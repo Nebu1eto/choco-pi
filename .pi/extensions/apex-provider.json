@@ -1,0 +1,11 @@
+{
+  "baseUrl": "",
+  "api": "openai-completions",
+  "defaults": {
+    "contextWindow": 128000,
+    "maxTokens": 16384,
+    "reasoning": false,
+    "input": ["text"]
+  },
+  "overrides": {}
+}

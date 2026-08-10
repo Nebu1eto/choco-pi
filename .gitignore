@@ -1,0 +1,11 @@
+# Pi installs project packages from .pi/settings.json on demand.
+.pi/npm/
+.pi/git/
+.pi/mcp-traces/
+.pi-subagents/
+
+# Never commit local credentials or environment overrides.
+.env
+.env.*
+!.env.example
+*.local

@@ -1,0 +1,23 @@
+{
+  "packages": [
+    "npm:@aliou/pi-synthetic@0.24.3",
+    "npm:pi-subagents@0.45.2",
+    "npm:pi-codex-goal@0.2.0",
+    "npm:pi-mcp-adapter@2.21.2",
+    "npm:pi-lens@3.8.74",
+    "npm:@howaboua/pi-codex-conversion@3.0.12",
+    "npm:pi-web-access@0.20.0",
+    "npm:pi-btw@0.4.1",
+    "npm:pi-zentui@0.18.1",
+    "npm:pi-agent-browser-native@0.3.0"
+  ],
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "subagents": {
+    "disableBuiltins": true,
+    "projectRootResolution": "git-root"
+  }
+}
