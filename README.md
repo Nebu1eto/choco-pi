@@ -4,7 +4,7 @@
 
 ## 시작하기
 
-저장소에서 `pi`를 실행하고 프로젝트를 신뢰하면 [`.pi/settings.json`](.pi/settings.json)에 버전을 고정한 패키지를 설치합니다. npm이 보류한 네이티브 보조 패키지는 내용을 확인한 뒤 다음처럼 허용합니다.
+저장소 루트에서 `pi`를 실행하고 프로젝트를 신뢰하면 [`.pi/settings.json`](.pi/settings.json)에 버전을 고정한 패키지를 설치합니다. npm이 보류한 네이티브 보조 패키지는 내용을 확인한 뒤 다음처럼 허용합니다.
 
 ```sh
 cd .pi/npm
@@ -28,6 +28,7 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 | 작업 중 사이드 대화 | [`pi-btw`](https://pi.dev/packages/pi-btw) | 0.4.1 |
 | Starship형 상태줄·TUI | [`pi-zentui`](https://pi.dev/packages/pi-zentui) | 0.18.1 |
 | 네이티브 브라우저 자동화 | [`pi-agent-browser-native`](https://github.com/fitchmultz/pi-agent-browser-native) | 0.3.0 |
+| 하위 `AGENTS.md`·Markdown workflow | [`@howaboua/pi-markdown-workflows`](https://pi.dev/packages/@howaboua/pi-markdown-workflows) | 0.2.20 |
 
 ## 서브 에이전트
 
@@ -45,6 +46,20 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 프로젝트의 [`runtime-model-prompt.ts`](.pi/extensions/runtime-model-prompt.ts)는 매 turn의 시스템 프롬프트 끝에 현재 `provider/model`을 추가합니다. 모델을 전환하면 다음 turn부터 새 값이 들어가며, API 키나 OAuth 정보는 포함하지 않습니다.
 
 정적인 규칙을 추가할 때는 Pi 기본 prompt를 유지하는 `.pi/APPEND_SYSTEM.md`를 우선 사용합니다. `.pi/SYSTEM.md`는 기본 prompt 전체를 교체해야 할 때만 사용합니다.
+
+### 하위 `AGENTS.md`
+
+Pi 자체는 시작 디렉터리에서 상위로 올라가며 context file을 읽고, 하위 디렉터리는 미리 재귀 탐색하지 않습니다. `@howaboua/pi-markdown-workflows`는 에이전트가 파일 읽기, read-like shell 명령 또는 Code Mode 작업으로 하위 경로에 들어갈 때 해당 경로까지의 `AGENTS.md` 체인을 넓은 범위부터 구체적인 범위 순서로 추가합니다. 위 시작 절차처럼 저장소 루트에서 Pi를 실행하면 루트 `AGENTS.md`는 Pi가 이미 읽으므로 다시 넣지 않습니다.
+
+예를 들어 저장소 루트에서 Pi를 실행한 뒤 `packages/api/src/service.ts`를 읽으면 다음 파일 중 존재하는 항목이 순서대로 적용됩니다.
+
+```text
+packages/AGENTS.md
+packages/api/AGENTS.md
+packages/api/src/AGENTS.md
+```
+
+이미 읽은 내용은 세션에 유지되고, 파일이 바뀌면 최대 10회의 대상 작업 안에 갱신됩니다. 이 패키지는 `/workflows`, `/skills`, `/learn` 명령과 확인 후 `.pi/workflows/`에 절차를 기록하는 `workflows_create` 도구도 제공합니다.
 
 ## Compaction
 

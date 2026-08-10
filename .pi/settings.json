@@ -9,7 +9,8 @@
     "npm:pi-web-access@0.20.0",
     "npm:pi-btw@0.4.1",
     "npm:pi-zentui@0.18.1",
-    "npm:pi-agent-browser-native@0.3.0"
+    "npm:pi-agent-browser-native@0.3.0",
+    "npm:@howaboua/pi-markdown-workflows@0.2.20"
   ],
   "compaction": {
     "enabled": true,
