@@ -1,5 +1,6 @@
 {
-  "defaultCap": 200000,
-  "appliesOver": 200000,
+  "defaultCap": 600000,
+  "defaultCompactAt": 550000,
+  "appliesOver": 999999,
   "models": {}
 }
