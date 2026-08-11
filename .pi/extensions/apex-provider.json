@@ -1,5 +1,5 @@
 {
-  "baseUrl": "",
+  "baseUrl": "https://api.callstack.ai/v1",
   "api": "openai-completions",
   "defaults": {
     "contextWindow": 128000,

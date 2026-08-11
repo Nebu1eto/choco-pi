@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
 type ApexApi = "openai-completions" | "openai-responses";
 type ModelInput = Array<"text" | "image">;
@@ -23,7 +24,7 @@ type ApexProviderConfig = {
 };
 
 const PROVIDER_ID = "callstack-apex";
-const CONFIG_FILE = join(".pi", "extensions", "apex-provider.json");
+const PROFILE_CONFIG_PATH = fileURLToPath(new URL("./apex-provider.json", import.meta.url));
 const DISCOVERY_TIMEOUT_MS = 10_000;
 const MODEL_STORE_TTL_MS = 4 * 60 * 60 * 1000;
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -121,8 +122,20 @@ export function normalizeApexModels(
 	return models;
 }
 
-function readConfig(cwd: string): ApexProviderConfig {
-	return JSON.parse(readFileSync(join(cwd, CONFIG_FILE), "utf8")) as ApexProviderConfig;
+async function readConfig(cwd: string): Promise<ApexProviderConfig> {
+	const configPaths = [
+		join(cwd, ".pi", "extensions", "apex-provider.json"),
+		join(getAgentDir(), "extensions", "apex-provider.json"),
+		PROFILE_CONFIG_PATH,
+	];
+	for (const configPath of configPaths) {
+		try {
+			return JSON.parse(await readFile(configPath, "utf8")) as ApexProviderConfig;
+		} catch (error) {
+			if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+		}
+	}
+	throw new Error("apex-provider.json was not found");
 }
 
 function resolveDefaults(config: ApexProviderConfig): ApexModelDefaults {
@@ -169,7 +182,7 @@ async function discoverApexModels(
 }
 
 export default async function apexProvider(pi: ExtensionAPI): Promise<void> {
-	const config = readConfig(process.cwd());
+	const config = await readConfig(process.cwd());
 	const baseUrl = resolveBaseUrl(config);
 	if (!baseUrl) return;
 
