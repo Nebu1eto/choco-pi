@@ -1,6 +1,7 @@
 # Pi installs project packages from .pi/settings.json on demand.
 .pi/npm/
 .pi/git/
+.pi/agent/
 .pi/mcp-traces/
 .pi-subagents/
 
