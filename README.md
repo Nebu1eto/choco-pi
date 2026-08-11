@@ -1,10 +1,28 @@
 # choco-pi
 
-개인 취향에 맞춘 [Pi 코딩 에이전트](https://pi.dev/) 설정 저장소입니다. 플러그인과 공유 가능한 설정만 Git으로 관리하고, OAuth 토큰과 API 키는 Pi의 사용자 전용 인증 저장소에 둡니다. 현재 기준은 Pi 0.84.1과 Node.js 24 이상입니다.
+[한국어](README.ko.md)
 
-## 시작하기
+choco-pi is an opinionated, project-aware profile for the [Pi coding agent](https://pi.dev/). It combines a custom agent contract, reusable workflows, model and provider controls, sub-agents, independent conversations, compaction settings, MCP, web access, browser automation, and a Nord-based terminal interface.
 
-저장소 루트에서 `pi`를 실행하고 프로젝트를 신뢰하면 [`.pi/settings.json`](.pi/settings.json)에 버전을 고정한 패키지를 설치합니다. npm이 보류한 네이티브 보조 패키지는 내용을 확인한 뒤 다음처럼 허용합니다.
+The repository tracks shareable configuration only. OAuth tokens and API keys remain in Pi's user-level credential store and must not be committed.
+
+## Requirements
+
+- Pi 0.84.1 or later
+- Node.js 24 or later
+- Git
+- Optional: [`agent-browser`](https://github.com/vercel-labs/agent-browser) 0.33.2 for native browser automation
+
+Before installing the profile globally, run Pi from the repository root so it loads [`.pi/settings.json`](.pi/settings.json), the custom system prompt, project extensions, agents, skills, and prompt templates.
+
+After cloning or copying the repository, start Pi from its root:
+
+```sh
+cd choco-pi
+pi
+```
+
+Pi installs the packages pinned in [`.pi/settings.json`](.pi/settings.json). If npm defers native install scripts, approve only the two packages used by the configured extensions:
 
 ```sh
 cd .pi/npm
@@ -12,46 +30,113 @@ npm install-scripts approve --allow-scripts-pin @ast-grep/cli tree-sitter-bash
 npm rebuild @ast-grep/cli tree-sitter-bash
 ```
 
-설정 변경 뒤에는 Pi에서 `/reload`를 실행합니다.
+Run `/reload` after changing files under `.pi`.
 
-## 기본 플러그인
+## Global profile
 
-| 기능 | 패키지 | 버전 |
-|---|---|---:|
-| Synthetic provider | [`@aliou/pi-synthetic`](https://github.com/aliou/pi-synthetic) | 0.24.3 |
-| 서브 에이전트·steering·queue | [`pi-subagents`](https://github.com/nicobailon/pi-subagents) | 0.45.2 |
-| Codex형 goal | [`pi-codex-goal`](https://pi.dev/packages/pi-codex-goal) | 0.2.0 |
-| 지연 로딩 MCP | [`pi-mcp-adapter`](https://pi.dev/packages/pi-mcp-adapter) | 2.21.2 |
-| LSP·lint·AST 진단 | [`pi-lens`](https://pi.dev/packages/pi-lens) | 3.8.74 |
-| Codex 도구·OpenAI compaction | [`@howaboua/pi-codex-conversion`](https://pi.dev/packages/@howaboua/pi-codex-conversion) | 3.0.12 |
-| 웹 검색·문서 추출 | [`pi-web-access`](https://github.com/nicobailon/pi-web-access) | 0.20.0 |
-| 작업 중 사이드 대화 | [`pi-btw`](https://pi.dev/packages/pi-btw) | 0.4.1 |
-| Starship형 상태줄·TUI | [`pi-zentui`](https://pi.dev/packages/pi-zentui) | 0.18.1 |
-| 네이티브 브라우저 자동화 | [`pi-agent-browser-native`](https://github.com/fitchmultz/pi-agent-browser-native) | 0.3.0 |
-| 하위 `AGENTS.md`·Markdown workflow | [`@howaboua/pi-markdown-workflows`](https://pi.dev/packages/@howaboua/pi-markdown-workflows) | 0.2.20 |
+This checkout is also the source of the current machine's global Pi profile under `~/.pi/agent`:
 
-## 서브 에이전트
+- `settings.json` installs the same pinned packages and references this checkout's `extensions`, `skills`, and `prompts` directories.
+- `SYSTEM.md`, `writing-policy.md`, `review-policy.md`, agent definitions, and provider configuration files are symbolic links to this checkout.
+- Pi launched from another directory therefore receives choco-pi as its user-level default. A trusted project's own `.pi` settings and `SYSTEM.md` can still override the global defaults through Pi's normal precedence rules.
 
-패키지 내장 역할은 비활성화했습니다. 대신 [`.pi/agents/general.md`](.pi/agents/general.md)를 시작점으로 복사하거나 `/subagents`에서 원하는 역할을 만듭니다. agent를 만들거나 편집할 때 `model`과 `thinking`을 지정할 수 있고, 실행할 때는 `model`을 다시 덮어쓸 수 있습니다.
+Keep this checkout at a stable path because the global profile points to it. Restart Pi or run `/reload` after changing the source files.
 
-- `/subagents`: agent·model·thinking 설정
-- `/subagents-fleet`: 실행 중인 child 조회, transcript 확인, steering과 중지. `s`로 메시지를 쓰고 Tab으로 `steer`·`follow_up`·`auto`를 선택
-- 메인 에이전트에 “다음 turn에 전달해”라고 요청하거나 Fleet에서 `follow_up` 선택: FIFO queue에 적재
-- 즉시 방향 전환 요청: `steer` 모드로 다음 안전 지점에 전달
+## What this profile provides
 
-프로젝트 agent는 `.pi/agents/**/*.md`, 프로젝트 skill은 `.pi/skills/**/SKILL.md`에 둡니다. `general`은 프로젝트 문맥과 skill을 상속하지만 모델과 thinking 기본값은 고정하지 않습니다.
+| Area | Behavior |
+|---|---|
+| Agent contract | Replaces Pi's base prompt with [`.pi/SYSTEM.md`](.pi/SYSTEM.md) and injects the active `provider/model` on every turn |
+| Project awareness | Applies root context at startup and loads path-scoped descendant `AGENTS.md` files when work enters those paths |
+| Writing | Applies the repository writing policy to normal responses and persisted documents without a separate skill command |
+| Workflows | Provides direct implementation, parallel implementation, hotfix, review, environment check, and local commit workflows |
+| Agents | Provides configurable `general`, `planner`, `implementer`, `reviewer`, and `handoff` leaf roles |
+| Conversations | Creates and coordinates independent Pi sessions with create, list, read, wait, queue, and steer operations |
+| Context | Applies model-specific soft context caps and supports OpenAI Responses server-side compaction through `pi-codex-conversion` |
+| Providers | Configures OpenAI Codex OAuth, Anthropic OAuth, Synthetic, and discovery-based Callstack Apex support |
+| Tools | Adds MCP, web search, content extraction, LSP diagnostics, browser automation, goals, and side conversations |
+| Interface | Uses `nord-dark`, `pi-zentui`, provider usage views, model effort controls, and familiar session aliases |
 
-## 시스템 프롬프트
+## Installed packages
 
-프로젝트의 [`runtime-model-prompt.ts`](.pi/extensions/runtime-model-prompt.ts)는 매 turn의 시스템 프롬프트 끝에 현재 `provider/model`을 추가합니다. 모델을 전환하면 다음 turn부터 새 값이 들어가며, API 키나 OAuth 정보는 포함하지 않습니다.
+Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 
-정적인 규칙을 추가할 때는 Pi 기본 prompt를 유지하는 `.pi/APPEND_SYSTEM.md`를 우선 사용합니다. `.pi/SYSTEM.md`는 기본 prompt 전체를 교체해야 할 때만 사용합니다.
+| Package | Version | Purpose |
+|---|---:|---|
+| [`@aliou/pi-synthetic`](https://github.com/aliou/pi-synthetic) | 0.24.3 | Synthetic provider and authentication |
+| [`pi-subagents`](https://github.com/nicobailon/pi-subagents) | 0.45.2 | Sub-agents, steering, follow-up queues, and fleet UI |
+| [`pi-codex-goal`](https://pi.dev/packages/pi-codex-goal) | 0.2.0 | Persistent Codex-style goals |
+| [`pi-mcp-adapter`](https://pi.dev/packages/pi-mcp-adapter) | 2.21.2 | Lazy MCP server loading |
+| [`pi-lens`](https://pi.dev/packages/pi-lens) | 3.8.74 | LSP, lint, and AST diagnostics |
+| [`@howaboua/pi-codex-conversion`](https://pi.dev/packages/@howaboua/pi-codex-conversion) | 3.0.12 | Codex-compatible tools and OpenAI Responses compaction |
+| [`pi-web-access`](https://github.com/nicobailon/pi-web-access) | 0.20.0 | Web search and document extraction |
+| [`pi-btw`](https://pi.dev/packages/pi-btw) | 0.4.1 | Side conversations during an active task |
+| [`pi-zentui`](https://pi.dev/packages/pi-zentui) | 0.18.1 | Editor, message framing, and status line |
+| [`pi-agent-browser-native`](https://github.com/fitchmultz/pi-agent-browser-native) | 0.3.0 | Native `agent-browser` integration |
+| [`@howaboua/pi-markdown-workflows`](https://pi.dev/packages/@howaboua/pi-markdown-workflows) | 0.2.20 | Descendant `AGENTS.md` loading and Markdown workflows |
+| [`@maddeye/pi-nord`](https://pi.dev/packages/@maddeye/pi-nord?name=nord&type=theme) | 1.0.0 | Nord themes |
 
-### 하위 `AGENTS.md`
+## Commands
 
-Pi 자체는 시작 디렉터리에서 상위로 올라가며 context file을 읽고, 하위 디렉터리는 미리 재귀 탐색하지 않습니다. `@howaboua/pi-markdown-workflows`는 에이전트가 파일 읽기, read-like shell 명령 또는 Code Mode 작업으로 하위 경로에 들어갈 때 해당 경로까지의 `AGENTS.md` 체인을 넓은 범위부터 구체적인 범위 순서로 추가합니다. 위 시작 절차처럼 저장소 루트에서 Pi를 실행하면 루트 `AGENTS.md`는 Pi가 이미 읽으므로 다시 넣지 않습니다.
+### Session and model controls
 
-예를 들어 저장소 루트에서 Pi를 실행한 뒤 `packages/api/src/service.ts`를 읽으면 다음 파일 중 존재하는 항목이 순서대로 적용됩니다.
+| Command | Description |
+|---|---|
+| `/exit` | Gracefully exit Pi; alias for `/quit` |
+| `/clear` | Start a fresh session while preserving the current session history; alias for `/new` |
+| `/effort` | Select a reasoning effort supported by the active model |
+| `/fast [on\|off\|status]` | Control OpenAI Codex Fast mode; no argument toggles the current state |
+| `/context-cap` | Show the soft context cap applied to the active model |
+| `/rewind` | Restore files and the Git index from an automatic turn checkpoint |
+| `/usage` | Show Claude Code, OpenAI Codex, and Synthetic usage in one view |
+| `/apex-refresh` | Rediscover Callstack Apex models immediately |
+
+Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can consume usage or API credit faster than the standard tier. The hidden llama.cpp provider remains available, but choco-pi removes `/llama` from the visible command list and command path.
+
+### Workflow commands
+
+| Command | Workflow |
+|---|---|
+| `/check [scope]` | Verify the base choco-pi environment and task-specific optional capabilities |
+| `/task-inline <task>` | Implement directly in the main agent; this is the default modifying workflow |
+| `/task <task>` | Plan and execute independent implementation units with sub-agents |
+| `/task-hotfix <task>` | Apply a narrow urgent fix directly in the main agent |
+| `/review [target]` | Run a report-only adversarial review with a fresh reviewer |
+| `/commit [guidance]` | Create one verified local commit without pushing |
+
+`/task` is reserved for work with at least two independent units that benefit from parallel execution. File count alone does not justify it. Direct and hotfix workflows do not delegate implementation.
+
+Every commit uses the harness `/commit` skill. It stages only the intended changes, follows repository-specific policy when present, and otherwise uses a scoped conventional subject, an optional terse body of at most two bullets, and `Assisted-by` and `Signed-off-by` trailers. It does not grant permission to push, open a pull request, publish, or deploy.
+
+### Independent conversation commands
+
+| Command | Description |
+|---|---|
+| `/session-new` | Choose a model, reasoning effort, optional name, and initial user prompt for a new conversation |
+| `/sessions [limit]` | List conversations for the current project |
+| `/session-send <id> <queue\|steer> <message>` | Send a queued or steering message to another conversation |
+| `/session-read <id> [limit] [include-tools]` | Read recent transcript items and the current cursor |
+| `/session-wait <id> [seconds] [after-cursor]` | Wait for progress after a cursor and for the target to become idle |
+
+The agent can call the same operations through `session_create`, `session_send`, `session_list`, `session_read`, and `session_wait`.
+
+Each conversation has its own Pi session ID and reloads project context, extensions, skills, and provider authentication. Same-process messages use the Pi session API directly. Cross-process messages use an owner-scoped heartbeat and a durable, sequenced mailbox under `~/.pi/agent/choco-pi/session-bridge/`.
+
+- `steer` requires an active target and is delivered at Pi's next safe steering point.
+- `queue` is FIFO and remains pending while the target is inactive.
+- Session discovery and messaging are restricted to the current working directory.
+- `session_create` returns immediately. Its cursor may be `null` until the first response.
+- Pi writes a new session's JSONL after its first assistant response. If the creating process exits before that response, the not-yet-persisted session can be lost. Existing JSONL records and queued mailbox messages remain available.
+
+## Agent behavior and project context
+
+[`.pi/SYSTEM.md`](.pi/SYSTEM.md) is the shared operating contract. It defines communication, instruction precedence, intent routing, authority boundaries, evidence requirements, delegation, review, continuity, and completion rules. It is project-neutral: repository-specific commands and domain rules belong in that repository's `AGENTS.md` or skills.
+
+[`runtime-model-prompt.ts`](.pi/extensions/runtime-model-prompt.ts) replaces `{{PI_CURRENT_MODEL}}` with the active `provider/model` on each turn. Parent and child sessions receive their own model identifier after model changes. Provider credentials are never added to the prompt.
+
+[`runtime-writing-prompt.ts`](.pi/extensions/runtime-writing-prompt.ts) injects [`.pi/writing-policy.md`](.pi/writing-policy.md) into main and child prompts. The policy covers evidence, claim strength, native-language style, document structure, English output, Japanese output, and final review.
+
+Pi loads context files from the startup path. `@howaboua/pi-markdown-workflows` adds descendant instructions when the agent reads or works in a deeper path. For example, accessing `packages/api/src/service.ts` can add, in order:
 
 ```text
 packages/AGENTS.md
@@ -59,63 +144,74 @@ packages/api/AGENTS.md
 packages/api/src/AGENTS.md
 ```
 
-이미 읽은 내용은 세션에 유지되고, 파일이 바뀌면 최대 10회의 대상 작업 안에 갱신됩니다. 이 패키지는 `/workflows`, `/skills`, `/learn` 명령과 확인 후 `.pi/workflows/`에 절차를 기록하는 `workflows_create` 도구도 제공합니다.
+Previously loaded instructions remain in the session and are refreshed after changes. The package also provides `/workflows`, `/skills`, `/learn`, and a confirmed `workflows_create` path for reusable Markdown procedures.
 
-## Compaction
+## Sub-agents
 
-기본 soft context cap은 200,000 tokens입니다. Pi의 `reserveTokens`가 16,384이므로 자동 compaction은 대략 183,616 tokens에서 시작하고, Pi fallback summary는 최근 20,000 tokens를 유지합니다.
+Built-in package roles are disabled. choco-pi provides five model-neutral, project-aware leaf roles under [`.pi/agents`](.pi/agents):
 
-모델별 값은 [`.pi/extensions/context-cap.json`](.pi/extensions/context-cap.json)에서 조정합니다.
+| Role | Use | Write access |
+|---|---|---:|
+| `general` | General scoped work | Yes |
+| `planner` | Dependency, conflict, and verification planning | No |
+| `implementer` | One assigned implementation unit | Yes |
+| `reviewer` | Fresh-context evidence-based review | No |
+| `handoff` | Concise report of verified state | No |
+
+Use `/subagents` to configure a role's model and reasoning effort. A task can override those values when spawning a child. Resolution follows explicit user choice, project profile, role configuration, and parent/runtime defaults in that order.
+
+Use `/subagents-fleet` to inspect running children, read transcripts, send `steer` or `follow_up` messages, and stop work. Roles rediscover context and skills from the child working directory instead of copying a stale parent prompt.
+
+## Checkpoints, review, and Git boundaries
+
+[`file-checkpoints.ts`](.pi/extensions/file-checkpoints.ts) records staged, unstaged, and untracked state at the start of each agent turn through a temporary Git index. It does not modify the real index. `/rewind` creates a safety checkpoint before restoring the selected state. Ignored files and conversation history are not changed; checkpoint objects are retained under `refs/choco-pi/checkpoints/`.
+
+[`review`](.pi/skills/review/SKILL.md) and [`.pi/review-policy.md`](.pi/review-policy.md) define a report-only adversarial review. The reviewer receives an exact diff or revision, tries to disprove its assumptions, and reports only reproducible or decisively traced findings. A review does not authorize fixes.
+
+Modifying workflows record the starting revision, inspect the dirty tree, maintain an acceptance ledger, and acquire a checkout mutation lease. Work stays in the current checkout unless the user requests a worktree or isolation is required by repository policy.
+
+## Context and compaction
+
+Models with a native context window of at least 1,000,000 tokens use a 600,000-token soft cap and start automatic compaction after 550,000 tokens. Local fallback summaries retain the most recent 20,000 tokens.
+
+Configure project-specific caps in [`.pi/extensions/context-cap.json`](.pi/extensions/context-cap.json). The global default is available at `~/.pi/agent/extensions/context-cap.json`; project configuration takes precedence.
 
 ```json
 {
-  "defaultCap": 200000,
-  "appliesOver": 200000,
+  "defaultCap": 600000,
+  "defaultCompactAt": 550000,
+  "appliesOver": 999999,
   "models": {
-    "openai-codex/gpt-5.6-sol": 180000,
-    "anthropic/claude-opus-4-6": 160000,
+    "provider/model": {
+      "cap": 600000,
+      "compactAt": 550000
+    },
     "provider/model-with-native-window": null
   }
 }
 ```
 
-- `provider/model: number`: 해당 모델의 정확한 soft cap
-- `provider/model: null`: 해당 모델은 native context window 유지
-- `/context-cap`: 현재 세션에 실제 적용된 cap 확인
+- A number applies that exact soft cap; an object sets both the cap and compaction threshold.
+- `null` disables both overrides for that model. Either object field can also be `null` to disable only that override.
+- `/context-cap` reports the effective value for the current session.
 
-OpenAI Codex에서는 `/codex openai`의 native Responses compaction을 켭니다. 이 저장소의 예시는 [`examples/pi-codex-conversion.json`](examples/pi-codex-conversion.json)이며, 패키지가 지원하는 사용자 전역 경로 `~/.pi/agent/pi-codex-conversion.json`에 복사합니다. 이는 OpenAI 서버가 `remote_compaction_v2` checkpoint를 만드는 방식이며 OpenAI Codex와 명시적으로 설정한 Responses 호환 provider에만 적용됩니다. 지원하지 않거나 원격 요청이 실패하면 가능한 경우 Pi compaction으로 폴백하며, 암호화된 checkpoint를 안전하게 재사용할 수 없는 상태에서는 문맥 손상을 막기 위해 명시적으로 취소합니다. 현재 Pi와 버전 범위가 맞지 않는 [`pi-openai-server-compaction`](https://github.com/algal/pi-openai-server-compaction)은 함께 설치하지 않습니다.
+For OpenAI Codex, enable native Responses compaction with `/codex openai`. The example in [`examples/pi-codex-conversion.json`](examples/pi-codex-conversion.json) can be copied to `~/.pi/agent/pi-codex-conversion.json`:
 
-## Goal, MCP, 웹 검색과 BTW
-
-- `/create-goal <작업>`: 검증 조건을 포함한 goal 생성
-- `/goal`: 현재 goal·사용량·상태 확인
-- [`.mcp.json`](.mcp.json): 프로젝트 MCP server 추가; 기본은 빈 구성이고 server는 lazy start
-- `/mcp`: MCP 상태와 설정
-- `web_search`, `fetch_content`: `pi-web-access`의 검색·본문 추출 도구
-- `/btw <질문>`: 메인 agent가 작업 중이어도 별도 Pi sub-session에서 질문
-- `/btw:model`, `/btw:thinking`: BTW 전용 모델과 reasoning 조정
-- `/btw:inject`, `/btw:summarize`: 사이드 대화를 메인 문맥으로 전달
-
-## TUI와 브라우저
-
-`pi-zentui`는 기본 설정으로 Opencode형 editor, framed user message, Starship형 footer를 적용합니다. `/zentui`에서 각 영역을 켜거나 끄고 스타일을 바꿀 수 있으며, 사용자 설정은 `~/.pi/agent/zentui.json`에 저장됩니다.
-
-`pi-agent-browser-native`는 `agent_browser` 도구를 추가하지만 브라우저 엔진은 포함하지 않습니다. 현재 패키지와 맞는 upstream 실행 파일을 별도로 설치하고 PATH에서 확인해야 합니다.
-
-```sh
-npm install --global --allow-scripts=agent-browser agent-browser@0.33.2
-agent-browser install
-agent-browser --version
-npm exec --yes --package pi-agent-browser-native@0.3.0 -- pi-agent-browser-doctor
+```json
+{
+  "compaction": {
+    "responsesCompaction": true
+  }
+}
 ```
 
-설치가 끝나면 에이전트가 `agent_browser`로 페이지 열기, interactive snapshot, 클릭, 입력, screenshot과 인증된 프로필 작업을 수행할 수 있습니다. `ffmpeg`는 브라우저 녹화 결과를 WebM으로 인코딩할 때만 필요합니다. 이 저장소는 확장의 선택형 Exa·Brave 검색 기능은 켜지 않으며, 기본 웹 검색에는 기존 `pi-web-access`를 사용합니다.
+This path uses OpenAI `remote_compaction_v2` checkpoints for OpenAI Codex and explicitly configured compatible Responses providers. Unsupported or failed remote requests fall back to Pi compaction when safe. choco-pi does not install `pi-openai-server-compaction` because its current Pi compatibility range does not match this profile.
 
-## 인증
+## Provider authentication
 
-OAuth 토큰과 API 키는 `~/.pi/agent/auth.json`에 저장됩니다. 이 파일은 Pi가 권한 `0600`으로 관리하며 저장소에 복사하지 않습니다.
+Pi stores OAuth tokens and API keys in `~/.pi/agent/auth.json` with mode `0600`. Do not copy this file into the repository.
 
-Pi를 실행하고 다음 명령을 사용합니다.
+Start Pi and authenticate the configured providers:
 
 ```text
 /login openai-codex
@@ -123,17 +219,13 @@ Pi를 실행하고 다음 명령을 사용합니다.
 /login synthetic
 ```
 
-- `openai-codex`: ChatGPT Plus/Pro 계정으로 브라우저 로그인
-- `anthropic`: Claude 계정 로그인을 선택해 브라우저에서 승인
-- `synthetic`: Synthetic API 키 입력
+- `openai-codex` uses browser OAuth for an eligible ChatGPT account.
+- `anthropic` offers Claude account authentication through the browser.
+- `synthetic` accepts a Synthetic API key.
 
-셸 환경 변수를 선호하면 Synthetic은 다음 방식도 지원합니다.
+Synthetic also reads the `SYNTHETIC_API_KEY` environment variable.
 
-```sh
-export SYNTHETIC_API_KEY='...'
-```
-
-인증 값을 출력하지 않고 상태만 확인하려면 다음 명령을 사용합니다.
+Check authentication without printing credential values:
 
 ```sh
 pi auth check --provider openai-codex --json
@@ -141,15 +233,15 @@ pi auth check --provider anthropic --json
 pi --approve --list-models synthetic
 ```
 
-마지막 명령은 Synthetic 인증이 준비되면 사용 가능한 모델을 표시합니다. Pi의 `auth` 하위 명령은 프로젝트 확장 공급자를 불러오지 않으므로 Synthetic 확인에는 사용하지 않습니다.
+Pi's `auth` subcommand does not load project-defined providers, so use model listing rather than `pi auth check` for Synthetic and Callstack Apex.
 
-## Callstack Apex
+## Callstack Apex discovery
 
-Apex의 API base URL을 [`.pi/extensions/apex-provider.json`](.pi/extensions/apex-provider.json)에 넣습니다. URL은 모델 API 접두사까지 포함해야 합니다. 예를 들어 모델 목록이 `https://apex.example/v1/models`에 있다면 `baseUrl`은 `https://apex.example/v1`입니다. 저장소에 URL을 남기고 싶지 않으면 `CALLSTACK_APEX_BASE_URL` 환경 변수가 이 값을 덮어씁니다.
+Set the OpenAI-compatible API base in [`.pi/extensions/apex-provider.json`](.pi/extensions/apex-provider.json), or use `~/.pi/agent/extensions/apex-provider.json` as the global default. Project configuration takes precedence. The base must include the API prefix but not `/models`. For a model endpoint at `https://apex.example/v1/models`, use:
 
 ```json
 {
-  "baseUrl": "https://replace-with-apex-endpoint.example/v1",
+  "baseUrl": "https://apex.example/v1",
   "api": "openai-completions",
   "defaults": {
     "contextWindow": 128000,
@@ -161,41 +253,88 @@ Apex의 API base URL을 [`.pi/extensions/apex-provider.json`](.pi/extensions/ape
 }
 ```
 
-API 키는 저장소에 넣지 않습니다. 환경 변수로 전달하거나, base URL을 설정하고 Pi를 다시 시작한 뒤 `/login callstack-apex`로 `~/.pi/agent/auth.json`에 저장합니다.
+Keep the URL outside Git by setting `CALLSTACK_APEX_BASE_URL`. Supply the key through `CALLSTACK_APEX_API_KEY`, or restart Pi after setting the base URL and run `/login callstack-apex`.
+
+After setting `CALLSTACK_APEX_BASE_URL` and `CALLSTACK_APEX_API_KEY` in the shell, verify discovery without printing either value:
 
 ```sh
-export CALLSTACK_APEX_API_KEY='...'
 pi --approve --list-models callstack-apex
 ```
 
-환경 변수 대신 `/login callstack-apex`로 키를 저장했다면 `/apex-refresh`를 한 번 실행합니다. 그 뒤에는 Pi를 시작할 때 모델을 자동 discovery하고 결과를 최대 4시간 재사용합니다. API의 모델 목록이 바뀌었을 때도 `/apex-refresh`로 즉시 강제 갱신할 수 있습니다.
+The extension requests `${baseUrl}/models` with Bearer authentication. It accepts the standard OpenAI `{ "data": [...] }` response, a direct array, or `{ "models": [...] }`. It imports model names, context windows, output limits, input modalities, reasoning flags, and supported features when supplied. Missing fields use `defaults`; entries in `overrides` take precedence.
 
-프로젝트 확장은 `${baseUrl}/models`를 Bearer 인증으로 조회합니다. 표준 OpenAI 응답인 `{ "data": [{ "id": "..." }] }`를 비롯해 배열과 `{ "models": [...] }` 형식을 인식하고, discovery 결과를 Pi의 모델 저장소에 캐시합니다. API가 `name`, `context_window`, `max_tokens`, `input_modalities`, `reasoning` 또는 `supported_features`를 제공하면 자동 반영합니다. 빠진 값에는 `defaults`를 사용합니다.
+Use `openai-completions` unless Apex has been confirmed to support the Responses API. Selecting `openai-responses` does not enable server-side compaction by itself. Run `/apex-refresh` after login or whenever the model catalog changes; successful discovery is cached for up to four hours.
 
-API 메타데이터가 없거나 잘못됐으면 모델별 값을 명시할 수 있습니다. `overrides`가 discovery 값보다 우선합니다.
+## MCP, goals, web access, and side conversations
 
-```json
-{
-  "overrides": {
-    "apex-model-id": {
-      "name": "Callstack Apex",
-      "contextWindow": 200000,
-      "maxTokens": 32768,
-      "reasoning": true,
-      "input": ["text", "image"]
-    }
-  }
-}
+- Add project MCP servers to [`.mcp.json`](.mcp.json); the default file contains no servers. `/mcp` shows configuration and runtime state.
+- `/create-goal <objective>` creates a persistent goal. `/goal` shows its state and usage.
+- `web_search` and `fetch_content` provide search and document extraction through `pi-web-access`.
+- `/btw <question>` starts a side conversation while the main agent is working.
+- `/btw:model` and `/btw:thinking` select the side conversation model and effort.
+- `/btw:inject` and `/btw:summarize` bring selected side-conversation context into the main session.
+
+## TUI and browser automation
+
+The default theme is `nord-dark`. `pi-zentui` supplies the editor, framed user messages, and status line; `/zentui` configures those regions and stores user preferences in `~/.pi/agent/zentui.json`.
+
+`pi-agent-browser-native` provides the `agent_browser` tool but does not bundle the browser runtime. Install the compatible executable separately:
+
+```sh
+npm install --global --allow-scripts=agent-browser agent-browser@0.33.2
+agent-browser install
+agent-browser --version
+npm exec --yes --package pi-agent-browser-native@0.3.0 -- pi-agent-browser-doctor
 ```
 
-기본 `api`는 일반 OpenAI Chat Completions 호환 경로를 쓰는 `openai-completions`입니다. Apex가 Responses API까지 호환한다고 확인된 경우에만 `openai-responses`로 바꿉니다. 이 변경만으로 OpenAI server-side compaction이 활성화되지는 않습니다.
+The agent can then open pages, capture interactive snapshots, click, type, take screenshots, and use authenticated browser profiles. `ffmpeg` is required only for WebM recording. choco-pi keeps the extension's optional Exa and Brave search integrations disabled and uses `pi-web-access` for normal web search.
 
-## 참고 자료
+## Usage reporting
 
-- [Pi 공식 사이트](https://pi.dev/)
-- [Pi 공급자와 인증](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/providers.md)
-- [Pi 패키지 관리](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md)
-- [Pi 사용자 정의 모델](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md)
+`/usage` queries Claude Code, OpenAI Codex, and Synthetic in parallel. It displays current utilization and reset or regeneration times without printing credentials or raw provider error bodies.
+
+Claude Code and OpenAI Codex usage depend on Pi OAuth credentials and provider endpoints also used by their CLIs. API-key authentication may not expose account quotas. Synthetic reports five-hour request usage and weekly credits; separately purchased subscription credit is outside that quota response.
+
+## Repository layout
+
+```text
+.pi/
+  SYSTEM.md                 Shared choco-pi operating contract
+  settings.json             Packages, theme, compaction, and sub-agent settings
+  agents/                   Project-aware leaf roles
+  extensions/               Provider, session, context, usage, and UI behavior
+  prompts/                  Familiar slash-command templates
+  skills/                   Workflow implementations
+  scripts/                  Shared workflow utilities
+  writing-policy.md         Always-on writing rules
+  review-policy.md          Shared adversarial review rules
+.mcp.json                   Project MCP configuration
+examples/                   Optional user-level configuration examples
+```
+
+Run the baseline check after installation or configuration changes:
+
+```text
+/check
+```
+
+The check validates Node and Pi versions, settings, installed package versions, required harness resources, command aliases, and the optional browser runtime without reading credentials.
+
+## Security and authority
+
+- Keep OAuth tokens, API keys, environment overrides, MCP traces, Pi package installs, and sub-agent runtime data outside Git.
+- choco-pi assumes a high-trust local development environment and does not add an approval workflow.
+- Local project files and explicitly scoped local databases can be modified when the task authorizes changes.
+- Remote databases, remote services, paths outside the working folder, and unrelated temporary locations require explicit user authority before writing.
+- A request to commit does not authorize push, pull request creation, deployment, publication, or other remote mutation.
+
+## References
+
+- [Pi](https://pi.dev/)
+- [Pi providers and authentication](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/providers.md)
+- [Pi package management](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md)
+- [Pi custom models](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md)
 - [Pi compaction](https://pi.dev/docs/latest/compaction)
-- [Synthetic Pi 확장](https://github.com/aliou/pi-synthetic)
-- [Callstack Apex 소개](https://www.callstack.com/blog/introducing-apex-a-fast-specialized-model-for-react-native)
+- [Synthetic extension](https://github.com/aliou/pi-synthetic)
+- [Callstack Apex introduction](https://www.callstack.com/blog/introducing-apex-a-fast-specialized-model-for-react-native)
+- [OpenAI Codex source](https://github.com/openai/codex)
