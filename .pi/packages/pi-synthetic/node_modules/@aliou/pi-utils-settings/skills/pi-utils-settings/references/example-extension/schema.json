@@ -1,0 +1,87 @@
+{
+  "$ref": "#/definitions/ExampleConfig",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ExampleConfig": {
+      "additionalProperties": false,
+      "description": "User-facing configuration for the example extension.",
+      "properties": {
+        "appearance": {
+          "additionalProperties": false,
+          "description": "Visual appearance settings.",
+          "properties": {
+            "fontSize": {
+              "description": "Editor font size in pixels.",
+              "type": "number"
+            },
+            "showLineNumbers": {
+              "description": "Show line numbers in the gutter.",
+              "type": "boolean"
+            },
+            "theme": {
+              "description": "Color theme name (e.g. \"dark\", \"light\", \"solarized\").",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "editor": {
+          "additionalProperties": false,
+          "description": "Editor behavior settings.",
+          "properties": {
+            "autoSave": {
+              "description": "Automatically save files after changes.",
+              "type": "boolean"
+            },
+            "formatOnSave": {
+              "description": "Run formatter on save.",
+              "type": "boolean"
+            },
+            "tabSize": {
+              "description": "Number of spaces per tab.",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "favorites": {
+          "description": "List of favorite file paths.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ignorePaths": {
+          "description": "Glob patterns for paths to ignore.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "profiles": {
+          "description": "Named configuration profiles.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "description": "Whether this profile is active.",
+                "type": "boolean"
+              },
+              "name": {
+                "description": "Profile display name.",
+                "type": "string"
+              },
+              "theme": {
+                "description": "Theme override for this profile.",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  }
+}
