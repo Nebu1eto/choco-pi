@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const REQUEST_TIMEOUT_MS = 10_000;
-const SYNTHETIC_QUOTAS_REQUEST_EVENT = "synthetic:quotas:request";
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
 const USAGE_BAR_WIDTH = 50;
 
@@ -202,7 +201,9 @@ export function normalizeSyntheticUsage(payload: unknown): ProviderUsage {
 	);
 	if (maximum !== undefined && maximum > 0 && remaining !== undefined) {
 		const boundedRemaining = Math.max(0, Math.min(maximum, remaining));
-		const requestsUsed = subscriptionRequests ?? maximum - boundedRemaining;
+		const requestsUsed = rollingMaximum !== undefined && rollingRemaining !== undefined
+			? maximum - boundedRemaining
+			: subscriptionRequests ?? maximum - boundedRemaining;
 		const requestDetail = requestsUsed === 0
 			? "No requests used"
 			: `${boundedRemaining}/${maximum} requests remaining`;
@@ -211,8 +212,8 @@ export function normalizeSyntheticUsage(payload: unknown): ProviderUsage {
 			label: "Five-hour requests",
 			percent: clampPercent((maximum - boundedRemaining) / maximum * 100),
 			qualifier: "used",
-			eventAt: dateValue(subscription?.renewsAt),
-			eventLabel: "resets",
+			eventAt: dateValue(rolling?.nextTickAt ?? subscription?.renewsAt),
+			eventLabel: rolling ? "regenerates" : "resets",
 			detail,
 			precision: 0,
 		});
@@ -269,27 +270,11 @@ async function codexUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
 	return normalizeCodexUsage(payload);
 }
 
-function syntheticUsage(pi: ExtensionAPI, ctx: ExtensionContext): Promise<ProviderUsage> {
-	if (!ctx.modelRegistry.getProviderAuthStatus("synthetic").configured) {
-		return Promise.resolve({ name: "Synthetic", status: "not connected", windows: [] });
-	}
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => reject(new Error("request timed out")), REQUEST_TIMEOUT_MS);
-		pi.events.emit(SYNTHETIC_QUOTAS_REQUEST_EVENT, {
-			respond(snapshot: unknown) {
-				clearTimeout(timer);
-				if (!isRecord(snapshot) || !isRecord(snapshot.quotas)) {
-					reject(new Error("quota data is unavailable"));
-					return;
-				}
-				try {
-					resolve(normalizeSyntheticUsage(snapshot.quotas));
-				} catch (error) {
-					reject(error);
-				}
-			},
-		});
-	});
+async function syntheticUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
+	const token = await providerToken(ctx, "synthetic");
+	if (!token) return { name: "Synthetic", status: "not connected", windows: [] };
+	const payload = await fetchJson("https://api.synthetic.new/v2/quotas", token, {});
+	return normalizeSyntheticUsage(payload);
 }
 
 function currencyValue(value: string): number {
@@ -342,7 +327,7 @@ export default function providerUsage(pi: ExtensionAPI): void {
 	pi.registerCommand("usage", {
 		description: "Show connected Claude Code, OpenAI Codex, and Synthetic usage",
 		handler: async (_args, ctx) => {
-			const requests = [claudeUsage(ctx), codexUsage(ctx), syntheticUsage(pi, ctx)];
+			const requests = [claudeUsage(ctx), codexUsage(ctx), syntheticUsage(ctx)];
 			const settled = await Promise.allSettled(requests);
 			const names = ["Claude Code", "OpenAI Codex", "Synthetic"];
 			const sections = settled.map((result, index) => result.status === "fulfilled"
