@@ -1,6 +1,6 @@
 {
   "packages": [
-    "npm:@aliou/pi-synthetic@0.24.3",
+    "./packages/pi-synthetic",
     "npm:pi-subagents@0.45.2",
     "npm:pi-codex-goal@0.2.0",
     "npm:pi-mcp-adapter@2.21.2",
