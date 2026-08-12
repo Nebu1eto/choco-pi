@@ -52,9 +52,9 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 | 작업 절차 | 직접 구현, 병렬 구현, 핫픽스, 리뷰, 환경 점검, 로컬 커밋 절차 제공 |
 | 에이전트 | 모델을 고정하지 않은 `general`, `planner`, `implementer`, `reviewer`, `handoff` 역할 제공 |
 | 독립 대화 | Pi 대화를 생성·조회·대기하고 queue·steer로 상호 제어 |
-| 문맥 관리 | 모델별 soft cap과 `pi-codex-conversion` 기반 OpenAI Responses 서버 컴팩션 지원 |
+| 문맥 관리 | 모델별 soft cap, 도구 지연 로딩, `/context` 사용량 분석과 OpenAI Responses 서버 컴팩션 지원 |
 | 공급자 | OpenAI Codex OAuth, Anthropic OAuth, Synthetic, 자동 discovery 방식 Callstack Apex 지원 |
-| 도구 | MCP, 웹 검색, 본문 추출, LSP 진단, 브라우저 자동화, goal, 사이드 대화 추가 |
+| 도구 | BM25 `tool_search`, MCP, 웹 검색, 본문 추출, LSP 진단, 브라우저 자동화, goal, 사이드 대화 추가 |
 | 인터페이스 | `nord-dark`, `pi-zentui`, 공급자 usage, effort 제어와 익숙한 세션 별칭 적용 |
 
 ## 설치 패키지
@@ -87,6 +87,7 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 | `/effort [level]` | 현재 모델이 지원하는 reasoning effort 선택 또는 직접 지정. 공백 뒤에는 가능한 값 자동 완성 |
 | `/fast [on\|off\|status]` | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환 |
 | `/context-cap` | 현재 모델에 적용된 soft context cap 확인 |
+| `/context [all]` | prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시 |
 | `/rewind` | turn 시작 시 저장한 checkpoint에서 파일과 Git index 복원 |
 | `/usage` | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시 |
 | `/apex-refresh` | Callstack Apex 모델을 즉시 다시 탐색 |
@@ -94,6 +95,8 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 Fast mode는 OpenAI Codex 요청에만 `service_tier: "priority"`를 추가합니다. Standard보다 사용량이나 API credit을 빠르게 소비할 수 있습니다. Pi에 숨겨진 llama.cpp 공급자는 유지하지만 `/llama` 명령은 choco-pi의 명령 목록과 실행 경로에서 제거합니다.
 
 프롬프트 입력 중 `Ctrl+S`를 누르면 현재 입력, 커서 위치와 접힌 대형 paste를 임시 보관하고 입력창을 비웁니다. stash가 있으면 입력창 위에 복원 안내가 표시되며, 빈 입력창에서 다시 누르면 내용이 복원되고 안내가 사라집니다. 이 stash는 현재 Pi 프로세스의 입력기에만 유지됩니다.
+
+MCP 도구는 metadata cache에서 first-class Pi 도구로 등록하되 초기 모델 context에는 넣지 않습니다. 모델은 `tool_search`에 자연어 capability를 전달해 BM25 상위 결과를 최대 5개만 다음 요청부터 활성화합니다. 활성화는 additive라 같은 세션에서 다시 검색할 필요가 없으며, `/context all`에서 active/deferred 목록을 확인할 수 있습니다.
 
 ### 작업 절차 명령
 
