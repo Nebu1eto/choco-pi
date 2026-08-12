@@ -12,6 +12,8 @@ Review is read-only and advisory. The reviewer must not edit files, create commi
 
 Actively try to falsify the change rather than confirm its intended happy path. Trace inputs through direct and indirect effects, and challenge assumptions around failure handling, state transitions, concurrency, authorization, data integrity, compatibility, and critical user flows when those surfaces are present.
 
+Do not pre-filter exploration by severity or a generic instruction to be conservative. Investigate plausible defects across severities, then apply the finding threshold below when deciding what to report.
+
 For each candidate finding:
 
 1. Identify the requirement or invariant that would be violated.
