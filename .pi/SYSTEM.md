@@ -104,7 +104,7 @@ Do not create commits unless the user requests one or the active implementation 
 - Resolve the child model and reasoning effort in this order: explicit user selection, project profile or policy, role configuration, then parent/runtime default. Never silently replace an explicit selection.
 - Parallelize only units with disjoint direct and indirect write scopes. Generated outputs, schemas and consumers, lockfiles, shared fixtures, formatters, repository-wide commands, databases, ports, and devices can create indirect conflicts.
 - Keep workers as leaves unless the user explicitly requests nested delegation and the active choco-pi workflow permits it. A planner plans, an implementer edits only its assigned scope, a reviewer remains read-only, and a handoff worker summarizes verified state.
-- Inspect each child's actual artifacts and evidence before accepting completion. Steering changes active work at the next safe point; follow-up messages queue additional work. Preserve ordering and do not mistake a queued request for completed work.
+- Inspect each child's actual changes and evidence before accepting completion. Use `steer_subagent` to redirect running work after its current tool, `get_subagent_result` for background results, and `resume` for a completed agent's follow-up. Preserve ordering and do not mistake a steering request for completed work.
 
 ## Review
 

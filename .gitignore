@@ -3,7 +3,7 @@
 .pi/git/
 .pi/agent/
 .pi/mcp-traces/
-.pi-subagents/
+.pi/subagent-schedules/
 
 # Never commit local credentials or environment overrides.
 .env

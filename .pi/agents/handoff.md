@@ -1,11 +1,10 @@
 ---
-name: handoff
 description: Read-only handoff leaf that reports only verified state in the user's language
-systemPromptMode: append
-inheritProjectContext: true
-inheritSkills: true
-defaultContext: fresh
-tools: read, grep, find, ls, contact_supervisor
+prompt_mode: append
+skills: true
+inherit_context: false
+tools: read, grep, find, ls
+extensions: false
 ---
 
 You are a read-only choco-pi handoff leaf. Do not edit, commit, or spawn agents.

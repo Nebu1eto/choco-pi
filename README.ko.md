@@ -37,7 +37,7 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 현재 checkout은 이 컴퓨터의 `~/.pi/agent` 전역 Pi profile 원본으로도 사용합니다.
 
 - `settings.json`은 같은 고정 버전 패키지를 설치하고 이 checkout의 `extensions`, `skills`, `prompts` 디렉터리를 참조합니다.
-- `SYSTEM.md`, `writing-policy.md`, `review-policy.md`, agent 정의와 공급자 설정 파일은 이 checkout으로 연결한 symbolic link입니다.
+- `SYSTEM.md`, `writing-policy.md`, `review-policy.md`, `subagents.json`, agent 정의와 공급자 설정 파일은 이 checkout으로 연결한 symbolic link입니다.
 - 따라서 다른 디렉터리에서 Pi를 실행해도 choco-pi가 사용자 기본 설정으로 적용됩니다. 신뢰한 프로젝트에 별도 `.pi` 설정이나 `SYSTEM.md`가 있으면 Pi의 기존 우선순위에 따라 전역 기본값을 덮어쓸 수 있습니다.
 
 전역 profile이 이 checkout을 직접 가리키므로 경로를 옮기거나 삭제하지 마십시오. 원본 파일을 바꾼 뒤 Pi를 다시 시작하거나 `/reload`를 실행합니다.
@@ -64,7 +64,7 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 | 패키지 | 버전 | 용도 |
 |---|---:|---|
 | [`@aliou/pi-synthetic`](https://github.com/aliou/pi-synthetic) | 0.24.3 | Synthetic 공급자와 인증 |
-| [`pi-subagents`](https://github.com/nicobailon/pi-subagents) | 0.45.2 | 서브 에이전트, steering, follow-up queue와 fleet UI |
+| [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents) | 0.15.0 | Claude Code 형태의 서브 에이전트, background 실행, steering, resume와 fleet UI |
 | [`pi-codex-goal`](https://pi.dev/packages/pi-codex-goal) | 0.2.0 | Codex 형태의 지속형 goal |
 | [`pi-mcp-adapter`](https://pi.dev/packages/pi-mcp-adapter) | 2.21.2 | MCP 서버 지연 로딩 |
 | [`pi-lens`](https://pi.dev/packages/pi-lens) | 3.8.74 | LSP, lint, AST 진단 |
@@ -150,7 +150,7 @@ packages/api/src/AGENTS.md
 
 ## 서브 에이전트
 
-패키지 기본 역할은 비활성화했습니다. [`.pi/agents`](.pi/agents)에는 모델을 고정하지 않은 project-aware leaf role 다섯 개가 있습니다.
+패키지 기본 역할은 [`.pi/subagents.json`](.pi/subagents.json)에서 비활성화하고, 알 수 없는 역할은 fallback 없이 거부합니다. [`.pi/agents`](.pi/agents)에는 모델을 고정하지 않은 project-aware leaf role 다섯 개가 있습니다.
 
 | 역할 | 용도 | 쓰기 |
 |---|---|---:|
@@ -160,11 +160,11 @@ packages/api/src/AGENTS.md
 | `reviewer` | fresh context 기반 근거 중심 리뷰 | 불가 |
 | `handoff` | 검증된 상태의 간결한 전달 | 불가 |
 
-`/subagents`에서 역할별 모델과 reasoning effort를 지정할 수 있으며 생성할 때 다시 덮어쓸 수 있습니다. 값은 사용자의 명시적 선택, 프로젝트 profile, 역할 설정, parent/runtime 기본값 순서로 결정합니다.
+`/agents`에서 역할, 실행 중인 agent, transcript, schedule과 운영 기본값을 확인합니다. 역할이 값을 고정하지 않았다면 `Agent` 호출에서 `model`과 `thinking`을 지정할 수 있습니다. 값은 명시적 호출, 역할 설정, parent/runtime 기본값 순서로 결정합니다.
 
-`/subagents-fleet`에서는 실행 중인 child, transcript, `steer`, `follow_up`, 중지를 관리합니다. 각 역할은 오래된 parent 프롬프트를 복사하지 않고 child working directory에서 context와 skill을 다시 탐색합니다.
+실행 중인 agent는 `steer_subagent`로 현재 tool 이후 방향을 바꾸고, background 결과는 `get_subagent_result`로 가져옵니다. 완료된 agent의 같은 작업 후속 처리는 `resume: <id>`를 포함한 `Agent` 호출을 사용합니다. 새 호출은 fresh conversation으로 시작하며 각 역할 지침은 현재 parent system prompt 뒤에 추가되고 skill을 상속합니다.
 
-쓰기 역할은 ambient child extension을 끄므로 선언된 native `bash`, `edit`, `write`가 모델 adapter에 대체되지 않습니다. Orchestrator가 겹치지 않는 ownership 범위를 할당하면 같은 checkout을 함께 수정할 수 있으며, worktree는 사용자가 요청하거나 저장소 정책상 격리가 필요할 때만 사용합니다.
+모든 custom role은 ambient child extension을 끄므로 선언된 native tool이 모델 adapter에 대체되지 않습니다. 쓰기 역할은 기본적으로 현재 checkout을 사용하며, Orchestrator가 겹치지 않는 direct·indirect ownership 범위를 할당한 경우에만 병렬 실행합니다. `isolation: "worktree"`는 명시적으로 선택할 때만 사용합니다.
 
 ## Checkpoint, 리뷰와 Git 경계
 
@@ -304,7 +304,8 @@ Claude Code와 OpenAI Codex는 Pi OAuth credential과 각 CLI가 사용하는 us
 ```text
 .pi/
   SYSTEM.md                 choco-pi 공통 운용 규칙
-  settings.json             패키지, 테마, compaction, sub-agent 설정
+  settings.json             패키지, 테마와 compaction 설정
+  subagents.json            Sub-agent runtime과 fallback 설정
   agents/                   Project-aware leaf role
   extensions/               공급자, 세션, context, usage, UI 동작
   prompts/                  익숙한 slash command template

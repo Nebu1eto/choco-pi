@@ -26,7 +26,7 @@ Resolve model and reasoning effort in the system-prompt priority order. Present 
 1. Assign each parallel unit an exclusive direct and indirect write scope, and validate that the scopes are disjoint. Work in the current checkout unless the user requests a worktree or repository policy requires isolation.
 2. Spawn leaf `implementer` agents by dependency wave. Each receives a bounded task packet and returns uncommitted changes plus exact evidence.
 3. Prevent parallel workers from committing, rebasing, generating shared output, formatting repository-wide state, running shared migrations, or mutating common databases, ports, devices, fixtures, schemas, or lockfiles.
-4. Use steering for an immediate correction at the next safe point and follow-up for queued work. Preserve message order.
+4. Use `steer_subagent` to correct running work after its current tool. Use `resume` only for a follow-up within the same unit, and preserve message order.
 5. Inspect every worker's actual diff and evidence. Send a correction back only while it remains inside that worker's scope; otherwise create a sequential integration unit.
 
 ## 4. Integrate and checkpoint
