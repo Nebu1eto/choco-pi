@@ -84,7 +84,7 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 |---|---|
 | `/exit` | Gracefully exit Pi; alias for `/quit` |
 | `/clear` | Start a fresh session while preserving the current session history; alias for `/new` |
-| `/effort` | Select a reasoning effort supported by the active model |
+| `/effort [level]` | Select or directly set a reasoning effort supported by the active model; values complete after a space |
 | `/fast [on\|off\|status]` | Control OpenAI Codex Fast mode; no argument toggles the current state |
 | `/context-cap` | Show the soft context cap applied to the active model |
 | `/rewind` | Restore files and the Git index from an automatic turn checkpoint |
@@ -92,6 +92,8 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 | `/apex-refresh` | Rediscover Callstack Apex models immediately |
 
 Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can consume usage or API credit faster than the standard tier. The hidden llama.cpp provider remains available, but choco-pi removes `/llama` from the visible command list and command path.
+
+While editing a prompt, press `Ctrl+S` to stash the current input, cursor position, and collapsed large-paste content, then clear the editor. Press it again on an empty editor to restore them. The stash lasts only for the current Pi process.
 
 ### Workflow commands
 

@@ -84,7 +84,7 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 |---|---|
 | `/exit` | Pi를 정상 종료. `/quit` 별칭 |
 | `/clear` | 현재 세션 기록을 보존하고 새 세션 시작. `/new` 별칭 |
-| `/effort` | 현재 모델이 지원하는 reasoning effort 선택 |
+| `/effort [level]` | 현재 모델이 지원하는 reasoning effort 선택 또는 직접 지정. 공백 뒤에는 가능한 값 자동 완성 |
 | `/fast [on\|off\|status]` | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환 |
 | `/context-cap` | 현재 모델에 적용된 soft context cap 확인 |
 | `/rewind` | turn 시작 시 저장한 checkpoint에서 파일과 Git index 복원 |
@@ -92,6 +92,8 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 | `/apex-refresh` | Callstack Apex 모델을 즉시 다시 탐색 |
 
 Fast mode는 OpenAI Codex 요청에만 `service_tier: "priority"`를 추가합니다. Standard보다 사용량이나 API credit을 빠르게 소비할 수 있습니다. Pi에 숨겨진 llama.cpp 공급자는 유지하지만 `/llama` 명령은 choco-pi의 명령 목록과 실행 경로에서 제거합니다.
+
+프롬프트 입력 중 `Ctrl+S`를 누르면 현재 입력, 커서 위치와 접힌 대형 paste를 임시 보관하고 입력창을 비웁니다. 빈 입력창에서 다시 누르면 그대로 복원합니다. 이 stash는 현재 Pi 프로세스의 입력기에만 유지됩니다.
 
 ### 작업 절차 명령
 
