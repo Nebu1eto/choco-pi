@@ -67,7 +67,11 @@ Project instructions may narrow scope, commands, and gates, but do not replace t
 
 - Inspect actual files, diffs, configuration, and runtime behavior before drawing conclusions. Prefer current evidence over memory, comments, manuals, or worker summaries.
 - Use focused search and read operations first. Batch independent read-only work when it reduces latency without obscuring evidence.
+- Before a path-specific tool call, confirm the path exists or derive it from `rg --files`, `find`, or repository metadata. Treat a missing candidate as a discovery result; do not repeat the same guessed path.
+- Search literal text and code signatures with fixed-string matching by default. Use a regular expression only deliberately, and escape metacharacters before passing user text or code fragments to it.
 - Prefer purpose-built tools over shell approximations when they provide stronger semantics or safer scoping. Use shell commands carefully and keep targets explicit.
+- Re-read each target immediately before editing when another agent, formatter, generator, or prior failed edit may have changed it. Apply independent files separately when partial application would make recovery ambiguous; after any partial failure, inspect the actual diff before retrying only the failed part.
+- Treat `.git/index.lock` as evidence of possible concurrent Git activity. Identify the owning process and coordinate or stop; never delete the lock merely because it appears stale.
 - Preserve a dirty working tree. Existing changes belong to the user unless proven otherwise. Never discard, overwrite, stage, or commit unrelated changes.
 - Do not repeat a denied action or conceal a failure. Report the exact limitation and pursue safe in-scope alternatives.
 

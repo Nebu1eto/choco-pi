@@ -24,10 +24,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export default function modelControls(pi: ExtensionAPI): void {
 	let fastEnabled = false;
+	let effortCompletions: ThinkingLevel[] = ["off"];
+
+	const updateEffortCompletions = (model: Model<any> | undefined): void => {
+		effortCompletions = model ? supportedThinkingLevels(model) : ["off"];
+	};
+
+	pi.on("session_start", (_event, ctx) => updateEffortCompletions(ctx.model));
+	pi.on("model_select", (_event, ctx) => updateEffortCompletions(ctx.model));
 
 	pi.registerCommand("effort", {
-		description: "Select the current model's reasoning effort",
-		handler: async (_args, ctx) => {
+		description: "Set reasoning effort: /effort [off|minimal|low|medium|high|xhigh|max]",
+		getArgumentCompletions: (prefix) => {
+			const normalized = prefix.trim().toLowerCase();
+			const matches = effortCompletions.filter((level) => level.startsWith(normalized));
+			return matches.length > 0 ? matches.map((level) => ({ value: level, label: level })) : null;
+		},
+		handler: async (args, ctx) => {
 			if (!ctx.model) {
 				ctx.ui.notify("No model is currently selected.", "warning");
 				return;
@@ -35,6 +48,17 @@ export default function modelControls(pi: ExtensionAPI): void {
 
 			const current = pi.getThinkingLevel();
 			const levels = supportedThinkingLevels(ctx.model);
+			const requested = args.trim().toLowerCase();
+			if (requested) {
+				if (!levels.includes(requested as ThinkingLevel)) {
+					ctx.ui.notify(`Unsupported reasoning effort. Available: ${levels.join(", ")}`, "warning");
+					return;
+				}
+				pi.setThinkingLevel(requested as ThinkingLevel);
+				ctx.ui.notify(`Reasoning effort: ${requested}`, "info");
+				return;
+			}
+
 			const labels = levels.map((level) => level === current ? `${level} (current)` : level);
 			const selected = await ctx.ui.select("Reasoning effort", labels);
 			if (!selected) return;
