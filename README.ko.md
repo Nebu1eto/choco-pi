@@ -93,7 +93,7 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 
 Fast mode는 OpenAI Codex 요청에만 `service_tier: "priority"`를 추가합니다. Standard보다 사용량이나 API credit을 빠르게 소비할 수 있습니다. Pi에 숨겨진 llama.cpp 공급자는 유지하지만 `/llama` 명령은 choco-pi의 명령 목록과 실행 경로에서 제거합니다.
 
-프롬프트 입력 중 `Ctrl+S`를 누르면 현재 입력, 커서 위치와 접힌 대형 paste를 임시 보관하고 입력창을 비웁니다. 빈 입력창에서 다시 누르면 그대로 복원합니다. 이 stash는 현재 Pi 프로세스의 입력기에만 유지됩니다.
+프롬프트 입력 중 `Ctrl+S`를 누르면 현재 입력, 커서 위치와 접힌 대형 paste를 임시 보관하고 입력창을 비웁니다. stash가 있으면 입력창 위에 복원 안내가 표시되며, 빈 입력창에서 다시 누르면 내용이 복원되고 안내가 사라집니다. 이 stash는 현재 Pi 프로세스의 입력기에만 유지됩니다.
 
 ### 작업 절차 명령
 
