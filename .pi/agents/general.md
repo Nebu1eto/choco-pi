@@ -1,5 +1,7 @@
 ---
 description: General-purpose project leaf with a user-selected model and reasoning effort
+model: openai-codex/gpt-5.6-sol
+thinking: low
 prompt_mode: append
 skills: true
 inherit_context: false
