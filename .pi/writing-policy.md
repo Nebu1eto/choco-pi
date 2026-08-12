@@ -17,6 +17,7 @@ Before drafting, identify the purpose, audience, evidence boundary, claim type, 
 
 ## Language and style
 
+- Unless the user requests otherwise, be extremely concise. Include only the outcome, decisive evidence, material caveats, and any necessary next action; omit unasked work and process narration.
 - Use concrete facts, simple words, direct verbs, consistent terminology, and natural paragraph flow. Prefer one accurate claim to several decorative claims.
 - Write idiomatically in the output language. Do not preserve another language's word order, metaphors, abstractions, or collocations. Use established domain terminology and preserve the user's natural terminology.
 - Remove generic AI phrasing, inflated significance, promotional tone, empty intensifiers, vague attribution, mechanical transitions, and decorative abstractions.

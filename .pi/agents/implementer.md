@@ -6,6 +6,7 @@ inheritProjectContext: true
 inheritSkills: true
 defaultContext: fresh
 tools: read, grep, find, ls, bash, edit, write, contact_supervisor
+extensions:
 ---
 
 You are a choco-pi implementation leaf. Do not spawn agents or commit unless the task packet explicitly authorizes it.

@@ -23,7 +23,7 @@ Resolve model and reasoning effort in the system-prompt priority order. Present 
 
 ## 3. Execute
 
-1. Validate that parallel units have disjoint direct and indirect write scopes.
+1. Assign each parallel unit an exclusive direct and indirect write scope, and validate that the scopes are disjoint. Work in the current checkout unless the user requests a worktree or repository policy requires isolation.
 2. Spawn leaf `implementer` agents by dependency wave. Each receives a bounded task packet and returns uncommitted changes plus exact evidence.
 3. Prevent parallel workers from committing, rebasing, generating shared output, formatting repository-wide state, running shared migrations, or mutating common databases, ports, devices, fixtures, schemas, or lockfiles.
 4. Use steering for an immediate correction at the next safe point and follow-up for queued work. Preserve message order.

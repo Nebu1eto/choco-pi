@@ -164,6 +164,8 @@ Use `/subagents` to configure a role's model and reasoning effort. A task can ov
 
 Use `/subagents-fleet` to inspect running children, read transcripts, send `steer` or `follow_up` messages, and stop work. Roles rediscover context and skills from the child working directory instead of copying a stale parent prompt.
 
+Writer roles disable ambient child extensions so their declared native `bash`, `edit`, and `write` tools cannot be replaced by a model adapter. They may edit the current checkout concurrently only after the orchestrator assigns disjoint ownership scopes; worktrees remain opt-in or repository-required isolation.
+
 ## Checkpoints, review, and Git boundaries
 
 [`file-checkpoints.ts`](.pi/extensions/file-checkpoints.ts) records staged, unstaged, and untracked state at the start of each agent turn through a temporary Git index. It does not modify the real index. `/rewind` creates a safety checkpoint before restoring the selected state. Ignored files and conversation history are not changed; checkpoint objects are retained under `refs/choco-pi/checkpoints/`.
