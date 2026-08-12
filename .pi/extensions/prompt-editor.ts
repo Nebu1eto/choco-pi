@@ -30,9 +30,16 @@ interface PromptStash {
 
 export class PromptEditor extends CustomEditor {
 	private stash?: PromptStash;
+	private readonly onStashChange: (stashed: boolean) => void;
 
-	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
+	constructor(
+		tui: TUI,
+		theme: EditorTheme,
+		keybindings: KeybindingsManager,
+		onStashChange: (stashed: boolean) => void,
+	) {
 		super(tui, theme, keybindings);
+		this.onStashChange = onStashChange;
 	}
 
 	private get internals(): EditorInternals {
@@ -45,6 +52,7 @@ export class PromptEditor extends CustomEditor {
 			this.stash = structuredClone({ state, pastes, pasteCounter });
 			this.setText("");
 			this.internals.undoStack.clear();
+			this.onStashChange(true);
 			return;
 		}
 
@@ -63,6 +71,7 @@ export class PromptEditor extends CustomEditor {
 		internals.lastAction = null;
 		internals.undoStack.clear();
 		this.stash = undefined;
+		this.onStashChange(false);
 		this.onChange?.(this.getText());
 		this.tui.requestRender();
 	}
@@ -79,6 +88,15 @@ export class PromptEditor extends CustomEditor {
 export default function promptEditor(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
-		ctx.ui.setEditorComponent((tui, theme, keybindings) => new PromptEditor(tui, theme, keybindings));
+		const showStash = (stashed: boolean): void => {
+			ctx.ui.setWidget(
+				"prompt-stash",
+				stashed ? ["Prompt stashed - Ctrl+S to restore"] : undefined,
+				{ placement: "aboveEditor" },
+			);
+		};
+		ctx.ui.setEditorComponent(
+			(tui, theme, keybindings) => new PromptEditor(tui, theme, keybindings, showStash),
+		);
 	});
 }

@@ -93,7 +93,7 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 
 Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can consume usage or API credit faster than the standard tier. The hidden llama.cpp provider remains available, but choco-pi removes `/llama` from the visible command list and command path.
 
-While editing a prompt, press `Ctrl+S` to stash the current input, cursor position, and collapsed large-paste content, then clear the editor. Press it again on an empty editor to restore them. The stash lasts only for the current Pi process.
+While editing a prompt, press `Ctrl+S` to stash the current input, cursor position, and collapsed large-paste content, then clear the editor. While a stash exists, a restore hint appears above the editor. Press `Ctrl+S` again on an empty editor to restore the prompt and clear the hint. The stash lasts only for the current Pi process.
 
 ### Workflow commands
 
