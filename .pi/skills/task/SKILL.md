@@ -37,6 +37,6 @@ Unless the user explicitly excluded a commit, load and follow the harness `commi
 
 ## 5. Review and handoff
 
-Select review depth by risk. For full review, run isolated blind and conformance `reviewer` contexts against the same immutable range when capacity permits; never leak plans or safety claims into the blind lane. Findings remain advisory until the main agent reproduces or proves them.
+Select review depth by risk. Use one fresh `reviewer` only when the user or project risk policy requires independent review. Give it the exact immutable range and applicable requirements, but not claimed safety, expected findings, or previous conclusions. Findings remain advisory until the main agent reproduces or proves them.
 
 Use `handoff` only when it materially improves a complex delivery. Stop all children and owned runtimes, then release the lease with `node <resolved-script> release --cwd "$PWD" --owner "$PI_SESSION_ID"`. Report exact final revision, acceptance results, review disposition, waivers, and remaining risk. Never treat a worker report as completion proof.
