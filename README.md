@@ -52,9 +52,9 @@ Keep this checkout at a stable path because the global profile points to it. Res
 | Workflows | Provides direct implementation, parallel implementation, hotfix, review, environment check, and local commit workflows |
 | Agents | Provides configurable `general`, `planner`, `implementer`, `reviewer`, and `handoff` leaf roles |
 | Conversations | Creates and coordinates independent Pi sessions with create, list, read, wait, queue, and steer operations |
-| Context | Applies model-specific soft context caps and supports OpenAI Responses server-side compaction through `pi-codex-conversion` |
+| Context | Applies model-specific soft caps, deferred tool loading, `/context` usage analysis, and OpenAI Responses server-side compaction |
 | Providers | Configures OpenAI Codex OAuth, Anthropic OAuth, Synthetic, and discovery-based Callstack Apex support |
-| Tools | Adds MCP, web search, content extraction, LSP diagnostics, browser automation, goals, and side conversations |
+| Tools | Adds BM25 `tool_search`, MCP, web search, content extraction, LSP diagnostics, browser automation, goals, and side conversations |
 | Interface | Uses `nord-dark`, `pi-zentui`, provider usage views, model effort controls, and familiar session aliases |
 
 ## Installed packages
@@ -87,6 +87,7 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 | `/effort [level]` | Select or directly set a reasoning effort supported by the active model; values complete after a space |
 | `/fast [on\|off\|status]` | Control OpenAI Codex Fast mode; no argument toggles the current state |
 | `/context-cap` | Show the soft context cap applied to the active model |
+| `/context [all]` | Show prompt, active/deferred tools, MCP, agents, context files, skills, messages, and autocompact buffer usage |
 | `/rewind` | Restore files and the Git index from an automatic turn checkpoint |
 | `/usage` | Show Claude Code, OpenAI Codex, and Synthetic usage in one view |
 | `/apex-refresh` | Rediscover Callstack Apex models immediately |
@@ -94,6 +95,8 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can consume usage or API credit faster than the standard tier. The hidden llama.cpp provider remains available, but choco-pi removes `/llama` from the visible command list and command path.
 
 While editing a prompt, press `Ctrl+S` to stash the current input, cursor position, and collapsed large-paste content, then clear the editor. While a stash exists, a restore hint appears above the editor. Press `Ctrl+S` again on an empty editor to restore the prompt and clear the hint. The stash lasts only for the current Pi process.
+
+MCP tools are registered from the metadata cache as first-class Pi tools but omitted from the initial model context. The model passes a natural-language capability to `tool_search`, which activates at most five top BM25 matches for the next request. Activation is additive, so discovered tools remain available for the session. Use `/context all` to inspect active and deferred inventories.
 
 ### Workflow commands
 
