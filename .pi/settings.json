@@ -1,7 +1,7 @@
 {
   "packages": [
     "./packages/pi-synthetic",
-    "npm:pi-subagents@0.45.2",
+    "npm:@tintinweb/pi-subagents@0.15.0",
     "npm:pi-codex-goal@0.2.0",
     "npm:pi-mcp-adapter@2.21.2",
     "npm:pi-lens@3.8.74",
@@ -18,9 +18,5 @@
     "enabled": true,
     "reserveTokens": 16384,
     "keepRecentTokens": 20000
-  },
-  "subagents": {
-    "disableBuiltins": true,
-    "projectRootResolution": "git-root"
   }
 }

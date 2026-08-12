@@ -37,7 +37,7 @@ Run `/reload` after changing files under `.pi`.
 This checkout is also the source of the current machine's global Pi profile under `~/.pi/agent`:
 
 - `settings.json` installs the same pinned packages and references this checkout's `extensions`, `skills`, and `prompts` directories.
-- `SYSTEM.md`, `writing-policy.md`, `review-policy.md`, agent definitions, and provider configuration files are symbolic links to this checkout.
+- `SYSTEM.md`, `writing-policy.md`, `review-policy.md`, `subagents.json`, agent definitions, and provider configuration files are symbolic links to this checkout.
 - Pi launched from another directory therefore receives choco-pi as its user-level default. A trusted project's own `.pi` settings and `SYSTEM.md` can still override the global defaults through Pi's normal precedence rules.
 
 Keep this checkout at a stable path because the global profile points to it. Restart Pi or run `/reload` after changing the source files.
@@ -64,7 +64,7 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 | Package | Version | Purpose |
 |---|---:|---|
 | [`@aliou/pi-synthetic`](https://github.com/aliou/pi-synthetic) | 0.24.3 | Synthetic provider and authentication |
-| [`pi-subagents`](https://github.com/nicobailon/pi-subagents) | 0.45.2 | Sub-agents, steering, follow-up queues, and fleet UI |
+| [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents) | 0.15.0 | Claude Code-style sub-agents, background execution, steering, resume, and fleet UI |
 | [`pi-codex-goal`](https://pi.dev/packages/pi-codex-goal) | 0.2.0 | Persistent Codex-style goals |
 | [`pi-mcp-adapter`](https://pi.dev/packages/pi-mcp-adapter) | 2.21.2 | Lazy MCP server loading |
 | [`pi-lens`](https://pi.dev/packages/pi-lens) | 3.8.74 | LSP, lint, and AST diagnostics |
@@ -150,7 +150,7 @@ Previously loaded instructions remain in the session and are refreshed after cha
 
 ## Sub-agents
 
-Built-in package roles are disabled. choco-pi provides five model-neutral, project-aware leaf roles under [`.pi/agents`](.pi/agents):
+Built-in package roles are disabled through [`.pi/subagents.json`](.pi/subagents.json), with unknown role names rejected instead of falling back. choco-pi provides five model-neutral, project-aware leaf roles under [`.pi/agents`](.pi/agents):
 
 | Role | Use | Write access |
 |---|---|---:|
@@ -160,11 +160,11 @@ Built-in package roles are disabled. choco-pi provides five model-neutral, proje
 | `reviewer` | Fresh-context evidence-based review | No |
 | `handoff` | Concise report of verified state | No |
 
-Use `/subagents` to configure a role's model and reasoning effort. A task can override those values when spawning a child. Resolution follows explicit user choice, project profile, role configuration, and parent/runtime defaults in that order.
+Use `/agents` to inspect roles, running agents, transcripts, schedules, and operational defaults. An `Agent` call can select `model` and `thinking` when the role does not pin them. Resolution follows explicit invocation, role configuration, then parent/runtime defaults.
 
-Use `/subagents-fleet` to inspect running children, read transcripts, send `steer` or `follow_up` messages, and stop work. Roles rediscover context and skills from the child working directory instead of copying a stale parent prompt.
+Use `steer_subagent` to redirect a running agent after its current tool, `get_subagent_result` to retrieve a background result, and an `Agent` call with `resume: <id>` for a completed agent's same-unit follow-up. New calls start with fresh conversation context; each custom role appends its instructions to the current parent system prompt and inherits skills.
 
-Writer roles disable ambient child extensions so their declared native `bash`, `edit`, and `write` tools cannot be replaced by a model adapter. They may edit the current checkout concurrently only after the orchestrator assigns disjoint ownership scopes; worktrees remain opt-in or repository-required isolation.
+All custom roles disable ambient child extensions, so the declared native tools cannot be replaced by a model adapter. Writer roles use the current checkout by default and may run concurrently only after the orchestrator assigns disjoint direct and indirect ownership scopes. `isolation: "worktree"` remains explicit opt-in isolation.
 
 ## Checkpoints, review, and Git boundaries
 
@@ -304,7 +304,8 @@ Claude Code and OpenAI Codex usage depend on Pi OAuth credentials and provider e
 ```text
 .pi/
   SYSTEM.md                 Shared choco-pi operating contract
-  settings.json             Packages, theme, compaction, and sub-agent settings
+  settings.json             Packages, theme, and compaction settings
+  subagents.json            Sub-agent runtime and fallback settings
   agents/                   Project-aware leaf roles
   extensions/               Provider, session, context, usage, and UI behavior
   prompts/                  Familiar slash-command templates

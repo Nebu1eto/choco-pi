@@ -30,6 +30,11 @@ type Settings = {
 	packages?: unknown;
 };
 
+type SubagentsSettings = {
+	disableDefaultAgents?: unknown;
+	fallbackSubagent?: unknown;
+};
+
 const execFileAsync = promisify(execFile);
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const configRoot = path.resolve(scriptDir, "../../..");
@@ -146,6 +151,21 @@ if (settings) {
 	}
 }
 
+const subagentsSettingsPath = path.join(configRoot, "subagents.json");
+try {
+	const parsed: unknown = JSON.parse(await readFile(subagentsSettingsPath, "utf8"));
+	if (!isRecord(parsed)) throw new Error("subagents.json must contain an object");
+	const subagents = parsed as SubagentsSettings;
+	const valid = subagents.disableDefaultAgents === true && subagents.fallbackSubagent === "none";
+	add(
+		"subagents",
+		valid ? "pass" : "fail",
+		valid ? "custom roles only; unknown roles fail closed" : "expected disableDefaultAgents=true and fallbackSubagent=none",
+	);
+} catch (error: unknown) {
+	add("subagents", "fail", error instanceof Error ? error.message : String(error));
+}
+
 const requiredResources = [
 	"SYSTEM.md",
 	"extensions/apex-provider.ts",
@@ -162,6 +182,7 @@ const requiredResources = [
 	"extensions/provider-usage.ts",
 	"review-policy.md",
 	"writing-policy.md",
+	"subagents.json",
 	"agents/general.md",
 	"agents/planner.md",
 	"agents/implementer.md",
