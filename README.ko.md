@@ -164,6 +164,8 @@ packages/api/src/AGENTS.md
 
 `/subagents-fleet`에서는 실행 중인 child, transcript, `steer`, `follow_up`, 중지를 관리합니다. 각 역할은 오래된 parent 프롬프트를 복사하지 않고 child working directory에서 context와 skill을 다시 탐색합니다.
 
+쓰기 역할은 ambient child extension을 끄므로 선언된 native `bash`, `edit`, `write`가 모델 adapter에 대체되지 않습니다. Orchestrator가 겹치지 않는 ownership 범위를 할당하면 같은 checkout을 함께 수정할 수 있으며, worktree는 사용자가 요청하거나 저장소 정책상 격리가 필요할 때만 사용합니다.
+
 ## Checkpoint, 리뷰와 Git 경계
 
 [`file-checkpoints.ts`](.pi/extensions/file-checkpoints.ts)는 각 agent turn 시작 시 임시 Git index를 사용해 staged, unstaged, untracked 상태를 기록합니다. 실제 index는 바꾸지 않습니다. `/rewind`는 복원 직전에도 안전 checkpoint를 만들고 선택한 상태로 파일과 index를 되돌립니다. ignored file과 대화 기록은 건드리지 않으며 object는 `refs/choco-pi/checkpoints/`에 보존합니다.
