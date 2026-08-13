@@ -3,22 +3,25 @@ import test from "node:test";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-test("role defaults do not lock caller-selected model or thinking effort", async () => {
+test("implementer role remains selected with model and thinking overrides", async () => {
 	const packageRoot = resolve(".pi/npm/node_modules/@tintinweb/pi-subagents/dist");
 	const { loadCustomAgents } = await import(pathToFileURL(resolve(packageRoot, "custom-agents.js")).href);
 	const { resolveAgentInvocationConfig } = await import(
 		pathToFileURL(resolve(packageRoot, "invocation-config.js")).href
 	);
-	const planner = loadCustomAgents(process.cwd()).get("planner");
-	assert.ok(planner);
-	assert.equal(planner.model, undefined);
-	assert.equal(planner.thinking, undefined);
+	const agents = loadCustomAgents(process.cwd());
+	const implementer = agents.get("implementer");
+	assert.ok(implementer);
+	assert.match(implementer.systemPrompt, /implementation leaf/);
+	assert.equal(implementer.model, undefined);
+	assert.equal(implementer.thinking, undefined);
 
-	const invocation = resolveAgentInvocationConfig(planner, {
-		model: "openai-codex/gpt-5.6-sol",
+	const invocation = resolveAgentInvocationConfig(implementer, {
+		model: "openai-codex/gpt-5.6-terra",
 		thinking: "high",
 	});
-	assert.equal(invocation.modelInput, "openai-codex/gpt-5.6-sol");
+	assert.equal(agents.get("implementer"), implementer);
+	assert.equal(invocation.modelInput, "openai-codex/gpt-5.6-terra");
 	assert.equal(invocation.modelFromParams, true);
 	assert.equal(invocation.thinking, "high");
 });

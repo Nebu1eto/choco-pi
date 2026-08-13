@@ -1,5 +1,5 @@
 ---
-description: Implementation leaf that edits only its assigned scope and returns risk-based evidence
+description: Implementation leaf that supports caller-selected model and effort, edits only its assigned scope, and returns risk-based evidence
 default_model: openai-codex/gpt-5.6-sol
 default_thinking: medium
 prompt_mode: append
