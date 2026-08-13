@@ -274,7 +274,7 @@ Use `openai-completions` unless Apex has been confirmed to support the Responses
 
 ## MCP, goals, web access, and side conversations
 
-- Configure MCP servers in [`.pi/mcp.json`](.pi/mcp.json). The global profile links the same file at `~/.pi/agent/mcp.json`, so the servers are available from other projects. `/mcp` shows configuration and runtime state.
+- Copy [`.pi/mcp.example.json`](.pi/mcp.example.json) to the ignored `.pi/mcp.json` and add any local OAuth client settings there. The global profile links that local file at `~/.pi/agent/mcp.json`, so the servers are available from other projects. `/mcp` shows configuration and runtime state.
 - `/create-goal <objective>` creates a persistent goal. `/goal` shows its state and usage.
 - `web_search` and `fetch_content` provide search and document extraction through `pi-web-access`.
 - `/btw <question>` starts a side conversation while the main agent is working.
@@ -307,7 +307,7 @@ Claude Code and OpenAI Codex usage depend on Pi OAuth credentials and provider e
 ```text
 .pi/
   SYSTEM.md                 Shared choco-pi operating contract
-  mcp.json                  Global and project MCP configuration
+  mcp.example.json          MCP configuration without local credentials
   settings.json             Packages, theme, and compaction settings
   subagents.json            Sub-agent runtime and fallback settings
   agents/                   Project-aware leaf roles

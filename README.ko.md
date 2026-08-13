@@ -274,7 +274,7 @@ Apex가 Responses API를 지원한다고 확인하기 전에는 `openai-completi
 
 ## MCP, goal, 웹과 사이드 대화
 
-- MCP 서버는 [`.pi/mcp.json`](.pi/mcp.json)에 설정합니다. 전역 profile의 `~/.pi/agent/mcp.json`도 같은 파일을 가리키므로 다른 프로젝트에서도 사용할 수 있습니다. `/mcp`에서 설정과 실행 상태를 확인합니다.
+- [`.pi/mcp.example.json`](.pi/mcp.example.json)을 Git에서 제외된 `.pi/mcp.json`으로 복사하고 로컬 OAuth client 설정을 추가합니다. 전역 profile의 `~/.pi/agent/mcp.json`도 이 로컬 파일을 가리키므로 다른 프로젝트에서도 사용할 수 있습니다. `/mcp`에서 설정과 실행 상태를 확인합니다.
 - `/create-goal <목표>`로 지속형 goal을 만들고 `/goal`에서 상태와 사용량을 확인합니다.
 - `web_search`, `fetch_content`는 `pi-web-access`를 통해 검색과 본문 추출을 수행합니다.
 - `/btw <질문>`은 메인 에이전트가 작업 중일 때 별도 대화를 시작합니다.
@@ -307,7 +307,7 @@ Claude Code와 OpenAI Codex는 Pi OAuth credential과 각 CLI가 사용하는 us
 ```text
 .pi/
   SYSTEM.md                 choco-pi 공통 운용 규칙
-  mcp.json                  전역·프로젝트 MCP 설정
+  mcp.example.json          로컬 credential을 제외한 MCP 설정 예시
   settings.json             패키지, 테마와 compaction 설정
   subagents.json            Sub-agent runtime과 fallback 설정
   agents/                   Project-aware leaf role
