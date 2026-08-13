@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import {
 	formatSkillsForPrompt,
@@ -17,6 +18,11 @@ type Category = {
 	label: string;
 	tokens: number;
 	marker: string;
+};
+
+type McpCatalog = {
+	total: number;
+	servers: Array<{ name: string; count: number }>;
 };
 
 function estimate(value: unknown): number {
@@ -55,6 +61,30 @@ function isMcpTool(tool: ToolInfo): boolean {
 
 function isAgentTool(tool: ToolInfo): boolean {
 	return tool.sourceInfo.source.includes("pi-subagents");
+}
+
+function mcpCatalog(cwd: string): McpCatalog {
+	try {
+		const projectConfig = JSON.parse(readFileSync(path.join(cwd, ".mcp.json"), "utf8")) as {
+			mcpServers?: Record<string, { disabled?: boolean }>;
+		};
+		const enabledServers = new Set(Object.entries(projectConfig.mcpServers ?? {})
+			.filter(([, definition]) => definition.disabled !== true)
+			.map(([name]) => name));
+		const agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent");
+		const cache = JSON.parse(readFileSync(path.join(agentDir, "mcp-cache.json"), "utf8")) as {
+			version?: number;
+			servers?: Record<string, { tools?: unknown[]; resources?: unknown[] }>;
+		};
+		if (cache.version !== 1 || !cache.servers) return { total: 0, servers: [] };
+		const servers = Object.entries(cache.servers)
+			.filter(([name]) => enabledServers.has(name))
+			.map(([name, entry]) => ({ name, count: (entry.tools?.length ?? 0) + (entry.resources?.length ?? 0) }))
+			.sort((left, right) => left.name.localeCompare(right.name));
+		return { total: servers.reduce((sum, server) => sum + server.count, 0), servers };
+	} catch {
+		return { total: 0, servers: [] };
+	}
 }
 
 function messageTokens(ctx: ExtensionCommandContext): number {
@@ -120,6 +150,7 @@ function renderContext(pi: ExtensionAPI, ctx: ExtensionCommandContext, expanded:
 	const activeMcp = tools.filter((tool) => activeNames.has(tool.name) && isMcpTool(tool));
 	const deferred = tools.filter((tool) => !activeNames.has(tool.name));
 	const deferredMcp = deferred.filter(isMcpTool);
+	const catalog = mcpCatalog(ctx.cwd);
 
 	const lines = [
 		"Context Usage",
@@ -133,7 +164,7 @@ function renderContext(pi: ExtensionAPI, ctx: ExtensionCommandContext, expanded:
 		"",
 		`Auto-compact threshold: ${formatTokens(Math.max(0, window - reserve))} tokens`,
 		`Tools: ${activeNames.size} active · ${deferred.length} deferred`,
-		`MCP tools: ${activeMcp.length} active · ${deferredMcp.length} deferred`,
+		`MCP tools: ${activeMcp.length} active · ${deferredMcp.length} deferred · ${catalog.total} cached/searchable`,
 		`Context files: ${options.contextFiles?.length ?? 0} · Skills: ${options.skills?.length ?? 0}`,
 	];
 
@@ -146,6 +177,7 @@ function renderContext(pi: ExtensionAPI, ctx: ExtensionCommandContext, expanded:
 	lines.push("", "Active tools");
 	for (const [source, sourceTools] of groupedActive) lines.push(`- ${source}: ${sourceTools.map((tool) => tool.name).join(", ")}`);
 	lines.push("", "Deferred tools", `- MCP: ${deferredMcp.map((tool) => tool.name).join(", ") || "none"}`);
+	lines.push(`- MCP catalog: ${catalog.servers.map((server) => `${server.name} (${server.count})`).join(", ") || "none"}`);
 	const otherDeferred = deferred.filter((tool) => !isMcpTool(tool));
 	lines.push(`- Other: ${otherDeferred.map((tool) => tool.name).join(", ") || "none"}`);
 	lines.push("", "Context files", ...(options.contextFiles?.map((file) => `- ${file.path} (${formatTokens(estimate(file.content))} tokens)`) ?? ["- none"]));

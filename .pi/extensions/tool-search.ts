@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import type { ExtensionAPI, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -13,16 +16,43 @@ const ALWAYS_ACTIVE = new Set([
 	"apply_patch",
 	"exec_command",
 	"write_stdin",
+	"mcp",
 	"tool_search",
 ]);
 
+type SearchTarget =
+	| { kind: "pi"; tool: ToolInfo }
+	| { kind: "mcp"; name: string; description: string; parameters?: unknown; server: string };
+
 type SearchDocument = {
-	tool: ToolInfo;
+	target: SearchTarget;
 	nameTokens: string[];
 	descriptionTokens: string[];
 	schemaTokens: string[];
 	sourceTokens: string[];
 	allTokens: string[];
+};
+
+type CachedMcpTool = {
+	name?: string;
+	description?: string;
+	inputSchema?: unknown;
+	uiVisibility?: string[];
+};
+
+type CachedMcpResource = {
+	name?: string;
+	description?: string;
+	uri?: string;
+};
+
+type McpMetadataCache = {
+	version?: number;
+	servers?: Record<string, { tools?: CachedMcpTool[]; resources?: CachedMcpResource[] }>;
+};
+
+type McpStatusSnapshot = {
+	servers?: Array<{ name?: string; disabled?: boolean }>;
 };
 
 function normalize(value: string): string {
@@ -64,24 +94,88 @@ function bm25FieldScore(tokens: string[], terms: string[], documentFrequency: Ma
 	}, 0);
 }
 
-function buildDocuments(tools: ToolInfo[]): SearchDocument[] {
-	return tools.map((tool) => {
-		const nameTokens = tokenize(tool.name);
-		const descriptionTokens = tokenize(tool.description);
-		const schemaTokens = tokenize(schemaText(tool.parameters));
-		const sourceTokens = tokenize(`${tool.sourceInfo.source} ${tool.sourceInfo.path}`);
-		return {
-			tool,
-			nameTokens,
-			descriptionTokens,
-			schemaTokens,
-			sourceTokens,
-			allTokens: [...nameTokens, ...descriptionTokens, ...schemaTokens, ...sourceTokens],
-		};
-	});
+function targetName(target: SearchTarget): string {
+	return target.kind === "pi" ? target.tool.name : target.name;
 }
 
-function rankTools(documents: SearchDocument[], query: string): ToolInfo[] {
+function targetDescription(target: SearchTarget): string {
+	return target.kind === "pi" ? target.tool.description : target.description;
+}
+
+function targetParameters(target: SearchTarget): unknown {
+	return target.kind === "pi" ? target.tool.parameters : target.parameters;
+}
+
+function makeDocument(target: SearchTarget, source: string): SearchDocument {
+	const nameTokens = tokenize(targetName(target));
+	const descriptionTokens = tokenize(targetDescription(target));
+	const schemaTokens = tokenize(schemaText(targetParameters(target)));
+	const sourceTokens = tokenize(source);
+	return {
+		target,
+		nameTokens,
+		descriptionTokens,
+		schemaTokens,
+		sourceTokens,
+		allTokens: [...nameTokens, ...descriptionTokens, ...schemaTokens, ...sourceTokens],
+	};
+}
+
+function buildPiDocuments(tools: ToolInfo[]): SearchDocument[] {
+	return tools.map((tool) => makeDocument({ kind: "pi", tool }, `${tool.sourceInfo.source} ${tool.sourceInfo.path}`));
+}
+
+function formatMcpToolName(server: string, name: string): string {
+	return `mcp__${server.replace(/-/g, "_")}_${name.replace(/\./g, "_")}`;
+}
+
+function formatResourceToolName(name: string): string {
+	const sanitized = name
+		.replace(/[^a-zA-Z0-9]/g, "_")
+		.replace(/_+/g, "_")
+		.replace(/^_+|_+$/g, "")
+		.toLowerCase();
+	return `read_${!sanitized || /^\d/.test(sanitized) ? `resource${sanitized ? `_${sanitized}` : ""}` : sanitized}`;
+}
+
+function loadMcpDocuments(enabledServers?: ReadonlySet<string>): SearchDocument[] {
+	try {
+		const agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent");
+		const cache = JSON.parse(readFileSync(path.join(agentDir, "mcp-cache.json"), "utf8")) as McpMetadataCache;
+		if (cache.version !== 1 || !cache.servers) return [];
+		const documents: SearchDocument[] = [];
+		for (const [server, entry] of Object.entries(cache.servers)) {
+			if (enabledServers && !enabledServers.has(server)) continue;
+			for (const tool of entry.tools ?? []) {
+				if (!tool.name || (tool.uiVisibility && !tool.uiVisibility.includes("model"))) continue;
+				const target: SearchTarget = {
+					kind: "mcp",
+					server,
+					name: formatMcpToolName(server, tool.name),
+					description: tool.description ?? "",
+					parameters: tool.inputSchema,
+				};
+				documents.push(makeDocument(target, `mcp ${server}`));
+			}
+			for (const resource of entry.resources ?? []) {
+				if (!resource.name || !resource.uri) continue;
+				const target: SearchTarget = {
+					kind: "mcp",
+					server,
+					name: formatMcpToolName(server, formatResourceToolName(resource.name)),
+					description: resource.description ?? `Read resource: ${resource.uri}`,
+					parameters: { type: "object", properties: {} },
+				};
+				documents.push(makeDocument(target, `mcp resource ${server}`));
+			}
+		}
+		return documents;
+	} catch {
+		return [];
+	}
+}
+
+function rankTools(documents: SearchDocument[], query: string): SearchTarget[] {
 	const terms = [...new Set(tokenize(query))];
 	if (terms.length === 0) return [];
 	const documentFrequency = new Map<string, number>();
@@ -95,8 +189,8 @@ function rankTools(documents: SearchDocument[], query: string): ToolInfo[] {
 		.map((document) => {
 			const coverage = terms.filter((term) => document.allTokens.some((token) => token === term || token.startsWith(term))).length / terms.length;
 			const minimumCoverage = terms.length <= 2 ? 1 : 0.6;
-			if (coverage < minimumCoverage) return { tool: document.tool, score: 0 };
-			const name = normalize(document.tool.name);
+			if (coverage < minimumCoverage) return { target: document.target, score: 0 };
+			const name = normalize(targetName(document.target));
 			const score =
 				bm25FieldScore(document.nameTokens, terms, documentFrequency, documents.length, averageLength) * 5
 				+ bm25FieldScore(document.descriptionTokens, terms, documentFrequency, documents.length, averageLength) * 2
@@ -104,11 +198,30 @@ function rankTools(documents: SearchDocument[], query: string): ToolInfo[] {
 				+ bm25FieldScore(document.sourceTokens, terms, documentFrequency, documents.length, averageLength)
 				+ (name === normalizedQuery ? 50 : name.includes(normalizedQuery) ? 20 : 0)
 				+ coverage * 10;
-			return { tool: document.tool, score };
+			return { target: document.target, score };
 		})
 		.filter((match) => match.score > 0)
-		.sort((left, right) => right.score - left.score || left.tool.name.localeCompare(right.tool.name))
-		.map((match) => match.tool);
+		.sort((left, right) => right.score - left.score || targetName(left.target).localeCompare(targetName(right.target)))
+		.map((match) => match.target);
+}
+
+function parameterSummary(schema: unknown): string {
+	if (!schema || typeof schema !== "object" || Array.isArray(schema)) return "none";
+	const value = schema as Record<string, unknown>;
+	if (!value.properties || typeof value.properties !== "object" || Array.isArray(value.properties)) return "see mcp describe";
+	const required = new Set(Array.isArray(value.required) ? value.required.filter((item): item is string => typeof item === "string") : []);
+	const entries = Object.entries(value.properties as Record<string, unknown>).map(([name, property]) => {
+		const definition = property && typeof property === "object" && !Array.isArray(property) ? property as Record<string, unknown> : {};
+		const type = typeof definition.type === "string"
+			? definition.type
+			: Array.isArray(definition.enum)
+				? definition.enum.map(String).join(" | ")
+				: "value";
+		return `${name}${required.has(name) ? "*" : ""}: ${type}`;
+	});
+	if (entries.length === 0) return "none";
+	const summary = entries.join("; ");
+	return summary.length > 500 ? `${summary.slice(0, 497)}...` : summary;
 }
 
 function compactDescription(value: string): string {
@@ -124,6 +237,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
 	let initializationScheduled = false;
 	let sessionStarted = false;
 	let mcpCatalogReady = false;
+	let enabledMcpServers: Set<string> | undefined;
 
 	const applyLeanSurface = (attempt = 0): void => {
 		initializationScheduled = false;
@@ -131,7 +245,10 @@ export default function toolSearch(pi: ExtensionAPI): void {
 		const allNames = new Set(allTools.map((tool) => tool.name));
 		for (const name of pi.getActiveTools()) allowedNames.add(name);
 		searchableNames = new Set([...allNames].filter((name) => allowedNames.has(name) && !ALWAYS_ACTIVE.has(name)));
-		searchableDocuments = buildDocuments(allTools.filter((tool) => searchableNames.has(tool.name)));
+		searchableDocuments = [
+			...buildPiDocuments(allTools.filter((tool) => searchableNames.has(tool.name))),
+			...loadMcpDocuments(enabledMcpServers),
+		];
 		const active = pi.getActiveTools();
 		const leanSurface = active.filter((name) => ALWAYS_ACTIVE.has(name) || loadedNames.has(name));
 		pi.setActiveTools([...new Set([...leanSurface, "tool_search"])]);
@@ -150,7 +267,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "tool_search",
 		label: "Tool Search",
-		description: "Search registered but deferred Pi and MCP tools by capability, then load up to five matching definitions for the next model request.",
+		description: "Search deferred Pi tools and cached MCP capabilities by natural language. Pi tools are activated; MCP matches are returned with compact parameters and called through the active mcp gateway.",
 		promptSnippet: "Search for deferred tools when the active tools cannot perform the task",
 		parameters: Type.Object({
 			query: Type.String({
@@ -173,26 +290,36 @@ export default function toolSearch(pi: ExtensionAPI): void {
 			const active = pi.getActiveTools();
 			const activeSet = new Set(active);
 			const matches = rankTools(searchableDocuments, query).slice(0, params.limit ?? DEFAULT_LIMIT);
-			const added = matches.map((tool) => tool.name).filter((name) => !activeSet.has(name));
+			const added = matches
+				.filter((target): target is Extract<SearchTarget, { kind: "pi" }> => target.kind === "pi")
+				.map((target) => target.tool.name)
+				.filter((name) => !activeSet.has(name));
 			if (added.length > 0) {
 				for (const name of added) loadedNames.add(name);
 				pi.setActiveTools([...new Set([...active, ...added])]);
 			}
 
-			const lines = matches.map((tool) => `- ${tool.name}: ${compactDescription(tool.description)}`);
+			const lines = matches.map((target) => target.kind === "pi"
+				? `- ${target.tool.name} [Pi]: ${compactDescription(target.tool.description)}`
+				: `- ${target.name} [MCP: ${target.server}]: ${compactDescription(target.description)}\n  Parameters: ${parameterSummary(target.parameters)}\n  Call: mcp({ tool: "${target.name}", args: { ... } })`);
+			const mcpMatches = matches.filter((target) => target.kind === "mcp").length;
 			return {
 				content: [{
 					type: "text",
 					text: matches.length === 0
 						? `No deferred tools found for: ${query}`
-						: `${added.length > 0 ? "Loaded" : "Already active"} ${matches.length} matching tool(s) for the next request:\n${lines.join("\n")}`,
+						: `Found ${matches.length} matching tool(s)${added.length > 0 ? `; activated ${added.length} Pi tool(s)` : ""}${mcpMatches > 0 ? `; ${mcpMatches} MCP tool(s) are callable through mcp` : ""}:\n${lines.join("\n")}\n\nUse mcp({ describe: "<tool>" }) if a matched MCP tool needs full parameter details.`,
 				}],
-				details: { matches: matches.map((tool) => tool.name), added },
+				details: { matches: matches.map(targetName), added },
 			};
 		},
 	});
 
-	pi.events.on("pi-mcp-adapter/status/v1", () => {
+	pi.events.on("pi-mcp-adapter/status/v1", (payload) => {
+		const snapshot = payload as McpStatusSnapshot;
+		enabledMcpServers = new Set((snapshot.servers ?? [])
+			.filter((server) => server.disabled !== true && typeof server.name === "string")
+			.map((server) => server.name as string));
 		mcpCatalogReady = true;
 		if (sessionStarted) scheduleLeanSurface();
 	});

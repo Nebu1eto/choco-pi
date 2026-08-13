@@ -1,7 +1,6 @@
 {
   "settings": {
-    "directTools": true,
-    "freezeDirectTools": true,
+    "directTools": false,
     "toolPrefix": "mcp"
   },
   "mcpServers": {
