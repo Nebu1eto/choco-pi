@@ -8,6 +8,7 @@
 .pi/models-store.json
 .pi/markdown-workflows.json
 .pi/extensions/synthetic.json
+.pi/mcp.json
 .pi/mcp-traces/
 .pi/subagent-schedules/
 node_modules/
