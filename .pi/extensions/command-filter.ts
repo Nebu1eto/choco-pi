@@ -9,7 +9,10 @@ type FilterableRunnerPrototype = typeof ExtensionRunner.prototype & {
 };
 
 function isExcludedCommand(command: ResolvedCommand): boolean {
-	return command.name === "llama" && command.sourceInfo.path === "<inline:llama.cpp>";
+	return command.name === "llama"
+		|| command.name === "apex-refresh"
+		|| command.name.startsWith("synthetic:")
+		|| command.name.startsWith("lens-");
 }
 
 export default function commandFilter(_pi: ExtensionAPI): void {
@@ -17,14 +20,9 @@ export default function commandFilter(_pi: ExtensionAPI): void {
 	if (prototype.__chocoPiCommandFilterApplied) return;
 
 	const getRegisteredCommands = prototype.getRegisteredCommands;
-	const getCommand = prototype.getCommand;
 
 	prototype.getRegisteredCommands = function getFilteredCommands(): ResolvedCommand[] {
 		return getRegisteredCommands.call(this).filter((command) => !isExcludedCommand(command));
-	};
-	prototype.getCommand = function getFilteredCommand(name: string): ResolvedCommand | undefined {
-		const command = getCommand.call(this, name);
-		return command && !isExcludedCommand(command) ? command : undefined;
 	};
 	prototype.__chocoPiCommandFilterApplied = true;
 }
