@@ -13,14 +13,15 @@ Git에는 공유 가능한 설정만 저장합니다. OAuth 토큰과 API 키는
 - Git
 - 선택 사항: 네이티브 브라우저 자동화를 위한 [`agent-browser`](https://github.com/vercel-labs/agent-browser) 0.33.2
 
-전역 profile을 설치하기 전에는 저장소 루트에서 Pi를 실행해야 [`.pi/settings.json`](.pi/settings.json), 시스템 프롬프트, 프로젝트 확장, 에이전트, 스킬과 명령 템플릿을 모두 읽습니다.
-
-저장소를 clone하거나 복사한 뒤 루트에서 Pi를 실행합니다.
+저장소를 clone하거나 복사한 뒤 전역 profile을 설치하고 Pi를 실행합니다.
 
 ```sh
 cd choco-pi
+npm run install:profile
 pi
 ```
+
+설치기는 credential과 runtime 상태를 보존하고 checkout 경로를 반영한 `~/.pi/agent/settings.json`을 생성한 뒤 Git으로 추적하는 공개 profile을 `~/.pi/agent`에 연결합니다. 충돌 파일은 교체하지 않고 중단합니다. 파일을 확인한 뒤 `npm run install:profile -- --backup`을 실행하면 기존 파일을 백업하고 추적 버전을 설치합니다.
 
 Pi는 [`.pi/settings.json`](.pi/settings.json)에 고정된 패키지를 설치합니다. npm이 네이티브 설치 스크립트를 보류하면 현재 확장에서 사용하는 두 패키지만 허용합니다.
 
@@ -37,10 +38,12 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 현재 checkout은 이 컴퓨터의 `~/.pi/agent` 전역 Pi profile 원본으로도 사용합니다.
 
 - `settings.json`은 같은 고정 버전 패키지를 설치하고 이 checkout의 `extensions`, `skills`, `prompts` 디렉터리를 참조합니다.
-- `SYSTEM.md`, `writing-policy.md`, `review-policy.md`, `subagents.json`, `mcp.json`, agent 정의와 공급자 설정 파일은 이 checkout으로 연결한 symbolic link입니다.
+- `SYSTEM.md`, 글쓰기·리뷰 정책, 서브 에이전트·Zentui 설정, agent 정의와 공급자 설정 파일은 이 checkout으로 연결한 symbolic link입니다. 로컬 `.pi/mcp.json`이 있으면 함께 연결합니다.
 - 따라서 다른 디렉터리에서 Pi를 실행해도 choco-pi가 사용자 기본 설정으로 적용됩니다. 신뢰한 프로젝트에 별도 `.pi` 설정이나 `SYSTEM.md`가 있으면 Pi의 기존 우선순위에 따라 전역 기본값을 덮어쓸 수 있습니다.
 
 전역 profile이 이 checkout을 직접 가리키므로 경로를 옮기거나 삭제하지 마십시오. 원본 파일을 바꾼 뒤 Pi를 다시 시작하거나 `/reload`를 실행합니다.
+
+Git으로 추적하는 [`.pi/zentui.json`](.pi/zentui.json)은 입력창의 모델을 bold, reasoning effort를 italic으로 표시합니다.
 
 ## 제공 기능
 
