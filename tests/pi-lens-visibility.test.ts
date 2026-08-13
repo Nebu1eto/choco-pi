@@ -1,0 +1,54 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { installPiLensVisibility } from "../.pi/extensions/pi-lens-visibility.ts";
+
+type Ui = ExtensionContext["ui"];
+
+function testUi() {
+	const statuses = new Map<string, string>();
+	const widgets = new Map<string, unknown>();
+	const ui = {
+		setStatus: (key: string, value: string | undefined) => {
+			if (value === undefined) statuses.delete(key);
+			else statuses.set(key, value);
+		},
+		setWidget: (key: string, value: unknown) => {
+			if (value === undefined) widgets.delete(key);
+			else widgets.set(key, value);
+		},
+	} as unknown as Ui;
+	return { ui, statuses, widgets };
+}
+
+test("pi-lens UI stays hidden while LSP is inactive and appears when active", () => {
+	const { ui, statuses, widgets } = testUi();
+	installPiLensVisibility(ui);
+	const widget = () => ({ render: () => ["pi-lens"], invalidate: () => {} });
+
+	ui.setStatus("pi-lens-lsp", "LSP Inactive");
+	ui.setWidget("pi-lens", widget as never, { placement: "belowEditor" });
+	assert.equal(statuses.has("pi-lens-lsp"), false);
+	assert.equal(widgets.has("pi-lens"), false);
+
+	ui.setStatus("pi-lens-lsp", "LSP Active: typescript");
+	assert.equal(statuses.get("pi-lens-lsp"), "LSP Active: typescript");
+	assert.equal(widgets.get("pi-lens"), widget);
+
+	ui.setStatus("pi-lens-lsp", "LSP Inactive");
+	assert.equal(statuses.has("pi-lens-lsp"), false);
+	assert.equal(widgets.has("pi-lens"), false);
+});
+
+test("pi-lens failures remain visible and unrelated UI is unchanged", () => {
+	const { ui, statuses, widgets } = testUi();
+	installPiLensVisibility(ui);
+
+	ui.setStatus("pi-lens-lsp", "LSP Failed: typescript");
+	ui.setStatus("other", "ready");
+	ui.setWidget("other", ["content"]);
+
+	assert.equal(statuses.get("pi-lens-lsp"), "LSP Failed: typescript");
+	assert.equal(statuses.get("other"), "ready");
+	assert.deepEqual(widgets.get("other"), ["content"]);
+});
