@@ -1,5 +1,5 @@
-import { CustomEditor, type ExtensionAPI, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import { matchesKey, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { matchesKey, type EditorComponent } from "@earendil-works/pi-tui";
 
 interface EditorState {
 	lines: string[];
@@ -9,7 +9,7 @@ interface EditorState {
 
 // Pi 0.84.1 has no public cursor/paste snapshot API. Keep this adapter aligned
 // with its pinned Editor implementation so stash can preserve both precisely.
-interface EditorInternals {
+interface EditorInternals extends EditorComponent {
 	state: EditorState;
 	pastes: Map<number, string>;
 	pasteCounter: number;
@@ -28,88 +28,167 @@ interface PromptStash {
 	pasteCounter: number;
 }
 
-export class PromptEditor extends CustomEditor {
-	private stash?: PromptStash;
-	private readonly onStashChange: (stashed: boolean) => void;
+type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
 
-	constructor(
-		tui: TUI,
-		theme: EditorTheme,
-		keybindings: KeybindingsManager,
-		onStashChange: (stashed: boolean) => void,
-	) {
-		super(tui, theme, keybindings);
-		this.onStashChange = onStashChange;
-	}
+type PromptEditorState = {
+	onStashChange: (stashed: boolean) => void;
+};
 
-	private get internals(): EditorInternals {
-		return this as unknown as EditorInternals;
-	}
+type PromptEditorFactory = EditorFactory & {
+	[factoryState]?: PromptEditorState;
+	[symbol: symbol]: unknown;
+};
 
-	private restoreStash(): void {
-		if (!this.stash) return;
+type EditorFactoryUi = {
+	getEditorComponent(): EditorFactory | undefined;
+	setEditorComponent(factory: EditorFactory): void;
+};
 
-		const restored = this.stash;
-		const internals = this.internals;
-		internals.state = restored.state;
-		internals.pastes = restored.pastes;
-		internals.pasteCounter = restored.pasteCounter;
-		internals.historyIndex = -1;
-		internals.historyDraft = null;
-		internals.scrollOffset = 0;
-		internals.preferredVisualCol = null;
-		internals.snappedFromCursorCol = null;
-		internals.lastAction = null;
-		internals.undoStack.clear();
-		this.stash = undefined;
-		this.onStashChange(false);
-		this.onChange?.(this.getText());
-		this.tui.requestRender();
-	}
+type EditorInstallOptions = {
+	intervalMs?: number;
+	maxAttempts?: number;
+	schedule?: (callback: () => void, delayMs: number) => void;
+};
 
-	private stashOrRestore(): void {
-		if (this.getText().length > 0) {
-			const { state, pastes, pasteCounter } = this.internals;
-			this.stash = structuredClone({ state, pastes, pasteCounter });
-			this.setText("");
-			this.internals.undoStack.clear();
-			this.onStashChange(true);
+const factoryState = Symbol.for("choco-pi.prompt-editor.factory");
+const decoratedEditor = Symbol.for("choco-pi.prompt-editor.instance");
+const zentuiEditorFactory = Symbol.for("pi-zentui.editor-factory");
+
+type DecoratedEditor = EditorInternals & { [decoratedEditor]?: true };
+
+export function decoratePromptEditor(
+	editor: EditorComponent,
+	onStashChange: (stashed: boolean) => void,
+	requestRender: () => void,
+): EditorComponent {
+	const target = editor as DecoratedEditor;
+	if (target[decoratedEditor]) return editor;
+
+	let stash: PromptStash | undefined;
+	const handleInput = editor.handleInput.bind(editor);
+
+	const restoreStash = (): void => {
+		if (!stash) return;
+
+		const restored = stash;
+		target.state = restored.state;
+		target.pastes = restored.pastes;
+		target.pasteCounter = restored.pasteCounter;
+		target.historyIndex = -1;
+		target.historyDraft = null;
+		target.scrollOffset = 0;
+		target.preferredVisualCol = null;
+		target.snappedFromCursorCol = null;
+		target.lastAction = null;
+		target.undoStack.clear();
+		stash = undefined;
+		onStashChange(false);
+		target.onChange?.(target.getText());
+		requestRender();
+	};
+
+	const stashOrRestore = (): void => {
+		if (target.getText().length > 0) {
+			const { state, pastes, pasteCounter } = target;
+			stash = structuredClone({ state, pastes, pasteCounter });
+			target.setText("");
+			target.undoStack.clear();
+			onStashChange(true);
 			return;
 		}
 
-		this.restoreStash();
-	}
+		restoreStash();
+	};
 
-	handleInput(data: string): void {
+	target.handleInput = (data: string): void => {
 		if (matchesKey(data, "ctrl+s")) {
-			this.stashOrRestore();
+			stashOrRestore();
 			return;
 		}
 
-		if (!this.stash) {
-			super.handleInput(data);
+		if (!stash) {
+			handleInput(data);
 			return;
 		}
 
-		const submit = this.onSubmit;
+		const submit = target.onSubmit;
 		const restoreAfterSubmit = (text: string): void => {
 			try {
 				submit?.(text);
 			} finally {
-				this.restoreStash();
+				restoreStash();
 			}
 		};
-		this.onSubmit = restoreAfterSubmit;
+		target.onSubmit = restoreAfterSubmit;
 		try {
-			super.handleInput(data);
+			handleInput(data);
 		} finally {
-			if (this.onSubmit === restoreAfterSubmit) this.onSubmit = submit;
+			if (target.onSubmit === restoreAfterSubmit) target.onSubmit = submit;
 		}
+	};
+
+	Object.defineProperty(target, decoratedEditor, { value: true });
+	return editor;
+}
+
+export function wrapPromptEditorFactory(baseFactory: EditorFactory, state: PromptEditorState): EditorFactory {
+	const existing = (baseFactory as PromptEditorFactory)[factoryState];
+	if (existing) {
+		Object.assign(existing, state);
+		return baseFactory;
 	}
+
+	const wrappedFactory = ((...args: Parameters<EditorFactory>) => {
+		const editor = baseFactory(...args);
+		return decoratePromptEditor(editor, state.onStashChange, () => args[0].requestRender());
+	}) as PromptEditorFactory;
+	Object.defineProperty(wrappedFactory, factoryState, { value: state });
+
+	// Keep Zentui ownership and other factory adapters intact. Fleet navigation
+	// then sees the original PolishedEditor instance instead of a wrapper object.
+	for (const symbol of Object.getOwnPropertySymbols(baseFactory)) {
+		if (symbol === factoryState) continue;
+		const descriptor = Object.getOwnPropertyDescriptor(baseFactory, symbol);
+		if (descriptor) Object.defineProperty(wrappedFactory, symbol, descriptor);
+	}
+	return wrappedFactory;
+}
+
+export function installPromptEditorWhenReady(
+	ui: EditorFactoryUi,
+	state: PromptEditorState,
+	isCurrent: () => boolean,
+	options: EditorInstallOptions = {},
+): void {
+	const intervalMs = options.intervalMs ?? 50;
+	const maxAttempts = options.maxAttempts ?? 100;
+	const schedule = options.schedule ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+	let attempts = 0;
+
+	const tryInstall = (): void => {
+		if (!isCurrent()) return;
+		try {
+			const factory = ui.getEditorComponent();
+			if (factory && Boolean((factory as PromptEditorFactory)[zentuiEditorFactory])) {
+				ui.setEditorComponent(wrapPromptEditorFactory(factory, state));
+				return;
+			}
+		} catch {
+			// Zentui may be replacing the editor while this retry runs.
+		}
+
+		attempts++;
+		if (attempts < maxAttempts) schedule(tryInstall, intervalMs);
+	};
+
+	schedule(tryInstall, intervalMs);
 }
 
 export default function promptEditor(pi: ExtensionAPI): void {
+	let installGeneration = 0;
+
 	pi.on("session_start", (_event, ctx) => {
+		const generation = ++installGeneration;
 		if (ctx.mode !== "tui") return;
 		const showStash = (stashed: boolean): void => {
 			ctx.ui.setWidget(
@@ -118,8 +197,10 @@ export default function promptEditor(pi: ExtensionAPI): void {
 				{ placement: "aboveEditor" },
 			);
 		};
-		ctx.ui.setEditorComponent(
-			(tui, theme, keybindings) => new PromptEditor(tui, theme, keybindings, showStash),
-		);
+		installPromptEditorWhenReady(ctx.ui, { onStashChange: showStash }, () => generation === installGeneration);
+	});
+
+	pi.on("session_shutdown", () => {
+		installGeneration++;
 	});
 }

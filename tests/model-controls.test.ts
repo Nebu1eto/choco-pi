@@ -5,6 +5,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	appendFastModeToEditorMetadata,
+	default as modelControls,
 	installFastModeEditorWhenReady,
 	restoreFastMode,
 	wrapFastModeEditorFactory,
@@ -103,4 +104,34 @@ test("non-OpenAI-Codex editor metadata is unchanged", () => {
 		appendFastModeToEditorMetadata(lines, 80, model("synthetic"), true),
 		lines,
 	);
+});
+
+test("fast toggles rerender without appending a scrollback status row", async () => {
+	let fastHandler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
+	let entries = 0;
+	const pi = {
+		on: () => {},
+		registerCommand: (name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) => {
+			if (name === "fast") fastHandler = options.handler;
+		},
+		appendEntry: () => { entries++; },
+	} as unknown as import("@earendil-works/pi-coding-agent").ExtensionAPI;
+	modelControls(pi);
+
+	let notifications = 0;
+	let renders = 0;
+	await fastHandler?.("on", {
+		model: model("openai-codex"),
+		ui: {
+			notify: () => { notifications++; },
+			setStatus: (_key: string, value: string | undefined) => {
+				assert.equal(value, undefined);
+				renders++;
+			},
+		},
+	});
+
+	assert.equal(entries, 1);
+	assert.equal(notifications, 0);
+	assert.equal(renders, 1);
 });

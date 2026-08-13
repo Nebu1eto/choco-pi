@@ -5,6 +5,7 @@ import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 type CheckStatus = "pass" | "warn" | "fail";
 
@@ -28,6 +29,7 @@ type NpmSpec = {
 
 type Settings = {
 	packages?: unknown;
+	tuiMode?: unknown;
 };
 
 type SubagentsSettings = {
@@ -120,6 +122,14 @@ try {
 }
 
 if (settings) {
+	add(
+		"tui-mode",
+		settings.tuiMode === "fullscreen" ? "pass" : "fail",
+		settings.tuiMode === "fullscreen"
+			? "fullscreen application-owned scrolling enabled"
+			: "expected tuiMode=fullscreen for stable multiplexed-terminal scrolling",
+	);
+
 	if (!Array.isArray(settings.packages)) {
 		add("packages", "fail", "settings.packages must be an array");
 	} else {
@@ -157,10 +167,26 @@ try {
 	if (!isRecord(parsed)) throw new Error("subagents.json must contain an object");
 	const subagents = parsed as SubagentsSettings;
 	const valid = subagents.disableDefaultAgents === true && subagents.fallbackSubagent === "none";
+	const roleFiles = ["general", "planner", "implementer", "reviewer", "handoff"];
+	const roleResults = await Promise.all(roleFiles.map(async (role) => {
+		const content = await readFile(path.join(configRoot, "agents", `${role}.md`), "utf8");
+		const { frontmatter } = parseFrontmatter<Record<string, unknown>>(content);
+		const defaultsPresent = typeof frontmatter.default_model === "string"
+			&& typeof frontmatter.default_thinking === "string";
+		const runtimePinsAbsent = frontmatter.model === undefined && frontmatter.thinking === undefined;
+		return { role, valid: defaultsPresent && runtimePinsAbsent };
+	}));
+	const invalidRoles = roleResults.filter((result) => !result.valid).map((result) => result.role);
+	const rolesValid = invalidRoles.length === 0;
 	add(
 		"subagents",
-		valid ? "pass" : "fail",
-		valid ? "custom roles only; unknown roles fail closed" : "expected disableDefaultAgents=true and fallbackSubagent=none",
+		valid && rolesValid ? "pass" : "fail",
+		valid && rolesValid
+			? "custom roles fail closed; model and thinking defaults remain spawn-overridable"
+			: [
+				valid ? null : "expected disableDefaultAgents=true and fallbackSubagent=none",
+				rolesValid ? null : `locked or missing role defaults: ${invalidRoles.join(", ")}`,
+			].filter((value): value is string => value !== null).join("; "),
 	);
 } catch (error: unknown) {
 	add("subagents", "fail", error instanceof Error ? error.message : String(error));
