@@ -1,7 +1,13 @@
 # Pi installs project packages from .pi/settings.json on demand.
 .pi/npm/
 .pi/git/
+
+# Pi runtime state, caches, credentials, and local extension settings.
 .pi/agent/
+.pi/auth.json
+.pi/models-store.json
+.pi/markdown-workflows.json
+.pi/extensions/synthetic.json
 .pi/mcp-traces/
 .pi/subagent-schedules/
 
