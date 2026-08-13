@@ -37,7 +37,7 @@ Run `/reload` after changing files under `.pi`.
 This checkout is also the source of the current machine's global Pi profile under `~/.pi/agent`:
 
 - `settings.json` installs the same pinned packages and references this checkout's `extensions`, `skills`, and `prompts` directories.
-- `SYSTEM.md`, `writing-policy.md`, `review-policy.md`, `subagents.json`, agent definitions, and provider configuration files are symbolic links to this checkout.
+- `SYSTEM.md`, `writing-policy.md`, `review-policy.md`, `subagents.json`, `mcp.json`, agent definitions, and provider configuration files are symbolic links to this checkout.
 - Pi launched from another directory therefore receives choco-pi as its user-level default. A trusted project's own `.pi` settings and `SYSTEM.md` can still override the global defaults through Pi's normal precedence rules.
 
 Keep this checkout at a stable path because the global profile points to it. Restart Pi or run `/reload` after changing the source files.
@@ -274,7 +274,7 @@ Use `openai-completions` unless Apex has been confirmed to support the Responses
 
 ## MCP, goals, web access, and side conversations
 
-- Add project MCP servers to [`.mcp.json`](.mcp.json); the default file contains no servers. `/mcp` shows configuration and runtime state.
+- Configure MCP servers in [`.pi/mcp.json`](.pi/mcp.json). The global profile links the same file at `~/.pi/agent/mcp.json`, so the servers are available from other projects. `/mcp` shows configuration and runtime state.
 - `/create-goal <objective>` creates a persistent goal. `/goal` shows its state and usage.
 - `web_search` and `fetch_content` provide search and document extraction through `pi-web-access`.
 - `/btw <question>` starts a side conversation while the main agent is working.
@@ -307,6 +307,7 @@ Claude Code and OpenAI Codex usage depend on Pi OAuth credentials and provider e
 ```text
 .pi/
   SYSTEM.md                 Shared choco-pi operating contract
+  mcp.json                  Global and project MCP configuration
   settings.json             Packages, theme, and compaction settings
   subagents.json            Sub-agent runtime and fallback settings
   agents/                   Project-aware leaf roles
@@ -316,7 +317,6 @@ Claude Code and OpenAI Codex usage depend on Pi OAuth credentials and provider e
   scripts/                  Shared workflow utilities
   writing-policy.md         Always-on writing rules
   review-policy.md          Shared adversarial review rules
-.mcp.json                   Project MCP configuration
 examples/                   Optional user-level configuration examples
 ```
 

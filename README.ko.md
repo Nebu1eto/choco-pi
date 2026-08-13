@@ -37,7 +37,7 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 현재 checkout은 이 컴퓨터의 `~/.pi/agent` 전역 Pi profile 원본으로도 사용합니다.
 
 - `settings.json`은 같은 고정 버전 패키지를 설치하고 이 checkout의 `extensions`, `skills`, `prompts` 디렉터리를 참조합니다.
-- `SYSTEM.md`, `writing-policy.md`, `review-policy.md`, `subagents.json`, agent 정의와 공급자 설정 파일은 이 checkout으로 연결한 symbolic link입니다.
+- `SYSTEM.md`, `writing-policy.md`, `review-policy.md`, `subagents.json`, `mcp.json`, agent 정의와 공급자 설정 파일은 이 checkout으로 연결한 symbolic link입니다.
 - 따라서 다른 디렉터리에서 Pi를 실행해도 choco-pi가 사용자 기본 설정으로 적용됩니다. 신뢰한 프로젝트에 별도 `.pi` 설정이나 `SYSTEM.md`가 있으면 Pi의 기존 우선순위에 따라 전역 기본값을 덮어쓸 수 있습니다.
 
 전역 profile이 이 checkout을 직접 가리키므로 경로를 옮기거나 삭제하지 마십시오. 원본 파일을 바꾼 뒤 Pi를 다시 시작하거나 `/reload`를 실행합니다.
@@ -274,7 +274,7 @@ Apex가 Responses API를 지원한다고 확인하기 전에는 `openai-completi
 
 ## MCP, goal, 웹과 사이드 대화
 
-- 프로젝트 MCP 서버는 [`.mcp.json`](.mcp.json)에 추가합니다. 기본 파일에는 서버가 없으며 `/mcp`에서 설정과 실행 상태를 확인합니다.
+- MCP 서버는 [`.pi/mcp.json`](.pi/mcp.json)에 설정합니다. 전역 profile의 `~/.pi/agent/mcp.json`도 같은 파일을 가리키므로 다른 프로젝트에서도 사용할 수 있습니다. `/mcp`에서 설정과 실행 상태를 확인합니다.
 - `/create-goal <목표>`로 지속형 goal을 만들고 `/goal`에서 상태와 사용량을 확인합니다.
 - `web_search`, `fetch_content`는 `pi-web-access`를 통해 검색과 본문 추출을 수행합니다.
 - `/btw <질문>`은 메인 에이전트가 작업 중일 때 별도 대화를 시작합니다.
@@ -307,6 +307,7 @@ Claude Code와 OpenAI Codex는 Pi OAuth credential과 각 CLI가 사용하는 us
 ```text
 .pi/
   SYSTEM.md                 choco-pi 공통 운용 규칙
+  mcp.json                  전역·프로젝트 MCP 설정
   settings.json             패키지, 테마와 compaction 설정
   subagents.json            Sub-agent runtime과 fallback 설정
   agents/                   Project-aware leaf role
@@ -316,7 +317,6 @@ Claude Code와 OpenAI Codex는 Pi OAuth credential과 각 CLI가 사용하는 us
   scripts/                  작업 절차 공통 utility
   writing-policy.md         항상 적용하는 글쓰기 규칙
   review-policy.md          공통 적대적 리뷰 규칙
-.mcp.json                   프로젝트 MCP 설정
 examples/                   사용자 전역 설정 예시
 ```
 
