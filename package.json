@@ -3,6 +3,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
+		"test": "node --test tests/model-controls.test.ts",
 		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {

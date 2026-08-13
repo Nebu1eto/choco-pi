@@ -1,10 +1,43 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { sliceByColumn, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const FAST_MODE_ENTRY = "choco-pi-fast-mode";
+const FAST_EDITOR_FACTORY = Symbol.for("choco-pi.model-controls.fast-editor-factory");
+const ZENTUI_EDITOR_FACTORY = Symbol.for("pi-zentui.editor-factory");
+const ZENTUI_EDITOR_SYMBOLS = [
+	ZENTUI_EDITOR_FACTORY,
+	Symbol.for("pi-zentui.editor-base-factory"),
+	Symbol.for("pi-zentui.editor-owner"),
+] as const;
 
-function supportedThinkingLevels(model: Model<any>): ThinkingLevel[] {
+type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
+
+type FastEditorState = {
+	getModel: () => Model<Api> | undefined;
+	isEnabled: () => boolean;
+	style: (text: string) => string;
+};
+
+type FastEditorFactory = EditorFactory & {
+	[FAST_EDITOR_FACTORY]?: FastEditorState;
+	[symbol: symbol]: unknown;
+};
+
+type EditorFactoryUi = {
+	getEditorComponent(): EditorFactory | undefined;
+	setEditorComponent(factory: EditorFactory): void;
+};
+
+type EditorInstallOptions = {
+	intervalMs?: number;
+	maxAttempts?: number;
+	schedule?: (callback: () => void, delayMs: number) => void;
+};
+
+function supportedThinkingLevels(model: Model<Api>): ThinkingLevel[] {
 	if (!model.reasoning) return ["off"];
 
 	return THINKING_LEVELS.filter((level) => {
@@ -14,7 +47,7 @@ function supportedThinkingLevels(model: Model<any>): ThinkingLevel[] {
 	});
 }
 
-function isCodexModel(model: Model<any> | undefined): boolean {
+function isCodexModel(model: Model<Api> | undefined): boolean {
 	return model?.provider === "openai-codex";
 }
 
@@ -22,16 +55,133 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function restoreFastMode(entries: readonly SessionEntry[]): boolean {
+	let enabled = false;
+	for (const entry of entries) {
+		if (entry.type !== "custom" || entry.customType !== FAST_MODE_ENTRY || !isRecord(entry.data)) continue;
+		if (typeof entry.data.enabled === "boolean") enabled = entry.data.enabled;
+	}
+	return enabled;
+}
+
+export function appendFastModeToEditorMetadata(
+	lines: string[],
+	width: number,
+	model: Model<Api> | undefined,
+	enabled: boolean,
+	style: (text: string) => string = (text) => text,
+): string[] {
+	if (!model || !isCodexModel(model) || !enabled) return lines;
+
+	for (let index = lines.length - 1; index >= 0; index--) {
+		const line = lines[index];
+		if (line === undefined) continue;
+		const plain = stripTerminalSequences(line).trimEnd();
+		if (!plain.includes(model.id)) continue;
+
+		const label = style("fast");
+		const labelWidth = visibleWidth(label);
+		const trailingMargin = 2;
+		const maxMetadataWidth = Math.max(0, width - labelWidth - trailingMargin - 2);
+		const metadata = truncateToWidth(sliceByColumn(line, 0, visibleWidth(plain)), maxMetadataWidth, "");
+		const padding = " ".repeat(Math.max(2, width - visibleWidth(metadata) - labelWidth - trailingMargin));
+		const decorated = truncateToWidth(`${metadata}${padding}${label}${" ".repeat(trailingMargin)}`, width, "");
+		return lines.with(index, decorated);
+	}
+
+	return lines;
+}
+
+export function wrapFastModeEditorFactory(baseFactory: EditorFactory, state: FastEditorState): EditorFactory {
+	const existing = (baseFactory as FastEditorFactory)[FAST_EDITOR_FACTORY];
+	if (existing) {
+		Object.assign(existing, state);
+		return baseFactory;
+	}
+
+	const wrappedFactory = ((...args: Parameters<EditorFactory>) => {
+		const editor = baseFactory(...args);
+		const render = editor.render.bind(editor);
+		editor.render = (width: number) => appendFastModeToEditorMetadata(
+			render(width),
+			width,
+			state.getModel(),
+			state.isEnabled(),
+			state.style,
+		);
+		return editor;
+	}) as FastEditorFactory;
+
+	Object.defineProperty(wrappedFactory, FAST_EDITOR_FACTORY, { value: state });
+	// Zentui uses these symbols to retain editor ownership across settings changes and cleanup.
+	for (const symbol of ZENTUI_EDITOR_SYMBOLS) {
+		if (!(symbol in baseFactory)) continue;
+		Object.defineProperty(wrappedFactory, symbol, {
+			value: (baseFactory as FastEditorFactory)[symbol],
+			configurable: true,
+		});
+	}
+	return wrappedFactory;
+}
+
+export function installFastModeEditorWhenReady(
+	ui: EditorFactoryUi,
+	state: FastEditorState,
+	isCurrent: () => boolean,
+	options: EditorInstallOptions = {},
+): void {
+	const intervalMs = options.intervalMs ?? 50;
+	const maxAttempts = options.maxAttempts ?? 100;
+	const schedule = options.schedule ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+	let attempts = 0;
+
+	const tryInstall = (): void => {
+		if (!isCurrent()) return;
+		try {
+			const factory = ui.getEditorComponent();
+			if (factory && Boolean((factory as FastEditorFactory)[ZENTUI_EDITOR_FACTORY])) {
+				ui.setEditorComponent(wrapFastModeEditorFactory(factory, state));
+				return;
+			}
+		} catch {
+			// Zentui may be replacing the editor while this retry runs.
+		}
+
+		attempts++;
+		if (attempts < maxAttempts) schedule(tryInstall, intervalMs);
+	};
+
+	schedule(tryInstall, intervalMs);
+}
+
 export default function modelControls(pi: ExtensionAPI): void {
 	let fastEnabled = false;
 	let effortCompletions: ThinkingLevel[] = ["off"];
+	let activeModel: Model<Api> | undefined;
+	let editorInstallGeneration = 0;
 
-	const updateEffortCompletions = (model: Model<any> | undefined): void => {
+	const updateModel = (model: Model<Api> | undefined): void => {
+		activeModel = model;
 		effortCompletions = model ? supportedThinkingLevels(model) : ["off"];
 	};
 
-	pi.on("session_start", (_event, ctx) => updateEffortCompletions(ctx.model));
-	pi.on("model_select", (_event, ctx) => updateEffortCompletions(ctx.model));
+	pi.on("session_start", (_event, ctx) => {
+		updateModel(ctx.model);
+		fastEnabled = restoreFastMode(ctx.sessionManager.getBranch());
+		const generation = ++editorInstallGeneration;
+		if (ctx.mode !== "tui") return;
+		// Local editors load before package editors. Retry for up to five seconds so
+		// decoration starts only after Zentui has produced the final metadata row.
+		installFastModeEditorWhenReady(ctx.ui, {
+			getModel: () => activeModel,
+			isEnabled: () => fastEnabled,
+			style: (text) => ctx.ui.theme.fg("muted", text),
+		}, () => generation === editorInstallGeneration);
+	});
+	pi.on("session_shutdown", () => {
+		editorInstallGeneration++;
+	});
+	pi.on("model_select", (_event, ctx) => updateModel(ctx.model));
 
 	pi.registerCommand("effort", {
 		description: "Set reasoning effort: /effort [off|minimal|low|medium|high|xhigh|max]",
@@ -88,6 +238,7 @@ export default function modelControls(pi: ExtensionAPI): void {
 			}
 
 			fastEnabled = action === "on" || action === "" && !fastEnabled;
+			pi.appendEntry(FAST_MODE_ENTRY, { enabled: fastEnabled });
 			ctx.ui.notify(`Fast mode: ${fastEnabled ? "on" : "off"}`, "info");
 		},
 	});

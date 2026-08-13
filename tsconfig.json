@@ -14,7 +14,8 @@
 	"include": [
 		".pi/extensions/**/*.ts",
 		".pi/scripts/**/*.ts",
-		".pi/skills/**/scripts/**/*.ts"
+		".pi/skills/**/scripts/**/*.ts",
+		"tests/**/*.ts"
 	],
 	"exclude": [
 		".pi/npm",
