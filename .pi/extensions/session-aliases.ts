@@ -3,7 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export default function sessionAliases(pi: ExtensionAPI): void {
 	pi.registerCommand("exit", {
 		description: "Quit choco-pi (alias for /quit)",
-		handler: (_args, ctx) => {
+		handler: async (_args, ctx) => {
 			ctx.shutdown();
 		},
 	});

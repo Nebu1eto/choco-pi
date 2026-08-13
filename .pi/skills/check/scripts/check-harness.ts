@@ -167,6 +167,10 @@ try {
 }
 
 const requiredResources = [
+	"../tsconfig.json",
+	"../package.json",
+	"../pnpm-lock.yaml",
+	"../pnpm-workspace.yaml",
 	"SYSTEM.md",
 	"extensions/apex-provider.ts",
 	"extensions/apex-provider.json",
@@ -181,6 +185,7 @@ const requiredResources = [
 	"extensions/session-bridge.ts",
 	"extensions/tool-search.ts",
 	"extensions/file-checkpoints.ts",
+	"extensions/exec-session-guidance.ts",
 	"extensions/provider-usage.ts",
 	"review-policy.md",
 	"writing-policy.md",
@@ -215,6 +220,15 @@ add(
 	missingResources.length ? "fail" : "pass",
 	missingResources.length ? `missing: ${missingResources.join(", ")}` : "system prompt, agents, workflows, and command aliases present",
 );
+
+const lensManifestPath = path.join(configRoot, "npm", "node_modules", "pi-lens", "package.json");
+try {
+	const manifest: unknown = JSON.parse(await readFile(lensManifestPath, "utf8"));
+	const version = isRecord(manifest) && typeof manifest.version === "string" ? manifest.version : undefined;
+	add("pi-lens", version ? "pass" : "fail", version ? `pi-lens ${version}; semantic tools available` : "pi-lens version is missing");
+} catch {
+	add("pi-lens", "fail", "configured pi-lens package is unavailable");
+}
 
 const browserResult = await run("agent-browser", ["--version"]);
 add(

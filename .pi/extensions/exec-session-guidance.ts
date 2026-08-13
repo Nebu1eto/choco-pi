@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 
 const RUNNING_SESSION_GUIDANCE =
 	/Session (\d+) still running\. Resume near completion with (?:tools\.)?write_stdin and an appropriate yield_time_ms(?:; do not use wait)?/g;
@@ -31,7 +31,7 @@ export function clarifyExecSessionGuidance<T extends ToolContent>(content: T[]):
 }
 
 export default function execSessionGuidance(pi: ExtensionAPI): void {
-	pi.on("tool_result", (event) => {
+	pi.on("tool_result", (event: ToolResultEvent) => {
 		if (event.toolName !== "exec") return;
 		const content = clarifyExecSessionGuidance(event.content);
 		if (content === event.content) return;
