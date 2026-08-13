@@ -89,7 +89,7 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 | `/context-cap` | Show the soft context cap applied to the active model |
 | `/context [all]` | Show prompt, active/deferred tools, MCP, agents, context files, skills, messages, and autocompact buffer usage |
 | `/rewind` | Restore files and the Git index from an automatic turn checkpoint |
-| `/usage` | Show Claude Code, OpenAI Codex, and Synthetic usage in one view |
+| `/usage`, `/quota` | Show Claude Code, OpenAI Codex, and Synthetic usage in one view |
 | `/apex-refresh` | Rediscover Callstack Apex models immediately |
 
 Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can consume usage or API credit faster than the standard tier. The hidden llama.cpp provider remains available, but choco-pi removes `/llama` from the visible command list and command path.

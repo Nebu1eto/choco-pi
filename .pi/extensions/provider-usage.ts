@@ -324,7 +324,7 @@ export function formatProviderUsage(result: ProviderUsage): string {
 }
 
 export default function providerUsage(pi: ExtensionAPI): void {
-	pi.registerCommand("usage", {
+	const command = {
 		description: "Show connected Claude Code, OpenAI Codex, and Synthetic usage",
 		handler: async (_args, ctx) => {
 			const requests = [claudeUsage(ctx), codexUsage(ctx), syntheticUsage(ctx)];
@@ -333,7 +333,9 @@ export default function providerUsage(pi: ExtensionAPI): void {
 			const sections = settled.map((result, index) => result.status === "fulfilled"
 				? formatProviderUsage(result.value)
 				: `${names[index]} — unavailable (${result.reason instanceof Error ? result.reason.message : "unknown error"})`);
-			ctx.ui.notify(sections.join("\n\n"), "info");
+			ctx.ui.notify(ctx.ui.theme.fg("text", sections.join("\n\n")), "info");
 		},
-	});
+	} satisfies Parameters<ExtensionAPI["registerCommand"]>[1];
+	pi.registerCommand("usage", command);
+	pi.registerCommand("quota", command);
 }
