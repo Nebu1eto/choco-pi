@@ -71,7 +71,7 @@ export default function modelControls(pi: ExtensionAPI): void {
 
 	pi.registerCommand("fast", {
 		description: "Control OpenAI Codex Fast mode: /fast [on|off|status]",
-		handler: (args, ctx) => {
+		handler: async (args, ctx) => {
 			if (!isCodexModel(ctx.model)) {
 				ctx.ui.notify("/fast is available only for OpenAI Codex models.", "warning");
 				return;

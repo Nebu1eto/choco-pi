@@ -17,10 +17,10 @@ Work in the main agent. Do not spawn implementation agents. A fresh read-only re
 
 ## 2. Implement and validate
 
-1. Inspect the closest implementation and validation surfaces.
+1. Inspect the closest implementation and validation surfaces. When pi-lens is active and the target is non-trivial source, use `symbol_search` → `module_report` → `read_symbol`/`read_enclosing`; use LSP navigation for semantic relationships.
 2. Make the smallest complete change directly.
 3. Add a persistent test only when the ledger justifies `regression_test`.
-4. Run affected project gates, focused checks, and every non-runtime acceptance item.
+4. Run `lsp_diagnostics` on changed supported source files and `lens_diagnostics mode=all` when pi-lens is active, then run affected project gates, focused checks, and every non-runtime acceptance item. Degraded Lens results are not passing evidence.
 5. Inspect the actual diff for objective conformance, minimality, and unrelated edits. Do not commit with known failures.
 
 ## 3. Checkpoint

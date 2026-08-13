@@ -10,6 +10,7 @@
 .pi/extensions/synthetic.json
 .pi/mcp-traces/
 .pi/subagent-schedules/
+node_modules/
 
 # Never commit local credentials or environment overrides.
 .env

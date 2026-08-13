@@ -144,8 +144,9 @@ export default function modelContextCap(pi: ExtensionAPI): void {
 		compactionRequested = false;
 	});
 	pi.on("turn_end", (_event, ctx) => {
-		if (!ctx.model) return;
-		const policy = appliedPolicies.find((entry) => entry.key === modelKey(ctx.model));
+		const model = ctx.model;
+		if (!model) return;
+		const policy = appliedPolicies.find((entry) => entry.key === modelKey(model));
 		if (policy?.compactAt === undefined) return;
 		const tokens = ctx.getContextUsage()?.tokens;
 		if (tokens === null || tokens === undefined || tokens <= policy.compactAt) {
