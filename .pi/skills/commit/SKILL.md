@@ -16,7 +16,8 @@ Use applicable `AGENTS.md` and repository documentation first. If they define me
 
 - <essential detail, only when needed>
 
-Assisted-by: choco-pi:<current model id without provider>
+Assisted-by: choco-pi:<orchestrator model id without provider>
+Assisted-by: choco-pi:<contributing sub-agent model id without provider, when applicable>
 Signed-off-by: <git user.name> <git user.email>
 ```
 
@@ -24,7 +25,7 @@ Signed-off-by: <git user.name> <git user.email>
 - Use `feat`, `fix`, `refactor`, `test`, `docs`, or `chore`. Include an issue only when known; never invent one.
 - Follow the user's language and keep the subject and each body bullet at or under 72 characters.
 - Omit the body when the subject is sufficient. Otherwise use at most two terse bullets containing only essential context not already stated in the subject. Prefer short fragments; do not repeat the summary, narrate files, or add routine implementation detail.
-- Include exactly one `Assisted-by` trailer for choco-pi and the runtime-injected current model ID without its provider prefix. When the injected ID is provider-qualified (for example, `openai-codex/gpt-5.6-sol`), use only the portion after the final `/` (`gpt-5.6-sol`). Include exactly one `Signed-off-by` trailer from the configured Git identity.
+- Include one `Assisted-by` trailer for the orchestrator model and one for each distinct sub-agent model that materially contributed to the committed changes. Omit unused worker output, deduplicate model IDs, and list the orchestrator first followed by sub-agent models in first-contribution order. Strip any provider prefix from each model ID: for example, use `gpt-5.6-sol` for `openai-codex/gpt-5.6-sol`. Include exactly one `Signed-off-by` trailer from the configured Git identity.
 
 ## Create the checkpoint
 
