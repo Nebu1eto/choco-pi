@@ -54,7 +54,12 @@ async function readConfig(cwd: string): Promise<ContextCapConfig> {
 		}
 	}
 	if (content === undefined) throw new Error("context-cap.json was not found");
-	const parsed = JSON.parse(content) as ContextCapConfig;
+	let parsed: ContextCapConfig;
+	try {
+		parsed = JSON.parse(content) as ContextCapConfig;
+	} catch (error) {
+		throw new Error("context-cap.json must contain valid JSON", { cause: error });
+	}
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
 		throw new Error("context-cap.json must contain a JSON object");
 	}
@@ -89,7 +94,7 @@ async function readConfig(cwd: string): Promise<ContextCapConfig> {
 	return { defaultCap, defaultCompactAt, appliesOver, models };
 }
 
-function resolvePolicy(model: Model<Api>, nativeWindow: number, config: ContextCapConfig): ResolvedContextPolicy {
+export function resolvePolicy(model: Model<Api>, nativeWindow: number, config: ContextCapConfig): ResolvedContextPolicy {
 	const key = modelKey(model);
 	const exact = config.models && Object.hasOwn(config.models, key)
 		? config.models[key]
@@ -109,6 +114,10 @@ function resolvePolicy(model: Model<Api>, nativeWindow: number, config: ContextC
 			? config.defaultCompactAt
 			: undefined,
 	};
+}
+
+export function shouldRequestCompaction(tokens: number | null | undefined, compactAt: number | undefined): boolean {
+	return compactAt !== undefined && tokens !== null && tokens !== undefined && tokens > compactAt;
 }
 
 async function applyContextCaps(ctx: ExtensionContext): Promise<void> {
@@ -143,13 +152,13 @@ export default function modelContextCap(pi: ExtensionAPI): void {
 	pi.on("model_select", () => {
 		compactionRequested = false;
 	});
-	pi.on("turn_end", (_event, ctx) => {
+	pi.on("agent_settled", (_event, ctx) => {
 		const model = ctx.model;
 		if (!model) return;
 		const policy = appliedPolicies.find((entry) => entry.key === modelKey(model));
 		if (policy?.compactAt === undefined) return;
 		const tokens = ctx.getContextUsage()?.tokens;
-		if (tokens === null || tokens === undefined || tokens <= policy.compactAt) {
+		if (!shouldRequestCompaction(tokens, policy.compactAt)) {
 			compactionRequested = false;
 			return;
 		}
