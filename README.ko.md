@@ -96,7 +96,7 @@ Fast mode는 OpenAI Codex 요청에만 `service_tier: "priority"`를 추가합�
 
 프롬프트 입력 중 `Ctrl+S`를 누르면 현재 입력, 커서 위치와 접힌 대형 paste를 임시 보관하고 입력창을 비웁니다. stash가 있으면 입력창 위에 복원 안내가 표시되며, 빈 입력창에서 다시 누르면 내용이 복원되고 안내가 사라집니다. 이 stash는 현재 Pi 프로세스의 입력기에만 유지됩니다.
 
-MCP 도구는 metadata cache에서 first-class Pi 도구로 등록하되 초기 모델 context에는 넣지 않습니다. 모델은 `tool_search`에 자연어 capability를 전달해 BM25 상위 결과를 최대 5개만 다음 요청부터 활성화합니다. 활성화는 additive라 같은 세션에서 다시 검색할 필요가 없으며, `/context all`에서 active/deferred 목록을 확인할 수 있습니다.
+MCP는 adapter gateway만 모델 context에 넣고 시작하며, cached MCP 도구를 direct tool로 등록하지 않습니다. 모델은 `tool_search`에 자연어 capability를 전달해 compact parameter 요약을 포함한 BM25 상위 결과를 최대 5개만 받습니다. MCP 결과는 `mcp`를 통해 호출하고 일반 Pi 도구는 세션에 additive하게 활성화합니다. 따라서 시작 시 대량 tool schema와 adapter의 direct-tool 경고가 모두 발생하지 않습니다. `/context all`에서 active/deferred Pi 도구 목록을 확인할 수 있습니다.
 
 ### 작업 절차 명령
 

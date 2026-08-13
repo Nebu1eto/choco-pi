@@ -96,7 +96,7 @@ Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can 
 
 While editing a prompt, press `Ctrl+S` to stash the current input, cursor position, and collapsed large-paste content, then clear the editor. While a stash exists, a restore hint appears above the editor. Press `Ctrl+S` again on an empty editor to restore the prompt and clear the hint. The stash lasts only for the current Pi process.
 
-MCP tools are registered from the metadata cache as first-class Pi tools but omitted from the initial model context. The model passes a natural-language capability to `tool_search`, which activates at most five top BM25 matches for the next request. Activation is additive, so discovered tools remain available for the session. Use `/context all` to inspect active and deferred inventories.
+MCP starts with only the adapter gateway in model context; cached MCP tools are not registered as direct tools. The model passes a natural-language capability to `tool_search`, which returns at most five top BM25 matches with compact parameter summaries. MCP matches are called through `mcp`, while ordinary Pi matches are activated additively for the session. This avoids both large startup tool schemas and the adapter's high-direct-tool advisory. Use `/context all` to inspect active and deferred Pi inventories.
 
 ### Workflow commands
 
