@@ -13,14 +13,15 @@ The repository tracks shareable configuration only. OAuth tokens and API keys re
 - Git
 - Optional: [`agent-browser`](https://github.com/vercel-labs/agent-browser) 0.33.2 for native browser automation
 
-Before installing the profile globally, run Pi from the repository root so it loads [`.pi/settings.json`](.pi/settings.json), the custom system prompt, project extensions, agents, skills, and prompt templates.
-
-After cloning or copying the repository, start Pi from its root:
+After cloning or copying the repository, install the global profile and start Pi:
 
 ```sh
 cd choco-pi
+npm run install:profile
 pi
 ```
+
+The installer keeps credentials and runtime state intact, generates `~/.pi/agent/settings.json` with checkout-relative paths, and links the tracked public profile into `~/.pi/agent`. It stops rather than replacing a conflicting file; inspect it, then rerun with `npm run install:profile -- --backup` to preserve the old file and install the tracked version.
 
 Pi installs the packages pinned in [`.pi/settings.json`](.pi/settings.json). If npm defers native install scripts, approve only the two packages used by the configured extensions:
 
@@ -37,10 +38,12 @@ Run `/reload` after changing files under `.pi`.
 This checkout is also the source of the current machine's global Pi profile under `~/.pi/agent`:
 
 - `settings.json` installs the same pinned packages and references this checkout's `extensions`, `skills`, and `prompts` directories.
-- `SYSTEM.md`, `writing-policy.md`, `review-policy.md`, `subagents.json`, `mcp.json`, agent definitions, and provider configuration files are symbolic links to this checkout.
+- `SYSTEM.md`, writing and review policy, sub-agent and Zentui configuration, agent definitions, and provider configuration files are symbolic links to this checkout. A local `.pi/mcp.json` is linked when present.
 - Pi launched from another directory therefore receives choco-pi as its user-level default. A trusted project's own `.pi` settings and `SYSTEM.md` can still override the global defaults through Pi's normal precedence rules.
 
 Keep this checkout at a stable path because the global profile points to it. Restart Pi or run `/reload` after changing the source files.
+
+The tracked [`.pi/zentui.json`](.pi/zentui.json) renders the editor model in bold and reasoning effort in italics.
 
 ## What this profile provides
 
