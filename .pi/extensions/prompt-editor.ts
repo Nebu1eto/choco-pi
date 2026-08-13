@@ -46,16 +46,7 @@ export class PromptEditor extends CustomEditor {
 		return this as unknown as EditorInternals;
 	}
 
-	private stashOrRestore(): void {
-		if (this.getText().length > 0) {
-			const { state, pastes, pasteCounter } = this.internals;
-			this.stash = structuredClone({ state, pastes, pasteCounter });
-			this.setText("");
-			this.internals.undoStack.clear();
-			this.onStashChange(true);
-			return;
-		}
-
+	private restoreStash(): void {
 		if (!this.stash) return;
 
 		const restored = this.stash;
@@ -76,12 +67,44 @@ export class PromptEditor extends CustomEditor {
 		this.tui.requestRender();
 	}
 
+	private stashOrRestore(): void {
+		if (this.getText().length > 0) {
+			const { state, pastes, pasteCounter } = this.internals;
+			this.stash = structuredClone({ state, pastes, pasteCounter });
+			this.setText("");
+			this.internals.undoStack.clear();
+			this.onStashChange(true);
+			return;
+		}
+
+		this.restoreStash();
+	}
+
 	handleInput(data: string): void {
 		if (matchesKey(data, "ctrl+s")) {
 			this.stashOrRestore();
 			return;
 		}
-		super.handleInput(data);
+
+		if (!this.stash) {
+			super.handleInput(data);
+			return;
+		}
+
+		const submit = this.onSubmit;
+		const restoreAfterSubmit = (text: string): void => {
+			try {
+				submit?.(text);
+			} finally {
+				this.restoreStash();
+			}
+		};
+		this.onSubmit = restoreAfterSubmit;
+		try {
+			super.handleInput(data);
+		} finally {
+			if (this.onSubmit === restoreAfterSubmit) this.onSubmit = submit;
+		}
 	}
 }
 
