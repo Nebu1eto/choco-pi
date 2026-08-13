@@ -6,7 +6,10 @@ import { Type } from "typebox";
 
 const MAX_QUERY_LENGTH = 500;
 const DEFAULT_LIMIT = 5;
-const ALWAYS_ACTIVE = new Set([
+
+// Keep the minimum execution, orchestration, and discovery path available
+// without requiring a preliminary tool search.
+export const ALWAYS_ACTIVE_TOOL_NAMES = [
 	"read",
 	"bash",
 	"edit",
@@ -16,9 +19,11 @@ const ALWAYS_ACTIVE = new Set([
 	"apply_patch",
 	"exec_command",
 	"write_stdin",
+	"Agent",
 	"mcp",
 	"tool_search",
-]);
+] as const;
+const ALWAYS_ACTIVE = new Set<string>(ALWAYS_ACTIVE_TOOL_NAMES);
 
 type SearchTarget =
 	| { kind: "pi"; tool: ToolInfo }
@@ -300,15 +305,18 @@ export default function toolSearch(pi: ExtensionAPI): void {
 			}
 
 			const lines = matches.map((target) => target.kind === "pi"
-				? `- ${target.tool.name} [Pi]: ${compactDescription(target.tool.description)}`
+				? `- ${target.tool.name} [Pi]: ${compactDescription(target.tool.description)}\n  Call: ${target.tool.name} directly (native Pi tool; never use mcp)`
 				: `- ${target.name} [MCP: ${target.server}]: ${compactDescription(target.description)}\n  Parameters: ${parameterSummary(target.parameters)}\n  Call: mcp({ tool: "${target.name}", args: { ... } })`);
 			const mcpMatches = matches.filter((target) => target.kind === "mcp").length;
+			const mcpHelp = mcpMatches > 0
+				? "\n\nUse mcp({ describe: \"<tool>\" }) only for matched MCP tools that need full parameter details."
+				: "";
 			return {
 				content: [{
 					type: "text",
 					text: matches.length === 0
 						? `No deferred tools found for: ${query}`
-						: `Found ${matches.length} matching tool(s)${added.length > 0 ? `; activated ${added.length} Pi tool(s)` : ""}${mcpMatches > 0 ? `; ${mcpMatches} MCP tool(s) are callable through mcp` : ""}:\n${lines.join("\n")}\n\nUse mcp({ describe: "<tool>" }) if a matched MCP tool needs full parameter details.`,
+						: `Found ${matches.length} matching tool(s)${added.length > 0 ? `; activated ${added.length} Pi tool(s)` : ""}${mcpMatches > 0 ? `; ${mcpMatches} MCP tool(s) are callable through mcp` : ""}:\n${lines.join("\n")}${mcpHelp}`,
 				}],
 				details: { matches: matches.map(targetName), added },
 			};
