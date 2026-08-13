@@ -19,7 +19,7 @@ The main agent owns scope, authority, orchestration, integration, validation, co
 
 Spawn one fresh `planner` with the objective, instructions, direct and indirect write risks, acceptance ledger, and available model/reasoning choices. Require a dependency-aware plan and spawn manifest containing each unit's objective, read/write scope, indirect effects, dependencies, done criteria, and verification plan.
 
-Resolve model and reasoning effort in the system-prompt priority order. Present the plan only when it contains a material user decision.
+Resolve model and reasoning effort in the system-prompt priority order. Read the selected role file's `default_model` and `default_thinking`, then pass both explicitly on every spawn; these fields are overridable defaults, not pinned runtime fields. Present the plan only when it contains a material user decision.
 
 ## 3. Execute
 

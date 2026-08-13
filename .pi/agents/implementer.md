@@ -1,7 +1,7 @@
 ---
 description: Implementation leaf that edits only its assigned scope and returns risk-based evidence
-model: openai-codex/gpt-5.6-sol
-thinking: medium
+default_model: openai-codex/gpt-5.6-sol
+default_thinking: medium
 prompt_mode: append
 skills: true
 inherit_context: false

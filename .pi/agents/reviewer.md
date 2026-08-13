@@ -1,7 +1,7 @@
 ---
 description: Read-only fresh-context reviewer that requires an exact diff and reproducible evidence
-model: anthropic/claude-opus-5
-thinking: xhigh
+default_model: anthropic/claude-opus-5
+default_thinking: xhigh
 prompt_mode: append
 skills: true
 inherit_context: false

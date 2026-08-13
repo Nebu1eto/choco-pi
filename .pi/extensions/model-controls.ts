@@ -239,7 +239,9 @@ export default function modelControls(pi: ExtensionAPI): void {
 
 			fastEnabled = action === "on" || action === "" && !fastEnabled;
 			pi.appendEntry(FAST_MODE_ENTRY, { enabled: fastEnabled });
-			ctx.ui.notify(`Fast mode: ${fastEnabled ? "on" : "off"}`, "info");
+			// The editor indicator is the confirmation. Avoid appending a status row:
+			// repeated height changes corrupt regular scrollback in Ghostty + Zellij.
+			ctx.ui.setStatus("fast-mode-refresh", undefined);
 		},
 	});
 
