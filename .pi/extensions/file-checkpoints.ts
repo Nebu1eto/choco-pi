@@ -7,7 +7,9 @@ import type {
 	ExtensionCommandContext,
 	ExtensionContext,
 	SessionEntry,
+	Theme,
 } from "@earendil-works/pi-coding-agent";
+import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const execFileAsync = promisify(execFile);
 const CHECKPOINT_ENTRY = "choco-pi:file-checkpoint";
@@ -33,6 +35,17 @@ export type TurnCheckpoint = {
 	conversationTargetId: string;
 	userTurnIndex: number;
 	label: string;
+};
+
+export type ChangeSummary = {
+	added: number;
+	deleted: number;
+	files: number;
+};
+
+export type RewindTimelineItem = {
+	turn: TurnCheckpoint;
+	changes: ChangeSummary;
 };
 
 async function git(
@@ -190,7 +203,7 @@ function messageContentLabel(content: unknown): string {
 				typeof part === "object" && part !== null && "type" in part && part.type === "text" &&
 				"text" in part && typeof part.text === "string" ? [part.text] : []).join(" ")
 			: "";
-	return text.replaceAll(/\s+/g, " ").trim().slice(0, 72) || "User turn";
+	return text.replaceAll(/\s+/g, " ").trim().slice(0, 240) || "User turn";
 }
 
 function userMessageLabel(ctx: ExtensionContext): string {
@@ -239,6 +252,121 @@ export function turnCheckpointsFromEntries(entries: readonly SessionEntry[]): Tu
 function checkpointChoice(turn: TurnCheckpoint): string {
 	const time = new Date(turn.checkpoint.timestamp).toLocaleString();
 	return `Turn ${turn.userTurnIndex} · ${time} · ${turn.label}`;
+}
+
+async function summarizeChanges(
+	cwd: string,
+	from: Pick<GitSnapshot, "worktreeTree">,
+	to: Pick<GitSnapshot, "worktreeTree">,
+): Promise<ChangeSummary> {
+	const output = await git(cwd, ["diff", "--numstat", from.worktreeTree, to.worktreeTree]);
+	let added = 0;
+	let deleted = 0;
+	let files = 0;
+	for (const line of output.split("\n")) {
+		if (!line) continue;
+		const [addedText, deletedText] = line.split("\t");
+		files += 1;
+		if (addedText !== "-") added += Number(addedText) || 0;
+		if (deletedText !== "-") deleted += Number(deletedText) || 0;
+	}
+	return { added, deleted, files };
+}
+
+export async function buildRewindTimeline(
+	cwd: string,
+	turns: readonly TurnCheckpoint[],
+	current: GitSnapshot,
+): Promise<RewindTimelineItem[]> {
+	return Promise.all(turns.map(async (turn, index) => ({
+		turn,
+		changes: await summarizeChanges(cwd, turn.checkpoint, turns[index + 1]?.checkpoint ?? current),
+	})));
+}
+
+function changeSummaryText(changes: ChangeSummary, theme: Theme): string {
+	if (changes.files === 0) return theme.fg("dim", "No code changes");
+	return [
+		theme.fg("dim", `${changes.files} file${changes.files === 1 ? "" : "s"}`),
+		theme.fg("toolDiffAdded", `+${changes.added}`),
+		theme.fg("toolDiffRemoved", `-${changes.deleted}`),
+	].join(" ");
+}
+
+export function renderRewindTimeline(
+	items: readonly RewindTimelineItem[],
+	selectedIndex: number,
+	width: number,
+	theme: Theme,
+): string[] {
+	const innerWidth = Math.max(20, width - 4);
+	const visibleTurns = 7;
+	const start = Math.max(0, Math.min(selectedIndex - Math.floor(visibleTurns / 2), items.length - visibleTurns));
+	const end = Math.min(items.length, start + visibleTurns);
+	const lines = [
+		theme.fg("accent", theme.bold("Rewind")),
+		"",
+		"Restore the conversation, files, and Git index to the point before a user turn.",
+		"",
+	];
+
+	if (start > 0) lines.push(theme.fg("dim", `  ↑ ${start} earlier turns`), "");
+	for (let index = start; index < end; index += 1) {
+		const item = items[index];
+		if (!item) continue;
+		const selected = index === selectedIndex;
+		const prefix = selected ? theme.fg("accent", "❯") : " ";
+		const label = selected ? theme.fg("accent", item.turn.label) : item.turn.label;
+		lines.push(truncateToWidth(`${prefix} ${label}`, innerWidth));
+		const timestamp = new Date(item.turn.checkpoint.timestamp).toLocaleString();
+		lines.push(truncateToWidth(`  Turn ${item.turn.userTurnIndex} · ${timestamp} · ${changeSummaryText(item.changes, theme)}`, innerWidth));
+		lines.push("");
+	}
+	if (end < items.length) lines.push(theme.fg("dim", `  ↓ ${items.length - end} later turns`), "");
+
+	if (end === items.length) {
+		const currentSelected = selectedIndex === items.length;
+		lines.push(`${currentSelected ? theme.fg("accent", "❯") : " "} ${theme.italic("(current)")}`);
+	}
+	lines.push("", theme.fg("dim", theme.italic("↑↓ to navigate · Enter to continue · Esc to cancel")));
+
+	const top = theme.fg("border", `┌${"─".repeat(Math.max(1, width - 2))}┐`);
+	const bottom = theme.fg("border", `└${"─".repeat(Math.max(1, width - 2))}┘`);
+	return [top, ...lines.map((line) => {
+		const clipped = truncateToWidth(line, innerWidth);
+		return `${theme.fg("border", "│")} ${clipped}${" ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)))} ${theme.fg("border", "│")}`;
+	}), bottom];
+}
+
+async function selectRewindTurn(
+	ctx: ExtensionCommandContext,
+	items: readonly RewindTimelineItem[],
+): Promise<TurnCheckpoint | undefined> {
+	if (ctx.mode !== "tui") {
+		const reversed = [...items].reverse();
+		const choices = reversed.map(({ turn }) => checkpointChoice(turn));
+		const selected = await ctx.ui.select("Rewind to turn", choices);
+		return selected ? reversed[choices.indexOf(selected)]?.turn : undefined;
+	}
+
+	return ctx.ui.custom<TurnCheckpoint | undefined>((tui, theme, _keybindings, done) => {
+		let selectedIndex = items.length;
+		return {
+			render: (width: number) => renderRewindTimeline(items, selectedIndex, width, theme),
+			invalidate: () => {},
+			handleInput: (data: string) => {
+				if (matchesKey(data, "escape")) done(undefined);
+				else if (matchesKey(data, "enter")) done(items[selectedIndex]?.turn);
+				else if (matchesKey(data, "up")) {
+					selectedIndex = Math.max(0, selectedIndex - 1);
+					tui.requestRender();
+				} else if (matchesKey(data, "down")) {
+					selectedIndex = Math.min(items.length, selectedIndex + 1);
+					tui.requestRender();
+				}
+			},
+		};
+	});
 }
 
 export async function restoreTurn(
@@ -292,16 +420,25 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
 		description: "Rewind conversation, files, and Git index to the start of a turn",
 		handler: async (_args, ctx) => {
 			await ctx.waitForIdle();
-			const checkpoints = turnCheckpointsFromEntries(ctx.sessionManager.getBranch()).reverse();
+			const checkpoints = turnCheckpointsFromEntries(ctx.sessionManager.getBranch());
 			if (checkpoints.length === 0) {
 				ctx.ui.notify("No turn checkpoints are available in this session branch.", "warning");
 				return;
 			}
 
-			const choices = checkpoints.map(checkpointChoice);
-			const selected = await ctx.ui.select("Rewind to turn", choices);
-			if (!selected) return;
-			const target = checkpoints[choices.indexOf(selected)];
+			let timeline: RewindTimelineItem[];
+			try {
+				const timestamp = Date.now();
+				const sessionId = ctx.sessionManager.getSessionId();
+				const preview = await captureGitSnapshot(ctx.cwd, `${sessionId}/${timestamp}-rewind-preview`);
+				timeline = await buildRewindTimeline(ctx.cwd, checkpoints, preview);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				ctx.ui.notify(`Turn rewind preview failed: ${message}`, "error");
+				return;
+			}
+
+			const target = await selectRewindTurn(ctx, timeline);
 			if (!target) return;
 
 			const confirmed = await ctx.ui.confirm(

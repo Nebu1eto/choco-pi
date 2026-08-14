@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry, Theme } from "@earendil-works/pi-coding-agent";
 import {
+	renderRewindTimeline,
 	restoreTurn,
 	turnCheckpointsFromEntries,
 	type TurnCheckpoint,
 } from "../.pi/extensions/file-checkpoints.ts";
+
+const plainTheme = {
+	fg: (_color: string, text: string) => text,
+	bold: (text: string) => text,
+	italic: (text: string) => text,
+} as Theme;
 
 const checkpoint = {
 	version: 1 as const,
@@ -44,6 +51,26 @@ test("turn checkpoints pair the latest pre-prompt snapshot with each user turn",
 			label: "Second prompt",
 		},
 	]);
+});
+
+test("rewind timeline starts at current and shows prompts with code-change summaries", () => {
+	const turn: TurnCheckpoint = {
+		checkpoint,
+		checkpointEntryId: "checkpoint-1",
+		conversationTargetId: "user-1",
+		userTurnIndex: 1,
+		label: "First prompt",
+	};
+	const lines = renderRewindTimeline([
+		{ turn, changes: { added: 10, deleted: 1, files: 2 } },
+	], 1, 100, plainTheme);
+	const screen = lines.join("\n");
+
+	assert.match(screen, /Rewind/);
+	assert.match(screen, /First prompt/);
+	assert.match(screen, /2 files \+10 -1/);
+	assert.match(screen, /❯ \(current\)/);
+	assert.match(screen, /↑↓ to navigate · Enter to continue · Esc to cancel/);
 });
 
 test("restoreTurn rolls files back when conversation navigation is cancelled", async () => {
