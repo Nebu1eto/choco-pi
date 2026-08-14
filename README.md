@@ -334,6 +334,34 @@ Run the baseline check after installation or configuration changes:
 
 The check validates Node and Pi versions, settings, installed package versions, required harness resources, command aliases, and the optional browser runtime without reading credentials.
 
+## Q&A
+
+### Why build choco-pi instead of using an existing coding agent?
+
+Three things were missing: using models from multiple providers in one session, OpenAI server-side compaction across the agent stack, and a harness built around the author's own workflow.
+
+- **Codex** is an excellent agent, but its multi-agent system is split across V1 and V2 protocols, which made working with non-OpenAI models uncomfortable.
+- **Claude Code** naturally does not relay OpenAI server-side compaction, so on a ChatGPT subscription with a limited context window, long sessions repeatedly fall back to slow local compaction.
+- **OpenCode** is not as easy to extend as Pi and does not support OpenAI server-side compaction.
+
+Pi's extension model solved all three in one profile. The absence of a sandbox layer was also a plus. With clear constraints in the system prompt the agent does not act dangerously — the author has run Codex in YOLO mode and Claude Code with dangerously-skip-permissions without incident, so Pi's trust-based model is a natural fit.
+
+### Why cap 1M-window models at 600K and move the compaction threshold?
+
+Recent models handle longer contexts better than earlier generations, but output quality still drops as context grows. The ChatGPT subscription caps input at 272K (plus 128K output), so the 600K soft cap already exceeds the largest provider's practical ceiling. Models without server-side compaction rely on local summary fallback, which is slower and less predictable. 600K keeps the working window where quality holds while accommodating providers that do not compact remotely.
+
+### What does choco-pi bring from existing coding agents?
+
+choco-pi is a harness built around the author's workflow, but it deliberately carries over features that made Claude Code, Codex, and similar agents productive.
+
+- `/context` shows token usage, active and deferred tools, MCP servers, context state, and autocompact status in one view.
+- `/usage` displays Claude Code, OpenAI Codex, and Synthetic subscription quotas side by side, so consumption limits across providers are visible at a glance.
+- choco-pi includes a tool-search tool that lazy-loads MCP and extension tools through BM25 matching instead of registering every tool at startup. This keeps model context small, the same approach adopted by agents like Codex and Claude Code.
+- `/rewind` rolls back files, the Git index, and the conversation branch to a selected turn, then returns that prompt to the editor.
+- Independent sessions can be created, listed, steered, and waited on, providing the same cross-session coordination found in other multi-session agents.
+
+The goal was to keep these conveniences while adding multi-provider model mixing and the extensibility that Pi offers.
+
 ## Security and authority
 
 - Keep OAuth tokens, API keys, environment overrides, MCP traces, Pi package installs, and sub-agent runtime data outside Git.
