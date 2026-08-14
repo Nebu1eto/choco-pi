@@ -14,6 +14,29 @@ import { Box, matchesKey, ScrollView, Text } from "@earendil-works/pi-tui";
 const BAR_WIDTH = 40;
 const DEFAULT_RESERVE_TOKENS = 16_384;
 
+const RESET = "\u001b[0m";
+const SEGMENT_COLORS: Record<string, string> = {
+	S: "\u001b[38;5;109m", // system prompt: blue
+	T: "\u001b[38;5;116m", // system tools: cyan
+	M: "\u001b[38;5;139m", // mcp tools: purple
+	A: "\u001b[38;5;179m", // custom agents: yellow
+	C: "\u001b[38;5;108m", // context files: green
+	K: "\u001b[38;5;173m", // skills: orange
+	G: "\u001b[38;5;110m", // messages: light blue
+	"·": "\u001b[38;5;240m", // free space: dim gray
+	B: "\u001b[38;5;131m", // autocompact buffer: red
+};
+
+function paint(marker: string, text: string, colorize: boolean): string {
+	if (!colorize || text.length === 0) return text;
+	const color = SEGMENT_COLORS[marker];
+	return color ? `${color}${text}${RESET}` : text;
+}
+
+function legendMarker(marker: string, colorize: boolean): string {
+	return colorize ? paint(marker, marker === "·" ? "·" : "█", colorize) : marker;
+}
+
 type Category = {
 	label: string;
 	tokens: number;
@@ -125,24 +148,33 @@ function categoryData(ctx: ExtensionCommandContext, options: BuildSystemPromptOp
 	];
 }
 
-function usageBar(categories: Category[], free: number, reserve: number, window: number): string {
+export function usageBar(categories: Category[], free: number, reserve: number, window: number, colorize: boolean): string {
 	const segments = [...categories, { label: "Free", tokens: free, marker: "·" }, { label: "Buffer", tokens: reserve, marker: "B" }];
-	let used = 0;
-	return segments.map((category, index) => {
-		const end = index === segments.length - 1
-			? BAR_WIDTH
-			: Math.min(BAR_WIDTH, Math.round((used + category.tokens) / Math.max(1, window) * BAR_WIDTH));
-		const width = Math.max(0, end - Math.round(used / Math.max(1, window) * BAR_WIDTH));
-		used += category.tokens;
-		return category.marker.repeat(width);
-	}).join("").slice(0, BAR_WIDTH).padEnd(BAR_WIDTH, "·");
+	const win = Math.max(1, window);
+	// Give every nonzero segment at least one cell so small categories stay
+	// visible, then trim overflow from the largest segments.
+	const widths = segments.map((segment) =>
+		segment.tokens > 0 ? Math.max(1, Math.round(segment.tokens / win * BAR_WIDTH)) : 0);
+	const overflow = () => widths.reduce((sum, width) => sum + width, 0) - BAR_WIDTH;
+	while (overflow() > 0) {
+		const largest = widths.indexOf(Math.max(...widths));
+		if (widths[largest] <= 1) break;
+		widths[largest] -= 1;
+	}
+	const parts = segments.map((segment, index) => {
+		const cell = colorize ? (segment.marker === "·" ? "·" : "█") : segment.marker;
+		return paint(segment.marker, cell.repeat(Math.max(0, widths[index])), colorize);
+	});
+	const drawn = widths.reduce((sum, width) => sum + Math.max(0, width), 0);
+	if (drawn < BAR_WIDTH) parts.push(paint("·", "·".repeat(BAR_WIDTH - drawn), colorize));
+	return parts.join("");
 }
 
 function sourceLabel(tool: ToolInfo): string {
 	return tool.sourceInfo.source === "builtin" ? "Pi" : tool.sourceInfo.source.replace(/^npm:/, "");
 }
 
-function renderContext(pi: ExtensionAPI, ctx: ExtensionCommandContext, expanded: boolean): string {
+function renderContext(pi: ExtensionAPI, ctx: ExtensionCommandContext, expanded: boolean, colorize: boolean): string {
 	const usage = ctx.getContextUsage();
 	const window = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
 	const options = ctx.getSystemPromptOptions();
@@ -164,13 +196,13 @@ function renderContext(pi: ExtensionAPI, ctx: ExtensionCommandContext, expanded:
 
 	const lines = [
 		"Context Usage",
-		`${usageBar(categories, free, reserve, window)}  ${ctx.model?.id ?? "No model"}`,
+		`${usageBar(categories, free, reserve, window, colorize)}  ${ctx.model?.id ?? "No model"}`,
 		`${formatTokens(total)}/${formatTokens(window)} tokens (${percent(total, window)})`,
 		"",
 		"Estimated usage by category",
-		...categories.map((category) => `${category.marker} ${category.label}: ${formatTokens(category.tokens)} tokens (${percent(category.tokens, window)})`),
-		`· Free space: ${formatTokens(free)} tokens (${percent(free, window)})`,
-		`B Autocompact buffer: ${formatTokens(reserve)} tokens (${percent(reserve, window)})`,
+		...categories.map((category) => `${legendMarker(category.marker, colorize)} ${category.label}: ${formatTokens(category.tokens)} tokens (${percent(category.tokens, window)})`),
+		`${legendMarker("·", colorize)} Free space: ${formatTokens(free)} tokens (${percent(free, window)})`,
+		`${legendMarker("B", colorize)} Autocompact buffer: ${formatTokens(reserve)} tokens (${percent(reserve, window)})`,
 		"",
 		`Auto-compact threshold: ${formatTokens(Math.max(0, window - reserve))} tokens`,
 		`Tools: ${activeNames.size} active · ${deferred.length} deferred`,
@@ -207,11 +239,11 @@ export default function contextStatus(pi: ExtensionAPI): void {
 				ctx.ui.notify("Usage: /context [all]", "warning");
 				return;
 			}
-			const report = renderContext(pi, ctx, mode === "all");
 			if (ctx.mode !== "tui") {
-				ctx.ui.notify(report, "info");
+				ctx.ui.notify(renderContext(pi, ctx, mode === "all", false), "info");
 				return;
 			}
+			const report = renderContext(pi, ctx, mode === "all", true);
 			await ctx.ui.custom((tui, theme, _keybindings, done) => {
 				const title = theme.fg("accent", theme.bold("Context Usage"));
 				const body = report.replace(/^Context Usage\n/, "");
