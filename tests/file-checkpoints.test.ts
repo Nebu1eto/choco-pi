@@ -17,19 +17,33 @@ const checkpoint = {
 	label: "First prompt",
 };
 
-test("turn checkpoints target the user message that started each turn", () => {
+test("turn checkpoints pair the latest pre-prompt snapshot with each user turn", () => {
 	const entries = [
-		{ type: "message", id: "user-1", parentId: null, message: { role: "user", content: "First prompt" } },
-		{ type: "custom", id: "checkpoint-1", parentId: "user-1", customType: "choco-pi:file-checkpoint", data: checkpoint },
+		{ type: "custom", id: "checkpoint-1", parentId: null, customType: "choco-pi:file-checkpoint", data: checkpoint },
+		{ type: "message", id: "user-1", parentId: "checkpoint-1", message: { role: "user", content: "First prompt" } },
 		{ type: "message", id: "assistant-1", parentId: "checkpoint-1", message: { role: "assistant", content: [] } },
-		{ type: "custom", id: "safety", parentId: "assistant-1", customType: "choco-pi:file-checkpoint", data: { ...checkpoint, label: "Before rewind" } },
+		{ type: "custom", id: "mid-turn", parentId: "assistant-1", customType: "choco-pi:file-checkpoint", data: { ...checkpoint, ref: "mid-turn" } },
+		{ type: "custom", id: "checkpoint-2", parentId: "mid-turn", customType: "choco-pi:file-checkpoint", data: { ...checkpoint, ref: "turn-2", label: "Second prompt" } },
+		{ type: "message", id: "user-2", parentId: "checkpoint-2", message: { role: "user", content: "Second prompt" } },
+		{ type: "custom", id: "trailing", parentId: "user-2", customType: "choco-pi:file-checkpoint", data: { ...checkpoint, ref: "trailing" } },
 	] as SessionEntry[];
 
-	assert.deepEqual(turnCheckpointsFromEntries(entries), [{
-		checkpoint,
-		checkpointEntryId: "checkpoint-1",
-		conversationTargetId: "user-1",
-	}]);
+	assert.deepEqual(turnCheckpointsFromEntries(entries), [
+		{
+			checkpoint,
+			checkpointEntryId: "checkpoint-1",
+			conversationTargetId: "user-1",
+			userTurnIndex: 1,
+			label: "First prompt",
+		},
+		{
+			checkpoint: { ...checkpoint, ref: "turn-2", label: "Second prompt" },
+			checkpointEntryId: "checkpoint-2",
+			conversationTargetId: "user-2",
+			userTurnIndex: 2,
+			label: "Second prompt",
+		},
+	]);
 });
 
 test("restoreTurn rolls files back when conversation navigation is cancelled", async () => {
@@ -37,6 +51,8 @@ test("restoreTurn rolls files back when conversation navigation is cancelled", a
 		checkpoint,
 		checkpointEntryId: "checkpoint-1",
 		conversationTargetId: "user-1",
+		userTurnIndex: 1,
+		label: "First prompt",
 	};
 	const safety = { ref: "safety", indexTree: "safety-index", worktreeTree: "safety-worktree" };
 	const restores: string[] = [];
@@ -56,6 +72,8 @@ test("restoreTurn restores files before rewinding the conversation without a sum
 		checkpoint,
 		checkpointEntryId: "checkpoint-1",
 		conversationTargetId: "user-1",
+		userTurnIndex: 1,
+		label: "First prompt",
 	};
 	const safety = { ref: "safety", indexTree: "safety-index", worktreeTree: "safety-worktree" };
 	const events: string[] = [];

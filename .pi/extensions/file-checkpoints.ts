@@ -31,6 +31,8 @@ export type TurnCheckpoint = {
 	checkpoint: FileCheckpoint;
 	checkpointEntryId: string;
 	conversationTargetId: string;
+	userTurnIndex: number;
+	label: string;
 };
 
 async function git(
@@ -180,26 +182,43 @@ export async function restoreGitSnapshot(
 	}
 }
 
+function messageContentLabel(content: unknown): string {
+	const text = typeof content === "string"
+		? content
+		: Array.isArray(content)
+			? content.flatMap((part) =>
+				typeof part === "object" && part !== null && "type" in part && part.type === "text" &&
+				"text" in part && typeof part.text === "string" ? [part.text] : []).join(" ")
+			: "";
+	return text.replaceAll(/\s+/g, " ").trim().slice(0, 72) || "User turn";
+}
+
 function userMessageLabel(ctx: ExtensionContext): string {
 	const entries = ctx.sessionManager.getBranch();
 	for (let index = entries.length - 1; index >= 0; index -= 1) {
 		const entry = entries[index];
 		if (entry.type !== "message" || entry.message.role !== "user") continue;
-		const content = entry.message.content;
-		const text = typeof content === "string"
-			? content
-			: content.filter((part) => part.type === "text").map((part) => part.text).join(" ");
-		return text.replaceAll(/\s+/g, " ").trim().slice(0, 72) || "User turn";
+		return messageContentLabel(entry.message.content);
 	}
 	return "User turn";
 }
 
 export function turnCheckpointsFromEntries(entries: readonly SessionEntry[]): TurnCheckpoint[] {
-	let latestUserEntryId: string | undefined;
+	let pending: Pick<TurnCheckpoint, "checkpoint" | "checkpointEntryId"> | undefined;
+	let userTurnIndex = 0;
 	const checkpoints: TurnCheckpoint[] = [];
 	for (const entry of entries) {
 		if (entry.type === "message" && entry.message.role === "user") {
-			latestUserEntryId = entry.id;
+			userTurnIndex += 1;
+			if (pending) {
+				checkpoints.push({
+					...pending,
+					conversationTargetId: entry.id,
+					userTurnIndex,
+					label: messageContentLabel(entry.message.content),
+				});
+				pending = undefined;
+			}
 			continue;
 		}
 		if (entry.type !== "custom" || entry.customType !== CHECKPOINT_ENTRY) continue;
@@ -207,12 +226,11 @@ export function turnCheckpointsFromEntries(entries: readonly SessionEntry[]): Tu
 		if (value?.version === 1 && typeof value.ref === "string" &&
 			typeof value.indexTree === "string" && typeof value.worktreeTree === "string" &&
 			typeof value.timestamp === "string" && typeof value.turnIndex === "number" &&
-			typeof value.label === "string" && value.label !== "Before rewind" && latestUserEntryId) {
-			checkpoints.push({
+			typeof value.label === "string" && value.label !== "Before rewind") {
+			pending = {
 				checkpoint: value as FileCheckpoint,
 				checkpointEntryId: entry.id,
-				conversationTargetId: latestUserEntryId,
-			});
+			};
 		}
 	}
 	return checkpoints;
@@ -220,7 +238,7 @@ export function turnCheckpointsFromEntries(entries: readonly SessionEntry[]): Tu
 
 function checkpointChoice(turn: TurnCheckpoint): string {
 	const time = new Date(turn.checkpoint.timestamp).toLocaleString();
-	return `Turn ${turn.checkpoint.turnIndex + 1} · ${time} · ${turn.checkpoint.label}`;
+	return `Turn ${turn.userTurnIndex} · ${time} · ${turn.label}`;
 }
 
 export async function restoreTurn(
