@@ -334,6 +334,34 @@ examples/                   사용자 전역 설정 예시
 
 이 검사는 credential을 읽지 않고 Node·Pi 버전, 설정, 설치 패키지 버전, 필수 harness resource, command alias와 선택형 browser runtime을 확인합니다.
 
+## Q&A
+
+### 왜 이미 좋은 코딩 에이전트들을 두고 choco-pi를 만들었나요?
+
+세 가지가 필요했습니다: 여러 공급자의 모델을 한 세션에서 혼용하는 것, OpenAI server-side compaction을 에이전트 전체에서 쓰는 것, 그리고 제 작업 방식에 맞는 harness를 갖는 것.
+
+- **Codex**는 훌륭한 에이전트지만 멀티 에이전트 시스템이 V1·V2로 나뉘어 있어 OpenAI 외의 모델에서 사용할 때 불편함을 느꼈습니다.
+- **Claude Code**에서는 당연히 OpenAI 모델을 쓸 때 server-side compaction을 전달하지 않아 Context Window가 제한되는 ChatGPT 구독에서는 긴 세션이 느린 로컬 compaction이 반복되어 불편함을 느낍니다.
+- **OpenCode**는 Pi만큼 확장하기 쉽지 않고, OpenAI server-side compaction을 지원하지 않습니다.
+
+Pi의 확장 모델이 세 문제를 하나의 profile로 해결했습니다. 샌드박스가 없는 점도 장점이었습니다. 시스템 프롬프트에서 제약을 명확히 주면 에이전트가 위험하게 행동하지 않았고, Codex는 YOLO 모드로 Claude Code는 dangerously-skip-permissions를 켜고 써 왔기 때문에 Pi의 신뢰 기반 모델이 맞았습니다.
+
+### 왜 1M context window 모델을 600K로 제한하고 compaction 지점도 변경했나요?
+
+최근 모델은 이전 세대보다 긴 context를 잘 처리하지만 context가 길어질수록 출력 품질은 여전히 떨어집니다. ChatGPT 구독의 입력 상한은 272K(+ 128K output)이므로 600K soft cap은 가장 큰 공급자의 실질 한도를 이미 넘습니다. Server-side compaction이 없는 모델은 로컬 summary fallback에 의존해 느리고 예측이 어렵습니다. 600K는 품질이 유지되는 범위를 지키면서 원격 compaction이 없는 공급자도 수용하는 지점입니다.
+
+### choco-pi가 기존 코딩 에이전트에서 가져온 것은 무엇인가요?
+
+choco-pi는 제 작업 방식에 맞춰 만든 harness지만, Claude Code·Codex 등 기존 에이전트에서 생산성을 높여 준 기능을 그대로 옮기려 했습니다.
+
+- `/context`는 토큰 사용량과 active·deferred 도구, MCP 서버, context와 autocompact 상태를 한 화면에 보여줍니다.
+- `/usage`는 Claude Code·OpenAI Codex·Synthetic 등 구독 서비스의 할당량을 나란히 표시해 여러 공급자의 사용량 제한을 한눈에 확인할 수 있습니다.
+- choco-pi는 시작 시 모든 도구를 등록하지 않고 BM25 매칭으로 MCP·확장 도구를 lazy load하는 도구 검색 도구를 만들었습니다. 이는 Claude Code나 Codex 등 여러 다른 코딩 에이전트처럼 모델 context를 작게 유지할 수 있게 도와줍니다.
+- `/rewind`는 파일, Git index와 대화 branch를 선택한 turn으로 되돌리고 해당 prompt를 편집기에 복원합니다.
+- 별도의 독립된 세션도 생성·조회·steer·대기할 수 있어 멀티 세션에서도 다른 에이전트에서 지원하는 세션 간 조율 기능도 그대로 쓸 수 있습니다.
+
+이 편의를 유지하면서 다중 공급자 모델 혼용과 Pi를 활용한 확장성을 얻는 것이 목표였습니다.
+
 ## 보안과 권한 경계
 
 - OAuth token, API key, 환경 override, MCP trace, Pi package 설치 결과와 sub-agent runtime data는 Git 밖에 둡니다.
