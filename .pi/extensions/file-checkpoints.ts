@@ -2,7 +2,12 @@ import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
+	ExtensionContext,
+	SessionEntry,
+} from "@earendil-works/pi-coding-agent";
 
 const execFileAsync = promisify(execFile);
 const CHECKPOINT_ENTRY = "choco-pi:file-checkpoint";
@@ -20,6 +25,13 @@ export type FileCheckpoint = {
 };
 
 type GitSnapshot = Pick<FileCheckpoint, "ref" | "indexTree" | "worktreeTree">;
+type SnapshotRestorer = (cwd: string, target: GitSnapshot, safety: GitSnapshot) => Promise<void>;
+
+export type TurnCheckpoint = {
+	checkpoint: FileCheckpoint;
+	checkpointEntryId: string;
+	conversationTargetId: string;
+};
 
 async function git(
 	cwd: string,
@@ -182,22 +194,53 @@ function userMessageLabel(ctx: ExtensionContext): string {
 	return "User turn";
 }
 
-function checkpointsFromBranch(ctx: ExtensionContext): FileCheckpoint[] {
-	return ctx.sessionManager.getBranch().flatMap((entry) => {
-		if (entry.type !== "custom" || entry.customType !== CHECKPOINT_ENTRY) return [];
+export function turnCheckpointsFromEntries(entries: readonly SessionEntry[]): TurnCheckpoint[] {
+	let latestUserEntryId: string | undefined;
+	const checkpoints: TurnCheckpoint[] = [];
+	for (const entry of entries) {
+		if (entry.type === "message" && entry.message.role === "user") {
+			latestUserEntryId = entry.id;
+			continue;
+		}
+		if (entry.type !== "custom" || entry.customType !== CHECKPOINT_ENTRY) continue;
 		const value = entry.data as Partial<FileCheckpoint> | undefined;
-		return value?.version === 1 && typeof value.ref === "string" &&
+		if (value?.version === 1 && typeof value.ref === "string" &&
 			typeof value.indexTree === "string" && typeof value.worktreeTree === "string" &&
 			typeof value.timestamp === "string" && typeof value.turnIndex === "number" &&
-			typeof value.label === "string"
-			? [value as FileCheckpoint]
-			: [];
-	});
+			typeof value.label === "string" && value.label !== "Before rewind" && latestUserEntryId) {
+			checkpoints.push({
+				checkpoint: value as FileCheckpoint,
+				checkpointEntryId: entry.id,
+				conversationTargetId: latestUserEntryId,
+			});
+		}
+	}
+	return checkpoints;
 }
 
-function checkpointChoice(checkpoint: FileCheckpoint): string {
-	const time = new Date(checkpoint.timestamp).toLocaleString();
-	return `Turn ${checkpoint.turnIndex + 1} · ${time} · ${checkpoint.label}`;
+function checkpointChoice(turn: TurnCheckpoint): string {
+	const time = new Date(turn.checkpoint.timestamp).toLocaleString();
+	return `Turn ${turn.checkpoint.turnIndex + 1} · ${time} · ${turn.checkpoint.label}`;
+}
+
+export async function restoreTurn(
+	ctx: Pick<ExtensionCommandContext, "cwd" | "navigateTree">,
+	target: TurnCheckpoint,
+	safety: GitSnapshot,
+	restore: SnapshotRestorer = restoreGitSnapshot,
+): Promise<void> {
+	await restore(ctx.cwd, target.checkpoint, safety);
+	try {
+		const navigation = await ctx.navigateTree(target.conversationTargetId, { summarize: false });
+		if (navigation.cancelled) throw new Error("Conversation rewind was cancelled.");
+	} catch (error) {
+		try {
+			await restore(ctx.cwd, safety, target.checkpoint);
+		} catch (rollbackError) {
+			throw new AggregateError([error, rollbackError], "Conversation rewind and file rollback failed.");
+		}
+		throw error;
+	}
 }
 
 export default function fileCheckpoints(pi: ExtensionAPI): void {
@@ -228,24 +271,24 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("rewind", {
-		description: "Restore files and Git index from an automatic turn checkpoint",
+		description: "Rewind conversation, files, and Git index to the start of a turn",
 		handler: async (_args, ctx) => {
 			await ctx.waitForIdle();
-			const checkpoints = checkpointsFromBranch(ctx).reverse();
+			const checkpoints = turnCheckpointsFromEntries(ctx.sessionManager.getBranch()).reverse();
 			if (checkpoints.length === 0) {
-				ctx.ui.notify("No file checkpoints are available in this session branch.", "warning");
+				ctx.ui.notify("No turn checkpoints are available in this session branch.", "warning");
 				return;
 			}
 
 			const choices = checkpoints.map(checkpointChoice);
-			const selected = await ctx.ui.select("Restore file checkpoint", choices);
+			const selected = await ctx.ui.select("Rewind to turn", choices);
 			if (!selected) return;
 			const target = checkpoints[choices.indexOf(selected)];
 			if (!target) return;
 
 			const confirmed = await ctx.ui.confirm(
-				"Restore file checkpoint?",
-				"This replaces the Git index and all non-ignored working-tree files. The current state will be saved as another checkpoint first. Conversation history is unchanged.",
+				"Rewind this turn?",
+				"This restores the conversation, Git index, and non-ignored files to before the selected turn. Later conversation remains available as a session-tree branch.",
 			);
 			if (!confirmed) return;
 
@@ -253,19 +296,16 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
 				const timestamp = Date.now();
 				const sessionId = ctx.sessionManager.getSessionId();
 				const safety = await captureGitSnapshot(ctx.cwd, `${sessionId}/${timestamp}-before-rewind`);
-				pi.appendEntry<FileCheckpoint>(CHECKPOINT_ENTRY, {
-					version: 1,
-					...safety,
-					timestamp: new Date(timestamp).toISOString(),
-					turnIndex: target.turnIndex,
-					label: "Before rewind",
+				await restoreTurn(ctx, target, safety);
+				pi.appendEntry(RESTORE_ENTRY, {
+					restoredRef: target.checkpoint.ref,
+					safetyRef: safety.ref,
+					restoredAt: new Date().toISOString(),
 				});
-				await restoreGitSnapshot(ctx.cwd, target, safety);
-				pi.appendEntry(RESTORE_ENTRY, { restoredRef: target.ref, restoredAt: new Date().toISOString() });
-				ctx.ui.notify("File checkpoint restored. Conversation history was not changed.", "info");
+				ctx.ui.notify("Turn rewound. The prompt is ready to edit and resubmit.", "info");
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(`File checkpoint restore failed: ${message}`, "error");
+				ctx.ui.notify(`Turn rewind failed: ${message}`, "error");
 			}
 		},
 	});
