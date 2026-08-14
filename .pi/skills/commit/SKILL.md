@@ -5,7 +5,7 @@ description: Create one well-scoped local Git checkpoint with choco-pi when the 
 
 # choco-pi Commit
 
-Create a commit only under explicit user authority or an active workflow's checkpoint rule. Never push, open a pull request, deploy, publish, or mutate another system.
+Create a commit only under explicit user authority or an active workflow's checkpoint rule. Never push.
 
 ## Resolve policy
 

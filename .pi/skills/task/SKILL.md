@@ -10,7 +10,7 @@ The main agent owns scope, authority, orchestration, integration, validation, co
 ## 1. Bootstrap
 
 1. Run `check`, including sub-agent discovery, plus repository gates required by applicable `AGENTS.md`.
-2. Read path-scoped instructions. Load another skill only for a distinct domain operation, never to replace this workflow. Record objective, exclusions, scope, constraints, success criteria, and authority boundaries.
+2. Read path-scoped instructions. Record objective, exclusions, scope, constraints, success criteria, and authority boundaries.
 3. Record `review_base`, inspect the dirty tree, resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill, and run `node <resolved-script> acquire --cwd "$PWD" --owner "$PI_SESSION_ID"`.
 4. Create the acceptance ledger with a verification mode for every required behavior.
 5. If this workflow was automatically selected but safe parallel execution or sub-agents are unavailable, fall back to `task-inline`. If the user explicitly selected it, report the limitation and request direction.
@@ -33,7 +33,7 @@ Select each role from the unit's work before resolving model or reasoning effort
 
 After all writers stop, merge and deduplicate deferred checks, run combined and project-required gates, and inspect the complete diff. Run project-required generation or formatting only from the orchestrator and treat unexpected semantic output as implementation work.
 
-Unless the user explicitly excluded a commit, load and follow the harness `commit` skill. Never create the commit directly or substitute another commit workflow. Run every required runtime behavior against the exact checkpoint `HEAD`. A correction invalidates affected evidence and requires combined validation, a new checkpoint, and final-`HEAD` proof.
+Unless the user explicitly excluded a commit, load and follow the harness `commit` skill. Run every required runtime behavior against the exact checkpoint `HEAD`. A correction invalidates affected evidence and requires combined validation, a new checkpoint, and final-`HEAD` proof.
 
 ## 5. Review and handoff
 
