@@ -23,7 +23,7 @@ Signed-off-by: <git user.name> <git user.email>
 
 - Use `[*]` for repository-wide work and the smallest meaningful package or component for `<scope>`. Omit the bracketed scope only when none can be determined.
 - Use `feat`, `fix`, `refactor`, `test`, `docs`, or `chore`. Include an issue only when known; never invent one.
-- Follow the user's language and keep the subject and each body bullet at or under 72 characters.
+- Determine the message language from history: inspect the user's recent commits (the configured Git identity) in this repository, and if they are all written in English, treat English as the project's commit-message language and write in English. Otherwise follow the user's language. Keep the subject and each body bullet at or under 72 characters.
 - Omit the body when the subject is sufficient. Otherwise use at most two terse bullets containing only essential context not already stated in the subject. Prefer short fragments; do not repeat the summary, narrate files, or add routine implementation detail.
 - Include one `Assisted-by` trailer for the orchestrator model and one for each distinct sub-agent model that materially contributed to the committed changes. Omit unused worker output, deduplicate model IDs, and list the orchestrator first followed by sub-agent models in first-contribution order. Strip any provider prefix from each model ID: for example, use `gpt-5.6-sol` for `openai-codex/gpt-5.6-sol`. Include exactly one `Signed-off-by` trailer from the configured Git identity.
 
