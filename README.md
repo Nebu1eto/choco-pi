@@ -86,12 +86,13 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 | Command | Description |
 |---|---|
 | `/exit` | Gracefully exit Pi; alias for `/quit` |
+| `/delete` | Permanently delete the current Pi session record and exit after confirmation |
 | `/clear` | Start a fresh session while preserving the current session history; alias for `/new` |
 | `/effort [level]` | Select or directly set a reasoning effort supported by the active model; values complete after a space |
 | `/fast [on\|off\|status]` | Control OpenAI Codex Fast mode; no argument toggles the current state |
 | `/context-cap` | Show the soft context cap applied to the active model |
 | `/context [all]` | Show prompt, active/deferred tools, MCP, agents, context files, skills, messages, and autocompact buffer usage |
-| `/rewind` | Restore files and the Git index from an automatic turn checkpoint |
+| `/rewind` | Rewind the active conversation branch, files, and Git index to a selected turn |
 | `/usage`, `/quota` | Show Claude Code, OpenAI Codex, and Synthetic usage in one view |
 | `/apex-refresh` | Rediscover Callstack Apex models immediately |
 
@@ -174,7 +175,7 @@ All custom roles disable ambient child extensions, so the declared native tools 
 
 ## Checkpoints, review, and Git boundaries
 
-[`file-checkpoints.ts`](.pi/extensions/file-checkpoints.ts) records staged, unstaged, and untracked state at the start of each agent turn through a temporary Git index. It does not modify the real index. `/rewind` creates a safety checkpoint before restoring the selected state. Ignored files and conversation history are not changed; checkpoint objects are retained under `refs/choco-pi/checkpoints/`.
+[`file-checkpoints.ts`](.pi/extensions/file-checkpoints.ts) records staged, unstaged, and untracked state at the start of each agent turn through a temporary Git index. It does not modify the real index. `/rewind` creates a safety checkpoint, restores files and the index, then moves the active conversation branch to before the selected user turn and returns that prompt to the editor. Later conversation remains available through Pi's session tree; ignored files are unchanged. Checkpoint objects are retained under `refs/choco-pi/checkpoints/`.
 
 [`review`](.pi/skills/review/SKILL.md) and [`.pi/review-policy.md`](.pi/review-policy.md) define a report-only adversarial review. The reviewer receives an exact diff or revision, tries to disprove its assumptions, and reports only reproducible or decisively traced findings. A review does not authorize fixes.
 

@@ -86,12 +86,13 @@ Git으로 추적하는 [`.pi/zentui.json`](.pi/zentui.json)은 입력창의 모�
 | 명령 | 설명 |
 |---|---|
 | `/exit` | Pi를 정상 종료. `/quit` 별칭 |
+| `/delete` | 확인 후 현재 Pi 세션 기록을 영구 삭제하고 종료 |
 | `/clear` | 현재 세션 기록을 보존하고 새 세션 시작. `/new` 별칭 |
 | `/effort [level]` | 현재 모델이 지원하는 reasoning effort 선택 또는 직접 지정. 공백 뒤에는 가능한 값 자동 완성 |
 | `/fast [on\|off\|status]` | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환 |
 | `/context-cap` | 현재 모델에 적용된 soft context cap 확인 |
 | `/context [all]` | prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시 |
-| `/rewind` | turn 시작 시 저장한 checkpoint에서 파일과 Git index 복원 |
+| `/rewind` | 선택한 턴으로 현재 대화 branch, 파일과 Git index를 함께 rewind |
 | `/usage` | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시 |
 | `/apex-refresh` | Callstack Apex 모델을 즉시 다시 탐색 |
 
@@ -174,7 +175,7 @@ packages/api/src/AGENTS.md
 
 ## Checkpoint, 리뷰와 Git 경계
 
-[`file-checkpoints.ts`](.pi/extensions/file-checkpoints.ts)는 각 agent turn 시작 시 임시 Git index를 사용해 staged, unstaged, untracked 상태를 기록합니다. 실제 index는 바꾸지 않습니다. `/rewind`는 복원 직전에도 안전 checkpoint를 만들고 선택한 상태로 파일과 index를 되돌립니다. ignored file과 대화 기록은 건드리지 않으며 object는 `refs/choco-pi/checkpoints/`에 보존합니다.
+[`file-checkpoints.ts`](.pi/extensions/file-checkpoints.ts)는 각 agent turn 시작 시 임시 Git index를 사용해 staged, unstaged, untracked 상태를 기록합니다. 실제 index는 바꾸지 않습니다. `/rewind`는 안전 checkpoint를 만든 뒤 파일과 index를 복원하고, 현재 대화 branch를 선택한 user turn 직전으로 이동해 해당 prompt를 편집기에 돌려놓습니다. 이후 대화는 Pi session tree에서 다시 접근할 수 있으며 ignored file은 건드리지 않습니다. checkpoint object는 `refs/choco-pi/checkpoints/`에 보존합니다.
 
 [`review`](.pi/skills/review/SKILL.md)와 [`.pi/review-policy.md`](.pi/review-policy.md)는 수정 없는 적대적 리뷰 절차입니다. reviewer는 정확한 diff나 revision을 받아 가정을 반증하고, 재현 가능하거나 결정적으로 추적한 finding만 보고합니다. 리뷰 요청만으로 수정 권한이 생기지 않습니다.
 
