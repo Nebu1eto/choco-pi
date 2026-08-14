@@ -1,7 +1,7 @@
 ---
 description: Read-only handoff leaf that reports only verified state in the user's language
 default_model: openai-codex/gpt-5.6-terra
-default_thinking: high
+default_thinking: medium
 prompt_mode: append
 skills: true
 inherit_context: false

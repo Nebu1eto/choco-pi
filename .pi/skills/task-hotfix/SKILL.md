@@ -10,7 +10,7 @@ Keep implementation in the main agent. Do not spawn implementation agents. A fre
 ## 1. Triage
 
 1. Run `check`; do not wait for optional capabilities unrelated to the incident.
-2. Read the incident evidence and applicable instructions. Load another skill only for a distinct domain operation required by the fix, never to replace this workflow.
+2. Read the incident evidence and applicable instructions.
 3. Record `review_base`, inspect the dirty tree, resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill, and run `node <resolved-script> acquire --cwd "$PWD" --owner "$PI_SESSION_ID"`.
 4. Reproduce the failure through the narrowest reliable path and identify the most likely root cause.
 5. Record success criteria, explicit exclusions, authority boundaries, and an acceptance ledger using `regression_test`, `direct_check`, or `runtime_e2e`.
@@ -24,8 +24,8 @@ Keep implementation in the main agent. Do not spawn implementation agents. A fre
 
 ## 3. Checkpoint and runtime proof
 
-Unless the user explicitly excluded a commit, load and follow the harness `commit` skill. Never create the commit directly or substitute another commit workflow. Run required executable behavior against that exact `HEAD`. A corrective edit invalidates affected evidence and requires validation, a new checkpoint, and final-`HEAD` verification again.
+Unless the user explicitly excluded a commit, load and follow the harness `commit` skill. Run required executable behavior against that exact `HEAD`. A corrective edit invalidates affected evidence and requires validation, a new checkpoint, and final-`HEAD` verification again.
 
 ## 4. Review and report
 
-Use fresh read-only review only when required, and independently validate any finding. After owned runtime cleanup, release the lease with `node <resolved-script> release --cwd "$PWD" --owner "$PI_SESSION_ID"`. Report the root cause, minimal patch, exact gates and runtime observations, final revision, waivers, and remaining risk. Do not push, deploy, publish, or change incident systems without explicit user authority.
+Use fresh read-only review only when required, and independently validate any finding. After owned runtime cleanup, release the lease with `node <resolved-script> release --cwd "$PWD" --owner "$PI_SESSION_ID"`. Report the root cause, minimal patch, exact gates and runtime observations, final revision, waivers, and remaining risk.
