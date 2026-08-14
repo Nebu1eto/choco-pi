@@ -206,7 +206,9 @@ Configure project-specific caps in [`.pi/extensions/context-cap.json`](.pi/exten
 - `null` disables both overrides for that model. Either object field can also be `null` to disable only that override.
 - `/context-cap` reports the effective value for the current session.
 
-For OpenAI Codex, enable native Responses compaction with `/codex openai`. The example in [`examples/pi-codex-conversion.json`](examples/pi-codex-conversion.json) can be copied to `~/.pi/agent/pi-codex-conversion.json`:
+For OpenAI Codex, enable native Responses compaction with `/codex openai`. The tracked [`.pi/pi-codex-conversion.json`](.pi/pi-codex-conversion.json) is linked to `~/.pi/agent/pi-codex-conversion.json` by `npm run install:profile`, so `/codex` settings are synchronized with the project. It keeps Fast mode off by default.
+
+The minimal compaction-only configuration is:
 
 ```json
 {

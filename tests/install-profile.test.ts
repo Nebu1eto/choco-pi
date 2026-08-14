@@ -35,6 +35,12 @@ test("profile installer links tracked config and is idempotent", async (context)
 		await readlink(path.join(agentDir, "zentui.json")),
 		path.resolve(".pi/zentui.json"),
 	);
+	assert.equal(
+		await readlink(path.join(agentDir, "pi-codex-conversion.json")),
+		path.resolve(".pi/pi-codex-conversion.json"),
+	);
+	const codexConfig = JSON.parse(await readFile(path.join(agentDir, "pi-codex-conversion.json"), "utf8"));
+	assert.equal(codexConfig.openai.fast, false);
 	const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
 	assert.equal(settings.packages[0], path.resolve(".pi/packages/pi-synthetic"));
 	assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions")]);

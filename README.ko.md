@@ -206,7 +206,9 @@ Native context window가 1,000,000 tokens 이상인 모델은 soft cap을 600,00
 - `null`은 해당 모델의 두 override를 모두 끕니다. Object의 개별 필드에도 `null`을 지정할 수 있습니다.
 - `/context-cap`은 현재 세션에 적용된 값을 표시합니다.
 
-OpenAI Codex에서는 `/codex openai`로 native Responses compaction을 켭니다. [`examples/pi-codex-conversion.json`](examples/pi-codex-conversion.json)을 `~/.pi/agent/pi-codex-conversion.json`에 복사할 수 있습니다.
+OpenAI Codex에서는 `/codex openai`로 native Responses compaction을 켭니다. 추적하는 [`.pi/pi-codex-conversion.json`](.pi/pi-codex-conversion.json)은 `npm run install:profile` 실행 시 `~/.pi/agent/pi-codex-conversion.json`에 링크되므로 `/codex` 설정도 프로젝트와 동기화됩니다. Fast mode의 기본값은 꺼짐입니다.
+
+compaction만 지정하는 최소 설정은 다음과 같습니다.
 
 ```json
 {

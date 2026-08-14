@@ -21,6 +21,7 @@ const PROFILE_LINKS = [
 	[".pi/SYSTEM.md", "SYSTEM.md"],
 	[".pi/writing-policy.md", "writing-policy.md"],
 	[".pi/review-policy.md", "review-policy.md"],
+	[".pi/pi-codex-conversion.json", "pi-codex-conversion.json"],
 	[".pi/subagents.json", "subagents.json"],
 	[".pi/zentui.json", "zentui.json"],
 	[".pi/agents/general.md", "agents/general.md"],
