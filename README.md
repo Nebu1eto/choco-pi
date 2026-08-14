@@ -2,7 +2,7 @@
 
 [한국어](README.ko.md)
 
-choco-pi is an opinionated, project-aware profile for the [Pi coding agent](https://pi.dev/). It combines a custom agent contract, reusable workflows, model and provider controls, sub-agents, independent conversations, compaction settings, MCP, web access, browser automation, and a Nord-based terminal interface.
+choco-pi is an opinionated, project-aware profile for the [Pi coding agent](https://pi.dev/). It combines custom operating rules, reusable workflows, model and provider controls, sub-agents, independent conversations, compaction settings, MCP, web access, browser automation, and a Nord-based terminal interface.
 
 The repository tracks shareable configuration only. OAuth tokens and API keys remain in Pi's user-level credential store and must not be committed.
 
@@ -49,7 +49,7 @@ The tracked [`.pi/zentui.json`](.pi/zentui.json) renders the editor model in bol
 
 | Area | Behavior |
 |---|---|
-| Agent contract | Replaces Pi's base prompt with [`.pi/SYSTEM.md`](.pi/SYSTEM.md) and injects the active `provider/model` on every turn |
+| Operating rules | Replaces Pi's base prompt with [`.pi/SYSTEM.md`](.pi/SYSTEM.md) and injects the active `provider/model` on every turn |
 | Project awareness | Applies root context at startup and loads path-scoped descendant `AGENTS.md` files when work enters those paths |
 | Writing | Applies the repository writing policy to normal responses and persisted documents without a separate skill command |
 | Workflows | Provides direct implementation, parallel implementation, hotfix, review, environment check, and local commit workflows |
@@ -98,9 +98,9 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 
 Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can consume usage or API credit faster than the standard tier. The hidden llama.cpp provider remains available, but choco-pi removes `/llama` from the visible command list and command path.
 
-While editing a prompt, press `Ctrl+S` to stash the current input, cursor position, and collapsed large-paste content, then clear the editor. While a stash exists, a restore hint appears above the editor. Press `Ctrl+S` again on an empty editor to restore the prompt and clear the hint. The stash lasts only for the current Pi process.
+`Ctrl+S` stashes the current input, cursor position, and collapsed paste content, then clears the editor. On an empty editor it restores the stash. The stash lasts only for the current Pi process.
 
-MCP starts with only the adapter gateway in model context; cached MCP tools are not registered as direct tools. The model passes a natural-language capability to `tool_search`, which returns at most five top BM25 matches with compact parameter summaries. MCP matches are called through `mcp`, while ordinary Pi matches are activated additively for the session. This avoids both large startup tool schemas and the adapter's high-direct-tool advisory. Use `/context all` to inspect active and deferred Pi inventories.
+MCP starts with only the adapter gateway in model context; cached MCP tools are not registered as direct tools. The model passes a natural-language capability to `tool_search`, which returns at most five BM25 matches with compact parameter summaries. MCP matches are called through `mcp`; Pi matches are activated additively for the session. This avoids large startup tool schemas and the adapter's direct-tool warning. Use `/context all` to inspect active and deferred inventories.
 
 ### Workflow commands
 
@@ -139,11 +139,11 @@ Each conversation has its own Pi session ID and reloads project context, extensi
 
 ## Agent behavior and project context
 
-[`.pi/SYSTEM.md`](.pi/SYSTEM.md) is the shared operating contract. It defines communication, instruction precedence, intent routing, authority boundaries, evidence requirements, delegation, review, continuity, and completion rules. It is project-neutral: repository-specific commands and domain rules belong in that repository's `AGENTS.md` or skills.
+[`.pi/SYSTEM.md`](.pi/SYSTEM.md) defines the shared operating rules: communication, instruction precedence, intent routing, authority boundaries, evidence, delegation, review, continuity, and completion. It is project-neutral: repository-specific commands and domain rules belong in that repository's `AGENTS.md` or skills.
 
-[`runtime-model-prompt.ts`](.pi/extensions/runtime-model-prompt.ts) replaces `{{PI_CURRENT_MODEL}}` with the active `provider/model` on each turn. Parent and child sessions receive their own model identifier after model changes. Provider credentials are never added to the prompt.
+[`runtime-model-prompt.ts`](.pi/extensions/runtime-model-prompt.ts) replaces `{{PI_CURRENT_MODEL}}` with the active `provider/model` on each turn, separately for parent and child sessions. Credentials are not included.
 
-[`runtime-writing-prompt.ts`](.pi/extensions/runtime-writing-prompt.ts) injects [`.pi/writing-policy.md`](.pi/writing-policy.md) into main and child prompts. The policy covers evidence, claim strength, native-language style, document structure, English output, Japanese output, and final review.
+[`runtime-writing-prompt.ts`](.pi/extensions/runtime-writing-prompt.ts) injects [`.pi/writing-policy.md`](.pi/writing-policy.md) into main and child prompts.
 
 Pi loads context files from the startup path. `@howaboua/pi-markdown-workflows` adds descendant instructions when the agent reads or works in a deeper path. For example, accessing `packages/api/src/service.ts` can add, in order:
 
@@ -153,7 +153,7 @@ packages/api/AGENTS.md
 packages/api/src/AGENTS.md
 ```
 
-Previously loaded instructions remain in the session and are refreshed after changes. The package also provides `/workflows`, `/skills`, `/learn`, and a confirmed `workflows_create` path for reusable Markdown procedures.
+Loaded instructions persist in the session and refresh on change. The package also provides `/workflows`, `/skills`, `/learn`, and `workflows_create`.
 
 ## Sub-agents
 
@@ -171,7 +171,7 @@ Use `/agents` to inspect roles, running agents, transcripts, schedules, and oper
 
 Use `steer_subagent` to redirect a running agent after its current tool, `get_subagent_result` to retrieve a background result, and an `Agent` call with `resume: <id>` for a completed agent's same-unit follow-up. New calls start with fresh conversation context; each custom role appends its instructions to the current parent system prompt and inherits skills.
 
-All custom roles disable ambient child extensions, so the declared native tools cannot be replaced by a model adapter. Writer roles use the current checkout by default and may run concurrently only after the orchestrator assigns disjoint direct and indirect ownership scopes. `isolation: "worktree"` remains explicit opt-in isolation.
+All custom roles disable ambient child extensions, so declared native tools cannot be replaced by a model adapter. Writer roles use the current checkout by default and may run concurrently only when the orchestrator assigns disjoint direct and indirect ownership scopes. `isolation: "worktree"` is explicit opt-in.
 
 ## Checkpoints, review, and Git boundaries
 
@@ -298,7 +298,7 @@ agent-browser --version
 npm exec --yes --package pi-agent-browser-native@0.3.0 -- pi-agent-browser-doctor
 ```
 
-The agent can then open pages, capture interactive snapshots, click, type, take screenshots, and use authenticated browser profiles. `ffmpeg` is required only for WebM recording. choco-pi keeps the extension's optional Exa and Brave search integrations disabled and uses `pi-web-access` for normal web search.
+After installation the agent can open pages, capture interactive snapshots, click, type, take screenshots, and use authenticated browser profiles. `ffmpeg` is required only for WebM recording. choco-pi disables the extension's optional Exa and Brave search integrations and uses `pi-web-access` for web search.
 
 ## Usage reporting
 
@@ -310,7 +310,7 @@ Claude Code and OpenAI Codex usage depend on Pi OAuth credentials and provider e
 
 ```text
 .pi/
-  SYSTEM.md                 Shared choco-pi operating contract
+  SYSTEM.md                 Shared choco-pi operating rules
   mcp.example.json          MCP configuration without local credentials
   settings.json             Packages, theme, and compaction settings
   subagents.json            Sub-agent runtime and fallback settings

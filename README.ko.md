@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-choco-pi는 [Pi 코딩 에이전트](https://pi.dev/)를 프로젝트 중심으로 운용하기 위한 개인화 설정 저장소입니다. 공통 에이전트 규칙, 재사용 가능한 작업 절차, 모델·공급자 제어, 서브 에이전트, 독립 대화, 컴팩션, MCP, 웹·브라우저 도구와 Nord 기반 터미널 UI를 한 설정으로 제공합니다.
+choco-pi는 [Pi 코딩 에이전트](https://pi.dev/)를 프로젝트 중심으로 운용하기 위한 개인화 설정 저장소입니다. 운용 규칙, 재사용 가능한 작업 절차, 모델·공급자 제어, 서브 에이전트, 독립 대화, 컴팩션, MCP, 웹·브라우저 도구와 Nord 기반 터미널 UI를 한 설정으로 제공합니다.
 
 Git에는 공유 가능한 설정만 저장합니다. OAuth 토큰과 API 키는 Pi의 사용자 전용 인증 저장소에 두며 저장소에 커밋하지 않습니다.
 
@@ -49,7 +49,7 @@ Git으로 추적하는 [`.pi/zentui.json`](.pi/zentui.json)은 입력창의 모�
 
 | 영역 | 동작 |
 |---|---|
-| 에이전트 규칙 | [`.pi/SYSTEM.md`](.pi/SYSTEM.md)로 Pi 기본 프롬프트를 교체하고 매 turn 실제 `provider/model`을 주입 |
+| 운용 규칙 | [`.pi/SYSTEM.md`](.pi/SYSTEM.md)로 Pi 기본 프롬프트를 교체하고 매 turn 실제 `provider/model`을 주입 |
 | 프로젝트 인식 | 시작 시 루트 지침을 읽고, 하위 경로에 접근할 때 해당 경로의 `AGENTS.md`를 추가 적용 |
 | 글쓰기 | 별도 스킬 호출 없이 일반 답변과 작성 문서에 저장소 글쓰기 정책 적용 |
 | 작업 절차 | 직접 구현, 병렬 구현, 핫픽스, 리뷰, 환경 점검, 로컬 커밋 절차 제공 |
@@ -98,9 +98,9 @@ Git으로 추적하는 [`.pi/zentui.json`](.pi/zentui.json)은 입력창의 모�
 
 Fast mode는 OpenAI Codex 요청에만 `service_tier: "priority"`를 추가합니다. Standard보다 사용량이나 API credit을 빠르게 소비할 수 있습니다. Pi에 숨겨진 llama.cpp 공급자는 유지하지만 `/llama` 명령은 choco-pi의 명령 목록과 실행 경로에서 제거합니다.
 
-프롬프트 입력 중 `Ctrl+S`를 누르면 현재 입력, 커서 위치와 접힌 대형 paste를 임시 보관하고 입력창을 비웁니다. stash가 있으면 입력창 위에 복원 안내가 표시되며, 빈 입력창에서 다시 누르면 내용이 복원되고 안내가 사라집니다. 이 stash는 현재 Pi 프로세스의 입력기에만 유지됩니다.
+`Ctrl+S`는 현재 입력, 커서 위치와 접힌 paste를 임시 보관하고 입력창을 비웁니다. 빈 입력창에서 다시 누르면 복원합니다. 이 stash는 현재 Pi 프로세스에서만 유지됩니다.
 
-MCP는 adapter gateway만 모델 context에 넣고 시작하며, cached MCP 도구를 direct tool로 등록하지 않습니다. 모델은 `tool_search`에 자연어 capability를 전달해 compact parameter 요약을 포함한 BM25 상위 결과를 최대 5개만 받습니다. MCP 결과는 `mcp`를 통해 호출하고 일반 Pi 도구는 세션에 additive하게 활성화합니다. 따라서 시작 시 대량 tool schema와 adapter의 direct-tool 경고가 모두 발생하지 않습니다. `/context all`에서 active/deferred Pi 도구 목록을 확인할 수 있습니다.
+MCP는 adapter gateway만 모델 context에 넣고 시작하며, cached MCP 도구를 direct tool로 등록하지 않습니다. 모델은 `tool_search`에 자연어 capability를 전달해 compact parameter 요약을 포함한 BM25 상위 결과를 최대 5개만 받습니다. MCP 결과는 `mcp`를 통해 호출하고 Pi 도구는 세션에 additive하게 활성화합니다. 따라서 시작 시 대량 tool schema와 adapter의 direct-tool 경고가 발생하지 않습니다. `/context all`에서 active/deferred 도구 목록을 확인할 수 있습니다.
 
 ### 작업 절차 명령
 
@@ -139,11 +139,11 @@ MCP는 adapter gateway만 모델 context에 넣고 시작하며, cached MCP 도�
 
 ## 에이전트 동작과 프로젝트 지침
 
-[`.pi/SYSTEM.md`](.pi/SYSTEM.md)는 모든 프로젝트에 적용하는 공통 운용 규칙입니다. 대화 방식, 지침 우선순위, 요청 유형별 routing, 권한 경계, 증거 수준, 위임, 리뷰, 연속성과 완료 조건을 정의합니다. 특정 저장소의 명령과 도메인 규칙은 해당 저장소의 `AGENTS.md`나 skill에 둡니다.
+[`.pi/SYSTEM.md`](.pi/SYSTEM.md)는 모든 프로젝트에 적용하는 공통 운용 규칙을 정의합니다: 대화 방식, 지침 우선순위, 요청 유형별 routing, 권한 경계, 증거 수준, 위임, 리뷰, 연속성, 완료 조건. 특정 저장소의 명령과 도메인 규칙은 해당 저장소의 `AGENTS.md`나 skill에 둡니다.
 
-[`runtime-model-prompt.ts`](.pi/extensions/runtime-model-prompt.ts)는 매 turn `{{PI_CURRENT_MODEL}}`을 실제 `provider/model`로 바꿉니다. 모델을 전환하면 parent와 child 각각 다음 turn부터 자신의 모델 정보를 받습니다. API key나 OAuth 정보는 프롬프트에 넣지 않습니다.
+[`runtime-model-prompt.ts`](.pi/extensions/runtime-model-prompt.ts)는 매 turn `{{PI_CURRENT_MODEL}}`을 실제 `provider/model`로 바꿉니다. 모델을 전환하면 parent와 child 각각 다음 turn부터 자신의 모델 정보를 받습니다. Credential은 프롬프트에 포함하지 않습니다.
 
-[`runtime-writing-prompt.ts`](.pi/extensions/runtime-writing-prompt.ts)는 [`.pi/writing-policy.md`](.pi/writing-policy.md)를 main과 child 프롬프트에 추가합니다. 이 정책은 근거와 주장 강도, 자연스러운 언어 사용, 문서 구조, 영어·일본어 출력과 최종 점검을 다룹니다.
+[`runtime-writing-prompt.ts`](.pi/extensions/runtime-writing-prompt.ts)는 [`.pi/writing-policy.md`](.pi/writing-policy.md)를 main과 child 프롬프트에 추가합니다.
 
 Pi는 시작 경로의 context file을 읽습니다. `@howaboua/pi-markdown-workflows`는 에이전트가 더 깊은 경로를 읽거나 작업할 때 하위 지침을 추가합니다. 예를 들어 `packages/api/src/service.ts`에 접근하면 다음 파일을 순서대로 적용할 수 있습니다.
 
@@ -153,7 +153,7 @@ packages/api/AGENTS.md
 packages/api/src/AGENTS.md
 ```
 
-한 번 읽은 지침은 세션에 유지하며 파일이 바뀌면 다시 불러옵니다. 이 패키지는 `/workflows`, `/skills`, `/learn`과 확인 절차를 거치는 `workflows_create` 기능도 제공합니다.
+읽은 지침은 세션에 유지하며 파일이 바뀌면 다시 불러옵니다. 이 패키지는 `/workflows`, `/skills`, `/learn`과 `workflows_create`도 제공합니다.
 
 ## 서브 에이전트
 
@@ -298,7 +298,7 @@ agent-browser --version
 npm exec --yes --package pi-agent-browser-native@0.3.0 -- pi-agent-browser-doctor
 ```
 
-설치 후 페이지 열기, interactive snapshot, 클릭, 입력, screenshot과 인증된 browser profile을 사용할 수 있습니다. `ffmpeg`는 WebM 녹화에만 필요합니다. 확장의 선택형 Exa·Brave 검색은 끄고 일반 웹 검색에는 `pi-web-access`를 사용합니다.
+설치 후 페이지 열기, interactive snapshot, 클릭, 입력, screenshot과 인증된 browser profile을 사용할 수 있습니다. `ffmpeg`는 WebM 녹화에만 필요합니다. 확장의 선택형 Exa·Brave 검색은 끄고 웹 검색에는 `pi-web-access`를 사용합니다.
 
 ## 사용량 조회
 
