@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Box, matchesKey, ScrollView, Text } from "@earendil-works/pi-tui";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
@@ -333,7 +334,41 @@ export default function providerUsage(pi: ExtensionAPI): void {
 			const sections = settled.map((result, index) => result.status === "fulfilled"
 				? formatProviderUsage(result.value)
 				: `${names[index]} — unavailable (${result.reason instanceof Error ? result.reason.message : "unknown error"})`);
-			ctx.ui.notify(ctx.ui.theme.fg("text", sections.join("\n\n")), "info");
+			const report = sections.join("\n\n");
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify(ctx.ui.theme.fg("text", report), "info");
+				return;
+			}
+			await ctx.ui.custom((tui, theme, _keybindings, done) => {
+				const title = theme.fg("accent", theme.bold("Provider Usage"));
+				const component = new Box(1, 1, (text) => theme.fg("border", text));
+				component.addChild(new Text(`${title}\n${theme.fg("text", report)}\n\n${theme.fg("dim", "Press Enter or Esc to close")}`, 0, 0));
+				const scrollView = new ScrollView(component, {
+					primary: true,
+					scrollbar: "auto",
+					scrollbarStyle: (text) => theme.fg("dim", text),
+				});
+				return {
+					render: (width: number) => scrollView.render(width),
+					invalidate: () => scrollView.invalidate(),
+					handleInput: (data: string) => {
+						if (matchesKey(data, "enter") || matchesKey(data, "escape")) done(undefined);
+						else if (matchesKey(data, "up")) {
+							scrollView.scrollBy(-1);
+							tui.requestRender();
+						} else if (matchesKey(data, "down")) {
+							scrollView.scrollBy(1);
+							tui.requestRender();
+						} else if (matchesKey(data, "pageUp")) {
+							scrollView.scrollBy(-Math.max(1, scrollView.viewportHeight - 1));
+							tui.requestRender();
+						} else if (matchesKey(data, "pageDown")) {
+							scrollView.scrollBy(Math.max(1, scrollView.viewportHeight - 1));
+							tui.requestRender();
+						}
+					},
+				};
+			});
 		},
 	} satisfies Parameters<ExtensionAPI["registerCommand"]>[1];
 	pi.registerCommand("usage", command);
