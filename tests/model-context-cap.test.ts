@@ -72,3 +72,106 @@ test("compaction is requested only after the agent run settles", async () => {
 	await handlers.get("agent_settled")?.({ type: "agent_settled" }, context);
 	assert.equal(compactionRequests, 1);
 });
+
+test("caps are re-applied to models replaced by a catalog refresh", async () => {
+	const handlers = new Map<string, (event: unknown, context: unknown) => unknown>();
+	const pi = {
+		on: (event: string, handler: (event: unknown, context: unknown) => unknown) => handlers.set(event, handler),
+		registerCommand: () => {},
+	} as unknown as ExtensionAPI;
+	modelContextCap(pi);
+
+	const startupModel = model(1_000_000);
+	let registryModel = startupModel;
+	const context = {
+		cwd: process.cwd(),
+		model: startupModel,
+		modelRegistry: { getAll: () => [registryModel] },
+		getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
+		compact: () => {},
+		ui: { notify: () => {} },
+	};
+
+	await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+	assert.equal(startupModel.contextWindow, 600_000);
+
+	// A catalog refresh replaces the registry entry with an uncapped object.
+	registryModel = model(1_000_000);
+	handlers.get("before_agent_start")?.({ type: "before_agent_start" }, context);
+	assert.equal(registryModel.contextWindow, 600_000);
+
+	const selectedModel = model(1_000_000);
+	context.model = selectedModel;
+	handlers.get("model_select")?.({ type: "model_select", model: selectedModel, source: "set" }, context);
+	assert.equal(selectedModel.contextWindow, 600_000);
+});
+
+test("a replaced session cancels pending re-applications instead of crashing Pi", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const handlers = new Map<string, (event: unknown, context: unknown) => unknown>();
+	const pi = {
+		on: (event: string, handler: (event: unknown, context: unknown) => unknown) => handlers.set(event, handler),
+		registerCommand: () => {},
+	} as unknown as ExtensionAPI;
+	modelContextCap(pi);
+
+	const startupModel = model(1_000_000);
+	let stale = false;
+	let registryReads = 0;
+	const context = {
+		cwd: process.cwd(),
+		model: startupModel,
+		// Pi's real context throws from this getter once the session is replaced.
+		get modelRegistry() {
+			if (stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+			registryReads += 1;
+			return { getAll: () => [startupModel] };
+		},
+		getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
+		compact: () => {},
+		ui: { notify: () => {} },
+	};
+
+	await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+	assert.equal(startupModel.contextWindow, 600_000);
+
+	stale = true;
+	const readsBeforeStaleTick = registryReads;
+	// A timer firing against a replaced session must not escape as an uncaught
+	// exception, and the remaining retries must stop touching that context.
+	assert.doesNotThrow(() => t.mock.timers.tick(2_000));
+	assert.doesNotThrow(() => t.mock.timers.tick(20_000));
+	assert.equal(registryReads, readsBeforeStaleTick);
+});
+
+test("session shutdown stops scheduled re-applications", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const handlers = new Map<string, (event: unknown, context: unknown) => unknown>();
+	const pi = {
+		on: (event: string, handler: (event: unknown, context: unknown) => unknown) => handlers.set(event, handler),
+		registerCommand: () => {},
+	} as unknown as ExtensionAPI;
+	modelContextCap(pi);
+
+	const startupModel = model(1_000_000);
+	let registryReads = 0;
+	const context = {
+		cwd: process.cwd(),
+		model: startupModel,
+		modelRegistry: {
+			getAll: () => {
+				registryReads += 1;
+				return [startupModel];
+			},
+		},
+		getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
+		compact: () => {},
+		ui: { notify: () => {} },
+	};
+
+	await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+	const readsAfterStart = registryReads;
+	handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
+	t.mock.timers.tick(20_000);
+	assert.equal(registryReads, readsAfterStart);
+});

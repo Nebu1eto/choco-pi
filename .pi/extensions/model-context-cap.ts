@@ -21,10 +21,15 @@ type ResolvedContextPolicy = {
 	compactAt?: number;
 };
 
-const originalWindows = new Map<string, number>();
+const nativeWindows = new WeakMap<Model<Api>, number>();
 let appliedPolicies: Array<{ key: string; original: number; cap: number; compactAt?: number }> = [];
+let cachedConfig: ContextCapConfig | undefined;
 let compactionRequested = false;
 const PROFILE_CONFIG_PATH = fileURLToPath(new URL("./context-cap.json", import.meta.url));
+// The interactive startup refresh replaces registry model objects a few seconds
+// after session_start, so caps are re-applied until that refresh has settled.
+const REAPPLY_DELAYS_MS = [2_000, 5_000, 10_000, 17_000];
+const pendingReapplies = new Set<NodeJS.Timeout>();
 
 function modelKey(model: Model<Api>): string {
 	return `${model.provider}/${model.id}`;
@@ -120,41 +125,101 @@ export function shouldRequestCompaction(tokens: number | null | undefined, compa
 	return compactAt !== undefined && tokens !== null && tokens !== undefined && tokens > compactAt;
 }
 
-async function applyContextCaps(ctx: ExtensionContext): Promise<void> {
-	const config = await readConfig(ctx.cwd);
-	appliedPolicies = [];
-	compactionRequested = false;
+function cappedModels(ctx: ExtensionContext, extra?: Model<Api>): Model<Api>[] {
+	const models = ctx.modelRegistry.getAll();
+	// A model selected before a catalog refresh stays in use even after the
+	// registry replaces its entry, so cap both the registry copy and the
+	// currently active object.
+	for (const candidate of [ctx.model, extra]) {
+		if (candidate && !models.includes(candidate)) models.push(candidate);
+	}
+	return models;
+}
 
-	for (const model of ctx.modelRegistry.getAll()) {
+function applyPolicies(ctx: ExtensionContext, config: ContextCapConfig, extra?: Model<Api>): void {
+	const applied = new Map<string, { key: string; original: number; cap: number; compactAt?: number }>();
+
+	for (const model of cappedModels(ctx, extra)) {
 		const key = modelKey(model);
-		const nativeWindow = originalWindows.get(key) ?? model.contextWindow;
-		originalWindows.set(key, nativeWindow);
+		const nativeWindow = nativeWindows.get(model) ?? model.contextWindow;
+		nativeWindows.set(model, nativeWindow);
 		model.contextWindow = nativeWindow;
 
 		const policy = resolvePolicy(model, nativeWindow, config);
 		if (policy.cap !== undefined) {
 			model.contextWindow = policy.cap;
 			if (policy.cap < nativeWindow || policy.compactAt !== undefined) {
-				appliedPolicies.push({ key, original: nativeWindow, cap: policy.cap, compactAt: policy.compactAt });
+				applied.set(key, { key, original: nativeWindow, cap: policy.cap, compactAt: policy.compactAt });
 			}
 		}
+	}
+	appliedPolicies = [...applied.values()];
+}
+
+async function applyContextCaps(ctx: ExtensionContext): Promise<void> {
+	cachedConfig = await readConfig(ctx.cwd);
+	compactionRequested = false;
+	applyPolicies(ctx, cachedConfig);
+}
+
+/** Re-apply the cached policy to model objects created after the last pass. */
+function reapplyContextCaps(ctx: ExtensionContext, extra?: Model<Api>): void {
+	if (cachedConfig) applyPolicies(ctx, cachedConfig, extra);
+}
+
+/** Cancel scheduled re-applications, whose captured context is about to expire. */
+function clearPendingReapplies(): void {
+	for (const timer of pendingReapplies) clearTimeout(timer);
+	pendingReapplies.clear();
+}
+
+function scheduleReapplies(ctx: ExtensionContext): void {
+	clearPendingReapplies();
+	for (const delay of REAPPLY_DELAYS_MS) {
+		const timer = setTimeout(() => {
+			pendingReapplies.delete(timer);
+			try {
+				reapplyContextCaps(ctx);
+			} catch {
+				// Pi rejects a captured context once the session is replaced by a
+				// reload, fork, or switch. This runs on a timer, where an escaping
+				// error becomes an uncaught exception and ends the process, so stop
+				// retrying and leave the caps to the next session_start.
+				clearPendingReapplies();
+			}
+		}, delay);
+		timer.unref?.();
+		pendingReapplies.add(timer);
 	}
 }
 
 export default function modelContextCap(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
+		clearPendingReapplies();
 		try {
 			await applyContextCaps(ctx);
+			scheduleReapplies(ctx);
 		} catch (error) {
 			ctx.ui.notify(`Failed to apply context caps: ${error instanceof Error ? error.message : String(error)}`, "error");
 		}
 	});
-	pi.on("model_select", () => {
+	pi.on("session_before_switch", () => {
+		clearPendingReapplies();
+	});
+	pi.on("session_shutdown", () => {
+		clearPendingReapplies();
+	});
+	pi.on("model_select", (event, ctx) => {
+		reapplyContextCaps(ctx, event.model);
 		compactionRequested = false;
+	});
+	pi.on("before_agent_start", (_event, ctx) => {
+		reapplyContextCaps(ctx);
 	});
 	pi.on("agent_settled", (_event, ctx) => {
 		const model = ctx.model;
 		if (!model) return;
+		reapplyContextCaps(ctx);
 		const policy = appliedPolicies.find((entry) => entry.key === modelKey(model));
 		if (policy?.compactAt === undefined) return;
 		const tokens = ctx.getContextUsage()?.tokens;
@@ -177,6 +242,7 @@ export default function modelContextCap(pi: ExtensionAPI): void {
 				ctx.ui.notify("No model is currently selected.", "info");
 				return;
 			}
+			reapplyContextCaps(ctx);
 			const key = modelKey(ctx.model);
 			const applied = appliedPolicies.find((entry) => entry.key === key);
 			const detail = applied

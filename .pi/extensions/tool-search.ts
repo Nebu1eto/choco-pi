@@ -20,6 +20,44 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
 	"exec_command",
 	"write_stdin",
 	"Agent",
+	// Launching Agent inevitably leads to checking on or redirecting the
+	// background agent it started; deferring these guarantees a mid-session
+	// tool_search activation (and a full prompt-cache rewrite) in every
+	// delegating session. Provided by @tintinweb/pi-subagents; if that
+	// package is absent or renames a tool, these names simply never appear
+	// in getActiveTools() and are dropped silently (see applyLeanSurface).
+	"get_subagent_result",
+	"steer_subagent",
+	// choco-pi's cross-session tools are the same kind of coordination path:
+	// listing, reading, waiting on, and steering another conversation happen
+	// together, so deferring any of them costs a prompt-cache rewrite in the
+	// middle of the coordination they support. Provided by session-bridge.ts.
+	"session_create",
+	"session_send",
+	"session_list",
+	"session_read",
+	"session_wait",
+	// pi-lens's own mandated funnel and completion gate (see .pi/SYSTEM.md and
+	// the package's own runtime status line, which calls exactly this set its
+	// "Key tools"): symbol_search finds candidates, module_report inspects
+	// one, read_symbol/read_enclosing read a body before editing, and
+	// lsp_diagnostics/lens_diagnostics are required before declaring work
+	// done. A session that reads or edits code with pi-lens active reaches
+	// all six every time, so deferring any of them buys a mid-session
+	// prompt-cache rewrite in the middle of that mandatory path. The
+	// package's remaining tools (project_report, ast_grep_*, lsp_navigation,
+	// lens_diagnostic_mark) are pi-lens's own "situational" tools, gated
+	// behind its own pi_lens_activate_tools call even when this extension's
+	// tool_search is bypassed; they stay deferred here. Provided by pi-lens;
+	// if that package is absent or renames a tool, these names simply never
+	// appear in getActiveTools() and are dropped silently (see
+	// applyLeanSurface).
+	"symbol_search",
+	"module_report",
+	"read_symbol",
+	"read_enclosing",
+	"lsp_diagnostics",
+	"lens_diagnostics",
 	"mcp",
 	"tool_search",
 ] as const;
