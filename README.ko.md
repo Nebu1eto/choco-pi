@@ -93,6 +93,7 @@ Git으로 추적하는 [`.pi/zentui.json`](.pi/zentui.json)은 입력창의 모�
 | `/context-cap` | 현재 모델에 적용된 soft context cap 확인 |
 | `/context [all]` | prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시 |
 | `/rewind` | 선택한 턴으로 현재 대화 branch, 파일과 Git index를 함께 rewind |
+| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | 로컬 human review 화면 열기. 인자가 없으면 대상 선택기 표시 |
 | `/usage` | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시 |
 | `/apex-refresh` | Callstack Apex 모델을 즉시 다시 탐색 |
 
@@ -110,7 +111,7 @@ MCP는 adapter gateway만 모델 context에 넣고 시작하며, cached MCP 도�
 | `/task-inline <작업>` | 메인 에이전트가 직접 구현. 기본 수정 절차 |
 | `/task <작업>` | 독립 구현 단위를 계획하고 서브 에이전트로 실행 |
 | `/task-hotfix <작업>` | 메인 에이전트가 좁은 범위의 긴급 수정 수행 |
-| `/review [대상]` | fresh reviewer로 수정 없는 적대적 리뷰 수행 |
+| `/review-agent [대상]` | fresh reviewer로 수정 없는 에이전틱 적대적 리뷰 수행 |
 | `/commit [지침]` | push 없이 검증된 로컬 커밋 하나 생성 |
 
 `/task`는 서로 독립적이고 병렬 실행의 이점이 있는 구현 단위가 두 개 이상일 때만 사용합니다. 파일 수가 많다는 이유만으로 선택하지 않습니다. 직접 구현과 핫픽스 절차는 구현을 위임하지 않습니다.
@@ -177,9 +178,130 @@ packages/api/src/AGENTS.md
 
 [`file-checkpoints.ts`](.pi/extensions/file-checkpoints.ts)는 각 agent turn 시작 시 임시 Git index를 사용해 staged, unstaged, untracked 상태를 기록합니다. 실제 index는 바꾸지 않습니다. `/rewind`는 안전 checkpoint를 만든 뒤 파일과 index를 복원하고, 현재 대화 branch를 선택한 user turn 직전으로 이동해 해당 prompt를 편집기에 돌려놓습니다. 이후 대화는 Pi session tree에서 다시 접근할 수 있으며 ignored file은 건드리지 않습니다. checkpoint object는 `refs/choco-pi/checkpoints/`에 보존합니다.
 
-[`review`](.pi/skills/review/SKILL.md)와 [`.pi/review-policy.md`](.pi/review-policy.md)는 수정 없는 적대적 리뷰 절차입니다. reviewer는 정확한 diff나 revision을 받아 가정을 반증하고, 재현 가능하거나 결정적으로 추적한 finding만 보고합니다. 리뷰 요청만으로 수정 권한이 생기지 않습니다.
+[`review`](.pi/skills/review/SKILL.md)와 [`.pi/review-policy.md`](.pi/review-policy.md)는 `/review-agent`가 수행하는 수정 없는 적대적 리뷰 절차입니다. reviewer는 정확한 diff나 revision을 받아 가정을 반증하고, 재현 가능하거나 결정적으로 추적한 finding만 보고합니다. 리뷰 요청만으로 수정 권한이 생기지 않습니다.
 
 수정 절차는 시작 revision과 dirty tree를 기록하고, acceptance ledger와 checkout mutation lease를 사용합니다. 사용자가 worktree를 요청하거나 저장소 정책상 격리가 필요하지 않으면 현재 checkout에서 작업합니다.
+
+## 대화형 human code review
+
+`/review`는 session checkpoint, branch 범위 또는 GitHub pull request를 로컬 TUI에서 검토합니다.
+`/review session`은 첫 checkpoint부터 현재 working tree까지 비교하고, `/review session turn <n>`은 한 turn의 변경만 보여줍니다.
+`/review branch <base>`는 `merge-base(HEAD, base)..HEAD`에 현재 index, working tree와 untracked 변경을 더해 검토합니다.
+Target을 함께 지정하면 `merge-base(target, base)..target` 범위를 사용합니다.
+`/review pr <number>`는 pull request의 merge base부터 head까지 검토하고, `/review resume`은 저장한 기록을 다시 엽니다.
+열린 pull request는 인자 completion과 대상 선택기에 표시됩니다.
+Pull request review 준비는 diff를 받아오고 worktree를 checkout하느라 시간이 걸리므로, 화면이 열릴 때까지 프롬프트 위에 진행 중 표시가 나타납니다.
+
+화면은 로컬 risk heuristic으로 파일 순서를 정하고 generated 또는 신호가 낮은 변경을 접습니다.
+Unified·split diff, syntax highlight, 변경 줄 검색, anchor가 있는 inline comment와 reviewed hunk 상태를 지원합니다.
+Pi의 `write`, `edit`, `apply_patch` 결과도 같은 renderer를 사용합니다.
+
+`/review`는 떠 있는 대화 상자가 아니라 터미널 전체를 쓰는 리뷰 모드로 들어갑니다.
+헤더 한 줄과 입력·상태·키를 위한 하단 네 줄만 남기고 나머지를 diff에 씁니다.
+줄 커서가 diff의 한 줄을 가리키고 `Shift+↑` / `Shift+↓`로 범위를 넓힐 수 있으므로, 코멘트는 선택한 줄 또는 선택한 범위에 붙습니다.
+코멘트 입력도 화면 안의 입력 줄에서 받으므로 별도 대화 상자가 리뷰 위에 겹치지 않습니다.
+
+작성한 코멘트는 diff 안에서 anchor된 줄 바로 아래에 줄 번호 또는 범위 라벨과 함께 표시되므로, 리뷰 중에도 푸터의 개수만이 아니라 내용이 그대로 보입니다.
+접힌 hunk의 placeholder는 안에 숨은 코멘트 개수를 함께 보여 줍니다.
+
+| 키 | 동작 |
+|---|---|
+| `j` / `k`, `↑` / `↓` | 줄 커서 이동 |
+| `]` / `[` | hunk 사이 이동 |
+| `n` / `p`, `→` / `←` | 파일 사이 이동 |
+| `PageUp` / `PageDown` | 줄 커서를 한 화면씩 이동 |
+| `Shift+↑` / `Shift+↓` | 줄 범위로 선택 확장. 일반 이동은 다시 한 줄로 |
+| `Space` | 현재 파일이나 hunk 접기·펼치기 |
+| `+` / `-` | 현재 hunk 위아래의 context 더 보기·줄이기 |
+| `/`, 이후 `N` / `P` | 변경 줄 검색과 검색 결과 이동 |
+| `c` | 선택한 줄 또는 범위에 comment 작성. `Enter` 저장, `Shift+Enter` 줄바꿈, `Esc` 취소 |
+| `a` | 현재 줄에 관해 agent에게 질문. `Enter` 전송, `Shift+Enter` 줄바꿈, `Esc` 닫기 |
+| `Tab` | 입력창에서 경로 자동완성. 리뷰 화면에서는 chat 열기 |
+| `Shift+Tab` | 리뷰와 chat 사이 focus 이동 |
+| `Ctrl+O` | chat의 도구 출력 접기/펼치기. 메인 세션과 동일 |
+| `e` / `E` | 설정한 editor에서 커서가 놓인 줄 또는 프로젝트 열기 |
+| `v` | unified·split diff 전환 |
+| `m` | 현재 hunk를 reviewed로 표시 |
+| `S` | 완료 후 저장. Pull request review는 제출하고 session review는 지시문을 입력창에 배치 |
+| `q` | 제출하지 않고 저장한 뒤 닫기 |
+
+comment의 side는 커서가 놓인 줄을 따릅니다.
+추가된 줄은 `RIGHT`, 삭제된 줄과 context 줄은 `LEFT`이므로 삭제된 코드에도 그대로 코멘트를 달 수 있습니다.
+커서는 접힌 hunk 안으로 들어가지 않으며, 펼치면 그 hunk의 첫 줄로 이동합니다.
+
+두 입력창 모두 프롬프트와 같은 자동완성 provider를 쓰되 프로세스 디렉터리가 아니라 리뷰 중인 worktree를 기준으로 삼습니다.
+따라서 `Tab`은 지금 보고 있는 코드의 경로를 완성하고, `fd`가 있으면 `@`로 트리 전체를 검색합니다.
+입력창마다 히스토리가 따로 있어 comment 창에서는 이전 comment가, chat에서는 이전 질문이 `↑`로 돌아오며 서로 섞이지 않습니다.
+히스토리는 리뷰를 닫으면 사라집니다.
+
+접힌 파일과 hunk도 선택 가능한 한 줄을 차지하므로 `k`로 되돌아가 `Space`로 다시 펼칠 수 있습니다.
+하단 네 줄은 comment·chat 입력, 현재 위치와 리뷰 상태, 현재 모드에서 쓸 수 있는 키로 나뉩니다.
+
+`+`와 `-`는 현재 hunk의 위아래 context를 hunk 안 어느 줄에서든 10줄씩, 가장자리당 최대 100줄까지 드러내고 되돌립니다.
+파일 경계나 다음 hunk가 이미 드러낸 영역에 닿으면 멈춥니다.
+드러난 줄은 작업 트리가 아니라 리뷰 대상 revision에서 읽으며, diff 자체를 다시 계산하지 않는 표시용 overlay입니다.
+따라서 hunk의 정체성이 유지되어 reviewed 상태와 기존 comment anchor가 펼치고 접어도 그대로 살아 있고, 드러난 줄에도 comment를 달 수 있습니다.
+
+`a`를 누르면 커서가 놓인 줄에 관해 질문하는 side chat이 열립니다.
+chat은 리뷰 worktree를 기준으로 동작하는 별도 agent session이며, 메인 에이전트와 같은 도구와 harness를 갖습니다.
+질문 턴에는 아무것도 바꾸지 말고 리뷰어에게 답하라는 지시가 포함되고, 대화 내용은 메인 대화의 context에 들어가지 않습니다.
+질문마다 위치 정보만 전달합니다: 파일, hunk header, side, 줄 번호, 현재 줄의 텍스트입니다.
+diff 본문은 보내지 않으며, 에이전트가 이 위치를 기준으로 리뷰 worktree의 코드를 직접 읽습니다.
+`Shift+Tab`으로 두 pane 사이 focus를 옮기고 `Esc`로 chat을 닫습니다.
+터미널 폭이 120칸 미만이면 chat이 화면을 나누는 대신 diff를 대체합니다.
+chat은 메인 프롬프트의 사용 경험을 그대로 따릅니다.
+응답은 같은 Markdown renderer와 테마로 렌더링되고, 도구 호출은 메인 전사의 도구 컴포넌트로 한 줄 제목까지 접혀 표시되며 `Ctrl+O`로 전체 출력을 펼치고, `PgUp`/`PgDn`으로 transcript를 스크롤합니다.
+메인 session에서 이어받은 모델과 thinking level은 입력창 바로 아래에 표시됩니다.
+`/`를 입력하면 익숙한 command 메뉴가 인자 자동완성과 함께 열립니다.
+`/model`과 `/effort`는 chat 자신의 session만 바꾸고, `/reload`는 chat session의 extension, skill, prompt, context 파일을 다시 읽어 들이며, 그 밖의 extension command·skill·prompt template은 메인 프롬프트에서와 똑같이 실행되며, `/quit`나 `/exit`은 `q`처럼 review를 저장하고 화면을 닫습니다.
+
+Pull request에서 `S`를 누르면 전체 요약과 comment, approve, request changes, GitHub에서 확인할 pending draft 중 하나를 선택합니다.
+일반 comment는 추가 확인 없이 제출합니다.
+Approve, request changes와 pending draft는 API write 전에 제출 계획을 보여주고 명시적인 확인을 요구합니다.
+Review 도중 pull request head가 바뀌면 새 pull request의 base-to-head diff에서 anchor를 다시 찾고, 이동한 comment를 계획에 표시합니다.
+고유한 위치를 찾지 못한 comment는 이유와 함께 file-level note로 내린 뒤 확인 전에 알립니다.
+제출이 실패하거나 사용자가 취소하면 로컬 기록을 유지하고 Markdown을 Pi 입력창에 배치해 오프라인 경로로 사용할 수 있게 합니다.
+
+화면 설정은 [`.pi/extensions/review.json`](.pi/extensions/review.json)에 둡니다.
+프로젝트의 `.pi/extensions/review.json`이 전역 profile에 연결한 파일보다 우선합니다.
+`gui` mode는 graphical editor를 detached process로 실행해 Pi 터미널을 유지하고, `terminal` mode는 editor가 끝날 때까지 TUI를 넘겨줍니다.
+Command에는 `{path}`, `{line}`, `{column}`, `{dir}` token을 사용할 수 있습니다.
+
+```json
+{
+  "editor": {
+    "command": ["zed", "--wait", "{path}:{line}"],
+    "mode": "gui"
+  },
+  "highlight": {
+    "enabled": true,
+    "maxFileBytes": 512000,
+    "maxDiffLines": 20000
+  },
+  "heuristics": {
+    "riskPatterns": [],
+    "collapsePatterns": []
+  }
+}
+```
+
+Terminal editor에는 `{"command":["nvim","+{line}","{path}"],"mode":"terminal"}` 같은 설정을 사용합니다.
+Editor를 명시하지 않으면 `zed` executable이 PATH에 있을 때 Zed GUI를 우선 사용합니다.
+Zed를 찾지 못하면 `VISUAL` 또는 `EDITOR`를 terminal mode로 사용하고, 둘 다 없으면 Zed가 설치되어 있지 않더라도 Zed 기본 명령으로 최종 fallback합니다.
+셸의 `$EDITOR`는 보통 커밋 메시지나 짧은 터미널 편집을 위한 값이라서 review 화면의 editor 선택과 의도가 다르므로, `$EDITOR`가 설정되어 있어도 Zed 기본값을 조용히 덮어쓰지 않습니다.
+diff를 읽는 데는 editor가 필요 없으므로 review 화면은 이 fallback과 무관하게 항상 열리며, `e`/`E`를 눌러 실제로 editor를 실행할 때만 그 값이 쓰이고, 해당 명령을 실행할 수 없으면 그 시점에 실패를 표시합니다.
+
+Review 기록은 `~/.pi/agent/choco-pi/reviews/` 아래에서 저장소와 대상별로 나누어 보관하므로 `/review pr <number>`를 여러 날에 걸쳐 이어갈 수 있습니다.
+Pull request head는 fetch한 뒤 `~/.pi/agent/choco-pi/reviews/<repository-key>/worktrees/` 아래의 detached worktree에 고정합니다.
+Extension은 ownership token이 일치하는 worktree만 제거하며, 오류가 발생한 경우를 포함해 review 화면이 닫힐 때 항상 정리합니다.
+다시 열면 pinned SHA에서 worktree를 재구성합니다.
+
+Diff와 review 기록은 extension process 안에만 머물며 model context를 소비하지 않습니다.
+Session review를 완료하면 human comment를 Pi 입력창에 넣지만 전송하지 않으며, 사용자가 그 내용을 제출해야 model context에 들어갑니다.
+Pull request 목록 조회, resolution과 제출에는 GitHub CLI가 필요합니다.
+`gh`를 설치하고 `gh auth login`을 실행해야 하며, completion, 대상 선택기 또는 제출 단계에서 GitHub를 사용할 수 없다는 메시지가 나오면 인증 후 다시 시도합니다.
+GitHub 인증이 없어도 로컬 기록과 Markdown export는 계속 사용할 수 있습니다.
+`a`(AI에게 묻기), `t`(type 정보) 키는 이후 단계에서 추가합니다.
 
 ## 문맥과 컴팩션
 
