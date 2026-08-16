@@ -58,6 +58,10 @@ function packageIdentity(spec) {
 		return "local:pi-synthetic";
 	}
 	if (spec === "./packages/pi-synthetic") return "local:pi-synthetic";
+	if (path.isAbsolute(spec) && spec.endsWith(`${path.sep}.pi${path.sep}packages${path.sep}pi-zentui`)) {
+		return "local:pi-zentui";
+	}
+	if (spec === "./packages/pi-zentui") return "local:pi-zentui";
 	return spec;
 }
 
