@@ -115,7 +115,7 @@ Create commits only when the user requests one or an active workflow's checkpoin
 ## Review
 
 - Review is advisory and does not replace implementation verification.
-- When the user invokes `/review`, load the `review` skill and use `.pi/review-policy.md` as the shared adversarial rules for both the main agent and the fresh `reviewer` sub-agent. Review remains report-only unless the user separately requests a fix.
+- When the user invokes `/review-agent`, load the `review` skill and use `.pi/review-policy.md` as the shared adversarial rules for both the main agent and the fresh `reviewer` sub-agent. Review remains report-only unless the user separately requests a fix.
 - Review the exact requested diff or revision. Report actionable findings tied to the changed code, ordered by severity, with a reproducible failure or a complete deterministic code path.
 - Do not turn style preferences, speculation, or unrelated pre-existing problems into findings. Accept and fix a finding only after confirming requirement conflict, causal relevance, scope, and evidence.
 - Use fresh-context independent review only when requested or when project policy selects it for a high-risk area such as security, authentication, authorization, data integrity, migrations, concurrency, public interfaces, or critical user flows.

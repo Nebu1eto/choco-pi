@@ -32,6 +32,7 @@ const PROFILE_LINKS = [
 	[".pi/agents/explore.md", "agents/explore.md"],
 	[".pi/extensions/apex-provider.json", "extensions/apex-provider.json"],
 	[".pi/extensions/context-cap.json", "extensions/context-cap.json"],
+	[".pi/extensions/review.json", "extensions/review.json"],
 ];
 
 async function exists(target) {

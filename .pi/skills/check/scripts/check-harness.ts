@@ -209,6 +209,8 @@ const requiredResources = [
 	"extensions/runtime-writing-prompt.ts",
 	"extensions/model-context-cap.ts",
 	"extensions/context-cap.json",
+	"extensions/review.json",
+	"extensions/review/index.ts",
 	"extensions/model-controls.ts",
 	"extensions/session-aliases.ts",
 	"extensions/session-bridge.ts",
@@ -237,7 +239,7 @@ const requiredResources = [
 	"prompts/task.md",
 	"prompts/task-hotfix.md",
 	"prompts/commit.md",
-	"prompts/review.md",
+	"prompts/review-agent.md",
 ];
 const resourceResults = await Promise.all(requiredResources.map(async (entry) => ({
 	entry,
