@@ -1,0 +1,11 @@
+{
+  "highlight": {
+    "enabled": true,
+    "maxFileBytes": 512000,
+    "maxDiffLines": 20000
+  },
+  "heuristics": {
+    "riskPatterns": [],
+    "collapsePatterns": []
+  }
+}
