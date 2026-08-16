@@ -1,18 +1,22 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { createRequire, registerHooks, stripTypeScriptTypes } from "node:module";
-import { dirname, resolve as resolvePath } from "node:path";
+import { existsSync } from "node:fs";
 import test from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	createZentuiFrameAdapter,
 	FRAME_BORDER_ROWS,
 	FRAME_BORDER_WIDTH,
+	resolveZentuiFile,
 	type ZentuiLoader,
 	type ZentuiModules,
 } from "../.pi/extensions/review/ui/zentui-frame.ts";
+import {
+	realBoxZentuiLoader,
+	realZentuiLoader,
+	SKIP_WITHOUT_ZENTUI,
+	withEditorStyle,
+} from "./zentui-build.ts";
 
 const PLAIN_THEME = {
 	fg: (_color: string, text: string) => text,
@@ -25,72 +29,9 @@ function editorRender(width: number, ...text: string[]): string[] {
 	return [rule, ...text.map((line) => line.padEnd(width, " ")), rule];
 }
 
-/**
- * zentui ships TypeScript sources inside node_modules, which Node refuses to
- * type-strip. These hooks make the real package loadable from a test process so
- * the frame contract is checked against zentui itself, not a stand-in.
- */
-function zentuiPackageDirectory(): string | undefined {
-	const repositoryRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
-	const base = resolvePath(repositoryRoot, ".pi/npm/package.json");
-	try {
-		return dirname(createRequire(base).resolve("pi-zentui/package.json"));
-	} catch {
-		return undefined;
-	}
-}
-
-const ZENTUI_DIRECTORY = zentuiPackageDirectory();
-const SKIP_WITHOUT_ZENTUI = ZENTUI_DIRECTORY ? false : "pi-zentui is not installed";
-
-let hooksRegistered = false;
-function registerZentuiSourceHooks(packageDirectory: string): void {
-	if (hooksRegistered) return;
-	hooksRegistered = true;
-	const owned = (url: string) => url.startsWith("file:")
-		&& fileURLToPath(url).startsWith(packageDirectory);
-	registerHooks({
-		resolve: (specifier, context, nextResolve) => {
-			if (specifier.startsWith(".") && context.parentURL && owned(context.parentURL)) {
-				const target = resolvePath(dirname(fileURLToPath(context.parentURL)), specifier);
-				if (!existsSync(target) && existsSync(`${target}.ts`)) {
-					return { url: pathToFileURL(`${target}.ts`).href, shortCircuit: true };
-				}
-			}
-			return nextResolve(specifier, context);
-		},
-		load: (url, context, nextLoad) => {
-			if (url.endsWith(".ts") && owned(url)) {
-				const path = fileURLToPath(url);
-				return {
-					format: "module",
-					shortCircuit: true,
-					source: stripTypeScriptTypes(readFileSync(path, "utf8"), {
-						mode: "strip",
-						sourceUrl: url,
-					}),
-				};
-			}
-			return nextLoad(url, context);
-		},
-	});
-}
-
-/** Loads zentui's real renderer and config reader. */
-const realZentuiLoader: ZentuiLoader = async () => {
-	if (!ZENTUI_DIRECTORY) return undefined;
-	registerZentuiSourceHooks(ZENTUI_DIRECTORY);
-	const editorPath = resolvePath(ZENTUI_DIRECTORY, "extensions/zentui/minimalist-editor.ts");
-	const configPath = resolvePath(ZENTUI_DIRECTORY, "extensions/zentui/config.ts");
-	const editor = await import(pathToFileURL(editorPath).href);
-	const config = await import(pathToFileURL(configPath).href);
-	return {
-		renderMinimalistFrame: editor.renderMinimalistFrame,
-		loadConfig: config.loadConfig,
-	} as ZentuiModules;
-};
 
 type RecordedFrame = Parameters<ZentuiModules["renderMinimalistFrame"]>[0];
+type RecordedPolishedFrame = Parameters<NonNullable<ZentuiModules["renderPolishedEditorFrame"]>>[0];
 
 function recordingLoader(options: {
 	config?: Record<string, unknown>;
@@ -105,6 +46,35 @@ function recordingLoader(options: {
 		loadConfig: () => options.config ?? {},
 	});
 	return { loader, calls };
+}
+
+/**
+ * A zentui that also exports the polished renderer, which is what decorates the
+ * session prompt in every style but `minimalist`.
+ */
+function polishedRecordingLoader(options: {
+	config?: Record<string, unknown>;
+	render?: (frame: RecordedPolishedFrame) => unknown;
+} = {}): {
+	loader: ZentuiLoader;
+	polishedCalls: RecordedPolishedFrame[];
+	boxCalls: RecordedFrame[];
+} {
+	const polishedCalls: RecordedPolishedFrame[] = [];
+	const boxCalls: RecordedFrame[] = [];
+	const loader: ZentuiLoader = async () => ({
+		renderMinimalistFrame: (frame) => {
+			boxCalls.push(frame);
+			return ["boxed"];
+		},
+		renderPolishedEditorFrame: (frame) => {
+			polishedCalls.push(frame);
+			return (options.render?.(frame) ?? ["polished"]) as string[];
+		},
+		formatProviderLabel: (provider) => (provider === "anthropic" ? "Anthropic" : (provider ?? "")),
+		loadConfig: () => options.config ?? {},
+	});
+	return { loader, polishedCalls, boxCalls };
 }
 
 test("frame overhead constants describe zentui's borders", () => {
@@ -329,7 +299,7 @@ test("the default loader never throws and always yields a usable adapter", async
 test("zentui's own renderer keeps the row count and fills the requested width", {
 	skip: SKIP_WITHOUT_ZENTUI,
 }, async () => {
-	const adapter = await createZentuiFrameAdapter(realZentuiLoader);
+	const adapter = await createZentuiFrameAdapter(realBoxZentuiLoader);
 	assert.equal(adapter.available, true);
 	assert.equal(adapter.editorWidth(100), 96);
 	assert.equal(adapter.editorWidth(5), 1);
@@ -361,7 +331,7 @@ test("zentui's own renderer keeps the row count and fills the requested width", 
 test("zentui's own renderer draws the completion list inside the frame", {
 	skip: SKIP_WITHOUT_ZENTUI,
 }, async () => {
-	const adapter = await createZentuiFrameAdapter(realZentuiLoader);
+	const adapter = await createZentuiFrameAdapter(realBoxZentuiLoader);
 	for (const width of [40, 80, 120]) {
 		const editorLines = editorRender(adapter.editorWidth(width), "src/");
 		const autocompleteLines = ["→ src/auth.ts", "  src/ordinary.ts"];
@@ -388,7 +358,7 @@ test("zentui's own renderer draws the completion list inside the frame", {
 test("zentui's own renderer shows the editor's hidden-row counts", {
 	skip: SKIP_WITHOUT_ZENTUI,
 }, async () => {
-	const adapter = await createZentuiFrameAdapter(realZentuiLoader);
+	const adapter = await createZentuiFrameAdapter(realBoxZentuiLoader);
 	const framed = adapter.frame({
 		width: 60,
 		editorLines: ["─── ↑ 3 more ───", "visible text", "─── ↓ 12 more ───"],
@@ -399,4 +369,169 @@ test("zentui's own renderer shows the editor's hidden-row counts", {
 	assert.equal(framed.length, 3);
 	assert.match(framed[0]!, /^╭─ ↑ 3 more ─+╮$/);
 	assert.match(framed.at(-1)!, /^╰─ ↓ 12 more ─+ my-project ─╯$/);
+});
+
+test("the configured prompt style decides which renderer draws the input", async () => {
+	const styles = [
+		{ style: undefined, polished: 1, boxed: 0, reason: "zentui defaults to the polished prompt" },
+		{ style: "opencode", polished: 1, boxed: 0, reason: "the polished prompt is reproduced" },
+		{ style: "opencode-copy-friendly", polished: 1, boxed: 0, reason: "still a polished prompt" },
+		{ style: "minimalist", polished: 0, boxed: 1, reason: "the box is the user's choice" },
+	];
+	for (const { style, polished, boxed, reason } of styles) {
+		const config = style === undefined ? {} : { components: { editor: { style } } };
+		const { loader, polishedCalls, boxCalls } = polishedRecordingLoader({ config });
+		const adapter = await createZentuiFrameAdapter(loader);
+		adapter.frame({
+			width: 60,
+			editorLines: editorRender(58, "text"),
+			cwd: "/repo",
+			uiTheme: PLAIN_THEME,
+		});
+		assert.equal(polishedCalls.length, polished, reason);
+		assert.equal(boxCalls.length, boxed, reason);
+	}
+});
+
+test("a zentui without the polished renderer still draws the box", async () => {
+	const { loader, calls } = recordingLoader({
+		config: { components: { editor: { style: "opencode" } } },
+	});
+	const adapter = await createZentuiFrameAdapter(loader);
+	const framed = adapter.frame({
+		width: 60,
+		editorLines: editorRender(56, "text"),
+		cwd: "/repo",
+		uiTheme: PLAIN_THEME,
+	});
+
+	assert.equal(calls.length, 1, "the older export is used rather than dropping the frame");
+	assert.deepEqual(framed, ["framed"]);
+	assert.equal(adapter.editorWidth(60), 56, "box borders still cost four columns");
+});
+
+test("the polished frame is given the chat's model, provider, and effort", async () => {
+	const { loader, polishedCalls } = polishedRecordingLoader();
+	const adapter = await createZentuiFrameAdapter(loader);
+	const autocompleteLines = ["→ src/auth.ts"];
+	adapter.frame({
+		width: 80,
+		editorLines: editorRender(78, "question", "second line"),
+		autocompleteLines,
+		cwd: "/workspace/project",
+		uiTheme: PLAIN_THEME,
+		model: { label: "claude-opus-5", provider: "anthropic", thinkingLevel: "medium" },
+	});
+
+	const frame = polishedCalls[0]!;
+	assert.deepEqual(
+		frame.editorLines,
+		["question".padEnd(78, " "), "second line".padEnd(78, " ")],
+		"pi-tui's rule rows are replaced, not wrapped",
+	);
+	assert.deepEqual(frame.autocompleteLines, autocompleteLines);
+	assert.equal(frame.width, 80);
+	assert.equal(frame.modelMeta.modelLabel, "claude-opus-5");
+	assert.equal(frame.modelMeta.providerLabel, "Anthropic", "the provider id becomes its display name");
+	assert.equal(frame.thinkingLevel, "medium");
+});
+
+test("an input with no session behind it names no model", async () => {
+	const { loader, polishedCalls } = polishedRecordingLoader();
+	const adapter = await createZentuiFrameAdapter(loader);
+	adapter.frame({
+		width: 60,
+		editorLines: editorRender(58, "draft comment"),
+		cwd: "/repo",
+		uiTheme: PLAIN_THEME,
+	});
+
+	const frame = polishedCalls[0]!;
+	assert.equal(frame.modelMeta.modelLabel, "");
+	assert.equal(frame.modelMeta.providerLabel, "");
+	assert.equal(frame.thinkingLevel, undefined);
+});
+
+test("the box keeps naming the model when the user chose it", async () => {
+	const { loader, calls } = recordingLoader({
+		config: { components: { editor: { style: "minimalist" } } },
+	});
+	const adapter = await createZentuiFrameAdapter(loader);
+	adapter.frame({
+		width: 60,
+		editorLines: editorRender(56, "question"),
+		cwd: "/repo",
+		uiTheme: PLAIN_THEME,
+		model: { label: "claude-opus-5", provider: "anthropic", thinkingLevel: "medium" },
+	});
+
+	assert.deepEqual(calls[0]?.metadata, {
+		cwd: "/repo",
+		projectRoot: "/repo",
+		modelLabel: "claude-opus-5",
+		thinkingLevel: "medium",
+	});
+});
+
+test("the polished styles reserve their own rail width, not the box's borders", async () => {
+	const cases = [
+		{ config: {}, width: 1, reason: "the default rail icon is empty, leaving its space" },
+		{ config: { icons: { rail: "▌" } }, width: 2, reason: "the rail icon plus its space" },
+		{
+			config: {
+				components: { editor: { style: "opencode-copy-friendly" } },
+				icons: { editorPrompt: "❯" },
+			},
+			width: 2,
+			reason: "the copy-friendly style prefixes the prompt icon instead",
+		},
+		{
+			config: { components: { editor: { style: "opencode-copy-friendly" } } },
+			width: 0,
+			reason: "no prompt icon, no reserved columns",
+		},
+	];
+	for (const { config, width, reason } of cases) {
+		const { loader } = polishedRecordingLoader({ config });
+		const adapter = await createZentuiFrameAdapter(loader);
+		assert.equal(adapter.editorWidth(100), 100 - width, reason);
+	}
+});
+
+test("zentui's own polished renderer reproduces the session prompt", {
+	skip: SKIP_WITHOUT_ZENTUI,
+}, async () => {
+	const adapter = await createZentuiFrameAdapter(withEditorStyle(realZentuiLoader, "opencode"));
+	assert.equal(adapter.available, true);
+
+	for (const width of [40, 80, 120]) {
+		const editorLines = editorRender(adapter.editorWidth(width), "question");
+		const framed = adapter.frame({
+			width,
+			editorLines,
+			cwd: "/workspace/my-project",
+			uiTheme: PLAIN_THEME,
+			model: { label: "claude-opus-5", provider: "anthropic", thinkingLevel: "medium" },
+		}).map(stripTerminalSequences);
+		const label = `width ${width}`;
+
+		assert.equal(framed.length, editorLines.length + 2, `${label} adds the metadata rows`);
+		assert.match(framed[0]!, /^─+$/, `${label} opens with a rule, not a box corner`);
+		assert.match(framed[1]!, /question/, `${label} keeps the typed text`);
+		assert.doesNotMatch(framed[2]!, /\w/, `${label} a blank row separates the metadata`);
+		assert.match(framed[3]!, /claude-opus-5/, `${label} the model is named under the input`);
+		assert.match(framed[3]!, /Anthropic/, `${label} the provider is named under the input`);
+		assert.match(framed[3]!, /medium/, `${label} the effort is named under the input`);
+		assert.match(framed.at(-1)!, /^─+$/, `${label} closes with a rule`);
+		for (const line of framed) {
+			assert.ok(visibleWidth(line) <= width, `${label} no row overflows`);
+		}
+	}
+});
+
+test("a zentui pinned by path is found like an installed one", () => {
+	const manifest = resolveZentuiFile("package.json");
+	assert.equal(typeof manifest, "string", "the pinned fork in .pi/packages must resolve");
+	assert.match(manifest!, /pi-zentui[/\\]package\.json$/);
+	assert.equal(existsSync(manifest!), true);
 });

@@ -2,10 +2,18 @@
  * Optional zentui chrome for the review view's input editors.
  *
  * pi-tui's `Editor` keeps every editing behaviour and renders its own two rule
- * rows around the text. zentui's `renderMinimalistFrame` is a pure function, so
- * this adapter hands it the text rows and lets it draw those two rows instead:
- * the input looks like the prompt the user types into for the rest of the
- * session, and the rendered row count does not change.
+ * rows around the text. zentui exposes its editor decoration as pure functions,
+ * so this adapter hands them the text rows and lets zentui draw the chrome
+ * instead: the input looks like the prompt the user types into for the rest of
+ * the session.
+ *
+ * zentui decorates the session prompt in the style the user configured, so this
+ * adapter follows the same setting. `opencode` and `opencode-copy-friendly` go
+ * through `renderPolishedEditorFrame`, which draws the rails and the model,
+ * provider, and thinking row under the text; `minimalist` goes through
+ * `renderMinimalistFrame`, which draws a box with the same labels on its
+ * borders. The review passes the chat's model and effort so those labels read
+ * the same way the main prompt's do.
  *
  * An open completion list is passed separately. zentui draws it inside the
  * frame through its own `renderFramedAutocompleteRows`, below the text and
@@ -14,13 +22,25 @@
  * zentui is an optional package. Missing installation, changed exports, an
  * unreadable config, or a throwing renderer all degrade to the unframed editor,
  * with the completion rows kept below it exactly as pi-tui emitted them.
+ * A zentui too old to export the polished renderer keeps the boxed frame.
  */
 
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { parseEditorRule } from "./review-input.ts";
+
+/** Model and effort the metadata row names, as the review knows them. */
+export type FrameModel = {
+	/** Model id without its provider, e.g. `claude-opus-5`. */
+	label: string;
+	/** Raw provider id, e.g. `anthropic`; zentui prints its display name. */
+	provider?: string;
+	thinkingLevel?: string;
+};
 
 export type FrameOptions = {
 	width: number;
@@ -31,6 +51,8 @@ export type FrameOptions = {
 	/** Working directory the frame labels; the review root of the diff being read. */
 	cwd: string;
 	uiTheme: Theme;
+	/** Omitted while no session backs the input; the row then names no model. */
+	model?: FrameModel;
 };
 
 export type ZentuiFrameAdapter = {
@@ -64,6 +86,15 @@ type MinimalistEditorMetadata = {
 
 type ZentuiConfig = Record<string, unknown>;
 
+/** zentui's editor metadata fields, as `renderPolishedEditorFrame` reads them. */
+type PolishedEditorMeta = {
+	modelLabel: string;
+	modelId?: string;
+	modelName?: string;
+	providerLabel: string;
+	sessionName?: string;
+};
+
 /**
  * zentui's shape as this adapter uses it. It is declared locally and checked at
  * runtime: zentui's own sources are never part of this project's type program.
@@ -80,6 +111,19 @@ export type ZentuiModules = {
 		config: ZentuiConfig;
 	}) => string[];
 	loadConfig: () => ZentuiConfig;
+	/** Absent in a zentui older than the polished frame export. */
+	renderPolishedEditorFrame?: (options: {
+		width: number;
+		editorLines: string[];
+		autocompleteLines?: string[];
+		viewport?: { above?: string; below?: string };
+		uiTheme: Theme;
+		config: ZentuiConfig;
+		modelMeta: PolishedEditorMeta;
+		thinkingLevel?: string;
+	}) => string[];
+	/** Turns a provider id into the display name the prompt shows. */
+	formatProviderLabel?: (provider: string | undefined) => string;
 };
 
 /** Frame border consumes 4 columns (│ plus a space on each side). */
@@ -95,6 +139,8 @@ export const FRAME_BORDER_ROWS = 2;
 const ZENTUI_PACKAGE = "pi-zentui";
 const ZENTUI_MINIMALIST_EDITOR = "extensions/zentui/minimalist-editor.ts";
 const ZENTUI_CONFIG = "extensions/zentui/config.ts";
+const ZENTUI_UI = "extensions/zentui/ui.ts";
+const ZENTUI_FORMAT = "extensions/zentui/format.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -129,7 +175,25 @@ function resolutionBases(): string[] {
 	}
 }
 
-function resolveZentuiFile(subpath: string): string | undefined {
+/**
+ * Directories a fork pinned by path can sit in. A `./packages/pi-zentui` entry
+ * in Pi's settings is loaded from that directory and never installed under the
+ * package name, so name resolution alone would miss the very copy the session
+ * is running.
+ */
+function localForkCandidates(subpath: string): string[] {
+	const candidates: string[] = [];
+	let directory = dirname(fileURLToPath(import.meta.url));
+	for (;;) {
+		candidates.push(join(directory, "packages", ZENTUI_PACKAGE, subpath));
+		const parent = dirname(directory);
+		if (parent === directory) return candidates;
+		directory = parent;
+	}
+}
+
+/** Locate one zentui source file, whether it is installed or pinned by path. */
+export function resolveZentuiFile(subpath: string): string | undefined {
 	const specifier = `${ZENTUI_PACKAGE}/${subpath}`;
 	for (const base of resolutionBases()) {
 		try {
@@ -137,6 +201,9 @@ function resolveZentuiFile(subpath: string): string | undefined {
 		} catch {
 			// Not installed relative to this base; try the next one.
 		}
+	}
+	for (const candidate of localForkCandidates(subpath)) {
+		if (existsSync(candidate)) return candidate;
 	}
 	return undefined;
 }
@@ -159,32 +226,88 @@ function validateModules(candidate: unknown): ZentuiModules | undefined {
 	if (typeof renderMinimalistFrame !== "function" || typeof loadConfig !== "function") {
 		return undefined;
 	}
+	const renderPolishedEditorFrame = candidate["renderPolishedEditorFrame"];
+	const formatProviderLabel = candidate["formatProviderLabel"];
 	return {
 		renderMinimalistFrame: renderMinimalistFrame as ZentuiModules["renderMinimalistFrame"],
 		loadConfig: loadConfig as ZentuiModules["loadConfig"],
+		...(typeof renderPolishedEditorFrame === "function"
+			? { renderPolishedEditorFrame: renderPolishedEditorFrame as NonNullable<ZentuiModules["renderPolishedEditorFrame"]> }
+			: {}),
+		...(typeof formatProviderLabel === "function"
+			? { formatProviderLabel: formatProviderLabel as NonNullable<ZentuiModules["formatProviderLabel"]> }
+			: {}),
 	};
+}
+
+/** Import a zentui module, treating an absent or unloadable file as absent. */
+async function importOptional(subpath: string): Promise<Record<string, unknown> | undefined> {
+	const path = resolveZentuiFile(subpath);
+	if (!path) return undefined;
+	try {
+		const loaded = await importAtRuntime(path);
+		return isRecord(loaded) ? loaded : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 const defaultLoader: ZentuiLoader = async () => {
 	const editorPath = resolveZentuiFile(ZENTUI_MINIMALIST_EDITOR);
 	const configPath = resolveZentuiFile(ZENTUI_CONFIG);
 	if (!editorPath || !configPath) return undefined;
-	const [editor, config] = await Promise.all([
+	const [editor, config, ui, format] = await Promise.all([
 		importAtRuntime(editorPath),
 		importAtRuntime(configPath),
+		importOptional(ZENTUI_UI),
+		importOptional(ZENTUI_FORMAT),
 	]);
 	if (!isRecord(editor) || !isRecord(config)) return undefined;
 	return validateModules({
 		renderMinimalistFrame: editor["renderMinimalistFrame"],
 		loadConfig: config["loadConfig"],
+		renderPolishedEditorFrame: ui?.["renderPolishedEditorFrame"],
+		formatProviderLabel: format?.["formatProviderLabel"],
 	});
 };
 
-/** Honour the user's zentui setting for the "↑ n more" labels; default on. */
-function viewportIndicatorsEnabled(config: ZentuiConfig): boolean {
+/** The editor section of a zentui config, or an empty record when absent. */
+function editorConfig(config: ZentuiConfig): Record<string, unknown> {
 	const components = config["components"];
 	const editor = isRecord(components) ? components["editor"] : undefined;
-	const enabled = isRecord(editor) ? editor["viewportIndicators"] : undefined;
+	return isRecord(editor) ? editor : {};
+}
+
+/**
+ * The style zentui decorates the session prompt with. `opencode` is zentui's
+ * own default, so an absent setting must decorate the review the same way.
+ */
+function editorStyle(config: ZentuiConfig): string {
+	const style = editorConfig(config)["style"];
+	return typeof style === "string" ? style : "opencode";
+}
+
+/**
+ * Columns the polished styles spend on chrome left of the text: the rail icon
+ * plus its trailing space, or the prompt icon for the copy-friendly style,
+ * which moves the rail below the text and prefixes the first row instead.
+ */
+function polishedRailWidth(config: ZentuiConfig): number {
+	const icons = config["icons"];
+	const icon = (name: string): string => {
+		const value = isRecord(icons) ? icons[name] : undefined;
+		return typeof value === "string" ? value : "";
+	};
+	if (editorStyle(config) === "opencode-copy-friendly") {
+		const prompt = icon("editorPrompt");
+		return prompt ? visibleWidth(prompt) + 1 : 0;
+	}
+	return visibleWidth(icon("rail")) + 1;
+}
+
+/** Honour the user's zentui setting for the "↑ n more" labels; default on. */
+function viewportIndicatorsEnabled(config: ZentuiConfig): boolean {
+	const enabled = editorConfig(config)["viewportIndicators"];
 	return typeof enabled === "boolean" ? enabled : true;
 }
 
@@ -217,12 +340,21 @@ export async function createZentuiFrameAdapter(
 	}
 	const viewportIndicators = viewportIndicatorsEnabled(config);
 	const modules = zentui;
+	// The polished styles are how zentui decorates the session prompt unless the
+	// user chose the box, so they are what the review must reproduce. A zentui
+	// without that export can still draw the box.
+	const polished = editorStyle(config) !== "minimalist" && modules.renderPolishedEditorFrame
+		? { render: modules.renderPolishedEditorFrame, railWidth: polishedRailWidth(config) }
+		: undefined;
 
 	return {
 		available: true,
-		editorWidth: (width) => (width > FRAME_BORDER_WIDTH ? width - FRAME_BORDER_WIDTH : width),
+		editorWidth: (width) => {
+			const chrome = polished ? polished.railWidth : FRAME_BORDER_WIDTH;
+			return width > chrome ? width - chrome : width;
+		},
 		frame: (options) => {
-			const { width, editorLines, autocompleteLines, cwd, uiTheme } = options;
+			const { width, editorLines, autocompleteLines, cwd, uiTheme, model } = options;
 			if (width <= FRAME_BORDER_WIDTH || editorLines.length < FRAME_BORDER_ROWS) {
 				return unframed(options);
 			}
@@ -235,10 +367,30 @@ export async function createZentuiFrameAdapter(
 					...(below.count ? { below: below.count } : {}),
 				}
 				: {};
+			const text = editorLines.slice(1, -1);
 			try {
+				if (polished) {
+					const framed = polished.render({
+						width,
+						editorLines: text,
+						...(autocompleteLines?.length ? { autocompleteLines } : {}),
+						...(above.count || below.count ? { viewport } : {}),
+						uiTheme,
+						config,
+						modelMeta: {
+							modelLabel: model?.label ?? "",
+							...(model?.label ? { modelId: model.label, modelName: model.label } : {}),
+							providerLabel: model?.provider
+								? modules.formatProviderLabel?.(model.provider) ?? model.provider
+								: "",
+						},
+						...(model?.thinkingLevel ? { thinkingLevel: model.thinkingLevel } : {}),
+					});
+					return isStringArray(framed) && framed.length > 0 ? framed : unframed(options);
+				}
 				const framed = modules.renderMinimalistFrame({
 					width,
-					editorLines: editorLines.slice(1, -1),
+					editorLines: text,
 					...(autocompleteLines?.length ? { autocompleteLines } : {}),
 					...(above.count || below.count ? { viewport } : {}),
 					// Empty: zentui reads this only to flag its shell mode, which
@@ -246,7 +398,12 @@ export async function createZentuiFrameAdapter(
 					inputText: "",
 					// The review root is both the directory shown and the project
 					// the diff belongs to, so every path style resolves to it.
-					metadata: { cwd, projectRoot: cwd },
+					metadata: {
+						cwd,
+						projectRoot: cwd,
+						...(model?.label ? { modelLabel: model.label } : {}),
+						...(model?.thinkingLevel ? { thinkingLevel: model.thinkingLevel } : {}),
+					},
 					uiTheme,
 					config,
 				});
