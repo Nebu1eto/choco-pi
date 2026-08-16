@@ -12,7 +12,7 @@ Work in the main agent. Do not spawn implementation agents. A fresh read-only re
 1. Run `check`, plus repository gates required by applicable `AGENTS.md`.
 2. Read the full path-scoped instruction chain.
 3. Record the current `HEAD` as `review_base`, inspect the dirty tree, and preserve unrelated work.
-4. Resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill and run `node <resolved-script> acquire --cwd "$PWD" --owner "$PI_SESSION_ID"`. Stop on a conflicting owner; never reclaim it from an apparently live session.
+4. Resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill and run `node <resolved-script> acquire --cwd "$PWD"`. The script identifies the calling session itself and reclaims a lease only from a provably dead holder. Stop on any other conflicting owner and never clear the lease directory by hand.
 5. Define the objective, exclusions, affected paths, authority boundaries, and an acceptance ledger. Assign each behavior `regression_test`, `direct_check`, or `runtime_e2e` before editing.
 
 ## 2. Implement and validate
@@ -33,4 +33,4 @@ Run each required `runtime_e2e` item against that exact `HEAD` unless the user e
 
 Use a fresh read-only reviewer only when required. Give it the exact `review_base..HEAD` range, applicable policy, and the minimum evidence needed for the selected review mode. Verify findings yourself before changing code.
 
-After owned processes stop, release the lease with `node <resolved-script> release --cwd "$PWD" --owner "$PI_SESSION_ID"` only when the workflow completes or is deliberately abandoned. If retaining it for recoverable blocked work, report that ownership. Finish only when every required acceptance row is `pass` on the current state or explicitly user-`waived`.
+After owned processes stop, release the lease with `node <resolved-script> release --cwd "$PWD"` only when the workflow completes or is deliberately abandoned. If retaining it for recoverable blocked work, report that ownership. Finish only when every required acceptance row is `pass` on the current state or explicitly user-`waived`.
