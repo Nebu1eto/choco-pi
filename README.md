@@ -93,6 +93,7 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 | `/context-cap` | Show the soft context cap applied to the active model |
 | `/context [all]` | Show prompt, active/deferred tools, MCP, agents, context files, skills, messages, and autocompact buffer usage |
 | `/rewind` | Rewind the active conversation branch, files, and Git index to a selected turn |
+| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | Open the local human review view; no argument opens the target picker |
 | `/usage`, `/quota` | Show Claude Code, OpenAI Codex, and Synthetic usage in one view |
 | `/apex-refresh` | Rediscover Callstack Apex models immediately |
 
@@ -110,7 +111,7 @@ MCP starts with only the adapter gateway in model context; cached MCP tools are 
 | `/task-inline <task>` | Implement directly in the main agent; this is the default modifying workflow |
 | `/task <task>` | Plan and execute independent implementation units with sub-agents |
 | `/task-hotfix <task>` | Apply a narrow urgent fix directly in the main agent |
-| `/review [target]` | Run a report-only adversarial review with a fresh reviewer |
+| `/review-agent [target]` | Run a report-only agentic adversarial review with a fresh reviewer |
 | `/commit [guidance]` | Create one verified local commit without pushing |
 
 `/task` is reserved for work with at least two independent units that benefit from parallel execution. File count alone does not justify it. Direct and hotfix workflows do not delegate implementation.
@@ -177,9 +178,82 @@ All custom roles disable ambient child extensions, so declared native tools cann
 
 [`file-checkpoints.ts`](.pi/extensions/file-checkpoints.ts) records staged, unstaged, and untracked state at the start of each agent turn through a temporary Git index. It does not modify the real index. `/rewind` creates a safety checkpoint, restores files and the index, then moves the active conversation branch to before the selected user turn and returns that prompt to the editor. Later conversation remains available through Pi's session tree; ignored files are unchanged. Checkpoint objects are retained under `refs/choco-pi/checkpoints/`.
 
-[`review`](.pi/skills/review/SKILL.md) and [`.pi/review-policy.md`](.pi/review-policy.md) define a report-only adversarial review. The reviewer receives an exact diff or revision, tries to disprove its assumptions, and reports only reproducible or decisively traced findings. A review does not authorize fixes.
+[`review`](.pi/skills/review/SKILL.md) and [`.pi/review-policy.md`](.pi/review-policy.md) define the `/review-agent` report-only adversarial review. The reviewer receives an exact diff or revision, tries to disprove its assumptions, and reports only reproducible or decisively traced findings. A review does not authorize fixes.
 
 Modifying workflows record the starting revision, inspect the dirty tree, maintain an acceptance ledger, and acquire a checkout mutation lease. Work stays in the current checkout unless the user requests a worktree or isolation is required by repository policy.
+
+## Interactive human code review
+
+`/review` opens a local TUI for session checkpoints, a branch range, or a GitHub pull request. `/review session` compares the first available checkpoint with the current working tree, while `/review session turn <n>` isolates one turn. `/review branch <base>` reviews `merge-base(HEAD, base)..HEAD` plus current index, working-tree, and untracked changes. Supplying a target reviews `merge-base(target, base)..target`. `/review pr <number>` reviews the pull request's merge-base-to-head diff, and `/review resume` opens saved records. Open pull requests appear in argument completion and the target picker.
+
+Preparing a pull request review fetches its diff and checks out a worktree, so a progress line appears above the prompt until the view opens.
+
+The view orders files by local risk heuristics, folds generated or low-signal changes, renders unified or split diffs with syntax highlighting, searches changed lines, collects anchored inline comments, and tracks reviewed hunks. Pi also uses the same renderer for `write`, `edit`, and `apply_patch` tool output.
+
+`/review` takes over the terminal as a full-screen mode rather than opening a floating dialog, reserving a header row and four rows at the bottom for input, state, and keys. A line cursor addresses one diff line, and `Shift+↑` / `Shift+↓` extend it into a range, so a comment attaches to the selected line or the selected range and nothing else. Comment text is typed in the view's own input; the review never stacks a separate dialog over itself.
+
+A committed comment renders in the diff itself, beneath its anchored line with its line or range label, so written remarks stay visible while reviewing instead of surviving only as a count in the footer. A folded hunk's placeholder reports how many comments it hides.
+
+| Key | Action |
+|---|---|
+| `j` / `k`, `↑` / `↓` | Move the line cursor |
+| `]` / `[` | Move between hunks |
+| `n` / `p`, `→` / `←` | Move between files |
+| `PageUp` / `PageDown` | Move the line cursor by a page |
+| `Shift+↑` / `Shift+↓` | Extend the selection to a line range; any plain move collapses it |
+| `Space` | Fold or expand the current file or hunk |
+| `+` / `-` | Reveal or hide context above and below the current hunk |
+| `/`, then `N` / `P` | Search changed lines and move between matches |
+| `c` | Comment on the selected line or range; `Enter` submits, `Shift+Enter` inserts a newline, `Esc` discards |
+| `a` | Ask an agent about the current line; `Enter` asks, `Shift+Enter` inserts a newline, `Esc` closes |
+| `Tab` | Complete a path in an input; from the review, open the chat |
+| `Shift+Tab` | Move focus between the review and the chat |
+| `Ctrl+O` | Toggle tool output in the chat, as in the main session |
+| `e` / `E` | Open the line under the cursor or the project in the configured editor |
+| `v` | Toggle unified and split diff modes |
+| `m` | Mark the current hunk reviewed |
+| `S` | Finish and save; submit a pull request review or place a session instruction in the input editor |
+| `q` | Save and close without submitting |
+
+A range stays inside one hunk and one side, because a GitHub comment range cannot span either. Extension stops at a side boundary rather than skipping the intervening rows, so the highlighted rows and the submitted range are always the same lines. A comment inherits the side of the line it sits on: added lines comment on `RIGHT`, removed and context lines on `LEFT`, so remarking on deleted code works as expected. The cursor never enters a folded hunk; expanding one moves it to that hunk's first line.
+
+Both inputs carry the prompt's own completion provider, rooted at the worktree under review rather than the process directory, so `Tab` completes a path from the code being reviewed and `@` searches the tree when `fd` is available. Each input keeps its own history, so `↑` recalls earlier comments in the comment box and earlier questions in the chat, and neither replays the other. History lives only as long as the review is open.
+
+A folded file or hunk still occupies one selectable row, so `k` returns to it and `Space` expands it again. The bottom four rows are split between the comment or chat input, the current position and review state, and the keys available in the current mode.
+
+`+` and `-` reveal and hide surrounding context above and below the current hunk from any line in it, ten lines at a time up to a hundred per edge, stopping at the file's boundary or before context already revealed from the next hunk. Revealed lines are read from the reviewed revision, never the working tree, and are a display overlay: the diff under review keeps its hunk identities, so reviewed state and existing comment anchors survive expanding and collapsing. Comments can be placed on revealed lines.
+
+`a` opens a side chat about the line under the cursor. The chat runs as a separate agent session rooted at the review's worktree, with the same toolset and harness as the main agent; questions instruct it to answer as a reviewer without changing anything, and nothing it discusses enters the main conversation's context. Each question carries only the location — file, hunk header, side, line, and the focused line's text — never the diff body; the agent reads the code itself from the review worktree. `Shift+Tab` moves focus between the panes and `Esc` closes the chat. Below 120 columns the chat replaces the diff instead of splitting the screen.
+
+The chat mirrors the main prompt's experience. Replies render through the same Markdown renderer and theme, tool calls collapse to a one-line title through the main transcript's own tool component with `Ctrl+O` toggling full output, and `PgUp`/`PgDn` scroll the transcript, and the model and thinking level — inherited from the main session — sit right under the input. A leading `/` opens the familiar command menu with argument completion: `/model` and `/effort` switch the chat's own session, `/reload` reloads its extensions, skills, prompts, and context files, the session's other extension commands, skills, and prompt templates run exactly as they would at the main prompt, and `/quit` or `/exit` saves the review and leaves, like `q`.
+
+For a pull request, `S` asks for an overall summary and one outcome: comment, approve, request changes, or a pending draft to inspect on GitHub. A plain comment submits without another confirmation. Approvals, change requests, and pending drafts show the submission plan and require explicit confirmation before any API write. If the pull request head moved, the plan relocates anchored comments against the new pull request base-to-head diff and reports every relocation; comments that no longer map uniquely are demoted to file-level notes with the reason shown before confirmation. A failed or declined submission keeps the local record and places its Markdown in Pi's input editor as an offline path.
+
+Configure the view in [`.pi/extensions/review.json`](.pi/extensions/review.json). A project-local `.pi/extensions/review.json` takes precedence over the linked global file. `gui` mode starts a detached graphical editor while Pi keeps the terminal; `terminal` mode releases the TUI until the editor exits. Command tokens support `{path}`, `{line}`, `{column}`, and `{dir}`.
+
+```json
+{
+  "editor": {
+    "command": ["zed", "--wait", "{path}:{line}"],
+    "mode": "gui"
+  },
+  "highlight": {
+    "enabled": true,
+    "maxFileBytes": 512000,
+    "maxDiffLines": 20000
+  },
+  "heuristics": {
+    "riskPatterns": [],
+    "collapsePatterns": []
+  }
+}
+```
+
+For a terminal editor, use a command such as `{"command":["nvim","+{line}","{path}"],"mode":"terminal"}`. Without an explicit `editor`, Zed in GUI mode wins when the `zed` executable is on `PATH`; otherwise `VISUAL` or `EDITOR` selects terminal mode; otherwise the view falls back to the Zed default command even if Zed is not installed. This keeps `$EDITOR` from silently overriding the documented Zed default, since a shell's `$EDITOR` is usually set for commit messages and quick terminal edits, not for reading a code review. The diff view always opens regardless of editor availability; only pressing `e` or `E` needs a working editor, and it reports a failure if the resolved command cannot actually spawn.
+
+Review records live under `~/.pi/agent/choco-pi/reviews/`, separated by repository and target, so `/review pr <number>` can resume across days. Pull request heads are fetched and checked out as detached, pinned worktrees under `~/.pi/agent/choco-pi/reviews/<repository-key>/worktrees/`. The extension removes only worktrees carrying its ownership token and disposes them whenever the review view closes, including after an error; reopening reconstructs the worktree from the pinned SHA.
+
+The diff and records stay inside the extension process and consume no model context. Finishing a session review places the human comments in Pi's input editor but does not send them; model context changes only if the user submits that text. Pull request listing, resolution, and submission require the GitHub CLI: install `gh`, run `gh auth login`, and retry if completion, the picker, or submission reports that GitHub is unavailable. Local records and Markdown export remain available without GitHub authentication. The `a` (ask AI) and `t` (type information) keys arrive in a later phase.
 
 ## Context and compaction
 
