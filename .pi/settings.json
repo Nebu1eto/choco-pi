@@ -1,12 +1,12 @@
 {
   "packages": [
     "./packages/pi-synthetic",
-    "npm:@tintinweb/pi-subagents@0.15.0",
+    "npm:@tintinweb/pi-subagents@0.16.1",
     "npm:pi-codex-goal@0.2.0",
-    "npm:pi-mcp-adapter@2.21.2",
-    "npm:pi-lens@3.8.74",
-    "npm:@howaboua/pi-codex-conversion@3.0.12",
-    "npm:pi-web-access@0.20.0",
+    "npm:pi-mcp-adapter@2.26.0",
+    "npm:pi-lens@4.0.0",
+    "npm:@howaboua/pi-codex-conversion@3.0.15",
+    "npm:pi-web-access@0.23.0",
     "npm:pi-btw@0.4.1",
     "./packages/pi-zentui",
     "npm:pi-agent-browser-native@0.3.0",
