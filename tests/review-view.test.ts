@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire, registerHooks, stripTypeScriptTypes } from "node:module";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { join } from "node:path";
 import test, { after } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth, type Component } from "@earendil-works/pi-tui";
@@ -44,10 +42,12 @@ import {
 	reviewViewHeights,
 	type ReviewViewHost,
 } from "../.pi/extensions/review/ui/review-view.ts";
+import { type ZentuiLoader } from "../.pi/extensions/review/ui/zentui-frame.ts";
 import {
-	type ZentuiLoader,
-	type ZentuiModules,
-} from "../.pi/extensions/review/ui/zentui-frame.ts";
+	realBoxZentuiLoader as realZentuiLoader,
+	SKIP_WITHOUT_ZENTUI,
+	unavailableZentuiLoader,
+} from "./zentui-build.ts";
 import {
 	beginCommentDraft,
 	commitCommentDraft,
@@ -1305,10 +1305,16 @@ test("the chat input completes /model and /effort like the main prompt", async (
 	await mounted.close();
 });
 
-test("model and effort sit under the input like the main footer, and /model and /effort switch them", async () => {
+test("without zentui the keys row carries model and effort, and /model and /effort switch them", async () => {
 	const fakeChat = new FakeReviewChat();
 	fakeChat.status = { model: "anthropic/claude-fable-5", thinkingLevel: "high" };
-	const mounted = await mountReview({ terminalRows: 24, createReviewChat: () => fakeChat });
+	const mounted = await mountReview({
+		terminalRows: 24,
+		createReviewChat: () => fakeChat,
+		// zentui's frame names them under the input; the plain editor cannot,
+		// so the keys row is where they survive.
+		zentuiLoader: unavailableZentuiLoader,
+	});
 	// No diff line is selected on purpose: commands must not need context.
 	mounted.component.handleInput?.("a");
 	let rendered = mounted.component.render(140).map(stripTerminalSequences);
@@ -1515,74 +1521,6 @@ test("chat splits at 120 columns and replaces the diff below that width", async 
 	await mounted.close();
 });
 
-/**
- * zentui ships TypeScript sources inside node_modules, which Node refuses to
- * type-strip. These hooks make the real package loadable from a test process so
- * the view is checked against zentui's own frame. The same helper lives in
- * tests/review-zentui-frame.test.ts; node:test isolates files, so importing it
- * across test files would run that file's tests a second time.
- */
-function zentuiPackageDirectory(): string | undefined {
-	const repositoryRoot = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
-	try {
-		const base = resolvePath(repositoryRoot, ".pi/npm/package.json");
-		return dirname(createRequire(base).resolve("pi-zentui/package.json"));
-	} catch {
-		return undefined;
-	}
-}
-
-const ZENTUI_DIRECTORY = zentuiPackageDirectory();
-const SKIP_WITHOUT_ZENTUI = ZENTUI_DIRECTORY ? false : "pi-zentui is not installed";
-
-let hooksRegistered = false;
-function registerZentuiSourceHooks(packageDirectory: string): void {
-	if (hooksRegistered) return;
-	hooksRegistered = true;
-	const owned = (url: string) => url.startsWith("file:")
-		&& fileURLToPath(url).startsWith(packageDirectory);
-	registerHooks({
-		resolve: (specifier, context, nextResolve) => {
-			if (specifier.startsWith(".") && context.parentURL && owned(context.parentURL)) {
-				const target = resolvePath(dirname(fileURLToPath(context.parentURL)), specifier);
-				if (!existsSync(target) && existsSync(`${target}.ts`)) {
-					return { url: pathToFileURL(`${target}.ts`).href, shortCircuit: true };
-				}
-			}
-			return nextResolve(specifier, context);
-		},
-		load: (url, context, nextLoad) => {
-			if (url.endsWith(".ts") && owned(url)) {
-				return {
-					format: "module",
-					shortCircuit: true,
-					source: stripTypeScriptTypes(readFileSync(fileURLToPath(url), "utf8"), {
-						mode: "strip",
-						sourceUrl: url,
-					}),
-				};
-			}
-			return nextLoad(url, context);
-		},
-	});
-}
-
-const realZentuiLoader: ZentuiLoader = async () => {
-	if (!ZENTUI_DIRECTORY) return undefined;
-	registerZentuiSourceHooks(ZENTUI_DIRECTORY);
-	const editor = await import(pathToFileURL(
-		resolvePath(ZENTUI_DIRECTORY, "extensions/zentui/minimalist-editor.ts"),
-	).href);
-	const config = await import(pathToFileURL(
-		resolvePath(ZENTUI_DIRECTORY, "extensions/zentui/config.ts"),
-	).href);
-	return {
-		renderMinimalistFrame: editor.renderMinimalistFrame,
-		loadConfig: config.loadConfig,
-	} as ZentuiModules;
-};
-
-const unavailableZentuiLoader: ZentuiLoader = async () => undefined;
 
 /** Rows the view devotes to the diff body: everything above the status row. */
 function bodyRowCount(lines: string[]): number {
@@ -1590,6 +1528,43 @@ function bodyRowCount(lines: string[]): number {
 	assert.notEqual(status, -1, "status row is rendered");
 	return status - 1;
 }
+
+test("the framed input names the chat's model instead of repeating it in the keys row", async () => {
+	const frames: { modelLabel?: string; thinkingLevel?: string }[] = [];
+	const loader: ZentuiLoader = async () => ({
+		renderMinimalistFrame: (frame) => {
+			frames.push({
+				...(frame.metadata.modelLabel === undefined ? {} : { modelLabel: frame.metadata.modelLabel }),
+				...(frame.metadata.thinkingLevel === undefined
+					? {}
+					: { thinkingLevel: frame.metadata.thinkingLevel }),
+			});
+			return ["┌ framed ┐"];
+		},
+		loadConfig: () => ({ components: { editor: { style: "minimalist" } } }),
+	});
+	const fakeChat = new FakeReviewChat();
+	fakeChat.status = { model: "anthropic/claude-fable-5", thinkingLevel: "high" };
+	const mounted = await mountReview({
+		terminalRows: 24,
+		createReviewChat: () => fakeChat,
+		zentuiLoader: loader,
+	});
+
+	mounted.component.handleInput?.("a");
+	const rendered = mounted.component.render(140).map(stripTerminalSequences);
+
+	assert.deepEqual(
+		frames.at(-1),
+		{ modelLabel: "claude-fable-5", thinkingLevel: "high" },
+		"the frame is told the model without its provider prefix, and the effort",
+	);
+	assert.doesNotMatch(
+		rendered.join("\n"),
+		/claude-fable-5 · high/,
+		"the keys row does not repeat what the input already names",
+	);
+});
 
 test("the framed comment input fits the reserved rows at every width", {
 	skip: SKIP_WITHOUT_ZENTUI,
@@ -1800,17 +1775,24 @@ test("accepting a completion writes the review root's path into the comment", as
 
 test("each input recalls its own history and never the other's", async () => {
 	const fakeChat = new FakeReviewChat();
-	const mounted = await mountReview({ terminalRows: 24, createReviewChat: () => fakeChat });
+	const mounted = await mountReview({
+		terminalRows: 24,
+		createReviewChat: () => fakeChat,
+		// History is the subject here, so the input keeps pi-tui's own chrome
+		// rather than depending on the reader's zentui configuration.
+		zentuiLoader: unavailableZentuiLoader,
+	});
 	const read = () => mounted.component.render(120).map(stripTerminalSequences).join("\n");
 	const COMMENT = "this cast hides a null";
 	const QUESTION = "why is this cast safe";
 	// The committed comment legitimately renders inline in the diff, so the
-	// history assertions must read the framed input rows alone.
+	// history assertions must read the input rows alone. They sit between the
+	// status row and the two keymap rows the view always closes with.
 	const inputRows = (text: string) => {
 		const lines = text.split("\n");
-		const top = lines.findIndex((line) => line.startsWith("╭"));
-		if (top === -1) return "";
-		return lines.slice(top, lines.findIndex((line) => line.startsWith("╰")) + 1).join("\n");
+		const status = lines.findIndex((line) => /\d+\/\d+ files/.test(line));
+		if (status === -1) return "";
+		return lines.slice(status + 1, -2).join("\n");
 	};
 
 	mounted.component.handleInput?.(" ");

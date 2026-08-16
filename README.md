@@ -190,7 +190,7 @@ Preparing a pull request review fetches its diff and checks out a worktree, so a
 
 The view orders files by local risk heuristics, folds generated or low-signal changes, renders unified or split diffs with syntax highlighting, searches changed lines, collects anchored inline comments, and tracks reviewed hunks. Pi also uses the same renderer for `write`, `edit`, and `apply_patch` tool output.
 
-`/review` takes over the terminal as a full-screen mode rather than opening a floating dialog, reserving a header row and four rows at the bottom for input, state, and keys. A line cursor addresses one diff line, and `Shift+↑` / `Shift+↓` extend it into a range, so a comment attaches to the selected line or the selected range and nothing else. Comment text is typed in the view's own input; the review never stacks a separate dialog over itself.
+`/review` takes over the terminal as a full-screen mode rather than opening a floating dialog, reserving a header row and, at the bottom, the review state, the input, and two key rows. A line cursor addresses one diff line, and `Shift+↑` / `Shift+↓` extend it into a range, so a comment attaches to the selected line or the selected range and nothing else. Comment text is typed in the view's own input; the review never stacks a separate dialog over itself.
 
 A committed comment renders in the diff itself, beneath its anchored line with its line or range label, so written remarks stay visible while reviewing instead of surviving only as a count in the footer. A folded hunk's placeholder reports how many comments it hides.
 
@@ -218,6 +218,8 @@ A committed comment renders in the diff itself, beneath its anchored line with i
 A range stays inside one hunk and one side, because a GitHub comment range cannot span either. Extension stops at a side boundary rather than skipping the intervening rows, so the highlighted rows and the submitted range are always the same lines. A comment inherits the side of the line it sits on: added lines comment on `RIGHT`, removed and context lines on `LEFT`, so remarking on deleted code works as expected. The cursor never enters a folded hunk; expanding one moves it to that hunk's first line.
 
 Both inputs carry the prompt's own completion provider, rooted at the worktree under review rather than the process directory, so `Tab` completes a path from the code being reviewed and `@` searches the tree when `fd` is available. Each input keeps its own history, so `↑` recalls earlier comments in the comment box and earlier questions in the chat, and neither replays the other. History lives only as long as the review is open.
+
+`pi-zentui` draws both inputs in the style it is configured to draw the session prompt with, whether that is the rails and the model, provider, and effort row of the `opencode` styles or the `minimalist` box, and the completion list renders inside that chrome. Without zentui the inputs keep pi-tui's plain editor and the key row carries the model and effort instead.
 
 A folded file or hunk still occupies one selectable row, so `k` returns to it and `Space` expands it again. The bottom four rows are split between the comment or chat input, the current position and review state, and the keys available in the current mode.
 

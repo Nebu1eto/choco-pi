@@ -1079,11 +1079,27 @@ export async function openReviewView(options: OpenReviewViewOptions): Promise<Re
 					let inputLines: string[];
 					let hintLineOne: string;
 					let hintLineTwo: string;
+					// zentui's frame names the model, provider, and effort under the
+					// text, exactly as it does for the session prompt. The chat is
+					// the session behind both boxes, so both name it.
+					const frameModel = (() => {
+						const model = chat?.status.model ?? options.chatModel;
+						const thinkingLevel = chat?.status.thinkingLevel ?? options.chatThinkingLevel;
+						if (!model && !thinkingLevel) return undefined;
+						const [provider, ...rest] = (model ?? "").split("/");
+						const identifier = rest.join("/");
+						return {
+							label: identifier || model || "",
+							...(identifier && provider ? { provider } : {}),
+							...(thinkingLevel ? { thinkingLevel } : {}),
+						};
+					})();
 					const framedInput = (input: ReviewInput): string[] => frameAdapter.frame({
 						width: contentWidth,
 						...input.render(frameAdapter.editorWidth(contentWidth)),
 						cwd: options.reviewRoot,
 						uiTheme: theme,
+						...(frameModel ? { model: frameModel } : {}),
 					});
 					if (state.commentDraft) {
 						const draftPosition = state.commentDraft.position;
@@ -1101,11 +1117,10 @@ export async function openReviewView(options: OpenReviewViewOptions): Promise<Re
 						hintLineOne = `j/k or ↑/↓ line · Shift+↑/↓ select lines · [/] hunk · n/p or →/← file · PgUp/PgDn page${chatOpen ? " · Tab focus chat · Ctrl+O tool output" : ""}`;
 						hintLineTwo = "+/- hunk context · Space fold · c comment · a ask · / search · N/P match · v mode · m reviewed · e/E editor · S finish · q save";
 					}
-					// The main prompt names the model and effort directly under its
-					// input, so the review does the same whenever the chat is open,
-					// right-aligned on the row below the input box.
+					// Without zentui the input has no metadata row, so the keys row
+					// carries the model and effort instead of dropping them.
 					const chatModelStatus = (() => {
-						if (!chatOpen || !chat) return undefined;
+						if (frameAdapter.available || !chatOpen || !chat) return undefined;
 						const text = [chat.status.model?.split("/").at(-1), chat.status.thinkingLevel]
 							.filter((part): part is string => Boolean(part))
 							.join(" · ");
