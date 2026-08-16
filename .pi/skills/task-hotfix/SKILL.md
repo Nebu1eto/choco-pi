@@ -11,7 +11,7 @@ Keep implementation in the main agent. Do not spawn implementation agents. A fre
 
 1. Run `check`; do not wait for optional capabilities unrelated to the incident.
 2. Read the incident evidence and applicable instructions.
-3. Record `review_base`, inspect the dirty tree, resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill, and run `node <resolved-script> acquire --cwd "$PWD" --owner "$PI_SESSION_ID"`.
+3. Record `review_base`, inspect the dirty tree, resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill, and run `node <resolved-script> acquire --cwd "$PWD"`. The script identifies the calling session itself; stop on a conflicting owner it does not report as dead.
 4. Reproduce the failure through the narrowest reliable path and identify the most likely root cause.
 5. Record success criteria, explicit exclusions, authority boundaries, and an acceptance ledger using `regression_test`, `direct_check`, or `runtime_e2e`.
 
@@ -28,4 +28,4 @@ Unless the user explicitly excluded a commit, load and follow the harness `commi
 
 ## 4. Review and report
 
-Use fresh read-only review only when required, and independently validate any finding. After owned runtime cleanup, release the lease with `node <resolved-script> release --cwd "$PWD" --owner "$PI_SESSION_ID"`. Report the root cause, minimal patch, exact gates and runtime observations, final revision, waivers, and remaining risk.
+Use fresh read-only review only when required, and independently validate any finding. After owned runtime cleanup, release the lease with `node <resolved-script> release --cwd "$PWD"`. Report the root cause, minimal patch, exact gates and runtime observations, final revision, waivers, and remaining risk.

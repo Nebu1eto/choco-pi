@@ -11,7 +11,7 @@ The main agent owns scope, authority, orchestration, integration, validation, co
 
 1. Run `check`, including sub-agent discovery, plus repository gates required by applicable `AGENTS.md`.
 2. Read path-scoped instructions. Record objective, exclusions, scope, constraints, success criteria, and authority boundaries.
-3. Record `review_base`, inspect the dirty tree, resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill, and run `node <resolved-script> acquire --cwd "$PWD" --owner "$PI_SESSION_ID"`.
+3. Record `review_base`, inspect the dirty tree, resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill, and run `node <resolved-script> acquire --cwd "$PWD"`. The script identifies the calling session itself; stop on a conflicting owner it does not report as dead.
 4. Create the acceptance ledger with a verification mode for every required behavior.
 5. If this workflow was automatically selected but safe parallel execution or sub-agents are unavailable, fall back to `task-inline`. If the user explicitly selected it, report the limitation and request direction.
 
@@ -39,4 +39,4 @@ Unless the user explicitly excluded a commit, load and follow the harness `commi
 
 Select review depth by risk. Use one fresh `reviewer` only when the user or project risk policy requires independent review. Give it the exact immutable range and applicable requirements, but not claimed safety, expected findings, or previous conclusions. Findings remain advisory until the main agent reproduces or proves them.
 
-Use `handoff` only when it materially improves a complex delivery. Stop all children and owned runtimes, then release the lease with `node <resolved-script> release --cwd "$PWD" --owner "$PI_SESSION_ID"`. Report exact final revision, acceptance results, review disposition, waivers, and remaining risk. Never treat a worker report as completion proof.
+Use `handoff` only when it materially improves a complex delivery. Stop all children and owned runtimes, then release the lease with `node <resolved-script> release --cwd "$PWD"`. Report exact final revision, acceptance results, review disposition, waivers, and remaining risk. Never treat a worker report as completion proof.
