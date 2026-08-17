@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import providerUsage from "../.pi/extensions/provider-usage.ts";
+import statusCommands, { STATUS_TABS } from "../.pi/extensions/status-commands.ts";
+
+test("status tabs expose Status, Usage, and Settings in order", () => {
+	assert.deepEqual(STATUS_TABS.map((tab) => tab.title), ["Status", "Usage", "Settings"]);
+});
 
 test("registers /quota as a white-text alias for /usage", async () => {
 	const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>();
-	providerUsage({
+	statusCommands({
 		registerCommand: (name: string, command: { handler: (args: string, ctx: any) => Promise<void> }) => {
 			commands.set(name, command);
 		},
+		getThinkingLevel: () => "medium",
 	} as any);
 
 	assert.equal(commands.get("quota"), commands.get("usage"));

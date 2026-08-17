@@ -2,9 +2,8 @@ import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { VERSION } from "@earendil-works/pi-coding-agent";
-import { Box, matchesKey, ScrollView, Text } from "@earendil-works/pi-tui";
 
 type ModelRecord = { baseUrl?: unknown; name?: unknown };
 
@@ -272,13 +271,18 @@ export function summarizeStatusRows(
 	});
 
 	const skills = (ctx.getSystemPromptOptions().skills ?? []).map((skill) => skill.name);
-	rows.push({
-		label: "Skills",
-		value: skills.length === 0 ? "none loaded" : `${skills.length} loaded (${skills.join(", ")})`,
-	});
+	const skillValue = skills.length === 0
+		? "none loaded"
+		: `${skills.length} loaded\n  ${skills.join(", ")}`;
+	rows.push({ label: "Skills", value: skillValue });
 
 	const agents = agentLabels(path.join(agentDir(), "agents"));
-	if (agents.length > 0) rows.push({ label: "Agent roles", value: agents.join(" | ") });
+	rows.push({
+		label: "Agent roles",
+		value: agents.length === 0
+			? "none defined"
+			: `${agents.length} defined\n  ${agents.join("\n  ")}`,
+	});
 
 	const bridge = bridgeSummary(cwd);
 	if (bridge) rows.push({ label: "Live Pi sessions", value: bridge });
@@ -321,53 +325,69 @@ export function formatStatus(
 	style?: { fg(color: string, text: string): string },
 ): string {
 	const width = rows.reduce((max, row) => Math.max(max, row.label.length + 1), 0);
-	return rows.map((row) => {
+	return rows.flatMap((row) => {
+		const [first, ...rest] = row.value.split("\n");
 		const label = `${row.label}:`.padEnd(width);
-		return `${style ? style.fg("muted", label) : label} ${row.value}`;
+		return [`${style ? style.fg("muted", label) : label} ${first}`, ...rest];
 	}).join("\n");
 }
 
-export default function sessionStatus(pi: ExtensionAPI): void {
-	pi.registerCommand("status", {
-		description: "Show session, model, context, MCP, and environment status",
-		handler: async (_args, ctx) => {
-			const rows = summarizeStatusRows(ctx, pi.getThinkingLevel());
-			if (ctx.mode !== "tui") {
-				ctx.ui.notify(ctx.ui.theme.fg("text", formatStatus(rows)), "info");
-				return;
-			}
-			await ctx.ui.custom((tui, theme, _keybindings, done) => {
-				const title = theme.fg("accent", theme.bold("choco-pi Status"));
-				const body = formatStatus(rows, theme);
-				const hint = theme.fg("dim", "Press Enter or Esc to close");
-				const component = new Box(1, 1, (text) => theme.fg("border", text));
-				component.addChild(new Text(`${title}\n\n${body}\n\n${hint}`, 0, 0));
-				const scrollView = new ScrollView(component, {
-					primary: true,
-					scrollbar: "auto",
-					scrollbarStyle: (text) => theme.fg("dim", text),
-				});
-				return {
-					render: (width: number) => scrollView.render(width),
-					invalidate: () => scrollView.invalidate(),
-					handleInput: (data: string) => {
-						if (matchesKey(data, "enter") || matchesKey(data, "escape")) done(undefined);
-						else if (matchesKey(data, "up")) {
-							scrollView.scrollBy(-1);
-							tui.requestRender();
-						} else if (matchesKey(data, "down")) {
-							scrollView.scrollBy(1);
-							tui.requestRender();
-						} else if (matchesKey(data, "pageUp")) {
-							scrollView.scrollBy(-Math.max(1, scrollView.viewportHeight - 1));
-							tui.requestRender();
-						} else if (matchesKey(data, "pageDown")) {
-							scrollView.scrollBy(Math.max(1, scrollView.viewportHeight - 1));
-							tui.requestRender();
-						}
-					},
-				};
-			});
-		},
+export function summarizeSettingsRows(
+	ctx: Pick<ExtensionCommandContext, "cwd">,
+): StatusRow[] {
+	const cwd = ctx.cwd;
+	const rows: StatusRow[] = [];
+
+	const agentSettingsPath = path.join(agentDir(), "settings.json");
+	const projectSettingsPath = path.join(cwd, ".pi", "settings.json");
+	rows.push({ label: "Agent settings", value: describePath(agentSettingsPath, cwd) });
+	rows.push({
+		label: "Project settings",
+		value: existsSync(projectSettingsPath) ? describePath(projectSettingsPath, cwd) : "none",
 	});
+
+	const agent = readJsonFile(agentSettingsPath);
+	const project = readJsonFile(projectSettingsPath);
+	const compaction = mergeCompaction(agent, project);
+	rows.push({ label: "Compaction", value: compaction });
+
+	const tuiMode = stringSetting(project, "tuiMode") ?? stringSetting(agent, "tuiMode") ?? "fullscreen";
+	rows.push({ label: "TUI mode", value: tuiMode });
+	rows.push({ label: "Theme", value: themeLabel(cwd) });
+
+	const agentsDir = path.join(agentDir(), "agents");
+	rows.push({ label: "Agents directory", value: describePath(agentsDir, cwd) });
+	const extensionsDir = path.join(agentDir(), "extensions");
+	rows.push({
+		label: "Extensions",
+		value: `${describePath(extensionsDir, cwd)}${existsSync(path.join(cwd, ".pi", "extensions")) ? ` | project: ${displayPath(path.join(cwd, ".pi", "extensions"), cwd)}` : ""}`,
+	});
+
+	const zentuiPath = path.join(agentDir(), "zentui.json");
+	rows.push({
+		label: "Zentui preferences",
+		value: existsSync(zentuiPath) ? describePath(zentuiPath, cwd) : "defaults",
+	});
+
+	return rows;
 }
+
+function stringSetting(raw: unknown, key: string): string | undefined {
+	return isRecord(raw) && typeof raw[key] === "string" ? raw[key] as string : undefined;
+}
+
+function mergeCompaction(agent: unknown, project: unknown): string {
+	const settings = [agent, project]
+		.map((raw) => isRecord(raw) && isRecord(raw.compaction) ? raw.compaction : undefined)
+		.filter((entry): entry is Record<string, unknown> => entry !== undefined);
+	const resolved = settings.reduce<Record<string, unknown>>((acc, entry) => ({ ...acc, ...entry }), {});
+	if (resolved.enabled === false) return "disabled";
+	const parts: string[] = ["enabled"];
+	if (typeof resolved.reserveTokens === "number") parts.push(`reserve ${resolved.reserveTokens.toLocaleString()}`);
+	if (typeof resolved.keepRecentTokens === "number") parts.push(`keep recent ${resolved.keepRecentTokens.toLocaleString()}`);
+	return parts.join(" · ");
+}
+
+// Command registration lives in status-commands.ts; this module only builds
+// the Status and Settings tab bodies.
+export default function sessionStatus(): void {}

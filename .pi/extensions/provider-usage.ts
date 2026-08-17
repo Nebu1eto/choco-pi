@@ -1,5 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Box, matchesKey, ScrollView, Text } from "@earendil-works/pi-tui";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
@@ -324,53 +323,17 @@ export function formatProviderUsage(result: ProviderUsage): string {
 	return [heading, ...windows].join("\n");
 }
 
-export default function providerUsage(pi: ExtensionAPI): void {
-	const command = {
-		description: "Show connected Claude Code, OpenAI Codex, and Synthetic usage",
-		handler: async (_args, ctx) => {
-			const requests = [claudeUsage(ctx), codexUsage(ctx), syntheticUsage(ctx)];
-			const settled = await Promise.allSettled(requests);
-			const names = ["Claude Code", "OpenAI Codex", "Synthetic"];
-			const sections = settled.map((result, index) => result.status === "fulfilled"
-				? formatProviderUsage(result.value)
-				: `${names[index]} — unavailable (${result.reason instanceof Error ? result.reason.message : "unknown error"})`);
-			const report = sections.join("\n\n");
-			if (ctx.mode !== "tui") {
-				ctx.ui.notify(ctx.ui.theme.fg("text", report), "info");
-				return;
-			}
-			await ctx.ui.custom((tui, theme, _keybindings, done) => {
-				const title = theme.fg("accent", theme.bold("Provider Usage"));
-				const component = new Box(1, 1, (text) => theme.fg("border", text));
-				component.addChild(new Text(`${title}\n${theme.fg("text", report)}\n\n${theme.fg("dim", "Press Enter or Esc to close")}`, 0, 0));
-				const scrollView = new ScrollView(component, {
-					primary: true,
-					scrollbar: "auto",
-					scrollbarStyle: (text) => theme.fg("dim", text),
-				});
-				return {
-					render: (width: number) => scrollView.render(width),
-					invalidate: () => scrollView.invalidate(),
-					handleInput: (data: string) => {
-						if (matchesKey(data, "enter") || matchesKey(data, "escape")) done(undefined);
-						else if (matchesKey(data, "up")) {
-							scrollView.scrollBy(-1);
-							tui.requestRender();
-						} else if (matchesKey(data, "down")) {
-							scrollView.scrollBy(1);
-							tui.requestRender();
-						} else if (matchesKey(data, "pageUp")) {
-							scrollView.scrollBy(-Math.max(1, scrollView.viewportHeight - 1));
-							tui.requestRender();
-						} else if (matchesKey(data, "pageDown")) {
-							scrollView.scrollBy(Math.max(1, scrollView.viewportHeight - 1));
-							tui.requestRender();
-						}
-					},
-				};
-			});
-		},
-	} satisfies Parameters<ExtensionAPI["registerCommand"]>[1];
-	pi.registerCommand("usage", command);
-	pi.registerCommand("quota", command);
+const PROVIDER_NAMES = ["Claude Code", "OpenAI Codex", "Synthetic"] as const;
+
+export async function usageReport(ctx: ExtensionContext): Promise<string> {
+	const requests = [claudeUsage(ctx), codexUsage(ctx), syntheticUsage(ctx)];
+	const settled = await Promise.allSettled(requests);
+	return settled.map((result, index) => result.status === "fulfilled"
+		? formatProviderUsage(result.value)
+		: `${PROVIDER_NAMES[index]} — unavailable (${result.reason instanceof Error ? result.reason.message : "unknown error"})`)
+		.join("\n\n");
 }
+
+// Command registration lives in status-commands.ts; this module only fetches
+// and formats the Usage tab body.
+export default function providerUsage(): void {}

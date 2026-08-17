@@ -88,14 +88,15 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 | `/exit` | Gracefully exit Pi; alias for `/quit` |
 | `/delete` | Permanently delete the current Pi session record and exit after confirmation |
 | `/clear` | Start a fresh session while preserving the current session history; alias for `/new` |
-| `/status` | Show Pi version, session identity, model and provider, context window, context files, skills, MCP servers, agent roles, and theme |
+| `/status` | Show Pi version, session identity, model and provider, context window, context files, skills, MCP servers, agent roles, and theme; opens the Status/Usage/Settings tab view |
+| `/settings` | Show settings sources, compaction, theme, and extension directories; opens the same tab view |
 | `/effort [level]` | Select or directly set a reasoning effort supported by the active model; values complete after a space |
 | `/fast [on\|off\|status]` | Control OpenAI Codex Fast mode; no argument toggles the current state |
 | `/context-cap` | Show the soft context cap applied to the active model |
 | `/context [all]` | Show prompt, active/deferred tools, MCP, agents, context files, skills, messages, and autocompact buffer usage |
 | `/rewind` | Rewind the active conversation branch, files, and Git index to a selected turn |
 | `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | Open the local human review view; no argument opens the target picker |
-| `/usage`, `/quota` | Show Claude Code, OpenAI Codex, and Synthetic usage in one view |
+| `/usage`, `/quota` | Show Claude Code, OpenAI Codex, and Synthetic usage in one view; opens the same tab view |
 | `/apex-refresh` | Rediscover Callstack Apex models immediately |
 
 Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can consume usage or API credit faster than the standard tier. The hidden llama.cpp provider remains available, but choco-pi removes `/llama` from the visible command list and command path.

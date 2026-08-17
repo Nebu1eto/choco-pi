@@ -3,16 +3,36 @@ import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import sessionStatus, {
+import {
 	agentLabels,
 	describePath,
 	formatStatus,
 	lookupModelRecord,
 	normalizePackageKey,
 	parseAgentFrontmatter,
+	summarizeSettingsRows,
 	summarizeStatusRows,
 } from "../.pi/extensions/session-status.ts";
+
+test("formatStatus renders multi-line values with continuation lines", () => {
+	const rendered = formatStatus([
+		{ label: "Skills", value: "2 loaded\n  check, review" },
+		{ label: "Theme", value: "nord-dark" },
+	]);
+	const lines = rendered.split("\n");
+	assert.match(lines[0], /^Skills:\s+2 loaded$/);
+	assert.equal(lines[1], "  check, review");
+	assert.match(lines[2], /^Theme:\s+nord-dark$/);
+});
+
+test("summarizeSettingsRows reports sources and effective toggles", () => {
+	const rows = summarizeSettingsRows({ cwd: process.cwd() });
+	const rendered = formatStatus(rows);
+	assert.match(rendered, /Agent settings:/);
+	assert.match(rendered, /Project settings:/);
+	assert.match(rendered, /Compaction:\s+(enabled|disabled)/);
+	assert.match(rendered, /Theme:\s+\S+/);
+});
 
 test("normalizePackageKey strips protocol and version while keeping scopes", () => {
 	assert.equal(normalizePackageKey("npm:@tintinweb/pi-subagents@0.16.1"), "@tintinweb/pi-subagents");
@@ -103,16 +123,4 @@ test("summarizeStatusRows includes session and model essentials", async (context
 	assert.match(rendered, /Reasoning effort:\s+medium/);
 	assert.match(rendered, /Context files:\s+none/);
 	assert.match(rendered, /Skills:\s+none loaded/);
-});
-
-test("/status command is registered with a TUI-safe handler", () => {
-	let captured: { description?: string } | undefined;
-	const pi = {
-		registerCommand: (name: string, command: { description?: string }) => {
-			if (name === "status") captured = command;
-		},
-		getThinkingLevel: () => "medium",
-	} as unknown as ExtensionAPI;
-	sessionStatus(pi);
-	assert.ok(captured?.description?.length);
 });

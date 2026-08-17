@@ -88,14 +88,15 @@ Git으로 추적하는 [`.pi/zentui.json`](.pi/zentui.json)은 입력창의 모�
 | `/exit` | Pi를 정상 종료. `/quit` 별칭 |
 | `/delete` | 확인 후 현재 Pi 세션 기록을 영구 삭제하고 종료 |
 | `/clear` | 현재 세션 기록을 보존하고 새 세션 시작. `/new` 별칭 |
-| `/status` | Pi 버전, 세션 식별자, 모델과 공급자, context window, context file, skill, MCP 서버, agent 역할, theme 표시 |
+| `/status` | Pi 버전, 세션 식별자, 모델과 공급자, context window, context file, skill, MCP 서버, agent 역할, theme 표시. Status/Usage/Settings 탭 뷰로 열림 |
+| `/settings` | 설정 출처, compaction, theme, extension 디렉터리 표시. 같은 탭 뷰로 열림 |
 | `/effort [level]` | 현재 모델이 지원하는 reasoning effort 선택 또는 직접 지정. 공백 뒤에는 가능한 값 자동 완성 |
 | `/fast [on\|off\|status]` | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환 |
 | `/context-cap` | 현재 모델에 적용된 soft context cap 확인 |
 | `/context [all]` | prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시 |
 | `/rewind` | 선택한 턴으로 현재 대화 branch, 파일과 Git index를 함께 rewind |
 | `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | 로컬 human review 화면 열기. 인자가 없으면 대상 선택기 표시 |
-| `/usage` | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시 |
+| `/usage` | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시. 같은 탭 뷰로 열림 |
 | `/apex-refresh` | Callstack Apex 모델을 즉시 다시 탐색 |
 
 Fast mode는 OpenAI Codex 요청에만 `service_tier: "priority"`를 추가합니다. Standard보다 사용량이나 API credit을 빠르게 소비할 수 있습니다. Pi에 숨겨진 llama.cpp 공급자는 유지하지만 `/llama` 명령은 choco-pi의 명령 목록과 실행 경로에서 제거합니다.
