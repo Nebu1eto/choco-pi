@@ -88,6 +88,7 @@ Git으로 추적하는 [`.pi/zentui.json`](.pi/zentui.json)은 입력창의 모�
 | `/exit` | Pi를 정상 종료. `/quit` 별칭 |
 | `/delete` | 확인 후 현재 Pi 세션 기록을 영구 삭제하고 종료 |
 | `/clear` | 현재 세션 기록을 보존하고 새 세션 시작. `/new` 별칭 |
+| `/status` | Pi 버전, 세션 식별자, 모델과 공급자, context window, context file, skill, MCP 서버, agent 역할, theme 표시 |
 | `/effort [level]` | 현재 모델이 지원하는 reasoning effort 선택 또는 직접 지정. 공백 뒤에는 가능한 값 자동 완성 |
 | `/fast [on\|off\|status]` | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환 |
 | `/context-cap` | 현재 모델에 적용된 soft context cap 확인 |
