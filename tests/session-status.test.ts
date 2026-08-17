@@ -10,7 +10,6 @@ import {
 	lookupModelRecord,
 	normalizePackageKey,
 	parseAgentFrontmatter,
-	summarizeSettingsRows,
 	summarizeStatusRows,
 } from "../.pi/extensions/session-status.ts";
 
@@ -23,15 +22,6 @@ test("formatStatus renders multi-line values with continuation lines", () => {
 	assert.match(lines[0], /^Skills:\s+2 loaded$/);
 	assert.equal(lines[1], "  check, review");
 	assert.match(lines[2], /^Theme:\s+nord-dark$/);
-});
-
-test("summarizeSettingsRows reports sources and effective toggles", () => {
-	const rows = summarizeSettingsRows({ cwd: process.cwd() });
-	const rendered = formatStatus(rows);
-	assert.match(rendered, /Agent settings:/);
-	assert.match(rendered, /Project settings:/);
-	assert.match(rendered, /Compaction:\s+(enabled|disabled)/);
-	assert.match(rendered, /Theme:\s+\S+/);
 });
 
 test("normalizePackageKey strips protocol and version while keeping scopes", () => {

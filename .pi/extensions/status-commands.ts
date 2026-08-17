@@ -1,14 +1,13 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, matchesKey, ScrollView, Text } from "@earendil-works/pi-tui";
-import { formatStatus, summarizeSettingsRows, summarizeStatusRows } from "./session-status.ts";
+import { formatStatus, summarizeStatusRows } from "./session-status.ts";
 import { usageReport } from "./provider-usage.ts";
 
-export type StatusTabId = "status" | "usage" | "settings";
+export type StatusTabId = "status" | "usage";
 
 export const STATUS_TABS: ReadonlyArray<{ id: StatusTabId; title: string }> = [
 	{ id: "status", title: "Status" },
 	{ id: "usage", title: "Usage" },
-	{ id: "settings", title: "Settings" },
 ];
 
 export function tabBody(
@@ -17,12 +16,11 @@ export function tabBody(
 	id: StatusTabId,
 	styled: boolean,
 ): Promise<string> {
-	if (id === "usage") return usageReport(ctx);
 	const style = styled ? ctx.ui.theme : undefined;
-	const body = id === "status"
-		? formatStatus(summarizeStatusRows(ctx, thinkingLevel), style)
-		: formatStatus(summarizeSettingsRows(ctx), style);
-	return Promise.resolve(body);
+	if (id === "usage") {
+		return usageReport(ctx).then((report) => style ? style.fg("text", report) : report);
+	}
+	return Promise.resolve(formatStatus(summarizeStatusRows(ctx, thinkingLevel), style));
 }
 
 async function showTab(
@@ -119,17 +117,13 @@ async function showTab(
 
 export default function statusCommands(pi: ExtensionAPI): void {
 	pi.registerCommand("status", {
-		description: "Show session, model, context, MCP, and environment status (Status/Usage/Settings tabs)",
+		description: "Show session, model, context, MCP, and environment status (Status/Usage tabs)",
 		handler: async (_args, ctx) => showTab(ctx, pi.getThinkingLevel(), "status"),
 	});
 	const usageCommand = {
-		description: "Show connected Claude Code, OpenAI Codex, and Synthetic usage (Status/Usage/Settings tabs)",
+		description: "Show connected Claude Code, OpenAI Codex, and Synthetic usage (Status/Usage tabs)",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => showTab(ctx, pi.getThinkingLevel(), "usage"),
 	};
 	pi.registerCommand("usage", usageCommand);
 	pi.registerCommand("quota", usageCommand);
-	pi.registerCommand("settings", {
-		description: "Show settings sources and effective values (Status/Usage/Settings tabs)",
-		handler: async (_args, ctx) => showTab(ctx, pi.getThinkingLevel(), "settings"),
-	});
 }

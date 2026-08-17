@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import statusCommands, { STATUS_TABS } from "../.pi/extensions/status-commands.ts";
+import statusCommands, { STATUS_TABS, tabBody } from "../.pi/extensions/status-commands.ts";
 
-test("status tabs expose Status, Usage, and Settings in order", () => {
-	assert.deepEqual(STATUS_TABS.map((tab) => tab.title), ["Status", "Usage", "Settings"]);
+test("status tabs expose Status and Usage in order", () => {
+	assert.deepEqual(STATUS_TABS.map((tab) => tab.title), ["Status", "Usage"]);
+});
+
+test("usage tab keeps the white body text for readability", async () => {
+	const body = await tabBody({
+		modelRegistry: { getProviderAuthStatus: () => ({ configured: false }) },
+		ui: { theme: { fg: (color: string, text: string) => `<${color}>${text}</${color}>` } },
+	} as any, "medium", "usage", true);
+	assert.match(body, /^<text>Claude Code — not connected/);
 });
 
 test("registers /quota as a white-text alias for /usage", async () => {
@@ -16,6 +24,7 @@ test("registers /quota as a white-text alias for /usage", async () => {
 	} as any);
 
 	assert.equal(commands.get("quota"), commands.get("usage"));
+	assert.equal(commands.has("settings"), false);
 
 	const notifications: Array<[string, string]> = [];
 	await commands.get("quota")?.handler("", {

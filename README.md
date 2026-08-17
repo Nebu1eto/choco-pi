@@ -88,8 +88,7 @@ Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
 | `/exit` | Gracefully exit Pi; alias for `/quit` |
 | `/delete` | Permanently delete the current Pi session record and exit after confirmation |
 | `/clear` | Start a fresh session while preserving the current session history; alias for `/new` |
-| `/status` | Show Pi version, session identity, model and provider, context window, context files, skills, MCP servers, agent roles, and theme; opens the Status/Usage/Settings tab view |
-| `/settings` | Show settings sources, compaction, theme, and extension directories; opens the same tab view |
+| `/status` | Show Pi version, session identity, model and provider, context window, context files, skills, MCP servers, agent roles, and theme; opens the Status/Usage tab view. Interactive settings stay on Pi's built-in `/settings` |
 | `/effort [level]` | Select or directly set a reasoning effort supported by the active model; values complete after a space |
 | `/fast [on\|off\|status]` | Control OpenAI Codex Fast mode; no argument toggles the current state |
 | `/context-cap` | Show the soft context cap applied to the active model |
