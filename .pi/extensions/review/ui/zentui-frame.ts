@@ -194,6 +194,11 @@ function localForkCandidates(subpath: string): string[] {
 
 /** Locate one zentui source file, whether it is installed or pinned by path. */
 export function resolveZentuiFile(subpath: string): string | undefined {
+	// A path-pinned fork is the copy the session actually loads, so it wins
+	// over any npm-installed namesake left in an ancestor's node_modules.
+	for (const candidate of localForkCandidates(subpath)) {
+		if (existsSync(candidate)) return candidate;
+	}
 	const specifier = `${ZENTUI_PACKAGE}/${subpath}`;
 	for (const base of resolutionBases()) {
 		try {
@@ -201,9 +206,6 @@ export function resolveZentuiFile(subpath: string): string | undefined {
 		} catch {
 			// Not installed relative to this base; try the next one.
 		}
-	}
-	for (const candidate of localForkCandidates(subpath)) {
-		if (existsSync(candidate)) return candidate;
 	}
 	return undefined;
 }
