@@ -201,11 +201,16 @@ export type ReviewStore = {
  * Child process seam. Implementations resolve rather than reject on a non-zero
  * exit so callers can inspect `code` and `stderr`; only a spawn failure
  * rejects.
+ *
+ * `input` is written to the child's stdin, which is then closed. Every
+ * implementation must deliver it: `gh api --input -` waits for end-of-file on
+ * stdin before it sends anything, so a runner that accepts `input` and drops it
+ * leaves the child blocked forever instead of failing.
  */
 export type ExecRunner = (
 	cmd: string,
 	args: string[],
-	opts?: { cwd?: string },
+	opts?: { cwd?: string; input?: string },
 ) => Promise<{ stdout: string; stderr: string; code: number }>;
 
 /**

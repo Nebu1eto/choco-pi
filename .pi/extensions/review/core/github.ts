@@ -21,11 +21,12 @@
  * status code cannot tell a reviewer which comment GitHub refused.
  */
 
-import { spawn } from "node:child_process";
 import { relocateAnchor } from "./anchor.ts";
+import { defaultExecRunner } from "./git.ts";
 import type {
 	DiffModel,
 	DiffSide,
+	ExecRunner,
 	ReviewComment,
 	ReviewRecord,
 } from "./types.ts";
@@ -35,49 +36,13 @@ import type {
 /**
  * Child process seam for `gh`.
  *
- * Structurally compatible with `ExecRunner` in both directions, extended with
- * `input` because the review payload is written to the child's stdin. Like
- * `ExecRunner`, implementations resolve for every process exit status and
- * reject only when the process cannot be spawned.
+ * An alias of `ExecRunner` rather than a parallel type. The two were once
+ * separate, and because a runner that ignores `input` is still structurally
+ * assignable to one that accepts it, the extension could inject a git runner
+ * here and silently drop the review payload. One type and one default runner
+ * remove that possibility.
  */
-export type GhRunner = (
-	cmd: string,
-	args: string[],
-	opts?: { cwd?: string; input?: string },
-) => Promise<{ stdout: string; stderr: string; code: number }>;
-
-/** Spawn a child process, write `input` to its stdin, and collect its output. */
-export const defaultGhRunner: GhRunner = (cmd, args, opts) =>
-	new Promise((resolve, reject) => {
-		const child = spawn(cmd, args, {
-			cwd: opts?.cwd,
-			stdio: ["pipe", "pipe", "pipe"],
-		});
-		let stdout = "";
-		let stderr = "";
-		let settled = false;
-		child.stdout.setEncoding("utf8");
-		child.stderr.setEncoding("utf8");
-		child.stdout.on("data", (chunk: string) => {
-			stdout += chunk;
-		});
-		child.stderr.on("data", (chunk: string) => {
-			stderr += chunk;
-		});
-		child.on("error", (error) => {
-			if (settled) return;
-			settled = true;
-			reject(error);
-		});
-		child.on("close", (code) => {
-			if (settled) return;
-			settled = true;
-			resolve({ stdout, stderr, code: code ?? 1 });
-		});
-		// `gh` may exit before reading stdin; an EPIPE here is not a failure.
-		child.stdin.on("error", () => {});
-		child.stdin.end(opts?.input ?? "");
-	});
+export type GhRunner = ExecRunner;
 
 /* ------------------------------------------------------------------ types */
 
@@ -377,7 +342,7 @@ async function runGh(
 		secrets?: readonly string[];
 	},
 ): Promise<string> {
-	const runner = options.runner ?? defaultGhRunner;
+	const runner = options.runner ?? defaultExecRunner;
 	let result: { stdout: string; stderr: string; code: number };
 	try {
 		result = await runner("gh", args, {
