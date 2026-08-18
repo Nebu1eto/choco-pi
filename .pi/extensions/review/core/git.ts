@@ -5,10 +5,16 @@ const MAX_BUFFER = 256 * 1024 * 1024;
 const GIT_CONFIG = ["-c", "core.quotePath=false", "-c", "color.ui=false"];
 const DIFF_ARGS = ["--patch", "-M", "-C", "--no-color"];
 
-/** Execute a child process, resolving for every process exit status. */
+/**
+ * Execute a child process, resolving for every process exit status.
+ *
+ * `opts.input` is written to stdin and stdin is closed either way. Closing it
+ * unconditionally is what keeps a reader such as `gh api --input -` from
+ * waiting on end-of-file that never arrives.
+ */
 export const defaultExecRunner: ExecRunner = (cmd, args, opts) =>
 	new Promise((resolve, reject) => {
-		execFile(cmd, args, {
+		const child = execFile(cmd, args, {
 			cwd: opts?.cwd,
 			encoding: "utf8",
 			maxBuffer: MAX_BUFFER,
@@ -30,6 +36,10 @@ export const defaultExecRunner: ExecRunner = (cmd, args, opts) =>
 				code: typeof error.code === "number" ? error.code : 1,
 			});
 		});
+		// A child that exits before reading stdin turns this write into EPIPE,
+		// which is not a command failure.
+		child.stdin?.on("error", () => {});
+		child.stdin?.end(opts?.input ?? "");
 	});
 
 export class GitCommandError extends Error {

@@ -201,3 +201,33 @@ test("the default exec runner resolves non-zero exits and rejects spawn failures
 		(error: NodeJS.ErrnoException) => typeof error.code === "string",
 	);
 });
+
+// `gh api --input -` reads stdin to end-of-file before it sends the request, so
+// a runner that never writes and never closes stdin hangs instead of failing.
+// A review submission blocked this way once left a `gh` process waiting
+// indefinitely with the review kept only in the local store.
+//
+// The child reports what it received at end-of-file, and its guard timer reports
+// the opposite. Without that guard a regression would stall the whole test run
+// rather than fail this test, because the orphaned child keeps the runner alive.
+const READ_STDIN_TO_END = [
+	"let text = '';",
+	"const done = (out) => process.stdout.write(out, () => process.exit(0));",
+	"const guard = setTimeout(() => done('stdin-never-closed'), 5000);",
+	"process.stdin.setEncoding('utf8');",
+	"process.stdin.on('data', (chunk) => { text += chunk; });",
+	"process.stdin.on('end', () => { clearTimeout(guard); done(text.length + ':' + text); });",
+].join(" ");
+
+test("the default exec runner delivers input on stdin and closes it", { timeout: 30_000 }, async () => {
+	const payload = JSON.stringify({ body: "review body", comments: [] });
+
+	const delivered = await defaultExecRunner(process.execPath, ["-e", READ_STDIN_TO_END], { input: payload });
+	assert.equal(delivered.code, 0);
+	assert.equal(delivered.stdout, `${payload.length}:${payload}`);
+
+	// Without input stdin must still be closed, or the child never exits.
+	const empty = await defaultExecRunner(process.execPath, ["-e", READ_STDIN_TO_END]);
+	assert.equal(empty.code, 0);
+	assert.equal(empty.stdout, "0:");
+});
