@@ -21,7 +21,7 @@ npm run install:profile
 pi
 ```
 
-The installer keeps credentials and runtime state intact, generates `~/.pi/agent/settings.json` with checkout-relative paths, and links the tracked public profile into `~/.pi/agent`. It stops rather than replacing a conflicting file; inspect it, then rerun with `npm run install:profile -- --backup` to preserve the old file and install the tracked version.
+The installer keeps credentials and runtime state intact, generates `~/.pi/agent/settings.json` with checkout-relative paths, and links the tracked public profile into `~/.pi/agent`. User-added packages in the global settings are preserved, but duplicate pins of tracked packages are replaced by the tracked one, and duplicate user-added pins keep only the newer version. It stops rather than replacing a conflicting file; inspect it, then rerun with `npm run install:profile -- --backup` to preserve the old file and install the tracked version.
 
 Pi installs the packages pinned in [`.pi/settings.json`](.pi/settings.json). If npm defers native install scripts, approve only the two packages used by the configured extensions:
 

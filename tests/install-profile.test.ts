@@ -24,6 +24,39 @@ test("global settings preserve user preferences and additional packages", () => 
 	assert.equal(settings.defaultModel, "user-model");
 });
 
+test("tracked package pins dedupe stale older versions of the same package", () => {
+	const settings = buildGlobalSettings(
+		{ packages: ["npm:pi-lens@4.0.0", "npm:@tintinweb/pi-subagents@0.16.1"] },
+		{
+			packages: [
+				"npm:pi-lens@3.8.74",
+				"npm:@tintinweb/pi-subagents@0.15.0",
+				"npm:pi-mono-figma",
+			],
+		},
+		process.cwd(),
+	);
+
+	assert.deepEqual(settings.packages, [
+		"npm:pi-lens@4.0.0",
+		"npm:@tintinweb/pi-subagents@0.16.1",
+		"npm:pi-mono-figma",
+	]);
+});
+
+test("user-added duplicate pins keep the newer version", () => {
+	const settings = buildGlobalSettings(
+		{ packages: ["./packages/pi-synthetic"] },
+		{ packages: ["npm:pi-mono-figma@1.0.0", "npm:pi-mono-figma@1.2.0"] },
+		process.cwd(),
+	);
+
+	assert.deepEqual(settings.packages, [
+		path.resolve(".pi/packages/pi-synthetic"),
+		"npm:pi-mono-figma@1.2.0",
+	]);
+});
+
 test("profile installer links tracked config and is idempotent", async (context) => {
 	const agentDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-"));
 	context.after(() => rm(agentDir, { recursive: true, force: true }));

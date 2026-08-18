@@ -21,7 +21,7 @@ npm run install:profile
 pi
 ```
 
-설치기는 credential과 runtime 상태를 보존하고 checkout 경로를 반영한 `~/.pi/agent/settings.json`을 생성한 뒤 Git으로 추적하는 공개 profile을 `~/.pi/agent`에 연결합니다. 충돌 파일은 교체하지 않고 중단합니다. 파일을 확인한 뒤 `npm run install:profile -- --backup`을 실행하면 기존 파일을 백업하고 추적 버전을 설치합니다.
+설치기는 credential과 runtime 상태를 보존하고 checkout 경로를 반영한 `~/.pi/agent/settings.json`을 생성한 뒤 Git으로 추적하는 공개 profile을 `~/.pi/agent`에 연결합니다. 전역 settings에 사용자가 추가한 패키지는 보존하되 저장소가 추적하는 패키지의 중복 pin은 교체하고, 사용자 추가 항목끼리 버전이 겹치면 최신 버전만 남깁니다. 충돌 파일은 교체하지 않고 중단합니다. 파일을 확인한 뒤 `npm run install:profile -- --backup`을 실행하면 기존 파일을 백업하고 추적 버전을 설치합니다.
 
 Pi는 [`.pi/settings.json`](.pi/settings.json)에 고정된 패키지를 설치합니다. npm이 네이티브 설치 스크립트를 보류하면 현재 확장에서 사용하는 두 패키지만 허용합니다.
 
