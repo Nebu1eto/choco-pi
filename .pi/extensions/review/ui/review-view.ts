@@ -13,6 +13,7 @@ import {
 	visibleWidth,
 	type EditorTheme,
 	type MarkdownTheme,
+	type OverlayHandle,
 	type SlashCommand,
 } from "@earendil-works/pi-tui";
 import {
@@ -608,6 +609,9 @@ export async function openReviewView(options: OpenReviewViewOptions): Promise<Re
 	let terminalRows = 24;
 	let chat: ReviewChat | undefined;
 	let unsubscribeChat: (() => void) | undefined;
+	// Handle for the review's own overlay, captured when Pi shows it. Needed so a
+	// host prompt can be made visible; absent in hosts that ignore `onHandle`.
+	let overlayHandle: OverlayHandle | undefined;
 
 	try {
 		return await options.host.custom<ReviewViewResult | undefined>((tui, theme, _keybindings, done) => {
@@ -925,6 +929,27 @@ export async function openReviewView(options: OpenReviewViewOptions): Promise<Re
 			}
 		}
 
+		/**
+		 * Run a host prompt that draws into the session's own editor row.
+		 *
+		 * The review is a focus-capturing overlay: while it is visible it covers
+		 * the editor row and holds the keyboard. A `select` or `input` opened from
+		 * inside it is mounted underneath, so it renders invisibly while taking
+		 * focus away from the review — the user sees a frozen review, every key
+		 * reaches a prompt that is not on screen, and the awaited promise never
+		 * settles. Hiding the overlay for the duration puts the prompt where it
+		 * can be seen and answered, and restores the review afterwards.
+		 */
+		async function withHostPrompt<T>(prompt: () => Promise<T>): Promise<T> {
+			overlayHandle?.setHidden(true);
+			try {
+				return await prompt();
+			} finally {
+				overlayHandle?.setHidden(false);
+				tui.requestRender(true);
+			}
+		}
+
 		async function expandContext(): Promise<void> {
 			const file = currentFile(state);
 			const hunk = currentHunk(state);
@@ -1000,7 +1025,7 @@ export async function openReviewView(options: OpenReviewViewOptions): Promise<Re
 					"Request changes",
 					"Pending draft to inspect on GitHub",
 				] as const;
-				const selected = await options.host.select("Pull request outcome", [...choices]);
+				const selected = await withHostPrompt(() => options.host.select("Pull request outcome", [...choices]));
 				if (selected === undefined) return;
 				const verdict = selected === choices[0]
 					? "comment"
@@ -1009,10 +1034,10 @@ export async function openReviewView(options: OpenReviewViewOptions): Promise<Re
 						: selected === choices[2]
 							? "request-changes"
 							: undefined;
-				const body = await options.host.input(
+				const body = await withHostPrompt(() => options.host.input(
 					"Overall review summary (required for comment and request changes)",
 					state.record.body ?? "",
-				);
+				));
 				if (body === undefined) return;
 				const { verdict: _verdict, body: _body, ...record } = state.record;
 				state = {
@@ -1029,7 +1054,7 @@ export async function openReviewView(options: OpenReviewViewOptions): Promise<Re
 		}
 
 		async function search(): Promise<void> {
-			const query = await options.host.input("Search changed lines", state.search?.query ?? "");
+			const query = await withHostPrompt(() => options.host.input("Search changed lines", state.search?.query ?? ""));
 			if (query === undefined) return;
 			changed(setSearchQuery(state, query));
 		}
@@ -1294,6 +1319,9 @@ export async function openReviewView(options: OpenReviewViewOptions): Promise<Re
 				maxHeight: reviewViewHeights(terminalRows).overlayMaxHeight,
 				margin: 0,
 			}),
+			onHandle: (handle) => {
+				overlayHandle = handle;
+			},
 		});
 	} finally {
 		unsubscribeChat?.();
