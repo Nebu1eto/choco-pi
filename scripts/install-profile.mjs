@@ -62,12 +62,49 @@ function packageIdentity(spec) {
 		return "local:pi-zentui";
 	}
 	if (spec === "./packages/pi-zentui") return "local:pi-zentui";
+	if (spec.startsWith("npm:")) return `npm:${npmPackageName(spec.slice(4))}`;
 	return spec;
+}
+
+function npmPackageName(raw) {
+	if (raw.startsWith("@")) {
+		const slash = raw.indexOf("/");
+		const versionAt = slash === -1 ? -1 : raw.indexOf("@", slash);
+		return versionAt === -1 ? raw : raw.slice(0, versionAt);
+	}
+	const versionAt = raw.indexOf("@");
+	return versionAt === -1 ? raw : raw.slice(0, versionAt);
+}
+
+function specVersion(spec) {
+	if (!spec.startsWith("npm:")) return undefined;
+	const match = spec.slice(4).match(/@(\d[^@/]*)$/);
+	return match?.[1];
+}
+
+function compareSpecVersions(left, right) {
+	const leftVersion = specVersion(left);
+	const rightVersion = specVersion(right);
+	if (leftVersion === undefined || rightVersion === undefined) return 0;
+	const leftParts = leftVersion.split(".").map((part) => Number.parseInt(part, 10) || 0);
+	const rightParts = rightVersion.split(".").map((part) => Number.parseInt(part, 10) || 0);
+	for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index++) {
+		const diff = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+		if (diff !== 0) return diff;
+	}
+	return 0;
 }
 
 function mergePackages(canonical, existing) {
 	const canonicalIds = new Set(canonical.map(packageIdentity));
-	return unique([...canonical, ...existing.filter((spec) => !canonicalIds.has(packageIdentity(spec)))]);
+	const extras = new Map();
+	for (const spec of existing) {
+		const identity = packageIdentity(spec);
+		if (canonicalIds.has(identity)) continue;
+		const current = extras.get(identity);
+		if (current === undefined || compareSpecVersions(spec, current) > 0) extras.set(identity, spec);
+	}
+	return unique([...canonical, ...extras.values()]);
 }
 
 export function buildGlobalSettings(projectSettings, existingSettings, root) {
