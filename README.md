@@ -383,6 +383,10 @@ After installation the agent can open pages, capture interactive snapshots, clic
 
 `/usage` queries Claude Code, OpenAI Codex, and Synthetic in parallel. It displays current utilization and reset or regeneration times without printing credentials or raw provider error bodies.
 
+The open view re-queries the providers every three minutes and again whenever the Usage tab is selected, so the numbers stay current without reopening the command. The previous body stays visible while a refresh runs, and a failed refresh keeps the last successful result.
+
+Claude Code shows the plan resolved from Anthropic's OAuth profile — `Pro`, `Max (5x)`, `Max (20x)`, `Team`, `Team Premium`, or `Enterprise`. OpenAI Codex shows the plan reported by ChatGPT — `Plus`, `Pro (5x)`, `Pro (20x)`, `Team`, `Business`, or `Enterprise`. An unrecognized plan value is shown as returned rather than hidden.
+
 Claude Code and OpenAI Codex usage depend on Pi OAuth credentials and provider endpoints also used by their CLIs. API-key authentication may not expose account quotas. Synthetic reports five-hour request usage and weekly credits; separately purchased subscription credit is outside that quota response.
 
 ## Repository layout
