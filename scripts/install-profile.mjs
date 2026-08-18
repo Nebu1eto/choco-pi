@@ -25,6 +25,7 @@ const PROFILE_LINKS = [
 	[".pi/subagents.json", "subagents.json"],
 	[".pi/zentui.json", "zentui.json"],
 	[".pi/models.json", "models.json"],
+	[".pi/keybindings.json", "keybindings.json"],
 	[".pi/agents/general.md", "agents/general.md"],
 	[".pi/agents/planner.md", "agents/planner.md"],
 	[".pi/agents/implementer.md", "agents/implementer.md"],
