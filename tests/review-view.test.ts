@@ -2299,3 +2299,139 @@ test("terminal editor restores the TUI when the child exits unsuccessfully", asy
 	), /status 9/);
 	assert.deepEqual(events, ["stop", "spawn", "start", "render:true"]);
 });
+
+/**
+ * The review is a focus-capturing overlay. A host prompt opened from inside it
+ * mounts underneath, so it renders invisibly while stealing the keyboard: the
+ * review looks frozen and its promise never settles. Every prompt must
+ * therefore hide the overlay first and restore it afterwards.
+ */
+type OverlayLog = { events: string[]; hiddenDuringPrompt: string[] };
+
+async function mountWithOverlayHandle(options: {
+	pullRequest?: PullRequestMetadata;
+	select?: (title: string, choices: string[]) => Promise<string | undefined>;
+	input?: (title: string, prefill: string) => Promise<string | undefined>;
+	record?: ReviewRecord;
+}): Promise<{ component: Component; log: OverlayLog; completion: Promise<unknown> }> {
+	const log: OverlayLog = { events: [], hiddenDuringPrompt: [] };
+	let hidden = false;
+	let component: Component | undefined;
+	let resolveResult: ((value: unknown) => void) | undefined;
+	let ready!: () => void;
+	const readyPromise = new Promise<void>((resolve) => {
+		ready = resolve;
+	});
+	const resultPromise = new Promise<unknown>((resolve) => {
+		resolveResult = resolve;
+	});
+	const custom: ReviewViewHost["custom"] = async (factory, customOptions) => {
+		component = await factory(
+			{
+				terminal: { rows: 24 },
+				requestRender: () => {},
+				stop: () => {},
+				start: () => {},
+			} as never,
+			PLAIN_THEME,
+			{} as never,
+			(value) => resolveResult?.(value),
+		);
+		customOptions?.onHandle?.({
+			hide: () => {},
+			setHidden: (value: boolean) => {
+				hidden = value;
+				log.events.push(value ? "hide" : "show");
+			},
+			isHidden: () => hidden,
+			focus: () => {},
+			unfocus: () => {},
+		} as never);
+		ready();
+		return await resultPromise as never;
+	};
+	const host: ReviewViewHost = {
+		custom,
+		input: async (title, prefill) => {
+			log.hiddenDuringPrompt.push(`input:${String(hidden)}`);
+			return await (options.input?.(title, prefill ?? "") ?? Promise.resolve(undefined));
+		},
+		notify: () => {},
+		select: async (title, choices) => {
+			log.hiddenDuringPrompt.push(`select:${String(hidden)}`);
+			return await (options.select?.(title, [...choices]) ?? Promise.resolve(undefined));
+		},
+		setEditorText: () => {},
+	};
+	const completion = openReviewView({
+		host,
+		store: STORE,
+		styler: { fg: (_color, text) => text, inverse: (text) => text },
+		model: MODEL,
+		assessments: ASSESSMENTS,
+		record: options.record ?? record(),
+		config: CONFIG,
+		reviewRoot: "/repo",
+		now: () => NOW,
+		...(options.pullRequest ? { pullRequest: options.pullRequest } : {}),
+		createCommentId: () => "overlay-comment",
+	});
+	await readyPromise;
+	assert.ok(component?.handleInput);
+	return { component: component as Component, log, completion };
+}
+
+const OVERLAY_PR: PullRequestMetadata = {
+	number: 7,
+	title: "Add a thing",
+	baseRefName: "main",
+	headSha: "head-sha",
+	author: { login: "octocat", name: "Octo", isBot: false },
+	url: "https://github.com/octo/widget/pull/7",
+	updatedAt: NOW,
+};
+
+/** The pull request branch of Finish is chosen by the record's own target. */
+function pullRequestRecord(): ReviewRecord {
+	return { ...record(), target: { kind: "pr", number: OVERLAY_PR.number } };
+}
+
+test("Finish hides the review overlay while the pull request prompts are open", async () => {
+	const mounted = await mountWithOverlayHandle({
+		pullRequest: OVERLAY_PR,
+		record: pullRequestRecord(),
+		select: async () => "Approve",
+		input: async () => "Looks good",
+	});
+	mounted.component.handleInput?.("S");
+	await mounted.completion;
+	// Both prompts ran with the overlay hidden, and each restored it afterwards.
+	assert.deepEqual(mounted.log.hiddenDuringPrompt, ["select:true", "input:true"]);
+	assert.deepEqual(mounted.log.events, ["hide", "show", "hide", "show"]);
+});
+
+test("Finish restores the review overlay when the outcome prompt is cancelled", async () => {
+	const mounted = await mountWithOverlayHandle({
+		pullRequest: OVERLAY_PR,
+		record: pullRequestRecord(),
+		select: async () => undefined,
+	});
+	mounted.component.handleInput?.("S");
+	// Cancelling leaves the review open, so close it the normal way.
+	await new Promise((resolve) => setTimeout(resolve, 10));
+	assert.deepEqual(mounted.log.events, ["hide", "show"]);
+	mounted.component.handleInput?.("q");
+	await mounted.completion;
+});
+
+test("Search hides the review overlay while its prompt is open", async () => {
+	const mounted = await mountWithOverlayHandle({
+		input: async () => "needle",
+	});
+	mounted.component.handleInput?.("/");
+	await new Promise((resolve) => setTimeout(resolve, 10));
+	assert.deepEqual(mounted.log.hiddenDuringPrompt, ["input:true"]);
+	assert.deepEqual(mounted.log.events, ["hide", "show"]);
+	mounted.component.handleInput?.("q");
+	await mounted.completion;
+});
