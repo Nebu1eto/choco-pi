@@ -433,6 +433,10 @@ npm exec --yes --package pi-agent-browser-native@0.3.0 -- pi-agent-browser-docto
 
 `/usage`는 Claude Code, OpenAI Codex, Synthetic을 병렬 조회해 현재 사용률과 reset 또는 regeneration 시각을 보여줍니다. Credential과 공급자의 원문 오류 응답은 출력하지 않습니다.
 
+화면을 연 상태에서 3분마다, 그리고 Usage 탭을 다시 선택할 때마다 공급자를 재조회하므로 명령을 다시 실행하지 않아도 최신 값을 유지합니다. 재조회 중에는 직전 내용을 그대로 보여주고, 재조회가 실패하면 마지막으로 성공한 결과를 유지합니다.
+
+Claude Code는 Anthropic OAuth profile에서 확인한 요금제를 `Pro`, `Max (5x)`, `Max (20x)`, `Team`, `Team Premium`, `Enterprise`로 표시합니다. OpenAI Codex는 ChatGPT가 응답한 요금제를 `Plus`, `Pro (5x)`, `Pro (20x)`, `Team`, `Business`, `Enterprise`로 표시합니다. 알려지지 않은 값은 숨기지 않고 응답 그대로 보여줍니다.
+
 Claude Code와 OpenAI Codex는 Pi OAuth credential과 각 CLI가 사용하는 usage endpoint에 의존합니다. API key 인증에서는 계정 quota를 가져오지 못할 수 있습니다. Synthetic은 5시간 요청량과 주간 credit 사용률을 제공하며 별도로 구매한 Subscription Credit은 이 quota 응답에 포함되지 않습니다.
 
 ## 저장소 구조

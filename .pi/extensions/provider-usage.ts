@@ -3,6 +3,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 const REQUEST_TIMEOUT_MS = 10_000;
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
 const USAGE_BAR_WIDTH = 50;
+const PROFILE_CACHE_MS = 30 * 60_000;
 
 type UsageWindow = {
 	label: string;
@@ -16,6 +17,7 @@ type UsageWindow = {
 
 type ProviderUsage = {
 	name: string;
+	plan?: string;
 	status?: string;
 	windows: UsageWindow[];
 };
@@ -118,7 +120,47 @@ function structuredClaudeWindow(value: unknown): UsageWindow | undefined {
 	};
 }
 
-export function normalizeClaudeUsage(payload: unknown): ProviderUsage {
+const CLAUDE_RATE_LIMIT_TIERS: Record<string, string> = {
+	default_claude_pro: "Pro",
+	default_claude_max_5x: "Max (5x)",
+	default_claude_max_20x: "Max (20x)",
+};
+
+const CLAUDE_SUBSCRIPTION_LABELS: Record<string, string> = {
+	free: "Free",
+	pro: "Pro",
+	max: "Max",
+	team: "Team",
+	enterprise: "Enterprise",
+};
+
+/**
+ * Derives the plan label from the `/api/oauth/profile` response. Team and
+ * Enterprise organizations keep a Max rate-limit tier, so the organization
+ * type decides those labels before the tier is consulted.
+ */
+export function claudePlanLabel(profile: unknown, fallbackSubscription?: string): string | undefined {
+	const record = isRecord(profile) ? profile : undefined;
+	const organization = record && isRecord(record.organization) ? record.organization : undefined;
+	const account = record && isRecord(record.account) ? record.account : undefined;
+	const organizationType = organization ? stringValue(organization.organization_type) : undefined;
+	if (organizationType === "claude_team") {
+		const seat = organization ? stringValue(organization.seat_tier) ?? "" : "";
+		return seat.toLowerCase().includes("premium") ? "Team Premium" : "Team";
+	}
+	if (organizationType === "claude_enterprise") return "Enterprise";
+	const tier = organization ? stringValue(organization.rate_limit_tier) : undefined;
+	const tierLabel = tier ? CLAUDE_RATE_LIMIT_TIERS[tier] : undefined;
+	if (tierLabel) return tierLabel;
+	if (organizationType?.startsWith("claude_")) {
+		return CLAUDE_SUBSCRIPTION_LABELS[organizationType.slice("claude_".length)];
+	}
+	if (account?.has_claude_max === true) return "Max";
+	if (account?.has_claude_pro === true) return "Pro";
+	return fallbackSubscription ? CLAUDE_SUBSCRIPTION_LABELS[fallbackSubscription.toLowerCase()] : undefined;
+}
+
+export function normalizeClaudeUsage(payload: unknown, profile?: unknown): ProviderUsage {
 	if (!isRecord(payload)) throw new Error("Unexpected response");
 	const structuredWindows = Array.isArray(payload.limits)
 		? payload.limits.flatMap((value) => {
@@ -148,7 +190,13 @@ export function normalizeClaudeUsage(payload: unknown): ProviderUsage {
 	const status = extraUsage?.is_enabled === true
 		? extraPercent === undefined ? "extra usage enabled" : `extra usage ${extraPercent.toFixed(0)}% used`
 		: undefined;
-	return { name: "Claude Code", status, windows: structuredWindows.length > 0 ? structuredWindows : legacyWindows };
+	const plan = claudePlanLabel(profile, stringValue(payload.plan_type));
+	return {
+		name: "Claude Code",
+		plan,
+		status,
+		windows: structuredWindows.length > 0 ? structuredWindows : legacyWindows,
+	};
 }
 
 function codexWindow(value: unknown, label: string): UsageWindow | undefined {
@@ -170,6 +218,44 @@ function codexWindow(value: unknown, label: string): UsageWindow | undefined {
 	};
 }
 
+const CODEX_PLAN_LABELS: Record<string, string> = {
+	guest: "Guest",
+	free: "Free",
+	free_workspace: "Free",
+	go: "Go",
+	plus: "Plus",
+	prolite: "Pro (5x)",
+	pro: "Pro (20x)",
+	team: "Team",
+	self_serve_business_prolite: "Business",
+	self_serve_business_usage_based: "Business",
+	business: "Business",
+	ent26: "Enterprise",
+	enterprise: "Enterprise",
+	enterprise_cbp_automation: "Enterprise",
+	enterprise_cbp_usage_based: "Enterprise",
+	hc: "Enterprise",
+	edu: "Edu",
+	education: "Edu",
+	k12: "K12",
+	quorum: "Quorum",
+};
+
+function titleCase(value: string): string {
+	return value
+		.split(/[_\s-]+/)
+		.filter(Boolean)
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(" ");
+}
+
+/** Maps the ChatGPT `plan_type` wire value to the label ChatGPT bills under. */
+export function codexPlanLabel(planType: string | undefined): string | undefined {
+	if (!planType) return undefined;
+	const key = planType.toLowerCase();
+	return CODEX_PLAN_LABELS[key] ?? titleCase(planType);
+}
+
 export function normalizeCodexUsage(payload: unknown): ProviderUsage {
 	if (!isRecord(payload)) throw new Error("Unexpected response");
 	const rateLimit = isRecord(payload.rate_limit) ? payload.rate_limit : {};
@@ -177,11 +263,15 @@ export function normalizeCodexUsage(payload: unknown): ProviderUsage {
 		codexWindow(rateLimit.primary_window, "5h"),
 		codexWindow(rateLimit.secondary_window, "7d"),
 	].filter((window): window is UsageWindow => window !== undefined);
-	const plan = stringValue(payload.plan_type);
+	const plan = codexPlanLabel(stringValue(payload.plan_type));
 	const credits = isRecord(payload.credits) ? payload.credits : undefined;
 	const balance = credits ? stringValue(credits.balance) ?? numberValue(credits.balance)?.toString() : undefined;
-	const statusParts = [plan, balance === undefined ? undefined : `${balance} credits`].filter(Boolean);
-	return { name: "OpenAI Codex", status: statusParts.join(" · ") || undefined, windows };
+	return {
+		name: "OpenAI Codex",
+		plan,
+		status: balance === undefined ? undefined : `${balance} credits`,
+		windows,
+	};
 }
 
 export function normalizeSyntheticUsage(payload: unknown): ProviderUsage {
@@ -249,13 +339,38 @@ async function providerToken(ctx: ExtensionContext, provider: string): Promise<s
 	return ctx.modelRegistry.getApiKeyForProvider(provider);
 }
 
+let claudeProfileCache: { at: number; profile: unknown } | undefined;
+
+/**
+ * Reads the live plan from Anthropic's profile endpoint. The value only changes
+ * when the subscription changes, so it is cached well beyond the usage refresh
+ * interval and never blocks the usage report when it fails.
+ */
+async function claudeProfile(token: string): Promise<unknown> {
+	if (claudeProfileCache && Date.now() - claudeProfileCache.at < PROFILE_CACHE_MS) {
+		return claudeProfileCache.profile;
+	}
+	try {
+		const profile = await fetchJson("https://api.anthropic.com/api/oauth/profile", token, {
+			"anthropic-beta": "oauth-2025-04-20",
+		});
+		claudeProfileCache = { at: Date.now(), profile };
+		return profile;
+	} catch {
+		return undefined;
+	}
+}
+
 async function claudeUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
 	const token = await providerToken(ctx, "anthropic");
 	if (!token) return { name: "Claude Code", status: "not connected", windows: [] };
-	const payload = await fetchJson("https://api.anthropic.com/api/oauth/usage", token, {
-		"anthropic-beta": "oauth-2025-04-20",
-	});
-	return normalizeClaudeUsage(payload);
+	const [payload, profile] = await Promise.all([
+		fetchJson("https://api.anthropic.com/api/oauth/usage", token, {
+			"anthropic-beta": "oauth-2025-04-20",
+		}),
+		claudeProfile(token),
+	]);
+	return normalizeClaudeUsage(payload, profile);
 }
 
 async function codexUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
@@ -307,8 +422,9 @@ function progressBar(percent: number, width = USAGE_BAR_WIDTH): string {
 }
 
 export function formatProviderUsage(result: ProviderUsage): string {
-	const heading = result.status ? `${result.name} — ${result.status}` : result.name;
-	if (result.windows.length === 0) return result.status ? heading : `${heading} — no quota windows`;
+	const summary = [result.plan, result.status].filter(Boolean).join(" · ");
+	const heading = summary ? `${result.name} — ${summary}` : result.name;
+	if (result.windows.length === 0) return summary ? heading : `${heading} — no quota windows`;
 	const windows = result.windows.flatMap((window) => {
 		const percent = formatNumber(window.percent, window.precision ?? 0);
 		const eventTime = relativeTime(window.eventAt);
