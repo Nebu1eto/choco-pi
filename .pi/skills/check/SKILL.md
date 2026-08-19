@@ -21,7 +21,7 @@ Never read or print `auth.json`, API keys, OAuth tokens, environment secrets, or
 Run only additions required by the current task:
 
 - Browser work: run `agent-browser --version` and the repository-documented browser doctor. Its absence blocks only browser work.
-- MCP work: validate `.pi/mcp.json` syntax and inspect `/mcp` status without starting unrelated servers.
+- MCP work: validate `~/.pi/agent/mcp.json` syntax and inspect `/mcp` status without starting unrelated servers. Report a project `.pi/mcp.json` as a duplicate configuration source rather than treating it as the expected location.
 - Provider setup: use Pi's status or model-listing commands for the named provider without displaying credentials.
 - Repository work: run any additional environment gate explicitly required by applicable `AGENTS.md`.
 

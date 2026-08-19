@@ -38,7 +38,7 @@ Run `/reload` after changing files under `.pi`.
 This checkout is also the source of the current machine's global Pi profile under `~/.pi/agent`:
 
 - `settings.json` installs the same pinned packages and references this checkout's `extensions`, `skills`, and `prompts` directories.
-- `SYSTEM.md`, writing and review policy, sub-agent and Zentui configuration, agent definitions, and provider configuration files are symbolic links to this checkout. A local `.pi/mcp.json` is linked when present.
+- `SYSTEM.md`, writing and review policy, sub-agent and Zentui configuration, agent definitions, and provider configuration files are symbolic links to this checkout. MCP configuration is the exception: it lives directly at `~/.pi/agent/mcp.json` and is not linked from here.
 - Pi launched from another directory therefore receives choco-pi as its user-level default. A trusted project's own `.pi` settings and `SYSTEM.md` can still override the global defaults through Pi's normal precedence rules.
 
 Keep this checkout at a stable path because the global profile points to it. Restart Pi or run `/reload` after changing the source files.
@@ -357,7 +357,8 @@ Use `openai-completions` unless Apex has been confirmed to support the Responses
 
 ## MCP, goals, web access, and side conversations
 
-- Copy [`.pi/mcp.example.json`](.pi/mcp.example.json) to the ignored `.pi/mcp.json` and add any local OAuth client settings there. The global profile links that local file at `~/.pi/agent/mcp.json`, so the servers are available from other projects. `/mcp` shows configuration and runtime state.
+- Copy [`.pi/mcp.example.json`](.pi/mcp.example.json) to `~/.pi/agent/mcp.json` and add any local OAuth client settings there. Keep it outside this checkout. Pi reads `~/.pi/agent/mcp.json` and a project `.pi/mcp.json` as separate sources, so a copy inside choco-pi registers every server twice whenever Pi runs from this directory, and a checkout that lacks the ignored file silently starts with no servers at all. `/mcp` shows configuration and runtime state.
+- A server whose authorization server does not support dynamic client registration needs a pre-registered client. Add `oauth.clientId` and `oauth.clientSecret` to that server's entry; a `clientSecret` beginning with `!` runs the rest as a shell command, which keeps the secret out of the file. Register `http://localhost:19876/callback` as the redirect URL with the provider.
 - `/create-goal <objective>` creates a persistent goal. `/goal` shows its state and usage.
 - `web_search` and `fetch_content` provide search and document extraction through `pi-web-access`.
 - `/btw <question>` starts a side conversation while the main agent is working.

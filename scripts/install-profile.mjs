@@ -200,8 +200,11 @@ export async function installProfile({
 	const projectSettings = await readJson(path.join(root, ".pi", "settings.json"));
 	const settingsPath = path.join(agentDir, "settings.json");
 	const existingSettings = await readJson(settingsPath, {});
+	// MCP configuration is deliberately not linked. Pi reads ~/.pi/agent/mcp.json and a
+	// project .pi/mcp.json as separate sources, so linking a repo-local copy registers every
+	// server twice when Pi runs from this checkout, and the ignored file disappearing leaves
+	// Pi with no servers at all. Keep the real file at ~/.pi/agent/mcp.json.
 	const links = [...PROFILE_LINKS];
-	if (await exists(path.join(root, ".pi", "mcp.json"))) links.push([".pi/mcp.json", "mcp.json"]);
 	if (!backup) {
 		for (const [sourceRelative, targetRelative] of links) {
 			const target = path.resolve(agentDir, targetRelative);
