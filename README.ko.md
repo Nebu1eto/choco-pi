@@ -38,7 +38,7 @@ npm rebuild @ast-grep/cli tree-sitter-bash
 현재 checkout은 이 컴퓨터의 `~/.pi/agent` 전역 Pi profile 원본으로도 사용합니다.
 
 - `settings.json`은 같은 고정 버전 패키지를 설치하고 이 checkout의 `extensions`, `skills`, `prompts` 디렉터리를 참조합니다.
-- `SYSTEM.md`, 글쓰기·리뷰 정책, 서브 에이전트·Zentui 설정, agent 정의와 공급자 설정 파일은 이 checkout으로 연결한 symbolic link입니다. 로컬 `.pi/mcp.json`이 있으면 함께 연결합니다.
+- `SYSTEM.md`, 글쓰기·리뷰 정책, 서브 에이전트·Zentui 설정, agent 정의와 공급자 설정 파일은 이 checkout으로 연결한 symbolic link입니다. MCP 설정은 예외로, `~/.pi/agent/mcp.json`에 직접 두며 이 checkout으로 연결하지 않습니다.
 - 따라서 다른 디렉터리에서 Pi를 실행해도 choco-pi가 사용자 기본 설정으로 적용됩니다. 신뢰한 프로젝트에 별도 `.pi` 설정이나 `SYSTEM.md`가 있으면 Pi의 기존 우선순위에 따라 전역 기본값을 덮어쓸 수 있습니다.
 
 전역 profile이 이 checkout을 직접 가리키므로 경로를 옮기거나 삭제하지 마십시오. 원본 파일을 바꾼 뒤 Pi를 다시 시작하거나 `/reload`를 실행합니다.
@@ -407,7 +407,8 @@ Apex가 Responses API를 지원한다고 확인하기 전에는 `openai-completi
 
 ## MCP, goal, 웹과 사이드 대화
 
-- [`.pi/mcp.example.json`](.pi/mcp.example.json)을 Git에서 제외된 `.pi/mcp.json`으로 복사하고 로컬 OAuth client 설정을 추가합니다. 전역 profile의 `~/.pi/agent/mcp.json`도 이 로컬 파일을 가리키므로 다른 프로젝트에서도 사용할 수 있습니다. `/mcp`에서 설정과 실행 상태를 확인합니다.
+- [`.pi/mcp.example.json`](.pi/mcp.example.json)을 `~/.pi/agent/mcp.json`으로 복사하고 로컬 OAuth client 설정을 추가합니다. 이 checkout 안에는 두지 않습니다. Pi는 `~/.pi/agent/mcp.json`과 프로젝트의 `.pi/mcp.json`을 서로 다른 소스로 읽으므로, choco-pi 안에 사본을 두면 이 디렉터리에서 Pi를 실행할 때 모든 서버가 두 번 등록됩니다. 반대로 Git에서 제외된 그 파일이 사라지면 서버가 하나도 없는 상태로 조용히 시작합니다. `/mcp`에서 설정과 실행 상태를 확인합니다.
+- 인증 서버가 dynamic client registration을 지원하지 않으면 사전 등록한 client가 필요합니다. 해당 서버 항목에 `oauth.clientId`와 `oauth.clientSecret`을 넣습니다. `clientSecret` 값이 `!`로 시작하면 나머지를 셸 명령으로 실행하므로 비밀값을 파일에 남기지 않을 수 있습니다. 공급자에는 redirect URL로 `http://localhost:19876/callback`을 등록합니다.
 - `/create-goal <목표>`로 지속형 goal을 만들고 `/goal`에서 상태와 사용량을 확인합니다.
 - `web_search`, `fetch_content`는 `pi-web-access`를 통해 검색과 본문 추출을 수행합니다.
 - `/btw <질문>`은 메인 에이전트가 작업 중일 때 별도 대화를 시작합니다.
