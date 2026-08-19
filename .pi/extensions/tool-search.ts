@@ -70,6 +70,7 @@ type SearchTarget =
 type SearchDocument = {
 	target: SearchTarget;
 	nameTokens: string[];
+	coreNameTokens: string[];
 	descriptionTokens: string[];
 	schemaTokens: string[];
 	sourceTokens: string[];
@@ -118,6 +119,10 @@ function schemaText(value: unknown, key = ""): string {
 		.join(" ");
 }
 
+function matchesTerm(tokens: string[], term: string): boolean {
+	return tokens.some((token) => token === term || token.startsWith(term));
+}
+
 function termFrequency(tokens: string[], term: string): number {
 	return tokens.reduce((count, token) => count + (token === term ? 1 : token.startsWith(term) ? 0.5 : 0), 0);
 }
@@ -149,6 +154,17 @@ function targetParameters(target: SearchTarget): unknown {
 	return target.kind === "pi" ? target.tool.parameters : target.parameters;
 }
 
+/**
+ * Name tokens that carry meaning, with the `mcp__<server>_` registration prefix removed.
+ * Every tool on a server repeats that prefix, so keeping it would make name precision
+ * look identical for all of them.
+ */
+function coreNameTokensOf(target: SearchTarget, nameTokens: string[]): string[] {
+	if (target.kind !== "mcp") return nameTokens;
+	const core = nameTokens.slice(1 + tokenize(target.server).length);
+	return core.length > 0 ? core : nameTokens;
+}
+
 function makeDocument(target: SearchTarget, source: string): SearchDocument {
 	const nameTokens = tokenize(targetName(target));
 	const descriptionTokens = tokenize(targetDescription(target));
@@ -157,6 +173,7 @@ function makeDocument(target: SearchTarget, source: string): SearchDocument {
 	return {
 		target,
 		nameTokens,
+		coreNameTokens: coreNameTokensOf(target, nameTokens),
 		descriptionTokens,
 		schemaTokens,
 		sourceTokens,
@@ -230,9 +247,18 @@ function rankTools(documents: SearchDocument[], query: string): SearchTarget[] {
 
 	return documents
 		.map((document) => {
-			const coverage = terms.filter((term) => document.allTokens.some((token) => token === term || token.startsWith(term))).length / terms.length;
-			const minimumCoverage = terms.length <= 2 ? 1 : 0.6;
-			if (coverage < minimumCoverage) return { target: document.target, score: 0 };
+			// Coverage counts only name and description. Schema text used to count too, which
+			// let a tool with a large parameter enum absorb unrelated query words and outrank
+			// the tool the query actually names.
+			const describedTokens = [...document.nameTokens, ...document.descriptionTokens];
+			const coverage = terms.filter((term) => matchesTerm(describedTokens, term)).length / terms.length;
+			if (coverage === 0) return { target: document.target, score: 0 };
+			// Share of the tool's own name that the query accounts for, so a narrower name
+			// beats a longer one that merely contains it.
+			const precision = document.coreNameTokens.length === 0
+				? 0
+				: document.coreNameTokens.filter((token) => terms.some((term) => token.startsWith(term) || term.startsWith(token))).length
+					/ document.coreNameTokens.length;
 			const name = normalize(targetName(document.target));
 			const score =
 				bm25FieldScore(document.nameTokens, terms, documentFrequency, documents.length, averageLength) * 5
@@ -240,7 +266,8 @@ function rankTools(documents: SearchDocument[], query: string): SearchTarget[] {
 				+ bm25FieldScore(document.schemaTokens, terms, documentFrequency, documents.length, averageLength)
 				+ bm25FieldScore(document.sourceTokens, terms, documentFrequency, documents.length, averageLength)
 				+ (name === normalizedQuery ? 50 : name.includes(normalizedQuery) ? 20 : 0)
-				+ coverage * 10;
+				+ coverage * 10
+				+ precision * 15;
 			return { target: document.target, score };
 		})
 		.filter((match) => match.score > 0)
