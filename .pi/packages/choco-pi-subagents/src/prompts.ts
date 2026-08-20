@@ -4,6 +4,18 @@
 
 import type { AgentConfig, EnvInfo } from "./types.ts";
 
+/** Capability restriction shared by BTW twins and legacy read-only agents. */
+const READ_ONLY_SIDE_CONVERSATION_BLOCK = `<read_only_side_conversation>
+You are answering a parallel side conversation owned by the main orchestrator.
+Use the inherited conversation only as context. Do not edit files, run commands, delegate work, or alter the main conversation.
+You may inspect the project with read, grep, find, and ls when needed, then answer the user's question directly.
+</read_only_side_conversation>`;
+
+/** Preserve the main agent identity while adding the BTW capability restriction. */
+export function buildReadOnlySideConversationPrompt(parentSystemPrompt: string): string {
+  return `${parentSystemPrompt}\n\n${READ_ONLY_SIDE_CONVERSATION_BLOCK}`;
+}
+
 /** Extra sections to inject into the system prompt (memory, skills, etc.). */
 export interface PromptExtras {
   /** Persistent memory content to inject (first 200 lines of MEMORY.md + instructions). */
@@ -73,11 +85,7 @@ Work only inside it — never in ${extras.worktreeBase}, even if other instructi
     }
   }
   if (extras?.readOnly) {
-    extraSections.push(`<read_only_side_conversation>
-You are answering a parallel side conversation owned by the main orchestrator.
-Use the inherited conversation only as context. Do not edit files, run commands, delegate work, or alter the main conversation.
-You may inspect the project with read, grep, find, and ls when needed, then answer the user's question directly.
-</read_only_side_conversation>`);
+    extraSections.push(READ_ONLY_SIDE_CONVERSATION_BLOCK);
   }
   const extrasSuffix = extraSections.length > 0 ? "\n\n" + extraSections.join("\n") : "";
 
