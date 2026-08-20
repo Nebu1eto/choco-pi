@@ -1,0 +1,42 @@
+{
+  "voiceFeaturesOnly": false,
+  "prompt": {
+    "heavySystemPromptOverwrite": false
+  },
+  "scope": {
+    "allProviders": "on",
+    "additionalProviders": []
+  },
+  "tools": {
+    "customRustBinariesDir": "",
+    "webRun": true,
+    "imageGeneration": true,
+    "viewImageFallback": true,
+    "applyPatchOnly": true,
+    "viewImageOnly": true,
+    "webRunOnly": true,
+    "imageGenerationOnly": true
+  },
+  "ui": {
+    "statusLine": false,
+    "toolRenaming": true,
+    "compactTools": true,
+    "codeModeDetails": false
+  },
+  "compaction": {
+    "responsesCompaction": true
+  },
+  "beta": {
+    "codeMode": true,
+    "responsesLite": false,
+    "v2UserMessageRetention": 64
+  },
+  "openai": {
+    "fast": false,
+    "verbosity": "low",
+    "forceCachedWebSockets": true,
+    "cacheDiagnostics": "off",
+    "harnessIdentifierHeader": false,
+    "webSearchModel": "gpt-5.6-luna"
+  }
+}
