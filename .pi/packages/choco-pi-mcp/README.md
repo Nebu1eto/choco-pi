@@ -1,8 +1,8 @@
-# pi-choco-mcp
+# choco-pi-mcp
 
-`pi-choco-mcp` is choco-pi's local, TypeScript-source fork of `pi-mcp-adapter` 2.26.1. It exposes `index.ts` as a Pi extension, `skills/` as Pi skills, and the `./types` and `./oauth` package exports.
+`choco-pi-mcp` is choco-pi's local, TypeScript-source fork of `pi-mcp-adapter` 2.26.1. It exposes `index.ts` as a Pi extension, `skills/` as Pi skills, and the `./types` and `./oauth` package exports.
 
-Add `./packages/pi-choco-mcp` to the package list in `.pi/settings.json`. This package does not modify that file itself.
+Add `./packages/choco-pi-mcp` to the package list in `.pi/settings.json`. This package does not modify that file itself.
 
 ## MCP support
 

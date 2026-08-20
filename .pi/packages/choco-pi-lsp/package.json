@@ -1,5 +1,5 @@
 {
-	"name": "pi-choco-lens",
+	"name": "choco-pi-lsp",
 	"version": "4.0.1-choco.0",
 	"private": true,
 	"type": "module",

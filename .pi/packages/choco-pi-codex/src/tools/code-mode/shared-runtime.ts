@@ -114,7 +114,7 @@ export class SharedCodeModeRuntime {
 
 	async getClient(ctx?: unknown): Promise<CodeModeExecutionClient> {
 		if (this.executionKind(ctx) === "notebook") {
-			return Promise.reject(new Error("Notebook Mode is not included in pi-choco-codex"));
+			return Promise.reject(new Error("Notebook Mode is not included in choco-pi-codex"));
 		}
 		if (!this.clientPromise) {
 			const startupAbort = new AbortController();

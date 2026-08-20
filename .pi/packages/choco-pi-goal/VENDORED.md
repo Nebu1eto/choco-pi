@@ -1,4 +1,4 @@
-# Vendored: pi-choco-goal (fork of pi-codex-goal)
+# Vendored: choco-pi-goal (fork of pi-codex-goal)
 
 This directory is a **vendored, renamed copy** of the upstream open-source
 package **pi-codex-goal**. This is not the original source repository.
@@ -40,7 +40,7 @@ Full parity with `0.2.0` is intended and preserved:
 
 ## choco-pi changes on top of `0.2.0`
 
-1. `package.json`: renamed to `pi-choco-goal`, marked `private`, description
+1. `package.json`: renamed to `choco-pi-goal`, marked `private`, description
    updated, upstream release scripts and repository metadata dropped. Both Pi
    entry points are kept: `pi.extensions` → `./src/index.ts`,
    `pi.prompts` → `./prompts`.
@@ -76,7 +76,7 @@ user-visible branding, and changing them would break behavior parity:
 ## How this copy is used
 
 `.pi/settings.json` references it as a local Pi package
-(`./packages/pi-choco-goal`, resolved against this `.pi` directory), replacing
+(`./packages/choco-pi-goal`, resolved against this `.pi` directory), replacing
 the former `npm:pi-codex-goal@0.2.0` entry.
 
 ## Updating

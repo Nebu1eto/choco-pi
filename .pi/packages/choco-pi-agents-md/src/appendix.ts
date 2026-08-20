@@ -17,7 +17,7 @@ export interface AgentsFileEntry {
 export const MAX_FILE_CHARS = 12_000;
 export const MAX_TOTAL_APPENDIX_CHARS = 40_000;
 
-const TRUNCATION_MARKER = "\n...[truncated by pi-choco-agents-md size cap]";
+const TRUNCATION_MARKER = "\n...[truncated by choco-pi-agents-md size cap]";
 
 function escapeXml(value: string): string {
 	return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");

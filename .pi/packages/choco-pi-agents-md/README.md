@@ -1,4 +1,4 @@
-# pi-choco-agents-md
+# choco-pi-agents-md
 
 Recursive subdirectory `AGENTS.md` context injection for choco-pi, as a
 minimal local pi package (`pi.extensions: ["./index.ts"]`, loaded from

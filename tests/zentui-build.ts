@@ -24,7 +24,7 @@ import {
 
 const REPOSITORY_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
 /** The fork this repository pins, after it was renamed from `pi-zentui`. */
-const PINNED_MANIFEST = resolvePath(REPOSITORY_ROOT, ".pi/packages/pi-choco-ui/package.json");
+const PINNED_MANIFEST = resolvePath(REPOSITORY_ROOT, ".pi/packages/choco-pi-ui/package.json");
 
 function compileZentui(): string | undefined {
 	// The pinned fork is the copy the session loads; the adapter's lookup still
@@ -64,7 +64,7 @@ function compileZentui(): string | undefined {
 export const ZENTUI_BUILD = compileZentui();
 export const SKIP_WITHOUT_ZENTUI = ZENTUI_BUILD
 	? false
-	: "pi-choco-ui could not be compiled for tests";
+	: "choco-pi-ui could not be compiled for tests";
 
 let hooksRegistered = false;
 /** zentui's relative imports carry no extension, which Node ESM requires. */

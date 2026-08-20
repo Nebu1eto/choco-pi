@@ -1,5 +1,5 @@
 {
-  "name": "pi-choco-mcp",
+  "name": "choco-pi-mcp",
   "version": "2.26.1",
   "description": "Vendored MCP (Model Context Protocol) adapter extension for choco-pi",
   "type": "module",
@@ -27,7 +27,7 @@
     "node": ">=20"
   },
   "bin": {
-    "pi-choco-mcp": "cli.js"
+    "choco-pi-mcp": "cli.js"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

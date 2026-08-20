@@ -66,13 +66,13 @@ const IMPORT_PATHS = {
 };
 
 function printHelp(log = console.log) {
-  log("pi-choco-mcp helper\n");
+  log("choco-pi-mcp helper\n");
   log("Configure the local package as:");
-  log("  ./packages/pi-choco-mcp\n");
+  log("  ./packages/choco-pi-mcp\n");
   log("Then optionally run:");
-  log("  pi-choco-mcp init       Detect host configs and scaffold Pi imports");
-  log("  pi-choco-mcp init --dry-run");
-  log("  pi-choco-mcp init --discover-host-configs  Opt in to host config fallback discovery");
+  log("  choco-pi-mcp init       Detect host configs and scaffold Pi imports");
+  log("  choco-pi-mcp init --dry-run");
+  log("  choco-pi-mcp init --discover-host-configs  Opt in to host config fallback discovery");
 }
 
 function readJsonFile(filePath) {
@@ -204,7 +204,7 @@ export async function main(argv = process.argv.slice(2), log = console.log, erro
 
   if (command === "install") {
     error("The custom downloader has been retired.");
-    error("Configure `./packages/pi-choco-mcp` in Pi, then optionally run `pi-choco-mcp init`.");
+    error("Configure `./packages/choco-pi-mcp` in Pi, then optionally run `choco-pi-mcp init`.");
     return 1;
   }
 

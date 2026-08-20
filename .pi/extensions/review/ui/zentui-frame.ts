@@ -136,7 +136,7 @@ export const FRAME_BORDER_WIDTH = 4;
  */
 export const FRAME_BORDER_ROWS = 2;
 
-const ZENTUI_PACKAGES = ["pi-choco-ui", "pi-zentui"];
+const ZENTUI_PACKAGES = ["choco-pi-ui", "pi-choco-ui", "pi-zentui"];
 const ZENTUI_MINIMALIST_EDITOR = "extensions/zentui/minimalist-editor.ts";
 const ZENTUI_CONFIG = "extensions/zentui/config.ts";
 const ZENTUI_UI = "extensions/zentui/ui.ts";
@@ -176,11 +176,11 @@ function resolutionBases(): string[] {
 }
 
 /**
- * Directories a fork pinned by path can sit in. A `./packages/pi-choco-ui`
+ * Directories a fork pinned by path can sit in. A `./packages/choco-pi-ui`
  * entry in Pi's settings is loaded from that directory and never installed
  * under the package name, so name resolution alone would miss the very copy
- * the session is running. The legacy `pi-zentui` name stays as fallback for
- * profiles not yet migrated.
+ * the session is running. The former `pi-choco-ui` and upstream `pi-zentui`
+ * names stay as migration fallbacks.
  */
 function localForkCandidates(subpath: string): string[] {
 	const candidates: string[] = [];
