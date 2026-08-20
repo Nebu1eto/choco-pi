@@ -52,10 +52,10 @@ const file: DiffFile = {
 
 const plainHighlight: HighlightFn = (code) => code.split("\n");
 
-const TEST_BACKGROUNDS: Record<DiffStyleBackground, string> = {
+const TEST_BACKGROUNDS = {
   toolSuccessBg: "\u001b[48;2;20;48;20m",
   toolErrorBg: "\u001b[48;2;56;20;20m",
-};
+} satisfies Record<DiffStyleBackground, string>;
 
 const testStyler: DiffStyler = {
   fg: (color, text) => {
@@ -84,8 +84,14 @@ function options(overrides: Partial<DiffRenderOptions> = {}): DiffRenderOptions 
   };
 }
 
-const COMPLETE_ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\))/g;
-const ANSI_AT_START = /^\u001b(?:\[([0-?]*[ -/]*)([@-~])|\][^\u0007]*(?:\u0007|\u001b\\))/;
+const COMPLETE_ANSI = new RegExp(
+  String.raw`\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\))`,
+  "g",
+);
+const ANSI_AT_START = new RegExp(
+  String.raw`^\u001b(?:\[([0-?]*[ -/]*)([@-~])|\][^\u0007]*(?:\u0007|\u001b\\))`,
+);
+const ESCAPE_SEQUENCE = new RegExp(String.raw`\u001b`);
 
 type BackgroundScan = { columns: string[]; final: string };
 
@@ -149,7 +155,7 @@ test("disabled and over-limit highlighting fall back to escape-free plain text",
     createHighlight({ config: highlightConfig, filePath: "sample.ts", diffLines: 1_001 }),
   ]) {
     assert.deepEqual(highlight(source), source.split("\n"));
-    assert.doesNotMatch(highlight(source).join(""), /\u001b/);
+    assert.doesNotMatch(highlight(source).join(""), ESCAPE_SEQUENCE);
   }
 });
 
@@ -172,7 +178,7 @@ test("a minimal styler renders the complete diff without optional color capabili
   assert.match(rendered[4]!, /^  2 │ \+   return color/);
   for (const line of rendered) {
     assertNoPartialEscape(line);
-    assert.doesNotMatch(line, /\u001b/);
+    assert.doesNotMatch(line, ESCAPE_SEQUENCE);
   }
 });
 

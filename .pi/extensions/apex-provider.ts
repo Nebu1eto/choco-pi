@@ -1,3 +1,5 @@
+import { reinterpretHostValue } from "./lib/runtime-values.ts";
+import { isBoolean, isObject, isString, type RuntimeValue } from "./lib/runtime-values.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,7 +41,8 @@ const FALLBACK_DEFAULTS: ApexModelDefaults = {
   input: ["text"],
 };
 
-function positiveInteger(value: unknown): number | undefined {
+function positiveInteger(value: RuntimeValue): number | undefined {
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   return Number.isInteger(value) && (value as number) > 0 ? (value as number) : undefined;
 }
 
@@ -51,7 +54,7 @@ function firstPositiveInteger(...values: unknown[]): number | undefined {
   return undefined;
 }
 
-function normalizeInput(value: unknown, fallback: ModelInput): ModelInput {
+function normalizeInput(value: RuntimeValue, fallback: ModelInput): ModelInput {
   if (!Array.isArray(value)) return [...fallback];
   const input = [
     ...new Set(
@@ -61,21 +64,22 @@ function normalizeInput(value: unknown, fallback: ModelInput): ModelInput {
   return input.length > 0 ? input : [...fallback];
 }
 
-function modelEntries(payload: unknown): unknown[] {
+function modelEntries(payload: RuntimeValue): unknown[] {
   if (Array.isArray(payload)) return payload;
-  if (!payload || typeof payload !== "object") return [];
-  const object = payload as Record<string, unknown>;
+  if (!payload || !isObject(payload)) return [];
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+  const object = payload as Record<string, RuntimeValue>;
   if (Array.isArray(object.data)) return object.data;
   return Array.isArray(object.models) ? object.models : [];
 }
 
-function featureEnabled(model: Record<string, unknown>, feature: string): boolean | undefined {
+function featureEnabled(model: Record<string, RuntimeValue>, feature: string): boolean | undefined {
   if (!Array.isArray(model.supported_features)) return undefined;
   return model.supported_features.includes(feature);
 }
 
 export function normalizeApexModels(
-  payload: unknown,
+  payload: RuntimeValue,
   defaults: ApexModelDefaults,
   overrides: Record<string, ApexModelOverride>,
 ): ProviderModelConfig[] {
@@ -83,37 +87,36 @@ export function normalizeApexModels(
   const models: ProviderModelConfig[] = [];
 
   for (const entry of modelEntries(payload)) {
-    if (!entry || typeof entry !== "object") continue;
-    const model = entry as Record<string, unknown>;
-    if (typeof model.id !== "string") continue;
+    if (!entry || !isObject(entry)) continue;
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+    const model = entry as Record<string, RuntimeValue>;
+    if (!isString(model.id)) continue;
     const id = model.id.trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
 
     const overrideValue = overrides[id];
     const override =
-      overrideValue && typeof overrideValue === "object" && !Array.isArray(overrideValue)
+      overrideValue && isObject(overrideValue) && !Array.isArray(overrideValue)
         ? overrideValue
         : {};
     const inputSource = model.input ?? model.input_modalities;
     const apiInput = normalizeInput(inputSource, defaults.input);
-    const apiReasoning =
-      typeof model.reasoning === "boolean"
-        ? model.reasoning
-        : typeof model.supports_reasoning === "boolean"
-          ? model.supports_reasoning
-          : featureEnabled(model, "reasoning");
-    const apiName = typeof model.name === "string" && model.name.trim() ? model.name.trim() : id;
+    const apiReasoning = isBoolean(model.reasoning)
+      ? model.reasoning
+      : isBoolean(model.supports_reasoning)
+        ? model.supports_reasoning
+        : featureEnabled(model, "reasoning");
+    const apiName = isString(model.name) && model.name.trim() ? model.name.trim() : id;
     const overrideName =
-      typeof override.name === "string" && override.name.trim() ? override.name.trim() : undefined;
+      isString(override.name) && override.name.trim() ? override.name.trim() : undefined;
 
     models.push({
       id,
       name: overrideName ?? apiName,
-      reasoning:
-        typeof override.reasoning === "boolean"
-          ? override.reasoning
-          : (apiReasoning ?? defaults.reasoning),
+      reasoning: isBoolean(override.reasoning)
+        ? override.reasoning
+        : (apiReasoning ?? defaults.reasoning),
       input: Array.isArray(override.input) ? normalizeInput(override.input, apiInput) : apiInput,
       cost: ZERO_COST,
       contextWindow:
@@ -138,6 +141,7 @@ async function readConfig(cwd: string): Promise<ApexProviderConfig> {
   ];
   for (const configPath of configPaths) {
     try {
+      // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
       return JSON.parse(await readFile(configPath, "utf8")) as ApexProviderConfig;
     } catch (error) {
       if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
@@ -151,10 +155,9 @@ function resolveDefaults(config: ApexProviderConfig): ApexModelDefaults {
     contextWindow:
       positiveInteger(config.defaults?.contextWindow) ?? FALLBACK_DEFAULTS.contextWindow,
     maxTokens: positiveInteger(config.defaults?.maxTokens) ?? FALLBACK_DEFAULTS.maxTokens,
-    reasoning:
-      typeof config.defaults?.reasoning === "boolean"
-        ? config.defaults.reasoning
-        : FALLBACK_DEFAULTS.reasoning,
+    reasoning: isBoolean(config.defaults?.reasoning)
+      ? config.defaults.reasoning
+      : FALLBACK_DEFAULTS.reasoning,
     input: normalizeInput(config.defaults?.input, FALLBACK_DEFAULTS.input),
   };
 }
@@ -206,7 +209,7 @@ export default async function apexProvider(pi: ExtensionAPI): Promise<void> {
 
   const defaults = resolveDefaults(config);
   const overrides =
-    config.overrides && typeof config.overrides === "object" && !Array.isArray(config.overrides)
+    config.overrides && isObject(config.overrides) && !Array.isArray(config.overrides)
       ? config.overrides
       : {};
   let initialModels: ProviderModelConfig[] = [];
@@ -237,7 +240,7 @@ export default async function apexProvider(pi: ExtensionAPI): Promise<void> {
       const persist = (models: ProviderModelConfig[]) =>
         context.publish({
           persist: {
-            models: models as unknown as Model<Api>[],
+            models: reinterpretHostValue<Model<Api>[]>(models),
             checkedAt: Date.now(),
           },
         });

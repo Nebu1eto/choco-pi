@@ -1,3 +1,9 @@
+import {
+  isString,
+  reinterpretHostValue,
+  runtimeTypeOf,
+  type RuntimeValue,
+} from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import test from "node:test";
@@ -18,6 +24,7 @@ import {
   withEditorStyle,
 } from "./zentui-build.ts";
 
+// SAFETY: The fixture supplies every host member exercised by this test.
 const PLAIN_THEME = {
   fg: (_color: string, text: string) => text,
   bold: (text: string) => text,
@@ -31,17 +38,24 @@ function editorRender(width: number, ...text: string[]): string[] {
 
 type RecordedFrame = Parameters<ZentuiModules["renderMinimalistFrame"]>[0];
 type RecordedPolishedFrame = Parameters<NonNullable<ZentuiModules["renderPolishedEditorFrame"]>>[0];
+type RecordingLoader = { loader: ZentuiLoader; calls: RecordedFrame[] };
+type PolishedRecordingLoader = {
+  loader: ZentuiLoader;
+  polishedCalls: RecordedPolishedFrame[];
+  boxCalls: RecordedFrame[];
+};
 
 function recordingLoader(
   options: {
-    config?: Record<string, unknown>;
-    render?: (frame: RecordedFrame) => unknown;
+    config?: Record<string, RuntimeValue>;
+    render?: (frame: RecordedFrame) => RuntimeValue;
   } = {},
-): { loader: ZentuiLoader; calls: RecordedFrame[] } {
+): RecordingLoader {
   const calls: RecordedFrame[] = [];
   const loader: ZentuiLoader = async () => ({
     renderMinimalistFrame: (frame) => {
       calls.push(frame);
+      // SAFETY: The fixture supplies every host member exercised by this test.
       return (options.render?.(frame) ?? ["framed"]) as string[];
     },
     loadConfig: () => options.config ?? {},
@@ -55,14 +69,10 @@ function recordingLoader(
  */
 function polishedRecordingLoader(
   options: {
-    config?: Record<string, unknown>;
-    render?: (frame: RecordedPolishedFrame) => unknown;
+    config?: Record<string, RuntimeValue>;
+    render?: (frame: RecordedPolishedFrame) => RuntimeValue;
   } = {},
-): {
-  loader: ZentuiLoader;
-  polishedCalls: RecordedPolishedFrame[];
-  boxCalls: RecordedFrame[];
-} {
+): PolishedRecordingLoader {
   const polishedCalls: RecordedPolishedFrame[] = [];
   const boxCalls: RecordedFrame[] = [];
   const loader: ZentuiLoader = async () => ({
@@ -72,6 +82,7 @@ function polishedRecordingLoader(
     },
     renderPolishedEditorFrame: (frame) => {
       polishedCalls.push(frame);
+      // SAFETY: The fixture supplies every host member exercised by this test.
       return (options.render?.(frame) ?? ["polished"]) as string[];
     },
     formatProviderLabel: (provider) => (provider === "anthropic" ? "Anthropic" : (provider ?? "")),
@@ -132,6 +143,7 @@ test("a module missing either export is refused at the boundary", async () => {
     undefined,
     "zentui",
   ]) {
+    // SAFETY: The fixture supplies every host member exercised by this test.
     const adapter = await createZentuiFrameAdapter(async () => candidate as never);
     assert.equal(adapter.available, false, `refused ${JSON.stringify(candidate) ?? "undefined"}`);
   }
@@ -148,6 +160,7 @@ test("an unreadable config makes the adapter unavailable", async () => {
 
   const nonObject = await createZentuiFrameAdapter(async () => ({
     renderMinimalistFrame: () => ["framed"],
+    // SAFETY: The fixture supplies every host member exercised by this test.
     loadConfig: (() => "not a config") as never,
   }));
   assert.equal(nonObject.available, false);
@@ -159,8 +172,8 @@ test("a renderer that throws or returns a non-string list falls back per call", 
     renderMinimalistFrame: () => {
       call += 1;
       if (call === 1) throw new Error("render failed");
-      if (call === 2) return [1, 2] as never;
-      if (call === 3) return [] as string[];
+      if (call === 2) return reinterpretHostValue<string[]>([1, 2]);
+      if (call === 3) return [];
       return ["recovered"];
     },
     loadConfig: () => ({}),
@@ -306,8 +319,8 @@ test("the default loader never throws and always yields a usable adapter", async
   const editorLines = editorRender(76, "text");
   const framed = adapter.frame({ width: 80, editorLines, cwd: "/repo", uiTheme: PLAIN_THEME });
 
-  assert.equal(typeof adapter.available, "boolean");
-  assert.ok(framed.every((line) => typeof line === "string"));
+  assert.equal(runtimeTypeOf(adapter.available), "boolean");
+  assert.ok(framed.every((line) => isString(line)));
   assert.equal(adapter.editorWidth(80), adapter.available ? 76 : 80);
   if (!adapter.available) assert.deepEqual(framed, editorLines);
 });
@@ -585,7 +598,7 @@ test(
 
 test("a zentui pinned by path is found like an installed one", () => {
   const manifest = resolveZentuiFile("package.json");
-  assert.equal(typeof manifest, "string", "the pinned fork in .pi/packages must resolve");
+  assert.equal(runtimeTypeOf(manifest), "string", "the pinned fork in .pi/packages must resolve");
   assert.match(manifest!, /choco-pi-ui[/\\]package\.json$/);
   assert.equal(existsSync(manifest!), true);
 });

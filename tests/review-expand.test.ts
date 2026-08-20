@@ -139,7 +139,7 @@ test("real git context uses correct old and new numbering without changing hunk 
   const firstOldBelow = hunk.oldStart + hunk.oldLines;
   const firstNewBelow = hunk.newStart + hunk.newLines;
   assert.deepEqual(
-    belowResult.expansion.below.map((line, offset) => ({
+    belowResult.expansion.below.map((line) => ({
       text: line.text,
       oldLine: line.oldLine,
       newLine: line.newLine,

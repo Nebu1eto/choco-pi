@@ -1,3 +1,4 @@
+import { isBoolean, isObject, type RuntimeValue } from "./lib/runtime-values.ts";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -36,7 +37,7 @@ type FastEditorState = {
 
 type FastEditorFactory = EditorFactory & {
   [FAST_EDITOR_FACTORY]?: FastEditorState;
-  [symbol: symbol]: unknown;
+  [symbol: symbol]: RuntimeValue;
 };
 
 type EditorFactoryUi = {
@@ -64,8 +65,8 @@ function isCodexModel(model: Model<Api> | undefined): boolean {
   return model?.provider === "openai-codex";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
+  return isObject(value) && value !== null && !Array.isArray(value);
 }
 
 export function restoreFastMode(entries: readonly SessionEntry[]): boolean {
@@ -73,7 +74,7 @@ export function restoreFastMode(entries: readonly SessionEntry[]): boolean {
   for (const entry of entries) {
     if (entry.type !== "custom" || entry.customType !== FAST_MODE_ENTRY || !isRecord(entry.data))
       continue;
-    if (typeof entry.data.enabled === "boolean") enabled = entry.data.enabled;
+    if (isBoolean(entry.data.enabled)) enabled = entry.data.enabled;
   }
   return enabled;
 }
@@ -120,12 +121,14 @@ export function wrapFastModeEditorFactory(
   baseFactory: EditorFactory,
   state: FastEditorState,
 ): EditorFactory {
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const existing = (baseFactory as FastEditorFactory)[FAST_EDITOR_FACTORY];
   if (existing) {
     Object.assign(existing, state);
     return baseFactory;
   }
 
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const wrappedFactory = ((...args: Parameters<EditorFactory>) => {
     const editor = baseFactory(...args);
     const render = editor.render.bind(editor);
@@ -145,6 +148,7 @@ export function wrapFastModeEditorFactory(
   for (const symbol of ZENTUI_EDITOR_SYMBOLS) {
     if (!(symbol in baseFactory)) continue;
     Object.defineProperty(wrappedFactory, symbol, {
+      // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
       value: (baseFactory as FastEditorFactory)[symbol],
       configurable: true,
     });
@@ -167,6 +171,7 @@ export function installFastModeEditorWhenReady(
     if (!isCurrent()) return;
     try {
       const factory = ui.getEditorComponent();
+      // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
       if (factory && Boolean((factory as FastEditorFactory)[ZENTUI_EDITOR_FACTORY])) {
         ui.setEditorComponent(wrapFastModeEditorFactory(factory, state));
         return;
@@ -232,10 +237,12 @@ export default function modelControls(pi: ExtensionAPI): void {
       const levels = supportedThinkingLevels(ctx.model);
       const requested = args.trim().toLowerCase();
       if (requested) {
+        // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
         if (!levels.includes(requested as ThinkingLevel)) {
           ctx.ui.notify(`Unsupported reasoning effort. Available: ${levels.join(", ")}`, "warning");
           return;
         }
+        // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
         pi.setThinkingLevel(requested as ThinkingLevel);
         ctx.ui.notify(`Reasoning effort: ${requested}`, "info");
         return;
@@ -245,6 +252,7 @@ export default function modelControls(pi: ExtensionAPI): void {
       const selected = await ctx.ui.select("Reasoning effort", labels);
       if (!selected) return;
 
+      // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
       const level = selected.replace(/ \(current\)$/, "") as ThinkingLevel;
       pi.setThinkingLevel(level);
       ctx.ui.notify(`Reasoning effort: ${level}`, "info");

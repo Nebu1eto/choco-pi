@@ -1,3 +1,4 @@
+import { propertiesWhen } from "../../lib/runtime-values.ts";
 /**
  * Local risk ordering and noise folding for review diffs.
  *
@@ -110,7 +111,7 @@ function isMinified(file: DiffFile): boolean {
   const changed = file.hunks
     .flatMap((hunk) => hunk.lines)
     .filter((line) => line.kind !== "context");
-  return changed.length > 0 && changed.some((line) => line.text.length >= 500);
+  return changed.some((line) => line.text.length >= 500);
 }
 
 function isSnapshot(path: string): boolean {
@@ -307,7 +308,7 @@ export function assessDiff(model: DiffModel, config: ResolvedReviewConfig): Diff
       riskScore,
       reasons: signals.map((signal) => signal.reason),
       collapsed,
-      ...(collapsed ? { collapseReason } : {}),
+      ...propertiesWhen(collapsed, () => ({ collapseReason })),
     } satisfies FileAssessment;
   });
 

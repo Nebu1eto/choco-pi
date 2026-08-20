@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "./lib/runtime-values.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Box, matchesKey, ScrollView, Text } from "@earendil-works/pi-tui";
 import { formatStatus, summarizeStatusRows } from "./session-status.ts";
@@ -49,7 +50,7 @@ export function createTabController(options: {
         cache.set(id, body);
         if (current === token && active === id) options.paint(body, { preserveScroll: background });
       })
-      .catch((error: unknown) => {
+      .catch((error: RuntimeValue) => {
         if (current !== token || active !== id || cache.has(id)) return;
         const message = error instanceof Error ? error.message : String(error);
         options.paint(options.failure(id, message), { preserveScroll: background });

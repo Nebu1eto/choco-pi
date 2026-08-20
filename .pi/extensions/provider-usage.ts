@@ -1,3 +1,4 @@
+import { isNumber, isObject, isString, recordOf, type RuntimeValue } from "./lib/runtime-values.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -27,28 +28,28 @@ type QuotaWindow = {
   resets_at?: string;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
+  return isObject(value) && value !== null && !Array.isArray(value);
 }
 
-function numberValue(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function numberValue(value: RuntimeValue): number | undefined {
+  return isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+function stringValue(value: RuntimeValue): string | undefined {
+  return isString(value) && value.length > 0 ? value : undefined;
 }
 
 function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
-function dateValue(value: unknown, unixSeconds = false): Date | undefined {
-  if (unixSeconds && typeof value === "number") {
+function dateValue(value: RuntimeValue, unixSeconds = false): Date | undefined {
+  if (unixSeconds && isNumber(value)) {
     const date = new Date(value * 1000);
     return Number.isNaN(date.getTime()) ? undefined : date;
   }
-  if (typeof value !== "string") return undefined;
+  if (!isString(value)) return undefined;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
@@ -57,7 +58,7 @@ async function fetchJson(
   url: string,
   token: string,
   headers: Record<string, string>,
-): Promise<unknown> {
+): Promise<RuntimeValue> {
   const response = await fetch(url, {
     headers: {
       Accept: "application/json",
@@ -70,7 +71,7 @@ async function fetchJson(
   return response.json();
 }
 
-function parseJwtPayload(token: string): Record<string, unknown> | undefined {
+function parseJwtPayload(token: string): Record<string, RuntimeValue> | undefined {
   try {
     const encoded = token.split(".")[1];
     if (!encoded) return undefined;
@@ -88,7 +89,7 @@ function codexAccountId(token: string): string | undefined {
   return isRecord(auth) ? stringValue(auth.chatgpt_account_id) : undefined;
 }
 
-function quotaWindow(value: unknown): QuotaWindow | undefined {
+function quotaWindow(value: RuntimeValue): QuotaWindow | undefined {
   if (!isRecord(value)) return undefined;
   return {
     utilization: numberValue(value.utilization),
@@ -96,7 +97,7 @@ function quotaWindow(value: unknown): QuotaWindow | undefined {
   };
 }
 
-function structuredClaudeWindow(value: unknown): UsageWindow | undefined {
+function structuredClaudeWindow(value: RuntimeValue): UsageWindow | undefined {
   if (!isRecord(value)) return undefined;
   const percent = numberValue(value.percent);
   const kind = stringValue(value.kind);
@@ -124,19 +125,19 @@ function structuredClaudeWindow(value: unknown): UsageWindow | undefined {
   };
 }
 
-const CLAUDE_RATE_LIMIT_TIERS: Record<string, string> = {
+const CLAUDE_RATE_LIMIT_TIERS = recordOf<string, string>()({
   default_claude_pro: "Pro",
   default_claude_max_5x: "Max (5x)",
   default_claude_max_20x: "Max (20x)",
-};
+});
 
-const CLAUDE_SUBSCRIPTION_LABELS: Record<string, string> = {
+const CLAUDE_SUBSCRIPTION_LABELS = recordOf<string, string>()({
   free: "Free",
   pro: "Pro",
   max: "Max",
   team: "Team",
   enterprise: "Enterprise",
-};
+});
 
 /**
  * Derives the plan label from the `/api/oauth/profile` response. Team and
@@ -144,7 +145,7 @@ const CLAUDE_SUBSCRIPTION_LABELS: Record<string, string> = {
  * type decides those labels before the tier is consulted.
  */
 export function claudePlanLabel(
-  profile: unknown,
+  profile: RuntimeValue,
   fallbackSubscription?: string,
 ): string | undefined {
   const record = isRecord(profile) ? profile : undefined;
@@ -169,7 +170,7 @@ export function claudePlanLabel(
     : undefined;
 }
 
-export function normalizeClaudeUsage(payload: unknown, profile?: unknown): ProviderUsage {
+export function normalizeClaudeUsage(payload: RuntimeValue, profile?: RuntimeValue): ProviderUsage {
   if (!isRecord(payload)) throw new Error("Unexpected response");
   const structuredWindows = Array.isArray(payload.limits)
     ? payload.limits.flatMap((value) => {
@@ -215,7 +216,7 @@ export function normalizeClaudeUsage(payload: unknown, profile?: unknown): Provi
   };
 }
 
-function codexWindow(value: unknown, label: string): UsageWindow | undefined {
+function codexWindow(value: RuntimeValue, label: string): UsageWindow | undefined {
   if (!isRecord(value)) return undefined;
   const percent = numberValue(value.used_percent);
   if (percent === undefined) return undefined;
@@ -237,7 +238,7 @@ function codexWindow(value: unknown, label: string): UsageWindow | undefined {
   };
 }
 
-const CODEX_PLAN_LABELS: Record<string, string> = {
+const CODEX_PLAN_LABELS = recordOf<string, string>()({
   guest: "Guest",
   free: "Free",
   free_workspace: "Free",
@@ -258,7 +259,7 @@ const CODEX_PLAN_LABELS: Record<string, string> = {
   education: "Edu",
   k12: "K12",
   quorum: "Quorum",
-};
+});
 
 function titleCase(value: string): string {
   return value
@@ -275,7 +276,7 @@ export function codexPlanLabel(planType: string | undefined): string | undefined
   return CODEX_PLAN_LABELS[key] ?? titleCase(planType);
 }
 
-export function normalizeCodexUsage(payload: unknown): ProviderUsage {
+export function normalizeCodexUsage(payload: RuntimeValue): ProviderUsage {
   if (!isRecord(payload)) throw new Error("Unexpected response");
   const rateLimit = isRecord(payload.rate_limit) ? payload.rate_limit : {};
   const windows = [
@@ -295,7 +296,7 @@ export function normalizeCodexUsage(payload: unknown): ProviderUsage {
   };
 }
 
-export function normalizeSyntheticUsage(payload: unknown): ProviderUsage {
+export function normalizeSyntheticUsage(payload: RuntimeValue): ProviderUsage {
   if (!isRecord(payload)) throw new Error("Unexpected response");
   const windows: UsageWindow[] = [];
   const subscription = isRecord(payload.subscription) ? payload.subscription : undefined;
@@ -370,7 +371,7 @@ let claudeProfileCache: { at: number; profile: unknown } | undefined;
  * when the subscription changes, so it is cached well beyond the usage refresh
  * interval and never blocks the usage report when it fails.
  */
-async function claudeProfile(token: string): Promise<unknown> {
+async function claudeProfile(token: string): Promise<RuntimeValue> {
   if (claudeProfileCache && Date.now() - claudeProfileCache.at < PROFILE_CACHE_MS) {
     return claudeProfileCache.profile;
   }

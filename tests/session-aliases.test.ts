@@ -1,3 +1,4 @@
+import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,11 +23,11 @@ test("/delete confirms, deletes the session record, and shuts down", async (cont
   const sessionFile = path.join(directory, "session.jsonl");
   await writeFile(sessionFile, "session record\n");
   let deleteHandler: ((args: string, ctx: any) => Promise<void>) | undefined;
-  const pi = {
+  const pi = reinterpretHostValue<ExtensionAPI>({
     registerCommand: (name: string, command: { handler: typeof deleteHandler }) => {
       if (name === "delete") deleteHandler = command.handler;
     },
-  } as unknown as ExtensionAPI;
+  });
   sessionAliases(pi);
   let shutdown = false;
 
@@ -49,11 +50,11 @@ test("/delete leaves the session intact when confirmation is declined", async (c
   const sessionFile = path.join(directory, "session.jsonl");
   await writeFile(sessionFile, "session record\n");
   let deleteHandler: ((args: string, ctx: any) => Promise<void>) | undefined;
-  const pi = {
+  const pi = reinterpretHostValue<ExtensionAPI>({
     registerCommand: (name: string, command: { handler: typeof deleteHandler }) => {
       if (name === "delete") deleteHandler = command.handler;
     },
-  } as unknown as ExtensionAPI;
+  });
   sessionAliases(pi);
   let shutdown = false;
 

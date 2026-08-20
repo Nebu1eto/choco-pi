@@ -122,6 +122,7 @@ test("summarizeStatusRows includes session and model essentials", async (context
     modelRegistry: { find: () => undefined },
     getSystemPromptOptions: () => ({ contextFiles: [], skills: [] }),
   };
+  // SAFETY: The fixture supplies every host member exercised by this test.
   const rows = summarizeStatusRows(ctx as never, "medium");
   const rendered = formatStatus(rows);
   assert.match(rendered, /Session ID:\s+session-1/);

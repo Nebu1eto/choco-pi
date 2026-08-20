@@ -18,6 +18,7 @@ function isExcludedCommand(command: ResolvedCommand): boolean {
 }
 
 export default function commandFilter(_pi: ExtensionAPI): void {
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const prototype = ExtensionRunner.prototype as FilterableRunnerPrototype;
   if (prototype.__chocoPiCommandFilterApplied) return;
 

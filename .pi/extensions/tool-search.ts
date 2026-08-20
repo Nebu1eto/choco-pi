@@ -1,3 +1,10 @@
+import {
+  isBoolean,
+  isJsonRecord,
+  isObject,
+  isString,
+  type RuntimeValue,
+} from "./lib/runtime-values.ts";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -101,9 +108,31 @@ type McpMetadataCache = {
   servers?: Record<string, { tools?: CachedMcpTool[]; resources?: CachedMcpResource[] }>;
 };
 
-type McpStatusSnapshot = {
-  servers?: Array<{ name?: string; disabled?: boolean }>;
-};
+type McpServerStatus = { name?: string; disabled?: boolean };
+
+type McpStatusSnapshot = { servers?: McpServerStatus[] };
+
+function parseMcpStatusSnapshot(value: RuntimeValue): McpStatusSnapshot {
+  if (!isJsonRecord(value)) throw new TypeError("MCP status event must contain an object");
+  if (value.servers === undefined) return {};
+  if (!Array.isArray(value.servers))
+    throw new TypeError("MCP status servers must contain an array");
+  const servers: McpServerStatus[] = value.servers.map((server) => {
+    if (!isJsonRecord(server)) throw new TypeError("MCP server status must contain an object");
+    const parsed: McpServerStatus = {};
+    if (server.name !== undefined) {
+      if (!isString(server.name)) throw new TypeError("MCP server name must contain a string");
+      parsed.name = server.name;
+    }
+    if (server.disabled !== undefined) {
+      if (!isBoolean(server.disabled))
+        throw new TypeError("MCP server disabled flag must contain a boolean");
+      parsed.disabled = server.disabled;
+    }
+    return parsed;
+  });
+  return { servers };
+}
 
 function normalize(value: string): string {
   return value
@@ -116,11 +145,12 @@ function tokenize(value: string): string[] {
   return normalize(value).match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
-function schemaText(value: unknown, key = ""): string {
-  if (typeof value === "string") return `${key} ${value}`;
+function schemaText(value: RuntimeValue, key = ""): string {
+  if (isString(value)) return `${key} ${value}`;
   if (Array.isArray(value)) return value.map((item) => schemaText(item, key)).join(" ");
-  if (!value || typeof value !== "object") return key;
-  return Object.entries(value as Record<string, unknown>)
+  if (!value || !isObject(value)) return key;
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+  return Object.entries(value as Record<string, RuntimeValue>)
     .map(([childKey, child]) => schemaText(child, childKey))
     .join(" ");
 }
@@ -168,7 +198,7 @@ function targetDescription(target: SearchTarget): string {
   return target.kind === "pi" ? target.tool.description : target.description;
 }
 
-function targetParameters(target: SearchTarget): unknown {
+function targetParameters(target: SearchTarget): RuntimeValue {
   return target.kind === "pi" ? target.tool.parameters : target.parameters;
 }
 
@@ -221,6 +251,7 @@ function formatResourceToolName(name: string): string {
 function loadMcpDocuments(enabledServers?: ReadonlySet<string>): SearchDocument[] {
   try {
     const agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent");
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     const cache = JSON.parse(
       readFileSync(path.join(agentDir, "mcp-cache.json"), "utf8"),
     ) as McpMetadataCache;
@@ -336,31 +367,24 @@ function rankTools(documents: SearchDocument[], query: string): SearchTarget[] {
     .map((match) => match.target);
 }
 
-function parameterSummary(schema: unknown): string {
-  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return "none";
-  const value = schema as Record<string, unknown>;
-  if (!value.properties || typeof value.properties !== "object" || Array.isArray(value.properties))
-    return "see mcp describe";
+function parameterSummary(schema: RuntimeValue): string {
+  if (!isJsonRecord(schema)) return "none";
+  const value = schema;
+  if (!isJsonRecord(value.properties)) return "see mcp describe";
   const required = new Set(
     Array.isArray(value.required)
-      ? value.required.filter((item): item is string => typeof item === "string")
+      ? value.required.filter((item): item is string => isString(item))
       : [],
   );
-  const entries = Object.entries(value.properties as Record<string, unknown>).map(
-    ([name, property]) => {
-      const definition =
-        property && typeof property === "object" && !Array.isArray(property)
-          ? (property as Record<string, unknown>)
-          : {};
-      const type =
-        typeof definition.type === "string"
-          ? definition.type
-          : Array.isArray(definition.enum)
-            ? definition.enum.map(String).join(" | ")
-            : "value";
-      return `${name}${required.has(name) ? "*" : ""}: ${type}`;
-    },
-  );
+  const entries = Object.entries(value.properties).map(([name, property]) => {
+    const definition = isJsonRecord(property) ? property : {};
+    const type = isString(definition.type)
+      ? definition.type
+      : Array.isArray(definition.enum)
+        ? definition.enum.map(String).join(" | ")
+        : "value";
+    return `${name}${required.has(name) ? "*" : ""}: ${type}`;
+  });
   if (entries.length === 0) return "none";
   const summary = entries.join("; ");
   return summary.length > 500 ? `${summary.slice(0, 497)}...` : summary;
@@ -471,11 +495,11 @@ export default function toolSearch(pi: ExtensionAPI): void {
   });
 
   pi.events.on("pi-mcp-adapter/status/v1", (payload) => {
-    const snapshot = payload as McpStatusSnapshot;
+    const snapshot = parseMcpStatusSnapshot(payload);
     enabledMcpServers = new Set(
-      (snapshot.servers ?? [])
-        .filter((server) => server.disabled !== true && typeof server.name === "string")
-        .map((server) => server.name as string),
+      (snapshot.servers ?? []).flatMap((server) =>
+        server.disabled !== true && isString(server.name) ? [server.name] : [],
+      ),
     );
     mcpCatalogReady = true;
     if (sessionStarted) scheduleLeanSurface();

@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -76,15 +77,25 @@ async function pullRequestRepository(t: TestContext): Promise<{
   return { root, remote, baseSha, headSha, targetSha };
 }
 
+type PullRequestMetadataFixture = {
+  number: number;
+  title: string;
+  baseRefName: string;
+  headRefOid: string;
+  author: RuntimeValue;
+  url: string;
+  updatedAt?: string;
+};
+
 function metadata(
   number: number,
   headSha: string,
-  author: unknown = {
+  author: RuntimeValue = {
     login: "octocat",
     name: "Octo Cat",
     is_bot: false,
   },
-): Record<string, unknown> {
+): PullRequestMetadataFixture {
   return {
     number,
     title: "Review this change",
@@ -174,6 +185,7 @@ test("gh metadata and completion listing parse every relied-on field, including 
 
 test("missing and unauthenticated gh failures give login instructions", async () => {
   const missing: ExecRunner = async () => {
+    // SAFETY: The fixture supplies every host member exercised by this test.
     const error = new Error("spawn gh ENOENT") as NodeJS.ErrnoException;
     error.code = "ENOENT";
     error.syscall = "spawn gh";

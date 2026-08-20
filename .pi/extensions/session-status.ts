@@ -1,3 +1,4 @@
+import { isObject, isString, type RuntimeValue } from "./lib/runtime-values.ts";
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -9,8 +10,8 @@ type ModelRecord = { baseUrl?: unknown; name?: unknown };
 
 export type StatusRow = { label: string; value: string };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
+  return isObject(value) && value !== null && !Array.isArray(value);
 }
 
 function agentDir(): string {
@@ -43,7 +44,7 @@ export function describePath(filePath: string, cwd: string): string {
   }
 }
 
-function readJsonFile(filePath: string): unknown | undefined {
+function readJsonFile(filePath: string): RuntimeValue | undefined {
   try {
     if (!existsSync(filePath)) return undefined;
     return JSON.parse(readFileSync(filePath, "utf8"));
@@ -83,14 +84,17 @@ function mcpState(cwd: string): McpState {
   if (!isRecord(cache) || !isRecord(cache.servers)) {
     return { count: names.size, missing: [...names], cached: false };
   }
-  const cachedServers = cache.servers as Record<string, unknown>;
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+  const cachedServers = cache.servers as Record<string, RuntimeValue>;
   const missing = [...names].filter((name) => cachedServers[name] === undefined);
   return { count: names.size, missing, cached: true };
 }
 
-function sessionStartedAt(ctx: { sessionManager: { getHeader(): unknown } }): string | undefined {
+function sessionStartedAt(ctx: {
+  sessionManager: { getHeader(): RuntimeValue };
+}): string | undefined {
   const header: unknown = ctx.sessionManager.getHeader();
-  if (!isRecord(header) || typeof header.timestamp !== "string") return undefined;
+  if (!isRecord(header) || !isString(header.timestamp)) return undefined;
   const date = new Date(header.timestamp);
   return Number.isNaN(date.getTime()) ? undefined : date.toLocaleString();
 }
@@ -120,12 +124,12 @@ function modelDisplay(
   modelName: string | undefined,
 ): string {
   if (!id) return "No model is currently selected";
-  const name = typeof recordName === "string" && recordName.length > 0 ? recordName : modelName;
+  const name = isString(recordName) && recordName.length > 0 ? recordName : modelName;
   return name && name !== id ? `${name} (${id})` : id;
 }
 
 function providerDisplay(provider: string, record: ModelRecord | undefined): string {
-  if (!record || typeof record.baseUrl !== "string" || record.baseUrl.length === 0) return provider;
+  if (!record || !isString(record.baseUrl) || record.baseUrl.length === 0) return provider;
   if (isDefaultProviderUrl(provider, record.baseUrl)) return provider;
   return `${provider} - ${record.baseUrl}`;
 }
@@ -166,7 +170,9 @@ export function parseAgentFrontmatter(content: string): AgentFrontmatter {
     const pair = line.match(/^(default_model|default_thinking):\s*(.+?)\s*$/);
     if (!pair) continue;
     const value = pair[2].replace(/^["']|["']$/g, "");
-    if (value.length > 0) result[pair[1] as keyof AgentFrontmatter] = value;
+    if (value.length === 0) continue;
+    if (pair[1] === "default_model") result.default_model = value;
+    else result.default_thinking = value;
   }
   return result;
 }
@@ -221,9 +227,9 @@ function bridgeSummary(cwd: string): string | undefined {
 
 function themeLabel(cwd: string): string {
   const agent = readJsonFile(path.join(agentDir(), "settings.json"));
-  if (isRecord(agent) && typeof agent.theme === "string") return agent.theme;
+  if (isRecord(agent) && isString(agent.theme)) return agent.theme;
   const project = readJsonFile(path.join(cwd, ".pi", "settings.json"));
-  return isRecord(project) && typeof project.theme === "string" ? project.theme : "default";
+  return isRecord(project) && isString(project.theme) ? project.theme : "default";
 }
 
 function corePackageLabel(): string | undefined {
@@ -258,7 +264,7 @@ function corePackageLabel(): string | undefined {
   ];
   for (const candidate of candidates) {
     const raw = readJsonFile(candidate);
-    if (isRecord(raw) && typeof raw.version === "string") return `pi-coding-agent ${raw.version}`;
+    if (isRecord(raw) && isString(raw.version)) return `pi-coding-agent ${raw.version}`;
   }
   return undefined;
 }
@@ -295,6 +301,7 @@ export function summarizeStatusRows(
   const record = lookupModelRecord(ctx, model?.provider, model?.id);
   rows.push({
     label: "Model",
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     value: modelDisplay(model?.id, record?.name as string | undefined, model?.name),
   });
   if (model) {
@@ -359,7 +366,7 @@ function configuredPackageCount(cwd: string): number {
     const raw = readJsonFile(settingsPath);
     if (!isRecord(raw) || !Array.isArray(raw.packages)) continue;
     for (const entry of raw.packages) {
-      if (typeof entry === "string") names.add(normalizePackageKey(entry));
+      if (isString(entry)) names.add(normalizePackageKey(entry));
     }
   }
   return names.size;

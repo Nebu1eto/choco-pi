@@ -1,3 +1,11 @@
+import { propertiesWhen } from "../../lib/runtime-values.ts";
+import {
+  isBoolean,
+  isFunction,
+  isObject,
+  isString,
+  type RuntimeValue,
+} from "../../lib/runtime-values.ts";
 /**
  * Optional zentui chrome for the review view's input editors.
  *
@@ -84,7 +92,7 @@ type MinimalistEditorMetadata = {
   agentActive?: boolean;
 };
 
-type ZentuiConfig = Record<string, unknown>;
+type ZentuiConfig = Record<string, RuntimeValue>;
 
 /** zentui's editor metadata fields, as `renderPolishedEditorFrame` reads them. */
 type PolishedEditorMeta = {
@@ -142,12 +150,12 @@ const ZENTUI_CONFIG = "extensions/zentui/config.ts";
 const ZENTUI_UI = "extensions/zentui/ui.ts";
 const ZENTUI_FORMAT = "extensions/zentui/format.ts";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
+  return isObject(value) && value !== null;
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+function isStringArray(value: RuntimeValue): value is string[] {
+  return Array.isArray(value) && value.every((entry) => isString(entry));
 }
 
 /** What the view would have shown with no zentui at all. */
@@ -220,43 +228,41 @@ export function resolveZentuiFile(subpath: string): string | undefined {
  * TypeScript resolve zentui's sources into this project's program, where their
  * extensionless relative imports fail node16 module resolution.
  */
-async function importAtRuntime(path: string): Promise<unknown> {
+async function importAtRuntime(path: string): Promise<RuntimeValue> {
   const specifier = pathToFileURL(path).href;
   return await import(specifier);
 }
 
 /** Accept a candidate only when it still has the exports this adapter calls. */
-function validateModules(candidate: unknown): ZentuiModules | undefined {
+function validateModules(candidate: RuntimeValue): ZentuiModules | undefined {
   if (!isRecord(candidate)) return undefined;
   const renderMinimalistFrame = candidate["renderMinimalistFrame"];
   const loadConfig = candidate["loadConfig"];
-  if (typeof renderMinimalistFrame !== "function" || typeof loadConfig !== "function") {
+  if (!isFunction(renderMinimalistFrame) || !isFunction(loadConfig)) {
     return undefined;
   }
   const renderPolishedEditorFrame = candidate["renderPolishedEditorFrame"];
   const formatProviderLabel = candidate["formatProviderLabel"];
   return {
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     renderMinimalistFrame: renderMinimalistFrame as ZentuiModules["renderMinimalistFrame"],
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     loadConfig: loadConfig as ZentuiModules["loadConfig"],
-    ...(typeof renderPolishedEditorFrame === "function"
-      ? {
-          renderPolishedEditorFrame: renderPolishedEditorFrame as NonNullable<
-            ZentuiModules["renderPolishedEditorFrame"]
-          >,
-        }
-      : {}),
-    ...(typeof formatProviderLabel === "function"
-      ? {
-          formatProviderLabel: formatProviderLabel as NonNullable<
-            ZentuiModules["formatProviderLabel"]
-          >,
-        }
-      : {}),
+    ...propertiesWhen(isFunction(renderPolishedEditorFrame), () => ({
+      // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+      renderPolishedEditorFrame: renderPolishedEditorFrame as NonNullable<
+        ZentuiModules["renderPolishedEditorFrame"]
+      >,
+    })),
+    ...propertiesWhen(isFunction(formatProviderLabel), () => ({
+      // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+      formatProviderLabel: formatProviderLabel as NonNullable<ZentuiModules["formatProviderLabel"]>,
+    })),
   };
 }
 
 /** Import a zentui module, treating an absent or unloadable file as absent. */
-async function importOptional(subpath: string): Promise<Record<string, unknown> | undefined> {
+async function importOptional(subpath: string): Promise<Record<string, RuntimeValue> | undefined> {
   const path = resolveZentuiFile(subpath);
   if (!path) return undefined;
   try {
@@ -287,7 +293,7 @@ const defaultLoader: ZentuiLoader = async () => {
 };
 
 /** The editor section of a zentui config, or an empty record when absent. */
-function editorConfig(config: ZentuiConfig): Record<string, unknown> {
+function editorConfig(config: ZentuiConfig): Record<string, RuntimeValue> {
   const components = config["components"];
   const editor = isRecord(components) ? components["editor"] : undefined;
   return isRecord(editor) ? editor : {};
@@ -299,7 +305,7 @@ function editorConfig(config: ZentuiConfig): Record<string, unknown> {
  */
 function editorStyle(config: ZentuiConfig): string {
   const style = editorConfig(config)["style"];
-  return typeof style === "string" ? style : "opencode";
+  return isString(style) ? style : "opencode";
 }
 
 /**
@@ -311,7 +317,7 @@ function polishedRailWidth(config: ZentuiConfig): number {
   const icons = config["icons"];
   const icon = (name: string): string => {
     const value = isRecord(icons) ? icons[name] : undefined;
-    return typeof value === "string" ? value : "";
+    return isString(value) ? value : "";
   };
   if (editorStyle(config) === "opencode-copy-friendly") {
     const prompt = icon("editorPrompt");
@@ -323,7 +329,7 @@ function polishedRailWidth(config: ZentuiConfig): number {
 /** Honour the user's zentui setting for the "↑ n more" labels; default on. */
 function viewportIndicatorsEnabled(config: ZentuiConfig): boolean {
   const enabled = editorConfig(config)["viewportIndicators"];
-  return typeof enabled === "boolean" ? enabled : true;
+  return isBoolean(enabled) ? enabled : true;
 }
 
 function createFallbackAdapter(): ZentuiFrameAdapter {
@@ -379,8 +385,8 @@ export async function createZentuiFrameAdapter(
       if (!above || !below) return unframed(options);
       const viewport = viewportIndicators
         ? {
-            ...(above.count ? { above: above.count } : {}),
-            ...(below.count ? { below: below.count } : {}),
+            ...propertiesWhen(above.count, () => ({ above: above.count })),
+            ...propertiesWhen(below.count, () => ({ below: below.count })),
           }
         : {};
       const text = editorLines.slice(1, -1);
@@ -389,26 +395,31 @@ export async function createZentuiFrameAdapter(
           const framed = polished.render({
             width,
             editorLines: text,
-            ...(autocompleteLines?.length ? { autocompleteLines } : {}),
-            ...(above.count || below.count ? { viewport } : {}),
+            ...propertiesWhen(autocompleteLines?.length, () => ({ autocompleteLines })),
+            ...propertiesWhen(above.count || below.count, () => ({ viewport })),
             uiTheme,
             config,
             modelMeta: {
               modelLabel: model?.label ?? "",
-              ...(model?.label ? { modelId: model.label, modelName: model.label } : {}),
+              ...propertiesWhen(model?.label, () => ({
+                modelId: model!.label,
+                modelName: model!.label,
+              })),
               providerLabel: model?.provider
                 ? (modules.formatProviderLabel?.(model.provider) ?? model.provider)
                 : "",
             },
-            ...(model?.thinkingLevel ? { thinkingLevel: model.thinkingLevel } : {}),
+            ...propertiesWhen(model?.thinkingLevel, () => ({
+              thinkingLevel: model!.thinkingLevel,
+            })),
           });
           return isStringArray(framed) && framed.length > 0 ? framed : unframed(options);
         }
         const framed = modules.renderMinimalistFrame({
           width,
           editorLines: text,
-          ...(autocompleteLines?.length ? { autocompleteLines } : {}),
-          ...(above.count || below.count ? { viewport } : {}),
+          ...propertiesWhen(autocompleteLines?.length, () => ({ autocompleteLines })),
+          ...propertiesWhen(above.count || below.count, () => ({ viewport })),
           // Empty: zentui reads this only to flag its shell mode, which
           // a review comment box does not have.
           inputText: "",
@@ -417,8 +428,10 @@ export async function createZentuiFrameAdapter(
           metadata: {
             cwd,
             projectRoot: cwd,
-            ...(model?.label ? { modelLabel: model.label } : {}),
-            ...(model?.thinkingLevel ? { thinkingLevel: model.thinkingLevel } : {}),
+            ...propertiesWhen(model?.label, () => ({ modelLabel: model!.label })),
+            ...propertiesWhen(model?.thinkingLevel, () => ({
+              thinkingLevel: model!.thinkingLevel,
+            })),
           },
           uiTheme,
           config,

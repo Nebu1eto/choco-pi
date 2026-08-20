@@ -1,3 +1,4 @@
+import { isString } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, rename, rm, unlink, writeFile } from "node:fs/promises";
@@ -222,7 +223,7 @@ test("the default exec runner resolves non-zero exits and rejects spawn failures
   assert.notEqual(signaled.code, 0);
   await assert.rejects(
     defaultExecRunner("definitely-not-a-review-test-command", []),
-    (error: NodeJS.ErrnoException) => typeof error.code === "string",
+    (error: NodeJS.ErrnoException) => isString(error.code),
   );
 });
 

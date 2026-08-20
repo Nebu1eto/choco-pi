@@ -1,3 +1,5 @@
+import { propertiesWhen } from "../../lib/runtime-values.ts";
+import { isObject, isString, type RuntimeValue } from "../../lib/runtime-values.ts";
 /**
  * Side-chat transport for the interactive review view (`/review`).
  *
@@ -134,7 +136,7 @@ export type ReviewChat = {
    * extension and MCP tools render with their own renderers; the review
    * chat does the same.
    */
-  toolDefinition(name: string): unknown;
+  toolDefinition(name: string): RuntimeValue;
   /**
    * Run a slash command through the session's own command surface: an
    * extension command executes, and a skill or prompt template expands into
@@ -186,7 +188,7 @@ export type ReviewChatSession = {
   /** Slash commands registered in the session: extension commands, prompts, and skills. */
   listCommands?(): ReviewChatCommandInfo[];
   /** Registered tool definition lookup, forwarded to the tool renderer. */
-  getToolDefinition?(name: string): unknown;
+  getToolDefinition?(name: string): RuntimeValue;
 };
 
 export type ReviewChatSessionRequest = {
@@ -279,7 +281,7 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
   let turnFailure: string | undefined;
 
   function notify(): void {
-    for (const listener of [...listeners]) {
+    for (const listener of Array.from(listeners)) {
       try {
         listener();
       } catch {
@@ -307,9 +309,9 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
    * rows here reproduces the main agent's transcript order.
    */
   function handleToolEvent(event: ReviewChatSessionEvent): boolean {
-    if (typeof event.toolCallId !== "string") return false;
+    if (!isString(event.toolCallId)) return false;
     if (event.type === "tool_execution_start") {
-      if (typeof event.toolName !== "string") return true;
+      if (!isString(event.toolName)) return true;
       messages.push({
         role: "tool",
         toolCallId: event.toolCallId,
@@ -381,11 +383,11 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
           createSession({
             cwd: options.cwd,
             model: desiredModel,
-            ...(desiredThinking ? { thinkingLevel: desiredThinking } : {}),
+            ...propertiesWhen(desiredThinking, () => ({ thinkingLevel: desiredThinking })),
             reviewRoot: reviewRoot || options.cwd,
           }),
         )
-        .catch((error: unknown) => {
+        .catch((error: RuntimeValue) => {
           // Do not cache the failure: a later question should retry.
           sessionPromise = undefined;
           throw error;
@@ -520,8 +522,8 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
       const model = live?.model ?? desiredModel;
       const thinkingLevel = live?.thinkingLevel ?? desiredThinking;
       return {
-        ...(model ? { model } : {}),
-        ...(thinkingLevel ? { thinkingLevel } : {}),
+        ...propertiesWhen(model, () => ({ model })),
+        ...propertiesWhen(thinkingLevel, () => ({ thinkingLevel })),
       };
     },
 
@@ -577,7 +579,7 @@ export function createReviewChat(options: ReviewChatOptions): ReviewChat {
       return session?.listCommands?.() ?? [];
     },
 
-    toolDefinition(name: string): unknown {
+    toolDefinition(name: string): RuntimeValue {
       return session?.getToolDefinition?.(name);
     },
 
@@ -649,7 +651,7 @@ async function createDefaultReviewSession(
     cwd: root,
     model,
     modelRuntime,
-    ...(request.thinkingLevel ? { thinkingLevel: request.thinkingLevel } : {}),
+    ...propertiesWhen(request.thinkingLevel, () => ({ thinkingLevel: request.thinkingLevel })),
     // The full default toolset, exactly like the main session. A tool
     // allowlist here is worse than none: extensions still inject the main
     // harness system prompt, and a model told about tools it cannot call
@@ -679,7 +681,9 @@ async function createDefaultReviewSession(
     abort: () => session.abort(),
     dispose: () => session.dispose(),
     describeModel: () => ({
-      ...(session.model ? { model: `${session.model.provider}/${session.model.id}` } : {}),
+      ...propertiesWhen(session.model, () => ({
+        model: `${session.model!.provider}/${session.model!.id}`,
+      })),
       thinkingLevel: session.thinkingLevel,
     }),
     setModel: async (query) => {
@@ -706,7 +710,7 @@ async function createDefaultReviewSession(
       try {
         return extensionsResult.runtime.getCommands().map((info) => ({
           name: info.name,
-          ...(info.description ? { description: info.description } : {}),
+          ...propertiesWhen(info.description, () => ({ description: info.description })),
         }));
       } catch {
         // The runtime rejects reads until initialization; an empty
@@ -724,19 +728,19 @@ function parseThinkingLevel(level: string | undefined): ReviewChatThinkingLevel 
   return REVIEW_CHAT_THINKING_LEVELS.find((candidate) => candidate === level);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
+  return isObject(value) && value !== null;
 }
 
 /** Concatenated text content of an assistant message, ignoring thinking and tool calls. */
-function assistantText(message: unknown): string {
+function assistantText(message: RuntimeValue): string {
   if (!isRecord(message) || message.role !== "assistant") return "";
   const content = message.content;
-  if (typeof content === "string") return content;
+  if (isString(content)) return content;
   if (!Array.isArray(content)) return "";
   let text = "";
   for (const part of content) {
-    if (isRecord(part) && part.type === "text" && typeof part.text === "string") text += part.text;
+    if (isRecord(part) && part.type === "text" && isString(part.text)) text += part.text;
   }
   return text;
 }
@@ -747,10 +751,10 @@ function assistantText(message: unknown): string {
  * Provider failures do not reject the prompt call; they arrive as a final
  * assistant message with `stopReason` `error` or `aborted`.
  */
-function messageFailure(message: unknown): string | undefined {
+function messageFailure(message: RuntimeValue): string | undefined {
   if (!isRecord(message) || message.role !== "assistant") return undefined;
   if (message.stopReason === "error") {
-    return typeof message.errorMessage === "string" && message.errorMessage.trim()
+    return isString(message.errorMessage) && message.errorMessage.trim()
       ? message.errorMessage.trim()
       : "the model provider reported an error.";
   }
@@ -758,7 +762,7 @@ function messageFailure(message: unknown): string | undefined {
   return undefined;
 }
 
-function describeError(error: unknown): string {
+function describeError(error: RuntimeValue): string {
   if (error instanceof Error && error.message.trim()) return error.message.trim();
   const text = String(error).trim();
   return text || "unknown failure.";

@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "./lib/runtime-values.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey, type EditorComponent } from "@earendil-works/pi-tui";
 
@@ -36,7 +37,7 @@ type PromptEditorState = {
 
 type PromptEditorFactory = EditorFactory & {
   [factoryState]?: PromptEditorState;
-  [symbol: symbol]: unknown;
+  [symbol: symbol]: RuntimeValue;
 };
 
 type EditorFactoryUi = {
@@ -61,6 +62,7 @@ export function decoratePromptEditor(
   onStashChange: (stashed: boolean) => void,
   requestRender: () => void,
 ): EditorComponent {
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const target = editor as DecoratedEditor;
   if (target[decoratedEditor]) return editor;
 
@@ -135,12 +137,14 @@ export function wrapPromptEditorFactory(
   baseFactory: EditorFactory,
   state: PromptEditorState,
 ): EditorFactory {
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const existing = (baseFactory as PromptEditorFactory)[factoryState];
   if (existing) {
     Object.assign(existing, state);
     return baseFactory;
   }
 
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const wrappedFactory = ((...args: Parameters<EditorFactory>) => {
     const editor = baseFactory(...args);
     return decoratePromptEditor(editor, state.onStashChange, () => args[0].requestRender());
@@ -172,6 +176,7 @@ export function installPromptEditorWhenReady(
     if (!isCurrent()) return;
     try {
       const factory = ui.getEditorComponent();
+      // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
       if (factory && Boolean((factory as PromptEditorFactory)[zentuiEditorFactory])) {
         ui.setEditorComponent(wrapPromptEditorFactory(factory, state));
         return;

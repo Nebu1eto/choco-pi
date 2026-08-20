@@ -1,3 +1,4 @@
+import { isString } from "./lib/runtime-values.ts";
 import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 
 const RUNNING_SESSION_GUIDANCE =
@@ -10,7 +11,7 @@ type ToolContent = { type: string; text?: string };
 export function clarifyExecSessionGuidance<T extends ToolContent>(content: T[]): T[] {
   let changed = false;
   const clarified = content.map((item) => {
-    if (item.type !== "text" || typeof item.text !== "string") return item;
+    if (item.type !== "text" || !isString(item.text)) return item;
 
     const text = item.text
       .replace(

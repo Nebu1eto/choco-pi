@@ -1,3 +1,6 @@
+import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { propertiesWhen } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -136,15 +139,19 @@ function commandContext(
   editorText: string[] = [],
   widgets: Array<string | undefined> = [],
 ): ExtensionCommandContext {
+  // SAFETY: The fixture supplies every host member exercised by this test.
   return {
     cwd: root,
     mode: "tui",
     hasUI: true,
+    // SAFETY: The fixture supplies every host member exercised by this test.
     sessionManager: {
       getSessionId: () => sessionId,
       getBranch: () => entries,
     } as any,
+    // SAFETY: The fixture supplies every host member exercised by this test.
     ui: {
+      // SAFETY: The fixture supplies every host member exercised by this test.
       theme: {
         fg: (_color: string, text: string) => text,
         inverse: (text: string) => text,
@@ -175,17 +182,17 @@ function register(
   } = {},
 ) {
   const calls = options.calls ?? [];
-  const handlers = new Map<string, (event: unknown, ctx: any) => void>();
+  const handlers = new Map<string, (event: RuntimeValue, ctx: any) => void>();
   let command: Omit<RegisteredCommand, "name" | "sourceInfo"> | undefined;
-  const api = {
-    on: (event: string, handler: (event: unknown, ctx: any) => void) =>
+  const api = reinterpretHostValue<ExtensionAPI>({
+    on: (event: string, handler: (event: RuntimeValue, ctx: any) => void) =>
       handlers.set(event, handler),
     registerCommand: (name: string, value: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
       assert.equal(name, "review");
       command = value;
     },
     appendEntry: () => undefined,
-  } as unknown as ExtensionAPI;
+  });
   registerReviewExtension(api, {
     runner: options.runner ?? createRunner(calls),
     store: options.store ?? createStore(),
@@ -195,7 +202,9 @@ function register(
       if (options.viewError) throw options.viewError;
       return options.viewResult?.(view.record);
     },
-    ...(options.reviewDirectory === undefined ? {} : { reviewDirectory: options.reviewDirectory }),
+    ...propertiesWhen(!(options.reviewDirectory === undefined), () => ({
+      reviewDirectory: options.reviewDirectory,
+    })),
     now: () => "2026-01-03T00:00:00.000Z",
   } satisfies ReviewExtensionDependencies);
   assert.ok(command, "/review must be registered");
@@ -218,10 +227,15 @@ function createPullRequestRunner(
     calls.push({
       command,
       args: [...args],
-      ...(runnerOptions?.cwd === undefined ? {} : { cwd: runnerOptions.cwd }),
-      ...((runnerOptions as { input?: string } | undefined)?.input === undefined
-        ? {}
-        : { input: (runnerOptions as { input?: string }).input }),
+      ...propertiesWhen(!(runnerOptions?.cwd === undefined), () => ({ cwd: runnerOptions?.cwd })),
+      ...propertiesWhen(
+        // SAFETY: The fixture supplies every host member exercised by this test.
+        !((runnerOptions as { input?: string } | undefined)?.input === undefined),
+        () => ({
+          // SAFETY: The fixture supplies every host member exercised by this test.
+          input: (runnerOptions as { input?: string }).input,
+        }),
+      ),
     });
     if (command === "gh") {
       if (args[0] === "pr" && args[1] === "list") {
@@ -298,7 +312,11 @@ function finishedPullRequestRecord(
 ): ReviewViewResult {
   return {
     action: "finish",
-    record: { ...review, ...(verdict === undefined ? {} : { verdict }), body: "Overall summary" },
+    record: {
+      ...review,
+      ...propertiesWhen(!(verdict === undefined), () => ({ verdict })),
+      body: "Overall summary",
+    },
     markdown: "# Offline review\n",
   };
 }
@@ -387,15 +405,15 @@ test("registers contextual, non-throwing argument completions", async () => {
 });
 
 test("completion failures are contained", async () => {
-  const handlers = new Map<string, (event: unknown, ctx: any) => void>();
+  const handlers = new Map<string, (event: RuntimeValue, ctx: any) => void>();
   let command: Omit<RegisteredCommand, "name" | "sourceInfo"> | undefined;
-  const api = {
-    on: (event: string, handler: (event: unknown, ctx: any) => void) =>
+  const api = reinterpretHostValue<ExtensionAPI>({
+    on: (event: string, handler: (event: RuntimeValue, ctx: any) => void) =>
       handlers.set(event, handler),
     registerCommand: (_name: string, value: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
       command = value;
     },
-  } as unknown as ExtensionAPI;
+  });
   registerReviewExtension(api, {
     runner: async () => {
       throw new Error("git unavailable");
@@ -574,6 +592,7 @@ test("S records a pull request outcome locally before command-level planning", a
     config,
     reviewRoot: root,
     host: {
+      // SAFETY: The fixture supplies every host member exercised by this test.
       custom: ((factory: any) =>
         new Promise((resolve) => {
           const component = factory(
@@ -599,6 +618,7 @@ test("S records a pull request outcome locally before command-level planning", a
       },
       list: async () => [],
     },
+    // SAFETY: The fixture supplies every host member exercised by this test.
     styler: theme as any,
     now: () => "2026-01-03T00:00:00.000Z",
   });

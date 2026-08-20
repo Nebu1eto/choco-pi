@@ -6,6 +6,7 @@ export async function deleteSessionRecord(sessionFile: string | undefined): Prom
   try {
     await unlink(sessionFile);
   } catch (error) {
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }

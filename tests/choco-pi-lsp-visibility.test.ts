@@ -1,3 +1,5 @@
+import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -8,16 +10,16 @@ type Ui = ExtensionContext["ui"];
 function testUi() {
   const statuses = new Map<string, string>();
   const widgets = new Map<string, unknown>();
-  const ui = {
+  const ui = reinterpretHostValue<Ui>({
     setStatus: (key: string, value: string | undefined) => {
       if (value === undefined) statuses.delete(key);
       else statuses.set(key, value);
     },
-    setWidget: (key: string, value: unknown) => {
+    setWidget: (key: string, value: RuntimeValue) => {
       if (value === undefined) widgets.delete(key);
       else widgets.set(key, value);
     },
-  } as unknown as Ui;
+  });
   return { ui, statuses, widgets };
 }
 
@@ -27,6 +29,7 @@ test("choco-pi-lsp UI stays hidden while LSP is inactive and appears when active
   const widget = () => ({ render: () => ["choco-pi-lsp"], invalidate: () => {} });
 
   ui.setStatus("choco-pi-lsp", "LSP Inactive");
+  // SAFETY: The fixture supplies every host member exercised by this test.
   ui.setWidget("choco-pi-lsp", widget as never, { placement: "belowEditor" });
   assert.equal(statuses.has("choco-pi-lsp"), false);
   assert.equal(widgets.has("choco-pi-lsp"), false);

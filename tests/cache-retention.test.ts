@@ -9,7 +9,7 @@ test("defaults PI_CACHE_RETENTION to long when unset", () => {
 });
 
 test("preserves an explicit PI_CACHE_RETENTION value", () => {
-  const env: Record<string, string | undefined> = { PI_CACHE_RETENTION: "none" };
+  const env = { PI_CACHE_RETENTION: "none" };
   applyDefaultCacheRetention(env);
   assert.equal(env.PI_CACHE_RETENTION, "none");
 });

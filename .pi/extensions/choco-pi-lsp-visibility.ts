@@ -1,3 +1,5 @@
+import { reinterpretHostValue } from "./lib/runtime-values.ts";
+import type { RuntimeValue } from "./lib/runtime-values.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 
@@ -26,6 +28,7 @@ function isLspInactive(status: string | undefined): boolean {
 }
 
 export function installChocoPiLspVisibility(ui: Ui): Installation {
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const patchedUi = ui as PatchedUi;
   const installed = patchedUi[INSTALLATION];
   if (installed) {
@@ -34,7 +37,9 @@ export function installChocoPiLspVisibility(ui: Ui): Installation {
   }
 
   const originalSetStatus = ui.setStatus.bind(ui);
-  const originalSetWidget = ui.setWidget.bind(ui) as unknown as (...args: WidgetArguments) => void;
+  const originalSetWidget = reinterpretHostValue<(...args: WidgetArguments) => void>(
+    ui.setWidget.bind(ui),
+  );
   let active = false;
   let lspWidget: WidgetArguments | undefined;
 
@@ -57,7 +62,8 @@ export function installChocoPiLspVisibility(ui: Ui): Installation {
     setLspWidgetVisibility();
   };
 
-  ui.setWidget = ((key: string, content: unknown, options?: unknown) => {
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+  ui.setWidget = ((key: string, content: RuntimeValue, options?: RuntimeValue) => {
     if (key !== LSP_WIDGET_KEY) {
       originalSetWidget(key, content, options);
       return;

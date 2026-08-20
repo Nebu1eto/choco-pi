@@ -4,6 +4,7 @@ import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 import commandFilter from "../.pi/extensions/command-filter.ts";
 
 test("hides internal commands from completion without blocking execution", () => {
+  // SAFETY: The fixture supplies every host member exercised by this test.
   const prototype = ExtensionRunner.prototype as any;
   const originalRegistered = prototype.getRegisteredCommands;
   const originalGetCommand = prototype.getCommand;
@@ -14,6 +15,7 @@ test("hides internal commands from completion without blocking execution", () =>
   prototype.getRegisteredCommands = () => commands;
   prototype.__chocoPiCommandFilterApplied = false;
   try {
+    // SAFETY: The fixture supplies every host member exercised by this test.
     commandFilter({} as any);
 
     assert.deepEqual(

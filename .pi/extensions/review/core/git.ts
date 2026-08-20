@@ -1,3 +1,4 @@
+import { isNumber, isString } from "../../lib/runtime-values.ts";
 import { execFile } from "node:child_process";
 import type { ExecRunner, ReviewTarget } from "./types.ts";
 
@@ -27,8 +28,9 @@ export const defaultExecRunner: ExecRunner = (cmd, args, opts) =>
           resolve({ stdout, stderr, code: 0 });
           return;
         }
+        // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
         const systemError = error as NodeJS.ErrnoException;
-        if (typeof systemError.code === "string" && systemError.syscall?.startsWith("spawn")) {
+        if (isString(systemError.code) && systemError.syscall?.startsWith("spawn")) {
           // execFile reports failures such as ENOENT and EACCES before the child starts.
           reject(error);
           return;
@@ -37,7 +39,7 @@ export const defaultExecRunner: ExecRunner = (cmd, args, opts) =>
         resolve({
           stdout,
           stderr,
-          code: typeof error.code === "number" ? error.code : 1,
+          code: isNumber(error.code) ? error.code : 1,
         });
       },
     );

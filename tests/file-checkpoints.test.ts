@@ -8,6 +8,7 @@ import {
   type TurnCheckpoint,
 } from "../.pi/extensions/file-checkpoints.ts";
 
+// SAFETY: The fixture supplies every host member exercised by this test.
 const plainTheme = {
   fg: (_color: string, text: string) => text,
   bold: (text: string) => text,
@@ -25,6 +26,7 @@ const checkpoint = {
 };
 
 test("turn checkpoints pair the latest pre-prompt snapshot with each user turn", () => {
+  // SAFETY: The fixture supplies every host member exercised by this test.
   const entries = [
     {
       type: "custom",

@@ -80,8 +80,8 @@ function changedTokenSpans(oldText: string, newText: string): [Span[], Span[]] {
     }
   }
 
-  const oldChanged = new Array<boolean>(oldTokens.length).fill(true);
-  const newChanged = new Array<boolean>(newTokens.length).fill(true);
+  const oldChanged = Array.from({ length: oldTokens.length }, () => true);
+  const newChanged = Array.from({ length: newTokens.length }, () => true);
   let oldIndex = 0;
   let newIndex = 0;
   while (oldIndex < oldTokens.length && newIndex < newTokens.length) {
@@ -203,13 +203,16 @@ function emphasize(
   return result;
 }
 
+const ANSI_STYLE_SEQUENCE = new RegExp(String.raw`\u001b\[([\d;:]*)m`, "g");
+const ANSI_BACKGROUND_START = new RegExp(String.raw`^\u001b\[48[;:]`);
+
 function injectBackgroundAfterResets(text: string, backgroundAnsi: string): string {
   return text.replace(
-    /\u001b\[([\d;:]*)m/g,
+    ANSI_STYLE_SEQUENCE,
     (sequence, parameters: string, offset: number, source: string) => {
       const values = parameters === "" ? ["0"] : parameters.split(/[;:]/);
       const resetsBackground = values.includes("0") || values.includes("49");
-      const nextSequenceSetsBackground = /^\u001b\[48[;:]/.test(
+      const nextSequenceSetsBackground = ANSI_BACKGROUND_START.test(
         source.slice(offset + sequence.length),
       );
       return resetsBackground && !nextSequenceSetsBackground

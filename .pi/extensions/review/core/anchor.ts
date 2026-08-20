@@ -1,3 +1,5 @@
+import { propertiesWhen } from "../../lib/runtime-values.ts";
+import { isString } from "../../lib/runtime-values.ts";
 import { createHash } from "node:crypto";
 import type { CommentAnchor, DiffHunk, DiffModel, DiffSide } from "./types.ts";
 
@@ -156,9 +158,11 @@ function mapped(match: Match, method: "exact" | "unique-substring"): AnchorReloc
     startLine: first.number,
     line: last.number,
     matchedSnippet: match.snippet,
-    ...(match.chunk.path === undefined ? {} : { path: match.chunk.path }),
-    ...(match.chunk.side === undefined ? {} : { side: match.chunk.side }),
-    ...(match.chunk.hunkHash === undefined ? {} : { hunkHash: match.chunk.hunkHash }),
+    ...propertiesWhen(!(match.chunk.path === undefined), () => ({ path: match.chunk.path })),
+    ...propertiesWhen(!(match.chunk.side === undefined), () => ({ side: match.chunk.side })),
+    ...propertiesWhen(!(match.chunk.hunkHash === undefined), () => ({
+      hunkHash: match.chunk.hunkHash,
+    })),
   };
 }
 
@@ -178,7 +182,7 @@ export function relocateAnchor(
       message: "The anchor snippet does not match its stored hash.",
     };
   }
-  const allChunks = typeof source === "string" ? [fileChunk(source)] : modelChunks(source, options);
+  const allChunks = isString(source) ? [fileChunk(source)] : modelChunks(source, options);
   const matchingHunkChunks = allChunks.filter((chunk) => chunk.hunkHash === anchor.hunkHash);
   const chunks = matchingHunkChunks.length > 0 ? matchingHunkChunks : allChunks;
   const anchorLines = anchor.snippet.replaceAll("\r\n", "\n").split("\n");

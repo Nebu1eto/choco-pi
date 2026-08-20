@@ -1,3 +1,4 @@
+import { propertiesWhen } from "../lib/runtime-values.ts";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -98,7 +99,7 @@ export function parseReviewCommand(argumentText: string, sessionId: string): Par
         target: {
           kind: "branch",
           base: tokens[1]!,
-          ...(tokens[2] ? { target: tokens[2] } : {}),
+          ...propertiesWhen(tokens[2], () => ({ target: tokens[2] })),
         },
       };
     case "resume":
@@ -412,7 +413,7 @@ async function loadPullRequestHeadDiff(
 ): Promise<DiffModel> {
   const review = await resolvePullRequestTarget(root, target, {
     runner,
-    ...(reviewDirectory === undefined ? {} : { reviewDirectory }),
+    ...propertiesWhen(!(reviewDirectory === undefined), () => ({ reviewDirectory })),
   });
   try {
     if (review.headSha !== headSha) {
@@ -603,9 +604,9 @@ export function registerReviewExtension(
             target.kind === "pr"
               ? await resolvePullRequestTarget(root, target, {
                   runner,
-                  ...(dependencies.reviewDirectory === undefined
-                    ? {}
-                    : { reviewDirectory: dependencies.reviewDirectory }),
+                  ...propertiesWhen(!(dependencies.reviewDirectory === undefined), () => ({
+                    reviewDirectory: dependencies.reviewDirectory,
+                  })),
                 })
               : undefined;
           const model = pullRequest
@@ -620,11 +621,13 @@ export function registerReviewExtension(
             record,
             config,
             reviewRoot: pullRequest?.worktreePath ?? root,
-            ...(pullRequest ? { pullRequest: pullRequest.metadata } : {}),
+            ...propertiesWhen(pullRequest, () => ({ pullRequest: pullRequest!.metadata })),
             // The side chat continues the user's own model choice: the
             // main session's current model, not Pi's default.
-            ...(ctx.model ? { chatModel: `${ctx.model.provider}/${ctx.model.id}` } : {}),
-            ...(ctx.thinkingLevel ? { chatThinkingLevel: ctx.thinkingLevel } : {}),
+            ...propertiesWhen(ctx.model, () => ({
+              chatModel: `${ctx.model!.provider}/${ctx.model!.id}`,
+            })),
+            ...propertiesWhen(ctx.thinkingLevel, () => ({ chatThinkingLevel: ctx.thinkingLevel })),
             listChatModels: async () =>
               ctx.modelRegistry.getAvailable().map((entry) => `${entry.provider}/${entry.id}`),
             host: ctx.ui,

@@ -1,3 +1,4 @@
+import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,7 +28,7 @@ const EDITOR_THEME: EditorTheme = {
 };
 
 function fakeTui(): TUI {
-  return { terminal: { rows: 40 }, requestRender: () => {} } as unknown as TUI;
+  return reinterpretHostValue<TUI>({ terminal: { rows: 40 }, requestRender: () => {} });
 }
 
 /** Completion is asynchronous; let its request chain finish. */
@@ -70,15 +71,14 @@ function reviewRoot(): string {
   return root;
 }
 
-function createInput(
-  root: string,
-  width = 60,
-): {
+type InputFixture = {
   input: ReviewInput;
   completions(): string[];
   text(): string;
   type(data: string): void;
-} {
+};
+
+function createInput(root: string, width = 60): InputFixture {
   // fdPath null keeps the test off the `@` fuzzy path, which shells out.
   const input = new ReviewInput(fakeTui(), EDITOR_THEME, { root, fdPath: null });
   const rendered = () => input.render(width);

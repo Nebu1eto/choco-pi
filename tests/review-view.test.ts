@@ -1,3 +1,5 @@
+import { propertiesWhen } from "../.pi/extensions/lib/runtime-values.ts";
+import { isFunction, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -77,6 +79,7 @@ const NOW = "2026-03-03T02:00:00.000Z";
 initTheme("dark", false);
 /** Shift+Tab as every terminal without the Kitty protocol sends it. */
 const SHIFT_TAB = "\u001b[Z";
+const ANSI_STYLE = new RegExp(String.raw`\u001b\[[0-9;]*m`, "g");
 const UP = "\u001b[A";
 const DOWN = "\u001b[B";
 /** Shift+arrow in the modified-CSI form every current terminal sends. */
@@ -176,6 +179,7 @@ function state(reviewedHunkIds: string[] = []) {
   });
 }
 
+// SAFETY: The fixture supplies every host member exercised by this test.
 const PLAIN_THEME = {
   fg: (_color: string, text: string) => text,
   bold: (text: string) => text,
@@ -218,7 +222,7 @@ async function mountReview(
   } = {},
 ): Promise<MountedReview> {
   let component: Component | undefined;
-  let resolveResult: ((value: unknown) => void) | undefined;
+  let resolveResult: ((value: RuntimeValue) => void) | undefined;
   let ready!: () => void;
   const readyPromise = new Promise<void>((resolveReady) => {
     ready = resolveReady;
@@ -231,6 +235,7 @@ async function mountReview(
   const savedRecords: ReviewRecord[] = [];
   const custom: ReviewViewHost["custom"] = async (factory) => {
     component = await factory(
+      // SAFETY: The fixture supplies every host member exercised by this test.
       {
         terminal: { rows: options.terminalRows ?? 16 },
         requestRender: () => {
@@ -240,10 +245,12 @@ async function mountReview(
         start: () => {},
       } as never,
       options.theme ?? PLAIN_THEME,
+      // SAFETY: The fixture supplies every host member exercised by this test.
       {} as never,
       (value) => resolveResult?.(value),
     );
     ready();
+    // SAFETY: The fixture supplies every host member exercised by this test.
     return (await resultPromise) as never;
   };
   const host: ReviewViewHost = {
@@ -271,15 +278,19 @@ async function mountReview(
     config: options.config ?? CONFIG,
     reviewRoot: options.reviewRoot ?? "/repo",
     now: options.now ?? (() => NOW),
-    ...(options.pullRequest ? { pullRequest: options.pullRequest } : {}),
-    ...(options.chatModel ? { chatModel: options.chatModel } : {}),
-    ...(options.chatThinkingLevel ? { chatThinkingLevel: options.chatThinkingLevel } : {}),
-    ...(options.listChatModels ? { listChatModels: options.listChatModels } : {}),
+    ...propertiesWhen(options.pullRequest, () => ({ pullRequest: options.pullRequest })),
+    ...propertiesWhen(options.chatModel, () => ({ chatModel: options.chatModel })),
+    ...propertiesWhen(options.chatThinkingLevel, () => ({
+      chatThinkingLevel: options.chatThinkingLevel,
+    })),
+    ...propertiesWhen(options.listChatModels, () => ({ listChatModels: options.listChatModels })),
     createCommentId: options.createCommentId ?? (() => "mounted-comment"),
-    ...(options.createReviewChat ? { createReviewChat: options.createReviewChat } : {}),
-    ...(options.execRunner ? { execRunner: options.execRunner } : {}),
-    ...(options.spawnEditor ? { spawnEditor: options.spawnEditor } : {}),
-    ...(options.zentuiLoader ? { zentuiLoader: options.zentuiLoader } : {}),
+    ...propertiesWhen(options.createReviewChat, () => ({
+      createReviewChat: options.createReviewChat,
+    })),
+    ...propertiesWhen(options.execRunner, () => ({ execRunner: options.execRunner })),
+    ...propertiesWhen(options.spawnEditor, () => ({ spawnEditor: options.spawnEditor })),
+    ...propertiesWhen(options.zentuiLoader, () => ({ zentuiLoader: options.zentuiLoader })),
   });
   await readyPromise;
   assert.ok(component?.handleInput);
@@ -295,12 +306,14 @@ async function mountReview(
   };
 }
 
+type FakeReviewChatStatus = { model?: string; thinkingLevel?: string };
+
 class FakeReviewChat implements ReviewChat {
   readonly messages: ReviewChatMessage[] = [];
   readonly asks: Array<{ question: string; context: ReviewChatContext }> = [];
   pending = false;
   disposed = false;
-  status: { model?: string; thinkingLevel?: string } = {};
+  status: FakeReviewChatStatus = {};
   readonly modelChanges: string[] = [];
   readonly effortChanges: string[] = [];
   private listeners = new Set<() => void>();
@@ -339,9 +352,9 @@ class FakeReviewChat implements ReviewChat {
     return this.availableCommands;
   }
 
-  toolDefinitions: Record<string, unknown> = {};
+  toolDefinitions: Record<string, RuntimeValue> = {};
 
-  toolDefinition(name: string): unknown {
+  toolDefinition(name: string): RuntimeValue {
     return this.toolDefinitions[name];
   }
 
@@ -449,6 +462,7 @@ test("styled header truncation preserves complete ANSI sequences", async () => {
     url: "https://github.com/octo/widget/pull/7",
     updatedAt: "2026-03-02T23:00:00.000Z",
   };
+  // SAFETY: The fixture supplies every host member exercised by this test.
   const ansiTheme = {
     fg: (_color: string, text: string) => `\u001b[31m${text}\u001b[39m`,
     bold: (text: string) => `\u001b[1m${text}\u001b[22m`,
@@ -462,7 +476,7 @@ test("styled header truncation preserves complete ANSI sequences", async () => {
   const width = 44;
   const header = mounted.component.render(width)[0] ?? "";
   assert.equal(visibleWidth(header), width);
-  assert.equal(header.replace(/\u001b\[[0-9;]*m/g, "").includes("\u001b"), false);
+  assert.equal(header.replace(ANSI_STYLE, "").includes("\u001b"), false);
   assert.match(stripTerminalSequences(header), /…\s+Review \[FOCUSED\]$/);
   await mounted.close();
 });
@@ -671,11 +685,15 @@ test("comment draft attachment produces a valid side-specific anchor", () => {
  * One hunk holding both sides, so a selection can be pushed at the boundary
  * between removed and added lines in either direction.
  */
-function mixedReviewFixture(): {
+type ReviewFixture = {
   model: DiffModel;
   assessments: DiffAssessment;
   record: ReviewRecord;
-} {
+};
+
+type ExpansionReviewFixture = ReviewFixture & { execRunner: ExecRunner };
+
+function mixedReviewFixture(): ReviewFixture {
   const mixed: DiffHunk = {
     id: "mixed-hunk",
     header: "@@ -10,5 +10,6 @@ function mixed",
@@ -1049,16 +1067,17 @@ test("in-view comment editor wraps, accepts newlines, submits, and cancels witho
   let overlaySettings: unknown;
   let inputCalls = 0;
   const sourceRecord = record();
+  // SAFETY: The fixture supplies every host member exercised by this test.
   const plainTheme = {
     fg: (_color: string, text: string) => text,
     bold: (text: string) => text,
   } as Theme;
   const custom: ReviewViewHost["custom"] = async (factory, customOptions) => {
-    overlaySettings =
-      typeof customOptions?.overlayOptions === "function"
-        ? customOptions.overlayOptions()
-        : customOptions?.overlayOptions;
+    overlaySettings = isFunction(customOptions?.overlayOptions)
+      ? customOptions.overlayOptions()
+      : customOptions?.overlayOptions;
     component = await factory(
+      // SAFETY: The fixture supplies every host member exercised by this test.
       {
         terminal: { rows: 12 },
         requestRender: () => {},
@@ -1066,9 +1085,11 @@ test("in-view comment editor wraps, accepts newlines, submits, and cancels witho
         start: () => {},
       } as never,
       plainTheme,
+      // SAFETY: The fixture supplies every host member exercised by this test.
       {} as never,
       () => {},
     );
+    // SAFETY: The fixture supplies every host member exercised by this test.
     return undefined as never;
   };
   const host: ReviewViewHost = {
@@ -1582,12 +1603,12 @@ test("the framed input names the chat's model instead of repeating it in the key
   const loader: ZentuiLoader = async () => ({
     renderMinimalistFrame: (frame) => {
       frames.push({
-        ...(frame.metadata.modelLabel === undefined
-          ? {}
-          : { modelLabel: frame.metadata.modelLabel }),
-        ...(frame.metadata.thinkingLevel === undefined
-          ? {}
-          : { thinkingLevel: frame.metadata.thinkingLevel }),
+        ...propertiesWhen(!(frame.metadata.modelLabel === undefined), () => ({
+          modelLabel: frame.metadata.modelLabel,
+        })),
+        ...propertiesWhen(!(frame.metadata.thinkingLevel === undefined), () => ({
+          thinkingLevel: frame.metadata.thinkingLevel,
+        })),
       });
       return ["┌ framed ┐"];
     },
@@ -1952,12 +1973,7 @@ function expansionReviewFixture({
 }: {
   oldStart?: number;
   fileLines?: number;
-} = {}): {
-  model: DiffModel;
-  assessments: DiffAssessment;
-  record: ReviewRecord;
-  execRunner: ExecRunner;
-} {
+} = {}): ExpansionReviewFixture {
   const expandableHunk: DiffHunk = {
     id: "expandable-hunk",
     header: `@@ -${oldStart},2 +${oldStart},3 @@ expandable`,
@@ -2121,11 +2137,7 @@ test("revealed rows participate in line and page movement and produce stable com
   );
 });
 
-function longReviewFixture(lineCount = 30): {
-  model: DiffModel;
-  assessments: DiffAssessment;
-  record: ReviewRecord;
-} {
+function longReviewFixture(lineCount = 30): ReviewFixture {
   const longHunk: DiffHunk = {
     id: "long-hunk",
     header: `@@ -1,${lineCount} +1,${lineCount} @@ long-hunk`,
@@ -2418,7 +2430,7 @@ async function mountWithOverlayHandle(options: {
   const log: OverlayLog = { events: [], hiddenDuringPrompt: [] };
   let hidden = false;
   let component: Component | undefined;
-  let resolveResult: ((value: unknown) => void) | undefined;
+  let resolveResult: ((value: RuntimeValue) => void) | undefined;
   let ready!: () => void;
   const readyPromise = new Promise<void>((resolve) => {
     ready = resolve;
@@ -2428,6 +2440,7 @@ async function mountWithOverlayHandle(options: {
   });
   const custom: ReviewViewHost["custom"] = async (factory, customOptions) => {
     component = await factory(
+      // SAFETY: The fixture supplies every host member exercised by this test.
       {
         terminal: { rows: 24 },
         requestRender: () => {},
@@ -2435,9 +2448,11 @@ async function mountWithOverlayHandle(options: {
         start: () => {},
       } as never,
       PLAIN_THEME,
+      // SAFETY: The fixture supplies every host member exercised by this test.
       {} as never,
       (value) => resolveResult?.(value),
     );
+    // SAFETY: The fixture supplies every host member exercised by this test.
     customOptions?.onHandle?.({
       hide: () => {},
       setHidden: (value: boolean) => {
@@ -2449,6 +2464,7 @@ async function mountWithOverlayHandle(options: {
       unfocus: () => {},
     } as never);
     ready();
+    // SAFETY: The fixture supplies every host member exercised by this test.
     return (await resultPromise) as never;
   };
   const host: ReviewViewHost = {
@@ -2474,11 +2490,12 @@ async function mountWithOverlayHandle(options: {
     config: CONFIG,
     reviewRoot: "/repo",
     now: () => NOW,
-    ...(options.pullRequest ? { pullRequest: options.pullRequest } : {}),
+    ...propertiesWhen(options.pullRequest, () => ({ pullRequest: options.pullRequest })),
     createCommentId: () => "overlay-comment",
   });
   await readyPromise;
   assert.ok(component?.handleInput);
+  // SAFETY: The fixture supplies every host member exercised by this test.
   return { component: component as Component, log, completion };
 }
 

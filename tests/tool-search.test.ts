@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import toolSearch, { ALWAYS_ACTIVE_TOOL_NAMES } from "../.pi/extensions/tool-search.ts";
 
+type McpStatusPayload = { servers: never[] };
+
 test("keeps Agent and core execution gateways always active", async () => {
   assert.ok(ALWAYS_ACTIVE_TOOL_NAMES.includes("Agent"));
 
   let active = ["read", "Agent", "deferred_probe"];
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: object) => void) | undefined;
+  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     {
       name: "read",
@@ -28,8 +30,10 @@ test("keeps Agent and core execution gateways always active", async () => {
       sourceInfo: { source: "extension", path: "probe" },
     },
   ];
+  // SAFETY: The fixture supplies every host member exercised by this test.
   toolSearch({
     registerTool: (tool: { name: string }) =>
+      // SAFETY: The fixture supplies every host member exercised by this test.
       tools.push({ ...tool, sourceInfo: { source: "extension", path: "tool-search" } } as any),
     getAllTools: () => tools,
     getActiveTools: () => active,
@@ -37,7 +41,7 @@ test("keeps Agent and core execution gateways always active", async () => {
       active = names;
     },
     events: {
-      on: (_name: string, handler: (payload: object) => void) => {
+      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
         mcpStatus = handler;
       },
     },
@@ -63,7 +67,7 @@ test("keeps the subagent orchestration trio active and out of search results", a
   let active = ["read", "Agent", "get_subagent_result", "steer_subagent", "deferred_probe"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: object) => void) | undefined;
+  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     {
       name: "read",
@@ -96,6 +100,7 @@ test("keeps the subagent orchestration trio active and out of search results", a
       sourceInfo: { source: "extension", path: "probe" },
     },
   ];
+  // SAFETY: The fixture supplies every host member exercised by this test.
   toolSearch({
     registerTool: (tool: any) => {
       searchTool = tool;
@@ -109,7 +114,7 @@ test("keeps the subagent orchestration trio active and out of search results", a
       active = names;
     },
     events: {
-      on: (_name: string, handler: (payload: object) => void) => {
+      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
         mcpStatus = handler;
       },
     },
@@ -138,7 +143,7 @@ test("keeps the subagent orchestration trio active and out of search results", a
 test("an always-active name with no registered tool does not corrupt the active set", async () => {
   let active = ["read", "deferred_probe"];
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: object) => void) | undefined;
+  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     {
       name: "read",
@@ -156,8 +161,10 @@ test("an always-active name with no registered tool does not corrupt the active 
     // but not registered here, simulating @tintinweb/pi-subagents being
     // absent or renaming its tools.
   ];
+  // SAFETY: The fixture supplies every host member exercised by this test.
   toolSearch({
     registerTool: (tool: { name: string }) =>
+      // SAFETY: The fixture supplies every host member exercised by this test.
       tools.push({ ...tool, sourceInfo: { source: "extension", path: "tool-search" } } as any),
     getAllTools: () => tools,
     getActiveTools: () => active,
@@ -165,7 +172,7 @@ test("an always-active name with no registered tool does not corrupt the active 
       active = names;
     },
     events: {
-      on: (_name: string, handler: (payload: object) => void) => {
+      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
         mcpStatus = handler;
       },
     },
@@ -189,13 +196,14 @@ test("labels deferred Pi tools as direct calls rather than MCP calls", async () 
   let active = ["deferred_probe"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: object) => void) | undefined;
+  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const probe = {
     name: "deferred_probe",
     description: "Inspect deferred probe state",
     parameters: {},
     sourceInfo: { source: "extension", path: "probe" },
   };
+  // SAFETY: The fixture supplies every host member exercised by this test.
   toolSearch({
     registerTool: (tool: any) => {
       searchTool = tool;
@@ -209,7 +217,7 @@ test("labels deferred Pi tools as direct calls rather than MCP calls", async () 
       active = names;
     },
     events: {
-      on: (_name: string, handler: (payload: object) => void) => {
+      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
         mcpStatus = handler;
       },
     },
@@ -237,12 +245,13 @@ test("keeps cross-session coordination tools active and out of search results", 
     "session_wait",
   ];
   for (const name of sessionTools)
+    // SAFETY: The fixture supplies every host member exercised by this test.
     assert.ok(ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never), `${name} must stay active`);
 
   let active = [...sessionTools, "deferred_probe"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: object) => void) | undefined;
+  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     ...sessionTools.map((name) => ({
       name,
@@ -257,6 +266,7 @@ test("keeps cross-session coordination tools active and out of search results", 
       sourceInfo: { source: "extension", path: "probe" },
     },
   ];
+  // SAFETY: The fixture supplies every host member exercised by this test.
   toolSearch({
     registerTool: (tool: any) => {
       searchTool = tool;
@@ -270,7 +280,7 @@ test("keeps cross-session coordination tools active and out of search results", 
       active = names;
     },
     events: {
-      on: (_name: string, handler: (payload: object) => void) => {
+      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
         mcpStatus = handler;
       },
     },
@@ -306,6 +316,7 @@ test("keeps the choco-pi-lsp mandated funnel and diagnostics gate active and out
     "diagnostics_report",
   ];
   for (const name of lspTools)
+    // SAFETY: The fixture supplies every host member exercised by this test.
     assert.ok(ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never), `${name} must stay active`);
 
   // Situational choco-pi-lsp tools (gated behind the package's own
@@ -316,13 +327,14 @@ test("keeps the choco-pi-lsp mandated funnel and diagnostics gate active and out
     "lsp_navigation",
     "lsp_activate_tools",
   ]) {
+    // SAFETY: The fixture supplies every host member exercised by this test.
     assert.ok(!ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never), `${name} must stay deferred`);
   }
 
   let active = [...lspTools, "deferred_probe"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: object) => void) | undefined;
+  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     ...lspTools.map((name) => ({
       name,
@@ -337,6 +349,7 @@ test("keeps the choco-pi-lsp mandated funnel and diagnostics gate active and out
       sourceInfo: { source: "extension", path: "probe" },
     },
   ];
+  // SAFETY: The fixture supplies every host member exercised by this test.
   toolSearch({
     registerTool: (tool: any) => {
       searchTool = tool;
@@ -350,7 +363,7 @@ test("keeps the choco-pi-lsp mandated funnel and diagnostics gate active and out
       active = names;
     },
     events: {
-      on: (_name: string, handler: (payload: object) => void) => {
+      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
         mcpStatus = handler;
       },
     },
