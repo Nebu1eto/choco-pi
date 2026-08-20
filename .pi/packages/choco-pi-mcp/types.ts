@@ -7,8 +7,15 @@ import type {
   Transport as McpTransport,
 } from "@modelcontextprotocol/client";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
-import type { UiStreamMode } from "./ui-stream-types.ts";
+import type { UiStreamHostContext, UiStreamMode } from "./ui-stream-types.ts";
 import type { UiToolVisibility } from "./ui-tool-visibility.ts";
+import {
+  isObjectValue,
+  isStringValue,
+  mergeObjectParts,
+  type McpObject,
+  type McpValue,
+} from "./protocol-values.js";
 
 export type Transport = McpTransport;
 
@@ -109,7 +116,7 @@ export interface UiProxyRequestBody<TParams> {
   params: TParams;
 }
 
-export interface UiProxyResult<T = Record<string, unknown>> {
+export interface UiProxyResult<T = McpObject> {
   ok: boolean;
   result?: T;
   error?: string;
@@ -141,16 +148,18 @@ export interface UiToolInfo {
 export interface UiHostContext {
   toolInfo?: UiToolInfo;
   theme?: "light" | "dark";
-  styles?: Record<string, unknown>;
+
+  styles?: McpObject;
   displayMode?: UiDisplayMode;
   availableDisplayModes?: UiDisplayMode[];
+  platform?: string;
+  "pi-mcp-adapter/stream"?: UiStreamHostContext;
   containerDimensions?: {
     width?: number;
     maxWidth?: number;
     height?: number;
     maxHeight?: number;
   };
-  [key: string]: unknown;
 }
 
 export type UiDisplayMode = "inline" | "fullscreen" | "pip";
@@ -193,8 +202,8 @@ export interface UiMessageParams {
   message?: string;
   prompt?: string;
   intent?: string;
-  params?: Record<string, unknown>;
-  [key: string]: unknown;
+
+  params?: McpObject;
 }
 
 /**
@@ -209,8 +218,9 @@ export function extractUiPromptText(params: UiMessageParams): string | undefined
   if (params.role === "user" && Array.isArray(params.content)) {
     const text = params.content
       .map((block) =>
-        block && typeof block === "object" && "text" in block
-          ? String((block as { text?: unknown }).text ?? "")
+        block && isObjectValue(block) && "text" in block
+          ? // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
+            String((block as { text?: unknown }).text ?? "")
           : "",
       )
       .filter(Boolean)
@@ -226,7 +236,8 @@ export function extractUiPromptText(params: UiMessageParams): string | undefined
  */
 export interface UiPromptHandoff {
   intent: string;
-  params: Record<string, unknown>;
+
+  params: McpObject;
   raw: string;
 }
 
@@ -251,12 +262,15 @@ export function parseUiPromptHandoff(prompt: string): UiPromptHandoff | undefine
 
   try {
     const parsed = JSON.parse(payloadText);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+
+    if (!parsed || !isObjectValue(parsed) || Array.isArray(parsed)) {
       return undefined;
     }
     return {
       intent,
-      params: parsed as Record<string, unknown>,
+
+      params:
+        /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ parsed as McpObject,
       raw: prompt,
     };
   } catch {
@@ -271,19 +285,22 @@ export function parseUiPromptHandoff(prompt: string): UiPromptHandoff | undefine
 export interface UiSessionMessages {
   prompts: string[];
   notifications: string[];
-  intents: Array<{ intent: string; params?: Record<string, unknown> }>;
+
+  intents: Array<{ intent: string; params?: McpObject }>;
   contexts: UiModelContextUpdate[];
 }
 
 export interface UiModelContextUpdate {
   summary: string;
   truncated: boolean;
-  payload?: Record<string, unknown>;
+
+  payload?: McpObject;
 }
 
 export interface UiModelContextParams {
   content?: McpContentBlock[];
-  structuredContent?: Record<string, unknown>;
+
+  structuredContent?: McpObject;
 }
 
 export function createUiModelContextUpdate(
@@ -308,7 +325,8 @@ export function createUiModelContextUpdate(
 
 export interface UiOpenLinkResult {
   isError?: boolean;
-  [key: string]: unknown;
+
+  [key: string]: McpValue;
 }
 
 export interface UiDisplayModeRequest {
@@ -317,7 +335,8 @@ export interface UiDisplayModeRequest {
 
 export interface UiDisplayModeResult {
   mode: UiDisplayMode;
-  [key: string]: unknown;
+
+  [key: string]: McpValue;
 }
 
 // Content types from MCP
@@ -492,7 +511,8 @@ export interface McpToolApprovalRequest {
   serverName: string;
   originalToolName: string;
   prefixedToolName: string;
-  args: Record<string, unknown>;
+
+  args: McpObject;
   origin: McpToolApprovalOrigin;
   signal?: AbortSignal;
   claim(handler: McpToolApprovalHandler): boolean;
@@ -830,19 +850,24 @@ export function createToolSelectorCandidateIndex(
   allCurrentCandidates: Set<string>,
   additionalCurrentCandidatesByToolName?: ReadonlyMap<string, ReadonlySet<string>>,
 ): ToolSelectorCandidateIndex {
-  return {
-    allCurrentCandidates,
-    matchingCountByPattern: new Map<string, number>(),
-    matcherByPattern: new Map<string, RegExp>(),
-    ...(additionalCurrentCandidatesByToolName ? { additionalCurrentCandidatesByToolName } : {}),
-  };
+  return mergeObjectParts(
+    {
+      allCurrentCandidates,
+      matchingCountByPattern: new Map<string, number>(),
+      matcherByPattern: new Map<string, RegExp>(),
+    },
+    additionalCurrentCandidatesByToolName ? { additionalCurrentCandidatesByToolName } : undefined,
+  );
 }
 
-export function matchesToolPattern(candidates: Set<string>, patterns?: unknown): boolean {
+export function matchesToolPattern<BoundaryValue>(
+  candidates: Set<string>,
+  patterns?: BoundaryValue,
+): boolean {
   if (!Array.isArray(patterns) || patterns.length === 0) return false;
 
   for (const pattern of patterns) {
-    if (typeof pattern !== "string") continue;
+    if (!isStringValue(pattern)) continue;
     if (!pattern.includes("*") && !pattern.includes("?") && candidates.has(pattern)) {
       return true;
     }
@@ -903,11 +928,12 @@ function indexHasOtherCurrentMatch(
   return totalMatchingCount > currentMatchingCount;
 }
 
-function matchesToolSelector(
+function matchesToolSelector<BoundaryValue>(
   toolName: string,
   serverName: string,
   prefix: ToolPrefix,
-  patterns: unknown,
+
+  patterns: BoundaryValue,
   otherCurrentCandidates?: ToolSelectorCandidateContext,
 ): boolean {
   if (!Array.isArray(patterns) || patterns.length === 0) return false;
@@ -918,8 +944,7 @@ function matchesToolSelector(
   const legacyCandidates = getToolNameCandidates(toolName, serverName, prefix);
   for (const candidate of currentCandidates) legacyCandidates.delete(candidate);
   return patterns.some((pattern) => {
-    if (typeof pattern !== "string" || !matchesToolPattern(legacyCandidates, [pattern]))
-      return false;
+    if (!isStringValue(pattern) || !matchesToolPattern(legacyCandidates, [pattern])) return false;
     const hasCollision =
       otherCurrentCandidates instanceof Set
         ? matchesToolPattern(otherCurrentCandidates, [pattern])
@@ -928,33 +953,37 @@ function matchesToolSelector(
   });
 }
 
-export function isToolIncluded(
+export function isToolIncluded<BoundaryValue>(
   toolName: string,
   serverName: string,
   prefix: ToolPrefix,
-  includeTools?: unknown,
+
+  includeTools?: BoundaryValue,
   otherCurrentCandidates?: ToolSelectorCandidateContext,
 ): boolean {
   if (!Array.isArray(includeTools) || includeTools.length === 0) return true;
   return matchesToolSelector(toolName, serverName, prefix, includeTools, otherCurrentCandidates);
 }
 
-export function isToolExcluded(
+export function isToolExcluded<BoundaryValue>(
   toolName: string,
   serverName: string,
   prefix: ToolPrefix,
-  excludeTools?: unknown,
+
+  excludeTools?: BoundaryValue,
   otherCurrentCandidates?: ToolSelectorCandidateContext,
 ): boolean {
   return matchesToolSelector(toolName, serverName, prefix, excludeTools, otherCurrentCandidates);
 }
 
-export function isToolAllowed(
+export function isToolAllowed<BoundaryValue>(
   toolName: string,
   serverName: string,
   prefix: ToolPrefix,
-  includeTools?: unknown,
-  excludeTools?: unknown,
+
+  includeTools?: BoundaryValue,
+
+  excludeTools?: BoundaryValue,
   otherCurrentCandidates?: ToolSelectorCandidateContext,
 ): boolean {
   return (

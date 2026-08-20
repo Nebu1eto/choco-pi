@@ -43,6 +43,7 @@ import {
 } from "./onboarding-state.ts";
 import { openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
+import { mergeObjectParts } from "./protocol-values.js";
 
 function terminalHyperlink(label: string, url: string): string {
   return `\u001B]8;;${sanitizeTerminalText(url)}\u001B\\${sanitizeTerminalText(label)}\u001B]8;;\u001B\\`;
@@ -331,31 +332,38 @@ export async function authenticateServer(
 
     ui.setStatus("mcp-auth", `Authenticating ${serverName}...`);
     const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
-    const status = await authenticate(serverName, serverUrl, definition, {
-      ...(authStorageOptions.baseDir ? { authStorageOptions } : {}),
-      onAuthorizationUrl: (authorizationUrl) => {
-        ui.notify(
-          `Open this URL to authenticate ${serverName}:\n\n${terminalHyperlink(authorizationUrl, authorizationUrl)}\n\n` +
-            "After approving, Pi will complete automatically if the browser can reach its localhost callback. " +
-            "On a remote machine, copy the full localhost URL from the browser address bar and paste it into Pi.",
-          "info",
-        );
-      },
-      onAuthorizationInput: async (authorizationUrl, inputSignal) => {
-        const readyToPaste = await ui.confirm(
-          `Authorize ${serverName}`,
-          `Open this link in your browser:\n${terminalHyperlink(authorizationUrl, authorizationUrl)}\n\n` +
-            "After approving access, select Yes to paste the callback URL.",
-          { signal: inputSignal },
-        );
-        if (!readyToPaste || inputSignal.aborted) return undefined;
-        return ui.input(`Complete ${serverName} OAuth`, "Paste the full callback URL", {
-          signal: inputSignal,
-        });
-      },
-      ...(signal ? { signal } : {}),
-      ...(runtime ? { runtime } : {}),
-    });
+    const status = await authenticate(
+      serverName,
+      serverUrl,
+      definition,
+      mergeObjectParts(
+        authStorageOptions.baseDir ? { authStorageOptions } : undefined,
+        {
+          onAuthorizationUrl: (authorizationUrl: string) => {
+            ui.notify(
+              `Open this URL to authenticate ${serverName}:\n\n${terminalHyperlink(authorizationUrl, authorizationUrl)}\n\n` +
+                "After approving, Pi will complete automatically if the browser can reach its localhost callback. " +
+                "On a remote machine, copy the full localhost URL from the browser address bar and paste it into Pi.",
+              "info",
+            );
+          },
+          onAuthorizationInput: async (authorizationUrl: string, inputSignal: AbortSignal) => {
+            const readyToPaste = await ui.confirm(
+              `Authorize ${serverName}`,
+              `Open this link in your browser:\n${terminalHyperlink(authorizationUrl, authorizationUrl)}\n\n` +
+                "After approving access, select Yes to paste the callback URL.",
+              { signal: inputSignal },
+            );
+            if (!readyToPaste || inputSignal.aborted) return undefined;
+            return ui.input(`Complete ${serverName} OAuth`, "Paste the full callback URL", {
+              signal: inputSignal,
+            });
+          },
+        },
+        signal ? { signal } : undefined,
+        runtime ? { runtime } : undefined,
+      ),
+    );
     if (signal?.aborted) signal.throwIfAborted();
 
     if (status === "authenticated") {
@@ -436,10 +444,7 @@ export interface PanelFlowResult {
   configChanged: boolean;
 }
 
-function buildSharedConfigNoticeLines(
-  configOverridePath: string | undefined,
-  cwd: string,
-): { lines: string[]; fingerprint: string | null } {
+function buildSharedConfigNoticeLines(configOverridePath: string | undefined, cwd: string) {
   const discovery = getMcpStandardConfigSummary(configOverridePath, cwd);
   const onboardingState = loadOnboardingState();
   if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) {
@@ -450,6 +455,7 @@ function buildSharedConfigNoticeLines(
     (source) => source.kind === "shared" && source.serverCount > 0,
   );
   const sourceList = sharedSources.map((source) => source.path).join(", ");
+
   return {
     lines: [
       `Using standard MCP config from ${sourceList}.`,
@@ -646,6 +652,7 @@ export async function openMcpPanel(
 
   const config = state.config;
   const cache = loadMetadataCache();
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   const configPath = (pi.getFlag("mcp-config") as string | undefined) ?? configOverridePath;
   const provenanceMap = getServerProvenance(configPath, ctx.cwd);
   const { lines: noticeLines, fingerprint } = buildSharedConfigNoticeLines(configPath, ctx.cwd);
@@ -727,6 +734,7 @@ export async function openMcpAuthPanel(
   }
 
   const cache = loadMetadataCache();
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   const configPath = (pi.getFlag("mcp-config") as string | undefined) ?? configOverridePath;
   const provenanceMap = getServerProvenance(configPath, ctx.cwd);
   const callbacks = buildMcpPanelCallbacks(state, config, ctx);

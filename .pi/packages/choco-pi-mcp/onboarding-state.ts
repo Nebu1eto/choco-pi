@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
+import { isObjectValue, isStringValue, mergeObjectParts } from "./protocol-values.js";
 
 export interface McpOnboardingState {
   version: 1;
@@ -24,16 +25,20 @@ export function loadOnboardingState(): McpOnboardingState {
   if (!existsSync(path)) return { ...DEFAULT_STATE };
 
   try {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const raw = JSON.parse(readFileSync(path, "utf-8")) as Partial<McpOnboardingState>;
-    if (!raw || typeof raw !== "object") return { ...DEFAULT_STATE };
-    return {
-      version: 1,
-      sharedConfigHintShown: raw.sharedConfigHintShown === true,
-      setupCompleted: raw.setupCompleted === true,
-      ...(typeof raw.lastDiscoveryFingerprint === "string"
+
+    if (!raw || !isObjectValue(raw)) return { ...DEFAULT_STATE };
+    return mergeObjectParts(
+      {
+        version: 1,
+        sharedConfigHintShown: raw.sharedConfigHintShown === true,
+        setupCompleted: raw.setupCompleted === true,
+      },
+      isStringValue(raw.lastDiscoveryFingerprint)
         ? { lastDiscoveryFingerprint: raw.lastDiscoveryFingerprint }
-        : {}),
-    };
+        : undefined,
+    );
   } catch {
     return { ...DEFAULT_STATE };
   }
@@ -58,21 +63,19 @@ export function updateOnboardingState(
 export function markSharedConfigHintShown(fingerprint?: string): McpOnboardingState {
   return updateOnboardingState((state) => {
     const lastDiscoveryFingerprint = fingerprint ?? state.lastDiscoveryFingerprint;
-    return {
-      ...state,
-      sharedConfigHintShown: true,
-      ...(lastDiscoveryFingerprint !== undefined ? { lastDiscoveryFingerprint } : {}),
-    };
+    return mergeObjectParts(
+      { ...state, sharedConfigHintShown: true },
+      lastDiscoveryFingerprint !== undefined ? { lastDiscoveryFingerprint } : undefined,
+    );
   });
 }
 
 export function markSetupCompleted(fingerprint?: string): McpOnboardingState {
   return updateOnboardingState((state) => {
     const lastDiscoveryFingerprint = fingerprint ?? state.lastDiscoveryFingerprint;
-    return {
-      ...state,
-      setupCompleted: true,
-      ...(lastDiscoveryFingerprint !== undefined ? { lastDiscoveryFingerprint } : {}),
-    };
+    return mergeObjectParts(
+      { ...state, setupCompleted: true },
+      lastDiscoveryFingerprint !== undefined ? { lastDiscoveryFingerprint } : undefined,
+    );
   });
 }

@@ -1,16 +1,19 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { isStringValue } from "./protocol-values.js";
 
 export function getConfigDirName(): string {
   const configDir = readPiConfig()?.configDir;
-  return typeof configDir === "string" && configDir.trim() ? configDir.trim() : ".pi";
+
+  return isStringValue(configDir) && configDir.trim() ? configDir.trim() : ".pi";
 }
 
 export function getAgentDir(): string {
   const piConfig = readPiConfig();
   const name = piConfig?.name;
-  const appName = typeof name === "string" && name.trim() ? name.trim() : "pi";
+
+  const appName = isStringValue(name) && name.trim() ? name.trim() : "pi";
   const configured = process.env[`${appName.toUpperCase()}_CODING_AGENT_DIR`]?.trim();
   if (!configured) {
     return join(homedir(), getConfigDirName(), "agent");
@@ -43,6 +46,7 @@ function readPiConfig(): { name?: unknown; configDir?: unknown; clientUri?: unkn
   const dir = process.env.PI_PACKAGE_DIR?.trim();
   if (!dir) return undefined;
   try {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const manifest = JSON.parse(readFileSync(join(resolve(dir), "package.json"), "utf8")) as {
       piConfig?: { name?: unknown; configDir?: unknown; clientUri?: unknown };
     };
@@ -54,7 +58,8 @@ function readPiConfig(): { name?: unknown; configDir?: unknown; clientUri?: unkn
 
 export function getAppName(): string {
   const name = readPiConfig()?.name;
-  return typeof name === "string" && name.trim() ? name.trim() : "pi";
+
+  return isStringValue(name) && name.trim() ? name.trim() : "pi";
 }
 
 /**
@@ -64,5 +69,6 @@ export function getAppName(): string {
  */
 export function getAppClientUri(): string | undefined {
   const uri = readPiConfig()?.clientUri;
-  return typeof uri === "string" && uri.trim() ? uri.trim() : undefined;
+
+  return isStringValue(uri) && uri.trim() ? uri.trim() : undefined;
 }

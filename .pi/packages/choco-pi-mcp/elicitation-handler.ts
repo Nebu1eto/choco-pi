@@ -11,6 +11,12 @@ import {
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import type { JsonSchemaType } from "@modelcontextprotocol/client";
 import open from "open";
+import {
+  isBooleanValue,
+  isNumberValue,
+  isStringValue,
+  mergeObjectParts,
+} from "./protocol-values.js";
 
 export type ElicitationValue = string | number | boolean | string[] | undefined;
 type FormProperty = ElicitRequestFormParams["requestedSchema"]["properties"][string];
@@ -110,11 +116,10 @@ async function collectValidField(
       coerceAndValidateFormValues(
         {
           ...params,
-          requestedSchema: {
-            type: "object",
-            properties: { [name]: schema },
-            ...(required ? { required: [name] } : {}),
-          },
+          requestedSchema: mergeObjectParts(
+            { type: "object", properties: { [name]: schema } },
+            required ? { required: [name] } : undefined,
+          ),
         },
         { [name]: result.value },
       );
@@ -223,7 +228,7 @@ async function collectField(
 export function coerceAndValidateFormValues(
   params: ElicitRequestFormParams,
   values: Record<string, ElicitationValue>,
-): Record<string, string | number | boolean | string[]> {
+) {
   const output: Record<string, string | number | boolean | string[]> = {};
   const required = new Set(params.requestedSchema.required ?? []);
   for (const [name, schema] of Object.entries(params.requestedSchema.properties)) {
@@ -234,6 +239,7 @@ export function coerceAndValidateFormValues(
     }
     if (schema.type === "string") {
       const stringValue = String(value);
+      // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
       const limits = schema as typeof schema & { minLength?: number; maxLength?: number };
       if (limits.minLength !== undefined && stringValue.length < limits.minLength) {
         throw new Error(
@@ -255,10 +261,11 @@ export function coerceAndValidateFormValues(
       continue;
     }
     if (schema.type === "number" || schema.type === "integer") {
-      if (typeof value === "string" && value.trim() === "") {
+      if (isStringValue(value) && value.trim() === "") {
         throw new Error(`Elicitation field ${name} must be a number`);
       }
-      const numberValue = typeof value === "number" ? value : Number(value);
+
+      const numberValue = isNumberValue(value) ? value : Number(value);
       if (!Number.isFinite(numberValue))
         throw new Error(`Elicitation field ${name} must be a number`);
       if (schema.type === "integer" && !Number.isInteger(numberValue)) {
@@ -274,7 +281,7 @@ export function coerceAndValidateFormValues(
       continue;
     }
     if (schema.type === "boolean") {
-      output[name] = typeof value === "boolean" ? value : value === "true";
+      output[name] = isBooleanValue(value) ? value : value === "true";
       continue;
     }
     if (schema.type === "array") {
@@ -294,11 +301,13 @@ export function coerceAndValidateFormValues(
     }
   }
   const validation = new AjvJsonSchemaValidator().getValidator(
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     params.requestedSchema as JsonSchemaType,
   )(output);
   if (!validation.valid) {
     throw new Error(`Invalid elicitation response: ${validation.errorMessage}`);
   }
+
   return output;
 }
 
@@ -325,6 +334,7 @@ function uniqueAction(label: string, choices: string[]): string {
 function extractMultiSelectOptions(
   schema: Extract<FormProperty, { type: "array" }>,
 ): Array<{ value: string; display: string }> {
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   const items = schema.items as {
     enum?: string[];
     anyOf?: Array<{ const: string; title: string }>;

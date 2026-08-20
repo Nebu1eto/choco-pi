@@ -7,9 +7,12 @@ import type {
   JsonSchemaValidator,
   jsonSchemaValidator as JsonSchemaValidatorProvider,
 } from "@modelcontextprotocol/client";
+import { isStringValue } from "./protocol-values.js";
 
 // ajv-formats types target its bundled ajv; the runtime accepts both instances.
-const addFormats = addFormatsImport as unknown as (instance: Ajv) => void;
+const addFormats = (instance: Ajv): void => {
+  addFormatsImport.default(instance);
+};
 
 type SchemaDialect = { status: "unstamped" } | { status: "stamped"; uri: string };
 
@@ -22,7 +25,7 @@ const DRAFT_2020_12_SCHEMA_URIS: ReadonlySet<string> = new Set([
 ]);
 
 function schemaDialect(schema: JsonSchemaType): SchemaDialect {
-  if (!("$schema" in schema) || typeof schema.$schema !== "string") {
+  if (!("$schema" in schema) || !isStringValue(schema.$schema)) {
     return { status: "unstamped" };
   }
   return {
@@ -40,8 +43,7 @@ export function createJsonSchemaValidator(): JsonSchemaValidatorProvider {
       const dialect = schemaDialect(schema);
       if (dialect.status === "unstamped" || DRAFT_2020_12_SCHEMA_URIS.has(dialect.uri)) {
         draft2020Validator ??= (() => {
-          const Ajv2020 = Ajv2020Import as unknown as typeof Ajv;
-          const ajv = new Ajv2020({ strict: false, allErrors: true });
+          const ajv = new Ajv2020Import.default({ strict: false, allErrors: true });
           addFormats(ajv);
           return new AjvJsonSchemaValidator(ajv);
         })();

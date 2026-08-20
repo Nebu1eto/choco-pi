@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { Transport } from "@modelcontextprotocol/client";
 import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/client";
+import { isNumberValue, isStringValue, mergeObjectParts } from "./protocol-values.js";
 
 export const MCP_TRACE_SCHEMA_VERSION = 1;
 export const DEFAULT_MCP_TRACE_MAX_BYTES = 256 * 1024;
@@ -74,10 +75,12 @@ function messageKind(message: JSONRPCMessage): McpTraceMessageKind {
   return "response";
 }
 
-function traceId(value: unknown): string | number | null | undefined {
+function traceId<BoundaryValue>(value: BoundaryValue): string | number | null | undefined {
   if (value === null) return null;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") return "[REDACTED_ID]";
+
+  if (isNumberValue(value) && Number.isFinite(value)) return value;
+
+  if (isStringValue(value)) return "[REDACTED_ID]";
   return undefined;
 }
 
@@ -99,22 +102,25 @@ export function createMcpTraceEvent(
 ): McpTraceEvent {
   const kind = messageKind(message);
   const bytes = messageBytes(message);
-  const event: McpTraceEvent = {
-    version: MCP_TRACE_SCHEMA_VERSION,
-    timestamp: new Date().toISOString(),
-    direction,
-    server: redactTraceText(server, 120),
-    transport,
-    kind,
-    status,
-    ...(bytes !== undefined ? { bytes } : {}),
-  };
+  const event: McpTraceEvent = mergeObjectParts(
+    {
+      version: MCP_TRACE_SCHEMA_VERSION,
+      timestamp: new Date().toISOString(),
+      direction,
+      server: redactTraceText(server, 120),
+      transport,
+      kind,
+      status,
+    },
+    bytes !== undefined ? { bytes } : undefined,
+  );
   if ("method" in message) event.method = redactTraceText(message.method, 120);
   if ("id" in message) event.id = traceId(message.id) ?? null;
   const relatedRequestId = traceId(options?.relatedRequestId);
   if (relatedRequestId !== undefined && relatedRequestId !== null)
     event.relatedRequestId = relatedRequestId;
-  if ("error" in message && message.error && typeof message.error.code === "number") {
+
+  if ("error" in message && message.error && isNumberValue(message.error.code)) {
     event.errorCode = message.error.code;
   }
   if (options?.durationMs !== undefined && Number.isFinite(options.durationMs)) {
@@ -172,7 +178,7 @@ export class McpTraceWriter {
     return this.disabled;
   }
 
-  get stats(): { bytes: number; events: number } {
+  get stats() {
     return { bytes: this.bytesWritten, events: this.eventsWritten };
   }
 
@@ -228,11 +234,13 @@ export function createMcpTraceWriter(
         "mcp-traces",
         `mcp-${timestamp}-${randomSuffix}.jsonl`,
       );
-  return new McpTraceWriter({
-    filePath,
-    ...(settings.maxBytes !== undefined ? { maxBytes: settings.maxBytes } : {}),
-    ...(settings.maxEvents !== undefined ? { maxEvents: settings.maxEvents } : {}),
-  });
+  return new McpTraceWriter(
+    mergeObjectParts(
+      { filePath },
+      settings.maxBytes !== undefined ? { maxBytes: settings.maxBytes } : undefined,
+      settings.maxEvents !== undefined ? { maxEvents: settings.maxEvents } : undefined,
+    ),
+  );
 }
 
 export interface McpTraceObserver {

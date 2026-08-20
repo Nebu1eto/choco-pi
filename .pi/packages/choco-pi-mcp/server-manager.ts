@@ -59,6 +59,7 @@ import {
   wrapTransportWithMcpTrace,
 } from "./mcp-trace.ts";
 import { createRequestHeadersCommandFetch } from "./request-headers-command.ts";
+import { isNumberValue, isStringValue, mergeObjectParts } from "./protocol-values.js";
 
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
@@ -70,13 +71,16 @@ type HttpAuthProviderState =
   | { status: "explicit"; provider: McpOAuthProvider }
   | { status: "implicit-challenged"; provider: McpOAuthProvider };
 
-function isUnauthorizedHttpError(error: unknown): boolean {
+function isUnauthorizedHttpError<BoundaryValue>(error: BoundaryValue): boolean {
   return (
     error instanceof UnauthorizedError || (error instanceof SdkHttpError && error.status === 401)
   );
 }
 
-function shouldFallbackToSse(error: unknown, definition: ServerDefinition): boolean {
+function shouldFallbackToSse<BoundaryValue>(
+  error: BoundaryValue,
+  definition: ServerDefinition,
+): boolean {
   if (definition.protocolVersion === "2026-07-28") return false;
   return error instanceof SdkHttpError && [404, 405, 406, 415].includes(error.status);
 }
@@ -253,10 +257,10 @@ export class McpServerManager {
       return undefined;
     }
 
-    return {
-      ...(ownedSignal ? { signal: ownedSignal } : {}),
-      ...(timeout !== undefined ? { timeout } : {}),
-    };
+    return mergeObjectParts(
+      ownedSignal ? { signal: ownedSignal } : undefined,
+      timeout !== undefined ? { timeout } : undefined,
+    );
   }
 
   async connect(
@@ -398,11 +402,14 @@ export class McpServerManager {
 
     const toolsRevision = expectedConnection.toolsRevision ?? 0;
     const refreshSignal = combineAbortSignals(healthOptions.signal, AbortSignal.timeout(timeout));
-    const tools = await this.fetchAllTools(expectedConnection.client, {
-      ...healthOptions,
-      ...(refreshSignal ? { signal: refreshSignal } : {}),
-      cacheMode: "refresh",
-    });
+    const tools = await this.fetchAllTools(
+      expectedConnection.client,
+      mergeObjectParts(
+        { ...healthOptions },
+        refreshSignal ? { signal: refreshSignal } : undefined,
+        { cacheMode: "refresh" },
+      ),
+    );
     throwIfAborted(ownedSignal);
 
     if (
@@ -492,7 +499,7 @@ export class McpServerManager {
     let transportAlreadyTraced = false;
     let stderrTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     const configuredTransports = [definition.command, definition.url, definition.socket].filter(
-      (value) => typeof value === "string" && value.length > 0,
+      (value) => isStringValue(value) && value.length > 0,
     );
     if (configuredTransports.length !== 1) {
       throw new Error(`Server ${name} must configure exactly one of command, url, or socket`);
@@ -517,13 +524,13 @@ export class McpServerManager {
 
       if (definition.pluginDataDir) mkdirSync(definition.pluginDataDir, { recursive: true });
       const cwd = resolveConfigPath(definition.cwd) ?? this.defaultCwd;
-      const stdioTransport = new StdioClientTransport({
-        command,
-        args,
-        env: resolveEnv(definition.env, name, definition.literalEnv === true),
-        ...(cwd !== undefined ? { cwd } : {}),
-        stderr: definition.debug ? "inherit" : "pipe",
-      });
+      const stdioTransport = new StdioClientTransport(
+        mergeObjectParts(
+          { command, args, env: resolveEnv(definition.env, name, definition.literalEnv === true) },
+          cwd !== undefined ? { cwd } : undefined,
+          { stderr: definition.debug ? "inherit" : "pipe" },
+        ),
+      );
       // Keep non-debug child diagnostics available for connection failures without
       // retaining an unbounded stream or changing the existing debug behavior.
       if (stdioTransport.stderr) {
@@ -583,19 +590,11 @@ export class McpServerManager {
       this.attachAdapterNotificationHandlers(name, client);
 
       const instructions = client.getInstructions?.();
-      const connection: ServerConnection = {
-        client,
-        transport,
-        definition,
-        tools: [],
-        toolsRevision: 0,
-        resources: [],
-        prompts: [],
-        ...(instructions !== undefined ? { instructions } : {}),
-        lastUsedAt: Date.now(),
-        inFlight: 0,
-        status: "connected",
-      };
+      const connection: ServerConnection = mergeObjectParts(
+        { client, transport, definition, tools: [], toolsRevision: 0, resources: [], prompts: [] },
+        instructions !== undefined ? { instructions } : undefined,
+        { lastUsedAt: Date.now(), inFlight: 0, status: "connected" },
+      );
 
       // Reflect the SDK's own close signal in connection status, guarded by
       // identity so a stale connection's late close can never clobber a fresh
@@ -631,7 +630,7 @@ export class McpServerManager {
       const cleanupFailures = cleanupResults.flatMap((result) =>
         result.status === "rejected" ? [result.reason] : [],
       );
-      let reportedError: unknown = error;
+      let reportedError = error;
       if (cleanupFailures.length > 0) {
         reportedError = new AggregateError(
           [error, ...cleanupFailures],
@@ -681,9 +680,10 @@ export class McpServerManager {
     }
   }
 
-  private async enrichHttpConnectionError(
+  private async enrichHttpConnectionError<BoundaryValue>(
     definition: ServerDefinition,
-    error: unknown,
+
+    error: BoundaryValue,
   ): Promise<Error> {
     const originalMessage = error instanceof Error ? error.message : String(error);
     try {
@@ -725,17 +725,17 @@ export class McpServerManager {
   }
 
   private buildClientCapabilities() {
-    return {
-      ...(this.samplingConfig ? { sampling: {} } : {}),
-      ...(this.elicitationConfig
+    return mergeObjectParts(
+      this.samplingConfig ? { sampling: {} } : undefined,
+      this.elicitationConfig
         ? {
-            elicitation: {
-              form: {},
-              ...(this.elicitationConfig.allowUrl ? { url: {} } : {}),
-            },
+            elicitation: mergeObjectParts(
+              { form: {} },
+              this.elicitationConfig.allowUrl ? { url: {} } : undefined,
+            ),
           }
-        : {}),
-    };
+        : undefined,
+    );
   }
 
   private createClient(serverName: string, definition: ServerDefinition): Client {
@@ -744,28 +744,30 @@ export class McpServerManager {
     let client: Client;
     client = new Client(
       { name: `pi-mcp-${serverName}`, version: "1.0.0" },
-      {
-        jsonSchemaValidator: createJsonSchemaValidator(),
-        ...(versionNegotiation ? { versionNegotiation } : {}),
-        ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
-        listChanged: {
-          tools: {
-            onChanged: (error: Error | null, tools: McpTool[] | null) => {
-              this.handleToolsListChanged(serverName, client, error, tools);
+      mergeObjectParts(
+        { jsonSchemaValidator: createJsonSchemaValidator() },
+        versionNegotiation ? { versionNegotiation } : undefined,
+        Object.keys(capabilities).length > 0 ? { capabilities } : undefined,
+        {
+          listChanged: {
+            tools: {
+              onChanged: (error: Error | null, tools: McpTool[] | null) => {
+                this.handleToolsListChanged(serverName, client, error, tools);
+              },
             },
-          },
-          resources: {
-            onChanged: (error: Error | null, resources: McpResource[] | null) => {
-              this.handleResourcesListChanged(serverName, client, error, resources);
+            resources: {
+              onChanged: (error: Error | null, resources: McpResource[] | null) => {
+                this.handleResourcesListChanged(serverName, client, error, resources);
+              },
             },
-          },
-          prompts: {
-            onChanged: (error: Error | null, prompts: McpPrompt[] | null) => {
-              this.handlePromptsListChanged(serverName, client, error, prompts);
+            prompts: {
+              onChanged: (error: Error | null, prompts: McpPrompt[] | null) => {
+                this.handlePromptsListChanged(serverName, client, error, prompts);
+              },
             },
           },
         },
-      },
+      ),
     );
     if (this.samplingConfig) {
       registerSamplingHandler(client, { ...this.samplingConfig, serverName });
@@ -958,16 +960,16 @@ export class McpServerManager {
       | { status: "failed"; client: Client; transport: Transport; error: unknown }
     > => {
       const authProvider = "provider" in authState ? authState.provider : undefined;
-      const transportOptions = {
-        ...(requestInit !== undefined ? { requestInit } : {}),
-        ...(requestFetch !== undefined ? { fetch: requestFetch } : {}),
-        ...(authProvider !== undefined ? { authProvider } : {}),
-        ...(authProvider !== undefined &&
-        definition.oauth !== false &&
-        definition.oauth?.skipIssuerMetadataValidation === true
+      const transportOptions = mergeObjectParts(
+        requestInit !== undefined ? { requestInit } : undefined,
+        requestFetch !== undefined ? { fetch: requestFetch } : undefined,
+        authProvider !== undefined ? { authProvider } : undefined,
+        authProvider !== undefined &&
+          definition.oauth !== false &&
+          definition.oauth?.skipIssuerMetadataValidation === true
           ? { skipIssuerMetadataValidation: true }
-          : {}),
-      };
+          : undefined,
+      );
       const baseTransport: Transport =
         kind === "streamable-http"
           ? new StreamableHTTPClientTransport(url, transportOptions)
@@ -1115,7 +1117,8 @@ export class McpServerManager {
   private attachAdapterNotificationHandlers(serverName: string, client: Client): void {
     client.setNotificationHandler(
       SERVER_STREAM_RESULT_PATCH_METHOD,
-      { params: serverStreamResultPatchNotificationSchema.shape.params },
+
+      { params: serverStreamResultPatchNotificationSchema["shape"].params },
       (params) => {
         const listener = this.uiStreamListeners.get(params.streamToken);
         if (!listener) return;
@@ -1146,7 +1149,7 @@ export class McpServerManager {
       this.touch(name);
       this.incrementInFlight(name);
       return await connection.client.getPrompt(
-        { name: promptName, ...(args ? { arguments: args } : {}) },
+        mergeObjectParts({ name: promptName }, args ? { arguments: args } : undefined),
         this.getRequestOptions(name, signal),
       );
     } finally {
@@ -1250,7 +1253,7 @@ export class McpServerManager {
     if (failures.length > 0) throw new AggregateError(failures, "MCP manager cleanup failed");
   }
 
-  private containsCleanupFailure(error: unknown): boolean {
+  private containsCleanupFailure<BoundaryValue>(error: BoundaryValue): boolean {
     const pending: unknown[] = [error];
     const seen = new Set<unknown>();
     while (pending.length > 0) {
@@ -1329,7 +1332,7 @@ function resolveEnv(
 }
 
 function normalizeRequestTimeoutMs(timeoutMs: number | undefined): number | undefined {
-  return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+  return isNumberValue(timeoutMs) && Number.isFinite(timeoutMs) && timeoutMs > 0
     ? timeoutMs
     : undefined;
 }

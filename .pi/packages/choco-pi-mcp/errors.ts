@@ -1,3 +1,4 @@
+import { mergeObjectParts, type McpObject, type McpValue } from "./protocol-values.js";
 /**
  * Custom error types for MCP UI operations.
  * Provides structured errors with context and recovery hints.
@@ -8,7 +9,8 @@ export interface McpUiErrorContext {
   tool?: string;
   uri?: string;
   session?: string;
-  [key: string]: unknown;
+
+  [key: string]: McpValue;
 }
 
 /**
@@ -42,7 +44,7 @@ export class McpUiError extends Error {
     }
   }
 
-  toJSON(): Record<string, unknown> {
+  toJSON(): McpObject {
     return {
       name: this.name,
       code: this.code,
@@ -59,12 +61,20 @@ export class McpUiError extends Error {
  */
 export class ResourceFetchError extends McpUiError {
   constructor(uri: string, reason: string, options?: { server?: string; cause?: Error }) {
-    super(`Failed to fetch UI resource "${uri}": ${reason}`, {
-      code: "RESOURCE_FETCH_ERROR",
-      context: { uri, ...(options?.server !== undefined ? { server: options.server } : {}) },
-      recoveryHint: "Check that the MCP server is connected and the resource URI is valid.",
-      ...(options?.cause !== undefined ? { cause: options.cause } : {}),
-    });
+    super(
+      `Failed to fetch UI resource "${uri}": ${reason}`,
+      mergeObjectParts(
+        {
+          code: "RESOURCE_FETCH_ERROR",
+          context: mergeObjectParts(
+            { uri },
+            options?.server !== undefined ? { server: options.server } : undefined,
+          ),
+          recoveryHint: "Check that the MCP server is connected and the resource URI is valid.",
+        },
+        options?.cause !== undefined ? { cause: options.cause } : undefined,
+      ),
+    );
     this.name = "ResourceFetchError";
   }
 }
@@ -76,11 +86,11 @@ export class ResourceParseError extends McpUiError {
   constructor(uri: string, reason: string, options?: { server?: string; mimeType?: string }) {
     super(`Invalid UI resource "${uri}": ${reason}`, {
       code: "RESOURCE_PARSE_ERROR",
-      context: {
-        uri,
-        ...(options?.server !== undefined ? { server: options.server } : {}),
-        ...(options?.mimeType !== undefined ? { mimeType: options.mimeType } : {}),
-      },
+      context: mergeObjectParts(
+        { uri },
+        options?.server !== undefined ? { server: options.server } : undefined,
+        options?.mimeType !== undefined ? { mimeType: options.mimeType } : undefined,
+      ),
       recoveryHint: "Ensure the resource returns valid HTML with the correct MIME type.",
     });
     this.name = "ResourceParseError";
@@ -92,13 +102,18 @@ export class ResourceParseError extends McpUiError {
  */
 export class BridgeConnectionError extends McpUiError {
   constructor(reason: string, options?: { session?: string; cause?: Error }) {
-    super(`AppBridge connection failed: ${reason}`, {
-      code: "BRIDGE_CONNECTION_ERROR",
-      context: options?.session !== undefined ? { session: options.session } : {},
-      recoveryHint:
-        "Check browser console for detailed errors. The iframe may have failed to load.",
-      ...(options?.cause !== undefined ? { cause: options.cause } : {}),
-    });
+    super(
+      `AppBridge connection failed: ${reason}`,
+      mergeObjectParts(
+        {
+          code: "BRIDGE_CONNECTION_ERROR",
+          context: options?.session !== undefined ? { session: options.session } : {},
+          recoveryHint:
+            "Check browser console for detailed errors. The iframe may have failed to load.",
+        },
+        options?.cause !== undefined ? { cause: options.cause } : undefined,
+      ),
+    );
     this.name = "BridgeConnectionError";
   }
 }
@@ -131,12 +146,17 @@ export class ConsentError extends McpUiError {
  */
 export class SessionError extends McpUiError {
   constructor(reason: string, options?: { session?: string; cause?: Error }) {
-    super(`Session error: ${reason}`, {
-      code: "SESSION_ERROR",
-      context: options?.session !== undefined ? { session: options.session } : {},
-      recoveryHint: "The session may have expired or been closed. Try opening the UI again.",
-      ...(options?.cause !== undefined ? { cause: options.cause } : {}),
-    });
+    super(
+      `Session error: ${reason}`,
+      mergeObjectParts(
+        {
+          code: "SESSION_ERROR",
+          context: options?.session !== undefined ? { session: options.session } : {},
+          recoveryHint: "The session may have expired or been closed. Try opening the UI again.",
+        },
+        options?.cause !== undefined ? { cause: options.cause } : undefined,
+      ),
+    );
     this.name = "SessionError";
   }
 }
@@ -146,12 +166,17 @@ export class SessionError extends McpUiError {
  */
 export class ServerError extends McpUiError {
   constructor(reason: string, options?: { port?: number; cause?: Error }) {
-    super(`UI server error: ${reason}`, {
-      code: "SERVER_ERROR",
-      context: options?.port !== undefined ? { port: options.port } : {},
-      recoveryHint: "Check if the port is available. Another process may be using it.",
-      ...(options?.cause !== undefined ? { cause: options.cause } : {}),
-    });
+    super(
+      `UI server error: ${reason}`,
+      mergeObjectParts(
+        {
+          code: "SERVER_ERROR",
+          context: options?.port !== undefined ? { port: options.port } : {},
+          recoveryHint: "Check if the port is available. Another process may be using it.",
+        },
+        options?.cause !== undefined ? { cause: options.cause } : undefined,
+      ),
+    );
     this.name = "ServerError";
   }
 }
@@ -161,12 +186,20 @@ export class ServerError extends McpUiError {
  */
 export class McpServerError extends McpUiError {
   constructor(server: string, reason: string, options?: { tool?: string; cause?: Error }) {
-    super(`MCP server "${server}" error: ${reason}`, {
-      code: "MCP_SERVER_ERROR",
-      context: { server, ...(options?.tool !== undefined ? { tool: options.tool } : {}) },
-      recoveryHint: "Check that the MCP server is running and responsive.",
-      ...(options?.cause !== undefined ? { cause: options.cause } : {}),
-    });
+    super(
+      `MCP server "${server}" error: ${reason}`,
+      mergeObjectParts(
+        {
+          code: "MCP_SERVER_ERROR",
+          context: mergeObjectParts(
+            { server },
+            options?.tool !== undefined ? { tool: options.tool } : undefined,
+          ),
+          recoveryHint: "Check that the MCP server is running and responsive.",
+        },
+        options?.cause !== undefined ? { cause: options.cause } : undefined,
+      ),
+    );
     this.name = "McpServerError";
   }
 }
@@ -174,30 +207,40 @@ export class McpServerError extends McpUiError {
 /**
  * Wrap an unknown error into an McpUiError.
  */
-export function wrapError(error: unknown, context?: McpUiErrorContext): McpUiError {
+
+export function wrapError<BoundaryValue>(
+  error: BoundaryValue,
+  context?: McpUiErrorContext,
+): McpUiError {
   if (error instanceof McpUiError) {
     // Merge contexts
-    return new McpUiError(error.message, {
-      code: error.code,
-      context: { ...error.context, ...context },
-      ...(error.recoveryHint !== undefined ? { recoveryHint: error.recoveryHint } : {}),
-      ...(error.cause !== undefined ? { cause: error.cause } : {}),
-    });
+    return new McpUiError(
+      error.message,
+      mergeObjectParts(
+        { code: error.code, context: { ...error.context, ...context } },
+        error.recoveryHint !== undefined ? { recoveryHint: error.recoveryHint } : undefined,
+        error.cause !== undefined ? { cause: error.cause } : undefined,
+      ),
+    );
   }
 
-  const cause = error instanceof Error ? error : undefined;
+  const cause: Error | undefined = error instanceof Error ? error : undefined;
   const message = error instanceof Error ? error.message : String(error);
 
-  return new McpUiError(message, {
-    code: "UNKNOWN_ERROR",
-    ...(context !== undefined ? { context } : {}),
-    ...(cause !== undefined ? { cause } : {}),
-  });
+  return new McpUiError(
+    message,
+    mergeObjectParts(
+      { code: "UNKNOWN_ERROR" },
+      context !== undefined ? { context } : undefined,
+      cause !== undefined ? { cause } : undefined,
+    ),
+  );
 }
 
 /**
  * Check if an error is a specific MCP UI error type.
  */
-export function isErrorCode(error: unknown, code: string): boolean {
+
+export function isErrorCode<BoundaryValue>(error: BoundaryValue, code: string): boolean {
   return error instanceof McpUiError && error.code === code;
 }

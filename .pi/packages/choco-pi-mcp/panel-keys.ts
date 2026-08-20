@@ -21,13 +21,11 @@ export interface PanelKeys {
   saveLabel(): string | null;
 }
 
-function configuredSaveKeys(keybindings?: PanelKeybindings): {
-  keys: KeyId[];
-  configured: boolean;
-} {
+function configuredSaveKeys(keybindings?: PanelKeybindings) {
   const explicit = keybindings?.getUserBindings?.()["mcp.panel.save"];
   if (explicit !== undefined)
     return { keys: Array.isArray(explicit) ? explicit : [explicit], configured: true };
+
   return { keys: [], configured: false };
 }
 

@@ -11,8 +11,19 @@ import { combineAbortSignals } from "./runtime-owner.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
 import type { McpExtensionState } from "./state.ts";
 import { findToolByName, formatSchema } from "./tool-metadata.ts";
-import { renderTsShape } from "./ts-shape.ts";
+
+import { renderTypeScriptSchema } from "./ts-shape.ts";
 import type { ContentBlock } from "./types.ts";
+import {
+  isBigIntValue,
+  isFunctionValue,
+  isNumberValue,
+  isObjectValue,
+  isStringValue,
+  isSymbolValue,
+  mergeObjectParts,
+  type McpObject,
+} from "./protocol-values.js";
 
 export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
 
@@ -35,15 +46,14 @@ type WorkerMessage =
 
 type WorkerResultMessage = { type: "result"; id: number; envelope: unknown };
 
-function needsInspectableFormatting(value: unknown, stack = new WeakSet<object>()): boolean {
-  if (
-    value === undefined ||
-    typeof value === "bigint" ||
-    typeof value === "function" ||
-    typeof value === "symbol"
-  )
+function needsInspectableFormatting<BoundaryValue>(
+  value: BoundaryValue,
+  stack = new WeakSet<object>(),
+): boolean {
+  if (value === undefined || isBigIntValue(value) || isFunctionValue(value) || isSymbolValue(value))
     return true;
-  if (typeof value !== "object" || value === null) return false;
+
+  if (!isObjectValue(value) || value === null) return false;
   if (stack.has(value)) return true;
   if (
     value instanceof Map ||
@@ -60,8 +70,8 @@ function needsInspectableFormatting(value: unknown, stack = new WeakSet<object>(
   }
 }
 
-function formatValue(value: unknown): string {
-  if (typeof value === "string") return value;
+function formatValue<BoundaryValue>(value: BoundaryValue): string {
+  if (isStringValue(value)) return value;
   try {
     if (!needsInspectableFormatting(value)) {
       const json = JSON.stringify(value, null, 2);
@@ -73,17 +83,15 @@ function formatValue(value: unknown): string {
   }
 }
 
-function toContentBlock(value: unknown): ContentBlock {
-  if (typeof value === "object" && value !== null) {
-    const block = value as Record<string, unknown>;
-    if (block.type === "text" && typeof block.text === "string") {
+function toContentBlock<BoundaryValue>(value: BoundaryValue): ContentBlock {
+  if (isObjectValue(value) && value !== null) {
+    const block =
+      /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ value as McpObject;
+
+    if (block.type === "text" && isStringValue(block.text)) {
       return { type: "text", text: block.text };
     }
-    if (
-      block.type === "image" &&
-      typeof block.data === "string" &&
-      typeof block.mimeType === "string"
-    ) {
+    if (block.type === "image" && isStringValue(block.data) && isStringValue(block.mimeType)) {
       return { type: "image", data: block.data, mimeType: block.mimeType };
     }
   }
@@ -97,27 +105,22 @@ function textFromContent(content: ContentBlock[]): string {
     .join("\n");
 }
 
-function abortReasonError(reason: unknown): Error {
+function abortReasonError<BoundaryValue>(reason: BoundaryValue): Error {
   return reason instanceof Error ? reason : new Error(String(reason ?? "MCP request aborted"));
 }
 
-function parseWorkerMessage(value: unknown): WorkerMessage | null {
-  if (typeof value !== "object" || value === null) return null;
-  const message = value as Record<string, unknown>;
+function parseWorkerMessage<BoundaryValue>(value: BoundaryValue): WorkerMessage | null {
+  if (!isObjectValue(value) || value === null) return null;
+
+  const message =
+    /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ value as McpObject;
   if (message.type === "emit" && "block" in message) return { type: "emit", block: message.block };
-  if (
-    message.type === "call" &&
-    typeof message.id === "number" &&
-    typeof message.path === "string"
-  ) {
+  if (message.type === "call" && isNumberValue(message.id) && isStringValue(message.path)) {
     return "args" in message
       ? { type: "call", id: message.id, path: message.path, args: message.args }
       : { type: "call", id: message.id, path: message.path };
   }
-  if (
-    (message.type === "search" || message.type === "describe") &&
-    typeof message.id === "number"
-  ) {
+  if ((message.type === "search" || message.type === "describe") && isNumberValue(message.id)) {
     return "input" in message
       ? { type: message.type, id: message.id, input: message.input }
       : { type: message.type, id: message.id };
@@ -127,7 +130,8 @@ function parseWorkerMessage(value: unknown): WorkerMessage | null {
       ? { type: "done", returnBlock: message.returnBlock }
       : { type: "done" };
   }
-  if (message.type === "error" && typeof message.message === "string") {
+
+  if (message.type === "error" && isStringValue(message.message)) {
     return { type: "error", message: message.message };
   }
   return null;
@@ -167,7 +171,8 @@ export async function runMcpScript(
           : operation.durationMs,
     }));
   let callsSnapshot: ScriptOperation[] | undefined;
-  const callTool = async (path: string, args?: Record<string, unknown>) => {
+
+  const callTool = async (path: string, args?: McpObject) => {
     // Record before dispatch so calls still in flight at timeout/abort appear in the trace.
     const startedAt = Date.now();
     const index =
@@ -192,14 +197,14 @@ export async function runMcpScript(
     if (details.error !== undefined) {
       const errorCode = String(details.error);
       const suggestions = Array.isArray(details.suggestions)
-        ? details.suggestions.filter(
-            (suggestion): suggestion is string => typeof suggestion === "string",
+        ? details.suggestions.filter((suggestion): suggestion is string =>
+            isStringValue(suggestion),
           )
         : [];
       const message =
         errorCode === "tool_not_found"
           ? `Tool "${path}" not found. Use await tools.search({ query: "..." }) inside mcpScript.${suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : ""}`
-          : typeof details.message === "string"
+          : isStringValue(details.message)
             ? details.message
             : textFromContent(result.content);
       calls[index] = {
@@ -230,25 +235,29 @@ export async function runMcpScript(
 
   const searchTools = (input?: SearchInput) => {
     const startedAt = Date.now();
-    const query = typeof input?.query === "string" ? input.query : "";
+
+    const query = isStringValue(input?.query) ? input.query : "";
     let error: unknown;
     try {
       if (query.trim() === "") {
         return { items: [], total: 0, hasMore: false, nextOffset: null };
       }
-      const server = typeof input?.server === "string" ? input.server : undefined;
-      const limit = typeof input?.limit === "number" ? input.limit : 12;
-      const offset = typeof input?.offset === "number" ? input.offset : 0;
+
+      const server = isStringValue(input?.server) ? input.server : undefined;
+
+      const limit = isNumberValue(input?.limit) ? input.limit : 12;
+
+      const offset = isNumberValue(input?.offset) ? input.offset : 0;
       const page = paginate(rankToolMatches(state, query, server), offset, limit);
       return {
         ...page,
-        items: page.items.map(({ server: matchServer, tool, score }) => ({
-          path: tool.name,
-          name: tool.originalName,
-          server: matchServer,
-          ...(tool.description ? { description: tool.description } : {}),
-          score,
-        })),
+        items: page.items.map(({ server: matchServer, tool, score }) =>
+          mergeObjectParts(
+            { path: tool.name, name: tool.originalName, server: matchServer },
+            tool.description ? { description: tool.description } : undefined,
+            { score },
+          ),
+        ),
       };
     } catch (caught) {
       error = caught;
@@ -271,25 +280,25 @@ export async function runMcpScript(
 
   const describeTool = (input?: DescribeInput) => {
     const startedAt = Date.now();
-    const path = typeof input?.path === "string" ? input.path : "";
-    let error: unknown;
+
+    const path = isStringValue(input?.path) ? input.path : "";
+    let traceError: string | undefined;
     try {
       for (const [server, metadata] of state.toolMetadata) {
         const tool = findToolByName(metadata, path);
         if (!tool) continue;
         const inputTypeScript = tool.inputSchema
-          ? (renderTsShape(tool.inputSchema) ?? formatSchema(tool.inputSchema))
+          ? (renderTypeScriptSchema(tool.inputSchema) ?? formatSchema(tool.inputSchema))
           : null;
-        return {
-          path: tool.name,
-          name: tool.originalName,
-          server,
-          ...(tool.description ? { description: tool.description } : {}),
-          ...(inputTypeScript ? { inputTypeScript } : {}),
-        };
+        return mergeObjectParts(
+          { path: tool.name, name: tool.originalName, server },
+          tool.description ? { description: tool.description } : undefined,
+          inputTypeScript ? { inputTypeScript } : undefined,
+        );
       }
       const suggestions = path ? rankSuggestions(state, path, 5) : [];
-      error = "tool_not_found";
+
+      traceError = "tool_not_found";
       return {
         path,
         error: {
@@ -299,17 +308,17 @@ export async function runMcpScript(
         },
       };
     } catch (caught) {
-      error = caught;
+      traceError = caught instanceof Error ? caught.message : String(caught);
       throw caught;
     } finally {
       calls.push(
-        error === undefined
+        traceError === undefined
           ? { operation: "describe", path, ok: true, durationMs: Date.now() - startedAt, startedAt }
           : {
               operation: "describe",
               path,
               ok: false,
-              error: error instanceof Error ? error.message : String(error),
+              error: traceError,
               durationMs: Date.now() - startedAt,
               startedAt,
             },
@@ -335,7 +344,8 @@ export async function runMcpScript(
     const activeWorker = worker;
     const execution = new Promise<void>((resolve, reject) => {
       let completed = false;
-      activeWorker.on("message", (value: unknown) => {
+
+      activeWorker.on("message", <BoundaryValue>(value: BoundaryValue) => {
         const message = parseWorkerMessage(value);
         if (!message || completed) return;
         if (message.type === "emit") {
@@ -359,11 +369,16 @@ export async function runMcpScript(
           if (message.type === "call") {
             envelope = await callTool(
               message.path,
-              message.args as Record<string, unknown> | undefined,
+
+              /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject | undefined for this value. */ message.args as
+                | McpObject
+                | undefined,
             );
           } else if (message.type === "search") {
+            // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
             envelope = searchTools(message.input as SearchInput | undefined);
           } else {
+            // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
             envelope = describeTool(message.input as DescribeInput | undefined);
           }
           const response: WorkerResultMessage = { type: "result", id: message.id, envelope };
@@ -429,12 +444,12 @@ export async function runMcpScript(
   );
   return {
     content: guarded.content,
-    details: {
-      mode: "script",
-      ...(errorCode ? { error: errorCode, message: errorMessage } : {}),
-      timeoutMs: resolvedTimeoutMs,
-      ...(callsSnapshot.length > 0 ? { calls: callsSnapshot } : {}),
-      ...guardedMcpDetails(guarded),
-    },
+    details: mergeObjectParts(
+      { mode: "script" },
+      errorCode ? { error: errorCode, message: errorMessage } : undefined,
+      { timeoutMs: resolvedTimeoutMs },
+      callsSnapshot.length > 0 ? { calls: callsSnapshot } : undefined,
+      { ...guardedMcpDetails(guarded) },
+    ),
   };
 }

@@ -7,6 +7,7 @@ import {
   matchesToolPattern,
   resolveToolPrefix,
 } from "./types.ts";
+import { isObjectValue, isStringValue } from "./protocol-values.js";
 
 /**
  * Shortest field token allowed to stem-match a longer query token.
@@ -41,7 +42,8 @@ export function resolveSearchKeywords(
   globalPrefix: ToolPrefix,
 ): string[] {
   const map = definition?.searchKeywords;
-  if (!map || typeof map !== "object" || Array.isArray(map)) return [];
+
+  if (!map || !isObjectValue(map) || Array.isArray(map)) return [];
   const candidates = getToolNameCandidates(
     toolOriginalName,
     serverName,
@@ -53,7 +55,7 @@ export function resolveSearchKeywords(
     if (!Array.isArray(values)) continue;
     if (!matchesToolPattern(candidates, [pattern])) continue;
     for (const value of values) {
-      if (typeof value !== "string") continue;
+      if (!isStringValue(value)) continue;
       const trimmed = value.trim();
       if (!trimmed || seen.has(trimmed)) continue;
       seen.add(trimmed);
@@ -97,6 +99,7 @@ export function scoreToolMatch(
   let wholeFieldExact = false;
   const matchedTokens = new Set<string>();
 
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   for (const [field, value] of Object.entries(fields) as Array<
     [keyof typeof FIELD_WEIGHTS, string]
   >) {
@@ -211,16 +214,13 @@ export function rankToolMatches(
   return matches.sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name));
 }
 
-export function paginate<T>(
-  items: T[],
-  offset: number,
-  limit: number,
-): { items: T[]; total: number; hasMore: boolean; nextOffset: number | null } {
+export function paginate<T>(items: T[], offset: number, limit: number) {
   const safeOffset = Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0;
   const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 1;
   const total = items.length;
   const page = items.slice(safeOffset, safeOffset + safeLimit);
   const nextOffset = safeOffset + page.length;
+
   return {
     items: page,
     total,

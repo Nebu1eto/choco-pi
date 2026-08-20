@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { McpExtensionState } from "./state.ts";
+import type { McpExtensionState, SendMessageFn } from "./state.ts";
 import {
   formatToolName,
   isServerDisabled,
@@ -48,6 +48,7 @@ import {
   type McpRuntimeOwner,
 } from "./runtime-owner.ts";
 import { publishMcpStatusSnapshot } from "./mcp-status.ts";
+import { isFunctionValue, isNumberValue, mergeObjectParts } from "./protocol-values.js";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
@@ -114,6 +115,7 @@ export async function initializeMcp(
 ): Promise<McpExtensionState> {
   // Pi guards ExtensionContext getters after reload. Snapshot all values that
   // can be used by asynchronous work before the first await.
+  // SAFETY: Pi returns a string or undefined for the declared mcp-config CLI flag.
   const configPath =
     options.config !== undefined
       ? undefined
@@ -140,14 +142,18 @@ export async function initializeMcp(
   manager.setAuthStorageOptions(authStorageOptions);
   const samplingAutoApprove = config.settings?.samplingAutoApprove === true;
   if (config.settings?.sampling !== false && (hasUI || samplingAutoApprove)) {
-    manager.setSamplingConfig({
-      autoApprove: samplingAutoApprove,
-      ...(ui !== undefined ? { ui } : {}),
-      modelRegistry,
-      getCurrentModel: () => (owner.isActive() ? ctx.model : undefined),
-      getSignal: () =>
-        owner.isActive() ? combineAbortSignals(owner.signal, ctx.signal) : owner.signal,
-    });
+    manager.setSamplingConfig(
+      mergeObjectParts(
+        { autoApprove: samplingAutoApprove },
+        ui !== undefined ? { ui } : undefined,
+        {
+          modelRegistry,
+          getCurrentModel: () => (owner.isActive() ? ctx.model : undefined),
+          getSignal: () =>
+            owner.isActive() ? combineAbortSignals(owner.signal, ctx.signal) : owner.signal,
+        },
+      ),
+    );
   }
   const elicitationEnabled = config.settings?.elicitation !== false && hasUI;
   if (elicitationEnabled && ui) {
@@ -169,53 +175,61 @@ export async function initializeMcp(
   const approvedToolCalls = new Map<string, true>();
   const uiResourceHandler = new UiResourceHandler(manager, config);
   const consentManager = new ConsentManager("once-per-server");
-  const state: McpExtensionState = {
-    owner,
-    manager,
-    lifecycle,
-    toolMetadata,
-    resourceCounts,
-    promptMetadata,
-    promptMetadataLive,
-    serverInstructions,
-    config,
-    programmaticConfig: options.config !== undefined,
-    oauthRuntime,
-    authStorageOptions,
-    failureTracker,
-    failureMessages,
-    approvedToolCalls,
-    approvalEvents: pi.events,
-    uiResourceHandler,
-    consentManager,
-    uiServer: null,
-    completedUiSessions: [],
-    openBrowser: async (url: string) => {
-      owner.throwIfInactive();
-      await openUrl(pi, url, process.env.BROWSER, owner.signal);
-      owner.throwIfInactive();
+  const state: McpExtensionState = mergeObjectParts(
+    {
+      owner,
+      manager,
+      lifecycle,
+      toolMetadata,
+      resourceCounts,
+      promptMetadata,
+      promptMetadataLive,
+      serverInstructions,
+      config,
+      programmaticConfig: options.config !== undefined,
+      oauthRuntime,
+      authStorageOptions,
+      failureTracker,
+      failureMessages,
+      approvedToolCalls,
+      approvalEvents: pi.events,
+      uiResourceHandler,
+      consentManager,
+      uiServer: null,
+      completedUiSessions: [],
+      openBrowser: async (url: string) => {
+        owner.throwIfInactive();
+        await openUrl(pi, url, process.env.BROWSER, owner.signal);
+        owner.throwIfInactive();
+      },
     },
-    ...(ui !== undefined ? { ui } : {}),
-    sendMessage: (message, options) => {
-      const deliver = () => {
-        if (!owner.isActive()) return;
-        pi.sendMessage(message as unknown as Parameters<typeof pi.sendMessage>[0], options);
-      };
-      if (!options?.triggerTurn) {
-        deliver();
-        return;
-      }
-      void lifecycle.ensureConverged(owner.signal).then(deliver, (error) => {
-        if (!owner.isActive() || isAbortError(error, owner.signal)) return;
-        const detail = error instanceof Error ? error.message : String(error);
-        logger.debug(
-          `MCP: pre-turn keep-alive convergence failed: ${sanitizeTerminalText(detail)}`,
-        );
-        deliver();
-      });
+    ui !== undefined ? { ui } : undefined,
+    {
+      sendMessage: (
+        message: Parameters<SendMessageFn>[0],
+        options: Parameters<SendMessageFn>[1],
+      ) => {
+        const deliver = () => {
+          if (!owner.isActive()) return;
+
+          Function.prototype.call.call(pi.sendMessage, pi, message, options);
+        };
+        if (!options?.triggerTurn) {
+          deliver();
+          return;
+        }
+        void lifecycle.ensureConverged(owner.signal).then(deliver, (error) => {
+          if (!owner.isActive() || isAbortError(error, owner.signal)) return;
+          const detail = error instanceof Error ? error.message : String(error);
+          logger.debug(
+            `MCP: pre-turn keep-alive convergence failed: ${sanitizeTerminalText(detail)}`,
+          );
+          deliver();
+        });
+      },
     },
-    ...(options.statusEvents !== undefined ? { statusEvents: options.statusEvents } : {}),
-  };
+    options.statusEvents !== undefined ? { statusEvents: options.statusEvents } : undefined,
+  );
   if (ownsOAuthRuntime) owner.addCleanup(() => shutdownOAuth(oauthRuntime));
   manager.setMetadataListChangedListener?.((serverName, reason) => {
     if (!owner.isActive()) return;
@@ -242,8 +256,9 @@ export async function initializeMcp(
     return state;
   }
 
-  const idleSetting =
-    typeof config.settings?.idleTimeout === "number" ? config.settings.idleTimeout : 10;
+  const idleSetting = isNumberValue(config.settings?.idleTimeout)
+    ? config.settings.idleTimeout
+    : 10;
   lifecycle.setGlobalIdleTimeout(idleSetting);
 
   const cachePath = getMetadataCachePath();
@@ -612,14 +627,12 @@ export function updateMetadataCache(
     resources = existingEntry.resources;
   }
 
-  const entry: ServerCacheEntry = {
-    configHash,
-    tools,
-    resources,
-    ...(prompts !== undefined ? { prompts } : {}),
-    ...(connection.instructions !== undefined ? { instructions: connection.instructions } : {}),
-    cachedAt: Date.now(),
-  };
+  const entry: ServerCacheEntry = mergeObjectParts(
+    { configHash, tools, resources },
+    prompts !== undefined ? { prompts } : undefined,
+    connection.instructions !== undefined ? { instructions: connection.instructions } : undefined,
+    { cachedAt: Date.now() },
+  );
 
   saveMetadataCache({ version: 1, servers: { [serverName]: entry } });
 }
@@ -631,7 +644,16 @@ export function notifyToolMetadataUpdated(
 ): void {
   try {
     const result = state.onToolMetadataUpdated?.(serverName, reason);
-    if (result && typeof (result as Promise<void>).catch === "function") {
+
+    if (
+      result &&
+      isFunctionValue(
+        /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes Promise<void> for this value. */ (
+          result as Promise<void>
+        ).catch,
+      )
+    ) {
+      // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
       (result as Promise<void>).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         logger.debug(`MCP: metadata update hook failed for ${serverName}: ${message}`);
@@ -758,14 +780,14 @@ export async function lazyConnect(
 function getEffectiveIdleTimeoutMinutes(state: McpExtensionState, serverName: string): number {
   const definition = state.config.mcpServers[serverName];
   if (!definition) {
-    return typeof state.config.settings?.idleTimeout === "number"
+    return isNumberValue(state.config.settings?.idleTimeout)
       ? state.config.settings.idleTimeout
       : 10;
   }
-  if (typeof definition.idleTimeout === "number") return definition.idleTimeout;
+
+  if (isNumberValue(definition.idleTimeout)) return definition.idleTimeout;
   const mode = definition.lifecycle ?? "lazy";
   if (mode === "eager" || mode === "lazy-keep-alive") return 0;
-  return typeof state.config.settings?.idleTimeout === "number"
-    ? state.config.settings.idleTimeout
-    : 10;
+
+  return isNumberValue(state.config.settings?.idleTimeout) ? state.config.settings.idleTimeout : 10;
 }

@@ -1,6 +1,7 @@
 // oauth-handler.ts - OAuth token compatibility helpers for MCP servers
 import type { OAuthTokens } from "@modelcontextprotocol/client";
 import { getAuthEntry } from "./mcp-auth.ts";
+import { mergeObjectParts } from "./protocol-values.js";
 
 /**
  * Get stored OAuth tokens for a server (if any).
@@ -17,15 +18,17 @@ export function getStoredTokens(serverName: string): OAuthTokens | undefined {
     return undefined;
   }
 
-  return {
-    access_token: tokens.accessToken,
-    token_type: "Bearer",
-    refresh_token: tokens.refreshToken,
-    expires_in:
-      tokens.expiresAt !== undefined
-        ? Math.max(0, Math.floor(tokens.expiresAt - Date.now() / 1000))
-        : undefined,
-    scope: tokens.scope,
-    ...(tokens.issuer !== undefined ? { issuer: tokens.issuer } : {}),
-  };
+  return mergeObjectParts(
+    {
+      access_token: tokens.accessToken,
+      token_type: "Bearer",
+      refresh_token: tokens.refreshToken,
+      expires_in:
+        tokens.expiresAt !== undefined
+          ? Math.max(0, Math.floor(tokens.expiresAt - Date.now() / 1000))
+          : undefined,
+      scope: tokens.scope,
+    },
+    tokens.issuer !== undefined ? { issuer: tokens.issuer } : undefined,
+  );
 }

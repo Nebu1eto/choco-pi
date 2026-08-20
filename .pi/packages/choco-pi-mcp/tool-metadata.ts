@@ -11,6 +11,12 @@ import {
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
+import {
+  isObjectValue,
+  isStringValue,
+  mergeObjectParts,
+  type McpObject,
+} from "./protocol-values.js";
 
 export function buildToolMetadata(
   tools: McpTool[],
@@ -21,7 +27,7 @@ export function buildToolMetadata(
   configuredServers?: Record<string, ServerEntry>,
   knownMetadata?: Map<string, ToolMetadata[]>,
   includeMissingConfiguredCandidates = false,
-): { metadata: ToolMetadata[]; failedTools: string[] } {
+) {
   const metadata: ToolMetadata[] = [];
   const failedTools: string[] = [];
   const seenNames = new Set<string>();
@@ -133,15 +139,15 @@ export function buildToolMetadata(
       failedTools.push(tool.name);
     }
     const uiStreamMode = extractToolUiStreamMode(tool._meta);
-    metadata.push({
-      name,
-      originalName: tool.name,
-      description: tool.description ?? "",
-      ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
-      ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
-      ...(uiVisibility !== undefined ? { uiVisibility } : {}),
-      ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
-    });
+    metadata.push(
+      mergeObjectParts(
+        { name, originalName: tool.name, description: tool.description ?? "" },
+        tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : undefined,
+        uiResourceUri !== undefined ? { uiResourceUri } : undefined,
+        uiVisibility !== undefined ? { uiVisibility } : undefined,
+        uiStreamMode !== undefined ? { uiStreamMode } : undefined,
+      ),
+    );
   }
 
   if (definition.exposeResources !== false) {
@@ -201,22 +207,24 @@ export function findToolByName(
   return metadata.find((m) => m.name.replace(/-/g, "_") === normalized);
 }
 
-export function formatSchema(schema: unknown, indent = "  "): string {
-  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+export function formatSchema<BoundaryValue>(schema: BoundaryValue, indent = "  "): string {
+  if (!schema || !isObjectValue(schema) || Array.isArray(schema)) {
     return `${indent}(no schema)`;
   }
 
-  const s = schema as Record<string, unknown>;
+  const s =
+    /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ schema as McpObject;
 
   if (
     s.type === "object" &&
     s.properties &&
-    typeof s.properties === "object" &&
+    isObjectValue(s.properties) &&
     !Array.isArray(s.properties)
   ) {
-    const props = s.properties as Record<string, unknown>;
+    const props =
+      /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ s.properties as McpObject;
     const required = Array.isArray(s.required)
-      ? s.required.filter((name): name is string => typeof name === "string")
+      ? s.required.filter((name): name is string => isStringValue(name))
       : [];
 
     if (Object.keys(props).length === 0) {
@@ -243,17 +251,19 @@ export function formatSchema(schema: unknown, indent = "  "): string {
   return `${indent}(complex schema)`;
 }
 
-function formatProperty(
+function formatProperty<BoundaryValue>(
   name: string,
-  schema: unknown,
+
+  schema: BoundaryValue,
   required: boolean,
   indent: string,
 ): string[] {
-  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+  if (!schema || !isObjectValue(schema) || Array.isArray(schema)) {
     return [`${indent}${name}${required ? " *required*" : ""}`];
   }
 
-  const s = schema as Record<string, unknown>;
+  const s =
+    /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ schema as McpObject;
   const parts = [`${indent}${name}`];
   const typeStr = formatType(s);
   if (typeStr) parts.push(`(${typeStr})`);
@@ -263,7 +273,7 @@ function formatProperty(
   return [parts.join(" "), ...formatNestedSchema(s, `${indent}  `)];
 }
 
-function formatNestedSchema(schema: Record<string, unknown>, indent: string): string[] {
+function formatNestedSchema(schema: McpObject, indent: string): string[] {
   const lines: string[] = [];
 
   if (Array.isArray(schema.anyOf)) {
@@ -275,15 +285,14 @@ function formatNestedSchema(schema: Record<string, unknown>, indent: string): st
   if (schema.items !== undefined) {
     lines.push(...formatProperty("items", schema.items, false, indent));
   }
-  if (
-    schema.properties &&
-    typeof schema.properties === "object" &&
-    !Array.isArray(schema.properties)
-  ) {
+  if (schema.properties && isObjectValue(schema.properties) && !Array.isArray(schema.properties)) {
     const required = Array.isArray(schema.required)
-      ? schema.required.filter((name): name is string => typeof name === "string")
+      ? schema.required.filter((name): name is string => isStringValue(name))
       : [];
-    for (const [name, propSchema] of Object.entries(schema.properties as Record<string, unknown>)) {
+
+    for (const [name, propSchema] of Object.entries(
+      /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ schema.properties as McpObject,
+    )) {
       lines.push(...formatProperty(name, propSchema, required.includes(name), indent));
     }
   }
@@ -295,12 +304,13 @@ function formatVariants(keyword: "anyOf" | "oneOf", variants: unknown[], indent:
   const lines = [`${indent}${keyword}:`];
 
   for (const variant of variants) {
-    if (!variant || typeof variant !== "object" || Array.isArray(variant)) {
+    if (!variant || !isObjectValue(variant) || Array.isArray(variant)) {
       lines.push(`${indent}  - ${JSON.stringify(variant)}`);
       continue;
     }
 
-    const s = variant as Record<string, unknown>;
+    const s =
+      /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ variant as McpObject;
     const typeStr = formatType(s) || "schema";
     const parts = [`${indent}  - ${typeStr}`];
     appendSchemaAnnotations(parts, s);
@@ -311,7 +321,7 @@ function formatVariants(keyword: "anyOf" | "oneOf", variants: unknown[], indent:
   return lines;
 }
 
-function formatType(schema: Record<string, unknown>): string {
+function formatType(schema: McpObject): string {
   if (Object.hasOwn(schema, "const")) {
     return `const ${JSON.stringify(schema.const)}`;
   }
@@ -328,11 +338,7 @@ function formatType(schema: Record<string, unknown>): string {
     return String(schema.type);
   }
 
-  if (
-    schema.properties &&
-    typeof schema.properties === "object" &&
-    !Array.isArray(schema.properties)
-  ) {
+  if (schema.properties && isObjectValue(schema.properties) && !Array.isArray(schema.properties)) {
     return "object";
   }
 
@@ -343,8 +349,8 @@ function formatType(schema: Record<string, unknown>): string {
   return "";
 }
 
-function appendSchemaAnnotations(parts: string[], schema: Record<string, unknown>): void {
-  if (schema.description && typeof schema.description === "string") {
+function appendSchemaAnnotations(parts: string[], schema: McpObject): void {
+  if (schema.description && isStringValue(schema.description)) {
     parts.push(`- ${schema.description}`);
   }
 

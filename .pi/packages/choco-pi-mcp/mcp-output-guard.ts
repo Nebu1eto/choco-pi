@@ -3,6 +3,17 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ContentBlock, McpSettings } from "./types.ts";
+import {
+  isBigIntValue,
+  isBooleanValue,
+  isNumberValue,
+  isObjectValue,
+  isStringValue,
+  mergeObjectParts,
+  parseMcpObject,
+  runtimeTypeOf,
+  type McpObject,
+} from "./protocol-values.js";
 
 export const DEFAULT_MCP_OUTPUT_MAX_BYTES = 50 * 1024;
 export const DEFAULT_MCP_OUTPUT_MAX_LINES = 2000;
@@ -12,7 +23,7 @@ const CONTENT_SUMMARY_LIMIT = 20;
 const KEY_PREVIEW_LIMIT = 20;
 const KEY_MAX_CHARS = 120;
 
-type Recordish = Record<string, unknown>;
+type Recordish = McpObject;
 
 export interface McpOutputGuardDetails {
   truncated: true;
@@ -31,10 +42,14 @@ export interface McpResultSummary {
   reason: string;
   isError: boolean;
   contentBlocks: number;
-  contentSummary: Array<Record<string, unknown>>;
-  structuredContent?: Record<string, unknown>;
-  meta?: Record<string, unknown>;
-  extraFields?: Array<Record<string, unknown>>;
+
+  contentSummary: Array<McpObject>;
+
+  structuredContent?: McpObject;
+
+  meta?: McpObject;
+
+  extraFields?: Array<McpObject>;
   rawResultBytes: number;
   fullResultPath?: string;
   resultWriteError?: string;
@@ -67,7 +82,8 @@ export function resolveMcpOutputGuardOptions(
   settings?: McpSettings,
 ): Pick<McpOutputGuardOptions, "enabled" | "maxBytes" | "maxLines" | "detailsMaxBytes"> {
   const configured = settings?.outputGuard;
-  const tuning = typeof configured === "object" && configured !== null ? configured : undefined;
+
+  const tuning = isObjectValue(configured) && configured !== null ? configured : undefined;
   return {
     enabled: envKillSwitch("MCP_OUTPUT_GUARD") ?? configured !== false,
     maxBytes: positiveInt(tuning?.maxBytes) ?? DEFAULT_MCP_OUTPUT_MAX_BYTES,
@@ -77,11 +93,14 @@ export function resolveMcpOutputGuardOptions(
 }
 
 /** Spread helper for tool-result details: includes mcpResult/outputGuard only when present. */
-export function guardedMcpDetails(guarded: GuardedMcpOutput): Record<string, unknown> {
-  return {
-    ...(guarded.mcpResult !== undefined ? { mcpResult: guarded.mcpResult } : {}),
-    ...(guarded.outputGuard ? { outputGuard: guarded.outputGuard } : {}),
-  };
+
+export function guardedMcpDetails(guarded: GuardedMcpOutput): McpObject {
+  return parseMcpObject(
+    mergeObjectParts(
+      guarded.mcpResult !== undefined ? { mcpResult: guarded.mcpResult } : undefined,
+      guarded.outputGuard ? { outputGuard: guarded.outputGuard } : undefined,
+    ),
+  );
 }
 
 /**
@@ -107,13 +126,14 @@ export async function guardMcpOutput(
   );
 
   if (options.enabled === false) {
-    return {
-      content: addAffixes(normalizedContent, prefix, suffix),
-      ...(options.rawMcpResult !== undefined ? { mcpResult: options.rawMcpResult } : {}),
-    };
+    return mergeObjectParts(
+      { content: addAffixes(normalizedContent, prefix, suffix) },
+      options.rawMcpResult !== undefined ? { mcpResult: options.rawMcpResult } : undefined,
+    );
   }
 
   const imageBlocks = normalizedContent.filter((block) => block.type === "image");
+  // SAFETY: The preceding type filter guarantees every mapped block has text content.
   const textOutput = normalizedContent
     .filter((block) => block.type === "text")
     .map((block) => (block as { text: string }).text)
@@ -136,16 +156,18 @@ export async function guardMcpOutput(
     const finalStats = textStats(finalText);
 
     guardedContent = [{ type: "text" as const, text: finalText }, ...imageBlocks];
-    outputGuard = {
-      truncated: true,
-      originalBytes: stats.bytes,
-      returnedBytes: finalStats.bytes,
-      originalLines: stats.lines,
-      returnedLines: finalStats.lines,
-      ...(imageBlocks.length > 0 ? { imageBlocksPassedThrough: imageBlocks.length } : {}),
-      ...(fullOutputPath !== undefined ? { fullOutputPath } : {}),
-      ...(writeError !== undefined ? { writeError } : {}),
-    };
+    outputGuard = mergeObjectParts(
+      {
+        truncated: true,
+        originalBytes: stats.bytes,
+        returnedBytes: finalStats.bytes,
+        originalLines: stats.lines,
+        returnedLines: finalStats.lines,
+      },
+      imageBlocks.length > 0 ? { imageBlocksPassedThrough: imageBlocks.length } : undefined,
+      fullOutputPath !== undefined ? { fullOutputPath } : undefined,
+      writeError !== undefined ? { writeError } : undefined,
+    );
   }
 
   const mcpResult =
@@ -153,18 +175,18 @@ export async function guardMcpOutput(
       ? undefined
       : await boundMcpResult(options.rawMcpResult, detailsMaxBytes);
 
-  return {
-    content: guardedContent,
-    ...(outputGuard ? { outputGuard } : {}),
-    ...(mcpResult !== undefined ? { mcpResult } : {}),
-  };
+  return mergeObjectParts(
+    { content: guardedContent },
+    outputGuard ? { outputGuard } : undefined,
+    mcpResult !== undefined ? { mcpResult } : undefined,
+  );
 }
 
 function sanitizeContent(content: ContentBlock[]): ContentBlock[] {
   return content.map((block) => {
     if (block.type !== "image") return block;
     const mimeType =
-      typeof block.mimeType === "string" && block.mimeType.trim()
+      isStringValue(block.mimeType) && block.mimeType.trim()
         ? block.mimeType.trim().slice(0, 100)
         : "image/png";
     return { ...block, mimeType };
@@ -176,6 +198,7 @@ function withEmptyTextFallback(
   fallback: string | undefined,
 ): ContentBlock[] {
   if (!fallback) return content;
+  // SAFETY: The preceding type filter guarantees every mapped block has text content.
   const textOutput = content
     .filter((block) => block.type === "text")
     .map((block) => (block as { text: string }).text)
@@ -217,23 +240,16 @@ function addAffixes(content: ContentBlock[], prefix: string, suffix: string): Co
   return next;
 }
 
-function reserveBudget(
-  maxBytes: number,
-  maxLines: number,
-  notice: string,
-): { maxBytes: number; maxLines: number } {
+function reserveBudget(maxBytes: number, maxLines: number, notice: string) {
   const noticeStats = textStats(`\n\n${notice}`);
+
   return {
     maxBytes: Math.max(0, maxBytes - noticeStats.bytes),
     maxLines: Math.max(0, maxLines - noticeStats.lines),
   };
 }
 
-function truncateHead(
-  text: string,
-  maxBytes: number,
-  maxLines: number,
-): { content: string; bytes: number; lines: number } {
+function truncateHead(text: string, maxBytes: number, maxLines: number) {
   const lines = text.split("\n");
   const output: string[] = [];
   let bytes = 0;
@@ -255,6 +271,7 @@ function truncateHead(
 
   const content = output.join("\n");
   const stats = textStats(content);
+
   return { content, bytes: stats.bytes, lines: stats.lines };
 }
 
@@ -283,15 +300,19 @@ function formatTruncationNotice(
  * detailsMaxBytes; otherwise replace it with a compact summary and spill the
  * raw JSON to a temp file.
  */
-async function boundMcpResult(result: unknown, detailsMaxBytes: number): Promise<unknown> {
+
+async function boundMcpResult<BoundaryValue>(
+  result: BoundaryValue,
+  detailsMaxBytes: number,
+): Promise<BoundaryValue | McpResultSummary> {
   const raw = safeStringify(result);
   const rawBytes = byteLength(raw);
   if (rawBytes <= detailsMaxBytes) return result;
   return summarizeMcpResult(result, raw, rawBytes);
 }
 
-async function summarizeMcpResult(
-  result: unknown,
+async function summarizeMcpResult<BoundaryValue>(
+  result: BoundaryValue,
   raw: string,
   rawBytes: number,
 ): Promise<McpResultSummary> {
@@ -299,17 +320,19 @@ async function summarizeMcpResult(
 
   const record = asRecord(result);
   const content = Array.isArray(record?.content) ? record.content : [];
-  const summary: McpResultSummary = {
-    omitted: true,
-    reason:
-      "Raw MCP result exceeded the details size limit and was replaced with this summary to keep session context bounded.",
-    isError: record?.isError === true,
-    contentBlocks: content.length,
-    contentSummary: summarizeContent(content),
-    rawResultBytes: rawBytes,
-    ...(fullResultPath !== undefined ? { fullResultPath } : {}),
-    ...(resultWriteError !== undefined ? { resultWriteError } : {}),
-  };
+  const summary: McpResultSummary = mergeObjectParts(
+    {
+      omitted: true,
+      reason:
+        "Raw MCP result exceeded the details size limit and was replaced with this summary to keep session context bounded.",
+      isError: record?.isError === true,
+      contentBlocks: content.length,
+      contentSummary: summarizeContent(content),
+      rawResultBytes: rawBytes,
+    },
+    fullResultPath !== undefined ? { fullResultPath } : undefined,
+    resultWriteError !== undefined ? { resultWriteError } : undefined,
+  );
 
   if (record && "structuredContent" in record) {
     summary.structuredContent = summarizeValue(record.structuredContent);
@@ -324,7 +347,8 @@ async function summarizeMcpResult(
       .slice(0, KEY_PREVIEW_LIMIT)
       .map((key) => ({
         key: truncateKey(key),
-        type: typeof record[key],
+
+        type: runtimeTypeOf(record[key]),
         estimatedBytes: estimateValueBytes(record[key]),
         omitted: true,
       }));
@@ -334,52 +358,53 @@ async function summarizeMcpResult(
   return summary;
 }
 
-function summarizeContent(content: unknown[]): Array<Record<string, unknown>> {
-  const summaries: Array<Record<string, unknown>> = content
-    .slice(0, CONTENT_SUMMARY_LIMIT)
-    .map((block) => {
-      const record = asRecord(block);
-      if (!record) return { type: typeof block, omitted: true };
-      if (record.type === "text") {
-        const text = typeof record.text === "string" ? record.text : "";
-        return {
-          type: "text",
-          bytes: byteLength(text),
-          lines: textStats(text).lines,
-          textOmitted: true,
-        };
-      }
-      if (record.type === "image") {
-        const data = typeof record.data === "string" ? record.data : "";
-        return {
-          type: "image",
-          mimeType: typeof record.mimeType === "string" ? record.mimeType : undefined,
-          dataBytes: byteLength(data),
-          dataOmitted: true,
-        };
-      }
+function summarizeContent(content: unknown[]): Array<McpObject> {
+  const summaries: Array<McpObject> = content.slice(0, CONTENT_SUMMARY_LIMIT).map((block) => {
+    const record = asRecord(block);
+
+    if (!record) return { type: runtimeTypeOf(block), omitted: true };
+    if (record.type === "text") {
+      const text = isStringValue(record.text) ? record.text : "";
       return {
-        type: typeof record.type === "string" ? record.type : "unknown",
-        estimatedBytes: estimateValueBytes(record),
-        omitted: true,
+        type: "text",
+        bytes: byteLength(text),
+        lines: textStats(text).lines,
+        textOmitted: true,
       };
-    });
+    }
+    if (record.type === "image") {
+      const data = isStringValue(record.data) ? record.data : "";
+      return {
+        type: "image",
+
+        mimeType: isStringValue(record.mimeType) ? record.mimeType : undefined,
+        dataBytes: byteLength(data),
+        dataOmitted: true,
+      };
+    }
+    return {
+      type: isStringValue(record.type) ? record.type : "unknown",
+      estimatedBytes: estimateValueBytes(record),
+      omitted: true,
+    };
+  });
   if (content.length > CONTENT_SUMMARY_LIMIT) {
     summaries.push({ type: "omitted", count: content.length - CONTENT_SUMMARY_LIMIT });
   }
   return summaries;
 }
 
-function summarizeValue(value: unknown): Record<string, unknown> {
+function summarizeValue<BoundaryValue>(value: BoundaryValue): McpObject {
   const record = asRecord(value);
   if (!record) {
     return {
-      type: value === null ? "null" : typeof value,
+      type: value === null ? "null" : runtimeTypeOf(value),
       estimatedBytes: estimateValueBytes(value),
       omitted: true,
     };
   }
   const keys = Object.keys(record);
+
   return {
     type: Array.isArray(value) ? "array" : "object",
     estimatedBytes: estimateValueBytes(value),
@@ -389,10 +414,12 @@ function summarizeValue(value: unknown): Record<string, unknown> {
   };
 }
 
-function estimateValueBytes(value: unknown, depth = 0): number {
+function estimateValueBytes<BoundaryValue>(value: BoundaryValue, depth = 0): number {
   if (value === null || value === undefined) return 0;
-  if (typeof value === "string") return byteLength(value);
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint")
+
+  if (isStringValue(value)) return byteLength(value);
+
+  if (isNumberValue(value) || isBooleanValue(value) || isBigIntValue(value))
     return byteLength(String(value));
   const record = asRecord(value);
   if (!record || depth >= 2) return 0;
@@ -420,11 +447,13 @@ async function saveArtifact(
   }
 }
 
-function asRecord(value: unknown): Recordish | undefined {
-  return typeof value === "object" && value !== null ? (value as Recordish) : undefined;
+function asRecord<BoundaryValue>(value: BoundaryValue): Recordish | undefined {
+  if (!isObjectValue(value) || value === null) return undefined;
+  // SAFETY: The runtime check establishes an object with string-accessible MCP fields.
+  return value as Recordish;
 }
 
-function safeStringify(value: unknown): string {
+function safeStringify<BoundaryValue>(value: BoundaryValue): string {
   try {
     // The output guard measures and spills raw MCP results; it does not render this JSON for the model.
     return JSON.stringify(value);
@@ -433,7 +462,7 @@ function safeStringify(value: unknown): string {
   }
 }
 
-function textStats(text: string): { bytes: number; lines: number } {
+function textStats(text: string) {
   return { bytes: byteLength(text), lines: text.length === 0 ? 0 : text.split("\n").length };
 }
 
@@ -441,8 +470,8 @@ function byteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
-function positiveInt(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+function positiveInt<BoundaryValue>(value: BoundaryValue): number | undefined {
+  if (!isNumberValue(value) || !Number.isFinite(value)) return undefined;
   const integer = Math.floor(value);
   return integer > 0 ? integer : undefined;
 }

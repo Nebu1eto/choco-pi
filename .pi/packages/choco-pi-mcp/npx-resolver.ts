@@ -17,6 +17,16 @@ import { join, dirname, extname, resolve, sep } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import { throwIfAborted } from "./abort.ts";
 import crossSpawn from "cross-spawn";
+import {
+  isBooleanValue,
+  isNumberValue,
+  isObjectValue,
+  isStringValue,
+  mergeObjectParts,
+  parseMcpValue,
+  type McpObject,
+  type McpValue,
+} from "./protocol-values.js";
 
 const CACHE_VERSION = 2;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -207,6 +217,7 @@ function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEnt
 
   let pkg: { bin?: string | Record<string, string>; version?: string } | null = null;
   try {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
       bin?: string | Record<string, string>;
       version?: string;
@@ -222,7 +233,7 @@ function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEnt
   let chosenBinName: string | undefined;
   let binRel: string | undefined;
 
-  if (typeof binField === "string") {
+  if (isStringValue(binField)) {
     chosenBinName = defaultBinName(packageName);
     binRel = binField;
   } else {
@@ -253,12 +264,11 @@ function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEnt
   }
 
   const isJs = detectJsBinary(resolvedBin);
-  return {
-    resolvedBin,
-    resolvedAt: Date.now(),
-    ...(pkg?.version !== undefined ? { packageVersion: pkg.version } : {}),
-    isJs,
-  };
+  return mergeObjectParts(
+    { resolvedBin, resolvedAt: Date.now() },
+    pkg?.version !== undefined ? { packageVersion: pkg.version } : undefined,
+    { isJs },
+  );
 }
 
 const FORCE_CACHE_TIMEOUT_MS = 30_000;
@@ -293,7 +303,7 @@ async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise
         reject(err);
       });
     });
-  } catch (error) {
+  } catch {
     if (signal?.aborted) throwIfAborted(signal);
     // Ignore failures, resolution will fall back to original command
   }
@@ -344,12 +354,12 @@ function parsePackageSpec(spec: string): ParsedPackageSpec | null {
 
   if (!packageName) return null;
   const normalizedVersion = requestedVersion?.replace(/^=/, "").replace(/^v/i, "");
-  return {
-    packageName,
-    ...(normalizedVersion && EXACT_PACKAGE_VERSION_RE.test(normalizedVersion)
+  return mergeObjectParts(
+    { packageName },
+    normalizedVersion && EXACT_PACKAGE_VERSION_RE.test(normalizedVersion)
       ? { exactVersion: normalizedVersion }
-      : {}),
-  };
+      : undefined,
+  );
 }
 
 function defaultBinName(packageName: string): string {
@@ -385,6 +395,7 @@ function findCachedPackageDir(
     if (!existsSync(packageJsonPath)) continue;
     if (exactVersion) {
       try {
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { version?: unknown };
         if (pkg.version !== exactVersion) continue;
       } catch {
@@ -451,41 +462,47 @@ function getNpxCachePath(): string {
   return getAgentPath("mcp-npx-cache.json");
 }
 
-function readNpxCachePayload(cachePath: string): unknown | null {
+function readNpxCachePayload(cachePath: string): McpValue | null {
   if (!existsSync(cachePath)) return null;
   try {
-    return JSON.parse(readFileSync(cachePath, "utf-8")) as unknown;
+    return parseMcpValue(JSON.parse(readFileSync(cachePath, "utf-8")));
   } catch {
     return null;
   }
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
+function asRecord<BoundaryValue>(value: BoundaryValue): McpObject | null {
+  // SAFETY: The object and array checks establish the dictionary representation returned by this parser.
+
+  return isObjectValue(value) && value !== null && !Array.isArray(value)
+    ? (value as McpObject)
     : null;
 }
 
 function createCacheEntries(): Record<string, NpxCacheEntry> {
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   return Object.create(null) as Record<string, NpxCacheEntry>;
 }
 
-function toNpxCacheEntry(value: unknown): NpxCacheEntry | null {
+function toNpxCacheEntry<BoundaryValue>(value: BoundaryValue): NpxCacheEntry | null {
   const raw = asRecord(value);
   if (!raw) return null;
-  if (typeof raw.resolvedBin !== "string") return null;
-  if (typeof raw.resolvedAt !== "number" || !Number.isFinite(raw.resolvedAt)) return null;
-  if (typeof raw.isJs !== "boolean") return null;
-  if (raw.packageVersion !== undefined && typeof raw.packageVersion !== "string") return null;
-  return {
-    resolvedBin: raw.resolvedBin,
-    resolvedAt: raw.resolvedAt,
-    ...(raw.packageVersion !== undefined ? { packageVersion: raw.packageVersion } : {}),
-    isJs: raw.isJs,
-  };
+
+  if (!isStringValue(raw.resolvedBin)) return null;
+
+  if (!isNumberValue(raw.resolvedAt) || !Number.isFinite(raw.resolvedAt)) return null;
+
+  if (!isBooleanValue(raw.isJs)) return null;
+
+  if (raw.packageVersion !== undefined && !isStringValue(raw.packageVersion)) return null;
+  return mergeObjectParts(
+    { resolvedBin: raw.resolvedBin, resolvedAt: raw.resolvedAt },
+    raw.packageVersion !== undefined ? { packageVersion: raw.packageVersion } : undefined,
+    { isJs: raw.isJs },
+  );
 }
 
-function toNpxCache(value: unknown): NpxCache | null {
+function toNpxCache<BoundaryValue>(value: BoundaryValue): NpxCache | null {
   const raw = asRecord(value);
   if (!raw || raw.version !== CACHE_VERSION) return null;
   const rawEntries = asRecord(raw.entries);

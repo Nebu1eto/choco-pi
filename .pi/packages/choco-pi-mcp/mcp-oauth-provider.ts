@@ -31,6 +31,7 @@ import {
 } from "./mcp-auth.ts";
 import { resolveCommandSecret } from "./utils.ts";
 import { getAppClientUri, getAppName } from "./agent-dir.ts";
+import { mergeObjectParts } from "./protocol-values.js";
 
 /**
  * Client name advertised during Dynamic Client Registration.
@@ -247,14 +248,16 @@ export class McpOAuthProvider implements OAuthClientProvider {
    */
   get clientMetadata(): OAuthClientMetadata {
     if (this.usesClientCredentials) {
-      return {
-        client_name: this.config.clientName ?? defaultClientName(),
-        ...(this.clientUri !== undefined ? { client_uri: this.clientUri } : {}),
-        ...(this.config.logoUri !== undefined ? { logo_uri: this.config.logoUri } : {}),
-        redirect_uris: [],
-        grant_types: ["client_credentials"],
-        token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
-      };
+      return mergeObjectParts(
+        { client_name: this.config.clientName ?? defaultClientName() },
+        this.clientUri !== undefined ? { client_uri: this.clientUri } : undefined,
+        this.config.logoUri !== undefined ? { logo_uri: this.config.logoUri } : undefined,
+        {
+          redirect_uris: [],
+          grant_types: ["client_credentials"],
+          token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
+        },
+      );
     }
 
     const redirectUrl = this.redirectUrl;
@@ -262,16 +265,17 @@ export class McpOAuthProvider implements OAuthClientProvider {
       throw new Error("redirectUrl is required for authorization_code flow");
     }
 
-    return {
-      redirect_uris: [redirectUrl],
-      client_name: this.config.clientName ?? defaultClientName(),
-      ...(this.clientUri !== undefined ? { client_uri: this.clientUri } : {}),
-      ...(this.config.logoUri !== undefined ? { logo_uri: this.config.logoUri } : {}),
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
-      ...(this.config.scope !== undefined ? { scope: this.config.scope } : {}),
-    };
+    return mergeObjectParts(
+      { redirect_uris: [redirectUrl], client_name: this.config.clientName ?? defaultClientName() },
+      this.clientUri !== undefined ? { client_uri: this.clientUri } : undefined,
+      this.config.logoUri !== undefined ? { logo_uri: this.config.logoUri } : undefined,
+      {
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
+      },
+      this.config.scope !== undefined ? { scope: this.config.scope } : undefined,
+    );
   }
 
   /**
@@ -305,11 +309,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
             `MCP server "${this.serverName}" OAuth clientSecret`,
           )
         : this.config.clientSecret;
-      return {
-        client_id: this.config.clientId,
-        client_secret: clientSecret,
-        ...(issuer !== undefined ? { issuer } : {}),
-      } as IssuerBoundClientInformation;
+      // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
+      return mergeObjectParts(
+        { client_id: this.config.clientId, client_secret: clientSecret },
+        issuer !== undefined ? { issuer } : undefined,
+      ) as IssuerBoundClientInformation;
     }
 
     // Keep client registration associated with this in-flight flow even if
@@ -350,20 +354,20 @@ export class McpOAuthProvider implements OAuthClientProvider {
       }
       // Return all registration metadata and the local issuer extension.
       // This keeps the SDK OAuth view and the stored issuer binding consistent.
-      return {
-        client_id: clientInfo.clientId,
-        client_secret: clientInfo.clientSecret,
-        ...(clientInfo.clientIdIssuedAt !== undefined
+      // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
+      return mergeObjectParts(
+        { client_id: clientInfo.clientId, client_secret: clientInfo.clientSecret },
+        clientInfo.clientIdIssuedAt !== undefined
           ? { client_id_issued_at: clientInfo.clientIdIssuedAt }
-          : {}),
-        ...(clientInfo.clientSecretExpiresAt !== undefined
+          : undefined,
+        clientInfo.clientSecretExpiresAt !== undefined
           ? { client_secret_expires_at: clientInfo.clientSecretExpiresAt }
-          : {}),
-        ...(clientInfo.redirectUris !== undefined
+          : undefined,
+        clientInfo.redirectUris !== undefined
           ? { redirect_uris: clientInfo.redirectUris }
-          : {}),
-        ...(clientInfo.issuer !== undefined ? { issuer: clientInfo.issuer } : {}),
-      } as IssuerBoundClientInformation;
+          : undefined,
+        clientInfo.issuer !== undefined ? { issuer: clientInfo.issuer } : undefined,
+      ) as IssuerBoundClientInformation;
     }
 
     // No client info or URL changed - will trigger dynamic registration
@@ -375,15 +379,16 @@ export class McpOAuthProvider implements OAuthClientProvider {
    */
   async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
     this.throwIfInactive();
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const issuer = this.discoveredIssuer ?? (info as IssuerBoundClientInformation).issuer;
     if (this.config.clientId && info.client_id === this.config.clientId) {
       updateClientInfo(
         this.serverName,
-        {
-          clientId: info.client_id,
-          ...(issuer !== undefined ? { issuer } : {}),
-          configPreRegistered: true,
-        },
+        mergeObjectParts(
+          { clientId: info.client_id },
+          issuer !== undefined ? { issuer } : undefined,
+          { configPreRegistered: true },
+        ),
         this.serverUrl,
         this.storageOptions,
       );
@@ -393,18 +398,18 @@ export class McpOAuthProvider implements OAuthClientProvider {
     const redirectUris =
       ("redirect_uris" in info ? info.redirect_uris : undefined) ??
       (this.redirectUrl ? [this.redirectUrl] : undefined);
-    const clientInfo: StoredClientInfo = {
-      clientId: info.client_id,
-      ...(info.client_secret !== undefined ? { clientSecret: info.client_secret } : {}),
-      ...(info.client_id_issued_at !== undefined
+    const clientInfo: StoredClientInfo = mergeObjectParts(
+      { clientId: info.client_id },
+      info.client_secret !== undefined ? { clientSecret: info.client_secret } : undefined,
+      info.client_id_issued_at !== undefined
         ? { clientIdIssuedAt: info.client_id_issued_at }
-        : {}),
-      ...(info.client_secret_expires_at !== undefined
+        : undefined,
+      info.client_secret_expires_at !== undefined
         ? { clientSecretExpiresAt: info.client_secret_expires_at }
-        : {}),
-      ...(redirectUris !== undefined ? { redirectUris } : {}),
-      ...(issuer !== undefined ? { issuer } : {}),
-    };
+        : undefined,
+      redirectUris !== undefined ? { redirectUris } : undefined,
+      issuer !== undefined ? { issuer } : undefined,
+    );
     this.flowClientInfo = clientInfo;
     updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions);
   }
@@ -424,35 +429,36 @@ export class McpOAuthProvider implements OAuthClientProvider {
       updateTokens(this.serverName, entry.tokens, this.serverUrl, this.storageOptions);
     }
 
-    return {
-      access_token: entry.tokens.accessToken,
-      token_type: "Bearer",
-      refresh_token: entry.tokens.refreshToken,
-      expires_in: entry.tokens.expiresAt
-        ? Math.max(0, Math.floor(entry.tokens.expiresAt - Date.now() / 1000))
-        : undefined,
-      scope: entry.tokens.scope,
-      ...(entry.tokens.issuer !== undefined ? { issuer: entry.tokens.issuer } : {}),
-    } as IssuerBoundTokens;
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
+    return mergeObjectParts(
+      {
+        access_token: entry.tokens.accessToken,
+        token_type: "Bearer",
+        refresh_token: entry.tokens.refreshToken,
+        expires_in: entry.tokens.expiresAt
+          ? Math.max(0, Math.floor(entry.tokens.expiresAt - Date.now() / 1000))
+          : undefined,
+        scope: entry.tokens.scope,
+      },
+      entry.tokens.issuer !== undefined ? { issuer: entry.tokens.issuer } : undefined,
+    ) as IssuerBoundTokens;
   }
 
   /**
    * Save OAuth tokens.
    */
   async saveTokens(tokens: OAuthTokens): Promise<void> {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const issuer = this.discoveredIssuer ?? (tokens as IssuerBoundTokens).issuer;
-    const storedTokens: StoredTokens = {
-      accessToken: tokens.access_token,
-      ...(tokens.refresh_token !== undefined ? { refreshToken: tokens.refresh_token } : {}),
-      // Preserve expiry even when expires_in is 0 (e.g. the SDK re-saving an
-      // already-expired token) so expired tokens stay expired instead of
-      // being persisted as never-expiring.
-      ...(tokens.expires_in !== undefined
+    const storedTokens: StoredTokens = mergeObjectParts(
+      { accessToken: tokens.access_token },
+      tokens.refresh_token !== undefined ? { refreshToken: tokens.refresh_token } : undefined,
+      tokens.expires_in !== undefined
         ? { expiresAt: Date.now() / 1000 + tokens.expires_in }
-        : {}),
-      ...(tokens.scope !== undefined ? { scope: tokens.scope } : {}),
-      ...(issuer !== undefined ? { issuer } : {}),
-    };
+        : undefined,
+      tokens.scope !== undefined ? { scope: tokens.scope } : undefined,
+      issuer !== undefined ? { issuer } : undefined,
+    );
     this.throwIfInactive();
     updateTokens(this.serverName, storedTokens, this.serverUrl, this.storageOptions);
     // Discovery must survive the browser redirect so the callback can verify

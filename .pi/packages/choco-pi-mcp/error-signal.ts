@@ -1,3 +1,4 @@
+import { isObjectValue } from "./protocol-values.js";
 /**
  * Decide the `isError` override for a finished tool result in the `tool_result` hook.
  *
@@ -10,8 +11,12 @@
  * Limited to those two codes: the adapter's other `details.error` values (`auth_required`, connection
  * states, search/validation feedback, ...) are not failed tool calls, so they get no override.
  */
-export function toolErrorOverride(details: unknown): { isError: true } | undefined {
-  if (details && typeof details === "object" && "error" in details) {
+
+export function toolErrorOverride<BoundaryValue>(
+  details: BoundaryValue,
+): { isError: true } | undefined {
+  if (details && isObjectValue(details) && "error" in details) {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const code = (details as { error?: unknown }).error;
     if (code === "tool_error" || code === "call_failed") {
       return { isError: true };

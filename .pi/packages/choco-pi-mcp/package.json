@@ -29,6 +29,7 @@
     "error-signal.ts",
     "state.ts",
     "utils.ts",
+    "protocol-values.ts",
     "abort.ts",
     "runtime-owner.ts",
     "tool-metadata.ts",

@@ -5,11 +5,12 @@ import {
   type McpServerStatusSnapshot,
   type McpStatusSnapshot,
 } from "./types.ts";
+import { mergeObjectParts } from "./protocol-values.js";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 
 export interface McpStatusEventBus {
-  emit(channel: string, data: unknown): void;
+  emit<BoundaryValue>(channel: string, data: BoundaryValue): void;
 }
 
 function getActiveFailureAgeSeconds(
@@ -61,14 +62,14 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
 
     totalTools += disabled ? 0 : toolCount;
     if (!disabled && resourceCount !== undefined) totalResources += resourceCount;
-    servers.push({
-      name,
-      status,
-      toolCount,
-      ...(resourceCount !== undefined ? { resourceCount } : {}),
-      ...(status === "failed" && failedAgoSeconds !== undefined ? { failedAgoSeconds } : {}),
-      disabled,
-    });
+    servers.push(
+      mergeObjectParts(
+        { name, status, toolCount },
+        resourceCount !== undefined ? { resourceCount } : undefined,
+        status === "failed" && failedAgoSeconds !== undefined ? { failedAgoSeconds } : undefined,
+        { disabled },
+      ),
+    );
   }
 
   return {

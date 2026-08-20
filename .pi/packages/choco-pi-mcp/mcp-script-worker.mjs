@@ -1,3 +1,30 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+
+const RuntimeUndefinedSchema = Type.Undefined();
+const RuntimeStringSchema = Type.String();
+const RuntimeNumberSchema = Type.Number();
+const RuntimeBigIntSchema = Type.BigInt();
+const RuntimeBooleanSchema = Type.Boolean();
+const RuntimeSymbolSchema = Type.Symbol();
+const RuntimeFunctionSchema = Type.Function([], Type.Unknown());
+
+function runtimeTypeOf(value) {
+  if (Check(RuntimeUndefinedSchema, value)) return "undefined";
+  if (Check(RuntimeStringSchema, value)) return "string";
+  if (
+    Check(RuntimeNumberSchema, value) ||
+    Object.is(value, Number.NaN) ||
+    Object.is(value, Number.POSITIVE_INFINITY) ||
+    Object.is(value, Number.NEGATIVE_INFINITY)
+  )
+    return "number";
+  if (Check(RuntimeBigIntSchema, value)) return "bigint";
+  if (Check(RuntimeBooleanSchema, value)) return "boolean";
+  if (Check(RuntimeSymbolSchema, value)) return "symbol";
+  if (Check(RuntimeFunctionSchema, value)) return "function";
+  return "object";
+}
 import { parentPort, workerData } from "node:worker_threads";
 import { formatWithOptions } from "node:util";
 import vm from "node:vm";
@@ -9,12 +36,13 @@ const RESERVED_TOOL_PROPS = new Set(["then", "catch", "finally", "toJSON", "toSt
 function needsInspectableFormatting(value, stack = new WeakSet()) {
   if (
     value === undefined ||
-    typeof value === "bigint" ||
-    typeof value === "function" ||
-    typeof value === "symbol"
+    runtimeTypeOf(value) === "bigint" ||
+    runtimeTypeOf(value) === "function" ||
+    runtimeTypeOf(value) === "symbol"
   )
     return true;
-  if (typeof value !== "object" || value === null) return false;
+
+  if (runtimeTypeOf(value) !== "object" || value === null) return false;
   if (stack.has(value)) return true;
   if (
     value instanceof Map ||
@@ -32,7 +60,7 @@ function needsInspectableFormatting(value, stack = new WeakSet()) {
 }
 
 function formatValue(value) {
-  if (typeof value === "string") return value;
+  if (runtimeTypeOf(value) === "string") return value;
   try {
     if (!needsInspectableFormatting(value)) {
       const json = JSON.stringify(value, null, 2);
@@ -45,14 +73,14 @@ function formatValue(value) {
 }
 
 function toContentBlock(value) {
-  if (typeof value === "object" && value !== null) {
-    if (value.type === "text" && typeof value.text === "string") {
+  if (runtimeTypeOf(value) === "object" && value !== null) {
+    if (value.type === "text" && runtimeTypeOf(value.text) === "string") {
       return { type: "text", text: value.text };
     }
     if (
       value.type === "image" &&
-      typeof value.data === "string" &&
-      typeof value.mimeType === "string"
+      runtimeTypeOf(value.data) === "string" &&
+      runtimeTypeOf(value.mimeType) === "string"
     ) {
       return { type: "image", data: value.data, mimeType: value.mimeType };
     }
@@ -64,7 +92,7 @@ let nextRequestId = 0;
 const pending = new Map();
 
 parentPort.on("message", (message) => {
-  if (message?.type !== "result" || typeof message.id !== "number") return;
+  if (message?.type !== "result" || runtimeTypeOf(message.id) !== "number") return;
   const resolve = pending.get(message.id);
   if (!resolve) return;
   pending.delete(message.id);
@@ -87,7 +115,8 @@ const tools = new Proxy(Object.create(null), {
     if (property === "call") {
       return async (path, args) => {
         // Invalid paths never reach dispatch and therefore never appear in the call trace.
-        if (typeof path !== "string" || path.trim() === "") {
+
+        if (runtimeTypeOf(path) !== "string" || path.trim() === "") {
           return {
             ok: false,
             error: {
@@ -102,7 +131,8 @@ const tools = new Proxy(Object.create(null), {
     if (property === "describe") {
       return async (input) => request("describe", { input });
     }
-    if (typeof property !== "string" || RESERVED_TOOL_PROPS.has(property)) return undefined;
+
+    if (runtimeTypeOf(property) !== "string" || RESERVED_TOOL_PROPS.has(property)) return undefined;
     return (args) => request("call", { path: property, args });
   },
   ownKeys() {

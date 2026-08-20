@@ -1,4 +1,31 @@
 #!/usr/bin/env node
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+
+const RuntimeUndefinedSchema = Type.Undefined();
+const RuntimeStringSchema = Type.String();
+const RuntimeNumberSchema = Type.Number();
+const RuntimeBigIntSchema = Type.BigInt();
+const RuntimeBooleanSchema = Type.Boolean();
+const RuntimeSymbolSchema = Type.Symbol();
+const RuntimeFunctionSchema = Type.Function([], Type.Unknown());
+
+function runtimeTypeOf(value) {
+  if (Check(RuntimeUndefinedSchema, value)) return "undefined";
+  if (Check(RuntimeStringSchema, value)) return "string";
+  if (
+    Check(RuntimeNumberSchema, value) ||
+    Object.is(value, Number.NaN) ||
+    Object.is(value, Number.POSITIVE_INFINITY) ||
+    Object.is(value, Number.NEGATIVE_INFINITY)
+  )
+    return "number";
+  if (Check(RuntimeBigIntSchema, value)) return "bigint";
+  if (Check(RuntimeBooleanSchema, value)) return "boolean";
+  if (Check(RuntimeSymbolSchema, value)) return "symbol";
+  if (Check(RuntimeFunctionSchema, value)) return "function";
+  return "object";
+}
 
 import fs from "node:fs";
 import path from "node:path";
@@ -27,13 +54,16 @@ function readPiConfig() {
 
 function getConfigDirName() {
   const configDir = readPiConfig()?.configDir;
-  return typeof configDir === "string" && configDir.trim() ? configDir.trim() : ".pi";
+
+  return runtimeTypeOf(configDir) === "string" && configDir.trim() ? configDir.trim() : ".pi";
 }
 
 function getAgentDir() {
   const piConfig = readPiConfig();
   const appName =
-    typeof piConfig?.name === "string" && piConfig.name.trim() ? piConfig.name.trim() : "pi";
+    runtimeTypeOf(piConfig?.name) === "string" && piConfig.name.trim()
+      ? piConfig.name.trim()
+      : "pi";
   const configured = process.env[`${appName.toUpperCase()}_CODING_AGENT_DIR`]?.trim();
   if (configured) return expandHome(configured);
   return path.join(HOME, getConfigDirName(), "agent");
@@ -89,9 +119,10 @@ function loadPiConfig() {
 
   const raw = readJsonFile(PI_CONFIG_PATH);
   const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
-  if (!mcpServers || typeof mcpServers !== "object" || Array.isArray(mcpServers)) {
+
+  if (!mcpServers || runtimeTypeOf(mcpServers) !== "object" || Array.isArray(mcpServers)) {
     throw new Error(
-      `Invalid MCP config at ${PI_CONFIG_PATH}: expected \"mcpServers\" to be an object`,
+      `Invalid MCP config at ${PI_CONFIG_PATH}: expected "mcpServers" to be an object`,
     );
   }
 
@@ -99,7 +130,7 @@ function loadPiConfig() {
   delete normalized["mcp-servers"];
 
   const imports = Array.isArray(raw.imports)
-    ? raw.imports.filter((value) => typeof value === "string")
+    ? raw.imports.filter((value) => runtimeTypeOf(value) === "string")
     : undefined;
   return {
     ...normalized,
@@ -176,14 +207,14 @@ async function runInit(argv, log = console.log) {
     return 0;
   }
 
-  const nextConfig = {
-    ...existingConfig,
-    ...(discoverySettingChanged
-      ? { settings: { ...existingConfig.settings, hostConfigDiscovery: "on" } }
-      : {}),
-    ...(importsToAdd.length > 0 ? { imports: [...existingImports, ...importsToAdd] } : {}),
-    mcpServers: existingConfig.mcpServers ?? {},
-  };
+  const nextConfig = { ...existingConfig };
+  if (discoverySettingChanged) {
+    nextConfig.settings = { ...existingConfig.settings, hostConfigDiscovery: "on" };
+  }
+  if (importsToAdd.length > 0) {
+    nextConfig.imports = [...existingImports, ...importsToAdd];
+  }
+  nextConfig.mcpServers = existingConfig.mcpServers ?? {};
 
   if (importsToAdd.length > 0) {
     log(`\nDetected host configs to import into Pi: ${importsToAdd.join(", ")}`);

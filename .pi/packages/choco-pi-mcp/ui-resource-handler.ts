@@ -16,13 +16,22 @@ import {
   type UiResourceMeta,
   type UiResourcePermissions,
 } from "./types.ts";
+import {
+  isBooleanValue,
+  isObjectValue,
+  isStringValue,
+  mergeObjectParts,
+  parseMcpObject,
+  type McpObject,
+} from "./protocol-values.js";
 
 interface ResourceContentRecord {
   uri?: string;
   mimeType?: string;
   text?: string;
   blob?: string;
-  _meta?: Record<string, unknown>;
+
+  _meta?: McpObject;
 }
 
 interface ReadUiResourceOptions {
@@ -63,12 +72,11 @@ export class UiResourceHandler {
         this.manager.incrementInFlight(serverName);
         try {
           result = await withSessionRecovery(
-            {
-              manager: this.manager,
-              config,
-              ...(options.signal ? { signal: options.signal } : {}),
-              ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
-            },
+            mergeObjectParts(
+              { manager: this.manager, config },
+              options.signal ? { signal: options.signal } : undefined,
+              options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : undefined,
+            ),
             serverName,
             (connection) =>
               connection.client.readResource(
@@ -91,10 +99,14 @@ export class UiResourceHandler {
         throw error;
       const message = error instanceof Error ? error.message : String(error);
       log.error("Failed to read resource", error instanceof Error ? error : undefined);
-      throw new ResourceFetchError(uri, message, {
-        server: serverName,
-        ...(error instanceof Error ? { cause: error } : {}),
-      });
+      throw new ResourceFetchError(
+        uri,
+        message,
+        mergeObjectParts(
+          { server: serverName },
+          error instanceof Error ? { cause: error } : undefined,
+        ),
+      );
     }
 
     const content = selectContent(result, uri);
@@ -127,36 +139,35 @@ export class UiResourceHandler {
       uri: content.uri ?? uri,
       html,
       mimeType: mimeType ?? RESOURCE_MIME_TYPE,
-      meta: {
-        ...((contentMeta.csp ?? listMeta.csp) !== undefined
+      meta: mergeObjectParts(
+        (contentMeta.csp ?? listMeta.csp) !== undefined
           ? { csp: contentMeta.csp ?? listMeta.csp }
-          : {}),
-        ...((contentMeta.permissions ?? listMeta.permissions) !== undefined
+          : undefined,
+        (contentMeta.permissions ?? listMeta.permissions) !== undefined
           ? { permissions: contentMeta.permissions ?? listMeta.permissions }
-          : {}),
-        ...((contentMeta.domain ?? listMeta.domain) !== undefined
+          : undefined,
+        (contentMeta.domain ?? listMeta.domain) !== undefined
           ? { domain: contentMeta.domain ?? listMeta.domain }
-          : {}),
-        ...((contentMeta.prefersBorder ?? listMeta.prefersBorder) !== undefined
+          : undefined,
+        (contentMeta.prefersBorder ?? listMeta.prefersBorder) !== undefined
           ? { prefersBorder: contentMeta.prefersBorder ?? listMeta.prefersBorder }
-          : {}),
-      },
+          : undefined,
+      ),
     };
   }
 
-  private getListResourceMeta(
-    serverName: string,
-    uri: string,
-  ): Record<string, unknown> | undefined {
+  private getListResourceMeta(serverName: string, uri: string): McpObject | undefined {
     const connection = this.manager.getConnection(serverName);
     if (!connection?.resources?.length) return undefined;
     const resource = connection.resources.find((entry) => entry.uri === uri);
-    if (!resource || !resource._meta || typeof resource._meta !== "object") return undefined;
-    return resource._meta;
+
+    if (!resource || !resource._meta || !isObjectValue(resource._meta)) return undefined;
+    return parseMcpObject(resource._meta);
   }
 }
 
 function selectContent(result: ReadResourceResult, preferredUri: string): ResourceContentRecord {
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   const contents = (result.contents ?? []) as ResourceContentRecord[];
   if (contents.length === 0) {
     throw new Error(`No contents returned for UI resource: ${preferredUri}`);
@@ -183,11 +194,11 @@ function isHtmlMimeType(mimeType: string): boolean {
 }
 
 function toHtml(content: ResourceContentRecord): string {
-  if (typeof content.text === "string") {
+  if (isStringValue(content.text)) {
     return content.text;
   }
 
-  if (typeof content.blob === "string") {
+  if (isStringValue(content.blob)) {
     return Buffer.from(content.blob, "base64").toString("utf-8");
   }
 
@@ -207,8 +218,8 @@ const UI_CSP_DOMAIN_FIELDS: readonly (keyof UiResourceCsp)[] = [
   "baseUriDomains",
 ];
 
-function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMeta {
-  if (!meta || typeof meta !== "object") return {};
+function extractUiMeta(meta: McpObject | undefined): UiResourceMeta {
+  if (!meta || !isObjectValue(meta)) return {};
 
   const ui = isRecord(meta.ui) ? meta.ui : undefined;
   const out: UiResourceMeta = {};
@@ -239,19 +250,22 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
   }
 
   if (ui && isRecord(ui.permissions)) {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     out.permissions = ui.permissions as UiResourcePermissions;
   }
-  if (ui && typeof ui.domain === "string") {
+
+  if (ui && isStringValue(ui.domain)) {
     out.domain = ui.domain;
   }
-  if (ui && typeof ui.prefersBorder === "boolean") {
+
+  if (ui && isBooleanValue(ui.prefersBorder)) {
     out.prefersBorder = ui.prefersBorder;
   }
 
   return out;
 }
 
-function normalizeUiResourceCsp(value: unknown): UiResourceCsp {
+function normalizeUiResourceCsp<BoundaryValue>(value: BoundaryValue): UiResourceCsp {
   if (!isRecord(value)) return {};
 
   const csp: UiResourceCsp = {};
@@ -262,7 +276,7 @@ function normalizeUiResourceCsp(value: unknown): UiResourceCsp {
   return csp;
 }
 
-function normalizeOpenAiWidgetCsp(value: unknown): UiResourceCsp {
+function normalizeOpenAiWidgetCsp<BoundaryValue>(value: BoundaryValue): UiResourceCsp {
   if (!isRecord(value)) return {};
 
   const csp: UiResourceCsp = {};
@@ -273,12 +287,12 @@ function normalizeOpenAiWidgetCsp(value: unknown): UiResourceCsp {
   return csp;
 }
 
-function copyStringArray(value: unknown): string[] | undefined {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string")
+function copyStringArray<BoundaryValue>(value: BoundaryValue): string[] | undefined {
+  return Array.isArray(value) && value.every((entry) => isStringValue(entry))
     ? [...value]
     : undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord<BoundaryValue>(value: BoundaryValue): value is BoundaryValue & McpObject {
+  return isObjectValue(value) && value !== null && !Array.isArray(value);
 }

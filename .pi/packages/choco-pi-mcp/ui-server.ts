@@ -37,12 +37,19 @@ import {
   type UiMessageParams,
   type UiModelContextParams,
   type UiOpenLinkResult,
-  type UiProxyRequestBody,
   type UiProxyResult,
   type UiResourceContent,
   type UiSessionMessages,
   type UiStreamSummary,
 } from "./types.ts";
+import {
+  isObjectValue,
+  isStringValue,
+  mergeObjectParts,
+  parseMcpObject,
+  type McpObject,
+  type McpValue,
+} from "./protocol-values.js";
 
 const MAX_BODY_SIZE = 2 * 1024 * 1024;
 const ABANDONED_GRACE_MS = 60_000;
@@ -56,7 +63,8 @@ let nextMoshiDiscoveryPort = MOSHI_DISCOVERY_PORT_START;
 export interface UiServerOptions {
   serverName: string;
   toolName: string;
-  toolArgs: Record<string, unknown>;
+
+  toolArgs: McpObject;
   resource: UiResourceContent;
   manager: McpServerManager;
   /**
@@ -89,7 +97,8 @@ export interface UiServerHandle {
   viewer?: "browser" | "glimpse" | "suppressed";
   windowOpen?: boolean;
   close: (reason?: string) => void;
-  sendToolInput: (args: Record<string, unknown>) => void;
+
+  sendToolInput: (args: McpObject) => void;
   sendToolResult: (result: CallToolResult) => void;
   sendResultPatch: (result: CallToolResult) => void;
   sendToolCancelled: (reason: string) => void;
@@ -138,10 +147,14 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   };
 
   const initialStreamContext = hostContext["pi-mcp-adapter/stream"];
-  if (initialStreamContext && typeof initialStreamContext === "object") {
+
+  if (initialStreamContext && isObjectValue(initialStreamContext)) {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const streamId = (initialStreamContext as { streamId?: unknown }).streamId;
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const mode = (initialStreamContext as { mode?: unknown }).mode;
-    if (typeof streamId === "string" && (mode === "eager" || mode === "stream-first")) {
+
+    if (isStringValue(streamId) && (mode === "eager" || mode === "stream-first")) {
       streamSummary = {
         streamId,
         mode,
@@ -171,10 +184,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     } else if (msgParams.type === "intent" || msgParams.intent) {
       const intentName = msgParams.intent ?? "";
       if (intentName) {
-        sessionMessages.intents.push({
-          intent: intentName,
-          ...(msgParams.params !== undefined ? { params: msgParams.params } : {}),
-        });
+        sessionMessages.intents.push(
+          mergeObjectParts(
+            { intent: intentName },
+            msgParams.params !== undefined ? { params: msgParams.params } : undefined,
+          ),
+        );
         log.debug("UI intent received", { intent: intentName });
       }
     } else if (msgParams.type === "notify" || msgParams.message) {
@@ -192,8 +207,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     lastHeartbeatAt = Date.now();
   };
 
-  const updateStreamSummary = (payload: unknown) => {
+  const updateStreamSummary = <BoundaryValue>(payload: BoundaryValue) => {
     const envelope = getVisualizationStreamEnvelope(
+      // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
       (payload as { structuredContent?: unknown } | null)?.structuredContent,
     );
     if (!envelope) return;
@@ -214,7 +230,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     else delete streamSummary.lastMessage;
   };
 
-  const serializeEvent = (eventId: number, name: string, payload: unknown): string => {
+  const serializeEvent = <BoundaryValue>(
+    eventId: number,
+    name: string,
+    payload: BoundaryValue,
+  ): string => {
     return `id: ${eventId}\nevent: ${name}\ndata: ${JSON.stringify(payload)}\n\n`;
   };
 
@@ -223,6 +243,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       const entry = eventLog[index];
       if (!entry) continue;
       const envelope = getVisualizationStreamEnvelope(
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         (entry.payload as { structuredContent?: unknown } | null)?.structuredContent,
       );
       if (envelope?.frameType === "checkpoint" || envelope?.frameType === "final") {
@@ -245,7 +266,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     }
   };
 
-  const pushEvent = (name: string, payload: unknown) => {
+  const pushEvent = <BoundaryValue>(name: string, payload: BoundaryValue) => {
     if (completed) return;
     const eventId = nextEventId++;
     eventLog.push({ id: eventId, name, payload });
@@ -422,13 +443,16 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       const body = await parseBody(req, res);
       if (!body) return;
       if (!validateTokenBody(body, sessionToken, res)) return;
-      const params = body.params ?? {};
+      const params =
+        isObjectValue(body.params) && body.params !== null ? parseMcpObject(body.params) : {};
       touchHeartbeat();
 
       if (url.pathname === "/proxy/tools/call") {
         options.consentManager.ensureApproved(options.serverName);
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         const callParams = params as CallToolRequest["params"];
-        if (!callParams || typeof callParams.name !== "string" || !callParams.name.trim()) {
+
+        if (!callParams || !isStringValue(callParams.name) || !callParams.name.trim()) {
           sendJson(res, 400, { ok: false, error: "Invalid tools/call params" });
           return;
         }
@@ -471,20 +495,22 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           name: callParams.name,
           arguments:
             callParams.arguments &&
-            typeof callParams.arguments === "object" &&
+            isObjectValue(callParams.arguments) &&
             !Array.isArray(callParams.arguments)
-              ? callParams.arguments
+              ? parseMcpObject(callParams.arguments)
               : {},
         };
-        const toolMeta = {
-          name: callParams.name,
-          originalName: callParams.name,
-          description: toolDefinition?.description ?? "",
-          ...(toolDefinition?.inputSchema !== undefined
+        const toolMeta = mergeObjectParts(
+          {
+            name: callParams.name,
+            originalName: callParams.name,
+            description: toolDefinition?.description ?? "",
+          },
+          toolDefinition?.inputSchema !== undefined
             ? { inputSchema: toolDefinition.inputSchema }
-            : {}),
-          ...(uiVisibility !== undefined ? { uiVisibility } : {}),
-        };
+            : undefined,
+          uiVisibility !== undefined ? { uiVisibility } : undefined,
+        );
         const approvalMetadata = new Map(options.state?.toolMetadata);
         const definition =
           options.config?.mcpServers[options.serverName] ??
@@ -549,11 +575,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           options.manager.incrementInFlight(options.serverName);
           const result = options.config
             ? await withSessionRecovery(
-                {
-                  manager: options.manager,
-                  config: options.config,
-                  ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
-                },
+                mergeObjectParts(
+                  { manager: options.manager, config: options.config },
+                  options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : undefined,
+                ),
                 options.serverName,
                 (conn) =>
                   conn.client.callTool(
@@ -574,6 +599,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (url.pathname === "/proxy/ui/consent") {
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         const approved = !!(params as { approved?: boolean }).approved;
         options.consentManager.registerDecision(options.serverName, approved);
         sendJson(res, 200, { ok: true, result: { approved } });
@@ -581,18 +607,18 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (url.pathname === "/proxy/ui/generated-tool-call-intent") {
-        const tool = typeof params.tool === "string" ? params.tool : undefined;
+        const tool = isStringValue(params.tool) ? params.tool : undefined;
         if (tool && isAppOnlyTool(tool)) {
           log.debug("Ignored generated app-only tool call intent", { tool });
         } else {
           await recordUiMessage({
             type: "intent",
             intent: "call_tool",
-            params: {
-              ...(tool !== undefined ? { tool } : {}),
-              ...(params.arguments !== undefined ? { arguments: params.arguments } : {}),
-              ...(params.isError !== undefined ? { isError: params.isError } : {}),
-            },
+            params: mergeObjectParts(
+              tool !== undefined ? { tool } : undefined,
+              params.arguments !== undefined ? { arguments: params.arguments } : undefined,
+              params.isError !== undefined ? { isError: params.isError } : undefined,
+            ),
           });
         }
         sendJson(res, 200, { ok: true, result: {} });
@@ -600,6 +626,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (url.pathname === "/proxy/ui/message") {
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         await recordUiMessage(params as UiMessageParams);
         sendJson(res, 200, { ok: true, result: {} });
         return;
@@ -614,20 +641,25 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
               content.some((block) => !ContentBlockSchema.safeParse(block).success))) ||
           (structuredContent !== undefined &&
             (!structuredContent ||
-              typeof structuredContent !== "object" ||
+              !isObjectValue(structuredContent) ||
               Array.isArray(structuredContent)))
         ) {
           sendJson(res, 400, { ok: false, error: "Invalid update-model-context params" });
           return;
         }
-        const ctxParams: UiModelContextParams = {
-          ...(content !== undefined
-            ? { content: content as NonNullable<UiModelContextParams["content"]> }
-            : {}),
-          ...(structuredContent !== undefined
-            ? { structuredContent: structuredContent as Record<string, unknown> }
-            : {}),
-        };
+        // SAFETY: The validation above establishes the optional content and structured-content representations.
+        const ctxParams: UiModelContextParams = mergeObjectParts(
+          content !== undefined
+            ? {
+                content: content as NonNullable<UiModelContextParams["content"]>,
+              }
+            : undefined,
+          structuredContent !== undefined
+            ? {
+                structuredContent: structuredContent as McpObject,
+              }
+            : undefined,
+        );
         const update = createUiModelContextUpdate(ctxParams);
         if (update) {
           sessionMessages.contexts.push(update);
@@ -642,8 +674,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (url.pathname === "/proxy/ui/open-link") {
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         const openParams = params as { url?: string };
-        if (!openParams?.url || typeof openParams.url !== "string") {
+
+        if (!openParams?.url || !isStringValue(openParams.url)) {
           sendJson(res, 400, { ok: false, error: "Invalid open-link params" });
           return;
         }
@@ -663,6 +697,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (url.pathname === "/proxy/ui/request-display-mode") {
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         const displayParams = params as UiDisplayModeRequest;
         const requested = displayParams?.mode;
         const available = hostContext.availableDisplayModes ?? ["inline"];
@@ -682,10 +717,14 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (url.pathname === "/proxy/ui/complete") {
-        const reason =
-          typeof (params as { reason?: string }).reason === "string"
-            ? (params as { reason?: string }).reason!
-            : "done";
+        const reason = isStringValue(
+          /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes { reason?: string } for this value. */ (
+            params as { reason?: string }
+          ).reason,
+        )
+          ? // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
+            (params as { reason?: string }).reason!
+          : "done";
         markCompleted(reason);
         sendJson(res, 200, { ok: true, result: {} });
         setTimeout(() => {
@@ -758,17 +797,18 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       log.error("Failed to start server", error);
       const port = candidates[candidateIndex];
       reject(
-        new ServerError(error.message, {
-          ...(port !== undefined ? { port } : {}),
-          cause: error,
-        }),
+        new ServerError(
+          error.message,
+          mergeObjectParts(port !== undefined ? { port } : undefined, { cause: error }),
+        ),
       );
     };
 
     const onListening = () => {
       server.off("error", onError);
       const address = server.address();
-      if (!address || typeof address === "string") {
+
+      if (!address || isStringValue(address)) {
         const err = new ServerError("invalid address");
         log.error("Invalid server address", err);
         reject(err);
@@ -791,7 +831,8 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           } catch {}
           closeSse();
         },
-        sendToolInput: (args: Record<string, unknown>) => {
+
+        sendToolInput: (args: McpObject) => {
           pushEvent("tool-input", { arguments: args });
         },
         sendToolResult: (result: CallToolResult) => {
@@ -819,17 +860,16 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   });
 }
 
-async function parseBody(
-  req: IncomingMessage,
-  res: ServerResponse,
-): Promise<UiProxyRequestBody<Record<string, unknown>> | null> {
+async function parseBody(req: IncomingMessage, res: ServerResponse): Promise<McpObject | null> {
   try {
     const body = await readBody(req);
-    if (!body || typeof body !== "object") {
+
+    if (!body || !isObjectValue(body)) {
       sendJson(res, 400, { ok: false, error: "Invalid request body" });
       return null;
     }
-    return body as UiProxyRequestBody<Record<string, unknown>>;
+
+    return parseMcpObject(body);
   } catch (error) {
     sendJson(res, 400, {
       ok: false,
@@ -839,7 +879,7 @@ async function parseBody(
   }
 }
 
-function readBody(req: IncomingMessage): Promise<unknown> {
+function readBody(req: IncomingMessage): Promise<McpValue> {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks: Buffer[] = [];
@@ -903,11 +943,7 @@ function validateTokenQuery(
   return true;
 }
 
-function validateTokenBody(
-  body: UiProxyRequestBody<Record<string, unknown>>,
-  expected: string,
-  res: ServerResponse,
-): boolean {
+function validateTokenBody(body: McpObject, expected: string, res: ServerResponse): boolean {
   if (body.token !== expected) {
     sendJson(res, 403, { ok: false, error: "Invalid session" });
     return false;

@@ -15,20 +15,23 @@ import {
   type ToolMetadata,
 } from "./types.ts";
 import { sanitizeTerminalText } from "./utils.ts";
+import { isObjectValue, mergeObjectParts, type McpObject } from "./protocol-values.js";
 
 export type ToolCallApprovalResult =
   | { ok: true }
   | { ok: false; reason: "denied" | "approval_required_headless" };
 
-function stableStringify(value: unknown): string {
-  if (value === null || value === undefined || typeof value !== "object") {
+function stableStringify<BoundaryValue>(value: BoundaryValue): string {
+  if (value === null || value === undefined || !isObjectValue(value)) {
     const serialized = JSON.stringify(value);
     return serialized === undefined ? "undefined" : serialized;
   }
   if (Array.isArray(value)) {
     return `[${value.map((item) => stableStringify(item)).join(",")}]`;
   }
-  const object = value as Record<string, unknown>;
+
+  const object =
+    /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ value as McpObject;
   return `{${Object.keys(object)
     .sort()
     .map((key) => `${JSON.stringify(key)}:${stableStringify(object[key])}`)
@@ -104,7 +107,9 @@ export function isToolCallApprovalRequired(
   );
 }
 
-function isMcpToolApprovalDecision(value: unknown): value is McpToolApprovalDecision {
+function isMcpToolApprovalDecision<BoundaryValue>(
+  value: BoundaryValue,
+): value is BoundaryValue & McpToolApprovalDecision {
   return (
     value === "allow_once" ||
     value === "allow_for_session" ||
@@ -117,7 +122,8 @@ async function requestBrokerApproval(
   state: McpExtensionState,
   serverName: string,
   toolMeta: ToolMetadata,
-  args: Record<string, unknown> | undefined,
+
+  args: McpObject | undefined,
   origin: McpToolApprovalOrigin,
   signal?: AbortSignal,
 ): Promise<McpToolApprovalDecision> {
@@ -125,20 +131,24 @@ async function requestBrokerApproval(
 
   let acceptingClaim = true;
   let handler: McpToolApprovalHandler | undefined;
-  const request: McpToolApprovalRequest = {
-    requestId: randomUUID(),
-    serverName,
-    originalToolName: toolMeta.originalName,
-    prefixedToolName: toolMeta.name,
-    args: args ?? {},
-    origin,
-    ...(signal !== undefined ? { signal } : {}),
-    claim(candidate: McpToolApprovalHandler) {
-      if (!acceptingClaim || handler) return false;
-      handler = candidate;
-      return true;
+  const request: McpToolApprovalRequest = mergeObjectParts(
+    {
+      requestId: randomUUID(),
+      serverName,
+      originalToolName: toolMeta.originalName,
+      prefixedToolName: toolMeta.name,
+      args: args ?? {},
+      origin,
     },
-  };
+    signal !== undefined ? { signal } : undefined,
+    {
+      claim(candidate: McpToolApprovalHandler) {
+        if (!acceptingClaim || handler) return false;
+        handler = candidate;
+        return true;
+      },
+    },
+  );
 
   state.approvalEvents.emit(MCP_TOOL_APPROVAL_REQUEST_EVENT, request);
   acceptingClaim = false;
@@ -157,7 +167,8 @@ export async function ensureToolCallApproved(
   state: McpExtensionState,
   serverName: string,
   toolMeta: ToolMetadata,
-  args: Record<string, unknown> | undefined,
+
+  args: McpObject | undefined,
   signal?: AbortSignal,
   origin: McpToolApprovalOrigin = toolMeta.resourceUri ? "resource" : "proxy",
   approvalMetadata?: ReadonlyMap<string, readonly ToolMetadata[]>,

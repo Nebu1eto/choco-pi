@@ -39,6 +39,12 @@ import { isServerDisabled, type ServerEntry } from "./types.ts";
 import { formatTerminalError, interpolateEnvRecord, interpolateEnvVars } from "./utils.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
+import {
+  isBooleanValue,
+  isObjectValue,
+  isStringValue,
+  mergeObjectParts,
+} from "./protocol-values.js";
 
 /** Auth status for a server */
 export type AuthStatus = "authenticated" | "expired" | "not_authenticated";
@@ -65,11 +71,13 @@ type AuthDiscovery = Pick<
 >;
 
 function applyOAuthConfig(discovery: AuthDiscovery, config: McpOAuthConfig): AuthDiscovery {
-  return {
-    ...discovery,
-    ...(config.scope !== undefined ? { scope: config.scope } : {}),
-    ...(config.skipIssuerMetadataValidation === true ? { skipIssuerMetadataValidation: true } : {}),
-  };
+  return mergeObjectParts(
+    { ...discovery },
+    config.scope !== undefined ? { scope: config.scope } : undefined,
+    config.skipIssuerMetadataValidation === true
+      ? { skipIssuerMetadataValidation: true }
+      : undefined,
+  );
 }
 
 type PendingAuth = {
@@ -171,12 +179,12 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
   const config: McpOAuthConfig = {};
   if (definition.oauth?.grantType !== undefined) config.grantType = definition.oauth.grantType;
   if (definition.oauth?.clientId !== undefined) {
-    if (typeof definition.oauth.clientId !== "string")
+    if (!isStringValue(definition.oauth.clientId))
       throw new Error("OAuth clientId must be a string");
     config.clientId = interpolateEnvVars(definition.oauth.clientId);
   }
   if (definition.oauth?.clientSecret !== undefined) {
-    if (typeof definition.oauth.clientSecret !== "string")
+    if (!isStringValue(definition.oauth.clientSecret))
       throw new Error("OAuth clientSecret must be a string");
     // Preserve command expressions for the provider; interpolation remains eager for ordinary values.
     config.clientSecret = definition.oauth.clientSecret.startsWith("!")
@@ -184,24 +192,26 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
       : interpolateEnvVars(definition.oauth.clientSecret);
   }
   if (definition.oauth?.scope !== undefined) {
-    if (typeof definition.oauth.scope !== "string") throw new Error("OAuth scope must be a string");
+    if (!isStringValue(definition.oauth.scope)) throw new Error("OAuth scope must be a string");
     config.scope = interpolateEnvVars(definition.oauth.scope);
   }
   if (definition.oauth?.authorizationParams !== undefined) {
     const params = definition.oauth.authorizationParams;
-    if (!params || typeof params !== "object" || Array.isArray(params)) {
+
+    if (!params || !isObjectValue(params) || Array.isArray(params)) {
       throw new Error("OAuth authorizationParams must be an object");
     }
     config.authorizationParams = {};
     for (const [key, value] of Object.entries(params)) {
       if (!key) throw new Error("OAuth authorizationParams keys must not be empty");
-      if (typeof value !== "string")
+
+      if (!isStringValue(value))
         throw new Error(`OAuth authorizationParams.${key} must be a string`);
       config.authorizationParams[key] = interpolateEnvVars(value);
     }
   }
   if (definition.oauth?.redirectUri !== undefined) {
-    if (typeof definition.oauth.redirectUri !== "string") {
+    if (!isStringValue(definition.oauth.redirectUri)) {
       throw new Error("OAuth redirectUri must be a string");
     }
     const redirectUri = interpolateEnvVars(definition.oauth.redirectUri).trim();
@@ -211,7 +221,7 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     config.redirectUri = redirectUri;
   }
   if (definition.oauth?.clientName !== undefined) {
-    if (typeof definition.oauth.clientName !== "string") {
+    if (!isStringValue(definition.oauth.clientName)) {
       throw new Error("OAuth clientName must be a string");
     }
     const clientName = interpolateEnvVars(definition.oauth.clientName).trim();
@@ -221,7 +231,7 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     config.clientName = clientName;
   }
   if (definition.oauth?.clientUri !== undefined) {
-    if (typeof definition.oauth.clientUri !== "string") {
+    if (!isStringValue(definition.oauth.clientUri)) {
       throw new Error("OAuth clientUri must be a string");
     }
     const clientUri = interpolateEnvVars(definition.oauth.clientUri).trim();
@@ -231,7 +241,7 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     config.clientUri = clientUri;
   }
   if (definition.oauth?.logoUri !== undefined) {
-    if (typeof definition.oauth.logoUri !== "string") {
+    if (!isStringValue(definition.oauth.logoUri)) {
       throw new Error("OAuth logoUri must be a string");
     }
     const logoUri = interpolateEnvVars(definition.oauth.logoUri).trim();
@@ -252,7 +262,7 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     config.logoUri = logoUri;
   }
   if (definition.oauth?.skipIssuerMetadataValidation !== undefined) {
-    if (typeof definition.oauth.skipIssuerMetadataValidation !== "boolean") {
+    if (!isBooleanValue(definition.oauth.skipIssuerMetadataValidation)) {
       throw new Error("OAuth skipIssuerMetadataValidation must be a boolean");
     }
     config.skipIssuerMetadataValidation = definition.oauth.skipIssuerMetadataValidation;
@@ -283,25 +293,34 @@ async function probeAuthDiscovery(
   try {
     headers.set("accept", "application/json, text/event-stream");
 
-    const response = await fetch(new URL(serverUrl), {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 0,
-        method: "initialize",
-        params: {
-          protocolVersion: LATEST_PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: "pi-mcp-adapter", version: "2.11.0" },
+    const response = await fetch(
+      new URL(serverUrl),
+      mergeObjectParts(
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 0,
+            method: "initialize",
+            params: {
+              protocolVersion: LATEST_PROTOCOL_VERSION,
+              capabilities: {},
+              clientInfo: { name: "pi-mcp-adapter", version: "2.11.0" },
+            },
+          }),
         },
-      }),
-      ...(discoverySignal ? { signal: discoverySignal } : {}),
-    });
+        discoverySignal ? { signal: discoverySignal } : undefined,
+      ),
+    );
     const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(response);
     await response.body?.cancel().catch(() => {});
-    return { ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}), ...(scope ? { scope } : {}) };
-  } catch (error) {
+
+    return mergeObjectParts(
+      resourceMetadataUrl ? { resourceMetadataUrl } : undefined,
+      scope ? { scope } : undefined,
+    );
+  } catch {
     if (signal?.aborted) throwIfAborted(signal);
     return {};
   } finally {
@@ -309,11 +328,7 @@ async function probeAuthDiscovery(
   }
 }
 
-function parseOAuthRedirectUri(redirectUri: string): {
-  port: number;
-  callbackHost: string;
-  callbackPath: string;
-} {
+function parseOAuthRedirectUri(redirectUri: string) {
   let url: URL;
   try {
     url = new URL(redirectUri);
@@ -349,6 +364,7 @@ function parseOAuthRedirectUri(redirectUri: string): {
   }
 
   const callbackHost = hostname === "[::1]" ? "::1" : hostname;
+
   return { port, callbackHost, callbackPath: url.pathname };
 }
 
@@ -420,18 +436,22 @@ export async function startAuth(
   const oauthState = generateState();
 
   try {
-    await ensureCallbackServer({
-      strictPort: Boolean(config.clientId) || config.redirectUri !== undefined,
-      oauthState,
-      reserveState: true,
-      ...(redirectCallback
-        ? {
-            port: redirectCallback.port,
-            callbackHost: redirectCallback.callbackHost,
-            callbackPath: redirectCallback.callbackPath,
-          }
-        : {}),
-    });
+    await ensureCallbackServer(
+      mergeObjectParts(
+        {
+          strictPort: Boolean(config.clientId) || config.redirectUri !== undefined,
+          oauthState,
+          reserveState: true,
+        },
+        redirectCallback
+          ? {
+              port: redirectCallback.port,
+              callbackHost: redirectCallback.callbackHost,
+              callbackPath: redirectCallback.callbackPath,
+            }
+          : undefined,
+      ),
+    );
     throwIfAborted(signal);
   } catch (error) {
     releaseCallbackServer(oauthState);
@@ -640,7 +660,8 @@ export function parseAuthorizationRedirectInput(
     const code = params.get("code");
     if (code) {
       const iss = params.get("iss");
-      return { code, ...(iss !== null ? { iss } : {}) };
+
+      return mergeObjectParts({ code }, iss !== null ? { iss } : undefined);
     }
   }
 
@@ -739,10 +760,9 @@ export async function completeAuth(
 ): Promise<AuthStatus> {
   const runtime = getRuntime(options);
   const runtimeState = getRuntimeState(runtime);
-  const { code, iss } =
-    typeof authorizationCode === "string"
-      ? { code: authorizationCode, iss: undefined }
-      : authorizationCode;
+  const { code, iss } = isStringValue(authorizationCode)
+    ? { code: authorizationCode, iss: undefined }
+    : authorizationCode;
   const fallbackAuthStorageOptions = options.authStorageOptions ?? {};
   const signal = combineAbortSignals(runtime.signal, options.signal);
   throwIfAborted(signal);
@@ -757,12 +777,14 @@ export async function completeAuth(
   throwIfAborted(signal);
 
   let keepPendingForRetry = false;
+  let didCatch = false;
   let caughtError: unknown;
   try {
     const discoveryState = await pendingAuth.authProvider.discoveryState();
     const metadata = discoveryState?.authorizationServerMetadata;
     const expectedIssuer = metadata?.issuer ?? discoveryState?.authorizationServerUrl;
     const requiresIssuer =
+      // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
       (metadata as { authorization_response_iss_parameter_supported?: unknown } | undefined)
         ?.authorization_response_iss_parameter_supported === true;
     if (expectedIssuer !== undefined && iss === undefined && requiresIssuer) {
@@ -779,34 +801,44 @@ export async function completeAuth(
     }
 
     const result = await abortable(
-      runSdkAuth(pendingAuth.authProvider, {
-        serverUrl: pendingAuth.serverUrl,
-        authorizationCode: code,
-        ...(iss !== undefined ? { iss } : {}),
-        ...pendingAuth.discovery,
-      }),
+      runSdkAuth(
+        pendingAuth.authProvider,
+        mergeObjectParts(
+          { serverUrl: pendingAuth.serverUrl, authorizationCode: code },
+          iss !== undefined ? { iss } : undefined,
+          { ...pendingAuth.discovery },
+        ),
+      ),
       signal,
     );
     throwIfAborted(signal);
     if (result !== "AUTHORIZED") {
       throw new UnauthorizedError("Failed to authorize");
     }
-    return "authenticated";
   } catch (error) {
+    didCatch = true;
     caughtError = error;
-    throw error;
-  } finally {
-    if (!keepPendingForRetry) {
-      try {
-        await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
-      } catch (cleanupError) {
-        if (caughtError !== undefined) {
-          throw new AggregateError([caughtError, cleanupError], "OAuth completion cleanup failed");
-        }
-        throw cleanupError;
-      }
+  }
+
+  let cleanupFailed = false;
+  let cleanupError: unknown;
+  if (!keepPendingForRetry) {
+    try {
+      await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
+    } catch (error) {
+      cleanupFailed = true;
+      cleanupError = error;
     }
   }
+
+  if (didCatch) {
+    if (cleanupFailed) {
+      throw new AggregateError([caughtError, cleanupError], "OAuth completion cleanup failed");
+    }
+    throw caughtError;
+  }
+  if (cleanupFailed) throw cleanupError;
+  return "authenticated";
 }
 
 /**
@@ -836,11 +868,12 @@ export async function authenticate(
   }
 
   const operation = (async (): Promise<AuthStatus> => {
-    const { authorizationUrl } = await startAuth(serverName, serverUrl, definition, {
-      ...options,
-      ...(signal ? { signal } : {}),
-      runtime,
-    });
+    const { authorizationUrl } = await startAuth(
+      serverName,
+      serverUrl,
+      definition,
+      mergeObjectParts({ ...options }, signal ? { signal } : undefined, { runtime }),
+    );
 
     if (!authorizationUrl) {
       return "authenticated";
@@ -895,11 +928,11 @@ export async function authenticate(
       // input is checked against the same state before token exchange.
       throwIfAborted(signal);
 
-      return await completeAuth(serverName, authorizationResponse.input, {
-        ...options,
-        ...(signal ? { signal } : {}),
-        runtime,
-      });
+      return await completeAuth(
+        serverName,
+        authorizationResponse.input,
+        mergeObjectParts({ ...options }, signal ? { signal } : undefined, { runtime }),
+      );
     } catch (error) {
       if (oauthState) cancelPendingCallback(oauthState);
       try {
@@ -975,13 +1008,15 @@ export async function getValidToken(
         const discovery = await probeAuthDiscovery(serverUrl, undefined, signal);
         throwIfAborted(signal);
         const result = await abortable(
-          runSdkAuth(authProvider, {
-            serverUrl,
-            ...discovery,
-            ...(options.skipIssuerMetadataValidation === true
-              ? { skipIssuerMetadataValidation: true }
-              : {}),
-          }),
+          runSdkAuth(
+            authProvider,
+            mergeObjectParts(
+              { serverUrl, ...discovery },
+              options.skipIssuerMetadataValidation === true
+                ? { skipIssuerMetadataValidation: true }
+                : undefined,
+            ),
+          ),
           signal,
         );
         throwIfAborted(signal);
@@ -1087,6 +1122,7 @@ export async function initializeOAuth(
   }
 
   await shutdownOAuth(legacyRuntime);
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   legacyRuntime = createOAuthRuntime(runtimeOrSignal as AbortSignal | undefined);
   return legacyRuntime;
 }

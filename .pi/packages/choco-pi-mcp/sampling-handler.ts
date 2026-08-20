@@ -18,6 +18,7 @@ import {
   type SamplingMessage,
   type SamplingMessageContentBlock,
 } from "@modelcontextprotocol/client";
+import { isStringValue, mergeObjectParts, type McpObject } from "./protocol-values.js";
 
 export type SamplingUIContext = Pick<ExtensionUIContext, "confirm">;
 export type SamplingModelRegistry = Pick<ModelRegistry, "getAvailable" | "getApiKeyAndHeaders">;
@@ -78,22 +79,25 @@ export async function handleSamplingRequest(
   );
   throwIfAborted(signal);
 
+  // SAFETY: MCP sampling metadata is specified as an extensible property bag.
   const result = await complete(
     model,
-    {
-      ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
-      messages,
-    },
-    {
-      ...(apiKey !== undefined ? { apiKey } : {}),
-      ...(headers !== undefined ? { headers } : {}),
-      maxTokens: params.maxTokens,
-      ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
-      ...(params.metadata !== undefined
-        ? { metadata: params.metadata as Record<string, unknown> }
-        : {}),
-      ...(signal ? { signal } : {}),
-    },
+    mergeObjectParts(
+      params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : undefined,
+      { messages },
+    ),
+    mergeObjectParts(
+      apiKey !== undefined ? { apiKey } : undefined,
+      headers !== undefined ? { headers } : undefined,
+      { maxTokens: params.maxTokens },
+      params.temperature !== undefined ? { temperature: params.temperature } : undefined,
+      params.metadata !== undefined
+        ? {
+            metadata: params.metadata as McpObject,
+          }
+        : undefined,
+      signal ? { signal } : undefined,
+    ),
   );
 
   const converted = convertAssistantResult(result);
@@ -131,7 +135,7 @@ function formatResponseApproval(serverName: string, response: CreateMessageResul
 }
 
 function messageText(message: Message): string {
-  if (typeof message.content === "string") return message.content;
+  if (isStringValue(message.content)) return message.content;
   return message.content
     .map((block) => {
       if (block.type === "text") return block.text;
@@ -182,11 +186,11 @@ async function resolveSamplingModel(
       errors.push(`${model.provider}/${model.id}: ${auth.error}`);
       continue;
     }
-    return {
-      model,
-      ...(auth.apiKey !== undefined ? { apiKey: auth.apiKey } : {}),
-      ...(auth.headers !== undefined ? { headers: auth.headers } : {}),
-    };
+    return mergeObjectParts(
+      { model },
+      auth.apiKey !== undefined ? { apiKey: auth.apiKey } : undefined,
+      auth.headers !== undefined ? { headers: auth.headers } : undefined,
+    );
   }
 
   if (errors.length > 0) {
