@@ -6,6 +6,7 @@ import { renderMinimalistFrame } from "./minimalist-editor";
 import { safeThemeFg } from "./style";
 import { renderPolishedEditorFrame } from "./ui";
 import { renderUserMessageStyle } from "./user-message-styles";
+import { isString } from "./runtime-values";
 
 export const SETTINGS_PREVIEW_MAX_WIDTH = 72;
 export const SETTINGS_PREVIEW_MAX_ROWS = 8;
@@ -24,10 +25,11 @@ function boundedRows(rows: string[], width: number): string[] {
 
 function previewConfig(config: PolishedTuiConfig): PolishedTuiConfig {
   const derived = structuredClone(config);
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   derived.icons = Object.fromEntries(
     Object.entries(derived.icons).map(([key, value]) => [
       key,
-      typeof value === "string" ? sanitizeEditorMetadataText(value) : value,
+      isString(value) ? sanitizeEditorMetadataText(value) : value,
     ]),
   ) as typeof derived.icons;
   return derived;

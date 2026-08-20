@@ -2,6 +2,12 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import {
+  type BoundaryValue,
+  isBoundaryValue,
+  isString,
+  parseBoundaryValue,
+} from "./runtime-values";
 
 const execFileAsync = promisify(execFile);
 const GIT_COMMAND_TIMEOUT_MS = 2_000;
@@ -208,10 +214,12 @@ function readOptionalText(path: string | undefined): string | undefined {
  * Pure git operation-state detector. Paths that exist (truthy strings that
  * callers verified with `existsSync`) select the active state in Starship order.
  */
-export function detectGitState(paths: GitStatePaths): {
+export type GitStateDetection = {
   gitState?: GitOperationState;
   gitStateLabel?: string;
-} {
+};
+
+export function detectGitState(paths: GitStatePaths): GitStateDetection {
   if (paths.rebaseMerge || paths.rebaseApply) {
     const msgnum = readOptionalText(paths.rebaseMsgnum);
     const end = readOptionalText(paths.rebaseEnd);
@@ -235,7 +243,7 @@ async function resolveGitPath(cwd: string, pathSpec: string): Promise<string | u
       cwd,
       timeout: GIT_COMMAND_TIMEOUT_MS,
     });
-    const resolved = (typeof stdout === "string" ? stdout : String(stdout)).trim();
+    const resolved = (isString(stdout) ? stdout : String(stdout)).trim();
     if (!resolved) return undefined;
     return resolved.startsWith("/") ? resolved : join(cwd, resolved);
   } catch {
@@ -272,11 +280,12 @@ async function readGitOperationState(cwd: string): Promise<{
   });
 }
 
-function isNotARepoError(error: unknown): boolean {
-  const message =
-    error instanceof Error
-      ? `${error.message}\n${"stderr" in error ? String((error as { stderr?: unknown }).stderr ?? "") : ""}`
-      : String(error);
+function isNotARepoError(error: BoundaryValue): boolean {
+  const stderr =
+    error instanceof Error && "stderr" in error && isBoundaryValue(error.stderr)
+      ? String(error.stderr ?? "")
+      : "";
+  const message = error instanceof Error ? `${error.message}\n${stderr}` : String(error);
   return /not a git repository|outside repository|not a git repo/i.test(message);
 }
 
@@ -320,7 +329,7 @@ export async function readGitStatus(
             cwd,
             timeout: GIT_COMMAND_TIMEOUT_MS,
           }).then(
-            (r) => ({ stdout: typeof r.stdout === "string" ? r.stdout : String(r.stdout) }),
+            (r) => ({ stdout: isString(r.stdout) ? r.stdout : String(r.stdout) }),
             () => ({ stdout: "" }),
           )
         : Promise.resolve({ stdout: "" }),
@@ -329,19 +338,19 @@ export async function readGitStatus(
             cwd,
             timeout: GIT_COMMAND_TIMEOUT_MS,
           }).then(
-            (r) => ({ stdout: typeof r.stdout === "string" ? r.stdout : String(r.stdout) }),
+            (r) => ({ stdout: isString(r.stdout) ? r.stdout : String(r.stdout) }),
             () => ({ stdout: "", failed: true as const }),
           )
         : Promise.resolve({ stdout: "", failed: true as const }),
     ]);
-    const stdoutText = typeof statusStdout === "string" ? statusStdout : String(statusStdout);
-    const stashStdout =
-      typeof stashResult.stdout === "string" ? stashResult.stdout : String(stashResult.stdout);
+    const stdoutText = isString(statusStdout) ? statusStdout : String(statusStdout);
+    const stashStdout = isString(stashResult.stdout)
+      ? stashResult.stdout
+      : String(stashResult.stdout);
     const stashCount = stashStdout.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
     const status = parseGitStatusPorcelain(stdoutText, stashCount);
     if (status.commit) {
-      const tagStdout =
-        typeof tagResult.stdout === "string" ? tagResult.stdout : String(tagResult.stdout);
+      const tagStdout = isString(tagResult.stdout) ? tagResult.stdout : String(tagResult.stdout);
       const tag = tagStdout.trim();
       status.commit = { ...status.commit, tag: tag || null };
     }
@@ -349,10 +358,9 @@ export async function readGitStatus(
       if ("failed" in metricsResult && metricsResult.failed) {
         status.metrics = null;
       } else {
-        const metricsStdout =
-          typeof metricsResult.stdout === "string"
-            ? metricsResult.stdout
-            : String(metricsResult.stdout);
+        const metricsStdout = isString(metricsResult.stdout)
+          ? metricsResult.stdout
+          : String(metricsResult.stdout);
         status.metrics = parseGitNumstat(metricsStdout);
       }
     }
@@ -365,7 +373,7 @@ export async function readGitStatus(
       },
     };
   } catch (error) {
-    if (isNotARepoError(error)) return { kind: "not_a_repo" };
+    if (isNotARepoError(parseBoundaryValue(error))) return { kind: "not_a_repo" };
 
     // Distinguish not-a-repo vs transient with a cheap rev-parse on the error path.
     try {
@@ -373,11 +381,11 @@ export async function readGitStatus(
         cwd,
         timeout: GIT_COMMAND_TIMEOUT_MS,
       });
-      const inside = (typeof stdout === "string" ? stdout : String(stdout)).trim();
+      const inside = (isString(stdout) ? stdout : String(stdout)).trim();
       if (inside !== "true") return { kind: "not_a_repo" };
       return { kind: "error" };
     } catch (inner) {
-      if (isNotARepoError(inner)) return { kind: "not_a_repo" };
+      if (isNotARepoError(parseBoundaryValue(inner))) return { kind: "not_a_repo" };
       return { kind: "error" };
     }
   }

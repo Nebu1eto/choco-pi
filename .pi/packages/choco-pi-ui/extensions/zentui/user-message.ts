@@ -8,13 +8,22 @@ import {
   sanitizeUserMessageSourceText,
 } from "./user-message-osc";
 import { renderUserMessageStyle, userMessageStyleCacheKey } from "./user-message-styles";
+import {
+  type BoundaryRecord,
+  type BoundaryValue,
+  invokeWithReceiver,
+  isCallable,
+  isNumber,
+  isObjectValue,
+  isString,
+} from "./runtime-values";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
 type PatchableUserMessagePrototype = {
-  children?: unknown[];
+  children?: BoundaryValue[];
 };
 
 type Cleanup = () => void;
@@ -30,17 +39,17 @@ type UserMessageRenderCache = {
 
 const userMessageRenderCache = new WeakMap<object, UserMessageRenderCache>();
 
-function isObject(value: unknown): value is object {
-  return (typeof value === "object" && value !== null) || typeof value === "function";
+function isObject(value: BoundaryValue): value is object {
+  return (isObjectValue(value) && value !== null) || isCallable(value);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is BoundaryRecord {
+  return isObjectValue(value) && value !== null && !Array.isArray(value);
 }
 
-function findMarkdownText(value: unknown): string | undefined {
+function findMarkdownText(value: BoundaryValue): string | undefined {
   if (!isRecord(value)) return undefined;
-  if (typeof value.text === "string") return value.text;
+  if (isString(value.text)) return value.text;
 
   const children = value.children;
   if (!Array.isArray(children)) return undefined;
@@ -53,7 +62,7 @@ function findMarkdownText(value: unknown): string | undefined {
   return undefined;
 }
 
-function getCachedMarkdownText(instance: object): string | undefined {
+function getCachedMarkdownText(instance: PatchableUserMessagePrototype): string | undefined {
   const cached = userMessageRenderCache.get(instance);
   if (cached?.hasMarkdownText) return cached.text;
 
@@ -114,14 +123,16 @@ function withPromptZoneMarkers(lines: string[]): string[] {
   return markedLines;
 }
 
-function sanitizePredecessorRender(result: unknown): unknown {
-  if (typeof result === "string") return sanitizeRenderedUserMessageText(result);
+function sanitizePredecessorRender(result: BoundaryValue): BoundaryValue {
+  if (isString(result)) return sanitizeRenderedUserMessageText(result);
   if (!Array.isArray(result)) return result;
-  const stringRows = result.every((line): line is string => typeof line === "string");
-  if (stringRows) return sanitizeRenderedUserMessageLines(result);
-  return result.map((line) =>
-    typeof line === "string" ? sanitizeRenderedUserMessageText(line) : line,
-  );
+  const stringRows: string[] = [];
+  for (const line of result) {
+    if (!isString(line))
+      return result.map((row) => (isString(row) ? sanitizeRenderedUserMessageText(row) : row));
+    stringRows.push(line);
+  }
+  return sanitizeRenderedUserMessageLines(stringRows);
 }
 
 function renderSafeSourceFallback(
@@ -160,7 +171,7 @@ export function installUserMessageStyle(
     "user-message-invalidate",
     ({ predecessor, receiver, args }) => {
       if (isObject(receiver)) userMessageRenderCache.delete(receiver);
-      return Reflect.apply(predecessor, receiver, args);
+      return invokeWithReceiver(predecessor, receiver, args);
     },
   );
   let cleanupRender: Cleanup;
@@ -171,11 +182,12 @@ export function installUserMessageStyle(
       "user-message-render",
       ({ predecessor, receiver, args }) => {
         const renderPredecessor = () =>
-          sanitizePredecessorRender(Reflect.apply(predecessor, receiver, args));
+          sanitizePredecessorRender(invokeWithReceiver(predecessor, receiver, args));
         const width = args[0];
-        if (typeof width !== "number") return renderPredecessor();
+        if (!isNumber(width)) return renderPredecessor();
         try {
           const lines = renderZentuiUserMessage(
+            // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
             receiver as PatchableUserMessagePrototype,
             width,
             getTheme(),
@@ -185,6 +197,7 @@ export function installUserMessageStyle(
           return lines.length ? withPromptZoneMarkers(lines) : lines;
         } catch {
           const safeFallback = renderSafeSourceFallback(
+            // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
             receiver as PatchableUserMessagePrototype,
             width,
           );

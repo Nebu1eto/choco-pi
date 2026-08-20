@@ -1,3 +1,4 @@
+import { type BoundaryValue, isString } from "./runtime-values";
 /**
  * Icon mode defaults and resolvers.
  *
@@ -111,20 +112,28 @@ export const ASCII_DEFAULT_ICONS: IconGlyphs = {
   package: "pkg",
 };
 
-export const OS_PLATFORM_ICONS_NERD: Record<string, string> = {
+interface PlatformIconMap {
+  [platform: string]: string;
+}
+
+interface RuntimeAsciiSymbolMap {
+  [runtime: string]: string;
+}
+
+export const OS_PLATFORM_ICONS_NERD: PlatformIconMap = {
   darwin: "\uf179",
   linux: "\uf17c",
   win32: "\uf17a",
 };
 
-export const OS_PLATFORM_ICONS_ASCII: Record<string, string> = {
+export const OS_PLATFORM_ICONS_ASCII: PlatformIconMap = {
   darwin: "mac",
   linux: "linux",
   win32: "win",
 };
 
 /** Short ASCII labels keyed by runtime `name`. */
-export const RUNTIME_ASCII_SYMBOLS: Record<string, string> = {
+export const RUNTIME_ASCII_SYMBOLS: RuntimeAsciiSymbolMap = {
   xmake: "xm",
   maven: "mvn",
   gradle: "grd",
@@ -184,11 +193,11 @@ export const RUNTIME_ASCII_SYMBOLS: Record<string, string> = {
   zig: "zig",
 };
 
-export function isIconMode(value: unknown): value is IconMode {
+export function isIconMode(value: BoundaryValue): value is IconMode {
   return value === "auto" || value === "nerd" || value === "ascii";
 }
 
-export function normalizeIconMode(value: unknown): IconMode {
+export function normalizeIconMode(value: BoundaryValue): IconMode {
   return isIconMode(value) ? value : "auto";
 }
 
@@ -202,9 +211,7 @@ export function resolveConfiguredIcons(
 ): ResolvedIcons {
   const base = modeDefaultIcons(mode);
   const rail =
-    typeof overrides.rail === "string" && overrides.rail.trim().length > 0
-      ? overrides.rail
-      : base.rail;
+    isString(overrides.rail) && overrides.rail.trim().length > 0 ? overrides.rail : base.rail;
   return {
     mode,
     ...base,
@@ -245,7 +252,7 @@ export function resolveRuntimeSymbol(
  */
 export function resolvePackageIcon(configuredPackageIcon: string, mode: IconMode = "auto"): string {
   const modeDefault = modeDefaultIcons(mode).package;
-  if (typeof configuredPackageIcon === "string" && configuredPackageIcon.length > 0) {
+  if (isString(configuredPackageIcon) && configuredPackageIcon.length > 0) {
     return configuredPackageIcon;
   }
   return modeDefault;

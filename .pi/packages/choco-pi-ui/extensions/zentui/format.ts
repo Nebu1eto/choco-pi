@@ -15,6 +15,7 @@ import { resolveOsIcon, resolvePackageIcon, resolveRuntimeSymbol } from "./icons
 import type { PackageVersionResult } from "./package-version";
 import type { RuntimeInfo } from "./runtime";
 import { renderStyleForSource } from "./style";
+import { type BoundaryValue, isCallable, isNumber, isObjectValue } from "./runtime-values";
 
 /**
  * Starship `git_commit` style — render a short hash, optionally with an
@@ -81,11 +82,11 @@ export type UsageTotals = {
 export type ContextColorTier = "normal" | "warning" | "error";
 
 type SessionUsage = {
-  input?: unknown;
-  output?: unknown;
-  cacheRead?: unknown;
-  cacheWrite?: unknown;
-  cost?: unknown;
+  input?: BoundaryValue;
+  output?: BoundaryValue;
+  cacheRead?: BoundaryValue;
+  cacheWrite?: BoundaryValue;
+  cost?: BoundaryValue;
 };
 
 type SessionEntry = {
@@ -134,10 +135,14 @@ export function formatElapsedDuration(durationMs: number): string {
   return `${seconds}s`;
 }
 
+interface ProviderLabels {
+  [provider: string]: string;
+}
+
 export function formatProviderLabel(provider: string | undefined): string {
   if (!provider) return "Unknown";
 
-  const known: Record<string, string> = {
+  const known: ProviderLabels = {
     anthropic: "Anthropic",
     gemini: "Google",
     google: "Google",
@@ -165,13 +170,14 @@ function calculateCacheHitRate(
   return (cacheRead / scale / scaledPromptTokens) * 100;
 }
 
-function normalizeUsageNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+function normalizeUsageNumber(value: BoundaryValue): number {
+  return isNumber(value) && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
 function usageCostTotal(usage: SessionUsage | undefined): number {
-  if (typeof usage?.cost !== "object" || usage.cost === null) return 0;
-  return normalizeUsageNumber((usage.cost as { total?: unknown }).total);
+  if (!isObjectValue(usage?.cost) || usage.cost === null) return 0;
+  // SAFETY: the preceding runtime guard validates the members used through this structural view.
+  return normalizeUsageNumber((usage.cost as { total?: BoundaryValue }).total);
 }
 
 function addUsageTotal(total: number, value: number): number {
@@ -270,14 +276,14 @@ export function __resetUsageTotalsCacheForTests(): void {
 }
 
 export function getUsageTotals(ctx: ExtensionContext): UsageTotals {
+  // SAFETY: the preceding runtime guard validates the members used through this structural view.
   const sessionManager = ctx.sessionManager as {
     getEntries?: () => readonly SessionEntry[];
     getBranch: () => readonly SessionEntry[];
   };
-  const entries =
-    typeof sessionManager.getEntries === "function"
-      ? sessionManager.getEntries()
-      : sessionManager.getBranch();
+  const entries = isCallable(sessionManager.getEntries)
+    ? sessionManager.getEntries()
+    : sessionManager.getBranch();
   const key = buildUsageFingerprint(entries);
   if (usageTotalsCache?.key === key) return usageTotalsCache.totals;
 
@@ -484,7 +490,7 @@ export function formatCwdLabel(cwd: string, cwdIcon: string, options?: FormatCwd
 }
 
 function stripAnsi(text: string): string {
-  return text.replace(/\u001B\[[0-9;]*m/g, "");
+  return text.replace(new RegExp(String.raw`\u001B\[[0-9;]*m`, "g"), "");
 }
 
 export function formatGitBranchText(

@@ -1,12 +1,13 @@
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import type { SessionLifecycle } from "./session-lifecycle";
+import { type BoundaryValue, isNumber, isObjectValue } from "./runtime-values";
 
 export type LiveContextOverride = {
   tokens: number;
 };
 
-function usageComponent(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+function usageComponent(value: BoundaryValue): number {
+  return isNumber(value) && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 export function calculateLiveContextTokens(usage: Usage | undefined): number | undefined {
@@ -21,8 +22,9 @@ export function calculateLiveContextTokens(usage: Usage | undefined): number | u
   return calculated > 0 ? calculated : undefined;
 }
 
-export function liveContextFromMessage(message: unknown): LiveContextOverride | undefined {
-  if (!message || typeof message !== "object") return undefined;
+export function liveContextFromMessage(message: BoundaryValue): LiveContextOverride | undefined {
+  if (!message || !isObjectValue(message)) return undefined;
+  // SAFETY: the preceding runtime guard validates the members used through this structural view.
   const assistant = message as Partial<AssistantMessage>;
   if (assistant.role !== "assistant") return undefined;
   if (assistant.stopReason === "error" || assistant.stopReason === "aborted") return undefined;
@@ -46,7 +48,7 @@ export class LiveContextController {
     return this.override;
   }
 
-  update(message: unknown): boolean {
+  update(message: BoundaryValue): boolean {
     const next = liveContextFromMessage(message);
     if (!next || !this.lifecycle.isCurrent()) return false;
     this.override = next;

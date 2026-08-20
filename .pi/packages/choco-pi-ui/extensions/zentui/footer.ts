@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { SeparatorStyle, ZentuiConfig } from "./config";
+import type { ZentuiConfig } from "./config";
 import { FOOTER_FORMAT_ALIASES } from "./config";
 import { sanitizeEditorMetadataText } from "./editor-metadata-format";
 import {
@@ -41,7 +41,7 @@ import type { LiveContextOverride } from "./live-context";
 import { type FooterState, modelLabelFor } from "./state";
 import { renderStyleForSource } from "./style";
 
-const separatorText: Record<SeparatorStyle, string> = {
+const separatorText = {
   pipe: " | ",
   dot: " · ",
   chevron: " › ",

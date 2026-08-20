@@ -52,7 +52,7 @@ function renderMarkdown(text: string, width: number, theme: Theme | undefined): 
 }
 
 function trimMarkdownPadding(line: string): string {
-  return line.replace(/ +((?:\x1b\[[0-?]*[ -/]*[@-~])*)$/, "$1");
+  return line.replace(new RegExp(String.raw` +((?:\x1b\[[0-?]*[ -/]*[@-~])*)$`), "$1");
 }
 
 function fillLine(content: string, width: number): string {

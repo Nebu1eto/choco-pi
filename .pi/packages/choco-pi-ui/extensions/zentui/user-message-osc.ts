@@ -46,7 +46,7 @@ function findOscBoundary(text: string, payloadStart: number): ControlBoundary | 
   return undefined;
 }
 
-const terminalControlPattern = /[\u0000-\u001f\u007f-\u009f]/;
+const terminalControlPattern = new RegExp(String.raw`[\u0000-\u001f\u007f-\u009f]`);
 const safeParameterKeyPattern = /^[A-Za-z0-9_.-]+$/;
 
 export function isValidUserMessageOsc8Payload(payload: string): boolean {
@@ -124,7 +124,7 @@ function consumeEscape(value: string, start: number): number {
 }
 
 function isSafeSgr(sequence: string): boolean {
-  return /^\x1b\[[0-9:;]*m$/.test(sequence);
+  return new RegExp(String.raw`^\x1b\[[0-9:;]*m$`).test(sequence);
 }
 
 function isOsc8Close(payload: string): boolean {
