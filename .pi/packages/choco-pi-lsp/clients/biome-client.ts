@@ -1,5 +1,5 @@
 /**
- * Biome Client for pi-lens
+ * Biome Client for choco-pi-lsp
  *
  * All-in-one: formatting + linting for JS/TS/JSX/TSX/CSS/JSON
  * Replaces Prettier with 15-50x faster Rust-based tool.
@@ -78,7 +78,7 @@ export class BiomeClient {
 	// the first resolution to win and stale across other packages.
 	private localBinaryByCwd = new Map<string, string>();
 	// The binary path written by `ensureTool("biome")` — genuinely global
-	// (lives under ~/.pi-lens/tools), so it's stored separately from the
+	// (lives under ~/.choco-pi-lsp/tools), so it's stored separately from the
 	// per-cwd cache and used as a final fallback before npx.
 	private autoInstalledBinaryPath: string | null = null;
 	/**
@@ -97,7 +97,7 @@ export class BiomeClient {
 	/**
 	 * Resolve the fastest available biome binary for `cwd`.
 	 * Prefers local node_modules/.bin/biome (skip npx overhead ~1s).
-	 * Falls back to ~/.pi-lens/tools, then npx.
+	 * Falls back to ~/.choco-pi-lsp/tools, then npx.
 	 *
 	 * In monorepos, callers should pass the project / sub-package root for the
 	 * edited file (typically `path.dirname(absolutePath)`). Omitting `cwd`
@@ -142,7 +142,7 @@ export class BiomeClient {
 		if (this.autoInstalledBinaryPath) {
 			return { cmd: this.autoInstalledBinaryPath, args: [] };
 		}
-		// Also check ~/.pi-lens/tools (where ensureTool("biome") auto-installs),
+		// Also check ~/.choco-pi-lsp/tools (where ensureTool("biome") auto-installs),
 		// so we avoid the ~1.5s `npx @biomejs/biome --version` fallback when the
 		// tool is already installed but not in the project's node_modules.
 		const managedCandidates = isWin

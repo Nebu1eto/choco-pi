@@ -5,7 +5,7 @@
  * Sibling to `clients/bus-publish.ts` (#482 `pilens:files:touched`) and
  * `clients/diagnostics-publish.ts` (#502 `pilens:diagnostics`) rather than a
  * new export crammed into either file: same emit plumbing shape and the same
- * `PI_LENS_BUS_PUBLISH` kill switch (`isBusPublishEnabled`, imported from
+ * `CHOCO_PI_LSP_BUS_PUBLISH` kill switch (`isBusPublishEnabled`, imported from
  * bus-publish.ts), but this producer owns its own emit-function singleton
  * (wired separately from index.ts, same as diagnostics-publish.ts does) since
  * it has nothing else in common with either sibling's module state.
@@ -13,10 +13,10 @@
  * ## Motivation (#673)
  *
  * `pilens:files:touched` only fires AFTER deferred formatting has completed —
- * it tells a same-process listener what pi-lens just mutated, in the past
+ * it tells a same-process listener what choco-pi-lsp just mutated, in the past
  * tense. #673 reported a concrete failure mode this leaves uncovered: another
  * in-process extension (a review/snapshot controller) derives an immutable
- * candidate tree from the live worktree mid-turn, unaware that pi-lens has a
+ * candidate tree from the live worktree mid-turn, unaware that choco-pi-lsp has a
  * file queued for deferred formatting that will still land — silently
  * invalidating the snapshot it just took. There was no bus signal for either
  * of the two moments that matter to that use case:
@@ -29,7 +29,7 @@
  *      (`pilens:format:start` — one event per batch, only when there is at
  *      least one queued file to format).
  *
- * This is deliberately visibility-only: it lets a listener know pi-lens MIGHT
+ * This is deliberately visibility-only: it lets a listener know choco-pi-lsp MIGHT
  * or IS ABOUT TO mutate specific files via deferred formatting, so it can
  * choose to wait, re-derive, or flag its own snapshot as provisional. It is
  * NOT a synchronous flush/barrier API (a caller cannot block deferred
@@ -97,7 +97,7 @@ export const BUS_AUTOFIX_START_VERSION = 1;
 
 export interface FormatQueuedPayload {
 	v: typeof BUS_FORMAT_QUEUED_VERSION;
-	source: "pi-lens";
+	source: "choco-pi-lsp";
 	filePath: string;
 	cwd: string;
 	tool: "write" | "edit";
@@ -106,7 +106,7 @@ export interface FormatQueuedPayload {
 
 export interface FormatStartPayload {
 	v: typeof BUS_FORMAT_START_VERSION;
-	source: "pi-lens";
+	source: "choco-pi-lsp";
 	cwd: string;
 	paths: string[];
 	fileCount: number;
@@ -115,7 +115,7 @@ export interface FormatStartPayload {
 
 export interface AutofixStartPayload {
 	v: typeof BUS_AUTOFIX_START_VERSION;
-	source: "pi-lens";
+	source: "choco-pi-lsp";
 	cwd: string;
 	paths: string[];
 	fileCount: number;
@@ -213,7 +213,7 @@ export function publishFormatQueued(args: PublishFormatQueuedArgs): void {
 	try {
 		const payload: FormatQueuedPayload = {
 			v: BUS_FORMAT_QUEUED_VERSION,
-			source: "pi-lens",
+			source: "choco-pi-lsp",
 			filePath: normalizeFilePath(args.filePath),
 			cwd: normalizeFilePath(args.cwd),
 			tool: args.tool,
@@ -295,7 +295,7 @@ export function publishFormatStart(args: PublishFormatStartArgs): void {
 		const paths = args.paths.map((p) => normalizeFilePath(p));
 		const payload: FormatStartPayload = {
 			v: BUS_FORMAT_START_VERSION,
-			source: "pi-lens",
+			source: "choco-pi-lsp",
 			cwd: normalizeFilePath(args.cwd),
 			paths,
 			fileCount: paths.length,
@@ -380,7 +380,7 @@ export function publishAutofixStart(args: PublishAutofixStartArgs): void {
 		const paths = args.paths.map((p) => normalizeFilePath(p));
 		const payload: AutofixStartPayload = {
 			v: BUS_AUTOFIX_START_VERSION,
-			source: "pi-lens",
+			source: "choco-pi-lsp",
 			cwd: normalizeFilePath(args.cwd),
 			paths,
 			fileCount: paths.length,

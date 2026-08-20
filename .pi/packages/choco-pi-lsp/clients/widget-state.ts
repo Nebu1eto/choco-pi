@@ -101,7 +101,7 @@ export interface WidgetDiagnostic {
 }
 
 /**
- * A diagnostic is "blocking" when pi-lens classifies it as a hard stop
+ * A diagnostic is "blocking" when choco-pi-lsp classifies it as a hard stop
  * (`semantic === "blocking"`). Falls back to severity for sources that
  * don't set `semantic` (raw tsc/eslint diagnostics) so the red dot still
  * fires on traditional compile errors.
@@ -158,7 +158,7 @@ let requestRenderFn: (() => void) | null = null;
 
 /**
  * Guards `recordDiagnostics` writes against the same race class fixed for
- * `clients/lsp/client.ts` in #555: pi-lens allows concurrent pipeline runs
+ * `clients/lsp/client.ts` in #555: choco-pi-lsp allows concurrent pipeline runs
  * for the same file across different same-turn edits, so an older edit's
  * (slower) pipeline can finish its `recordDiagnostics` call AFTER a newer
  * edit's (faster) pipeline already recorded fresher diagnostics for that
@@ -736,7 +736,7 @@ export function reconcileCascadeNeighborLspErrors(
  * `recordDiagnostics` is otherwise only reachable from `pipeline.ts`'s
  * per-edit dispatch, so a file that becomes stale/fresh purely because of a
  * change to some OTHER file it depends on (and is never itself re-edited
- * through pi-lens) has no path to correct the footer — a full scan proves
+ * through choco-pi-lsp) has no path to correct the footer — a full scan proves
  * the fresher truth but had nowhere to put it. This is that path, shared by
  * both call sites so there's exactly one place that decides whether a scan
  * result is trustworthy enough to write.
@@ -784,7 +784,7 @@ export function reconcileScanDiagnostics(
 }
 
 /**
- * Drop widget entries whose file changed on disk after pi-lens last recorded
+ * Drop widget entries whose file changed on disk after choco-pi-lsp last recorded
  * them (`mtimeMs > touchedAt` → the recorded diagnostics predate the current
  * content → stale) or that no longer exist. Keeps `diagnostics_report` from
  * surfacing findings the agent already fixed (or that an external edit
@@ -989,7 +989,7 @@ export interface FileDiagnosticSummary {
 }
 
 /**
- * Return current diagnostics for every file pi-lens has seen this session.
+ * Return current diagnostics for every file choco-pi-lsp has seen this session.
  * Used by diagnostics_report tool (mode: "all"). Exposes the FULL per-file
  * diagnostic set — decoupled from the widget's display cap — so the agent sees
  * everything, not just the 12 the TUI keeps for rendering.
@@ -1129,7 +1129,7 @@ export function renderWidget(
 	const lspChip =
 		useHorizontal && spawning.length > 0 ? "  " + dim("LSP↑") : "";
 
-	const header = ` ${cyan("pi-lens")}${langStr ? "  " + dim(langStr) : ""}${lspChip}${summary ? "  " + summary : ""}`;
+	const header = ` ${cyan("choco-pi-lsp")}${langStr ? "  " + dim(langStr) : ""}${lspChip}${summary ? "  " + summary : ""}`;
 	lines.push(fitLine(header, w));
 
 	// File list — display order varies by mode
@@ -1163,7 +1163,7 @@ export function renderWidget(
 		// #1641: gate only the ONE record whose line numbers are about to be
 		// rendered, not the whole (potentially session-long) `deduped` list the
 		// header counts read — one memoized stat per redraw, never a per-file
-		// scan of every file pi-lens has touched this session. A past-EOF
+		// scan of every file choco-pi-lsp has touched this session. A past-EOF
 		// citation demoted here can leave the header's aggregate blocking count
 		// one turn stale; `reconcileStaleWidgetFiles`'s existing debounced sweep
 		// (scheduleStaleReconcile) already re-derives that aggregate on its own

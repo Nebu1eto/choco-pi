@@ -43,8 +43,8 @@ export function supportsDeferredTools(
  *
  * Every OTHER reason (fork/reload/resume) is a session REBUILD: the host
  * constructs a brand-new AgentSession with `includeAllExtensionTools: true`
- * (pi `core/agent-session.js`), so every registered pi-lens tool is active
- * again by the time our handler runs, while pi-lens's own extension closure
+ * (pi `core/agent-session.js`), so every registered choco-pi-lsp tool is active
+ * again by the time our handler runs, while choco-pi-lsp's own extension closure
  * state survives. Those reasons must RESTORE the previous posture, not skip.
  */
 export function isFreshSessionStart(reason: unknown): boolean {
@@ -61,7 +61,7 @@ export interface ToolSetPlan {
 }
 
 /**
- * Compute the active-tool set pi-lens wants: everything currently active that
+ * Compute the active-tool set choco-pi-lsp wants: everything currently active that
  * is not a lazy tool, plus exactly the lazy tools the model activated in this
  * logical session (`remembered`).
  *
@@ -107,7 +107,7 @@ export function planToolSet(
 export function recordToolSetMutation(mutation: ToolSetMutation): void {
 	logLatency({
 		type: "phase",
-		filePath: "<pi-lens>",
+		filePath: "<choco-pi-lsp>",
 		phase: "tool_set_mutation",
 		durationMs: 0,
 		metadata: { ...mutation },

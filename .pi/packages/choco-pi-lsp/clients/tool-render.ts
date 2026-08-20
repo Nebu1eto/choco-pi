@@ -2,7 +2,7 @@
  * Opt-in compact one-line tool-result rendering (#1327).
  *
  * pi renders a tool call as two rows by default: the tool-name/args row
- * (`renderCall`) and the result row (`renderResult`). Most pi-lens tools
+ * (`renderCall`) and the result row (`renderResult`). Most choco-pi-lsp tools
  * already supply a `renderResult` via `tools/render-compact.ts`'s
  * `compactRenderResult` — a collapsed one-line summary (brand-blue) plus the
  * full output when expanded. This module adds a further, OPT-IN layer that
@@ -64,7 +64,7 @@ function fullTextOf(result: CompactLineResultLike): string {
 /**
  * Build the collapsed compact line from a tool's ALREADY-COMPUTED summary
  * text (verbatim reuse — see module doc). `summaryText` is expected in the
- * `<name/hint> — <detail>` shape every pi-lens summarizer already produces
+ * `<name/hint> — <detail>` shape every choco-pi-lsp summarizer already produces
  * (e.g. `diagnostics_report all — 3 blocking · 3 errors · 2 warnings (1 file)`);
  * when the separator is absent the whole string is styled as one span
  * instead of guessing a split point.

@@ -44,7 +44,7 @@
  *     past a cap), keyed on BOTH mtime AND size (review round V1) — mtime
  *     ALONE is not a reliable cache key on hosts where its resolution is
  *     coarser than back-to-back writes: a truncate-then-write, a formatter
- *     write-back, or pi-lens's own auto-format immediately followed by the
+ *     write-back, or choco-pi-lsp's own auto-format immediately followed by the
  *     agent's write can land two DIFFERENT contents on the identical
  *     `mtimeMs`, and a mtime-only cache serves the first content's count for
  *     the second — measured live at 207/300 shrink/restore cycles. Requiring
@@ -91,7 +91,7 @@ interface LineCountCacheEntry {
 	 * Byte size at the time `lineCount` was computed. Required alongside
 	 * `mtimeMs` for a cache HIT (review round V1): mtime resolution on this
 	 * host is coarse enough (~1ms) that two writes in the same tick —
-	 * truncate-then-write, a formatter write-back, a checkout, pi-lens's own
+	 * truncate-then-write, a formatter write-back, a checkout, choco-pi-lsp's own
 	 * auto-format immediately followed by the agent's write — can land on the
 	 * IDENTICAL `mtimeMs` while the content differs. Measured live: 207/300
 	 * shrink/restore cycles served the wrong line count keyed on mtime alone,

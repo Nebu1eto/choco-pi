@@ -1,5 +1,5 @@
 /**
- * Post-write pipeline for pi-lens
+ * Post-write pipeline for choco-pi-lsp
  *
  * Extracted from index.ts tool_result handler.
  * Runs sequentially on every file write/edit:
@@ -102,7 +102,7 @@ const AUTOFIX_CHANGED_FILE_SCAN_LIMIT = 5000;
  * proceeds; the dispatch LSP runner, which has its own 30s cap, still tries).
  */
 function lspSyncBudgetMs(): number {
-	const raw = Number(process.env.PI_LENS_LSP_SYNC_BUDGET_MS);
+	const raw = Number(process.env.CHOCO_PI_LSP_LSP_SYNC_BUDGET_MS);
 	return Number.isFinite(raw) && raw > 0 ? raw : 3000;
 }
 
@@ -312,7 +312,7 @@ export interface PipelineResult {
 	isError: boolean;
 	/** True if file was modified by format/autofix */
 	fileModified: boolean;
-	/** Files modified by pi-lens format/autofix, including side-effect files. */
+	/** Files modified by choco-pi-lsp format/autofix, including side-effect files. */
 	changedFiles?: string[];
 	/** Blocking-only formatted output for turn_end re-surfacing if agent didn't fix */
 	inlineBlockerSummary?: string;

@@ -1,9 +1,9 @@
-# pi-lens bundled default typos allowlist (#967).
+# choco-pi-lsp bundled default typos allowlist (#967).
 #
 # This file is injected as `initializationOptions.config` for the `typos-lsp`
 # auxiliary server ONLY when a project has no local typos config of its own
 # (`typos.toml` / `_typos.toml` / `.typos.toml` — see clients/typos-config.ts).
-# Any project-owned config always wins outright: pi-lens injects nothing in
+# Any project-owned config always wins outright: choco-pi-lsp injects nothing in
 # that case, so this file never merges with (and can never outrank) a team's
 # own allowlist.
 #

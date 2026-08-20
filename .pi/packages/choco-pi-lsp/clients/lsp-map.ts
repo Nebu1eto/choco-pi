@@ -68,7 +68,7 @@ export interface AggregatedFileGraph {
 }
 
 export interface AggregateOptions {
-	/** Cap on rendered file nodes; default resolved by the caller (env PI_LENS_MAP_MAX_NODES, else 500). */
+	/** Cap on rendered file nodes; default resolved by the caller (env CHOCO_PI_LSP_MAP_MAX_NODES, else 500). */
 	maxNodes?: number;
 	/**
 	 * Normalized file ids (per `normalizeMapKey`) to exclude from the map.
@@ -155,7 +155,7 @@ export function aggregateGraphToFiles(
 	}
 
 	// ── Pass 2: canonicalize compiled twins ─────────────────────────────────
-	// pi-lens (and many TS projects) compile in place, so the review graph's
+	// choco-pi-lsp (and many TS projects) compile in place, so the review graph's
 	// import resolution frequently lands on the compiled `X.js` sibling of an
 	// `X.ts` source. Rendering both as separate map nodes doubles the project
 	// and splits each file's edges across the pair. When BOTH the compiled
@@ -666,7 +666,7 @@ export function renderMapHtml(payload: LensMapPayload): string {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" />
-<title>pi-lens project map</title>
+<title>choco-pi-lsp project map</title>
 <style>
   :root {
     color-scheme: light;
@@ -738,7 +738,7 @@ export function renderMapHtml(payload: LensMapPayload): string {
 <body>
 <noscript>This project map needs JavaScript to render the interactive graph.</noscript>
 <header>
-  <h1>pi-lens project map</h1>
+  <h1>choco-pi-lsp project map</h1>
   <div class="stats">
     <span><strong id="stat-files">-</strong> files</span>
     <span><strong id="stat-edges">-</strong> edges</span>
@@ -1126,7 +1126,7 @@ export function renderMapHtml(payload: LensMapPayload): string {
   var searchInput = document.getElementById("search-input");
   if (searchInput) {
     // No debounce: recomputeVisibility is a single O(nodes+edges) pass and
-    // the map caps at PI_LENS_MAP_MAX_NODES (500 default) — cheap per input.
+    // the map caps at CHOCO_PI_LSP_MAP_MAX_NODES (500 default) — cheap per input.
     searchInput.addEventListener("input", function () {
       searchTerm = searchInput.value.trim().toLowerCase();
       recomputeVisibility();
@@ -1202,7 +1202,7 @@ export interface GenerateLensMapResult {
 }
 
 function resolveMaxNodes(): number {
-	const raw = process.env.PI_LENS_MAP_MAX_NODES?.trim();
+	const raw = process.env.CHOCO_PI_LSP_MAP_MAX_NODES?.trim();
 	if (!raw) return DEFAULT_MAX_MAP_NODES;
 	const parsed = Number(raw);
 	return Number.isFinite(parsed) && parsed > 0

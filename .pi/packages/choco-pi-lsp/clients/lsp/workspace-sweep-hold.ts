@@ -175,6 +175,6 @@ export function _resetWorkspaceSweepHoldForTests(): void {
  * override mid-run.
  */
 export function getFullScanWallClockMs(): number {
-	const raw = Number(process.env.PI_LENS_LENS_DIAGNOSTICS_FULL_TIMEOUT_MS);
+	const raw = Number(process.env.CHOCO_PI_LSP_LENS_DIAGNOSTICS_FULL_TIMEOUT_MS);
 	return Number.isFinite(raw) && raw > 0 ? raw : 300_000; // 5 min default
 }

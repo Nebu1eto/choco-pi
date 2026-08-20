@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
 
 /**
- * The moment pi-lens's module graph started evaluating, captured as this
+ * The moment choco-pi-lsp's module graph started evaluating, captured as this
  * module's first statement (#1374 host-boot vs extension-eval split).
  *
  * This module is otherwise side-effect-free by design (#1434 S3d review): it
@@ -15,4 +15,4 @@ import { performance } from "node:perf_hooks";
  * means importing this module, or `startup-timing.ts`, never installs
  * anything.
  */
-export const PI_LENS_EVAL_STARTED_MS = performance.now();
+export const CHOCO_PI_LSP_EVAL_STARTED_MS = performance.now();

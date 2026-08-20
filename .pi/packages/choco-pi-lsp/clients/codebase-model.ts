@@ -8,7 +8,7 @@
  *
  * This is intentionally internal-only. The one agent-facing surface is a
  * single dbg log line at session-start so quality can be assessed via
- * ~/.pi-lens/sessionstart.log before any agent exposure.
+ * ~/.choco-pi-lsp/sessionstart.log before any agent exposure.
  */
 
 import * as fs from "node:fs";

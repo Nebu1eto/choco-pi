@@ -1,5 +1,5 @@
 /**
- * Test Runner Client for pi-lens
+ * Test Runner Client for choco-pi-lsp
  *
  * Detects test files and runs them on write/edit to provide
  * immediate test feedback to the AI agent.
@@ -1170,7 +1170,7 @@ export class TestRunnerClient {
 	 *
 	 * Wall-clock SPAN across suites (max end - min start), not a sum: suites in
 	 * one payload may have run in parallel workers, and summing would report
-	 * more elapsed time than the run took. With the single suite pi-lens
+	 * more elapsed time than the run took. With the single suite choco-pi-lsp
 	 * actually produces (one test file per invocation) the two agree.
 	 *
 	 * The span excludes the runner's own startup: the top-level `startTime` is
@@ -1584,7 +1584,7 @@ export class TestRunnerClient {
 	 *   which would report a wrong number rather than none. Surefire 2.x wrote
 	 *   `sec` where 3.x writes `s`; both are accepted.
 	 *
-	 *   EXPECT THIS TO BE ABSENT IN PRACTICE. pi-lens invokes `mvn test -q`
+	 *   EXPECT THIS TO BE ABSENT IN PRACTICE. choco-pi-lsp invokes `mvn test -q`
 	 *   (see RUNNERS.maven above), and surefire logs its per-class `Tests run:
 	 *   ..., Time elapsed: ...` lines at INFO, which `-q` suppresses. Only the
 	 *   ERROR-level lines of a FAILING class survive, so a green maven run
@@ -1797,7 +1797,7 @@ export class TestRunnerClient {
 		// and the last is the last module: a `--fail-at-end` build whose first
 		// module had 3 failures and whose second module was green would report
 		// 0 failures, turning a red build into `PASS` in the turn-end log. That
-		// is reachable without pi-lens passing the flag, because maven also
+		// is reachable without choco-pi-lsp passing the flag, because maven also
 		// reads `.mvn/maven.config` and `MAVEN_ARGS`.
 		//
 		// So: SUM the aggregates. That makes counts reactor-wide, the same

@@ -79,8 +79,8 @@ export function markTreeSitterWasmAborted(): void {
 	// render path (#1333); the machine-readable record is the logTreeSitter
 	// `runtime_abort` entry below.
 	notifyUserDegradation(
-		"pi-lens: tree-sitter WASM runtime aborted; structural analysis is disabled " +
-			"for this process. Restart the pi-lens extension/MCP server to recover.",
+		"choco-pi-lsp: tree-sitter WASM runtime aborted; structural analysis is disabled " +
+			"for this process. Restart the choco-pi-lsp extension/MCP server to recover.",
 		"error",
 	);
 	logTreeSitter({

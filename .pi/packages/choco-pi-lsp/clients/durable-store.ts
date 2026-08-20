@@ -1,6 +1,6 @@
 /**
  * Synchronous locked read-modify-write commit seam for behavior-gating JSON
- * stores shared by multiple pi-lens processes.
+ * stores shared by multiple choco-pi-lsp processes.
  *
  * The authoritative read happens only after the bounded PID lock is held; the
  * caller merges only its delta, publication is a throwing atomic replacement,

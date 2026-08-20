@@ -75,9 +75,9 @@ export interface ActionableWarningsReport {
 		 * countable instead of arriving indistinguishable from a real warning.
 		 *
 		 * OPTIONAL on purpose: this report is persisted to
-		 * `.pi-lens/cache/actionable-warnings.json` and read back by
+		 * `.choco-pi-lsp/cache/actionable-warnings.json` and read back by
 		 * `clients/runtime-agent-end.ts` and `tools/diagnostics-report.ts`, which
-		 * can find a file written by a pi-lens build that predates the field.
+		 * can find a file written by a choco-pi-lsp build that predates the field.
 		 * Every reader must tolerate its absence.
 		 */
 		byTier?: { warning: number; info: number; hint: number; error: number };
@@ -871,7 +871,7 @@ export function formatActionableWarningsAdvisory(
 	return [
 		`🟡 Fixable warnings introduced this turn: ${report.summary.unsuppressed}.${safe}`,
 		tierLine,
-		`Details written to .pi-lens/cache/actionable-warnings.json`,
+		`Details written to .choco-pi-lsp/cache/actionable-warnings.json`,
 		fileList ? `Files:\n${fileList}${more}` : undefined,
 		"If continuing in these files, read that JSON and resolve warnings that are safe and relevant. Do not apply broad refactors unless requested.",
 	]

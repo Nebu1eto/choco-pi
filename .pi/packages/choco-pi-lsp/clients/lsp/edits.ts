@@ -100,7 +100,7 @@ export interface ApplyWorkspaceEditOptions {
 	positionEncoding?: PositionEncoding;
 	/** Current client-side LSP document versions, keyed by normalized path. */
 	documentVersions?: ReadonlyMap<string, number>;
-	/** Optional shared bookkeeping for a mutation initiated by pi-lens. */
+	/** Optional shared bookkeeping for a mutation initiated by choco-pi-lsp. */
 	mutationContext?: LspMutationContext;
 	/** Rename flows use one outer bookkeeping record after their resource rename. */
 	observe?: boolean;

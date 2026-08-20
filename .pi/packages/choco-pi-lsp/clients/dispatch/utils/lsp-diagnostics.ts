@@ -11,7 +11,7 @@ export interface ConvertLspDiagnosticsOptions {
 	 * (`${source}:${code}`) — which meant the SAME finding got a different
 	 * `rule` depending on which path converted it (`ast-grep:<id>` per-edit vs
 	 * `lens_diagnostics_full:<id>` from a scan), breaking dedup identity,
-	 * inline `pi-lens-ignore` suppression, and tool-provenance re-tagging for
+	 * inline `choco-pi-lsp-ignore` suppression, and tool-provenance re-tagging for
 	 * every scan-reconciled entry (#692). Provenance must never leak into an
 	 * identity field, so it now lives here instead — a dedicated, purely
 	 * informational field on `Diagnostic` (`scanOrigin`) that dedup/suppression

@@ -1,8 +1,8 @@
 /**
  * Host shim for the MCP path.
  *
- * pi-lens's dispatch core only couples to the host through a single-method
- * interface — `PiAgentAPI.getFlag`. When pi-lens runs *inside pi*, that flag
+ * choco-pi-lsp's dispatch core only couples to the host through a single-method
+ * interface — `PiAgentAPI.getFlag`. When choco-pi-lsp runs *inside pi*, that flag
  * resolver is backed by pi's CLI flags + project/global config. When it runs as
  * an MCP server (no pi process, no CLI flags), we back it by project/global
  * config + env + optional per-call overrides instead. This is the *entire* host

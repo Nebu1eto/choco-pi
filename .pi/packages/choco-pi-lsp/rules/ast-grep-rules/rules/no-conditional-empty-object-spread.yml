@@ -9,7 +9,7 @@ note: |
   alternative is an empty object literal), not by exact source text, so
   it also catches the un-parenthesized and multi-property-spread forms.
 
-  FP-scan finding (pi-lens codebase, clients/ tools/ mcp/ index.ts): 147
+  FP-scan finding (choco-pi-lsp codebase, clients/ tools/ mcp/ index.ts): 147
   hits, and every sampled hit is this exact shape used deliberately to
   build an optional-field object (`...(hit.annotations ? {
   annotations: hit.annotations } : {})`). That is a real, established

@@ -1,5 +1,5 @@
 /**
- * File Role Classification for pi-lens
+ * File Role Classification for choco-pi-lsp
  *
  * Classifies files by their structural role in the project so runners
  * can skip checks that don't apply (e.g. no complexity checks on generated

@@ -1,5 +1,5 @@
 /**
- * LSP Client for pi-lens
+ * LSP Client for choco-pi-lsp
  *
  * Handles JSON-RPC communication with language servers:
  * - Initialize/shutdown lifecycle
@@ -396,7 +396,7 @@ export interface LSPClientInfo {
 	/** Commands the server advertised for workspace/executeCommand (the allowlist) */
 	getAdvertisedCommands(): string[];
 	/** Top-level keys of the raw ServerCapabilities advertised at initialize —
-	 *  the full advertised surface (incl. providers pi-lens does not parse). */
+	 *  the full advertised surface (incl. providers choco-pi-lsp does not parse). */
 	getRawCapabilityKeys(): string[];
 	/** See `LSPServerInfo.spawn`'s `launchVariant` (server.ts) — which concrete
 	 *  binary/protocol variant this client instance is actually running.
@@ -528,7 +528,7 @@ export interface LSPClientInfo {
 // --- Constants ---
 
 const INITIALIZE_TIMEOUT_MS = positiveIntFromEnv(
-	"PI_LENS_LSP_INIT_TIMEOUT_MS",
+	"CHOCO_PI_LSP_LSP_INIT_TIMEOUT_MS",
 	15_000,
 ); // 15s — npx downloads are handled by ensureTool, not here
 
@@ -546,10 +546,10 @@ const INITIALIZE_TIMEOUT_MS = positiveIntFromEnv(
  */
 export const CLIENT_CAPABILITIES = {
 	general: { positionEncodings: ADVERTISED_POSITION_ENCODINGS },
-	// #974: workDoneProgress is intentionally NOT advertised. pi-lens never
+	// #974: workDoneProgress is intentionally NOT advertised. choco-pi-lsp never
 	// consumes `$/progress` notifications (grepped: zero listeners anywhere in
 	// clients/), so declaring the capability only invites servers to open
-	// progress tokens pi-lens will silently ignore — and opengrep's
+	// progress tokens choco-pi-lsp will silently ignore — and opengrep's
 	// `--experimental` LSP mode crash-loops when it can't parse our
 	// spec-correct `{"result": null}` reply to its
 	// `window/workDoneProgress/create` request. "Only advertise what you
@@ -588,15 +588,15 @@ export const CLIENT_CAPABILITIES = {
 	},
 } as const;
 const NAV_REQUEST_TIMEOUT_MS = positiveIntFromEnv(
-	"PI_LENS_LSP_NAV_REQUEST_TIMEOUT_MS",
+	"CHOCO_PI_LSP_LSP_NAV_REQUEST_TIMEOUT_MS",
 	10_000,
 ); // 10s — per-request ceiling; prevents heavy servers (vue, svelte) from hanging
 const DIAGNOSTICS_WAIT_TIMEOUT_MS = positiveIntFromEnv(
-	"PI_LENS_LSP_DIAGNOSTICS_WAIT_MS",
+	"CHOCO_PI_LSP_LSP_DIAGNOSTICS_WAIT_MS",
 	10_000,
 );
 const PULL_DIAGNOSTICS_RETRY_INTERVAL_MS = positiveIntFromEnv(
-	"PI_LENS_LSP_PULL_RETRY_INTERVAL_MS",
+	"CHOCO_PI_LSP_LSP_PULL_RETRY_INTERVAL_MS",
 	250,
 );
 // Per-request ceiling for pull diagnostics (textDocument/diagnostic), mirroring
@@ -606,7 +606,7 @@ const PULL_DIAGNOSTICS_RETRY_INTERVAL_MS = positiveIntFromEnv(
 // the diagnostics flush. On timeout the request is treated as `unavailable`, which
 // (per #240) is NOT read as clean and falls through to the bounded push backstop.
 const PULL_REQUEST_TIMEOUT_MS = positiveIntFromEnv(
-	"PI_LENS_LSP_PULL_REQUEST_TIMEOUT_MS",
+	"CHOCO_PI_LSP_LSP_PULL_REQUEST_TIMEOUT_MS",
 	10_000,
 );
 // #1773: the smallest budget this codebase treats as usable — dispatching
@@ -626,7 +626,7 @@ const PULL_REQUEST_TIMEOUT_MS = positiveIntFromEnv(
 // still gets a real attempt.
 const PULL_MIN_USABLE_BUDGET_MS = 5;
 const SHUTDOWN_REQUEST_TIMEOUT_MS = positiveIntFromEnv(
-	"PI_LENS_LSP_SHUTDOWN_TIMEOUT_MS",
+	"CHOCO_PI_LSP_LSP_SHUTDOWN_TIMEOUT_MS",
 	1000,
 );
 // #1620: the `exit` NOTIFICATION needs its own ceiling, for the same reason the
@@ -637,7 +637,7 @@ const SHUTDOWN_REQUEST_TIMEOUT_MS = positiveIntFromEnv(
 // unbounded await was the whole mechanism of the leak. Kept equal to the request
 // budget: a healthy server still gets a brief graceful window before the kill.
 const EXIT_NOTIFY_TIMEOUT_MS = positiveIntFromEnv(
-	"PI_LENS_LSP_EXIT_NOTIFY_TIMEOUT_MS",
+	"CHOCO_PI_LSP_LSP_EXIT_NOTIFY_TIMEOUT_MS",
 	1000,
 );
 // #1277: cheap liveness round-trip for the silent-clean gates (`index.ts`).
@@ -649,7 +649,7 @@ const EXIT_NOTIFY_TIMEOUT_MS = positiveIntFromEnv(
 // connection round-trips SOMETHING before the touch reports clean, not
 // complete a real navigation request.
 const LIVENESS_PING_TIMEOUT_MS = positiveIntFromEnv(
-	"PI_LENS_LSP_LIVENESS_PING_TIMEOUT_MS",
+	"CHOCO_PI_LSP_LSP_LIVENESS_PING_TIMEOUT_MS",
 	300,
 );
 // Distinctive, unlikely-to-collide query string — the response content is
@@ -701,14 +701,14 @@ async function mapWithConcurrency<T>(
 // stops a hung server from blocking the caller forever. On timeout the command
 // may still be applying server-side; we surface that rather than pretend it ran.
 const EXECUTE_COMMAND_TIMEOUT_MS = positiveIntFromEnv(
-	"PI_LENS_LSP_EXECUTE_COMMAND_TIMEOUT_MS",
+	"CHOCO_PI_LSP_LSP_EXECUTE_COMMAND_TIMEOUT_MS",
 	30_000,
 );
 // #1412 H1: short ceiling for the read-only tsserver project-identity probe.
 // This is a telemetry sample, not a mutation — it must never hold the door
 // open for anything close to EXECUTE_COMMAND_TIMEOUT_MS.
 const PROBE_COMMAND_TIMEOUT_MS = positiveIntFromEnv(
-	"PI_LENS_LSP_PROJECT_IDENTITY_PROBE_TIMEOUT_MS",
+	"CHOCO_PI_LSP_LSP_PROJECT_IDENTITY_PROBE_TIMEOUT_MS",
 	2_500,
 );
 
@@ -934,7 +934,7 @@ export interface LSPClientState {
 	 *  — None (0), Full (1) or Incremental (2). Optional so existing state
 	 *  literals across the test suite don't all need updating; every read site
 	 *  falls back to `TEXT_DOCUMENT_SYNC_KIND_FULL`, which is the whole-document
-	 *  `{ text }` shape pi-lens has always sent — an absent value never changes
+	 *  `{ text }` shape choco-pi-lsp has always sent — an absent value never changes
 	 *  behavior. Set once at initialize, next to `positionEncoding`. */
 	syncKind?: TextDocumentSyncKind;
 	/** Baseline mode from static initResult — used to revert on unregister */
@@ -1663,7 +1663,7 @@ function recordSentContent(
  * #1669: the `contentChanges` array for a `textDocument/didChange` notification.
  *
  * Full/None (or unrecognized/absent) sync kind: unchanged — a single
- * whole-document `{ text }` event, the shape pi-lens has always sent.
+ * whole-document `{ text }` event, the shape choco-pi-lsp has always sent.
  *
  * Incremental: a server registering Incremental-only expects every change
  * event to carry a `range`; a shapeless whole-document event is out of spec
@@ -2578,7 +2578,7 @@ async function pullDiagnosticSource(
 		// (`recordSentContent` runs unconditionally on every didOpen/didChange,
 		// regardless of push/pull mode), so this costs no extra read. A pull
 		// response describes whatever the server had when it answered, which for
-		// a pi-lens-opened document is exactly that last-sent payload.
+		// a choco-pi-lsp-opened document is exactly that last-sent payload.
 		const sentHash = state.documentContentHashes.get(normalizedPath)?.hash;
 		// #1667: two ways this answer can already be obsolete, and neither may
 		// write. Report the round trip as unavailable - a superseded answer is not
@@ -3663,9 +3663,9 @@ async function toWirePosition(
 // #276: drop a navigation result whose document was edited while the request was
 // in flight. Mirrors the diagnostics-path staleness check (isVersionStale) which
 // compares the version computed-against to the latest didChange. Default on;
-// PI_LENS_LSP_NAV_STALE_DROP=0 disables it if it ever over-drops.
+// CHOCO_PI_LSP_LSP_NAV_STALE_DROP=0 disables it if it ever over-drops.
 function navStaleDropEnabled(): boolean {
-	return process.env.PI_LENS_LSP_NAV_STALE_DROP !== "0";
+	return process.env.CHOCO_PI_LSP_LSP_NAV_STALE_DROP !== "0";
 }
 
 // Exported for the timeout regression tests (#365). `timeoutMs` overrides the
@@ -4939,7 +4939,7 @@ async function safeSendRequest<T>(
 	try {
 		// One safe retry on ContentModified (-32801): the document changed under
 		// us, so the server discarded the request. A single retry beats returning
-		// empty — correctness-under-edit is pi-lens's whole hot path (#238 Item 2).
+		// empty — correctness-under-edit is choco-pi-lsp's whole hot path (#238 Item 2).
 		const MAX_ATTEMPTS = 2;
 		for (let attempt = 1; ; attempt++) {
 			try {

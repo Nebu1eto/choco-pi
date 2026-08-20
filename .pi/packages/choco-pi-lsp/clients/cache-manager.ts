@@ -1,10 +1,10 @@
 /**
- * CacheManager for pi-lens.
+ * CacheManager for choco-pi-lsp.
  *
  * Manages persistent cache for scanner results and turn state.
  * Provides read/write/freshness checks for:
- * - Scanner cache: .pi-lens/cache/{scanner}.json
- * - Turn state: .pi-lens/turn-state.json
+ * - Scanner cache: .choco-pi-lsp/cache/{scanner}.json
+ * - Turn state: .choco-pi-lsp/turn-state.json
  *
  * All paths are relative to project root (process.cwd()).
  */

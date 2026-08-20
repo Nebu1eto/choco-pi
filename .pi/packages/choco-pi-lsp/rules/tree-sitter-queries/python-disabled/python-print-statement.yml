@@ -8,7 +8,7 @@
 # migrations/ directories where print() is the right tool. The rule doesn't respect
 # # noqa: T201 suppressions (would require preprocessor pass on the source).
 #
-# Most legitimate production-code print() usage in pi-lens codebases is found by
+# Most legitimate production-code print() usage in choco-pi-lsp codebases is found by
 # ruff T201 already — this rule duplicates that with worse signal-to-noise.
 # Re-enable if a robust noqa-aware filter is added.
 

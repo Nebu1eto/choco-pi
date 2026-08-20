@@ -1,6 +1,6 @@
 /**
  * Normalize a rule id to the form a user typically writes in a
- * `pi-lens-ignore` comment, an inline suppression, or a project-level
+ * `choco-pi-lsp-ignore` comment, an inline suppression, or a project-level
  * `disable`/`select` list. Strips the `ast-grep:` LSP source prefix and the
  * language suffix used by the rule catalogs.
  */

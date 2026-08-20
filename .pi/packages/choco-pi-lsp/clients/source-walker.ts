@@ -79,7 +79,7 @@ export async function readDirEntriesSafeAsync(
 }
 
 export interface DirWalkPolicy {
-	/** Project ignore rules (.gitignore + .pi-lens.json), from `getProjectIgnoreMatcher`. */
+	/** Project ignore rules (.gitignore + .choco-pi-lsp.json), from `getProjectIgnoreMatcher`. */
 	ignoreMatcher: ProjectIgnoreMatcher;
 	/** Extra directory-name/glob patterns to exclude, merged with the shared default list. */
 	extraExcludeDirs?: string[];

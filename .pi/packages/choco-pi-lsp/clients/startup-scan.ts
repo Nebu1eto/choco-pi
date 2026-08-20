@@ -1,7 +1,7 @@
 /**
  * Startup scan safety — gates eager cache warmups to real project roots.
  *
- * Prevents pi-lens from scanning $HOME or generic directories at session
+ * Prevents choco-pi-lsp from scanning $HOME or generic directories at session
  * start, which would hang or produce meaningless results.
  *
  * Credit: alexx-ftw (PR #1)
@@ -96,13 +96,13 @@ const DEFAULT_STARTUP_SCAN_VERDICT_TTL_MS = 24 * 60 * 60 * 1000;
  * How long a persisted `too-many-source-files` verdict stays reusable before
  * a session re-walks the tree to refresh it (#699).
  *
- * Resolution order: `PI_LENS_STARTUP_SCAN_VERDICT_TTL_MS` env var, else the
+ * Resolution order: `CHOCO_PI_LSP_STARTUP_SCAN_VERDICT_TTL_MS` env var, else the
  * 24h default. Lazy + memoized (via `lazyEnvNumber`, #763) so importing this
  * module never touches `process.env` at load time (house style — see
  * `runtime-config.ts` / `slow-fs.ts` / `subagent-mode.ts`).
  */
 const _ttl = lazyEnvNumber(
-	"PI_LENS_STARTUP_SCAN_VERDICT_TTL_MS",
+	"CHOCO_PI_LSP_STARTUP_SCAN_VERDICT_TTL_MS",
 	DEFAULT_STARTUP_SCAN_VERDICT_TTL_MS,
 );
 export const getStartupScanVerdictTtlMs = _ttl.get;
@@ -114,13 +114,13 @@ export const _resetStartupScanVerdictTtlForTests = _ttl._resetForTests;
 /**
  * Total directory-entry ceiling for the startup source-count walk (#758).
  *
- * Resolution order: `PI_LENS_STARTUP_SCAN_MAX_ENTRIES` env var, else the
+ * Resolution order: `CHOCO_PI_LSP_STARTUP_SCAN_MAX_ENTRIES` env var, else the
  * `MAX_STARTUP_SCAN_ENTRIES` default. Lazy + memoized (via `lazyEnvNumber`,
  * #763) so importing this module never touches `process.env` at load time
  * (same house style as `getStartupScanVerdictTtlMs`).
  */
 const _maxEntries = lazyEnvNumber(
-	"PI_LENS_STARTUP_SCAN_MAX_ENTRIES",
+	"CHOCO_PI_LSP_STARTUP_SCAN_MAX_ENTRIES",
 	MAX_STARTUP_SCAN_ENTRIES,
 );
 export const getStartupScanMaxEntries = _maxEntries.get;
@@ -138,7 +138,7 @@ export const _resetStartupScanMaxEntriesForTests = _maxEntries._resetForTests;
  * can shrink below `MAX_STARTUP_SOURCE_FILES` (or below the entry ceiling)
  * between sessions, and nothing else would notice
  * — the seq-based freshness check that guards every other
- * `project-snapshot.json` field never fires for them, because pi-lens never
+ * `project-snapshot.json` field never fires for them, because choco-pi-lsp never
  * writes anything while `canWarmCaches` is false, so the snapshot's seq
  * never advances on its own. Trade-off, by design: a shrunk repo recovers
  * automatically once the TTL expires and the next session re-walks, in

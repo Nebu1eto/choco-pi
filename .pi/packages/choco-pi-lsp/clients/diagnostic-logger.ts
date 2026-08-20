@@ -1,7 +1,7 @@
 /**
  * Diagnostic Logger — append-only JSONL log for cross-session analytics
  *
- * Log file: ~/.pi-lens/logs/{date}.jsonl
+ * Log file: ~/.choco-pi-lsp/logs/{date}.jsonl
  */
 
 import * as path from "node:path";

@@ -103,7 +103,7 @@ export const TREE_CACHE_SCAN_CAPACITY_CEILING = 500;
  * (#1715): span the scan's file count so a second scan over the same files
  * reuses every tree instead of re-parsing files the LRU evicted at the
  * interactive default — bounded by `TREE_CACHE_SCAN_CAPACITY_CEILING` (or
- * its `PI_LENS_TREE_SITTER_CACHE_SCAN_CAP` override) so the heap cost stated
+ * its `CHOCO_PI_LSP_TREE_SITTER_CACHE_SCAN_CAP` override) so the heap cost stated
  * above stays a real ceiling. Never shrinks a capacity the cache already
  * has — a later, smaller scan (or an unrelated caller) must not undo an
  * earlier grow.
@@ -112,7 +112,7 @@ export function deriveScanTreeCacheCapacity(
 	fileCount: number,
 	currentMaxSize: number,
 ): number {
-	const envRaw = process.env.PI_LENS_TREE_SITTER_CACHE_SCAN_CAP;
+	const envRaw = process.env.CHOCO_PI_LSP_TREE_SITTER_CACHE_SCAN_CAP;
 	const envValue =
 		envRaw !== undefined ? Number.parseInt(envRaw, 10) : Number.NaN;
 	const ceiling =

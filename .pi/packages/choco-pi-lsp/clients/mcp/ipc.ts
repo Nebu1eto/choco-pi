@@ -35,9 +35,9 @@ export const WARM_CODE_ACTION_LOOKUP_LIMIT = 6;
 export function ipcPathForCwd(cwd: string): string {
 	const hash = workspaceHash(cwd);
 	if (process.platform === "win32") {
-		return `\\\\.\\pipe\\pi-lens-mcp-${hash}`;
+		return `\\\\.\\pipe\\choco-pi-lsp-mcp-${hash}`;
 	}
-	return path.join(os.tmpdir(), `pi-lens-mcp-${hash}.sock`);
+	return path.join(os.tmpdir(), `choco-pi-lsp-mcp-${hash}.sock`);
 }
 
 /**
@@ -349,7 +349,7 @@ export type WarmTurnEndResult =
 	| { available: false; reason: WarmDiagnosticsFailureReason };
 
 /**
- * Ask the warm server to run pi-lens's real turn-end pass. Execution and
+ * Ask the warm server to run choco-pi-lsp's real turn-end pass. Execution and
  * delivery are separate: the first one-shot connection returns a capability,
  * then a second one-shot connection acknowledges receipt. If the client
  * deadline or either connection loses, the server leaves the durable finding
@@ -416,7 +416,7 @@ export interface TurnEndStatus {
 
 /** Per-workspace status file, keyed by the same hash as the IPC endpoint. */
 export function turnEndStatusPathForCwd(cwd: string): string {
-	return path.join(os.tmpdir(), `pi-lens-turn-end-${workspaceHash(cwd)}.json`);
+	return path.join(os.tmpdir(), `choco-pi-lsp-turn-end-${workspaceHash(cwd)}.json`);
 }
 
 export function readTurnEndStatus(cwd: string): TurnEndStatus | undefined {

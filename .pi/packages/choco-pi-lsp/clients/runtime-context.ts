@@ -11,7 +11,7 @@ import { logLatency } from "./latency-logger.js";
 
 // Exported so the Stop-hook bin strips exactly what these bridges prepend.
 export const AUTOMATION_FRAMING =
-	"[pi-lens automated check — not a user request] ";
+	"[choco-pi-lsp automated check — not a user request] ";
 
 type ContextResult = { messages: Array<{ role: "user"; content: string }> };
 
@@ -235,7 +235,7 @@ export function consumeSessionStartGuidance(
 		messages: [
 			{
 				role: "user",
-				content: `[pi-lens automated context — not a user request]\n\n${guidance.data.content}`,
+				content: `[choco-pi-lsp automated context — not a user request]\n\n${guidance.data.content}`,
 			},
 		],
 	};

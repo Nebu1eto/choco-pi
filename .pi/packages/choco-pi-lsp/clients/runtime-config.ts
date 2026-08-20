@@ -13,28 +13,28 @@ let _runnerTimeoutFloorCache: number | undefined;
  * effective timeout = max(runner.timeoutMs ?? 30_000, runnerTimeoutFloorMs).
  *
  * Resolution order (highest priority first):
- *   1. `dispatch.runnerTimeoutFloorMs` in `~/.pi-lens/config.json`
- *   2. `PI_LENS_RUNNER_TIMEOUT_FLOOR_MS` environment variable
+ *   1. `dispatch.runnerTimeoutFloorMs` in `~/.choco-pi-lsp/config.json`
+ *   2. `CHOCO_PI_LSP_RUNNER_TIMEOUT_FLOOR_MS` environment variable
  *   3. 0 (no floor — runner budgets and the 30 s default apply as-is)
  *
  * Lazy + memoized so importing `runtime-config.ts` does not trigger disk IO.
  * The config file is read at most once per process, on first dispatch.
  *
- * @example ~/.pi-lens/config.json
+ * @example ~/.choco-pi-lsp/config.json
  * ```json
  * { "dispatch": { "runnerTimeoutFloorMs": 180000 } }
  * ```
  *
  * @example env var
  * ```bash
- * PI_LENS_RUNNER_TIMEOUT_FLOOR_MS=180000 pi
+ * CHOCO_PI_LSP_RUNNER_TIMEOUT_FLOOR_MS=180000 pi
  * ```
  */
 export function getRunnerTimeoutFloorMs(): number {
 	if (_runnerTimeoutFloorCache !== undefined) return _runnerTimeoutFloorCache;
 	const config = loadPiLensGlobalConfig();
 	const configFloor = toPositiveFinite(config?.dispatch?.runnerTimeoutFloorMs);
-	const envFloor = toPositiveFinite(process.env.PI_LENS_RUNNER_TIMEOUT_FLOOR_MS);
+	const envFloor = toPositiveFinite(process.env.CHOCO_PI_LSP_RUNNER_TIMEOUT_FLOOR_MS);
 	_runnerTimeoutFloorCache = Math.max(configFloor, envFloor, 0);
 	return _runnerTimeoutFloorCache;
 }

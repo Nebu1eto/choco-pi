@@ -11,11 +11,11 @@ note: |
 
   Shipped at `hint`, not `error`: AGENTS.md smell 3 records that this
   arm was dropped from `no-unknown-laundering.yml` after an FP-scan
-  found 192 legitimate `unknown` return types in pi-lens's own tree
+  found 192 legitimate `unknown` return types in choco-pi-lsp's own tree
   (parsers, and a `ProxyHandler.get` trap whose signature TypeScript
   itself requires). That's a finding about this repo's own code, not a
   reason to withhold the pattern from the catalog, so it ships as a
-  discoverable hint. Self-scan note: do NOT try to make pi-lens's own
+  discoverable hint. Self-scan note: do NOT try to make choco-pi-lsp's own
   tree clean against this rule (#1718's baseline problem); the adopting
   PR records the 2026-08-19 hit count instead.
 

@@ -38,13 +38,13 @@ note: |
   a conservative (under-fires, not over-fires) choice.
 
   Shipped at `hint`: the 2026-08-19 audit rejected outright adopting
-  this rule against pi-lens's own tree — it has no schema-decoding
+  this rule against choco-pi-lsp's own tree — it has no schema-decoding
   library, and the concentration of hits is exactly where the rule
   wants a schema layer (third-party JSON/LSP wire payloads), so
   self-conformance would be an architecture decision, not a lint fix.
-  That verdict stands for pi-lens's own code; it doesn't mean the
+  That verdict stands for choco-pi-lsp's own code; it doesn't mean the
   pattern has no value for a repository that DOES have a decoder at its
-  boundaries. Self-scan note: do NOT try to make pi-lens's own tree
+  boundaries. Self-scan note: do NOT try to make choco-pi-lsp's own tree
   clean against this rule (#1718's baseline problem, likely never, per
   the architecture-decision finding above); the adopting PR records the
   2026-08-19 hit count so a rule that fires thousands of times against

@@ -17,7 +17,7 @@
  *
  * The SDK also exports seven `tool_result` discriminators — `isBashToolResult`,
  * `isReadToolResult`, `isEditToolResult`, `isWriteToolResult`,
- * `isGrepToolResult`, `isFindToolResult`, `isLsToolResult`. pi-lens does NOT
+ * `isGrepToolResult`, `isFindToolResult`, `isLsToolResult`. choco-pi-lsp does NOT
  * consolidate onto them, and the reasons are worth recording so the question
  * isn't relitigated:
  *
@@ -27,15 +27,15 @@
  *    `e.toolName === "<name>"` (checked against the pinned SDK's `types.js`).
  * 2. **`isToolCallEventType` already subsumes all seven.** It is the SDK's own
  *    generic form of the same check, and it is already inlined below and used
- *    at pi-lens's `tool_call` sites. Adding seven fixed-name aliases of a
+ *    at choco-pi-lsp's `tool_call` sites. Adding seven fixed-name aliases of a
  *    generic we already have would be indirection, not consolidation.
- * 3. **The seven cover strictly fewer tools than pi-lens intercepts.** They
- *    enumerate the built-ins only; pi-lens's `tool_call`/`tool_result` paths
- *    also key off `lsp_navigation` and pi-lens's own registered tools, which no
+ * 3. **The seven cover strictly fewer tools than choco-pi-lsp intercepts.** They
+ *    enumerate the built-ins only; choco-pi-lsp's `tool_call`/`tool_result` paths
+ *    also key off `lsp_navigation` and choco-pi-lsp's own registered tools, which no
  *    host discriminator names.
- * 4. **The host union is narrower than the events pi-lens handles.** The host
+ * 4. **The host union is narrower than the events choco-pi-lsp handles.** The host
  *    `ToolResultEvent` declares `toolCallId`/`input`/`content`/`isError`/
- *    `details`/`usage`; pi-lens's local `ToolResultEvent`
+ *    `details`/`usage`; choco-pi-lsp's local `ToolResultEvent`
  *    (`clients/runtime-tool-result.ts`) declares the subset it reads. It used
  *    to additionally carry `id`/`callId`/`requestId`/`provider`/`model`/
  *    `sessionId`/`session` "for the telemetry-identity path" — #1655 item 2
@@ -43,13 +43,13 @@
  *    exactly `type`/`toolName`/`toolCallId`/`input`/`content`/`details`/
  *    `isError`/`usage` (`dist/core/agent-session.js:243-256`, source
  *    `src/core/agent-session.ts:502-516`), so the branch reading them was dead
- *    code. The standing reason not to narrow is point 3: pi-lens also
+ *    code. The standing reason not to narrow is point 3: choco-pi-lsp also
  *    synthesizes its OWN `tool_result` payloads (bash-derived writes,
  *    partial-apply) that no host discriminator would admit.
  *
  * What IS consolidated is the part that costs nothing: the host's `details`
  * SHAPES are type-only exports, so `EditToolDetails` & co. are imported as
- * types rather than re-declared ad hoc. Genuinely pi-lens-specific `details`
+ * types rather than re-declared ad hoc. Genuinely choco-pi-lsp-specific `details`
  * payloads (`searchReads`, `piLensPartialApply`) stay hand-declared — no host
  * type describes them.
  */
@@ -70,7 +70,7 @@ export function isToolCallEventType<T extends string>(
  * Resolve a STABLE correlation id shared between a `tool_call` and its
  * paired `tool_result`, checking every field name a host is known to use
  * (#1642 F4) — the SDK declares `toolCallId` (see the file header above for
- * why pi-lens can't import the SDK's own type at runtime), but
+ * why choco-pi-lsp can't import the SDK's own type at runtime), but
  * `read-guard-logger.ts`'s `getReadGuardCorrelationId` already had to widen
  * to `callId`/`requestId`/`id` for hosts that populate one of those instead.
  * Single source of truth for that field list — do not hand-roll a narrower

@@ -1,7 +1,7 @@
 /**
- * Periodic version refresh for pi-lens's managed npm tools (#1730).
+ * Periodic version refresh for choco-pi-lsp's managed npm tools (#1730).
  *
- * `~/.pi-lens/tools/package.json` records ranges, not versions — `npm install
+ * `~/.choco-pi-lsp/tools/package.json` records ranges, not versions — `npm install
  * knip` writes `"knip": "^6.4.1"` and a lockfile pinning 6.4.1. Nothing ever
  * re-resolved that range, so the managed copy stayed on the version present at
  * first install for the life of the machine. A managed knip 28 minors behind
@@ -83,22 +83,22 @@ function numericEnv(name: string, fallback: number): number {
 }
 
 function refreshIntervalMs(): number {
-	return numericEnv("PI_LENS_TOOL_REFRESH_INTERVAL_MS", DEFAULT_INTERVAL_MS);
+	return numericEnv("CHOCO_PI_LSP_TOOL_REFRESH_INTERVAL_MS", DEFAULT_INTERVAL_MS);
 }
 
 function retryIntervalMs(): number {
-	return numericEnv("PI_LENS_TOOL_REFRESH_RETRY_MS", DEFAULT_RETRY_INTERVAL_MS);
+	return numericEnv("CHOCO_PI_LSP_TOOL_REFRESH_RETRY_MS", DEFAULT_RETRY_INTERVAL_MS);
 }
 
 function maxPerSession(): number {
 	return numericEnv(
-		"PI_LENS_TOOL_REFRESH_MAX_PER_SESSION",
+		"CHOCO_PI_LSP_TOOL_REFRESH_MAX_PER_SESSION",
 		DEFAULT_MAX_PER_SESSION,
 	);
 }
 
 function refreshTimeoutMs(): number {
-	return numericEnv("PI_LENS_INSTALL_TIMEOUT_MS", DEFAULT_TIMEOUT_MS);
+	return numericEnv("CHOCO_PI_LSP_INSTALL_TIMEOUT_MS", DEFAULT_TIMEOUT_MS);
 }
 
 // --- Persisted state ---
@@ -192,7 +192,7 @@ export async function readManagedToolRefreshState(): Promise<ManagedToolRefreshS
 
 /**
  * Commit one tool's stamp under the durable-store lock, merging against
- * whatever a sibling pi-lens process wrote since this process read.
+ * whatever a sibling choco-pi-lsp process wrote since this process read.
  *
  * A torn or corrupt file is recovered as empty HERE (rather than thrown) so a
  * later commit can replace it. The read path above still reports `unreadable`,
@@ -282,7 +282,7 @@ export interface RefreshCandidate {
 
 /**
  * Registry entries that are BOTH refreshable and actually installed in the
- * managed tree. An entry pi-lens has never installed has no version to move,
+ * managed tree. An entry choco-pi-lsp has never installed has no version to move,
  * and `npm update` on it would install it — turning a refresh into an
  * unrequested download.
  */
@@ -380,8 +380,8 @@ async function refreshOne(
 	const previousVersion = await readInstalledVersion(candidate.packageName);
 	const pm = await resolveNodePackageManager(toolsDir);
 	const testNpmScript =
-		process.env.PI_LENS_TEST_MODE === "1"
-			? process.env.PI_LENS_TEST_NPM_SCRIPT
+		process.env.CHOCO_PI_LSP_TEST_MODE === "1"
+			? process.env.CHOCO_PI_LSP_TEST_NPM_SCRIPT
 			: undefined;
 	const command = testNpmScript ? process.execPath : pmBinary(pm);
 	const args = [
@@ -564,7 +564,7 @@ export function runManagedToolRefresh(
 async function executeManagedToolRefresh(
 	now: number,
 ): Promise<ManagedToolRefreshOutcome> {
-	if (process.env.PI_LENS_DISABLE_TOOL_REFRESH === "1") {
+	if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_REFRESH === "1") {
 		return { skipped: "disabled", refreshed: [] };
 	}
 	// Reserve BEFORE any await. Reading the budget here and spending it after

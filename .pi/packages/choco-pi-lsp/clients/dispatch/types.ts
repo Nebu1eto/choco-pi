@@ -1,5 +1,5 @@
 /**
- * Redesigned Dispatch Types for pi-lens
+ * Redesigned Dispatch Types for choco-pi-lsp
  *
  * Key insight: Different clients have different OUTPUT SEMANTICS:
  * - BLOCKING: Errors that stop the agent (architect, lsp errors)
@@ -175,7 +175,7 @@ export interface DispatchContext {
 	readonly autofix: boolean;
 	readonly deltaMode: boolean;
 	readonly facts: import("./fact-store.js").FactStore;
-	/** Project-local .pi-lens.json config captured for this dispatch. */
+	/** Project-local .choco-pi-lsp.json config captured for this dispatch. */
 	readonly projectConfig?: PiLensProjectConfig;
 	/** Only run blocking rules (severity: error) - used for fast feedback on file write */
 	readonly blockingOnly?: boolean;

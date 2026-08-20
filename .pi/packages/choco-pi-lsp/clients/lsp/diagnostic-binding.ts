@@ -8,7 +8,7 @@ import { normalizeEphemeralMapKey } from "../path-utils.js";
  * against, instead of inferring staleness purely from mtime/TTL proxies.
  *
  * A `publishDiagnostics` notification carries an optional `version` (the
- * document version the diagnostics apply to). pi-lens already owns the
+ * document version the diagnostics apply to). choco-pi-lsp already owns the
  * didOpen/didChange version counter and the exact text it sent at each
  * version, so at SEND time it can fingerprint that text and, when the server
  * echoes a `version`, bind the stored diagnostics to that fingerprint. A
@@ -376,7 +376,7 @@ export function auxiliaryCoverageGap(
 /**
  * Fingerprint the EXACT text handed to didOpen/didChange. sha256 over the raw
  * string — no normalization — so the disk comparison (which reads the file with
- * the SAME raw `utf-8` transform pi-lens builds LSP payloads with) round-trips
+ * the SAME raw `utf-8` transform choco-pi-lsp builds LSP payloads with) round-trips
  * CRLF and BOM bytes identically. See `createDiskBindingCache`.
  */
 export function hashDiagnosticContent(content: string): string {
@@ -418,7 +418,7 @@ export function bindingStateLabel(
  * unchanged files. Cheapness contract (#1095): stat the file first and only
  * read+hash when the mtime differs from the memoized entry.
  *
- * READ-TRANSFORM SYMMETRY (the CRLF/BOM invariant): pi-lens builds every LSP
+ * READ-TRANSFORM SYMMETRY (the CRLF/BOM invariant): choco-pi-lsp builds every LSP
  * didOpen/didChange payload from `fs.readFile(path, "utf-8")` (raw UTF-8 — no
  * BOM strip, no EOL normalization). This verifier reads disk with the identical
  * `readFileSync(path, "utf-8")` so a Windows CRLF(+BOM) file whose bytes are

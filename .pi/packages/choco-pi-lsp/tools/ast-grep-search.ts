@@ -515,7 +515,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
 					// Node's warning channel instead of console output.
 					try {
 						process.emitWarning(`ast_grep_search telemetry failed: ${err}`, {
-							code: "PI_LENS_AST_GREP_SEARCH_TELEMETRY_FAILED",
+							code: "CHOCO_PI_LSP_AST_GREP_SEARCH_TELEMETRY_FAILED",
 						});
 					} catch {
 						void err;

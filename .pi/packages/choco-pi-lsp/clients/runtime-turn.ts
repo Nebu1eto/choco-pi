@@ -96,8 +96,8 @@ let pendingSweepRearm: { cancelled: boolean } | null = null;
 function emitIdleResetReporterWarning(reportErr: unknown): void {
 	try {
 		process.emitWarning(
-			`pi-lens LSP idle reset error reporter failed: ${reportErr}`,
-			{ code: "PI_LENS_LSP_IDLE_RESET_REPORTER_FAILED" },
+			`choco-pi-lsp LSP idle reset error reporter failed: ${reportErr}`,
+			{ code: "CHOCO_PI_LSP_LSP_IDLE_RESET_REPORTER_FAILED" },
 		);
 	} catch {
 		// Preserve the detached-timer invariant: this path must never crash.
@@ -338,7 +338,7 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
 		// #713: subagent sessions use a shorter idle reset (nominally 60s) — a
 		// short-lived task agent holding a warm fleet for 4 minutes after its
 		// last turn is pure waste under fan-out. Classify ONCE here so every
-		// tick in this call path shares the same answer. PI_LENS_SUBAGENT_FULL=1
+		// tick in this call path shares the same answer. CHOCO_PI_LSP_SUBAGENT_FULL=1
 		// restores the base delay via isSubagentSession() returning false.
 		// #1618: both branches route through `getEffectiveLspIdleResetMs` so
 		// AC6's derivation applies universally — see that function's doc for

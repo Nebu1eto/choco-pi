@@ -1,6 +1,6 @@
 # Custom Rules
 
-pi-lens picks up project-local rules automatically alongside its built-ins.
+choco-pi-lsp picks up project-local rules automatically alongside its built-ins.
 Drop YAML files in the right directory and they are active on the next file dispatch — no config required.
 
 > For the full list of bundled rules per language, see the generated catalogs:

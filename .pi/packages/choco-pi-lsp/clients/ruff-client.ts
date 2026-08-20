@@ -1,5 +1,5 @@
 /**
- * Ruff Client for pi-lens
+ * Ruff Client for choco-pi-lsp
  *
  * Fast Python linting and formatting via Ruff CLI.
  * Replaces flake8, pylint, isort, black, pyupgrade.

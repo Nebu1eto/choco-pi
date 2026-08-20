@@ -1,8 +1,8 @@
 /**
- * LensEngine — the single internal-facing seam for pi-lens host adapters.
+ * LensEngine — the single internal-facing seam for choco-pi-lsp host adapters.
  *
  * The maintainability rule: host adapters (the MCP server today; index.ts can
- * adopt incrementally) talk ONLY to this module, never reaching into pi-lens
+ * adopt incrementally) talk ONLY to this module, never reaching into choco-pi-lsp
  * internals directly. So when an internal API is refactored, the break surfaces
  * HERE (one file, TypeScript-loud), not scattered across the adapter. New
  * mirrored capabilities (cascade, call-graph, …) get a method here and the
@@ -165,12 +165,12 @@ export function scanTruncationNotice(
 		return (
 			`⚠ Scan stopped after ${snapshot.filesScanned} complete file(s): the ` +
 			"tree-sitter WASM runtime aborted. Results are partial and were not cached; " +
-			"restart the pi-lens extension/MCP server to restore structural analysis."
+			"restart the choco-pi-lsp extension/MCP server to restore structural analysis."
 		);
 	}
 	return (
 		`⚠ Scan truncated at ${snapshot.filesScanned} file(s) — results are partial; ` +
-		"raise maxProjectFiles in .pi-lens.json to scan fully."
+		"raise maxProjectFiles in .choco-pi-lsp.json to scan fully."
 	);
 }
 
@@ -284,10 +284,10 @@ export function ensureLspConfig(cwd: string): Promise<void> {
 export type { ResourceFootprint } from "./instance-registry.js";
 
 /**
- * #620: total CPU/RAM footprint attributable to pi-lens across every process
+ * #620: total CPU/RAM footprint attributable to choco-pi-lsp across every process
  * it owns — every registered instance's host, plus that instance's live LSP
- * children. Reads the machine-global `~/.pi-lens/instances.json` registry, so
- * this answers across ALL concurrent pi-lens sessions/worktrees on the box,
+ * children. Reads the machine-global `~/.choco-pi-lsp/instances.json` registry, so
+ * this answers across ALL concurrent choco-pi-lsp sessions/worktrees on the box,
  * not just this one. Best-effort: reflects whatever heartbeats have landed so
  * far — a stale-heartbeat instance simply reports its last-sampled numbers.
  */

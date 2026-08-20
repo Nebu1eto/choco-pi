@@ -1,5 +1,5 @@
 /**
- * AstGrep Client for pi-lens
+ * AstGrep Client for choco-pi-lsp
  *
  * Structural code analysis using ast-grep CLI.
  * Scans files against YAML rule definitions.
@@ -72,9 +72,9 @@ const VALIDATION_SNIPPETS: Record<string, { ext: string; source: string }> = {
 	c: { ext: "c", source: "int main(void) { return 0; }\n" },
 	cpp: { ext: "cpp", source: "int main() { return 0; }\n" },
 	csharp: { ext: "cs", source: "class C { static void Main() {} }\n" },
-	css: { ext: "css", source: ".pi-lens { color: black; }\n" },
+	css: { ext: "css", source: ".choco-pi-lsp { color: black; }\n" },
 	go: { ext: "go", source: "package main\nfunc main() {}\n" },
-	html: { ext: "html", source: "<main>pi-lens</main>\n" },
+	html: { ext: "html", source: "<main>choco-pi-lsp</main>\n" },
 	java: { ext: "java", source: "class Main { void run() {} }\n" },
 	javascript: { ext: "js", source: "const piLensValidate = 1;\n" },
 	json: { ext: "json", source: '{"piLensValidate":true}\n' },
@@ -339,7 +339,7 @@ export class AstGrepClient {
 		lang: string,
 		options: { includeAnonymous?: boolean } = {},
 	): Promise<{ output?: string; error?: string }> {
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-lens-ast-dump-"));
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "choco-pi-lsp-ast-dump-"));
 		const tmpFile = path.join(
 			tmpDir,
 			`snippet.${lang.replace(/[^a-z0-9_-]/gi, "") || "txt"}`,
@@ -388,7 +388,7 @@ export class AstGrepClient {
 
 		const snippet = validationSnippetFor(lang);
 		const tmpDir = fs.mkdtempSync(
-			path.join(os.tmpdir(), "pi-lens-sg-validate-"),
+			path.join(os.tmpdir(), "choco-pi-lsp-sg-validate-"),
 		);
 		const tmpFile = path.join(tmpDir, `snippet.${snippet.ext}`);
 		try {
@@ -444,7 +444,7 @@ export class AstGrepClient {
 		const language =
 			/^\s*language:\s*([^\s#]+)/im.exec(ruleYaml)?.[1] ?? "typescript";
 		const snippet = validationSnippetFor(language);
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-lens-sg-rule-"));
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "choco-pi-lsp-sg-rule-"));
 		try {
 			fs.writeFileSync(
 				path.join(tmpDir, `snippet.${snippet.ext}`),

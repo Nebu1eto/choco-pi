@@ -1,5 +1,5 @@
 /**
- * Unified LSP Runner for pi-lens
+ * Unified LSP Runner for choco-pi-lsp
  *
  * Handles type checking for ALL LSP-supported languages:
  * - TypeScript/JavaScript (typescript-language-server)
@@ -49,7 +49,7 @@ const LSP_SPAWN_BUDGET_MS = RUNTIME_CONFIG.pipeline.lspSpawnBudgetMs;
 // (typescript-language-server on large monorepos has been observed >7 s)
 // can't dominate the per-edit pipeline budget. Diagnostics that arrive
 // after the cap still land in the client's cache and surface on the
-// next edit. Overridable via PI_LENS_LSP_DIAGNOSTICS_MAX_WAIT_MS.
+// next edit. Overridable via CHOCO_PI_LSP_LSP_DIAGNOSTICS_MAX_WAIT_MS.
 const LSP_DIAGNOSTICS_WAIT_MS = 2500;
 const MAX_CODE_ACTION_TITLES = 3;
 

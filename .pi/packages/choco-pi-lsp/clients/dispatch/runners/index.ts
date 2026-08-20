@@ -1,5 +1,5 @@
 /**
- * Runner definitions for pi-lens dispatch system
+ * Runner definitions for choco-pi-lsp dispatch system
  */
 
 import type { RunnerRegistry } from "../types.js";

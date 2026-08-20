@@ -148,7 +148,7 @@ export interface WriteFileAtomicOptions {
  *
  * Anchoring is correct for both consumer styles in this repo today
  * (matching against a full path or a bare basename), but this is confined to
- * pi-lens's own cache directories — a consumer sweeping a directory it does
+ * choco-pi-lsp's own cache directories — a consumer sweeping a directory it does
  * not fully control should not assume every match is one of this module's
  * staging files.
  */

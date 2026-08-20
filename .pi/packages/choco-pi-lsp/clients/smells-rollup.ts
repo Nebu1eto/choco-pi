@@ -1,7 +1,7 @@
 /**
  * Automatic smells self-surfacing (#1123 item 3).
  *
- * `scripts/analyze-pi-lens-logs.mjs` (`npm run logs:smells`) already detects
+ * `scripts/analyze-choco-pi-lsp-logs.mjs` (`npm run logs:smells`) already detects
  * a wide catalogue of operational smells, but it is MANUAL — an operator has
  * to think to run it. The #1123 investigation found 20 stale-ctx
  * `emit_failed` rows (see `session-lifecycle.ts`'s stale-ctx guard) and 37
@@ -9,8 +9,8 @@
  * This module closes that gap with a small, ALWAYS-ON rollup that surfaces a
  * subset of the analyzer's smells without anyone running the script.
  *
- * COST BOUND (the constraint that shapes the design): `~/.pi-lens/*.log`
- * files are size-rotated at `PI_LENS_MAX_LOG_SIZE_MB` (default 10MB,
+ * COST BOUND (the constraint that shapes the design): `~/.choco-pi-lsp/*.log`
+ * files are size-rotated at `CHOCO_PI_LSP_MAX_LOG_SIZE_MB` (default 10MB,
  * `clients/log-cleanup.ts`). Re-scanning a whole rotated log on every
  * `session_start` — the analyzer's own approach — is exactly the megabyte
  * full-file read `session_start` (a hot, input-latency-sensitive path, see
@@ -265,7 +265,7 @@ export function checkSmellsAndNoteOnce(counts: SmellsRollupCounts): string[] {
 		if (counts[key] >= SMELLS_THRESHOLDS[key]) {
 			notifiedThisSession.add(key);
 			notes.push(
-				`pi-lens smell: ${SMELL_LABELS[key]} x${counts[key]} (recent tail-scan) — run \`npm run logs:smells\` for detail`,
+				`choco-pi-lsp smell: ${SMELL_LABELS[key]} x${counts[key]} (recent tail-scan) — run \`npm run logs:smells\` for detail`,
 			);
 		}
 	}

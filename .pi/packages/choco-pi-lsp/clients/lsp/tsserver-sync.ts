@@ -314,7 +314,7 @@ export function tsserverSeverityFromCategory(category: string): 1 | 2 | 3 | 4 {
 }
 
 /**
- * Convert a tsserver-protocol sync diagnostic into pi-lens's LSP-shaped
+ * Convert a tsserver-protocol sync diagnostic into choco-pi-lsp's LSP-shaped
  * `LSPDiagnostic`. Both `line`/`offset` are 1-based in tsserver's protocol
  * and 0-based in LSP — this conversion handles that.
  */

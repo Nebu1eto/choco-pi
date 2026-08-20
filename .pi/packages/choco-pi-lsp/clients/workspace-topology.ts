@@ -2,7 +2,7 @@
  * Shared, memoized workspace-topology snapshot service (#806).
  *
  * Several subsystems each performed their own independent per-directory
- * marker walk (`.pi-lens.json` discovery in `project-lsp-config.ts`,
+ * marker walk (`.choco-pi-lsp.json` discovery in `project-lsp-config.ts`,
  * governing-tsconfig discovery in `review-graph/tsconfig-paths.ts`,
  * workspace-manifest presence checks in `review-graph/workspace-modules.ts`)
  * — each with its own probe pattern and its own (or no) invalidation. In a
@@ -49,10 +49,10 @@ import {
 /** Depth cap on any upward marker walk — mirrors `findNearestMarkerRoot`'s bound. */
 const MAX_WALK_DEPTH = 64;
 
-const PI_LENS_CONFIG_BASENAMES = [".pi-lens.json", "pi-lens.json"] as const;
+const CHOCO_PI_LSP_CONFIG_BASENAMES = [".choco-pi-lsp.json", "choco-pi-lsp.json"] as const;
 
 /**
- * Every marker pi-lens subsystems currently probe for, keyed by the basename
+ * Every marker choco-pi-lsp subsystems currently probe for, keyed by the basename
  * on disk. Add a new marker here (not a private probe elsewhere) when a
  * consumer needs another per-directory file presence check.
  */
@@ -73,7 +73,7 @@ export interface DirectoryMarkers {
 	entryNames: ReadonlySet<string>;
 	/** Immediate-child file/symlink names, used for glob marker matching. */
 	entryFileNames: ReadonlySet<string>;
-	/** Resolved path of `.pi-lens.json`, preferred over the no-dot fallback. */
+	/** Resolved path of `.choco-pi-lsp.json`, preferred over the no-dot fallback. */
 	piLensConfigPath: string | undefined;
 	tsconfigPath: string | undefined;
 	packageJsonPath: string | undefined;
@@ -101,7 +101,7 @@ const TOPOLOGY_MAX_WALK_ENTRIES = 512;
 const TOPOLOGY_IDLE_EVICT_MS_DEFAULT = 20 * 60_000;
 
 function topologyIdleEvictMs(): number {
-	const value = Number.parseInt(process.env.PI_LENS_WORKSPACE_TOPOLOGY_IDLE_EVICT_MS ?? "", 10);
+	const value = Number.parseInt(process.env.CHOCO_PI_LSP_WORKSPACE_TOPOLOGY_IDLE_EVICT_MS ?? "", 10);
 	return Number.isSafeInteger(value) && value > 0 ? value : TOPOLOGY_IDLE_EVICT_MS_DEFAULT;
 }
 
@@ -176,9 +176,9 @@ function safeIsFile(filePath: string): boolean {
 
 /**
  * Single-pass marker scan for one directory: one `readdir` collects ALL
- * markers pi-lens subsystems care about, cached and invalidated by the
+ * markers choco-pi-lsp subsystems care about, cached and invalidated by the
  * directory's own mtime (so an add/remove/rename inside `dir` — which bumps
- * the directory's mtime on every platform pi-lens supports — drops the
+ * the directory's mtime on every platform choco-pi-lsp supports — drops the
  * cached entry without a session restart).
  */
 export function getDirectoryMarkers(dir: string): DirectoryMarkers {
@@ -215,8 +215,8 @@ export function getDirectoryMarkers(dir: string): DirectoryMarkers {
 	};
 
 	const piLensConfigPath =
-		resolveMarker(PI_LENS_CONFIG_BASENAMES[0]) ??
-		resolveMarker(PI_LENS_CONFIG_BASENAMES[1]);
+		resolveMarker(CHOCO_PI_LSP_CONFIG_BASENAMES[0]) ??
+		resolveMarker(CHOCO_PI_LSP_CONFIG_BASENAMES[1]);
 
 	const markers: DirectoryMarkers = {
 		dir: resolvedDir,
@@ -409,7 +409,7 @@ export interface PiLensConfigMarker {
 }
 
 /**
- * `.pi-lens.json`/`pi-lens.json` directly IN `dir` — no upward walk. The
+ * `.choco-pi-lsp.json`/`choco-pi-lsp.json` directly IN `dir` — no upward walk. The
  * shared-index equivalent of `project-lsp-config.ts`'s old private
  * `findPiLensConfigInDir` probe loop.
  */

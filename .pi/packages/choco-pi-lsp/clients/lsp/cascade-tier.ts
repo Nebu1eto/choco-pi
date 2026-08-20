@@ -119,12 +119,12 @@ export function classifyCascadeWaitTier(
 
 let _enabledCache: boolean | undefined;
 
-/** `PI_LENS_TIER_AWARE_CASCADE=0` disables the whole feature: every cascade
+/** `CHOCO_PI_LSP_TIER_AWARE_CASCADE=0` disables the whole feature: every cascade
  * touch waits in-lane exactly as it did before #458, no outstanding-touch
  * bookkeeping, no reconcile task registered. */
 export function isTierAwareCascadeEnabled(): boolean {
 	if (_enabledCache !== undefined) return _enabledCache;
-	_enabledCache = process.env.PI_LENS_TIER_AWARE_CASCADE !== "0";
+	_enabledCache = process.env.CHOCO_PI_LSP_TIER_AWARE_CASCADE !== "0";
 	return _enabledCache;
 }
 

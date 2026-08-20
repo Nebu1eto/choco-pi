@@ -1,5 +1,5 @@
 /**
- * Shared machinery for pi-lens's session-scan security clients
+ * Shared machinery for choco-pi-lsp's session-scan security clients
  * (gitleaks #130, govulncheck #132, trivy #131).
  *
  * Each of those surfaces findings from an external CLI scanner with the same
@@ -276,7 +276,7 @@ export abstract class SecurityScanClient<TResult> {
 
 	/**
 	 * Standard availability path for the GitHub-release tools (gitleaks, trivy):
-	 * PATH probe first, then fall back to the pi-lens installer's `ensureTool`.
+	 * PATH probe first, then fall back to the choco-pi-lsp installer's `ensureTool`.
 	 * Records the resolved binary path and sets `this.available`.
 	 */
 	protected async ensureViaInstaller(versionArgs: string[]): Promise<boolean> {

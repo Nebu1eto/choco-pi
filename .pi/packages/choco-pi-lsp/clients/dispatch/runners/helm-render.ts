@@ -30,7 +30,7 @@
  *
  * ## Two gates, because the switch ships INSIDE the repository
  *
- * `.pi-lens.json` is a tracked file, so a cloned repository can arrive with the
+ * `.choco-pi-lsp.json` is a tracked file, so a cloned repository can arrive with the
  * switch already on — a malicious chart repo would authorize execution of its
  * own templates just by containing the config that says so. Consent from the
  * repo is therefore necessary but not sufficient: the render also requires
@@ -128,7 +128,7 @@ function isWithin(root: string, candidate: string): boolean {
 /**
  * Explicit opt-in for rendering. Rendering runs chart-authored template code,
  * so the default is OFF and only an explicit `helm.renderValidation.enabled`
- * in `.pi-lens.json` (the loader walks up, so `~/.pi-lens.json` enables it for
+ * in `.choco-pi-lsp.json` (the loader walks up, so `~/.choco-pi-lsp.json` enables it for
  * every project) turns it on. Exported for tests and gate-before-spawn callers.
  *
  * Pass the WORKSPACE ROOT of the chart about to render, not a process cwd: this
@@ -424,7 +424,7 @@ function failedResult(kind: string, message: string): RunnerResult {
 }
 
 /**
- * The flags pi-lens itself puts on the command line. If helm complains about one
+ * The flags choco-pi-lsp itself puts on the command line. If helm complains about one
  * of THESE, the complaint is about us, not about the chart.
  */
 const OUR_RENDER_FLAGS = ["--output-dir"] as const;
@@ -663,12 +663,12 @@ async function renderAndValidate(
 	if (!helmCmd) return helmUnavailableResult(cwd);
 
 	const outputDir = fs.mkdtempSync(
-		path.join(os.tmpdir(), "pi-lens-helm-render-"),
+		path.join(os.tmpdir(), "choco-pi-lsp-helm-render-"),
 	);
 	try {
 		const render = await safeSpawnAsync(
 			helmCmd,
-			["template", "pi-lens-render", chartRoot, "--output-dir", outputDir],
+			["template", "choco-pi-lsp-render", chartRoot, "--output-dir", outputDir],
 			{
 				cwd,
 				timeout: RENDER_TIMEOUT_MS,
@@ -708,7 +708,7 @@ async function renderAndValidate(
 				});
 				return failedResult(
 					"invocation_rejected",
-					`helm rejected pi-lens's own invocation (${ourFlag}); this is a helm/pi-lens compatibility problem, not a chart defect: ${renderOutput.trim().slice(0, 160)}`,
+					`helm rejected choco-pi-lsp's own invocation (${ourFlag}); this is a helm/choco-pi-lsp compatibility problem, not a chart defect: ${renderOutput.trim().slice(0, 160)}`,
 				);
 			}
 			// A failed RENDER is a real diagnostic: the chart cannot be installed.
@@ -816,7 +816,7 @@ const helmRenderRunner: RunnerDefinition = {
 		const chartRoot = path.resolve(discovered);
 		if (!isWithin(workspaceRoot, chartRoot)) return SKIPPED;
 
-		// Gate 2 — project trust. `.pi-lens.json` is a TRACKED file, so consent
+		// Gate 2 — project trust. `.choco-pi-lsp.json` is a TRACKED file, so consent
 		// can arrive inside a cloned repository: a hostile chart repo would
 		// authorize execution of its own templates simply by shipping the switch.
 		// Trust is the host's answer, not the repo's, so it cannot be forged by

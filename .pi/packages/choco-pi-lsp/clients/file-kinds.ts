@@ -1,5 +1,5 @@
 /**
- * File Kind Detection for pi-lens
+ * File Kind Detection for choco-pi-lsp
  *
  * Centralized file type detection to avoid duplication across clients.
  * Maps file extensions and paths to semantic file kinds.

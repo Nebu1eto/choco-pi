@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
-	"description": "choco-pi fork of pi-lens: LSP, tree-sitter/ast-grep structural analysis, semantic index tools, and format/autofix feedback, loaded from TypeScript source as a local pi package.",
+	"description": "choco-pi fork of choco-pi-lsp: LSP, tree-sitter/ast-grep structural analysis, semantic index tools, and format/autofix feedback, loaded from TypeScript source as a local pi package.",
 	"license": "MIT",
 	"main": "./index.ts",
 	"keywords": [

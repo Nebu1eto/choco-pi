@@ -11,13 +11,13 @@ note: |
 
   Shipped at `hint`, not `error`: AGENTS.md smell 3 records that this
   exact arm was dropped from `no-unknown-laundering.yml` after an
-  FP-scan found 166 legitimate `unknown` parameters in pi-lens's own
+  FP-scan found 166 legitimate `unknown` parameters in choco-pi-lsp's own
   tree (type-guard/validator functions like
   `errorMessage(err: unknown)`). That finding is about THIS repo's own
   code, not a reason to withhold the pattern from the shipped catalog —
   other repositories may have real slop here — so it ships as a
   discoverable hint instead. Self-scan note: do NOT try to make
-  pi-lens's own tree clean against this rule (#1718's baseline
+  choco-pi-lsp's own tree clean against this rule (#1718's baseline
   problem); the adopting PR records the 2026-08-19 hit count instead.
 
   Scope: a direct `unknown` annotation on a required or optional

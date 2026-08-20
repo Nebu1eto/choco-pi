@@ -287,7 +287,7 @@ interface LifetimeCleanupState {
 
 // Vitest reloads modules inside a reused worker. Keep this registry on the
 // process so those module instances share one signal/exit listener set.
-const lifetimeStateKey = Symbol.for("pi-lens.safe-spawn.lifetime-state");
+const lifetimeStateKey = Symbol.for("choco-pi-lsp.safe-spawn.lifetime-state");
 const processWithLifetimeState = process as typeof process & {
 	[lifetimeStateKey]?: LifetimeCleanupState;
 };
@@ -391,7 +391,7 @@ function cmdEscapeArg(arg: string): string {
  * (the bug behind #214) means a tool whose resolved path contains a space (e.g.
  * `C:\Program Files\Go\bin\go.exe`) makes cmd.exe parse `C:\Program` as the
  * command and fail with "'C:\Program' is not recognized". `cmdEscapeArg` is a
- * no-op for space-free commands, so this is safe for the npm/.pi-lens tool paths
+ * no-op for space-free commands, so this is safe for the npm/.choco-pi-lsp tool paths
  * that already worked. The `chcp 65001` prefix forces the UTF-8 code page (so
  * tool output isn't mangled by the system code page) and, as a side benefit,
  * keeps the (possibly quoted) command off the front of the line, avoiding
@@ -878,7 +878,7 @@ export function resolveWindowsCommandForEnvironment(
 		// Positive entries are revalidated on every hit so an executable deleted
 		// or replaced mid-session cannot remain spawnable through stale cache
 		// state. Negative entries are short-lived to discover external installs;
-		// pi-lens-managed installs also reset the cache immediately on success.
+		// choco-pi-lsp-managed installs also reset the cache immediately on success.
 		if (cached.resolved && statIsFile(cached.resolved.resolvedPath)) {
 			return cached.resolved;
 		}

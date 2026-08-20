@@ -26,8 +26,8 @@ export interface PiLensToggleConfig {
 
 export interface PiLensGlobalConfig {
 	/**
-	 * Gitignore-style patterns excluded from pi-lens scans across ALL projects.
-	 * Merged at LOWEST precedence: a project `.gitignore` or `.pi-lens.json`
+	 * Gitignore-style patterns excluded from choco-pi-lsp scans across ALL projects.
+	 * Merged at LOWEST precedence: a project `.gitignore` or `.choco-pi-lsp.json`
 	 * `ignore` (including `!negation`) overrides these. See #252.
 	 */
 	ignore?: string[];
@@ -36,7 +36,7 @@ export interface PiLensGlobalConfig {
 		 * Minimum wall-clock budget (ms) for every dispatch runner.
 		 * Acts as a floor: effective timeout = max(runner.timeoutMs ?? 30_000, runnerTimeoutFloorMs).
 		 * Useful for large monorepos where slow toolchains (e.g. cargo clippy) exceed
-		 * any runner's declared budget. Also overridable via PI_LENS_RUNNER_TIMEOUT_FLOOR_MS.
+		 * any runner's declared budget. Also overridable via CHOCO_PI_LSP_RUNNER_TIMEOUT_FLOOR_MS.
 		 */
 		runnerTimeoutFloorMs?: number;
 	};
@@ -44,7 +44,7 @@ export interface PiLensGlobalConfig {
 		/** Whether the diagnostics widget is visible when a session starts. */
 		visible?: boolean;
 	};
-	/** Whether pi-lens runs at all this session (`--no-lens`). */
+	/** Whether choco-pi-lsp runs at all this session (`--no-lens`). */
 	lens?: PiLensToggleConfig;
 	/** Whether unified LSP diagnostics run (`--no-lsp`). */
 	lsp?: PiLensToggleConfig;
@@ -67,7 +67,7 @@ export interface PiLensGlobalConfig {
 	autofix?: {
 		/**
 		 * Whether the pipeline may apply deterministic linter fixes (Biome,
-		 * Ruff, ESLint, ...). Defaults true. A project `.pi-lens.json`
+		 * Ruff, ESLint, ...). Defaults true. A project `.choco-pi-lsp.json`
 		 * `autofix.enabled` overrides this in either direction (#792).
 		 */
 		enabled?: boolean;
@@ -91,7 +91,7 @@ export interface PiLensGlobalConfig {
 	};
 	contextInjection?: {
 		/**
-		 * Whether pi-lens prepends automatic findings (session-start guidance,
+		 * Whether choco-pi-lsp prepends automatic findings (session-start guidance,
 		 * turn-end findings, test findings) into the next model turn via the
 		 * `context` hook. Defaults true. Set false to keep tools/LSP/read-guard/
 		 * formatting running while avoiding prompt-cache invalidation from injected
@@ -111,9 +111,9 @@ export interface PiLensGlobalConfig {
 }
 
 export function getPiLensGlobalConfigPath(homeDir = os.homedir()): string {
-	const override = process.env.PI_LENS_CONFIG_PATH;
+	const override = process.env.CHOCO_PI_LSP_CONFIG_PATH;
 	if (override) return path.resolve(override);
-	return path.join(homeDir, ".pi-lens", "config.json");
+	return path.join(homeDir, ".choco-pi-lsp", "config.json");
 }
 
 const warnedInvalidGlobalConfigs = new Set<string>();
@@ -136,7 +136,7 @@ function warnInvalidGlobalConfigOnce(configPath: string, reason: string): void {
 	});
 	// HUMAN-audience too: a config the user wrote is being ignored. Routed
 	// through the host's own render path (#1333), never a raw write.
-	notifyUserDegradation(`pi-lens: ${message}`);
+	notifyUserDegradation(`choco-pi-lsp: ${message}`);
 }
 
 /** For tests that need to force the warn-once cache to reset between cases. */
@@ -171,7 +171,7 @@ export function getRuntimeLensFlagOverride(
 
 /**
  * choco-pi fork: persist one dotted `configKey` (e.g. `lsp.enabled`) into
- * `~/.pi-lens/config.json` so a runtime toggle survives the session. Creates
+ * `~/.choco-pi-lsp/config.json` so a runtime toggle survives the session. Creates
  * the directory/file when absent, preserves every other key, and returns
  * false (never throws) on any read/parse/write failure — the caller reports
  * that persistence failed while the in-memory override still applies.
@@ -326,7 +326,7 @@ export function loadPiLensGlobalConfig(
 		for (const key of Object.keys(raw)) {
 			if (!knownGlobalConfigKeys.has(key)) {
 				warnInvalid(
-					`unknown key "${key}" is not a recognized pi-lens setting (check for a typo); ignored`,
+					`unknown key "${key}" is not a recognized choco-pi-lsp setting (check for a typo); ignored`,
 				);
 			}
 		}

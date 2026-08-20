@@ -1,5 +1,5 @@
 /**
- * FileTime Tracking for pi-lens
+ * FileTime Tracking for choco-pi-lsp
  *
  * Prevents race conditions when auto-formatting or external tools modify files.
  * Tracks file modification times and sizes to detect external changes.

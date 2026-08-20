@@ -3,7 +3,7 @@
  * (`pilens:files:touched` #482 / `pilens:diagnostics` #502 /
  * `pilens:diagnostic:disposition` / `pilens:format:queued` +
  * `pilens:format:start` + `pilens:autofix:start` #673/#684 /
- * `pi-lens/analysis-complete` + `pi-lens/findings` + `pi-lens/turn-findings`
+ * `choco-pi-lsp/analysis-complete` + `choco-pi-lsp/findings` + `choco-pi-lsp/turn-findings`
  * #1415) — nine event names across five producers.
  *
  * All five producers (clients/bus-publish.ts, clients/diagnostics-publish.ts,
@@ -19,7 +19,7 @@
  * most — same failure shape as the #544 MCP session_start incident this repo
  * already fixed once.
  *
- * This module gives bus events the same durable trace every other pi-lens
+ * This module gives bus events the same durable trace every other choco-pi-lsp
  * subsystem already has (latency.log, cascade.log, read-guard.log, ...) —
  * see clients/latency-logger.ts for the house pattern this mirrors exactly:
  * one shared `createNdjsonLogger` writer, `isTestMode()` no-op guard,
@@ -63,9 +63,9 @@ export type BusEventName =
 	| "pilens:format:queued"
 	| "pilens:format:start"
 	| "pilens:autofix:start"
-	| "pi-lens/analysis-complete"
-	| "pi-lens/findings"
-	| "pi-lens/turn-findings";
+	| "choco-pi-lsp/analysis-complete"
+	| "choco-pi-lsp/findings"
+	| "choco-pi-lsp/turn-findings";
 
 export type BusEventOutcome =
 	| "emitted"

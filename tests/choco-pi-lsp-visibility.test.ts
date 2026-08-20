@@ -26,29 +26,29 @@ test("choco-pi-lsp UI stays hidden while LSP is inactive and appears when active
 	installChocoPiLspVisibility(ui);
 	const widget = () => ({ render: () => ["choco-pi-lsp"], invalidate: () => {} });
 
-	ui.setStatus("pi-lens-lsp", "LSP Inactive");
-	ui.setWidget("pi-lens", widget as never, { placement: "belowEditor" });
-	assert.equal(statuses.has("pi-lens-lsp"), false);
-	assert.equal(widgets.has("pi-lens"), false);
+	ui.setStatus("choco-pi-lsp", "LSP Inactive");
+	ui.setWidget("choco-pi-lsp", widget as never, { placement: "belowEditor" });
+	assert.equal(statuses.has("choco-pi-lsp"), false);
+	assert.equal(widgets.has("choco-pi-lsp"), false);
 
-	ui.setStatus("pi-lens-lsp", "LSP Active: typescript");
-	assert.equal(statuses.get("pi-lens-lsp"), "LSP Active: typescript");
-	assert.equal(widgets.get("pi-lens"), widget);
+	ui.setStatus("choco-pi-lsp", "LSP Active: typescript");
+	assert.equal(statuses.get("choco-pi-lsp"), "LSP Active: typescript");
+	assert.equal(widgets.get("choco-pi-lsp"), widget);
 
-	ui.setStatus("pi-lens-lsp", "LSP Inactive");
-	assert.equal(statuses.has("pi-lens-lsp"), false);
-	assert.equal(widgets.has("pi-lens"), false);
+	ui.setStatus("choco-pi-lsp", "LSP Inactive");
+	assert.equal(statuses.has("choco-pi-lsp"), false);
+	assert.equal(widgets.has("choco-pi-lsp"), false);
 });
 
 test("choco-pi-lsp failures remain visible and unrelated UI is unchanged", () => {
 	const { ui, statuses, widgets } = testUi();
 	installChocoPiLspVisibility(ui);
 
-	ui.setStatus("pi-lens-lsp", "LSP Failed: typescript");
+	ui.setStatus("choco-pi-lsp", "LSP Failed: typescript");
 	ui.setStatus("other", "ready");
 	ui.setWidget("other", ["content"]);
 
-	assert.equal(statuses.get("pi-lens-lsp"), "LSP Failed: typescript");
+	assert.equal(statuses.get("choco-pi-lsp"), "LSP Failed: typescript");
 	assert.equal(statuses.get("other"), "ready");
 	assert.deepEqual(widgets.get("other"), ["content"]);
 });

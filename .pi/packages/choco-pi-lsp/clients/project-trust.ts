@@ -4,7 +4,7 @@
  * pi decides project trust itself: an extension may *answer* the question by
  * registering `pi.on("project_trust", handler)` (returning
  * `{ trusted: "yes" | "no" | "undecided" }`), but every other extension simply
- * *consumes* the outcome through `ExtensionContext.isProjectTrusted()`. pi-lens
+ * *consumes* the outcome through `ExtensionContext.isProjectTrusted()`. choco-pi-lsp
  * is a consumer — it must never register the handler and answer the trust
  * question on the user's behalf.
  *
@@ -14,7 +14,7 @@
  *   - `ProjectTrustEventDecision = "yes" | "no" | "undecided"`  (line 390)
  *
  * Note the asymmetry: the *event* has a three-valued decision, but the *ctx*
- * accessor collapses it to a boolean. So the only distinctions pi-lens can make
+ * accessor collapses it to a boolean. So the only distinctions choco-pi-lsp can make
  * are "host says trusted", "host says NOT trusted", and "host gave no signal at
  * all" (older hosts with no `isProjectTrusted` on the ctx).
  *
@@ -67,7 +67,7 @@ function latchProjectTrustState(next: ProjectTrustState): void {
  *
  * Returns `"unknown"` when the host predates the accessor, when the accessor
  * throws, or when it returns a non-boolean — never guesses "untrusted" from a
- * missing surface, because that would silently disable pi-lens on every older
+ * missing surface, because that would silently disable choco-pi-lsp on every older
  * host.
  */
 export function readProjectTrustFromContext(ctx: unknown): ProjectTrustState {

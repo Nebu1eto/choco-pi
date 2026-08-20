@@ -4,7 +4,7 @@
  * In-process subagent extensions (tintinweb/pi-subagents-style: a fresh
  * `AgentSession` built and `bindExtensions()`-ed inside the SAME Node process
  * as the parent pi session) reuse pi's process-global extension-loader cache,
- * so the subagent's `session_start` re-invokes pi-lens's SAME module-scope
+ * so the subagent's `session_start` re-invokes choco-pi-lsp's SAME module-scope
  * singletons the parent is still using. Left unguarded, `handleSessionStart`
  * destructively resets shared state (`resetLSPService({fast:true})` kills
  * every live LSP client; `runtime.resetForSession()` bumps the session
@@ -23,7 +23,7 @@
  * sequential replacement, i.e. run the full reset). It only suppresses the
  * reset on POSITIVE evidence that a live sibling primary session exists.
  *
- * Kill switch: `PI_LENS_CONCURRENT_SESSION_GUARD=0` disables the guard
+ * Kill switch: `CHOCO_PI_LSP_CONCURRENT_SESSION_GUARD=0` disables the guard
  * entirely — every session_start classifies as if sequential (today's
  * behavior), matching the lazy-env-read house style (see
  * `subagent-mode.ts` / `runtime-config.ts`).
@@ -90,7 +90,7 @@ export function classifySessionStart(
 /** Lazy env read (house style) — never memoized, so tests can flip it
  * mid-run via `process.env` without a reset hook. */
 function guardEnabled(): boolean {
-	return process.env.PI_LENS_CONCURRENT_SESSION_GUARD !== "0";
+	return process.env.CHOCO_PI_LSP_CONCURRENT_SESSION_GUARD !== "0";
 }
 
 /**
@@ -107,7 +107,7 @@ function guardEnabled(): boolean {
  * `core/extensions/runner.js` in the installed
  * `@earendil-works/pi-coding-agent` SDK dist). `isIdle` was picked over the
  * plain getters (`cwd`, `mode`, `hasUI`) only for readability at call sites
- * that already branch on idle state elsewhere in pi-lens; any of the other
+ * that already branch on idle state elsewhere in choco-pi-lsp; any of the other
  * assertActive()-wrapped accessors would work identically for this probe.
  *
  * Returns:

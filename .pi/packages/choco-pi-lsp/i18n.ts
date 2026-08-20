@@ -46,7 +46,7 @@ const translations: Record<Exclude<Locale, "en">, Record<string, string>> = {
 let currentLocale: Locale = "en";
 
 export function initI18n(pi: { events?: { emit?: (event: string, payload: unknown) => void } }): void {
-	pi.events?.emit?.("pi-core/i18n/registerBundle", { namespace: "pi-lens", defaultLocale: "en", locales: translations });
+	pi.events?.emit?.("pi-core/i18n/registerBundle", { namespace: "choco-pi-lsp", defaultLocale: "en", locales: translations });
 	pi.events?.emit?.("pi-core/i18n/requestApi", {
 		onReady: (api: { getLocale?: () => string; onLocaleChange?: (cb: (locale: string) => void) => void }) => {
 			const next = api.getLocale?.();

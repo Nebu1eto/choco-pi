@@ -62,7 +62,7 @@ const EXT_TO_LANG: Record<string, string> = {
 };
 
 /**
- * Canonical set of source-code file extensions pi-lens understands, derived
+ * Canonical set of source-code file extensions choco-pi-lsp understands, derived
  * from the same {@link EXT_TO_LANG} map the read-coverage path uses. Exported as
  * the single source of truth so language-spanning scanners cover every
  * supported language instead of a hardcoded subset (#262).

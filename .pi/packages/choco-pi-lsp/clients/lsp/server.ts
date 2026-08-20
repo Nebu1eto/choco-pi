@@ -1,5 +1,5 @@
 /**
- * LSP Server Definitions for pi-lens
+ * LSP Server Definitions for choco-pi-lsp
  *
  * Defines 40+ language servers with:
  * - Root detection (monorepo support)
@@ -314,7 +314,7 @@ export interface LSPServerInfo {
 }
 
 function isLspInstallDisabled(): boolean {
-	return process.env.PI_LENS_DISABLE_LSP_INSTALL === "1";
+	return process.env.CHOCO_PI_LSP_DISABLE_LSP_INSTALL === "1";
 }
 
 function canInstall(allowInstall?: boolean): boolean {
@@ -324,7 +324,7 @@ function canInstall(allowInstall?: boolean): boolean {
 const DIRECT_LSP_NEGATIVE_TTL_MS = Math.max(
 	30_000,
 	Number.parseInt(
-		process.env.PI_LENS_DIRECT_LSP_NEGATIVE_TTL_MS ?? "600000",
+		process.env.CHOCO_PI_LSP_DIRECT_LSP_NEGATIVE_TTL_MS ?? "600000",
 		10,
 	) || 600_000,
 );
@@ -380,7 +380,7 @@ function markDirectLspCommandUnavailable(command: string): void {
 	directLspCommandSkipLoggedUntil.delete(command);
 }
 
-const PI_LENS_BIN_DIR = path.join(getGlobalPiLensDir(), "bin");
+const CHOCO_PI_LSP_BIN_DIR = path.join(getGlobalPiLensDir(), "bin");
 
 // ---------------------------------------------------------------------------
 // Unified binary resolution + launch
@@ -1204,10 +1204,10 @@ export async function tryGoInstallGopls(): Promise<boolean> {
 }
 
 export async function tryDotnetToolInstall(tool: string): Promise<boolean> {
-	mkdirSync(PI_LENS_BIN_DIR, { recursive: true });
+	mkdirSync(CHOCO_PI_LSP_BIN_DIR, { recursive: true });
 	const result = await safeSpawnAsync(
 		"dotnet",
-		["tool", "install", "--tool-path", PI_LENS_BIN_DIR, tool],
+		["tool", "install", "--tool-path", CHOCO_PI_LSP_BIN_DIR, tool],
 		{ timeout: 180000, ignoreAmbientSignal: true },
 	);
 	if (!result.error && result.status === 0) return true;
@@ -1223,7 +1223,7 @@ export async function tryDotnetToolInstall(tool: string): Promise<boolean> {
 
 	const updateResult = await safeSpawnAsync(
 		"dotnet",
-		["tool", "update", "--tool-path", PI_LENS_BIN_DIR, tool],
+		["tool", "update", "--tool-path", CHOCO_PI_LSP_BIN_DIR, tool],
 		{ timeout: 180000, ignoreAmbientSignal: true },
 	);
 	return !updateResult.error && updateResult.status === 0;
@@ -1359,7 +1359,7 @@ async function typescriptVersionForTsc(
 
 /**
  * Locate tsserver.js — tries local project (walking up from root, #1412 M1),
- * then process.cwd() as a last-resort fallback, then pi-lens managed
+ * then process.cwd() as a last-resort fallback, then choco-pi-lsp managed
  * TypeScript. Returns the path to tsserver.js, or undefined if not found.
  */
 async function findTsserverPath(
@@ -1531,8 +1531,8 @@ async function findNativeTypeScriptLsp(
 function dotnetToolCandidates(tool: string): string[] {
 	const home = os.homedir();
 	return [
-		path.join(PI_LENS_BIN_DIR, `${tool}.exe`),
-		path.join(PI_LENS_BIN_DIR, tool),
+		path.join(CHOCO_PI_LSP_BIN_DIR, `${tool}.exe`),
+		path.join(CHOCO_PI_LSP_BIN_DIR, tool),
 		path.join(home, ".dotnet", "tools", `${tool}.exe`),
 		path.join(home, ".dotnet", "tools", tool),
 		tool,
@@ -1573,7 +1573,7 @@ export function cargoBinCandidates(tool: string): string[] {
 }
 
 /**
- * Try to install a gem to the pi-lens bin dir. Resolves true if the install succeeded.
+ * Try to install a gem to the choco-pi-lsp bin dir. Resolves true if the install succeeded.
  */
 export async function tryGemInstall(gem: string): Promise<boolean> {
 	const { join } = await import("node:path");
@@ -2482,7 +2482,7 @@ function buildPsesArgs(bundleDir: string): string[] {
 	// commonly lives under "C:\Program Files\…" (a space), which forces launchLSP's
 	// Windows shell path, and an embedded `&`/quotes in a single -Command string
 	// gets mangled by cmd.exe. Plain argv tokens survive shell escaping (our paths
-	// are under ~/.pi-lens, no spaces). -Stdio makes PSES speak LSP over this
+	// are under ~/.choco-pi-lsp, no spaces). -Stdio makes PSES speak LSP over this
 	// process's stdin/stdout; -LanguageServiceOnly skips the debug adapter.
 	return [
 		"-NoLogo",
@@ -2495,9 +2495,9 @@ function buildPsesArgs(bundleDir: string): string[] {
 		"-File",
 		script,
 		"-HostName",
-		"pi-lens",
+		"choco-pi-lsp",
 		"-HostProfileId",
-		"pi-lens",
+		"choco-pi-lsp",
 		"-HostVersion",
 		"1.0.0",
 		"-BundledModulesPath",
@@ -3309,7 +3309,7 @@ export const OpengrepServer: LSPServerInfo = {
 // cross-cutting, diagnostic-only auxiliary (never a file's primary language
 // server). It attaches EVERYWHERE (#239 Phase 2): a project `sgconfig.y[a]ml`
 // surfaces the team's OWN curated rules (auto-discovered), and absent one it
-// launches with `--config <shipped baseline>` so pi-lens's bundled ruleset runs
+// launches with `--config <shipped baseline>` so choco-pi-lsp's bundled ruleset runs
 // anyway — superseding the in-process napi runner, which steps aside when this
 // server's binary is available (and resumes as the fallback when it isn't —
 // Gate B). NOTE: the napi runner is NOT a subset — it delegates to napi's native
@@ -3374,7 +3374,7 @@ export const AstGrepServer: LSPServerInfo = {
 	initializeTimeoutMs: 15000,
 	async spawn(root, options) {
 		// A project sgconfig wins (the team's curated ruleset, auto-discovered from
-		// cwd). Otherwise point `--config` at pi-lens's shipped baseline ruleset.
+		// cwd). Otherwise point `--config` at choco-pi-lsp's shipped baseline ruleset.
 		const projectSgconfig = findLocalSgconfig(root);
 		let args = ["lsp"];
 		if (!projectSgconfig) {

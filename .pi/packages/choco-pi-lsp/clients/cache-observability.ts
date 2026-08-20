@@ -1,7 +1,7 @@
 /**
  * Prompt-cache observability (#1018).
  *
- * Two provider-independent signals, both sinking into ~/.pi-lens/latency.log
+ * Two provider-independent signals, both sinking into ~/.choco-pi-lsp/latency.log
  * via {@link logLatency} (matching the neighboring `type: "phase"` records):
  *
  *   1. Response-side cache usage (`cache_usage`) — on each assistant
@@ -10,16 +10,16 @@
  *      fact. This is what the provider DID, not what we hoped it would do.
  *
  *   2. Request-side context observations (`cache_context`) — one bounded record
- *      for every `context` call, describing pi-lens's own before/after message
+ *      for every `context` call, describing choco-pi-lsp's own before/after message
  *      transformation, placement, injection sources, and privacy-preserving
- *      hashes. This is what pi-lens observed locally, not the final provider
+ *      hashes. This is what choco-pi-lsp observed locally, not the final provider
  *      request after other context handlers have run and not a provider cache
  *      result.
  *
  *   3. Request-side prefix stability (`cache_prefix_break`) — a content hash of
  *      `messages[0]` observed on every `context` call. After #1016 the first
  *      message must stay byte-stable across a whole session; a logged CHANGE
- *      flags that something (pi-lens or otherwise) broke the cache prefix. This
+ *      flags that something (choco-pi-lsp or otherwise) broke the cache prefix. This
  *      remains a local observation, never a provider cache-miss claim.
  *
  * All paths are defensive: `usage` (and its fields) may be absent on older
@@ -294,7 +294,7 @@ function firstMessageChangeFor(
 /**
  * Log one bounded request-side observation for every `context` call. This is
  * deliberately a separate phase from `cache_prefix_break`: it describes the
- * messages pi-lens saw and returned from its own context handler, not the final
+ * messages choco-pi-lsp saw and returned from its own context handler, not the final
  * provider request after other context handlers and not whether a provider
  * reused or missed a prompt cache. `observationId` is local to this process; the
  * host currently exposes no request id on ContextEvent/MessageEndEvent. A
@@ -364,12 +364,12 @@ export function observeCacheContext(args: {
 
 		logLatency({
 			type: "phase",
-			filePath: "<pi-lens>",
+			filePath: "<choco-pi-lsp>",
 			phase: "cache_context",
 			durationMs: 0,
 			metadata: {
 				version: 1,
-				observedStage: "pi-lens-context-handler",
+				observedStage: "choco-pi-lsp-context-handler",
 				observationId: `ctx-${(++contextObservationCounter).toString(36)}`,
 				sessionId: sessionKey(args.sessionId),
 				sessionRole: args.sessionRole,
@@ -460,7 +460,7 @@ export function logCacheUsage(
 		const u = usage as AssistantUsageLike;
 		logLatency({
 			type: "phase",
-			filePath: "<pi-lens>",
+			filePath: "<choco-pi-lsp>",
 			phase: "cache_usage",
 			durationMs: 0,
 			metadata: {
@@ -605,7 +605,7 @@ export function observeCachePrefix(
 			recordSessionHash(key, currentHash);
 			logLatency({
 				type: "phase",
-				filePath: "<pi-lens>",
+				filePath: "<choco-pi-lsp>",
 				phase: "cache_prefix_break",
 				durationMs: 0,
 				metadata: {
@@ -624,7 +624,7 @@ export function observeCachePrefix(
 		if (currentHash !== previousHash) {
 			logLatency({
 				type: "phase",
-				filePath: "<pi-lens>",
+				filePath: "<choco-pi-lsp>",
 				phase: "cache_prefix_break",
 				durationMs: 0,
 				metadata: {

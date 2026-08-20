@@ -186,7 +186,7 @@ import { emitBounded } from "./clients/bounded-telemetry.js";
  * so the identity is this fixed marker, the same value the record's
  * `filePath` has carried since #192.
  */
-const LOOP_BLOCK_IDENTITY = "<pi-lens>";
+const LOOP_BLOCK_IDENTITY = "<choco-pi-lsp>";
 import {
 	isFreshSessionStart,
 	planToolSet,
@@ -202,8 +202,8 @@ import {
 import {
 	getPiLensEvalMs,
 	markPiLensLoaded,
-	PI_LENS_HOST_BOOT_MS,
-	PI_LENS_LOADED_FROM,
+	CHOCO_PI_LSP_HOST_BOOT_MS,
+	CHOCO_PI_LSP_LOADED_FROM,
 } from "./clients/startup-timing.js";
 import { toRunnerDisplayPath } from "./clients/dispatch/runner-context.js";
 import {
@@ -241,8 +241,8 @@ function resetDispatchBaselines(cwd?: string): void {
 
 // First executable statement: every import above has been evaluated, so the
 // full load/transpile cost has been paid. Capture it now.
-const PI_LENS_LOAD_MS = markPiLensLoaded();
-const PI_LENS_EVAL_MS = getPiLensEvalMs() ?? 0;
+const CHOCO_PI_LSP_LOAD_MS = markPiLensLoaded();
+const CHOCO_PI_LSP_EVAL_MS = getPiLensEvalMs() ?? 0;
 // Start the event-loop occupancy monitor as early as possible so startup
 // blocks are captured. Native histogram — no per-event overhead. (#192)
 startEventLoopMonitor();
@@ -257,7 +257,7 @@ let lastLoggedLoopWorstMs = 0;
 let sessionWorstRealBlockMs = 0;
 // How many turns logged a suspected system stall (sleep/paging) this session —
 // surfaced in /lens-health so a machine freeze reads as environment, not a
-// pi-lens block (#1122).
+// choco-pi-lsp block (#1122).
 let sessionSuspectedStalls = 0;
 
 function dbg(msg: string) {
@@ -282,7 +282,7 @@ function rememberEventCtx(ctx: any): void {
 /**
  * Mode-aware `ctx.ui.notify` (#1334 S2). Every user-facing notify in this file
  * goes through here so terminal ownership is derived from the HOST's
- * `ctx.mode`, not from pi-lens guessing. In "print"/"json" the message is
+ * `ctx.mode`, not from choco-pi-lsp guessing. In "print"/"json" the message is
  * logged instead of rendered — those modes are one-shot pipelines whose stdout
  * belongs to the run's actual output, not to extension chatter. "tui", "rpc"
  * and an older host with no `mode` field all notify exactly as before.
@@ -397,32 +397,32 @@ export function createHostPorts(
 	});
 }
 
-// Log how long pi took to load pi-lens — the jiti transpile of every module is
+// Log how long pi took to load choco-pi-lsp — the jiti transpile of every module is
 // paid by now. Source mode includes transpiling ~200 .ts files; the precompiled
 // dist build does not, so the delta is the #182 startup win. One line per load.
 dbg(
-	`pi-lens loaded: ${PI_LENS_LOAD_MS}ms after process start (from ${PI_LENS_LOADED_FROM})`,
+	`choco-pi-lsp loaded: ${CHOCO_PI_LSP_LOAD_MS}ms after process start (from ${CHOCO_PI_LSP_LOADED_FROM})`,
 );
 logLatency({
 	type: "phase",
-	filePath: "<pi-lens>",
+	filePath: "<choco-pi-lsp>",
 	phase: "extension_loaded",
-	durationMs: PI_LENS_LOAD_MS,
-	metadata: { loadedFrom: PI_LENS_LOADED_FROM },
+	durationMs: CHOCO_PI_LSP_LOAD_MS,
+	metadata: { loadedFrom: CHOCO_PI_LSP_LOADED_FROM },
 });
 logLatency({
 	type: "phase",
-	filePath: "<pi-lens>",
+	filePath: "<choco-pi-lsp>",
 	phase: "host_boot",
-	durationMs: PI_LENS_HOST_BOOT_MS,
-	metadata: { loadedFrom: PI_LENS_LOADED_FROM },
+	durationMs: CHOCO_PI_LSP_HOST_BOOT_MS,
+	metadata: { loadedFrom: CHOCO_PI_LSP_LOADED_FROM },
 });
 logLatency({
 	type: "phase",
-	filePath: "<pi-lens>",
+	filePath: "<choco-pi-lsp>",
 	phase: "extension_eval",
-	durationMs: PI_LENS_EVAL_MS,
-	metadata: { loadedFrom: PI_LENS_LOADED_FROM },
+	durationMs: CHOCO_PI_LSP_EVAL_MS,
+	metadata: { loadedFrom: CHOCO_PI_LSP_LOADED_FROM },
 });
 
 // No-op log function (verbose console logging was removed with lens-verbose flag)
@@ -559,7 +559,7 @@ function cleanStaleTsBuildInfo(cwd: string): string[] {
  * which runs it inside a console capture window (#1434).
  */
 function activateExtension(hostPi: ExtensionAPI) {
-	// #1434: every pi-lens entry point registered through this API runs inside a
+	// #1434: every choco-pi-lsp entry point registered through this API runs inside a
 	// capture window, so a dependency writing to console during our work reaches
 	// the log instead of pi's frame. Host-initiated output stays on the real
 	// console, because it runs outside every window.
@@ -583,12 +583,12 @@ function activateExtension(hostPi: ExtensionAPI) {
 	// #1333 — defense in depth, the pi-side mirror of `mcp/server.ts`'s
 	// `console.log = console.error` guard. pi owns the terminal (raw mode +
 	// cursor-addressed diff repaints), so a raw byte from ANY transitively
-	// loaded module desyncs its screen model. pi-lens's own sites are migrated
+	// loaded module desyncs its screen model. choco-pi-lsp's own sites are migrated
 	// to real ndjson sinks; this net catches everything else. The REAL install
 	// happens at import time via `clients/console-guard-install.js` (index.ts's
 	// first import) so module-init writes are covered too; this call is an
 	// idempotent re-install for tests that invoke the factory directly. No-op
-	// under test mode and under `PI_LENS_CONSOLE_GUARD=0`.
+	// under test mode and under `CHOCO_PI_LSP_CONSOLE_GUARD=0`.
 	installConsoleGuard();
 	initI18n(pi);
 	// #1333 HUMAN channel: user-facing degradations found deep in clients/
@@ -655,10 +655,10 @@ function activateExtension(hostPi: ExtensionAPI) {
 		try {
 			// choco-pi fork: when LSP usage is toggled off (`/lsp off`, `--no-lsp`,
 			// or `lsp.enabled=false`), render the disabled state as an "LSP
-			// Inactive" variant. The pi-lens-visibility extension keys on that
+			// Inactive" variant. The choco-pi-lsp-visibility extension keys on that
 			// phrase to hide both the status segment and the widget.
 			if (getLensFlag("no-lsp")) {
-				setStatus("pi-lens-lsp", theme.fg("dim", "LSP Inactive (disabled)"));
+				setStatus("choco-pi-lsp", theme.fg("dim", "LSP Inactive (disabled)"));
 				return;
 			}
 			// Active and Failed coexist (#170): show the working servers in green
@@ -681,7 +681,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 			// idle timer released them) — not a fault. Render it neutral/grey, not
 			// red, only when there is nothing else to show.
 			setStatus(
-				"pi-lens-lsp",
+				"choco-pi-lsp",
 				parts.length > 0 ? parts.join(" · ") : theme.fg("dim", "LSP Inactive"),
 			);
 		} catch (err) {
@@ -792,7 +792,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 	// Automatic context injection (the `context` hook). Independent of lensEnabled
 	// so tools/LSP/read-guard/formatting keep running when it is off. Precedence:
 	// env override → CLI flag → global config, all resolved inside getLensFlag
-	// from the registry's PI_LENS_NO_CONTEXT_INJECTION env binding (#166).
+	// from the registry's CHOCO_PI_LSP_NO_CONTEXT_INJECTION env binding (#166).
 	let contextInjectionEnabled = !getLensFlag("no-lens-context");
 	let lensWidgetVisible = globalConfig?.widget?.visible !== false;
 	let mountedLensWidgetUi: LensWidgetUi | undefined;
@@ -852,7 +852,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 		}
 		const setWidget = ui.setWidget as LensWidgetSetWidget;
 		setWidget(
-			"pi-lens",
+			"choco-pi-lsp",
 			(tui: LensWidgetTui, theme: LensWidgetTheme) => {
 				renderInvalidator = () => tui.requestRender();
 				setRenderCallback(() => {
@@ -881,7 +881,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 		setRenderCallback(() => {});
 		if (typeof ui?.setWidget !== "function") return false;
 		const setWidget = ui.setWidget as LensWidgetSetWidget;
-		setWidget("pi-lens", undefined);
+		setWidget("choco-pi-lsp", undefined);
 		mountedLensWidgetUi = undefined;
 		return true;
 	}
@@ -908,14 +908,14 @@ function activateExtension(hostPi: ExtensionAPI) {
 
 	pi.registerCommand("lens-toggle", {
 		description:
-			"Toggle pi-lens on/off for the current session. Usage: /lens-toggle",
+			"Toggle choco-pi-lsp on/off for the current session. Usage: /lens-toggle",
 		handler: async (_args, ctx) => {
 			lensEnabled = !lensEnabled;
 			notifyUi(
 				ctx,
 				lensEnabled
-					? "pi-lens enabled for this session."
-					: "pi-lens disabled for this session. Run /lens-toggle again to resume.",
+					? "choco-pi-lsp enabled for this session."
+					: "choco-pi-lsp disabled for this session. Run /lens-toggle again to resume.",
 				lensEnabled ? "info" : "warning",
 			);
 		},
@@ -929,7 +929,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 	// `lsp.enabled` key carries it into the next session.
 	pi.registerCommand("lsp", {
 		description:
-			"Turn pi-lens LSP usage on or off at runtime, or show its state. Usage: /lsp on|off|status",
+			"Turn choco-pi-lsp LSP usage on or off at runtime, or show its state. Usage: /lsp on|off|status",
 		handler: async (args, ctx) => {
 			const [subcommand] = normalizeCommandArgs(args);
 			const repaintLspStatus = () => {
@@ -956,7 +956,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 						ctx,
 						persisted
 							? "LSP enabled. Servers warm lazily on the next edit or LSP tool call (persisted as lsp.enabled=true)."
-							: "LSP enabled for this session — persisting lsp.enabled to ~/.pi-lens/config.json failed.",
+							: "LSP enabled for this session — persisting lsp.enabled to ~/.choco-pi-lsp/config.json failed.",
 						"info",
 					);
 					return;
@@ -972,7 +972,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 						ctx,
 						persisted
 							? "LSP disabled — language servers stopped; lsp_diagnostics/lsp_navigation report disabled. Run /lsp on to re-enable (persisted as lsp.enabled=false)."
-							: "LSP disabled for this session — persisting lsp.enabled to ~/.pi-lens/config.json failed.",
+							: "LSP disabled for this session — persisting lsp.enabled to ~/.choco-pi-lsp/config.json failed.",
 						"warning",
 					);
 					return;
@@ -1019,8 +1019,8 @@ function activateExtension(hostPi: ExtensionAPI) {
 			notifyUi(
 				ctx,
 				contextInjectionEnabled
-					? "pi-lens context injection enabled — findings will be added to the next turn."
-					: "pi-lens context injection disabled — findings are still cached (diagnostics_report, /lens-health) but not added to model context.",
+					? "choco-pi-lsp context injection enabled — findings will be added to the next turn."
+					: "choco-pi-lsp context injection disabled — findings are still cached (diagnostics_report, /lens-health) but not added to model context.",
 				contextInjectionEnabled ? "info" : "warning",
 			);
 		},
@@ -1028,7 +1028,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 
 	pi.registerCommand("lens-widget-toggle", {
 		description:
-			"Show or hide the pi-lens diagnostics widget below the editor. Usage: /lens-widget-toggle",
+			"Show or hide the choco-pi-lsp diagnostics widget below the editor. Usage: /lens-widget-toggle",
 		handler: async (_args, ctx) => {
 			const nextVisible = !lensWidgetVisible;
 			const mode = readExtensionMode(ctx);
@@ -1038,7 +1038,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 			if (nextVisible && !supportsTuiWidget(mode)) {
 				notifyUi(
 					ctx,
-					`pi-lens widget needs an interactive TUI — unavailable in "${mode}" mode.`,
+					`choco-pi-lsp widget needs an interactive TUI — unavailable in "${mode}" mode.`,
 					"warning",
 				);
 				return;
@@ -1049,7 +1049,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 			if (!changed) {
 				notifyUi(
 					ctx,
-					"pi-lens widget is not supported by this pi version.",
+					"choco-pi-lsp widget is not supported by this pi version.",
 					"warning",
 				);
 				return;
@@ -1059,8 +1059,8 @@ function activateExtension(hostPi: ExtensionAPI) {
 			notifyUi(
 				ctx,
 				lensWidgetVisible
-					? "pi-lens widget shown. Run /lens-widget-toggle to hide it."
-					: "pi-lens widget hidden. Run /lens-widget-toggle to show it.",
+					? "choco-pi-lsp widget shown. Run /lens-widget-toggle to hide it."
+					: "choco-pi-lsp widget hidden. Run /lens-widget-toggle to show it.",
 				"info",
 			);
 		},
@@ -1153,7 +1153,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 
 	pi.registerCommand("lens-health", {
 		description:
-			"Show pi-lens runtime health: pipeline crashes, slow runners, and last dispatch latency. Usage: /lens-health",
+			"Show choco-pi-lsp runtime health: pipeline crashes, slow runners, and last dispatch latency. Usage: /lens-health",
 		handler: async (_args, ctx) => {
 			const crashEntries = runtime
 				.getCrashEntries()
@@ -1279,7 +1279,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 
 			// On-demand heap snapshot (#1126) — the retainer-attribution half of the
 			// memory line above: it says how many bytes are resident by subsystem,
-			// this captures WHICH objects retain them. Gated behind PI_LENS_DEBUG_HEAP
+			// this captures WHICH objects retain them. Gated behind CHOCO_PI_LSP_DEBUG_HEAP
 			// (zero cost + no file when unset) and only ever triggered from this
 			// operator-invoked diagnostics command — never a hot path or timer, so the
 			// synchronous multi-second snapshot pause is opt-in and explicit. See
@@ -1395,7 +1395,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 
 	pi.registerCommand("lens-tools", {
 		description:
-			"Show pi-lens tool installation status: globally installed, auto-installed, or npx fallback. Usage: /lens-tools",
+			"Show choco-pi-lsp tool installation status: globally installed, auto-installed, or npx fallback. Usage: /lens-tools",
 		handler: async (_args, ctx) => {
 			const statuses = await getAllToolStatuses();
 
@@ -1403,7 +1403,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 				"global-path": statuses.filter((s) => s.source === "global-path"),
 				"npm-global": statuses.filter((s) => s.source === "npm-global"),
 				"pip-user": statuses.filter((s) => s.source === "pip-user"),
-				"pi-lens-auto": statuses.filter((s) => s.source === "pi-lens-auto"),
+				"choco-pi-lsp-auto": statuses.filter((s) => s.source === "choco-pi-lsp-auto"),
 				"github-release": statuses.filter((s) => s.source === "github-release"),
 				"npx-fallback": statuses.filter((s) => s.source === "npx-fallback"),
 				"not-installed": statuses.filter((s) => s.source === "not-installed"),
@@ -1451,13 +1451,13 @@ function activateExtension(hostPi: ExtensionAPI) {
 				}
 			}
 
-			// pi-lens auto-installed
-			if (bySource["pi-lens-auto"].length > 0) {
+			// choco-pi-lsp auto-installed
+			if (bySource["choco-pi-lsp-auto"].length > 0) {
 				lines.push(
 					"",
-					`🤖 Auto-installed (${bySource["pi-lens-auto"].length}):`,
+					`🤖 Auto-installed (${bySource["choco-pi-lsp-auto"].length}):`,
 				);
-				for (const tool of bySource["pi-lens-auto"]) {
+				for (const tool of bySource["choco-pi-lsp-auto"]) {
 					lines.push(`  ✓ ${tool.name}`);
 				}
 			}
@@ -1600,7 +1600,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 	// deactivated in the block below right after registration. The model
 	// activates the ones it needs via `lsp_activate_tools`. On hosts without
 	// that API this whole tier is simply left statically active, matching
-	// pi-lens's behavior before this feature existed.
+	// choco-pi-lsp's behavior before this feature existed.
 	const lazyTools = [
 		createAstGrepSearchTool(astGrepClient),
 		createAstGrepReplaceTool(astGrepClient),
@@ -1684,7 +1684,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 	// flag-off path registers the ORIGINAL tool definitions untouched —
 	// byte-identical to pre-#1327 behavior (no renderCall/renderResult added
 	// or altered). Only tools that already define `renderResult` (every
-	// substantive pi-lens tool — see tools/render-compact.ts) are wrapped;
+	// substantive choco-pi-lsp tool — see tools/render-compact.ts) are wrapped;
 	// the rest pass through wrapToolsForCompactLine unchanged.
 	const compactToolLineEnabled = getLensFlag("lens-compact-tool-line") === true;
 	const toolsToRegister = [
@@ -1755,7 +1755,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 			const sessionReason = (event as { reason?: string }).reason;
 
 			// #1334 S5: adopt the HOST's project-trust decision before anything
-			// below can auto-install a tool or spawn an LSP server. pi-lens is a
+			// below can auto-install a tool or spawn an LSP server. choco-pi-lsp is a
 			// CONSUMER of trust (`ctx.isProjectTrusted()`), never a handler of the
 			// `project_trust` event — answering that question on the user's behalf
 			// is the host's/user's job. Re-read here and on every turn_start because
@@ -1814,14 +1814,14 @@ function activateExtension(hostPi: ExtensionAPI) {
 			// there).
 			//
 			// #1453: this RESTORES, it does not merely shrink. Every session_start
-			// reason arrives with all registered pi-lens tools active, because the
+			// reason arrives with all registered choco-pi-lsp tools active, because the
 			// host builds a fresh AgentSession with `includeAllExtensionTools: true`
 			// on fork/reload/resume just as it does on startup, and never persists
 			// an active-tool set per session. Skipping the call on those reasons
 			// would therefore leave every lazy tool active forever AND change the
 			// advertised tool list relative to the parent's cached prompt prefix.
 			// Rebuilding the same set instead keeps the prefix identical and
-			// genuinely preserves the model's activations, because pi-lens's own
+			// genuinely preserves the model's activations, because choco-pi-lsp's own
 			// closure state (`rememberedLazyTools`) survives the rebuild.
 			//
 			// Deliberately BELOW the #473 concurrent-secondary guard: the active
@@ -1908,7 +1908,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 			// lost (stale-heartbeat entry removal, or a silently-failed
 			// `killPidTree`), the child becomes permanently invisible to it. This
 			// backstop instead scans the OS process table directly for known
-			// pi-lens-managed binary names and only acts on ones that are BOTH
+			// choco-pi-lsp-managed binary names and only acts on ones that are BOTH
 			// untracked by the current registry snapshot AND have a
 			// confirmed-dead parent — never on name alone. Fire-and-forget, same
 			// non-blocking/never-throws contract as `sweepOrphans`.
@@ -1923,7 +1923,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 			void checkCrossProcessLspBudget();
 			// #492: child-at-session_start cross-process nudge consumer. Reads
 			// `recent-touches.json` (clients/recent-touches.ts) for entries from
-			// OTHER pi-lens instances (pid-excluded) within the 15-minute
+			// OTHER choco-pi-lsp instances (pid-excluded) within the 15-minute
 			// freshness window whose file still exists, and feeds them into the
 			// same #485 accumulator a bus event would use — the first `context`
 			// call this session makes (clients/agent-nudge.ts, wired below) then
@@ -2149,9 +2149,9 @@ function activateExtension(hostPi: ExtensionAPI) {
 		setAmbientAbortSignal(ctx?.signal);
 		// Earliest possible marker for the edit pipeline: the first instrumented
 		// phase is `read_file` deep inside runPipeline, so a stall before that (or
-		// upstream, before pi-lens even received the event) leaves NO trace — that
+		// upstream, before choco-pi-lsp even received the event) leaves NO trace — that
 		// is exactly why a wedged-LSP edit hang was invisible in latency.log. This
-		// row means "pi-lens received this edit"; if it is present but nothing
+		// row means "choco-pi-lsp received this edit"; if it is present but nothing
 		// follows, the stall is in the pipeline; if it is absent, it is upstream.
 		const rtToolName = (event as { toolName?: string })?.toolName;
 		if (rtToolName === "edit" || rtToolName === "write") {
@@ -2216,7 +2216,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 		// #492: parent-at-turn_start cross-process nudge consumer — the "parent
 		// blind to child" direction, arguably the more important one (the
 		// child is ephemeral; the parent keeps editing the same tree after a
-		// subagent returns and its pi-lens has autoformatted on top of the
+		// subagent returns and its choco-pi-lsp has autoformatted on top of the
 		// child's edits). Hot path: `readCrossProcessTouchesForTurnStart`
 		// mtime-gates itself (ONE `fs.stat`, no read/parse when the record
 		// hasn't changed since the last turn_start), so this call is
@@ -2322,7 +2322,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 			);
 			logLatency({
 				type: "phase",
-				filePath: ctx.cwd ?? "<pi-lens>",
+				filePath: ctx.cwd ?? "<choco-pi-lsp>",
 				phase: "agent_end_concurrent_secondary_skip",
 				durationMs: 0,
 				metadata: { sessionId: currentSessionId },
@@ -2462,7 +2462,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 					const sample = buildMemorySample(runtime.wordIndex);
 					logLatency({
 						type: "phase",
-						filePath: "<pi-lens>",
+						filePath: "<choco-pi-lsp>",
 						phase: "memory_sample",
 						durationMs: 0,
 						metadata: { turnIndex: runtime.turnIndex, ...sample },
@@ -2741,7 +2741,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 				// #1123 item 4: dump active handles AFTER the quiet-window work is
 				// scheduled — the #1097-class leak (a stray ref'd timer surviving
 				// past settle) is only visible once whatever settle itself queued is
-				// already in flight. No-op unless PI_LENS_DEBUG_HANDLES=1.
+				// already in flight. No-op unless CHOCO_PI_LSP_DEBUG_HANDLES=1.
 				dumpActiveHandles("agent_settled");
 			},
 		);
@@ -2815,7 +2815,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 		// #1123 item 4: dump active handles AFTER teardown — whatever is still
 		// alive at this point is exactly what would keep a --print/--no-session
 		// process from exiting (the #1097 lesson: what survives IS the leak).
-		// No-op unless PI_LENS_DEBUG_HANDLES=1.
+		// No-op unless CHOCO_PI_LSP_DEBUG_HANDLES=1.
 		dumpActiveHandles("session_shutdown");
 	});
 
@@ -2847,7 +2847,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 	// --- Inject turn-end findings into next agent turn ---
 	// jscpd, madge, and turn-end delta results are cached at turn_end and consumed here
 	// via the context event, which fires before each provider request.
-	// Placement (#1016): splice the ephemeral pi-lens findings in IMMEDIATELY BEFORE
+	// Placement (#1016): splice the ephemeral choco-pi-lsp findings in IMMEDIATELY BEFORE
 	// the final message rather than prepending at index 0. Prepending flipped
 	// messages[0] every turn, which invalidated the entire prompt-cache prefix on
 	// EVERY prefix-caching provider (Anthropic, Bedrock, AND OpenAI — all key the
@@ -3030,6 +3030,6 @@ export default function (pi: ExtensionAPI) {
 
 // #1434: the import graph has finished evaluating, so the module window closes
 // here. Everything after this point is host-owned execution, until one of
-// pi-lens's own entry points opens its own window. This must stay the last
+// choco-pi-lsp's own entry points opens its own window. This must stay the last
 // statement in index.ts.
 closeModuleLoadConsoleWindow();

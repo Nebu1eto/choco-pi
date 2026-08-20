@@ -1,8 +1,8 @@
 /**
- * Project-level `.pi-lens.json` config loader.
+ * Project-level `.choco-pi-lsp.json` config loader.
  *
- * Reads an optional `.pi-lens.json` (or `pi-lens.json`) at the project root and
- * surfaces the fields the rest of pi-lens honors:
+ * Reads an optional `.choco-pi-lsp.json` (or `choco-pi-lsp.json`) at the project root and
+ * surfaces the fields the rest of choco-pi-lsp honors:
  *
  *   - `ignore` — gitignore-style glob patterns added to every scan (LSP walk,
  *     fact-rules, tree-sitter, jscpd, knip, review graph, source-filter). Wired
@@ -28,12 +28,12 @@
  *     non-numeric/non-positive value warns and is dropped). Read by
  *     `getReviewGraphMaxFilesDerived`, where it takes precedence over the
  *     taper (but the subsystem's own PRE-EXISTING
- *     `PI_LENS_REVIEW_GRAPH_MAX_FILES` env override still wins outright over
+ *     `CHOCO_PI_LSP_REVIEW_GRAPH_MAX_FILES` env override still wins outright over
  *     both, unchanged).
  *
  *   - `format.enabled`, `autofix.enabled`, and
  *     `actionableWarnings.autoFix.enabled` — project-owned mutation controls.
- *     These can disable pi-lens writes while leaving diagnostics enabled.
+ *     These can disable choco-pi-lsp writes while leaving diagnostics enabled.
  *
  * The file is loaded once per `(path, mtimeMs)` and cached — editing the file
  * invalidates the cache so the next access sees the new values without
@@ -43,17 +43,17 @@
  *
  * The loader walks up from the starting directory until it finds a config file
  * (mirroring `lsp/config.ts`'s `loadLSPConfig` so project-monorepos with a
- * `.pi-lens.json` at the repo root work without per-subdir configs).
+ * `.choco-pi-lsp.json` at the repo root work without per-subdir configs).
  *
  * A malformed file is treated as "no config" and logged once — we never want a
  * stray syntax error in user-edited JSON to break diagnostics.
  *
  * `findPiLensConfigInDir` / `loadPiLensConfigInDir` are the per-directory
  * (no upward walk) counterparts used by `file-utils.ts`'s
- * `getProjectIgnoreMatcher` to layer NESTED `.pi-lens.json` `ignore` fields
+ * `getProjectIgnoreMatcher` to layer NESTED `.choco-pi-lsp.json` `ignore` fields
  * the same way nested `.gitignore`s are already layered (#783): every
  * ancestor directory between the git root and a scanned file is checked for
- * its own config file, so a package-local `.pi-lens.json`'s `ignore`
+ * its own config file, so a package-local `.choco-pi-lsp.json`'s `ignore`
  * patterns apply to files inside that package, in addition to (and with
  * higher precedence than) the root config's `ignore` patterns.
  */
@@ -76,16 +76,16 @@ import {
 import { isAtOrAboveHomeDir, walkUpDirs } from "./path-utils.js";
 import { findPiLensConfigMarkerInDir } from "./workspace-topology.js";
 
-const PROJECT_CONFIG_BASENAMES = [".pi-lens.json", "pi-lens.json"];
+const PROJECT_CONFIG_BASENAMES = [".choco-pi-lsp.json", "choco-pi-lsp.json"];
 
 /**
- * The project loader's OWN recognized top-level keys — pi-lens-native sections,
+ * The project loader's OWN recognized top-level keys — choco-pi-lsp-native sections,
  * whether parsed here into typed fields (`ignore`, `rules`, `maxProjectFiles`,
- * `reviewGraph`) or read off `PiLensProjectConfig.raw` by another pi-lens
+ * `reviewGraph`) or read off `PiLensProjectConfig.raw` by another choco-pi-lsp
  * consumer (`trivy`, read via `.raw` in `trivy-client.ts`). The project-scoped
  * flag sections (`format`, `autofix`, `actionableWarnings`) are NOT listed here;
  * they are derived from `PROJECT_SCOPED_LENS_FLAGS` so the registry stays the
- * single source of truth (#883). Foreign (non-pi-lens) namespaces the shared
+ * single source of truth (#883). Foreign (non-choco-pi-lsp) namespaces the shared
  * file also carries live in `PROJECT_FOREIGN_CONFIG_NAMESPACES` beside the
  * registry.
  */
@@ -104,7 +104,7 @@ export interface PiLensProjectRuleConfig {
 	threshold?: number;
 	/**
 	 * Project-level disable list — rule ids whose diagnostics the project's
-	 * `.pi-lens.json` deliberately turns off. Output-only filtering (the
+	 * `.choco-pi-lsp.json` deliberately turns off. Output-only filtering (the
 	 * diagnostics are still recorded: widget state, baseline, and dispatch
 	 * dedup see them), so a project's own policy never widens the trusted
 	 * surface area beyond what the user actually sees. Matching is PROJECT-
@@ -209,7 +209,7 @@ const discoveryCache = new Map<string, DiscoveryCacheEntry>();
 const warnedInvalidConfigs = new Set<string>();
 
 /**
- * Walk up from `startDir` looking for a `.pi-lens.json` or `pi-lens.json`.
+ * Walk up from `startDir` looking for a `.choco-pi-lsp.json` or `choco-pi-lsp.json`.
  * Returns the parsed config, or an empty config if none was found.
  */
 export function loadPiLensProjectConfig(
@@ -253,7 +253,7 @@ export interface PiLensProjectConfigFileInfo {
 }
 
 /**
- * Look for a `.pi-lens.json`/`pi-lens.json` directly IN `dir` — no upward
+ * Look for a `.choco-pi-lsp.json`/`choco-pi-lsp.json` directly IN `dir` — no upward
  * walk. Used to layer nested per-package configs (#783) the same way
  * `file-utils.ts` layers nested `.gitignore`s: each ancestor directory
  * between the git root and a target file is checked for its OWN config
@@ -309,7 +309,7 @@ export function findNestedProjectMutationValue(
 }
 
 /**
- * Load the `.pi-lens.json`/`pi-lens.json` directly IN `dir` (no upward
+ * Load the `.choco-pi-lsp.json`/`choco-pi-lsp.json` directly IN `dir` (no upward
  * walk) — the per-directory counterpart to `loadPiLensProjectConfig`'s
  * upward-walking discovery. Shares `configCache` (keyed by absolute config
  * path + mtime), so a directory whose config was already loaded via the
@@ -397,8 +397,8 @@ function warnInvalidConfigOnce(configPath: string, reason: string): void {
 		message,
 		metadata: { configPath, reason },
 	});
-	// HUMAN-audience too: the user's own `.pi-lens.json` is being ignored.
-	notifyUserDegradation(`pi-lens: ${message}`);
+	// HUMAN-audience too: the user's own `.choco-pi-lsp.json` is being ignored.
+	notifyUserDegradation(`choco-pi-lsp: ${message}`);
 }
 
 function parseRulePolicyList(
@@ -582,7 +582,7 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
 	}
 
 	// #533 hygiene: mirror the global loader's unknown-key warn so a typo in a
-	// shared `.pi-lens.json` (e.g. `maxProjectFile`, `lps`) produces a signal
+	// shared `.choco-pi-lsp.json` (e.g. `maxProjectFile`, `lps`) produces a signal
 	// instead of silently doing nothing. The recognized set is single-sourced
 	// (#883): the project loader's own keys + the project-scoped flag sections
 	// (registry-derived) + the foreign namespaces the LSP loader reads from this
@@ -606,12 +606,12 @@ function parseConfigFile(configPath: string): PiLensProjectConfig {
 		if (globalScopeOnlyKeys.has(key)) {
 			warnInvalidConfigOnce(
 				configPath,
-				`"${key}" is a global-only pi-lens setting and is not honored in a project .pi-lens.json (set it in ~/.pi-lens/config.json or pass the matching CLI flag); ignored`,
+				`"${key}" is a global-only choco-pi-lsp setting and is not honored in a project .choco-pi-lsp.json (set it in ~/.choco-pi-lsp/config.json or pass the matching CLI flag); ignored`,
 			);
 		} else {
 			warnInvalidConfigOnce(
 				configPath,
-				`unknown key "${key}" is not a recognized pi-lens setting (check for a typo); ignored`,
+				`unknown key "${key}" is not a recognized choco-pi-lsp setting (check for a typo); ignored`,
 			);
 		}
 	}

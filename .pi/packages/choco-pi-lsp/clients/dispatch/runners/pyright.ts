@@ -110,7 +110,7 @@ const pyrightRunner: RunnerDefinition = {
 						? "warning"
 						: "none",
 			};
-		// pi-lens-ignore: missing-error-propagation
+		// choco-pi-lsp-ignore: missing-error-propagation
 		} catch {
 			logExtension({
 				subsystem: "runner:pyright",

@@ -69,9 +69,9 @@ export interface CodeQualityWarningsReport {
 		 * being folded into `warning`.
 		 *
 		 * OPTIONAL on purpose: this report is persisted to
-		 * `.pi-lens/cache/code-quality-warnings.json` and read back by
+		 * `.choco-pi-lsp/cache/code-quality-warnings.json` and read back by
 		 * `tools/diagnostics-report.ts`, which can find a file written by a
-		 * pi-lens build that predates the field. Readers must tolerate absence.
+		 * choco-pi-lsp build that predates the field. Readers must tolerate absence.
 		 */
 		byTier?: { warning: number; info: number; hint: number };
 		topRules: Array<{ rule: string; count: number }>;
@@ -284,7 +284,7 @@ export function buildCodeQualityWarningsReport(args: {
 
 /**
  * #557 audit (same race class as #555's LSP client fix and #560's
- * `widget-state.ts` `recordDiagnostics` fix): pi-lens deliberately allows
+ * `widget-state.ts` `recordDiagnostics` fix): choco-pi-lsp deliberately allows
  * concurrent pipeline runs for the SAME file across DIFFERENT same-turn
  * edits (dedupe key is `filePath + contentHash`, not just `filePath` — see
  * `clients/runtime-tool-result.ts`), so a per-key cache fed directly from
@@ -391,7 +391,7 @@ export function formatCodeQualityWarningsAdvisory(
 			? `By tier: ${tiers}. Hint and info are style opinions, not defects.`
 			: undefined,
 		topRules ? `Top rules: ${topRules}` : undefined,
-		"Details written to .pi-lens/cache/code-quality-warnings.json",
+		"Details written to .choco-pi-lsp/cache/code-quality-warnings.json",
 		"No action required unless you are already refactoring these areas.",
 	]
 		.filter(Boolean)

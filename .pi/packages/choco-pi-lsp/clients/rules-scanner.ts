@@ -1,5 +1,5 @@
 /**
- * Project rules scanner for pi-lens.
+ * Project rules scanner for choco-pi-lsp.
  *
  * Scans for rule files that other tools/agents may have left:
  * - .claude/rules/   — Claude Code rule files

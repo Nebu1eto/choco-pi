@@ -1,5 +1,5 @@
 /**
- * On-demand V8 heap-snapshot writer — the `PI_LENS_DEBUG_HEAP` sibling that
+ * On-demand V8 heap-snapshot writer — the `CHOCO_PI_LSP_DEBUG_HEAP` sibling that
  * `clients/memory-sampler.ts`'s docstring names as the SEPARATE, explicitly
  * opt-in mechanism for #1126's acceptance criterion ("a heap snapshot of a
  * >1 GB instance identifying the dominant retainers"). The periodic
@@ -11,7 +11,7 @@
  * observability, deliberately kept out of the always-on sampler because a heap
  * snapshot is expensive (see COST below).
  *
- * `PI_LENS_DEBUG_HEAP=1` (read ONCE at module load, exactly like
+ * `CHOCO_PI_LSP_DEBUG_HEAP=1` (read ONCE at module load, exactly like
  * `debug-handles.ts` — a flag baked in at startup, never toggled mid-session):
  *   - OFF (default): every export below is a no-op that returns immediately on
  *     the flag check. No file is written, no `node:v8` snapshot work happens,
@@ -20,16 +20,16 @@
  *     `isDebugHeapEnabled()` first, so an unset flag costs a single boolean
  *     read. This is NEVER wired to a hot hook, a timer, or a lifecycle event.
  *   - ON: `writeHeapSnapshotNow(label)` calls `v8.writeHeapSnapshot()` to
- *     `~/.pi-lens/heap-<pid>-<iso>.heapsnapshot` and appends ONE ndjson
+ *     `~/.choco-pi-lsp/heap-<pid>-<iso>.heapsnapshot` and appends ONE ndjson
  *     breadcrumb (path, pid, `rssBytes`, `durationMs`) to `heap-snapshots.log`
  *     via the standard size-bounded `createNdjsonLogger` family (same rotation
- *     bounds every other pi-lens log gets, #1101-era registry). The breadcrumb
+ *     bounds every other choco-pi-lsp log gets, #1101-era registry). The breadcrumb
  *     lets latency.log's `memory_sample` trajectory and the on-disk snapshot
  *     files cross-reference each other after the fact.
  *
  * COST: `v8.writeHeapSnapshot()` is a SYNCHRONOUS, multi-hundred-MB, multi-
  * second operation that pauses the whole process — which is exactly why it is
- * (a) strictly opt-in behind `PI_LENS_DEBUG_HEAP`, and (b) only ever invoked on
+ * (a) strictly opt-in behind `CHOCO_PI_LSP_DEBUG_HEAP`, and (b) only ever invoked on
  * explicit operator demand via `/lens-health`, never on an automatic path.
  * Auto-capturing a snapshot when a `memory_sample` crosses an RSS threshold is
  * a DELIBERATELY-DEFERRED follow-up (see #1126) precisely because a threshold
@@ -56,9 +56,9 @@ import { getMaxLogSizeMB } from "./log-cleanup.js";
 import { createNdjsonLogger, type NdjsonLogger } from "./ndjson-logger.js";
 
 /** Read once at module load — see module docstring. Not re-read per call. */
-const DEBUG_HEAP_ENABLED = process.env.PI_LENS_DEBUG_HEAP === "1";
+const DEBUG_HEAP_ENABLED = process.env.CHOCO_PI_LSP_DEBUG_HEAP === "1";
 
-/** Newest-N `.heapsnapshot` files kept in the pi-lens dir; older ones are
+/** Newest-N `.heapsnapshot` files kept in the choco-pi-lsp dir; older ones are
  *  pruned after every write. See the module docstring's shape-9 note for why
  *  newest-kept (not earliest-pinned) is the right retention policy here. */
 export const SNAPSHOT_RETENTION = 3;
@@ -80,7 +80,7 @@ const writer: NdjsonLogger | null = DEBUG_HEAP_ENABLED
 		})
 	: null;
 
-/** True iff `PI_LENS_DEBUG_HEAP=1` was set when this module first loaded. */
+/** True iff `CHOCO_PI_LSP_DEBUG_HEAP=1` was set when this module first loaded. */
 export function isDebugHeapEnabled(): boolean {
 	return DEBUG_HEAP_ENABLED;
 }
@@ -158,9 +158,9 @@ export interface HeapSnapshotResult {
 }
 
 /**
- * Write one heap snapshot to `~/.pi-lens/`, append a breadcrumb line, and prune
+ * Write one heap snapshot to `~/.choco-pi-lsp/`, append a breadcrumb line, and prune
  * to the newest `SNAPSHOT_RETENTION` files. A pure no-op returning `null` — no
- * file, no allocation past the flag check — when `PI_LENS_DEBUG_HEAP` was unset
+ * file, no allocation past the flag check — when `CHOCO_PI_LSP_DEBUG_HEAP` was unset
  * at startup. `label` records the trigger (currently only `"lsp_health"`).
  */
 export function writeHeapSnapshotNow(label: string): HeapSnapshotResult | null {

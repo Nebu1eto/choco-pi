@@ -9,7 +9,7 @@ const packageRootCache = new Map<string, string>();
  * Walks upward from the caller until it finds the nearest package.json.
  *
  * This is the correct alternative to process.cwd() for resolving
- * pi-lens's own assets (rules, grammars, configs) when installed
+ * choco-pi-lsp's own assets (rules, grammars, configs) when installed
  * globally — cwd is the user's project, not the extension root.
  *
  * Credit: alexx-ftw (PR #1)

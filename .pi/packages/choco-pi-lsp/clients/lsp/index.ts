@@ -1,5 +1,5 @@
 /**
- * LSP Service Layer for pi-lens
+ * LSP Service Layer for choco-pi-lsp
  *
  * Manages multiple LSP clients per workspace with:
  * - Auto-spawning based on file type
@@ -278,12 +278,12 @@ const OPTIONAL_LSP_RETRY_COOLDOWN_MS = 5 * 60_000;
 const OPTIONAL_LSP_SERVER_IDS = new Set<string>();
 const NAV_CLIENT_WAIT_TIMEOUT_MS = Math.max(
 	0,
-	Number.parseInt(process.env.PI_LENS_LSP_NAV_CLIENT_WAIT_MS ?? "1500", 10) ||
+	Number.parseInt(process.env.CHOCO_PI_LSP_LSP_NAV_CLIENT_WAIT_MS ?? "1500", 10) ||
 		1500,
 );
 const TOUCH_DEBOUNCE_MS = Math.max(
 	0,
-	Number.parseInt(process.env.PI_LENS_LSP_TOUCH_DEBOUNCE_MS ?? "1500", 10) ||
+	Number.parseInt(process.env.CHOCO_PI_LSP_LSP_TOUCH_DEBOUNCE_MS ?? "1500", 10) ||
 		1500,
 );
 // #1621: the rename-propagation notifies (`didClose` ahead of the rename,
@@ -302,7 +302,7 @@ const TOUCH_DEBOUNCE_MS = Math.max(
 const RENAME_NOTIFY_TIMEOUT_MS = Math.max(
 	50,
 	Number.parseInt(
-		process.env.PI_LENS_LSP_RENAME_NOTIFY_TIMEOUT_MS ?? "1500",
+		process.env.CHOCO_PI_LSP_LSP_RENAME_NOTIFY_TIMEOUT_MS ?? "1500",
 		10,
 	) || 1500,
 );
@@ -338,14 +338,14 @@ const DEFAULT_LSP_CLIENT_CEILING = 24;
 const DEFAULT_TS_IDLE_EVICT_MS = 20 * 60_000;
 
 export function getTypeScriptIdleEvictMs(): number {
-	const parsed = Number.parseInt(process.env.PI_LENS_TS_IDLE_EVICT_MS ?? "", 10);
+	const parsed = Number.parseInt(process.env.CHOCO_PI_LSP_TS_IDLE_EVICT_MS ?? "", 10);
 	return Number.isSafeInteger(parsed) && parsed > 0
 		? parsed
 		: DEFAULT_TS_IDLE_EVICT_MS;
 }
 
 export function getLspClientCeiling(): number {
-	const parsed = Number.parseInt(process.env.PI_LENS_LSP_CLIENT_CEILING ?? "", 10);
+	const parsed = Number.parseInt(process.env.CHOCO_PI_LSP_LSP_CLIENT_CEILING ?? "", 10);
 	return Number.isSafeInteger(parsed) && parsed > 0
 		? parsed
 		: DEFAULT_LSP_CLIENT_CEILING;
@@ -359,7 +359,7 @@ export function getLspClientCeiling(): number {
 // in this file.
 function warmupTimeoutMs(): number {
 	const raw = Number.parseInt(
-		process.env.PI_LENS_LSP_WARMUP_TIMEOUT_MS ?? "",
+		process.env.CHOCO_PI_LSP_LSP_WARMUP_TIMEOUT_MS ?? "",
 		10,
 	);
 	return Number.isFinite(raw) && raw > 0 ? raw : 20_000;
@@ -374,20 +374,20 @@ function warmupTimeoutMs(): number {
 // pause entirely (retry fires immediately).
 function warmupRetryBackoffMs(): number {
 	const raw = Number.parseInt(
-		process.env.PI_LENS_LSP_WARMUP_RETRY_BACKOFF_MS ?? "",
+		process.env.CHOCO_PI_LSP_LSP_WARMUP_RETRY_BACKOFF_MS ?? "",
 		10,
 	);
 	return Number.isFinite(raw) && raw >= 0 ? raw : 500;
 }
 
 /**
- * Read the `PI_LENS_LSP_DIAGNOSTICS_MAX_WAIT_MS` env override at call time
+ * Read the `CHOCO_PI_LSP_LSP_DIAGNOSTICS_MAX_WAIT_MS` env override at call time
  * (process.env mutations in tests stay live). Returns undefined when unset,
  * non-numeric, or negative — callers fall back through the explicit option
  * chain in {@link LSPService.touchFile}.
  */
 function readEnvDiagnosticsWaitMs(): number | undefined {
-	const raw = process.env.PI_LENS_LSP_DIAGNOSTICS_MAX_WAIT_MS;
+	const raw = process.env.CHOCO_PI_LSP_LSP_DIAGNOSTICS_MAX_WAIT_MS;
 	if (raw === undefined) return undefined;
 	const parsed = Number.parseInt(raw, 10);
 	if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
@@ -403,14 +403,14 @@ function readEnvDiagnosticsWaitMs(): number | undefined {
  * and users can tune without a rebuild.
  */
 function readTsserverSyncGraceMs(): number {
-	const raw = process.env.PI_LENS_TSSERVER_SYNC_GRACE_MS;
+	const raw = process.env.CHOCO_PI_LSP_TSSERVER_SYNC_GRACE_MS;
 	if (raw === undefined) return 300;
 	const parsed = Number.parseInt(raw, 10);
 	if (!Number.isFinite(parsed) || parsed < 0) return 300;
 	return parsed;
 }
 /**
- * Read the `PI_LENS_AUX_GRACE_MS` env override at call time (not module
+ * Read the `CHOCO_PI_LSP_AUX_GRACE_MS` env override at call time (not module
  * load time) so tests can set it per-case. Controls the CEILING on how long
  * auxiliary-role promises (opengrep, ast-grep, zizmor, …) are waited after
  * all primary-role promises have settled, in both getDiagnostics
@@ -422,7 +422,7 @@ function readTsserverSyncGraceMs(): number {
  * 2000ms; getDiagnostics: 2000ms — see the `?? 2000` at each call site).
  */
 function readEnvAuxGraceMs(): number | undefined {
-	const raw = process.env.PI_LENS_AUX_GRACE_MS;
+	const raw = process.env.CHOCO_PI_LSP_AUX_GRACE_MS;
 	if (raw === undefined) return undefined;
 	const parsed = Number.parseInt(raw, 10);
 	if (!Number.isFinite(parsed) || parsed < 0) return undefined;
@@ -431,14 +431,14 @@ function readEnvAuxGraceMs(): number | undefined {
 const DIAGNOSTICS_SEMANTIC_SETTLE_THRESHOLD_MS = Math.max(
 	0,
 	Number.parseInt(
-		process.env.PI_LENS_LSP_DIAGNOSTICS_SEMANTIC_THRESHOLD_MS ?? "250",
+		process.env.CHOCO_PI_LSP_LSP_DIAGNOSTICS_SEMANTIC_THRESHOLD_MS ?? "250",
 		10,
 	) || 250,
 );
 const DIAGNOSTICS_SEMANTIC_SETTLE_WAIT_MS = Math.max(
 	0,
 	Number.parseInt(
-		process.env.PI_LENS_LSP_DIAGNOSTICS_SEMANTIC_SETTLE_MS ?? "400",
+		process.env.CHOCO_PI_LSP_LSP_DIAGNOSTICS_SEMANTIC_SETTLE_MS ?? "400",
 		10,
 	) || 400,
 );
@@ -447,7 +447,7 @@ const DIAGNOSTICS_SEMANTIC_SETTLE_WAIT_MS = Math.max(
 const EARLY_UNBLOCK_GRACE_MS = Math.max(
 	0,
 	Number.parseInt(
-		process.env.PI_LENS_LSP_EARLY_UNBLOCK_GRACE_MS ?? "400",
+		process.env.CHOCO_PI_LSP_LSP_EARLY_UNBLOCK_GRACE_MS ?? "400",
 		10,
 	) || 400,
 );
@@ -540,7 +540,7 @@ export interface LSPTouchFileOptions {
 	 * LSP on one file doesn't dominate the per-edit pipeline budget (#117).
 	 *
 	 * Resolution order (first wins):
-	 *   1. `PI_LENS_LSP_DIAGNOSTICS_MAX_WAIT_MS` env var (user override)
+	 *   1. `CHOCO_PI_LSP_LSP_DIAGNOSTICS_MAX_WAIT_MS` env var (user override)
 	 *   2. this option
 	 *   3. `maxClientWaitMs` (legacy fallback)
 	 *   4. built-in defaults (3000 ms for `full`, 1200 ms for `document`)
@@ -841,7 +841,7 @@ const WORKSPACE_DIAGNOSTICS_CONCURRENCY = 8;
 // diagnostics wait in between, which is what defeated the debounce), while no
 // single burst ever exceeds this width regardless of total group size.
 const WORKSPACE_SWEEP_PREOPEN_CHUNK_SIZE = (() => {
-	const raw = Number(process.env.PI_LENS_LSP_WORKSPACE_PREOPEN_CHUNK);
+	const raw = Number(process.env.CHOCO_PI_LSP_LSP_WORKSPACE_PREOPEN_CHUNK);
 	return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 8;
 })();
 
@@ -869,7 +869,7 @@ const WORKSPACE_SWEEP_EXCLUDED_SERVER_IDS: ReadonlySet<string> = new Set([
 // edits), and the workspace sweep. Bounding it here degrades a wedged server to
 // "no fresh diagnostics" instead of hanging the edit, for ALL callers.
 function notifyWriteBudgetMs(): number {
-	const raw = Number(process.env.PI_LENS_LSP_NOTIFY_BUDGET_MS);
+	const raw = Number(process.env.CHOCO_PI_LSP_LSP_NOTIFY_BUDGET_MS);
 	return Number.isFinite(raw) && raw > 0 ? raw : 2000;
 }
 
@@ -905,7 +905,7 @@ function auxNotifyInflightLimit(info: LSPServerInfo): number {
 	if (typeof perServer === "number" && Number.isFinite(perServer) && perServer > 0) {
 		return Math.floor(perServer);
 	}
-	const raw = Number(process.env.PI_LENS_LSP_AUX_NOTIFY_INFLIGHT);
+	const raw = Number(process.env.CHOCO_PI_LSP_LSP_AUX_NOTIFY_INFLIGHT);
 	return Number.isFinite(raw) && raw > 0
 		? Math.floor(raw)
 		: AUX_NOTIFY_INFLIGHT_DEFAULT;
@@ -915,7 +915,7 @@ function auxNotifyInflightLimit(info: LSPServerInfo): number {
 // than a per-file wait — it's a single request but scans the whole program —
 // yet bounded so a hung server still falls back to the per-file path.
 function workspacePullBudgetMs(): number {
-	const raw = Number(process.env.PI_LENS_LSP_WORKSPACE_PULL_MS);
+	const raw = Number(process.env.CHOCO_PI_LSP_LSP_WORKSPACE_PULL_MS);
 	return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
 }
 
@@ -927,7 +927,7 @@ const DEFAULT_MAX_WORKSPACE_DIAGNOSTIC_FILES = 5000;
 
 function getMaxWorkspaceDiagnosticFiles(): number {
 	const override = Number.parseInt(
-		process.env.PI_LENS_LSP_WORKSPACE_MAX_FILES ?? "",
+		process.env.CHOCO_PI_LSP_LSP_WORKSPACE_MAX_FILES ?? "",
 		10,
 	);
 	return Number.isFinite(override) && override > 0
@@ -943,7 +943,7 @@ function getMaxWorkspaceDiagnosticFiles(): number {
  *
  * Directory/file exclusion goes through the SAME ignore matcher every other scan
  * surface uses: `isExcludedDirName` for default dependency/build dirs plus the
- * project's `.pi-lens.json` / `.gitignore` patterns via `getProjectIgnoreMatcher`.
+ * project's `.choco-pi-lsp.json` / `.gitignore` patterns via `getProjectIgnoreMatcher`.
  * Previously this walk used its own hardcoded skip-dir set, which silently
  * dropped user `"ignore": [...]` patterns and diverged from the canonical list
  * (#243). The walk is also hard-capped (#250).
@@ -2738,7 +2738,7 @@ export class LSPService {
 
 	private shouldAllowInstall(serverId: string): boolean {
 		if (!assertInstallAllowed(`lsp install: ${serverId}`)) return false;
-		return process.env.PI_LENS_DISABLE_LSP_INSTALL !== "1";
+		return process.env.CHOCO_PI_LSP_DISABLE_LSP_INSTALL !== "1";
 	}
 
 	/**
@@ -2778,7 +2778,7 @@ export class LSPService {
 				try {
 					spawned?.process?.process?.kill();
 				} catch {
-					// pi-lens-ignore: missing-error-propagation — best-effort kill on aborted spawn
+					// choco-pi-lsp-ignore: missing-error-propagation — best-effort kill on aborted spawn
 				}
 				logSessionStart(
 					`lsp spawn ${server.id}: aborted (service shut down mid-spawn)`,
@@ -3947,7 +3947,7 @@ export class LSPService {
 				// #707 racing variant: rather than burning the full push-wait budget
 				// on a silent-on-clean server (which by definition never answers on a
 				// clean file), race the push wait against a grace-delayed sync
-				// confirm. The grace (default 300ms, PI_LENS_TSSERVER_SYNC_GRACE_MS)
+				// confirm. The grace (default 300ms, CHOCO_PI_LSP_TSSERVER_SYNC_GRACE_MS)
 				// gives a genuinely dirty file's push a head start: if diagnostics
 				// arrive before the grace elapses, the sync request never goes out —
 				// zero new latency or requests on the push-answers path.
@@ -5098,7 +5098,7 @@ export class LSPService {
 		// can apply a bounded aux grace once all primary-role promises have
 		// settled. Servers with role:"auxiliary" (opengrep, ast-grep, zizmor, …)
 		// get their OWN declared `aggregateWaitMs` budget after the primary
-		// settles, capped by the PI_LENS_AUX_GRACE_MS global ceiling (default
+		// settles, capped by the CHOCO_PI_LSP_AUX_GRACE_MS global ceiling (default
 		// 2000ms) — the same "declared budget, capped by a ceiling" shape
 		// `touchFile`'s with-auxiliary push wait uses, so this lane can no longer
 		// starve a scanner whose measured warm run (e.g. opengrep ~1.3s) is
@@ -6006,7 +6006,7 @@ export class LSPService {
 	 * returns immediately. Only when at least one candidate server hasn't
 	 * demonstrated readiness does this perform one deliberate warm-up
 	 * `touchFile` round trip against `representativeFile`, bounded by its
-	 * OWN generous budget (`warmupTimeoutMs`/`PI_LENS_LSP_WARMUP_TIMEOUT_MS`
+	 * OWN generous budget (`warmupTimeoutMs`/`CHOCO_PI_LSP_LSP_WARMUP_TIMEOUT_MS`
 	 * — distinct from the per-file sweep budget), and waits for it to
 	 * settle (success, timeout, or abort) before returning. This does NOT
 	 * change the per-file wait budgets or confirmed/unconfirmed contract
@@ -6334,7 +6334,7 @@ export class LSPService {
 		// of an observed multi-hour hang. Budget each file so the worker always
 		// returns to the loop (and its abort check). Env-tunable.
 		const perFileMs = (() => {
-			const raw = Number(process.env.PI_LENS_LSP_WORKSPACE_PER_FILE_MS);
+			const raw = Number(process.env.CHOCO_PI_LSP_LSP_WORKSPACE_PER_FILE_MS);
 			return Number.isFinite(raw) && raw > 0 ? raw : 15_000;
 		})();
 		const results: LSPWorkspaceDiagnosticResult[] = [];
@@ -6430,7 +6430,7 @@ export class LSPService {
 		// the pull covers only the primary server (files with auxiliary scanners
 		// would lose those). Enabled per group only when the server advertises it and
 		// no file in the group has an auxiliary; any miss falls back to per-file.
-		const workspacePullEnabled = process.env.PI_LENS_LSP_WORKSPACE_PULL === "1";
+		const workspacePullEnabled = process.env.CHOCO_PI_LSP_LSP_WORKSPACE_PULL === "1";
 
 		// Start marker: without this a hang leaves no trace that the sweep even
 		// began (the completion log below never fires). Per-file `lsp_touch_file`
@@ -6919,7 +6919,7 @@ export class LSPService {
 		);
 
 		// #1618: per-reason tally alongside the flat `timedOutFiles` count (kept
-		// for the existing `scripts/analyze-pi-lens-logs.mjs` consumer) — a
+		// for the existing `scripts/analyze-choco-pi-lsp-logs.mjs` consumer) — a
 		// dashboard reading only the flat count can no longer mistake 81
 		// service-destroyed files for 81 budget-exhausted ones.
 		const unconfirmedByReason: Partial<
@@ -7165,7 +7165,7 @@ export class LSPService {
 	 * (resolveServerRoot) is async and this must stay synchronous for the
 	 * caller's bail path. A same-server spawn in an unrelated workspace root
 	 * also reports true. Rare in practice (this codebase is single-root per
-	 * pi-lens session in the overwhelming common case) and the failure mode is
+	 * choco-pi-lsp session in the overwhelming common case) and the failure mode is
 	 * the same "downgrade wedged to spawn-in-flight" direction as the
 	 * auxiliary case above — acceptable for a log-wording hint, not a gate.
 	 * Pure lookup — does not spawn or wait for a client.

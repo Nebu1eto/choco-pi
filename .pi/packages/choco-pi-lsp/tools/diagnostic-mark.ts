@@ -7,7 +7,7 @@
  * tool's output):
  *   false-positive — the rule misfired. Persists project-wide.
  *   suppress       — real finding, deliberate policy not to fix. Writes an
- *                     inline `pi-lens-ignore: <rule>` comment into the source
+ *                     inline `choco-pi-lsp-ignore: <rule>` comment into the source
  *                     (read by clients/dispatch/inline-suppressions.ts) —
  *                     portable and git-visible, not just a store entry.
  *   defer          — fix later. Session-ephemeral; resurfaces on the next
@@ -211,7 +211,7 @@ export function createLensDiagnosticMarkTool(
 			"Record a disposition for a diagnostics_report finding, using the exact filePath/rule/message/line " +
 			"it was reported with. false-positive/suppress persist across sessions; defer lasts only for the " +
 			"current session (resurfaces next time); flagged marks it for you to come back and fix, and shows " +
-			"up tagged in a later diagnostics_report mode=full. suppress additionally writes a `pi-lens-ignore: " +
+			"up tagged in a later diagnostics_report mode=full. suppress additionally writes a `choco-pi-lsp-ignore: " +
 			"<rule>` comment into the source above the flagged line — rule is required for suppress. " +
 			"The line is verified/reanchored against current diagnostics before writing (#802): if a live " +
 			"diagnostic for this tool/rule/message is now at a different line, that line is used instead of " +
@@ -286,7 +286,7 @@ export function createLensDiagnosticMarkTool(
 					content: [
 						{
 							type: "text" as const,
-							text: "disposition=suppress requires `rule` — the inline pi-lens-ignore comment names a rule id.",
+							text: "disposition=suppress requires `rule` — the inline choco-pi-lsp-ignore comment names a rule id.",
 						},
 					],
 					isError: true,
@@ -397,7 +397,7 @@ export function createLensDiagnosticMarkTool(
 
 			const verb =
 				disposition === "suppress"
-					? `suppressed (inline pi-lens-ignore comment written above line ${verifiedLine})`
+					? `suppressed (inline choco-pi-lsp-ignore comment written above line ${verifiedLine})`
 					: disposition === "defer"
 						? "deferred for this session"
 						: disposition === "flagged"

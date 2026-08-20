@@ -1,7 +1,7 @@
 /**
  * Per-session diagnostic state persistence (#190 Phase 1).
  *
- * pi-lens's widget/diagnostic state was in-memory only, so quitting and resuming
+ * choco-pi-lsp's widget/diagnostic state was in-memory only, so quitting and resuming
  * a session (`pi --session <id>`) started "fresh" — `diagnostics_report` returned
  * nothing. This store persists the widget snapshot to disk keyed by pi's STABLE
  * session id (`ctx.sessionManager.getSessionId()`), so a resumed session can

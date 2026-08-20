@@ -752,7 +752,7 @@ export function createLspNavigationTool(
 			"- executeCommand: Run a server-advertised command via workspace/executeCommand. HARDENED: allowlisted to commands the server advertised; dry-run by default (reports whether advertised) — set apply:true to actually run. Pass command (+ optional commandArguments).\n" +
 			"- workspaceDiagnostics: List all diagnostics tracked by active LSP clients\n" +
 			"- capabilities: Show cached operation support for active LSP servers\n\n" +
-			"Line and character are 1-based (as shown in editors). For position-based operations, prefer passing symbol when you know the line but not the exact character; character can be omitted or -1 and pi-lens will resolve the symbol column. Use symbol#N for repeated symbols on the same line (1-based occurrence).",
+			"Line and character are 1-based (as shown in editors). For position-based operations, prefer passing symbol when you know the line but not the exact character; character can be omitted or -1 and choco-pi-lsp will resolve the symbol column. Use symbol#N for repeated symbols on the same line (1-based occurrence).",
 		promptSnippet: "Find definitions, references, and hover info via LSP",
 		renderResult: compactRenderResult<{
 			operation?: string;

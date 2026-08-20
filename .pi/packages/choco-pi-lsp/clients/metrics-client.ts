@@ -1,5 +1,5 @@
 /**
- * Silent Metrics Client for pi-lens
+ * Silent Metrics Client for choco-pi-lsp
  *
  * Tracks code quality metrics silently during the session.
  * Metrics are aggregated and shown in session summary only.

@@ -565,7 +565,7 @@ function resolveOldTextEdits(
 			}
 			errors.push(errorMsg);
 			// Counterfactual: would the host's edit tool have applied this oldText
-			// anyway? hostWouldApply=true => this block is a false-block (pi-lens
+			// anyway? hostWouldApply=true => this block is a false-block (choco-pi-lsp
 			// friction the host wouldn't have); false => a genuine miss. This is the
 			// measurement that tells us whether the guard earns its keep (#257).
 			const hostMatch = hostWouldApplyOldText(rawContent, oldText);
@@ -1192,7 +1192,7 @@ export function getTouchedLinesForGuard(
 		// The host standard-edit fields (path, edits[].oldText/newText) are pinned
 		// to the SDK's EditToolInput, so a host edit-schema change is a compile
 		// error instead of silently falling through to `unknown_edit_schema`. The
-		// remaining keys are pi-lens's own extensions for native-ranged + hashline
+		// remaining keys are choco-pi-lsp's own extensions for native-ranged + hashline
 		// edit tools; oldText/newText are probed as optional because range-only
 		// edits omit them (refs #3).
 		const editInput = (event as { input?: unknown }).input as Partial<

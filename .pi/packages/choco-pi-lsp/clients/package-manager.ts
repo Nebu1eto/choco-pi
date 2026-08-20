@@ -3,7 +3,7 @@
  *
  * Single source of truth for "which package manager should we use here, and how
  * do we spell each command (run script / install / exec / global bin) for it".
- * Supports npm, pnpm, yarn and bun so pi-lens works on whatever manager the
+ * Supports npm, pnpm, yarn and bun so choco-pi-lsp works on whatever manager the
  * machine actually ships.
  *
  * Resolution order (see `resolveNodePackageManager`):
@@ -108,8 +108,8 @@ const PROBE_TIMEOUT_MS = 5_000;
  * A timed-out probe used to be memoized as a permanent `false` — the process
  * would silently downgrade a declared pnpm/yarn manager to npm for its whole
  * life. The blast radius was internal: this resolver only serves installs
- * into pi-lens's own managed tools directory and `pilens_rebuild` on a
- * pi-lens source checkout, never a user project's lockfile (#1496). Each
+ * into choco-pi-lsp's own managed tools directory and `pilens_rebuild` on a
+ * choco-pi-lsp source checkout, never a user project's lockfile (#1496). Each
  * manager now sits behind the shared transient-aware latch (#1467/#1476):
  * only a genuine absence (`where`/`which` exits non-zero, or ENOENT) latches;
  * a timeout, abort or host stall expires on a cooldown and is re-probed.
@@ -236,7 +236,7 @@ function isAvailable(
  * psscriptanalyzer's (#1490) and zizmor's (#1535) module-local latches.
  * Without this wired into `session_start`, a genuine "pnpm is missing"
  * verdict from one session stayed latched into the next: install pnpm mid
- * day, start a fresh session, pi-lens still reports it missing until a
+ * day, start a fresh session, choco-pi-lsp still reports it missing until a
  * process restart (#1653). Called from `handleSessionStart`'s per-session
  * reset block beside `resetZizmorTokenAvailability()` /
  * `resetPsScriptAnalyzerAvailability()`; also used directly by tests.
@@ -318,7 +318,7 @@ export function installArgs(
  *
  * This is the command that repairs a dependency frozen by its own lockfile.
  * `installArgs` re-runs the install, and a lockfile entry that already
- * satisfies the range makes that a no-op: pi-lens's managed tools tree stayed
+ * satisfies the range makes that a no-op: choco-pi-lsp's managed tools tree stayed
  * on the version written at first install for the life of the machine even
  * though the declared caret range permitted 28 newer minors (#1730).
  */
@@ -336,7 +336,7 @@ export function updateArgs(
 /**
  * Args to install a single package **globally** (`-g`). npm/pnpm/bun spell this
  * `install -g` / `add -g`; yarn uses `global add` (yarn classic — Berry removed
- * global installs, but pi-lens's manager resolution prefers npm/pnpm first, so
+ * global installs, but choco-pi-lsp's manager resolution prefers npm/pnpm first, so
  * yarn is only chosen when it is the declared/only manager). The resulting
  * binary is found again by `allAvailableGlobalBinDirs`, which covers every
  * manager's global bin dir.

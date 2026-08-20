@@ -40,7 +40,7 @@
  * cascade would be permanently downsized because a *wait* was configured small.
  * That is a budget change wearing a timeout's clothes, so the derivation stands
  * down entirely (`no-rescue-window`) and the flat cap applies. This is what
- * keeps `PI_LENS_CASCADE_SETTLE_WAIT_MS` from doubling as a neighbour-count
+ * keeps `CHOCO_PI_LSP_CASCADE_SETTLE_WAIT_MS` from doubling as a neighbour-count
  * knob: at the 5000/100/40 defaults the band is a prelude of 1.0–4.5 s, and
  * shrinking the wait to 1000 ms disables narrowing rather than capping every
  * cascade at ~10 neighbours.
@@ -67,7 +67,7 @@ import { RUNTIME_CONFIG } from "./runtime-config.js";
  * restore the 5000 ms default.
  */
 export function cascadeSettleWaitMs(): number {
-	const raw = Number(process.env.PI_LENS_CASCADE_SETTLE_WAIT_MS);
+	const raw = Number(process.env.CHOCO_PI_LSP_CASCADE_SETTLE_WAIT_MS);
 	return Number.isFinite(raw) && raw >= 0 ? raw : 5000;
 }
 
@@ -82,12 +82,12 @@ const DEFAULT_NEIGHBOUR_BUDGET = 40;
 
 export const CASCADE_NEIGHBOUR_BUDGET = Math.max(
 	MIN_NEIGHBOUR_BUDGET,
-	Number.parseInt(process.env.PI_LENS_CASCADE_NEIGHBOUR_BUDGET ?? "40", 10) ||
+	Number.parseInt(process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_BUDGET ?? "40", 10) ||
 		DEFAULT_NEIGHBOUR_BUDGET,
 );
 
 /**
- * True when `PI_LENS_CASCADE_NEIGHBOUR_BUDGET` moved the ceiling away from the
+ * True when `CHOCO_PI_LSP_CASCADE_NEIGHBOUR_BUDGET` moved the ceiling away from the
  * default (#1462 review F-E). Raising it far enough can push
  * `ceiling * perNeighbourMs` past the settle window, so EVERY cascade reads
  * `no-rescue-window` — the whole derivation disarmed by a cap change nobody
@@ -95,7 +95,7 @@ export const CASCADE_NEIGHBOUR_BUDGET = Math.max(
  * it describes.
  */
 const NEIGHBOUR_BUDGET_OVERRIDDEN =
-	process.env.PI_LENS_CASCADE_NEIGHBOUR_BUDGET !== undefined &&
+	process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_BUDGET !== undefined &&
 	CASCADE_NEIGHBOUR_BUDGET !== DEFAULT_NEIGHBOUR_BUDGET;
 
 /**
@@ -115,14 +115,14 @@ const DEFAULT_NEIGHBOUR_COST_MS = 100;
 /** Read per call — sized once per cascade run, never on a hot path. */
 function neighbourCostMs(): number {
 	return (
-		toPositiveFinite(process.env.PI_LENS_CASCADE_NEIGHBOUR_COST_MS) ||
+		toPositiveFinite(process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_COST_MS) ||
 		DEFAULT_NEIGHBOUR_COST_MS
 	);
 }
 
 function neighbourFloor(): number {
 	return (
-		toPositiveFinite(process.env.PI_LENS_CASCADE_NEIGHBOUR_FLOOR) ||
+		toPositiveFinite(process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_FLOOR) ||
 		MIN_NEIGHBOUR_BUDGET
 	);
 }
@@ -154,7 +154,7 @@ export interface CascadeBudgetDecision {
 	 * (`runtime-coordinator.ts`), which retains a slow compute until it resolves
 	 * however long that takes; the drain only gets it there sooner.
 	 *
-	 * Counts the drain only when it will actually run: `PI_LENS_QUIET_WINDOW=0`
+	 * Counts the drain only when it will actually run: `CHOCO_PI_LSP_QUIET_WINDOW=0`
 	 * disables the scheduler while `quietWindowWaitMs()` keeps returning its
 	 * budget, so reading the budget alone would claim 15 s of drain that no
 	 * longer exists (#1462 review N3).
@@ -219,7 +219,7 @@ export function deriveCascadeNeighbourBudget(options: {
 				kind: "cascade-budget-override-disarmed",
 				subject: "cascade-neighbour-budget",
 				reason:
-					`PI_LENS_CASCADE_NEIGHBOUR_BUDGET=${CASCADE_NEIGHBOUR_BUDGET} needs ` +
+					`CHOCO_PI_LSP_CASCADE_NEIGHBOUR_BUDGET=${CASCADE_NEIGHBOUR_BUDGET} needs ` +
 					`${ceiling * perNeighbourMs}ms to walk the full cap, which exceeds ` +
 					`the ${onTimeMs}ms settle window — the rescue band is disarmed and ` +
 					`every cascade keeps the flat (overridden) cap`,

@@ -1,5 +1,5 @@
 /**
- * Complexity Metrics Client for pi-lens
+ * Complexity Metrics Client for choco-pi-lsp
  *
  * Language-agnostic AST-based code complexity metrics, computed over the shared
  * tree-sitter client (#402 — no `typescript` compiler dependency). Supported

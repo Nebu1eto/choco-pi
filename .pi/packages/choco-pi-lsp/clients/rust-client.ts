@@ -1,5 +1,5 @@
 /**
- * Rust Client for pi-lens
+ * Rust Client for choco-pi-lsp
  *
  * Provides Rust type checking and linting via cargo check and clippy.
  *

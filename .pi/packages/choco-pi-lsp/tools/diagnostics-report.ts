@@ -4,7 +4,7 @@
  * Three modes:
  *   delta (default) — fixable warnings from the current agent turn, read from
  *                     the actionable-warnings and code-quality-warnings caches.
- *   all             — all known diagnostic counts across every file pi-lens has
+ *   all             — all known diagnostic counts across every file choco-pi-lsp has
  *                     seen this session, read from the widget state.
  *   full            — active project-wide LSP diagnostic scan merged with all.
  */
@@ -238,7 +238,7 @@ export function createLensDiagnosticsTool(
 		name: "diagnostics_report" as const,
 		label: "Project Diagnostics",
 		description:
-			"Query pi-lens's diagnostic state. mode=delta/all are cache-only and instant; " +
+			"Query choco-pi-lsp's diagnostic state. mode=delta/all are cache-only and instant; " +
 			"mode=full is an expensive active project-wide LSP scan merged with cached runner state.\n\n" +
 			"IMPORTANT: unlike lsp_diagnostics (LSP only), this tool covers ALL dispatch " +
 			"runners: LSP errors, tree-sitter structural rules, ast-grep security rules, " +
@@ -346,7 +346,7 @@ export function createLensDiagnosticsTool(
 			maxLspFiles: Type.Optional(
 				Type.Number({
 					description:
-						"mode=full only: cap the number of files routed through the language server for the project-wide LSP sweep. On large projects (e.g. a Next.js app with thousands of source files) the uncapped sweep can take many minutes; set this to bound it. Default is generous (env PI_LENS_LSP_WORKSPACE_MAX_FILES, else 5000).",
+						"mode=full only: cap the number of files routed through the language server for the project-wide LSP sweep. On large projects (e.g. a Next.js app with thousands of source files) the uncapped sweep can take many minutes; set this to bound it. Default is generous (env CHOCO_PI_LSP_LSP_WORKSPACE_MAX_FILES, else 5000).",
 				}),
 			),
 			includeGenerated: Type.Optional(
@@ -369,14 +369,14 @@ export function createLensDiagnosticsTool(
 						"more errors instead of silently truncating). Entries may be relative " +
 						"(resolved against cwd) or absolute, and a directory entry matches all " +
 						"files under it (e.g. \"src/\"). mode=delta/all are a pure post-filter " +
-						"of cached/session state — they can only show findings for files pi-lens " +
+						"of cached/session state — they can only show findings for files choco-pi-lsp " +
 						"has already dispatched, so an unseen file shows nothing (use mode=full " +
 						"for an active scan). mode=full actively scans exactly these paths (LSP " +
 						"sweep + cheap in-process runners); the project snapshot is still a post-filtered " +
 						"cache reads, never relaunched. Explicitly-listed files are NOT filtered " +
 						"through the project ignore matcher (matching lsp_diagnostics' paths " +
 						"semantics) — naming a file is assumed to mean it regardless of " +
-						".gitignore/.pi-lens.json; a directory entry's expansion still honors " +
+						".gitignore/.choco-pi-lsp.json; a directory entry's expansion still honors " +
 						"ignore (and when the list mixes directories and files, mode=full scans " +
 						"via the ignore-filtered walk, so an ignore-excluded file entry is only " +
 						"guaranteed an active scan in a files-only list). Nonexistent entries " +
@@ -569,7 +569,7 @@ function appendProjectDiagnosticsDeltaLines(
  * (tool, rule) an agent's mark binds to matches mode=full's own project-runner
  * filter (`applyInlineSuppressionsToSummaries`), keeping the two paths in
  * agreement. Weak-anchored → no file read. Also applies the project's
- * `.pi-lens.json` `rules.<id>.disable`/`select` policy so a project's policy
+ * `.choco-pi-lsp.json` `rules.<id>.disable`/`select` policy so a project's policy
  * overlays the same delta report cache; the cache is otherwise insensitive to
  * a project-config edit (the per-edit path picks it up immediately, but a
  * non-dispatch tool query would replay the pre-edit state).
@@ -591,7 +591,7 @@ function filterDeltaReportDispositions(
 }
 
 /**
- * Load the rule-policy map from a project's `.pi-lens.json` — same source the
+ * Load the rule-policy map from a project's `.choco-pi-lsp.json` — same source the
  * per-edit dispatch path uses, so a project's policy applies consistently
  * across every output surface. `loadPiLensProjectConfig` is mtime-cached, and
  * the map is filtered to entries that actually have a `disable`/`select` list
@@ -672,7 +672,7 @@ function formatDeltaMode(
 	);
 	const actionable = actionableEntry?.data;
 	const quality = qualityEntry?.data;
-	// Project rule policy (`.pi-lens.json` `rules.<id>.disable` /
+	// Project rule policy (`.choco-pi-lsp.json` `rules.<id>.disable` /
 	// `rules.<id>.select`) — output-only filtering applied consistently across
 	// every mode. The cache-only delta/all paths would otherwise leak project-
 	// policy oversight (the per-edit dispatch already filters, but the cache
@@ -922,7 +922,7 @@ function resolvePathsScope(
 function pathsScopeCacheOnlyNote(scope: PathsScope | undefined): string {
 	if (!scope) return "";
 	return (
-		"\n\nNote: paths restricts this to cached findings for files pi-lens has " +
+		"\n\nNote: paths restricts this to cached findings for files choco-pi-lsp has " +
 		"already dispatched this session — mode=delta/all can't see files it " +
 		"hasn't touched. Use mode=full to actively scan exactly these paths."
 	);
@@ -1203,7 +1203,7 @@ function formatUnconfirmedReasonClause(
  *
  * Motivating case (#646): a real sweep came back 34/155 unconfirmed, and
  * diagnosing WHICH server was responsible required grepping
- * `~/.pi-lens/latency.log` by hand — it turned out to be 100% one push-only
+ * `~/.choco-pi-lsp/latency.log` by hand — it turned out to be 100% one push-only
  * server (marksman). This tally makes that visible directly: `{ marksman:
  * { confirmed: 0, total: 34 }, typescript: { confirmed: 121, total: 121 } }`.
  *
@@ -1336,7 +1336,7 @@ function mergeDiagnosticsWithWidgetSummaries(
 }
 
 /**
- * Apply inline `pi-lens-ignore` suppression to the merged mode=full summaries so
+ * Apply inline `choco-pi-lsp-ignore` suppression to the merged mode=full summaries so
  * the project-wide sweep honors the same comments as the per-edit path (#442) —
  * without it, a site cleanly suppressed in mode=all reappears as blocking here.
  * Reads each flagged file once (bounded to files that actually have diagnostics);
@@ -1344,7 +1344,7 @@ function mergeDiagnosticsWithWidgetSummaries(
  * an I/O error). Re-summarizes so the blocking/error/warning counts reflect the
  * suppression.
  *
- * Also applies the project's `.pi-lens.json` `rules.<id>.disable`/`select`
+ * Also applies the project's `.choco-pi-lsp.json` `rules.<id>.disable`/`select`
  * policy AFTER inline suppression / disposition so the same set of findings
  * the per-edit `dispatcher.ts` filters is what's rendered here. The policy
  * map is passed in (computed once per `formatFullMode` call) rather than
@@ -1380,7 +1380,7 @@ async function applyInlineSuppressionsToSummaries(
 			// diagnostics from a fresh LSP sweep/project scan that never went
 			// through that path, so without this a disposed finding reappears here.
 			const kept = applyDispositions(inlineKept, cwd, summary.filePath, content);
-			// Project rule policy (`.pi-lens.json` `rules.<id>.disable`/`select`).
+			// Project rule policy (`.choco-pi-lsp.json` `rules.<id>.disable`/`select`).
 			// Applied after inline suppression / disposition so the policy's
 			// output-only filtering affects the same surface the per-edit path
 			// produces (no double-counting, no leftover policy-rejected findings).
@@ -1679,7 +1679,7 @@ async function formatFullMode(
 			// Never let a footer-reconciliation hiccup fail the scan itself.
 		}
 	}
-	// Project rule policy (`.pi-lens.json` `rules.<id>.disable`/`select`) —
+	// Project rule policy (`.choco-pi-lsp.json` `rules.<id>.disable`/`select`) —
 	// loaded once per mode=full call, BEFORE `projectSnapshot`/`projectDelta`
 	// are built below, so `.diagnostics.length` on both (which feeds
 	// `details.projectDiagnostics`/`details.projectDiagnosticsDelta` as well
@@ -2072,7 +2072,7 @@ async function formatFullMode(
 				?.reason?.name === "TimeoutError";
 		const note = timedOut
 			? `\n\n⚠ Scan exceeded its ${Math.round((options.wallClockMs ?? 0) / 1000)}s time budget and was stopped — results are partial. ` +
-				"Narrow it with maxLspFiles, or raise PI_LENS_LENS_DIAGNOSTICS_FULL_TIMEOUT_MS."
+				"Narrow it with maxLspFiles, or raise CHOCO_PI_LSP_LENS_DIAGNOSTICS_FULL_TIMEOUT_MS."
 			: "\n\n⚠ Scan cancelled before completion — results are partial. " +
 				"Re-run with a smaller maxLspFiles to finish within budget.";
 		return {
@@ -2180,7 +2180,7 @@ function formatAllMode(
 	// post-dispatch diagnostic_mark (suppress/defer) would otherwise still
 	// show here. Re-apply the weak filter (zero I/O) for the cache-only path and
 	// re-summarize so blocking/error/warning counts reflect the drop.
-	// Same project rule policy (`.pi-lens.json` `rules.<id>.disable`/`select`)
+	// Same project rule policy (`.choco-pi-lsp.json` `rules.<id>.disable`/`select`)
 	// overlays both modes: mode=full re-applies it after inline suppression /
 	// disposition (zero I/O), mode=all applies it here on the cache-only path.
 	// The full path's policyMover is loaded below in `applyInlineSuppressionsToSummaries`.
@@ -2202,7 +2202,7 @@ function formatAllMode(
 	// through — a fresh sweep's server can still be citing its own stale
 	// in-memory document, so gating only the cached half would miss exactly
 	// the live incident this issue reports. Runs AFTER dispositions/rule
-	// policy (not before): a finding a mark or a `.pi-lens.json` rule policy
+	// policy (not before): a finding a mark or a `.choco-pi-lsp.json` rule policy
 	// already dropped is not being served, so it must never trigger a resync
 	// or a `diagnostic_past_eof` telemetry record on this call.
 	const eofGated = dispositioned.map((s) => {

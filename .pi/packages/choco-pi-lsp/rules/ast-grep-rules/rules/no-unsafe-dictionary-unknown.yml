@@ -19,7 +19,7 @@ note: |
   type forces the caller to narrow before use, go look and decide" —
   rather than a rule that tells this repo's own idiom it's wrong.
 
-  Self-scan note: do NOT try to make pi-lens's own tree clean against
+  Self-scan note: do NOT try to make choco-pi-lsp's own tree clean against
   this rule (that is #1718's baseline problem, not this PR's). Recorded
   in the adopting PR body per rule instead: 2026-08-19 hit count on
   clients/ + tests/, napi engine.

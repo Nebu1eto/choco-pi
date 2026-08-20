@@ -71,7 +71,7 @@ function childDirs(base: string): string[] {
 function candidateRoots(): string[] {
 	const home = os.homedir();
 	const roots: string[] = [];
-	// JetBrains and pi-lens managed (Tier 2 download target) — all platforms.
+	// JetBrains and choco-pi-lsp managed (Tier 2 download target) — all platforms.
 	roots.push(path.join(home, ".jdks"));
 	roots.push(path.join(getGlobalPiLensDir(), "tools"));
 

@@ -1,5 +1,5 @@
 /**
- * AgentBehaviorClient for pi-lens
+ * AgentBehaviorClient for choco-pi-lsp
  *
  * Tracks tool call sequences and flags anti-patterns in real-time:
  * - Blind writes: editing or writing without reading first (a same-session

@@ -1,5 +1,5 @@
 /**
- * Diagnostic Aggregation Utilities for pi-lens LSP
+ * Diagnostic Aggregation Utilities for choco-pi-lsp LSP
  *
  * Provides result-aware racing for multi-client diagnostic collection.
  * Replaces the simple Promise.race + grace window pattern with one that

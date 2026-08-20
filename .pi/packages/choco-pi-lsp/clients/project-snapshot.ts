@@ -313,7 +313,7 @@ const PROJECT_SNAPSHOT_MAX_WARM_ROOTS = 8;
 const PROJECT_SNAPSHOT_IDLE_EVICT_MS_DEFAULT = 20 * 60_000;
 
 function projectSnapshotIdleEvictMs(): number {
-	const value = Number.parseInt(process.env.PI_LENS_PROJECT_SNAPSHOT_IDLE_EVICT_MS ?? "", 10);
+	const value = Number.parseInt(process.env.CHOCO_PI_LSP_PROJECT_SNAPSHOT_IDLE_EVICT_MS ?? "", 10);
 	return Number.isSafeInteger(value) && value > 0 ? value : PROJECT_SNAPSHOT_IDLE_EVICT_MS_DEFAULT;
 }
 
@@ -566,7 +566,7 @@ function snapshotWorkerEnabled(): boolean {
 	// The synchronous fallback writer is a legitimate degraded mode (hosts that
 	// can't spawn a worker); tests also force it so a save→load is fully
 	// synchronous. Production defaults to the worker.
-	const raw = process.env.PI_LENS_SNAPSHOT_PERSIST_SYNC;
+	const raw = process.env.CHOCO_PI_LSP_SNAPSHOT_PERSIST_SYNC;
 	return !(raw === "1" || raw === "true");
 }
 
@@ -1026,7 +1026,7 @@ export function saveProjectSnapshot(
 		data: snapshot,
 		testDelayMs:
 			process.env.NODE_ENV === "test"
-				? Number(process.env.PI_LENS_TEST_SNAPSHOT_PERSIST_WORKER_DELAY_MS) ||
+				? Number(process.env.CHOCO_PI_LSP_TEST_SNAPSHOT_PERSIST_WORKER_DELAY_MS) ||
 					undefined
 				: undefined,
 	};

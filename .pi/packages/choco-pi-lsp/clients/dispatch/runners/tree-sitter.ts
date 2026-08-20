@@ -629,7 +629,7 @@ const treeSitterRunner: RunnerDefinition = {
 				});
 			}
 		} catch (err) {
-			// pi-lens-ignore: missing-error-propagation — per-dispatch resilience, intentional
+			// choco-pi-lsp-ignore: missing-error-propagation — per-dispatch resilience, intentional
 			const msg = err instanceof Error ? err.message : String(err);
 			// Emscripten abort() corrupts the entire module-level wasm heap.
 			// Poison the singleton so no further queries attempt to use the dead runtime.

@@ -12,7 +12,7 @@ export function logConcurrentSessionBind(args: {
 }): void {
 	logLatency({
 		type: "phase",
-		filePath: "<pi-lens>",
+		filePath: "<choco-pi-lsp>",
 		phase: "concurrent_session_bind",
 		durationMs: 0,
 		metadata: args,

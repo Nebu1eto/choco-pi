@@ -89,7 +89,7 @@ interface NdjsonWriterState {
 	exitFlusher: () => void;
 }
 
-const NDJSON_GLOBAL_STATE_SCHEMA = "pi-lens.ndjson-logger.state";
+const NDJSON_GLOBAL_STATE_SCHEMA = "choco-pi-lsp.ndjson-logger.state";
 const NDJSON_LEGACY_GLOBAL_STATE_VERSION = 1;
 const NDJSON_GLOBAL_STATE_VERSION = 2;
 
@@ -109,7 +109,7 @@ interface LegacyNdjsonGlobalState {
 	registeredLogFiles: Set<string>;
 }
 
-const NDJSON_GLOBAL_STATE_KEY = Symbol.for("pi-lens.ndjson-logger.state");
+const NDJSON_GLOBAL_STATE_KEY = Symbol.for("choco-pi-lsp.ndjson-logger.state");
 const globalStateHost = globalThis as typeof globalThis & {
 	[key: symbol]: unknown;
 };

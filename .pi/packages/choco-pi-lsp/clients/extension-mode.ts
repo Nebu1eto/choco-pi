@@ -12,7 +12,7 @@
  * The host's own comment on `mode` is the contract this module encodes:
  * *"Use `"tui"` to guard terminal-only UI such as custom components."*
  *
- * pi-lens previously derived terminal ownership from nothing at all — it
+ * choco-pi-lsp previously derived terminal ownership from nothing at all — it
  * mounted its widget and chattered through `ui.notify` in every mode, including
  * `print` and `json`, where the process is a one-shot producing machine- or
  * pipe-consumed output and there is no live TUI to render into.
@@ -58,7 +58,7 @@ export function readExtensionMode(ctx: unknown): ExtensionRunMode {
 }
 
 /**
- * Whether a terminal-only custom component (the pi-lens diagnostics widget) can
+ * Whether a terminal-only custom component (the choco-pi-lsp diagnostics widget) can
  * be mounted. `"unknown"` mounts — older hosts must behave exactly as before.
  */
 export function supportsTuiWidget(mode: ExtensionRunMode): boolean {

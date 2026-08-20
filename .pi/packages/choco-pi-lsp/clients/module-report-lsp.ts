@@ -14,7 +14,7 @@
  *     report fan-out cannot flood the server; each probe is clipped to the
  *     remaining wall-clock budget.
  *   - OPT-IN: disabled by default (budget 0) until validated in a real pi session;
- *     enable with PI_LENS_MODULE_REPORT_LSP_BUDGET_MS.
+ *     enable with CHOCO_PI_LSP_MODULE_REPORT_LSP_BUDGET_MS.
  *
  * PARKED BY DECISION (#1090, 2026-08-12): zero live importers by design —
  * efe3d2a5 unwired module_report's LSP path (#256) and re-homed live
@@ -39,7 +39,7 @@ export function _resetModuleReportConfigForTests(): void {
 
 function getLspBudgetMs(): number {
 	if (_lspBudgetMs === undefined) {
-		const raw = Number(process.env.PI_LENS_MODULE_REPORT_LSP_BUDGET_MS);
+		const raw = Number(process.env.CHOCO_PI_LSP_MODULE_REPORT_LSP_BUDGET_MS);
 		// Default OFF (0) after the #256 OOM: the live-LSP tier is opt-in until the
 		// bounded/file-scoped path is validated in a real pi session. A finite >=0
 		// value is honored verbatim (set 3000 to enable); anything else → 0.

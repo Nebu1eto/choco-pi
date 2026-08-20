@@ -1,5 +1,5 @@
 /**
- * Writes the `pi-lens-ignore` suppression comment that inline-suppressions.ts
+ * Writes the `choco-pi-lsp-ignore` suppression comment that inline-suppressions.ts
  * already knows how to read (#690's `suppress` disposition). The reader
  * accepts either `//` or `#` on any line regardless of language, but the
  * WRITER must pick the syntactically valid comment character for the target
@@ -37,9 +37,9 @@ function commentPrefixFor(filePath: string): "#" | "//" {
 }
 
 /**
- * Insert a `pi-lens-ignore: <rule>` comment on the line immediately above
+ * Insert a `choco-pi-lsp-ignore: <rule>` comment on the line immediately above
  * `line` (1-based), matching inline-suppressions.ts's "same line or line
- * above" read semantics. If the line above already carries a pi-lens-ignore
+ * above" read semantics. If the line above already carries a choco-pi-lsp-ignore
  * comment, the rule is appended to its list instead of adding a duplicate
  * comment line. Returns the updated content; throws if `line` is out of range.
  */
@@ -56,7 +56,7 @@ export function insertSuppressComment(
 	const prefix = commentPrefixFor(filePath);
 	const aboveIdx = line - 2; // 0-based index of the line immediately above
 	const existingAbove = aboveIdx >= 0 ? lines[aboveIdx] : undefined;
-	const suppressRe = /((?:\/\/|#)\s*pi-lens-ignore:\s*)(.+)$/;
+	const suppressRe = /((?:\/\/|#)\s*choco-pi-lsp-ignore:\s*)(.+)$/;
 	const match = existingAbove !== undefined ? suppressRe.exec(existingAbove) : null;
 	if (match && existingAbove !== undefined) {
 		const rules = match[2]
@@ -71,6 +71,6 @@ export function insertSuppressComment(
 	// up rather than sitting at column 0.
 	const targetLine = lines[line - 1] ?? "";
 	const indent = /^\s*/.exec(targetLine)?.[0] ?? "";
-	lines.splice(line - 1, 0, `${indent}${prefix} pi-lens-ignore: ${rule}`);
+	lines.splice(line - 1, 0, `${indent}${prefix} choco-pi-lsp-ignore: ${rule}`);
 	return lines.join("\n");
 }

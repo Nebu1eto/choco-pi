@@ -1,5 +1,5 @@
 /**
- * Path utilities for pi-lens
+ * Path utilities for choco-pi-lsp
  *
  * Handles cross-platform path normalization, particularly
  * Windows case-insensitivity issues when using paths as Map keys.
@@ -516,7 +516,7 @@ const RIGHT_SINGLE_QUOTE = "\u2019";
  * The unicode space class pi folds to U+0020, copied character-for-character
  * from `@earendil-works/pi-coding-agent/dist/utils/paths.js:6`
  * (`UNICODE_SPACES`, source `src/utils/paths.ts`). Widening or narrowing this
- * set makes pi-lens resolve a different file than pi does.
+ * set makes choco-pi-lsp resolve a different file than pi does.
  */
 const HOST_UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 
@@ -556,7 +556,7 @@ interface HostNormalizeOptions {
  *
  * The `win32` step is gated on `process.platform`, exactly as pi gates it.
  * This is a deliberate exception to the usual probe-the-filesystem rule
- * (AGENTS.md shape 2): pi-lens runs in pi's own process, so mirroring the
+ * (AGENTS.md shape 2): choco-pi-lsp runs in pi's own process, so mirroring the
  * host's own platform branch is what keeps the two resolvers in agreement.
  * Shape-based parsing here would DIVERGE from the host, not protect against
  * it.
@@ -588,7 +588,7 @@ export function normalizeHostToolPath(
 		try {
 			return fileURLToPath(normalized);
 		} catch {
-			// pi lets a malformed file: URL throw out of normalizePath, but pi-lens
+			// pi lets a malformed file: URL throw out of normalizePath, but choco-pi-lsp
 			// is advisory instrumentation on the same event: a URL pi rejects must
 			// degrade to "no path" here, never take down the tool_call handler.
 			return normalized;
@@ -661,10 +661,10 @@ export interface HostPathVariantResolution {
  * Each candidate is used only when it DIFFERS from the resolved path and the
  * file exists; otherwise pi falls back to the resolved path. So the file pi
  * actually read can differ from what a naive `path.resolve` produces, and
- * pi-lens keyed its read guard, LSP touch, and dispatch off the naive form —
+ * choco-pi-lsp keyed its read guard, LSP touch, and dispatch off the naive form —
  * silently doing nothing for exactly those files.
  *
- * Order matters: it is pi's, so pi-lens picks the same file pi did when more
+ * Order matters: it is pi's, so choco-pi-lsp picks the same file pi did when more
  * than one variant happens to exist.
  *
  * @param resolvedPath an already-resolved absolute path (the naive form)
@@ -703,7 +703,7 @@ export function resolveHostPathVariants(
 
 	const triedVariants: string[] = [];
 	for (const { variant, candidate } of candidates) {
-		// pi skips a candidate identical to the resolved path, so pi-lens does
+		// pi skips a candidate identical to the resolved path, so choco-pi-lsp does
 		// too — otherwise a no-op "variant" would be reported as a match.
 		if (candidate === resolvedPath) continue;
 		triedVariants.push(variant);

@@ -1,5 +1,5 @@
 /**
- * Read-Before-Edit Guard for pi-lens
+ * Read-Before-Edit Guard for choco-pi-lsp
  *
  * Blocks edits that lack adequate prior reading:
  * 1. Zero-read edit: never read this file in this branch
@@ -23,7 +23,7 @@ export interface ReadRecord {
 	// What the agent *asked* for
 	requestedOffset: number;
 	requestedLimit: number;
-	// What pi-lens *delivered* (after LSP expansion, if any)
+	// What choco-pi-lsp *delivered* (after LSP expansion, if any)
 	effectiveOffset: number;
 	effectiveLimit: number;
 	expandedByLsp: boolean;
@@ -139,7 +139,7 @@ const DEFAULT_CONFIG: ReadGuardConfig = {
 const OWN_EDIT_STALE_GRACE_MS = Math.max(
 	0,
 	Number.parseInt(
-		process.env.PI_LENS_READ_GUARD_OWN_EDIT_GRACE_MS ?? "120000",
+		process.env.CHOCO_PI_LSP_READ_GUARD_OWN_EDIT_GRACE_MS ?? "120000",
 		10,
 	) || 120000,
 );
@@ -148,7 +148,7 @@ const OWN_EDIT_STALE_GRACE_MS = Math.max(
 const READ_HASH_MAX_LINES = Math.max(
 	0,
 	Number.parseInt(
-		process.env.PI_LENS_READ_GUARD_HASH_MAX_LINES ?? "3000",
+		process.env.CHOCO_PI_LSP_READ_GUARD_HASH_MAX_LINES ?? "3000",
 		10,
 	) || 3000,
 );
@@ -232,21 +232,21 @@ const currentContentMatchesBinding = _currentContentMatchesBindingForTests;
 const RELOCATION_WINDOW_MIN = Math.max(
 	1,
 	Number.parseInt(
-		process.env.PI_LENS_READ_GUARD_RELOCATION_WINDOW_MIN ?? "40",
+		process.env.CHOCO_PI_LSP_READ_GUARD_RELOCATION_WINDOW_MIN ?? "40",
 		10,
 	) || 40,
 );
 const RELOCATION_WINDOW_PER_EDIT = Math.max(
 	0,
 	Number.parseInt(
-		process.env.PI_LENS_READ_GUARD_RELOCATION_WINDOW_PER_EDIT ?? "20",
+		process.env.CHOCO_PI_LSP_READ_GUARD_RELOCATION_WINDOW_PER_EDIT ?? "20",
 		10,
 	) || 20,
 );
 const RELOCATION_WINDOW_MAX = Math.max(
 	RELOCATION_WINDOW_MIN,
 	Number.parseInt(
-		process.env.PI_LENS_READ_GUARD_RELOCATION_WINDOW_MAX ?? "400",
+		process.env.CHOCO_PI_LSP_READ_GUARD_RELOCATION_WINDOW_MAX ?? "400",
 		10,
 	) || 400,
 );
@@ -441,7 +441,7 @@ export class ReadGuard {
 	}
 
 	private idleEvictMs(): number {
-		const value = Number.parseInt(process.env.PI_LENS_READ_GUARD_IDLE_EVICT_MS ?? "", 10);
+		const value = Number.parseInt(process.env.CHOCO_PI_LSP_READ_GUARD_IDLE_EVICT_MS ?? "", 10);
 		return Number.isSafeInteger(value) && value > 0 ? value : READ_GUARD_IDLE_EVICT_MS_DEFAULT;
 	}
 
@@ -871,8 +871,8 @@ export class ReadGuard {
 	}
 
 	/**
-	 * Whether pi-lens has any record of this path from a read or write this
-	 * session (#1668). Gates external-delete detection: a path pi-lens never
+	 * Whether choco-pi-lsp has any record of this path from a read or write this
+	 * session (#1668). Gates external-delete detection: a path choco-pi-lsp never
 	 * read or wrote is one no LSP server's cache was ever told about through
 	 * us, so an `rm` naming it carries no signal worth checking disk for —
 	 * this is a lookup against state already being tracked, never a fresh
@@ -895,7 +895,7 @@ export class ReadGuard {
 	}
 
 	/**
-	 * Drop all record of a path pi-lens confirmed no longer exists on disk
+	 * Drop all record of a path choco-pi-lsp confirmed no longer exists on disk
 	 * (#1668, external delete). Without this a later write reusing the same
 	 * path would inherit a stale writtenThisSession/reads entry from before
 	 * the delete, and a repeat `rm` of the same already-gone path would keep

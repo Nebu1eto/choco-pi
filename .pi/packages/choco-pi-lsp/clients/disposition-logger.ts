@@ -25,7 +25,7 @@ const DISPOSITION_LOG_BACKUP_FILE = path.join(
 const MAX_LOG_BYTES = Math.max(
 	128 * 1024,
 	Number.parseInt(
-		process.env.PI_LENS_DISPOSITION_LOG_MAX_BYTES ?? "1048576",
+		process.env.CHOCO_PI_LSP_DISPOSITION_LOG_MAX_BYTES ?? "1048576",
 		10,
 	) || 1048576,
 );

@@ -310,7 +310,7 @@ export interface AtomicStageSweepOptions {
 }
 
 /**
- * Remove orphaned generic atomic-write staging files from pi-lens-owned
+ * Remove orphaned generic atomic-write staging files from choco-pi-lsp-owned
  * directories. This is deliberately a directory-entry sweep, not a watcher:
  * it runs from session_start, reads at most `maxEntries` entries per directory,
  * and never creates a process-lifetime handle.
@@ -494,10 +494,10 @@ async function killPidTree(pid: number): Promise<void> {
 }
 
 /**
- * #658: known pi-lens-managed LSP/scanner binary names (clients/lsp/server.ts
+ * #658: known choco-pi-lsp-managed LSP/scanner binary names (clients/lsp/server.ts
  * spawn candidates), used by the registry-INDEPENDENT backstop sweep below.
  * `opengrep-core` is opengrep's own native subprocess (not spawned directly by
- * pi-lens, but still part of the tree we manage). `yaml-language-server` and
+ * choco-pi-lsp, but still part of the tree we manage). `yaml-language-server` and
  * `typescript-language-server` are node-launched — their OS image name is
  * `node`/`node.exe`, so matching is done against the full command line
  * (script path), not the process image name, exactly like the existing
@@ -644,7 +644,7 @@ async function enumerateManagedProcesses(): Promise<OsProcessInfo[]> {
 
 /**
  * Fire-and-forget REGISTRY-INDEPENDENT backstop sweep (#658): finds
- * pi-lens-managed LSP/scanner processes the registry-driven `sweepOrphans`
+ * choco-pi-lsp-managed LSP/scanner processes the registry-driven `sweepOrphans`
  * can never see again once their registry trace is lost (a stale-heartbeat
  * entry removal, or a `killPidTree` call that failed silently) — enumerates
  * live OS processes by known binary name, and kills any that are both

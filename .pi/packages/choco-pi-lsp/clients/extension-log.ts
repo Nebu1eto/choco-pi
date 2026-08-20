@@ -10,7 +10,7 @@
  * their stdout contract and keep their writes.)
  *
  * This module is the general-purpose replacement sink: one `createNdjsonLogger`
- * instance over `<global pi-lens dir>/extension.log`, per the single-writer
+ * instance over `<global choco-pi-lsp dir>/extension.log`, per the single-writer
  * invariant in AGENTS.md. Subsystems that already own a log (tree-sitter,
  * review-graph, cascade, latency, sessionstart) route to THAT log instead —
  * this file is for the areas that had no sink at all.
@@ -147,10 +147,10 @@ const installedConsoleMethods = new Map<ConsoleMethod, ConsoleFn>();
 /**
  * The async capture window (#1434).
  *
- * The guard must catch pi-lens's own writes without swallowing the host's. pi's
+ * The guard must catch choco-pi-lsp's own writes without swallowing the host's. pi's
  * one-shot CLI commands print through `console.log`, so a permanent global
  * reroute makes `pi list` print nothing in any project whose cwd loads the
- * extension first. The store answers "is pi-lens executing right now?" and
+ * extension first. The store answers "is choco-pi-lsp executing right now?" and
  * `AsyncLocalStorage` carries that answer into every promise, timer and
  * callback created inside the window — so an async handler still captures after
  * an `await`, while host code outside the window keeps its real sink.
@@ -159,7 +159,7 @@ const installedConsoleMethods = new Map<ConsoleMethod, ConsoleFn>();
  * async_hooks init hook for every promise in the process on Node 22 — the same
  * hazard `tree-sitter-client.ts`'s `parseCacheMeasurement.disable()` comment
  * documents — so constructing one at module scope taxes every `await` in the
- * host even when the kill switch (`PI_LENS_CONSOLE_GUARD=0`) or test mode means
+ * host even when the kill switch (`CHOCO_PI_LSP_CONSOLE_GUARD=0`) or test mode means
  * the guard never installs and nothing ever reads the store. Construction is
  * deferred to the first `runInConsoleCaptureWindow` call, and only happens once
  * `installConsoleGuard()` has actually installed (never under the kill switch
@@ -177,14 +177,14 @@ function getConsoleCaptureStorage(): AsyncLocalStorage<true> | undefined {
 
 /**
  * Module evaluation is the one window `AsyncLocalStorage` cannot wrap: the
- * module graph is evaluated by the loader, not by a pi-lens call. It is
+ * module graph is evaluated by the loader, not by a choco-pi-lsp call. It is
  * synchronous, so a plain flag is enough (#1333's original concern — a
  * transitively loaded dependency writing during its own init).
  */
 let moduleLoadWindowOpen = false;
 
 /**
- * True while pi-lens owns execution, so console writes belong in the log.
+ * True while choco-pi-lsp owns execution, so console writes belong in the log.
  *
  * `consoleCaptureStorage` may not have been constructed yet (S1b) — that state
  * means "no window was ever opened through `runInConsoleCaptureWindow`", i.e.
@@ -198,7 +198,7 @@ export function isConsoleCaptureActive(): boolean {
 
 /**
  * Open the module-evaluation window. Called by `clients/console-guard-install.ts`
- * before any other pi-lens module evaluates.
+ * before any other choco-pi-lsp module evaluates.
  *
  * The window closes explicitly at the end of `index.ts`. The backstop below
  * closes it anyway if that never runs (an import throws, or the entry changes
@@ -248,7 +248,7 @@ function inCaptureWindow<T extends ConsoleFn | ((...args: never[]) => unknown)>(
 }
 
 /**
- * True for every host API member that can hand pi-lens's own functions back to
+ * True for every host API member that can hand choco-pi-lsp's own functions back to
  * the host to be called later: `on(event, handler)` and any `register*`
  * method (`registerTool`, `registerCommand`, `registerMessageRenderer`,
  * `registerShortcut`, `registerFlag`, `registerMarkdownTransformer`,
@@ -285,13 +285,13 @@ function isCaptureSeam(prop: PropertyKey): boolean {
  * PI-LENS actually registers (`options.handler`, `tool.execute` — never two
  * levels deep). It does NOT cover every shape the host's `ExtensionAPI` type
  * permits: `registerProvider`'s `config.oauth.*` callbacks sit two levels
- * deep and `config.models[]` sits behind a skipped array. pi-lens never
+ * deep and `config.models[]` sits behind a skipped array. choco-pi-lsp never
  * calls `registerProvider`; extend the descent if that changes (same known-
  * gap convention as the `pi.events` note in AGENTS.md).
  *
  * Mutates the object in place rather than copying — a spread copy would drop
  * non-enumerable or prototype-carried members of a definition object (defect
- * shape 5), and these definitions are pi-lens's own, built just above the
+ * shape 5), and these definitions are choco-pi-lsp's own, built just above the
  * register call.
  */
 function wrapFunctionsInPlace(value: unknown): unknown {
@@ -349,7 +349,7 @@ function assignWrapped(
 }
 
 /**
- * Wrap the host extension API so every pi-lens entry point runs in a capture
+ * Wrap the host extension API so every choco-pi-lsp entry point runs in a capture
  * window.
  *
  * pi calls our event handlers and tool bodies from its own async context, so a
@@ -433,21 +433,21 @@ function formatConsoleArgs(args: unknown[]): string {
  * protects the JSON-RPC stdout channel for the same structural reason.
  *
  * The patch is a DISPATCHER, not a permanent reroute (#1434). It sends a write
- * to the extension log only while pi-lens owns execution; every other write
+ * to the extension log only while choco-pi-lsp owns execution; every other write
  * goes to the original console method. pi's own one-shot CLI commands print
  * through `console.log`, so an unconditional reroute silenced them: `pi list`
  * exited 0 with no output in any project whose cwd loaded the extension first.
  *
- * This is a NET, not the fix: pi-lens's own sites are migrated to real sinks
+ * This is a NET, not the fix: choco-pi-lsp's own sites are migrated to real sinks
  * with real schemas. Idempotent, and inert under test mode (vitest owns the
- * console) and under `PI_LENS_CONSOLE_GUARD=0`.
+ * console) and under `CHOCO_PI_LSP_CONSOLE_GUARD=0`.
  *
  * Returns true when the patch was applied by this call.
  */
 export function installConsoleGuard(): boolean {
 	if (consoleGuardInstalled) return false;
 	if (isTestMode()) return false;
-	if (process.env.PI_LENS_CONSOLE_GUARD === "0") return false;
+	if (process.env.CHOCO_PI_LSP_CONSOLE_GUARD === "0") return false;
 	consoleGuardInstalled = true;
 	const target = console as unknown as Record<ConsoleMethod, unknown>;
 	for (const method of CONSOLE_METHODS) {

@@ -1,5 +1,5 @@
 /**
- * Fix Worklog for pi-lens
+ * Fix Worklog for choco-pi-lsp
  *
  * Appends auto-fixed and fixable diagnostics to the project data worklog
  * so repair history is preserved across sessions.

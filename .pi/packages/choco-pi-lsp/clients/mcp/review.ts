@@ -131,10 +131,10 @@ export function canRebuildPiLens(repoRoot: string): boolean {
 }
 
 export const REBUILD_UNAVAILABLE_MESSAGE =
-	"pilens_rebuild is unavailable in an installed pi-lens package. Rebuilding is only safe from a source checkout containing tsconfig.dist.json; reinstall or update pi-lens through your package manager instead.";
+	"pilens_rebuild is unavailable in an installed choco-pi-lsp package. Rebuilding is only safe from a source checkout containing tsconfig.dist.json; reinstall or update choco-pi-lsp through your package manager instead.";
 
 /**
- * Run `<pm> run <script>` in the pi-lens repo, where `<pm>` is resolved from the
+ * Run `<pm> run <script>` in the choco-pi-lsp repo, where `<pm>` is resolved from the
  * repo's lockfile / installed managers. Uses `safeSpawnAsync` (Windows
  * `.cmd`/shell-aware). `ignoreAmbientSignal` — a rebuild must run to completion.
  */
