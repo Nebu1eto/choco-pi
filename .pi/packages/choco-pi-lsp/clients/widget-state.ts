@@ -129,7 +129,7 @@ interface FileRecord {
 	/**
 	 * Full, uncapped diagnostics for this file. The TUI never renders these
 	 * (it uses the capped `diagnostics` + its own row limits); they exist so
-	 * the lens_diagnostics tool can expose the complete set to the agent without
+	 * the diagnostics_report tool can expose the complete set to the agent without
 	 * inheriting the widget's display cap.
 	 */
 	allDiagnostics: WidgetDiagnostic[];
@@ -622,7 +622,7 @@ function countDiagnostics(diags: WidgetDiagnostic[]): {
  * path and the bus-publish/mark-tool read accessors, all of which fire far
  * more often than an agent's own edit/tool cadence. Triggering a document
  * resync from every one of those reads would storm the LSP with didOpen calls
- * for a file whose drift hasn't yet been fixed. `tools/lens-diagnostics.ts`'s
+ * for a file whose drift hasn't yet been fixed. `tools/diagnostics-report.ts`'s
  * `formatAllMode` — an explicit, agent-invoked tool call — is the resync
  * trigger point (#1641 criterion 2); this gate still demotes/logs on its own.
  *
@@ -689,7 +689,7 @@ function isLspErrorEntry(d: WidgetDiagnostic): boolean {
  * (`isLspErrorEntry`) with the cascade's fresh LSP errors and preserve
  * everything else verbatim. A stale LSP warning or biome finding therefore
  * survives an errors-only cascade — correct, because this check never looked at
- * it; it self-corrects on the next per-edit dispatch or a `lens_diagnostics`
+ * it; it self-corrects on the next per-edit dispatch or a `diagnostics_report`
  * scan (which DO re-examine every source).
  *
  * Only ever call this for a CONFIRMED result (a valid passive snapshot or a
@@ -730,7 +730,7 @@ export function reconcileCascadeNeighborLspErrors(
 
 /**
  * Reconcile a diagnostics result obtained OUTSIDE the per-edit dispatch
- * pipeline — a `lens_diagnostics` mode=full workspace scan, or a standalone
+ * pipeline — a `diagnostics_report` mode=full workspace scan, or a standalone
  * `lsp_diagnostics` on-demand check — into the footer cache (#571).
  *
  * `recordDiagnostics` is otherwise only reachable from `pipeline.ts`'s
@@ -786,7 +786,7 @@ export function reconcileScanDiagnostics(
 /**
  * Drop widget entries whose file changed on disk after pi-lens last recorded
  * them (`mtimeMs > touchedAt` → the recorded diagnostics predate the current
- * content → stale) or that no longer exist. Keeps `lens_diagnostics` from
+ * content → stale) or that no longer exist. Keeps `diagnostics_report` from
  * surfacing findings the agent already fixed (or that an external edit
  * invalidated). Async with concurrent stats — call on read, never on the typing
  * path. Returns how many entries were dropped (so callers can tell the agent
@@ -867,7 +867,7 @@ export async function reconcileStaleWidgetFiles(): Promise<number> {
 
 /**
  * Dependency-axis freshness gate for the session diagnostics store that feeds
- * `lens_diagnostics mode=all` (and the footer widget) — the second #1631 surface.
+ * `diagnostics_report mode=all` (and the footer widget) — the second #1631 surface.
  *
  * `reconcileStaleWidgetFiles` (above) already drops a record whose OWN file changed
  * on disk after the diagnostic was observed. It cannot see the cross-file case: the
@@ -954,8 +954,8 @@ export async function reconcileStaleWidgetDependencyBlockers(
  * Keep the TUI honest (#298 follow-up). `reconcileStaleWidgetFiles` drops
  * widget entries whose file changed on disk after they were last recorded
  * (i.e. diagnostics the agent already fixed) — but it was only ever wired
- * into the `lens_diagnostics` tool, so the widget rendered cached diagnostics
- * verbatim and kept showing fixed errors until `lens_diagnostics` was run by
+ * into the `diagnostics_report` tool, so the widget rendered cached diagnostics
+ * verbatim and kept showing fixed errors until `diagnostics_report` was run by
  * hand. This debounced scheduler fires it from the widget render path (see
  * `mountLensWidget` in index.ts) so stale entries self-correct. The debounce
  * collapses the burst of renders that accompany a save into a single sweep.
@@ -990,7 +990,7 @@ export interface FileDiagnosticSummary {
 
 /**
  * Return current diagnostics for every file pi-lens has seen this session.
- * Used by lens_diagnostics tool (mode: "all"). Exposes the FULL per-file
+ * Used by diagnostics_report tool (mode: "all"). Exposes the FULL per-file
  * diagnostic set — decoupled from the widget's display cap — so the agent sees
  * everything, not just the 12 the TUI keeps for rendering.
  */

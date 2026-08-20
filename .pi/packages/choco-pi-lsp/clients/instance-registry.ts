@@ -478,7 +478,7 @@ export interface ResourceFootprint {
  * flagged `stale: true`: a dead pid is unambiguous (unlike heartbeat
  * staleness, which the reaper deliberately treats as "maybe idle-but-alive"
  * and never uses to justify removing/hiding anything) — the wire shape and
- * every existing caller (chiefly `pilens_health`'s headline instance
+ * every existing caller (chiefly `lsp_health`'s headline instance
  * count/RSS/CPU numbers) simply expects a footprint of currently-live
  * instances. Left `undefined` for pure/synchronous callers (incl. every
  * pre-#735 unit test) that pass a plain snapshot with no intent to check OS

@@ -15,7 +15,7 @@
  * loop), not as a per-tool copy: `wrapToolForCompactLine` decorates any
  * `ToolDefinition` that already defines `renderResult`; tools without one are
  * returned untouched. Callers gate the whole thing behind the `ui.compactToolLine`
- * flag (`clients/lens-flag-registry.ts`) — when it is off, the ORIGINAL tool
+ * flag (`clients/lsp-flag-registry.ts`) — when it is off, the ORIGINAL tool
  * array is registered unwrapped, so behavior is byte-identical to today (no
  * `renderCall`/`renderResult` are added or altered).
  *
@@ -65,7 +65,7 @@ function fullTextOf(result: CompactLineResultLike): string {
  * Build the collapsed compact line from a tool's ALREADY-COMPUTED summary
  * text (verbatim reuse — see module doc). `summaryText` is expected in the
  * `<name/hint> — <detail>` shape every pi-lens summarizer already produces
- * (e.g. `lens_diagnostics all — 3 blocking · 3 errors · 2 warnings (1 file)`);
+ * (e.g. `diagnostics_report all — 3 blocking · 3 errors · 2 warnings (1 file)`);
  * when the separator is absent the whole string is styled as one span
  * instead of guessing a split point.
  *
@@ -128,7 +128,7 @@ export function wrapToolForCompactLine<T extends ToolDefinition<any, any, any>>(
 		}
 		if (originalRenderCall) return originalRenderCall(args, theme, context);
 		// Mirrors the host's own createCallFallback exactly: styled `tool.name`
-		// (the registered name, e.g. "lens_diagnostics"), not the display label.
+		// (the registered name, e.g. "diagnostics_report"), not the display label.
 		const line = theme.fg("toolTitle", theme.bold(tool.name));
 		return {
 			render: (width: number) => fitLines([line], width),

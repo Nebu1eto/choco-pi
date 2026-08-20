@@ -170,26 +170,26 @@ test("keeps cross-session coordination tools active and out of search results", 
 	for (const name of sessionTools) assert.doesNotMatch(text, new RegExp(`\\b${name}\\b`));
 });
 
-test("keeps the pi-lens mandated funnel and diagnostics gate active and out of search results", async () => {
-	const lensTools = ["symbol_search", "module_report", "read_symbol", "read_enclosing", "lsp_diagnostics", "lens_diagnostics"];
-	for (const name of lensTools) assert.ok(ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never), `${name} must stay active`);
+test("keeps the choco-pi-lsp mandated funnel and diagnostics gate active and out of search results", async () => {
+	const lspTools = ["symbol_search", "module_report", "read_symbol", "read_enclosing", "lsp_diagnostics", "diagnostics_report"];
+	for (const name of lspTools) assert.ok(ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never), `${name} must stay active`);
 
-	// Situational pi-lens tools (gated behind the package's own
-	// pi_lens_activate_tools call) are deliberately left out.
-	for (const name of ["project_report", "ast_grep_search", "lsp_navigation", "pi_lens_activate_tools"]) {
+	// Situational choco-pi-lsp tools (gated behind the package's own
+	// lsp_activate_tools call) are deliberately left out.
+	for (const name of ["project_report", "ast_grep_search", "lsp_navigation", "lsp_activate_tools"]) {
 		assert.ok(!ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never), `${name} must stay deferred`);
 	}
 
-	let active = [...lensTools, "deferred_probe"];
+	let active = [...lspTools, "deferred_probe"];
 	let searchTool: any;
 	let sessionStart: (() => void) | undefined;
 	let mcpStatus: ((payload: object) => void) | undefined;
 	const tools = [
-		...lensTools.map((name) => ({
+		...lspTools.map((name) => ({
 			name,
-			description: `pi-lens code-exploration tool (${name})`,
+			description: `choco-pi-lsp code-exploration tool (${name})`,
 			parameters: {},
-			sourceInfo: { source: "extension", path: "pi-lens" },
+			sourceInfo: { source: "extension", path: "choco-pi-lsp" },
 		})),
 		{ name: "deferred_probe", description: "Deferred probe", parameters: {}, sourceInfo: { source: "extension", path: "probe" } },
 	];
@@ -207,10 +207,10 @@ test("keeps the pi-lens mandated funnel and diagnostics gate active and out of s
 	await new Promise((resolve) => setImmediate(resolve));
 
 	// Eager loading is the point: no search may be required to reach them.
-	for (const name of lensTools) assert.ok(active.includes(name), `${name} must remain in the active surface`);
+	for (const name of lspTools) assert.ok(active.includes(name), `${name} must remain in the active surface`);
 
 	// Always-active tools are not searchable, so they never consume a result slot.
 	const result = await searchTool.execute("call", { query: "symbol module read diagnostics", limit: 5 });
 	const text = result.content[0].text;
-	for (const name of lensTools) assert.doesNotMatch(text, new RegExp(`\\b${name}\\b`));
+	for (const name of lspTools) assert.doesNotMatch(text, new RegExp(`\\b${name}\\b`));
 });

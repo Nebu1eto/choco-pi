@@ -72,7 +72,7 @@ import {
 	PROJECT_FOREIGN_CONFIG_NAMESPACES,
 	PROJECT_SCOPED_LENS_FLAGS,
 	readFlagConfigValue,
-} from "./lens-flag-registry.js";
+} from "./lsp-flag-registry.js";
 import { isAtOrAboveHomeDir, walkUpDirs } from "./path-utils.js";
 import { findPiLensConfigMarkerInDir } from "./workspace-topology.js";
 

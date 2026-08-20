@@ -3363,7 +3363,7 @@ export const AstGrepServer: LSPServerInfo = {
 		RootWithFallback(NearestRoot([".git"]), async () => process.cwd()),
 	),
 	availabilityKey: "ast-grep",
-	// #1714: the one auxiliary with a measured wedge ceiling. A `lens_diagnostics
+	// #1714: the one auxiliary with a measured wedge ceiling. A `diagnostics_report
 	// mode=full` sweep of 225 files drove this server into an unrecoverable stall
 	// twice in two exposures (writes outstanding 5.9 s and 9.4 s, then a forced
 	// shutdown that timed out both the request and the exit notify). It re-parses

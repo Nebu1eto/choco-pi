@@ -1,9 +1,9 @@
 /**
- * lens_diagnostic_mark — agent-facing disposition operation (#690, unifying
+ * diagnostic_mark — agent-facing disposition operation (#690, unifying
  * #181/#503/#504's discussion into one triage layer).
  *
  * Four dispositions, given the exact filePath/rule/message/line a
- * lens_diagnostics finding was reported with (same fields shown in that
+ * diagnostics_report finding was reported with (same fields shown in that
  * tool's output):
  *   false-positive — the rule misfired. Persists project-wide.
  *   suppress       — real finding, deliberate policy not to fix. Writes an
@@ -13,7 +13,7 @@
  *   defer          — fix later. Session-ephemeral; resurfaces on the next
  *                     process run.
  *   flagged        — mark for the agent to fix. Persists until resolved;
- *                     surfaces in lens_diagnostics mode=full as "flagged-to-fix".
+ *                     surfaces in diagnostics_report mode=full as "flagged-to-fix".
  *
  * Anchoring is content-based, never file:line, but the flavor differs by
  * disposition (see clients/diagnostic-dispositions.ts's module doc):
@@ -22,11 +22,11 @@
  * if the line is rewritten); defer/suppress/flagged use a WEAK anchor (rule +
  * normalized message only — intent-level judgments that must survive edits to
  * the flagged line). Both are the SAME derivation clients/dispatch/
- * dispatcher.ts and lens-diagnostics.ts's mode=full path use when filtering,
+ * dispatcher.ts and diagnostics-report.ts's mode=full path use when filtering,
  * so a mark made here is honored on the very next dispatch/query.
  *
  * #802: the caller-supplied `line` is NOT trusted as-is anymore — it's the
- * line a (possibly stale) lens_diagnostics call reported, and the file may
+ * line a (possibly stale) diagnostics_report call reported, and the file may
  * have moved on since (an earlier edit, a prior suppress in the same batch
  * shifting later lines down). Before writing anything, `verifyLine` below
  * cross-checks it against live per-file diagnostics recorded in
@@ -110,7 +110,7 @@ function widgetCrossCheck(
  * and non-blank (today's behavior, unchanged); otherwise search outward for
  * the nearest non-blank line within FUZZY_SEARCH_RADIUS. Returns undefined
  * when nothing plausible is nearby (caller must be told to re-run
- * lens_diagnostics rather than write at a guessed position).
+ * diagnostics_report rather than write at a guessed position).
  */
 function fuzzyReanchor(
 	lines: string[],
@@ -181,7 +181,7 @@ function verifyLine(
 			return {
 				error:
 					`line ${callerLine} looks stale (out of range or blank, and no diagnostic ` +
-					"match was found nearby) — re-run lens_diagnostics and retry with the current line.",
+					"match was found nearby) — re-run diagnostics_report and retry with the current line.",
 			};
 		}
 		return {
@@ -193,7 +193,7 @@ function verifyLine(
 		};
 	} catch {
 		return {
-			error: `could not verify line ${callerLine} — re-run lens_diagnostics and retry.`,
+			error: `could not verify line ${callerLine} — re-run diagnostics_report and retry.`,
 		};
 	}
 }
@@ -205,13 +205,13 @@ export function createLensDiagnosticMarkTool(
 	getIdentity?: () => { model?: string; provider?: string },
 ) {
 	return {
-		name: "lens_diagnostic_mark" as const,
+		name: "diagnostic_mark" as const,
 		label: "Mark Diagnostic",
 		description:
-			"Record a disposition for a lens_diagnostics finding, using the exact filePath/rule/message/line " +
+			"Record a disposition for a diagnostics_report finding, using the exact filePath/rule/message/line " +
 			"it was reported with. false-positive/suppress persist across sessions; defer lasts only for the " +
 			"current session (resurfaces next time); flagged marks it for you to come back and fix, and shows " +
-			"up tagged in a later lens_diagnostics mode=full. suppress additionally writes a `pi-lens-ignore: " +
+			"up tagged in a later diagnostics_report mode=full. suppress additionally writes a `pi-lens-ignore: " +
 			"<rule>` comment into the source above the flagged line — rule is required for suppress. " +
 			"The line is verified/reanchored against current diagnostics before writing (#802): if a live " +
 			"diagnostic for this tool/rule/message is now at a different line, that line is used instead of " +
@@ -219,7 +219,7 @@ export function createLensDiagnosticMarkTool(
 			"bottom-up (highest line number first) — each inserted comment shifts later lines down by one, " +
 			"and reanchoring can't always disambiguate two nearby findings.",
 		promptSnippet:
-			"Use lens_diagnostic_mark to dismiss a false-positive, suppress a won't-fix, defer, or flag a finding to fix later",
+			"Use diagnostic_mark to dismiss a false-positive, suppress a won't-fix, defer, or flag a finding to fix later",
 		parameters: Type.Object({
 			filePath: Type.String({
 				description: "The file the diagnostic was reported on (relative or absolute).",
@@ -228,12 +228,12 @@ export function createLensDiagnosticMarkTool(
 				description: "The 1-based line the diagnostic was reported at.",
 			}),
 			message: Type.String({
-				description: "The diagnostic's message, exactly as lens_diagnostics reported it.",
+				description: "The diagnostic's message, exactly as diagnostics_report reported it.",
 			}),
 			rule: Type.Optional(
 				Type.String({
 					description:
-						"The diagnostic's rule id, if it has one (shown in lens_diagnostics as [rule]). Required for disposition=suppress.",
+						"The diagnostic's rule id, if it has one (shown in diagnostics_report as [rule]). Required for disposition=suppress.",
 				}),
 			),
 			tool: Type.Optional(
@@ -350,7 +350,7 @@ export function createLensDiagnosticMarkTool(
 						content: [
 							{
 								type: "text" as const,
-								text: `Refusing to suppress at ${path.relative(cwd, absPath)}:${line} — could not verify the line; re-run lens_diagnostics and retry.`,
+								text: `Refusing to suppress at ${path.relative(cwd, absPath)}:${line} — could not verify the line; re-run diagnostics_report and retry.`,
 							},
 						],
 						isError: true,

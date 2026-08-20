@@ -13,7 +13,7 @@
 
 import type { FileKind } from "../file-kinds.js";
 import type { FileRole } from "../file-role.js";
-import type { PiLensProjectConfig } from "../project-lens-config.js";
+import type { PiLensProjectConfig } from "../project-lsp-config.js";
 
 export type DefectClass =
 	| "silent-error"

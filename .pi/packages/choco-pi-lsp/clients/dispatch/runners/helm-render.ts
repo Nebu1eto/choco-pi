@@ -68,7 +68,7 @@ import * as path from "node:path";
 import { logLatency } from "../../latency-logger.js";
 import { PathKeyedMap } from "../../path-keyed-map.js";
 import { normalizeMapKey } from "../../path-utils.js";
-import { loadPiLensProjectConfig } from "../../project-lens-config.js";
+import { loadPiLensProjectConfig } from "../../project-lsp-config.js";
 import {
 	getProjectTrustState,
 	projectTrustDenialReason,

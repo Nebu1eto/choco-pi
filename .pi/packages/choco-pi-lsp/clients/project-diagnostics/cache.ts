@@ -73,7 +73,7 @@ export function writeProjectDiagnosticsDeltaReport(
  * Drop diagnostics whose underlying file changed on disk after the snapshot was
  * taken (`mtimeMs > scannedAt + MTIME_DRIFT_TOLERANCE_MS`) or no longer
  * exists. The persisted snapshot is a
- * cross-session cache served by `lens_diagnostics mode=full refreshRunners=cached`;
+ * cross-session cache served by `diagnostics_report mode=full refreshRunners=cached`;
  * without this it replays diagnostics the agent has since fixed or for files that
  * were deleted (#298 — "the cache needs to be cleaned before running diagnostics
  * because it became stale"). This mirrors `reconcileStaleWidgetFiles` for the

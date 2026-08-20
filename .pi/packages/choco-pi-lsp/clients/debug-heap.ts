@@ -161,7 +161,7 @@ export interface HeapSnapshotResult {
  * Write one heap snapshot to `~/.pi-lens/`, append a breadcrumb line, and prune
  * to the newest `SNAPSHOT_RETENTION` files. A pure no-op returning `null` — no
  * file, no allocation past the flag check — when `PI_LENS_DEBUG_HEAP` was unset
- * at startup. `label` records the trigger (currently only `"lens_health"`).
+ * at startup. `label` records the trigger (currently only `"lsp_health"`).
  */
 export function writeHeapSnapshotNow(label: string): HeapSnapshotResult | null {
 	if (!DEBUG_HEAP_ENABLED) return null;

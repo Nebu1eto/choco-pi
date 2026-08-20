@@ -21,7 +21,7 @@ import { newLspMutationCorrelationId, type LspMutationContext } from "./lsp-muta
 import {
 	getGlobalActionableWarningMaxFixes,
 	type PiLensFlagSource,
-} from "./lens-config.js";
+} from "./lsp-config.js";
 import { resyncLspFile, runAutofix, runFormatPhase } from "./pipeline.js";
 import { getAmbientAbortSignal } from "./safe-spawn.js";
 import {

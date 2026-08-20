@@ -49,7 +49,7 @@ import {
 	shouldShortenLspIdleTimeout,
 } from "./lsp-budget.js";
 import { updateHeartbeat } from "./instance-registry.js";
-import { emitLensTurnFindings } from "./lens-events.js";
+import { emitLensTurnFindings } from "./lsp-events.js";
 import { RUNTIME_CONFIG } from "./runtime-config.js";
 import { isSubagentSession } from "./subagent-mode.js";
 import type { RuntimeCoordinator } from "./runtime-coordinator.js";
@@ -138,7 +138,7 @@ function scheduleLSPIdleReset(
 	}
 	lspIdleResetTimeout = setTimeout(() => {
 		lspIdleResetTimeout = null;
-		// #1618: a full workspace sweep (`lens_diagnostics mode=full`) grants
+		// #1618: a full workspace sweep (`diagnostics_report mode=full`) grants
 		// itself a wall-clock ceiling that can outlive this timer's delay — this
 		// used to fire straight into an in-flight sweep and destroy the very
 		// service the sweep was actively touching, mislabeling every file the
@@ -175,7 +175,7 @@ function scheduleLSPIdleReset(
 }
 
 // #1618 acceptance criterion 6: FULL_SCAN_WALL_CLOCK_MS (the full-sweep wall
-// clock ceiling, `tools/lens-diagnostics.ts`) must stay under EVERY idle
+// clock ceiling, `tools/diagnostics-report.ts`) must stay under EVERY idle
 // reset delay this module can arm — derived, not asserted, so the constants
 // can't drift back into a relationship where a still-running sweep can
 // outlive the timer. The AC1 hold above already makes a mid-sweep fire
@@ -1158,7 +1158,7 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
 	// below: it is a delta contributor (like knip above), pushing into
 	// projectDiagnosticsDelta / projectDiagnosticsSources. If it ran after the
 	// single write, a call-graph-only turn would persist nothing and a mixed turn
-	// would drop the call-graph entries — so lens_diagnostics (which only reads the
+	// would drop the call-graph entries — so diagnostics_report (which only reads the
 	// persisted report) would never surface the findings (#179/#533).
 	if (runtime.callGraph && files.length > 0) {
 		const coverage = runtime.callGraph.coverage;

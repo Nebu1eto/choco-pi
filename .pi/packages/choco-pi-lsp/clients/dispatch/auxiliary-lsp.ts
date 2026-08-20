@@ -151,7 +151,7 @@ export const AUXILIARY_LSP_PROFILES: readonly AuxiliaryLspProfile[] = [
 		// Community set is uniformly ERROR/LOW-confidence audit-tier, so blocking on
 		// it would be a firehose. We honor ERROR→blocking ONLY when the repo
 		// supplies its own curated rules (the author's deliberate severity); the
-		// auto set is advisory. Either way, findings surface via lens_diagnostics.
+		// auto set is advisory. Either way, findings surface via diagnostics_report.
 		allowBlocking: (cwd) => Boolean(findLocalOpengrepConfig(cwd)),
 		semantic: blockOnErrorWhenAllowed,
 		defectClass: (d) =>
@@ -190,7 +190,7 @@ export const AUXILIARY_LSP_PROFILES: readonly AuxiliaryLspProfile[] = [
 		// zizmor's default ("regular") persona is a curated, low-false-positive
 		// audit set, but as an always-on advisory we only let it BLOCK when the repo
 		// opts in with its own `zizmor.yml` (the author's deliberate severities /
-		// ignores). Advisory otherwise — findings still surface via lens_diagnostics.
+		// ignores). Advisory otherwise — findings still surface via diagnostics_report.
 		// zizmor maps High→ERROR(1), Medium/Low→WARNING(2), Informational→INFO(3).
 		allowBlocking: (cwd) => Boolean(findLocalZizmorConfig(cwd)),
 		semantic: blockOnErrorWhenAllowed,
@@ -213,7 +213,7 @@ export const AUXILIARY_LSP_PROFILES: readonly AuxiliaryLspProfile[] = [
 		// correction), but as an always-on advisory we only let it BLOCK when the
 		// repo opts in with its own `typos.toml`/`_typos.toml`/`.typos.toml` (the
 		// team's curated dictionary + chosen severity). Advisory otherwise —
-		// findings still surface via lens_diagnostics. Note typos-lsp's default
+		// findings still surface via diagnostics_report. Note typos-lsp's default
 		// severity is WARNING, so even with a config it stays advisory unless the
 		// repo raises `diagnostic-severity` to Error.
 		allowBlocking: (cwd) => Boolean(findLocalTyposConfig(cwd)),
@@ -328,7 +328,7 @@ export function applyAuxiliarySuppressions(
 /**
  * #692: shared aux re-tag implementation — extracted from the per-edit
  * dispatch runner (`clients/dispatch/runners/lsp.ts`) so a scan/sweep path
- * that reconciles LSP diagnostics into widget state (`lens_diagnostics
+ * that reconciles LSP diagnostics into widget state (`diagnostics_report
  * mode=full`, `lsp_diagnostics`) gives its auxiliary-sourced findings
  * (ast-grep, opengrep, zizmor, typos) the SAME tool re-tag, semantic policy,
  * and defect-class classification the per-edit path always has — previously

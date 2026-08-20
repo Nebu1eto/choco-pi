@@ -290,7 +290,7 @@ export function resolveBaselineSgconfig(
 		return cached.path;
 	}
 
-	const dir = path.join(os.tmpdir(), "pi-lens-ast-grep");
+	const dir = path.join(os.tmpdir(), "choco-pi-lsp-ast-grep");
 	fs.mkdirSync(dir, { recursive: true });
 	const artifactKey = rootArtifactKey(root);
 	const file = path.join(

@@ -1,9 +1,9 @@
 ---
-name: pi-lens-write-ast-grep-rule
-description: Use when writing a new pi-lens ast-grep rule YAML file — covers schema, drop path, gotchas, and NAPI runner constraints
+name: choco-pi-lsp-write-ast-grep-rule
+description: Use when writing a new choco-pi-lsp ast-grep rule YAML file — covers schema, drop path, gotchas, and NAPI runner constraints
 ---
 
-# Writing a pi-lens ast-grep Rule
+# Writing a choco-pi-lsp ast-grep Rule
 
 Drop path: `rules/ast-grep-rules/rules/<id>.yml`  
 Same `id` as a built-in overrides it. Multiple rules per file: separate with `---`.

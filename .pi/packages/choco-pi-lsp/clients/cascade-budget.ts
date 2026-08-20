@@ -51,7 +51,7 @@ import { toPositiveFinite } from "./env-utils.js";
 // The knobs only, never the scheduler — this module is arithmetic and has no
 // business depending on a task registry to read two numbers (#1462 review N4).
 // Note it buys nothing at load time: `runtime-config.js` below already reaches
-// `pidusage` via `lens-config.js`.
+// `pidusage` via `lsp-config.js`.
 import {
 	isQuietWindowEnabled,
 	quietWindowWaitMs,

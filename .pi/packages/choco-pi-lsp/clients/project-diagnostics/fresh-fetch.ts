@@ -1,5 +1,5 @@
 /**
- * THE heavyweight-analyzer reader for `lens_diagnostics mode=full` (#585).
+ * THE heavyweight-analyzer reader for `diagnostics_report mode=full` (#585).
  *
  * It superseded a cache-ONLY reader (`extractCachedProjectDiagnostics`, since
  * removed from ./extractors.ts as a #585-class dead parallel path — see that
@@ -45,7 +45,7 @@
  * Does NOT change session_start's or turn_end's own scheduling (both remain
  * skip-if-cached) — this module is additive and mode=full-only.
  *
- * Abort handling: `formatFullMode` (`tools/lens-diagnostics.ts`) already
+ * Abort handling: `formatFullMode` (`tools/diagnostics-report.ts`) already
  * threads a combined signal (Escape/turn-abort OR'd with a hard wall-clock
  * ceiling, `FULL_SCAN_WALL_CLOCK_MS`) into the LSP sweep and the cheap
  * project-runner scan — this module accepts the SAME signal so a `mode=full`
@@ -161,7 +161,7 @@ export interface FreshProjectDiagnosticsResult {
 	dispositionSuppressedByLane?: Record<string, number>;
 }
 
-/** The heavyweight analyzers surfaced in `lens_diagnostics mode=full` — this is
+/** The heavyweight analyzers surfaced in `diagnostics_report mode=full` — this is
  *  now the single source of truth for that list (#585 removed the parallel
  *  cache-only `EXTRACTORS` registry that used to shadow it). `warmTriggerFor`
  *  (extractors.ts) is keyed by these same ids for the "cold" honesty note.
@@ -309,7 +309,7 @@ export async function fetchFreshProjectDiagnostics(
 		// source of truth — the exact wiring gitleaks/trivy use above). #585: this
 		// was the one extractor registered in `extractors.ts` but MISSING here, so
 		// opengrep scanned+cached yet nothing production read it back into
-		// `lens_diagnostics mode=full` — the honesty gap (#533) this task closes.
+		// `diagnostics_report mode=full` — the honesty gap (#533) this task closes.
 		task("opengrep", async () => {
 			if (!(await clients.opengrepClient.ensureAvailable())) {
 				markCold(

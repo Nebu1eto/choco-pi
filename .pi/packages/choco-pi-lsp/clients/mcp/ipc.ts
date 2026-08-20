@@ -403,7 +403,7 @@ export async function requestWarmTurnEnd(
 // (no warm server, timeout, schema skew) leaves no trace the long-lived MCP
 // server could report. Before this, that skip was one stderr line the agent
 // never sees — the exact invisible-state shape #544 fixed for auto-session.
-// The hook records its outcome to a small per-workspace file; `pilens_health`
+// The hook records its outcome to a small per-workspace file; `lsp_health`
 // reads it. Best-effort throughout: telemetry must never break a hook.
 
 export interface TurnEndStatus {

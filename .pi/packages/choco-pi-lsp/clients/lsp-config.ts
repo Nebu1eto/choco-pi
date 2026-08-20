@@ -11,11 +11,11 @@ import {
 	GLOBAL_NON_FLAG_CONFIG_SECTIONS,
 	LENS_FLAGS,
 	readFlagConfigValue,
-} from "./lens-flag-registry.js";
+} from "./lsp-flag-registry.js";
 import {
 	findNestedProjectMutationValue,
 	type PiLensProjectConfig,
-} from "./project-lens-config.js";
+} from "./project-lsp-config.js";
 
 export type PiLensFormatMode = "deferred" | "immediate";
 
@@ -95,7 +95,7 @@ export interface PiLensGlobalConfig {
 		 * turn-end findings, test findings) into the next model turn via the
 		 * `context` hook. Defaults true. Set false to keep tools/LSP/read-guard/
 		 * formatting running while avoiding prompt-cache invalidation from injected
-		 * messages. Findings are still cached for `lens_diagnostics` / `/lens-health`.
+		 * messages. Findings are still cached for `diagnostics_report` / `/lens-health`.
 		 */
 		enabled?: boolean;
 	};
@@ -119,7 +119,7 @@ export function getPiLensGlobalConfigPath(homeDir = os.homedir()): string {
 const warnedInvalidGlobalConfigs = new Set<string>();
 
 /**
- * Same warn-once-per-(path, reason) contract as project-lens-config.ts's
+ * Same warn-once-per-(path, reason) contract as project-lsp-config.ts's
  * `warnInvalidConfigOnce` — a malformed global config value is logged once
  * and then treated as absent, rather than silently dropped (#792).
  */
@@ -374,7 +374,7 @@ export interface ResolvedPiLensFlag {
  * returning the `source` so callers can log e.g.
  * "(--no-autofix, source=project)" instead of a bare boolean (#792).
  *
- * Every tier is driven by `clients/lens-flag-registry.ts` (#166): the spec's
+ * Every tier is driven by `clients/lsp-flag-registry.ts` (#166): the spec's
  * `configKey` is read out of each config object rather than matched by a
  * per-flag branch, so a new toggle needs no change here at all.
  *

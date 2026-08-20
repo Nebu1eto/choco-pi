@@ -109,8 +109,8 @@ export interface SessionStartOutcome {
 /**
  * Run pi-lens's real session_start. Much of the work (scans, baseline, LSP warm)
  * runs in the background, so the immediate return carries the synchronous
- * guidance + whatever baseline/LSP state is ready; query `pilens_diagnostics` /
- * `pilens_health` afterwards for the scan results as they land.
+ * guidance + whatever baseline/LSP state is ready; query `diagnostics_report` /
+ * `lsp_health` afterwards for the scan results as they land.
  */
 export async function runSessionStart(
 	cwd: string,

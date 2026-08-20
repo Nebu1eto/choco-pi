@@ -30,7 +30,7 @@ import {
 	getReadGuardCorrelationId,
 	logReadGuardEvent,
 } from "./read-guard-logger.js";
-import type { PiLensFlagSource } from "./lens-config.js";
+import type { PiLensFlagSource } from "./lsp-config.js";
 import type { EditToolDetails } from "@earendil-works/pi-coding-agent";
 import type { LSPShutdownOptions } from "./lsp/client.js";
 import { notifyExternalFileChange } from "./lsp/index.js";
@@ -507,7 +507,7 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
 	// the read-guard (like the Write tool), and (2) re-run the pipeline via a
 	// synthetic `write` event so its diagnostics, fileSeq, and change-log refresh.
 	// Without (2) a `git checkout -- f` restore keeps serving the pre-restore
-	// (e.g. broken-state) warnings on every later lens_diagnostics call.
+	// (e.g. broken-state) warnings on every later diagnostics_report call.
 	if (
 		event.toolName === "bash" &&
 		typeof (event.input as { command?: unknown }).command === "string"

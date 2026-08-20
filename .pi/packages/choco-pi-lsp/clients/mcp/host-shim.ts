@@ -13,9 +13,9 @@
 import {
 	loadPiLensGlobalConfig,
 	resolvePiLensFlag,
-} from "../lens-config.js";
+} from "../lsp-config.js";
 import type { PiAgentAPI } from "../dispatch/types.js";
-import { loadPiLensProjectConfig } from "../project-lens-config.js";
+import { loadPiLensProjectConfig } from "../project-lsp-config.js";
 
 /**
  * Build a `PiAgentAPI` for the MCP path. `overrides` lets a single MCP tool call

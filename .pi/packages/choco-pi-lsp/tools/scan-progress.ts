@@ -1,6 +1,6 @@
 /**
  * Shared progress-streaming helper for the long-running full/batch/directory
- * diagnostic scans (`lens_diagnostics mode=full`, `lsp_diagnostics`). Those runs
+ * diagnostic scans (`diagnostics_report mode=full`, `lsp_diagnostics`). Those runs
  * are opaque for minutes; this streams a throttled progress bar to the tool's
  * `onUpdate` callback so the agent/user sees movement.
  */

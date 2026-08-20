@@ -10,7 +10,7 @@
  *
  * NOT a load-time win, despite what the first version of this comment claimed:
  * `cascade-budget.ts` imports `runtime-config.ts` for `cascadeMaxFiles`, and
- * that reaches `pidusage` through `lens-config.ts` regardless — probed, and
+ * that reaches `pidusage` through `lsp-config.ts` regardless — probed, and
  * `dispatch/integration.ts` already imported `runtime-config.ts` before #1462.
  * The split is a dependency-direction fix and nothing more.
  *

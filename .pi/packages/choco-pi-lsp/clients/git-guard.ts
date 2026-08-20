@@ -798,7 +798,7 @@ export function evaluateGitGuard(
 		const detail = runtime.gitGuardSummary ? `\n${runtime.gitGuardSummary}` : "";
 		return {
 			block: true,
-			reason: `🔴 COMMIT BLOCKED (--lens-guard): unresolved blockers must be fixed before commit/push.${detail}\nRun lens_diagnostics mode=all for full details, then commit again.`,
+			reason: `🔴 COMMIT BLOCKED (--lens-guard): unresolved blockers must be fixed before commit/push.${detail}\nRun diagnostics_report mode=all for full details, then commit again.`,
 		};
 	}
 	if (runtime.gitGuardCacheUnknownReason) {
@@ -881,6 +881,6 @@ export function evaluateGitGuard(
 	return {
 		block: true,
 		reason:
-			"🔴 COMMIT BLOCKED (--lens-guard): unresolved blockers must be fixed before commit/push.\nRun lens_diagnostics mode=all for full details, then commit again.",
+			"🔴 COMMIT BLOCKED (--lens-guard): unresolved blockers must be fixed before commit/push.\nRun diagnostics_report mode=all for full details, then commit again.",
 	};
 }

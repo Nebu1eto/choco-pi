@@ -1,4 +1,4 @@
-# pi-lens ast-grep Rule Reference
+# choco-pi-lsp ast-grep Rule Reference
 
 Deep-dive companion to `SKILL.md`. Read this when you're debugging a rule
 that isn't matching (or over-matching) the way you expect: ReDoS-safe regex
@@ -48,7 +48,7 @@ grammars, and precision-over-recall heuristics for denylist-shaped rules.
      rule is not enough for standalone `.js` coverage, so shipped user-facing
      TS/JS rules that should fire under the ast-grep LSP usually need a `-js`
      twin with `language: JavaScript` plus its own fixture.
-   - the in-process NAPI fallback (`ast-grep-napi.ts` — pi-lens source checkout
+   - the in-process NAPI fallback (`ast-grep-napi.ts` — choco-pi-lsp source checkout
      only, not present in the installed package) already DEDUPES by grammar
      (#657): `ruleLanguageForFile` (`ast-grep-napi.ts:205-216`) maps each file
      extension to its actual grammar, and the matcher (`:450-455`) skips any
@@ -81,9 +81,9 @@ grammars, and precision-over-recall heuristics for denylist-shaped rules.
        const f=(n,k)=>{let c=n.kind()===k?1:0;for(const x of n.children())c+=f(x,k);return c};
        console.log(f(r,"subscript_expression"))})'   # >0 means the kind is real
 
-✅ Test through the REAL runner from the pi-lens source checkout's repo root — it loads the actual shipped
+✅ Test through the REAL runner from the choco-pi-lsp source checkout's repo root — it loads the actual shipped
    rules from rules/ast-grep-rules/rules. Assert on diagnostic `rule` ids:
-     const res = await runner.run(ctx);  // ctx.filePath = temp .ts, cwd = repo  (pi-lens source checkout only — not present in the installed package)
+     const res = await runner.run(ctx);  // ctx.filePath = temp .ts, cwd = repo  (choco-pi-lsp source checkout only — not present in the installed package)
    For pattern/kind/regex-only rules (CLI-identical semantics) `ast-grep scan` is fine.
 
 ✅ Before shipping any text/regex detector, FP-scan the codebase:

@@ -1,6 +1,6 @@
 /**
  * #1618: a full workspace sweep (`LSPService.runWorkspaceDiagnostics`, the
- * engine behind `lens_diagnostics mode=full`) grants itself a wall-clock
+ * engine behind `diagnostics_report mode=full`) grants itself a wall-clock
  * ceiling (`FULL_SCAN_WALL_CLOCK_MS`, see {@link getFullScanWallClockMs})
  * that can outlive the detached LSP idle-reset timer armed by
  * `clients/runtime-turn.ts`'s `handleTurnEnd` on a file-less turn. Nothing
@@ -13,7 +13,7 @@
  * its own lifetime (try/finally, so a throw or an aborted sweep still
  * releases it) and the idle-reset timer consults it before firing. Holds are
  * tracked as TOKENS (acquire-time-stamped), not a bare counter — two
- * overlapping `lens_diagnostics mode=full` calls (or a sweep started while
+ * overlapping `diagnostics_report mode=full` calls (or a sweep started while
  * another is still finishing) must each be free to release independently
  * without the other's hold being dropped early.
  *
@@ -29,12 +29,12 @@
  *      force-releases any token older than {@link getWorkspaceSweepMaxHoldAgeMs},
  *      derived from the sweep's own wall-clock ceiling plus a safety margin.
  *      A real sweep is either done or self-aborted well within that window
- *      (`tools/lens-diagnostics.ts` races `FULL_SCAN_WALL_CLOCK_MS`), so a
+ *      (`tools/diagnostics-report.ts` races `FULL_SCAN_WALL_CLOCK_MS`), so a
  *      token still held past it can only be a bug — never a legitimate long
  *      sweep — and gets force-released with its own distinct log record.
  *
  * `getFullScanWallClockMs` also lives here (rather than duplicated between
- * `tools/lens-diagnostics.ts` and `clients/runtime-turn.ts`) so the idle-reset
+ * `tools/diagnostics-report.ts` and `clients/runtime-turn.ts`) so the idle-reset
  * delay on every path (base AND the subagent/budget-shortened paths) can be
  * DERIVED from the sweep's own ceiling instead of the constants drifting
  * apart again (#1618 acceptance criterion 6).
@@ -166,9 +166,9 @@ export function _resetWorkspaceSweepHoldForTests(): void {
 }
 
 /**
- * Wall-clock ceiling for one `lens_diagnostics mode=full` scan
+ * Wall-clock ceiling for one `diagnostics_report mode=full` scan
  * (`runWorkspaceDiagnostics` plus its concurrent project-runner/analyzer
- * work). Single source for `tools/lens-diagnostics.ts` (the sweep caller),
+ * work). Single source for `tools/diagnostics-report.ts` (the sweep caller),
  * `clients/runtime-turn.ts` (every idle-reset path, whose delay must outlive
  * it), and this module's own max-hold-age failsafe — lazy env read, never
  * memoized, matching this codebase's house style so a test can flip the

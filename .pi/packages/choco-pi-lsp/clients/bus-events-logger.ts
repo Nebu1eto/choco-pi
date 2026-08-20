@@ -8,11 +8,11 @@
  *
  * All five producers (clients/bus-publish.ts, clients/diagnostics-publish.ts,
  * clients/disposition-publish.ts, clients/format-events-publish.ts,
- * clients/lens-events.ts) are fire-and-forget: on failure or on a structural
+ * clients/lsp-events.ts) are fire-and-forget: on failure or on a structural
  * no-op (never wired, kill switch off) the four #482/#502/#673/#684
  * producers only invoke an optional `dbg` callback, which varies by host and
  * is a documented no-op in the MCP host (clients/mcp/session.ts's
- * `dbg: noop`); `lens-events.ts` (#1415) has no `dbg` param at all — its
+ * `dbg: noop`); `lsp-events.ts` (#1415) has no `dbg` param at all — its
  * events are purely observational inter-extension telemetry, so this NDJSON
  * trace is its ONLY failure-visible surface. Either way, that leaves
  * bus-publish outcomes invisible in exactly the context where they matter

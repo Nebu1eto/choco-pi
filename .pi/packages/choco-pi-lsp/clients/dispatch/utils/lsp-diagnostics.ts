@@ -5,7 +5,7 @@ export interface ConvertLspDiagnosticsOptions {
 	tool?: string;
 	/**
 	 * #692: provenance label for a diagnostic reconciled from a SCAN path
-	 * (`lens_diagnostics mode=full`'s footer reconcile, `lsp_diagnostics`' own
+	 * (`diagnostics_report mode=full`'s footer reconcile, `lsp_diagnostics`' own
 	 * footer reconcile) rather than the per-edit dispatch pipeline. This used
 	 * to be carried in a `source` option that got baked straight into `rule`
 	 * (`${source}:${code}`) — which meant the SAME finding got a different

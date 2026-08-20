@@ -369,7 +369,7 @@ export function getServersForFileWithConfig(filePath: string): LSPServerInfo[] {
  * whether the actual type checker/compiler confirmed the file clean.
  *
  * #646: extracted from `tools/lsp-diagnostics.ts` (where it originated) so
- * `tools/lens-diagnostics.ts`'s `mode=full` sweep can share the exact same
+ * `tools/diagnostics-report.ts`'s `mode=full` sweep can share the exact same
  * primary/auxiliary classification instead of hand-copying it — both tools
  * now report the same primary-vs-auxiliary split for the same file.
  */

@@ -14,7 +14,7 @@
  *                     only, so it naturally resurfaces on process restart —
  *                     never persisted, never needs pruning.
  *   flagged        — user wants the agent to fix this. Persistent until
- *                     resolved; surfaced through the existing lens_diagnostics
+ *                     resolved; surfaced through the existing diagnostics_report
  *                     query (tagged), not a separate file/tool the agent has
  *                     to separately poll.
  *
@@ -146,7 +146,7 @@ export function normalizeMessage(message: string): string {
 // (computeStrictAnchor/computeWeakAnchor) both derive their path component here,
 // so a mark and its later lookup diverge whenever the two callers pass different
 // path FORMS of the same file. That is exactly the bug: the mark tool
-// (lens-diagnostic-mark.ts) passes a RAW cwd / `path.resolve(cwd, arg)`, while
+// (diagnostic-mark.ts) passes a RAW cwd / `path.resolve(cwd, arg)`, while
 // the dispatch read side (dispatcher.ts createDispatchContext) passes
 // `normalizeMapKey`-canonicalized cwd/filePath — so a Windows drive/segment
 // case, symlink/realpath, or slash difference between the two forms silently
@@ -543,7 +543,7 @@ export function _resetDeferredForTests(): void {
 /**
  * Drop diagnostics disposed false-positive/suppress, or deferred this session,
  * from `diagnostics`. `flagged` diagnostics are kept as-is — callers that want
- * to surface the flag (e.g. lens_diagnostics' rendering) look it up separately
+ * to surface the flag (e.g. diagnostics_report' rendering) look it up separately
  * via getDisposition on the WEAK anchor (anchorsForDiagnostic(...).weak).
  *
  * Computes both anchors per diagnostic (cheap — same hash primitive, twice)
@@ -589,7 +589,7 @@ export function applyDispositions<T extends DispositionCandidate>(
 
 /**
  * WEAK-anchor-only disposition filter for the "instant" (cache-only)
- * lens_diagnostics modes (delta/all). Drops diagnostics disposed `suppress`
+ * diagnostics_report modes (delta/all). Drops diagnostics disposed `suppress`
  * or deferred this session — both WEAK-anchored (`file|tool|rule|message`, no
  * line-content hash; see module doc), so this needs ZERO file I/O: it computes
  * only the weak anchor and never touches the diagnostic's line content.

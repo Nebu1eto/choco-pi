@@ -151,7 +151,7 @@ import { unsafeBoundaryRule } from "./rules/unsafe-boundary.js";
 import {
 	loadPiLensProjectConfig,
 	type PiLensProjectConfig,
-} from "../project-lens-config.js";
+} from "../project-lsp-config.js";
 
 registerRule(errorObscuringRule);
 registerRule(errorSwallowingRule);
@@ -529,7 +529,7 @@ const MAX_FILES = RUNTIME_CONFIG.pipeline.cascadeMaxFiles;
  * (opengrep/ast-grep/zizmor/typos — `findAuxiliaryProfileForSource`). The
  * cascade's `convertLspDiagnostics` tags everything `tool: "lsp"`,
  * `semantic: "blocking"` and — unlike every OTHER widget writer
- * (`runners/lsp.ts`, `tools/lsp-diagnostics.ts`, `tools/lens-diagnostics.ts`) —
+ * (`runners/lsp.ts`, `tools/lsp-diagnostics.ts`, `tools/diagnostics-report.ts`) —
  * never runs `retagAuxiliaryDiagnostics`. Since `getAllDiagnostics` /
  * `touchFile({clientScope:"all"})` include the auxiliary servers' findings,
  * writing them here would (a) DOUBLE-COUNT a neighbor's own correctly-tagged aux
@@ -785,7 +785,7 @@ export const CASCADE_GRAPH_KINDS = new Set([
  * same `getProjectIgnoreMatcher` every other scan surface uses. Cascade surfaces
  * collateral diagnostics in OTHER files an edit touched; a file the user ignores
  * (e.g. a `*.test.ts` glob in `.pi-lens.json`) must not be re-surfaced here just
- * because it imports the edited file — project walk and lens_diagnostics already
+ * because it imports the edited file — project walk and diagnostics_report already
  * filter it, and cascade was the last surface that didn't (#297). Fail-open: a
  * config-probe error never drops a neighbour, matching the walkers' behaviour.
  */

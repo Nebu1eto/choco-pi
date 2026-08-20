@@ -15,7 +15,7 @@ import {
 
 /**
  * #671: per-file cache of the last CONFIRMED `runWorkspaceDiagnostics` sweep
- * result, so a repeat `lens_diagnostics mode=full` with no intervening edits
+ * result, so a repeat `diagnostics_report mode=full` with no intervening edits
  * doesn't re-touch every file through the language server(s) again. Mirrors
  * `clients/project-diagnostics/cache.ts`'s load/save + mtime-staleness shape
  * (same `getProjectDataDir`-rooted `cache/` path, same version-guard +
