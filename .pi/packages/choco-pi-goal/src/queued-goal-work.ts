@@ -1,3 +1,6 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+
 import { continuationGoalIdFromPrompt, supersededContinuationMessage } from "./prompts.js";
 import {
   isActiveGoalQueuedDetails,
@@ -12,6 +15,11 @@ import {
   userContentFromUnknown,
 } from "./queued-goal-messages.js";
 import { CUSTOM_ENTRY_TYPE, type GoalStatus, type ThreadGoal } from "./types.js";
+
+const StringSchema = Type.String();
+const SupersededContinuationDetailsSchema = Type.Object({
+  kind: Type.Literal("superseded_continuation"),
+});
 
 interface SupersededContinuationDetails {
   kind: "superseded_continuation";
@@ -54,6 +62,11 @@ type RewrittenQueuedGoalWorkMessage =
 type ProviderContextRewrite<TMessage extends QueuedGoalContextInput> = TMessage &
   RewrittenQueuedGoalWorkMessage;
 
+interface QueuedGoalRewriteResult<TMessage extends QueuedGoalContextInput> {
+  messages: TMessage[];
+  changed: boolean;
+}
+
 /** Single typed bridge from concrete queued-goal rewrites back onto provider-context messages. */
 function mergeProviderContextMessage<TMessage extends QueuedGoalContextInput>(
   original: TMessage,
@@ -65,16 +78,12 @@ function mergeProviderContextMessage<TMessage extends QueuedGoalContextInput>(
   };
 }
 
-function isSupersededContinuationDetails(details: unknown): boolean {
-  return (
-    details !== null &&
-    typeof details === "object" &&
-    (details as { kind?: unknown }).kind === "superseded_continuation"
-  );
+function isSupersededContinuationDetails(details: QueuedGoalContextInput["details"]): boolean {
+  return Check(SupersededContinuationDetailsSchema, details);
 }
 
-function textContentFromMessageContent(content: unknown): string | null {
-  if (typeof content === "string") {
+function textContentFromMessageContent(content: QueuedGoalContextInput["content"]): string | null {
+  if (Check(StringSchema, content)) {
     return content;
   }
 
@@ -86,7 +95,9 @@ function textContentFromMessageContent(content: unknown): string | null {
   return parts.map((part) => part.text).join("\n");
 }
 
-function continuationGoalIdFromMessageContent(content: unknown): string | null {
+function continuationGoalIdFromMessageContent(
+  content: QueuedGoalContextInput["content"],
+): string | null {
   const text = textContentFromMessageContent(content);
   return text === null ? null : continuationGoalIdFromPrompt(text);
 }
@@ -159,7 +170,7 @@ function dedupeActiveGoalContinuations<TMessage extends QueuedGoalContextInput>(
   messages: readonly TMessage[],
   goal: ThreadGoal,
   resolveQueuedGoalWorkMessageId: (message: QueuedGoalContextInput) => string | null,
-): { messages: TMessage[]; changed: boolean } {
+): QueuedGoalRewriteResult<TMessage> {
   const activeGoalId = goal.goalId;
   const indices: number[] = [];
   for (let index = 0; index < messages.length; index += 1) {
@@ -251,7 +262,7 @@ export function applyQueuedGoalProviderContextRewrites<TMessage extends QueuedGo
       message: QueuedGoalContextInput,
     ) => string | null;
   },
-): { messages: TMessage[]; changed: boolean } {
+): QueuedGoalRewriteResult<TMessage> {
   let changed = false;
   let nextMessages: TMessage[] = messages.map((message) => {
     const queuedGoalId = options.resolveStaleQueuedGoalWorkMessageId(message);

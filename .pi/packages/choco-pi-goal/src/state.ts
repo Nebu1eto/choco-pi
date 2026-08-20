@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+
 import {
   CUSTOM_ENTRY_TYPE,
   MAX_OBJECTIVE_CHARS,
@@ -14,9 +17,69 @@ import {
   type ThreadGoal,
 } from "./types.js";
 
+const GoalStatusSchema = Type.Union([
+  Type.Literal("active"),
+  Type.Literal("paused"),
+  Type.Literal("budgetLimited"),
+  Type.Literal("complete"),
+]);
+const RuntimeUsageGoalStatusSchema = Type.Union([
+  Type.Literal("active"),
+  Type.Literal("budgetLimited"),
+]);
+const GoalUsageSchema = Type.Object({
+  tokensUsed: Type.Number(),
+  activeSeconds: Type.Number(),
+});
+const ThreadGoalSchema = Type.Object({
+  goalId: Type.String(),
+  objective: Type.String(),
+  status: GoalStatusSchema,
+  tokenBudget: Type.Union([Type.Number(), Type.Null()]),
+  usage: GoalUsageSchema,
+  createdAt: Type.Number(),
+  updatedAt: Type.Number(),
+});
+const GoalCustomEntrySchema = Type.Union([
+  Type.Object({
+    version: Type.Literal(1),
+    kind: Type.Literal("set"),
+    goal: ThreadGoalSchema,
+    at: Type.Number(),
+  }),
+  Type.Object({
+    version: Type.Literal(1),
+    kind: Type.Literal("usage"),
+    source: Type.Literal("runtime"),
+    goalId: Type.String(),
+    status: RuntimeUsageGoalStatusSchema,
+    usage: GoalUsageSchema,
+    updatedAt: Type.Number(),
+    at: Type.Number(),
+  }),
+  Type.Object({
+    version: Type.Literal(1),
+    kind: Type.Literal("clear"),
+    clearedGoalId: Type.Union([Type.String(), Type.Null()]),
+    at: Type.Number(),
+  }),
+  Type.Object({
+    version: Type.Literal(1),
+    kind: Type.Literal("host_overflow_cap_reset"),
+    active: Type.Boolean(),
+    at: Type.Number(),
+  }),
+]);
+
 export interface ApplyUsageOptions {
   expectedGoalId?: string | null;
   accountBudgetLimited?: boolean;
+}
+
+export interface ApplyUsageResult {
+  goal: ThreadGoal | null;
+  changed: boolean;
+  crossedBudget: boolean;
 }
 
 export function unixSeconds(): number {
@@ -151,67 +214,26 @@ export function hostOverflowCapResetEntry(active: boolean, at = unixSeconds()): 
   };
 }
 
-export function isGoalCustomEntry(data: unknown): data is GoalCustomEntry {
-  if (!data || typeof data !== "object") {
-    return false;
-  }
-  const entry = data as GoalCustomEntry;
-  if (entry.version !== 1 || typeof entry.at !== "number") {
-    return false;
-  }
-  if (entry.kind === "clear") {
-    return entry.clearedGoalId === null || typeof entry.clearedGoalId === "string";
-  }
-  if (entry.kind === "usage") {
-    return (
-      entry.source === "runtime" &&
-      typeof entry.goalId === "string" &&
-      isRuntimeUsageGoalStatus(entry.status) &&
-      isGoalUsage(entry.usage) &&
-      typeof entry.updatedAt === "number"
-    );
-  }
-  if (entry.kind === "host_overflow_cap_reset") {
-    return typeof entry.active === "boolean";
-  }
-  return entry.kind === "set" && isThreadGoal(entry.goal);
+export function isGoalCustomEntry(data: SessionEntryLike["data"]): data is GoalCustomEntry {
+  return Check(GoalCustomEntrySchema, data);
 }
 
-export function isGoalUsage(usage: unknown): usage is GoalUsage {
-  if (!usage || typeof usage !== "object") {
-    return false;
-  }
-  const candidate = usage as GoalUsage;
-  return typeof candidate.tokensUsed === "number" && typeof candidate.activeSeconds === "number";
+export function isGoalUsage(usage: SessionEntryLike["data"]): usage is GoalUsage {
+  return Check(GoalUsageSchema, usage);
 }
 
-export function isRuntimeUsageGoalStatus(status: unknown): status is RuntimeUsageGoalStatus {
-  return status === "active" || status === "budgetLimited";
+export function isRuntimeUsageGoalStatus(
+  status: SessionEntryLike["data"],
+): status is RuntimeUsageGoalStatus {
+  return Check(RuntimeUsageGoalStatusSchema, status);
 }
 
-export function isThreadGoal(goal: unknown): goal is ThreadGoal {
-  if (!goal || typeof goal !== "object") {
-    return false;
-  }
-  const candidate = goal as ThreadGoal;
-  return (
-    typeof candidate.goalId === "string" &&
-    typeof candidate.objective === "string" &&
-    isGoalStatus(candidate.status) &&
-    (candidate.tokenBudget === null || typeof candidate.tokenBudget === "number") &&
-    typeof candidate.createdAt === "number" &&
-    typeof candidate.updatedAt === "number" &&
-    isGoalUsage(candidate.usage)
-  );
+export function isThreadGoal(goal: SessionEntryLike["data"]): goal is ThreadGoal {
+  return Check(ThreadGoalSchema, goal);
 }
 
-export function isGoalStatus(status: unknown): status is GoalStatus {
-  return (
-    status === "active" ||
-    status === "paused" ||
-    status === "budgetLimited" ||
-    status === "complete"
-  );
+export function isGoalStatus(status: SessionEntryLike["data"]): status is GoalStatus {
+  return Check(GoalStatusSchema, status);
 }
 
 function canApplyRuntimeUsageEntry(
@@ -408,7 +430,7 @@ export function applyUsage(
   tokensDelta: number,
   activeSecondsDelta: number,
   options: ApplyUsageOptions = {},
-): { goal: ThreadGoal | null; changed: boolean; crossedBudget: boolean } {
+): ApplyUsageResult {
   if (!current) {
     return { goal: current, changed: false, crossedBudget: false };
   }

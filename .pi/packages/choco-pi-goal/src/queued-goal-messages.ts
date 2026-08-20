@@ -1,4 +1,22 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+
 import { CUSTOM_ENTRY_TYPE } from "./types.js";
+
+const StringSchema = Type.String();
+const NumberSchema = Type.Number();
+const QueuedGoalTextPartSchema = Type.Object({
+  type: Type.Literal("text"),
+  text: Type.String(),
+});
+const ActiveGoalQueuedDetailsSchema = Type.Object({
+  kind: Type.Union([
+    Type.Literal("continuation"),
+    Type.Literal("command_start"),
+    Type.Literal("command_resume"),
+  ]),
+  goalId: Type.String(),
+});
 
 type GoalQueuedWorkKind = "continuation" | "command_start" | "command_resume";
 
@@ -60,26 +78,26 @@ function isQueuedGoalCustomRole(
   return message.role === "custom" && message.customType === CUSTOM_ENTRY_TYPE;
 }
 
-export function userContentFromUnknown(content: unknown): QueuedGoalUserContent {
+export function userContentFromUnknown(
+  content: QueuedGoalContextInput["content"],
+): QueuedGoalUserContent {
   if (!Array.isArray(content)) {
     return [];
   }
 
   const parts: QueuedGoalTextPart[] = [];
   for (const part of content) {
-    if (part === null || typeof part !== "object") {
-      continue;
-    }
-    const candidate = part as { type?: unknown; text?: unknown };
-    if (candidate.type === "text" && typeof candidate.text === "string") {
-      parts.push({ type: "text", text: candidate.text });
+    if (Check(QueuedGoalTextPartSchema, part)) {
+      parts.push({ type: "text", text: part.text });
     }
   }
   return parts;
 }
 
-function customContentFromUnknown(content: unknown): string | QueuedGoalUserContent {
-  if (typeof content === "string") {
+function customContentFromUnknown(
+  content: QueuedGoalContextInput["content"],
+): string | QueuedGoalUserContent {
+  if (Check(StringSchema, content)) {
     return content;
   }
 
@@ -91,7 +109,7 @@ function customContentFromUnknown(content: unknown): string | QueuedGoalUserCont
 export function toQueuedGoalContextCarrier(
   message: QueuedGoalContextInput,
 ): QueuedGoalContextCarrier | null {
-  if (typeof message.timestamp !== "number") {
+  if (!Check(NumberSchema, message.timestamp)) {
     return null;
   }
 
@@ -146,17 +164,10 @@ export function toQueuedGoalWorkSource(
   }
 }
 
-export function isActiveGoalQueuedDetails(details: unknown): details is ActiveGoalQueuedDetails {
-  if (details === null || typeof details !== "object") {
-    return false;
-  }
-
-  const candidate = details as { kind?: unknown; goalId?: unknown };
-  const kind = candidate.kind;
-  return (
-    (kind === "continuation" || kind === "command_start" || kind === "command_resume") &&
-    typeof candidate.goalId === "string"
-  );
+export function isActiveGoalQueuedDetails(
+  details: QueuedGoalContextInput["details"],
+): details is ActiveGoalQueuedDetails {
+  return Check(ActiveGoalQueuedDetailsSchema, details);
 }
 
 export function isCommandResumeQueuedGoalMessage(message: QueuedGoalContextCarrier): boolean {
