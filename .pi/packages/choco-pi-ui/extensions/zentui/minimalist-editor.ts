@@ -3,6 +3,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ZentuiConfig } from "./config";
 import { sanitizeEditorMetadataText } from "./editor-metadata-format";
+import { isString } from "./runtime-values";
 import {
   buildContextGauge,
   contextColorTier,
@@ -368,7 +369,7 @@ export function renderMinimalistFrame({
     }
     try {
       const rendered = borderColor(text);
-      return typeof rendered === "string" ? rendered : renderStaticBorder(text);
+      return isString(rendered) ? rendered : renderStaticBorder(text);
     } catch {
       return renderStaticBorder(text);
     }

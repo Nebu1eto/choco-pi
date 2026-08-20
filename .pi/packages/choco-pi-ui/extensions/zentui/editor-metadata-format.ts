@@ -137,12 +137,14 @@ function editorThinkingStyle(config: ZentuiConfig, level: string): string | unde
   }
 }
 
+type RenderedMetadataVariable = { plain: string; styled: string };
+
 function renderVariable(
   name: string,
   values: EditorMetadataValues,
   uiTheme: Theme,
   config: ZentuiConfig,
-): { plain: string; styled: string } {
+): RenderedMetadataVariable {
   const colorSource = config.components.editor.colorSource;
   const thinking = values.thinking.toLowerCase() === "off" ? "" : values.thinking;
   const raw =

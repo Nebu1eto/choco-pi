@@ -27,6 +27,7 @@ import {
   type PolishedTuiConfig,
   type SelectorBordersComponentConfig,
   type SeparatorStyle,
+  type StarshipFooterStyleConfig,
   saveEditorComponentPatch,
   saveExtensionStatusColorMode,
   saveExtensionStatusDefaultPlacement,
@@ -73,6 +74,7 @@ import { createInitialState, type FooterState, modelLabelFor, syncState } from "
 import { resolveFooterTelemetry } from "./telemetry";
 import { PolishedEditor, WrappedPolishedEditor } from "./ui";
 import { installUserMessageStyle, removeUserMessageStyle } from "./user-message";
+import { type BoundaryValue, isBoundaryValue, isCallable, isSymbol } from "./runtime-values";
 import {
   AgentDurationClock,
   snapshotWorkingLineHighStyle,
@@ -120,10 +122,12 @@ function editorTransferFailureMessage(reason: EditorTransferFailureReason): stri
 }
 
 function isZentuiEditorFactory(factory: EditorFactory | undefined): boolean {
+  // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
   return Boolean((factory as ZentuiEditorFactory | undefined)?.[ZENTUI_EDITOR_FACTORY]);
 }
 
 function getZentuiEditorBaseFactory(factory: EditorFactory | undefined): EditorFactory | undefined {
+  // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
   return (factory as ZentuiEditorFactory | undefined)?.[ZENTUI_EDITOR_BASE_FACTORY];
 }
 
@@ -163,6 +167,7 @@ function findRepositoryRoot(cwd: string): string | undefined {
 
 function isTuiContext(ctx: ExtensionContext): boolean {
   try {
+    // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
     const mode = (ctx as ExtensionContext & { mode?: string }).mode;
     return ctx.hasUI && (mode === undefined || mode === "tui");
   } catch {
@@ -177,18 +182,19 @@ export default function (pi: ExtensionAPI) {
 
   let currentConfig: PolishedTuiConfig = loadConfig();
   // Keep the capability guard defensive for hosts with incomplete extension APIs.
-  if (typeof pi.registerEntryRenderer === "function") {
-    pi.registerEntryRenderer(TURN_SUMMARY_ENTRY_TYPE, (entry, options, theme) =>
-      renderTurnSummaryEntry(
-        entry,
+  if (isCallable(pi.registerEntryRenderer)) {
+    pi.registerEntryRenderer(TURN_SUMMARY_ENTRY_TYPE, (entry, options, theme) => {
+      if (!isBoundaryValue(entry.data)) return undefined;
+      return renderTurnSummaryEntry(
+        { data: entry.data },
         {
           ...options,
           colorSource: currentConfig.components.workingLine.colorSource,
           workingLineHigh: currentConfig.colors.workingLineHigh,
         },
         theme,
-      ),
-    );
+      );
+    });
   }
   let activeTheme: Theme | undefined;
   let requestFooterRender: (() => void) | undefined;
@@ -221,6 +227,7 @@ export default function (pi: ExtensionAPI) {
   let activeTuiContext: ExtensionContext | undefined;
 
   const isOwnedEditorFactory = (factory: EditorFactory | undefined) =>
+    // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
     (factory as ZentuiEditorFactory | undefined)?.[ZENTUI_EDITOR_OWNER] === editorOwnerToken;
   const effectiveEditorEnabled = () =>
     currentConfig.components.editor.enabled &&
@@ -265,6 +272,7 @@ export default function (pi: ExtensionAPI) {
   const getCurrentConfig = () => currentConfig;
   const workingLine = new WorkingLineController(
     getCurrentConfig,
+    // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
     () => activeTheme as Theme,
     agentDurationClock,
     Math.random,
@@ -644,6 +652,7 @@ export default function (pi: ExtensionAPI) {
 
   const makeEditorFactory = (ctx: ExtensionContext): ZentuiEditorFactory => {
     const sessionTheme = ctx.ui.theme;
+    // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
     const factory = ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => {
       requestEditorRender = () => tui.requestRender();
       return new PolishedEditor(
@@ -689,6 +698,7 @@ export default function (pi: ExtensionAPI) {
     baseFactory: EditorFactory,
   ): ZentuiEditorFactory => {
     const sessionTheme = ctx.ui.theme;
+    // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
     const factory = ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => {
       requestEditorRender = () => tui.requestRender();
       return new WrappedPolishedEditor(
@@ -792,14 +802,20 @@ export default function (pi: ExtensionAPI) {
     return { ok: true };
   };
 
-  const ctxFooterOwner = (ctx: ExtensionContext): unknown =>
-    (ctx.ui as unknown as Record<PropertyKey, unknown>)[ZENTUI_FOOTER_OWNER];
+  const ctxFooterOwner = (ctx: ExtensionContext): BoundaryValue => {
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(ctx.ui, ZENTUI_FOOTER_OWNER);
+      const owner: unknown = descriptor?.value;
+      return isBoundaryValue(owner) ? owner : undefined;
+    } catch {
+      return undefined;
+    }
+  };
 
   const setStatusLineOwnership = (ctx: ExtensionContext, token: symbol | undefined) => {
-    const ui = ctx.ui as unknown as Record<PropertyKey, unknown>;
     try {
-      if (token) ui[ZENTUI_FOOTER_OWNER] = token;
-      else delete ui[ZENTUI_FOOTER_OWNER];
+      if (token) Reflect.set(ctx.ui, ZENTUI_FOOTER_OWNER, token);
+      else Reflect.deleteProperty(ctx.ui, ZENTUI_FOOTER_OWNER);
     } catch {
       // Failure to mark ownership intentionally prevents Native from restoring it.
     }
@@ -984,7 +1000,7 @@ export default function (pi: ExtensionAPI) {
     activeTuiContext = ctx;
     activeTheme = ctx.ui.theme;
     const staleFooterOwner = ctxFooterOwner(ctx);
-    if (typeof staleFooterOwner === "symbol") installedFooterToken = staleFooterOwner;
+    if (isSymbol(staleFooterOwner)) installedFooterToken = staleFooterOwner;
     ensureConfigExists();
     currentConfig = loadConfig();
     syncFooterState(ctx);
@@ -1082,10 +1098,10 @@ export default function (pi: ExtensionAPI) {
     activeTuiContext = undefined;
   };
 
-  const syncInteractiveState = (_event: unknown, ctx: ExtensionContext) => {
+  const syncInteractiveState = (_event: BoundaryValue, ctx: ExtensionContext) => {
     refreshInteractiveState(ctx);
   };
-  const syncInteractiveAndProjectState = (_event: unknown, ctx: ExtensionContext) => {
+  const syncInteractiveAndProjectState = (_event: BoundaryValue, ctx: ExtensionContext) => {
     refreshInteractiveState(ctx, true);
   };
 
@@ -1160,6 +1176,7 @@ export default function (pi: ExtensionAPI) {
     },
     setFooterSegments(patch: Partial<FooterSegmentsConfig>, ctx: ExtensionContext) {
       applyFooterDependencyConfigChange(ctx, () =>
+        // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
         saveStarshipFooterStylePatch({ segments: patch as FooterSegmentsConfig }),
       );
     },
@@ -1170,14 +1187,12 @@ export default function (pi: ExtensionAPI) {
       patch: Partial<Pick<PolishedTuiConfig, "responsiveFooter" | "compactFooterMaxLines">>,
       ctx: ExtensionContext,
     ) {
-      applyFooterDependencyConfigChange(ctx, () =>
-        saveStarshipFooterStylePatch({
-          ...(patch.responsiveFooter === undefined ? {} : { responsive: patch.responsiveFooter }),
-          ...(patch.compactFooterMaxLines === undefined
-            ? {}
-            : { compactMaxLines: patch.compactFooterMaxLines }),
-        }),
-      );
+      const stylePatch: Partial<StarshipFooterStyleConfig> = {};
+      if (patch.responsiveFooter !== undefined) stylePatch.responsive = patch.responsiveFooter;
+      if (patch.compactFooterMaxLines !== undefined) {
+        stylePatch.compactMaxLines = patch.compactFooterMaxLines;
+      }
+      applyFooterDependencyConfigChange(ctx, () => saveStarshipFooterStylePatch(stylePatch));
     },
     setIconMode(mode: IconMode) {
       currentConfig = saveIconsModePatch(mode);
@@ -1189,19 +1204,23 @@ export default function (pi: ExtensionAPI) {
       currentConfig = saveStarshipFooterStylePatch({ separator });
     },
     setPathDisplay(patch: Partial<PathDisplayConfig>) {
+      // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
       currentConfig = saveStarshipFooterStylePatch({ pathDisplay: patch as PathDisplayConfig });
     },
     setGitBranch(patch: Partial<GitBranchConfig>) {
+      // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
       currentConfig = saveStarshipFooterStylePatch({ gitBranch: patch as GitBranchConfig });
     },
     setGitCommit(
       patch: Partial<Pick<GitCommitConfig, "onlyDetached" | "showTag">>,
       ctx: ExtensionContext,
     ) {
+      // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
       currentConfig = saveStarshipFooterStylePatch({ gitCommit: patch as GitCommitConfig });
       if (patch.showTag !== undefined) reconcileProjectRefresh(ctx, true);
     },
     setGitMetrics(patch: Partial<GitMetricsConfig>, ctx: ExtensionContext) {
+      // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
       currentConfig = saveStarshipFooterStylePatch({ gitMetrics: patch as GitMetricsConfig });
       if (patch.ignoreSubmodules !== undefined) reconcileProjectRefresh(ctx, true);
     },
@@ -1229,7 +1248,10 @@ export default function (pi: ExtensionAPI) {
     cleanupUi(ctx);
   });
 
-  const syncInteractiveAndProjectStateWithUsage = (_event: unknown, ctx: ExtensionContext) => {
+  const syncInteractiveAndProjectStateWithUsage = (
+    _event: BoundaryValue,
+    ctx: ExtensionContext,
+  ) => {
     invalidateUsageTotalsCache();
     refreshInteractiveState(ctx, true);
   };

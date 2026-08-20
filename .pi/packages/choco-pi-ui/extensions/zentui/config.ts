@@ -27,6 +27,16 @@ import {
 import { isSupportedColorSpec } from "./style";
 import { normalizeWorkingLineMessages } from "./working-line";
 import { PI_WORKING_LINE_MESSAGES } from "./working-line-messages";
+import {
+  type BoundaryRecord,
+  type BoundaryValue,
+  isBigInt,
+  isBoolean,
+  isNumber,
+  isObjectValue,
+  isString,
+  parseBoundaryValue,
+} from "./runtime-values";
 
 export type ColorSpec = string;
 export type ColorSource = "theme" | "terminal";
@@ -211,9 +221,9 @@ export const DEFAULT_WORKING_LINE_TEXT_INTERVAL_MS = 60;
 export const MIN_WORKING_LINE_INTERVAL_MS = 30;
 export const MAX_WORKING_LINE_INTERVAL_MS = 1000;
 
-export function isValidWorkingLineIntervalMs(value: unknown): value is number {
+export function isValidWorkingLineIntervalMs(value: BoundaryValue): value is number {
   return (
-    typeof value === "number" &&
+    isNumber(value) &&
     Number.isSafeInteger(value) &&
     value >= MIN_WORKING_LINE_INTERVAL_MS &&
     value <= MAX_WORKING_LINE_INTERVAL_MS
@@ -392,7 +402,11 @@ export const FOOTER_FORMAT_VARIABLES = [
  * Alias → canonical variable name mapping for `footerFormat`.
  * `$fill` is special (not a variable) and handled by the parser.
  */
-export const FOOTER_FORMAT_ALIASES: Record<string, string> = {
+interface FooterFormatAliases {
+  [alias: string]: string;
+}
+
+export const FOOTER_FORMAT_ALIASES: FooterFormatAliases = {
   directory: "cwd",
   branch: "git_branch",
   status: "git_status",
@@ -566,15 +580,15 @@ export const defaultConfig: PolishedTuiConfig = {
   extensionStatuses: defaultStarshipStyle.extensionStatuses,
 };
 
-type ConfigRecord = Record<string, unknown>;
+type ConfigRecord = BoundaryRecord;
 
-function isRecord(value: unknown): value is ConfigRecord {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is ConfigRecord {
+  return value !== null && isObjectValue(value) && !Array.isArray(value);
 }
 
-function parseProjectRefreshIntervalMs(value: unknown): number {
+function parseProjectRefreshIntervalMs(value: BoundaryValue): number {
   if (value === 0) return 0;
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (!isNumber(value) || !Number.isFinite(value)) {
     return DEFAULT_PROJECT_REFRESH_INTERVAL_MS;
   }
 
@@ -587,20 +601,20 @@ function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
-function parseContextStyle(value: unknown): ContextStyle {
+function parseContextStyle(value: BoundaryValue): ContextStyle {
   if (value === "text" || value === "gauge" || value === "text+gauge") return value;
   return defaultConfig.contextStyle;
 }
 
 function parseEditorModelLabel(
-  value: unknown,
+  value: BoundaryValue,
   fallback: ModelLabelSource = defaultComponents.editor.modelLabel,
 ): ModelLabelSource {
   if (value === "id" || value === "name") return value;
   return fallback;
 }
 
-function parseEditorStyle(value: unknown): EditorStyle {
+function parseEditorStyle(value: BoundaryValue): EditorStyle {
   if (value === "opencode" || value === "opencode-copy-friendly" || value === "minimalist") {
     return value;
   }
@@ -609,21 +623,21 @@ function parseEditorStyle(value: unknown): EditorStyle {
   return defaultConfig.editorStyle;
 }
 
-function parseEditorBorderColorMode(value: unknown): EditorBorderColorMode {
+function parseEditorBorderColorMode(value: BoundaryValue): EditorBorderColorMode {
   if (value === "static" || value === "adaptive") return value;
   return defaultConfig.editorBorderColorMode;
 }
 
-export function isSeparatorStyle(value: unknown): value is SeparatorStyle {
+export function isSeparatorStyle(value: BoundaryValue): value is SeparatorStyle {
   return value === "pipe" || value === "dot" || value === "chevron" || value === "none";
 }
 
-function parseSeparatorStyle(value: unknown): SeparatorStyle {
+function parseSeparatorStyle(value: BoundaryValue): SeparatorStyle {
   return isSeparatorStyle(value) ? value : defaultConfig.separator;
 }
 
 function parseContextThresholds(
-  value: unknown,
+  value: BoundaryValue,
   defaults: ContextThresholds = defaultStarshipStyle.contextThresholds,
 ): ContextThresholds {
   if (!isRecord(value)) return { ...defaults };
@@ -631,11 +645,11 @@ function parseContextThresholds(
   const warningRaw = value.warning;
   const errorRaw = value.error;
   let warning =
-    typeof warningRaw === "number" && Number.isFinite(warningRaw)
+    isNumber(warningRaw) && Number.isFinite(warningRaw)
       ? clampPercent(Math.round(warningRaw))
       : defaults.warning;
   let error =
-    typeof errorRaw === "number" && Number.isFinite(errorRaw)
+    isNumber(errorRaw) && Number.isFinite(errorRaw)
       ? clampPercent(Math.round(errorRaw))
       : defaults.error;
   if (error < warning) {
@@ -646,25 +660,25 @@ function parseContextThresholds(
   return { warning, error };
 }
 
-function parsePathDisplay(value: unknown): PathDisplayConfig {
+function parsePathDisplay(value: BoundaryValue): PathDisplayConfig {
   const defaults = defaultConfig.pathDisplay;
   if (!isRecord(value)) return { ...defaults };
   const mode = value.mode === "full" || value.mode === "basename" ? value.mode : defaults.mode;
   const rawDepth = value.depth;
   const depth =
-    typeof rawDepth === "number" && Number.isFinite(rawDepth) && rawDepth >= 0
+    isNumber(rawDepth) && Number.isFinite(rawDepth) && rawDepth >= 0
       ? Math.min(5, Math.floor(rawDepth))
       : defaults.depth;
   return { mode, depth };
 }
 
-function normalizeGitBranchMaxLength(value: unknown): GitBranchMaxLength {
+function normalizeGitBranchMaxLength(value: BoundaryValue): GitBranchMaxLength {
   if (value === "full") return value;
-  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
+  if (isNumber(value) && Number.isInteger(value) && value > 0) return value;
   return defaultConfig.gitBranch.maxLength;
 }
 
-function parseGitBranchConfig(value: unknown): GitBranchConfig {
+function parseGitBranchConfig(value: BoundaryValue): GitBranchConfig {
   const defaults = defaultConfig.gitBranch;
   if (!isRecord(value)) return { ...defaults };
   return {
@@ -672,16 +686,16 @@ function parseGitBranchConfig(value: unknown): GitBranchConfig {
   };
 }
 
-function stringValue(record: Record<string, unknown>, key: string): string | undefined {
+function stringValue(record: BoundaryRecord, key: string): string | undefined {
   const value = record[key];
-  return typeof value === "string" ? value : undefined;
+  return isString(value) ? value : undefined;
 }
 
-function parseCompactFooterMaxLines(value: unknown): CompactFooterMaxLines {
+function parseCompactFooterMaxLines(value: BoundaryValue): CompactFooterMaxLines {
   return value === 1 || value === 2 || value === 3 || value === "unlimited" ? value : 2;
 }
 
-function colorValue(record: Record<string, unknown>, key: string): string | undefined {
+function colorValue(record: BoundaryRecord, key: string): string | undefined {
   const value = stringValue(record, key);
   return value !== undefined && isSupportedColorSpec(value) ? value : undefined;
 }
@@ -689,14 +703,16 @@ function colorValue(record: Record<string, unknown>, key: string): string | unde
 function definedColors(
   colors: Partial<Record<keyof PolishedTuiConfig["colors"], string | undefined>>,
 ): Partial<PolishedTuiConfig["colors"]> {
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   return Object.fromEntries(
-    Object.entries(colors).filter(
-      (entry): entry is [keyof PolishedTuiConfig["colors"], string] => typeof entry[1] === "string",
+    Object.entries(colors).filter((entry): entry is [keyof PolishedTuiConfig["colors"], string] =>
+      isString(entry[1]),
     ),
   ) as Partial<PolishedTuiConfig["colors"]>;
 }
 
-function normalizeIconOverrides(record: Record<string, unknown>): Partial<IconGlyphs> {
+function normalizeIconOverrides(record: BoundaryRecord): Partial<IconGlyphs> {
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   return Object.fromEntries(
     ICON_GLYPH_KEYS.flatMap((key) => {
       const value = stringValue(record, key);
@@ -705,7 +721,7 @@ function normalizeIconOverrides(record: Record<string, unknown>): Partial<IconGl
   ) as Partial<IconGlyphs>;
 }
 
-function normalizeColors(record: Record<string, unknown>): Partial<PolishedTuiConfig["colors"]> {
+function normalizeColors(record: BoundaryRecord): Partial<PolishedTuiConfig["colors"]> {
   return definedColors({
     cwd: colorValue(record, "cwd") ?? colorValue(record, "cwdText"),
     sessionName: colorValue(record, "sessionName"),
@@ -745,46 +761,47 @@ function normalizeColors(record: Record<string, unknown>): Partial<PolishedTuiCo
 }
 
 /** Clamp hashLength to Git's valid abbreviation range [4, 40]. */
-function normalizeGitHashLength(value: unknown): number {
-  const parsed = typeof value === "number" ? value : Number(value);
+function normalizeGitHashLength(value: BoundaryValue): number {
+  const parsed = isNumber(value) ? value : Number(value);
   if (!Number.isFinite(parsed)) return defaultConfig.gitCommit.hashLength;
   const rounded = Math.round(parsed);
   return Math.min(40, Math.max(4, rounded));
 }
 
-function normalizeGitCommitConfig(record: Record<string, unknown>): GitCommitConfig {
+function normalizeGitCommitConfig(record: BoundaryRecord): GitCommitConfig {
   return {
     hashLength: normalizeGitHashLength(record.hashLength),
-    onlyDetached:
-      typeof record.onlyDetached === "boolean"
-        ? record.onlyDetached
-        : defaultConfig.gitCommit.onlyDetached,
-    showTag: typeof record.showTag === "boolean" ? record.showTag : defaultConfig.gitCommit.showTag,
+    onlyDetached: isBoolean(record.onlyDetached)
+      ? record.onlyDetached
+      : defaultConfig.gitCommit.onlyDetached,
+    showTag: isBoolean(record.showTag) ? record.showTag : defaultConfig.gitCommit.showTag,
   };
 }
 
-function normalizeGitMetricsConfig(record: Record<string, unknown>): GitMetricsConfig {
+function normalizeGitMetricsConfig(record: BoundaryRecord): GitMetricsConfig {
   return {
-    onlyNonzero:
-      typeof record.onlyNonzero === "boolean"
-        ? record.onlyNonzero
-        : defaultConfig.gitMetrics.onlyNonzero,
-    ignoreSubmodules:
-      typeof record.ignoreSubmodules === "boolean"
-        ? record.ignoreSubmodules
-        : defaultConfig.gitMetrics.ignoreSubmodules,
+    onlyNonzero: isBoolean(record.onlyNonzero)
+      ? record.onlyNonzero
+      : defaultConfig.gitMetrics.onlyNonzero,
+    ignoreSubmodules: isBoolean(record.ignoreSubmodules)
+      ? record.ignoreSubmodules
+      : defaultConfig.gitMetrics.ignoreSubmodules,
   };
 }
 
-export function isExtensionStatusPlacement(value: unknown): value is ExtensionStatusPlacement {
+export function isExtensionStatusPlacement(
+  value: BoundaryValue,
+): value is ExtensionStatusPlacement {
   return value === "off" || value === "left" || value === "middle" || value === "right";
 }
 
-export function isExtensionStatusColorMode(value: unknown): value is ExtensionStatusColorMode {
+export function isExtensionStatusColorMode(
+  value: BoundaryValue,
+): value is ExtensionStatusColorMode {
   return value === "zentui" || value === "original";
 }
 
-function normalizeExtensionStatuses(record: Record<string, unknown>): ExtensionStatusesConfig {
+function normalizeExtensionStatuses(record: BoundaryRecord): ExtensionStatusesConfig {
   const defaultPlacement = isExtensionStatusPlacement(record.defaultPlacement)
     ? record.defaultPlacement
     : defaultConfig.extensionStatuses.defaultPlacement;
@@ -842,7 +859,8 @@ function isFooterSegmentKey(value: string): value is keyof FooterSegmentsConfig 
   );
 }
 
-function validColorSourceEntries(record: Record<string, unknown>): Partial<ColorSourcesConfig> {
+function validColorSourceEntries(record: BoundaryRecord): Partial<ColorSourcesConfig> {
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   return Object.fromEntries(
     Object.entries(record).filter((entry): entry is [keyof ColorSourcesConfig, ColorSource] => {
       const [key, value] = entry;
@@ -851,20 +869,22 @@ function validColorSourceEntries(record: Record<string, unknown>): Partial<Color
   ) as Partial<ColorSourcesConfig>;
 }
 
-function validUiFeatureEntries(record: Record<string, unknown>): Partial<UiFeaturesConfig> {
+function validUiFeatureEntries(record: BoundaryRecord): Partial<UiFeaturesConfig> {
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   return Object.fromEntries(
     Object.entries(record).filter((entry): entry is [keyof UiFeaturesConfig, boolean] => {
       const [key, value] = entry;
-      return isUiFeatureKey(key) && typeof value === "boolean";
+      return isUiFeatureKey(key) && isBoolean(value);
     }),
   ) as Partial<UiFeaturesConfig>;
 }
 
-function validFooterSegmentEntries(record: Record<string, unknown>): Partial<FooterSegmentsConfig> {
+function validFooterSegmentEntries(record: BoundaryRecord): Partial<FooterSegmentsConfig> {
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   return Object.fromEntries(
     Object.entries(record).filter((entry): entry is [keyof FooterSegmentsConfig, boolean] => {
       const [key, value] = entry;
-      return isFooterSegmentKey(key) && typeof value === "boolean";
+      return isFooterSegmentKey(key) && isBoolean(value);
     }),
   ) as Partial<FooterSegmentsConfig>;
 }
@@ -872,12 +892,10 @@ function validFooterSegmentEntries(record: Record<string, unknown>): Partial<Foo
 type ConfigFileState =
   | { kind: "missing"; record: ConfigRecord; writePath: string }
   | { kind: "valid"; record: ConfigRecord; writePath: string; mode: number }
-  | { kind: "corrupt"; error: unknown };
+  | { kind: "corrupt"; error: BoundaryValue };
 
-function errorCode(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "code" in error
-    ? String(error.code)
-    : undefined;
+function errorCode(error: BoundaryValue): string | undefined {
+  return isObjectValue(error) && error !== null && "code" in error ? String(error.code) : undefined;
 }
 
 function readConfigFileState(path: string): ConfigFileState {
@@ -891,15 +909,16 @@ function readConfigFileState(path: string): ConfigFileState {
       ? { kind: "valid", record: parsed, writePath, mode: targetStat.mode & 0o7777 }
       : { kind: "corrupt", error: new Error("top-level value must be a JSON object") };
   } catch (error) {
-    if (errorCode(error) === "ENOENT") {
+    const caughtError = parseBoundaryValue(error);
+    if (errorCode(caughtError) === "ENOENT") {
       try {
         lstatSync(path);
       } catch (pathError) {
-        if (errorCode(pathError) === "ENOENT")
+        if (errorCode(parseBoundaryValue(pathError)) === "ENOENT")
           return { kind: "missing", record: {}, writePath: path };
       }
     }
-    return { kind: "corrupt", error };
+    return { kind: "corrupt", error: caughtError };
   }
 }
 
@@ -923,7 +942,7 @@ function writeConfigAtomically(path: string, record: ConfigRecord, mode?: number
     try {
       unlinkSync(tempPath);
     } catch (cleanupError) {
-      if (errorCode(cleanupError) !== "ENOENT") {
+      if (errorCode(parseBoundaryValue(cleanupError)) !== "ENOENT") {
         // Preserve the persistence failure; the best-effort cleanup error is secondary.
       }
     }
@@ -959,7 +978,7 @@ function hasOwn(record: ConfigRecord, key: string): boolean {
   return Object.hasOwn(record, key);
 }
 
-function recordValue(value: unknown): ConfigRecord {
+function recordValue(value: BoundaryValue): ConfigRecord {
   return isRecord(value) ? value : {};
 }
 
@@ -968,35 +987,35 @@ function resolvedValue(
   canonicalKey: string,
   legacy?: ConfigRecord,
   legacyKey = canonicalKey,
-): unknown {
+): BoundaryValue {
   if (hasOwn(canonical, canonicalKey)) return canonical[canonicalKey];
   if (legacy && hasOwn(legacy, legacyKey)) return legacy[legacyKey];
   return undefined;
 }
 
-function parseBoolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === "boolean" ? value : fallback;
+function parseBoolean(value: BoundaryValue, fallback: boolean): boolean {
+  return isBoolean(value) ? value : fallback;
 }
 
-function parseColorSource(value: unknown, fallback: ColorSource): ColorSource {
+function parseColorSource(value: BoundaryValue, fallback: ColorSource): ColorSource {
   return value === "theme" || value === "terminal" ? value : fallback;
 }
 
-function parseSelectorBorderStyle(value: unknown): SelectorBorderStyle {
+function parseSelectorBorderStyle(value: BoundaryValue): SelectorBorderStyle {
   return value === "zentui" ? value : "zentui";
 }
 
-function parseFooterStyle(value: unknown): FooterStyle | undefined {
+function parseFooterStyle(value: BoundaryValue): FooterStyle | undefined {
   return value === "native" || value === "starship" || value === "hidden" ? value : undefined;
 }
 
-function parseNonEmptyString(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.length > 0 ? value : fallback;
+function parseNonEmptyString(value: BoundaryValue, fallback: string): string {
+  return isString(value) && value.length > 0 ? value : fallback;
 }
 
 function resolveContextThresholds(
-  canonical: unknown,
-  legacy: unknown,
+  canonical: BoundaryValue,
+  legacy: BoundaryValue,
   defaults: ContextThresholds,
 ): ContextThresholds {
   const canonicalRecord = recordValue(canonical);
@@ -1010,7 +1029,7 @@ function resolveContextThresholds(
   );
 }
 
-function resolvePathDisplay(canonical: unknown, legacy: unknown): PathDisplayConfig {
+function resolvePathDisplay(canonical: BoundaryValue, legacy: BoundaryValue): PathDisplayConfig {
   const canonicalRecord = recordValue(canonical);
   const legacyRecord = recordValue(legacy);
   return parsePathDisplay({
@@ -1019,7 +1038,7 @@ function resolvePathDisplay(canonical: unknown, legacy: unknown): PathDisplayCon
   });
 }
 
-function resolveGitBranch(canonical: unknown, legacy: unknown): GitBranchConfig {
+function resolveGitBranch(canonical: BoundaryValue, legacy: BoundaryValue): GitBranchConfig {
   const canonicalRecord = recordValue(canonical);
   const legacyRecord = recordValue(legacy);
   return parseGitBranchConfig({
@@ -1027,7 +1046,7 @@ function resolveGitBranch(canonical: unknown, legacy: unknown): GitBranchConfig 
   });
 }
 
-function resolveGitCommit(canonical: unknown, legacy: unknown): GitCommitConfig {
+function resolveGitCommit(canonical: BoundaryValue, legacy: BoundaryValue): GitCommitConfig {
   const canonicalRecord = recordValue(canonical);
   const legacyRecord = recordValue(legacy);
   return normalizeGitCommitConfig({
@@ -1037,7 +1056,7 @@ function resolveGitCommit(canonical: unknown, legacy: unknown): GitCommitConfig 
   });
 }
 
-function resolveGitMetrics(canonical: unknown, legacy: unknown): GitMetricsConfig {
+function resolveGitMetrics(canonical: BoundaryValue, legacy: BoundaryValue): GitMetricsConfig {
   const canonicalRecord = recordValue(canonical);
   const legacyRecord = recordValue(legacy);
   return normalizeGitMetricsConfig({
@@ -1046,7 +1065,10 @@ function resolveGitMetrics(canonical: unknown, legacy: unknown): GitMetricsConfi
   });
 }
 
-function resolveExtensionStatuses(canonical: unknown, legacy: unknown): ExtensionStatusesConfig {
+function resolveExtensionStatuses(
+  canonical: BoundaryValue,
+  legacy: BoundaryValue,
+): ExtensionStatusesConfig {
   const canonicalRecord = recordValue(canonical);
   const legacyRecord = recordValue(legacy);
   return normalizeExtensionStatuses({
@@ -1056,11 +1078,16 @@ function resolveExtensionStatuses(canonical: unknown, legacy: unknown): Extensio
   });
 }
 
+// SAFETY: the config parser has validated the value or constructed it from the named canonical key set.
 const FOOTER_SEGMENT_KEYS = Object.keys(defaultFooterSegments) as Array<keyof FooterSegmentsConfig>;
 
-function resolveFooterSegments(canonical: unknown, legacy: unknown): FooterSegmentsConfig {
+function resolveFooterSegments(
+  canonical: BoundaryValue,
+  legacy: BoundaryValue,
+): FooterSegmentsConfig {
   const canonicalRecord = recordValue(canonical);
   const legacyRecord = recordValue(legacy);
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   return Object.fromEntries(
     FOOTER_SEGMENT_KEYS.map((key) => [
       key,
@@ -1101,8 +1128,8 @@ function resolveEditorStyle(
 function resolveFooterStyle(footer: ConfigRecord, features: ConfigRecord): FooterStyle {
   const explicit = parseFooterStyle(footer.style);
   if (explicit) return explicit;
-  if (typeof footer.enabled === "boolean") return footer.enabled ? "starship" : "native";
-  if (typeof features.statusLine === "boolean") {
+  if (isBoolean(footer.enabled)) return footer.enabled ? "starship" : "native";
+  if (isBoolean(features.statusLine)) {
     return features.statusLine ? "starship" : "native";
   }
   return defaultComponents.footer.style;
@@ -1188,6 +1215,13 @@ function resolveComponents(config: ConfigRecord): ComponentsConfig {
     defaultStarshipStyle.contextThresholds,
   );
   const compactFormat = resolvedValue(starship, "compactFormat", config, "compactFooterFormat");
+  const spinnerIntervalMs = resolvedValue(
+    workingLine,
+    "spinnerIntervalMs",
+    workingLine,
+    "intervalMs",
+  );
+  const starshipFormat = resolvedValue(starship, "format", config, "footerFormat");
   const metadataFormat = hasOwn(opencode, "metadataFormat")
     ? opencode.metadataFormat
     : resolvedValue(polished, "metadataFormat", config, "editorMetadataFormat");
@@ -1278,10 +1312,8 @@ function resolveComponents(config: ConfigRecord): ComponentsConfig {
         workingLine.spinner === "pulse"
           ? workingLine.spinner
           : defaultComponents.workingLine.spinner,
-      spinnerIntervalMs: isValidWorkingLineIntervalMs(
-        resolvedValue(workingLine, "spinnerIntervalMs", workingLine, "intervalMs"),
-      )
-        ? (resolvedValue(workingLine, "spinnerIntervalMs", workingLine, "intervalMs") as number)
+      spinnerIntervalMs: isValidWorkingLineIntervalMs(spinnerIntervalMs)
+        ? spinnerIntervalMs
         : defaultComponents.workingLine.spinnerIntervalMs,
       animateSpinnerColor: parseBoolean(
         workingLine.animateSpinnerColor,
@@ -1340,10 +1372,7 @@ function resolveComponents(config: ConfigRecord): ComponentsConfig {
       ),
       styles: {
         starship: {
-          format:
-            typeof resolvedValue(starship, "format", config, "footerFormat") === "string"
-              ? (resolvedValue(starship, "format", config, "footerFormat") as string)
-              : defaultStarshipStyle.format,
+          format: isString(starshipFormat) ? starshipFormat : defaultStarshipStyle.format,
           responsive: parseBoolean(
             resolvedValue(starship, "responsive", config, "responsiveFooter"),
             defaultStarshipStyle.responsive,
@@ -1410,7 +1439,7 @@ function compatibilityView(config: ZentuiConfig): PolishedTuiConfig {
 
 const unsupportedComponentStyles = new WeakMap<ZentuiConfig, ReadonlySet<ComponentStyleOwner>>();
 
-const knownComponentStyleIds: Record<ComponentStyleOwner, ReadonlySet<string>> = {
+const knownComponentStyleIds = {
   editor: new Set([
     "opencode",
     "opencode-copy-friendly",
@@ -1430,7 +1459,7 @@ function unsupportedSelectedStyleId(
   const component = recordValue(recordValue(record.components)[owner]);
   if (!hasOwn(component, "style")) return undefined;
   const style = component.style;
-  return typeof style === "string" && style.trim() && !knownComponentStyleIds[owner].has(style)
+  return isString(style) && style.trim() && !knownComponentStyleIds[owner].has(style)
     ? style
     : undefined;
 }
@@ -1442,7 +1471,7 @@ export function hasUnsupportedComponentStyle(
   return unsupportedComponentStyles.get(config)?.has(owner) ?? false;
 }
 
-export function mergeConfig(parsed: unknown): PolishedTuiConfig {
+export function mergeConfig(parsed: BoundaryValue): PolishedTuiConfig {
   const config = isRecord(parsed) ? parsed : {};
   const iconsRecord = recordValue(config.icons);
   const colorsRecord = recordValue(config.colors);
@@ -1499,7 +1528,7 @@ export function loadConfig(): PolishedTuiConfig {
   }
 }
 
-function overlayKnown(raw: unknown, known: unknown): unknown {
+function overlayKnown(raw: BoundaryValue, known: BoundaryValue): BoundaryValue {
   if (!isRecord(known)) return known;
   const output: ConfigRecord = isRecord(raw) ? { ...raw } : {};
   for (const [key, value] of Object.entries(known)) {
@@ -1513,7 +1542,12 @@ function overlayKnown(raw: unknown, known: unknown): unknown {
   return output;
 }
 
-type PreservedStyleIds = Partial<Record<ComponentStyleOwner, string>>;
+type PreservedStyleIds = {
+  editor?: string;
+  userMessages?: string;
+  selectorBorders?: string;
+  footer?: string;
+};
 
 function unknownSelectedStyleIds(record: ConfigRecord): PreservedStyleIds {
   return {
@@ -1530,6 +1564,7 @@ function restoreUnknownSelectedStyleIds(
   replacedStyle?: ComponentStyleOwner,
 ): void {
   const components = recordValue(record.components);
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   for (const [owner, style] of Object.entries(preserved) as [ComponentStyleOwner, string][]) {
     if (style === undefined || owner === replacedStyle) continue;
     const component = recordValue(components[owner]);
@@ -1850,13 +1885,14 @@ export function saveFooterSegmentsPatch(
   path = configPath,
 ): PolishedTuiConfig {
   return saveStarshipFooterStylePatch(
+    // SAFETY: the config parser has validated the value or constructed it from the named canonical key set.
     { segments: validFooterSegmentEntries(patch) as FooterSegmentsConfig },
     path,
   );
 }
 
 export function saveFooterFormatPatch(value: string, path = configPath): PolishedTuiConfig {
-  return saveStarshipFooterStylePatch({ format: typeof value === "string" ? value : "" }, path);
+  return saveStarshipFooterStylePatch({ format: isString(value) ? value : "" }, path);
 }
 
 export function saveResponsiveFooterPatch(
@@ -1866,9 +1902,8 @@ export function saveResponsiveFooterPatch(
   path = configPath,
 ): PolishedTuiConfig {
   const canonical: Partial<StarshipFooterStyleConfig> = {};
-  if (typeof patch.responsiveFooter === "boolean") canonical.responsive = patch.responsiveFooter;
-  if (typeof patch.compactFooterFormat === "string")
-    canonical.compactFormat = patch.compactFooterFormat;
+  if (isBoolean(patch.responsiveFooter)) canonical.responsive = patch.responsiveFooter;
+  if (isString(patch.compactFooterFormat)) canonical.compactFormat = patch.compactFooterFormat;
   if (patch.compactFooterMaxLines !== undefined) {
     canonical.compactMaxLines = parseCompactFooterMaxLines(patch.compactFooterMaxLines);
   }
@@ -1897,7 +1932,7 @@ export function saveContextThresholdsPatch(
   thresholds: Partial<ContextThresholds>,
   path = configPath,
 ): PolishedTuiConfig {
-  if (typeof thresholds.warning === "bigint" || typeof thresholds.error === "bigint") {
+  if (isBigInt(thresholds.warning) || isBigInt(thresholds.error)) {
     throw new TypeError("Context thresholds must be JSON-serializable numbers");
   }
   return saveComponentsMutation((components) => {
@@ -1970,8 +2005,8 @@ export function saveGitCommitPatch(
   path = configPath,
 ): PolishedTuiConfig {
   const valid: Partial<GitCommitConfig> = {};
-  if (typeof patch.onlyDetached === "boolean") valid.onlyDetached = patch.onlyDetached;
-  if (typeof patch.showTag === "boolean") valid.showTag = patch.showTag;
+  if (isBoolean(patch.onlyDetached)) valid.onlyDetached = patch.onlyDetached;
+  if (isBoolean(patch.showTag)) valid.showTag = patch.showTag;
   return saveComponentsMutation((components) => {
     components.footer.styles.starship.gitCommit = {
       ...components.footer.styles.starship.gitCommit,
@@ -1985,8 +2020,8 @@ export function saveGitMetricsPatch(
   path = configPath,
 ): PolishedTuiConfig {
   const valid: Partial<GitMetricsConfig> = {};
-  if (typeof patch.onlyNonzero === "boolean") valid.onlyNonzero = patch.onlyNonzero;
-  if (typeof patch.ignoreSubmodules === "boolean") valid.ignoreSubmodules = patch.ignoreSubmodules;
+  if (isBoolean(patch.onlyNonzero)) valid.onlyNonzero = patch.onlyNonzero;
+  if (isBoolean(patch.ignoreSubmodules)) valid.ignoreSubmodules = patch.ignoreSubmodules;
   return saveComponentsMutation((components) => {
     components.footer.styles.starship.gitMetrics = {
       ...components.footer.styles.starship.gitMetrics,

@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { isString } from "./runtime-values";
 
 const execFileAsync = promisify(execFile);
 const VERSION_TIMEOUT_MS = 2500;
@@ -138,7 +139,7 @@ async function runVersion(
       timeout: VERSION_TIMEOUT_MS,
     });
     const text =
-      `${typeof stdout === "string" ? stdout : String(stdout)}\n${typeof stderr === "string" ? stderr : String(stderr)}`.trim();
+      `${isString(stdout) ? stdout : String(stdout)}\n${isString(stderr) ? stderr : String(stderr)}`.trim();
     return text || undefined;
   } catch {
     return undefined;

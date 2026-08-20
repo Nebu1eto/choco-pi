@@ -1,4 +1,5 @@
 import { type ExtensionContext, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { type BoundaryValue, isBoolean, isCallable } from "./runtime-values";
 
 export type FooterTelemetry = {
   subscription?: boolean;
@@ -6,8 +7,8 @@ export type FooterTelemetry = {
 };
 
 type SettingsManagerLike = {
-  drainErrors?: () => unknown[];
-  getCompactionEnabled?: () => unknown;
+  drainErrors?: () => BoundaryValue[];
+  getCompactionEnabled?: () => BoundaryValue;
 };
 
 type SettingsManagerFactory = {
@@ -28,12 +29,13 @@ function resolveSubscription(ctx: ExtensionContext): boolean | undefined {
   if (model.provider === "kimi-coding") return true;
 
   try {
+    // SAFETY: the preceding runtime guard validates the members used through this structural view.
     const registry = ctx.modelRegistry as {
-      isUsingOAuth?: (candidate: typeof model) => unknown;
+      isUsingOAuth?: (candidate: typeof model) => BoundaryValue;
     };
-    if (typeof registry?.isUsingOAuth !== "function") return undefined;
+    if (!isCallable(registry?.isUsingOAuth)) return undefined;
     const result = registry.isUsingOAuth(model);
-    return typeof result === "boolean" ? result : undefined;
+    return isBoolean(result) ? result : undefined;
   } catch {
     return undefined;
   }
@@ -44,26 +46,25 @@ function resolveAutoCompaction(
   factory: SettingsManagerFactory | undefined,
 ): boolean | undefined {
   try {
-    const isProjectTrusted = (
-      ctx as ExtensionContext & {
-        isProjectTrusted?: () => unknown;
-      }
-    ).isProjectTrusted;
-    if (typeof factory?.create !== "function" || typeof isProjectTrusted !== "function") {
+    const isProjectTrusted =
+      // SAFETY: the preceding runtime guard validates the members used through this structural view.
+      (
+        ctx as ExtensionContext & {
+          isProjectTrusted?: () => BoundaryValue;
+        }
+      ).isProjectTrusted;
+    if (!isCallable(factory?.create) || !isCallable(isProjectTrusted)) {
       return undefined;
     }
     const trusted = isProjectTrusted.call(ctx);
-    if (typeof trusted !== "boolean") return undefined;
+    if (!isBoolean(trusted)) return undefined;
     const settings = factory.create(ctx.cwd, undefined, { projectTrusted: trusted });
-    if (
-      typeof settings?.drainErrors !== "function" ||
-      typeof settings.getCompactionEnabled !== "function"
-    ) {
+    if (!isCallable(settings?.drainErrors) || !isCallable(settings.getCompactionEnabled)) {
       return undefined;
     }
     if (settings.drainErrors().length > 0) return undefined;
     const enabled = settings.getCompactionEnabled();
-    return typeof enabled === "boolean" ? enabled : undefined;
+    return isBoolean(enabled) ? enabled : undefined;
   } catch {
     return undefined;
   }

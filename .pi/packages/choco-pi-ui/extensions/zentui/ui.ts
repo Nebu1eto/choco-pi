@@ -12,6 +12,13 @@ import type { EditorStyle, ZentuiConfig } from "./config";
 import { renderEditorMetadataFormat } from "./editor-metadata-format";
 import { type MinimalistEditorMetadata, renderMinimalistFrame } from "./minimalist-editor";
 import {
+  type BoundaryValue,
+  invokeWithReceiver,
+  isBoundaryRecord,
+  isCallable,
+  isString,
+} from "./runtime-values";
+import {
   EDITOR_ACCENT_FALLBACK,
   EDITOR_BORDER_FALLBACK,
   renderStyleForSourceOrFallback,
@@ -52,6 +59,9 @@ type AutocompleteCapture = {
   rows: string[];
 };
 
+type AutocompleteRenderResult<T> = { value: T; capture?: AutocompleteCapture };
+type PolishedFrameInspection = { safe: boolean; ownedFrame?: PolishedFrameSplit };
+
 type WrappedEditor = EditorComponent &
   AutocompleteEditorInternals & {
     focused?: boolean;
@@ -59,12 +69,12 @@ type WrappedEditor = EditorComponent &
     onCtrlD?: () => void;
     onPasteImage?: () => void;
     onExtensionShortcut?: (data: string) => boolean;
-    actionHandlers?: Map<unknown, () => void>;
+    actionHandlers?: Map<BoundaryValue, () => void>;
     wantsKeyRelease?: boolean;
     disableSubmit?: boolean;
     getLines?: () => string[];
-    getCursor?: () => unknown;
-    getMode?: () => unknown;
+    getCursor?: () => BoundaryValue;
+    getMode?: () => BoundaryValue;
     getPaddingX?: () => number;
     getAutocompleteMaxVisible?: () => number;
     addToHistory?: (text: string) => void;
@@ -132,21 +142,29 @@ type MinimalistFrameAdapterOptions = {
 
 type AutocompleteCount = { known: true; count: number } | { known: false };
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((line) => typeof line === "string");
+function autocompleteEditorInternals(editor: BoundaryValue): AutocompleteEditorInternals {
+  // SAFETY: CustomEditor host instances own the autocomplete members described by this private host adapter.
+  return editor as AutocompleteEditorInternals;
 }
 
-function isViewportCounts(value: unknown): value is ViewportCounts {
-  if (!value || typeof value !== "object") return false;
-  const counts = value as Record<string, unknown>;
+function isStringArray(value: BoundaryValue): value is string[] {
+  return Array.isArray(value) && value.every((line) => isString(line));
+}
+
+function isViewportCounts(value: BoundaryValue): value is ViewportCounts {
+  if (!isBoundaryRecord(value)) return false;
+  const counts = value;
   return [counts.above, counts.below].every(
-    (count) => count === undefined || (typeof count === "string" && /^[1-9]\d*$/.test(count)),
+    (count) => count === undefined || (isString(count) && /^[1-9]\d*$/.test(count)),
   );
 }
 
-function isPolishedFrameSplit(value: unknown, baseLineCount: number): value is PolishedFrameSplit {
-  if (!value || typeof value !== "object") return false;
-  const split = value as Record<string, unknown>;
+function isPolishedFrameSplit(
+  value: BoundaryValue,
+  baseLineCount: number,
+): value is PolishedFrameSplit {
+  if (!isBoundaryRecord(value)) return false;
+  const split = value;
   return (
     isStringArray(split.editorLines) &&
     isStringArray(split.trailingLines) &&
@@ -162,7 +180,7 @@ function autocompleteCount(
 ): AutocompleteCount {
   try {
     const showing = source.isShowingAutocomplete;
-    if (typeof showing !== "function" || !showing.call(source)) return { known: true, count: 0 };
+    if (!isCallable(showing) || !showing.call(source)) return { known: true, count: 0 };
     if (
       !capture?.compatible ||
       capture.called !== 1 ||
@@ -180,12 +198,10 @@ function autocompleteCount(
 export function renderWithAutocompleteCapture<T>(
   source: AutocompleteEditorInternals,
   render: () => T,
-): { value: T; capture?: AutocompleteCapture } {
+): AutocompleteRenderResult<T> {
   let showing = false;
   try {
-    showing =
-      typeof source.isShowingAutocomplete === "function" &&
-      source.isShowingAutocomplete.call(source);
+    showing = isCallable(source.isShowingAutocomplete) && source.isShowingAutocomplete.call(source);
   } catch {
     return { value: render() };
   }
@@ -193,24 +209,24 @@ export function renderWithAutocompleteCapture<T>(
 
   let list: AutocompleteListInternals;
   let own: PropertyDescriptor | undefined;
-  let predecessor: (...args: unknown[]) => unknown;
+  let predecessor: (...args: BoundaryValue[]) => BoundaryValue;
   try {
     const candidate = source.autocompleteList;
     if (!candidate) return { value: render() };
     own = Object.getOwnPropertyDescriptor(candidate, "render");
-    const current = Reflect.get(candidate, "render");
-    if (typeof current !== "function") return { value: render() };
+    const current = candidate.render;
+    if (!isCallable(current)) return { value: render() };
     if (own && (!("value" in own) || own.writable !== true)) return { value: render() };
     if (!own && !Object.isExtensible(candidate)) return { value: render() };
     list = candidate;
-    predecessor = current as (...args: unknown[]) => unknown;
+    predecessor = current;
   } catch {
     return { value: render() };
   }
 
   const capture: AutocompleteCapture = { compatible: true, called: 0, rows: [] };
-  const wrapper = function (this: AutocompleteListInternals, ...args: unknown[]) {
-    const result = Reflect.apply(predecessor, this, args);
+  const wrapper = function (this: AutocompleteListInternals, ...args: BoundaryValue[]) {
+    const result = invokeWithReceiver(predecessor, this, args);
     capture.called++;
     if (!isStringArray(result)) {
       capture.compatible = false;
@@ -233,15 +249,15 @@ export function renderWithAutocompleteCapture<T>(
     return { value: render(), capture };
   } finally {
     let current: PropertyDescriptor | undefined;
-    let currentValue: unknown;
+    let currentValue: BoundaryValue;
     let descriptorKnown = true;
     try {
       current = Object.getOwnPropertyDescriptor(list, "render");
-      currentValue = current && "value" in current ? current.value : Reflect.get(list, "render");
+      currentValue = current && "value" in current ? current.value : list.render;
     } catch {
       descriptorKnown = false;
       try {
-        currentValue = Reflect.get(list, "render");
+        currentValue = list.render;
       } catch {
         currentValue = undefined;
       }
@@ -340,7 +356,9 @@ function composeMetadataLine(left: string, right: string | undefined, width: num
 }
 
 function ansiStrippedText(line: string): string {
-  return line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "");
+  return line
+    .replace(new RegExp(String.raw`\x1b\[[0-?]*[ -/]*[@-~]`, "g"), "")
+    .replace(new RegExp(String.raw`\x1b\][^\x07]*(?:\x07|\x1b\\)`, "g"), "");
 }
 
 function plainRenderedText(line: string): string {
@@ -436,7 +454,7 @@ function inspectPolishedFrameProvenance(
   rendered: string[],
   config: ZentuiConfig,
   uiTheme: Theme,
-): { safe: boolean; ownedFrame?: PolishedFrameSplit } {
+): PolishedFrameInspection {
   const provenance = POLISHED_FRAME_SPLITS.get(rendered);
   const provenanceMatches = Boolean(
     provenance &&
@@ -470,7 +488,7 @@ function vimModeColor(mode: string): string {
 
 function readVimStatus(editor: WrappedEditor, uiTheme: Theme): string | undefined {
   const mode = editor.getMode?.();
-  if (typeof mode !== "string") return undefined;
+  if (!isString(mode)) return undefined;
   const normalized = mode.trim();
   if (!normalized) return undefined;
   const label = `${normalized.toUpperCase()} `;
@@ -659,15 +677,12 @@ export function renderPolishedEditorFrame({
       text,
     );
   const renderBorder = (text: string) => {
-    if (
-      config.components.editor.borderColorMode !== "adaptive" ||
-      typeof borderColor !== "function"
-    ) {
+    if (config.components.editor.borderColorMode !== "adaptive" || !isCallable(borderColor)) {
       return renderStaticBorder(text);
     }
     try {
       const rendered = borderColor(text);
-      return typeof rendered === "string" ? rendered : renderStaticBorder(text);
+      return isString(rendered) ? rendered : renderStaticBorder(text);
     } catch {
       return renderStaticBorder(text);
     }
@@ -754,14 +769,13 @@ export class PolishedEditor extends CustomEditor {
         return clampRenderedLines(super.render(width), width);
       }
       try {
-        const captured = renderWithAutocompleteCapture(
-          this as unknown as AutocompleteEditorInternals,
-          () => super.render(Math.max(0, width - 4)),
+        const captured = renderWithAutocompleteCapture(autocompleteEditorInternals(this), () =>
+          super.render(Math.max(0, width - 4)),
         );
         const result = renderMinimalistFrameFromBase({
           width,
           baseRendered: captured.value,
-          autocompleteSource: this as unknown as AutocompleteEditorInternals,
+          autocompleteSource: autocompleteEditorInternals(this),
           autocompleteCapture: captured.capture,
           uiTheme: this.uiTheme,
           config,
@@ -785,14 +799,13 @@ export class PolishedEditor extends CustomEditor {
     const { railWidth } = getEditorChromeWidths(config, this.uiTheme, "\x1b[0m");
     const innerWidth = Math.max(0, width - railWidth);
     try {
-      const captured = renderWithAutocompleteCapture(
-        this as unknown as AutocompleteEditorInternals,
-        () => super.render(innerWidth),
+      const captured = renderWithAutocompleteCapture(autocompleteEditorInternals(this), () =>
+        super.render(innerWidth),
       );
       const result = renderPolishedFrame({
         width,
         baseRendered: captured.value,
-        autocompleteSource: this as unknown as AutocompleteEditorInternals,
+        autocompleteSource: autocompleteEditorInternals(this),
         autocompleteCapture: captured.capture,
         uiTheme: this.uiTheme,
         config,
@@ -827,19 +840,19 @@ export class WrappedPolishedEditor implements EditorComponent {
     private readonly getMinimalistMetadata: () => MinimalistEditorMetadata = () => ({ cwd: "" }),
     private readonly onMinimalistDecorationChange: (active: boolean) => void = () => {},
   ) {
-    if (typeof base.addToHistory === "function") {
+    if (isCallable(base.addToHistory)) {
       this.addToHistory = (text) => base.addToHistory?.(text);
     }
-    if (typeof base.insertTextAtCursor === "function") {
+    if (isCallable(base.insertTextAtCursor)) {
       this.insertTextAtCursor = (text) => base.insertTextAtCursor?.(text);
     }
-    if (typeof base.setAutocompleteProvider === "function") {
+    if (isCallable(base.setAutocompleteProvider)) {
       this.setAutocompleteProvider = (provider) => base.setAutocompleteProvider?.(provider);
     }
-    if (typeof base.setPaddingX === "function") {
+    if (isCallable(base.setPaddingX)) {
       this.setPaddingX = (padding) => base.setPaddingX?.(padding);
     }
-    if (typeof base.setAutocompleteMaxVisible === "function") {
+    if (isCallable(base.setAutocompleteMaxVisible)) {
       this.setAutocompleteMaxVisible = (maxVisible) => base.setAutocompleteMaxVisible?.(maxVisible);
     }
   }
@@ -900,10 +913,10 @@ export class WrappedPolishedEditor implements EditorComponent {
     this.base.onExtensionShortcut = value;
   }
 
-  get actionHandlers(): Map<unknown, () => void> | undefined {
+  get actionHandlers(): Map<BoundaryValue, () => void> | undefined {
     return this.base.actionHandlers;
   }
-  set actionHandlers(value: Map<unknown, () => void> | undefined) {
+  set actionHandlers(value: Map<BoundaryValue, () => void> | undefined) {
     this.base.actionHandlers = value;
   }
 
@@ -1043,11 +1056,11 @@ export class WrappedPolishedEditor implements EditorComponent {
     return this.base.getLines?.() ?? this.base.getText().split("\n");
   }
 
-  getCursor(): unknown {
+  getCursor(): BoundaryValue {
     return this.base.getCursor?.();
   }
 
-  getMode(): unknown {
+  getMode(): BoundaryValue {
     return this.base.getMode?.();
   }
 

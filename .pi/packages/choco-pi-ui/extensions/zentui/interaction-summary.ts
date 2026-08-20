@@ -1,10 +1,18 @@
-import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { ColorSource, ColorSpec } from "./config";
 import { formatCount, formatElapsedDuration } from "./format";
 import { isSafeSgrStylePrefix } from "./style";
 import { renderWorkingLineHigh } from "./working-line";
+import {
+  type BoundaryRecord,
+  type BoundaryValue,
+  isBoundaryRecord,
+  isNumber,
+  isObjectValue,
+  isString,
+} from "./runtime-values";
 
 export const TURN_SUMMARY_ENTRY_TYPE = "zentui-turn-summary";
 const TURN_SUMMARY_VERSION = 3;
@@ -36,6 +44,10 @@ export type TurnSummaryMetrics = SummaryBase & { thoughtDurationMs: number };
 
 type Interval = { start: number; end: number };
 type TaggedInterval = Interval & { sources: number[] };
+type IntervalDifference = { intervals: Interval[]; incomplete: boolean };
+type TaggedIntervalDifference = { intervals: TaggedInterval[]; incomplete: boolean };
+type CodePointAppendResult = { codePoints: number; pendingHighSurrogate: boolean };
+type AgentStartResult = { interactionStarted: boolean };
 type ThoughtCoverage = { intervals: TaggedInterval[]; incomplete: boolean };
 type ThoughtBlock = { startedAt?: number; closed: boolean };
 
@@ -137,8 +149,8 @@ const HEAD_UNITS = 64;
 const TAIL_UNITS = 64;
 const HASH_OFFSET = 0x811c9dc5;
 
-function isNonnegativeSafeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+function isNonnegativeSafeInteger(value: BoundaryValue): value is number {
+  return isNumber(value) && Number.isSafeInteger(value) && value >= 0;
 }
 
 function safeAdd(left: number, right: number): number {
@@ -153,20 +165,20 @@ function addTokens(left: InteractionTokens, right: InteractionTokens): Interacti
   return { input: safeAdd(left.input, right.input), output: safeAdd(left.output, right.output) };
 }
 
-type InteractionMessage = { role?: string; usage?: unknown; responseId?: unknown };
+type InteractionMessage = { role?: string; usage?: BoundaryValue; responseId?: BoundaryValue };
 
 export function parseAssistantMessageTokens(
   message: InteractionMessage,
 ): InteractionTokens | undefined {
-  if (message.role !== "assistant") return undefined;
-  const usage = (message as unknown as AssistantMessage).usage;
-  return isNonnegativeSafeInteger(usage?.input) && isNonnegativeSafeInteger(usage?.output)
+  if (message.role !== "assistant" || !isBoundaryRecord(message.usage)) return undefined;
+  const usage = message.usage;
+  return isNonnegativeSafeInteger(usage.input) && isNonnegativeSafeInteger(usage.output)
     ? { input: usage.input, output: usage.output }
     : undefined;
 }
 
 function responseIdKey(message: InteractionMessage): string | undefined {
-  if (typeof message.responseId !== "string") return undefined;
+  if (!isString(message.responseId)) return undefined;
   const value = message.responseId;
   if (value.length > MAX_RESPONSE_ID_UNITS) return undefined;
   const normalized = value.trim();
@@ -263,7 +275,7 @@ function addThoughtInterval(
 export function subtractThoughtIntervalsWithinCap(
   source: readonly Interval[],
   removed: readonly Interval[],
-): { intervals: Interval[]; incomplete: boolean } {
+): IntervalDifference {
   let result = unionIntervals(source);
   for (const cut of unionIntervals(removed)) {
     result = result.flatMap((part) => {
@@ -283,7 +295,7 @@ export function subtractThoughtIntervalsWithinCap(
 function cappedTaggedDifference(
   source: readonly TaggedInterval[],
   removed: readonly Interval[],
-): { intervals: TaggedInterval[]; incomplete: boolean } {
+): TaggedIntervalDifference {
   let incomplete = false;
   const fragments = source.flatMap((interval) => {
     const difference = subtractThoughtIntervalsWithinCap([interval], removed);
@@ -307,10 +319,7 @@ function hashUnits(value: string, start: number, end: number, seed = HASH_OFFSET
   return hash;
 }
 
-function appendCodePoints(
-  value: string,
-  pendingHighSurrogate: boolean,
-): { codePoints: number; pendingHighSurrogate: boolean } {
+function appendCodePoints(value: string, pendingHighSurrogate: boolean): CodePointAppendResult {
   let codePoints = 0;
   let index = 0;
   if (pendingHighSurrogate) {
@@ -359,23 +368,22 @@ function validateEvent(
     event.type !== "thinking_end"
   )
     return undefined;
-  const record = event as unknown as Record<string, unknown>;
-  if (
-    !Number.isSafeInteger(record.contentIndex) ||
-    (record.contentIndex as number) < 0 ||
-    (record.contentIndex as number) > MAX_CONTENT_INDEX
-  )
+  if (!isBoundaryRecord(event)) return false;
+  const record: BoundaryRecord = event;
+  const rawContentIndex = record.contentIndex;
+  if (!isNonnegativeSafeInteger(rawContentIndex) || rawContentIndex > MAX_CONTENT_INDEX)
     return false;
   const partial = record.partial;
-  if (!partial || typeof partial !== "object" || Array.isArray(partial)) return false;
-  const content = (partial as Record<string, unknown>).content;
+  if (!isBoundaryRecord(partial)) return false;
+  const content = partial.content;
   if (!Array.isArray(content)) return false;
-  const contentIndex = record.contentIndex as number;
+  const contentIndex = rawContentIndex;
   const isDelta =
     event.type === "text_delta" ||
     event.type === "thinking_delta" ||
     event.type === "toolcall_delta";
-  if (isDelta && typeof record.delta !== "string") return false;
+  const rawDelta = record.delta;
+  if (isDelta && !isString(rawDelta)) return false;
   const expectedType =
     event.type === "text_delta"
       ? "text"
@@ -386,25 +394,26 @@ function validateEvent(
   if (event.type === "toolcall_delta" && !(contentIndex in content)) return false;
   if (contentIndex in content) {
     const item = content[contentIndex];
-    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
-    const itemRecord = item as Record<string, unknown>;
+    if (!isBoundaryRecord(item)) return false;
+    const itemRecord = item;
     if (itemRecord.type !== expectedType) return false;
     if (expectedType === "toolCall") {
       if (
-        typeof itemRecord.id !== "string" ||
-        typeof itemRecord.name !== "string" ||
+        !isString(itemRecord.id) ||
+        !isString(itemRecord.name) ||
         !itemRecord.arguments ||
-        typeof itemRecord.arguments !== "object" ||
+        !isObjectValue(itemRecord.arguments) ||
         Array.isArray(itemRecord.arguments)
       )
         return false;
     } else {
       const field = expectedType === "text" ? "text" : "thinking";
-      if (typeof itemRecord[field] !== "string") return false;
-      cumulative = itemRecord[field] as string;
+      const snapshot = itemRecord[field];
+      if (!isString(snapshot)) return false;
+      cumulative = snapshot;
     }
   }
-  const delta = isDelta ? (record.delta as string) : undefined;
+  const delta = isDelta && isString(rawDelta) ? rawDelta : undefined;
   return {
     type: event.type,
     contentIndex,
@@ -421,7 +430,7 @@ export class InteractionMetricsTracker {
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  agentStart(now = this.now()): { interactionStarted: boolean } {
+  agentStart(now = this.now()): AgentStartResult {
     const at = safeTime(now);
     const interactionStarted = this.interaction === undefined;
     if (!this.interaction) {
@@ -977,13 +986,13 @@ export class InteractionMetricsTracker {
   }
 }
 
-function hasExactKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
+function hasExactKeys(record: BoundaryRecord, expected: readonly string[]): boolean {
   return Object.keys(record).sort().join("\0") === [...expected].sort().join("\0");
 }
 
-export function isTurnSummaryData(value: unknown): value is TurnSummaryData {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
+export function isTurnSummaryData(value: BoundaryValue): value is TurnSummaryData {
+  if (!isBoundaryRecord(value)) return false;
+  const record = value;
   if (
     !isNonnegativeSafeInteger(record.durationMs) ||
     !isNonnegativeSafeInteger(record.input) ||
@@ -1023,8 +1032,8 @@ export function formatTurnSummary(data: TurnSummaryData | TurnSummaryMetrics): s
 }
 
 export function renderTurnSummaryEntry(
-  entry: { data?: unknown },
-  themeOptions: unknown,
+  entry: { data?: BoundaryValue },
+  themeOptions: BoundaryValue,
   theme: Pick<Theme, "fg">,
 ): Text | undefined {
   if (!isTurnSummaryData(entry.data)) return undefined;
@@ -1032,6 +1041,7 @@ export function renderTurnSummaryEntry(
   if (entry.data.version === 2 || entry.data.version === 3) {
     return new Text(`${entry.data.stylePrefix}${text}${SGR_RESET}`, 0, 0);
   }
+  // SAFETY: the preceding runtime guard validates the members used through this structural view.
   const options = (themeOptions ?? {}) as {
     colorSource?: ColorSource;
     workingLineHigh?: ColorSpec;

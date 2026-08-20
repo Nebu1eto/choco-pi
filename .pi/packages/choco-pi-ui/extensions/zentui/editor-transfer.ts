@@ -1,7 +1,8 @@
-export type EditorComponentFactory = (...args: never[]) => unknown;
+import { type BoundaryValue, isCallable, isString } from "./runtime-values";
+export type EditorComponentFactory = (...args: never[]) => BoundaryValue;
 
 export type EditorTransferUi<Factory = EditorComponentFactory> = {
-  getEditorText?: () => unknown;
+  getEditorText?: () => BoundaryValue;
   setEditorText?: (text: string) => void;
   setEditorComponent?: (factory: Factory | undefined) => void;
   getEditorComponent?: () => Factory | undefined;
@@ -28,10 +29,10 @@ export function replaceEditorComponentWithExpandedText<Factory>(
   factory: Factory | undefined,
 ): EditorTransferResult {
   if (
-    typeof ui.getEditorText !== "function" ||
-    typeof ui.setEditorText !== "function" ||
-    typeof ui.setEditorComponent !== "function" ||
-    typeof ui.getEditorComponent !== "function"
+    !isCallable(ui.getEditorText) ||
+    !isCallable(ui.setEditorText) ||
+    !isCallable(ui.setEditorComponent) ||
+    !isCallable(ui.getEditorComponent)
   ) {
     return { ok: false, reason: "unsupported-transfer-api" };
   }
@@ -43,13 +44,13 @@ export function replaceEditorComponentWithExpandedText<Factory>(
     return { ok: false, reason: "editor-factory-snapshot-failed" };
   }
 
-  let expandedText: unknown;
+  let expandedText: BoundaryValue;
   try {
     expandedText = ui.getEditorText();
   } catch {
     return { ok: false, reason: "editor-text-snapshot-failed" };
   }
-  if (typeof expandedText !== "string") {
+  if (!isString(expandedText)) {
     return { ok: false, reason: "editor-text-snapshot-failed" };
   }
 

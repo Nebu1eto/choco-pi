@@ -19,6 +19,9 @@ export type CompactFormatChunk =
   | { kind: "tokens"; tokens: FormatToken[]; boundary: CompactBoundaryKind }
   | { kind: "extensions"; boundary: CompactBoundaryKind };
 
+type ParsedTokenSlice = { tokens: FormatToken[]; nextIndex: number };
+export type RenderedFormatSplit = { left: string; middle: string; right: string };
+
 const TOKEN_REGEX = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}|\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
 
 /**
@@ -38,7 +41,7 @@ function parseTokenSlice(
   start: number,
   end: number,
   topLevel = false,
-): { tokens: FormatToken[]; nextIndex: number } {
+): ParsedTokenSlice {
   const tokens: FormatToken[] = [];
   let index = start;
   let textStart = start;
@@ -120,7 +123,7 @@ function parseTokenSlice(
 export function renderFormatSplit(
   tokens: FormatToken[],
   renderVariable: (name: string) => string,
-): { left: string; middle: string; right: string } {
+): RenderedFormatSplit {
   const fillIndices = findTopLevelFillIndices(tokens);
 
   if (fillIndices.length === 0) {

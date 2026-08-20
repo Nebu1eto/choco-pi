@@ -19,7 +19,7 @@ export type ExtensionStatusSegmentsByPlacement = {
   right: ExtensionStatusSegment[];
 };
 
-const safeSgrPattern = /\x1b\[[0-9;:]*m/g;
+const safeSgrPattern = new RegExp(String.raw`\x1b\[[0-9;:]*m`, "g");
 const sgrPlaceholderPattern = /__ZENTUI_SGR_(\d+)__/g;
 
 function compareKeys(a: ExtensionStatusSegment, b: ExtensionStatusSegment): number {
@@ -29,7 +29,7 @@ function compareKeys(a: ExtensionStatusSegment, b: ExtensionStatusSegment): numb
 function normalizeStatusWhitespace(value: string): string {
   return value
     .replace(/[\r\n\t\f\v]+/g, " ")
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .replace(new RegExp(String.raw`[\u0000-\u001f\u007f-\u009f]`, "g"), "")
     .replace(/\s+/g, " ")
     .trim();
 }

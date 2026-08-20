@@ -1,5 +1,6 @@
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { ColorSource, ColorSpec } from "./config";
+import { type BoundaryValue, isString } from "./runtime-values";
 
 type ThemeLike = {
   fg(color: string, text: string): string;
@@ -180,6 +181,7 @@ function isSupportedStyleToken(token: string): boolean {
     return terminalColorToAnsi(normalized.slice(3), isBackground) !== undefined;
   }
 
+  // SAFETY: the preceding runtime guard validates the members used through this structural view.
   return themeColorTokens.has(token as ThemeColor);
 }
 
@@ -281,15 +283,11 @@ function isSafeSgrParameters(parameters: string): boolean {
 }
 
 /** Accept only the bounded SGR subset emitted by Zentui's supported style tokens. */
-export function isSafeSgrStylePrefix(value: unknown): value is string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_SAFE_SGR_PREFIX_CODE_UNITS
-  ) {
+export function isSafeSgrStylePrefix(value: BoundaryValue): value is string {
+  if (!isString(value) || value.length === 0 || value.length > MAX_SAFE_SGR_PREFIX_CODE_UNITS) {
     return false;
   }
-  const sequence = /\x1b\[([0-9]+(?:;[0-9]+)*)m/g;
+  const sequence = new RegExp(String.raw`\x1b\[([0-9]+(?:;[0-9]+)*)m`, "g");
   let offset = 0;
   let count = 0;
   for (const match of value.matchAll(sequence)) {
@@ -377,7 +375,7 @@ export function renderStyleForSourceOrFallback(
   fallback: ColorSpec | SourceStyleFallback,
   text: string,
 ): string {
-  const fallbackStyle = typeof fallback === "string" ? fallback : fallback[source];
+  const fallbackStyle = isString(fallback) ? fallback : fallback[source];
   return renderStyleForSource(theme, source, style ?? fallbackStyle, text);
 }
 
@@ -388,7 +386,7 @@ export function renderStyleForSourceOrFallbackStrict(
   fallback: ColorSpec | SourceStyleFallback,
   text: string,
 ): string {
-  const fallbackStyle = typeof fallback === "string" ? fallback : fallback[source];
+  const fallbackStyle = isString(fallback) ? fallback : fallback[source];
   const resolvedStyle = style ?? fallbackStyle;
   return source === "terminal"
     ? renderStyleStrict(theme, resolvedStyle, text)

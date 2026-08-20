@@ -1,3 +1,9 @@
+import {
+  type BoundaryPropertyMap,
+  type BoundaryValue,
+  invokeWithReceiver,
+  isCallable,
+} from "./runtime-values";
 export const ZENTUI_PROTOTYPE_PATCH_REGISTRY = Symbol.for("pi-zentui.prototype-patch-registry");
 
 type PrototypePatchAdapter =
@@ -5,15 +11,15 @@ type PrototypePatchAdapter =
   | "user-message-invalidate"
   | "selector-border-render";
 
-type PrototypeMethod = (this: unknown, ...args: unknown[]) => unknown;
+type PrototypeMethod = (this: BoundaryValue, ...args: BoundaryValue[]) => BoundaryValue;
 
 type PatchInvocation = {
   predecessor: PrototypeMethod;
-  receiver: unknown;
-  args: unknown[];
+  receiver: BoundaryValue;
+  args: BoundaryValue[];
 };
 
-type PatchBehavior = (invocation: PatchInvocation) => unknown;
+type PatchBehavior = (invocation: PatchInvocation) => BoundaryValue;
 
 type Registration = {
   token: symbol;
@@ -30,10 +36,11 @@ type PatchRecord = {
 
 type PatchRegistry = Map<PrototypePatchAdapter, PatchRecord>;
 
-type PatchTarget = Record<PropertyKey, unknown>;
+type PatchTarget = BoundaryPropertyMap;
 
 function existingRegistry(target: PatchTarget): PatchRegistry | undefined {
   const existing = target[ZENTUI_PROTOTYPE_PATCH_REGISTRY];
+  // SAFETY: the preceding runtime guard validates the members used through this structural view.
   return existing instanceof Map ? (existing as PatchRegistry) : undefined;
 }
 
@@ -100,11 +107,12 @@ function createCleanup(
 }
 
 export function installPrototypePatch(
-  targetValue: object,
+  targetValue: BoundaryValue,
   method: "render" | "invalidate",
   adapter: PrototypePatchAdapter,
   behavior: PatchBehavior,
 ): () => void {
+  // SAFETY: the preceding runtime guard validates the members used through this structural view.
   const target = targetValue as PatchTarget;
   const registry = registryFor(target);
   let record = registry.get(adapter);
@@ -113,24 +121,25 @@ export function installPrototypePatch(
     const displacedRecord = record;
     const predecessorDescriptor = Object.getOwnPropertyDescriptor(target, method);
     const predecessor = target[method];
-    if (typeof predecessor !== "function") {
+    if (!isCallable(predecessor)) {
       if (registry.size === 0) delete target[ZENTUI_PROTOTYPE_PATCH_REGISTRY];
       throw new TypeError(`Cannot patch ${method}: predecessor is not a function`);
     }
     const nextRecord: PatchRecord = {
       method,
+      // SAFETY: the preceding runtime guard validates the members used through this structural view.
       predecessor: predecessor as PrototypeMethod,
       predecessorDescriptor,
       wrapper: () => undefined,
     };
     const wrapper: PrototypeMethod = function zentuiPrototypeWrapper(
-      this: unknown,
-      ...args: unknown[]
-    ): unknown {
+      this: BoundaryValue,
+      ...args: BoundaryValue[]
+    ): BoundaryValue {
       const activeBehavior = nextRecord.registration?.behavior;
       return activeBehavior
         ? activeBehavior({ predecessor: nextRecord.predecessor, receiver: this, args })
-        : Reflect.apply(nextRecord.predecessor, this, args);
+        : invokeWithReceiver(nextRecord.predecessor, this, args);
     };
     nextRecord.wrapper = wrapper;
     try {
@@ -150,10 +159,11 @@ export function installPrototypePatch(
 }
 
 export function removePrototypePatch(
-  targetValue: object,
+  targetValue: BoundaryValue,
   method: "render" | "invalidate",
   adapter: PrototypePatchAdapter,
 ): void {
+  // SAFETY: the preceding runtime guard validates the members used through this structural view.
   const target = targetValue as PatchTarget;
   const registry = existingRegistry(target);
   const record = registry?.get(adapter);

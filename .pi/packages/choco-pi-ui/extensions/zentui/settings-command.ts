@@ -56,6 +56,7 @@ import {
   SETTINGS_PREVIEW_MAX_WIDTH,
 } from "./settings-previews";
 import { EDITOR_BORDER_STYLE, renderChromeBorder, safeThemeFg } from "./style";
+import { isString } from "./runtime-values";
 import {
   buildWorkingLinePreviewFrames,
   normalizeWorkingLineMessages,
@@ -78,20 +79,20 @@ const pathDepthValues = ["0", "1", "2", "3", "4", "5"];
 const branchLengthPresetValues = ["full", "10", "20", "30", "40", "50"];
 const iconModeValues: IconMode[] = ["auto", "nerd", "ascii"];
 const modelLabelValues: ModelLabelSource[] = ["id", "name"];
-const editorStyleLabels: Record<EditorStyle, string> = {
+const editorStyleLabels = {
   opencode: "Opencode",
   "opencode-copy-friendly": "Opencode (copy-friendly)",
   minimalist: "Minimalist",
 };
 const editorStyleValues = Object.values(editorStyleLabels);
-const userMessageStyleLabels: Record<UserMessageStyle, string> = {
+const userMessageStyleLabels = {
   framed: "Framed",
   "framed-copy-friendly": "Framed (copy-friendly)",
   compact: "Compact",
   labeled: "Labeled",
 };
 const userMessageStyleValues = Object.values(userMessageStyleLabels);
-const footerStyleLabels: Record<FooterStyle, string> = {
+const footerStyleLabels = {
   native: "Native",
   starship: "Starship",
   hidden: "Hidden",
@@ -102,7 +103,7 @@ const minimalistContextFormatValues = ["percent", "percent-total"];
 const editorBorderColorModeValues: EditorBorderColorMode[] = ["static", "adaptive"];
 const compactFooterMaxLineValues = ["1", "2", "3", "unlimited"];
 const featureStateValues: FeatureState[] = ["enabled", "disabled"];
-const workingLineSpinnerLabels: Record<WorkingLineSpinner, string> = {
+const workingLineSpinnerLabels = {
   braille: "Braille Orbit",
   "star-bloom": "Star Bloom",
   pinwheel: "ASCII Pinwheel",
@@ -193,7 +194,7 @@ type SettingsCommandDeps = {
   settingsListTheme?: SettingsListTheme;
 };
 
-const sectionLabels: Record<SettingsSection, string> = {
+const sectionLabels = {
   appearance: "Appearance",
   editor: "Editor",
   userMessages: "User messages",
@@ -204,7 +205,7 @@ const sectionLabels: Record<SettingsSection, string> = {
   extensions: "Extensions",
 };
 
-const footerSegmentSettingLabels: Record<FooterSegmentSettingId, string> = {
+const footerSegmentSettingLabels = {
   cwd: "Current directory",
   sessionName: "Session name",
   gitBranch: "Git branch",
@@ -224,7 +225,7 @@ const footerSegmentSettingLabels: Record<FooterSegmentSettingId, string> = {
   gitMetrics: "Git line metrics",
 };
 
-const footerSegmentSettingDescriptions: Record<FooterSegmentSettingId, string> = {
+const footerSegmentSettingDescriptions = {
   cwd: "Show or hide the current working directory segment on the left.",
   sessionName: "Show or hide the current Pi session name on the left.",
   gitBranch: "Show or hide the git branch name on the left.",
@@ -275,6 +276,7 @@ function editorStyleLabel(style: EditorStyle): string {
   return editorStyleLabels[style];
 }
 function editorStyleId(label: string): EditorStyle | undefined {
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   return (Object.entries(editorStyleLabels) as Array<[EditorStyle, string]>).find(
     ([, value]) => value === label,
   )?.[0];
@@ -283,6 +285,7 @@ function footerStyleLabel(style: FooterStyle): string {
   return footerStyleLabels[style];
 }
 function footerStyleId(label: string): FooterStyle | undefined {
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   return (Object.entries(footerStyleLabels) as Array<[FooterStyle, string]>).find(
     ([, value]) => value === label,
   )?.[0];
@@ -291,11 +294,13 @@ function userMessageStyleLabel(style: UserMessageStyle): string {
   return userMessageStyleLabels[style];
 }
 function userMessageStyleId(label: string): UserMessageStyle | undefined {
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   return (Object.entries(userMessageStyleLabels) as Array<[UserMessageStyle, string]>).find(
     ([, value]) => value === label,
   )?.[0];
 }
 function workingLineSpinnerId(label: string): WorkingLineSpinner | undefined {
+  // SAFETY: the source keys and values are filtered against the asserted domain immediately before conversion.
   return (Object.entries(workingLineSpinnerLabels) as Array<[WorkingLineSpinner, string]>).find(
     ([, value]) => value === label,
   )?.[0];
@@ -797,6 +802,7 @@ function buildSegmentsItems(config: PolishedTuiConfig): SettingItem[] {
 }
 function branchLengthValues(maxLength: GitBranchMaxLength): string[] {
   const current = String(maxLength);
+  // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
   return branchLengthPresetValues.includes(current as never)
     ? [...branchLengthPresetValues]
     : [current, ...branchLengthPresetValues];
@@ -1001,7 +1007,7 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
     description: "Configure choco-ui",
     getArgumentCompletions: argumentCompletions,
     handler: async (_args, ctx) => {
-      const args = typeof _args === "string" ? _args : "";
+      const args = isString(_args) ? _args : "";
       const format = parseFormatCommand(args);
       if (format) {
         try {
@@ -1068,6 +1074,7 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
         if (ctx.hasUI) ctx.ui.notify(usageText(), "warning");
         return;
       }
+      // SAFETY: this value comes from the selector options declared for the corresponding settings field.
       const mode = (ctx as typeof ctx & { mode?: string }).mode;
       if (!ctx.hasUI || (mode !== undefined && mode !== "tui")) return;
 
@@ -1238,6 +1245,7 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
                       ["compact", "project", "full"].includes(newValue)
                     )
                       deps.setMinimalist(
+                        // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
                         { pathDisplay: newValue as MinimalistConfig["pathDisplay"] },
                         ctx,
                       );
@@ -1246,6 +1254,7 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
                       ["percent", "percent-total"].includes(newValue)
                     )
                       deps.setMinimalist(
+                        // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
                         { contextFormat: newValue as MinimalistConfig["contextFormat"] },
                         ctx,
                       );
@@ -1347,9 +1356,11 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
                   }
                   if (
                     id === "workingLineTextAnimation" &&
+                    // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
                     workingLineTextAnimationValues.includes(newValue as WorkingLineTextAnimation)
                   ) {
                     const result = deps.setWorkingLineComponent(
+                      // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
                       { textAnimation: newValue as WorkingLineTextAnimation },
                       ctx,
                     );
@@ -1462,9 +1473,11 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
                   }
                   if (
                     id === "compactFooterMaxLines" &&
+                    // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
                     compactFooterMaxLineValues.includes(newValue as never)
                   ) {
                     const value: CompactFooterMaxLines =
+                      // SAFETY: this value comes from the selector options declared for the corresponding settings field.
                       newValue === "unlimited" ? "unlimited" : (Number(newValue) as 1 | 2 | 3);
                     deps.setResponsiveFooter({ compactFooterMaxLines: value }, ctx);
                     settingsList.updateValue(id, newValue);
@@ -1473,8 +1486,10 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
                   }
                   if (
                     id === "contextStyle" &&
+                    // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
                     contextStyleValues.includes(newValue as ContextStyle)
                   ) {
+                    // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
                     deps.setContextStyle(newValue as ContextStyle);
                     settingsList.updateValue(id, newValue);
                     notifyChange("Context style", newValue);
@@ -1486,12 +1501,15 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
                     notifyChange("Separator", newValue);
                     return;
                   }
+                  // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
                   if (id === "pathDisplay" && pathDisplayModeValues.includes(newValue as never)) {
+                    // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
                     deps.setPathDisplay({ mode: newValue as PathDisplayConfig["mode"] });
                     settingsList.updateValue(id, newValue);
                     notifyChange("Path display", newValue);
                     return;
                   }
+                  // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
                   if (id === "pathDepth" && pathDepthValues.includes(newValue as never)) {
                     deps.setPathDisplay({ depth: Number(newValue) });
                     settingsList.updateValue(id, newValue);

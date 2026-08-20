@@ -12,11 +12,11 @@ import {
   isSafeSgrStylePrefix,
   isSupportedColorSpec,
   renderStyleForSourceOrFallback,
-  type SourceStyleFallback,
   type ThemeLike,
 } from "./style";
 import { PI_WORKING_LINE_MESSAGES } from "./working-line-messages";
 import { WORKING_LINE_SPINNERS } from "./working-line-spinners";
+import { type BoundaryValue, isBoolean, isCallable, isString } from "./runtime-values";
 
 export { WORKING_LINE_SPINNERS } from "./working-line-spinners";
 
@@ -40,7 +40,7 @@ export const MAX_WORKING_LINE_STYLE_TOKENS = 4;
 export const MAX_WORKING_LINE_STYLE_CODE_UNITS = 48;
 export const MAX_WORKING_LINE_ENTRIES_EXAMINED = 256;
 
-const WORKING_LINE_FALLBACKS: Record<"low" | "mid" | "high", SourceStyleFallback> = {
+const WORKING_LINE_FALLBACKS = {
   low: { theme: "dim", terminal: "bright-black" },
   mid: { theme: "muted", terminal: "cyan" },
   high: { theme: "bold accent", terminal: "bold cyan" },
@@ -52,6 +52,8 @@ const SGR_RESET = "\x1b[0m";
 
 type Tier = "low" | "mid" | "high";
 type GraphemeCell = { text: string; start: number; width: number };
+type GraphemeCells = { cells: GraphemeCell[]; width: number };
+type KittHead = { position: number; direction: 1 | -1 };
 
 type WorkingLineUi = {
   setWorkingMessage(message?: string): void;
@@ -139,7 +141,7 @@ export class AgentDurationClock {
 function segmentGraphemes(value: string): Iterable<string> {
   try {
     const Segmenter = Intl.Segmenter;
-    if (typeof Segmenter === "function") {
+    if (isCallable(Segmenter)) {
       const segments = new Segmenter(undefined, { granularity: "grapheme" }).segment(value);
       return {
         *[Symbol.iterator]() {
@@ -192,17 +194,23 @@ function trimGraphemeWhitespace(value: string): string {
 
 function stripC1TerminalSequences(value: string): string {
   return value
-    .replaceAll(/[\u0090\u0098\u009d\u009e\u009f][\s\S]*?(?:\u0007|\u009c|\x1b\\|$)/g, "")
+    .replaceAll(
+      new RegExp(
+        String.raw`[\u0090\u0098\u009d\u009e\u009f][\s\S]*?(?:\u0007|\u009c|\x1b\\|$)`,
+        "g",
+      ),
+      "",
+    )
     .replaceAll(/\u009b[0-?]*[ -/]*[@-~]/g, "");
 }
 
 /** Normalize untrusted user-authored text before it can reach Pi's working row. */
-export function normalizeWorkingLineMessage(value: unknown): string {
-  if (typeof value !== "string") return "";
+export function normalizeWorkingLineMessage(value: BoundaryValue): string {
+  if (!isString(value)) return "";
   const bounded = boundRawWorkingLineInput(value);
   const withoutTerminalSequences = stripVTControlCharacters(stripC1TerminalSequences(bounded));
   const withoutControls = withoutTerminalSequences
-    .replaceAll(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replaceAll(new RegExp(String.raw`[\u0000-\u001f\u007f-\u009f]`, "g"), " ")
     .replaceAll(/[\u034f\u061c\u200b\u200e\u200f\u202a-\u202e\u2060\u2066-\u206f]/g, "");
   const normalized = trimGraphemeWhitespace(
     withoutControls.normalize("NFC").replaceAll(/\s+/gu, " "),
@@ -215,7 +223,7 @@ export function normalizeWorkingLineMessage(value: unknown): string {
   return visibleWidth(truncated) > 0 ? truncated : "";
 }
 
-export function normalizeWorkingLineMessages(values: unknown): string[] {
+export function normalizeWorkingLineMessages(values: BoundaryValue): string[] {
   if (!Array.isArray(values)) return [];
   const output: string[] = [];
   const seen = new Set<string>();
@@ -268,7 +276,7 @@ function schedulePeriod(intervalMs: number, cycleAdvances: number, quantumMs: nu
   return product / gcd(quantumMs, product);
 }
 
-function graphemeCells(message: string): { cells: GraphemeCell[]; width: number } {
+function graphemeCells(message: string): GraphemeCells {
   const cells: GraphemeCell[] = [];
   let start = 0;
   for (const text of segmentGraphemes(message)) {
@@ -288,7 +296,7 @@ function classicTier(cell: GraphemeCell, tick: number): Tier {
   return "low";
 }
 
-function kittHead(tick: number, width: number): { position: number; direction: 1 | -1 } {
+function kittHead(tick: number, width: number): KittHead {
   const span = width + KITT_TRAIL_CELLS - 1;
   if (tick < span) return { position: tick - (KITT_TRAIL_CELLS - 1), direction: 1 };
   return {
@@ -501,6 +509,12 @@ export type WorkingLineFrameState = {
   textTick: number;
 };
 
+type WorkingLineSpinnerFrames = {
+  frames: string[];
+  frameStates: WorkingLineFrameState[];
+  intervalMs: number;
+};
+
 export type WorkingLineSchedulerMetadata = {
   quantumMs: number;
   effectiveSpinnerIntervalMs: number;
@@ -542,7 +556,7 @@ export function formatWorkingLineThought(
   return `${thought.active ? "thinking" : "thought for"} ${formatWorkingLineElapsed(thought.durationMs)}`;
 }
 
-export function normalizeWorkingLineToolLabel(value: unknown): string {
+export function normalizeWorkingLineToolLabel(value: BoundaryValue): string {
   const normalized = normalizeWorkingLineMessage(value);
   if (visibleWidth(normalized) <= MAX_WORKING_LINE_TOOL_CELLS) return normalized;
   const prefix = truncateGraphemes(normalized, MAX_WORKING_LINE_TOOL_CELLS - 1);
@@ -558,7 +572,7 @@ export function formatWorkingLineTokens(
     !Number.isSafeInteger(tokens.output) ||
     tokens.input < 0 ||
     tokens.output < 0 ||
-    (tokens.outputApproximate !== undefined && typeof tokens.outputApproximate !== "boolean")
+    (tokens.outputApproximate !== undefined && !isBoolean(tokens.outputApproximate))
   ) {
     return undefined;
   }
@@ -932,7 +946,7 @@ export function buildWorkingLineSpinnerFrames(
   colors: PolishedTuiColors,
   theme: ThemeLike,
   startTick = 0,
-): { frames: string[]; frameStates: WorkingLineFrameState[]; intervalMs: number } {
+): WorkingLineSpinnerFrames {
   const spinner = WORKING_LINE_SPINNERS[config.spinner];
   workingLineSpinnerWidth(config.spinner);
   const phase = Number.isFinite(startTick) ? Math.max(0, Math.floor(startTick)) : 0;
@@ -973,10 +987,12 @@ export function buildWorkingLinePreviewFrames(
 
 function workingLineUi(ctx: WorkingLineContext): WorkingLineUi | undefined {
   if (ctx.hasUI === false || (ctx.mode !== undefined && ctx.mode !== "tui")) return undefined;
-  const ui = ctx.ui as unknown as Partial<WorkingLineUi>;
-  if (typeof ui.setWorkingMessage !== "function" || typeof ui.setWorkingIndicator !== "function") {
+  // SAFETY: TUI contexts expose optional working-line methods through this host capability view.
+  const ui = ctx.ui as Partial<WorkingLineUi>;
+  if (!isCallable(ui.setWorkingMessage) || !isCallable(ui.setWorkingIndicator)) {
     return undefined;
   }
+  // SAFETY: the host TUI runtime supplies this shape and adjacent capability checks validate accessed members.
   return ui as WorkingLineUi;
 }
 

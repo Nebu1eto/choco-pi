@@ -32,6 +32,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { type BoundaryValue, isBoundaryRecord, isString } from "./runtime-values";
 
 export type PackageVersionResult = {
   /** Starship ecosystem key — matches `runtimeMetadata[].name` where it exists. */
@@ -90,7 +91,9 @@ export const PACKAGE_VERSION_ECOSYSTEMS = [
  * Empty / whitespace-only values return `undefined`.
  */
 function cleanVersion(value: string | undefined): string | undefined {
-  if (!value || /[\u0000-\u001f\u007f-\u009f]/.test(value)) return undefined;
+  if (!value || new RegExp(String.raw`[\u0000-\u001f\u007f-\u009f]`).test(value)) {
+    return undefined;
+  }
   let text = value.trim();
   if (!text) return undefined;
 
@@ -123,7 +126,7 @@ function cleanVersion(value: string | undefined): string | undefined {
 
 // --- JSON helpers --------------------------------------------------------
 
-function safeJsonParse(raw: string): unknown {
+function safeJsonParse(raw: string): BoundaryValue {
   try {
     return JSON.parse(raw);
   } catch {
@@ -189,7 +192,7 @@ function stripJsonComments(raw: string): string {
   return result;
 }
 
-function safeJsoncParse(raw: string): unknown {
+function safeJsoncParse(raw: string): BoundaryValue {
   try {
     return JSON.parse(stripJsonComments(raw));
   } catch {
@@ -199,16 +202,16 @@ function safeJsoncParse(raw: string): unknown {
 
 function readJsonVersionField(raw: string, key: string): string | undefined {
   const parsed = safeJsonParse(raw);
-  if (!parsed || typeof parsed !== "object") return undefined;
-  const value = (parsed as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : undefined;
+  if (!isBoundaryRecord(parsed)) return undefined;
+  const value = parsed[key];
+  return isString(value) ? value : undefined;
 }
 
 function readJsoncVersionField(raw: string, key: string): string | undefined {
   const parsed = safeJsoncParse(raw);
-  if (!parsed || typeof parsed !== "object") return undefined;
-  const value = (parsed as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : undefined;
+  if (!isBoundaryRecord(parsed)) return undefined;
+  const value = parsed[key];
+  return isString(value) ? value : undefined;
 }
 
 // --- TOML helpers --------------------------------------------------------
