@@ -58,6 +58,7 @@ import {
 import { FleetList, type FleetUICtx } from "./ui/fleet-list.ts";
 import { FocusedAgentController } from "./ui/focus-mode.ts";
 import { showSchedulesMenu } from "./ui/schedule-menu.ts";
+import { SideConversationController } from "./ui/side-conversation.ts";
 import { selectItem } from "./ui/select-item.ts";
 import { addUsage, getLifetimeTotal, getSessionContextPercent, type LifetimeUsage } from "./usage.ts";
 import { isWorktreeIsolationEnabled, setWorktreeIsolationEnabled } from "./worktree.ts";
@@ -444,6 +445,7 @@ export default function (pi: ExtensionAPI) {
       toolUses: record.toolUses,
       durationMs,
       tokens,
+      ...(record.sideConversation && { sideConversation: true }),
     };
   }
 
@@ -467,7 +469,21 @@ export default function (pi: ExtensionAPI) {
       id: record.id, type: record.type, description: record.description,
       status: record.status, result: record.result, error: record.error,
       startedAt: record.startedAt, completedAt: record.completedAt,
+      ...(record.sideConversation && { sideConversation: true }),
     });
+
+    // Side answers stay out of the orchestrator transcript. Their controller
+    // keeps an open overlay live, or emits a non-turn-triggering UI notice when
+    // the user dismissed it. Shared lifecycle, widget and fleet bookkeeping
+    // still applies because this is an ordinary top-level record.
+    if (record.sideConversation) {
+      agentActivity.delete(record.id);
+      widget.markFinished(record.id);
+      fleet.onAgentFinished(record.id);
+      sideConversations.onAgentComplete(record);
+      widget.update();
+      return;
+    }
 
     // Skip notification if result was already consumed via get_subagent_result
     if (record.resultConsumed) {
@@ -570,6 +586,11 @@ export default function (pi: ExtensionAPI) {
     // Bypasses handle allocation, so a forged value would duplicate a live
     // agent's name and make `@handle` ambiguous. Same rule: dispatcher only.
     delete safeOptions.reclaim;
+    // Side-conversation identity and its notification/read-only behavior are an
+    // internal capability issued only by the /btw controller. RPC and registry
+    // callers cannot forge it to suppress ordinary result delivery.
+    delete safeOptions.sideConversation;
+    delete safeOptions.readOnly;
     return spawnResolved(piRef, ctxRef, type, prompt, safeOptions);
   };
 
@@ -643,6 +664,7 @@ export default function (pi: ExtensionAPI) {
     if (ctx.hasUI) {
       widget.setUICtx(ctx.ui);
       focus.setUICtx(ctx.ui);
+      sideConversations.setUICtx(ctx.ui);
       fleet.setUICtx(ctx.ui as any);
     }
     manager.clearCompleted(true);
@@ -913,6 +935,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_before_switch", () => {
+    sideConversations.dismiss();
     focus.unfocus();
     manager.clearCompleted(true);
     scheduler.stop();
@@ -935,6 +958,7 @@ export default function (pi: ExtensionAPI) {
     manager.abortAll();
     for (const timer of pendingNudges.values()) clearTimeout(timer);
     pendingNudges.clear();
+    sideConversations.dispose();
     focus.dispose();
     fleet.dispose();
     manager.dispose();
@@ -957,10 +981,20 @@ export default function (pi: ExtensionAPI) {
     onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
   });
 
+  // BTW side conversations are root subagents with a read-only launch profile.
+  // The controller owns only their dismissible overlay and notice delivery;
+  // focus, concurrency, handles and persistence remain manager-owned.
+  const sideConversations = new SideConversationController(manager, {
+    getActivity: id => agentActivity.get(id),
+    onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
+    focusAgent: (record, tui, theme) => focus.focus(record, tui, theme),
+  });
+
   // Claude Code-style FleetView: navigable list of main + subagents below the editor.
   const fleet = new FleetList(manager, agentActivity, {
     focusAgent: (record, tui, theme) => focus.focus(record, tui, theme),
     isAgentFocused: () => focus.isFocused(),
+    openSideConversation: record => sideConversations.open(record),
   });
   let fleetViewEnabled = true;
   function isFleetViewEnabled(): boolean { return fleetViewEnabled; }
@@ -3041,6 +3075,73 @@ Write the file using the write tool. Only write the file, nothing else.`;
     );
     ctx.ui.notify(message, level);
   }
+
+  async function handleBtwCommand(args: string, ctx: ExtensionCommandContext): Promise<void> {
+    const question = args.trim();
+    if (question) {
+      reloadCustomAgents();
+      const dispatch = resolveSpawnType("general-purpose");
+      if (!dispatch.ok) {
+        ctx.ui.notify(`Could not start BTW conversation: ${dispatch.message}`, "error");
+        return;
+      }
+
+      try {
+        const id = sideConversations.launch(pi, ctx, dispatch.type, question);
+        const record = manager.getRecord(id);
+        widget.ensureTimer();
+        widget.update();
+        fleet.ensureTimer();
+        fleet.update();
+        pi.events.emit("subagents:created", {
+          id,
+          type: dispatch.type,
+          description: record?.description ?? question,
+          isBackground: true,
+          sideConversation: true,
+        });
+        const handle = record?.alias ?? record?.handle ?? id;
+        ctx.ui.notify(
+          `${record?.status === "queued" ? "Queued" : "Started"} BTW @${handle}. Esc dismisses without stopping it.`,
+          "info",
+        );
+      } catch (error) {
+        ctx.ui.notify(
+          `Could not start BTW conversation: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+      }
+      return;
+    }
+
+    const records = manager.listAgents().filter(record => record.sideConversation && !record.parentAgentId);
+    if (records.length === 0) {
+      ctx.ui.notify("No BTW conversations. Start one with /btw <question>.", "info");
+      return;
+    }
+
+    let selected = records[0];
+    if (records.length > 1) {
+      const choices = records.map(record => {
+        const handle = record.alias ?? record.handle ?? record.id;
+        return `@${handle} · ${record.status} · ${record.description} · ${record.id.slice(0, 8)}`;
+      });
+      const choice = await ctx.ui.select("BTW conversations", choices);
+      if (!choice) return;
+      selected = records[choices.indexOf(choice)] ?? selected;
+    }
+
+    if (!selected.session) {
+      ctx.ui.notify(`BTW conversation is ${selected.status}; its session is not available yet.`, "info");
+      return;
+    }
+    sideConversations.open(selected);
+  }
+
+  pi.registerCommand("btw", {
+    description: "Ask a parallel read-only side conversation, or reopen one",
+    handler: async (args, ctx) => { await handleBtwCommand(args, ctx); },
+  });
 
   pi.registerCommand("agents", {
     description: "Manage agents",

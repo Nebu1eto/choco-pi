@@ -115,6 +115,19 @@ input predecessor. The method registry uses an additive, instance-scoped wrapper
 so pi-zentui and prompt-editor adapters remain composed. `tests/focus-mode.test.ts`
 pins transcript swapping, streaming refresh, steering ownership and restoration.
 
+### BTW side conversations
+
+The fork adds `src/ui/side-conversation.ts`, the `/btw` command, an
+orchestrator-owned `AgentRecord.sideConversation` marker, and a read-only runner
+profile. BTW launches fork the main context into a normal background subagent,
+share `maxConcurrent`, handles, FleetView and fullscreen focus, but restrict
+runtime tools to `read`, `grep`, `find` and `ls` with extensions and delegation
+disabled. `ConversationViewer` gains an opt-in reply-after-completion mode so the
+dismissible overlay can steer a live run or resume the same settled session.
+Completion outside the overlay uses a UI notice rather than a main-transcript
+follow-up. `tests/side-conversation.test.ts` pins the marker, dismissal and
+steering behavior.
+
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 
 The repository previously ran `npm:@tintinweb/pi-subagents@0.16.1`. Two entries

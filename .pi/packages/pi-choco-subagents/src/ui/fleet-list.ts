@@ -22,6 +22,8 @@ import { ConversationViewer, VIEWPORT_HEIGHT_PCT } from "./conversation-viewer.t
 export type FleetFocusOptions = {
   focusAgent?: (record: AgentRecord, tui: any, theme: Theme) => boolean;
   isAgentFocused?: () => boolean;
+  /** Side conversations own their dismissible/replyable overlay lifecycle. */
+  openSideConversation?: (record: AgentRecord) => boolean;
 };
 
 /** Widget key for the below-editor fleet list. */
@@ -319,6 +321,11 @@ export class FleetList {
     }
     const record = entry.record;
     if (!this.ui) return;
+    if (record.sideConversation && this.focusOptions.openSideConversation?.(record)) {
+      this.active = false;
+      this.update();
+      return;
+    }
     if (!record.session) {
       this.ui.notify(`Agent is ${record.status} — no session available.`, "info");
       return;
@@ -417,8 +424,9 @@ export class FleetList {
     const name = renderAgentName(record.type, theme, selected
       ? { fallbackColor: "text", bold: hasAgentBadge(record.type) }
       : { fallbackColor: "muted" });
+    const sideTag = record.sideConversation ? theme.fg("accent", "[btw] ") : "";
     const description = selected ? theme.fg("text", record.description) : record.description;
-    const left = `  ${this.bullet(rosterIndex, sel, theme)} ${name}  ${description}`;
+    const left = `  ${this.bullet(rosterIndex, sel, theme)} ${sideTag}${name}  ${description}`;
     const tokens = getLifetimeTotal(this.agentActivity.get(record.id)?.lifetimeUsage ?? record.lifetimeUsage);
     const elapsedMs = (record.completedAt ?? Date.now()) - record.startedAt; // freezes once finished
     const stats = `${formatFleetElapsed(elapsedMs)} · ${formatFleetTokens(tokens)}`;

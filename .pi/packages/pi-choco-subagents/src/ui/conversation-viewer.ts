@@ -26,6 +26,10 @@ export type ConversationViewerOptions = {
   profile?: "overlay" | "focus";
   /** Enter fullscreen focus while preserving the overlay as the default viewer. */
   onFocus?: () => void;
+  /** Side conversations can start another turn after the prior run settled. */
+  allowReplyWhenFinished?: boolean;
+  /** User-facing verb for the composer affordance. */
+  replyLabel?: "steer" | "reply";
 };
 
 export class ConversationViewer implements Component {
@@ -56,6 +60,8 @@ export class ConversationViewer implements Component {
   private onSteer?: (message: string) => void;
   private profile: "overlay" | "focus";
   private onFocus?: () => void;
+  private allowReplyWhenFinished: boolean;
+  private replyLabel: "steer" | "reply";
 
   constructor(
     tui: TUI,
@@ -80,6 +86,8 @@ export class ConversationViewer implements Component {
     this.onSteer = onSteer;
     this.profile = options.profile ?? "overlay";
     this.onFocus = options.onFocus;
+    this.allowReplyWhenFinished = options.allowReplyWhenFinished === true;
+    this.replyLabel = options.replyLabel ?? "steer";
 
     this.keys = createViewerKeys(keybindings);
     this.unsubscribe = session.subscribe(() => {
@@ -199,8 +207,9 @@ export class ConversationViewer implements Component {
       headerParts.push(formatSessionTokens(tokens, percent, th, this.record.compactionCount));
     }
 
+    const sideTag = this.record.sideConversation ? `${th.fg("accent", "[btw]")} ` : "";
     lines.push(row(
-      `${statusIcon} ${renderAgentName(this.record.type, th, { bold: true })}${modeTag}  ${th.fg("muted", this.record.description)} ${th.fg("dim", "·")} ${fgPreservingNestedStyles(th, "dim", headerParts.join(" · "))}`,
+      `${statusIcon} ${sideTag}${renderAgentName(this.record.type, th, { bold: true })}${modeTag}  ${th.fg("muted", this.record.description)} ${th.fg("dim", "·")} ${fgPreservingNestedStyles(th, "dim", headerParts.join(" · "))}`,
     ));
     const invocationLine = this.invocationLine();
     if (invocationLine) lines.push(row(invocationLine));
@@ -233,7 +242,7 @@ export class ConversationViewer implements Component {
       // Composer row: the Input renders its own `> ` prompt and cursor.
       lines.push(row(this.composer.render(innerW)[0] ?? ""));
       const composeHint = th.fg("dim", "Enter send · Esc cancel");
-      const composeLeft = th.fg("accent", "✎ steer");
+      const composeLeft = th.fg("accent", `✎ ${this.replyLabel}`);
       const composeGap = Math.max(1, innerW - visibleWidth(composeLeft) - visibleWidth(composeHint));
       lines.push(row(composeLeft + " ".repeat(composeGap) + composeHint));
     } else {
@@ -245,7 +254,7 @@ export class ConversationViewer implements Component {
       if (this.profile === "focus") {
         actions.push(th.fg("dim", this.isAgentActive() ? "prompt steers this agent" : "conversation is read-only"));
       } else {
-        if (this.canSteer()) actions.push(th.fg("dim", "Enter steer"));
+        if (this.canSteer()) actions.push(th.fg("dim", `Enter ${this.replyLabel}`));
         if (this.onFocus) actions.push(th.fg("dim", "f focus"));
         if (this.isStoppable()) {
           actions.push(this.stopArmed ? th.fg("error", "x again to STOP") : th.fg("dim", "x stop"));
@@ -283,9 +292,12 @@ export class ConversationViewer implements Component {
     return !!this.onStop && this.isAgentActive();
   }
 
-  /** Steerable only when a steer handler exists and the agent is still active. */
+  /**
+   * Ordinary viewers steer only an active run. A side-conversation viewer may
+   * also accept a reply after settlement; its owner resumes the same session.
+   */
   private canSteer(): boolean {
-    return !!this.onSteer && this.isAgentActive();
+    return !!this.onSteer && (this.isAgentActive() || this.allowReplyWhenFinished);
   }
 
   /** Open the inline steering composer and route subsequent input to it. */
