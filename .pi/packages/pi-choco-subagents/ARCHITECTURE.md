@@ -6,9 +6,13 @@ conversations, and dynamic workflow fan-out. It maps the modules that matter and
 names the exact attachment point for each of those three, so a later phase does
 not have to re-derive them from a 3,000-line entry file.
 
-Most sections are a module map. Seams A and B also record the implemented
-focus-mode and side-conversation designs because later phases must compose with
-their UI ownership and delivery rules.
+Most sections are a module map. Seams A, B and C record the implemented
+focus-mode, side-conversation and dynamic-workflow designs so future changes can
+compose with their UI ownership, scheduling and delivery rules.
+
+Current choco-pi additions over the vendored core are fullscreen subagent focus,
+dismissible read-only `/btw` conversations, and root-orchestrated dynamic DAG
+workflows with parallel subagents and aggregate results.
 
 ## Load path
 
@@ -31,7 +35,8 @@ this extension out must stay completely silent.
 | Module | Role |
 | --- | --- |
 | `index.ts` | Extension factory: tool registration (`Agent`, `get_subagent_result`, `steer_subagent`), the `/agents` command tree, settings menus, the `input` mention hook, batch grouping, and every lifecycle handler. |
-| `agent-manager.ts` | Record lifecycle: spawn, queue, concurrency, abort, steer, resume, completion callbacks, handle allocation and tombstones, `maxConcurrent` scheduling. |
+| `agent-manager.ts` | Record lifecycle: spawn, queue, concurrency, abort, steer, resume, completion callbacks, handle allocation and tombstones, `maxConcurrent` scheduling. Workflow steps carry aggregate/step ids but otherwise use this lifecycle unchanged. |
+| `workflow.ts` | TypeBox workflow definition, graph/type/reference validation, bounded prompt rendering, mutable DAG scheduler, failure policy, cancellation and aggregate results. The runner interface keeps scheduling tests independent of live agents. |
 | `agent-runner.ts` | Builds and drives the child `AgentSession`: tool allow/denylists, `ext:` narrowing, extension filtering, model runtime inheritance, turn limits, final-status classification. |
 | `agent-types.ts` | The registry of spawnable types: defaults overlaid by user agents, `enabled` filtering, `resolveType`/`resolveSpawnType`, fallback policy. |
 | `nested-tools.ts` | The scoped `Agent`/`get_subagent_result`/`steer_subagent` a subagent receives when its frontmatter sets `allowed_subagents`, plus the depth cap. |
@@ -211,52 +216,87 @@ cleanup.
 
 ## Seam C — dynamic workflow fan-out
 
-**What exists.** Fan-out is already implemented for the one-turn case, and every
-spawn source converges on one function.
+The root extension registers four workflow tools beside `Agent`:
+`workflow_run`, `workflow_update`, `get_workflow_result` and `workflow_cancel`.
+Child sessions return before registering extension tools, and their scoped
+nested tool set remains exactly `Agent`, `get_subagent_result` and
+`steer_subagent`. A workflow step therefore cannot launch another workflow; the
+existing child-session/depth boundary remains the privilege boundary.
 
-- `index.ts::spawnTopLevel` is the single validated entry point. The `Agent`
-  tool, the scheduler at fire time, cross-extension RPC and nested delegation
-  all resolve their type through `resolveSpawnType` and then reach
-  `spawnResolved` → `AgentManager.spawn`. A refused type never reaches
-  `runAgent`. A workflow engine adds a caller here; it does not add a path.
-- `index.ts::finalizeBatch` debounce-groups background spawns from one turn:
-  each new agent resets a 100 ms window, and 2+ agents in `smart`/`group` join
-  mode become a group. Agents that completed during the window are fed in
-  retroactively.
-- `group-join.ts::GroupJoinManager` holds a group until all members finish or a
-  30 s timeout fires (15 s for stragglers after a partial delivery), then calls
-  one `DeliveryCallback(records, partial)`. That is a join barrier with a
-  timeout — the primitive a fan-out/fan-in workflow step needs.
-- `types.ts::JoinMode` is `'async' | 'group' | 'smart'`;
-  `invocation-config.ts::resolveJoinMode` decides it per spawn.
-- `schedule.ts::SubagentScheduler` + `schedule-store.ts` provide time-triggered
-  spawns that survive restarts.
+### Definition and validation
 
-**Where fan-out attaches.**
+`workflow.ts::WorkflowDefinitionSchema` is the single JSON/TypeBox definition.
+A definition has a name, an optional `dynamic` flag and one or more steps. Each
+step has `id`, `subagent_type`, `prompt`, optional `needs`, `model`, `thinking`,
+`max_turns`, `timeout_ms`, `isolation`, and `continue_on_error`. Launch and every
+runtime update validate:
 
-1. *Grouping*: `finalizeBatch` groups by *arrival time*, which is right for
-   "the model made four parallel tool calls" and wrong for "step 3 of a workflow
-   spawns four units". An explicit group id passed through `SpawnOptions` and
-   registered directly with `groupJoin.registerGroup` bypasses the debounce
-   without touching it. `AgentRecord.groupId` already exists and is already what
-   `onAgentComplete` keys off.
-2. *Barriers*: extend `JoinMode` rather than adding a second completion path.
-   Everything downstream — deferred notifications, partial-delivery labelling,
-   straggler re-batching — reads that one field.
-3. *Dependencies between steps*: nothing models them today. `AgentManager`
-   queues on `maxConcurrent` only. A dependency-aware scheduler belongs beside
-   the queue in `agent-manager.ts`, not in the tool handler, because nested
-   children deliberately do **not** occupy `maxConcurrent` slots (queueing them
-   behind their waiting parent would deadlock) and any new gate inherits that
-   constraint.
-4. *Depth and privilege*: `nested-tools.ts` caps nesting via `maxSubagentDepth`
-   and gates delegation on `allowed_subagents`. Fan-out driven by a workflow
-   definition still runs through those checks — the allowlist is a privilege
-   boundary, not a routing hint, so a workflow cannot widen what an agent may
-   spawn.
-5. *Out-of-process drivers*: `cross-extension-rpc.ts` already exposes spawn and
-   stop with a versioned envelope (`PROTOCOL_VERSION = 2`). A workflow engine
-   living in another extension needs no new transport.
+- structural schema and duplicate ids;
+- enabled agent types, without the ordinary Agent fallback;
+- unknown dependencies and cycles;
+- `{{steps.<id>.output}}` references, which must name a transitive upstream
+  dependency. Only the `output` field is available.
+
+A static example:
+
+```json
+{
+  "name": "inspect then implement",
+  "steps": [
+    { "id": "inspect", "subagent_type": "Explore", "prompt": "Find the cause." },
+    {
+      "id": "build",
+      "subagent_type": "implementer",
+      "needs": ["inspect"],
+      "prompt": "Implement from this evidence:\n{{steps.inspect.output}}",
+      "max_turns": 20
+    }
+  ]
+}
+```
+
+### Scheduler and dynamic updates
+
+`WorkflowManager` owns aggregate runs; each run has a pure DAG controller and a
+`WorkflowStepRunner`. The controller starts definition-order ready steps up to
+the manager's `maxConcurrent` snapshot. The production runner then uses normal
+`AgentManager.spawn`, so workflow work also shares the live global pool with
+ordinary agents. A step starts only after all `needs` are terminal. Independent
+steps fan out and completion pumps newly ready dependents.
+
+Failure is fail-fast unless the failed step sets `continue_on_error: true`.
+Fail-fast marks pending steps skipped and aborts running siblings. A continued
+failure permits dependents to run and makes the aggregate
+`completed_with_errors`. `workflow_cancel` marks pending steps cancelled and
+aborts running agent records.
+
+A caller can replace only pending steps or add new steps atomically through
+`workflow_update`; the combined graph is revalidated before mutation. A static
+workflow may be updated while work remains. A definition with `dynamic: true`
+stays `waiting` when idle so the orchestrator can inspect a completed result,
+add result-dependent steps, and finally seal the graph with
+`workflow_update({ finish: true })`.
+
+### Result passing, limits and delivery
+
+Every final step output is captured in the aggregate. Prompt rendering replaces
+an upstream reference immediately before launch. Each reference contributes at
+most 32,000 characters including its truncation marker; repeated references are
+bounded independently. `get_workflow_result` returns workflow status plus every
+step's status, agent id, output, error and timestamps.
+
+Each step resolves model, thinking, isolation and turn limits through the same
+agent-frontmatter/caller precedence as `Agent`. Omitting `max_turns` inherits the
+agent/package default. Omitting `timeout_ms` preserves the package's no
+wall-clock-timeout behavior; setting it aborts that step at the given duration.
+
+Workflow steps are ordinary top-level agent records tagged with `workflowId`
+and `workflowStepId`. FleetView prefixes them `[wf:<step>]`; Enter and fullscreen
+focus continue to operate on the underlying session. Static workflows suppress
+individual result nudges and send one aggregate completion notification.
+Dynamic workflows relay step completion notifications while open, allowing the
+orchestrator to choose the next update, and send the aggregate notification
+once sealed and settled.
 
 ## Invariants a later phase should not casually break
 

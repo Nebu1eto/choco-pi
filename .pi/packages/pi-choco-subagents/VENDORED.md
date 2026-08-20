@@ -128,6 +128,21 @@ Completion outside the overlay uses a UI notice rather than a main-transcript
 follow-up. `tests/side-conversation.test.ts` pins the marker, dismissal and
 steering behavior.
 
+### Dynamic subagent workflows
+
+The fork adds `src/workflow.ts` and the root-only `workflow_run`,
+`workflow_update`, `get_workflow_result` and `workflow_cancel` tools. A TypeBox
+schema defines mutable DAGs of agent steps; launch/update validation rejects
+unknown types or dependencies, cycles and invalid output references. The pure
+scheduler fans out ready steps under `maxConcurrent`, renders bounded upstream
+outputs into dependent prompts, supports fail-fast or `continue_on_error`, and
+aggregates per-step status/output. Production steps use ordinary
+`AgentManager` records tagged for FleetView and fullscreen focus. Dynamic runs
+may wait idle for runtime additions before sealing; nested sessions receive no
+workflow tools. `tests/workflow.test.ts` uses a stub runner to pin validation,
+topological scheduling, result bounds, failure policies, dynamic updates and
+cancellation.
+
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 
 The repository previously ran `npm:@tintinweb/pi-subagents@0.16.1`. Two entries
