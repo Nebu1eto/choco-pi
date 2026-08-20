@@ -38,7 +38,9 @@ Reproduced faithfully:
   the tool-result text see an identical shape.
 - `tool_result` hook registration; `read`, `grep`, `find`, `ls` tool inputs
   drive target-path resolution; grep-formatted `path:line:` output lines are
-  parsed back into path candidates from tool text output.
+  parsed back into path candidates from tool text output. Pi code-mode results
+  are expanded through completed `event.details.traces` entries, including
+  nested `exec_command` calls whose shell text is carried in `input.cmd`.
 - Per-session, per-absolute-path dedup: an `AGENTS.md` already injected once
   this session is not injected again on a later matching tool call.
 - `session_start` / `session_tree` reset the dedup state (new session, or
@@ -61,11 +63,6 @@ Reproduced faithfully:
   extension process; forking or resuming a session re-injects previously
   seen files once. This trades a minor amount of redundant injection after
   a fork/resume for a much smaller, dependency-free implementation.
-- **No `codeMode`/batched-trace event unwrapping.** The reference inspects
-  `event.details.traces` to also process tool calls nested inside a single
-  batched "code mode" tool result (`core/subdir/tool-events.js`). This
-  harness's `ToolResultEvent` shape was not observed to carry that field, so
-  it is not ported; each `tool_result` event is processed as one target set.
 - **Simplified shell-command target parsing.** The reference
   (`core/subdir/shell-targets.js`) has a full tokenizer plus `git`
   subcommand/flag grammar (`git -C dir ls-files`, `git --git-dir=`, etc.) and
@@ -76,13 +73,6 @@ Reproduced faithfully:
   across `;`/`|`/`&` separated segments, and skips the first non-flag
   argument after `rg`/`grep` (the search pattern, not a path) but does not
   special-case `git` subcommands, `--git-dir=`, or `-C`.
-- **Tool name set matches this host's `ToolResultEvent`, not the reference's
-  wider guess list.** The reference also matches `exec`, `exec_command`, and
-  `shell` as shell-tool names (defensive coverage for hosts with different
-  tool names). This host's installed `@earendil-works/pi-coding-agent@0.84.2`
-  types only define `bash` as the shell tool name, so only `bash` is matched.
-  If a future host version adds another shell tool name, extend
-  `SHELL_TOOLS` in `src/subdir.ts`.
 - **`write`/`edit` tool calls are not treated as touched-path targets.**
   Matches the reference: it also does not treat `write`/`edit` as
   AGENTS.md-triggering events, only `read`/`grep`/`find`/`ls`/shell.

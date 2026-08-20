@@ -1,14 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { findAgentsFiles } from "./agents-chain.ts";
 import { type AgentsFileEntry, appendAgentsContext, capFileContent, capTotalAppendixSize } from "./appendix.ts";
 import { contentRootForTarget, resolvePath } from "./paths.ts";
 import { isDiscoveryShellCommand, shellTargets } from "./shell-targets.ts";
+import { codeModeDiscoveryEvents, type DiscoveryToolResultEvent } from "./tool-events.ts";
 
 const PATH_DISCOVERY_TOOLS = new Set(["grep", "find", "ls"]);
-const SHELL_TOOLS = new Set(["bash"]);
+const SHELL_TOOLS = new Set(["bash", "exec", "exec_command", "shell"]);
 const MAX_OUTPUT_SCAN_LINES = 250;
 
 interface FailedRead {
@@ -70,9 +71,13 @@ export function registerAgentsMdAutoload(pi: ExtensionAPI): void {
 		});
 	}
 
-	function targetsForEvent(event: ToolResultEvent, eventCwd: string): string[] {
+	function targetsForEvent(event: DiscoveryToolResultEvent, baseCwd: string): string[] {
 		const input = event.input;
-		const pathInput = typeof input["path"] === "string" ? (input["path"] as string) : undefined;
+		const workdir = ["workdir", "cwd", "working_directory"]
+			.map((key) => input[key])
+			.find((value): value is string => typeof value === "string");
+		const eventCwd = workdir !== undefined ? resolvePath(workdir, baseCwd) : baseCwd;
+		const pathInput = typeof input["path"] === "string" ? input["path"] : undefined;
 
 		if (event.toolName === "read") {
 			return [pathInput ? resolvePath(pathInput, eventCwd) : eventCwd];
@@ -82,7 +87,12 @@ export function registerAgentsMdAutoload(pi: ExtensionAPI): void {
 			return [base, ...pathsFromToolText(event.content, base, event.toolName)];
 		}
 		if (SHELL_TOOLS.has(event.toolName)) {
-			const command = typeof input["command"] === "string" ? (input["command"] as string) : undefined;
+			const command =
+				typeof input["command"] === "string"
+					? input["command"]
+					: typeof input["cmd"] === "string"
+						? input["cmd"]
+						: undefined;
 			if (!command || !isDiscoveryShellCommand(command)) return [];
 			return shellTargets(command, eventCwd);
 		}
@@ -139,15 +149,10 @@ export function registerAgentsMdAutoload(pi: ExtensionAPI): void {
 
 	pi.on("tool_result", async (event, ctx) => {
 		ensureSession(ctx.cwd);
-		if (event.isError) return undefined;
+		const discoveryEvents = codeModeDiscoveryEvents(event);
+		if (event.isError) discoveryEvents.shift();
 
-		const input = event.input;
-		const workdir = ["workdir", "cwd", "working_directory"]
-			.map((key) => input[key])
-			.find((value): value is string => typeof value === "string");
-		const eventCwd = workdir !== undefined ? resolvePath(workdir, currentCwd) : currentCwd;
-
-		const targets = targetsForEvent(event, eventCwd);
+		const targets = discoveryEvents.flatMap((discoveryEvent) => targetsForEvent(discoveryEvent, currentCwd));
 		if (!targets.length) return undefined;
 
 		const agentFiles = agentsForTargets(targets);
