@@ -250,3 +250,22 @@ test("cancelling a workflow aborts running steps and cancels pending steps", asy
   assert.equal(result.status, "cancelled");
   assert.deepEqual(result.steps.map(step => step.status), ["cancelled", "cancelled"]);
 });
+
+test("a cancelled step reports cancellation instead of the runner's abort text", async () => {
+  const runner = new DeferredRunner();
+  const manager = new WorkflowManager();
+  const started = manager.start(definition([
+    { id: "a", subagent_type: "Explore", prompt: "a" },
+  ]), resolveType, runner, 1);
+
+  await flush();
+  manager.cancel(started.workflowId);
+  // The runner surfaces its own abort wording; a deliberate cancel must not
+  // present that to the user as a step failure.
+  runner.finish("a", { status: "cancelled", error: "Agent ended with status stopped." });
+
+  const result = await manager.wait(started.workflowId)!;
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.steps[0].status, "cancelled");
+  assert.equal(result.steps[0].error, "Step cancelled.");
+});
