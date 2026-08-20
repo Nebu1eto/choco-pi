@@ -3,6 +3,8 @@ import { randomBytes, createHash } from "node:crypto";
 import type { OAuthDeviceCodeInfo } from "@earendil-works/pi-ai/oauth";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import { type OAuthDeviceCodePollResult, pollOAuthDeviceCodeFlow } from "./device-code.ts";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -30,6 +32,29 @@ type OAuthCredentials = { access: string; refresh: string; expires: number; acco
 type OAuthCallbacks = Parameters<NonNullable<ProviderConfig["oauth"]>["login"]>[0];
 type DeviceAuthToken = { authorization_code: string; code_verifier: string };
 
+const JwtPayloadSchema = Type.Record(Type.String(), Type.Unknown());
+type JwtPayload = Static<typeof JwtPayloadSchema>;
+const JwtAuthSchema = Type.Object({ chatgpt_account_id: Type.Optional(Type.String()) });
+const TokenResponseSchema = Type.Object({
+  access_token: Type.String(),
+  refresh_token: Type.String(),
+  expires_in: Type.Number(),
+});
+const DeviceAuthTokenSchema = Type.Object({
+  authorization_code: Type.String(),
+  code_verifier: Type.String(),
+});
+const DeviceAuthErrorSchema = Type.Object({
+  error: Type.Optional(
+    Type.Union([Type.String(), Type.Object({ code: Type.Optional(Type.String()) })]),
+  ),
+});
+const DeviceCodeResponseSchema = Type.Object({
+  device_auth_id: Type.String(),
+  user_code: Type.String(),
+  interval: Type.Union([Type.Number(), Type.String()]),
+});
+
 function getCallbackHost(): string {
   return process.env["PI_OAUTH_CALLBACK_HOST"] || "127.0.0.1";
 }
@@ -45,21 +70,20 @@ async function createPkce(): Promise<{ verifier: string; challenge: string }> {
   return { verifier, challenge };
 }
 
-function decodeJwt(token: string): Record<string, unknown> | null {
+function decodeJwt(token: string): JwtPayload | null {
   try {
-    return JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
+    const parsed: object = JSON.parse(
+      Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"),
+    );
+    return Check(JwtPayloadSchema, parsed) ? parsed : null;
   } catch {
     return null;
   }
 }
 
 export function getOpenAICodexAccountId(accessToken: string): string | null {
-  const auth = decodeJwt(accessToken)?.[JWT_CLAIM_PATH] as
-    | { chatgpt_account_id?: unknown }
-    | undefined;
-  return typeof auth?.chatgpt_account_id === "string" && auth.chatgpt_account_id
-    ? auth.chatgpt_account_id
-    : null;
+  const auth = decodeJwt(accessToken)?.[JWT_CLAIM_PATH];
+  return Check(JwtAuthSchema, auth) && auth.chatgpt_account_id ? auth.chatgpt_account_id : null;
 }
 
 export function clampOpenAICodexModelWindows(models: Model<Api>[]): Model<Api>[] {
@@ -71,14 +95,22 @@ export function clampOpenAICodexModelWindows(models: Model<Api>[]): Model<Api>[]
   );
 }
 
+interface AuthorizationInput {
+  code?: string | undefined;
+  state?: string | undefined;
+}
+
 function compactCodeState(
   code: string | null | undefined,
   state?: string | null | undefined,
-): { code?: string; state?: string } {
-  return { ...(code ? { code } : {}), ...(state ? { state } : {}) };
+): AuthorizationInput {
+  const result: AuthorizationInput = {};
+  if (code) result.code = code;
+  if (state) result.state = state;
+  return result;
 }
 
-function parseAuthorizationInput(input: string): { code?: string; state?: string } {
+function parseAuthorizationInput(input: string): AuthorizationInput {
   const value = input.trim();
   if (!value) return {};
   try {
@@ -130,12 +162,8 @@ async function tokenRequest(
     throw new Error(
       `OpenAI Codex token ${operation} failed (${response.status}): ${await response.text().catch(() => response.statusText)}`,
     );
-  const json = (await response.json()) as {
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-  };
-  if (!json.access_token || !json.refresh_token || typeof json.expires_in !== "number")
+  const json = await response.json();
+  if (!Check(TokenResponseSchema, json) || !json.access_token || !json.refresh_token)
     throw new Error(
       `OpenAI Codex token ${operation} response missing fields: ${JSON.stringify(json)}`,
     );
@@ -278,8 +306,8 @@ export async function parseOpenAICodexDeviceAuthPollResponse(
   response: Response,
 ): Promise<OAuthDeviceCodePollResult<DeviceAuthToken>> {
   if (response.ok) {
-    const json = (await response.json()) as Partial<DeviceAuthToken> | null;
-    return json?.authorization_code && json.code_verifier
+    const json = await response.json();
+    return Check(DeviceAuthTokenSchema, json) && json.authorization_code && json.code_verifier
       ? {
           status: "complete",
           value: { authorization_code: json.authorization_code, code_verifier: json.code_verifier },
@@ -292,11 +320,13 @@ export async function parseOpenAICodexDeviceAuthPollResponse(
   if (response.status === 403 || response.status === 404) return { status: "pending" };
 
   const responseBody = await response.text().catch(() => "");
-  let errorCode: unknown;
+  let errorCode: string | undefined;
   try {
-    const json = JSON.parse(responseBody) as { error?: string | { code?: string } } | null;
-    const error = json?.error;
-    errorCode = typeof error === "object" ? error?.code : error;
+    const json: object | null = JSON.parse(responseBody);
+    if (Check(DeviceAuthErrorSchema, json)) {
+      const error = json.error;
+      errorCode = Check(Type.String(), error) ? error : error?.code;
+    }
   } catch {}
   if (errorCode === "deviceauth_authorization_pending") return { status: "pending" };
   if (errorCode === "slow_down") return { status: "slow_down" };
@@ -318,19 +348,14 @@ async function loginDeviceCode(callbacks: OAuthCallbacks): Promise<OAuthCredenti
     throw new Error(
       `OpenAI Codex device code request failed with status ${response.status}: ${await response.text().catch(() => response.statusText)}`,
     );
-  const json = (await response.json()) as {
-    device_auth_id?: string;
-    user_code?: string;
-    interval?: number | string;
-  };
-  const intervalSeconds =
-    typeof json.interval === "string" ? Number(json.interval.trim()) : json.interval;
-  if (
-    !json.device_auth_id ||
-    !json.user_code ||
-    typeof intervalSeconds !== "number" ||
-    !Number.isFinite(intervalSeconds)
-  )
+  const json = await response.json();
+  if (!Check(DeviceCodeResponseSchema, json)) {
+    throw new Error(`Invalid OpenAI Codex device code response: ${JSON.stringify(json)}`);
+  }
+  const intervalSeconds = Check(Type.String(), json.interval)
+    ? Number(json.interval.trim())
+    : json.interval;
+  if (!json.device_auth_id || !json.user_code || !Number.isFinite(intervalSeconds))
     throw new Error(`Invalid OpenAI Codex device code response: ${JSON.stringify(json)}`);
   callbacks.onDeviceCode({
     userCode: json.user_code,

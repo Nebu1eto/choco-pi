@@ -1,3 +1,8 @@
+import { conditionalProperties } from "../adapter/runtime-values.ts";
+import { JsonObjectSchema } from "../adapter/runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "../adapter/runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { createHash } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -35,12 +40,12 @@ const weeklyUsageCache = new Map<
 >();
 const weeklyUsageKeyByModel = new WeakMap<RuntimeModel, string>();
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is JsonObject {
+  return Value.Check(JsonObjectSchema, value);
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+function stringValue(value: BoundaryValue): string | undefined {
+  return Value.Check(Type.String(), value) && value.trim().length > 0 ? value : undefined;
 }
 
 export function buildCodexUsageUrl(): string {
@@ -59,7 +64,9 @@ function extractAccountId(token: string): string | undefined {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return undefined;
-    const payload = JSON.parse(Buffer.from(parts[1] ?? "", "base64").toString("utf8")) as unknown;
+    const payload: BoundaryValue = JSON.parse(
+      Buffer.from(parts[1] ?? "", "base64").toString("utf8"),
+    );
     const authClaims = isRecord(payload) ? payload[JWT_CLAIM_PATH]! : undefined;
     const accountId = isRecord(authClaims) ? authClaims["chatgpt_account_id"]! : undefined;
     return stringValue(accountId);
@@ -121,7 +128,7 @@ async function fetchCodexRateLimitResetCreditsWithHeaders(
     const response = await fetch(buildCodexRateLimitResetCreditsUrl(), {
       method: "GET",
       headers,
-      ...(signal ? { signal } : {}),
+      ...conditionalProperties(Boolean(signal), { signal }),
     });
     if (!response.ok) return undefined;
     return parseCodexRateLimitResetCreditsPayload(JSON.parse(await response.text()));
@@ -139,7 +146,7 @@ async function fetchCodexUsageWithHeaders(
   const response = await fetch(buildCodexUsageUrl(), {
     method: "GET",
     headers,
-    ...(signal ? { signal } : {}),
+    ...conditionalProperties(Boolean(signal), { signal }),
   });
   const text = await response.text();
   if (!response.ok)
@@ -223,7 +230,7 @@ function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 export function createCodexRateLimitResetRedeemRequestId(): string {
-  return typeof globalThis.crypto?.randomUUID === "function"
+  return Value.Check(Type.Function([], Type.Unknown()), globalThis.crypto?.randomUUID)
     ? globalThis.crypto.randomUUID()
     : `pi_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
@@ -246,7 +253,7 @@ export async function consumeCodexRateLimitResetCredit(
     method: "POST",
     headers,
     body: JSON.stringify({ redeem_request_id: redeemRequestId }),
-    ...(ctx.signal ? { signal: ctx.signal } : {}),
+    ...conditionalProperties(Boolean(ctx.signal), { signal: ctx.signal }),
   });
   const text = await response.text();
   if (!response.ok)

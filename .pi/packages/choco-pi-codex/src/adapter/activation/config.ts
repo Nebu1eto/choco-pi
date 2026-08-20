@@ -1,3 +1,8 @@
+import { conditionalProperties } from "../runtime-values.ts";
+import { JsonObjectSchema } from "../runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { normalizeExecutionMode, type ExecutionMode } from "./execution-mode.ts";
 
 export type CodexVerbosity = "low" | "medium" | "high";
@@ -163,84 +168,85 @@ export const DEFAULT_CODEX_CONVERSION_CONFIG: CodexConversionConfig = {
   },
 };
 
-export function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+export function isObject(value: BoundaryValue): value is JsonObject {
+  return Value.Check(JsonObjectSchema, value);
 }
 
-export function normalizeAllProvidersMode(value: unknown): AllProvidersMode | undefined {
+export function normalizeAllProvidersMode(value: BoundaryValue): AllProvidersMode | undefined {
   if (value === true) return "on";
   if (value === false) return "off";
   return value === "off" || value === "on" || value === "extras" ? value : undefined;
 }
 
-export function normalizeCodexVerbosity(value: unknown): CodexVerbosity | undefined {
-  if (typeof value !== "string") return undefined;
+export function normalizeCodexVerbosity(value: BoundaryValue): CodexVerbosity | undefined {
+  if (!Value.Check(Type.String(), value)) return undefined;
   const normalized = value.trim().toLowerCase();
   return normalized === "low" || normalized === "medium" || normalized === "high"
     ? normalized
     : undefined;
 }
 
-export function normalizeCacheDiagnosticsMode(value: unknown): CacheDiagnosticsMode | undefined {
+export function normalizeCacheDiagnosticsMode(
+  value: BoundaryValue,
+): CacheDiagnosticsMode | undefined {
   return value === "off" || value === "status" || value === "status-and-log" ? value : undefined;
 }
 
-export function normalizeWebSearchModel(value: unknown): WebSearchModel | undefined {
-  if (typeof value !== "string") return undefined;
-  return (WEB_SEARCH_MODELS as readonly string[]).includes(value)
-    ? (value as WebSearchModel)
-    : undefined;
+export function normalizeWebSearchModel(value: BoundaryValue): WebSearchModel | undefined {
+  return WEB_SEARCH_MODELS.find((model) => model === value);
 }
 
 export function normalizeV2UserMessageRetention(
-  value: unknown,
+  value: BoundaryValue,
 ): V2UserMessageRetention | undefined {
   return value === 16 || value === 32 || value === 64 ? value : undefined;
 }
 
-export function normalizeDictationShortcutMode(value: unknown): DictationShortcutMode | undefined {
+export function normalizeDictationShortcutMode(
+  value: BoundaryValue,
+): DictationShortcutMode | undefined {
   return value === "push" || value === "toggle" ? value : undefined;
 }
 
-export function normalizeRealtimeV3Voice(value: unknown): RealtimeV3Voice | undefined {
-  return typeof value === "string"
+export function normalizeRealtimeV3Voice(value: BoundaryValue): RealtimeV3Voice | undefined {
+  return Value.Check(Type.String(), value)
     ? REALTIME_V3_VOICES.find((voice) => voice === value)
     : undefined;
 }
 
-export function normalizeProviderList(value: unknown): string[] {
+export function normalizeProviderList(value: BoundaryValue): string[] {
   if (!Array.isArray(value)) return [];
   return [
     ...new Set(
       value
-        .filter((entry): entry is string => typeof entry === "string")
+        .filter((entry): entry is string => Value.Check(Type.String(), entry))
         .map((entry) => entry.trim().toLowerCase())
         .filter(Boolean),
     ),
   ];
 }
 
-function bool(value: unknown, fallback: boolean): boolean {
-  return typeof value === "boolean" ? value : fallback;
+function bool(value: BoundaryValue, fallback: boolean): boolean {
+  return Value.Check(Type.Boolean(), value) ? value : fallback;
 }
 
-function stringValue(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+function stringValue(value: BoundaryValue, fallback: string): string {
+  return Value.Check(Type.String(), value) && value.trim() ? value.trim() : fallback;
 }
 
-function optionalString(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
+function optionalString(value: BoundaryValue): string | undefined {
+  if (!Value.Check(Type.String(), value)) return undefined;
   const normalized = value.trim();
   return normalized && Buffer.byteLength(normalized) <= 512 ? normalized : undefined;
 }
 
 function integerInRange(
-  value: unknown,
+  value: BoundaryValue,
   fallback: number,
   minimum: number,
   maximum: number,
 ): number {
-  return typeof value === "number" &&
+  return Value.Check(Type.Number(), value) &&
     Number.isSafeInteger(value) &&
     value >= minimum &&
     value <= maximum
@@ -248,25 +254,25 @@ function integerInRange(
     : fallback;
 }
 
-function normalizeVoiceContextModel(value: unknown): VoiceContextModel | undefined {
+function normalizeVoiceContextModel(value: BoundaryValue): VoiceContextModel | undefined {
   if (!isObject(value)) return undefined;
   const provider = optionalString(value["provider"]);
   const modelId = optionalString(value["modelId"]);
   return provider && modelId ? { provider, modelId } : undefined;
 }
 
-export function normalizeVoiceContextReasoning(value: unknown): VoiceContextReasoning {
-  return typeof value === "string" &&
-    (VOICE_CONTEXT_REASONING_LEVELS as readonly string[]).includes(value)
-    ? (value as VoiceContextReasoning)
-    : DEFAULT_VOICE_CONTEXT_REASONING;
+export function normalizeVoiceContextReasoning(value: BoundaryValue): VoiceContextReasoning {
+  return (
+    VOICE_CONTEXT_REASONING_LEVELS.find((reasoning) => reasoning === value) ??
+    DEFAULT_VOICE_CONTEXT_REASONING
+  );
 }
 
-export function normalizeCustomRustBinariesDir(value: unknown): string {
+export function normalizeCustomRustBinariesDir(value: BoundaryValue): string {
   return optionalString(value) ?? "";
 }
 
-export function normalizeCodexConversionConfig(value: unknown): CodexConversionConfig {
+export function normalizeCodexConversionConfig(value: BoundaryValue): CodexConversionConfig {
   if (!isObject(value)) return structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);
   const prompt = isObject(value["prompt"]) ? value["prompt"] : {};
   const scope = isObject(value["scope"]) ? value["scope"] : {};
@@ -373,7 +379,7 @@ export function normalizeCodexConversionConfig(value: unknown): CodexConversionC
         MIN_NOTEBOOK_HEAP_MIB,
         MAX_NOTEBOOK_HEAP_MIB,
       ),
-      ...(notebookProfile ? { profile: notebookProfile } : {}),
+      ...conditionalProperties(Boolean(notebookProfile), { profile: notebookProfile }),
     },
     voice: {
       v3Voice:
@@ -413,10 +419,10 @@ export function normalizeCodexConversionConfig(value: unknown): CodexConversionC
       dictationShortcutMode:
         normalizeDictationShortcutMode(voice["dictationShortcutMode"]) ??
         DEFAULT_CODEX_CONVERSION_CONFIG.voice.dictationShortcutMode,
-      ...(contextModel ? { contextModel } : {}),
+      ...conditionalProperties(Boolean(contextModel), { contextModel }),
       contextReasoning: normalizeVoiceContextReasoning(voice["contextReasoning"]),
-      ...(inputDevice ? { inputDevice } : {}),
-      ...(outputDevice ? { outputDevice } : {}),
+      ...conditionalProperties(Boolean(inputDevice), { inputDevice }),
+      ...conditionalProperties(Boolean(outputDevice), { outputDevice }),
     },
     openai: {
       fast: bool(openai["fast"], DEFAULT_CODEX_CONVERSION_CONFIG.openai["fast"]),
@@ -449,7 +455,7 @@ export function normalizeCodexConversionConfig(value: unknown): CodexConversionC
   };
 }
 
-function normalizeNotebookProfile(value: unknown): string | undefined {
+function normalizeNotebookProfile(value: BoundaryValue): string | undefined {
   const name = optionalString(value);
   return name && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name) ? name : undefined;
 }

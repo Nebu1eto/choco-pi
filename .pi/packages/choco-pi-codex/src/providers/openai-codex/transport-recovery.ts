@@ -9,6 +9,8 @@ import {
   type Model,
   type Transport,
 } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import type { CodexConversionConfig } from "../../adapter/activation/config.ts";
 import { createGrammarToolInputProperties } from "../constrained-sampling.ts";
 import {
@@ -70,10 +72,12 @@ import {
 } from "./turn-state.ts";
 import type {
   CanonicalHistoryDecision,
+  CodexDiagnosticsEvent,
   CodexDiagnosticsLane,
   CodexDiagnosticsSink,
   CodexProviderStreamOptions,
   OpenAICodexStreamOptions,
+  ProviderOutputItem,
   ResponsesBody,
 } from "./types.ts";
 import { createInitialAssistantMessage } from "./types.ts";
@@ -97,6 +101,8 @@ import {
   validateCanonicalSessionRequest,
 } from "./session-continuity.ts";
 
+const CompactionTriggerSchema = Type.Object({ type: Type.Literal("compaction_trigger") });
+
 export type CodexProviderRuntimeConfig = Pick<CodexConversionConfig, "openai" | "executionMode"> &
   Partial<Pick<CodexConversionConfig, "compaction">>;
 
@@ -116,12 +122,7 @@ export interface CodexTransportRecoveryDependencies {
 }
 
 function diagnosticsLane(body: ResponsesBody): Exclude<CodexDiagnosticsLane, "prewarm"> {
-  return body.input.some(
-    (item) =>
-      item &&
-      typeof item === "object" &&
-      (item as { type?: unknown }).type === "compaction_trigger",
-  )
+  return body.input.some((item) => Check(CompactionTriggerSchema, item))
     ? "compaction"
     : "response";
 }
@@ -157,7 +158,7 @@ function codexStreamMaxRetries(options: OpenAICodexStreamOptions | undefined): n
   return Math.min(Math.floor(configured), MAX_STREAM_MAX_RETRIES);
 }
 
-function rateLimitRecoveryBudgetError(error: unknown): NonRetryableProviderError {
+function rateLimitRecoveryBudgetError<T>(error: T): NonRetryableProviderError {
   const requestedDelayMs = codexStreamRetryDelay(error);
   const detail =
     requestedDelayMs === undefined
@@ -272,16 +273,12 @@ export function createCodexTransportStream<TApi extends Api>(
     runtimeConfig?.openai,
     options?.sessionId,
   );
-  const effectiveOptions: OpenAICodexStreamOptions | undefined = options
-    ? {
-        ...options,
-        transport: effectiveTransport,
-        grammarToolInputProperties,
-        ...(runtimeConfig?.compaction?.responsesCompaction
-          ? { headers: withRemoteCompactionV2Feature(options.headers) }
-          : {}),
-      }
+  const effectiveOptions: OpenAICodexStreamOptions = options
+    ? { ...options, transport: effectiveTransport, grammarToolInputProperties }
     : { transport: effectiveTransport, grammarToolInputProperties };
+  if (options && runtimeConfig?.compaction?.responsesCompaction) {
+    effectiveOptions.headers = withRemoteCompactionV2Feature(options.headers);
+  }
   const stream = createAssistantMessageEventStream();
 
   (async () => {
@@ -289,7 +286,7 @@ export function createCodexTransportStream<TApi extends Api>(
     const diagnostics = noThrowCodexDiagnosticsSink(deps.getDiagnostics?.());
     let lane: Exclude<CodexDiagnosticsLane, "prewarm"> = "response";
     let diagnosticsFailureRecorded = false;
-    const recordFailure = (transport: "websocket" | "sse", error: unknown) => {
+    const recordFailure = <T>(transport: "websocket" | "sse", error: T) => {
       if (!diagnostics) return;
       diagnosticsFailureRecorded = true;
       diagnostics({ type: "failure", lane, transport, failure: codexDiagnosticsFailure(error) });
@@ -324,7 +321,7 @@ export function createCodexTransportStream<TApi extends Api>(
       const routing = resolveCodexRequestRouting({
         model: body.model,
         fast: runtimeConfig?.openai.fast === true,
-        serviceTier: body.service_tier,
+        serviceTier: body.service_tier === null ? undefined : body.service_tier,
         normalOriginator: runtimeConfig?.openai.harnessIdentifierHeader
           ? PI_CODEX_CONVERSION_ORIGINATOR
           : "pi",
@@ -358,7 +355,7 @@ export function createCodexTransportStream<TApi extends Api>(
       let overloadRetryCount = 0;
       let overloadWaitedMs = 0;
       let rateLimitWaitedMs = 0;
-      const planRetry = (error: unknown, retryCount: number) => {
+      const planRetry = <T>(error: T, retryCount: number) => {
         const overload = isCodexOverloadError(error);
         const rateLimit = isCodexRateLimitError(error);
         const fallbackDelayMs = codexStreamRetryDelayMs(retryCount);
@@ -465,14 +462,15 @@ export function createCodexTransportStream<TApi extends Api>(
               !overloadBudgetExhausted &&
               !rateLimitBudgetExhausted
             ) {
-              diagnostics?.({
+              const retryEvent: Extract<CodexDiagnosticsEvent, { type: "retry" }> = {
                 type: "retry",
                 lane,
                 transport: "websocket",
                 attempt: attempt + 2,
-                ...(retryPlan.delayMs !== undefined ? { delayMs: retryPlan.delayMs } : {}),
                 failure: codexDiagnosticsFailure(error),
-              });
+              };
+              if (retryPlan.delayMs !== undefined) retryEvent.delayMs = retryPlan.delayMs;
+              diagnostics?.(retryEvent);
               await waitBeforeRetry(retryPlan);
               continue;
             }
@@ -520,7 +518,7 @@ export function createCodexTransportStream<TApi extends Api>(
       );
       for (let attempt = 0; attempt <= streamMaxRetries; attempt++) {
         if (attempt > 0) output = createInitialAssistantMessage(model);
-        const responseItems: unknown[] = [];
+        const responseItems: ProviderOutputItem[] = [];
         try {
           if (effectiveOptions?.compactionDiagnostics) {
             Object.assign(effectiveOptions.compactionDiagnostics, {
@@ -531,7 +529,7 @@ export function createCodexTransportStream<TApi extends Api>(
               sentInputItems: body.input.length,
             });
           }
-          diagnostics?.({
+          const requestEvent: Extract<CodexDiagnosticsEvent, { type: "request" }> = {
             type: "request",
             lane,
             transport: "sse",
@@ -539,11 +537,12 @@ export function createCodexTransportStream<TApi extends Api>(
             fullInputItems: body.input.length,
             sentInputItems: body.input.length,
             model: body.model,
-            ...(canonicalHistory ? { canonicalHistory } : {}),
-            ...(effectiveOptions?.compactionDiagnostics
-              ? { compaction: structuredClone(effectiveOptions.compactionDiagnostics) }
-              : {}),
-          });
+          };
+          if (canonicalHistory) requestEvent.canonicalHistory = canonicalHistory;
+          if (effectiveOptions.compactionDiagnostics) {
+            requestEvent.compaction = structuredClone(effectiveOptions.compactionDiagnostics);
+          }
+          diagnostics?.(requestEvent);
           const response = await openCodexSSE(
             model,
             sseBody,
@@ -609,14 +608,15 @@ export function createCodexTransportStream<TApi extends Api>(
             !overloadBudgetExhausted &&
             !rateLimitBudgetExhausted
           ) {
-            diagnostics?.({
+            const retryEvent: Extract<CodexDiagnosticsEvent, { type: "retry" }> = {
               type: "retry",
               lane,
               transport: "sse",
               attempt: attempt + 2,
-              ...(retryPlan.delayMs !== undefined ? { delayMs: retryPlan.delayMs } : {}),
               failure: codexDiagnosticsFailure(error),
-            });
+            };
+            if (retryPlan.delayMs !== undefined) retryEvent.delayMs = retryPlan.delayMs;
+            diagnostics?.(retryEvent);
             await waitBeforeRetry(retryPlan);
             continue;
           }
@@ -636,7 +636,7 @@ export function createCodexTransportStream<TApi extends Api>(
         recordFailure(effectiveTransport === "sse" ? "sse" : "websocket", error);
       stream.push({
         type: "error",
-        reason: (effectiveOptions?.signal?.aborted ? "aborted" : "error") as "aborted" | "error",
+        reason: effectiveOptions.signal?.aborted ? "aborted" : "error",
         error: createErrorMessage(output, error, !!effectiveOptions?.signal?.aborted),
       });
       stream.end();

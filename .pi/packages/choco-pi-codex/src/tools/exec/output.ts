@@ -1,6 +1,12 @@
 import { randomBytes } from "node:crypto";
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
+const ESCAPE = String.fromCodePoint(0x1b);
+const BELL = String.fromCodePoint(0x07);
+const OSC_SEQUENCE = new RegExp(`${ESCAPE}\\][^${BELL}${ESCAPE}]*(?:${BELL}|${ESCAPE}\\\\)`, "g");
+const DCS_SEQUENCE = new RegExp(`${ESCAPE}[P_X^][\\s\\S]*?${ESCAPE}\\\\`, "g");
+const CSI_SEQUENCE = new RegExp(`${ESCAPE}\\[[0-?]*[ -/]*[@-~]`, "g");
+const TWO_BYTE_ESCAPE = new RegExp(`${ESCAPE}[@-_]`, "g");
 
 export interface ExecOutputSessionState {
   buffer: string;
@@ -8,18 +14,32 @@ export interface ExecOutputSessionState {
   emittedOffset: number;
 }
 
+export interface TruncatedTail {
+  output: string;
+  removed: number;
+}
+
+export interface TruncatedOutput {
+  output: string;
+  original_token_count?: number | undefined;
+}
+
+interface OutputSlice {
+  text: string;
+  originalCharCount: number;
+  endOffset: number;
+}
+
 function maxCharsForTokens(maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS): number {
   return Math.max(256, maxOutputTokens * 4);
 }
 
 function stripTerminalControlSequences(text: string): string {
-  const withoutOscAndDcs = text
-    .replace(/\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g, "")
-    .replace(/\u001B[P_X^][\s\S]*?\u001B\\/g, "");
+  const withoutOscAndDcs = text.replace(OSC_SEQUENCE, "").replace(DCS_SEQUENCE, "");
   return withoutOscAndDcs
-    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/\u001B[@-_]/g, "")
-    .replaceAll("\u001B", "");
+    .replace(CSI_SEQUENCE, "")
+    .replace(TWO_BYTE_ESCAPE, "")
+    .replaceAll(ESCAPE, "");
 }
 
 function sanitizeBinaryOutput(text: string): string {
@@ -76,10 +96,7 @@ export function renderTerminalOutput(text: string): string {
   return committed + line.join("");
 }
 
-export function truncateToTail(
-  text: string,
-  maxChars: number,
-): { output: string; removed: number } {
+export function truncateToTail(text: string, maxChars: number): TruncatedTail {
   let start = Math.max(0, text.length - maxChars);
   if (start > 0 && start < text.length && /[\uDC00-\uDFFF]/.test(text[start]!)) start += 1;
   return { output: text.slice(start), removed: start };
@@ -93,7 +110,7 @@ export function truncateOutput(
   text: string,
   maxOutputTokens?: number,
   originalCharCount = text.length,
-): { output: string; original_token_count?: number | undefined } {
+): TruncatedOutput {
   if (text.length === 0 && originalCharCount === 0) return { output: "" };
   const maxChars = maxCharsForTokens(maxOutputTokens);
   const originalTokenCount = Math.ceil(Math.max(text.length, originalCharCount) / 4);
@@ -104,10 +121,7 @@ export function truncateOutput(
   };
 }
 
-function outputSince(
-  session: ExecOutputSessionState,
-  offset: number,
-): { text: string; originalCharCount: number; endOffset: number } {
+function outputSince(session: ExecOutputSessionState, offset: number): OutputSlice {
   const endOffset = session.bufferStartOffset + session.buffer.length;
   const startOffset = Math.max(offset, session.bufferStartOffset);
   return {

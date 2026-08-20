@@ -2,7 +2,11 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const TOOL_DIRS: Record<string, string> = {
+interface ToolDirectoryMap {
+  [toolName: string]: string | undefined;
+}
+
+const TOOL_DIRS: ToolDirectoryMap = {
   apply_patch: "apply-patch",
   exec_bridge: "exec",
   imagegen: "imagegen",

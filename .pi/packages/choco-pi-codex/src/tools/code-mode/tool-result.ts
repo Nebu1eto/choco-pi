@@ -1,5 +1,22 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isNumberValue, isObjectValue, isStringValue } from "../boundary.js";
 import { DEFAULT_CODE_MODE_OUTPUT_TOKENS, MAX_CODE_MODE_OUTPUT_TOKENS } from "./host-protocol.js";
-import type { NotebookMemoryUsage, RuntimeContentItem, RuntimeResponse } from "./types.js";
+import type {
+  NotebookMemoryUsage,
+  RuntimeContentItem,
+  RuntimeResponse,
+  RuntimeToolTrace,
+} from "./types.js";
+
+interface CodeModeToolResultDetails {
+  codeMode: true;
+  cellId: string;
+  status: RuntimeResponse["kind"];
+  traces?: RuntimeToolTrace[] | undefined;
+  droppedTraceCount?: number | undefined;
+  notebookMemory?: NotebookMemoryUsage | undefined;
+  scriptError?: string | undefined;
+}
 
 const MAX_OUTPUT_IMAGE_COUNT = 4;
 const MAX_OUTPUT_IMAGE_CHARS = 16 * 1024 * 1024;
@@ -50,20 +67,21 @@ export function toCodeModeToolResult(response: RuntimeResponse, maxTokens?: numb
     MAX_CODE_MODE_OUTPUT_TOKENS,
     Math.max(1, maxTokens ?? response.maxOutputTokens ?? DEFAULT_CODE_MODE_OUTPUT_TOKENS),
   );
+  const details: CodeModeToolResultDetails = {
+    codeMode: true,
+    cellId: response.cellId,
+    status: response.kind,
+  };
+  if (response.traces) details.traces = response.traces;
+  if (response.droppedTraceCount) details.droppedTraceCount = response.droppedTraceCount;
+  if (response.notebookMemory) details.notebookMemory = response.notebookMemory;
+  if (scriptError) details.scriptError = scriptError;
   return {
     content: [
       { type: "text" as const, text: status },
       ...truncateTextContent(output, outputTokens * 4),
     ],
-    details: {
-      codeMode: true,
-      cellId: response.cellId,
-      status: response.kind,
-      ...(response.traces ? { traces: response.traces } : {}),
-      ...(response.droppedTraceCount ? { droppedTraceCount: response.droppedTraceCount } : {}),
-      ...(response.notebookMemory ? { notebookMemory: response.notebookMemory } : {}),
-      ...(scriptError ? { scriptError } : {}),
-    },
+    details,
   };
 }
 
@@ -108,13 +126,8 @@ export function formatRunningExecSessionGuidance(sessionId: number): string {
   return `Session ${sessionId} still running. Resume near completion with tools.write_stdin and an appropriate yield_time_ms; do not use wait`;
 }
 
-function numericSessionId(value: unknown): number | undefined {
-  if (
-    value &&
-    typeof value === "object" &&
-    "session_id" in value &&
-    typeof value.session_id === "number"
-  )
+function numericSessionId(value: BoundaryValue): number | undefined {
+  if (value && isObjectValue(value) && "session_id" in value && isNumberValue(value.session_id))
     return value.session_id;
   return undefined;
 }
@@ -122,9 +135,9 @@ function numericSessionId(value: unknown): number | undefined {
 function toPiContent(
   item: RuntimeContentItem,
 ): { type: "text"; text: string } | { type: "image"; data: string; mimeType: string } | undefined {
-  if (item.type === "input_text" && typeof item.text === "string")
+  if (item.type === "input_text" && isStringValue(item.text))
     return { type: "text", text: item.text };
-  if (item.type === "input_image" && typeof item.image_url === "string") {
+  if (item.type === "input_image" && isStringValue(item.image_url)) {
     const match = item.image_url.match(/^data:([^;,]+);base64,(.+)$/s);
     if (match) return { type: "image", mimeType: match[1]!, data: match[2]! };
   }
@@ -139,7 +152,7 @@ function truncateTextContent<T extends { type: string; text?: string }>(
   let truncated = false;
   const output: T[] = [];
   for (const item of content) {
-    if (item.type !== "text" || typeof item.text !== "string") {
+    if (item.type !== "text" || !isStringValue(item.text)) {
       output.push(item);
       continue;
     }

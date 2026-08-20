@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isObjectValue, isStringValue } from "../boundary.js";
 import { type Component, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import {
   imagesByMimeType,
@@ -61,7 +63,7 @@ function renderCodeModeResult(
       ? content.slice(1)
       : content;
   const text = renderedContent
-    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .filter((item) => item.type === "text" && isStringValue(item.text))
     .map((item) => item.text)
     .join("\n");
   const scriptErrorRenderedByTrace = Boolean(
@@ -76,7 +78,7 @@ function renderCodeModeResult(
   const renderedText = outputText ? theme.fg(tone, outputText) : "";
   const images = renderedContent.filter(
     (item): item is RenderedToolContent & { data: string; mimeType: string } =>
-      item.type === "image" && typeof item.data === "string" && typeof item.mimeType === "string",
+      item.type === "image" && isStringValue(item.data) && isStringValue(item.mimeType),
   );
   const emittedImages = imagesByMimeType(images);
   const showOutput =
@@ -121,8 +123,9 @@ function renderCodeModeResult(
   return container;
 }
 
-function asDetails(value: unknown): CodeModeResultDetails {
-  return value && typeof value === "object" ? (value as CodeModeResultDetails) : {};
+function asDetails(value: BoundaryValue): CodeModeResultDetails {
+  // SAFETY: Registered code-mode tools are the sole producers of these details and construct CodeModeResultDetails; the object check rejects absent foreign details.
+  return value && isObjectValue(value) ? (value as CodeModeResultDetails) : {};
 }
 
 function statusText(details: CodeModeResultDetails): string {

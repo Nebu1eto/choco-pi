@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { CodexConversionConfig } from "../adapter/activation/config.ts";
@@ -46,8 +48,9 @@ export function registerCodexUi(
   pi.registerMessageRenderer<{ kind?: "usage" | undefined }>(
     NATIVE_COMPACTION_DISPLAY_MESSAGE_TYPE,
     (message, _options, theme) => {
-      const content =
-        typeof message.content === "string" ? message.content : NATIVE_COMPACTION_DISPLAY_TEXT;
+      const content = Value.Check(Type.String(), message.content)
+        ? message.content
+        : NATIVE_COMPACTION_DISPLAY_TEXT;
       return renderNativeCompaction(content, message.details?.kind, theme);
     },
   );
@@ -55,7 +58,7 @@ export function registerCodexUi(
     NATIVE_COMPACTION_DISPLAY_MESSAGE_TYPE,
     (entry, _options, theme) => {
       return renderNativeCompaction(
-        typeof entry.data?.content === "string"
+        Value.Check(Type.String(), entry.data?.content)
           ? entry.data.content
           : NATIVE_COMPACTION_DISPLAY_TEXT,
         entry.data?.kind,

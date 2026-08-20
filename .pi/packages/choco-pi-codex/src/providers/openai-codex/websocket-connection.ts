@@ -1,9 +1,16 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import {
   DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS,
   WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE,
 } from "./constants.ts";
 import { headersToRecord } from "./header-record.ts";
-import type { ProviderEnv, WebSocketConstructorLike, WebSocketLike } from "./types.ts";
+import type {
+  ProviderEnv,
+  WebSocketConstructorLike,
+  WebSocketEvent,
+  WebSocketLike,
+} from "./types.ts";
 
 const dynamicImport = (specifier: string) => import(specifier);
 
@@ -18,13 +25,30 @@ const PROXY_ENV_KEYS = new Set([
   "npm_config_proxy",
 ]);
 
-type GetProxyForUrl = (url: string | object | URL) => string;
+type GetProxyForUrl = (url: string) => string;
+
+const StringSchema = Type.String();
+const NumberSchema = Type.Number();
+const FunctionSchema = Type.Function([], Type.Unknown());
+const ErrorRecordType = Type.Record(Type.String(), Type.Unknown());
+type ErrorRecord = Static<typeof ErrorRecordType>;
+const ErrorRecordSchema = Type.Unsafe<ErrorRecord>({ type: "object" });
+const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.Unknown()) });
+const ErrorEventSchema = Type.Object({
+  message: Type.Optional(Type.Unknown()),
+  error: Type.Optional(Type.Unknown()),
+});
+const CloseEventSchema = Type.Object({
+  code: Type.Optional(Type.Unknown()),
+  reason: Type.Optional(Type.Unknown()),
+});
 
 let proxyFromEnvPromise: Promise<GetProxyForUrl> | undefined;
 async function getProxyFromEnv(): Promise<GetProxyForUrl> {
-  proxyFromEnvPromise ??= dynamicImport("proxy-from-env").then(
-    (module) => (module as { getProxyForUrl: GetProxyForUrl }).getProxyForUrl,
-  );
+  proxyFromEnvPromise ??= dynamicImport("proxy-from-env").then((module) => {
+    const getProxyForUrl: GetProxyForUrl = module.getProxyForUrl;
+    return getProxyForUrl;
+  });
   return proxyFromEnvPromise;
 }
 
@@ -33,7 +57,7 @@ async function getWebSocketConstructor(
   url: string,
   env?: ProviderEnv,
 ): Promise<WebSocketConstructorLike | null> {
-  if (typeof process !== "undefined" && process.versions["bun"]!) {
+  if (globalThis.process !== undefined && process.versions["bun"]!) {
     if (!env && _cachedWebSocket) return _cachedWebSocket;
     const getProxyForUrl = await getProxyFromEnv();
     const WebSocketWithProxy = class extends WebSocket {
@@ -43,10 +67,13 @@ async function getWebSocketConstructor(
       ) {
         const proxy = resolveWebSocketProxyForTargetSync(getProxyForUrl, url, env);
         const baseOptions =
-          Array.isArray(options) || typeof options === "string"
+          Array.isArray(options) || Check(StringSchema, options)
             ? { protocols: options }
             : { ...options };
-        super(url, { ...baseOptions, ...(proxy ? { proxy } : {}) } as never);
+        const socketOptions = proxy ? { ...baseOptions, proxy } : baseOptions;
+        // SAFETY: Bun's WebSocket constructor accepts this runtime-checked protocols/options union,
+        // including its proxy extension, although the host WebSocket overload omits that extension.
+        super(url, socketOptions as never);
       }
     };
     if (!env) _cachedWebSocket = WebSocketWithProxy;
@@ -55,25 +82,27 @@ async function getWebSocketConstructor(
   const getProxyForUrl = await getProxyFromEnv();
   const proxy = resolveWebSocketProxyForTargetSync(getProxyForUrl, url, env);
   if (!proxy) {
-    const ctor = (
-      globalThis as typeof globalThis & { WebSocket?: WebSocketConstructorLike | undefined }
-    ).WebSocket;
-    return typeof ctor === "function" ? ctor : null;
+    const ctor = globalThis.WebSocket;
+    if (!Check(FunctionSchema, ctor)) return null;
+    // SAFETY: The runtime function check establishes a WebSocket constructor; the adapter only
+    // relies on the standard send, close, readyState, and event-listener members.
+    return ctor as WebSocketConstructorLike;
   }
   const proxyUrl = proxy;
-  const { ProxyAgent, WebSocket: UndiciWebSocket } = (await dynamicImport(
-    "undici",
-  )) as typeof import("undici");
+  const undici: typeof import("undici") = await dynamicImport("undici");
+  const { ProxyAgent, WebSocket: UndiciWebSocket } = undici;
   const WebSocketWithProxy = class extends UndiciWebSocket {
     constructor(
       socketUrl: string,
       options?: { headers?: Record<string, string> | undefined } | string | string[],
     ) {
       const baseOptions =
-        Array.isArray(options) || typeof options === "string"
+        Array.isArray(options) || Check(StringSchema, options)
           ? { protocols: options }
           : { ...options };
       const dispatcher = new ProxyAgent(proxyUrl);
+      // SAFETY: Undici accepts dispatcher alongside the checked protocols/options union, while its
+      // public constructor overload does not expose this proxy-specific combination.
       super(socketUrl, { ...baseOptions, dispatcher } as never);
       let dispatcherClosed = false;
       const closeDispatcher = () => {
@@ -102,7 +131,7 @@ function scopedProxyEnv(env: ProviderEnv | undefined): Map<string, string> {
 }
 
 function withScopedProxyEnv<T>(env: ProviderEnv | undefined, run: () => T): T {
-  if (typeof process === "undefined") return run();
+  if (globalThis.process === undefined) return run();
   const scoped = scopedProxyEnv(env);
   if (scoped.size === 0) return run();
 
@@ -143,7 +172,7 @@ export async function resolveWebSocketProxyForTarget(
 }
 
 function getWebSocketReadyState(socket: WebSocketLike): number | undefined {
-  return typeof socket.readyState === "number" ? socket.readyState : undefined;
+  return socket.readyState;
 }
 
 export function isWebSocketReusable(socket: WebSocketLike): boolean {
@@ -159,20 +188,25 @@ export function closeWebSocketSilently(socket: WebSocketLike, code = 1000, reaso
   }
 }
 
+class NestedWebSocketError extends Error {
+  code?: string | number | undefined;
+}
+
 function nestedWebSocketError(error: Error): Error {
-  const wrapped = new Error(`WebSocket error: ${error.message}`, { cause: error }) as Error & {
-    code?: string | number | undefined;
-  };
+  const wrapped = new NestedWebSocketError(`WebSocket error: ${error.message}`, { cause: error });
   wrapped.name = "WebSocketError";
-  const code = (error as Error & { code?: unknown }).code;
-  if (typeof code === "string" || typeof code === "number") wrapped.code = code;
+  if (
+    Check(ErrorCodeSchema, error) &&
+    (Check(StringSchema, error.code) || Check(NumberSchema, error.code))
+  )
+    wrapped.code = error.code;
   return wrapped;
 }
 
-function webSocketHttpStatus(value: unknown, seen = new Set<unknown>()): number | undefined {
-  if (!value || typeof value !== "object" || seen.has(value)) return undefined;
+function webSocketHttpStatus<T>(value: T, seen = new Set<object>()): number | undefined {
+  if (!Check(ErrorRecordSchema, value) || seen.has(value)) return undefined;
   seen.add(value);
-  const record = value as Record<string, unknown>;
+  const record: ErrorRecord = value;
   for (const candidate of [
     record["status"],
     record["statusCode"],
@@ -180,8 +214,8 @@ function webSocketHttpStatus(value: unknown, seen = new Set<unknown>()): number 
     record["code"],
   ]) {
     const parsed =
-      typeof candidate === "string" && /^\d+$/.test(candidate) ? Number(candidate) : candidate;
-    if (typeof parsed === "number" && Number.isInteger(parsed) && parsed >= 100 && parsed <= 599)
+      Check(StringSchema, candidate) && /^\d+$/.test(candidate) ? Number(candidate) : candidate;
+    if (Check(NumberSchema, parsed) && Number.isInteger(parsed) && parsed >= 100 && parsed <= 599)
       return parsed;
   }
   return (
@@ -191,20 +225,20 @@ function webSocketHttpStatus(value: unknown, seen = new Set<unknown>()): number 
   );
 }
 
-function webSocketCloseCode(value: unknown, seen = new Set<unknown>()): number | undefined {
-  if (!value || typeof value !== "object" || seen.has(value)) return undefined;
+function webSocketCloseCode<T>(value: T, seen = new Set<object>()): number | undefined {
+  if (!Check(ErrorRecordSchema, value) || seen.has(value)) return undefined;
   seen.add(value);
-  const record = value as Record<string, unknown>;
+  const record: ErrorRecord = value;
   for (const candidate of [record["closeCode"], record["code"]]) {
     const parsed =
-      typeof candidate === "string" && /^\d+$/.test(candidate) ? Number(candidate) : candidate;
-    if (typeof parsed === "number" && Number.isInteger(parsed) && parsed >= 1000 && parsed <= 4999)
+      Check(StringSchema, candidate) && /^\d+$/.test(candidate) ? Number(candidate) : candidate;
+    if (Check(NumberSchema, parsed) && Number.isInteger(parsed) && parsed >= 1000 && parsed <= 4999)
       return parsed;
   }
   return webSocketCloseCode(record["error"], seen) ?? webSocketCloseCode(record["cause"], seen);
 }
 
-function webSocketStatus(error: unknown): number | undefined {
+function webSocketStatus<T>(error: T): number | undefined {
   const structured = webSocketHttpStatus(error);
   if (structured !== undefined) return structured;
   const message = error instanceof Error ? error.message : String(error);
@@ -215,43 +249,46 @@ function webSocketStatus(error: unknown): number | undefined {
   return match?.[1] ? Number(match[1]) : undefined;
 }
 
-export function isWebSocketUpgradeRequiredError(error: unknown): boolean {
+export function isWebSocketUpgradeRequiredError<T>(error: T): boolean {
   return webSocketStatus(error) === 426;
 }
 
-export function isWebSocketMessageTooBigError(error: unknown): boolean {
+export function isWebSocketMessageTooBigError<T>(error: T): boolean {
   if (webSocketCloseCode(error) === WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE) return true;
   const message = error instanceof Error ? error.message : String(error);
   return /(?:\b1009\b|message too big)/i.test(message);
 }
 
-export function isPermanentWebSocketError(error: unknown): boolean {
+export function isPermanentWebSocketError<T>(error: T): boolean {
   const status = webSocketStatus(error);
   return status === 400 || status === 429;
 }
 
-export function isWebSocketUnauthorizedError(error: unknown): boolean {
+export function isWebSocketUnauthorizedError<T>(error: T): boolean {
   return webSocketStatus(error) === 401;
 }
 
-export function extractWebSocketError(event: unknown): Error {
-  if (event && typeof event === "object") {
-    const message =
-      "message" in event ? (event as { message?: unknown | undefined }).message : undefined;
-    if (typeof message === "string" && message.length > 0) {
-      const error = new Error(message) as Error & { status?: number | undefined };
-      error.status = webSocketHttpStatus(event);
-      return error;
-    }
-    const nestedError =
-      "error" in event ? (event as { error?: unknown | undefined }).error : undefined;
-    if (nestedError instanceof Error && nestedError.message.length > 0)
-      return nestedWebSocketError(nestedError);
-    if (nestedError && typeof nestedError === "object" && "message" in nestedError) {
-      const nestedMessage = (nestedError as { message?: unknown | undefined }).message;
-      if (typeof nestedMessage === "string" && nestedMessage.length > 0)
-        return nestedWebSocketError(new Error(nestedMessage));
-    }
+class WebSocketStatusError extends Error {
+  status?: number | undefined;
+}
+
+export function extractWebSocketError<T>(event: T): Error {
+  if (!Check(ErrorEventSchema, event)) return new Error("WebSocket error");
+  if (Check(StringSchema, event.message) && event.message.length > 0) {
+    const error = new WebSocketStatusError(event.message);
+    error.status = webSocketHttpStatus(event);
+    return error;
+  }
+  const nestedError = event.error;
+  if (nestedError instanceof Error && nestedError.message.length > 0) {
+    return nestedWebSocketError(nestedError);
+  }
+  if (
+    Check(ErrorEventSchema, nestedError) &&
+    Check(StringSchema, nestedError.message) &&
+    nestedError.message.length > 0
+  ) {
+    return nestedWebSocketError(new Error(nestedError.message));
   }
   return new Error("WebSocket error");
 }
@@ -271,22 +308,19 @@ export class WebSocketCloseError extends Error {
   }
 }
 
-export function extractWebSocketCloseError(event: unknown): Error {
-  if (event && typeof event === "object") {
-    const code = "code" in event ? (event as { code?: unknown | undefined }).code : undefined;
-    const reason =
-      "reason" in event ? (event as { reason?: unknown | undefined }).reason : undefined;
-    const codeText = typeof code === "number" ? ` ${code}` : "";
-    let reasonText = typeof reason === "string" && reason.length > 0 ? ` ${reason}` : "";
-    if (!reasonText && code === WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE) {
-      reasonText = " message too big";
-    }
-    return new WebSocketCloseError(`WebSocket closed${codeText}${reasonText}`.trim(), {
-      code: typeof code === "number" ? code : undefined,
-      reason: typeof reason === "string" && reason.length > 0 ? reason : undefined,
-    });
+export function extractWebSocketCloseError<T>(event: T): Error {
+  if (!Check(CloseEventSchema, event)) return new Error("WebSocket closed");
+  const code = Check(NumberSchema, event.code) ? event.code : undefined;
+  const reason = Check(StringSchema, event.reason) ? event.reason : undefined;
+  const codeText = code === undefined ? "" : ` ${code}`;
+  let reasonText = reason ? ` ${reason}` : "";
+  if (!reasonText && code === WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE) {
+    reasonText = " message too big";
   }
-  return new Error("WebSocket closed");
+  return new WebSocketCloseError(`WebSocket closed${codeText}${reasonText}`.trim(), {
+    code,
+    reason: reason || undefined,
+  });
 }
 
 export async function connectWebSocket(
@@ -322,13 +356,13 @@ export async function connectWebSocket(
       cleanup();
       resolve(socket);
     };
-    const onError = (event: unknown) => {
+    const onError = (event: WebSocketEvent) => {
       if (settled) return;
       settled = true;
       cleanup();
       reject(extractWebSocketError(event));
     };
-    const onClose = (event: unknown) => {
+    const onClose = (event: WebSocketEvent) => {
       if (settled) return;
       settled = true;
       cleanup();

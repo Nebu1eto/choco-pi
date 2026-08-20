@@ -56,7 +56,11 @@ async function prepareCodexRequestBody<TApi extends Api>(
 ): Promise<ResponsesBody> {
   let body = buildRequestBody(model, context, options);
   const nextBody = await options?.onPayload?.(body, model);
-  if (nextBody !== undefined) body = nextBody as ResponsesBody;
+  if (nextBody !== undefined) {
+    // SAFETY: The provider payload hook receives a ResponsesBody and a defined replacement must
+    // preserve that same request representation for the host provider API.
+    body = nextBody as ResponsesBody;
+  }
   if (responsesLite) {
     body = isResponsesLiteRequest(body)
       ? namespaceExistingResponsesLiteRequest({ ...body, parallel_tool_calls: false })
@@ -109,7 +113,7 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
   const routing = resolveCodexRequestRouting({
     model: body.model,
     fast: runtimeConfig?.openai.fast === true,
-    serviceTier: body.service_tier,
+    serviceTier: body.service_tier === null ? undefined : body.service_tier,
     normalOriginator: runtimeConfig?.openai.harnessIdentifierHeader
       ? PI_CODEX_CONVERSION_ORIGINATOR
       : "pi",
@@ -152,6 +156,22 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
   }
 }
 
+type TransportDependencies = Parameters<typeof createCodexTransportStream>[3];
+
+function createTransportDependencies(
+  options: Parameters<typeof registerOpenAICodexCustomProvider>[1],
+): TransportDependencies {
+  const dependencies: TransportDependencies = {
+    prepareRequestBody: prepareCodexRequestBody,
+  };
+  if (options.getConfig) dependencies.getConfig = options.getConfig;
+  if (options.useResponsesLite) dependencies.useResponsesLite = options.useResponsesLite;
+  if (options.turnState) dependencies.turnState = options.turnState;
+  if (options.onPreparedPayload) dependencies.onPreparedPayload = options.onPreparedPayload;
+  if (options.getDiagnostics) dependencies.getDiagnostics = options.getDiagnostics;
+  return dependencies;
+}
+
 export function registerOpenAICodexCustomProvider(
   pi: ExtensionAPI,
   options: {
@@ -168,13 +188,11 @@ export function registerOpenAICodexCustomProvider(
     models: openAICodexModelsWithDaybreak(),
     oauth: openaiCodexNativeOAuthProvider,
     streamSimple: (model, context, streamOptions) =>
-      createCodexTransportStream(model, context, streamOptions, {
-        prepareRequestBody: prepareCodexRequestBody,
-        ...(options.getConfig ? { getConfig: options.getConfig } : {}),
-        ...(options.useResponsesLite ? { useResponsesLite: options.useResponsesLite } : {}),
-        ...(options.turnState ? { turnState: options.turnState } : {}),
-        ...(options.onPreparedPayload ? { onPreparedPayload: options.onPreparedPayload } : {}),
-        ...(options.getDiagnostics ? { getDiagnostics: options.getDiagnostics } : {}),
-      }),
+      createCodexTransportStream(
+        model,
+        context,
+        streamOptions,
+        createTransportDependencies(options),
+      ),
   });
 }

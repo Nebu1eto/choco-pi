@@ -1,3 +1,4 @@
+import { conditionalProperties } from "./runtime-values.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Tool } from "@earendil-works/pi-ai";
 import { CODE_MODE_EXEC_CONSTRAINED_SAMPLING } from "../tools/code-mode/exec-contract.ts";
@@ -20,7 +21,7 @@ export function getActiveToolsInActiveOrder(
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters,
-        ...(constrainedSampling ? { constrainedSampling } : {}),
+        ...conditionalProperties(Boolean(constrainedSampling), { constrainedSampling }),
       },
     ];
   });

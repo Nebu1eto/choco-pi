@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { summarizeShellCommand, type ShellAction } from "../../shell/summary.ts";
 import type { ExecCommandStatus } from "../../tools/exec/command-state.ts";
 
@@ -31,7 +33,7 @@ export function renderWriteStdinCall(
   command: string | undefined,
   theme: RenderTheme,
 ): string {
-  const interacted = typeof input === "string" && input.length > 0;
+  const interacted = Value.Check(Type.String(), input) && input.length > 0;
   const marker = interacted ? "↳ " : "• ";
   const title = interacted
     ? "Interacted with background terminal"
@@ -106,23 +108,28 @@ function formatCommandPreview(command: string | undefined): string | undefined {
   return shortenCommand(singleLine, 80);
 }
 
-function formatActionLine(action: ShellAction): { title: string; body: string } {
+interface ActionLine {
+  title: string;
+  body: string;
+}
+
+function formatActionLine(action: ShellAction): ActionLine {
   if (action.kind === "read") {
-    return { title: "Read", body: formatReadLabel(action) };
+    return { title: "Read", body: formatReadLabel(action) } satisfies ActionLine;
   }
   if (action.kind === "list") {
-    return { title: "List", body: action.path ?? action.command };
+    return { title: "List", body: action.path ?? action.command } satisfies ActionLine;
   }
   if (action.kind === "search") {
     if (action.query && action.path) {
-      return { title: "Search", body: `${action.query} in ${action.path}` };
+      return { title: "Search", body: `${action.query} in ${action.path}` } satisfies ActionLine;
     }
     if (action.query) {
-      return { title: "Search", body: action.query };
+      return { title: "Search", body: action.query } satisfies ActionLine;
     }
-    return { title: "Search", body: action.command };
+    return { title: "Search", body: action.command } satisfies ActionLine;
   }
-  return { title: "Run", body: action.command };
+  return { title: "Run", body: action.command } satisfies ActionLine;
 }
 
 function formatReadLabel(action: Extract<ShellAction, { kind: "read" }>): string {

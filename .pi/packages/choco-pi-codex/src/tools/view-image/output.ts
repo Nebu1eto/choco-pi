@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isObjectValue, isStringValue } from "../boundary.js";
 export type ViewImageContent = {
   type: "image";
   data: string;
@@ -5,11 +7,11 @@ export type ViewImageContent = {
   detail: "high" | "original";
 };
 
-export function imageContentsFromViewImageDetails(details: unknown): ViewImageContent[] {
-  if (!details || typeof details !== "object") return [];
-  const description = (details as { viewImageDescription?: unknown }).viewImageDescription;
-  if (!description || typeof description !== "object") return [];
-  const image = (description as { image?: unknown }).image;
+export function imageContentsFromViewImageDetails(details: BoundaryValue): ViewImageContent[] {
+  if (!details || !isObjectValue(details)) return [];
+  const description = details.viewImageDescription;
+  if (!description || !isObjectValue(description)) return [];
+  const image = description.image;
   return isViewImageContent(image) ? [image] : [];
 }
 
@@ -35,23 +37,21 @@ function imageContentFromJson(json: string): ViewImageContent | undefined {
   } catch {
     return undefined;
   }
-  if (!parsed || typeof parsed !== "object") return undefined;
-  const imageUrl = (parsed as Record<string, unknown>)["image_url"];
-  const detail = (parsed as Record<string, unknown>)["detail"];
-  if (typeof imageUrl !== "string" || (detail !== "high" && detail !== "original"))
-    return undefined;
+  if (!parsed || !isObjectValue(parsed)) return undefined;
+  const imageUrl = parsed.image_url;
+  const detail = parsed.detail;
+  if (!isStringValue(imageUrl) || (detail !== "high" && detail !== "original")) return undefined;
   const match = imageUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);
   return match ? { type: "image", mimeType: match[1]!, data: match[2]!, detail } : undefined;
 }
 
-function isViewImageContent(value: unknown): value is ViewImageContent {
+function isViewImageContent(value: BoundaryValue): value is ViewImageContent {
   return Boolean(
     value &&
-    typeof value === "object" &&
-    (value as { type?: unknown }).type === "image" &&
-    typeof (value as { data?: unknown }).data === "string" &&
-    typeof (value as { mimeType?: unknown }).mimeType === "string" &&
-    ((value as { detail?: unknown }).detail === "high" ||
-      (value as { detail?: unknown }).detail === "original"),
+    isObjectValue(value) &&
+    value.type === "image" &&
+    isStringValue(value.data) &&
+    isStringValue(value.mimeType) &&
+    (value.detail === "high" || value.detail === "original"),
   );
 }

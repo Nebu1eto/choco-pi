@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../boundary.js";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 
 const MAX_FRAME_BYTES = 64 * 1024 * 1024;
@@ -5,13 +6,13 @@ const MAX_QUEUED_WRITE_BYTES = 128 * 1024 * 1024;
 
 type HostProcessOptions = {
   binary: string;
-  onMessage: (message: unknown) => void;
+  onMessage: (message: BoundaryValue) => void;
   onFailure: (error: Error) => void;
 };
 
 export class CodeModeHostProcess {
   private readonly binary: string;
-  private readonly onMessage: (message: unknown) => void;
+  private readonly onMessage: (message: BoundaryValue) => void;
   private readonly onFailure: (error: Error) => void;
   private child: ChildProcessWithoutNullStreams | undefined;
   private buffer = Buffer.alloc(0);
@@ -55,7 +56,7 @@ export class CodeModeHostProcess {
     });
   }
 
-  send(message: unknown): void {
+  send(message: BoundaryValue): void {
     const child = this.child;
     if (!child?.stdin.writable) throw new Error("Code-mode host is not running");
     const payload = Buffer.from(JSON.stringify(message));

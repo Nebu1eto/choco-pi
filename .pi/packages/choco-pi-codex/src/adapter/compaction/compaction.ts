@@ -1,3 +1,8 @@
+import { conditionalProperties } from "../runtime-values.ts";
+import { JsonObjectSchema } from "../runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -54,8 +59,8 @@ import {
 } from "../../providers/openai-codex/headers.ts";
 import type { CodexCompactionDiagnostic } from "./diagnostics.ts";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is JsonObject {
+  return Value.Check(JsonObjectSchema, value);
 }
 
 function stashLatestNativeWindowForPiCompactionFallback(
@@ -83,12 +88,12 @@ function stashLatestNativeWindowForPiCompactionFallback(
   return true;
 }
 
-function cloneCompactedWindow(window: readonly unknown[]): ResponsesInputItem[] | undefined {
+function cloneCompactedWindow(window: readonly BoundaryValue[]): ResponsesInputItem[] | undefined {
   if (!window.every(isRecord)) return undefined;
   return window.map((item) => structuredClone(item));
 }
 
-function buildCompactionTools(pi: ExtensionAPI, codeMode: boolean): unknown[] | undefined {
+function buildCompactionTools(pi: ExtensionAPI, codeMode: boolean): BoundaryValue[] | undefined {
   const tools = getActiveToolsInActiveOrder(pi, codeMode);
   if (tools.length === 0) return undefined;
   return convertResponsesTools(tools, { strict: null });
@@ -102,10 +107,11 @@ function buildCompactionReasoning(
 ): NativeCompactionRequestOptions["reasoning"] {
   const level = pi.getThinkingLevel();
   if (!compactionTargetModel.reasoning || level === "off") return undefined;
+  // SAFETY: getThinkingLevel returns ModelThinkingLevel or "off", and the preceding branch excludes "off".
   const clampedLevel = clampThinkingLevel(compactionTargetModel, level as ModelThinkingLevel);
   const rawEffort = compactionTargetModel.thinkingLevelMap?.[clampedLevel] ?? clampedLevel;
   const effort =
-    typeof rawEffort === "string" &&
+    Value.Check(Type.String(), rawEffort) &&
     resolveCodexRuntimePlanForState(ctx, state).effectiveOpenAICodex
       ? clampCodexReasoningEffort(compactionTargetModel.id, rawEffort)
       : rawEffort;
@@ -143,12 +149,16 @@ function buildCompactionRequestOptions(
   return {
     parallel_tool_calls: true,
     prompt_cache_key: clampOpenAIPromptCacheKey(ctx.sessionManager.getSessionId()),
-    ...(resolveCodexRuntimePlanForState(ctx, state).effectiveOpenAICodex && state.config.openai.fast
-      ? { service_tier: "priority" }
-      : {}),
+    ...conditionalProperties(
+      Boolean(
+        resolveCodexRuntimePlanForState(ctx, state).effectiveOpenAICodex &&
+        state.config.openai.fast,
+      ),
+      { service_tier: "priority" },
+    ),
     text: { verbosity: state.config.openai.verbosity },
-    ...(tools ? { tools } : {}),
-    ...(reasoning ? { reasoning } : {}),
+    ...conditionalProperties(Boolean(tools), { tools }),
+    ...conditionalProperties(Boolean(reasoning), { reasoning }),
   };
 }
 
@@ -171,12 +181,12 @@ function notifyNativeCompactionFallback(
   );
 }
 
-function textFromResponsesContent(content: unknown): string {
-  if (typeof content === "string") return content;
+function textFromResponsesContent(content: BoundaryValue): string {
+  if (Value.Check(Type.String(), content)) return content;
   if (!Array.isArray(content)) return "";
   return content
     .map((item) =>
-      isRecord(item) && item["type"] === "input_text" && typeof item["text"]! === "string"
+      isRecord(item) && item["type"] === "input_text" && Value.Check(Type.String(), item["text"]!)
         ? item["text"]!
         : "",
     )
@@ -184,7 +194,7 @@ function textFromResponsesContent(content: unknown): string {
 }
 
 function isPiCompactionSummarizationPayload(payload: ResponsesCompatibleRequestPayload): boolean {
-  const instructions = typeof payload.instructions === "string" ? payload.instructions : "";
+  const instructions = Value.Check(Type.String(), payload.instructions) ? payload.instructions : "";
   if (/compact|summar/i.test(instructions)) return true;
 
   return payload.input.some((item) => {
@@ -349,19 +359,21 @@ async function handleCodexSessionBeforeCompactInner(
           builtInput.input,
         )
       : { decision: "not_applicable" as const };
+  // SAFETY: Canonical replay produced these JSON objects from Responses input items and every retained item passed the record parser.
   const validatedCanonicalInput = canonicalReplay.input?.every(isRecord)
     ? (canonicalReplay.input as ResponsesInputItem[])
     : undefined;
   const input = validatedCanonicalInput ?? builtInput.input;
   const { compactedKeptWindow } = builtInput;
+  const checkpointModel = latestNativeCompaction.ok
+    ? latestNativeCompaction.entry.details?.model
+    : undefined;
   const compactionDiagnostic: CodexCompactionDiagnostic = {
     model: runtime.model,
     inputSource: validatedCanonicalInput ? "canonical" : "reconstructed",
     canonicalReplay: canonicalReplay.decision,
     checkpointReused: latestNativeCompaction.ok,
-    ...(latestNativeCompaction.ok && latestNativeCompaction.entry.details?.model
-      ? { checkpointModel: latestNativeCompaction.entry.details.model }
-      : {}),
+    ...conditionalProperties(Boolean(checkpointModel), { checkpointModel }),
   };
 
   if (input.length === 0) {
@@ -383,7 +395,7 @@ async function handleCodexSessionBeforeCompactInner(
     // only previous_response_id plus the trigger instead of the full history.
     systemPrompt: state.activeProviderSystemPrompt ?? ctx.getSystemPrompt(),
     messages: [],
-    ...(tools.length > 0 ? { tools } : {}),
+    ...conditionalProperties(Boolean(tools.length > 0), { tools }),
   };
   const compactResult = await executeRemoteCompactionV2({
     runtime,
@@ -451,10 +463,10 @@ async function handleCodexSessionBeforeCompactInner(
 }
 
 export async function rewriteCodexCompactedProviderRequest(
-  payload: unknown,
+  payload: BoundaryValue,
   ctx: ExtensionContext,
   state: AdapterState,
-): Promise<unknown | undefined> {
+): Promise<BoundaryValue | undefined> {
   const plan = resolveCodexRuntimePlanForState(ctx, state);
   if (!plan.nativeCompaction || (!plan.effectiveOpenAICodex && !isResponsesContext(ctx)))
     return undefined;
@@ -473,6 +485,7 @@ export async function rewriteCodexCompactedProviderRequest(
   });
   if (latestNativeCompactionIndex === undefined) return undefined;
   if (!runtime.payload) return undefined;
+  // SAFETY: findLatestNativeCompactionEntryIndex returns an in-bounds entry accepted by isNativeCompactionEntry.
   const compactionEntry = branchEntries[latestNativeCompactionIndex]! as NativeCompactionEntry;
   const rewrite = rewriteResponsesPayloadWithNativeReplay({
     model: runtime.currentModel,
@@ -491,10 +504,10 @@ export async function rewriteCodexCompactedProviderRequest(
 }
 
 export async function injectPendingNativeWindowIntoPiCompactionRequest(
-  payload: unknown,
+  payload: BoundaryValue,
   ctx: ExtensionContext,
   state: AdapterState,
-): Promise<unknown | undefined> {
+): Promise<BoundaryValue | undefined> {
   const pending = state.pendingPiCompactionNativeWindow;
   if (!pending || pending.window.length === 0) return undefined;
   if (!isResponsesCompatiblePayload(payload)) return undefined;

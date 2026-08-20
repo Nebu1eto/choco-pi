@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isStringValue } from "../boundary.js";
 import { type Component, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import { previewText, renderTextAndImages } from "./render-content.js";
 import type {
@@ -123,7 +125,7 @@ function renderGenericTraceCall(
   const verb = trace.status === "running" ? "Running" : trace.status === "error" ? "Failed" : "Ran";
   let text = `${theme.fg("dim", "•")} ${theme.bold(`${verb} ${trace.name}`)}`;
   if (expanded) {
-    const input = typeof trace.input === "string" ? trace.input : safeRenderString(trace.input);
+    const input = isStringValue(trace.input) ? trace.input : safeRenderString(trace.input);
     if (input) text += `\n${theme.fg("dim", input)}`;
   }
   return new Text(text, 0, 0);
@@ -142,7 +144,7 @@ function renderGenericTraceResult(
     .join("\n");
   const images = result.content.filter(
     (item): item is typeof item & { data: string; mimeType: string } =>
-      item.type === "image" && typeof item.data === "string" && typeof item.mimeType === "string",
+      item.type === "image" && isStringValue(item.data) && isStringValue(item.mimeType),
   );
   const renderedText = theme.fg("dim", text);
   return renderTextAndImages(full ? renderedText : previewText(renderedText, theme), images, theme);
@@ -154,7 +156,7 @@ function isProgrammaticTool(
   return Boolean(tool && "invoke" in tool);
 }
 
-function safeRenderString(value: unknown): string {
+function safeRenderString(value: BoundaryValue): string {
   try {
     return JSON.stringify(value) ?? String(value ?? "");
   } catch {

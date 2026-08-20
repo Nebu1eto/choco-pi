@@ -44,9 +44,9 @@ export async function pollOAuthDeviceCodeFlow<T>(
   options: OAuthDeviceCodePollOptions<T>,
 ): Promise<T> {
   const deadline =
-    typeof options.expiresInSeconds === "number"
-      ? Date.now() + options.expiresInSeconds * 1000
-      : Number.POSITIVE_INFINITY;
+    options.expiresInSeconds === undefined
+      ? Number.POSITIVE_INFINITY
+      : Date.now() + options.expiresInSeconds * 1000;
   let intervalMs = Math.max(
     MINIMUM_INTERVAL_MS,
     Math.floor((options.intervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS) * 1000),
@@ -69,7 +69,7 @@ export async function pollOAuthDeviceCodeFlow<T>(
     if (result.status === "slow_down") {
       slowDownResponses += 1;
       intervalMs =
-        typeof result.intervalSeconds === "number" &&
+        result.intervalSeconds !== undefined &&
         Number.isFinite(result.intervalSeconds) &&
         result.intervalSeconds > 0
           ? Math.max(MINIMUM_INTERVAL_MS, Math.floor(result.intervalSeconds * 1000))

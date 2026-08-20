@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isObjectValue, isStringValue } from "../boundary.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   type CodeModeToolPreflight,
@@ -41,14 +43,14 @@ export function registerCodeModePreflightBroker(pi: ExtensionAPI): BrokerRegistr
   announce();
   return {
     async run(call) {
-      for (const preflight of [...preflights]) {
+      for (const preflight of Array.from(preflights)) {
         call.signal.throwIfAborted();
         const pending = Promise.resolve().then(() => preflight(preflightSnapshot(call)));
         void pending.catch(() => undefined);
         const result = await raceAbort(pending, call.signal);
         call.signal.throwIfAborted();
         if (result?.block !== true) continue;
-        const reason = typeof result.reason === "string" ? result.reason.trim() : "";
+        const reason = isStringValue(result.reason) ? result.reason.trim() : "";
         throw new Error(reason || `Code Mode nested tool blocked: ${call.toolName}`);
       }
     },
@@ -77,7 +79,7 @@ async function raceAbort<T>(pending: Promise<T>, signal: AbortSignal): Promise<T
 
 export async function runCodeModeToolPreflight(
   toolName: string,
-  input: unknown,
+  input: BoundaryValue,
   context: ToolExecutionContext,
   signal: AbortSignal,
 ): Promise<void> {
@@ -103,8 +105,8 @@ function preflightSnapshot(call: CodeModeToolPreflightCall): CodeModeToolPreflig
   });
 }
 
-function freezeInput(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+function freezeInput(value: BoundaryValue): BoundaryValue {
+  if (!value || !isObjectValue(value) || Object.isFrozen(value)) return value;
   if (Array.isArray(value)) {
     for (const item of value) freezeInput(item);
   } else {

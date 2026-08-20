@@ -254,6 +254,7 @@ function injectGuidelines(prompt: string, mode?: CodexPromptMode): string {
     return insertBeforeTrailingContext(prompt, fallbackSection);
   }
 
+  // SAFETY: The successful regex match contains all three required capture groups by construction.
   const [, header, body, suffix] = match as RegExpMatchArray & { 1: string; 2: string; 3: string };
   const bodyLines = body.split("\n");
   const canonicalBodyLines = bodyLines.map(canonicalizeGuidelineLine);

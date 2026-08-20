@@ -1,3 +1,5 @@
+import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
+import { isFunctionValue, isObjectValue, isStringValue } from "../boundary.js";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { formatNativeBinaryError, nativeBinaryRecoveryMessage } from "../../native-binary-error.ts";
@@ -83,22 +85,23 @@ function createEmptyResultComponent(): Container {
   return new Container();
 }
 
-type WebRunOutput = Record<string, unknown> & {
-  encrypted_output?: string | undefined;
-  output_text?: string | undefined;
-  output?: string | undefined;
-  text?: string | undefined;
-};
+interface WebRunRequest extends BoundaryRecord {
+  id: string | undefined;
+  model?: string | undefined;
+  input?: NonNullable<ReturnType<typeof buildWebSearchInput>> | undefined;
+}
+
+type WebRunOutput = BoundaryRecord;
 
 type WebRunExecutionResult = { text: string; details: WebRunOutput };
 
-function firstString(value: unknown, key: string): string | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const field = (value as Record<string, unknown>)[key];
-  return typeof field === "string" && field.trim() ? field.trim() : undefined;
+function firstString(value: BoundaryValue, key: string): string | undefined {
+  if (!value || !isObjectValue(value)) return undefined;
+  const field = value[key];
+  return isStringValue(field) && field.trim() ? field.trim() : undefined;
 }
 
-function webSearchCallDetail(params: Record<string, unknown>): string | undefined {
+function webSearchCallDetail(params: BoundaryRecord): string | undefined {
   const search = Array.isArray(params["search_query"]!) ? params["search_query"]![0] : undefined;
   const image = Array.isArray(params["image_query"]!) ? params["image_query"]![0] : undefined;
   const open = Array.isArray(params["open"]!) ? params["open"]![0] : undefined;
@@ -126,7 +129,7 @@ export interface WebSearchToolOptions {
 
 async function runWebRunBinary(
   webRunPath: string,
-  params: Record<string, unknown>,
+  params: BoundaryRecord,
   env: NodeJS.ProcessEnv,
   signal: AbortSignal | undefined | null,
 ): Promise<string> {
@@ -181,9 +184,9 @@ async function runWebRunBinary(
   });
 }
 
-function formatWebRunOutput(parsed: Record<string, unknown>): string | undefined {
+function formatWebRunOutput(parsed: BoundaryRecord): string | undefined {
   const outputText = parsed["output"] ?? parsed["output_text"] ?? parsed["text"];
-  if (typeof outputText === "string" && outputText.trim()) return outputText;
+  if (isStringValue(outputText) && outputText.trim()) return outputText;
   if (parsed["search_results"] !== undefined) return JSON.stringify(parsed, null, 2);
   if (
     Array.isArray(parsed["content"]) ||
@@ -206,7 +209,7 @@ function supportsExecutableWebSearch(
 }
 
 export async function executeCodexWebSearch(
-  params: Record<string, unknown>,
+  params: BoundaryRecord,
   ctx: ExtensionContext,
   signal: AbortSignal | undefined | null,
   options: WebSearchToolOptions = {},
@@ -218,28 +221,25 @@ export async function executeCodexWebSearch(
     throw new Error(`web_run binary is not bundled for ${process.platform}-${process.arch}`);
   const provider = await resolveCodexToolProvider(ctx, options.allowConfiguredProvider);
   const sessionId = ctx.sessionManager?.getSessionId?.() || options.sessionId;
-  const configuredModel = typeof options.model === "function" ? options.model() : options.model;
+  const configuredModel = isFunctionValue(options.model) ? options.model() : options.model;
   const model = provider.route === "configured-responses" ? provider.model : configuredModel;
   const env = codexToolProviderEnv(provider);
   const input = SEND_NATIVE_WEB_SEARCH_HISTORY
     ? buildWebSearchInput(ctx.sessionManager.buildContextEntries())
     : undefined;
   try {
-    const stdout = await runWebRunBinary(
-      webRunPath,
-      { ...params, id: sessionId, ...(model ? { model } : {}), ...(input ? { input } : {}) },
-      env,
-      signal,
-    );
-    const parsed = JSON.parse(stdout) as WebRunOutput;
+    const request: WebRunRequest = { ...params, id: sessionId };
+    if (model) request["model"] = model;
+    if (input) request["input"] = input;
+    const stdout = await runWebRunBinary(webRunPath, request, env, signal);
+    const parsed: unknown = JSON.parse(stdout);
+    if (!isObjectValue(parsed)) throw new Error("web_run returned invalid structured JSON output");
     const output = formatWebRunOutput(parsed);
     if (output) return { text: output, details: parsed };
     throw new Error("web_run search returned no output");
   } catch (error) {
     const stderr =
-      error && typeof error === "object" && "stderr" in error
-        ? String((error as { stderr?: unknown }).stderr ?? "")
-        : "";
+      error && isObjectValue(error) && "stderr" in error ? String(error.stderr ?? "") : "";
     const message = stderr.trim() || (error instanceof Error ? error.message : String(error));
     throw new Error(message);
   }
@@ -250,14 +250,13 @@ export function createWebSearchTool(
   options: WebSearchToolOptions = {},
 ): ToolDefinition<typeof WEB_SEARCH_PARAMETERS> {
   const toolOptions = { sessionId: randomUUID(), ...options };
-  return {
+  // SAFETY: The Pi tool API provides object arguments to prepareArguments; the record check preserves that shape.
+  const tool: ToolDefinition<typeof WEB_SEARCH_PARAMETERS> = {
     name,
     label: name,
     description: "Search/open web",
-    ...(toolOptions.promptSnippet === false ? {} : { promptSnippet: "Use explicit args" }),
     parameters: WEB_SEARCH_PARAMETERS,
-    prepareArguments: (args) =>
-      args && typeof args === "object" ? (args as Record<string, unknown>) : {},
+    prepareArguments: (args) => (args && isObjectValue(args) ? args : {}),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (!supportsExecutableWebSearch(ctx.model, toolOptions))
         throw new Error(WEB_SEARCH_UNSUPPORTED_MESSAGE);
@@ -267,27 +266,28 @@ export function createWebSearchTool(
         details: { webRun: output.details },
       };
     },
-    ...(toolOptions.customRendering === false
-      ? {}
-      : {
-          renderCall(args, theme) {
-            return renderCodexToolCell(
-              "Searched the web",
-              webSearchCallDetail(args as Record<string, unknown>),
-              theme,
-            );
-          },
-          renderResult(result, { expanded }, theme) {
-            if (!expanded) return createEmptyResultComponent();
-            const textBlock = result.content.find((item) => item.type === "text");
-            return new Text(
-              theme.fg("dim", textBlock?.type === "text" ? textBlock.text : "(no output)"),
-              0,
-              0,
-            );
-          },
-        }),
   };
+  if (toolOptions.promptSnippet !== false) tool.promptSnippet = "Use explicit args";
+  if (toolOptions.customRendering !== false) {
+    tool.renderCall = (args, theme) => {
+      // SAFETY: The renderer receives the parameter object validated by the registered tool schema.
+      return renderCodexToolCell(
+        "Searched the web",
+        webSearchCallDetail(args as BoundaryRecord),
+        theme,
+      );
+    };
+    tool.renderResult = (result, { expanded }, theme) => {
+      if (!expanded) return createEmptyResultComponent();
+      const textBlock = result.content.find((item) => item.type === "text");
+      return new Text(
+        theme.fg("dim", textBlock?.type === "text" ? textBlock.text : "(no output)"),
+        0,
+        0,
+      );
+    };
+  }
+  return tool;
 }
 
 export function registerWebSearchTool(

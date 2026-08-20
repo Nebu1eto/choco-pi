@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isObjectValue, isStringValue } from "../boundary.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
 type SearchInputMessage = {
@@ -9,18 +11,18 @@ type SearchInputMessage = {
   }>;
 };
 
-function visibleText(message: unknown): string[] {
-  if (!message || typeof message !== "object" || !("content" in message)) return [];
+function visibleText(message: BoundaryValue): string[] {
+  if (!message || !isObjectValue(message) || !("content" in message)) return [];
   const content = message.content;
-  if (typeof content === "string") return [content];
+  if (isStringValue(content)) return [content];
   if (!Array.isArray(content)) return [];
   return content.flatMap((part) =>
     part &&
-    typeof part === "object" &&
+    isObjectValue(part) &&
     "type" in part &&
     part.type === "text" &&
     "text" in part &&
-    typeof part.text === "string"
+    isStringValue(part.text)
       ? [part.text]
       : [],
   );

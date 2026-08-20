@@ -1,3 +1,12 @@
+import { isBoundaryValue, type BoundaryValue } from "../adapter/runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+
+const CommandArgsSchema = Type.Object({ cmd: Type.String() });
+const ToolCallOnlyAssistantMessageSchema = Type.Object({
+  role: Type.Literal("assistant"),
+  content: Type.Array(Type.Object({ type: Type.Literal("toolCall") }), { minItems: 1 }),
+});
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readEffectiveCodexConversionConfig } from "../adapter/activation/config-store.ts";
 import { syncAdapter } from "../adapter/activation/activation.ts";
@@ -44,39 +53,25 @@ function formatCompactionUsage(usage: NativeCompactionUsage): string {
   return `Compaction V2 · input ${tokens(usage.inputTokens)} · cache read ${tokens(usage.cachedInputTokens)} (${ratio}) · cache write ${tokens(usage.cacheWriteInputTokens)} · output ${tokens(usage.outputTokens)}${diagnostic ? ` ${diagnostic}` : ""}`;
 }
 
-function commandArg(args: unknown): string | undefined {
-  if (!args || typeof args !== "object" || !("cmd" in args) || typeof args.cmd !== "string")
-    return undefined;
-  return args.cmd;
+function commandArg(args: BoundaryValue): string | undefined {
+  return Value.Check(CommandArgsSchema, args) ? args.cmd : undefined;
 }
 
-function isToolCallOnlyAssistantMessage(message: unknown): boolean {
-  if (
-    !message ||
-    typeof message !== "object" ||
-    !("role" in message) ||
-    message.role !== "assistant"
-  )
-    return false;
-  if (!("content" in message) || !Array.isArray(message.content) || message.content.length === 0)
-    return false;
-  return message.content.every(
-    (item) =>
-      typeof item === "object" && item !== null && "type" in item && item.type === "toolCall",
-  );
+function isToolCallOnlyAssistantMessage(message: BoundaryValue): boolean {
+  return Value.Check(ToolCallOnlyAssistantMessageSchema, message);
 }
 
-function isAbortError(error: unknown): boolean {
+function isAbortError(error: Error | BoundaryValue): boolean {
   return (
     error instanceof Error &&
     (error.name === "AbortError" ||
       error.name === "ABORT_ERR" ||
-      (error as Error & { code?: unknown }).code === "ABORT_ERR")
+      ("code" in error && error.code === "ABORT_ERR"))
   );
 }
 
 export function prepareCodeModeHost(codeMode: CodeModeRegistration, ctx: ExtensionContext): void {
-  void codeMode.prepare(ctx)?.catch((error: unknown) => {
+  void codeMode.prepare(ctx)?.catch((error) => {
     if (isAbortError(error)) return;
     ctx.ui.notify(
       `Code Mode host setup failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -198,7 +193,7 @@ export function registerCodexEvents(
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    const failures: unknown[] = [];
+    const failures: BoundaryValue[] = [];
     await runShutdownStep(failures, () =>
       runtime.shutdownTransport(ctx.sessionManager.getSessionId()),
     );
@@ -249,6 +244,7 @@ export function registerCodexEvents(
   });
   pi.on("before_provider_request", async (event, ctx) => {
     state.cwd = ctx.cwd;
+    if (!isBoundaryValue(event.payload)) return undefined;
     return rewriteCodexProviderRequest(event.payload, ctx, state);
   });
   pi.on("before_provider_headers", (event, ctx) => {
@@ -266,6 +262,7 @@ export function registerCodexEvents(
     if (
       event.fromExtension &&
       compactionEntry &&
+      isBoundaryValue(compactionEntry.details) &&
       isNativeCompactionDetails(compactionEntry.details)
     ) {
       const details = compactionEntry.details;
@@ -300,10 +297,13 @@ export function registerCodexEvents(
   });
 }
 
-async function runShutdownStep(failures: unknown[], action: () => unknown): Promise<void> {
+async function runShutdownStep(
+  failures: BoundaryValue[],
+  action: () => void | Promise<void>,
+): Promise<void> {
   try {
     await action();
   } catch (error) {
-    failures.push(error);
+    failures.push(error instanceof Error ? error : String(error));
   }
 }

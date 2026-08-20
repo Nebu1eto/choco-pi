@@ -1,3 +1,4 @@
+import { isNumberValue, isObjectValue, isStringValue } from "../boundary.js";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { getExperimentalToolSampling } from "../tool-sampling.ts";
@@ -19,6 +20,11 @@ const DEFAULT_WAIT_MS = 10_000;
 const MIN_ADAPTIVE_WAIT_MS = 5_000;
 const MAX_ADAPTIVE_WAIT_MS = 1_800_000;
 type RenderTracker = ReturnType<typeof createCodeModeRenderTracker>;
+interface WriteStdinResumeInput {
+  session_id: number;
+  yield_time_ms: number;
+  max_output_tokens?: number | undefined;
+}
 const EXEC_PARAMETERS = Type.Object({
   code: Type.String(),
 });
@@ -58,6 +64,7 @@ function createExecTool(
   renderResult: ReturnType<typeof createResultRenderer>,
   preflight: NonNullable<ToolExecutionContext["preflight"]>,
 ): ToolDefinition<typeof EXEC_PARAMETERS> {
+  // SAFETY: renderExecCall and createResultRenderer implement this registered tool's renderer callback shapes; assertions bridge SDK generic variance only.
   return {
     name: "exec",
     label: "Exec",
@@ -100,13 +107,13 @@ function createWaitTool(
   preflight: NonNullable<ToolExecutionContext["preflight"]>,
 ): ToolDefinition<typeof WAIT_PARAMETERS> {
   const constrainedSampling = getExperimentalToolSampling("wait");
-  return {
+  // SAFETY: renderWaitCall and createResultRenderer implement this registered tool's renderer callback shapes; assertions bridge SDK generic variance only.
+  const tool: ToolDefinition<typeof WAIT_PARAMETERS> = {
     name: "wait",
     label: "Wait",
     description: WAIT_DESCRIPTION,
     promptSnippet: "Resume or terminate an exec cell",
     parameters: WAIT_PARAMETERS,
-    ...(constrainedSampling ? { constrainedSampling } : {}),
     async execute(id, params, signal, onUpdate, ctx) {
       tracker.start(id);
       try {
@@ -160,6 +167,8 @@ function createWaitTool(
     ) => renderWaitCall(args, theme, context, tracker, runtime.useRichRendering())) as any,
     renderResult: renderResult as any,
   };
+  if (constrainedSampling) tool.constrainedSampling = constrainedSampling;
+  return tool;
 }
 
 async function continueExecSessionFromMistakenWait(
@@ -186,11 +195,11 @@ async function continueExecSessionFromMistakenWait(
     .collectTools(context.extensionContext)
     .find((tool) => tool.name === "write_stdin" && "invoke" in tool);
   if (!writeStdin || !("invoke" in writeStdin)) return undefined;
-  const input = {
+  const input: WriteStdinResumeInput = {
     session_id: sessionId,
     yield_time_ms: yieldTimeMs,
-    ...(maxOutputTokens === undefined ? {} : { max_output_tokens: maxOutputTokens }),
   };
+  if (maxOutputTokens !== undefined) input.max_output_tokens = maxOutputTokens;
   const nestedSignal = signal ?? new AbortController().signal;
   await runCodeModeToolPreflight(writeStdin.name, input, context, nestedSignal);
   nestedSignal.throwIfAborted();
@@ -203,11 +212,11 @@ async function continueExecSessionFromMistakenWait(
     if (/unknown process id/i.test(fallbackMessage)) return undefined;
     throw fallbackError;
   }
-  if (!value || typeof value !== "object" || !("output" in value)) return undefined;
-  const output = typeof value.output === "string" ? value.output : "";
+  if (!value || !isObjectValue(value) || !("output" in value)) return undefined;
+  const output = isStringValue(value.output) ? value.output : "";
   const exitCode =
-    "exit_code" in value && typeof value.exit_code === "number" ? value.exit_code : undefined;
-  const running = "session_id" in value && typeof value.session_id === "number";
+    "exit_code" in value && isNumberValue(value.exit_code) ? value.exit_code : undefined;
+  const running = "session_id" in value && isNumberValue(value.session_id);
   return {
     running,
     result: {

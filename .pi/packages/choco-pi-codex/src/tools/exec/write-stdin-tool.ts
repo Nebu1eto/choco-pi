@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isNumberValue, isObjectValue, isStringValue } from "../boundary.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Container, Text } from "@earendil-works/pi-tui";
@@ -61,33 +63,29 @@ function getResultState(result: {
   return { output: "" };
 }
 
-function parseWriteStdinParams(params: unknown): WriteStdinParams {
+function parseWriteStdinParams(params: BoundaryValue): WriteStdinParams {
   if (
     !params ||
-    typeof params !== "object" ||
+    !isObjectValue(params) ||
     !("session_id" in params) ||
-    typeof params.session_id !== "number"
+    !isNumberValue(params.session_id)
   ) {
     throw new Error("write_stdin requires numeric 'session_id'");
   }
-  const chars = "chars" in params && typeof params.chars === "string" ? params.chars : undefined;
+  const chars = "chars" in params && isStringValue(params.chars) ? params.chars : undefined;
   const yield_time_ms =
-    "yield_time_ms" in params && typeof params.yield_time_ms === "number"
+    "yield_time_ms" in params && isNumberValue(params.yield_time_ms)
       ? params.yield_time_ms
       : undefined;
   const max_output_tokens =
-    "max_output_tokens" in params && typeof params.max_output_tokens === "number"
+    "max_output_tokens" in params && isNumberValue(params.max_output_tokens)
       ? params.max_output_tokens
       : undefined;
   return { session_id: params.session_id, chars, yield_time_ms, max_output_tokens };
 }
 
-function isUnifiedExecResult(details: unknown): details is UnifiedExecResult {
-  return (
-    typeof details === "object" &&
-    details !== null &&
-    typeof (details as { output?: unknown }).output === "string"
-  );
+function isUnifiedExecResult(details: BoundaryValue): details is UnifiedExecResult {
+  return isObjectValue(details) && details !== null && isStringValue(details.output);
 }
 
 function createEmptyResultComponent(): Container {
@@ -105,7 +103,6 @@ export function createWriteStdinTool(
     name: "write_stdin",
     label: "write_stdin",
     description: "Write/poll exec session",
-    ...(options.promptSnippet === false ? {} : { promptSnippet: "Write to exec session" }),
     parameters: WRITE_STDIN_PARAMETERS,
     async execute(_toolCallId, params, signal, onUpdate) {
       const typed = parseWriteStdinParams(params);
@@ -131,11 +128,10 @@ export function createWriteStdinTool(
       };
     },
     renderCall(args, theme) {
-      const inputArgs = args as Partial<WriteStdinParams>;
-      const sessionId = typeof inputArgs.session_id === "number" ? inputArgs.session_id : "?";
-      const input = typeof inputArgs.chars === "string" ? inputArgs.chars : undefined;
-      const command =
-        typeof sessionId === "number" ? sessions.getSessionCommand(sessionId) : undefined;
+      const inputArgs = isObjectValue(args) ? args : {};
+      const sessionId = isNumberValue(inputArgs.session_id) ? inputArgs.session_id : "?";
+      const input = isStringValue(inputArgs.chars) ? inputArgs.chars : undefined;
+      const command = isNumberValue(sessionId) ? sessions.getSessionCommand(sessionId) : undefined;
       return new Text(renderWriteStdinCall(sessionId, input, command, theme), 0, 0);
     },
     renderResult(result, { expanded, isPartial }, theme) {
@@ -163,6 +159,7 @@ export function createWriteStdinTool(
       return new Text(text, 0, 0);
     },
   };
+  if (options.promptSnippet !== false) tool.promptSnippet = "Write to exec session";
   return tool;
 }
 
@@ -174,5 +171,6 @@ export function registerWriteStdinTool(
     showOutputWhenCollapsed?: boolean | undefined;
   } = {},
 ): void {
+  // SAFETY: createWriteStdinTool is typed from ExtensionAPI.registerTool; the assertion only bridges the SDK's generic details variance.
   pi.registerTool(createWriteStdinTool(sessions, options) as any);
 }

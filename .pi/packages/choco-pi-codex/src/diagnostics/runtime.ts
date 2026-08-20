@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../adapter/runtime-values.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { CacheDiagnosticsMode } from "../adapter/activation/config.ts";
 import type {
@@ -80,7 +81,7 @@ export async function createCodexDiagnosticsRuntime(options: {
     }, options.missHoldMs ?? CACHE_MISS_HOLD_MS);
     holdTimer.unref?.();
   };
-  const reportLogFailure = (error: unknown) => {
+  const reportLogFailure = (error: BoundaryValue) => {
     logActive = false;
     if (logFailureReported) return;
     logFailureReported = true;
@@ -106,7 +107,7 @@ export async function createCodexDiagnosticsRuntime(options: {
       logActive = true;
       if (options.announceLog) ctx.ui.notify(`Codex cache log: ${log.path}`, "info");
     } catch (error) {
-      reportLogFailure(error);
+      reportLogFailure(error instanceof Error ? error : String(error));
     }
   }
 
@@ -163,16 +164,16 @@ export async function createCodexDiagnosticsRuntime(options: {
     },
     async shutdown() {
       if (holdTimer) clearTimeout(holdTimer);
-      const failures: unknown[] = [];
+      const failures: BoundaryValue[] = [];
       try {
         ctx.ui.setStatus(CACHE_STATUS_KEY, undefined);
       } catch (error) {
-        failures.push(error);
+        failures.push(error instanceof Error ? error : String(error));
       }
       try {
         await log?.close();
       } catch (error) {
-        failures.push(error);
+        failures.push(error instanceof Error ? error : String(error));
       }
       if (failures.length === 1) throw failures[0];
       if (failures.length > 1)

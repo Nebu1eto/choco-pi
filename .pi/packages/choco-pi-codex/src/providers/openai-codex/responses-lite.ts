@@ -1,8 +1,11 @@
 import { resizeImage } from "@earendil-works/pi-coding-agent";
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import {
   namespaceResponsesLiteInputTools,
   namespaceResponsesLiteTools,
 } from "./responses-lite-tools.ts";
+import type { ProtocolPropertyValue, ProtocolValue } from "./types.ts";
 
 export const RESPONSES_LITE_HEADER = "x-openai-internal-codex-responses-lite";
 const RESPONSES_LITE_WS_METADATA_KEY = "ws_request_header_x_openai_internal_codex_responses_lite";
@@ -15,29 +18,34 @@ const IMAGE_MAX_BASE64_BYTES = 64 * 1024 * 1024;
 
 export interface ResponsesLiteCompatibleBody {
   model: string;
-  input: unknown[];
+  input: ProtocolValue[];
   instructions?: string | undefined;
-  tools?: unknown[] | undefined;
+  tools?: ProtocolValue[] | undefined;
   parallel_tool_calls?: boolean | undefined;
-  reasoning?: unknown | undefined;
+  reasoning?: ProtocolValue | undefined;
   client_metadata?: Record<string, string> | undefined;
-  [key: string]: unknown;
+  [key: string]: ProtocolPropertyValue;
 }
 
 export function isResponsesLiteRequest(body: ResponsesLiteCompatibleBody): boolean {
   return isRecord(body.input[0]) && body.input[0]["type"] === "additional_tools";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+const ProtocolRecordType = Type.Record(Type.String(), Type.Unknown());
+type ProtocolRecord = Static<typeof ProtocolRecordType>;
+const ProtocolRecordSchema = Type.Unsafe<ProtocolRecord>({ type: "object" });
+const StringSchema = Type.String();
+
+function isRecord<T>(value: T): value is Extract<T, object> & ProtocolRecord {
+  return Check(ProtocolRecordSchema, value);
 }
 
-function prepareLiteContent(content: unknown): unknown {
+function prepareLiteContent<T>(content: T) {
   if (!Array.isArray(content)) return content;
   return content.map((item) => {
     if (!isRecord(item) || item["type"] !== "input_image") return item;
     const imageUrl = item["image_url"];
-    if (typeof imageUrl === "string" && /^https?:\/\//i.test(imageUrl)) {
+    if (Check(StringSchema, imageUrl) && /^https?:\/\//i.test(imageUrl)) {
       return {
         type: "input_text",
         text: "image content omitted because remote image URLs are not supported",
@@ -48,7 +56,7 @@ function prepareLiteContent(content: unknown): unknown {
   });
 }
 
-function prepareLiteInput(input: readonly unknown[]): unknown[] {
+function prepareLiteInput(input: readonly ProtocolValue[]): ProtocolValue[] {
   const prepared = input.map((item) => {
     if (!isRecord(item)) return item;
     if (
@@ -59,13 +67,14 @@ function prepareLiteInput(input: readonly unknown[]): unknown[] {
     ) {
       return { ...item, content: prepareLiteContent(item["content"]) };
     }
+    const output = item["output"];
     if (
       (item["type"] === "function_call_output" || item["type"] === "custom_tool_call_output") &&
-      isRecord(item["output"])
+      isRecord(output)
     ) {
       return {
         ...item,
-        output: { ...item["output"], content: prepareLiteContent(item["output"]["content"]) },
+        output: Object.assign({}, output, { content: prepareLiteContent(output["content"]) }),
       };
     }
     if (
@@ -108,14 +117,14 @@ async function prepareDataImageUrl(imageUrl: string): Promise<string | undefined
   }
 }
 
-async function prepareLiteImageContent(content: unknown): Promise<unknown> {
+async function prepareLiteImageContent<T>(content: T) {
   if (!Array.isArray(content)) return content;
   return Promise.all(
     content.map(async (item) => {
       if (
         !isRecord(item) ||
         item["type"] !== "input_image" ||
-        typeof item["image_url"] !== "string"
+        !Check(StringSchema, item["image_url"])
       )
         return item;
       if (!/^data:/i.test(item["image_url"])) return item;
@@ -142,16 +151,16 @@ export async function prepareResponsesLiteRequestImages<TBody extends ResponsesL
       ) {
         return { ...item, content: await prepareLiteImageContent(item["content"]) };
       }
+      const output = item["output"];
       if (
         (item["type"] === "function_call_output" || item["type"] === "custom_tool_call_output") &&
-        isRecord(item["output"])
+        isRecord(output)
       ) {
         return {
           ...item,
-          output: {
-            ...item["output"],
-            content: await prepareLiteImageContent(item["output"]["content"]),
-          },
+          output: Object.assign({}, output, {
+            content: await prepareLiteImageContent(output["content"]),
+          }),
         };
       }
       if (
@@ -171,7 +180,7 @@ export function applyResponsesLiteRequest<TBody extends ResponsesLiteCompatibleB
 ): TBody {
   const instructions = body.instructions?.trim();
   const tools = [...(body.tools ?? [])];
-  const prefix: unknown[] = [
+  const prefix: ProtocolValue[] = [
     {
       type: "additional_tools",
       role: "developer",
@@ -188,11 +197,15 @@ export function applyResponsesLiteRequest<TBody extends ResponsesLiteCompatibleB
       : []),
   ];
   const { instructions: _instructions, tools: _tools, ...rest } = body;
+  const reasoning: ProtocolRecord = isRecord(body.reasoning) ? { ...body.reasoning } : {};
+  reasoning["context"] = "all_turns";
+  // SAFETY: The constructed value preserves every TBody property except the intentionally omitted
+  // instructions and tools fields, then supplies the required Responses Lite replacements.
   return {
     ...rest,
     input: [...prefix, ...prepareLiteInput(body.input)],
     parallel_tool_calls: false,
-    reasoning: { ...(isRecord(body.reasoning) ? body.reasoning : {}), context: "all_turns" },
+    reasoning,
   } as TBody;
 }
 
@@ -207,6 +220,6 @@ export function applyResponsesLiteWebSocketMetadata<TBody extends ResponsesLiteC
 ): TBody & { client_metadata: Record<string, string> } {
   return {
     ...body,
-    client_metadata: { ...(body.client_metadata ?? {}), [RESPONSES_LITE_WS_METADATA_KEY]: "true" },
+    client_metadata: { ...body.client_metadata, [RESPONSES_LITE_WS_METADATA_KEY]: "true" },
   };
 }

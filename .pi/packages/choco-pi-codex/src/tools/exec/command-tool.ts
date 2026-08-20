@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isBooleanValue, isNumberValue, isObjectValue, isStringValue } from "../boundary.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { keyHint, truncateToVisualLines } from "@earendil-works/pi-coding-agent";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
@@ -50,45 +52,41 @@ interface ExecCommandRenderContextLike {
   invalidate?: () => void | undefined;
 }
 
-function prepareExecCommandArguments(args: unknown): ExecCommandParams {
-  if (!args || typeof args !== "object") return args as ExecCommandParams;
-  const prepared = { ...(args as Record<string, unknown>) };
+function prepareExecCommandArguments(args: BoundaryValue): BoundaryValue {
+  if (!args || !isObjectValue(args)) return args;
+  const prepared = { ...args };
   if (!("cmd" in prepared) && "command" in prepared) prepared["cmd"] = prepared["command"]!;
   if (!("workdir" in prepared)) {
     if ("cwd" in prepared) prepared["workdir"] = prepared["cwd"]!;
     else if ("working_directory" in prepared) prepared["workdir"] = prepared["working_directory"]!;
   }
-  return prepared as unknown as ExecCommandParams;
+  return prepared;
 }
 
-function parseExecCommandParams(params: unknown): ExecCommandParams {
-  if (!params || typeof params !== "object")
+function parseExecCommandParams(params: BoundaryValue): ExecCommandParams {
+  if (!params || !isObjectValue(params))
     throw new Error("exec_command requires an object parameter");
   const cmd = "cmd" in params ? params.cmd : undefined;
-  if (typeof cmd !== "string") throw new Error("exec_command requires a string 'cmd' parameter");
+  if (!isStringValue(cmd)) throw new Error("exec_command requires a string 'cmd' parameter");
   return {
     cmd,
-    workdir: "workdir" in params && typeof params.workdir === "string" ? params.workdir : undefined,
-    shell: "shell" in params && typeof params.shell === "string" ? params.shell : undefined,
-    tty: "tty" in params && typeof params.tty === "boolean" ? params.tty : undefined,
+    workdir: "workdir" in params && isStringValue(params.workdir) ? params.workdir : undefined,
+    shell: "shell" in params && isStringValue(params.shell) ? params.shell : undefined,
+    tty: "tty" in params && isBooleanValue(params.tty) ? params.tty : undefined,
     yield_time_ms:
-      "yield_time_ms" in params && typeof params.yield_time_ms === "number"
+      "yield_time_ms" in params && isNumberValue(params.yield_time_ms)
         ? params.yield_time_ms
         : undefined,
     max_output_tokens:
-      "max_output_tokens" in params && typeof params.max_output_tokens === "number"
+      "max_output_tokens" in params && isNumberValue(params.max_output_tokens)
         ? params.max_output_tokens
         : undefined,
-    login: "login" in params && typeof params.login === "boolean" ? params.login : undefined,
+    login: "login" in params && isBooleanValue(params.login) ? params.login : undefined,
   };
 }
 
-function isUnifiedExecResult(details: unknown): details is UnifiedExecResult {
-  return (
-    typeof details === "object" &&
-    details !== null &&
-    typeof (details as { output?: unknown }).output === "string"
-  );
+function isUnifiedExecResult(details: BoundaryValue): details is UnifiedExecResult {
+  return isObjectValue(details) && details !== null && isStringValue(details.output);
 }
 
 const COLLAPSED_OUTPUT_MAX_VISUAL_LINES = 5;
@@ -96,6 +94,11 @@ const COLLAPSED_OUTPUT_MAX_RAW_CHARS = 16_000;
 const COLLAPSED_OUTPUT_MAX_RAW_LINES = 160;
 type CollapsedExecOutput = Pick<UnifiedExecResult, "output"> &
   Partial<Pick<UnifiedExecResult, "exit_code" | "session_id" | "wall_time_seconds">>;
+
+interface CollapsedOutputResult {
+  text: string;
+  truncated: boolean;
+}
 
 function expandHint(): string {
   try {
@@ -108,7 +111,7 @@ function expandHint(): string {
 function collapsedOutput(
   result: CollapsedExecOutput,
   theme: { fg(role: string, text: string): string },
-): { text: string; truncated: boolean } {
+): CollapsedOutputResult {
   let output = renderTerminalOutput(result.output).trimEnd();
   let truncated = false;
   if (output.length > COLLAPSED_OUTPUT_MAX_RAW_CHARS) {
@@ -127,7 +130,7 @@ function collapsedOutput(
     parts.push(theme.fg("accent", `Session ${result.session_id} still running`));
   if (result.exit_code !== undefined && result.exit_code !== 0)
     parts.push(theme.fg("muted", `Exit code: ${result.exit_code}`));
-  if (typeof result.wall_time_seconds === "number" && parts.some(Boolean))
+  if (isNumberValue(result.wall_time_seconds) && parts.some(Boolean))
     parts.push(theme.fg("muted", `Took ${result.wall_time_seconds.toFixed(1)}s`));
   return { text: parts.filter(Boolean).join("\n"), truncated };
 }
@@ -183,7 +186,7 @@ function renderCall(
   context: ExecCommandRenderContextLike | undefined,
   tracker: ExecCommandTracker,
 ) {
-  const command = typeof args.cmd === "string" ? args.cmd : "";
+  const command = isStringValue(args.cmd) ? args.cmd : "";
   tracker.registerRenderContext(context?.toolCallId, context?.invalidate ?? (() => {}));
   const info = tracker.getRenderInfo(context?.toolCallId, command);
   if (info.hidden) return new Text("", 0, 0);
@@ -204,7 +207,7 @@ function renderResult(
   tracker: ExecCommandTracker,
   options: ExecCommandToolOptions,
 ) {
-  const command = typeof context?.args?.cmd === "string" ? context.args.cmd : "";
+  const command = isStringValue(context?.args?.cmd) ? context.args.cmd : "";
   if (tracker.getRenderInfo(context?.toolCallId, command).hidden) return new Container();
   const details = isUnifiedExecResult(result.details) ? result.details : undefined;
   const textContent = result.content.find((item) => item.type === "text");
@@ -233,9 +236,7 @@ export function createExecCommandTool(
     name: "exec_command",
     label: "exec_command",
     description: "Run shell commands; may return session_id",
-    ...(options.promptSnippet === false ? {} : { promptSnippet: "Run command" }),
     parameters: EXEC_COMMAND_PARAMETERS,
-    ...(constrainedSampling ? { constrainedSampling } : {}),
     prepareArguments: prepareExecCommandArguments,
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       if (signal?.aborted) throw new Error("exec_command aborted");
@@ -259,25 +260,27 @@ export function createExecCommandTool(
         tracker.recordPersistentSession(toolCallId, result.session_id);
       return toToolResult(result);
     },
-    ...(options.customRendering === false
-      ? {}
-      : {
-          renderCall: ((
-            args: { cmd?: unknown },
-            theme: { fg(role: string, text: string): string; bold(text: string): string },
-            context?: ExecCommandRenderContextLike,
-          ) => renderCall(args, theme, context, tracker)) as never,
-          renderResult: ((
-            result: {
-              content: Array<{ type: string; text?: string | undefined }>;
-              details?: unknown;
-            },
-            renderOptions: { expanded: boolean; isPartial: boolean },
-            theme: { fg(role: string, text: string): string },
-            context?: ExecCommandRenderContextLike,
-          ) => renderResult(result, renderOptions, theme, context, tracker, options)) as never,
-        }),
   };
+  if (options.promptSnippet !== false) tool.promptSnippet = "Run command";
+  if (constrainedSampling) tool.constrainedSampling = constrainedSampling;
+  if (options.customRendering !== false) {
+    // SAFETY: The registered schema and Pi renderer API establish these callback argument shapes.
+    tool.renderCall = ((
+      args: { cmd?: unknown },
+      theme: { fg(role: string, text: string): string; bold(text: string): string },
+      context?: ExecCommandRenderContextLike,
+    ) => renderCall(args, theme, context, tracker)) as never;
+    // SAFETY: The Pi renderer API supplies tool-result content and render options in this shape.
+    tool.renderResult = ((
+      result: {
+        content: Array<{ type: string; text?: string | undefined }>;
+        details?: unknown;
+      },
+      renderOptions: { expanded: boolean; isPartial: boolean },
+      theme: { fg(role: string, text: string): string },
+      context?: ExecCommandRenderContextLike,
+    ) => renderResult(result, renderOptions, theme, context, tracker, options)) as never;
+  }
   return tool;
 }
 
@@ -287,5 +290,6 @@ export function registerExecCommandTool(
   sessions: ExecSessionManager,
   options: ExecCommandToolOptions = {},
 ): void {
+  // SAFETY: createExecCommandTool uses the registerTool parameter type; this reconciles the SDK's invariant generic tool definition.
   pi.registerTool(createExecCommandTool(tracker, sessions, options) as never);
 }

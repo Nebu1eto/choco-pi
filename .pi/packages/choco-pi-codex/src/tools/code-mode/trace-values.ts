@@ -1,24 +1,32 @@
+import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
+import {
+  isBigIntValue,
+  isBooleanValue,
+  isFunctionValue,
+  isNumberValue,
+  isObjectValue,
+  isStringValue,
+  isSymbolValue,
+} from "../boundary.js";
 import type { RuntimeToolResult, RuntimeToolTrace } from "./types.js";
 
 const MAX_TRACE_TEXT_CHARS = 32_768;
 const MAX_TRACE_DETAILS_CHARS = 65_536;
 const MAX_SERIALIZED_NODES = 4_096;
 
-export function toolResultFromValue(value: unknown): RuntimeToolResult {
+export function toolResultFromValue(value: BoundaryValue): RuntimeToolResult {
   return {
     content: [
       {
         type: "text",
-        text:
-          typeof value === "string"
-            ? value
-            : safeStringify(value, "(non-serializable tool result)"),
+        text: isStringValue(value) ? value : safeStringify(value, "(non-serializable tool result)"),
       },
     ],
   };
 }
 
 export function cloneTrace(trace: RuntimeToolTrace): RuntimeToolTrace {
+  // SAFETY: sanitizeValue recursively preserves object keys and scalar kinds; trace already satisfies RuntimeToolTrace at this internal boundary.
   return sanitizeValue(trace, {
     remaining: Number.MAX_SAFE_INTEGER,
   }) as RuntimeToolTrace;
@@ -33,13 +41,13 @@ export function boundRuntimeToolResult(
   let omittedImages = 0;
   const content: RuntimeToolResult["content"] = [];
   for (const item of result.content) {
-    if (item.type === "text" && typeof item.text === "string") {
+    if (item.type === "text" && isStringValue(item.text)) {
       const text = truncateTraceText(item.text, textRemaining);
       textRemaining = Math.max(0, textRemaining - text.length);
       if (text) content.push({ ...item, text });
       continue;
     }
-    if (item.type === "image" && typeof item.data === "string") {
+    if (item.type === "image" && isStringValue(item.data)) {
       if (item.data.length <= imageRemaining) {
         imageRemaining -= item.data.length;
         content.push({ ...item });
@@ -48,6 +56,7 @@ export function boundRuntimeToolResult(
       }
       continue;
     }
+    // SAFETY: item comes from RuntimeToolResult.content; sanitizeValue preserves its discriminant while bounding nested values.
     content.push(
       sanitizeValue(item, {
         remaining: MAX_TRACE_TEXT_CHARS,
@@ -60,16 +69,13 @@ export function boundRuntimeToolResult(
       text: `[${omittedImages} nested image${omittedImages === 1 ? "" : "s"} omitted from trace]`,
     });
   }
-  return {
-    content,
-    ...(result.details === undefined
-      ? {}
-      : {
-          details: sanitizeValue(result.details, {
-            remaining: MAX_TRACE_DETAILS_CHARS,
-          }),
-        }),
-  };
+  const bounded: RuntimeToolResult = { content };
+  if (result.details !== undefined) {
+    bounded.details = sanitizeValue(result.details, {
+      remaining: MAX_TRACE_DETAILS_CHARS,
+    });
+  }
+  return bounded;
 }
 
 export function truncateTraceText(text: string, remaining: number): string {
@@ -79,7 +85,7 @@ export function truncateTraceText(text: string, remaining: number): string {
   return `${text.slice(0, Math.max(0, remaining - marker.length))}${marker}`;
 }
 
-export function sanitizeTraceInput(value: unknown, maxChars: number): unknown {
+export function sanitizeTraceInput(value: BoundaryValue, maxChars: number): BoundaryValue {
   return sanitizeValue(value, { remaining: maxChars });
 }
 
@@ -90,20 +96,20 @@ interface SerializationBudget {
   depth?: number;
 }
 
-function sanitizeValue(value: unknown, budget: SerializationBudget): unknown {
+function sanitizeValue(value: BoundaryValue, budget: SerializationBudget): BoundaryValue {
   const depth = budget.depth ?? 0;
   const nodesRemaining = budget.nodesRemaining ?? MAX_SERIALIZED_NODES;
   if (nodesRemaining <= 0 || budget.remaining <= 0) return "[value limit]";
   budget.nodesRemaining = nodesRemaining - 1;
   budget.remaining = Math.max(0, budget.remaining - 1);
-  if (value === null || value === undefined || typeof value === "boolean") return value;
-  if (typeof value === "number") {
+  if (value === null || value === undefined || isBooleanValue(value)) return value;
+  if (isNumberValue(value)) {
     budget.remaining = Math.max(0, budget.remaining - 8);
     return Number.isFinite(value) ? value : String(value);
   }
-  if (typeof value === "bigint" || typeof value === "symbol" || typeof value === "function")
+  if (isBigIntValue(value) || isSymbolValue(value) || isFunctionValue(value))
     return sanitizeValue(String(value), budget);
-  if (typeof value === "string") {
+  if (isStringValue(value)) {
     const available = Math.max(0, budget.remaining);
     budget.remaining -= Math.min(value.length, available);
     return value.length <= available
@@ -111,7 +117,7 @@ function sanitizeValue(value: unknown, budget: SerializationBudget): unknown {
       : `${value.slice(0, Math.max(0, available - 21))}[value truncated]`;
   }
   if (depth >= 12) return "[depth limit]";
-  if (typeof value !== "object") return String(value);
+  if (!isObjectValue(value)) return String(value);
   const seen = budget.seen ?? new WeakSet<object>();
   if (seen.has(value)) return "[circular]";
   seen.add(value);
@@ -130,7 +136,7 @@ function sanitizeValue(value: unknown, budget: SerializationBudget): unknown {
     return output;
   }
   if (value instanceof Date) return value.toISOString();
-  const output: Record<string, unknown> = {};
+  const output: BoundaryRecord = {};
   let entries: Array<[string, unknown]>;
   try {
     entries = Object.entries(value);
@@ -150,7 +156,7 @@ function sanitizeValue(value: unknown, budget: SerializationBudget): unknown {
   return output;
 }
 
-function safeStringify(value: unknown, fallback: string): string {
+function safeStringify(value: BoundaryValue, fallback: string): string {
   try {
     return JSON.stringify(sanitizeValue(value, { remaining: MAX_TRACE_TEXT_CHARS })) ?? fallback;
   } catch {

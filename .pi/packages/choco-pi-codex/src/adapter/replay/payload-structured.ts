@@ -1,23 +1,30 @@
+import { jsonValueType, JsonObjectSchema } from "../runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type {
   ResponsesInputContentItem,
   ResponsesInputItem,
   ResponsesInputMessageItem,
 } from "../compaction/serializer.js";
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+export function isRecord(value: BoundaryValue): value is JsonObject {
+  return Value.Check(JsonObjectSchema, value);
 }
 
-export function isResponsesInputContentItem(value: unknown): value is ResponsesInputContentItem {
-  if (!isRecord(value) || typeof value["type"]! !== "string") return false;
-  if (value["type"] === "input_text") return typeof value["text"]! === "string";
+export function isResponsesInputContentItem(
+  value: BoundaryValue,
+): value is ResponsesInputContentItem {
+  if (!isRecord(value) || !Value.Check(Type.String(), value["type"]!)) return false;
+  if (value["type"] === "input_text") return Value.Check(Type.String(), value["text"]!);
   if (value["type"] === "input_image")
-    return value["detail"] === "auto" && typeof value["image_url"]! === "string";
-  if (value["type"] === "encrypted_content") return typeof value["encrypted_content"]! === "string";
+    return value["detail"] === "auto" && Value.Check(Type.String(), value["image_url"]!);
+  if (value["type"] === "encrypted_content")
+    return Value.Check(Type.String(), value["encrypted_content"]!);
   return false;
 }
 export function isResponsesInputMessageRole(
-  value: unknown,
+  value: BoundaryValue,
 ): value is ResponsesInputMessageItem["role"] {
   return value === "user" || value === "developer" || value === "system";
 }
@@ -28,11 +35,13 @@ export function isPreambleRole(
   return value === "developer" || value === "system";
 }
 
-export function isResponsesInputMessageItem(value: unknown): value is ResponsesInputMessageItem {
+export function isResponsesInputMessageItem(
+  value: BoundaryValue,
+): value is ResponsesInputMessageItem {
   if (!isRecord(value) || !isResponsesInputMessageRole(value["role"]!)) return false;
   const { content } = value;
   return (
-    typeof content === "string" ||
+    Value.Check(Type.String(), content) ||
     (Array.isArray(content) && content.every(isResponsesInputContentItem))
   );
 }
@@ -51,35 +60,34 @@ export function cloneResponsesInputMessageItem(
 ): ResponsesInputMessageItem {
   return {
     role: item.role,
-    content:
-      typeof item.content === "string"
-        ? item.content
-        : item.content.map(cloneResponsesInputContentItem),
+    content: Value.Check(Type.String(), item.content)
+      ? item.content
+      : item.content.map(cloneResponsesInputContentItem),
   };
 }
 
-export function cloneStructuredValue(value: unknown): unknown {
+export function cloneStructuredValue(value: BoundaryValue): BoundaryValue {
   if (
     value === undefined ||
     value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
+    Value.Check(Type.String(), value) ||
+    Value.Check(Type.Number(), value) ||
+    Value.Check(Type.Boolean(), value)
   )
     return value;
   if (Array.isArray(value)) return value.map(cloneStructuredValue);
   if (isRecord(value)) {
-    const clone: Record<string, unknown> = {};
+    const clone: JsonObject = {};
     for (const [key, nested] of Object.entries(value)) clone[key] = cloneStructuredValue(nested);
     return clone;
   }
-  throw new Error(`Unsupported structured value: ${typeof value}`);
+  throw new Error(`Unsupported structured value: ${jsonValueType(value)}`);
 }
 
 export function cloneOpaqueCompactedWindow(
-  compactedWindow: readonly unknown[],
-): unknown[] | undefined {
-  const cloned: unknown[] = [];
+  compactedWindow: readonly BoundaryValue[],
+): BoundaryValue[] | undefined {
+  const cloned: BoundaryValue[] = [];
   for (const item of compactedWindow) {
     if (!isRecord(item)) return undefined;
     try {
@@ -92,12 +100,14 @@ export function cloneOpaqueCompactedWindow(
 }
 
 export function cloneResponsesInputSlice(
-  items: readonly unknown[],
+  items: readonly BoundaryValue[],
 ): ResponsesInputItem[] | undefined {
   const cloned: ResponsesInputItem[] = [];
   for (const item of items) {
     try {
-      cloned.push(cloneStructuredValue(item) as ResponsesInputItem);
+      const clonedItem = cloneStructuredValue(item);
+      if (!Value.Check(JsonObjectSchema, clonedItem)) return undefined;
+      cloned.push(clonedItem);
     } catch {
       return undefined;
     }
@@ -105,7 +115,7 @@ export function cloneResponsesInputSlice(
   return cloned;
 }
 
-export function areEquivalentValues(left: unknown, right: unknown): boolean {
+export function areEquivalentValues(left: BoundaryValue, right: BoundaryValue): boolean {
   if (Object.is(left, right)) return true;
   if (Array.isArray(left) || Array.isArray(right)) {
     if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;

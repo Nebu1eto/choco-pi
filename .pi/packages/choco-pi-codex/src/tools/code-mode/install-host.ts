@@ -1,3 +1,4 @@
+import { isObjectValue } from "../boundary.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -15,9 +16,14 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { codeModeHostBinaryName, hostAssetUrl, resolveCodeModeHostAsset } from "./host-assets.ts";
 
 const DOWNLOAD_TIMEOUT_MS = 120_000;
+const ProxyModuleSchema = Type.Object({
+  getProxyForUrl: Type.Function([Type.String()], Type.String()),
+});
 const INSTALL_LOCK_POLL_MS = 200;
 const INSTALL_LOCK_TIMEOUT_MS = 125_000;
 const INSTALL_LOCK_STALE_MS = 180_000;
@@ -50,15 +56,17 @@ export async function installCodeModeHost(options: InstallCodeModeHostOptions): 
     let bytes: Buffer;
     try {
       const timeoutSignal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
-      const { getProxyForUrl } = (await dynamicImport("proxy-from-env")) as {
-        getProxyForUrl(url: string): string;
-      };
-      const proxy = getProxyForUrl(assetUrl);
-      const response = await globalThis.fetch(assetUrl, {
+      const proxyModule: unknown = await dynamicImport("proxy-from-env");
+      if (!Value.Check(ProxyModuleSchema, proxyModule)) {
+        throw new Error("proxy-from-env returned an invalid module");
+      }
+      const proxy = proxyModule.getProxyForUrl(assetUrl);
+      const request: RequestInit & { proxy?: string } = {
         redirect: "follow",
         signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
-        ...(proxy ? { proxy } : {}),
-      } as RequestInit & { proxy?: string });
+      };
+      if (proxy) request.proxy = proxy;
+      const response = await globalThis.fetch(assetUrl, request);
       if (!response.ok)
         throw new Error(`download failed: ${response.status} ${response.statusText}`);
       bytes = Buffer.from(await response.arrayBuffer());
@@ -110,7 +118,7 @@ async function acquireInstallLock(
       mkdirSync(lockPath);
       return true;
     } catch (error) {
-      if (!error || typeof error !== "object" || !("code" in error) || error.code !== "EEXIST")
+      if (!error || !isObjectValue(error) || !("code" in error) || error.code !== "EEXIST")
         throw error;
       try {
         if (Date.now() - statSync(lockPath).mtimeMs > INSTALL_LOCK_STALE_MS) {
@@ -120,7 +128,7 @@ async function acquireInstallLock(
       } catch (statError) {
         if (
           !statError ||
-          typeof statError !== "object" ||
+          !isObjectValue(statError) ||
           !("code" in statError) ||
           statError.code !== "ENOENT"
         )

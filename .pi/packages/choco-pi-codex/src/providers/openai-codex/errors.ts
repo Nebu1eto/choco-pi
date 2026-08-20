@@ -1,4 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 
 export class NonRetryableProviderError extends Error {}
 
@@ -20,30 +22,37 @@ type CodexErrorEnvelope = {
   headers?: Record<string, string | number | undefined> | undefined;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+const ErrorRecordType = Type.Record(Type.String(), Type.Unknown());
+type ErrorRecord = Static<typeof ErrorRecordType>;
+const ErrorRecordSchema = Type.Unsafe<ErrorRecord>({ type: "object" });
+const StringSchema = Type.String();
+const NumberSchema = Type.Number();
+
+function isRecord<T>(value: T): value is Extract<T, object> & ErrorRecord {
+  return Check(ErrorRecordSchema, value);
 }
 
-function asNumber(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value !== "string" || !value.trim()) return undefined;
+function asNumber<T>(value: T): number | undefined {
+  if (Check(NumberSchema, value) && Number.isFinite(value)) return value;
+  if (!Check(StringSchema, value) || !value.trim()) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function asString<T>(value: T): string | undefined {
+  return Check(StringSchema, value) && value.trim() ? value.trim() : undefined;
 }
 
-function parseJsonObject(value: string): unknown | undefined {
+function parseJsonObject(value: string): ErrorRecord | undefined {
   try {
-    return JSON.parse(value);
+    const parsed: object = JSON.parse(value);
+    return isRecord(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
 }
 
-function extractJsonObjectFromMessage(message: string): unknown | undefined {
+function extractJsonObjectFromMessage(message: string): ErrorRecord | undefined {
   const start = message.indexOf("{");
   if (start < 0) return undefined;
   for (let end = message.length; end > start; end -= 1) {
@@ -54,10 +63,18 @@ function extractJsonObjectFromMessage(message: string): unknown | undefined {
   return undefined;
 }
 
-function normalizeCodexErrorEnvelope(value: unknown): CodexErrorEnvelope | undefined {
+function normalizeCodexErrorEnvelope<T>(value: T): CodexErrorEnvelope | undefined {
   if (!isRecord(value)) return undefined;
   const error = isRecord(value["error"]!) ? value["error"]! : undefined;
-  const headers = isRecord(value["headers"]!) ? value["headers"]! : undefined;
+  const rawHeaders = value["headers"];
+  const headers: Record<string, string | number | undefined> = {};
+  if (isRecord(rawHeaders)) {
+    for (const [key, headerValue] of Object.entries(rawHeaders)) {
+      if (Check(StringSchema, headerValue) || Check(NumberSchema, headerValue)) {
+        headers[key] = headerValue;
+      }
+    }
+  }
   return {
     status_code: asNumber(value["status_code"]!),
     error: error
@@ -70,7 +87,7 @@ function normalizeCodexErrorEnvelope(value: unknown): CodexErrorEnvelope | undef
           resets_in_seconds: asNumber(error["resets_in_seconds"]!),
         }
       : undefined,
-    headers: headers as Record<string, string | number | undefined> | undefined,
+    headers: isRecord(rawHeaders) ? headers : undefined,
   };
 }
 
@@ -81,7 +98,7 @@ function header(
   if (!headers) return undefined;
   for (const [key, value] of Object.entries(headers)) {
     if (key.toLowerCase() === name.toLowerCase())
-      return asString(value) ?? (typeof value === "number" ? String(value) : undefined);
+      return asString(value) ?? (Check(NumberSchema, value) ? String(value) : undefined);
   }
   return undefined;
 }
@@ -114,9 +131,9 @@ function formatLimitUsage(
   return `${label}: ${parts.join(", ")}.`;
 }
 
-export function formatCodexUsageLimitError(value: unknown): string | undefined {
+export function formatCodexUsageLimitError<T>(value: T): string | undefined {
   const envelope = normalizeCodexErrorEnvelope(
-    typeof value === "string"
+    Check(StringSchema, value)
       ? (parseJsonObject(value) ?? extractJsonObjectFromMessage(value))
       : value,
   );
@@ -157,7 +174,7 @@ export function isRetryableStreamStatus(status: number): boolean {
   return (status < 200 || status >= 300) && status !== 400 && status !== 401 && status !== 429;
 }
 
-export function buildProviderErrorMessage(error: unknown): string {
+export function buildProviderErrorMessage<T>(error: T): string {
   const message = error instanceof Error ? error.message : String(error);
   const code = isRecord(error) ? asString(error["code"]!) : undefined;
   if (code === "invalid_prompt") {
@@ -175,47 +192,40 @@ export function buildProviderErrorMessage(error: unknown): string {
   return message;
 }
 
-export function createErrorMessage(
+export function createErrorMessage<T>(
   message: AssistantMessage,
-  error: unknown,
+  error: T,
   aborted: boolean,
 ): AssistantMessage {
   for (const block of message.content) {
-    if (typeof block === "object" && block !== null && "partialJson" in block) {
-      delete (block as { partialJson?: string | undefined }).partialJson;
-    }
+    if ("partialJson" in block) delete block.partialJson;
   }
   message.stopReason = aborted ? "aborted" : "error";
   message.errorMessage = buildProviderErrorMessage(error);
   return message;
 }
 
-export async function parseErrorResponse(
-  response: Response,
-): Promise<{ message: string; friendlyMessage?: string | undefined; code?: string | undefined }> {
+interface ParsedErrorResponse {
+  message: string;
+  friendlyMessage?: string | undefined;
+  code?: string | undefined;
+}
+
+export async function parseErrorResponse(response: Response): Promise<ParsedErrorResponse> {
   const raw = await response.text();
   let message = raw || response.statusText || "Request failed";
   let friendlyMessage: string | undefined;
   let code: string | undefined;
 
   try {
-    const parsed = JSON.parse(raw) as {
-      error?:
-        | {
-            code?: string | undefined;
-            type?: string | undefined;
-            plan_type?: string | undefined;
-            resets_at?: number | undefined;
-            message?: string | undefined;
-          }
-        | undefined;
-    };
+    const parsed = parseJsonObject(raw);
+    if (!parsed) throw new Error("Malformed error response");
     friendlyMessage = formatCodexUsageLimitError({
       ...parsed,
       status_code: response.status,
       headers: Object.fromEntries(response.headers.entries()),
     });
-    const err = parsed?.error;
+    const err = normalizeCodexErrorEnvelope(parsed)?.error;
     if (err) {
       code = err.code || err.type;
       if (!friendlyMessage && isTerminalRateLimitError(`${code ?? ""} ${err.message ?? ""}`)) {
@@ -232,5 +242,7 @@ export async function parseErrorResponse(
     // ignore malformed error bodies
   }
 
-  return { message, friendlyMessage, ...(code ? { code } : {}) };
+  const result: ParsedErrorResponse = { message, friendlyMessage };
+  if (code) result.code = code;
+  return result;
 }

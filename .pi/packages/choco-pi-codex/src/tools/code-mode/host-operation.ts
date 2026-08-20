@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../boundary.js";
 import type { CodeModeHostSession } from "./host-session.js";
 
 export function cancelOperation(session: CodeModeHostSession, id: number): Error {
@@ -27,6 +28,6 @@ export function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw abortError();
 }
 
-export function toError(error: unknown): Error {
+export function toError(error: BoundaryValue): Error {
   return error instanceof Error ? error : new Error(String(error));
 }

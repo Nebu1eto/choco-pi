@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../runtime-values.ts";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
@@ -54,6 +55,7 @@ function collectPiReplayMessages(entries: readonly SessionEntry[]): AgentMessage
 }
 
 export function createCompactionSummaryAgentMessage(entry: NativeCompactionEntry): AgentMessage {
+  // SAFETY: NativeCompactionEntry carries the complete persisted compactionSummary message fields.
   return {
     role: "compactionSummary",
     summary: entry.summary,
@@ -98,7 +100,7 @@ function createReplayVariants<TApi extends Api>(args: {
 }
 
 function clonePayloadConversationInput(args: {
-  payloadInput: readonly unknown[];
+  payloadInput: readonly BoundaryValue[];
   freshPreamble: FreshAuthoritativePreamble;
 }): ResponsesInputItem[] | undefined {
   const tailEndIndex = args.payloadInput.length - args.freshPreamble.trailingInput.length;
@@ -121,15 +123,15 @@ function stripLeadingCompactionSummaryPlaceholder(args: {
   ) {
     return [...args.conversationInput];
   }
-  return [...args.conversationInput.slice(args.compactionSummaryInput.length)];
+  return args.conversationInput.slice(args.compactionSummaryInput.length);
 }
 
 export function buildLenientNativeReplayPayload(args: {
   payload: ResponsesCompatibleRequestPayload;
   freshPreamble: FreshAuthoritativePreamble;
-  compactedWindow: readonly unknown[];
+  compactedWindow: readonly BoundaryValue[];
   compactionSummaryInput: readonly ResponsesInputItem[];
-}): { input: unknown[]; conversationInput: ResponsesInputItem[] } | undefined {
+}): { input: BoundaryValue[]; conversationInput: ResponsesInputItem[] } | undefined {
   const conversationInput = clonePayloadConversationInput({
     payloadInput: args.payload.input,
     freshPreamble: args.freshPreamble,
@@ -152,7 +154,7 @@ export function buildLenientNativeReplayPayload(args: {
 
 export function findReplayMatch<TApi extends Api>(args: {
   model: Model<TApi>;
-  payloadInput: readonly unknown[];
+  payloadInput: readonly BoundaryValue[];
   freshPreamble: FreshAuthoritativePreamble;
   compactionSummaryMessage: AgentMessage;
   preCompactionEntries: readonly SessionEntry[];

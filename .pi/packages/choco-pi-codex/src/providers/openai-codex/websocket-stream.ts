@@ -16,10 +16,12 @@ import {
 import type {
   CachedWebSocketRequestBodyResult,
   CanonicalHistoryDecision,
+  CodexDiagnosticsEvent,
   CodexDiagnosticsLane,
   CodexDiagnosticsSink,
   CodexPrewarmResult,
   OpenAICodexStreamOptions,
+  ProviderOutputItem,
   ResponsesBody,
 } from "./types.ts";
 import type { CodexTurnState } from "./turn-state.ts";
@@ -80,9 +82,8 @@ export async function processWebSocketStream<TApi extends Api>(
   );
   let keepConnection = true;
   let released = false;
-  const responseItems: unknown[] = [];
-  const transport =
-    (options as { transport?: string | undefined } | undefined)?.transport ?? "auto";
+  const responseItems: ProviderOutputItem[] = [];
+  const transport = options?.transport ?? "auto";
   const useCachedContext = transport === "websocket-cached" || transport === "auto";
   // ChatGPT Codex Responses rejects `store: true` ("Store must be set to false").
   // WebSocket continuation still works via connection-scoped previous_response_id state.
@@ -114,7 +115,7 @@ export async function processWebSocketStream<TApi extends Api>(
 
   try {
     if (diagnostics && recordDiagnostics) {
-      recordDiagnostics({
+      const requestEvent: Extract<CodexDiagnosticsEvent, { type: "request" }> = {
         type: "request",
         lane: diagnostics.lane,
         transport: "websocket",
@@ -124,12 +125,13 @@ export async function processWebSocketStream<TApi extends Api>(
         model: fullBody.model,
         socketReused: reused,
         continuation: cachedRequest.decision,
-        ...(canonical?.decision ? { canonicalHistory: canonical.decision } : {}),
-        ...(options?.compactionDiagnostics
-          ? { compaction: structuredClone(options.compactionDiagnostics) }
-          : {}),
         previousResponseId: Boolean(requestBody.previous_response_id),
-      });
+      };
+      if (canonical?.decision) requestEvent.canonicalHistory = canonical.decision;
+      if (options?.compactionDiagnostics) {
+        requestEvent.compaction = structuredClone(options.compactionDiagnostics);
+      }
+      recordDiagnostics(requestEvent);
     }
     socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
     await processMappedCodexResponsesStream(
@@ -221,7 +223,7 @@ export async function prewarmWebSocket(
     options.env,
   );
   let keepConnection = true;
-  const responseItems: unknown[] = [];
+  const responseItems: ProviderOutputItem[] = [];
   let responseId: string | undefined;
   let responseStatus: string | undefined;
   let usage: CodexPrewarmResult["usage"];
@@ -272,7 +274,9 @@ export async function prewarmWebSocket(
       };
     }
     recordDiagnostics?.({ type: "prewarm-ready", transport: "websocket", socketReused: reused });
-    return { socketReused: reused, ...(usage ? { usage } : {}) };
+    const result: CodexPrewarmResult = { socketReused: reused };
+    if (usage) result.usage = usage;
+    return result;
   } catch (error) {
     keepConnection = false;
     recordDiagnostics?.({

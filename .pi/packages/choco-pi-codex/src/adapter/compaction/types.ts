@@ -1,3 +1,8 @@
+import { conditionalProperties } from "../runtime-values.ts";
+import { jsonValueType, JsonObjectSchema } from "../runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { CompactionEntry, CompactionResult } from "@earendil-works/pi-coding-agent";
 import { isCodexCompactionDiagnostic, type CodexCompactionDiagnostic } from "./diagnostics.ts";
 
@@ -46,7 +51,7 @@ export type NativeCompactionIdentity = {
 
 export type NativeCompactionDetails = NativeCompactionIdentity & {
   strategy: PersistedNativeCompactionStrategy;
-  compactedWindow: unknown[];
+  compactedWindow: BoundaryValue[];
   compactResponseId?: string | undefined;
   createdAt: string;
   requestMeta?: NativeCompactionRequestMeta | undefined;
@@ -56,7 +61,7 @@ export type NativeCompactionDetails = NativeCompactionIdentity & {
 export type NativeCompactionEntry = CompactionEntry<NativeCompactionDetails>;
 
 export type CreateNativeCompactionDetailsInput = NativeCompactionIdentity & {
-  compactedWindow: unknown[];
+  compactedWindow: BoundaryValue[];
   compactResponseId?: string | undefined;
   createdAt?: string | undefined;
   requestMeta?: NativeCompactionRequestMeta | undefined;
@@ -70,28 +75,28 @@ export type CreateNativeCompactionShimResultInput = {
   details: NativeCompactionDetails;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is JsonObject {
+  return Value.Check(JsonObjectSchema, value);
 }
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
+function isNonEmptyString(value: BoundaryValue): value is string {
+  return Value.Check(Type.String(), value) && value.trim().length > 0;
 }
 
-function isFiniteNonNegativeNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+function isFiniteNonNegativeNumber(value: BoundaryValue): value is number {
+  return Value.Check(Type.Number(), value) && Number.isFinite(value) && value >= 0;
 }
 
 function normalizeString(value: string): string {
   return value.trim();
 }
 
-function isStructuredValue(value: unknown): boolean {
+function isStructuredValue(value: BoundaryValue): boolean {
   if (
     value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
+    Value.Check(Type.String(), value) ||
+    Value.Check(Type.Number(), value) ||
+    Value.Check(Type.Boolean(), value)
   ) {
     return true;
   }
@@ -107,12 +112,12 @@ function isStructuredValue(value: unknown): boolean {
   return false;
 }
 
-function cloneStructuredValue(value: unknown): unknown {
+function cloneStructuredValue(value: BoundaryValue): BoundaryValue {
   if (
     value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
+    Value.Check(Type.String(), value) ||
+    Value.Check(Type.Number(), value) ||
+    Value.Check(Type.Boolean(), value)
   ) {
     return value;
   }
@@ -122,22 +127,22 @@ function cloneStructuredValue(value: unknown): unknown {
   }
 
   if (isRecord(value)) {
-    const clone: Record<string, unknown> = {};
+    const clone: JsonObject = {};
     for (const [key, nested] of Object.entries(value)) {
       clone[key] = cloneStructuredValue(nested);
     }
     return clone;
   }
 
-  throw new Error(`Unsupported structured value: ${typeof value}`);
+  throw new Error(`Unsupported structured value: ${jsonValueType(value)}`);
 }
 
-function isCompactedWindowItem(value: unknown): value is Record<string, unknown> {
+function isCompactedWindowItem(value: BoundaryValue): value is JsonObject {
   return isRecord(value) && Object.values(value).every(isStructuredValue);
 }
 
 export function isNativeCompactionRequestMeta(
-  value: unknown,
+  value: BoundaryValue,
 ): value is NativeCompactionRequestMeta {
   if (!isRecord(value)) {
     return false;
@@ -148,18 +153,21 @@ export function isNativeCompactionRequestMeta(
     return false;
   }
 
-  if (previousSummaryPresent !== undefined && typeof previousSummaryPresent !== "boolean") {
+  if (
+    previousSummaryPresent !== undefined &&
+    !Value.Check(Type.Boolean(), previousSummaryPresent)
+  ) {
     return false;
   }
 
-  if (compactedKeptWindow !== undefined && typeof compactedKeptWindow !== "boolean") {
+  if (compactedKeptWindow !== undefined && !Value.Check(Type.Boolean(), compactedKeptWindow)) {
     return false;
   }
 
   return true;
 }
 
-export function isNativeCompactionUsage(value: unknown): value is NativeCompactionUsage {
+export function isNativeCompactionUsage(value: BoundaryValue): value is NativeCompactionUsage {
   if (!isRecord(value)) return false;
   return (
     [
@@ -172,11 +180,11 @@ export function isNativeCompactionUsage(value: unknown): value is NativeCompacti
   );
 }
 
-export function isNativeCompactionDetails(value: unknown): value is NativeCompactionDetails {
+export function isNativeCompactionDetails(value: BoundaryValue): value is NativeCompactionDetails {
   if (!isRecord(value)) {
     return false;
   }
-  const candidate = value as Record<string, unknown>;
+  const candidate = value;
 
   return (
     (candidate["strategy"] === NATIVE_COMPACTION_STRATEGY ||
@@ -196,7 +204,7 @@ export function isNativeCompactionDetails(value: unknown): value is NativeCompac
   );
 }
 
-export function isNativeCompactionEntry(value: unknown): value is NativeCompactionEntry {
+export function isNativeCompactionEntry(value: BoundaryValue): value is NativeCompactionEntry {
   return (
     isRecord(value) &&
     value["type"] === "compaction" &&
@@ -222,15 +230,16 @@ export function createNativeCompactionDetails(
       : new Date().toISOString(),
     requestMeta: input.requestMeta
       ? {
-          ...(input.requestMeta.tokensBefore !== undefined
-            ? { tokensBefore: input.requestMeta.tokensBefore }
-            : {}),
-          ...(input.requestMeta.previousSummaryPresent !== undefined
-            ? { previousSummaryPresent: input.requestMeta.previousSummaryPresent }
-            : {}),
-          ...(input.requestMeta.compactedKeptWindow !== undefined
-            ? { compactedKeptWindow: input.requestMeta.compactedKeptWindow }
-            : {}),
+          ...conditionalProperties(Boolean(input.requestMeta.tokensBefore !== undefined), {
+            tokensBefore: input.requestMeta.tokensBefore,
+          }),
+          ...conditionalProperties(
+            Boolean(input.requestMeta.previousSummaryPresent !== undefined),
+            { previousSummaryPresent: input.requestMeta.previousSummaryPresent },
+          ),
+          ...conditionalProperties(Boolean(input.requestMeta.compactedKeptWindow !== undefined), {
+            compactedKeptWindow: input.requestMeta.compactedKeptWindow,
+          }),
         }
       : undefined,
     usage: input.usage ? { ...input.usage } : undefined,

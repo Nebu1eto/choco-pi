@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../boundary.js";
 import { ensureCodeModeHostBinary } from "./binary.js";
 import { CodeModeHostClient } from "./host-client.js";
 import type {
@@ -44,57 +45,59 @@ export interface CodeModeExecutionClient {
 }
 
 export interface CodeModeToolProvider {
-  getTools(ctx?: unknown): CodeModeToolDefinition[];
+  getTools(ctx?: BoundaryValue): CodeModeToolDefinition[];
   documentationPath?: string | undefined;
-  isActive?(ctx: unknown): boolean;
+  isActive?(ctx: BoundaryValue): boolean;
   providesRenderers?: boolean | undefined;
   richRendering?(): boolean;
-  executionKind?(ctx: unknown): CodeModeExecutionKind;
-  notebookOptions?(ctx: unknown): NotebookRuntimeOptions;
+  executionKind?(ctx: BoundaryValue): CodeModeExecutionKind;
+  notebookOptions?(ctx: BoundaryValue): NotebookRuntimeOptions;
 }
 
+export class CodeModeProviderId {}
+
 export class SharedCodeModeRuntime {
-  readonly providers = new Map<object, CodeModeToolProvider>();
+  readonly providers = new Map<CodeModeProviderId, CodeModeToolProvider>();
   private clientPromise: Promise<CodeModeHostClient> | undefined;
   private clientStartupAbort: AbortController | undefined;
   private customPromptToolsSnapshot: CodeModeToolDefinition[] | undefined;
   private promptSectionSnapshot: string | undefined;
 
-  addProvider(provider: CodeModeToolProvider): object {
-    const id = {};
+  addProvider(provider: CodeModeToolProvider): CodeModeProviderId {
+    const id = new CodeModeProviderId();
     this.providers.set(id, provider);
     return id;
   }
 
-  removeProvider(id: object): void {
+  removeProvider(id: CodeModeProviderId): void {
     this.providers.delete(id);
   }
 
-  activeProviders(ctx?: unknown): CodeModeToolProvider[] {
+  activeProviders(ctx?: BoundaryValue): CodeModeToolProvider[] {
     return [...this.providers.values()].filter(
       (provider) => !provider.isActive || provider.isActive(ctx),
     );
   }
 
-  collectTools(ctx?: unknown): CodeModeToolDefinition[] {
+  collectTools(ctx?: BoundaryValue): CodeModeToolDefinition[] {
     const tools = this.collectProviderTools(ctx);
     return this.customPromptToolsSnapshot
       ? applyCustomPromptState(tools, this.customPromptToolsSnapshot)
       : tools;
   }
 
-  refreshPromptTools(ctx?: unknown): CodeModeToolDefinition[] {
+  refreshPromptTools(ctx?: BoundaryValue): CodeModeToolDefinition[] {
     const tools = this.collectProviderTools(ctx);
     this.customPromptToolsSnapshot = tools.filter(isCustomTool);
     return tools;
   }
 
-  resetPromptTools(ctx?: unknown): CodeModeToolDefinition[] {
+  resetPromptTools(ctx?: BoundaryValue): CodeModeToolDefinition[] {
     this.promptSectionSnapshot = undefined;
     return this.refreshPromptTools(ctx);
   }
 
-  collectPromptTools(ctx?: unknown): CodeModeToolDefinition[] {
+  collectPromptTools(ctx?: BoundaryValue): CodeModeToolDefinition[] {
     if (!this.customPromptToolsSnapshot) return this.refreshPromptTools(ctx);
     const liveProgrammaticTools = this.collectProviderTools(ctx).filter(
       (tool) => !isCustomTool(tool),
@@ -123,7 +126,7 @@ export class SharedCodeModeRuntime {
     );
   }
 
-  executionKind(ctx?: unknown): CodeModeExecutionKind {
+  executionKind(ctx?: BoundaryValue): CodeModeExecutionKind {
     const explicit = new Set(
       this.activeProviders(ctx)
         .map((provider) => provider.executionKind?.(ctx))
@@ -133,7 +136,7 @@ export class SharedCodeModeRuntime {
     return explicit.values().next().value ?? "code";
   }
 
-  async getClient(ctx?: unknown): Promise<CodeModeExecutionClient> {
+  async getClient(ctx?: BoundaryValue): Promise<CodeModeExecutionClient> {
     if (this.executionKind(ctx) === "notebook") {
       return Promise.reject(new Error("Notebook Mode is not included in choco-pi-codex"));
     }
@@ -158,7 +161,7 @@ export class SharedCodeModeRuntime {
     return this.clientPromise;
   }
 
-  prepare(ctx?: unknown): Promise<void> | undefined {
+  prepare(ctx?: BoundaryValue): Promise<void> | undefined {
     if (this.activeProviders(ctx).length === 0) return undefined;
     return this.getClient(ctx).then(() => undefined);
   }
@@ -181,7 +184,7 @@ export class SharedCodeModeRuntime {
     }
   }
 
-  private collectProviderTools(ctx?: unknown): CodeModeToolDefinition[] {
+  private collectProviderTools(ctx?: BoundaryValue): CodeModeToolDefinition[] {
     return collectUniqueTools(this.activeProviders(ctx), ctx);
   }
 }
@@ -209,7 +212,7 @@ function applyCustomPromptState(
 
 function collectUniqueTools(
   providers: CodeModeToolProvider[],
-  ctx?: unknown,
+  ctx?: BoundaryValue,
 ): CodeModeToolDefinition[] {
   const tools = providers.flatMap((provider) => provider.getTools(ctx));
   const byName = new Map<string, CodeModeToolDefinition>();

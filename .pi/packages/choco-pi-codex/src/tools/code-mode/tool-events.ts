@@ -1,3 +1,4 @@
+import { isObjectValue, isStringValue } from "../boundary.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildCodeModeToolsPrompt, injectCodeModeToolsPrompt } from "./custom-tool-prompt.js";
 import type { SharedCodeModeRuntime } from "./shared-runtime.js";
@@ -31,11 +32,11 @@ export function registerCodeModeEvents(pi: ExtensionAPI, runtime: SharedCodeMode
     if (
       (event.toolName === "exec" || event.toolName === "wait") &&
       event.details &&
-      typeof event.details === "object" &&
+      isObjectValue(event.details) &&
       "codeMode" in event.details &&
       event.details.codeMode === true &&
       "scriptError" in event.details &&
-      typeof event.details.scriptError === "string"
+      isStringValue(event.details.scriptError)
     )
       return { isError: true };
     return undefined;

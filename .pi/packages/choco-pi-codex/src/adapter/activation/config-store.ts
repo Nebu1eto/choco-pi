@@ -1,3 +1,7 @@
+import { JsonObjectSchema } from "../runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -24,14 +28,11 @@ export type CodexConversionConfigScope = "global" | "folder";
 const OWNED_CONFIG_KEYS = Object.keys(DEFAULT_CODEX_CONVERSION_CONFIG);
 const LEGACY_OWNED_CONFIG_KEYS = ["beta"];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is JsonObject {
+  return Value.Check(JsonObjectSchema, value);
 }
 
-function mergeConfigDocument(
-  existing: Record<string, unknown>,
-  owned: Record<string, unknown>,
-): Record<string, unknown> {
+function mergeConfigDocument(existing: JsonObject, owned: JsonObject): JsonObject {
   const merged = { ...existing };
   for (const [key, value] of Object.entries(owned)) {
     const previous = merged[key];
@@ -41,10 +42,7 @@ function mergeConfigDocument(
   return merged;
 }
 
-function clearAbsentOwnedOptionals(
-  document: Record<string, unknown>,
-  owned: Record<string, unknown>,
-): void {
+function clearAbsentOwnedOptionals(document: JsonObject, owned: JsonObject): void {
   const voice = isRecord(document["voice"]) ? document["voice"] : undefined;
   const ownedVoice = isRecord(owned["voice"]) ? owned["voice"] : undefined;
   if (!voice || !ownedVoice) return;
@@ -52,7 +50,7 @@ function clearAbsentOwnedOptionals(
     if (!(key in ownedVoice)) delete voice[key];
 }
 
-function writeConfigDocumentAtomic(configPath: string, document: Record<string, unknown>): void {
+function writeConfigDocumentAtomic(configPath: string, document: JsonObject): void {
   const temporaryPath = `${configPath}.${process.pid}.${Date.now()}.tmp`;
   mkdirSync(dirname(configPath), { recursive: true });
   try {
@@ -73,7 +71,7 @@ function withoutProjectOnlyConfig(config: CodexConversionConfig): CodexConversio
   };
 }
 
-function withoutProjectOnlyDocument(document: Record<string, unknown>): Record<string, unknown> {
+function withoutProjectOnlyDocument(document: JsonObject): JsonObject {
   const openai = isRecord(document["openai"]) ? { ...document["openai"] } : undefined;
   if (!openai) return document;
   delete openai["cacheKeepalive"];
@@ -94,10 +92,11 @@ export function getProjectCodexConversionConfigPath(cwd: string): string {
 function readConfigDocument(
   configPath: string,
   scope: "global" | "trusted project",
-): unknown | undefined {
+): BoundaryValue | undefined {
   if (!existsSync(configPath)) return undefined;
   try {
-    return JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
+    const parsed: BoundaryValue = JSON.parse(readFileSync(configPath, "utf-8"));
+    return parsed;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[pi-codex-conversion] Failed to read ${scope} config ${configPath}: ${message}`);
@@ -113,14 +112,15 @@ export function readCodexConversionConfig(
   const migration = migrateCodexConversionConfigIfNeeded(parsed);
   const config = withoutProjectOnlyConfig(normalizeCodexConversionConfig(migration.config));
   const voice = isRecord(parsed) && isRecord(parsed["voice"]) ? parsed["voice"] : undefined;
-  if (typeof voice?.["audioSetupCompleted"] !== "boolean") config.voice.audioSetupCompleted = true;
+  if (!Value.Check(Type.Boolean(), voice?.["audioSetupCompleted"]))
+    config.voice.audioSetupCompleted = true;
   return config;
 }
 
 export function readProjectCodexConversionDocument(
   cwd: string,
   projectTrusted: boolean,
-): Record<string, unknown> | undefined {
+): JsonObject | undefined {
   if (!projectTrusted) return undefined;
   const path = getProjectCodexConversionConfigPath(cwd);
   const parsed = readConfigDocument(path, "trusted project");
@@ -163,11 +163,8 @@ export function readLayeredCodexConversionConfig(
 ): CodexConversionConfig {
   const global = readCodexConversionConfig(options.globalConfigPath);
   const project = readProjectCodexConversionDocument(options.cwd, options.projectTrusted);
-  return project
-    ? normalizeCodexConversionConfig(
-        mergeConfigDocument(global as unknown as Record<string, unknown>, project),
-      )
-    : global;
+  if (!project || !Value.Check(JsonObjectSchema, global)) return global;
+  return normalizeCodexConversionConfig(mergeConfigDocument(global, project));
 }
 
 export function setProjectCodexCacheKeepalive(
@@ -224,7 +221,9 @@ export function clearFolderCodexConversionConfig(
   for (const key of [...OWNED_CONFIG_KEYS, ...LEGACY_OWNED_CONFIG_KEYS]) {
     if (key === "openai" && isRecord(project[key])) {
       const keepalive = project[key]["cacheKeepalive"];
-      const nextOpenAI = typeof keepalive === "boolean" ? { cacheKeepalive: keepalive } : {};
+      const nextOpenAI = Value.Check(Type.Boolean(), keepalive)
+        ? { cacheKeepalive: keepalive }
+        : {};
       if (Object.keys(nextOpenAI).length === 0) delete project[key];
       else project[key] = nextOpenAI;
       continue;
@@ -248,13 +247,15 @@ export function writeCodexConversionConfig(
   preserveProjectCacheKeepalive = false,
 ): { ok: true } | { ok: false; error: string } {
   try {
-    const normalized = withoutProjectOnlyDocument(
-      normalizeCodexConversionConfig(config) as unknown as Record<string, unknown>,
-    );
+    const normalizedConfig = normalizeCodexConversionConfig(config);
+    if (!Value.Check(JsonObjectSchema, normalizedConfig)) {
+      throw new Error("Normalized Codex configuration is not JSON-serializable");
+    }
+    const normalized = withoutProjectOnlyDocument(normalizedConfig);
     let document = normalized;
     if (existsSync(configPath)) {
       try {
-        const existing = JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
+        const existing: BoundaryValue = JSON.parse(readFileSync(configPath, "utf-8"));
         if (isRecord(existing)) document = mergeConfigDocument(existing, normalized);
       } catch {
         // A valid explicit settings write replaces an unreadable document.

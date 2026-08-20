@@ -66,12 +66,13 @@ export async function ensureCodeModeHostBinary(
     return codeModeHostBinaryPath(runtime);
   } catch {
     const name = codeModeHostBinaryName(runtime.platform);
-    await runtime.install({
+    const installOptions: InstallCodeModeHostOptions = {
       destination: codeModeHostCachePath(name, runtime),
       platform: runtime.platform,
       arch: runtime.arch,
-      ...(signal ? { signal } : {}),
-    });
+    };
+    if (signal) installOptions.signal = signal;
+    await runtime.install(installOptions);
     return codeModeHostBinaryPath(runtime);
   }
 }

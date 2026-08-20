@@ -1,4 +1,13 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+
 export type TextSignaturePhase = "commentary" | "final_answer";
+
+const TextSignatureSchema = Type.Object({
+  v: Type.Literal(1),
+  id: Type.String(),
+  phase: Type.Optional(Type.Unknown()),
+});
 
 export function shortHash(str: string): string {
   let h1 = 0xdeadbeef;
@@ -14,9 +23,7 @@ export function shortHash(str: string): string {
 }
 
 export function encodeTextSignatureV1(id: string, phase?: string): string {
-  const payload: { v: 1; id: string; phase?: string | undefined } = { v: 1, id };
-  if (phase) payload.phase = phase;
-  return JSON.stringify(payload);
+  return JSON.stringify(phase ? { v: 1, id, phase } : { v: 1, id });
 }
 
 export function parseTextSignature(
@@ -25,12 +32,8 @@ export function parseTextSignature(
   if (!signature) return undefined;
   if (signature.startsWith("{")) {
     try {
-      const parsed = JSON.parse(signature) as {
-        v?: number | undefined;
-        id?: string | undefined;
-        phase?: TextSignaturePhase | string | undefined;
-      };
-      if (parsed.v === 1 && typeof parsed.id === "string") {
+      const parsed: object = JSON.parse(signature);
+      if (Check(TextSignatureSchema, parsed)) {
         return parsed.phase === "commentary" || parsed.phase === "final_answer"
           ? { id: parsed.id, phase: parsed.phase }
           : { id: parsed.id };

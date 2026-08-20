@@ -14,6 +14,7 @@ export function initializeBashParser(): void {
 
 export function extractBashCommand(command: string[]): [shell: string, script: string] | undefined {
   if (command.length !== 3) return undefined;
+  // SAFETY: The preceding length check verifies all three tuple positions are present.
   const [shell, flag, script] = command as [string, string, string];
   if (flag !== "-lc" && flag !== "-c") return undefined;
   const shellName = shell.replace(/\\/g, "/").split("/").pop()?.toLowerCase();

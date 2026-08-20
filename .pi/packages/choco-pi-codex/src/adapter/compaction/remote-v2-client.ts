@@ -1,3 +1,7 @@
+import { conditionalProperties, JsonObjectSchema } from "../runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import {
   type Api,
   type AssistantMessage,
@@ -39,12 +43,12 @@ type V2Stream = (
   model: Model<Api>,
   context: Context,
   options?: SimpleStreamOptions,
-) => AsyncIterable<unknown>;
+) => AsyncIterable<BoundaryValue>;
 
 export type RemoteCompactionV2Result =
   | {
       ok: true;
-      compaction: Record<string, unknown>;
+      compaction: JsonObject;
       responseId: string;
       createdAt: string;
       usage?: RemoteCompactionV2Usage | undefined;
@@ -84,6 +88,7 @@ function resolveStream(options: ExecuteRemoteCompactionV2Options): V2Stream | un
     // The Codex API implementation is registered once under the stock
     // provider. The runtime model and credentials retain the alias scope.
     const registration = options.modelRegistry.getRegisteredProviderConfig("openai-codex");
+    // SAFETY: Provider registration verifies this receiver-preserving stream callback uses the V2 stream signature.
     return registration?.api === "openai-codex-responses" && registration.streamSimple
       ? (registration.streamSimple as V2Stream)
       : undefined;
@@ -91,6 +96,7 @@ function resolveStream(options: ExecuteRemoteCompactionV2Options): V2Stream | un
   const configuredRegistration = options.modelRegistry.getRegisteredProviderConfig(
     options.runtime.provider,
   );
+  // SAFETY: The matching API discriminator verifies this registered callback uses the V2 stream signature.
   return options.runtime.api === "openai-responses" &&
     configuredRegistration?.api === "openai-responses" &&
     configuredRegistration.streamSimple
@@ -166,23 +172,28 @@ function withCurrentCompactionControls(
     ...historyBody
   } = canonicalBody;
   const currentReasoning = requestOptions.reasoning ?? currentBody.reasoning;
+  const parsedCurrentReasoning = Value.Check(JsonObjectSchema, currentReasoning)
+    ? currentReasoning
+    : {};
   const reasoningContext = canonicalReasoning?.context;
   return {
     ...historyBody,
     text: structuredClone(currentBody.text),
-    ...(reasoningContext || currentReasoning
-      ? {
-          reasoning: {
-            ...(reasoningContext ? { context: reasoningContext } : {}),
-            ...structuredClone(currentReasoning ?? {}),
-          },
-        }
-      : {}),
-    ...(currentBody.service_tier !== undefined ? { service_tier: currentBody.service_tier } : {}),
-    ...(currentBody.temperature !== undefined ? { temperature: currentBody.temperature } : {}),
-    ...(currentBody.client_metadata
-      ? { client_metadata: structuredClone(currentBody.client_metadata) }
-      : {}),
+    ...conditionalProperties(Boolean(reasoningContext || currentReasoning), {
+      reasoning: {
+        ...conditionalProperties(Boolean(reasoningContext), { context: reasoningContext }),
+        ...structuredClone(parsedCurrentReasoning),
+      },
+    }),
+    ...conditionalProperties(Boolean(currentBody.service_tier !== undefined), {
+      service_tier: currentBody.service_tier,
+    }),
+    ...conditionalProperties(Boolean(currentBody.temperature !== undefined), {
+      temperature: currentBody.temperature,
+    }),
+    ...conditionalProperties(Boolean(currentBody.client_metadata), {
+      client_metadata: structuredClone(currentBody.client_metadata),
+    }),
   };
 }
 
@@ -190,7 +201,7 @@ async function runAttempt(
   options: ExecuteRemoteCompactionV2Options,
   streamSimple: V2Stream,
 ): Promise<RemoteCompactionV2Result> {
-  const outputItems: unknown[] = [];
+  const outputItems: BoundaryValue[] = [];
   let responseStatus: number | undefined;
   const compactionDiagnostic = options.compactionDiagnostic ?? {
     inputSource: options.promptInputSource ?? "reconstructed",
@@ -215,30 +226,35 @@ async function runAttempt(
     options.promptInputSource !== "reconstructed" && canonicalIdentity
       ? canonicalCompactionRequestBody(options.sessionId, options.runtime.model, canonicalIdentity)
       : undefined;
+  const serviceTier = Value.Check(Type.String(), options.requestOptions.service_tier)
+    ? options.requestOptions.service_tier
+    : undefined;
+  const textVerbosity = options.requestOptions.text?.verbosity;
+  // SAFETY: TypeBox verified serviceTier as a string; the host SDK narrows that wire value to its service-tier union.
   const streamOptions: OpenAICodexStreamOptions = {
-    ...(options.runtime.apiKey ? { apiKey: options.runtime.apiKey } : {}),
+    ...conditionalProperties(Boolean(options.runtime.apiKey), { apiKey: options.runtime.apiKey }),
     headers: withRemoteCompactionV2Feature(options.runtime.headers),
     sessionId: options.sessionId,
-    ...(options.signal ? { signal: options.signal } : {}),
-    ...(options.transport ? { transport: options.transport } : {}),
-    ...(options.runtime.codexTransport ? { canonicalCompaction: true } : {}),
+    ...conditionalProperties(Boolean(options.signal), { signal: options.signal }),
+    ...conditionalProperties(Boolean(options.transport), { transport: options.transport }),
+    ...conditionalProperties(Boolean(options.runtime.codexTransport), {
+      canonicalCompaction: true,
+    }),
     compactionDiagnostics: compactionDiagnostic,
     maxRetries: options.runtime.codexTransport ? MAX_STREAM_RETRIES : 0,
-    ...(typeof options.requestOptions.service_tier === "string"
-      ? { serviceTier: options.requestOptions.service_tier as never }
-      : {}),
-    ...(options.requestOptions.text?.verbosity
-      ? { textVerbosity: options.requestOptions.text.verbosity }
-      : {}),
+    ...conditionalProperties(Boolean(serviceTier), { serviceTier: serviceTier as never }),
+    ...conditionalProperties(Boolean(textVerbosity), { textVerbosity }),
     onOutputItemDone: (item) => outputItems.push(item),
     onResponse: (response) => {
       responseStatus = response.status;
     },
     onPayload: async (payload) => {
+      // SAFETY: OpenAICodexStreamOptions.onPayload receives the ResponsesBody built by this registered provider.
       const body = payload as ResponsesBody;
       const requestBody = canonicalBody
         ? withCurrentCompactionControls(canonicalBody, body, options.requestOptions)
         : body;
+      // SAFETY: The normalizer retains only JsonObject values, which are valid ResponsesReasoningItem variants.
       const promptInput = normalizeRemoteCompactionV2PromptInput(
         canonicalInput ?? options.promptInput,
       ) as ResponsesInputItem[];
@@ -246,9 +262,9 @@ async function runAttempt(
         {
           model: requestBody.model,
           input: promptInput,
-          ...(typeof requestBody.instructions === "string"
-            ? { instructions: requestBody.instructions }
-            : {}),
+          ...conditionalProperties(Boolean(Value.Check(Type.String(), requestBody.instructions)), {
+            instructions: requestBody.instructions,
+          }),
         },
         {
           budgetTokens: resolveNativeCompactionRequestBudget({
@@ -263,9 +279,9 @@ async function runAttempt(
       return {
         ...requestBody,
         input: [...request.request.input, { type: "compaction_trigger" }],
-        ...(!canonicalBody && options.requestOptions.reasoning
-          ? { reasoning: structuredClone(options.requestOptions.reasoning) }
-          : {}),
+        ...conditionalProperties(Boolean(!canonicalBody && options.requestOptions.reasoning), {
+          reasoning: structuredClone(options.requestOptions.reasoning),
+        }),
       };
     },
   };
@@ -277,6 +293,7 @@ async function runAttempt(
     options.context,
     streamOptions,
   )) {
+    // SAFETY: The registered V2 stream yields Pi assistant lifecycle events with these optional fields.
     const event = rawEvent as {
       type?: string;
       reason?: string;
@@ -293,7 +310,7 @@ async function runAttempt(
         ok: false,
         reason: isAborted(options.signal, message) ? "aborted" : "stream-error",
         errorMessage: message,
-        ...(responseStatus !== undefined ? { status: responseStatus } : {}),
+        ...conditionalProperties(Boolean(responseStatus !== undefined), { status: responseStatus }),
       };
     }
   }

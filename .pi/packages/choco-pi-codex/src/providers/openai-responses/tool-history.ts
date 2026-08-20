@@ -1,3 +1,5 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import { shortHash } from "./signatures.ts";
 
 type ToolFamily = "function" | "custom" | "search";
@@ -8,15 +10,20 @@ type PairedCall = {
   index: number;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+const HistoryRecordType = Type.Record(Type.String(), Type.Unknown());
+type HistoryRecord = Static<typeof HistoryRecordType>;
+const HistoryRecordSchema = Type.Unsafe<HistoryRecord>({ type: "object" });
+const StringSchema = Type.String();
+
+function isRecord<T>(value: T): value is Extract<T, object> & HistoryRecord {
+  return Check(HistoryRecordSchema, value);
 }
 
-function callId(item: unknown): string | undefined {
-  return isRecord(item) && typeof item["call_id"] === "string" ? item["call_id"] : undefined;
+function callId<T>(item: T): string | undefined {
+  return isRecord(item) && Check(StringSchema, item["call_id"]) ? item["call_id"] : undefined;
 }
 
-function callFamily(item: unknown): ToolFamily | undefined {
+function callFamily<T>(item: T): ToolFamily | undefined {
   if (!isRecord(item)) return undefined;
   if (item["type"] === "function_call" || item["type"] === "local_shell_call") return "function";
   if (item["type"] === "custom_tool_call") return "custom";
@@ -24,67 +31,96 @@ function callFamily(item: unknown): ToolFamily | undefined {
   return undefined;
 }
 
-function outputFamily(item: unknown): ToolFamily | undefined {
+function outputFamily<T>(item: T): ToolFamily | undefined {
   if (!isRecord(item)) return undefined;
   if (item["type"] === "function_call_output") return "function";
   if (item["type"] === "custom_tool_call_output") return "custom";
   if (
     item["type"] === "tool_search_output" &&
     item["execution"] !== "server" &&
-    typeof item["call_id"] === "string"
+    Check(StringSchema, item["call_id"])
   )
     return "search";
   return undefined;
 }
 
-function syntheticOutputId(prefix: string, call: Record<string, unknown>): string | undefined {
+function syntheticOutputId(prefix: string, call: HistoryRecord): string | undefined {
   const sourceId = call["id"];
-  return typeof sourceId === "string" && sourceId !== ""
+  return Check(StringSchema, sourceId) && sourceId !== ""
     ? `${prefix}_${shortHash(`${prefix}:${sourceId}`)}`
     : undefined;
 }
 
-function syntheticOutput(
-  call: Record<string, unknown>,
-  family: ToolFamily,
-  id: string,
-): Record<string, unknown> {
+interface SyntheticCustomToolOutput {
+  type: "custom_tool_call_output";
+  id?: string;
+  call_id: string;
+  output: string;
+}
+interface SyntheticSearchToolOutput {
+  type: "tool_search_output";
+  id?: string;
+  call_id: string;
+  status: "completed";
+  execution: "client";
+  tools: never[];
+}
+interface SyntheticFunctionToolOutput {
+  type: "function_call_output";
+  id?: string;
+  call_id: string;
+  output: string;
+}
+type SyntheticToolOutput =
+  | SyntheticCustomToolOutput
+  | SyntheticSearchToolOutput
+  | SyntheticFunctionToolOutput;
+
+function syntheticOutput(call: HistoryRecord, family: ToolFamily, id: string): SyntheticToolOutput {
   if (family === "custom") {
     const outputId = syntheticOutputId("ctco", call);
-    return {
+    const output: SyntheticCustomToolOutput = {
       type: "custom_tool_call_output",
-      ...(outputId ? { id: outputId } : {}),
       call_id: id,
       output: "aborted",
     };
+    if (outputId) output.id = outputId;
+    return output;
   }
   if (family === "search") {
     const outputId = syntheticOutputId("tso", call);
-    return {
+    const output: SyntheticSearchToolOutput = {
       type: "tool_search_output",
-      ...(outputId ? { id: outputId } : {}),
       call_id: id,
       status: "completed",
       execution: "client",
       tools: [],
     };
+    if (outputId) output.id = outputId;
+    return output;
   }
   const outputId = syntheticOutputId("fco", call);
-  return {
+  const output: SyntheticFunctionToolOutput = {
     type: "function_call_output",
-    ...(outputId ? { id: outputId } : {}),
     call_id: id,
     output: "aborted",
   };
+  if (outputId) output.id = outputId;
+  return output;
+}
+
+function itemAt<T>(input: T[], index: number): T {
+  // SAFETY: Every caller supplies an index from a loop bounded by this same array's length.
+  return input[index] as T;
 }
 
 /** Keep Responses tool calls and outputs paired after arbitrary history rewrites. */
-export function normalizeResponsesToolHistory(input: readonly unknown[]): unknown[] {
+export function normalizeResponsesToolHistory<T>(input: T[]): (T | SyntheticToolOutput)[] {
   const calls = new Map<string, PairedCall>();
   const validCalls = new Set<number>();
   const droppedCalls = new Set<number>();
   for (let index = 0; index < input.length; index++) {
-    const item = input[index];
+    const item = itemAt(input, index);
     const family = callFamily(item);
     const id = callId(item);
     if (!family || id === undefined) continue;
@@ -99,7 +135,7 @@ export function normalizeResponsesToolHistory(input: readonly unknown[]): unknow
   const matchedCalls = new Set<string>();
   const droppedOutputs = new Set<number>();
   for (let index = 0; index < input.length; index++) {
-    const item = input[index];
+    const item = itemAt(input, index);
     const family = outputFamily(item);
     const id = callId(item);
     if (!family) continue;
@@ -111,9 +147,9 @@ export function normalizeResponsesToolHistory(input: readonly unknown[]): unknow
     matchedCalls.add(call.id);
   }
 
-  let normalized: unknown[] | undefined;
+  let normalized: (T | SyntheticToolOutput)[] | undefined;
   for (let index = 0; index < input.length; index++) {
-    const item = input[index];
+    const item = itemAt(input, index);
     const family = callFamily(item);
     const drop = droppedCalls.has(index) || droppedOutputs.has(index);
     if (drop) {
@@ -128,5 +164,5 @@ export function normalizeResponsesToolHistory(input: readonly unknown[]): unknow
     normalized.push(syntheticOutput(item, family, id));
   }
 
-  return normalized ?? (input as unknown[]);
+  return normalized ?? input;
 }

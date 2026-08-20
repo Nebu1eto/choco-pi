@@ -260,14 +260,22 @@ function columnWidths(rows: string[][]): number[] {
   );
 }
 
+const ANSI_COLOR_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+
 function stripAnsi(value: string): string {
-  return value.replace(/\x1b\[[0-9;]*m/g, "");
+  return value.replace(ANSI_COLOR_SEQUENCE, "");
 }
 function padCell(value: string, width: number): string {
   return value + " ".repeat(Math.max(0, width - stripAnsi(value).length));
 }
 function formatUsageRow(row: string[], widths: number[]): string {
   return `  ${row.map((cell, index) => padCell(cell, widths[index] ?? 0)).join("  ")}`;
+}
+
+interface UsageColumns {
+  bar: string;
+  percent: string;
+  reset: string;
 }
 
 function usageColumns(
@@ -278,8 +286,8 @@ function usageColumns(
         resetsAt?: number | undefined;
       }
     | undefined,
-): { bar: string; percent: string; reset: string } {
-  if (!window) return { bar: "", percent: "", reset: "" };
+): UsageColumns {
+  if (!window) return { bar: "", percent: "", reset: "" } satisfies UsageColumns;
   const percent =
     window.usedPercent === undefined
       ? undefined
@@ -288,7 +296,7 @@ function usageColumns(
     bar: usageBar(percent),
     percent: percent === undefined ? "?%" : `${Math.round(percent)}%`,
     reset: formatResetShort(window.resetsAt),
-  };
+  } satisfies UsageColumns;
 }
 
 function usageBar(percent: number | undefined): string {

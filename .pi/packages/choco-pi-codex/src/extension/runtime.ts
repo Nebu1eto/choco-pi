@@ -1,4 +1,9 @@
 import {
+  conditionalProperties,
+  isBoundaryValue,
+  type BoundaryValue,
+} from "../adapter/runtime-values.ts";
+import {
   buildSessionContext,
   convertToLlm,
   type ExtensionAPI,
@@ -119,7 +124,7 @@ export function createCodexExtensionRuntime(pi: ExtensionAPI): CodexExtensionRun
   });
   let prewarmController: AbortController | undefined;
   let prewarmPromise: Promise<CodexPrewarmResult> | undefined;
-  let prewarmTransportSettlement: Promise<unknown> | undefined;
+  let prewarmTransportSettlement: Promise<BoundaryValue> | undefined;
   let pendingPrewarmKey: string | undefined;
   let prewarmedIdentity: string | undefined;
   let activePrewarmKind: "ordinary" | "keepalive" | undefined;
@@ -224,21 +229,25 @@ export function createCodexExtensionRuntime(pi: ExtensionAPI): CodexExtensionRun
           { systemPrompt: preparedSystemPrompt, messages, tools },
           {
             apiKey: auth.apiKey,
-            ...(auth.headers ? { headers: auth.headers } : {}),
-            ...(auth.env ? { env: auth.env } : {}),
+            ...conditionalProperties(Boolean(auth.headers), { headers: auth.headers }),
+            ...conditionalProperties(Boolean(auth.env), { env: auth.env }),
             sessionId: ctx.sessionManager.getSessionId(),
             signal: controller.signal,
             ...reasoning,
             textVerbosity: config.openai.verbosity,
-            ...(config.openai.fast ? { serviceTier: "priority" as const } : {}),
-            onPayload: (body) =>
-              rewriteFinalRequest
+            ...conditionalProperties(Boolean(config.openai.fast), {
+              serviceTier: "priority" as const,
+            }),
+            onPayload: (body) => {
+              if (!isBoundaryValue(body)) return undefined;
+              return rewriteFinalRequest
                 ? rewriteCodexProviderRequest(body, ctx, { ...state, config, executionMode })
                 : rewriteCodexPrewarmProviderRequest(body, ctx, {
                     ...state,
                     config,
                     executionMode,
-                  }),
+                  });
+            },
           },
           {
             getConfig: () => ({
@@ -251,7 +260,10 @@ export function createCodexExtensionRuntime(pi: ExtensionAPI): CodexExtensionRun
               "responses-lite",
             turnState: state.codexTurnState,
             getDiagnostics: () => diagnostics.sink(),
-            ...(preparedBody ? { preparedBody, preserveContinuation: true } : {}),
+            ...conditionalProperties(Boolean(preparedBody), {
+              preparedBody,
+              preserveContinuation: true,
+            }),
           },
         );
         prewarmTransportSettlement = transportSettlement;
@@ -262,7 +274,7 @@ export function createCodexExtensionRuntime(pi: ExtensionAPI): CodexExtensionRun
           prewarmedIdentity = identity;
           return {
             status: "ready",
-            ...(result.usage ? { usage: result.usage } : {}),
+            ...conditionalProperties(Boolean(result.usage), { usage: result.usage }),
             socketReused: result.socketReused,
           } as const;
         } finally {

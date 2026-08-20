@@ -1,8 +1,16 @@
+import type { BoundaryValue } from "../adapter/runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { mkdir, open } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { CodexDiagnosticsEvent } from "../providers/openai-codex/types.ts";
 
 const LOG_DIRECTORY_BASENAME = "pi-codex-logs";
+
+const UNSAFE_FILENAME_CHARACTERS = new RegExp(
+  `[${String.fromCharCode(0)}-${String.fromCharCode(31)}${String.fromCharCode(127)}/\\\\:]+`,
+  "g",
+);
 
 export interface CodexDiagnosticsLog {
   path: string;
@@ -13,7 +21,7 @@ export interface CodexDiagnosticsLog {
 function safeFilenamePart(value: string): string {
   return value
     .normalize("NFKC")
-    .replace(/[\u0000-\u001f\u007f/\\:]+/g, "-")
+    .replace(UNSAFE_FILENAME_CHARACTERS, "-")
     .replace(/\s+/g, "-")
     .replace(/[^\p{L}\p{N}._-]+/gu, "-")
     .replace(/^[.-]+|[.-]+$/g, "")
@@ -50,7 +58,7 @@ function safeText(value: string): string {
 
 function field(key: string, value: string | number | boolean | undefined): string | undefined {
   if (value === undefined) return undefined;
-  return `${key}=${typeof value === "string" ? JSON.stringify(safeText(value)) : String(value)}`;
+  return `${key}=${Value.Check(Type.String(), value) ? JSON.stringify(safeText(value)) : String(value)}`;
 }
 
 function eventFields(event: CodexDiagnosticsEvent): Array<string | undefined> {
@@ -137,7 +145,7 @@ export async function createCodexDiagnosticsLog(options: {
   modelProvider?: string | undefined;
   modelId?: string | undefined;
   agentDir: string;
-  onError: (error: unknown) => void;
+  onError: (error: BoundaryValue) => void;
 }): Promise<CodexDiagnosticsLog> {
   const agentDir = options.agentDir;
   const path = codexDiagnosticsLogPath({
@@ -175,7 +183,7 @@ export async function createCodexDiagnosticsLog(options: {
       if (failed) return;
       pending = pending
         .then(() => handle.appendFile(formatEvent(event), "utf8"))
-        .catch((error: unknown) => {
+        .catch((error) => {
           failed = true;
           try {
             options.onError(error);

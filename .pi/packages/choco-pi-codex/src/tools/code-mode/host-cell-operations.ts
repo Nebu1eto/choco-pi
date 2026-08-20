@@ -1,3 +1,4 @@
+import type { BoundaryRecord } from "../boundary.js";
 import type { CodeModeHostDelegation } from "./host-delegation.js";
 import { operationAbort, throwIfAborted } from "./host-operation.js";
 import { isMissingRuntimeOutcome, parseRuntimeResponse, runtimeOutcome } from "./host-protocol.js";
@@ -54,7 +55,7 @@ export class CodeModeHostCellOperations {
     cellId: string,
     context: ToolExecutionContext,
     signal: AbortSignal | undefined,
-    request: Record<string, unknown>,
+    request: BoundaryRecord,
     invalidOutcomeMessage: string,
   ): Promise<RuntimeResponse> {
     throwIfAborted(signal);
@@ -70,10 +71,9 @@ export class CodeModeHostCellOperations {
       );
       const wrapped = runtimeOutcome(value);
       if (!wrapped) throw new Error(invalidOutcomeMessage);
-      return {
-        ...this.delegation.attach(parseRuntimeResponse(wrapped)),
-        ...(isMissingRuntimeOutcome(value) ? { missingCell: true as const } : {}),
-      };
+      const response = this.delegation.attach(parseRuntimeResponse(wrapped));
+      if (isMissingRuntimeOutcome(value)) response.missingCell = true;
+      return response;
     } finally {
       signal?.removeEventListener("abort", abort);
     }

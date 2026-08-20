@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isBooleanValue, isObjectValue, isStringValue } from "../boundary.js";
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -26,38 +28,38 @@ export function getProjectCustomToolsDir(launchDir: string = process.cwd()): str
   return join(launchDir, ".pi", CUSTOM_TOOLS_DIRNAME);
 }
 
-function requiredString(value: unknown, field: string, path: string): string {
-  if (typeof value !== "string" || !value.trim())
+function requiredString(value: BoundaryValue, field: string, path: string): string {
+  if (!isStringValue(value) || !value.trim())
     throw new Error(`${path}: ${field} must be a non-empty string`);
   return value.trim();
 }
 
-function optionalString(value: unknown, field: string, path: string): string | undefined {
+function optionalString(value: BoundaryValue, field: string, path: string): string | undefined {
   if (value === undefined) return undefined;
   return requiredString(value, field, path);
 }
 
-function stringArray(value: unknown, field: string, path: string): string[] {
+function stringArray(value: BoundaryValue, field: string, path: string): string[] {
   if (value === undefined) return [];
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string"))
+  if (!Array.isArray(value) || value.some((entry) => !isStringValue(entry)))
     throw new Error(`${path}: ${field} must be an array of strings`);
   return [...value];
 }
 
-function inputMode(value: unknown, path: string): CustomToolInputMode {
+function inputMode(value: BoundaryValue, path: string): CustomToolInputMode {
   if (value === undefined) return "arg";
   if (value === "arg" || value === "stdin") return value;
   throw new Error(`${path}: input must be "arg" or "stdin"`);
 }
 
-function deferLoading(value: unknown, path: string): boolean {
+function deferLoading(value: BoundaryValue, path: string): boolean {
   if (value === undefined) return true;
-  if (typeof value === "boolean") return value;
+  if (isBooleanValue(value)) return value;
   throw new Error(`${path}: defer_loading must be a boolean`);
 }
 
 function optionalNonNegativeInteger(
-  value: unknown,
+  value: BoundaryValue,
   field: string,
   path: string,
 ): number | undefined {
@@ -71,7 +73,8 @@ export function parseCustomTool(path: string, text: string): CustomToolDefinitio
   const name = basename(path, extname(path));
   if (!TOOL_NAME_PATTERN.test(name))
     throw new Error(`${path}: filename must be a JavaScript-compatible tool name`);
-  const value = parse(text) as Record<string, unknown>;
+  const value: unknown = parse(text);
+  if (!isObjectValue(value)) throw new Error(`${path}: tool definition must be an object`);
   const known = new Set([
     "usage",
     "description",
@@ -136,7 +139,7 @@ function customToolPaths(dir: string, errors: CustomToolDiscoveryError[]): strin
       .sort((left, right) => left.name.localeCompare(right.name))
       .map((entry) => join(dir, entry.name));
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
+    if (error && isObjectValue(error) && "code" in error && error.code === "ENOENT") return [];
     const detail = error instanceof Error ? error.message : String(error);
     errors.push({ path: dir, message: `${dir}: ${detail}` });
     return [];

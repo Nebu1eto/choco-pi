@@ -75,7 +75,7 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
         runtime.resetTransport(ctx.sessionManager.getSessionId());
       }
       if (config.voiceFeaturesOnly && !previousConfig.voiceFeaturesOnly) {
-        void codeMode.shutdownHost().catch((error: unknown) => {
+        void codeMode.shutdownHost().catch((error) => {
           ctx.ui.notify(
             `Could not stop Code Mode host: ${error instanceof Error ? error.message : String(error)}`,
             "warning",
@@ -85,7 +85,7 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
         void codeMode
           .shutdownHost()
           .then(() => prepareCodeModeHost(codeMode, ctx))
-          .catch((error: unknown) => {
+          .catch((error) => {
             ctx.ui.notify(
               `Could not switch execution mode: ${error instanceof Error ? error.message : String(error)}`,
               "warning",

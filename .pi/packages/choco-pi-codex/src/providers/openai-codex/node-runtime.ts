@@ -1,9 +1,17 @@
 const dynamicImport = (specifier: string) => import(specifier);
 
-export const osInfo: { current: { platform(): string; release(): string; arch(): string } | null } =
-  { current: null };
+type OsModule = { platform(): string; release(): string; arch(): string };
+interface OsInfo {
+  current: OsModule | null;
+}
 
-if (typeof process !== "undefined" && (process.versions?.node || process.versions["bun"]!)) {
+function createOsInfo(): OsInfo {
+  return { current: null };
+}
+
+export const osInfo = createOsInfo();
+
+if (globalThis.process !== undefined && (process.versions?.node || process.versions["bun"]!)) {
   dynamicImport("node:os")
     .then((module) => {
       osInfo.current = module;

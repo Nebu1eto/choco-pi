@@ -1,3 +1,4 @@
+import { isStringValue } from "../boundary.js";
 import { resolve } from "node:path";
 import {
   CODEX_FALLBACK_SHELL,
@@ -14,6 +15,12 @@ export const MAX_EXEC_YIELD_TIME_MS = 1_800_000;
 export const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
 export const DEFAULT_WRITE_YIELD_TIME_MS = 250;
 export const DEFAULT_MAX_EMPTY_WRITE_YIELD_TIME_MS = 1_800_000;
+
+export interface ResolvedExecution {
+  shell: string;
+  command: string;
+  env: NodeJS.ProcessEnv;
+}
 
 const BASH_SYNC_ENV_KEYS = [
   "PATH",
@@ -61,7 +68,7 @@ function buildSyncedBashCommand(command: string, env: NodeJS.ProcessEnv): string
   const assignments: string[] = [];
   for (const key of BASH_SYNC_ENV_KEYS) {
     const value = key === "SHELL" ? CODEX_FALLBACK_SHELL : env[key]!;
-    if (typeof value !== "string") continue;
+    if (!isStringValue(value)) continue;
     assignments.push(`export ${key}=${shellEscape(value)}`);
   }
   return assignments.length === 0 ? command : `${assignments.join("; ")}; ${command}`;
@@ -72,7 +79,7 @@ export function resolveExecution(
   command: string,
   extraEnv?: NodeJS.ProcessEnv,
   baseEnv: NodeJS.ProcessEnv = process.env,
-): { shell: string; command: string; env: NodeJS.ProcessEnv } {
+): ResolvedExecution {
   const shell = resolveShell(requestedShell);
   const env: NodeJS.ProcessEnv = { ...baseEnv, ...extraEnv };
   if (!shouldSyncBashEnv(requestedShell, shell)) return { shell, command, env };

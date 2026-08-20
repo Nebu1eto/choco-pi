@@ -8,6 +8,7 @@ import type {
 import { isProviderContextExcludedCustomMessageEntry } from "../prompt/context-filter.ts";
 
 function toBranchSummaryMessage(entry: BranchSummaryEntry): AgentMessage {
+  // SAFETY: BranchSummaryEntry supplies every field required by Pi's branchSummary message variant.
   return {
     role: "branchSummary",
     summary: entry.summary,
@@ -17,6 +18,7 @@ function toBranchSummaryMessage(entry: BranchSummaryEntry): AgentMessage {
 }
 
 function toCustomMessage(entry: CustomMessageEntry): AgentMessage {
+  // SAFETY: CustomMessageEntry supplies every field required by Pi's custom message variant.
   return {
     role: "custom",
     customType: entry.customType,

@@ -1,13 +1,25 @@
+import type { BoundaryRecord } from "../boundary.js";
+import { isNumberValue, isStringValue } from "../boundary.js";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { formatNativeBinaryError } from "../../native-binary-error.ts";
 import { getBundledToolBinaryPath } from "../native/binary.ts";
+
+const BridgeResponseIdentitySchema = Type.Object({ request_id: Type.Number() });
+const BridgeResponseSchema = Type.Object({
+  request_id: Type.Number(),
+  ok: Type.Boolean(),
+  result: Type.Optional(Type.Unknown()),
+  error: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+});
 
 interface BridgeResponse<T = unknown> {
   request_id: number;
   ok: boolean;
   result?: T | undefined;
-  error?: string | undefined;
+  error?: string | null | undefined;
 }
 
 export interface BridgeReadResponse {
@@ -20,7 +32,7 @@ export interface BridgeReadResponse {
 }
 
 export interface ExecBridgeClient {
-  request<T = unknown>(request: Record<string, unknown>): Promise<T>;
+  request<T = unknown>(request: BoundaryRecord): Promise<T>;
   shutdown(): Promise<void>;
 }
 
@@ -39,8 +51,7 @@ export function formatExecBridgeExitError(
   signal?: NodeJS.Signals | null | undefined,
 ): string {
   const detail = stderr.trim();
-  const status =
-    typeof code === "number" ? `code ${code}` : signal ? `signal ${signal}` : undefined;
+  const status = isNumberValue(code) ? `code ${code}` : signal ? `signal ${signal}` : undefined;
   const prefix = status ? `exec_bridge exited (${status})` : "exec_bridge exited";
   const message = detail ? `${prefix}: ${detail}` : prefix;
   return formatNativeBinaryError("exec_bridge", message);
@@ -88,17 +99,22 @@ export function createExecBridgeClient(
       const line = bridgeLineBuffer.slice(0, newline).trim();
       bridgeLineBuffer = bridgeLineBuffer.slice(newline + 1);
       if (!line) continue;
-      let response: BridgeResponse;
+      let parsed: unknown;
       try {
-        response = JSON.parse(line) as BridgeResponse;
+        parsed = JSON.parse(line);
       } catch {
         continue;
       }
-      const pending = pendingBridgeRequests.get(response.request_id);
+      if (!Value.Check(BridgeResponseIdentitySchema, parsed)) continue;
+      const pending = pendingBridgeRequests.get(parsed.request_id);
       if (!pending) continue;
-      pendingBridgeRequests.delete(response.request_id);
+      pendingBridgeRequests.delete(parsed.request_id);
       bridgeResponded = true;
-      pending.resolve(response);
+      if (!Value.Check(BridgeResponseSchema, parsed)) {
+        pending.reject(new Error("exec_bridge returned an invalid response"));
+        continue;
+      }
+      pending.resolve(parsed);
     }
   }
 
@@ -145,12 +161,13 @@ export function createExecBridgeClient(
   }
 
   async function sendRequest<T = unknown>(
-    value: Record<string, unknown>,
+    value: BoundaryRecord,
     existingChild?: ChildProcessWithoutNullStreams,
   ): Promise<T> {
     const requestId = nextBridgeRequestId++;
     const child = existingChild ?? getBridge();
     const response = await new Promise<BridgeResponse<T>>((resolve, reject) => {
+      // SAFETY: requestId binds this resolver to the same validated BridgeResponse envelope regardless of its caller-owned result type.
       pendingBridgeRequests.set(requestId, {
         resolve: resolve as (value: BridgeResponse) => void,
         reject,
@@ -162,10 +179,11 @@ export function createExecBridgeClient(
       });
     });
     if (!response.ok) throw new Error(response.error ?? "exec_bridge request failed");
+    // SAFETY: The request operation determines T; the response envelope is schema-validated and matched by request_id above.
     return response.result as T;
   }
 
-  async function request<T = unknown>(value: Record<string, unknown>): Promise<T> {
+  async function request<T = unknown>(value: BoundaryRecord): Promise<T> {
     if (bridgeClosed) throw new Error("exec_bridge is shut down");
     return sendRequest<T>(value);
   }
@@ -212,7 +230,7 @@ function killUnixDescendants(rootPid: number): void {
     stdio: ["ignore", "pipe", "ignore"],
     timeout: 2_000,
   });
-  if (result.status !== 0 || typeof result.stdout !== "string") return;
+  if (result.status !== 0 || !isStringValue(result.stdout)) return;
   const processes = result.stdout.split("\n").flatMap((line) => {
     const [pid, parentPid, processGroupId] = line.trim().split(/\s+/).map(Number);
     return pid && parentPid !== undefined && processGroupId

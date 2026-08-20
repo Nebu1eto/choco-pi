@@ -1,4 +1,6 @@
 import { clampThinkingLevel, type Api, type Context, type Model } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import {
   CODEX_TOOL_CALL_PROVIDERS,
   convertResponsesMessages,
@@ -7,6 +9,18 @@ import {
 } from "../openai-responses/shared.ts";
 import { OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH } from "./constants.ts";
 import type { OpenAICodexStreamOptions, ResponsesBody } from "./types.ts";
+
+interface ModelCompat {
+  supportsStrictMode?: boolean | undefined;
+  supportsAdditionalTools?: boolean | undefined;
+  supportsToolSearch?: boolean | undefined;
+}
+
+// Model metadata is a live registry object; keep these guards shallow as the former casts were.
+const ModelCompatSchema = Type.Unsafe<ModelCompat>({ type: "object" });
+const ThinkingLevelMapSchema = Type.Unsafe<Record<string, string | null | undefined>>({
+  type: "object",
+});
 
 function clampOpenAIPromptCacheKey(key: string | undefined): string | undefined {
   if (key === undefined) return undefined;
@@ -32,13 +46,7 @@ export function buildRequestBody<TApi extends Api>(
   context: Context,
   options?: OpenAICodexStreamOptions,
 ): ResponsesBody {
-  const compat = model.compat as
-    | {
-        supportsStrictMode?: boolean | undefined;
-        supportsAdditionalTools?: boolean | undefined;
-        supportsToolSearch?: boolean | undefined;
-      }
-    | undefined;
+  const compat = Check(ModelCompatSchema, model.compat) ? model.compat : undefined;
   const supportsStrictMode = compat?.supportsStrictMode ?? true;
   const deferredToolsMode = compat?.supportsAdditionalTools
     ? "additional-tools"
@@ -68,28 +76,27 @@ export function buildRequestBody<TApi extends Api>(
     instructions: context.systemPrompt || "You are a helpful assistant.",
     input: messages,
     text: {
-      verbosity: ((options as { textVerbosity?: string | undefined } | undefined)?.textVerbosity ??
-        "low") as string,
+      verbosity: options?.textVerbosity ?? "low",
     },
     include: ["reasoning.encrypted_content"],
     prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId),
     tool_choice: options?.toolChoice ?? "auto",
     parallel_tool_calls: true,
-    ...(options?.sessionId
-      ? { client_metadata: { session_id: options.sessionId, thread_id: options.sessionId } }
-      : {}),
   };
+  if (options?.sessionId) {
+    body.client_metadata = { session_id: options.sessionId, thread_id: options.sessionId };
+  }
 
   // The Codex ChatGPT-backed endpoint rejects output-token cap fields with
   // `Unsupported parameter: max_output_tokens`. Pi's branch summarizer passes
   // `maxTokens`, so forwarding it breaks `/tree` summaries and extensions that
   // use `ctx.navigateTree(..., { summarize: true })`.
 
-  if ((options as { temperature?: number | undefined } | undefined)?.temperature !== undefined) {
-    body.temperature = (options as { temperature?: number | undefined }).temperature;
+  if (options?.temperature !== undefined) {
+    body.temperature = options.temperature;
   }
 
-  const serviceTier = (options as { serviceTier?: string | undefined } | undefined)?.serviceTier;
+  const serviceTier = options?.serviceTier;
   if (serviceTier !== undefined) {
     body.service_tier = serviceTier;
   }
@@ -108,9 +115,9 @@ export function buildRequestBody<TApi extends Api>(
   const reasoningEffort =
     options?.reasoningEffort ?? (clampedReasoning === "off" ? undefined : clampedReasoning);
   if (reasoningEffort !== undefined) {
-    const thinkingLevelMap = model.thinkingLevelMap as
-      | Record<string, string | null | undefined>
-      | undefined;
+    const thinkingLevelMap = Check(ThinkingLevelMapSchema, model.thinkingLevelMap)
+      ? model.thinkingLevelMap
+      : undefined;
     const effort =
       reasoningEffort === "none"
         ? (thinkingLevelMap?.["off"] ?? "none")
@@ -118,8 +125,7 @@ export function buildRequestBody<TApi extends Api>(
     if (effort === null) return body;
     body.reasoning = {
       effort: clampReasoningEffort(model.id, effort),
-      summary: ((options as { reasoningSummary?: string | undefined } | undefined)
-        ?.reasoningSummary ?? "auto") as string,
+      summary: options?.reasoningSummary ?? "auto",
     };
   }
 

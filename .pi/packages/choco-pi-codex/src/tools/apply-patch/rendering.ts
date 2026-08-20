@@ -10,6 +10,12 @@ interface PreviewLine {
   text: string;
 }
 
+interface UpdatePreview {
+  added: number;
+  removed: number;
+  lines: PreviewLine[];
+}
+
 interface FilePreview {
   verb: "Added" | "Deleted" | "Edited";
   path: string;
@@ -181,10 +187,7 @@ function buildFilePreview(action: ParsedPatchAction, cwd: string): FilePreview {
   };
 }
 
-function buildUpdatePreview(
-  action: ParsedPatchAction,
-  cwd: string,
-): { added: number; removed: number; lines: PreviewLine[] } {
+function buildUpdatePreview(action: ParsedPatchAction, cwd: string): UpdatePreview {
   if (!action.lines) {
     return { added: 0, removed: 0, lines: [] };
   }

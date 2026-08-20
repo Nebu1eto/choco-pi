@@ -82,6 +82,7 @@ export async function openCodexSettingsScreen(
                 },
                 update: (value: string, current: CodexConversionConfig) => ({
                   ...current,
+                  // SAFETY: This selector emits only the adjacent "normal" and "code" values.
                   executionMode: value as ExecutionMode,
                 }),
               },
