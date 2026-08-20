@@ -7,6 +7,7 @@ import {
 } from "@aliou/pi-utils-settings";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
+import { type Static, Type } from "typebox";
 import pkg from "../package.json" with { type: "json" };
 import {
   formatSyntheticUtilityApiProxySummary,
@@ -14,20 +15,40 @@ import {
   validateSyntheticUtilityApiProxyUrl,
 } from "./client";
 
-export type SyntheticFeatureId =
-  | "webSearch"
-  | "quotasCommand"
-  | "subBarIntegration"
-  | "usageStatus"
-  | "quotaWarnings";
+export const SyntheticFeatureIdSchema = Type.Union([
+  Type.Literal("webSearch"),
+  Type.Literal("quotasCommand"),
+  Type.Literal("subBarIntegration"),
+  Type.Literal("usageStatus"),
+  Type.Literal("quotaWarnings"),
+]);
+
+export type SyntheticFeatureId = Static<typeof SyntheticFeatureIdSchema>;
+
+function isSyntheticFeatureId(id: string): id is SyntheticFeatureId {
+  switch (id) {
+    case "webSearch":
+    case "quotasCommand":
+    case "subBarIntegration":
+    case "usageStatus":
+    case "quotaWarnings":
+      return true;
+    default:
+      return false;
+  }
+}
 
 export const SYNTHETIC_EXTENSIONS_REQUEST_EVENT = "synthetic:extensions:request" as const;
 
 export const SYNTHETIC_EXTENSIONS_REGISTER_EVENT = "synthetic:extensions:register" as const;
 
-export interface SyntheticExtensionsRegisterPayload {
-  feature: SyntheticFeatureId;
-}
+export const SyntheticExtensionsRegisterPayloadSchema = Type.Object({
+  feature: SyntheticFeatureIdSchema,
+});
+
+export type SyntheticExtensionsRegisterPayload = Static<
+  typeof SyntheticExtensionsRegisterPayloadSchema
+>;
 
 /** Config schema version. Stamped on disk when config is seeded or migrated. */
 export const SYNTHETIC_CONFIG_VERSION: string = pkg.version;
@@ -43,16 +64,18 @@ export interface SyntheticConfig {
   proxyRequiresAuth?: boolean;
 }
 
-export interface ResolvedSyntheticConfig {
-  configVersion: string;
-  webSearch: boolean;
-  quotasCommand: boolean;
-  usageStatus: boolean;
-  quotaWarnings: boolean;
-  subBarIntegration: boolean;
-  proxyUrl: string;
-  proxyRequiresAuth: boolean;
-}
+export const ResolvedSyntheticConfigSchema = Type.Object({
+  configVersion: Type.String(),
+  webSearch: Type.Boolean(),
+  quotasCommand: Type.Boolean(),
+  usageStatus: Type.Boolean(),
+  quotaWarnings: Type.Boolean(),
+  subBarIntegration: Type.Boolean(),
+  proxyUrl: Type.String(),
+  proxyRequiresAuth: Type.Boolean(),
+});
+
+export type ResolvedSyntheticConfig = Static<typeof ResolvedSyntheticConfigSchema>;
 
 const DEFAULT_CONFIG: ResolvedSyntheticConfig = {
   configVersion: SYNTHETIC_CONFIG_VERSION,
@@ -96,9 +119,11 @@ export async function seedSyntheticConfigIfMissing(): Promise<void> {
 
 export const SYNTHETIC_CONFIG_UPDATED_EVENT = "synthetic:config:updated" as const;
 
-export interface SyntheticConfigUpdatedPayload {
-  config: ResolvedSyntheticConfig;
-}
+export const SyntheticConfigUpdatedPayloadSchema = Type.Object({
+  config: ResolvedSyntheticConfigSchema,
+});
+
+export type SyntheticConfigUpdatedPayload = Static<typeof SyntheticConfigUpdatedPayloadSchema>;
 
 export function emitSyntheticConfigUpdated(pi: ExtensionAPI): void {
   pi.events.emit(SYNTHETIC_CONFIG_UPDATED_EVENT, {
@@ -299,15 +324,7 @@ export function registerSyntheticSettings(
       return sections;
     },
     onSettingChange: (id, newValue, config) => {
-      const featureIds = new Set<string>([
-        "webSearch",
-        "quotasCommand",
-        "usageStatus",
-        "quotaWarnings",
-        "subBarIntegration",
-      ]);
-
-      if (featureIds.has(id) && !getLoadedFeatures().has(id as SyntheticFeatureId)) {
+      if (isSyntheticFeatureId(id) && !getLoadedFeatures().has(id)) {
         return null;
       }
 

@@ -1,6 +1,10 @@
-const FETCH_TIMEOUT_MS = 15_000;
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 
-export function isTimeoutReason(reason: unknown): boolean {
+const FETCH_TIMEOUT_MS = 15_000;
+const ErrorPayloadSchema = Type.Object({ error: Type.Optional(Type.String()) });
+
+export function isTimeoutReason(reason: Error | DOMException | undefined): boolean {
   return (
     (reason instanceof DOMException && reason.name === "TimeoutError") ||
     (reason instanceof Error && reason.name === "TimeoutError")
@@ -23,8 +27,8 @@ export async function parseErrorMessage(response: Response): Promise<string> {
     const body = await response.text();
     if (!body) return message;
     try {
-      const parsed = JSON.parse(body) as { error?: string };
-      return parsed.error || body;
+      const parsed = JSON.parse(body);
+      return Value.Check(ErrorPayloadSchema, parsed) && parsed.error ? parsed.error : body;
     } catch {
       return body;
     }

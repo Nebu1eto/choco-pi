@@ -1,5 +1,6 @@
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import { resolveSyntheticClientOptions, SyntheticClient } from "../../src/client";
 import {
   configLoader,
@@ -8,8 +9,8 @@ import {
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
-  type SyntheticConfigUpdatedPayload,
-  type SyntheticExtensionsRegisterPayload,
+  SyntheticConfigUpdatedPayloadSchema,
+  SyntheticExtensionsRegisterPayloadSchema,
   type SyntheticFeatureId,
   seedSyntheticConfigIfMissing,
 } from "../../src/config";
@@ -20,8 +21,8 @@ import {
   SYNTHETIC_QUOTAS_READ_EVENT,
   SYNTHETIC_QUOTAS_REQUEST_EVENT,
   SYNTHETIC_QUOTAS_UPDATED_EVENT,
-  type SyntheticQuotasReadPayload,
-  type SyntheticQuotasRequestPayload,
+  SyntheticQuotasReadPayloadSchema,
+  SyntheticQuotasRequestEventPayloadSchema,
   type SyntheticQuotasSnapshotPayload,
 } from "../../src/types/quotas";
 import { SYNTHETIC_OVERFLOW_PATTERN } from "./context-overflow";
@@ -75,8 +76,9 @@ export default async function (pi: ExtensionAPI) {
 
   registerSyntheticProvider(pi);
 
-  pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data: unknown) => {
-    const config = (data as SyntheticConfigUpdatedPayload).config;
+  pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
+    if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
+    const config = data.config;
 
     if (
       config.proxyUrl !== utilityApiProxyUrl ||
@@ -90,8 +92,9 @@ export default async function (pi: ExtensionAPI) {
 
   const loadedFeatures = new Set<SyntheticFeatureId>();
 
-  pi.events.on(SYNTHETIC_EXTENSIONS_REGISTER_EVENT, (data: unknown) => {
-    const { feature } = data as SyntheticExtensionsRegisterPayload;
+  pi.events.on(SYNTHETIC_EXTENSIONS_REGISTER_EVENT, (data) => {
+    if (!Value.Check(SyntheticExtensionsRegisterPayloadSchema, data)) return;
+    const { feature } = data;
     loadedFeatures.add(feature);
   });
 
@@ -154,16 +157,17 @@ export default async function (pi: ExtensionAPI) {
     };
   });
 
-  pi.events.on(SYNTHETIC_QUOTAS_REQUEST_EVENT, async (data: unknown) => {
-    const payload = data as SyntheticQuotasRequestPayload | undefined;
+  pi.events.on(SYNTHETIC_QUOTAS_REQUEST_EVENT, async (data) => {
+    if (!Value.Check(SyntheticQuotasRequestEventPayloadSchema, data)) return;
     const snapshot = await quotaStore.refreshFromApi(fetchQuotasFromAuth);
-    if (payload?.respond) {
-      payload.respond(toSnapshotPayload(snapshot));
+    if (data?.respond) {
+      data.respond(toSnapshotPayload(snapshot));
     }
   });
 
-  pi.events.on(SYNTHETIC_QUOTAS_READ_EVENT, (data: unknown) => {
-    const { respond } = data as SyntheticQuotasReadPayload;
+  pi.events.on(SYNTHETIC_QUOTAS_READ_EVENT, (data) => {
+    if (!Value.Check(SyntheticQuotasReadPayloadSchema, data)) return;
+    const { respond } = data;
     respond(toSnapshotPayload(quotaStore.getSnapshot()));
   });
 

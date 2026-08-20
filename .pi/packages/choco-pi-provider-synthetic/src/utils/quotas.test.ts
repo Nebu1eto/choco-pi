@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { QuotasResponse } from "../types/quotas";
 import { detectBillingMode } from "./quotas";
 
 describe("detectBillingMode", () => {
@@ -33,11 +32,7 @@ describe("detectBillingMode", () => {
   });
 
   it("rejects malformed subscription quota windows", () => {
-    expect(detectBillingMode({ subscription: {} } as QuotasResponse)).toBe("pay-as-you-go");
-    expect(
-      detectBillingMode({
-        weeklyTokenLimit: true,
-      } as unknown as QuotasResponse),
-    ).toBe("pay-as-you-go");
+    expect(detectBillingMode(JSON.parse('{"subscription":{}}'))).toBe("pay-as-you-go");
+    expect(detectBillingMode(JSON.parse('{"weeklyTokenLimit":true}'))).toBe("pay-as-you-go");
   });
 });

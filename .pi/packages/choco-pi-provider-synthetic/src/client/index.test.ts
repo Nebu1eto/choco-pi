@@ -6,6 +6,8 @@ import {
   resolveSyntheticUtilityApiBaseUrl,
   SyntheticClient,
   type SyntheticClientOptions,
+  type SyntheticModelsResponse,
+  type SyntheticSearchResponse,
   syntheticUtilityApiRequiresAuth,
   validateSyntheticUtilityApiProxyUrl,
 } from "./index";
@@ -15,18 +17,18 @@ const QUOTAS_BODY = {
   subscription: { limit: 1000, requests: 5, renewsAt: "2026-01-01T00:00:00Z" },
 };
 
-function mockFetchOk(body: unknown, capture?: (init: RequestInit) => void) {
+type MockResponseBody = typeof QUOTAS_BODY | SyntheticSearchResponse | SyntheticModelsResponse;
+
+function mockFetchOk(body: MockResponseBody, capture?: (init: RequestInit) => void) {
   return vi
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
       capture?.(init ?? {});
-      return {
-        ok: true,
+      return new Response(JSON.stringify(body), {
         status: 200,
         statusText: "OK",
-        json: async () => body,
-        text: async () => JSON.stringify(body),
-      } as Response;
+        headers: { "Content-Type": "application/json" },
+      });
     });
 }
 

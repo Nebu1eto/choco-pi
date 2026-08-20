@@ -214,6 +214,7 @@ export const syntheticWebSearchTool = defineTool({
       return new Text(theme.fg("muted", "Synthetic: WebSearch: fetching..."), 0, 0);
     }
 
+    // SAFETY: defineTool passes through details returned by this tool's execute handler; error results may omit them.
     const details = result.details as WebSearchDetails | undefined;
     const results = details?.results || [];
     const container = new Container();

@@ -1,9 +1,12 @@
-import type { QuotasResponse, QuotasResult } from "../types/quotas";
-import type {
-  SyntheticClientOptions,
-  SyntheticClientRequestOptions,
-  SyntheticModelsResponse,
-  SyntheticSearchResponse,
+import { Value } from "typebox/value";
+import { QuotasResponseSchema, type QuotasResult } from "../types/quotas";
+import {
+  type SyntheticClientOptions,
+  type SyntheticClientRequestOptions,
+  type SyntheticModelsResponse,
+  SyntheticModelsResponseSchema,
+  type SyntheticSearchResponse,
+  SyntheticSearchResponseSchema,
 } from "./types";
 import {
   DEFAULT_SYNTHETIC_API_BASE_URL,
@@ -58,7 +61,10 @@ export class SyntheticClient {
         };
       }
 
-      const data: QuotasResponse = await response.json();
+      const data = await response.json();
+      if (!Value.Check(QuotasResponseSchema, data)) {
+        throw new Error("Synthetic quotas API returned an invalid response");
+      }
       return { success: true, data: { quotas: data } };
     } catch (err: unknown) {
       const isAbort = signal.aborted || (err instanceof DOMException && err.name === "AbortError");
@@ -104,7 +110,10 @@ export class SyntheticClient {
 
     try {
       const data = await response.json();
-      return data as SyntheticSearchResponse;
+      if (!Value.Check(SyntheticSearchResponseSchema, data)) {
+        throw new Error("Synthetic search API returned an invalid response");
+      }
+      return data;
     } catch (parseError) {
       throw new Error(
         parseError instanceof Error
@@ -131,7 +140,10 @@ export class SyntheticClient {
       }
 
       const data = await response.json();
-      return data as SyntheticModelsResponse;
+      if (!Value.Check(SyntheticModelsResponseSchema, data)) {
+        throw new Error("Synthetic models API returned an invalid response");
+      }
+      return data;
     } catch (err: unknown) {
       const isAbort = signal.aborted || (err instanceof DOMException && err.name === "AbortError");
       if (isAbort && isTimeoutReason(signal.reason)) {

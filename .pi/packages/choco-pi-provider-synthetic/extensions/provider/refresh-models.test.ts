@@ -11,6 +11,11 @@ import { createSyntheticRefreshModels } from "./refresh-models";
 
 const MODEL_STORE_TTL_MS = 4 * 60 * 60 * 1000;
 
+type WrittenModels = Array<{ models: unknown[]; checkedAt: number }>;
+type TestRefreshModelsContext = RefreshModelsContext & {
+  getWritten: () => WrittenModels;
+};
+
 function createContext(
   options: {
     allowNetwork?: boolean;
@@ -18,11 +23,12 @@ function createContext(
     credential?: { type: "api_key"; key: string };
     store?: { models?: unknown[]; checkedAt?: number };
   } = {},
-): RefreshModelsContext {
-  const written: Array<{ models: unknown[]; checkedAt: number }> = [];
+): TestRefreshModelsContext {
+  const written: WrittenModels = [];
 
   // Provide both the 0.84 (stored/publish) and legacy (store) refresh-context
   // shapes so the tests exercise the runtime shape-detection shim.
+  // SAFETY: the mock supplies every RefreshModelsContext member used by the refresh implementation plus getWritten.
   return {
     credential: options.credential,
     allowNetwork: options.allowNetwork ?? true,
@@ -37,7 +43,7 @@ function createContext(
     publish: vi.fn(async (publication) => {
       if (publication.persist) {
         written.push({
-          models: publication.persist.models as unknown[],
+          models: publication.persist.models,
           checkedAt: publication.persist.checkedAt ?? 0,
         });
       }
@@ -54,16 +60,14 @@ function createContext(
       ),
       write: vi.fn(async (entry) => {
         written.push({
-          models: entry.models as unknown[],
+          models: entry.models,
           checkedAt: entry.checkedAt ?? 0,
         });
       }),
       delete: vi.fn(),
     },
     getWritten: () => written,
-  } as unknown as RefreshModelsContext & {
-    getWritten: () => Array<{ models: unknown[]; checkedAt: number }>;
-  };
+  } as TestRefreshModelsContext;
 }
 
 const apiModel: SyntheticApiModel = {
@@ -160,9 +164,7 @@ describe("createSyntheticRefreshModels", () => {
     const ctx = createContext();
 
     await refresh(ctx);
-    const written = (
-      ctx as unknown as { getWritten: () => Array<{ models: unknown[] }> }
-    ).getWritten();
+    const written = ctx.getWritten();
 
     expect(written).toHaveLength(1);
     expect(written[0]?.models).toHaveLength(1);

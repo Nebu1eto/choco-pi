@@ -1,17 +1,18 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import {
   configLoader,
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
-  type SyntheticConfigUpdatedPayload,
+  SyntheticConfigUpdatedPayloadSchema,
 } from "../../src/config";
 import { QuotaHistory } from "../../src/services/quota-history";
 import { QuotaWarningNotifier } from "../../src/services/quota-warnings";
 import {
   SYNTHETIC_QUOTAS_UPDATED_EVENT,
   type SyntheticQuotasSnapshotPayload,
-  type SyntheticQuotasUpdatedPayload,
+  SyntheticQuotasUpdatedPayloadSchema,
 } from "../../src/types/quotas";
 import { buildProjectionHints } from "../../src/utils/quotas-projection";
 import { readQuotas, requestQuotas } from "../_shared/quota-events";
@@ -61,9 +62,9 @@ export default async function (pi: ExtensionAPI) {
     });
   }
 
-  pi.events.on(SYNTHETIC_QUOTAS_UPDATED_EVENT, (data: unknown) => {
-    if (!enabled) return;
-    const snapshot = data as SyntheticQuotasUpdatedPayload;
+  pi.events.on(SYNTHETIC_QUOTAS_UPDATED_EVENT, (data) => {
+    if (!Value.Check(SyntheticQuotasUpdatedPayloadSchema, data) || !enabled) return;
+    const snapshot = data;
     historyReady
       .then(() => {
         if (enabled) history.record(snapshot);
@@ -71,9 +72,10 @@ export default async function (pi: ExtensionAPI) {
       .catch(() => undefined);
   });
 
-  pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data: unknown) => {
+  pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
+    if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
     const wasEnabled = enabled;
-    enabled = (data as SyntheticConfigUpdatedPayload).config.quotaWarnings;
+    enabled = data.config.quotaWarnings;
 
     // Only reset alert state when the feature itself is toggled, so unrelated
     // config changes do not re-trigger one-time warnings.
