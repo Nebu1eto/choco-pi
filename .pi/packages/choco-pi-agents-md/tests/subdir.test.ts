@@ -3,18 +3,61 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { MAX_FILE_CHARS } from "../src/appendix.ts";
 import { isDiscoveryShellCommand } from "../src/shell-targets.ts";
 import { registerAgentsMdAutoload } from "../src/subdir.ts";
 
-function createStubPi() {
-  const handlers = new Map<string, (event: any, ctx: any) => unknown>();
+interface TestContent {
+  type: string;
+  text?: string;
+}
+
+interface TestHandlerResult {
+  content?: TestContent[];
+}
+
+interface TestContext {
+  cwd: string;
+  hasUI: boolean;
+  ui: {
+    notify(message: string, level: "warning" | "info"): void;
+  };
+}
+
+interface SessionStartFixture {
+  type: "session_start";
+  reason: "startup";
+}
+
+type TestEvent =
+  | ReturnType<typeof readEvent>
+  | ReturnType<typeof realHostCodeModeEvent>
+  | SessionStartFixture;
+type TestHandlerReturn = TestHandlerResult | void | Promise<TestHandlerResult | void>;
+type TestHandler = (event: TestEvent, ctx: TestContext) => TestHandlerReturn;
+
+interface StubPi {
+  on(event: string, handler: TestHandler): void;
+  handlers: Map<string, TestHandler>;
+}
+
+function createStubPi(): StubPi {
+  const handlers = new Map<string, TestHandler>();
   return {
-    on(event: string, handler: (event: any, ctx: any) => unknown) {
+    on(event, handler) {
       handlers.set(event, handler);
     },
     handlers,
   };
+}
+
+function createRegisteredStubPi(): StubPi {
+  const pi = createStubPi();
+  // SAFETY: The stub supplies the three `on` registrations used by this extension; tests invoke
+  // each stored handler with host-shaped fixtures and the required context fields.
+  registerAgentsMdAutoload(pi as ExtensionAPI);
+  return pi;
 }
 
 function readEvent(target: string) {
@@ -28,8 +71,8 @@ function readEvent(target: string) {
   };
 }
 
-function appendixText(result: unknown): string | undefined {
-  return (result as { content?: { type: string; text?: string }[] } | undefined)?.content?.find(
+function appendixText(result: TestHandlerResult | void): string | undefined {
+  return result?.content?.find(
     (item) => item.type === "text" && item.text?.includes("<subdirectory_agents_context>"),
   )?.text;
 }
@@ -80,8 +123,7 @@ test("a file dropped by the total appendix cap remains eligible for a later call
     const target = path.join(directory, "example.ts");
     fs.writeFileSync(target, "export {};\n");
 
-    const pi = createStubPi();
-    registerAgentsMdAutoload(pi as never);
+    const pi = createRegisteredStubPi();
     const ctx = { cwd: root, hasUI: false, ui: { notify() {} } };
     pi.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, ctx);
 
@@ -109,8 +151,7 @@ test("a symlinked session cwd excludes root guidance and uses cwd-relative label
     fs.writeFileSync(path.join(nested, "AGENTS.md"), "NESTED-GUIDANCE");
     fs.symlinkSync(root, linkedRoot, "dir");
 
-    const pi = createStubPi();
-    registerAgentsMdAutoload(pi as never);
+    const pi = createRegisteredStubPi();
     const ctx = { cwd: linkedRoot, hasUI: false, ui: { notify() {} } };
     pi.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, ctx);
 
@@ -152,22 +193,17 @@ test("injects AGENTS.md for Pi code-mode exec_command traces", async () => {
     fs.writeFileSync(path.join(packageDir, "AGENTS.md"), "package-specific guidance");
     fs.writeFileSync(target, "export type Example = string;\n");
 
-    const pi = createStubPi();
-    registerAgentsMdAutoload(pi as never);
+    const pi = createRegisteredStubPi();
     const ctx = { cwd: root, hasUI: false, ui: { notify() {} } };
     pi.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, ctx);
 
-    const result = (await pi.handlers.get("tool_result")?.(
-      realHostCodeModeEvent(target, root),
-      ctx,
-    )) as { content: { type: string; text?: string }[] } | undefined;
-    const appendix = result?.content.find(
-      (item) => item.type === "text" && item.text?.includes("<subdirectory_agents_context>"),
+    const appendix = appendixText(
+      await pi.handlers.get("tool_result")?.(realHostCodeModeEvent(target, root), ctx),
     );
 
-    assert.ok(appendix?.text, "expected code-mode nested tool access to inject AGENTS.md context");
-    assert.match(appendix.text, /<agents_file path="\.pi\/packages\/example\/AGENTS\.md">/);
-    assert.match(appendix.text, /package-specific guidance/);
+    assert.ok(appendix, "expected code-mode nested tool access to inject AGENTS.md context");
+    assert.match(appendix, /<agents_file path="\.pi\/packages\/example\/AGENTS\.md">/);
+    assert.match(appendix, /package-specific guidance/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

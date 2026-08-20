@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type {
+  ExtensionAPI,
+  SessionStartEvent,
+  SessionTreeEvent,
+} from "@earendil-works/pi-coding-agent";
 import { findAgentsFiles } from "./agents-chain.ts";
 import {
   type AgentsFileEntry,
@@ -11,7 +14,11 @@ import {
 } from "./appendix.ts";
 import { contentRootForTarget, resolvePath } from "./paths.ts";
 import { isDiscoveryShellCommand, shellTargets } from "./shell-targets.ts";
-import { codeModeDiscoveryEvents, type DiscoveryToolResultEvent } from "./tool-events.ts";
+import {
+  codeModeDiscoveryEvents,
+  type DiscoveryToolResultEvent,
+  type ToolContent,
+} from "./tool-events.ts";
 
 const PATH_DISCOVERY_TOOLS = new Set(["grep", "find", "ls"]);
 const SHELL_TOOLS = new Set(["bash", "exec", "exec_command", "shell"]);
@@ -60,14 +67,12 @@ export function registerAgentsMdAutoload(pi: ExtensionAPI): void {
   }
 
   function looksPathLike(value: string | undefined): value is string {
-    return Boolean(value) && !value!.includes("\0") && !value!.startsWith("<");
+    return (
+      value !== undefined && value.length > 0 && !value.includes("\0") && !value.startsWith("<")
+    );
   }
 
-  function pathsFromToolText(
-    content: (TextContent | ImageContent)[],
-    base: string,
-    toolName: string,
-  ): string[] {
+  function pathsFromToolText(content: ToolContent[], base: string, toolName: string): string[] {
     return content.flatMap((item) => {
       if (item.type !== "text" || !item.text) return [];
       return item.text
@@ -82,11 +87,9 @@ export function registerAgentsMdAutoload(pi: ExtensionAPI): void {
 
   function targetsForEvent(event: DiscoveryToolResultEvent, baseCwd: string): string[] {
     const input = event.input;
-    const workdir = ["workdir", "cwd", "working_directory"]
-      .map((key) => input[key])
-      .find((value): value is string => typeof value === "string");
+    const workdir = input.workdir ?? input.cwd ?? input.working_directory;
     const eventCwd = workdir !== undefined ? resolvePath(workdir, baseCwd) : baseCwd;
-    const pathInput = typeof input["path"] === "string" ? input["path"] : undefined;
+    const pathInput = input.path;
 
     if (event.toolName === "read") {
       return [pathInput ? resolvePath(pathInput, eventCwd) : eventCwd];
@@ -96,12 +99,7 @@ export function registerAgentsMdAutoload(pi: ExtensionAPI): void {
       return [base, ...pathsFromToolText(event.content, base, event.toolName)];
     }
     if (SHELL_TOOLS.has(event.toolName)) {
-      const command =
-        typeof input["command"] === "string"
-          ? input["command"]
-          : typeof input["cmd"] === "string"
-            ? input["cmd"]
-            : undefined;
+      const command = input.command ?? input.cmd;
       if (!command || !isDiscoveryShellCommand(command)) return [];
       return shellTargets(command, eventCwd);
     }
@@ -157,7 +155,10 @@ export function registerAgentsMdAutoload(pi: ExtensionAPI): void {
     return { appendixFiles, failedFiles };
   }
 
-  const handleSessionChange = (_event: unknown, ctx: { cwd: string }): void => {
+  const handleSessionChange = (
+    _event: SessionStartEvent | SessionTreeEvent,
+    ctx: { cwd: string },
+  ): void => {
     resetSession(ctx.cwd);
   };
   pi.on("session_start", handleSessionChange);
