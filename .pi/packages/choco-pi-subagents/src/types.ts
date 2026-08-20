@@ -90,7 +90,7 @@ export interface AgentConfig {
   sourcePath?: string;
 }
 
-export type JoinMode = 'async' | 'group' | 'smart';
+export type JoinMode = "async" | "group" | "smart";
 
 /**
  * Display mode for the persistent above-editor agent widget.
@@ -99,7 +99,7 @@ export type JoinMode = 'async' | 'group' | 'smart';
  *   Agent tool result, #118); show background/queued/scheduled/RPC.
  * - `off`: hide the widget entirely.
  */
-export type WidgetMode = 'all' | 'background' | 'off';
+export type WidgetMode = "all" | "background" | "off";
 
 /**
  * How `@handle message` starts an agent that is not already running.
@@ -112,7 +112,7 @@ export type WidgetMode = 'all' | 'background' | 'off';
  * Messaging a running agent and resuming a finished one are direct in every
  * mode — Claude Code only differs from us on the *new* invocation.
  */
-export type AgentMentionMode = 'model' | 'direct' | 'off';
+export type AgentMentionMode = "model" | "direct" | "off";
 
 /**
  * What survives a record's eviction so `@handle` keeps working. The live record

@@ -7,8 +7,8 @@
 
 /** Streaming update callback the SDK hands tool `execute` (shape mirrors result). */
 export type ToolUpdate = (update: {
-	content: Array<{ type: "text"; text: string }>;
-	details?: unknown;
+  content: Array<{ type: "text"; text: string }>;
+  details?: unknown;
 }) => void;
 
 /**
@@ -20,29 +20,23 @@ export type ToolUpdate = (update: {
  * usual summary. Without this, the details-driven summarizer renders "0
  * diagnostics" mid-scan and the bar never shows.
  */
-export function scanningSummaryLine(
-	details: unknown,
-	text: string,
-): string | null {
-	const d = details as
-		| { phase?: string; completed?: number; total?: number }
-		| undefined;
-	if (d?.phase !== "scanning") return null;
-	return text || `Scanning… ${d.completed ?? 0}/${d.total ?? 0}`;
+export function scanningSummaryLine(details: unknown, text: string): string | null {
+  const d = details as { phase?: string; completed?: number; total?: number } | undefined;
+  if (d?.phase !== "scanning") return null;
+  return text || `Scanning… ${d.completed ?? 0}/${d.total ?? 0}`;
 }
 
 /** A ≤20-char ASCII bar + counts, e.g. `Scanning… [████░░░░░░] 45/123 (37%)`. */
 export function renderScanProgress(
-	completed: number,
-	total: number,
-	label = "Scanning project diagnostics",
+  completed: number,
+  total: number,
+  label = "Scanning project diagnostics",
 ): string {
-	const pct =
-		total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
-	const width = 20;
-	const filled = Math.round((pct / 100) * width);
-	const bar = "█".repeat(filled) + "░".repeat(Math.max(0, width - filled));
-	return `${label}… [${bar}] ${completed}/${total} (${pct}%)`;
+  const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  const width = 20;
+  const filled = Math.round((pct / 100) * width);
+  const bar = "█".repeat(filled) + "░".repeat(Math.max(0, width - filled));
+  return `${label}… [${bar}] ${completed}/${total} (${pct}%)`;
 }
 
 /**
@@ -52,22 +46,20 @@ export function renderScanProgress(
  * gave no callback, so callers can pass it straight through as an optional.
  */
 export function makeProgressReporter(
-	onUpdate: unknown,
-	label?: string,
-	throttleMs = 250,
+  onUpdate: unknown,
+  label?: string,
+  throttleMs = 250,
 ): ((completed: number, total: number) => void) | undefined {
-	const emit = onUpdate as ToolUpdate | undefined;
-	if (typeof emit !== "function") return undefined;
-	let lastEmit = 0;
-	return (completed: number, total: number) => {
-		const now = Date.now();
-		if (completed < total && now - lastEmit < throttleMs) return;
-		lastEmit = now;
-		emit({
-			content: [
-				{ type: "text", text: renderScanProgress(completed, total, label) },
-			],
-			details: { phase: "scanning", completed, total },
-		});
-	};
+  const emit = onUpdate as ToolUpdate | undefined;
+  if (typeof emit !== "function") return undefined;
+  let lastEmit = 0;
+  return (completed: number, total: number) => {
+    const now = Date.now();
+    if (completed < total && now - lastEmit < throttleMs) return;
+    lastEmit = now;
+    emit({
+      content: [{ type: "text", text: renderScanProgress(completed, total, label) }],
+      details: { phase: "scanning", completed, total },
+    });
+  };
 }

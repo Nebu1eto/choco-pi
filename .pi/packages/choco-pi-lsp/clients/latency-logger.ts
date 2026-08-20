@@ -8,38 +8,38 @@ const LATENCY_LOG_DIR = getGlobalPiLensDir();
 const LATENCY_LOG_FILE = path.join(LATENCY_LOG_DIR, "latency.log");
 
 const writer = createNdjsonLogger({
-	filePath: LATENCY_LOG_FILE,
-	maxBytes: getMaxLogSizeMB() * 1024 * 1024,
+  filePath: LATENCY_LOG_FILE,
+  maxBytes: getMaxLogSizeMB() * 1024 * 1024,
 });
 
 export interface LatencyEntry {
-	type: "runner" | "tool_result" | "phase";
-	/** ISO timestamp when this entry was written (= finish time for runners) */
-	ts?: string;
-	/** Process that wrote the entry; used to isolate current-session telemetry. */
-	pid?: number;
-	/** ISO timestamp when the runner/phase started — diff with ts = durationMs */
-	startedAt?: string;
-	toolName?: string;
-	filePath: string;
-	fullPath?: string;
-	phase?: string;
-	durationMs: number;
-	totalDurationMs?: number;
-	result?: string;
-	runnerId?: string;
-	status?: string;
-	diagnosticCount?: number;
-	semantic?: string;
-	/** Per-diagnostic summary when a runner produces findings — aids root-cause analysis */
-	diagnostics?: Array<{ rule?: string; message: string; line?: number; semantic?: string }>;
-	/** For dispatch_complete: actual wall-clock time (groups run in parallel) */
-	wallClockMs?: number;
-	/** For dispatch_complete: sum of all individual runner durationMs */
-	sumMs?: number;
-	/** wallClockMs - sumMs ≥ 0 means parallelism saved this many ms */
-	parallelGainMs?: number;
-	metadata?: Record<string, unknown>;
+  type: "runner" | "tool_result" | "phase";
+  /** ISO timestamp when this entry was written (= finish time for runners) */
+  ts?: string;
+  /** Process that wrote the entry; used to isolate current-session telemetry. */
+  pid?: number;
+  /** ISO timestamp when the runner/phase started — diff with ts = durationMs */
+  startedAt?: string;
+  toolName?: string;
+  filePath: string;
+  fullPath?: string;
+  phase?: string;
+  durationMs: number;
+  totalDurationMs?: number;
+  result?: string;
+  runnerId?: string;
+  status?: string;
+  diagnosticCount?: number;
+  semantic?: string;
+  /** Per-diagnostic summary when a runner produces findings — aids root-cause analysis */
+  diagnostics?: Array<{ rule?: string; message: string; line?: number; semantic?: string }>;
+  /** For dispatch_complete: actual wall-clock time (groups run in parallel) */
+  wallClockMs?: number;
+  /** For dispatch_complete: sum of all individual runner durationMs */
+  sumMs?: number;
+  /** wallClockMs - sumMs ≥ 0 means parallelism saved this many ms */
+  parallelGainMs?: number;
+  metadata?: Record<string, unknown>;
 }
 
 /** Bound on the `recentPhases` ring below — keeps the attribution record small. */
@@ -110,21 +110,21 @@ let recentPhases: Array<{ phase: string; ts: string }> = [];
  * to the record instead of to the touch that is actually stalled.
  */
 const LAST_PHASE_EXCLUDED = new Set([
-	"loop_block",
-	"lsp_typescript_project_identity",
-	"advisory_provenance_decision",
-	"authoritative_content_attachment_decision",
-	"agent_end_deferred_mutation_drain",
-	"agent_end_deferred_mutation_requeue",
-	"session_end_bus_rollup",
-	"lsp_aux_wait_outcome",
-	"tool_set_mutation",
-	"availability_decision",
-	"finding_dead_path_drop",
-	"finding_stale_line_demote",
-	"lsp_scanner_coverage_gap",
-	"lsp_notify_resync_deferred",
-	"lsp_notify_write_late_landed",
+  "loop_block",
+  "lsp_typescript_project_identity",
+  "advisory_provenance_decision",
+  "authoritative_content_attachment_decision",
+  "agent_end_deferred_mutation_drain",
+  "agent_end_deferred_mutation_requeue",
+  "session_end_bus_rollup",
+  "lsp_aux_wait_outcome",
+  "tool_set_mutation",
+  "availability_decision",
+  "finding_dead_path_drop",
+  "finding_stale_line_demote",
+  "lsp_scanner_coverage_gap",
+  "lsp_notify_resync_deferred",
+  "lsp_notify_write_late_landed",
 ]);
 
 /**
@@ -135,7 +135,7 @@ const LAST_PHASE_EXCLUDED = new Set([
  * trusting it as the cause (it is a breadcrumb, not proof).
  */
 export function getLastLoggedPhase(): { phase: string; ts: string } | undefined {
-	return recentPhases[0];
+  return recentPhases[0];
 }
 
 /**
@@ -145,9 +145,9 @@ export function getLastLoggedPhase(): { phase: string; ts: string } | undefined 
  * these are breadcrumbs from whatever ran most recently, not proof of cause.
  */
 export function getRecentLoggedPhases(
-	limit = RECENT_PHASE_CAP,
+  limit = RECENT_PHASE_CAP,
 ): Array<{ phase: string; ts: string }> {
-	return recentPhases.slice(0, Math.min(limit, RECENT_PHASE_CAP));
+  return recentPhases.slice(0, Math.min(limit, RECENT_PHASE_CAP));
 }
 
 /**
@@ -161,7 +161,7 @@ export function getRecentLoggedPhases(
  * this returns the unclamped size regardless of what the read side does.
  */
 export function _recentPhasesStorageLengthForTest(): number {
-	return recentPhases.length;
+  return recentPhases.length;
 }
 
 /**
@@ -173,31 +173,31 @@ export function _recentPhasesStorageLengthForTest(): number {
  * that independence matters).
  */
 export function _setRecentPhasesForTest(entries: Array<{ phase: string; ts: string }>): void {
-	recentPhases = entries;
+  recentPhases = entries;
 }
 
 export function logLatency(entry: LatencyEntry): void {
-	const ts = new Date().toISOString();
-	if (entry.type === "phase" && entry.phase && !LAST_PHASE_EXCLUDED.has(entry.phase)) {
-		recentPhases = [{ phase: entry.phase, ts }, ...recentPhases].slice(0, RECENT_PHASE_CAP);
-	}
-	if (isTestMode()) {
-		return;
-	}
-	writer.log({ ...entry, ts, pid: process.pid });
+  const ts = new Date().toISOString();
+  if (entry.type === "phase" && entry.phase && !LAST_PHASE_EXCLUDED.has(entry.phase)) {
+    recentPhases = [{ phase: entry.phase, ts }, ...recentPhases].slice(0, RECENT_PHASE_CAP);
+  }
+  if (isTestMode()) {
+    return;
+  }
+  writer.log({ ...entry, ts, pid: process.pid });
 }
 
 export function getLatencyLogPath(): string {
-	return LATENCY_LOG_FILE;
+  return LATENCY_LOG_FILE;
 }
 
 /** Resolve once all enqueued latency writes are on disk (tests/shutdown). */
 export function flushLatencyLog(): Promise<void> {
-	return writer.flush();
+  return writer.flush();
 }
 
 export function clearLatencyLog(): void {
-	// Enqueue the truncate in the same serialized queue so a clear cannot race a
-	// pending drain. Await flushLatencyLog() if you need the file empty on disk.
-	writer.truncate();
+  // Enqueue the truncate in the same serialized queue so a clear cannot race a
+  // pending drain. Await flushLatencyLog() if you need the file empty on disk.
+  writer.truncate();
 }

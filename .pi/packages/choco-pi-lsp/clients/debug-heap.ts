@@ -66,32 +66,29 @@ export const SNAPSHOT_RETENTION = 3;
 const SNAPSHOT_PREFIX = "heap-";
 const SNAPSHOT_SUFFIX = ".heapsnapshot";
 
-const HEAP_SNAPSHOT_LOG_FILE = path.join(
-	getGlobalPiLensDir(),
-	"heap-snapshots.log",
-);
+const HEAP_SNAPSHOT_LOG_FILE = path.join(getGlobalPiLensDir(), "heap-snapshots.log");
 
 // Only ever constructed when the flag is on — the entire cost of this module
 // when unset is the one boolean check at the top of each export below.
 const writer: NdjsonLogger | null = DEBUG_HEAP_ENABLED
-	? createNdjsonLogger({
-			filePath: HEAP_SNAPSHOT_LOG_FILE,
-			maxBytes: getMaxLogSizeMB() * 1024 * 1024,
-		})
-	: null;
+  ? createNdjsonLogger({
+      filePath: HEAP_SNAPSHOT_LOG_FILE,
+      maxBytes: getMaxLogSizeMB() * 1024 * 1024,
+    })
+  : null;
 
 /** True iff `CHOCO_PI_LSP_DEBUG_HEAP=1` was set when this module first loaded. */
 export function isDebugHeapEnabled(): boolean {
-	return DEBUG_HEAP_ENABLED;
+  return DEBUG_HEAP_ENABLED;
 }
 
 export function getHeapSnapshotLogPath(): string {
-	return HEAP_SNAPSHOT_LOG_FILE;
+  return HEAP_SNAPSHOT_LOG_FILE;
 }
 
 /** Resolve once all enqueued breadcrumb writes are on disk (tests). */
 export function flushHeapSnapshotLog(): Promise<void> {
-	return writer ? writer.flush() : Promise.resolve();
+  return writer ? writer.flush() : Promise.resolve();
 }
 
 /**
@@ -100,7 +97,7 @@ export function flushHeapSnapshotLog(): Promise<void> {
  * on Windows; see AGENTS.md's OS-agnostic rule). Exported for tests.
  */
 export function snapshotFileName(pid: number, isoTs: string): string {
-	return `${SNAPSHOT_PREFIX}${pid}-${isoTs.replace(/[:.]/g, "-")}${SNAPSHOT_SUFFIX}`;
+  return `${SNAPSHOT_PREFIX}${pid}-${isoTs.replace(/[:.]/g, "-")}${SNAPSHOT_SUFFIX}`;
 }
 
 /**
@@ -109,52 +106,47 @@ export function snapshotFileName(pid: number, isoTs: string): string {
  * docstring). Best-effort: unreadable dir / unstattable / undeletable files are
  * skipped, never thrown. Returns the paths actually removed (for tests).
  */
-export function pruneOldSnapshots(
-	dir: string,
-	keep: number = SNAPSHOT_RETENTION,
-): string[] {
-	let names: string[];
-	try {
-		names = fs.readdirSync(dir);
-	} catch {
-		return [];
-	}
-	const snapshots = names
-		.filter(
-			(name) => name.startsWith(SNAPSHOT_PREFIX) && name.endsWith(SNAPSHOT_SUFFIX),
-		)
-		.map((name) => {
-			const full = path.join(dir, name);
-			let mtimeMs = 0;
-			try {
-				mtimeMs = fs.statSync(full).mtimeMs;
-			} catch {
-				// unstattable (racing delete): sorts oldest, pruned first
-			}
-			return { full, mtimeMs };
-		})
-		.sort((a, b) => b.mtimeMs - a.mtimeMs); // newest first
+export function pruneOldSnapshots(dir: string, keep: number = SNAPSHOT_RETENTION): string[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const snapshots = names
+    .filter((name) => name.startsWith(SNAPSHOT_PREFIX) && name.endsWith(SNAPSHOT_SUFFIX))
+    .map((name) => {
+      const full = path.join(dir, name);
+      let mtimeMs = 0;
+      try {
+        mtimeMs = fs.statSync(full).mtimeMs;
+      } catch {
+        // unstattable (racing delete): sorts oldest, pruned first
+      }
+      return { full, mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs); // newest first
 
-	const removed: string[] = [];
-	for (const stale of snapshots.slice(Math.max(0, keep))) {
-		try {
-			fs.rmSync(stale.full, { force: true });
-			removed.push(stale.full);
-		} catch {
-			// best-effort — a failed prune must never break the caller
-		}
-	}
-	return removed;
+  const removed: string[] = [];
+  for (const stale of snapshots.slice(Math.max(0, keep))) {
+    try {
+      fs.rmSync(stale.full, { force: true });
+      removed.push(stale.full);
+    } catch {
+      // best-effort — a failed prune must never break the caller
+    }
+  }
+  return removed;
 }
 
 export interface HeapSnapshotResult {
-	/** Absolute path of the `.heapsnapshot` file written. */
-	path: string;
-	/** `process.memoryUsage().rss` at capture time — the number the snapshot
-	 *  explains, echoed so the breadcrumb and file are self-describing. */
-	rssBytes: number;
-	/** Wall-clock ms the synchronous snapshot write took (its process pause). */
-	durationMs: number;
+  /** Absolute path of the `.heapsnapshot` file written. */
+  path: string;
+  /** `process.memoryUsage().rss` at capture time — the number the snapshot
+   *  explains, echoed so the breadcrumb and file are self-describing. */
+  rssBytes: number;
+  /** Wall-clock ms the synchronous snapshot write took (its process pause). */
+  durationMs: number;
 }
 
 /**
@@ -164,29 +156,29 @@ export interface HeapSnapshotResult {
  * at startup. `label` records the trigger (currently only `"lsp_health"`).
  */
 export function writeHeapSnapshotNow(label: string): HeapSnapshotResult | null {
-	if (!DEBUG_HEAP_ENABLED) return null;
-	const dir = getGlobalPiLensDir();
-	try {
-		fs.mkdirSync(dir, { recursive: true });
-	} catch {
-		// dir already exists / unwritable — writeHeapSnapshot will surface it
-	}
-	const ts = new Date().toISOString();
-	const target = path.join(dir, snapshotFileName(process.pid, ts));
-	const rssBytes = process.memoryUsage().rss;
-	const start = Date.now();
-	let written: string;
-	try {
-		// Returns the filename it actually wrote to.
-		written = v8.writeHeapSnapshot(target);
-	} catch {
-		// A snapshot can fail under memory pressure — the very condition it is
-		// most wanted in. Best-effort: report failure by returning null rather
-		// than throwing into the diagnostics command.
-		return null;
-	}
-	const durationMs = Date.now() - start;
-	pruneOldSnapshots(dir);
-	writer?.log({ ts, label, path: written, pid: process.pid, rssBytes, durationMs });
-	return { path: written, rssBytes, durationMs };
+  if (!DEBUG_HEAP_ENABLED) return null;
+  const dir = getGlobalPiLensDir();
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    // dir already exists / unwritable — writeHeapSnapshot will surface it
+  }
+  const ts = new Date().toISOString();
+  const target = path.join(dir, snapshotFileName(process.pid, ts));
+  const rssBytes = process.memoryUsage().rss;
+  const start = Date.now();
+  let written: string;
+  try {
+    // Returns the filename it actually wrote to.
+    written = v8.writeHeapSnapshot(target);
+  } catch {
+    // A snapshot can fail under memory pressure — the very condition it is
+    // most wanted in. Best-effort: report failure by returning null rather
+    // than throwing into the diagnostics command.
+    return null;
+  }
+  const durationMs = Date.now() - start;
+  pruneOldSnapshots(dir);
+  writer?.log({ ts, label, path: written, pid: process.pid, rssBytes, durationMs });
+  return { path: written, rssBytes, durationMs };
 }

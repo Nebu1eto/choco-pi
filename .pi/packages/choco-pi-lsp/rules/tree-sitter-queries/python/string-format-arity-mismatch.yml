@@ -45,7 +45,7 @@ examples:
     "%s" % (1, 2)         # TypeError: not all arguments converted
     "%s %s" % (1,)        # TypeError: not enough arguments
     "%(a)s" % {"b": 1}    # KeyError: 'a'
-  
+
   good: |
     "%s" % 1              # OK
     "%s %s" % (1, 2)      # OK

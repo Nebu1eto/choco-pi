@@ -89,7 +89,8 @@ class CompactMcpToolResult implements Component {
       const prefix = index === 0 ? this.renderPrefix(safeWidth) : "";
       return `${prefix}${this.theme.fg("toolOutput", line)}`;
     });
-    const hiddenText = this.display.truncated || bodies.some((body) => visibleWidth(body) > safeWidth);
+    const hiddenText =
+      this.display.truncated || bodies.some((body) => visibleWidth(body) > safeWidth);
     const rendered = bodies.map((body, index) => {
       const suffix = hiddenText && index === bodies.length - 1 ? " … (Ctrl+O to expand)" : "";
       if (!suffix) return truncateToWidth(body, safeWidth, "…");
@@ -153,9 +154,7 @@ class CollapsibleText implements Component {
     const safeWidth = Math.max(1, Math.floor(width));
     const charBudget = safeWidth * (this.maxCollapsedLines + 1) * COLLAPSED_RENDER_CHAR_SLACK;
     if (!this.collapsedText || this.collapsedText.charBudget !== charBudget) {
-      const prefix = this.text.length > charBudget
-        ? this.text.slice(0, charBudget)
-        : this.text;
+      const prefix = this.text.length > charBudget ? this.text.slice(0, charBudget) : this.text;
       this.collapsedText = {
         charBudget,
         fullyIncluded: prefix === this.text,
@@ -165,15 +164,17 @@ class CollapsibleText implements Component {
     }
 
     const lines = this.collapsedText.text.render(width);
-    if (!this.preTruncated && this.collapsedText.fullyIncluded && lines.length <= this.maxCollapsedLines) return lines;
+    if (
+      !this.preTruncated &&
+      this.collapsedText.fullyIncluded &&
+      lines.length <= this.maxCollapsedLines
+    )
+      return lines;
     if (this.collapsedRender?.width === width && this.collapsedRender.charBudget === charBudget) {
       return this.collapsedRender.lines;
     }
 
-    const rendered = [
-      ...lines.slice(0, this.maxCollapsedLines),
-      ...this.footerText.render(width),
-    ];
+    const rendered = [...lines.slice(0, this.maxCollapsedLines), ...this.footerText.render(width)];
     this.collapsedRender = { width, charBudget, lines: rendered };
     return rendered;
   }
@@ -208,7 +209,12 @@ function formatJsonish(value: unknown, maxChars: number): string {
 }
 
 function hasUsefulObjectContent(value: unknown): boolean {
-  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length > 0;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length > 0
+  );
 }
 
 export function formatMcpProxyToolCallLines(
@@ -253,31 +259,48 @@ export function formatMcpDirectToolCallLines(
 function renderToolCallLines(lines: string[], theme?: RenderTheme) {
   const activeTheme = theme ?? plainTheme;
   const [title = "mcp", ...rest] = lines;
-  const styledTitle = activeTheme.fg("toolTitle", activeTheme.bold ? activeTheme.bold(title) : title);
-  const styledRest = rest.map(line => activeTheme.fg("muted", line));
+  const styledTitle = activeTheme.fg(
+    "toolTitle",
+    activeTheme.bold ? activeTheme.bold(title) : title,
+  );
+  const styledRest = rest.map((line) => activeTheme.fg("muted", line));
   return new Text([styledTitle, ...styledRest].join("\n"), 0, 0);
 }
 
-function formatCompactInputPreview(lines: string[], maxChars = DEFAULT_MAX_COMPACT_INPUT_CHARS): string {
+function formatCompactInputPreview(
+  lines: string[],
+  maxChars = DEFAULT_MAX_COMPACT_INPUT_CHARS,
+): string {
   return truncateText(lines.slice(1).join(" ").replace(/\s+/g, " ").trim(), maxChars);
 }
 
-export function resolveMcpToolRenderOptions(settings?: McpToolRenderSettings): McpToolRenderOptions {
+export function resolveMcpToolRenderOptions(
+  settings?: McpToolRenderSettings,
+): McpToolRenderOptions {
   const resultRendering = settings?.toolResultRendering === "boxed" ? "boxed" : "compact";
   const collapsedLines = settings?.collapsedResultLines;
-  const defaultLines = resultRendering === "boxed" ? DEFAULT_BOXED_COLLAPSED_LINES : DEFAULT_COMPACT_COLLAPSED_LINES;
+  const defaultLines =
+    resultRendering === "boxed" ? DEFAULT_BOXED_COLLAPSED_LINES : DEFAULT_COMPACT_COLLAPSED_LINES;
   return {
     resultRendering,
-    collapsedResultLines: collapsedLines === 1 || collapsedLines === 2 || collapsedLines === 3 ? collapsedLines : defaultLines,
+    collapsedResultLines:
+      collapsedLines === 1 || collapsedLines === 2 || collapsedLines === 3
+        ? collapsedLines
+        : defaultLines,
   };
 }
 
-function shouldUseCompactFinalRender(options: McpToolRenderOptions, context?: McpToolRenderContext): boolean {
-  return options.resultRendering === "compact"
-    && context !== undefined
-    && context.isPartial === false
-    && context.expanded !== true
-    && context.isError !== true;
+function shouldUseCompactFinalRender(
+  options: McpToolRenderOptions,
+  context?: McpToolRenderContext,
+): boolean {
+  return (
+    options.resultRendering === "compact" &&
+    context !== undefined &&
+    context.isPartial === false &&
+    context.expanded !== true &&
+    context.isError !== true
+  );
 }
 
 function renderToolCall(
@@ -299,7 +322,12 @@ export function renderMcpProxyToolCall(
   theme?: RenderTheme,
   context?: McpToolRenderContext,
 ) {
-  return renderToolCall(formatMcpProxyToolCallLines(args), theme, context, resolveMcpToolRenderOptions());
+  return renderToolCall(
+    formatMcpProxyToolCallLines(args),
+    theme,
+    context,
+    resolveMcpToolRenderOptions(),
+  );
 }
 
 export function createMcpProxyToolCallRenderer(options: McpToolRenderOptions) {
@@ -308,7 +336,10 @@ export function createMcpProxyToolCallRenderer(options: McpToolRenderOptions) {
   };
 }
 
-export function createMcpDirectToolCallRenderer(displayName: string, options = resolveMcpToolRenderOptions()) {
+export function createMcpDirectToolCallRenderer(
+  displayName: string,
+  options = resolveMcpToolRenderOptions(),
+) {
   return (args: Record<string, unknown>, theme?: RenderTheme, context?: McpToolRenderContext) => {
     return renderToolCall(formatMcpDirectToolCallLines(displayName, args), theme, context, options);
   };
@@ -386,16 +417,20 @@ function collectCollapsedResultLines(
   return { lines, truncated };
 }
 
-export function formatMcpToolResultIdentity(details: McpToolResultDetails | undefined): string | null {
+export function formatMcpToolResultIdentity(
+  details: McpToolResultDetails | undefined,
+): string | null {
   if (details?.mode !== "call") return null;
-  const server = typeof details.server === "string"
-    ? details.server
-    : typeof details.hintServer === "string"
-      ? details.hintServer
-      : null;
+  const server =
+    typeof details.server === "string"
+      ? details.server
+      : typeof details.hintServer === "string"
+        ? details.hintServer
+        : null;
   if (!server) return null;
   if (typeof details.tool === "string") return `MCP ${server}/${details.tool}`;
-  if (typeof details.resourceUri === "string") return `MCP ${server} resource ${details.resourceUri}`;
+  if (typeof details.resourceUri === "string")
+    return `MCP ${server} resource ${details.resourceUri}`;
   if (typeof details.requestedTool === "string") return `MCP ${server}/${details.requestedTool}`;
   return null;
 }

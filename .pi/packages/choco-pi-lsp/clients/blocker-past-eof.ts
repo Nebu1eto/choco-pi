@@ -41,30 +41,30 @@
  * session-lifetime flag to reset.
  */
 import {
-	demotePastEofDiagnostics,
-	resyncDocumentOnPastEof,
-	type LineCountCache,
+  demotePastEofDiagnostics,
+  resyncDocumentOnPastEof,
+  type LineCountCache,
 } from "./diagnostic-line-freshness.js";
 import type { RuntimeCoordinator } from "./runtime-coordinator.js";
 
 /** Per-turn result of the past-EOF sweep over the cached inline blockers. */
 export interface BlockerPastEofCounts {
-	/** Cached blocker entries present when the sweep ran. */
-	total: number;
-	/** Entries this gate evaluated (had at least one cited line and no
-	 * dependency-drift demotion in the way). */
-	checked: number;
-	/** Rising edge this turn — demoted for citing a line past current EOF. */
-	demoted: number;
-	/** Falling edge this turn — a prior past-EOF demotion healed (the file's
-	 * line count grew back past the cited line). */
-	healed: number;
+  /** Cached blocker entries present when the sweep ran. */
+  total: number;
+  /** Entries this gate evaluated (had at least one cited line and no
+   * dependency-drift demotion in the way). */
+  checked: number;
+  /** Rising edge this turn — demoted for citing a line past current EOF. */
+  demoted: number;
+  /** Falling edge this turn — a prior past-EOF demotion healed (the file's
+   * line count grew back past the cited line). */
+  healed: number;
 }
 
 export interface BlockerPastEofOptions {
-	lineCountCache?: LineCountCache;
-	/** Test seam: defaults to the real LSP resync trigger. */
-	resync?: (filePath: string) => void;
+  lineCountCache?: LineCountCache;
+  /** Test seam: defaults to the real LSP resync trigger. */
+  resync?: (filePath: string) => void;
 }
 
 /**
@@ -78,72 +78,69 @@ export interface BlockerPastEofOptions {
  * failing the turn end.
  */
 export function sweepInlineBlockerPastEof(
-	runtime: RuntimeCoordinator,
-	cwd: string,
-	options?: BlockerPastEofOptions,
+  runtime: RuntimeCoordinator,
+  cwd: string,
+  options?: BlockerPastEofOptions,
 ): BlockerPastEofCounts {
-	const counts: BlockerPastEofCounts = {
-		total: 0,
-		checked: 0,
-		demoted: 0,
-		healed: 0,
-	};
-	const resync = options?.resync ?? resyncDocumentOnPastEof;
+  const counts: BlockerPastEofCounts = {
+    total: 0,
+    checked: 0,
+    demoted: 0,
+    healed: 0,
+  };
+  const resync = options?.resync ?? resyncDocumentOnPastEof;
 
-	let entries: ReturnType<RuntimeCoordinator["getInlineBlockersSnapshot"]>;
-	try {
-		entries = runtime.getInlineBlockersSnapshot();
-	} catch {
-		return counts;
-	}
-	counts.total = entries.length;
+  let entries: ReturnType<RuntimeCoordinator["getInlineBlockersSnapshot"]>;
+  try {
+    entries = runtime.getInlineBlockersSnapshot();
+  } catch {
+    return counts;
+  }
+  counts.total = entries.length;
 
-	for (const entry of entries) {
-		try {
-			if (!entry.lines || entry.lines.length === 0) continue;
-			// Not this gate's demotion to heal or re-assert (#1641 composition
-			// rule — see module doc).
-			if (entry.stale && entry.staleReason !== "past-eof") continue;
-			counts.checked += 1;
+  for (const entry of entries) {
+    try {
+      if (!entry.lines || entry.lines.length === 0) continue;
+      // Not this gate's demotion to heal or re-assert (#1641 composition
+      // rule — see module doc).
+      if (entry.stale && entry.staleReason !== "past-eof") continue;
+      counts.checked += 1;
 
-			// Reuse the shared gate's per-line verdict machinery: feed it one
-			// synthetic "diagnostic" per cited line, sharing this record's
-			// current stale/staleReason so it can detect the rising/falling
-			// edge itself instead of this module re-implementing that logic.
-			const probes = entry.lines.map((line) => ({
-				line,
-				stale: entry.stale,
-				staleReason: entry.staleReason,
-			}));
-			// `demotePastEofDiagnostics` already logs (`diagnostic_past_eof`) and
-			// fires `resync` exactly once per call on a rising edge — reusing it
-			// here (rather than re-implementing that bookkeeping) keeps this
-			// gate's telemetry and resync-on-demotion behavior identical to the
-			// widget/lens surfaces #1664 already wired.
-			const { diagnostics } = demotePastEofDiagnostics({
-				store: "inline-blocker",
-				cwd,
-				filePath: entry.filePath,
-				diagnostics: probes,
-				lineCountCache: options?.lineCountCache,
-				resync,
-			});
-			// The record cites any of its lines being past EOF as a whole-record
-			// demotion — one summary string, not one flag per line.
-			const isPastEof = diagnostics.some((d) => d.stale);
-			const transitioned = runtime.setInlineBlockerPastEofStale(
-				entry.filePath,
-				isPastEof,
-			);
-			if (!transitioned) continue;
-			if (isPastEof) {
-				counts.demoted += 1;
-			} else {
-				counts.healed += 1;
-			}
-		} catch {
-			// Per-entry failure: leave the entry as-is.
-		}
-	}
-	return counts;
+      // Reuse the shared gate's per-line verdict machinery: feed it one
+      // synthetic "diagnostic" per cited line, sharing this record's
+      // current stale/staleReason so it can detect the rising/falling
+      // edge itself instead of this module re-implementing that logic.
+      const probes = entry.lines.map((line) => ({
+        line,
+        stale: entry.stale,
+        staleReason: entry.staleReason,
+      }));
+      // `demotePastEofDiagnostics` already logs (`diagnostic_past_eof`) and
+      // fires `resync` exactly once per call on a rising edge — reusing it
+      // here (rather than re-implementing that bookkeeping) keeps this
+      // gate's telemetry and resync-on-demotion behavior identical to the
+      // widget/lens surfaces #1664 already wired.
+      const { diagnostics } = demotePastEofDiagnostics({
+        store: "inline-blocker",
+        cwd,
+        filePath: entry.filePath,
+        diagnostics: probes,
+        lineCountCache: options?.lineCountCache,
+        resync,
+      });
+      // The record cites any of its lines being past EOF as a whole-record
+      // demotion — one summary string, not one flag per line.
+      const isPastEof = diagnostics.some((d) => d.stale);
+      const transitioned = runtime.setInlineBlockerPastEofStale(entry.filePath, isPastEof);
+      if (!transitioned) continue;
+      if (isPastEof) {
+        counts.demoted += 1;
+      } else {
+        counts.healed += 1;
+      }
+    } catch {
+      // Per-entry failure: leave the entry as-is.
+    }
+  }
+  return counts;
 }

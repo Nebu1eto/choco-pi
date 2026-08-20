@@ -4,4 +4,4 @@ valid:
   - 'window.alert("hi")'
 invalid:
   - 'alert("hello")'
-  - 'alert(1, 2, 3)'
+  - "alert(1, 2, 3)"

@@ -1,12 +1,4 @@
-import {
-  afterEach,
-  assert,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectionHint } from "../types/quotas";
 import {
   assessWindow,
@@ -25,8 +17,7 @@ function makeWindow(
 ): QuotaWindow {
   const windowSeconds = overrides.windowSeconds ?? 3600;
   // resetsAt defaults to 30 minutes from now (50% through a 1h window)
-  const resetsAt =
-    overrides.resetsAt ?? new Date(Date.now() + windowSeconds * 500);
+  const resetsAt = overrides.resetsAt ?? new Date(Date.now() + windowSeconds * 500);
   return {
     id: "test",
     label: "Test Window",
@@ -214,9 +205,7 @@ describe("assessWindow", () => {
     it("does not treat the next weekly regen as weekly elapsed time", () => {
       const windows = toWindows({
         weeklyTokenLimit: {
-          nextRegenAt: new Date(
-            Date.now() + (2 * 60 + 36) * 60 * 1000,
-          ).toISOString(),
+          nextRegenAt: new Date(Date.now() + (2 * 60 + 36) * 60 * 1000).toISOString(),
           percentRemaining: 19,
           maxCredits: "$15.12",
           remainingCredits: "$2.87",

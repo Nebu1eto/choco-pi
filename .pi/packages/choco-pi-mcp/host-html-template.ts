@@ -410,17 +410,11 @@ export function buildCspMetaContent(csp: UiResourceCsp | undefined): string {
     toDirective("font-src", ["'self'"], resourceDomains),
     toDirective("img-src", ["'self'", "data:"], resourceDomains),
     toDirective("media-src", ["'self'", "data:"], resourceDomains),
-    connectDomains.length > 0
-      ? `connect-src ${connectDomains.join(" ")}`
-      : "connect-src 'none'",
-    frameDomains.length > 0
-      ? `frame-src ${frameDomains.join(" ")}`
-      : "frame-src 'none'",
+    connectDomains.length > 0 ? `connect-src ${connectDomains.join(" ")}` : "connect-src 'none'",
+    frameDomains.length > 0 ? `frame-src ${frameDomains.join(" ")}` : "frame-src 'none'",
     "worker-src 'none'",
     "object-src 'none'",
-    baseUriDomains.length > 0
-      ? `base-uri ${baseUriDomains.join(" ")}`
-      : "base-uri 'self'",
+    baseUriDomains.length > 0 ? `base-uri ${baseUriDomains.join(" ")}` : "base-uri 'self'",
   ].join("; ");
 }
 
@@ -431,15 +425,19 @@ function toDirective(name: string, trustedSources: string[], domains: string[]):
 function sanitizeCspDomains(domains: unknown): string[] {
   if (!Array.isArray(domains)) return [];
 
-  return [...new Set(domains.filter(
-    (domain): domain is string =>
-      typeof domain === "string" &&
-      domain.length > 0 &&
-      // HTTP headers must be printable ASCII; rejecting all other code points also
-      // excludes every C0/C1 control character before Node serializes the policy.
-      /^[\x21-\x7E]+$/.test(domain) &&
-      !/[;'"]/.test(domain),
-  ))];
+  return [
+    ...new Set(
+      domains.filter(
+        (domain): domain is string =>
+          typeof domain === "string" &&
+          domain.length > 0 &&
+          // HTTP headers must be printable ASCII; rejecting all other code points also
+          // excludes every C0/C1 control character before Node serializes the policy.
+          /^[\x21-\x7E]+$/.test(domain) &&
+          !/[;'"]/.test(domain),
+      ),
+    ),
+  ];
 }
 
 function safeInlineJSON(value: unknown): string {

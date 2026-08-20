@@ -12,8 +12,8 @@ Same `id` as a built-in overrides it. Multiple rules per file: separate with `--
 
 ```yaml
 id: no-foo-bar
-language: TypeScript        # PascalCase — see languages below
-severity: warning           # error | warning | info
+language: TypeScript # PascalCase — see languages below
+severity: warning # error | warning | info
 message: "Avoid foo.bar() — use baz() instead"
 note: |
   Longer explanation / fix guidance here.
@@ -29,10 +29,10 @@ rule:
 
 ```yaml
 rule:
-  pattern: foo($X)          # ast-grep pattern — $X single, $$$ARGS multi
-  kind: call_expression     # AST node kind (alternative to pattern)
-  regex: "secret|token"     # regex on node text
-  has:                      # descendant must match
+  pattern: foo($X) # ast-grep pattern — $X single, $$$ARGS multi
+  kind: call_expression # AST node kind (alternative to pattern)
+  regex: "secret|token" # regex on node text
+  has: # descendant must match
     pattern: await $$$
   not:
     kind: comment
@@ -53,14 +53,14 @@ nest freely; nothing is silently skipped:
 ```yaml
 rule:
   kind: call_expression
-  inside:                     # ancestor must match
+  inside: # ancestor must match
     kind: function_declaration
-    stopBy: end               # ↑ search ALL ancestors (default is direct parent)
-  has:                        # descendant must match (default: DIRECT child)
-    field: arguments          # field constraints work
-  follows:                    # immediately-preceding sibling
+    stopBy: end # ↑ search ALL ancestors (default is direct parent)
+  has: # descendant must match (default: DIRECT child)
+    field: arguments # field constraints work
+  follows: # immediately-preceding sibling
     pattern: const $X = $V
-constraints:                  # metavariable regex constraints work
+constraints: # metavariable regex constraints work
   X:
     regex: "Error$"
 ```

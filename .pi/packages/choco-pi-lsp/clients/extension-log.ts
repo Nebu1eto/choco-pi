@@ -28,14 +28,11 @@ import { getGlobalPiLensDir } from "./file-utils.js";
 import { getMaxLogSizeMB } from "./log-cleanup.js";
 import { createNdjsonLogger } from "./ndjson-logger.js";
 
-export const EXTENSION_LOG_FILE = path.join(
-	getGlobalPiLensDir(),
-	"extension.log",
-);
+export const EXTENSION_LOG_FILE = path.join(getGlobalPiLensDir(), "extension.log");
 
 const writer = createNdjsonLogger({
-	filePath: EXTENSION_LOG_FILE,
-	maxBytes: getMaxLogSizeMB() * 1024 * 1024,
+  filePath: EXTENSION_LOG_FILE,
+  maxBytes: getMaxLogSizeMB() * 1024 * 1024,
 });
 
 /**
@@ -46,24 +43,24 @@ const writer = createNdjsonLogger({
 export type ExtensionLogLevel = "error" | "warn" | "debug";
 
 export interface ExtensionLogEntry {
-	/** Owning area, e.g. `dispatch`, `format`, `lens-config`. */
-	subsystem: string;
-	message: string;
-	/** Defaults to `error` (the level every migrated ungated site wrote at). */
-	level?: ExtensionLogLevel;
-	metadata?: Record<string, unknown>;
+  /** Owning area, e.g. `dispatch`, `format`, `lens-config`. */
+  subsystem: string;
+  message: string;
+  /** Defaults to `error` (the level every migrated ungated site wrote at). */
+  level?: ExtensionLogLevel;
+  metadata?: Record<string, unknown>;
 }
 
 export function logExtension(entry: ExtensionLogEntry): void {
-	if (isTestMode()) return;
-	writer.log({
-		ts: new Date().toISOString(),
-		pid: process.pid,
-		level: entry.level ?? "error",
-		subsystem: entry.subsystem,
-		message: entry.message,
-		...(entry.metadata ? { metadata: entry.metadata } : {}),
-	});
+  if (isTestMode()) return;
+  writer.log({
+    ts: new Date().toISOString(),
+    pid: process.pid,
+    level: entry.level ?? "error",
+    subsystem: entry.subsystem,
+    message: entry.message,
+    ...(entry.metadata ? { metadata: entry.metadata } : {}),
+  });
 }
 
 /**
@@ -77,62 +74,54 @@ export function logExtension(entry: ExtensionLogEntry): void {
  * the SINK, not the gate, so turning verbose on can never corrupt the frame.
  */
 export interface SubsystemLogger {
-	(message: string, metadata?: Record<string, unknown>): void;
-	error(message: string, metadata?: Record<string, unknown>): void;
-	warn(message: string, metadata?: Record<string, unknown>): void;
-	debug(message: string, metadata?: Record<string, unknown>): void;
+  (message: string, metadata?: Record<string, unknown>): void;
+  error(message: string, metadata?: Record<string, unknown>): void;
+  warn(message: string, metadata?: Record<string, unknown>): void;
+  debug(message: string, metadata?: Record<string, unknown>): void;
 }
 
 export function createSubsystemLogger(
-	subsystem: string,
-	defaultLevel: ExtensionLogLevel = "debug",
+  subsystem: string,
+  defaultLevel: ExtensionLogLevel = "debug",
 ): SubsystemLogger {
-	const at =
-		(level: ExtensionLogLevel) =>
-		(message: string, metadata?: Record<string, unknown>): void => {
-			logExtension({ subsystem, message, level, metadata });
-		};
-	const logger = at(defaultLevel) as SubsystemLogger;
-	logger.error = at("error");
-	logger.warn = at("warn");
-	logger.debug = at("debug");
-	return logger;
+  const at =
+    (level: ExtensionLogLevel) =>
+    (message: string, metadata?: Record<string, unknown>): void => {
+      logExtension({ subsystem, message, level, metadata });
+    };
+  const logger = at(defaultLevel) as SubsystemLogger;
+  logger.error = at("error");
+  logger.warn = at("warn");
+  logger.debug = at("debug");
+  return logger;
 }
 
 /** No-op with the `SubsystemLogger` shape, for the verbose-off branch. */
 export function noopSubsystemLogger(): SubsystemLogger {
-	const noop = (() => {}) as unknown as SubsystemLogger;
-	noop.error = () => {};
-	noop.warn = () => {};
-	noop.debug = () => {};
-	return noop;
+  const noop = (() => {}) as unknown as SubsystemLogger;
+  noop.error = () => {};
+  noop.warn = () => {};
+  noop.debug = () => {};
+  return noop;
 }
 
 export function getExtensionLogPath(): string {
-	return EXTENSION_LOG_FILE;
+  return EXTENSION_LOG_FILE;
 }
 
 /** Resolve once all enqueued extension-log writes are on disk (tests/shutdown). */
 export function flushExtensionLog(): Promise<void> {
-	return writer.flush();
+  return writer.flush();
 }
 
 /** Teardown-only: force queued entries to disk before the process exits. */
 export function flushExtensionLogSync(): void {
-	writer.flushSync();
+  writer.flushSync();
 }
 
 // --- Defense in depth: the console reroute -----------------------------------
 
-const CONSOLE_METHODS = [
-	"log",
-	"info",
-	"warn",
-	"error",
-	"debug",
-	"trace",
-	"dir",
-] as const;
+const CONSOLE_METHODS = ["log", "info", "warn", "error", "debug", "trace", "dir"] as const;
 
 type ConsoleMethod = (typeof CONSOLE_METHODS)[number];
 
@@ -168,11 +157,11 @@ const installedConsoleMethods = new Map<ConsoleMethod, ConsoleFn>();
 let consoleCaptureStorage: AsyncLocalStorage<true> | undefined;
 
 function getConsoleCaptureStorage(): AsyncLocalStorage<true> | undefined {
-	if (!consoleGuardInstalled) return undefined;
-	if (consoleCaptureStorage === undefined) {
-		consoleCaptureStorage = new AsyncLocalStorage<true>();
-	}
-	return consoleCaptureStorage;
+  if (!consoleGuardInstalled) return undefined;
+  if (consoleCaptureStorage === undefined) {
+    consoleCaptureStorage = new AsyncLocalStorage<true>();
+  }
+  return consoleCaptureStorage;
 }
 
 /**
@@ -191,9 +180,7 @@ let moduleLoadWindowOpen = false;
  * the same as an empty store, so it reads as "no window" rather than throwing.
  */
 export function isConsoleCaptureActive(): boolean {
-	return (
-		moduleLoadWindowOpen || consoleCaptureStorage?.getStore() === true
-	);
+  return moduleLoadWindowOpen || consoleCaptureStorage?.getStore() === true;
 }
 
 /**
@@ -208,17 +195,17 @@ export function isConsoleCaptureActive(): boolean {
  * hold a one-shot CLI process open (defect shape 4).
  */
 export function openModuleLoadConsoleWindow(): void {
-	if (moduleLoadWindowOpen) return;
-	moduleLoadWindowOpen = true;
-	const backstop = setImmediate(() => {
-		moduleLoadWindowOpen = false;
-	});
-	backstop.unref?.();
+  if (moduleLoadWindowOpen) return;
+  moduleLoadWindowOpen = true;
+  const backstop = setImmediate(() => {
+    moduleLoadWindowOpen = false;
+  });
+  backstop.unref?.();
 }
 
 /** Close the module-evaluation window. Idempotent. */
 export function closeModuleLoadConsoleWindow(): void {
-	moduleLoadWindowOpen = false;
+  moduleLoadWindowOpen = false;
 }
 
 /**
@@ -232,19 +219,15 @@ export function closeModuleLoadConsoleWindow(): void {
  * `fn` directly.
  */
 export function runInConsoleCaptureWindow<T>(fn: () => T): T {
-	const storage = getConsoleCaptureStorage();
-	if (!storage) return fn();
-	return storage.run(true, fn);
+  const storage = getConsoleCaptureStorage();
+  if (!storage) return fn();
+  return storage.run(true, fn);
 }
 
-function inCaptureWindow<T extends ConsoleFn | ((...args: never[]) => unknown)>(
-	fn: T,
-): T {
-	return function (this: unknown, ...args: unknown[]): unknown {
-		return runInConsoleCaptureWindow(() =>
-			(fn as (...a: unknown[]) => unknown).apply(this, args),
-		);
-	} as unknown as T;
+function inCaptureWindow<T extends ConsoleFn | ((...args: never[]) => unknown)>(fn: T): T {
+  return function (this: unknown, ...args: unknown[]): unknown {
+    return runInConsoleCaptureWindow(() => (fn as (...a: unknown[]) => unknown).apply(this, args));
+  } as unknown as T;
 }
 
 /**
@@ -263,7 +246,7 @@ function inCaptureWindow<T extends ConsoleFn | ((...args: never[]) => unknown)>(
  * the terminal.
  */
 function isCaptureSeam(prop: PropertyKey): boolean {
-	return prop === "on" || (typeof prop === "string" && prop.startsWith("register"));
+  return prop === "on" || (typeof prop === "string" && prop.startsWith("register"));
 }
 
 /**
@@ -295,20 +278,20 @@ function isCaptureSeam(prop: PropertyKey): boolean {
  * register call.
  */
 function wrapFunctionsInPlace(value: unknown): unknown {
-	if (typeof value === "function") {
-		return inCaptureWindow(value as ConsoleFn);
-	}
-	if (value === null || typeof value !== "object" || Array.isArray(value)) {
-		return value;
-	}
-	const obj = value as Record<string, unknown>;
-	for (const key of Object.keys(obj)) {
-		const propValue = obj[key];
-		if (typeof propValue === "function") {
-			assignWrapped(obj, key, propValue as ConsoleFn);
-		}
-	}
-	return value;
+  if (typeof value === "function") {
+    return inCaptureWindow(value as ConsoleFn);
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const obj = value as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    const propValue = obj[key];
+    if (typeof propValue === "function") {
+      assignWrapped(obj, key, propValue as ConsoleFn);
+    }
+  }
+  return value;
 }
 
 /**
@@ -322,30 +305,26 @@ function wrapFunctionsInPlace(value: unknown): unknown {
  * net for that one callback, which is strictly better than the tool/command
  * never registering at all.
  */
-function assignWrapped(
-	obj: Record<string, unknown>,
-	key: string,
-	fn: ConsoleFn,
-): void {
-	const wrapped = inCaptureWindow(fn);
-	try {
-		obj[key] = wrapped;
-		return;
-	} catch {
-		// Non-writable data property — fall through to defineProperty.
-	}
-	try {
-		Object.defineProperty(obj, key, {
-			value: wrapped,
-			writable: true,
-			configurable: true,
-			enumerable: true,
-		});
-	} catch {
-		// Frozen solid: leave the original unwrapped function in place rather
-		// than throwing (which would abort the whole register call) or silently
-		// dropping it.
-	}
+function assignWrapped(obj: Record<string, unknown>, key: string, fn: ConsoleFn): void {
+  const wrapped = inCaptureWindow(fn);
+  try {
+    obj[key] = wrapped;
+    return;
+  } catch {
+    // Non-writable data property — fall through to defineProperty.
+  }
+  try {
+    Object.defineProperty(obj, key, {
+      value: wrapped,
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  } catch {
+    // Frozen solid: leave the original unwrapped function in place rather
+    // than throwing (which would abort the whole register call) or silently
+    // dropping it.
+  }
 }
 
 /**
@@ -364,66 +343,63 @@ function assignWrapped(
  * reads of the same property, sees a stable value.
  */
 export function withConsoleCaptureWindows<T extends object>(api: T): T {
-	const wrapperCache = new Map<PropertyKey, unknown>();
-	const proxy: T = new Proxy(api, {
-		get(target, prop): unknown {
-			// A non-configurable, non-writable OWN data property is a proxy
-			// invariant: the get trap MUST return the exact value the target
-			// holds, or the engine throws a TypeError on read. Degrade to the raw
-			// value instead of tripping that invariant (S2a) — a frozen host API
-			// loses the capture window for that member, but keeps working.
-			const descriptor = Reflect.getOwnPropertyDescriptor(target, prop);
-			if (descriptor && descriptor.writable === false && descriptor.configurable === false) {
-				return descriptor.value;
-			}
-			const cached = wrapperCache.get(prop);
-			if (cached !== undefined) return cached;
-			const value = Reflect.get(target, prop, target);
-			if (typeof value !== "function") return value;
-			const method = value as (...args: unknown[]) => unknown;
-			// A host that returns `this` for chaining would hand back the raw API,
-			// so a chained `on(...).on(...)` would register an unwrapped handler.
-			// Keep the proxy on the chain.
-			const keepProxy = (result: unknown): unknown =>
-				result === target ? proxy : result;
-			// Pass-through members are cached too (S3a/S3b: `proxy.getFlag ===
-			// proxy.getFlag`), but the cached wrapper re-reads `target[prop]` on
-			// EVERY call rather than closing over `method` -- a plain
-			// `method.bind(target)` pins the function reference captured at first
-			// access, so a host (or a test simulating one) that reassigns its own
-			// method after registration would silently keep calling the stale one.
-			// Re-reading keeps the cached wrapper's identity stable while staying
-			// live to whatever `target[prop]` currently is.
-			const wrapper = isCaptureSeam(prop)
-				? (...args: unknown[]): unknown => {
-						const wrapped = args.map((arg) => wrapFunctionsInPlace(arg));
-						return keepProxy(method.apply(target, wrapped));
-					}
-				: (...args: unknown[]): unknown => {
-						const current = Reflect.get(target, prop, target) as (
-							...a: unknown[]
-						) => unknown;
-						return current.apply(target, args);
-					};
-			wrapperCache.set(prop, wrapper);
-			return wrapper;
-		},
-	});
-	return proxy;
+  const wrapperCache = new Map<PropertyKey, unknown>();
+  const proxy: T = new Proxy(api, {
+    get(target, prop): unknown {
+      // A non-configurable, non-writable OWN data property is a proxy
+      // invariant: the get trap MUST return the exact value the target
+      // holds, or the engine throws a TypeError on read. Degrade to the raw
+      // value instead of tripping that invariant (S2a) — a frozen host API
+      // loses the capture window for that member, but keeps working.
+      const descriptor = Reflect.getOwnPropertyDescriptor(target, prop);
+      if (descriptor && descriptor.writable === false && descriptor.configurable === false) {
+        return descriptor.value;
+      }
+      const cached = wrapperCache.get(prop);
+      if (cached !== undefined) return cached;
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== "function") return value;
+      const method = value as (...args: unknown[]) => unknown;
+      // A host that returns `this` for chaining would hand back the raw API,
+      // so a chained `on(...).on(...)` would register an unwrapped handler.
+      // Keep the proxy on the chain.
+      const keepProxy = (result: unknown): unknown => (result === target ? proxy : result);
+      // Pass-through members are cached too (S3a/S3b: `proxy.getFlag ===
+      // proxy.getFlag`), but the cached wrapper re-reads `target[prop]` on
+      // EVERY call rather than closing over `method` -- a plain
+      // `method.bind(target)` pins the function reference captured at first
+      // access, so a host (or a test simulating one) that reassigns its own
+      // method after registration would silently keep calling the stale one.
+      // Re-reading keeps the cached wrapper's identity stable while staying
+      // live to whatever `target[prop]` currently is.
+      const wrapper = isCaptureSeam(prop)
+        ? (...args: unknown[]): unknown => {
+            const wrapped = args.map((arg) => wrapFunctionsInPlace(arg));
+            return keepProxy(method.apply(target, wrapped));
+          }
+        : (...args: unknown[]): unknown => {
+            const current = Reflect.get(target, prop, target) as (...a: unknown[]) => unknown;
+            return current.apply(target, args);
+          };
+      wrapperCache.set(prop, wrapper);
+      return wrapper;
+    },
+  });
+  return proxy;
 }
 
 function formatConsoleArgs(args: unknown[]): string {
-	return args
-		.map((arg) => {
-			if (typeof arg === "string") return arg;
-			if (arg instanceof Error) return arg.stack ?? arg.message;
-			try {
-				return JSON.stringify(arg) ?? String(arg);
-			} catch {
-				return String(arg);
-			}
-		})
-		.join(" ");
+  return args
+    .map((arg) => {
+      if (typeof arg === "string") return arg;
+      if (arg instanceof Error) return arg.stack ?? arg.message;
+      try {
+        return JSON.stringify(arg) ?? String(arg);
+      } catch {
+        return String(arg);
+      }
+    })
+    .join(" ");
 }
 
 /**
@@ -445,33 +421,32 @@ function formatConsoleArgs(args: unknown[]): string {
  * Returns true when the patch was applied by this call.
  */
 export function installConsoleGuard(): boolean {
-	if (consoleGuardInstalled) return false;
-	if (isTestMode()) return false;
-	if (process.env.CHOCO_PI_LSP_CONSOLE_GUARD === "0") return false;
-	consoleGuardInstalled = true;
-	const target = console as unknown as Record<ConsoleMethod, unknown>;
-	for (const method of CONSOLE_METHODS) {
-		const original = target[method];
-		if (typeof original !== "function") continue;
-		const originalFn = original as ConsoleFn;
-		originalConsoleMethods.set(method, originalFn);
-		const replacement: ConsoleFn = (...args: unknown[]): void => {
-			if (!isConsoleCaptureActive()) {
-				originalFn.apply(console, args);
-				return;
-			}
-			logExtension({
-				subsystem: "console",
-				level:
-					method === "warn" ? "warn" : method === "error" ? "error" : "debug",
-				message: formatConsoleArgs(args),
-				metadata: { method },
-			});
-		};
-		installedConsoleMethods.set(method, replacement);
-		target[method] = replacement;
-	}
-	return true;
+  if (consoleGuardInstalled) return false;
+  if (isTestMode()) return false;
+  if (process.env.CHOCO_PI_LSP_CONSOLE_GUARD === "0") return false;
+  consoleGuardInstalled = true;
+  const target = console as unknown as Record<ConsoleMethod, unknown>;
+  for (const method of CONSOLE_METHODS) {
+    const original = target[method];
+    if (typeof original !== "function") continue;
+    const originalFn = original as ConsoleFn;
+    originalConsoleMethods.set(method, originalFn);
+    const replacement: ConsoleFn = (...args: unknown[]): void => {
+      if (!isConsoleCaptureActive()) {
+        originalFn.apply(console, args);
+        return;
+      }
+      logExtension({
+        subsystem: "console",
+        level: method === "warn" ? "warn" : method === "error" ? "error" : "debug",
+        message: formatConsoleArgs(args),
+        metadata: { method },
+      });
+    };
+    installedConsoleMethods.set(method, replacement);
+    target[method] = replacement;
+  }
+  return true;
 }
 
 /**
@@ -481,23 +456,23 @@ export function installConsoleGuard(): boolean {
  * clobber their replacement. Returns true when this call uninstalled.
  */
 export function uninstallConsoleGuard(): boolean {
-	if (!consoleGuardInstalled) return false;
-	consoleGuardInstalled = false;
-	const target = console as unknown as Record<ConsoleMethod, unknown>;
-	for (const [method, original] of originalConsoleMethods) {
-		if (target[method] === installedConsoleMethods.get(method)) {
-			target[method] = original;
-		}
-	}
-	originalConsoleMethods.clear();
-	installedConsoleMethods.clear();
-	return true;
+  if (!consoleGuardInstalled) return false;
+  consoleGuardInstalled = false;
+  const target = console as unknown as Record<ConsoleMethod, unknown>;
+  for (const [method, original] of originalConsoleMethods) {
+    if (target[method] === installedConsoleMethods.get(method)) {
+      target[method] = original;
+    }
+  }
+  originalConsoleMethods.clear();
+  installedConsoleMethods.clear();
+  return true;
 }
 
 /** Test-only: uninstall the guard and close every open capture window. */
 export function _resetConsoleGuardForTests(): void {
-	uninstallConsoleGuard();
-	consoleGuardInstalled = false;
-	consoleCaptureStorage = undefined;
-	moduleLoadWindowOpen = false;
+  uninstallConsoleGuard();
+  consoleGuardInstalled = false;
+  consoleCaptureStorage = undefined;
+  moduleLoadWindowOpen = false;
 }

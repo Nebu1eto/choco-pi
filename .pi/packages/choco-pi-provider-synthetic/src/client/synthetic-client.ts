@@ -10,12 +10,7 @@ import {
   resolveSyntheticUtilityApiBaseUrl,
   syntheticUtilityApiUrl,
 } from "./utility-api";
-import {
-  authHeaders,
-  combineWithTimeout,
-  isTimeoutReason,
-  parseErrorMessage,
-} from "./utils";
+import { authHeaders, combineWithTimeout, isTimeoutReason, parseErrorMessage } from "./utils";
 
 export class SyntheticClient {
   private readonly apiKey: string | undefined;
@@ -32,9 +27,7 @@ export class SyntheticClient {
     return resolveSyntheticUtilityApiBaseUrl(this.proxyUrl);
   }
 
-  async quotas(
-    options: SyntheticClientRequestOptions = {},
-  ): Promise<QuotasResult> {
+  async quotas(options: SyntheticClientRequestOptions = {}): Promise<QuotasResult> {
     if (this.requiresAuth && !this.apiKey) {
       return {
         success: false,
@@ -53,13 +46,10 @@ export class SyntheticClient {
     const signal = combineWithTimeout(options.signal);
 
     try {
-      const response = await fetch(
-        syntheticUtilityApiUrl(baseUrl, "/v2/quotas"),
-        {
-          headers: authHeaders(this.apiKey),
-          signal,
-        },
-      );
+      const response = await fetch(syntheticUtilityApiUrl(baseUrl, "/v2/quotas"), {
+        headers: authHeaders(this.apiKey),
+        signal,
+      });
 
       if (!response.ok) {
         return {
@@ -71,9 +61,7 @@ export class SyntheticClient {
       const data: QuotasResponse = await response.json();
       return { success: true, data: { quotas: data } };
     } catch (err: unknown) {
-      const isAbort =
-        signal.aborted ||
-        (err instanceof DOMException && err.name === "AbortError");
+      const isAbort = signal.aborted || (err instanceof DOMException && err.name === "AbortError");
       if (isAbort) {
         if (isTimeoutReason(signal.reason)) {
           return {
@@ -99,18 +87,15 @@ export class SyntheticClient {
       throw new Error("No API key provided");
     }
 
-    const response = await fetch(
-      syntheticUtilityApiUrl(this.resolveBaseUrl(), "/v2/search"),
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders(this.apiKey),
-        },
-        body: JSON.stringify({ query }),
-        signal: options.signal,
+    const response = await fetch(syntheticUtilityApiUrl(this.resolveBaseUrl(), "/v2/search"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(this.apiKey),
       },
-    );
+      body: JSON.stringify({ query }),
+      signal: options.signal,
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -129,17 +114,12 @@ export class SyntheticClient {
     }
   }
 
-  async models(
-    options: SyntheticClientRequestOptions = {},
-  ): Promise<SyntheticModelsResponse> {
+  async models(options: SyntheticClientRequestOptions = {}): Promise<SyntheticModelsResponse> {
     const signal = combineWithTimeout(options.signal);
 
     try {
       const response = await fetch(
-        syntheticUtilityApiUrl(
-          DEFAULT_SYNTHETIC_API_BASE_URL,
-          "/openai/v1/models",
-        ),
+        syntheticUtilityApiUrl(DEFAULT_SYNTHETIC_API_BASE_URL, "/openai/v1/models"),
         {
           headers: authHeaders(this.apiKey),
           signal,
@@ -147,17 +127,13 @@ export class SyntheticClient {
       );
 
       if (!response.ok) {
-        throw new Error(
-          `Synthetic models API error: ${response.status} ${await response.text()}`,
-        );
+        throw new Error(`Synthetic models API error: ${response.status} ${await response.text()}`);
       }
 
       const data = await response.json();
       return data as SyntheticModelsResponse;
     } catch (err: unknown) {
-      const isAbort =
-        signal.aborted ||
-        (err instanceof DOMException && err.name === "AbortError");
+      const isAbort = signal.aborted || (err instanceof DOMException && err.name === "AbortError");
       if (isAbort && isTimeoutReason(signal.reason)) {
         throw new Error("Synthetic models API request timed out");
       }

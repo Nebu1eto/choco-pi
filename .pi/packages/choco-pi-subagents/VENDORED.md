@@ -41,14 +41,14 @@ reaches all 39 files (verified by a reachability walk over the import graph).
 Removed items are upstream build, test and publish scaffolding that a vendored
 source package cannot use:
 
-| Removed | Why |
-| --- | --- |
-| `dist/**` | The package is loaded from `src/`; a second copy of every module would drift silently. |
-| `vitest.config.ts` | Upstream's `test/` directory is not part of the npm tarball, so the config points at nothing here. |
-| `CONTRIBUTING.md`, `SECURITY.md` | Upstream project process; routes reports to the upstream repository. |
-| Upstream `README.md` | Replaced by this fork's `README.md`, which documents the fork's name, wiring and load mechanism. Upstream's full feature manual stays available in its repository. |
-| `package.json`: `repository`, `homepage`, `bugs`, `author`, `publishConfig`, `pi.video`, `pi.image` | Point at the upstream project; this fork is `private` and not published. |
-| `package.json`: `devDependencies`, `scripts.build`/`test`/`test:watch`/`test:e2e`/`test:coverage`/`lint`/`lint:fix`/`prepublishOnly` | The fork has no build step, no vendored test suite and no Biome config. `scripts.typecheck` is kept. |
+| Removed                                                                                                                              | Why                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dist/**`                                                                                                                            | The package is loaded from `src/`; a second copy of every module would drift silently.                                                                             |
+| `vitest.config.ts`                                                                                                                   | Upstream's `test/` directory is not part of the npm tarball, so the config points at nothing here.                                                                 |
+| `CONTRIBUTING.md`, `SECURITY.md`                                                                                                     | Upstream project process; routes reports to the upstream repository.                                                                                               |
+| Upstream `README.md`                                                                                                                 | Replaced by this fork's `README.md`, which documents the fork's name, wiring and load mechanism. Upstream's full feature manual stays available in its repository. |
+| `package.json`: `repository`, `homepage`, `bugs`, `author`, `publishConfig`, `pi.video`, `pi.image`                                  | Point at the upstream project; this fork is `private` and not published.                                                                                           |
+| `package.json`: `devDependencies`, `scripts.build`/`test`/`test:watch`/`test:e2e`/`test:coverage`/`lint`/`lint:fix`/`prepublishOnly` | The fork has no build step, no vendored test suite and no Biome config. `scripts.typecheck` is kept.                                                               |
 
 ## What was changed
 
@@ -180,11 +180,11 @@ Vendored under `node_modules/`, copied from the pnpm store of the original
 `choco-pi` checkout at the exact versions that resolved there. All three are
 dependency-free, so the vendored tree is flat and complete:
 
-| Package | Version | Upstream range |
-| --- | --- | --- |
-| `@sinclair/typebox` | 0.34.52 | `^0.34.49` |
-| `croner` | 10.0.1 | `^10.0.1` |
-| `nanoid` | 5.1.16 | `^5.0.0` |
+| Package             | Version | Upstream range |
+| ------------------- | ------- | -------------- |
+| `@sinclair/typebox` | 0.34.52 | `^0.34.49`     |
+| `croner`            | 10.0.1  | `^10.0.1`      |
+| `nanoid`            | 5.1.16  | `^5.0.0`       |
 
 `package.json` pins them exactly, so a future `npm install` here cannot drift
 away from what is vendored. The `@earendil-works/*` packages stay peers: pi

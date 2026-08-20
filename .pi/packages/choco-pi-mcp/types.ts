@@ -44,13 +44,13 @@ export interface McpStatusSnapshot {
 }
 
 // Import sources for config
-export type ImportKind = 
-  | "cursor" 
-  | "claude-code" 
-  | "claude-desktop" 
-  | "codex" 
+export type ImportKind =
+  | "cursor"
+  | "claude-code"
+  | "claude-desktop"
+  | "codex"
   | "opencode"
-  | "windsurf" 
+  | "windsurf"
   | "vscode";
 
 type SdkTool = ListToolsResult["tools"][number];
@@ -208,7 +208,11 @@ export function extractUiPromptText(params: UiMessageParams): string | undefined
 
   if (params.role === "user" && Array.isArray(params.content)) {
     const text = params.content
-      .map((block) => (block && typeof block === "object" && "text" in block ? String((block as { text?: unknown }).text ?? "") : ""))
+      .map((block) =>
+        block && typeof block === "object" && "text" in block
+          ? String((block as { text?: unknown }).text ?? "")
+          : "",
+      )
       .filter(Boolean)
       .join("\n\n");
     return text || undefined;
@@ -282,7 +286,10 @@ export interface UiModelContextParams {
   structuredContent?: Record<string, unknown>;
 }
 
-export function createUiModelContextUpdate(params: UiModelContextParams, maxChars = 12_000): UiModelContextUpdate | undefined {
+export function createUiModelContextUpdate(
+  params: UiModelContextParams,
+  maxChars = 12_000,
+): UiModelContextUpdate | undefined {
   const payload = Object.fromEntries(
     Object.entries(params).filter(([, value]) => value !== undefined),
   );
@@ -382,7 +389,7 @@ export interface ServerEntry {
   headers?: Record<string, string>;
   /** Add or replace HTTP headers by running a trusted command for each request. */
   requestHeadersCommand?: HttpRequestHeadersCommand;
-  /** 
+  /**
    * Authentication type:
    * - 'oauth' - Use OAuth 2.1 (auto-discovers endpoints, supports dynamic client registration)
    * - 'bearer' - Use static Bearer token
@@ -392,7 +399,7 @@ export interface ServerEntry {
   auth?: "oauth" | "bearer" | false;
   bearerToken?: string;
   bearerTokenEnv?: string;
-  /** 
+  /**
    * OAuth configuration (optional).
    * If not provided, the SDK will attempt dynamic client registration.
    * Set to false to explicitly disable OAuth for this server.
@@ -420,7 +427,7 @@ export interface ServerEntry {
   // Require interactive approval before calling matching MCP tools/resources.
   approveTools?: boolean | string[];
   // Debug
-  debug?: boolean;  // Show server stderr (default: false)
+  debug?: boolean; // Show server stderr (default: false)
   /** Enable metadata-only JSONL protocol tracing for this server. */
   trace?: boolean;
   /** Force a specific HTTP MCP transport. Used by Agent Plugins, whose `type` declares the transport and forbids client fallback. */
@@ -476,7 +483,9 @@ export const MCP_TOOL_APPROVAL_REQUEST_EVENT = "pi-mcp-adapter:tool-approval-req
 
 export type McpToolApprovalOrigin = "proxy" | "direct" | "script" | "resource" | "iframe";
 export type McpToolApprovalDecision = "allow_once" | "allow_for_session" | "deny" | "abstain";
-export type McpToolApprovalHandler = () => McpToolApprovalDecision | Promise<McpToolApprovalDecision>;
+export type McpToolApprovalHandler = () =>
+  | McpToolApprovalDecision
+  | Promise<McpToolApprovalDecision>;
 
 export interface McpToolApprovalRequest {
   requestId: string;
@@ -571,13 +580,13 @@ export interface McpAdapterOptions {
 export type ServerDefinition = ServerEntry;
 
 export interface ToolMetadata {
-  name: string;           // Prefixed tool name (e.g., "xcodebuild_list_sims")
-  originalName: string;   // Original MCP tool name (e.g., "list_sims")
+  name: string; // Prefixed tool name (e.g., "xcodebuild_list_sims")
+  originalName: string; // Original MCP tool name (e.g., "list_sims")
   description: string;
-  resourceUri?: string;   // For resource tools: the URI to read
+  resourceUri?: string; // For resource tools: the URI to read
   uiResourceUri?: string; // For app-enabled tools: the UI resource URI
   uiVisibility?: UiToolVisibility[];
-  inputSchema?: unknown;  // JSON Schema for parameters (stored for describe/errors)
+  inputSchema?: unknown; // JSON Schema for parameters (stored for describe/errors)
   uiStreamMode?: UiStreamMode;
 }
 
@@ -652,7 +661,9 @@ export interface McpPanelCallbacks {
   reconnect: (serverName: string) => Promise<boolean>;
   canAuthenticate: (serverName: string) => boolean;
   authenticate: (serverName: string) => Promise<McpAuthResult>;
-  getConnectionStatus: (serverName: string) => "connected" | "idle" | "failed" | "needs-auth" | "disabled";
+  getConnectionStatus: (
+    serverName: string,
+  ) => "connected" | "idle" | "failed" | "needs-auth" | "disabled";
   getFailureMessage?: (serverName: string) => string | null;
   refreshCacheAfterReconnect: (serverName: string) => ServerCacheEntry | null;
 }
@@ -667,15 +678,12 @@ export interface McpPanelResult {
  */
 function sanitizeServerPrefix(serverName: string, preserveProviderValid = true): string {
   const validCharacters = preserveProviderValid ? /^[A-Za-z0-9_-]$/ : /^[A-Za-z0-9]$/;
-  return Array.from(serverName, char =>
+  return Array.from(serverName, (char) =>
     validCharacters.test(char) ? char : `_${char.codePointAt(0)!.toString(16)}_`,
   ).join("");
 }
 
-export function getServerPrefix(
-  serverName: string,
-  mode: ToolPrefix
-): string {
+export function getServerPrefix(serverName: string, mode: ToolPrefix): string {
   if (mode === "none") return "";
   if (mode === "short") {
     let short = sanitizeServerPrefix(serverName.replace(/-?mcp$/i, ""));
@@ -689,11 +697,7 @@ export function getServerPrefix(
 /**
  * Format a tool name with server prefix.
  */
-export function formatToolName(
-  toolName: string,
-  serverName: string,
-  prefix: ToolPrefix
-): string {
+export function formatToolName(toolName: string, serverName: string, prefix: ToolPrefix): string {
   const p = getServerPrefix(serverName, prefix);
   const sanitized = toolName.replace(/\./g, "_");
   return p ? `${p}_${sanitized}` : sanitized;
@@ -705,7 +709,6 @@ export function resolveToolPrefix(
 ): ToolPrefix {
   return definition?.toolPrefix ?? globalPrefix ?? "server";
 }
-
 
 /**
  * Resolve a configured MCP server name from a prefixed tool name.
@@ -757,13 +760,15 @@ export function formatPromptCommandName(
   serverName: string,
   prefix: ToolPrefix,
 ): string {
-  const serverPart = getServerPrefix(serverName, prefix) || sanitizeServerPrefix(serverName) || "server";
+  const serverPart =
+    getServerPrefix(serverName, prefix) || sanitizeServerPrefix(serverName) || "server";
   return `mcp__${serverPart}__${sanitizePromptName(promptName)}`;
 }
 
 function getLegacyServerPrefix(serverName: string, mode: ToolPrefix): string {
   if (mode === "none") return "";
-  if (mode === "short") return sanitizeServerPrefix(serverName.replace(/-?mcp$/i, ""), false) || "mcp";
+  if (mode === "short")
+    return sanitizeServerPrefix(serverName.replace(/-?mcp$/i, ""), false) || "mcp";
   if (mode === "mcp") return `mcp__${sanitizeServerPrefix(serverName, false)}`;
   return sanitizeServerPrefix(serverName, false);
 }
@@ -774,7 +779,12 @@ function formatLegacyToolName(toolName: string, serverName: string, prefix: Tool
   return serverPrefix ? `${serverPrefix}_${sanitizedToolName}` : sanitizedToolName;
 }
 
-export function getToolNameCandidates(toolName: string, serverName: string, prefix: ToolPrefix, includeLegacy = true): Set<string> {
+export function getToolNameCandidates(
+  toolName: string,
+  serverName: string,
+  prefix: ToolPrefix,
+  includeLegacy = true,
+): Set<string> {
   const candidates = new Set<string>([
     toolName,
     formatToolName(toolName, serverName, prefix),
@@ -802,7 +812,10 @@ export function getToolNameCandidates(toolName: string, serverName: string, pref
 }
 
 function globToRegExp(pattern: string): RegExp {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".");
   return new RegExp(`^${escaped}$`);
 }
 
@@ -833,7 +846,10 @@ export function matchesToolPattern(candidates: Set<string>, patterns?: unknown):
     if (!pattern.includes("*") && !pattern.includes("?") && candidates.has(pattern)) {
       return true;
     }
-    if ((pattern.includes("*") || pattern.includes("?")) && [...candidates].some(candidate => globToRegExp(pattern).test(candidate))) {
+    if (
+      (pattern.includes("*") || pattern.includes("?")) &&
+      [...candidates].some((candidate) => globToRegExp(pattern).test(candidate))
+    ) {
       return true;
     }
   }
@@ -874,7 +890,8 @@ function indexHasOtherCurrentMatch(
   let totalMatchingCount = matchingCount;
   if (additionalCandidates) {
     for (const candidate of additionalCandidates) {
-      if (!index.allCurrentCandidates.has(candidate) && matcher.test(candidate)) totalMatchingCount++;
+      if (!index.allCurrentCandidates.has(candidate) && matcher.test(candidate))
+        totalMatchingCount++;
     }
   }
   if (totalMatchingCount === 0) return false;
@@ -896,14 +913,17 @@ function matchesToolSelector(
   if (!Array.isArray(patterns) || patterns.length === 0) return false;
   const currentCandidates = getToolNameCandidates(toolName, serverName, prefix, false);
   if (matchesToolPattern(currentCandidates, patterns)) return true;
-  if (!otherCurrentCandidates) return matchesToolPattern(getToolNameCandidates(toolName, serverName, prefix), patterns);
+  if (!otherCurrentCandidates)
+    return matchesToolPattern(getToolNameCandidates(toolName, serverName, prefix), patterns);
   const legacyCandidates = getToolNameCandidates(toolName, serverName, prefix);
   for (const candidate of currentCandidates) legacyCandidates.delete(candidate);
-  return patterns.some(pattern => {
-    if (typeof pattern !== "string" || !matchesToolPattern(legacyCandidates, [pattern])) return false;
-    const hasCollision = otherCurrentCandidates instanceof Set
-      ? matchesToolPattern(otherCurrentCandidates, [pattern])
-      : indexHasOtherCurrentMatch(otherCurrentCandidates, toolName, currentCandidates, pattern);
+  return patterns.some((pattern) => {
+    if (typeof pattern !== "string" || !matchesToolPattern(legacyCandidates, [pattern]))
+      return false;
+    const hasCollision =
+      otherCurrentCandidates instanceof Set
+        ? matchesToolPattern(otherCurrentCandidates, [pattern])
+        : indexHasOtherCurrentMatch(otherCurrentCandidates, toolName, currentCandidates, pattern);
     return !hasCollision;
   });
 }
@@ -937,6 +957,8 @@ export function isToolAllowed(
   excludeTools?: unknown,
   otherCurrentCandidates?: ToolSelectorCandidateContext,
 ): boolean {
-  return isToolIncluded(toolName, serverName, prefix, includeTools, otherCurrentCandidates)
-    && !isToolExcluded(toolName, serverName, prefix, excludeTools, otherCurrentCandidates);
+  return (
+    isToolIncluded(toolName, serverName, prefix, includeTools, otherCurrentCandidates) &&
+    !isToolExcluded(toolName, serverName, prefix, excludeTools, otherCurrentCandidates)
+  );
 }

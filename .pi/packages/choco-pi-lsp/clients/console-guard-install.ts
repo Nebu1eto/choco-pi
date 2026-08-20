@@ -16,10 +16,7 @@ import { CHOCO_PI_LSP_EVAL_STARTED_MS } from "./eval-timestamp.js";
 // #1434: the guard captures only while choco-pi-lsp owns execution, so the module
 // window must be open for the rest of the import graph. index.ts closes it on
 // its last line; an unref'd backstop closes it if that never runs.
-import {
-	installConsoleGuard,
-	openModuleLoadConsoleWindow,
-} from "./extension-log.js";
+import { installConsoleGuard, openModuleLoadConsoleWindow } from "./extension-log.js";
 
 installConsoleGuard();
 openModuleLoadConsoleWindow();

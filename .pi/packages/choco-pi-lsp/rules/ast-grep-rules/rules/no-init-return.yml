@@ -29,5 +29,5 @@ rule:
         kind: function_definition
         has:
           field: name
-          regex: '^__init__$'
+          regex: "^__init__$"
         stopBy: end

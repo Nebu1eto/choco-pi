@@ -1,6 +1,14 @@
-import type { ExtensionHandler, TurnEndEvent, TurnStartEvent } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionHandler,
+  TurnEndEvent,
+  TurnStartEvent,
+} from "@earendil-works/pi-coding-agent";
 
-import { assistantTurnTokens, isAbortedAssistantMessage, isToolUseAssistantMessage } from "./goal-accounting.js";
+import {
+  assistantTurnTokens,
+  isAbortedAssistantMessage,
+  isToolUseAssistantMessage,
+} from "./goal-accounting.js";
 import { isAssistantContextOverflow, isErrorAssistantMessage } from "./recovery.js";
 import {
   getContextWindow,
@@ -13,7 +21,8 @@ import type {
 } from "./goal-runtime-event-handler-types.js";
 
 export function createTurnEventHandlers(deps: GoalRuntimeTurnHandlerContext) {
-  const { runtimeState, stateController, continuation, goalAccounting, recoveryRuntime, status } = deps;
+  const { runtimeState, stateController, continuation, goalAccounting, recoveryRuntime, status } =
+    deps;
 
   return {
     onTurnStart: (async (event, ctx) => {
@@ -25,7 +34,9 @@ export function createTurnEventHandlers(deps: GoalRuntimeTurnHandlerContext) {
     }) satisfies ExtensionHandler<TurnStartEvent>,
 
     onToolExecutionEnd: (async (event, ctx) => {
-      if (runStaleQueuedWorkPlan(runtimeState.staleQueuedWorkGuard.planToolExecutionEnd(), ctx, deps)) {
+      if (
+        runStaleQueuedWorkPlan(runtimeState.staleQueuedWorkGuard.planToolExecutionEnd(), ctx, deps)
+      ) {
         return;
       }
 

@@ -1,7 +1,7 @@
 import { formatDuration, formatTokenValue } from "./format.js";
 import type { ThreadGoal } from "./types.js";
 
-const CONTINUATION_MARKER_PREFIX = "<pi_goal_continuation goal_id=\"";
+const CONTINUATION_MARKER_PREFIX = '<pi_goal_continuation goal_id="';
 
 export const GOAL_TOOL_NAME_GUIDANCE =
   "Call each goal tool by the name exposed in your available tool list. In pi that is usually get_goal, create_goal, and update_goal; in bridged MCP runs it may be a namespaced variant such as pi__get_goal, pi__create_goal, or pi__update_goal. Do not assume display, history, or transcript tool names are callable unless they appear in your tool list.";
@@ -65,7 +65,7 @@ export function continuationGoalIdFromPrompt(prompt: string): string | null {
   if (!prompt.startsWith(CONTINUATION_MARKER_PREFIX)) {
     return null;
   }
-  const end = prompt.indexOf("\"", CONTINUATION_MARKER_PREFIX.length);
+  const end = prompt.indexOf('"', CONTINUATION_MARKER_PREFIX.length);
   if (end === -1) {
     return null;
   }
@@ -97,10 +97,7 @@ function budgetPromptLines(goal: ThreadGoal, includeRemaining: boolean): string[
 }
 
 export function escapeXmlText(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 export function supersededContinuationMessage(goalId: string): string {

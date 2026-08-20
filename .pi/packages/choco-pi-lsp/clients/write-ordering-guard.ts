@@ -26,34 +26,34 @@
  * callers that can't supply an ordering token aren't penalized).
  */
 export class WriteOrderingGuard<K, T extends number = number> {
-	private readonly lastSeen = new Map<K, T>();
+  private readonly lastSeen = new Map<K, T>();
 
-	/**
-	 * Returns `true` if a write with `token` for `key` should proceed, and
-	 * `false` if it's superseded (a write with a higher token for the same
-	 * key was already recorded) and should be dropped.
-	 *
-	 * On `true` with a defined `token`, records it as the new last-seen value
-	 * for `key` — including on a tie (a write whose token matches the last
-	 * recorded one is not superseded, and re-recording the same token is a
-	 * no-op either way). The very first write for a key always proceeds
-	 * (nothing to compare against yet).
-	 */
-	shouldWrite(key: K, token: T | undefined): boolean {
-		if (token === undefined) return true;
-		const last = this.lastSeen.get(key);
-		if (last !== undefined && token < last) return false;
-		this.lastSeen.set(key, token);
-		return true;
-	}
+  /**
+   * Returns `true` if a write with `token` for `key` should proceed, and
+   * `false` if it's superseded (a write with a higher token for the same
+   * key was already recorded) and should be dropped.
+   *
+   * On `true` with a defined `token`, records it as the new last-seen value
+   * for `key` — including on a tie (a write whose token matches the last
+   * recorded one is not superseded, and re-recording the same token is a
+   * no-op either way). The very first write for a key always proceeds
+   * (nothing to compare against yet).
+   */
+  shouldWrite(key: K, token: T | undefined): boolean {
+    if (token === undefined) return true;
+    const last = this.lastSeen.get(key);
+    if (last !== undefined && token < last) return false;
+    this.lastSeen.set(key, token);
+    return true;
+  }
 
-	/** Drop tracked ordering state for `key` (e.g. on cache eviction). */
-	delete(key: K): void {
-		this.lastSeen.delete(key);
-	}
+  /** Drop tracked ordering state for `key` (e.g. on cache eviction). */
+  delete(key: K): void {
+    this.lastSeen.delete(key);
+  }
 
-	/** Drop all tracked ordering state. */
-	clear(): void {
-		this.lastSeen.clear();
-	}
+  /** Drop all tracked ordering state. */
+  clear(): void {
+    this.lastSeen.clear();
+  }
 }

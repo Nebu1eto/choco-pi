@@ -33,10 +33,7 @@ import * as path from "node:path";
 import type { ProjectIgnoreMatcher } from "./file-utils.js";
 import { isExcludedDirName } from "./file-utils.js";
 import { isGeneratedArtifactDirectoryName } from "./generated-artifacts.js";
-import {
-	createDeadline,
-	yieldIfOverBudget,
-} from "./cooperative-budget.js";
+import { createDeadline, yieldIfOverBudget } from "./cooperative-budget.js";
 
 /**
  * Read a directory's entries, returning `[]` for a permission-denied or
@@ -46,11 +43,11 @@ import {
  * caller already treated that as "yields no entries," not a hard failure.
  */
 export function readDirEntriesSafe(dirPath: string): fs.Dirent[] {
-	try {
-		return fs.readdirSync(dirPath, { withFileTypes: true });
-	} catch {
-		return [];
-	}
+  try {
+    return fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -68,36 +65,34 @@ export function readDirEntriesSafe(dirPath: string): fs.Dirent[] {
  * read still blocked on a cloud stall"); #1170 deferred the SHARED engine, and
  * this is that same fix applied here — so every async walker gets it at once.
  */
-export async function readDirEntriesSafeAsync(
-	dirPath: string,
-): Promise<fs.Dirent[]> {
-	try {
-		return await fs.promises.readdir(dirPath, { withFileTypes: true });
-	} catch {
-		return [];
-	}
+export async function readDirEntriesSafeAsync(dirPath: string): Promise<fs.Dirent[]> {
+  try {
+    return await fs.promises.readdir(dirPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
 }
 
 export interface DirWalkPolicy {
-	/** Project ignore rules (.gitignore + .choco-pi-lsp.json), from `getProjectIgnoreMatcher`. */
-	ignoreMatcher: ProjectIgnoreMatcher;
-	/** Extra directory-name/glob patterns to exclude, merged with the shared default list. */
-	extraExcludeDirs?: string[];
-	/**
-	 * Also exclude directories that look like generated/build-artifact output
-	 * (e.g. `dist`, `.next`, `__generated__`). Only `source-filter.ts` opts into
-	 * this today — `language-profile.ts` and `startup-scan.ts` never checked
-	 * for it, so their walkers must pass this as `false`/omitted to keep their
-	 * existing behavior.
-	 */
-	skipGeneratedArtifactDirs?: boolean;
-	/**
-	 * Recurse into symlinked directories. Default `false` (skip them) —
-	 * matches `source-filter.ts`'s existing default. `language-profile.ts` and
-	 * `startup-scan.ts` never checked `entry.isSymbolicLink()` at all (i.e.
-	 * always followed), so their call sites must pass `true` to preserve that.
-	 */
-	followSymlinks?: boolean;
+  /** Project ignore rules (.gitignore + .choco-pi-lsp.json), from `getProjectIgnoreMatcher`. */
+  ignoreMatcher: ProjectIgnoreMatcher;
+  /** Extra directory-name/glob patterns to exclude, merged with the shared default list. */
+  extraExcludeDirs?: string[];
+  /**
+   * Also exclude directories that look like generated/build-artifact output
+   * (e.g. `dist`, `.next`, `__generated__`). Only `source-filter.ts` opts into
+   * this today — `language-profile.ts` and `startup-scan.ts` never checked
+   * for it, so their walkers must pass this as `false`/omitted to keep their
+   * existing behavior.
+   */
+  skipGeneratedArtifactDirs?: boolean;
+  /**
+   * Recurse into symlinked directories. Default `false` (skip them) —
+   * matches `source-filter.ts`'s existing default. `language-profile.ts` and
+   * `startup-scan.ts` never checked `entry.isSymbolicLink()` at all (i.e.
+   * always followed), so their call sites must pass `true` to preserve that.
+   */
+  followSymlinks?: boolean;
 }
 
 /**
@@ -117,24 +112,21 @@ export interface DirWalkPolicy {
  * callback — never fires for them.
  */
 export function shouldRecurseIntoDir(
-	entry: fs.Dirent,
-	fullPath: string,
-	policy: DirWalkPolicy,
-	onGeneratedDirSkip?: () => void,
+  entry: fs.Dirent,
+  fullPath: string,
+  policy: DirWalkPolicy,
+  onGeneratedDirSkip?: () => void,
 ): boolean {
-	if (isExcludedDirName(entry.name, policy.extraExcludeDirs ?? [])) {
-		return false;
-	}
-	if (policy.ignoreMatcher.isIgnored(fullPath, true)) return false;
-	if (
-		policy.skipGeneratedArtifactDirs === true &&
-		isGeneratedArtifactDirectoryName(entry.name)
-	) {
-		onGeneratedDirSkip?.();
-		return false;
-	}
-	if (policy.followSymlinks !== true && entry.isSymbolicLink()) return false;
-	return true;
+  if (isExcludedDirName(entry.name, policy.extraExcludeDirs ?? [])) {
+    return false;
+  }
+  if (policy.ignoreMatcher.isIgnored(fullPath, true)) return false;
+  if (policy.skipGeneratedArtifactDirs === true && isGeneratedArtifactDirectoryName(entry.name)) {
+    onGeneratedDirSkip?.();
+    return false;
+  }
+  if (policy.followSymlinks !== true && entry.isSymbolicLink()) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,33 +170,33 @@ export type WalkDisposition = "recurse" | "skip" | "stop";
 export type WalkVisitor = (entry: fs.Dirent, fullPath: string) => WalkDisposition;
 
 export interface StackWalkOptions {
-	/**
-	 * Loop guard checked once before popping each directory (not per entry).
-	 * Reproduces jscpd's per-directory entry budget (`visited < MAX_ENTRIES` as
-	 * a `while` condition): the current directory's entry loop always runs to
-	 * completion, but no further directory is popped once this returns true.
-	 * When it stops the walk this way the driver returns `false` (the visitor
-	 * never signalled `"stop"`).
-	 */
-	shouldStop?: () => boolean;
+  /**
+   * Loop guard checked once before popping each directory (not per entry).
+   * Reproduces jscpd's per-directory entry budget (`visited < MAX_ENTRIES` as
+   * a `while` condition): the current directory's entry loop always runs to
+   * completion, but no further directory is popped once this returns true.
+   * When it stops the walk this way the driver returns `false` (the visitor
+   * never signalled `"stop"`).
+   */
+  shouldStop?: () => boolean;
 }
 
 export interface AsyncStackWalkOptions extends StackWalkOptions {
-	/**
-	 * Yield to the macrotask queue (via `setImmediate`) when the monotonic work
-	 * budget expires. `setImmediate` — not
-	 * `Promise.resolve` — is required so stdin "data" events (also macrotasks)
-	 * can interleave and keystrokes stay responsive during `session_start`
-	 * (#703).
-	 */
-	/** Maximum synchronous CPU occupancy between macrotask yields. */
-	budgetMs?: number;
-	/**
-	 * Optional async hook awaited once before the walk begins — used to prime
-	 * the ignore-matcher's tracked-file index (`ensureTrackedIndex`, #703) so a
-	 * tracked file matching a `.gitignore` pattern isn't dropped.
-	 */
-	beforeWalk?: () => Promise<void>;
+  /**
+   * Yield to the macrotask queue (via `setImmediate`) when the monotonic work
+   * budget expires. `setImmediate` — not
+   * `Promise.resolve` — is required so stdin "data" events (also macrotasks)
+   * can interleave and keystrokes stay responsive during `session_start`
+   * (#703).
+   */
+  /** Maximum synchronous CPU occupancy between macrotask yields. */
+  budgetMs?: number;
+  /**
+   * Optional async hook awaited once before the walk begins — used to prime
+   * the ignore-matcher's tracked-file index (`ensureTrackedIndex`, #703) so a
+   * tracked file matching a `.gitignore` pattern isn't dropped.
+   */
+  beforeWalk?: () => Promise<void>;
 }
 
 /**
@@ -218,35 +210,35 @@ export interface AsyncStackWalkOptions extends StackWalkOptions {
  * pop order descends left-to-right.
  */
 function* walkTreeStackSteps(
-	rootDir: string,
-	visit: WalkVisitor,
-	shouldStop?: () => boolean,
+  rootDir: string,
+  visit: WalkVisitor,
+  shouldStop?: () => boolean,
 ): Generator<string | undefined, boolean, fs.Dirent[] | undefined> {
-	const stack: string[] = [rootDir];
-	while (stack.length > 0) {
-		if (shouldStop?.()) return false;
-		const dir = stack.pop();
-		if (dir === undefined) continue;
-		// Directory-read REQUEST (#1137): the generator never reads the
-		// filesystem itself — it yields the directory path and the driver
-		// supplies the entries. That is what lets the sync driver stay
-		// `readdirSync` while the async driver reads via `fs.promises.readdir`
-		// WITHOUT forking the traversal into two implementations that can
-		// drift (the invariant this generator exists to protect).
-		const entries = (yield dir) ?? [];
-		const subDirs: string[] = [];
-		for (const entry of entries) {
-			const fullPath = path.join(dir, entry.name);
-			const disposition = visit(entry, fullPath);
-			if (disposition === "stop") return true;
-			if (disposition === "recurse") subDirs.push(fullPath);
-			// Per-entry yield point: `undefined` distinguishes it from a
-			// directory-read request above.
-			yield undefined;
-		}
-		for (let i = subDirs.length - 1; i >= 0; i--) stack.push(subDirs[i]);
-	}
-	return false;
+  const stack: string[] = [rootDir];
+  while (stack.length > 0) {
+    if (shouldStop?.()) return false;
+    const dir = stack.pop();
+    if (dir === undefined) continue;
+    // Directory-read REQUEST (#1137): the generator never reads the
+    // filesystem itself — it yields the directory path and the driver
+    // supplies the entries. That is what lets the sync driver stay
+    // `readdirSync` while the async driver reads via `fs.promises.readdir`
+    // WITHOUT forking the traversal into two implementations that can
+    // drift (the invariant this generator exists to protect).
+    const entries = (yield dir) ?? [];
+    const subDirs: string[] = [];
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      const disposition = visit(entry, fullPath);
+      if (disposition === "stop") return true;
+      if (disposition === "recurse") subDirs.push(fullPath);
+      // Per-entry yield point: `undefined` distinguishes it from a
+      // directory-read request above.
+      yield undefined;
+    }
+    for (let i = subDirs.length - 1; i >= 0; i--) stack.push(subDirs[i]);
+  }
+  return false;
 }
 
 /**
@@ -255,18 +247,16 @@ function* walkTreeStackSteps(
  * visitor stopped the walk via `"stop"`.
  */
 export function walkTreeStackSync(
-	rootDir: string,
-	visit: WalkVisitor,
-	opts: StackWalkOptions = {},
+  rootDir: string,
+  visit: WalkVisitor,
+  opts: StackWalkOptions = {},
 ): boolean {
-	const steps = walkTreeStackSteps(rootDir, visit, opts.shouldStop);
-	let step = steps.next();
-	while (!step.done) {
-		step = steps.next(
-			step.value === undefined ? undefined : readDirEntriesSafe(step.value),
-		);
-	}
-	return step.value;
+  const steps = walkTreeStackSteps(rootDir, visit, opts.shouldStop);
+  let step = steps.next();
+  while (!step.done) {
+    step = steps.next(step.value === undefined ? undefined : readDirEntriesSafe(step.value));
+  }
+  return step.value;
 }
 
 /**
@@ -283,25 +273,25 @@ export function walkTreeStackSync(
  * stall no matter how often the walk yielded around it.
  */
 export async function walkTreeStackAsync(
-	rootDir: string,
-	visit: WalkVisitor,
-	opts: AsyncStackWalkOptions,
+  rootDir: string,
+  visit: WalkVisitor,
+  opts: AsyncStackWalkOptions,
 ): Promise<boolean> {
-	await opts.beforeWalk?.();
-	const steps = walkTreeStackSteps(rootDir, visit, opts.shouldStop);
-	const deadline = createDeadline(opts.budgetMs ?? 8);
-	let step = steps.next();
-	while (!step.done) {
-		if (step.value !== undefined) {
-			// Directory-read request — satisfy it off the loop. No
-			step = steps.next(await readDirEntriesSafeAsync(step.value));
-			deadline.reset();
-			continue;
-		}
-		if (deadline.expired()) await yieldIfOverBudget(deadline);
-		step = steps.next();
-	}
-	return step.value;
+  await opts.beforeWalk?.();
+  const steps = walkTreeStackSteps(rootDir, visit, opts.shouldStop);
+  const deadline = createDeadline(opts.budgetMs ?? 8);
+  let step = steps.next();
+  while (!step.done) {
+    if (step.value !== undefined) {
+      // Directory-read request — satisfy it off the loop. No
+      step = steps.next(await readDirEntriesSafeAsync(step.value));
+      deadline.reset();
+      continue;
+    }
+    if (deadline.expired()) await yieldIfOverBudget(deadline);
+    step = steps.next();
+  }
+  return step.value;
 }
 
 /**
@@ -312,18 +302,15 @@ export async function walkTreeStackAsync(
  * Returns true iff the visitor stopped the walk via `"stop"`; the stop
  * propagates up through every recursion frame so the walk halts at once.
  */
-export function walkTreeRecursiveSync(
-	rootDir: string,
-	visit: WalkVisitor,
-): boolean {
-	function scan(currentDir: string): boolean {
-		for (const entry of readDirEntriesSafe(currentDir)) {
-			const fullPath = path.join(currentDir, entry.name);
-			const disposition = visit(entry, fullPath);
-			if (disposition === "stop") return true;
-			if (disposition === "recurse" && scan(fullPath)) return true;
-		}
-		return false;
-	}
-	return scan(rootDir);
+export function walkTreeRecursiveSync(rootDir: string, visit: WalkVisitor): boolean {
+  function scan(currentDir: string): boolean {
+    for (const entry of readDirEntriesSafe(currentDir)) {
+      const fullPath = path.join(currentDir, entry.name);
+      const disposition = visit(entry, fullPath);
+      if (disposition === "stop") return true;
+      if (disposition === "recurse" && scan(fullPath)) return true;
+    }
+    return false;
+  }
+  return scan(rootDir);
 }

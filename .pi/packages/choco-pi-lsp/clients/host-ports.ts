@@ -8,61 +8,61 @@ import type { UserNotifyLevel } from "./user-notify.js";
 export type HostLogSink = (entry: Record<string, unknown>) => void;
 
 export interface HostPorts {
-	readonly notify: {
-		user(message: string, level?: UserNotifyLevel): void;
-	};
-	readonly trust: {
-		isProjectTrusted(): ProjectTrustState;
-	};
-	readonly mode: {
-		current(): ExtensionRunMode;
-		supportsTuiWidget(): boolean;
-		suppressesUserNotify(): boolean;
-	};
-	readonly log: {
-		extension(entry: ExtensionLogEntry): void;
-		debug(message: string, metadata?: Record<string, unknown>): void;
-		sink(subsystem: string): HostLogSink;
-	};
-	readonly emit: {
-		/**
-		 * Every `pi.events` publish, including the `choco-pi-lsp/*` producer family
-		 * (clients/lsp-events.ts). A separate `.lens` port existed briefly but
-		 * was never wired to anything but this same `emit` function — removed
-		 * as vestigial (#1415 review) rather than kept as a distinction with no
-		 * behavioral difference.
-		 */
-		bus(channel: string, payload: unknown): void;
-	};
-	readonly status: {
-		set(name: string, value: string): void;
-	};
-	readonly spawn: {
-		abortSignal(): AbortSignal | undefined;
-		isAllowed(context: string): boolean;
-	};
-	readonly render: {
-		invalidate(): void;
-	};
-	readonly session: {
-		id(): string | undefined;
-	};
-	readonly workspace: {
-		cwd(): string | undefined;
-		projectRoot(): string | undefined;
-	};
-	readonly flags: {
-		get(name: string, filePath?: string): string | boolean | undefined;
-	};
-	readonly tools: {
-		has(name: string): Promise<boolean>;
-		getActive(): string[];
-		setActive(names: string[]): void;
-	};
+  readonly notify: {
+    user(message: string, level?: UserNotifyLevel): void;
+  };
+  readonly trust: {
+    isProjectTrusted(): ProjectTrustState;
+  };
+  readonly mode: {
+    current(): ExtensionRunMode;
+    supportsTuiWidget(): boolean;
+    suppressesUserNotify(): boolean;
+  };
+  readonly log: {
+    extension(entry: ExtensionLogEntry): void;
+    debug(message: string, metadata?: Record<string, unknown>): void;
+    sink(subsystem: string): HostLogSink;
+  };
+  readonly emit: {
+    /**
+     * Every `pi.events` publish, including the `choco-pi-lsp/*` producer family
+     * (clients/lsp-events.ts). A separate `.lens` port existed briefly but
+     * was never wired to anything but this same `emit` function — removed
+     * as vestigial (#1415 review) rather than kept as a distinction with no
+     * behavioral difference.
+     */
+    bus(channel: string, payload: unknown): void;
+  };
+  readonly status: {
+    set(name: string, value: string): void;
+  };
+  readonly spawn: {
+    abortSignal(): AbortSignal | undefined;
+    isAllowed(context: string): boolean;
+  };
+  readonly render: {
+    invalidate(): void;
+  };
+  readonly session: {
+    id(): string | undefined;
+  };
+  readonly workspace: {
+    cwd(): string | undefined;
+    projectRoot(): string | undefined;
+  };
+  readonly flags: {
+    get(name: string, filePath?: string): string | boolean | undefined;
+  };
+  readonly tools: {
+    has(name: string): Promise<boolean>;
+    getActive(): string[];
+    setActive(names: string[]): void;
+  };
 }
 
 export type HostPortsOverrides = {
-	[K in keyof HostPorts]?: Partial<HostPorts[K]>;
+  [K in keyof HostPorts]?: Partial<HostPorts[K]>;
 };
 
 /**
@@ -70,32 +70,30 @@ export type HostPortsOverrides = {
  * match the pre-ports absent-host paths: unknown trust/mode, fail-open spawn,
  * and no-op delivery surfaces.
  */
-export function createDefaultHostPorts(
-	overrides: HostPortsOverrides = {},
-): HostPorts {
-	const unknownMode = (): ExtensionRunMode => "unknown";
-	const defaults: HostPorts = {
-		notify: { user: () => {} },
-		trust: { isProjectTrusted: () => "unknown" },
-		mode: {
-			current: unknownMode,
-			supportsTuiWidget: () => true,
-			suppressesUserNotify: () => false,
-		},
-		log: { extension: () => {}, debug: () => {}, sink: () => () => {} },
-		emit: { bus: () => {} },
-		status: { set: () => {} },
-		spawn: { abortSignal: () => undefined, isAllowed: () => true },
-		render: { invalidate: () => {} },
-		session: { id: () => undefined },
-		workspace: { cwd: () => undefined, projectRoot: () => undefined },
-		flags: { get: () => undefined },
-		tools: { has: async () => false, getActive: () => [], setActive: () => {} },
-	};
-	return Object.fromEntries(
-		Object.entries(defaults).map(([group, value]) => [
-			group,
-			{ ...value, ...(overrides[group as keyof HostPorts] ?? {}) },
-		]),
-	) as unknown as HostPorts;
+export function createDefaultHostPorts(overrides: HostPortsOverrides = {}): HostPorts {
+  const unknownMode = (): ExtensionRunMode => "unknown";
+  const defaults: HostPorts = {
+    notify: { user: () => {} },
+    trust: { isProjectTrusted: () => "unknown" },
+    mode: {
+      current: unknownMode,
+      supportsTuiWidget: () => true,
+      suppressesUserNotify: () => false,
+    },
+    log: { extension: () => {}, debug: () => {}, sink: () => () => {} },
+    emit: { bus: () => {} },
+    status: { set: () => {} },
+    spawn: { abortSignal: () => undefined, isAllowed: () => true },
+    render: { invalidate: () => {} },
+    session: { id: () => undefined },
+    workspace: { cwd: () => undefined, projectRoot: () => undefined },
+    flags: { get: () => undefined },
+    tools: { has: async () => false, getActive: () => [], setActive: () => {} },
+  };
+  return Object.fromEntries(
+    Object.entries(defaults).map(([group, value]) => [
+      group,
+      { ...value, ...(overrides[group as keyof HostPorts] ?? {}) },
+    ]),
+  ) as unknown as HostPorts;
 }

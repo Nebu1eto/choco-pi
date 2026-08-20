@@ -2,29 +2,29 @@
   "name": "choco-pi-subagents",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "description": "choco-pi fork of @tintinweb/pi-subagents: Claude Code-style autonomous sub-agents for pi, loaded from TypeScript source as a local pi package.",
-  "license": "MIT",
   "keywords": [
-    "pi-package",
+    "agent",
+    "autonomous",
     "pi",
     "pi-extension",
-    "subagent",
-    "agent",
-    "autonomous"
+    "pi-package",
+    "subagent"
   ],
-  "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.84.0",
-    "@earendil-works/pi-coding-agent": ">=0.84.0",
-    "@earendil-works/pi-tui": ">=0.84.0"
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@sinclair/typebox": "0.34.52",
     "croner": "10.0.1",
     "nanoid": "5.1.16"
   },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.84.0",
+    "@earendil-works/pi-coding-agent": ">=0.84.0",
+    "@earendil-works/pi-tui": ">=0.84.0"
   },
   "pi": {
     "extensions": [

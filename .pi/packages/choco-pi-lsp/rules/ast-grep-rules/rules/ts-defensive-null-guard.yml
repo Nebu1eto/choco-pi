@@ -8,5 +8,5 @@ metadata:
 rule:
   kind: if_statement
   any:
-  - pattern: "if ($X === null || $X === undefined) { return null; }"
-  - pattern: "if ($X == null) { return null; }"
+    - pattern: "if ($X === null || $X === undefined) { return null; }"
+    - pattern: "if ($X == null) { return null; }"

@@ -69,16 +69,16 @@ const declaredSources = new Set<string>();
 const MAX_DECLARED_SOURCES = 128;
 
 function declare(name: string): string {
-	if (!name.trim()) {
-		throw new Error("generation source needs a non-empty name");
-	}
-	if (declaredSources.size < MAX_DECLARED_SOURCES) declaredSources.add(name);
-	return name;
+  if (!name.trim()) {
+    throw new Error("generation source needs a non-empty name");
+  }
+  if (declaredSources.size < MAX_DECLARED_SOURCES) declaredSources.add(name);
+  return name;
 }
 
 /** Every generation-carrying store name declared this process. */
 export function listDeclaredGenerationSources(): string[] {
-	return [...declaredSources].sort((a, b) => a.localeCompare(b));
+  return [...declaredSources].sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -90,31 +90,31 @@ export function listDeclaredGenerationSources(): string[] {
  * reason other than skipping the write.
  */
 export interface GenerationHandle {
-	/** The generation observed at capture time. */
-	readonly generation: number;
-	/** True while the source has not advanced past the captured generation. */
-	isCurrent(): boolean;
-	/**
-	 * Run `write` only if the captured generation is still current.
-	 *
-	 * Returns the write's value, or `undefined` when the write was dropped.
-	 * A drop is recorded once per (source, subject) with a repeat count —
-	 * `subject` must therefore identify WHAT was dropped (the cwd, the tool,
-	 * the file), never a bare constant, or the ledger loses the discriminating
-	 * identity that makes it useful.
-	 */
-	guardedWrite<T>(subject: string, write: () => T): T | undefined;
+  /** The generation observed at capture time. */
+  readonly generation: number;
+  /** True while the source has not advanced past the captured generation. */
+  isCurrent(): boolean;
+  /**
+   * Run `write` only if the captured generation is still current.
+   *
+   * Returns the write's value, or `undefined` when the write was dropped.
+   * A drop is recorded once per (source, subject) with a repeat count —
+   * `subject` must therefore identify WHAT was dropped (the cwd, the tool,
+   * the file), never a bare constant, or the ledger loses the discriminating
+   * identity that makes it useful.
+   */
+  guardedWrite<T>(subject: string, write: () => T): T | undefined;
 }
 
 /** A single monotonic counter owned by one resetting seam. */
 export interface GenerationSource {
-	readonly name: string;
-	/** The current generation. */
-	current(): number;
-	/** Advance the generation, invalidating every outstanding handle. */
-	bump(): number;
-	/** Capture the current generation for a write that follows an await. */
-	capture(): GenerationHandle;
+  readonly name: string;
+  /** The current generation. */
+  current(): number;
+  /** Advance the generation, invalidating every outstanding handle. */
+  bump(): number;
+  /** Capture the current generation for a write that follows an await. */
+  capture(): GenerationHandle;
 }
 
 /**
@@ -143,59 +143,55 @@ export interface GenerationSource {
  * costs correctness nothing and only costs work.
  */
 export interface GenerationMap {
-	readonly name: string;
-	/** The key's current stamp, or 0 when it holds none. Opaque; compare only. */
-	current(key: string): number;
-	/** Issue the key a fresh stamp, invalidating every outstanding handle. */
-	bump(key: string): number;
-	/** Capture the key's stamp for a write that follows an await. */
-	capture(key: string): GenerationHandle;
-	/**
-	 * Drop a key entirely, invalidating its outstanding handles.
-	 *
-	 * For stores that RETIRE a key rather than invalidating it, and that need
-	 * the memory back. `retirePullSource` in `clients/lsp/client.ts` is the
-	 * shape. This ships ahead of its first production caller: `lsp/client.ts`
-	 * is the named next migration and this is the operation it needs, so the
-	 * primitive carries it now rather than growing an API under merge pressure.
-	 */
-	forget(key: string): void;
-	/** Number of keys currently retained, for tests and bound assertions. */
-	size(): number;
+  readonly name: string;
+  /** The key's current stamp, or 0 when it holds none. Opaque; compare only. */
+  current(key: string): number;
+  /** Issue the key a fresh stamp, invalidating every outstanding handle. */
+  bump(key: string): number;
+  /** Capture the key's stamp for a write that follows an await. */
+  capture(key: string): GenerationHandle;
+  /**
+   * Drop a key entirely, invalidating its outstanding handles.
+   *
+   * For stores that RETIRE a key rather than invalidating it, and that need
+   * the memory back. `retirePullSource` in `clients/lsp/client.ts` is the
+   * shape. This ships ahead of its first production caller: `lsp/client.ts`
+   * is the named next migration and this is the operation it needs, so the
+   * primitive carries it now rather than growing an API under merge pressure.
+   */
+  forget(key: string): void;
+  /** Number of keys currently retained, for tests and bound assertions. */
+  size(): number;
 }
 
 function recordStaleWrite(
-	sourceName: string,
-	subject: string,
-	captured: number,
-	observed: number,
+  sourceName: string,
+  subject: string,
+  captured: number,
+  observed: number,
 ): void {
-	incrementDegradationCount({
-		kind: "generation-guard-stale-write",
-		subject: `${sourceName}:${subject}`,
-		reason: `write dropped: captured generation ${captured}, current ${observed}`,
-	});
+  incrementDegradationCount({
+    kind: "generation-guard-stale-write",
+    subject: `${sourceName}:${subject}`,
+    reason: `write dropped: captured generation ${captured}, current ${observed}`,
+  });
 }
 
-function makeHandle(
-	sourceName: string,
-	generation: number,
-	read: () => number,
-): GenerationHandle {
-	return {
-		generation,
-		isCurrent(): boolean {
-			return read() === generation;
-		},
-		guardedWrite<T>(subject: string, write: () => T): T | undefined {
-			const observed = read();
-			if (observed !== generation) {
-				recordStaleWrite(sourceName, subject, generation, observed);
-				return undefined;
-			}
-			return write();
-		},
-	};
+function makeHandle(sourceName: string, generation: number, read: () => number): GenerationHandle {
+  return {
+    generation,
+    isCurrent(): boolean {
+      return read() === generation;
+    },
+    guardedWrite<T>(subject: string, write: () => T): T | undefined {
+      const observed = read();
+      if (observed !== generation) {
+        recordStaleWrite(sourceName, subject, generation, observed);
+        return undefined;
+      }
+      return write();
+    },
+  };
 }
 
 /**
@@ -205,47 +201,47 @@ function makeHandle(
  * declaration list, so it must name the STORE, not the module.
  */
 export function createGenerationSource(name: string): GenerationSource {
-	declare(name);
-	let generation = 0;
-	const read = (): number => generation;
-	return {
-		name,
-		current: read,
-		bump(): number {
-			generation += 1;
-			return generation;
-		},
-		capture(): GenerationHandle {
-			return makeHandle(name, generation, read);
-		},
-	};
+  declare(name);
+  let generation = 0;
+  const read = (): number => generation;
+  return {
+    name,
+    current: read,
+    bump(): number {
+      generation += 1;
+      return generation;
+    },
+    capture(): GenerationHandle {
+      return makeHandle(name, generation, read);
+    },
+  };
 }
 
 const DEFAULT_MAX_KEYS = 512;
 
 export interface GenerationMapOptions {
-	/**
-	 * Normalize keys before use. Pass the same normalizer the guarded store
-	 * uses for its own map, or two spellings of one cwd get two stamps.
-	 *
-	 * The normalizer MAY consult the filesystem, and the repo's does:
-	 * `normalizeMapKey` runs `realpathSync.native` on Windows, which answers
-	 * differently once a path that did not exist comes into existence. A
-	 * handle therefore re-runs the normalizer whenever the map has been
-	 * invalidated since that handle was captured, and skips it otherwise.
-	 *
-	 * The common sweep — capture once, check per file, no refresh — pays the
-	 * normalizer exactly once instead of once per file. A sweep that IS
-	 * invalidated pays it on every check from that point on. That is the right
-	 * trade: correctness is not negotiable, and an invalidated sweep is about
-	 * to stop serving from this store anyway.
-	 */
-	normalizeKey?: (key: string) => string;
-	/**
-	 * Retained-key ceiling. Eviction drops the oldest key and fails CLOSED:
-	 * its handles read 0, a stamp no live handle holds. See `GenerationMap`.
-	 */
-	maxKeys?: number;
+  /**
+   * Normalize keys before use. Pass the same normalizer the guarded store
+   * uses for its own map, or two spellings of one cwd get two stamps.
+   *
+   * The normalizer MAY consult the filesystem, and the repo's does:
+   * `normalizeMapKey` runs `realpathSync.native` on Windows, which answers
+   * differently once a path that did not exist comes into existence. A
+   * handle therefore re-runs the normalizer whenever the map has been
+   * invalidated since that handle was captured, and skips it otherwise.
+   *
+   * The common sweep — capture once, check per file, no refresh — pays the
+   * normalizer exactly once instead of once per file. A sweep that IS
+   * invalidated pays it on every check from that point on. That is the right
+   * trade: correctness is not negotiable, and an invalidated sweep is about
+   * to stop serving from this store anyway.
+   */
+  normalizeKey?: (key: string) => string;
+  /**
+   * Retained-key ceiling. Eviction drops the oldest key and fails CLOSED:
+   * its handles read 0, a stamp no live handle holds. See `GenerationMap`.
+   */
+  maxKeys?: number;
 }
 
 /**
@@ -256,75 +252,75 @@ export interface GenerationMapOptions {
  * (path, source) pair must not invalidate a different pair's.
  */
 export function createGenerationMap(
-	name: string,
-	options: GenerationMapOptions = {},
+  name: string,
+  options: GenerationMapOptions = {},
 ): GenerationMap {
-	declare(name);
-	const normalize = options.normalizeKey ?? ((key: string): string => key);
-	const maxKeys = Math.max(1, options.maxKeys ?? DEFAULT_MAX_KEYS);
-	// Insertion-ordered: the oldest key is evicted first. Re-stamping a key
-	// refreshes its position so a hot cwd is not evicted by a burst of
-	// one-shot ones.
-	const stamps = new Map<string, number>();
-	// ONE ticket counter for the whole map. See GenerationMap's doc comment:
-	// per-key counters starting at 0 make eviction and forget() fail OPEN.
-	// 0 is reserved for "this key holds no stamp" and is never issued.
-	let nextTicket = 0;
-	// Counts every mutation that can change what a key's stamp reads: a bump,
-	// a forget, an eviction. A handle records this at capture and re-derives
-	// its key only when it has moved. See normalizeKey's doc comment.
-	let invalidations = 0;
+  declare(name);
+  const normalize = options.normalizeKey ?? ((key: string): string => key);
+  const maxKeys = Math.max(1, options.maxKeys ?? DEFAULT_MAX_KEYS);
+  // Insertion-ordered: the oldest key is evicted first. Re-stamping a key
+  // refreshes its position so a hot cwd is not evicted by a burst of
+  // one-shot ones.
+  const stamps = new Map<string, number>();
+  // ONE ticket counter for the whole map. See GenerationMap's doc comment:
+  // per-key counters starting at 0 make eviction and forget() fail OPEN.
+  // 0 is reserved for "this key holds no stamp" and is never issued.
+  let nextTicket = 0;
+  // Counts every mutation that can change what a key's stamp reads: a bump,
+  // a forget, an eviction. A handle records this at capture and re-derives
+  // its key only when it has moved. See normalizeKey's doc comment.
+  let invalidations = 0;
 
-	const read = (key: string): number => stamps.get(key) ?? 0;
+  const read = (key: string): number => stamps.get(key) ?? 0;
 
-	function issue(key: string): number {
-		nextTicket += 1;
-		stamps.delete(key);
-		stamps.set(key, nextTicket);
-		while (stamps.size > maxKeys) {
-			const oldest = stamps.keys().next().value;
-			if (oldest === undefined) break;
-			stamps.delete(oldest);
-			invalidations += 1;
-		}
-		return nextTicket;
-	}
+  function issue(key: string): number {
+    nextTicket += 1;
+    stamps.delete(key);
+    stamps.set(key, nextTicket);
+    while (stamps.size > maxKeys) {
+      const oldest = stamps.keys().next().value;
+      if (oldest === undefined) break;
+      stamps.delete(oldest);
+      invalidations += 1;
+    }
+    return nextTicket;
+  }
 
-	return {
-		name,
-		current(key: string): number {
-			return read(normalize(key));
-		},
-		bump(key: string): number {
-			invalidations += 1;
-			return issue(normalize(key));
-		},
-		capture(key: string): GenerationHandle {
-			const normalized = normalize(key);
-			// A first-use capture ISSUES a stamp rather than reading 0. A handle
-			// holding 0 would be indistinguishable from one whose key was later
-			// forgotten or evicted, which is the fail-open hole this closes.
-			const stamp = read(normalized) || issue(normalized);
-			const capturedInvalidations = invalidations;
-			return makeHandle(`${name}[${normalized}]`, stamp, () => {
-				// Fast path: nothing has been invalidated since capture, so no key
-				// can have changed stamps and the normalizer need not run again.
-				if (invalidations === capturedInvalidations) return stamp;
-				// Something moved. Re-derive the key from the ORIGINAL string: a
-				// normalizer that consults the filesystem can resolve the same
-				// input to a different key once the path exists, and a stamp read
-				// under the stale spelling would falsely read current.
-				return read(normalize(key));
-			});
-		},
-		forget(key: string): void {
-			invalidations += 1;
-			stamps.delete(normalize(key));
-		},
-		size(): number {
-			return stamps.size;
-		},
-	};
+  return {
+    name,
+    current(key: string): number {
+      return read(normalize(key));
+    },
+    bump(key: string): number {
+      invalidations += 1;
+      return issue(normalize(key));
+    },
+    capture(key: string): GenerationHandle {
+      const normalized = normalize(key);
+      // A first-use capture ISSUES a stamp rather than reading 0. A handle
+      // holding 0 would be indistinguishable from one whose key was later
+      // forgotten or evicted, which is the fail-open hole this closes.
+      const stamp = read(normalized) || issue(normalized);
+      const capturedInvalidations = invalidations;
+      return makeHandle(`${name}[${normalized}]`, stamp, () => {
+        // Fast path: nothing has been invalidated since capture, so no key
+        // can have changed stamps and the normalizer need not run again.
+        if (invalidations === capturedInvalidations) return stamp;
+        // Something moved. Re-derive the key from the ORIGINAL string: a
+        // normalizer that consults the filesystem can resolve the same
+        // input to a different key once the path exists, and a stamp read
+        // under the stale spelling would falsely read current.
+        return read(normalize(key));
+      });
+    },
+    forget(key: string): void {
+      invalidations += 1;
+      stamps.delete(normalize(key));
+    },
+    size(): number {
+      return stamps.size;
+    },
+  };
 }
 
 /**
@@ -343,8 +339,8 @@ export function createGenerationMap(
  * discover by grep.
  */
 export async function withGeneration<T>(
-	source: Pick<GenerationSource, "capture">,
-	fn: (handle: GenerationHandle) => Promise<T>,
+  source: Pick<GenerationSource, "capture">,
+  fn: (handle: GenerationHandle) => Promise<T>,
 ): Promise<T> {
-	return fn(source.capture());
+  return fn(source.capture());
 }

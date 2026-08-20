@@ -27,11 +27,23 @@
       "type": "string",
       "description": "Language override. Normally inferred from the directory name.",
       "enum": [
-        "typescript", "javascript", "tsx",
-        "python", "go", "rust",
-        "java", "csharp", "kotlin",
-        "ruby", "cpp", "c",
-        "css", "php", "plsql", "abap", "cobol"
+        "typescript",
+        "javascript",
+        "tsx",
+        "python",
+        "go",
+        "rust",
+        "java",
+        "csharp",
+        "kotlin",
+        "ruby",
+        "cpp",
+        "c",
+        "css",
+        "php",
+        "plsql",
+        "abap",
+        "cobol"
       ]
     },
     "message": {
@@ -69,10 +81,7 @@
             "description": "Capture name to test, e.g. '@FUNC_NAME'."
           },
           "value": {
-            "oneOf": [
-              { "type": "string" },
-              { "type": "array", "items": { "type": "string" } }
-            ],
+            "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }],
             "description": "Value(s) to match against. Use an array for 'any-of'."
           }
         }

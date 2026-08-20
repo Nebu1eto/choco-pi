@@ -9,8 +9,10 @@ SOURCE: /[\s\S]+/
 `;
 
 export const CODE_MODE_EXEC_CONSTRAINED_SAMPLING = {
-	type: "grammar",
-	variants: { openai_lark: CODE_MODE_EXEC_GRAMMAR },
+  type: "grammar",
+  variants: { openai_lark: CODE_MODE_EXEC_GRAMMAR },
 } as const;
 
-export const CODE_MODE_EXEC_GRAMMAR_INPUTS: ReadonlyMap<string, string> = new Map([["exec", "code"]]);
+export const CODE_MODE_EXEC_GRAMMAR_INPUTS: ReadonlyMap<string, string> = new Map([
+  ["exec", "code"],
+]);

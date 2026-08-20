@@ -18,24 +18,18 @@ export type PositionEncoding = "utf-8" | "utf-16" | "utf-32";
 
 /** Encodings we advertise to servers, in preference order (UTF-16 first to keep
  *  the historical default unless a server explicitly wants otherwise). */
-export const ADVERTISED_POSITION_ENCODINGS: readonly PositionEncoding[] = [
-	"utf-16",
-	"utf-8",
-];
+export const ADVERTISED_POSITION_ENCODINGS: readonly PositionEncoding[] = ["utf-16", "utf-8"];
 
 /**
  * The encoding the server will use, read from its initialize reply. Defaults to
  * UTF-16 when the server doesn't advertise one (pre-3.17 behaviour). An
  * unrecognised value also falls back to UTF-16 — safer than guessing.
  */
-export function negotiatePositionEncoding(
-	serverCapabilities: unknown,
-): PositionEncoding {
-	const raw = (
-		serverCapabilities as { positionEncoding?: unknown } | null | undefined
-	)?.positionEncoding;
-	if (raw === "utf-8" || raw === "utf-16" || raw === "utf-32") return raw;
-	return "utf-16";
+export function negotiatePositionEncoding(serverCapabilities: unknown): PositionEncoding {
+  const raw = (serverCapabilities as { positionEncoding?: unknown } | null | undefined)
+    ?.positionEncoding;
+  if (raw === "utf-8" || raw === "utf-16" || raw === "utf-32") return raw;
+  return "utf-16";
 }
 
 /**
@@ -45,26 +39,26 @@ export function negotiatePositionEncoding(
  * line length (in the source UTF-16 units) before conversion.
  */
 export function convertCharacterOffset(
-	encoding: PositionEncoding,
-	lineText: string,
-	utf16Character: number,
+  encoding: PositionEncoding,
+  lineText: string,
+  utf16Character: number,
 ): number {
-	if (encoding === "utf-16") return utf16Character;
-	if (utf16Character <= 0) return 0;
-	// Slice in UTF-16 units (JS string semantics), then re-measure the prefix in
-	// the target encoding's units.
-	const clamped = Math.min(utf16Character, lineText.length);
-	const prefix = lineText.slice(0, clamped);
-	if (encoding === "utf-8") return Buffer.byteLength(prefix, "utf8");
-	// utf-32: number of Unicode code points (spread iterates by code point).
-	return [...prefix].length;
+  if (encoding === "utf-16") return utf16Character;
+  if (utf16Character <= 0) return 0;
+  // Slice in UTF-16 units (JS string semantics), then re-measure the prefix in
+  // the target encoding's units.
+  const clamped = Math.min(utf16Character, lineText.length);
+  const prefix = lineText.slice(0, clamped);
+  if (encoding === "utf-8") return Buffer.byteLength(prefix, "utf8");
+  // utf-32: number of Unicode code points (spread iterates by code point).
+  return [...prefix].length;
 }
 
 /** Extract the text of a single 0-based line from full file content. */
 export function lineTextAt(content: string, line: number): string {
-	if (line < 0) return "";
-	// Split on \n; trailing \r is irrelevant to offset math (it's after the
-	// character columns the caller cares about, and never multibyte).
-	const lines = content.split("\n");
-	return lines[line] ?? "";
+  if (line < 0) return "";
+  // Split on \n; trailing \r is irrelevant to offset math (it's after the
+  // character columns the caller cares about, and never multibyte).
+  const lines = content.split("\n");
+  return lines[line] ?? "";
 }

@@ -25,72 +25,64 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { normalizeMapKey } from "../path-utils.js";
-import {
-	aliasedImportTargets,
-	referencedProjectImportTarget,
-} from "./tsconfig-paths.js";
+import { aliasedImportTargets, referencedProjectImportTarget } from "./tsconfig-paths.js";
 import { buildModuleGraph, type WorkspaceModule } from "./workspace-modules.js";
 
 /** True when `p` is inside (or equal to) `cwd` — blocks resolution escaping the workspace. */
 function isWithin(cwd: string, p: string): boolean {
-	const root = path.resolve(cwd);
-	const rp = path.resolve(p);
-	return rp === root || rp.startsWith(root + path.sep);
+  const root = path.resolve(cwd);
+  const rp = path.resolve(p);
+  return rp === root || rp.startsWith(root + path.sep);
 }
 
 function isFile(p: string): boolean {
-	try {
-		return fs.statSync(p).isFile();
-	} catch {
-		return false;
-	}
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function isDir(p: string): boolean {
-	try {
-		return fs.statSync(p).isDirectory();
-	} catch {
-		return false;
-	}
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /** First candidate that exists as a file within cwd, normalized — or []. */
 function firstExistingFile(cwd: string, candidates: string[]): string[] {
-	for (const c of candidates) {
-		if (isWithin(cwd, c) && isFile(c)) return [normalizeMapKey(c)];
-	}
-	return [];
+  for (const c of candidates) {
+    if (isWithin(cwd, c) && isFile(c)) return [normalizeMapKey(c)];
+  }
+  return [];
 }
 
 /** All `ext` files directly in `dir` (non-recursive), normalized — or []. */
 function sourceFilesIn(cwd: string, dir: string, ext: string): string[] {
-	if (!isWithin(cwd, dir) || !isDir(dir)) return [];
-	try {
-		return fs
-			.readdirSync(dir)
-			.filter((n) => n.endsWith(ext))
-			.map((n) => normalizeMapKey(path.join(dir, n)))
-			.sort();
-	} catch {
-		return [];
-	}
+  if (!isWithin(cwd, dir) || !isDir(dir)) return [];
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((n) => n.endsWith(ext))
+      .map((n) => normalizeMapKey(path.join(dir, n)))
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 /** Resolve a path-ish source relative to the importing file's directory. */
-function resolveRelative(
-	cwd: string,
-	filePath: string,
-	source: string,
-	exts: string[],
-): string[] {
-	const base = path.resolve(path.dirname(filePath), source);
-	return firstExistingFile(cwd, [base, ...exts.map((e) => base + e)]);
+function resolveRelative(cwd: string, filePath: string, source: string, exts: string[]): string[] {
+  const base = path.resolve(path.dirname(filePath), source);
+  return firstExistingFile(cwd, [base, ...exts.map((e) => base + e)]);
 }
 
 function resolveDart(cwd: string, filePath: string, source: string): string[] {
-	// package: / dart: imports are SDK/pub deps, not project files.
-	if (source.startsWith("package:") || source.startsWith("dart:")) return [];
-	return resolveRelative(cwd, filePath, source, [".dart"]);
+  // package: / dart: imports are SDK/pub deps, not project files.
+  if (source.startsWith("package:") || source.startsWith("dart:")) return [];
+  return resolveRelative(cwd, filePath, source, [".dart"]);
 }
 
 // --- JS/TS -------------------------------------------------------------------
@@ -129,46 +121,49 @@ export const JS_TS_EXT_RE = /\.(mjs|cjs|mts|cts|jsx?|tsx?)$/i;
  * source-twin-preferring candidate list." Only how `base`/`strippedBase` are
  * computed differs (relative-to-importing-file vs. relative-to-package-root).
  */
-function jsTsExtensionCandidates(
-	base: string,
-	strippedBase: string,
-	ext: string,
-): string[] {
-	const candidates: string[] = [];
-	if (ext === ".mjs") candidates.push(`${strippedBase}.mts`);
-	if (ext === ".cjs") candidates.push(`${strippedBase}.cts`);
-	if (ext === ".mts") candidates.push(`${strippedBase}.mts`);
-	if (ext === ".cts") candidates.push(`${strippedBase}.cts`);
-	candidates.push(
-		`${strippedBase}.ts`,
-		`${strippedBase}.tsx`,
-		`${strippedBase}.mts`,
-		`${strippedBase}.cts`,
-	);
-	// The literal specifier path (covers both "no extension in the specifier"
-	// — base === strippedBase — and the compiled/as-written extension itself).
-	candidates.push(
-		base,
-		`${strippedBase}.js`,
-		`${strippedBase}.jsx`,
-		`${strippedBase}.mjs`,
-		`${strippedBase}.cjs`,
-	);
-	for (const index of ["index.ts", "index.tsx", "index.mts", "index.cts", "index.js", "index.jsx", "index.mjs", "index.cjs"]) {
-		candidates.push(path.join(base, index));
-	}
-	return [...new Set(candidates)];
+function jsTsExtensionCandidates(base: string, strippedBase: string, ext: string): string[] {
+  const candidates: string[] = [];
+  if (ext === ".mjs") candidates.push(`${strippedBase}.mts`);
+  if (ext === ".cjs") candidates.push(`${strippedBase}.cts`);
+  if (ext === ".mts") candidates.push(`${strippedBase}.mts`);
+  if (ext === ".cts") candidates.push(`${strippedBase}.cts`);
+  candidates.push(
+    `${strippedBase}.ts`,
+    `${strippedBase}.tsx`,
+    `${strippedBase}.mts`,
+    `${strippedBase}.cts`,
+  );
+  // The literal specifier path (covers both "no extension in the specifier"
+  // — base === strippedBase — and the compiled/as-written extension itself).
+  candidates.push(
+    base,
+    `${strippedBase}.js`,
+    `${strippedBase}.jsx`,
+    `${strippedBase}.mjs`,
+    `${strippedBase}.cjs`,
+  );
+  for (const index of [
+    "index.ts",
+    "index.tsx",
+    "index.mts",
+    "index.cts",
+    "index.js",
+    "index.jsx",
+    "index.mjs",
+    "index.cjs",
+  ]) {
+    candidates.push(path.join(base, index));
+  }
+  return [...new Set(candidates)];
 }
 
 export function jsTsCandidatePaths(filePath: string, source: string): string[] {
-	const base = path.resolve(path.dirname(filePath), source);
-	const strippedSource = source.replace(JS_TS_EXT_RE, "");
-	const strippedBase =
-		strippedSource === source
-			? base
-			: path.resolve(path.dirname(filePath), strippedSource);
-	const ext = path.extname(source).toLowerCase();
-	return jsTsExtensionCandidates(base, strippedBase, ext);
+  const base = path.resolve(path.dirname(filePath), source);
+  const strippedSource = source.replace(JS_TS_EXT_RE, "");
+  const strippedBase =
+    strippedSource === source ? base : path.resolve(path.dirname(filePath), strippedSource);
+  const ext = path.extname(source).toLowerCase();
+  return jsTsExtensionCandidates(base, strippedBase, ext);
 }
 
 /**
@@ -181,19 +176,18 @@ export function jsTsCandidatePaths(filePath: string, source: string): string[] {
  * breaker rather than relying on Map iteration order.
  */
 function findWorkspaceModuleForSpecifier(
-	modules: Iterable<WorkspaceModule>,
-	source: string,
+  modules: Iterable<WorkspaceModule>,
+  source: string,
 ): { mod: WorkspaceModule; subpath: string } | undefined {
-	let best: { mod: WorkspaceModule; subpath: string } | undefined;
-	for (const mod of modules) {
-		let subpath: string | undefined;
-		if (source === mod.name) subpath = "";
-		else if (source.startsWith(`${mod.name}/`))
-			subpath = source.slice(mod.name.length + 1);
-		if (subpath === undefined) continue;
-		if (!best || mod.name.length > best.mod.name.length) best = { mod, subpath };
-	}
-	return best;
+  let best: { mod: WorkspaceModule; subpath: string } | undefined;
+  for (const mod of modules) {
+    let subpath: string | undefined;
+    if (source === mod.name) subpath = "";
+    else if (source.startsWith(`${mod.name}/`)) subpath = source.slice(mod.name.length + 1);
+    if (subpath === undefined) continue;
+    if (!best || mod.name.length > best.mod.name.length) best = { mod, subpath };
+  }
+  return best;
 }
 
 /** First string found among `exports`'s "." condition (or the field itself if
@@ -202,92 +196,90 @@ function findWorkspaceModuleForSpecifier(
  * exotic (subpath patterns, condition arrays) falls through to the
  * index.ts/js fallback below rather than guessing. */
 function pickExportsMain(exportsField: unknown): string | undefined {
-	if (typeof exportsField === "string") return exportsField;
-	if (!exportsField || typeof exportsField !== "object") return undefined;
-	const obj = exportsField as Record<string, unknown>;
-	const dot = obj["."] ?? obj;
-	if (typeof dot === "string") return dot;
-	if (dot && typeof dot === "object") {
-		for (const key of ["import", "require", "default"]) {
-			const v = (dot as Record<string, unknown>)[key];
-			if (typeof v === "string") return v;
-		}
-	}
-	return undefined;
+  if (typeof exportsField === "string") return exportsField;
+  if (!exportsField || typeof exportsField !== "object") return undefined;
+  const obj = exportsField as Record<string, unknown>;
+  const dot = obj["."] ?? obj;
+  if (typeof dot === "string") return dot;
+  if (dot && typeof dot === "object") {
+    for (const key of ["import", "require", "default"]) {
+      const v = (dot as Record<string, unknown>)[key];
+      if (typeof v === "string") return v;
+    }
+  }
+  return undefined;
 }
 
 /** Candidate entry-file paths for a workspace package root: package.json's
  * `main`/`module`/`exports`-main first, then the conventional index files. */
 function workspaceEntryCandidates(pkgRoot: string): string[] {
-	let main: string | undefined;
-	try {
-		const pkg = JSON.parse(
-			fs.readFileSync(path.join(pkgRoot, "package.json"), "utf-8"),
-		) as { main?: string; module?: string; exports?: unknown };
-		main = pickExportsMain(pkg.exports) ?? pkg.module ?? pkg.main;
-	} catch {
-		// missing/unreadable package.json — fall through to index candidates
-	}
-	const candidates: string[] = [];
-	if (main) {
-		const mainPath = path.resolve(pkgRoot, main);
-		const ext = path.extname(mainPath).toLowerCase();
-		const stripped = mainPath.replace(JS_TS_EXT_RE, "");
-		candidates.push(...jsTsExtensionCandidates(mainPath, stripped, ext));
-	}
-	for (const base of [pkgRoot, path.join(pkgRoot, "src")]) {
-		candidates.push(
-			path.join(base, "index.ts"),
-			path.join(base, "index.tsx"),
-			path.join(base, "index.mts"),
-			path.join(base, "index.cts"),
-			path.join(base, "index.js"),
-			path.join(base, "index.jsx"),
-			path.join(base, "index.mjs"),
-			path.join(base, "index.cjs"),
-		);
-	}
-	return [...new Set(candidates)];
+  let main: string | undefined;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, "package.json"), "utf-8")) as {
+      main?: string;
+      module?: string;
+      exports?: unknown;
+    };
+    main = pickExportsMain(pkg.exports) ?? pkg.module ?? pkg.main;
+  } catch {
+    // missing/unreadable package.json — fall through to index candidates
+  }
+  const candidates: string[] = [];
+  if (main) {
+    const mainPath = path.resolve(pkgRoot, main);
+    const ext = path.extname(mainPath).toLowerCase();
+    const stripped = mainPath.replace(JS_TS_EXT_RE, "");
+    candidates.push(...jsTsExtensionCandidates(mainPath, stripped, ext));
+  }
+  for (const base of [pkgRoot, path.join(pkgRoot, "src")]) {
+    candidates.push(
+      path.join(base, "index.ts"),
+      path.join(base, "index.tsx"),
+      path.join(base, "index.mts"),
+      path.join(base, "index.cts"),
+      path.join(base, "index.js"),
+      path.join(base, "index.jsx"),
+      path.join(base, "index.mjs"),
+      path.join(base, "index.cjs"),
+    );
+  }
+  return [...new Set(candidates)];
 }
 
 /** Candidate paths for a workspace-package SUBPATH import (`@scope/pkg/foo`)
  * — same source-twin-preferring extension probe as a relative import, rooted
  * at the package dir instead of the importing file's dir. */
 function workspaceSubpathCandidates(pkgRoot: string, subpath: string): string[] {
-	const base = path.join(pkgRoot, subpath);
-	const strippedSubpath = subpath.replace(JS_TS_EXT_RE, "");
-	const strippedBase =
-		strippedSubpath === subpath ? base : path.join(pkgRoot, strippedSubpath);
-	const ext = path.extname(subpath).toLowerCase();
-	return jsTsExtensionCandidates(base, strippedBase, ext);
+  const base = path.join(pkgRoot, subpath);
+  const strippedSubpath = subpath.replace(JS_TS_EXT_RE, "");
+  const strippedBase = strippedSubpath === subpath ? base : path.join(pkgRoot, strippedSubpath);
+  const ext = path.extname(subpath).toLowerCase();
+  return jsTsExtensionCandidates(base, strippedBase, ext);
 }
 
 /** Resolve tsconfig paths aliases before workspace-package matching. */
 export function resolveAliasedImport(
-	cwd: string,
-	specifier: string,
-	importerDir: string,
+  cwd: string,
+  specifier: string,
+  importerDir: string,
 ): string[] {
-	for (const target of aliasedImportTargets(specifier, importerDir)) {
-		const ext = path.extname(target).toLowerCase();
-		const stripped = target.replace(JS_TS_EXT_RE, "");
-		const found = firstExistingFile(
-			cwd,
-			jsTsExtensionCandidates(target, stripped, ext),
-		);
-		if (found.length) return found;
-	}
-	return [];
+  for (const target of aliasedImportTargets(specifier, importerDir)) {
+    const ext = path.extname(target).toLowerCase();
+    const stripped = target.replace(JS_TS_EXT_RE, "");
+    const found = firstExistingFile(cwd, jsTsExtensionCandidates(target, stripped, ext));
+    if (found.length) return found;
+  }
+  return [];
 }
 
 /** Resolve an exact package name declared by a tsconfig project reference. */
 export function resolveProjectReferenceImport(
-	cwd: string,
-	specifier: string,
-	importerDir: string,
+  cwd: string,
+  specifier: string,
+  importerDir: string,
 ): string[] {
-	const target = referencedProjectImportTarget(specifier, importerDir);
-	return target ? firstExistingFile(cwd, [target]) : [];
+  const target = referencedProjectImportTarget(specifier, importerDir);
+  return target ? firstExistingFile(cwd, [target]) : [];
 }
 
 /**
@@ -301,19 +293,16 @@ export function resolveProjectReferenceImport(
  * real filesystem scan only once per graph build (first bare specifier hit),
  * not once per import edge.
  */
-export function resolveWorkspacePackageImport(
-	cwd: string,
-	source: string,
-): string[] {
-	if (source.startsWith(".")) return [];
-	const graph = buildModuleGraph(cwd);
-	if (!graph) return [];
-	const match = findWorkspaceModuleForSpecifier(graph.modules.values(), source);
-	if (!match) return [];
-	const candidates = match.subpath
-		? workspaceSubpathCandidates(match.mod.root, match.subpath)
-		: workspaceEntryCandidates(match.mod.root);
-	return firstExistingFile(cwd, candidates);
+export function resolveWorkspacePackageImport(cwd: string, source: string): string[] {
+  if (source.startsWith(".")) return [];
+  const graph = buildModuleGraph(cwd);
+  if (!graph) return [];
+  const match = findWorkspaceModuleForSpecifier(graph.modules.values(), source);
+  if (!match) return [];
+  const candidates = match.subpath
+    ? workspaceSubpathCandidates(match.mod.root, match.subpath)
+    : workspaceEntryCandidates(match.mod.root);
+  return firstExistingFile(cwd, candidates);
 }
 
 /**
@@ -327,19 +316,13 @@ export function resolveWorkspacePackageImport(
  * both candidate lists.
  */
 function resolveJsTs(cwd: string, filePath: string, source: string): string[] {
-	if (!source.startsWith(".")) {
-		const aliased = resolveAliasedImport(cwd, source, path.dirname(filePath));
-		if (aliased.length) return aliased;
-		const referenced = resolveProjectReferenceImport(
-			cwd,
-			source,
-			path.dirname(filePath),
-		);
-		return referenced.length
-			? referenced
-			: resolveWorkspacePackageImport(cwd, source);
-	}
-	return firstExistingFile(cwd, jsTsCandidatePaths(filePath, source));
+  if (!source.startsWith(".")) {
+    const aliased = resolveAliasedImport(cwd, source, path.dirname(filePath));
+    if (aliased.length) return aliased;
+    const referenced = resolveProjectReferenceImport(cwd, source, path.dirname(filePath));
+    return referenced.length ? referenced : resolveWorkspacePackageImport(cwd, source);
+  }
+  return firstExistingFile(cwd, jsTsCandidatePaths(filePath, source));
 }
 
 // --- C / C++ -----------------------------------------------------------------
@@ -353,147 +336,132 @@ function resolveJsTs(cwd: string, filePath: string, source: string): string[] {
  * src), so cold and warm agree on which file a local include points to.
  */
 function resolveCxx(cwd: string, filePath: string, source: string): string[] {
-	if (source.startsWith("<")) return [];
-	const dir = path.dirname(path.resolve(filePath));
-	return firstExistingFile(cwd, [
-		path.resolve(dir, source),
-		path.resolve(cwd, source),
-		path.resolve(cwd, "include", source),
-		path.resolve(cwd, "src", source),
-	]);
+  if (source.startsWith("<")) return [];
+  const dir = path.dirname(path.resolve(filePath));
+  return firstExistingFile(cwd, [
+    path.resolve(dir, source),
+    path.resolve(cwd, source),
+    path.resolve(cwd, "include", source),
+    path.resolve(cwd, "src", source),
+  ]);
 }
 
 // --- Python -----------------------------------------------------------------
 
 /** Candidate source roots for an absolute dotted import. */
 function pythonRoots(cwd: string, fileDir: string): string[] {
-	// The package root is the first ancestor of the importing file that is NOT
-	// itself a package (no __init__.py) — that's where a top-level `import a.b`
-	// is anchored. Add cwd and cwd/src as conventional fallbacks.
-	let p = fileDir;
-	const root = path.resolve(cwd);
-	while (isWithin(cwd, p) && isFile(path.join(p, "__init__.py"))) {
-		const parent = path.dirname(p);
-		if (parent === p) break;
-		p = parent;
-	}
-	const roots = new Set([p, root, path.join(root, "src")]);
-	return [...roots].filter((r) => isDir(r));
+  // The package root is the first ancestor of the importing file that is NOT
+  // itself a package (no __init__.py) — that's where a top-level `import a.b`
+  // is anchored. Add cwd and cwd/src as conventional fallbacks.
+  let p = fileDir;
+  const root = path.resolve(cwd);
+  while (isWithin(cwd, p) && isFile(path.join(p, "__init__.py"))) {
+    const parent = path.dirname(p);
+    if (parent === p) break;
+    p = parent;
+  }
+  const roots = new Set([p, root, path.join(root, "src")]);
+  return [...roots].filter((r) => isDir(r));
 }
 
-function resolvePython(
-	cwd: string,
-	filePath: string,
-	source: string,
-): string[] {
-	const fileDir = path.dirname(path.resolve(filePath));
-	if (source.startsWith(".")) {
-		// Relative import: leading dots = how far up, remainder = dotted subpath.
-		const m = source.match(/^(\.+)(.*)$/);
-		if (!m) return [];
-		const dots = m[1].length;
-		let baseDir = fileDir;
-		for (let i = 1; i < dots; i++) baseDir = path.dirname(baseDir);
-		const rest = m[2] ? m[2].split(".") : [];
-		const target = path.join(baseDir, ...rest);
-		return firstExistingFile(cwd, [
-			`${target}.py`,
-			path.join(target, "__init__.py"),
-		]);
-	}
-	const parts = source.split(".");
-	for (const root of pythonRoots(cwd, fileDir)) {
-		const target = path.join(root, ...parts);
-		const found = firstExistingFile(cwd, [
-			`${target}.py`,
-			path.join(target, "__init__.py"),
-		]);
-		if (found.length) return found;
-	}
-	return [];
+function resolvePython(cwd: string, filePath: string, source: string): string[] {
+  const fileDir = path.dirname(path.resolve(filePath));
+  if (source.startsWith(".")) {
+    // Relative import: leading dots = how far up, remainder = dotted subpath.
+    const m = source.match(/^(\.+)(.*)$/);
+    if (!m) return [];
+    const dots = m[1].length;
+    let baseDir = fileDir;
+    for (let i = 1; i < dots; i++) baseDir = path.dirname(baseDir);
+    const rest = m[2] ? m[2].split(".") : [];
+    const target = path.join(baseDir, ...rest);
+    return firstExistingFile(cwd, [`${target}.py`, path.join(target, "__init__.py")]);
+  }
+  const parts = source.split(".");
+  for (const root of pythonRoots(cwd, fileDir)) {
+    const target = path.join(root, ...parts);
+    const found = firstExistingFile(cwd, [`${target}.py`, path.join(target, "__init__.py")]);
+    if (found.length) return found;
+  }
+  return [];
 }
 
 // --- Go ---------------------------------------------------------------------
 
 /** Walk up from the importing file to a go.mod and read its `module` path. */
 function findGoModule(
-	cwd: string,
-	filePath: string,
+  cwd: string,
+  filePath: string,
 ): { moduleDir: string; modulePath: string } | null {
-	let dir = path.dirname(path.resolve(filePath));
-	const root = path.resolve(cwd);
-	while (true) {
-		try {
-			const content = fs.readFileSync(path.join(dir, "go.mod"), "utf-8");
-			const m = content.match(/^\s*module\s+(\S+)/m);
-			if (m) return { moduleDir: dir, modulePath: m[1] };
-		} catch {
-			// no go.mod here — keep climbing
-		}
-		if (dir === root) break;
-		const parent = path.dirname(dir);
-		if (parent === dir || !isWithin(cwd, parent)) break;
-		dir = parent;
-	}
-	return null;
+  let dir = path.dirname(path.resolve(filePath));
+  const root = path.resolve(cwd);
+  while (true) {
+    try {
+      const content = fs.readFileSync(path.join(dir, "go.mod"), "utf-8");
+      const m = content.match(/^\s*module\s+(\S+)/m);
+      if (m) return { moduleDir: dir, modulePath: m[1] };
+    } catch {
+      // no go.mod here — keep climbing
+    }
+    if (dir === root) break;
+    const parent = path.dirname(dir);
+    if (parent === dir || !isWithin(cwd, parent)) break;
+    dir = parent;
+  }
+  return null;
 }
 
 function resolveGo(cwd: string, filePath: string, source: string): string[] {
-	const mod = findGoModule(cwd, filePath);
-	if (!mod) return [];
-	// Only same-module import paths map to a local package directory; stdlib and
-	// third-party paths (no module prefix) stay external.
-	if (source !== mod.modulePath && !source.startsWith(`${mod.modulePath}/`)) {
-		return [];
-	}
-	const rel =
-		source === mod.modulePath ? "" : source.slice(mod.modulePath.length + 1);
-	// A Go package is a directory; edge to every .go file in it (who-imports
-	// works at file granularity). Exclude nothing — _test.go files import too.
-	return sourceFilesIn(cwd, path.join(mod.moduleDir, rel), ".go");
+  const mod = findGoModule(cwd, filePath);
+  if (!mod) return [];
+  // Only same-module import paths map to a local package directory; stdlib and
+  // third-party paths (no module prefix) stay external.
+  if (source !== mod.modulePath && !source.startsWith(`${mod.modulePath}/`)) {
+    return [];
+  }
+  const rel = source === mod.modulePath ? "" : source.slice(mod.modulePath.length + 1);
+  // A Go package is a directory; edge to every .go file in it (who-imports
+  // works at file granularity). Exclude nothing — _test.go files import too.
+  return sourceFilesIn(cwd, path.join(mod.moduleDir, rel), ".go");
 }
 
 // --- Java -------------------------------------------------------------------
 
 function javaSourceRoots(cwd: string, filePath: string): string[] {
-	const root = path.resolve(cwd);
-	const roots = new Set<string>();
-	for (const c of ["src/main/java", "src/test/java", "src", ""]) {
-		roots.add(path.join(root, c));
-	}
-	// The importing file's own source root is one of its ancestors, so a
-	// same-project import resolves even on a non-conventional layout.
-	let p = path.dirname(path.resolve(filePath));
-	while (true) {
-		roots.add(p);
-		if (p === root) break;
-		const parent = path.dirname(p);
-		if (parent === p || !isWithin(cwd, parent)) break;
-		p = parent;
-	}
-	return [...roots].filter((r) => isDir(r));
+  const root = path.resolve(cwd);
+  const roots = new Set<string>();
+  for (const c of ["src/main/java", "src/test/java", "src", ""]) {
+    roots.add(path.join(root, c));
+  }
+  // The importing file's own source root is one of its ancestors, so a
+  // same-project import resolves even on a non-conventional layout.
+  let p = path.dirname(path.resolve(filePath));
+  while (true) {
+    roots.add(p);
+    if (p === root) break;
+    const parent = path.dirname(p);
+    if (parent === p || !isWithin(cwd, parent)) break;
+    p = parent;
+  }
+  return [...roots].filter((r) => isDir(r));
 }
 
 function resolveJava(cwd: string, filePath: string, source: string): string[] {
-	const parts = source.split(".");
-	for (const root of javaSourceRoots(cwd, filePath)) {
-		// import a.b.Foo  → a/b/Foo.java
-		const asFile = firstExistingFile(cwd, [
-			`${path.join(root, ...parts)}.java`,
-		]);
-		if (asFile.length) return asFile;
-		// import a.b.*  (captured as a.b) → every .java in the package dir
-		const asPkg = sourceFilesIn(cwd, path.join(root, ...parts), ".java");
-		if (asPkg.length) return asPkg;
-		// static import a.b.Foo.bar → drop the member, resolve the class file
-		if (parts.length > 1) {
-			const dropLast = firstExistingFile(cwd, [
-				`${path.join(root, ...parts.slice(0, -1))}.java`,
-			]);
-			if (dropLast.length) return dropLast;
-		}
-	}
-	return [];
+  const parts = source.split(".");
+  for (const root of javaSourceRoots(cwd, filePath)) {
+    // import a.b.Foo  → a/b/Foo.java
+    const asFile = firstExistingFile(cwd, [`${path.join(root, ...parts)}.java`]);
+    if (asFile.length) return asFile;
+    // import a.b.*  (captured as a.b) → every .java in the package dir
+    const asPkg = sourceFilesIn(cwd, path.join(root, ...parts), ".java");
+    if (asPkg.length) return asPkg;
+    // static import a.b.Foo.bar → drop the member, resolve the class file
+    if (parts.length > 1) {
+      const dropLast = firstExistingFile(cwd, [`${path.join(root, ...parts.slice(0, -1))}.java`]);
+      if (dropLast.length) return dropLast;
+    }
+  }
+  return [];
 }
 
 /**
@@ -502,35 +470,35 @@ function resolveJava(cwd: string, filePath: string, source: string): string[] {
  * when the source isn't a resolvable in-project file (keep it as external).
  */
 export function resolveImportToFiles(
-	cwd: string,
-	filePath: string,
-	languageId: string,
-	source: string,
+  cwd: string,
+  filePath: string,
+  languageId: string,
+  source: string,
 ): string[] {
-	switch (languageId) {
-		case "typescript":
-		case "tsx":
-		case "javascript":
-		case "jsts":
-			return resolveJsTs(cwd, filePath, source);
-		case "c":
-		case "cpp":
-			return resolveCxx(cwd, filePath, source);
-		case "ruby":
-			return resolveRelative(cwd, filePath, source, [".rb"]);
-		case "zig":
-			return resolveRelative(cwd, filePath, source, [".zig"]);
-		case "bash":
-			return resolveRelative(cwd, filePath, source, [".sh", ".bash"]);
-		case "dart":
-			return resolveDart(cwd, filePath, source);
-		case "python":
-			return resolvePython(cwd, filePath, source);
-		case "go":
-			return resolveGo(cwd, filePath, source);
-		case "java":
-			return resolveJava(cwd, filePath, source);
-		default:
-			return [];
-	}
+  switch (languageId) {
+    case "typescript":
+    case "tsx":
+    case "javascript":
+    case "jsts":
+      return resolveJsTs(cwd, filePath, source);
+    case "c":
+    case "cpp":
+      return resolveCxx(cwd, filePath, source);
+    case "ruby":
+      return resolveRelative(cwd, filePath, source, [".rb"]);
+    case "zig":
+      return resolveRelative(cwd, filePath, source, [".zig"]);
+    case "bash":
+      return resolveRelative(cwd, filePath, source, [".sh", ".bash"]);
+    case "dart":
+      return resolveDart(cwd, filePath, source);
+    case "python":
+      return resolvePython(cwd, filePath, source);
+    case "go":
+      return resolveGo(cwd, filePath, source);
+    case "java":
+      return resolveJava(cwd, filePath, source);
+    default:
+      return [];
+  }
 }

@@ -22,7 +22,10 @@ type RenderTarget = {
 export type FocusUICtx = {
   setWidget(
     key: string,
-    content: undefined | string[] | ((tui: TUI, theme: Theme) => { render(width: number): string[]; invalidate(): void }),
+    content:
+      | undefined
+      | string[]
+      | ((tui: TUI, theme: Theme) => { render(width: number): string[]; invalidate(): void }),
     options?: { placement?: "aboveEditor" | "belowEditor" },
   ): void;
   notify(message: string, type?: "info" | "warning" | "error"): void;
@@ -30,12 +33,15 @@ export type FocusUICtx = {
 
 export type FocusManager = {
   steer(id: string, message: string): boolean;
-  resume(id: string, message: string, signal?: AbortSignal, opts?: { isBackground?: boolean }): Promise<AgentRecord | undefined>;
+  resume(
+    id: string,
+    message: string,
+    signal?: AbortSignal,
+    opts?: { isBackground?: boolean },
+  ): Promise<AgentRecord | undefined>;
 };
 
-export type FocusState =
-  | { kind: "orchestrator" }
-  | { kind: "agent"; agentId: string };
+export type FocusState = { kind: "orchestrator" } | { kind: "agent"; agentId: string };
 
 export type FocusControllerOptions = {
   getActivity?: (id: string) => AgentActivity | undefined;
@@ -60,9 +66,11 @@ type ActiveFocus = {
 function isEditorLike(value: unknown): value is EditorLike {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<EditorLike>;
-  return typeof candidate.handleInput === "function"
-    && typeof candidate.getText === "function"
-    && typeof candidate.setText === "function";
+  return (
+    typeof candidate.handleInput === "function" &&
+    typeof candidate.getText === "function" &&
+    typeof candidate.setText === "function"
+  );
 }
 
 function childrenOf(value: unknown): unknown[] {
@@ -75,7 +83,7 @@ function childrenOf(value: unknown): unknown[] {
 function findDocument(tui: TUI): RenderTarget | undefined {
   const candidate = tui.children[0] as Partial<RenderTarget> | undefined;
   return candidate && typeof candidate.render === "function"
-    ? candidate as RenderTarget
+    ? (candidate as RenderTarget)
     : undefined;
 }
 
@@ -254,24 +262,35 @@ export class FocusedAgentController {
         const label = focusLabel(record);
         this.ui?.notify(`Resuming ${label}…`, "info");
         active.tui.requestRender();
-        void this.manager.resume(record.id, message, undefined, { isBackground: true })
+        void this.manager
+          .resume(record.id, message, undefined, { isBackground: true })
           .then((resumed) => {
-            if (resumed === undefined) this.ui?.notify(`Agent ${label} (${record.status}) cannot be resumed.`, "warning");
+            if (resumed === undefined)
+              this.ui?.notify(`Agent ${label} (${record.status}) cannot be resumed.`, "warning");
           })
           .catch((error) => {
-            this.ui?.notify(`Could not resume ${label}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+            this.ui?.notify(
+              `Could not resume ${label}: ${error instanceof Error ? error.message : String(error)}`,
+              "warning",
+            );
           });
         return;
       }
       // Pi's Editor clears before invoking onSubmit. Put the focused draft back
       // when nothing can receive it so a session-less record cannot eat input.
       editor.setText(text);
-      this.ui?.notify(`Agent ${focusLabel(record)} is ${record.status} and cannot be steered.`, "info");
+      this.ui?.notify(
+        `Agent ${focusLabel(record)} is ${record.status} and cannot be steered.`,
+        "info",
+      );
       return;
     }
     if (!this.manager.steer(record.id, message)) {
       editor.setText(text);
-      this.ui?.notify(`Agent ${focusLabel(record)} is ${record.status} and cannot be steered.`, "info");
+      this.ui?.notify(
+        `Agent ${focusLabel(record)} is ${record.status} and cannot be steered.`,
+        "info",
+      );
       return;
     }
 
@@ -287,10 +306,15 @@ export class FocusedAgentController {
     this.ui?.setWidget(
       FOCUS_WIDGET_KEY,
       (_tui, theme) => ({
-        render: (width) => [truncateToWidth(
-          theme.fg("dim", `Focused ${focusLabel(record)} · prompt targets this agent · Esc returns to main`),
-          width,
-        )],
+        render: (width) => [
+          truncateToWidth(
+            theme.fg(
+              "dim",
+              `Focused ${focusLabel(record)} · prompt targets this agent · Esc returns to main`,
+            ),
+            width,
+          ),
+        ],
         invalidate: () => {},
       }),
       { placement: "aboveEditor" },

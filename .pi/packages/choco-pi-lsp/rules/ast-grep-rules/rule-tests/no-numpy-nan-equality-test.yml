@@ -4,13 +4,13 @@ valid:
     import numpy as np
     if np.isnan(x):
         pass
-  - 'math.isnan(x)'
-  - 'x is None'
-  - 'x == 1'
+  - "math.isnan(x)"
+  - "x is None"
+  - "x == 1"
 invalid:
-  - 'x == numpy.nan'
-  - 'x != numpy.nan'
-  - 'numpy.nan == x'
+  - "x == numpy.nan"
+  - "x != numpy.nan"
+  - "numpy.nan == x"
   - "x == float('nan')"
   - |
     import numpy as np

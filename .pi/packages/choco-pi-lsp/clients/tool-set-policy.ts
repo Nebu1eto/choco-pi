@@ -1,22 +1,22 @@
 import { logLatency } from "./latency-logger.js";
 
 export type ToolSetMutationReason =
-	| "fresh_session_lazy_deactivation"
-	| "session_rebuild_restore"
-	| "lazy_activation";
+  | "fresh_session_lazy_deactivation"
+  | "session_rebuild_restore"
+  | "lazy_activation";
 
 export interface ToolSetMutation {
-	addedCount: number;
-	removedCount: number;
-	reason: ToolSetMutationReason;
-	deferralApplies: boolean;
+  addedCount: number;
+  removedCount: number;
+  reason: ToolSetMutationReason;
+  deferralApplies: boolean;
 }
 
 /** The only part of the host model object this module reads. */
 type DeferredToolModel = {
-	compat?: {
-		supportsToolReferences?: boolean;
-	};
+  compat?: {
+    supportsToolReferences?: boolean;
+  };
 };
 
 /**
@@ -30,10 +30,8 @@ type DeferredToolModel = {
  * annotates the `tool_set_mutation` log line, so guessing high would make the
  * log lie, while guessing low merely under-claims.
  */
-export function supportsDeferredTools(
-	model: DeferredToolModel | undefined,
-): boolean {
-	return model?.compat?.supportsToolReferences === true;
+export function supportsDeferredTools(model: DeferredToolModel | undefined): boolean {
+  return model?.compat?.supportsToolReferences === true;
 }
 
 /**
@@ -48,16 +46,16 @@ export function supportsDeferredTools(
  * state survives. Those reasons must RESTORE the previous posture, not skip.
  */
 export function isFreshSessionStart(reason: unknown): boolean {
-	return reason === undefined || reason === "startup" || reason === "new";
+  return reason === undefined || reason === "startup" || reason === "new";
 }
 
 export interface ToolSetPlan {
-	/** The exact set to hand `pi.setActiveTools`. */
-	desired: string[];
-	addedCount: number;
-	removedCount: number;
-	/** False when `desired` already equals the host's active set. */
-	changed: boolean;
+  /** The exact set to hand `pi.setActiveTools`. */
+  desired: string[];
+  addedCount: number;
+  removedCount: number;
+  /** False when `desired` already equals the host's active set. */
+  changed: boolean;
 }
 
 /**
@@ -72,44 +70,44 @@ export interface ToolSetPlan {
  * to the one the prompt cache prefix was built from.
  */
 export function planToolSet(
-	active: readonly string[],
-	lazyNames: ReadonlySet<string>,
-	remembered: ReadonlySet<string>,
+  active: readonly string[],
+  lazyNames: ReadonlySet<string>,
+  remembered: ReadonlySet<string>,
 ): ToolSetPlan {
-	const desired = active.filter(
-		// Lazy tools are dropped here and re-appended below in REMEMBERED
-		// (= activation) order. Keeping them in the host's registration
-		// position would restore the right SET in the wrong ARRAY order, and
-		// the active-tools array is what serializes into the request's tool
-		// block — a transposition is a changed prefix, i.e. a cache miss.
-		(name) => !lazyNames.has(name),
-	);
-	// A remembered tool the host did not list as active still belongs in the
-	// set (defensive: the host controls what `getActiveTools` returns).
-	const desiredSet = new Set(desired);
-	for (const name of remembered) {
-		if (!desiredSet.has(name)) {
-			desired.push(name);
-			desiredSet.add(name);
-		}
-	}
-	const activeSet = new Set(active);
-	const removedCount = active.filter((name) => !desiredSet.has(name)).length;
-	const addedCount = desired.filter((name) => !activeSet.has(name)).length;
-	return {
-		desired,
-		addedCount,
-		removedCount,
-		changed: addedCount > 0 || removedCount > 0,
-	};
+  const desired = active.filter(
+    // Lazy tools are dropped here and re-appended below in REMEMBERED
+    // (= activation) order. Keeping them in the host's registration
+    // position would restore the right SET in the wrong ARRAY order, and
+    // the active-tools array is what serializes into the request's tool
+    // block — a transposition is a changed prefix, i.e. a cache miss.
+    (name) => !lazyNames.has(name),
+  );
+  // A remembered tool the host did not list as active still belongs in the
+  // set (defensive: the host controls what `getActiveTools` returns).
+  const desiredSet = new Set(desired);
+  for (const name of remembered) {
+    if (!desiredSet.has(name)) {
+      desired.push(name);
+      desiredSet.add(name);
+    }
+  }
+  const activeSet = new Set(active);
+  const removedCount = active.filter((name) => !desiredSet.has(name)).length;
+  const addedCount = desired.filter((name) => !activeSet.has(name)).length;
+  return {
+    desired,
+    addedCount,
+    removedCount,
+    changed: addedCount > 0 || removedCount > 0,
+  };
 }
 
 export function recordToolSetMutation(mutation: ToolSetMutation): void {
-	logLatency({
-		type: "phase",
-		filePath: "<choco-pi-lsp>",
-		phase: "tool_set_mutation",
-		durationMs: 0,
-		metadata: { ...mutation },
-	});
+  logLatency({
+    type: "phase",
+    filePath: "<choco-pi-lsp>",
+    phase: "tool_set_mutation",
+    durationMs: 0,
+    metadata: { ...mutation },
+  });
 }

@@ -141,7 +141,10 @@ function requireCurrentGoal(
 
 function requireStatus(current: ThreadGoal, expected: GoalStatus, kind: string): void {
   if (current.status !== expected) {
-    throw transitionInvariantError(kind, `current status must be ${expected} (got ${current.status})`);
+    throw transitionInvariantError(
+      kind,
+      `current status must be ${expected} (got ${current.status})`,
+    );
   }
 }
 
@@ -167,7 +170,11 @@ function requireUnchangedObjective(current: ThreadGoal, nextGoal: ThreadGoal, ki
   }
 }
 
-function requireUnchangedTokenBudget(current: ThreadGoal, nextGoal: ThreadGoal, kind: string): void {
+function requireUnchangedTokenBudget(
+  current: ThreadGoal,
+  nextGoal: ThreadGoal,
+  kind: string,
+): void {
   if (current.tokenBudget !== nextGoal.tokenBudget) {
     throw transitionInvariantError(kind, "tokenBudget must be unchanged");
   }
@@ -189,10 +196,7 @@ function requireRuntimeAccountingChange(
     nextGoal.usage.activeSeconds > current.usage.activeSeconds;
   const statusChanged = current.status !== nextGoal.status;
   if (!usageIncreased && !statusChanged) {
-    throw transitionInvariantError(
-      kind,
-      "runtime accounting must increase usage or change status",
-    );
+    throw transitionInvariantError(kind, "runtime accounting must increase usage or change status");
   }
 }
 
@@ -220,7 +224,11 @@ function requireBudgetLimitedUsageAtOrOverBudget(nextGoal: ThreadGoal, kind: str
   }
 }
 
-function requireNonRewindingUpdatedAt(current: ThreadGoal, nextGoal: ThreadGoal, kind: string): void {
+function requireNonRewindingUpdatedAt(
+  current: ThreadGoal,
+  nextGoal: ThreadGoal,
+  kind: string,
+): void {
   if (nextGoal.updatedAt < current.updatedAt) {
     throw transitionInvariantError(kind, "updatedAt must not decrease");
   }
@@ -239,14 +247,15 @@ function planDerivedActiveToPausedTransition(
     persist: "set",
     nextGoal,
     source: "runtime",
-    beforePersist: mergeGoalTransitionEffects([...extraBefore], memoryEffectsFromGoalChange(current, nextGoal)),
+    beforePersist: mergeGoalTransitionEffects(
+      [...extraBefore],
+      memoryEffectsFromGoalChange(current, nextGoal),
+    ),
     afterPersist: [],
   };
 }
 
-function planDerivedResumeActiveTransition(
-  current: ThreadGoal | null,
-): GoalTransitionPlan {
+function planDerivedResumeActiveTransition(current: ThreadGoal | null): GoalTransitionPlan {
   const kind = "resume_active";
   requireCurrentGoal(current, kind);
   requireStatus(current, "paused", kind);
@@ -312,40 +321,28 @@ export function planGoalTransition(
       };
 
     case "abort_pause":
-      return planDerivedActiveToPausedTransition(
-        "abort_pause",
-        current,
-        [
-          { type: "clearContinuation" },
-          { type: "clearActiveAccounting" },
-          { type: "resetRecovery" },
-          { type: "clearBudgetWarning" },
-        ],
-      );
+      return planDerivedActiveToPausedTransition("abort_pause", current, [
+        { type: "clearContinuation" },
+        { type: "clearActiveAccounting" },
+        { type: "resetRecovery" },
+        { type: "clearBudgetWarning" },
+      ]);
 
     case "resume_active":
       return planDerivedResumeActiveTransition(current);
 
     case "recovery_pause":
-      return planDerivedActiveToPausedTransition(
-        "recovery_pause",
-        current,
-        [
-          { type: "clearContinuation" },
-          { type: "setRecoveryPausedAttention", reason: request.recoveryReason },
-        ],
-      );
+      return planDerivedActiveToPausedTransition("recovery_pause", current, [
+        { type: "clearContinuation" },
+        { type: "setRecoveryPausedAttention", reason: request.recoveryReason },
+      ]);
 
     case "recovery_shutdown_pause":
-      return planDerivedActiveToPausedTransition(
-        "recovery_shutdown_pause",
-        current,
-        [
-          { type: "clearContinuation" },
-          { type: "clearHostOverflowRecovery" },
-          { type: "setRecoveryPausedAttention", reason: request.recoveryReason },
-        ],
-      );
+      return planDerivedActiveToPausedTransition("recovery_shutdown_pause", current, [
+        { type: "clearContinuation" },
+        { type: "clearHostOverflowRecovery" },
+        { type: "setRecoveryPausedAttention", reason: request.recoveryReason },
+      ]);
 
     case "runtime_accounting": {
       const { nextGoal } = request;
@@ -373,9 +370,7 @@ export function planGoalTransition(
       const { nextGoal, source } = request;
       const wasPausedBefore = current?.status === "paused";
       const afterPersist =
-        source === "command"
-          ? commandAfterPersistEffects(current, nextGoal, wasPausedBefore)
-          : [];
+        source === "command" ? commandAfterPersistEffects(current, nextGoal, wasPausedBefore) : [];
       if (current && goalsEquivalent(current, nextGoal)) {
         return {
           persist: "skip",

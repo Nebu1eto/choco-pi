@@ -11,7 +11,7 @@ message: "Regexp.new with variable — ReDoS risk if pattern is user-controlled"
 description: |
   Building regexes from variables can cause ReDoS if user-controlled.
   A crafted pattern causes catastrophic backtracking.
-  
+
   ✅ FIX:
     safe = Regexp.escape(user_input)
     Regexp.new(safe)
@@ -45,7 +45,7 @@ examples:
     pattern = params[:filter]
     Regexp.new(pattern)          # ReDoS risk!
     Regexp.new(user_input, 'i')  # ReDoS risk!
-  
+
   good: |
     safe = Regexp.escape(params[:filter])
     Regexp.new(safe)

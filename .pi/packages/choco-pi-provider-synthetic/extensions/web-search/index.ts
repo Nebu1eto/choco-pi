@@ -1,8 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  resolveSyntheticClientOptions,
-  SyntheticClient,
-} from "../../src/client";
+import { resolveSyntheticClientOptions, SyntheticClient } from "../../src/client";
 import {
   configLoader,
   SYNTHETIC_CONFIG_UPDATED_EVENT,
@@ -11,10 +8,7 @@ import {
   type SyntheticConfigUpdatedPayload,
 } from "../../src/config";
 import { detectBillingMode } from "../../src/utils/quotas";
-import {
-  registerSyntheticWebSearchTool,
-  SYNTHETIC_WEB_SEARCH_TOOL,
-} from "./tool";
+import { registerSyntheticWebSearchTool, SYNTHETIC_WEB_SEARCH_TOOL } from "./tool";
 
 export type WebSearchEntitlement = "unknown" | "subscription" | "pay-as-you-go";
 
@@ -52,10 +46,7 @@ export default async function (pi: ExtensionAPI) {
   registerSyntheticWebSearchTool(pi);
 
   function syncActivation(): void {
-    syncToolActivation(
-      pi,
-      shouldActivateWebSearch(config.webSearch, entitlement),
-    );
+    syncToolActivation(pi, shouldActivateWebSearch(config.webSearch, entitlement));
   }
 
   function cancelQuotaCheck(): void {

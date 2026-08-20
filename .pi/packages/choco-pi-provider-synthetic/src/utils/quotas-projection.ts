@@ -64,9 +64,7 @@ export function buildProjectionHints(
   return hints;
 }
 
-function samplesFromSnapshots(
-  snapshots: readonly ProjectionSnapshot[],
-): Sample[] {
+function samplesFromSnapshots(snapshots: readonly ProjectionSnapshot[]): Sample[] {
   const samples: Sample[] = [];
   for (const snapshot of snapshots) {
     const rolling = rollingSample(snapshot);
@@ -109,12 +107,7 @@ function weeklySample(snapshot: ProjectionSnapshot): Sample | undefined {
   const capacity = parseCurrency(quota.maxCredits);
   const remaining = parseCurrency(quota.remainingCredits);
   const refillAmount = parseCurrency(quota.nextRegenCredits);
-  if (
-    capacity <= 0 ||
-    remaining < 0 ||
-    refillAmount <= 0 ||
-    refillAmount > capacity
-  ) {
+  if (capacity <= 0 || remaining < 0 || refillAmount <= 0 || refillAmount > capacity) {
     return undefined;
   }
 
@@ -135,10 +128,7 @@ function weeklySample(snapshot: ProjectionSnapshot): Sample | undefined {
   };
 }
 
-function projectionForSample(
-  current: Sample,
-  samples: readonly Sample[],
-): ProjectionHint | null {
+function projectionForSample(current: Sample, samples: readonly Sample[]): ProjectionHint | null {
   if (current.id === WEEKLY_TOKEN_LIMIT_ID) {
     return weeklyProjectionForSample(current, samples);
   }
@@ -177,9 +167,7 @@ function weeklyProjectionForSample(
   const minAt = current.at - current.maxHistoryAgeMs;
   const weeklySamples = samples.filter(
     (sample) =>
-      sample.id === WEEKLY_TOKEN_LIMIT_ID &&
-      sample.at >= minAt &&
-      sample.at <= current.at,
+      sample.id === WEEKLY_TOKEN_LIMIT_ID && sample.at >= minAt && sample.at <= current.at,
   );
   const ratesByDay = new Map<string, DailyBurnRates>();
 
@@ -193,10 +181,7 @@ function weeklyProjectionForSample(
     }
 
     const latestBaselineAt = endpoint.at - WEEKLY_MIN_SAMPLE_MS;
-    while (
-      baselineIndex + 1 < index &&
-      weeklySamples[baselineIndex + 1].at <= latestBaselineAt
-    ) {
+    while (baselineIndex + 1 < index && weeklySamples[baselineIndex + 1].at <= latestBaselineAt) {
       baselineIndex++;
     }
     if (
@@ -255,10 +240,7 @@ function netDrainRateBetween(previous: Sample, current: Sample): number {
   return grossBurn / elapsedMs - refillRate;
 }
 
-function grossBurnRateBetween(
-  previous: Sample,
-  current: Sample,
-): number | undefined {
+function grossBurnRateBetween(previous: Sample, current: Sample): number | undefined {
   const elapsedMs = current.at - previous.at;
   const refillRate = current.refillAmount / current.refillIntervalMs;
   const expectedRefill = refillRate * elapsedMs;

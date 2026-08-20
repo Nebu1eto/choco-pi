@@ -18,10 +18,10 @@ export type AstGrepNapi = typeof import("@ast-grep/napi");
 const _require = createRequire(import.meta.url);
 
 export function loadAstGrepNapi(): Promise<AstGrepNapi> {
-	try {
-		const entry = _require.resolve("@ast-grep/napi");
-		return import(pathToFileURL(entry).href) as Promise<AstGrepNapi>;
-	} catch {
-		return import("@ast-grep/napi");
-	}
+  try {
+    const entry = _require.resolve("@ast-grep/napi");
+    return import(pathToFileURL(entry).href) as Promise<AstGrepNapi>;
+  } catch {
+    return import("@ast-grep/napi");
+  }
 }

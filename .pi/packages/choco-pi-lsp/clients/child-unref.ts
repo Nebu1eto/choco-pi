@@ -34,18 +34,18 @@ import { spawn as nodeSpawn } from "node:child_process";
  * waiting for it. Never throws.
  */
 export function unrefChildAndPipes(child: ChildProcess): void {
-	try {
-		child.unref();
-		// Child stdio pipes are `net.Socket`s at runtime (which expose `unref`),
-		// but are typed as `Readable`/`Writable` (which do not) — cast to the
-		// optional-`unref` shape and guard, so an un-piped ("ignore") stream is a
-		// no-op rather than a crash.
-		for (const stream of [child.stdout, child.stderr, child.stdin]) {
-			(stream as { unref?: () => void } | null)?.unref?.();
-		}
-	} catch {
-		// best-effort — unref must never throw out of a fire-and-forget spawn
-	}
+  try {
+    child.unref();
+    // Child stdio pipes are `net.Socket`s at runtime (which expose `unref`),
+    // but are typed as `Readable`/`Writable` (which do not) — cast to the
+    // optional-`unref` shape and guard, so an un-piped ("ignore") stream is a
+    // no-op rather than a crash.
+    for (const stream of [child.stdout, child.stderr, child.stdin]) {
+      (stream as { unref?: () => void } | null)?.unref?.();
+    }
+  } catch {
+    // best-effort — unref must never throw out of a fire-and-forget spawn
+  }
 }
 
 /**
@@ -63,28 +63,28 @@ export function unrefChildAndPipes(child: ChildProcess): void {
  * here already has).
  */
 export function spawnCollectStdout(
-	command: string,
-	args: string[],
-	options: SpawnOptions,
+  command: string,
+  args: string[],
+  options: SpawnOptions,
 ): Promise<string> {
-	return new Promise((resolve) => {
-		let settled = false;
-		const settle = (value: string) => {
-			if (settled) return;
-			settled = true;
-			resolve(value);
-		};
-		try {
-			const child = nodeSpawn(command, args, options);
-			unrefChildAndPipes(child);
-			let out = "";
-			child.stdout?.on("data", (chunk) => {
-				out += chunk.toString();
-			});
-			child.once("error", () => settle(""));
-			child.once("close", () => settle(out));
-		} catch {
-			settle("");
-		}
-	});
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (value: string) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    try {
+      const child = nodeSpawn(command, args, options);
+      unrefChildAndPipes(child);
+      let out = "";
+      child.stdout?.on("data", (chunk) => {
+        out += chunk.toString();
+      });
+      child.once("error", () => settle(""));
+      child.once("close", () => settle(out));
+    } catch {
+      settle("");
+    }
+  });
 }

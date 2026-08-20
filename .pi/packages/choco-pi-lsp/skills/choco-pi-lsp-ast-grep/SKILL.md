@@ -28,10 +28,10 @@ These tools (plus `ast_grep_outline`, `ast_grep_dump`, `lsp_navigation`) are reg
 
 ## Metavariables
 
-| Syntax | Matches | Named? |
-|---|---|---|
-| `$X` | single node | yes — captures the node |
-| `$$$` | zero or more nodes | no — unnamed wildcard |
+| Syntax    | Matches            | Named?                  |
+| --------- | ------------------ | ----------------------- |
+| `$X`      | single node        | yes — captures the node |
+| `$$$`     | zero or more nodes | no — unnamed wildcard   |
 | `$$$ARGS` | zero or more nodes | yes — captures the list |
 
 Use `$$$` when you don't need the captured value; `$$$NAME` when you do.
@@ -40,25 +40,25 @@ Use `$$$` when you don't need the captured value; `$$$NAME` when you do.
 
 ### Patterns
 
-| Pattern | Matches |
-|---|---|
-| `fetchMetrics($ARGS)` | call with any single arg |
-| `fetchMetrics($$$ARGS)` | call with any number of args |
-| `function $NAME($$$) { $$$ }` | function declaration |
+| Pattern                        | Matches                          |
+| ------------------------------ | -------------------------------- |
+| `fetchMetrics($ARGS)`          | call with any single arg         |
+| `fetchMetrics($$$ARGS)`        | call with any number of args     |
+| `function $NAME($$$) { $$$ }`  | function declaration             |
 | `import { $NAMES } from $PATH` | named import (no quotes on path) |
-| `const $X = $Y` | variable declaration |
+| `const $X = $Y`                | variable declaration             |
 
 ### Structural-intent parameters (preferred for cross-context queries)
 
 Use these instead of writing raw YAML:
 
-| Parameter | Tool | What it does |
-|---|---|---|
-| `insideKind` | both | Only match inside an ancestor of this node kind (searches ALL ancestors, `stopBy: end`) |
-| `hasKind` | both | Only match nodes whose **immediate child** has this kind (`stopBy: neighbor` — NOT recursive) |
+| Parameter           | Tool | What it does                                                                                                                                                 |
+| ------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `insideKind`        | both | Only match inside an ancestor of this node kind (searches ALL ancestors, `stopBy: end`)                                                                      |
+| `hasKind`           | both | Only match nodes whose **immediate child** has this kind (`stopBy: neighbor` — NOT recursive)                                                                |
 | `hasDescendantKind` | both | Only match nodes containing this kind **anywhere in their descendants** (`stopBy: end`) — use this instead of `hasKind` when the target isn't a direct child |
-| `follows` | both | Only match nodes preceded by a sibling matching this pattern |
-| `precedes` | both | Only match nodes followed by a sibling matching this pattern |
+| `follows`           | both | Only match nodes preceded by a sibling matching this pattern                                                                                                 |
+| `precedes`          | both | Only match nodes followed by a sibling matching this pattern                                                                                                 |
 
 `hasKind` and `hasDescendantKind` are mutually exclusive on both tools — combining them errors.
 
@@ -153,11 +153,11 @@ kind: arrow_function
 
 Use these as starting points, then scope `paths` tightly.
 
-| Task | Pattern / params |
-|---|---|
+| Task                                            | Pattern / params                             |
+| ----------------------------------------------- | -------------------------------------------- |
 | Find object-literal function dependency by name | `pattern: { resetLSPService: $FN, $$$REST }` |
-| Find empty catches | `pattern: try { $$$BODY } catch ($ERR) { }` |
-| Find fire-and-forget async calls | `pattern: void $CALL` |
+| Find empty catches                              | `pattern: try { $$$BODY } catch ($ERR) { }`  |
+| Find fire-and-forget async calls                | `pattern: void $CALL`                        |
 
 For lifecycle bugs, search first, then use the returned `details.matchLocations[].readSlice` handle for bounded context.
 

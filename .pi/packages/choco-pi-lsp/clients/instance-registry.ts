@@ -37,58 +37,55 @@ import { getGlobalPiLensDir } from "./file-utils.js";
 // import is actually invoked.
 import { realIsPidAlive } from "./instance-reaper.js";
 import { normalizeFilePath } from "./path-utils.js";
-import {
-	getSubagentIdentity,
-	isSubagentSession,
-} from "./subagent-mode.js";
+import { getSubagentIdentity, isSubagentSession } from "./subagent-mode.js";
 
 export interface LspChildEntry {
-	pid: number;
-	serverId: string;
-	command: string;
-	/** Per-spawn-unique marker (e.g. a temp sgconfig path) for command-line
-	 *  re-identification when the pid itself is gone/recycled. */
-	marker?: string;
-	spawnedAt: string;
-	/** Resident set size in bytes, sampled at heartbeat cadence via
-	 *  clients/resource-sampler.ts (#620). Best-effort — `undefined` when the
-	 *  pid couldn't be sampled (already exited, or sampling itself failed). */
-	rssBytes?: number;
-	/** CPU percent (0-100+, matching `pidusage`'s convention — can exceed 100
-	 *  on a multi-core box under sustained load) sampled at the same cadence.
-	 *  Same best-effort/undefined semantics as `rssBytes`. */
-	cpuPercent?: number;
+  pid: number;
+  serverId: string;
+  command: string;
+  /** Per-spawn-unique marker (e.g. a temp sgconfig path) for command-line
+   *  re-identification when the pid itself is gone/recycled. */
+  marker?: string;
+  spawnedAt: string;
+  /** Resident set size in bytes, sampled at heartbeat cadence via
+   *  clients/resource-sampler.ts (#620). Best-effort — `undefined` when the
+   *  pid couldn't be sampled (already exited, or sampling itself failed). */
+  rssBytes?: number;
+  /** CPU percent (0-100+, matching `pidusage`'s convention — can exceed 100
+   *  on a multi-core box under sustained load) sampled at the same cadence.
+   *  Same best-effort/undefined semantics as `rssBytes`. */
+  cpuPercent?: number;
 }
 
 export interface InstanceEntry {
-	pid: number;
-	startedAt: string;
-	projectRoot: string;
-	lspChildren: LspChildEntry[];
-	lspChildCount: number;
-	rssBytes: number;
-	/** Host process CPU percent, sampled at the same heartbeat cadence as
-	 *  `rssBytes` (#620). `undefined` when sampling failed/unavailable (e.g.
-	 *  the `pidusage` dependency errored) — a missing value must never be
-	 *  read as "0% CPU". */
-	cpuPercent?: number;
-	heartbeatAt: string;
-	/** Best-effort identity for concurrency-profile analysis (#822). Absent
-	 *  entirely for primary sessions and tolerated as absent on old entries. */
-	subagent?: {
-		marker?: string;
-		agentType?: string;
-		parentPid?: number;
-		runId?: string;
-	};
+  pid: number;
+  startedAt: string;
+  projectRoot: string;
+  lspChildren: LspChildEntry[];
+  lspChildCount: number;
+  rssBytes: number;
+  /** Host process CPU percent, sampled at the same heartbeat cadence as
+   *  `rssBytes` (#620). `undefined` when sampling failed/unavailable (e.g.
+   *  the `pidusage` dependency errored) — a missing value must never be
+   *  read as "0% CPU". */
+  cpuPercent?: number;
+  heartbeatAt: string;
+  /** Best-effort identity for concurrency-profile analysis (#822). Absent
+   *  entirely for primary sessions and tolerated as absent on old entries. */
+  subagent?: {
+    marker?: string;
+    agentType?: string;
+    parentPid?: number;
+    runId?: string;
+  };
 }
 
 interface RegistryFile {
-	instances: InstanceEntry[];
+  instances: InstanceEntry[];
 }
 
 function registryPath(): string {
-	return path.join(getGlobalPiLensDir(), "instances.json");
+  return path.join(getGlobalPiLensDir(), "instances.json");
 }
 
 // --- Kill switch (lazy, memoized — house style per clients/runtime-config.ts) ---
@@ -101,14 +98,14 @@ let _enabledCache: boolean | undefined;
  * sweep in clients/instance-reaper.ts, which checks this too).
  */
 export function isInstanceRegistryEnabled(): boolean {
-	if (_enabledCache !== undefined) return _enabledCache;
-	_enabledCache = process.env.CHOCO_PI_LSP_INSTANCE_REGISTRY !== "0";
-	return _enabledCache;
+  if (_enabledCache !== undefined) return _enabledCache;
+  _enabledCache = process.env.CHOCO_PI_LSP_INSTANCE_REGISTRY !== "0";
+  return _enabledCache;
 }
 
 /** Test-only: clear the memoized kill-switch read. */
 export function _resetInstanceRegistryEnabledForTests(): void {
-	_enabledCache = undefined;
+  _enabledCache = undefined;
 }
 
 // --- Read ---
@@ -131,174 +128,174 @@ export function _resetInstanceRegistryEnabledForTests(): void {
  * torn file gets re-read, instead of re-logging on every call.
  */
 function recordCorruptRegistryRead(reasonCode: string): void {
-	recordDegradationOnce({
-		kind: "instance-registry-corrupt",
-		subject: "instances.json",
-		reason: `read failed (${reasonCode}); treating as empty`,
-	});
+  recordDegradationOnce({
+    kind: "instance-registry-corrupt",
+    subject: "instances.json",
+    reason: `read failed (${reasonCode}); treating as empty`,
+  });
 }
 
 function readRegistrySync(): RegistryFile {
-	try {
-		const raw = fs.readFileSync(registryPath(), "utf-8");
-		const parsed = JSON.parse(raw);
-		if (parsed && Array.isArray(parsed.instances)) {
-			return parsed as RegistryFile;
-		}
-		recordCorruptRegistryRead("invalid shape");
-		return { instances: [] };
-	} catch (err) {
-		// Missing file, corrupt JSON, or a read error — treat as empty, never
-		// throw. Missing (ENOENT) is a clean start and stays silent; anything
-		// else is recorded so a corrupt/torn file is distinguishable from one.
-		const code = (err as NodeJS.ErrnoException | undefined)?.code;
-		if (code !== "ENOENT") recordCorruptRegistryRead(code ?? "invalid");
-		return { instances: [] };
-	}
+  try {
+    const raw = fs.readFileSync(registryPath(), "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.instances)) {
+      return parsed as RegistryFile;
+    }
+    recordCorruptRegistryRead("invalid shape");
+    return { instances: [] };
+  } catch (err) {
+    // Missing file, corrupt JSON, or a read error — treat as empty, never
+    // throw. Missing (ENOENT) is a clean start and stays silent; anything
+    // else is recorded so a corrupt/torn file is distinguishable from one.
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ENOENT") recordCorruptRegistryRead(code ?? "invalid");
+    return { instances: [] };
+  }
 }
 
 async function readRegistryAsync(): Promise<RegistryFile> {
-	try {
-		const raw = await fs.promises.readFile(registryPath(), "utf-8");
-		const parsed = JSON.parse(raw);
-		if (parsed && Array.isArray(parsed.instances)) {
-			return parsed as RegistryFile;
-		}
-		recordCorruptRegistryRead("invalid shape");
-		return { instances: [] };
-	} catch (err) {
-		const code = (err as NodeJS.ErrnoException | undefined)?.code;
-		if (code !== "ENOENT") recordCorruptRegistryRead(code ?? "invalid");
-		return { instances: [] };
-	}
+  try {
+    const raw = await fs.promises.readFile(registryPath(), "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.instances)) {
+      return parsed as RegistryFile;
+    }
+    recordCorruptRegistryRead("invalid shape");
+    return { instances: [] };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ENOENT") recordCorruptRegistryRead(code ?? "invalid");
+    return { instances: [] };
+  }
 }
 
 /** Read-only snapshot of the whole registry (used by the reaper). */
 export async function readInstanceRegistry(): Promise<InstanceEntry[]> {
-	const file = await readRegistryAsync();
-	return file.instances;
+  const file = await readRegistryAsync();
+  return file.instances;
 }
 
 // --- Write (atomic tmp + rename via clients/atomic-write.ts, #762) ---
 
 async function writeRegistryAsync(file: RegistryFile): Promise<void> {
-	const dir = getGlobalPiLensDir();
-	const target = registryPath();
-	try {
-		await fs.promises.mkdir(dir, { recursive: true });
-	} catch {
-		// Best-effort observability substrate — a failed mkdir just means this
-		// update is lost, never a thrown error for the caller.
-		return;
-	}
-	// bestEffort (default): a failed write just means this update is lost,
-	// never a thrown error for the caller.
-	await writeFileAtomicAsync(target, JSON.stringify(file));
+  const dir = getGlobalPiLensDir();
+  const target = registryPath();
+  try {
+    await fs.promises.mkdir(dir, { recursive: true });
+  } catch {
+    // Best-effort observability substrate — a failed mkdir just means this
+    // update is lost, never a thrown error for the caller.
+    return;
+  }
+  // bestEffort (default): a failed write just means this update is lost,
+  // never a thrown error for the caller.
+  await writeFileAtomicAsync(target, JSON.stringify(file));
 }
 
 function writeRegistrySync(file: RegistryFile): void {
-	const dir = getGlobalPiLensDir();
-	const target = registryPath();
-	try {
-		fs.mkdirSync(dir, { recursive: true });
-	} catch {
-		return;
-	}
-	writeFileAtomic(target, JSON.stringify(file));
+  const dir = getGlobalPiLensDir();
+  const target = registryPath();
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    return;
+  }
+  writeFileAtomic(target, JSON.stringify(file));
 }
 
 // --- Mutations (all read-modify-write whole file) ---
 
 /** Create/overwrite this process's entry. */
 export async function registerInstance(projectRoot: string): Promise<void> {
-	if (!isInstanceRegistryEnabled()) return;
-	const pid = process.pid;
-	const normalizedRoot = normalizeFilePath(projectRoot);
-	const file = await readRegistryAsync();
-	const now = new Date().toISOString();
-	const others = file.instances.filter((entry) => entry.pid !== pid);
-	const existing = file.instances.find((entry) => entry.pid === pid);
-	const identity = isSubagentSession() ? getSubagentIdentity() : undefined;
-	const subagent = identity
-		? {
-				marker: identity.marker,
-				agentType: identity.agentName,
-				parentPid: identity.parentPid,
-				runId: identity.runId,
-			}
-		: undefined;
-	others.push({
-		pid,
-		startedAt: existing?.startedAt ?? now,
-		projectRoot: normalizedRoot,
-		lspChildren: existing?.lspChildren ?? [],
-		lspChildCount: existing?.lspChildren?.length ?? 0,
-		rssBytes: process.memoryUsage().rss,
-		heartbeatAt: now,
-		...(subagent ? { subagent } : {}),
-	});
-	await writeRegistryAsync({ instances: others });
+  if (!isInstanceRegistryEnabled()) return;
+  const pid = process.pid;
+  const normalizedRoot = normalizeFilePath(projectRoot);
+  const file = await readRegistryAsync();
+  const now = new Date().toISOString();
+  const others = file.instances.filter((entry) => entry.pid !== pid);
+  const existing = file.instances.find((entry) => entry.pid === pid);
+  const identity = isSubagentSession() ? getSubagentIdentity() : undefined;
+  const subagent = identity
+    ? {
+        marker: identity.marker,
+        agentType: identity.agentName,
+        parentPid: identity.parentPid,
+        runId: identity.runId,
+      }
+    : undefined;
+  others.push({
+    pid,
+    startedAt: existing?.startedAt ?? now,
+    projectRoot: normalizedRoot,
+    lspChildren: existing?.lspChildren ?? [],
+    lspChildCount: existing?.lspChildren?.length ?? 0,
+    rssBytes: process.memoryUsage().rss,
+    heartbeatAt: now,
+    ...(subagent ? { subagent } : {}),
+  });
+  await writeRegistryAsync({ instances: others });
 }
 
 export interface HeartbeatPatch {
-	rssBytes?: number;
-	/** Host CPU percent for this heartbeat (#620). Omit to leave the
-	 *  previously-recorded value untouched (sampling is best-effort and may
-	 *  legitimately fail on a given tick — an omission must not be read as
-	 *  "0% CPU", so this only overwrites when a fresh sample is supplied). */
-	cpuPercent?: number;
-	/** Per-lspChild resource samples (#620), keyed by pid, applied on top of
-	 *  the process's current `lspChildren` array. A pid not present in this
-	 *  map keeps its previous rss/cpu values untouched (the child may simply
-	 *  not have been sampled this tick, e.g. sampling failed for that pid
-	 *  alone) — never zeroed out. Pids the entry no longer knows about are
-	 *  ignored (the child was already removed via `removeLspChild`).
-	 */
-	childUsage?: Record<number, { rssBytes?: number; cpuPercent?: number }>;
+  rssBytes?: number;
+  /** Host CPU percent for this heartbeat (#620). Omit to leave the
+   *  previously-recorded value untouched (sampling is best-effort and may
+   *  legitimately fail on a given tick — an omission must not be read as
+   *  "0% CPU", so this only overwrites when a fresh sample is supplied). */
+  cpuPercent?: number;
+  /** Per-lspChild resource samples (#620), keyed by pid, applied on top of
+   *  the process's current `lspChildren` array. A pid not present in this
+   *  map keeps its previous rss/cpu values untouched (the child may simply
+   *  not have been sampled this tick, e.g. sampling failed for that pid
+   *  alone) — never zeroed out. Pids the entry no longer knows about are
+   *  ignored (the child was already removed via `removeLspChild`).
+   */
+  childUsage?: Record<number, { rssBytes?: number; cpuPercent?: number }>;
 }
 
 /** Update this process's heartbeat/rss (and, since #620, host CPU% + live
  *  LSP children's rss/CPU%). Cheap — safe to call every turn end. */
 export async function updateHeartbeat(patch: HeartbeatPatch = {}): Promise<void> {
-	if (!isInstanceRegistryEnabled()) return;
-	const pid = process.pid;
-	const file = await readRegistryAsync();
-	const idx = file.instances.findIndex((entry) => entry.pid === pid);
-	if (idx === -1) {
-		// No prior registerInstance in this run (e.g. registry file was reaped
-		// out from under us, or heartbeat fired before session_start finished) —
-		// nothing to update against; skip rather than fabricate a projectRoot.
-		return;
-	}
-	const now = new Date().toISOString();
-	const current = file.instances[idx];
-	const lspChildren = patch.childUsage
-		? current.lspChildren.map((child) => {
-				const usage = patch.childUsage?.[child.pid];
-				if (!usage) return child;
-				return {
-					...child,
-					rssBytes: usage.rssBytes ?? child.rssBytes,
-					cpuPercent: usage.cpuPercent ?? child.cpuPercent,
-				};
-			})
-		: current.lspChildren;
-	file.instances[idx] = {
-		...current,
-		rssBytes: patch.rssBytes ?? process.memoryUsage().rss,
-		cpuPercent: patch.cpuPercent ?? current.cpuPercent,
-		lspChildren,
-		lspChildCount: lspChildren.length,
-		heartbeatAt: now,
-	};
-	await writeRegistryAsync(file);
+  if (!isInstanceRegistryEnabled()) return;
+  const pid = process.pid;
+  const file = await readRegistryAsync();
+  const idx = file.instances.findIndex((entry) => entry.pid === pid);
+  if (idx === -1) {
+    // No prior registerInstance in this run (e.g. registry file was reaped
+    // out from under us, or heartbeat fired before session_start finished) —
+    // nothing to update against; skip rather than fabricate a projectRoot.
+    return;
+  }
+  const now = new Date().toISOString();
+  const current = file.instances[idx];
+  const lspChildren = patch.childUsage
+    ? current.lspChildren.map((child) => {
+        const usage = patch.childUsage?.[child.pid];
+        if (!usage) return child;
+        return {
+          ...child,
+          rssBytes: usage.rssBytes ?? child.rssBytes,
+          cpuPercent: usage.cpuPercent ?? child.cpuPercent,
+        };
+      })
+    : current.lspChildren;
+  file.instances[idx] = {
+    ...current,
+    rssBytes: patch.rssBytes ?? process.memoryUsage().rss,
+    cpuPercent: patch.cpuPercent ?? current.cpuPercent,
+    lspChildren,
+    lspChildCount: lspChildren.length,
+    heartbeatAt: now,
+  };
+  await writeRegistryAsync(file);
 }
 
 export interface RecordLspChildInput {
-	pid: number;
-	serverId: string;
-	command: string;
-	marker?: string;
+  pid: number;
+  serverId: string;
+  command: string;
+  marker?: string;
 }
 
 // Every mutation below (`recordLspChild`, `removeLspChild`) reads the WHOLE
@@ -319,54 +316,52 @@ export interface RecordLspChildInput {
 let registryChildMutationTail: Promise<void> = Promise.resolve();
 
 function queueRegistryChildMutation(op: () => Promise<void>): Promise<void> {
-	const run = registryChildMutationTail.then(op);
-	registryChildMutationTail = run.catch(() => {});
-	return run;
+  const run = registryChildMutationTail.then(op);
+  registryChildMutationTail = run.catch(() => {});
+  return run;
 }
 
 /** Append/replace (by pid) an LSP child under this process's entry. */
 export function recordLspChild(entry: RecordLspChildInput): Promise<void> {
-	return queueRegistryChildMutation(() => recordLspChildNow(entry));
+  return queueRegistryChildMutation(() => recordLspChildNow(entry));
 }
 
 async function recordLspChildNow(entry: RecordLspChildInput): Promise<void> {
-	if (!isInstanceRegistryEnabled()) return;
-	const pid = process.pid;
-	const file = await readRegistryAsync();
-	const idx = file.instances.findIndex((inst) => inst.pid === pid);
-	const now = new Date().toISOString();
-	const childEntry: LspChildEntry = {
-		pid: entry.pid,
-		serverId: entry.serverId,
-		command: entry.command,
-		marker: entry.marker,
-		spawnedAt: now,
-	};
-	if (idx === -1) {
-		// registerInstance hasn't run yet in this process (or was reaped) —
-		// synthesize a minimal entry so the child is still tracked.
-		file.instances.push({
-			pid,
-			startedAt: now,
-			projectRoot: normalizeFilePath(process.cwd()),
-			lspChildren: [childEntry],
-			lspChildCount: 1,
-			rssBytes: process.memoryUsage().rss,
-			heartbeatAt: now,
-		});
-	} else {
-		const current = file.instances[idx];
-		const filtered = current.lspChildren.filter(
-			(child) => child.pid !== entry.pid,
-		);
-		filtered.push(childEntry);
-		file.instances[idx] = {
-			...current,
-			lspChildren: filtered,
-			lspChildCount: filtered.length,
-		};
-	}
-	await writeRegistryAsync(file);
+  if (!isInstanceRegistryEnabled()) return;
+  const pid = process.pid;
+  const file = await readRegistryAsync();
+  const idx = file.instances.findIndex((inst) => inst.pid === pid);
+  const now = new Date().toISOString();
+  const childEntry: LspChildEntry = {
+    pid: entry.pid,
+    serverId: entry.serverId,
+    command: entry.command,
+    marker: entry.marker,
+    spawnedAt: now,
+  };
+  if (idx === -1) {
+    // registerInstance hasn't run yet in this process (or was reaped) —
+    // synthesize a minimal entry so the child is still tracked.
+    file.instances.push({
+      pid,
+      startedAt: now,
+      projectRoot: normalizeFilePath(process.cwd()),
+      lspChildren: [childEntry],
+      lspChildCount: 1,
+      rssBytes: process.memoryUsage().rss,
+      heartbeatAt: now,
+    });
+  } else {
+    const current = file.instances[idx];
+    const filtered = current.lspChildren.filter((child) => child.pid !== entry.pid);
+    filtered.push(childEntry);
+    file.instances[idx] = {
+      ...current,
+      lspChildren: filtered,
+      lspChildCount: filtered.length,
+    };
+  }
+  await writeRegistryAsync(file);
 }
 
 /**
@@ -382,39 +377,31 @@ async function recordLspChildNow(entry: RecordLspChildInput): Promise<void> {
  * this call fires synchronously off THIS process's own just-confirmed exit
  * of that exact pid, well inside the OS's pid-reuse latency.
  */
-export function removeLspChild(
-	pid: number,
-	expectedMarker?: string,
-): Promise<void> {
-	return queueRegistryChildMutation(() =>
-		removeLspChildNow(pid, expectedMarker),
-	);
+export function removeLspChild(pid: number, expectedMarker?: string): Promise<void> {
+  return queueRegistryChildMutation(() => removeLspChildNow(pid, expectedMarker));
 }
 
-async function removeLspChildNow(
-	pid: number,
-	expectedMarker?: string,
-): Promise<void> {
-	if (!isInstanceRegistryEnabled()) return;
-	const selfPid = process.pid;
-	const file = await readRegistryAsync();
-	const idx = file.instances.findIndex((inst) => inst.pid === selfPid);
-	if (idx === -1) return;
-	const current = file.instances[idx];
-	const filtered = current.lspChildren.filter((child) => {
-		if (child.pid !== pid) return true; // keep — different pid
-		if (expectedMarker && child.marker && child.marker !== expectedMarker) {
-			return true; // keep — pid recycled onto a differently-marked child
-		}
-		return false; // drop — this is the child we're deregistering
-	});
-	if (filtered.length === current.lspChildren.length) return; // nothing removed
-	file.instances[idx] = {
-		...current,
-		lspChildren: filtered,
-		lspChildCount: filtered.length,
-	};
-	await writeRegistryAsync(file);
+async function removeLspChildNow(pid: number, expectedMarker?: string): Promise<void> {
+  if (!isInstanceRegistryEnabled()) return;
+  const selfPid = process.pid;
+  const file = await readRegistryAsync();
+  const idx = file.instances.findIndex((inst) => inst.pid === selfPid);
+  if (idx === -1) return;
+  const current = file.instances[idx];
+  const filtered = current.lspChildren.filter((child) => {
+    if (child.pid !== pid) return true; // keep — different pid
+    if (expectedMarker && child.marker && child.marker !== expectedMarker) {
+      return true; // keep — pid recycled onto a differently-marked child
+    }
+    return false; // drop — this is the child we're deregistering
+  });
+  if (filtered.length === current.lspChildren.length) return; // nothing removed
+  file.instances[idx] = {
+    ...current,
+    lspChildren: filtered,
+    lspChildCount: filtered.length,
+  };
+  await writeRegistryAsync(file);
 }
 
 /**
@@ -423,37 +410,37 @@ async function removeLspChildNow(
  * function spawns nothing).
  */
 export function deregisterInstance(): void {
-	if (!isInstanceRegistryEnabled()) return;
-	const pid = process.pid;
-	const file = readRegistrySync();
-	const remaining = file.instances.filter((entry) => entry.pid !== pid);
-	if (remaining.length === file.instances.length) return; // nothing to remove
-	writeRegistrySync({ instances: remaining });
+  if (!isInstanceRegistryEnabled()) return;
+  const pid = process.pid;
+  const file = readRegistrySync();
+  const remaining = file.instances.filter((entry) => entry.pid !== pid);
+  if (remaining.length === file.instances.length) return; // nothing to remove
+  writeRegistrySync({ instances: remaining });
 }
 
 // --- Resource footprint aggregation (#620) ----------------------------------
 
 export interface InstanceFootprint {
-	pid: number;
-	projectRoot: string;
-	rssBytes: number;
-	cpuPercent: number;
-	lspChildCount: number;
-	lspChildRssBytes: number;
-	lspChildCpuPercent: number;
+  pid: number;
+  projectRoot: string;
+  rssBytes: number;
+  cpuPercent: number;
+  lspChildCount: number;
+  lspChildRssBytes: number;
+  lspChildCpuPercent: number;
 }
 
 export interface ResourceFootprint {
-	instanceCount: number;
-	totalRssBytes: number;
-	/** Sum of every sampled CPU%, host + every LSP child, across every
-	 *  registered instance. This is a SUM, not an average — on a multi-core
-	 *  box it can exceed 100 even for a single busy process (matches
-	 *  `pidusage`'s per-process convention), so read it as "how much CPU is
-	 *  attributable to choco-pi-lsp", not "% of one core". */
-	totalCpuPercent: number;
-	totalLspChildCount: number;
-	perInstance: InstanceFootprint[];
+  instanceCount: number;
+  totalRssBytes: number;
+  /** Sum of every sampled CPU%, host + every LSP child, across every
+   *  registered instance. This is a SUM, not an average — on a multi-core
+   *  box it can exceed 100 even for a single busy process (matches
+   *  `pidusage`'s per-process convention), so read it as "how much CPU is
+   *  attributable to choco-pi-lsp", not "% of one core". */
+  totalCpuPercent: number;
+  totalLspChildCount: number;
+  perInstance: InstanceFootprint[];
 }
 
 /**
@@ -491,48 +478,48 @@ export interface ResourceFootprint {
  * so plain liveness is judged sufficient here.
  */
 export function computeResourceFootprint(
-	instances: InstanceEntry[],
-	isPidAlive?: (pid: number) => boolean,
+  instances: InstanceEntry[],
+  isPidAlive?: (pid: number) => boolean,
 ): ResourceFootprint {
-	const liveInstances = isPidAlive
-		? instances.filter((instance) => isPidAlive(instance.pid))
-		: instances;
-	const perInstance: InstanceFootprint[] = liveInstances.map((instance) => {
-		const lspChildRssBytes = instance.lspChildren.reduce(
-			(sum, child) => sum + (child.rssBytes ?? 0),
-			0,
-		);
-		const lspChildCpuPercent = instance.lspChildren.reduce(
-			(sum, child) => sum + (child.cpuPercent ?? 0),
-			0,
-		);
-		return {
-			pid: instance.pid,
-			projectRoot: instance.projectRoot,
-			rssBytes: instance.rssBytes ?? 0,
-			cpuPercent: instance.cpuPercent ?? 0,
-			lspChildCount: instance.lspChildren.length,
-			lspChildRssBytes,
-			lspChildCpuPercent,
-		};
-	});
+  const liveInstances = isPidAlive
+    ? instances.filter((instance) => isPidAlive(instance.pid))
+    : instances;
+  const perInstance: InstanceFootprint[] = liveInstances.map((instance) => {
+    const lspChildRssBytes = instance.lspChildren.reduce(
+      (sum, child) => sum + (child.rssBytes ?? 0),
+      0,
+    );
+    const lspChildCpuPercent = instance.lspChildren.reduce(
+      (sum, child) => sum + (child.cpuPercent ?? 0),
+      0,
+    );
+    return {
+      pid: instance.pid,
+      projectRoot: instance.projectRoot,
+      rssBytes: instance.rssBytes ?? 0,
+      cpuPercent: instance.cpuPercent ?? 0,
+      lspChildCount: instance.lspChildren.length,
+      lspChildRssBytes,
+      lspChildCpuPercent,
+    };
+  });
 
-	let totalRssBytes = 0;
-	let totalCpuPercent = 0;
-	let totalLspChildCount = 0;
-	for (const inst of perInstance) {
-		totalRssBytes += inst.rssBytes + inst.lspChildRssBytes;
-		totalCpuPercent += inst.cpuPercent + inst.lspChildCpuPercent;
-		totalLspChildCount += inst.lspChildCount;
-	}
+  let totalRssBytes = 0;
+  let totalCpuPercent = 0;
+  let totalLspChildCount = 0;
+  for (const inst of perInstance) {
+    totalRssBytes += inst.rssBytes + inst.lspChildRssBytes;
+    totalCpuPercent += inst.cpuPercent + inst.lspChildCpuPercent;
+    totalLspChildCount += inst.lspChildCount;
+  }
 
-	return {
-		instanceCount: perInstance.length,
-		totalRssBytes,
-		totalCpuPercent,
-		totalLspChildCount,
-		perInstance,
-	};
+  return {
+    instanceCount: perInstance.length,
+    totalRssBytes,
+    totalCpuPercent,
+    totalLspChildCount,
+    perInstance,
+  };
 }
 
 /**
@@ -554,22 +541,22 @@ export function computeResourceFootprint(
  * state.
  */
 export async function getResourceFootprint(
-	isPidAlive: (pid: number) => boolean = realIsPidAlive,
+  isPidAlive: (pid: number) => boolean = realIsPidAlive,
 ): Promise<ResourceFootprint> {
-	const instances = await readInstanceRegistry();
-	const deadPids = new Set(
-		instances.filter((instance) => !isPidAlive(instance.pid)).map((instance) => instance.pid),
-	);
-	if (deadPids.size > 0) {
-		// Fire-and-forget: a health-report read must never block on, or fail
-		// because of, a registry write.
-		prunePids(deadPids).catch(() => {
-			// best-effort — a dead-pid entry that fails to prune here is simply
-			// re-evaluated (and re-dropped from the report) on the next read, and
-			// remains catchable by the scheduled reaper sweep regardless.
-		});
-	}
-	return computeResourceFootprint(instances, isPidAlive);
+  const instances = await readInstanceRegistry();
+  const deadPids = new Set(
+    instances.filter((instance) => !isPidAlive(instance.pid)).map((instance) => instance.pid),
+  );
+  if (deadPids.size > 0) {
+    // Fire-and-forget: a health-report read must never block on, or fail
+    // because of, a registry write.
+    prunePids(deadPids).catch(() => {
+      // best-effort — a dead-pid entry that fails to prune here is simply
+      // re-evaluated (and re-dropped from the report) on the next read, and
+      // remains catchable by the scheduled reaper sweep regardless.
+    });
+  }
+  return computeResourceFootprint(instances, isPidAlive);
 }
 
 /** Best-effort removal of specific dead pids' entries from the on-disk
@@ -581,8 +568,8 @@ export async function getResourceFootprint(
  *  reaching back across the same import edge `realIsPidAlive` already
  *  crosses in the other direction. */
 async function prunePids(deadPids: Set<number>): Promise<void> {
-	const file = await readRegistryAsync();
-	const remaining = file.instances.filter((entry) => !deadPids.has(entry.pid));
-	if (remaining.length === file.instances.length) return;
-	await writeRegistryAsync({ instances: remaining });
+  const file = await readRegistryAsync();
+  const remaining = file.instances.filter((entry) => !deadPids.has(entry.pid));
+  if (remaining.length === file.instances.length) return;
+  await writeRegistryAsync({ instances: remaining });
 }

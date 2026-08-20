@@ -28,6 +28,6 @@ rule:
       kind: function_definition
       has:
         kind: type
-        regex: 'Iterable'
+        regex: "Iterable"
         stopBy: end
       stopBy: end

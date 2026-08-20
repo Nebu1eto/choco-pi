@@ -25,12 +25,12 @@ import type { InstanceEntry } from "./instance-registry.js";
 import { realIsPidAlive } from "./instance-reaper.js";
 
 export interface VanishedInstance {
-	pid: number;
-	/** `InstanceEntry.heartbeatAt` — the last heartbeat this process ever
-	 *  wrote before it stopped updating the registry. */
-	lastSeenAt: string;
-	/** `InstanceEntry.rssBytes` at that last heartbeat. */
-	rssBytes: number;
+  pid: number;
+  /** `InstanceEntry.heartbeatAt` — the last heartbeat this process ever
+   *  wrote before it stopped updating the registry. */
+  lastSeenAt: string;
+  /** `InstanceEntry.rssBytes` at that last heartbeat. */
+  rssBytes: number;
 }
 
 /**
@@ -42,16 +42,16 @@ export interface VanishedInstance {
  * — never flag a live-but-unverifiable instance as vanished.
  */
 export function detectVanishedInstances(
-	registry: InstanceEntry[],
-	isPidAlive: (pid: number) => boolean,
+  registry: InstanceEntry[],
+  isPidAlive: (pid: number) => boolean,
 ): VanishedInstance[] {
-	return registry
-		.filter((entry) => !isPidAlive(entry.pid))
-		.map((entry) => ({
-			pid: entry.pid,
-			lastSeenAt: entry.heartbeatAt,
-			rssBytes: entry.rssBytes ?? 0,
-		}));
+  return registry
+    .filter((entry) => !isPidAlive(entry.pid))
+    .map((entry) => ({
+      pid: entry.pid,
+      lastSeenAt: entry.heartbeatAt,
+      rssBytes: entry.rssBytes ?? 0,
+    }));
 }
 
 /**
@@ -60,18 +60,18 @@ export function detectVanishedInstances(
  * function never mutates or prunes the registry; that stays the reaper's job.
  */
 export function logVanishedInstances(
-	registry: InstanceEntry[],
-	isPidAlive: (pid: number) => boolean = realIsPidAlive,
+  registry: InstanceEntry[],
+  isPidAlive: (pid: number) => boolean = realIsPidAlive,
 ): void {
-	try {
-		const vanished = detectVanishedInstances(registry, isPidAlive);
-		for (const instance of vanished) {
-			const rssMb = Math.round(instance.rssBytes / (1024 * 1024));
-			logSessionStart(
-				`previous instance pid ${instance.pid} last seen ${instance.lastSeenAt} (RSS ${rssMb}MB) exited without shutdown`,
-			);
-		}
-	} catch {
-		// best-effort observability — never fail session_start over this
-	}
+  try {
+    const vanished = detectVanishedInstances(registry, isPidAlive);
+    for (const instance of vanished) {
+      const rssMb = Math.round(instance.rssBytes / (1024 * 1024));
+      logSessionStart(
+        `previous instance pid ${instance.pid} last seen ${instance.lastSeenAt} (RSS ${rssMb}MB) exited without shutdown`,
+      );
+    }
+  } catch {
+    // best-effort observability — never fail session_start over this
+  }
 }

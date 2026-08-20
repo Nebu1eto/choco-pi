@@ -13,9 +13,9 @@ message: "Wildcard import — pollutes namespace, hard to track origin"
 description: |
   'from module import *' makes it unclear where names come from
   and can cause name collisions. Explicit is better than implicit.
-  
+
   ✅ FIX: Import specific names or use module prefix
-  
+
   ```python
   from os import path, getenv  # GOOD - explicit
   import os  # GOOD - namespace preserved
@@ -40,7 +40,7 @@ examples:
   bad: |
     from os import *  # BAD - where does path come from?
     from numpy import *  # BAD - pollutes namespace
-  
+
   good: |
     from os import path, getenv  # GOOD - explicit
     import numpy as np  # GOOD - namespace preserved

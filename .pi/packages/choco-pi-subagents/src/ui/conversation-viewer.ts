@@ -6,13 +6,29 @@
  */
 
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { type Component, Input, matchesKey, type TUI, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import {
+  type Component,
+  Input,
+  matchesKey,
+  type TUI,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 import { renderAgentName } from "../agent-color.ts";
 import { extractText } from "../context.ts";
 import type { AgentRecord } from "../types.ts";
 import { getLifetimeTotal, getSessionContextPercent } from "../usage.ts";
 import type { Theme } from "./agent-widget.ts";
-import { type AgentActivity, buildInvocationTags, describeActivity, fgPreservingNestedStyles, formatDuration, formatSessionTokens, getPromptModeLabel } from "./agent-widget.ts";
+import {
+  type AgentActivity,
+  buildInvocationTags,
+  describeActivity,
+  fgPreservingNestedStyles,
+  formatDuration,
+  formatSessionTokens,
+  getPromptModeLabel,
+} from "./agent-widget.ts";
 import { createViewerKeys, type ViewerKeybindings, type ViewerKeys } from "./viewer-keys.ts";
 
 /** Base lines consumed by chrome: top border + header + header sep + footer sep + footer + bottom border. */
@@ -180,7 +196,11 @@ export class ConversationViewer implements Component {
       return s + " ".repeat(Math.max(0, len - vis));
     };
     const row = (content: string) =>
-      th.fg("border", "│") + " " + truncateToWidth(pad(content, innerW), innerW, "...", true) + " " + th.fg("border", "│");
+      th.fg("border", "│") +
+      " " +
+      truncateToWidth(pad(content, innerW), innerW, "...", true) +
+      " " +
+      th.fg("border", "│");
     const hrTop = th.fg("border", `╭${"─".repeat(width - 2)}╮`);
     const hrBot = th.fg("border", `╰${"─".repeat(width - 2)}╯`);
     const hrMid = row(th.fg("dim", "─".repeat(innerW)));
@@ -189,13 +209,14 @@ export class ConversationViewer implements Component {
     lines.push(hrTop);
     const modeLabel = getPromptModeLabel(this.record.type);
     const modeTag = modeLabel ? ` ${th.fg("dim", `(${modeLabel})`)}` : "";
-    const statusIcon = this.record.status === "running"
-      ? th.fg("accent", "●")
-      : this.record.status === "completed"
-        ? th.fg("success", "✓")
-        : this.record.status === "error"
-          ? th.fg("error", "✗")
-          : th.fg("dim", "○");
+    const statusIcon =
+      this.record.status === "running"
+        ? th.fg("accent", "●")
+        : this.record.status === "completed"
+          ? th.fg("success", "✓")
+          : this.record.status === "error"
+            ? th.fg("error", "✗")
+            : th.fg("dim", "○");
     const duration = formatDuration(this.record.startedAt, this.record.completedAt);
 
     const headerParts: string[] = [duration];
@@ -208,9 +229,11 @@ export class ConversationViewer implements Component {
     }
 
     const sideTag = this.record.sideConversation ? `${th.fg("accent", "[btw]")} ` : "";
-    lines.push(row(
-      `${statusIcon} ${sideTag}${renderAgentName(this.record.type, th, { bold: true })}${modeTag}  ${th.fg("muted", this.record.description)} ${th.fg("dim", "·")} ${fgPreservingNestedStyles(th, "dim", headerParts.join(" · "))}`,
-    ));
+    lines.push(
+      row(
+        `${statusIcon} ${sideTag}${renderAgentName(this.record.type, th, { bold: true })}${modeTag}  ${th.fg("muted", this.record.description)} ${th.fg("dim", "·")} ${fgPreservingNestedStyles(th, "dim", headerParts.join(" · "))}`,
+      ),
+    );
     const invocationLine = this.invocationLine();
     if (invocationLine) lines.push(row(invocationLine));
     lines.push(hrMid);
@@ -220,9 +243,10 @@ export class ConversationViewer implements Component {
     // Pi's main transcript already owns clipping, native scrolling and follow-
     // end behavior. In focus mode give it the whole subagent transcript instead
     // of imposing the modal's 70% viewport inside that scroll view.
-    const viewportHeight = this.profile === "focus"
-      ? Math.max(MIN_VIEWPORT, contentLines.length)
-      : this.viewportHeight();
+    const viewportHeight =
+      this.profile === "focus"
+        ? Math.max(MIN_VIEWPORT, contentLines.length)
+        : this.viewportHeight();
     const maxScroll = Math.max(0, contentLines.length - viewportHeight);
 
     if (this.autoScroll) {
@@ -243,7 +267,10 @@ export class ConversationViewer implements Component {
       lines.push(row(this.composer.render(innerW)[0] ?? ""));
       const composeHint = th.fg("dim", "Enter send · Esc cancel");
       const composeLeft = th.fg("accent", `✎ ${this.replyLabel}`);
-      const composeGap = Math.max(1, innerW - visibleWidth(composeLeft) - visibleWidth(composeHint));
+      const composeGap = Math.max(
+        1,
+        innerW - visibleWidth(composeLeft) - visibleWidth(composeHint),
+      );
       lines.push(row(composeLeft + " ".repeat(composeGap) + composeHint));
     } else {
       // Actions on the left, navigation on the right. The scroll hint keeps its
@@ -252,7 +279,12 @@ export class ConversationViewer implements Component {
       const sep = th.fg("dim", " · ");
       const actions: string[] = [];
       if (this.profile === "focus") {
-        actions.push(th.fg("dim", this.isAgentActive() ? "prompt steers this agent" : "conversation is read-only"));
+        actions.push(
+          th.fg(
+            "dim",
+            this.isAgentActive() ? "prompt steers this agent" : "conversation is read-only",
+          ),
+        );
       } else {
         if (this.canSteer()) actions.push(th.fg("dim", `Enter ${this.replyLabel}`));
         if (this.onFocus) actions.push(th.fg("dim", "f focus"));
@@ -260,20 +292,23 @@ export class ConversationViewer implements Component {
           actions.push(this.stopArmed ? th.fg("error", "x again to STOP") : th.fg("dim", "x stop"));
         }
       }
-      const footerRight = this.profile === "focus"
-        ? th.fg("dim", "Esc return to main")
-        : th.fg("dim", "↑↓ scroll · PgUp/PgDn or Shift+↑↓ · Esc close");
+      const footerRight =
+        this.profile === "focus"
+          ? th.fg("dim", "Esc return to main")
+          : th.fg("dim", "↑↓ scroll · PgUp/PgDn or Shift+↑↓ · Esc close");
 
       // Prepend the line-count/scroll-% readout only when there's spare width —
       // it's the first thing dropped so it never crowds out the hints.
-      const scrollPct = contentLines.length <= viewportHeight
-        ? "100%"
-        : `${Math.round(((visibleStart + viewportHeight) / contentLines.length) * 100)}%`;
+      const scrollPct =
+        contentLines.length <= viewportHeight
+          ? "100%"
+          : `${Math.round(((visibleStart + viewportHeight) / contentLines.length) * 100)}%`;
       const count = th.fg("dim", `${contentLines.length} lines · ${scrollPct}`);
       const withCount = [count, ...actions].join(sep);
-      const footerLeft = visibleWidth(withCount) + visibleWidth(footerRight) + 1 <= innerW
-        ? withCount
-        : actions.join(sep);
+      const footerLeft =
+        visibleWidth(withCount) + visibleWidth(footerRight) + 1 <= innerW
+          ? withCount
+          : actions.join(sep);
 
       const footerGap = Math.max(1, innerW - visibleWidth(footerLeft) - visibleWidth(footerRight));
       lines.push(row(footerLeft + " ".repeat(footerGap) + footerRight));
@@ -318,7 +353,9 @@ export class ConversationViewer implements Component {
     this.tui.requestRender();
   }
 
-  invalidate(): void { /* no cached state to clear */ }
+  invalidate(): void {
+    /* no cached state to clear */
+  }
 
   dispose(): void {
     this.closed = true;
@@ -364,9 +401,7 @@ export class ConversationViewer implements Component {
     let needsSeparator = false;
     for (const msg of messages) {
       if (msg.role === "user") {
-        const text = typeof msg.content === "string"
-          ? msg.content
-          : extractText(msg.content);
+        const text = typeof msg.content === "string" ? msg.content : extractText(msg.content);
         if (!text.trim()) continue;
         if (needsSeparator) lines.push(th.fg("dim", "───"));
         lines.push(th.fg("accent", "[User]"));
@@ -406,9 +441,8 @@ export class ConversationViewer implements Component {
         if (needsSeparator) lines.push(th.fg("dim", "───"));
         lines.push(truncateToWidth(th.fg("muted", `  $ ${bash.command}`), width));
         if (bash.output?.trim()) {
-          const out = bash.output.length > 500
-            ? bash.output.slice(0, 500) + "... (truncated)"
-            : bash.output;
+          const out =
+            bash.output.length > 500 ? bash.output.slice(0, 500) + "... (truncated)" : bash.output;
           for (const line of wrapTextWithAnsi(out.trim(), width)) {
             lines.push(th.fg("dim", line));
           }
@@ -426,6 +460,6 @@ export class ConversationViewer implements Component {
       lines.push(truncateToWidth(th.fg("accent", "▍ ") + th.fg("dim", act), width));
     }
 
-    return lines.map(l => truncateToWidth(l, width));
+    return lines.map((l) => truncateToWidth(l, width));
   }
 }

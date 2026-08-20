@@ -98,10 +98,10 @@ When Pi has fully settled and will not continue automatically, the default-on **
 
 Spinner glyph motion is always active. Classic and KITT move color across the message and segments by default; **Animate spinner color** optionally includes spinner cells and their separator in that sweep. Static colors the complete row uniformly and ignores text speed and spinner-color participation without changing their saved values. Content fits the 77-cell indicator payload while reserving the complete Tokens label first, then Message, Thought, Elapsed, and Tool allocation, and preserves the visual **Message · Tool · Elapsed · Thought · Tokens** order and complete 80-column Loader-row contract. Active thought appears immediately as `thinking 0s` and updates once per second; completed positive thought appears as `thought for Ns`. Rebuilds preserve the displayed spinner and visible color-sweep position. Pi's working-row APIs are global and unkeyed, so another extension may win by writing last.
 
-| Setting | Default | Presets | Applies to |
-| --- | ---: | --- | --- |
-| `spinnerIntervalMs` | 100 ms | Fast 60 / Normal 100 / Slow 160 / Custom | Spinner glyph motion |
-| `textIntervalMs` | 60 ms | Fast 40 / Normal 60 / Slow 100 / Custom | Classic/KITT color motion |
+| Setting             | Default | Presets                                  | Applies to                |
+| ------------------- | ------: | ---------------------------------------- | ------------------------- |
+| `spinnerIntervalMs` |  100 ms | Fast 60 / Normal 100 / Slow 160 / Custom | Spinner glyph motion      |
+| `textIntervalMs`    |   60 ms | Fast 40 / Normal 60 / Slow 100 / Custom  | Classic/KITT color motion |
 
 Both speeds accept safe integers from `30` through `1000` ms. Static ignores text speed without changing it. Classic/KITT combine both cadences through one Pi Loader interval; exact cycles are used within the 1024-frame/512-KiB limits. Pathological custom pairs use a bounded evenly distributed schedule: cycle totals round by at most half a spinner glyph cycle and half a text step, spinner wrap remains continuous, and text phase may reset once per bounded fallback array cycle. Legacy `intervalMs` is accepted only as migration input for `spinnerIntervalMs` when the canonical field is absent.
 
@@ -247,193 +247,205 @@ Default config values — copy this and change any value you want:
 
 ```json
 {
-	"projectRefreshIntervalMs": 30000,
-	"components": {
-		"editor": {
-			"enabled": true,
-			"style": "opencode",
-			"colorSource": "theme",
-			"borderColorMode": "static",
-			"modelLabel": "id",
-			"viewportIndicators": true,
-			"styles": {
-				"opencode": {
-					"metadataFormat": "$model  $provider(  $thinking)"
-				},
-				"opencode-copy-friendly": {
-					"metadataFormat": "$model  $provider(  $thinking)"
-				},
-				"minimalist": {
-					"pathDisplay": "compact",
-					"contextFormat": "percent",
-					"contextGauge": false,
-					"showSessionName": true,
-					"showTimer": true,
-					"showCost": true,
-					"showGit": true,
-					"contextThresholds": {
-						"warning": 70,
-						"error": 90
-					}
-				}
-			}
-		},
-		"userMessages": {
-			"enabled": true,
-			"style": "framed",
-			"colorSource": "theme",
-			"styles": {
-				"framed": {},
-				"framed-copy-friendly": {},
-				"compact": {},
-				"labeled": {}
-			}
-		},
-		"workingLine": {
-			"enabled": false,
-			"turnSummary": true,
-			"spinner": "star-bloom",
-			"spinnerIntervalMs": 100,
-			"animateSpinnerColor": false,
-			"textIntervalMs": 60,
-			"textAnimation": "classic",
-			"colorSource": "theme",
-			"messages": {
-				"custom": true,
-				"values": [
-					"Sautéing…", "Cooking…", "Ionizing…", "Zigzagging…",
-					"Razzle-dazzling…", "Photosynthesizing…", "Nucleating…", "Brewing…",
-					"Combobulating…", "Boogieing…", "Befuddling…", "Alchemizing…",
-					"Conjuring…", "Baking…", "Simmering…", "Blanching…"
-				]
-			},
-			"segments": {
-				"tool": true,
-				"elapsed": true,
-				"thought": true,
-				"tokens": true
-			}
-		},
-		"selectorBorders": {
-			"enabled": true,
-			"style": "zentui",
-			"colorSource": "theme"
-		},
-		"footer": {
-			"style": "starship",
-			"colorSource": "theme",
-			"modelLabel": "id",
-			"styles": {
-				"starship": {
-					"format": "",
-					"responsive": true,
-					"compactFormat": "$cwd$wrap(in $session_name)$wrap(on $git_branch) $git_status$wrap$context$wrap_sep$tokens",
-					"compactMaxLines": 2,
-					"separator": "pipe",
-					"contextStyle": "text",
-					"contextThresholds": {
-						"warning": 70,
-						"error": 90
-					},
-					"pathDisplay": {
-						"mode": "basename",
-						"depth": 0
-					},
-					"segments": {
-						"cwd": true,
-						"sessionName": true,
-						"gitBranch": true,
-						"gitStatus": true,
-						"gitCounts": false,
-						"runtime": true,
-						"modelInfo": false,
-						"context": true,
-						"tokens": true,
-						"cost": true,
-						"sessionDuration": false,
-						"username": false,
-						"time": false,
-						"os": false,
-						"packageVersion": false,
-						"gitCommit": false,
-						"gitMetrics": false
-					},
-					"gitBranch": {
-						"maxLength": "full"
-					},
-					"gitCommit": {
-						"hashLength": 7,
-						"onlyDetached": true,
-						"showTag": true
-					},
-					"gitMetrics": {
-						"onlyNonzero": true,
-						"ignoreSubmodules": false
-					},
-					"extensionStatuses": {
-						"defaultPlacement": "right",
-						"placements": {},
-						"colorModes": {}
-					}
-				}
-			}
-		}
-	},
-	"icons": {
-		"mode": "auto",
-		"cwd": "",
-		"git": "",
-		"ahead": "↑",
-		"behind": "↓",
-		"diverged": "⇕",
-		"conflicted": "=",
-		"untracked": "?",
-		"stashed": "$",
-		"modified": "!",
-		"staged": "+",
-		"renamed": "»",
-		"deleted": "✘",
-		"typechanged": "T",
-		"cacheHit": "󰆼",
-		"editorPrompt": "",
-		"rail": "│",
-		"username": "",
-		"time": "",
-		"os": ""
-	},
-	"colors": {
-		"cwd": "bold cyan",
-		"sessionName": "bold green",
-		"gitBranch": "bold purple",
-		"gitStatus": "bold red",
-		"contextNormal": "bright-black",
-		"contextWarning": "bold yellow",
-		"contextError": "bold red",
-		"tokens": "bright-black",
-		"cost": "bold green",
-		"extensionStatus": "bright-black",
-		"separator": "bright-black",
-		"runtimePrefix": "",
-		"sessionDuration": "yellow",
-		"packageVersion": "208",
-		"gitCommit": "bold green",
-		"gitMetricsAdded": "bold green",
-		"gitMetricsDeleted": "bold red",
-		"username": "bold yellow",
-		"time": "bold yellow",
-		"os": "bold white",
-		"editorAccent": "accent",
-		"editorPrompt": "accent",
-		"editorBorder": "borderMuted",
-		"editorModel": "accent",
-		"editorProvider": "text",
-		"editorThinking": "muted",
-		"editorThinkingMinimal": "thinkingMinimal",
-		"editorThinkingLow": "thinkingLow",
-		"editorThinkingMedium": "thinkingMedium",
-		"editorThinkingHigh": "thinkingHigh",
-		"editorThinkingXhigh": "thinkingXhigh"
-	}
+  "projectRefreshIntervalMs": 30000,
+  "components": {
+    "editor": {
+      "enabled": true,
+      "style": "opencode",
+      "colorSource": "theme",
+      "borderColorMode": "static",
+      "modelLabel": "id",
+      "viewportIndicators": true,
+      "styles": {
+        "opencode": {
+          "metadataFormat": "$model  $provider(  $thinking)"
+        },
+        "opencode-copy-friendly": {
+          "metadataFormat": "$model  $provider(  $thinking)"
+        },
+        "minimalist": {
+          "pathDisplay": "compact",
+          "contextFormat": "percent",
+          "contextGauge": false,
+          "showSessionName": true,
+          "showTimer": true,
+          "showCost": true,
+          "showGit": true,
+          "contextThresholds": {
+            "warning": 70,
+            "error": 90
+          }
+        }
+      }
+    },
+    "userMessages": {
+      "enabled": true,
+      "style": "framed",
+      "colorSource": "theme",
+      "styles": {
+        "framed": {},
+        "framed-copy-friendly": {},
+        "compact": {},
+        "labeled": {}
+      }
+    },
+    "workingLine": {
+      "enabled": false,
+      "turnSummary": true,
+      "spinner": "star-bloom",
+      "spinnerIntervalMs": 100,
+      "animateSpinnerColor": false,
+      "textIntervalMs": 60,
+      "textAnimation": "classic",
+      "colorSource": "theme",
+      "messages": {
+        "custom": true,
+        "values": [
+          "Sautéing…",
+          "Cooking…",
+          "Ionizing…",
+          "Zigzagging…",
+          "Razzle-dazzling…",
+          "Photosynthesizing…",
+          "Nucleating…",
+          "Brewing…",
+          "Combobulating…",
+          "Boogieing…",
+          "Befuddling…",
+          "Alchemizing…",
+          "Conjuring…",
+          "Baking…",
+          "Simmering…",
+          "Blanching…"
+        ]
+      },
+      "segments": {
+        "tool": true,
+        "elapsed": true,
+        "thought": true,
+        "tokens": true
+      }
+    },
+    "selectorBorders": {
+      "enabled": true,
+      "style": "zentui",
+      "colorSource": "theme"
+    },
+    "footer": {
+      "style": "starship",
+      "colorSource": "theme",
+      "modelLabel": "id",
+      "styles": {
+        "starship": {
+          "format": "",
+          "responsive": true,
+          "compactFormat": "$cwd$wrap(in $session_name)$wrap(on $git_branch) $git_status$wrap$context$wrap_sep$tokens",
+          "compactMaxLines": 2,
+          "separator": "pipe",
+          "contextStyle": "text",
+          "contextThresholds": {
+            "warning": 70,
+            "error": 90
+          },
+          "pathDisplay": {
+            "mode": "basename",
+            "depth": 0
+          },
+          "segments": {
+            "cwd": true,
+            "sessionName": true,
+            "gitBranch": true,
+            "gitStatus": true,
+            "gitCounts": false,
+            "runtime": true,
+            "modelInfo": false,
+            "context": true,
+            "tokens": true,
+            "cost": true,
+            "sessionDuration": false,
+            "username": false,
+            "time": false,
+            "os": false,
+            "packageVersion": false,
+            "gitCommit": false,
+            "gitMetrics": false
+          },
+          "gitBranch": {
+            "maxLength": "full"
+          },
+          "gitCommit": {
+            "hashLength": 7,
+            "onlyDetached": true,
+            "showTag": true
+          },
+          "gitMetrics": {
+            "onlyNonzero": true,
+            "ignoreSubmodules": false
+          },
+          "extensionStatuses": {
+            "defaultPlacement": "right",
+            "placements": {},
+            "colorModes": {}
+          }
+        }
+      }
+    }
+  },
+  "icons": {
+    "mode": "auto",
+    "cwd": "",
+    "git": "",
+    "ahead": "↑",
+    "behind": "↓",
+    "diverged": "⇕",
+    "conflicted": "=",
+    "untracked": "?",
+    "stashed": "$",
+    "modified": "!",
+    "staged": "+",
+    "renamed": "»",
+    "deleted": "✘",
+    "typechanged": "T",
+    "cacheHit": "󰆼",
+    "editorPrompt": "",
+    "rail": "│",
+    "username": "",
+    "time": "",
+    "os": ""
+  },
+  "colors": {
+    "cwd": "bold cyan",
+    "sessionName": "bold green",
+    "gitBranch": "bold purple",
+    "gitStatus": "bold red",
+    "contextNormal": "bright-black",
+    "contextWarning": "bold yellow",
+    "contextError": "bold red",
+    "tokens": "bright-black",
+    "cost": "bold green",
+    "extensionStatus": "bright-black",
+    "separator": "bright-black",
+    "runtimePrefix": "",
+    "sessionDuration": "yellow",
+    "packageVersion": "208",
+    "gitCommit": "bold green",
+    "gitMetricsAdded": "bold green",
+    "gitMetricsDeleted": "bold red",
+    "username": "bold yellow",
+    "time": "bold yellow",
+    "os": "bold white",
+    "editorAccent": "accent",
+    "editorPrompt": "accent",
+    "editorBorder": "borderMuted",
+    "editorModel": "accent",
+    "editorProvider": "text",
+    "editorThinking": "muted",
+    "editorThinkingMinimal": "thinkingMinimal",
+    "editorThinkingLow": "thinkingLow",
+    "editorThinkingMedium": "thinkingMedium",
+    "editorThinkingHigh": "thinkingHigh",
+    "editorThinkingXhigh": "thinkingXhigh"
+  }
 }
 ```
 
@@ -475,31 +487,31 @@ Set `metadataFormat` under either opencode style in `~/.pi/agent/choco-pi-ui.jso
 
 ```json
 {
-	"components": {
-		"editor": {
-			"styles": {
-				"opencode": {
-					"metadataFormat": "$model_name ($model_id)( · $provider)( · $thinking)( · $session_name)"
-				},
-				"opencode-copy-friendly": {
-					"metadataFormat": "$model( · $provider)"
-				}
-			}
-		}
-	}
+  "components": {
+    "editor": {
+      "styles": {
+        "opencode": {
+          "metadataFormat": "$model_name ($model_id)( · $provider)( · $thinking)( · $session_name)"
+        },
+        "opencode-copy-friendly": {
+          "metadataFormat": "$model( · $provider)"
+        }
+      }
+    }
+  }
 }
 ```
 
 The syntax follows the Footer Format Template conventions: `$variable` and `${variable}` references, literal text and spaces, and conditional groups `( ... )` that disappear when all variables inside are empty. Unknown variables and `$fill` render empty; `$fill` never creates an editor layout zone because the right side remains reserved for structural Vim status.
 
-| Token           | Renders                                                                                       |
-| --------------- | --------------------------------------------------------------------------------------------- |
-| `$model`        | label selected by `components.editor.modelLabel` (`id`, or name with ID fallback)            |
-| `$model_id`     | active Pi model ID                                                                            |
-| `$model_name`   | active Pi model display name; empty when no name is set                                       |
-| `$provider`     | provider label using choco-ui's existing formatting                                             |
-| `$thinking`     | current thinking level; empty when thinking is `off`                                          |
-| `$session_name` | current Pi session name; empty when unnamed                                                    |
+| Token           | Renders                                                                           |
+| --------------- | --------------------------------------------------------------------------------- |
+| `$model`        | label selected by `components.editor.modelLabel` (`id`, or name with ID fallback) |
+| `$model_id`     | active Pi model ID                                                                |
+| `$model_name`   | active Pi model display name; empty when no name is set                           |
+| `$provider`     | provider label using choco-ui's existing formatting                               |
+| `$thinking`     | current thinking level; empty when thinking is `off`                              |
+| `$session_name` | current Pi session name; empty when unnamed                                       |
 
 Model variables use `editorModel`, provider uses `editorProvider`, and thinking uses the matching `editorThinking*` style. Literal text and `$session_name` use the neutral editor border theme style. The template controls spacing. ANSI/VT sequences, control characters, and line-breaking whitespace are sanitized before rendering without collapsing ordinary spaces.
 
@@ -513,15 +525,15 @@ A second `$fill` creates a **centered middle zone** — content between the two 
 
 ```json
 {
-	"components": {
-		"footer": {
-			"styles": {
-				"starship": {
-					"format": "$os $username $cwd($sep$session_name)( on $git_branch)( $git_status)( via $runtime)$fill($context)($sep$tokens)($sep$cost)($sep$time)"
-				}
-			}
-		}
-	}
+  "components": {
+    "footer": {
+      "styles": {
+        "starship": {
+          "format": "$os $username $cwd($sep$session_name)( on $git_branch)( $git_status)( via $runtime)$fill($context)($sep$tokens)($sep$cost)($sep$time)"
+        }
+      }
+    }
+  }
 }
 ```
 
@@ -529,15 +541,15 @@ Center the branch between directory and cost:
 
 ```json
 {
-	"components": {
-		"footer": {
-			"styles": {
-				"starship": {
-					"format": "$cwd $fill $git_branch $fill $cost"
-				}
-			}
-		}
-	}
+  "components": {
+    "footer": {
+      "styles": {
+        "starship": {
+          "format": "$cwd $fill $git_branch $fill $cost"
+        }
+      }
+    }
+  }
 }
 ```
 
@@ -545,36 +557,36 @@ The released flat `footerFormat` and `footerSegments` keys remain accepted only 
 
 ### Variables
 
-| Token               | Aliases      | Renders                                                             |
-| ------------------- | ------------ | ------------------------------------------------------------------- |
-| `$cwd`              | `$directory` | current directory                                                   |
-| `$session_name`     |              | current Pi session name                                             |
-| `$git_branch`       | `$branch`    | git branch with icon                                                |
-| `$git_status`       | `$status`    | `[!?↑]` status block                                                |
-| `$git_state`        | `$state`     | `REBASING` / `MERGING` / … (optional `n/m`)                         |
-| `$git_commit`       | `$commit`    | short commit hash (+ exact-match tag when present)                  |
-| `$git_tag`          | `$tag`       | exact-match tag at HEAD                                             |
-| `$git_metrics`      |              | aggregate line changes `+added −deleted`                            |
-| `$git_added`        |              | added line count (`+N`)                                             |
-| `$git_deleted`      |              | deleted line count (`−N`)                                           |
-| `$runtime`          |              | runtime icon + version                                              |
-| `$model`            |              | selected model label (`components.footer.modelLabel`)                |
-| `$provider`         |              | formatted provider label                                            |
-| `$package`          |              | project package version, `is <glyph> <version>` (manifest-derived)  |
-| `$package_version`  |              | raw project package version (no icon)                               |
-| `$session_duration` | `$duration`  | session running time                                                |
-| `$username`         |              | `user@host`                                                         |
-| `$os`               |              | operating-system icon                                               |
-| `$time`             |              | current time `HH:MM`                                                |
+| Token               | Aliases      | Renders                                                               |
+| ------------------- | ------------ | --------------------------------------------------------------------- |
+| `$cwd`              | `$directory` | current directory                                                     |
+| `$session_name`     |              | current Pi session name                                               |
+| `$git_branch`       | `$branch`    | git branch with icon                                                  |
+| `$git_status`       | `$status`    | `[!?↑]` status block                                                  |
+| `$git_state`        | `$state`     | `REBASING` / `MERGING` / … (optional `n/m`)                           |
+| `$git_commit`       | `$commit`    | short commit hash (+ exact-match tag when present)                    |
+| `$git_tag`          | `$tag`       | exact-match tag at HEAD                                               |
+| `$git_metrics`      |              | aggregate line changes `+added −deleted`                              |
+| `$git_added`        |              | added line count (`+N`)                                               |
+| `$git_deleted`      |              | deleted line count (`−N`)                                             |
+| `$runtime`          |              | runtime icon + version                                                |
+| `$model`            |              | selected model label (`components.footer.modelLabel`)                 |
+| `$provider`         |              | formatted provider label                                              |
+| `$package`          |              | project package version, `is <glyph> <version>` (manifest-derived)    |
+| `$package_version`  |              | raw project package version (no icon)                                 |
+| `$session_duration` | `$duration`  | session running time                                                  |
+| `$username`         |              | `user@host`                                                           |
+| `$os`               |              | operating-system icon                                                 |
+| `$time`             |              | current time `HH:MM`                                                  |
 | `$context`          |              | context usage (text and/or gauge; finite percentages use one decimal) |
-| `$tokens`           |              | input/output counts and existing cache-hit percentage               |
-| `$cache_read`       |              | cache-read total (`R1.2k`); empty at zero or when unavailable       |
-| `$cache_write`      |              | cache-write total (`W300`); empty at zero or when unavailable       |
-| `$cost`             |              | session cost                                                        |
-| `$subscription`     |              | `(sub)` in subscription mode; otherwise empty                       |
-| `$auto_compaction`  |              | `(auto)` when automatic compaction is enabled; otherwise empty      |
-| `$sep`              | `$separator` | themed `\|` using `colors.separator`                               |
-| `$fill`             | —            | special: splits zones                                               |
+| `$tokens`           |              | input/output counts and existing cache-hit percentage                 |
+| `$cache_read`       |              | cache-read total (`R1.2k`); empty at zero or when unavailable         |
+| `$cache_write`      |              | cache-write total (`W300`); empty at zero or when unavailable         |
+| `$cost`             |              | session cost                                                          |
+| `$subscription`     |              | `(sub)` in subscription mode; otherwise empty                         |
+| `$auto_compaction`  |              | `(auto)` when automatic compaction is enabled; otherwise empty        |
+| `$sep`              | `$separator` | themed `\|` using `colors.separator`                                  |
+| `$fill`             | —            | special: splits zones                                                 |
 
 ### `$fill` behavior
 
@@ -601,7 +613,7 @@ Pi 0.84 introduces a native fullscreen TUI with a sticky editor and Footer plus 
 
 ```json
 {
-	"tuiMode": "fullscreen"
+  "tuiMode": "fullscreen"
 }
 ```
 

@@ -22,8 +22,8 @@
 import { normalizeRuleId } from "./rule-id-normalize.js";
 
 export interface RulePolicyEntry {
-	disable?: string[];
-	select?: string[];
+  disable?: string[];
+  select?: string[];
 }
 
 /**
@@ -52,18 +52,18 @@ export type RulePolicyMap = Record<string, RulePolicyEntry | undefined>;
  * `ast-grep:no-eval` and `no-eval-js`.
  */
 export function evaluateRulePolicy(
-	ruleId: string,
-	policyMap: RulePolicyMap | undefined,
+  ruleId: string,
+  policyMap: RulePolicyMap | undefined,
 ): { dropped: boolean } {
-	if (!policyMap) return { dropped: false };
-	const raw = ruleId || "";
-	const norm = normalizeRuleId(raw);
+  if (!policyMap) return { dropped: false };
+  const raw = ruleId || "";
+  const norm = normalizeRuleId(raw);
 
-	if (scanList(policyMap, (e) => e.disable, raw, norm).matched) {
-		return { dropped: true };
-	}
-	const select = scanList(policyMap, (e) => e.select, raw, norm);
-	return { dropped: select.sawEntry && !select.matched };
+  if (scanList(policyMap, (e) => e.disable, raw, norm).matched) {
+    return { dropped: true };
+  }
+  const select = scanList(policyMap, (e) => e.select, raw, norm);
+  return { dropped: select.sawEntry && !select.matched };
 }
 
 /**
@@ -72,24 +72,24 @@ export function evaluateRulePolicy(
  * which is what makes a `select` union restrictive rather than absent.
  */
 function scanList(
-	policyMap: RulePolicyMap,
-	pick: (entry: RulePolicyEntry) => string[] | undefined,
-	raw: string,
-	norm: string,
+  policyMap: RulePolicyMap,
+  pick: (entry: RulePolicyEntry) => string[] | undefined,
+  raw: string,
+  norm: string,
 ): { matched: boolean; sawEntry: boolean } {
-	let sawEntry = false;
-	for (const entry of Object.values(policyMap)) {
-		for (const candidate of (entry && pick(entry)) ?? []) {
-			sawEntry = true;
-			if (matchesRule(candidate, raw, norm)) return { matched: true, sawEntry };
-		}
-	}
-	return { matched: false, sawEntry };
+  let sawEntry = false;
+  for (const entry of Object.values(policyMap)) {
+    for (const candidate of (entry && pick(entry)) ?? []) {
+      sawEntry = true;
+      if (matchesRule(candidate, raw, norm)) return { matched: true, sawEntry };
+    }
+  }
+  return { matched: false, sawEntry };
 }
 
 function matchesRule(entry: string, raw: string, normalized: string): boolean {
-	if (entry === raw) return true;
-	return normalizeRuleId(entry) === normalized;
+  if (entry === raw) return true;
+  return normalizeRuleId(entry) === normalized;
 }
 
 /**
@@ -105,32 +105,32 @@ function matchesRule(entry: string, raw: string, normalized: string): boolean {
  * applies consistently across every output surface.
  */
 export function applyRulePolicy<T extends { rule?: string; code?: string }>(
-	diagnostics: T[],
-	policyMap: Record<string, unknown> | undefined,
+  diagnostics: T[],
+  policyMap: Record<string, unknown> | undefined,
 ): T[] {
-	if (!policyMap) return diagnostics;
-	// Fast-path: if every entry has neither disable nor select, there is no
-	// output filter to apply. Keeps the hot path (most projects have only
-	// thresholds) cheap.
-	let hasFilter = false;
-	for (const rawEntry of Object.values(policyMap)) {
-		if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) {
-			continue;
-		}
-		const entry = rawEntry as { disable?: string[]; select?: string[] };
-		if ((entry.disable?.length ?? 0) > 0 || (entry.select?.length ?? 0) > 0) {
-			hasFilter = true;
-			break;
-		}
-	}
-	if (!hasFilter) return diagnostics;
+  if (!policyMap) return diagnostics;
+  // Fast-path: if every entry has neither disable nor select, there is no
+  // output filter to apply. Keeps the hot path (most projects have only
+  // thresholds) cheap.
+  let hasFilter = false;
+  for (const rawEntry of Object.values(policyMap)) {
+    if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) {
+      continue;
+    }
+    const entry = rawEntry as { disable?: string[]; select?: string[] };
+    if ((entry.disable?.length ?? 0) > 0 || (entry.select?.length ?? 0) > 0) {
+      hasFilter = true;
+      break;
+    }
+  }
+  if (!hasFilter) return diagnostics;
 
-	return diagnostics.filter((d) => {
-		const ruleId = d.rule ?? d.code;
-		if (!ruleId) return true;
-		const { dropped } = evaluateRulePolicy(ruleId, policyMap as RulePolicyMap);
-		return !dropped;
-	});
+  return diagnostics.filter((d) => {
+    const ruleId = d.rule ?? d.code;
+    if (!ruleId) return true;
+    const { dropped } = evaluateRulePolicy(ruleId, policyMap as RulePolicyMap);
+    return !dropped;
+  });
 }
 
 /**
@@ -141,23 +141,23 @@ export function applyRulePolicy<T extends { rule?: string; code?: string }>(
  * filter step doesn't repeat the work.
  */
 export function rulePolicyMapFromConfig(
-	rules: Record<string, unknown> | undefined,
+  rules: Record<string, unknown> | undefined,
 ): RulePolicyMap | undefined {
-	if (!rules) return undefined;
-	let built: RulePolicyMap | undefined;
-	for (const [key, rawEntry] of Object.entries(rules)) {
-		if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) {
-			continue;
-		}
-		const entry = rawEntry as { disable?: string[]; select?: string[] };
-		const hasDisable = (entry.disable?.length ?? 0) > 0;
-		const hasSelect = (entry.select?.length ?? 0) > 0;
-		if (!hasDisable && !hasSelect) continue;
-		built ??= {};
-		built[key] = {
-			...(hasDisable ? { disable: entry.disable } : {}),
-			...(hasSelect ? { select: entry.select } : {}),
-		};
-	}
-	return built;
+  if (!rules) return undefined;
+  let built: RulePolicyMap | undefined;
+  for (const [key, rawEntry] of Object.entries(rules)) {
+    if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) {
+      continue;
+    }
+    const entry = rawEntry as { disable?: string[]; select?: string[] };
+    const hasDisable = (entry.disable?.length ?? 0) > 0;
+    const hasSelect = (entry.select?.length ?? 0) > 0;
+    if (!hasDisable && !hasSelect) continue;
+    built ??= {};
+    built[key] = {
+      ...(hasDisable ? { disable: entry.disable } : {}),
+      ...(hasSelect ? { select: entry.select } : {}),
+    };
+  }
+  return built;
 }

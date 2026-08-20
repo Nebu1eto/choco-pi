@@ -13,7 +13,7 @@ message: "unwrap() can panic — use ? or match for proper error handling"
 description: |
   unwrap() causes a panic on None/Err, crashing the program.
   Use proper error handling instead.
-  
+
   ✅ FIX: Use ? operator in functions returning Result/Option,
   or match to handle the error case.
 
@@ -38,7 +38,7 @@ examples:
   bad: |
     let value = some_result.unwrap();  // Can panic!
     let item = vec.get(0).unwrap();   // Can panic if empty!
-  
+
   good: |
     let value = some_result?;  // Propagate error
     match vec.get(0) {

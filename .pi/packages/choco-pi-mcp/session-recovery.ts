@@ -47,14 +47,18 @@ const SERVER_NOT_INITIALIZED_MCP_MESSAGES = new Set([
 export function isTerminatedSession(err: unknown, hadSessionId: boolean): boolean {
   if (!hadSessionId) return false;
   if (err instanceof SdkHttpError) {
-    return err.status === 404
-      || (err.status === 400
-        && /"code"\s*:\s*-32000/.test(err.message)
-        && /"message"\s*:\s*"Bad Request: Server not initialized"/.test(err.message));
+    return (
+      err.status === 404 ||
+      (err.status === 400 &&
+        /"code"\s*:\s*-32000/.test(err.message) &&
+        /"message"\s*:\s*"Bad Request: Server not initialized"/.test(err.message))
+    );
   }
-  return err instanceof ProtocolError
-    && err.code === CONNECTION_CLOSED_PROTOCOL_CODE
-    && SERVER_NOT_INITIALIZED_MCP_MESSAGES.has(err.message);
+  return (
+    err instanceof ProtocolError &&
+    err.code === CONNECTION_CLOSED_PROTOCOL_CODE &&
+    SERVER_NOT_INITIALIZED_MCP_MESSAGES.has(err.message)
+  );
 }
 
 function hasSessionId(connection: ServerConnection): boolean {
@@ -66,8 +70,13 @@ function hasSessionId(connection: ServerConnection): boolean {
 }
 
 export class SessionRecoveryAuthRequiredError extends Error {
-  constructor(readonly serverName: string, readonly authMessage?: string) {
-    super(authMessage ?? `MCP server "${serverName}" requires OAuth authentication after reconnect.`);
+  constructor(
+    readonly serverName: string,
+    readonly authMessage?: string,
+  ) {
+    super(
+      authMessage ?? `MCP server "${serverName}" requires OAuth authentication after reconnect.`,
+    );
     this.name = "SessionRecoveryAuthRequiredError";
   }
 }
@@ -109,8 +118,11 @@ export async function withSessionRecovery<T>(
     return await fn(connection);
   } catch (err) {
     const definition = deps.config.mcpServers[serverName];
-    if (definition && supportsOAuth(definition)
-      && (err instanceof UnauthorizedError || (err instanceof SdkHttpError && err.status === 401))) {
+    if (
+      definition &&
+      supportsOAuth(definition) &&
+      (err instanceof UnauthorizedError || (err instanceof SdkHttpError && err.status === 401))
+    ) {
       invalidateAuthEntryCache(serverName);
     }
     if (!isTerminatedSession(err, hadSessionId)) {
@@ -135,7 +147,7 @@ export async function withSessionRecovery<T>(
     throwIfAborted(deps.signal);
 
     if (freshConnection.status === "needs-auth") {
-      freshConnection = await deps.onNeedsAuth?.(serverName) ?? freshConnection;
+      freshConnection = (await deps.onNeedsAuth?.(serverName)) ?? freshConnection;
       throwIfAborted(deps.signal);
     }
 
@@ -149,8 +161,11 @@ export async function withSessionRecovery<T>(
     try {
       deps.manager.publishMetadataChanged(serverName, freshConnection, "session-reconnect");
     } catch (publicationError) {
-      const message = publicationError instanceof Error ? publicationError.message : String(publicationError);
-      logger.debug(`MCP metadata publication after reconnect failed for "${serverName}": ${message}`);
+      const message =
+        publicationError instanceof Error ? publicationError.message : String(publicationError);
+      logger.debug(
+        `MCP metadata publication after reconnect failed for "${serverName}": ${message}`,
+      );
     }
     throwIfAborted(deps.signal);
     return fn(freshConnection);

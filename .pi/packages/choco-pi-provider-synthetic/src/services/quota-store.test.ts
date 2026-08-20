@@ -1,12 +1,4 @@
-import {
-  afterEach,
-  assert,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QuotasResponse } from "../types/quotas";
 import { QuotaStore } from "./quota-store";
 

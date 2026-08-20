@@ -59,7 +59,7 @@ examples:
         def __eq__(self): pass  # BAD - missing 'other'
         def __hash__(self, x): pass  # BAD - extra arg
         def __repr__(self, x): pass  # BAD - extra arg
-  
+
   good: |
     class Foo:
         def __eq__(self, other): return self.x == other.x

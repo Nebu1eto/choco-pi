@@ -25,32 +25,32 @@ export type CascadeWaitTier = "pull-capable" | "tier3-silent" | "waits";
  * never be the reason a real answer gets missed.
  */
 export function classifyServerWaitTier(
-	serverId: string,
-	snapshot: LSPCapabilitySnapshot | undefined,
+  serverId: string,
+  snapshot: LSPCapabilitySnapshot | undefined,
 ): CascadeWaitTier {
-	if (!snapshot) return "waits"; // no live snapshot yet — fail-safe
+  if (!snapshot) return "waits"; // no live snapshot yet — fail-safe
 
-	const mode = snapshot.workspaceDiagnosticsSupport?.mode;
-	if (mode === "pull") return "pull-capable";
-	if (mode !== "push-only") return "waits";
+  const mode = snapshot.workspaceDiagnosticsSupport?.mode;
+  if (mode === "pull") return "pull-capable";
+  if (mode !== "push-only") return "waits";
 
-	const strategy = getStrategy(serverId, snapshot.launchVariant);
-	if (strategy.silentOnClean !== true) return "waits"; // 2*/unknown push-only
+  const strategy = getStrategy(serverId, snapshot.launchVariant);
+  if (strategy.silentOnClean !== true) return "waits"; // 2*/unknown push-only
 
-	// #524/#529/#541/#558: `silentOnClean` on a server-id-keyed strategy is
-	// only proven against the variant it was actually measured against.
-	// "typescript" today means either classic typescript-language-server
-	// (confirmed silent-on-clean, 2026-07-12 dual-environment re-measurement)
-	// or TS7's native `tsc --lsp --stdio` (the SAME re-measurement found it
-	// publishes 2 version-less diagnostic sets on clean — NOT silent, a
-	// drift from the earlier #541 measurement). A native-ts7 snapshot must
-	// NOT inherit the classic verdict: fall through to "waits", the same
-	// ambiguous/fail-safe path an unmarked or non-push-only server already
-	// takes. `launchVariant === "classic"` or absent (older snapshots that
-	// predate the marker) keeps today's tier-3 behavior exactly.
-	if (snapshot.launchVariant === "native-ts7") return "waits";
+  // #524/#529/#541/#558: `silentOnClean` on a server-id-keyed strategy is
+  // only proven against the variant it was actually measured against.
+  // "typescript" today means either classic typescript-language-server
+  // (confirmed silent-on-clean, 2026-07-12 dual-environment re-measurement)
+  // or TS7's native `tsc --lsp --stdio` (the SAME re-measurement found it
+  // publishes 2 version-less diagnostic sets on clean — NOT silent, a
+  // drift from the earlier #541 measurement). A native-ts7 snapshot must
+  // NOT inherit the classic verdict: fall through to "waits", the same
+  // ambiguous/fail-safe path an unmarked or non-push-only server already
+  // takes. `launchVariant === "classic"` or absent (older snapshots that
+  // predate the marker) keeps today's tier-3 behavior exactly.
+  if (snapshot.launchVariant === "native-ts7") return "waits";
 
-	return "tier3-silent";
+  return "tier3-silent";
 }
 
 /**
@@ -62,18 +62,16 @@ export function classifyServerWaitTier(
  * id/snapshot pair to apply its one cascade-only override.
  */
 export function resolvePrimaryServerForWaitPolicy(
-	filePath: string,
-	snapshots: Awaited<ReturnType<LSPService["getCapabilitySnapshots"]>>,
+  filePath: string,
+  snapshots: Awaited<ReturnType<LSPService["getCapabilitySnapshots"]>>,
 ): { serverId: string; snapshot: LSPCapabilitySnapshot | undefined } | undefined {
-	const servers = getServersForFileWithConfig(filePath).filter(
-		(s) => s.role !== "auxiliary",
-	);
-	const primary = servers[0];
-	if (!primary) return undefined;
-	return {
-		serverId: primary.id,
-		snapshot: snapshots.find((s) => s.serverId === primary.id),
-	};
+  const servers = getServersForFileWithConfig(filePath).filter((s) => s.role !== "auxiliary");
+  const primary = servers[0];
+  if (!primary) return undefined;
+  return {
+    serverId: primary.id,
+    snapshot: snapshots.find((s) => s.serverId === primary.id),
+  };
 }
 
 /**
@@ -85,12 +83,12 @@ export function resolvePrimaryServerForWaitPolicy(
  * then defers to the shared per-server rule.
  */
 export function classifyCascadeWaitTier(
-	lspService: Pick<LSPService, "getCapabilitySnapshots">,
-	filePath: string,
-	snapshots: Awaited<ReturnType<LSPService["getCapabilitySnapshots"]>>,
+  lspService: Pick<LSPService, "getCapabilitySnapshots">,
+  filePath: string,
+  snapshots: Awaited<ReturnType<LSPService["getCapabilitySnapshots"]>>,
 ): CascadeWaitTier {
-	void lspService; // kept in the signature for call-site clarity/typing only
-	const primary = resolvePrimaryServerForWaitPolicy(filePath, snapshots);
-	if (!primary) return "waits";
-	return classifyServerWaitTier(primary.serverId, primary.snapshot);
+  void lspService; // kept in the signature for call-site clarity/typing only
+  const primary = resolvePrimaryServerForWaitPolicy(filePath, snapshots);
+  if (!primary) return "waits";
+  return classifyServerWaitTier(primary.serverId, primary.snapshot);
 }

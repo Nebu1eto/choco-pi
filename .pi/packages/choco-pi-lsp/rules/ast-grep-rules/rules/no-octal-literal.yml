@@ -11,4 +11,4 @@ note: |
   or drop the leading zero for decimal.
 rule:
   kind: number
-  regex: '^0[0-9]'
+  regex: "^0[0-9]"

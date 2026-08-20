@@ -13,7 +13,7 @@ message: "eval() executes arbitrary code — security risk, avoid if possible"
 description: |
   eval() executes arbitrary code and is a major security vulnerability.
   Never use eval with user input.
-  
+
   ✅ FIX: Use send(), const_get(), or other metaprogramming instead.
 
 query: |
@@ -38,7 +38,7 @@ examples:
   bad: |
     eval(user_input)  # Code injection!
     eval("system('rm -rf /')")
-  
+
   good: |
     # Use safer alternatives
     Object.const_get(class_name)

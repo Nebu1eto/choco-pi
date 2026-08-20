@@ -13,9 +13,9 @@ description: |
   - Interrupt (Ctrl+C)
   - SystemExit (exit/abort)
   - SignalException (kill signals)
-  
+
   This makes the process impossible to kill gracefully.
-  
+
   ✅ FIX: Use StandardError or a specific exception class:
     rescue StandardError => e   # safe: catches user errors
     rescue ArgumentError, TypeError => e  # specific
@@ -43,7 +43,7 @@ examples:
     rescue Exception => e   # catches SystemExit, Interrupt!
       puts e.message
     end
-  
+
   good: |
     begin
       risky_operation

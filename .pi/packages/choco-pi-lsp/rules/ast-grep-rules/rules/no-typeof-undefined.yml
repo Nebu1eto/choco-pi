@@ -11,11 +11,11 @@ note: |
   code guarding browser-only globals).
 rule:
   any:
-    - pattern: "typeof $X === \"undefined\""
-    - pattern: "typeof $X !== \"undefined\""
-    - pattern: "typeof $X == \"undefined\""
-    - pattern: "typeof $X != \"undefined\""
+    - pattern: 'typeof $X === "undefined"'
+    - pattern: 'typeof $X !== "undefined"'
+    - pattern: 'typeof $X == "undefined"'
+    - pattern: 'typeof $X != "undefined"'
 constraints:
   X:
     not:
-      regex: '^(__dirname|__filename|window|document|navigator|self|location|localStorage|sessionStorage)$'
+      regex: "^(__dirname|__filename|window|document|navigator|self|location|localStorage|sessionStorage)$"

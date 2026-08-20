@@ -86,14 +86,18 @@ export function createGoalAccounting(deps: GoalAccountingDeps) {
   ): void => {
     const goal = deps.getGoal();
     const accounting = deps.getAccounting();
-    const canAccount = goal?.status === "active" || (accountBudgetLimited && goal?.status === "budgetLimited");
+    const canAccount =
+      goal?.status === "active" || (accountBudgetLimited && goal?.status === "budgetLimited");
     if (!goal || accounting.activeGoalId !== goal.goalId || !canAccount) {
       beginAccounting();
       return;
     }
 
     const now = Date.now();
-    const elapsed = accounting.lastAccountedAt === null ? 0 : Math.floor((now - accounting.lastAccountedAt) / 1000);
+    const elapsed =
+      accounting.lastAccountedAt === null
+        ? 0
+        : Math.floor((now - accounting.lastAccountedAt) / 1000);
     accounting.lastAccountedAt = now;
 
     const result = applyUsage(goal, completedTurnTokens, elapsed, {
@@ -106,7 +110,11 @@ export function createGoalAccounting(deps: GoalAccountingDeps) {
 
     deps.applyRuntimeAccountingTransition(ctx, result.goal);
 
-    if (allowBudgetSteering && result.crossedBudget && accounting.budgetWarningSentFor !== result.goal.goalId) {
+    if (
+      allowBudgetSteering &&
+      result.crossedBudget &&
+      accounting.budgetWarningSentFor !== result.goal.goalId
+    ) {
       accounting.budgetWarningSentFor = result.goal.goalId;
       deps.sendMessage(
         {

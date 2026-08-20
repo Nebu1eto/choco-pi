@@ -18,18 +18,16 @@ const QUOTAS_BODY = {
 function mockFetchOk(body: unknown, capture?: (init: RequestInit) => void) {
   return vi
     .spyOn(globalThis, "fetch")
-    .mockImplementation(
-      async (_input: RequestInfo | URL, init?: RequestInit) => {
-        capture?.(init ?? {});
-        return {
-          ok: true,
-          status: 200,
-          statusText: "OK",
-          json: async () => body,
-          text: async () => JSON.stringify(body),
-        } as Response;
-      },
-    );
+    .mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capture?.(init ?? {});
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      } as Response;
+    });
 }
 
 afterEach(() => {
@@ -38,21 +36,17 @@ afterEach(() => {
 
 describe("Synthetic utility API endpoints", () => {
   it("uses the Synthetic API when no proxy is configured", () => {
-    expect(resolveSyntheticUtilityApiBaseUrl()).toBe(
-      DEFAULT_SYNTHETIC_API_BASE_URL,
-    );
+    expect(resolveSyntheticUtilityApiBaseUrl()).toBe(DEFAULT_SYNTHETIC_API_BASE_URL);
   });
 
   it("trims trailing slashes from proxy URLs", () => {
-    expect(
-      resolveSyntheticUtilityApiBaseUrl("https://proxy.example.com///"),
-    ).toBe("https://proxy.example.com");
+    expect(resolveSyntheticUtilityApiBaseUrl("https://proxy.example.com///")).toBe(
+      "https://proxy.example.com",
+    );
   });
 
   it("preserves proxy path prefixes when joining endpoint paths", () => {
-    const baseUrl = resolveSyntheticUtilityApiBaseUrl(
-      "https://proxy.example.com/synthetic/",
-    );
+    const baseUrl = resolveSyntheticUtilityApiBaseUrl("https://proxy.example.com/synthetic/");
 
     expect(syntheticUtilityApiUrl(baseUrl, "/v2/search")).toBe(
       "https://proxy.example.com/synthetic/v2/search",
@@ -101,9 +95,9 @@ describe("Synthetic utility API endpoints", () => {
     expect(() => resolveSyntheticUtilityApiBaseUrl("not-a-url")).toThrow(
       /Proxy URL must be a valid URL/,
     );
-    expect(() =>
-      resolveSyntheticUtilityApiBaseUrl("ftp://proxy.example.com"),
-    ).toThrow(/Proxy URL must use http or https/);
+    expect(() => resolveSyntheticUtilityApiBaseUrl("ftp://proxy.example.com")).toThrow(
+      /Proxy URL must use http or https/,
+    );
   });
 });
 
@@ -130,10 +124,7 @@ describe("resolveSyntheticClientOptions", () => {
   });
 
   it("returns null when auth is required but no key is available", async () => {
-    const result = await resolveSyntheticClientOptions(
-      {},
-      async () => undefined,
-    );
+    const result = await resolveSyntheticClientOptions({}, async () => undefined);
     expect(result).toBeNull();
   });
 

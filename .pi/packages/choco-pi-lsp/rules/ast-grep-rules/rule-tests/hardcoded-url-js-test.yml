@@ -1,6 +1,6 @@
 id: hardcoded-url-js
 valid:
-  - 'const url = process.env.API_URL'
+  - "const url = process.env.API_URL"
   - 'const x = "hello"'
   - 'export const BASE_URL_CLINE = "https://api.cline.bot";'
 invalid:

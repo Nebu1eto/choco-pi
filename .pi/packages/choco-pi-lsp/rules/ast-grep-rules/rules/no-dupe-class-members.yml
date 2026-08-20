@@ -46,7 +46,6 @@ utils:
             follows:
               pattern: $$ACCESS
 
-
   accessor-name:
     matches: member-name
     follows:

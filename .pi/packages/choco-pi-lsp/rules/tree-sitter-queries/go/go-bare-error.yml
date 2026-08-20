@@ -12,7 +12,7 @@ message: "Error returned without handling — check err value"
 
 description: |
   Returning errors without checking or handling can lead to silent failures.
-  
+
   ✅ FIX: Handle the error before returning, or document why it's safe.
 
 query: |
@@ -51,7 +51,7 @@ examples:
     func doWork() error {
         return someOperation()  // Error returned without checking
     }
-  
+
   good: |
     func doWork() error {
         if err := someOperation(); err != nil {

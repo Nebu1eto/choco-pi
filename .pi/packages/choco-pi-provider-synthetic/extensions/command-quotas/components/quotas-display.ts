@@ -45,12 +45,7 @@ function renderProgressBar(
     pacePercent >= 5 &&
     Math.abs(pacePercent - percent) >= 5;
   const paceIndex = showPace
-    ? Math.min(
-        width - 1,
-        Math.round(
-          (Math.max(0, Math.min(100, pacePercent ?? 0)) / 100) * width,
-        ),
-      )
+    ? Math.min(width - 1, Math.round((Math.max(0, Math.min(100, pacePercent ?? 0)) / 100) * width))
     : null;
 
   const reset = "\x1b[0m";
@@ -88,12 +83,7 @@ export class QuotasComponent implements Component {
   private onRefetch: () => void;
   private loader: Loader | null = null;
 
-  constructor(
-    theme: Theme,
-    tui: TUI,
-    onClose: () => void,
-    onRefetch: () => void,
-  ) {
+  constructor(theme: Theme, tui: TUI, onClose: () => void, onRefetch: () => void) {
     this.theme = theme;
     this.tui = tui;
     this.onClose = onClose;
@@ -161,9 +151,7 @@ export class QuotasComponent implements Component {
         lines.push(this.theme.fg("error", `  ${this.state.message}`));
         break;
       case "loaded":
-        lines.push(
-          ...this.renderLoaded(this.state.quotas, contentWidth, width),
-        );
+        lines.push(...this.renderLoaded(this.state.quotas, contentWidth, width));
         break;
     }
 
@@ -174,11 +162,7 @@ export class QuotasComponent implements Component {
     return lines;
   }
 
-  private renderLoaded(
-    quotas: QuotasResponse,
-    contentWidth: number,
-    maxWidth: number,
-  ): string[] {
+  private renderLoaded(quotas: QuotasResponse, contentWidth: number, maxWidth: number): string[] {
     const lines: string[] = [];
     const windows = toWindows(quotas);
     const barWidth = Math.min(50, Math.max(20, contentWidth - 20));
@@ -198,11 +182,7 @@ export class QuotasComponent implements Component {
     return lines;
   }
 
-  private renderWindow(
-    window: QuotaWindow,
-    barWidth: number,
-    maxWidth: number,
-  ): string[] {
+  private renderWindow(window: QuotaWindow, barWidth: number, maxWidth: number): string[] {
     const lines: string[] = [];
     const theme = this.theme;
 
@@ -210,9 +190,7 @@ export class QuotasComponent implements Component {
     const color = getSeverityColor(assessment.severity);
 
     // Label
-    lines.push(
-      truncateToWidth(`  ${theme.fg("accent", window.label)}`, maxWidth),
-    );
+    lines.push(truncateToWidth(`  ${theme.fg("accent", window.label)}`, maxWidth));
 
     // Bar + usage
     const bar = renderProgressBar(
@@ -226,12 +204,7 @@ export class QuotasComponent implements Component {
       ? `${Math.round(window.usedPercent)}%/$${window.limitValue.toFixed(2)}`
       : `${Math.round(window.usedPercent)}%/${window.limitValue}`;
     const limitedBadge = window.limited ? theme.fg("error", " LIMITED") : "";
-    lines.push(
-      truncateToWidth(
-        `  ${bar} ${theme.fg(color, usedStr)}${limitedBadge}`,
-        maxWidth,
-      ),
-    );
+    lines.push(truncateToWidth(`  ${bar} ${theme.fg(color, usedStr)}${limitedBadge}`, maxWidth));
 
     // Subtitle: next event info
     if (window.nextLabel) {
@@ -239,9 +212,7 @@ export class QuotasComponent implements Component {
       const subtitleStr = window.nextAmount
         ? `${window.nextAmount} in ${timeStr}`
         : `${window.nextLabel} in ${timeStr}`;
-      lines.push(
-        truncateToWidth(`  ${theme.fg("dim", subtitleStr)}`, maxWidth),
-      );
+      lines.push(truncateToWidth(`  ${theme.fg("dim", subtitleStr)}`, maxWidth));
     }
 
     return lines;

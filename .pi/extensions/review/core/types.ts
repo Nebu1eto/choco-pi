@@ -30,49 +30,49 @@ export type DiffSide = "LEFT" | "RIGHT";
  * ` `, `+`, or `-` marker and excludes the trailing newline.
  */
 export type DiffLine = {
-	kind: "context" | "add" | "del";
-	oldLine?: number;
-	newLine?: number;
-	text: string;
+  kind: "context" | "add" | "del";
+  oldLine?: number;
+  newLine?: number;
+  text: string;
 };
 
 export type DiffHunk = {
-	/**
-	 * Stable content hash identifying this hunk across recomputation.
-	 *
-	 * The hash covers the file path, the hunk header with its `@@ -a,b +c,d @@`
-	 * range portion stripped (only the trailing section context contributes),
-	 * and the hunk body normalized to per-line `kind` markers plus `text` with
-	 * all line numbers excluded. Excluding the ranges and line numbers is
-	 * deliberate: an unrelated edit earlier in the file shifts every later hunk,
-	 * and reviewed-state and comment anchors must survive that shift.
-	 */
-	id: string;
-	/** Raw `@@ -a,b +c,d @@ section` header line as produced by git. */
-	header: string;
-	oldStart: number;
-	oldLines: number;
-	newStart: number;
-	newLines: number;
-	lines: DiffLine[];
+  /**
+   * Stable content hash identifying this hunk across recomputation.
+   *
+   * The hash covers the file path, the hunk header with its `@@ -a,b +c,d @@`
+   * range portion stripped (only the trailing section context contributes),
+   * and the hunk body normalized to per-line `kind` markers plus `text` with
+   * all line numbers excluded. Excluding the ranges and line numbers is
+   * deliberate: an unrelated edit earlier in the file shifts every later hunk,
+   * and reviewed-state and comment anchors must survive that shift.
+   */
+  id: string;
+  /** Raw `@@ -a,b +c,d @@ section` header line as produced by git. */
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffLine[];
 };
 
 export type DiffFile = {
-	/** Path in the head revision; for a deletion, the path that was removed. */
-	path: string;
-	/** Path in the base revision, present only for renames and copies. */
-	oldPath?: string;
-	kind: "modified" | "added" | "deleted" | "renamed" | "copied" | "binary";
-	/** Empty for `binary` files, which carry no reviewable text. */
-	hunks: DiffHunk[];
-	additions: number;
-	deletions: number;
+  /** Path in the head revision; for a deletion, the path that was removed. */
+  path: string;
+  /** Path in the base revision, present only for renames and copies. */
+  oldPath?: string;
+  kind: "modified" | "added" | "deleted" | "renamed" | "copied" | "binary";
+  /** Empty for `binary` files, which carry no reviewable text. */
+  hunks: DiffHunk[];
+  additions: number;
+  deletions: number;
 };
 
 export type DiffModel = {
-	baseSha: string;
-	headSha: string;
-	files: DiffFile[];
+  baseSha: string;
+  headSha: string;
+  files: DiffFile[];
 };
 
 /* ---------------------------------------------------------------- target */
@@ -92,10 +92,10 @@ export type DiffModel = {
  *   review lands.
  */
 export type ReviewTarget =
-	| { kind: "session"; sessionId: string }
-	| { kind: "session-turn"; sessionId: string; turnIndex: number }
-	| { kind: "branch"; base: string; target?: string }
-	| { kind: "pr"; number: number };
+  | { kind: "session"; sessionId: string }
+  | { kind: "session-turn"; sessionId: string; turnIndex: number }
+  | { kind: "branch"; base: string; target?: string }
+  | { kind: "pr"; number: number };
 
 /* -------------------------------------------------------------- comments */
 
@@ -109,28 +109,28 @@ export type ReviewTarget =
  * a fuzzy match on `snippet`.
  */
 export type CommentAnchor = {
-	/** `DiffHunk.id` of the hunk the comment was written against. */
-	hunkHash: string;
-	/** Hash of `snippet`, used for exact relocation. */
-	snippetHash: string;
-	/** Verbatim source text the comment refers to. */
-	snippet: string;
+  /** `DiffHunk.id` of the hunk the comment was written against. */
+  hunkHash: string;
+  /** Hash of `snippet`, used for exact relocation. */
+  snippetHash: string;
+  /** Verbatim source text the comment refers to. */
+  snippet: string;
 };
 
 export type ReviewComment = {
-	id: string;
-	path: string;
-	side: DiffSide;
-	/** Last line of the comment range, in the numbering of `side`. */
-	line: number;
-	/** First line of a multi-line comment; absent for a single-line comment. */
-	startLine?: number;
-	body: string;
-	anchor: CommentAnchor;
-	/** ISO 8601 timestamp. */
-	createdAt: string;
-	/** ISO 8601 timestamp. */
-	updatedAt: string;
+  id: string;
+  path: string;
+  side: DiffSide;
+  /** Last line of the comment range, in the numbering of `side`. */
+  line: number;
+  /** First line of a multi-line comment; absent for a single-line comment. */
+  startLine?: number;
+  body: string;
+  anchor: CommentAnchor;
+  /** ISO 8601 timestamp. */
+  createdAt: string;
+  /** ISO 8601 timestamp. */
+  updatedAt: string;
 };
 
 /* ----------------------------------------------------------- assessments */
@@ -142,57 +142,57 @@ export type ReviewComment = {
  * a score without a human-readable justification is not actionable.
  */
 export type FileAssessment = {
-	path: string;
-	riskScore: number;
-	reasons: string[];
-	collapsed: boolean;
-	collapseReason?: string;
+  path: string;
+  riskScore: number;
+  reasons: string[];
+  collapsed: boolean;
+  collapseReason?: string;
 };
 
 export type HunkAssessment = {
-	hunkId: string;
-	collapsed: boolean;
-	reason?: string;
+  hunkId: string;
+  collapsed: boolean;
+  reason?: string;
 };
 
 /* ---------------------------------------------------------- persistence */
 
 export type ReviewCursorState = {
-	/** `DiffHunk.id` values the human has marked reviewed. */
-	reviewedHunkIds: string[];
-	/** Head revision the reviewed set was recorded against. */
-	lastHeadSha: string;
+  /** `DiffHunk.id` values the human has marked reviewed. */
+  reviewedHunkIds: string[];
+  /** Head revision the reviewed set was recorded against. */
+  lastHeadSha: string;
 };
 
 export type ReviewRecord = {
-	version: 1;
-	/**
-	 * Stable identifier for the repository, chosen by the caller so records
-	 * from different checkouts never collide.
-	 */
-	repoKey: string;
-	target: ReviewTarget;
-	baseSha: string;
-	headSha: string;
-	cursor: ReviewCursorState;
-	comments: ReviewComment[];
-	verdict?: "comment" | "approve" | "request-changes";
-	/** Overall review body, submitted alongside the verdict in Phase 2. */
-	body?: string;
-	/** ISO 8601 timestamp. */
-	createdAt: string;
-	/** ISO 8601 timestamp. */
-	updatedAt: string;
+  version: 1;
+  /**
+   * Stable identifier for the repository, chosen by the caller so records
+   * from different checkouts never collide.
+   */
+  repoKey: string;
+  target: ReviewTarget;
+  baseSha: string;
+  headSha: string;
+  cursor: ReviewCursorState;
+  comments: ReviewComment[];
+  verdict?: "comment" | "approve" | "request-changes";
+  /** Overall review body, submitted alongside the verdict in Phase 2. */
+  body?: string;
+  /** ISO 8601 timestamp. */
+  createdAt: string;
+  /** ISO 8601 timestamp. */
+  updatedAt: string;
 };
 
 export type ReviewStore = {
-	/**
-	 * `targetKey` is a caller-derived string that is stable for a given
-	 * `ReviewTarget`, unique across targets, and safe to use in a file name.
-	 */
-	load(repoKey: string, targetKey: string): Promise<ReviewRecord | undefined>;
-	save(record: ReviewRecord): Promise<void>;
-	list(repoKey: string): Promise<ReviewRecord[]>;
+  /**
+   * `targetKey` is a caller-derived string that is stable for a given
+   * `ReviewTarget`, unique across targets, and safe to use in a file name.
+   */
+  load(repoKey: string, targetKey: string): Promise<ReviewRecord | undefined>;
+  save(record: ReviewRecord): Promise<void>;
+  list(repoKey: string): Promise<ReviewRecord[]>;
 };
 
 /* ----------------------------------------------------------------- seams */
@@ -208,9 +208,9 @@ export type ReviewStore = {
  * leaves the child blocked forever instead of failing.
  */
 export type ExecRunner = (
-	cmd: string,
-	args: string[],
-	opts?: { cwd?: string; input?: string },
+  cmd: string,
+  args: string[],
+  opts?: { cwd?: string; input?: string },
 ) => Promise<{ stdout: string; stderr: string; code: number }>;
 
 /**
@@ -224,12 +224,12 @@ export type ExecRunner = (
 export type HighlightFn = (code: string, lang?: string) => string[];
 
 export type DiffRenderOptions = {
-	mode: "unified" | "split";
-	/** Total render width in terminal columns. */
-	width: number;
-	highlight: HighlightFn;
-	/** Returns true when the hunk with this `DiffHunk.id` renders folded. */
-	fold: (hunkId: string) => boolean;
+  mode: "unified" | "split";
+  /** Total render width in terminal columns. */
+  width: number;
+  highlight: HighlightFn;
+  /** Returns true when the hunk with this `DiffHunk.id` renders folded. */
+  fold: (hunkId: string) => boolean;
 };
 
 /* ---------------------------------------------------------- configuration */
@@ -252,24 +252,24 @@ export type DiffRenderOptions = {
  * freezes the TUI behind an invisible editor or corrupts the screen.
  */
 export type EditorConfig = {
-	command: string[];
-	mode: "gui" | "terminal";
+  command: string[];
+  mode: "gui" | "terminal";
 };
 
 /** User-supplied configuration, as read from `review.json`. */
 export type ReviewConfig = {
-	editor?: EditorConfig;
-	highlight?: {
-		enabled?: boolean;
-		maxFileBytes?: number;
-		maxDiffLines?: number;
-	};
-	heuristics?: {
-		/** Extra path patterns that raise a file's risk score. */
-		riskPatterns?: string[];
-		/** Extra path patterns that collapse a file by default. */
-		collapsePatterns?: string[];
-	};
+  editor?: EditorConfig;
+  highlight?: {
+    enabled?: boolean;
+    maxFileBytes?: number;
+    maxDiffLines?: number;
+  };
+  heuristics?: {
+    /** Extra path patterns that raise a file's risk score. */
+    riskPatterns?: string[];
+    /** Extra path patterns that collapse a file by default. */
+    collapsePatterns?: string[];
+  };
 };
 
 /**
@@ -279,16 +279,16 @@ export type ReviewConfig = {
  * built-in patterns and the matching syntax, and treats these as additions.
  */
 export type ResolvedReviewConfig = {
-	editor: EditorConfig;
-	highlight: {
-		enabled: boolean;
-		maxFileBytes: number;
-		maxDiffLines: number;
-	};
-	heuristics: {
-		riskPatterns: string[];
-		collapsePatterns: string[];
-	};
+  editor: EditorConfig;
+  highlight: {
+    enabled: boolean;
+    maxFileBytes: number;
+    maxDiffLines: number;
+  };
+  heuristics: {
+    riskPatterns: string[];
+    collapsePatterns: string[];
+  };
 };
 
 /* --------------------------------------------------------------- adapter */
@@ -306,6 +306,6 @@ export type ResolvedReviewConfig = {
  * unavailable and `/review` reports that; `branch` targets keep working.
  */
 export type SessionCheckpointProvider = {
-	listTurns(): Promise<Array<{ turnIndex: number; tree: string; label: string }>>;
-	appendReviewState?(record: ReviewRecord): void;
+  listTurns(): Promise<Array<{ turnIndex: number; tree: string; label: string }>>;
+  appendReviewState?(record: ReviewRecord): void;
 };

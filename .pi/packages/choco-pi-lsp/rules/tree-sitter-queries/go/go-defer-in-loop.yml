@@ -13,7 +13,7 @@ message: "defer in loop can cause resource exhaustion — move outside loop or u
 description: |
   Using defer inside a loop defers cleanup until the function returns,
   not until the loop iteration ends. This can cause resource exhaustion.
-  
+
   ✅ FIX: Move defer outside loop, or wrap loop body in a function.
 
 query: |
@@ -38,7 +38,7 @@ examples:
         defer f.Close()  // All closes deferred until function exit!
         process(f)
     }
-  
+
   good: |
     for _, file := range files {
         func() {

@@ -7,10 +7,22 @@ const RESERVED_TOOL_PROPS = new Set(["then", "catch", "finally", "toJSON", "toSt
 
 // Keep this formatting logic in sync with mcp-code.ts; the standalone worker cannot import the TypeScript host module.
 function needsInspectableFormatting(value, stack = new WeakSet()) {
-  if (value === undefined || typeof value === "bigint" || typeof value === "function" || typeof value === "symbol") return true;
+  if (
+    value === undefined ||
+    typeof value === "bigint" ||
+    typeof value === "function" ||
+    typeof value === "symbol"
+  )
+    return true;
   if (typeof value !== "object" || value === null) return false;
   if (stack.has(value)) return true;
-  if (value instanceof Map || value instanceof Set || value instanceof WeakMap || value instanceof WeakSet) return true;
+  if (
+    value instanceof Map ||
+    value instanceof Set ||
+    value instanceof WeakMap ||
+    value instanceof WeakSet
+  )
+    return true;
   stack.add(value);
   try {
     return Object.values(value).some((entry) => needsInspectableFormatting(entry, stack));
@@ -37,7 +49,11 @@ function toContentBlock(value) {
     if (value.type === "text" && typeof value.text === "string") {
       return { type: "text", text: value.text };
     }
-    if (value.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string") {
+    if (
+      value.type === "image" &&
+      typeof value.data === "string" &&
+      typeof value.mimeType === "string"
+    ) {
       return { type: "image", data: value.data, mimeType: value.mimeType };
     }
   }
@@ -99,28 +115,40 @@ const emit = (value) => {
 };
 
 const capturedConsole = Object.freeze({
-  log: (...args) => emit(`[console.log] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
-  info: (...args) => emit(`[console.info] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
-  warn: (...args) => emit(`[console.warn] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
-  error: (...args) => emit(`[console.error] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
-  debug: (...args) => emit(`[console.debug] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
+  log: (...args) =>
+    emit(`[console.log] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
+  info: (...args) =>
+    emit(`[console.info] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
+  warn: (...args) =>
+    emit(`[console.warn] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
+  error: (...args) =>
+    emit(`[console.error] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
+  debug: (...args) =>
+    emit(`[console.debug] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
 });
 
 void (async () => {
   try {
-    const context = vm.createContext(Object.assign(Object.create(null), {
-      tools,
-      emit,
-      console: capturedConsole,
-    }), {
-      codeGeneration: { strings: false, wasm: false },
-      name: "mcpScript",
+    const context = vm.createContext(
+      Object.assign(Object.create(null), {
+        tools,
+        emit,
+        console: capturedConsole,
+      }),
+      {
+        codeGeneration: { strings: false, wasm: false },
+        name: "mcpScript",
+      },
+    );
+    const script = new vm.Script(`(async () => {\n${workerData.code}\n})()`, {
+      filename: "mcpScript.js",
     });
-    const script = new vm.Script(`(async () => {\n${workerData.code}\n})()`, { filename: "mcpScript.js" });
     const returnValue = await Promise.resolve(script.runInContext(context));
-    parentPort.postMessage(returnValue === undefined
-      ? { type: "done" }
-      : { type: "done", returnBlock: toContentBlock(returnValue) });
+    parentPort.postMessage(
+      returnValue === undefined
+        ? { type: "done" }
+        : { type: "done", returnBlock: toContentBlock(returnValue) },
+    );
   } catch (error) {
     parentPort.postMessage({
       type: "error",

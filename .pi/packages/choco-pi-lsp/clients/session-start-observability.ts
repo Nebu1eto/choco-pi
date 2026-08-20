@@ -6,15 +6,15 @@ import { logLatency } from "./latency-logger.js";
  * hydration phase.
  */
 export function logConcurrentSessionBind(args: {
-	secondaryCount: number;
-	sessionReason?: string;
-	sameCwd: boolean;
+  secondaryCount: number;
+  sessionReason?: string;
+  sameCwd: boolean;
 }): void {
-	logLatency({
-		type: "phase",
-		filePath: "<choco-pi-lsp>",
-		phase: "concurrent_session_bind",
-		durationMs: 0,
-		metadata: args,
-	});
+  logLatency({
+    type: "phase",
+    filePath: "<choco-pi-lsp>",
+    phase: "concurrent_session_bind",
+    durationMs: 0,
+    metadata: args,
+  });
 }

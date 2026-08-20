@@ -75,19 +75,19 @@ const MAX_NAMES_SHOWN = 5;
 export type AccumulatedFileOrigin = "local" | "cross-process";
 
 interface AccumulatedFile {
-	/** Original (non-normalized) path, for display. First-seen form wins. */
-	displayPath: string;
-	reasons: Set<FilesTouchedPayload["reason"]>;
-	origin: AccumulatedFileOrigin;
-	/**
-	 * #1464: the write that produced this touch also handed the agent the full
-	 * post-fix bytes in its OWN tool result, so a "re-read before editing"
-	 * nudge would be telling the agent to re-fetch what it already holds. Set
-	 * by `noteAuthoritativeContentAttachment`; cleared by every later touch of
-	 * the same path, because the delivered bytes are stale the moment the file
-	 * changes again.
-	 */
-	contentDelivered: boolean;
+  /** Original (non-normalized) path, for display. First-seen form wins. */
+  displayPath: string;
+  reasons: Set<FilesTouchedPayload["reason"]>;
+  origin: AccumulatedFileOrigin;
+  /**
+   * #1464: the write that produced this touch also handed the agent the full
+   * post-fix bytes in its OWN tool result, so a "re-read before editing"
+   * nudge would be telling the agent to re-fetch what it already holds. Set
+   * by `noteAuthoritativeContentAttachment`; cleared by every later touch of
+   * the same path, because the delivered bytes are stale the moment the file
+   * changes again.
+   */
+  contentDelivered: boolean;
 }
 
 // Module-level accumulator: one process/session, so a plain map keyed via
@@ -109,9 +109,9 @@ let _relevanceFilteredCount = 0;
 
 /** Test-only: clear accumulator state between test files/cases. */
 export function _resetAgentNudgeForTests(): void {
-	_touched.clear();
-	_relevanceFilteredCount = 0;
-	_enabledCache = undefined;
+  _touched.clear();
+  _relevanceFilteredCount = 0;
+  _enabledCache = undefined;
 }
 
 // --- Kill switch (lazy, memoized — house style per clients/quiet-window.ts) ---
@@ -120,21 +120,21 @@ let _enabledCache: boolean | undefined;
 
 /** `CHOCO_PI_LSP_AGENT_NUDGE=0` disables accumulation and injection outright. */
 export function isAgentNudgeEnabled(): boolean {
-	if (_enabledCache === undefined) {
-		_enabledCache = process.env.CHOCO_PI_LSP_AGENT_NUDGE !== "0";
-	}
-	return _enabledCache;
+  if (_enabledCache === undefined) {
+    _enabledCache = process.env.CHOCO_PI_LSP_AGENT_NUDGE !== "0";
+  }
+  return _enabledCache;
 }
 
 function isValidPayload(data: unknown): data is FilesTouchedPayload {
-	if (!data || typeof data !== "object") return false;
-	const p = data as Partial<FilesTouchedPayload>;
-	return (
-		p.v === 1 &&
-		p.source === "choco-pi-lsp" &&
-		(p.reason === "autofix" || p.reason === "format") &&
-		Array.isArray(p.paths)
-	);
+  if (!data || typeof data !== "object") return false;
+  const p = data as Partial<FilesTouchedPayload>;
+  return (
+    p.v === 1 &&
+    p.source === "choco-pi-lsp" &&
+    (p.reason === "autofix" || p.reason === "format") &&
+    Array.isArray(p.paths)
+  );
 }
 
 /**
@@ -146,42 +146,41 @@ function isValidPayload(data: unknown): data is FilesTouchedPayload {
  * which form was recorded first).
  */
 function recordTouchedEvent(
-	payload: FilesTouchedPayload,
-	getReadGuard: () => ReadGuard | undefined,
+  payload: FilesTouchedPayload,
+  getReadGuard: () => ReadGuard | undefined,
 ): void {
-	const readGuard = getReadGuard();
-	if (!readGuard) return;
+  const readGuard = getReadGuard();
+  if (!readGuard) return;
 
-	for (const rawPath of payload.paths) {
-		const isRelevant =
-			readGuard.getReadHistory(rawPath).length > 0 ||
-			readGuard.getEditHistory(rawPath).length > 0;
-		if (!isRelevant) {
-			_relevanceFilteredCount++;
-			continue;
-		}
+  for (const rawPath of payload.paths) {
+    const isRelevant =
+      readGuard.getReadHistory(rawPath).length > 0 || readGuard.getEditHistory(rawPath).length > 0;
+    if (!isRelevant) {
+      _relevanceFilteredCount++;
+      continue;
+    }
 
-		const mapKey = normalizeMapKey(rawPath);
-		const existing = _touched.get(mapKey);
-		if (existing) {
-			existing.reasons.add(payload.reason);
-			// "local" is sticky — see AccumulatedFileOrigin doc. A file already
-			// recorded via the cross-process feed, now also reported by this
-			// session's own bus, upgrades to "local".
-			existing.origin = "local";
-			// #1464: a fresh touch invalidates any content already delivered for
-			// this path (the default deferred format at agent_end, a cascade
-			// autofix) — those bytes no longer describe the file.
-			existing.contentDelivered = false;
-		} else {
-			_touched.set(mapKey, {
-				displayPath: rawPath,
-				reasons: new Set([payload.reason]),
-				origin: "local",
-				contentDelivered: false,
-			});
-		}
-	}
+    const mapKey = normalizeMapKey(rawPath);
+    const existing = _touched.get(mapKey);
+    if (existing) {
+      existing.reasons.add(payload.reason);
+      // "local" is sticky — see AccumulatedFileOrigin doc. A file already
+      // recorded via the cross-process feed, now also reported by this
+      // session's own bus, upgrades to "local".
+      existing.origin = "local";
+      // #1464: a fresh touch invalidates any content already delivered for
+      // this path (the default deferred format at agent_end, a cascade
+      // autofix) — those bytes no longer describe the file.
+      existing.contentDelivered = false;
+    } else {
+      _touched.set(mapKey, {
+        displayPath: rawPath,
+        reasons: new Set([payload.reason]),
+        origin: "local",
+        contentDelivered: false,
+      });
+    }
+  }
 }
 
 /**
@@ -209,28 +208,28 @@ function recordTouchedEvent(
  * so entries reaching this function are already the "new, foreign" set.
  */
 export function recordCrossProcessTouches(
-	entries: Array<{ path: string; reason: FilesTouchedPayload["reason"] }>,
+  entries: Array<{ path: string; reason: FilesTouchedPayload["reason"] }>,
 ): void {
-	if (!isAgentNudgeEnabled()) return;
-	for (const entry of entries) {
-		const mapKey = normalizeMapKey(entry.path);
-		const existing = _touched.get(mapKey);
-		if (existing) {
-			existing.reasons.add(entry.reason);
-			// "local" is sticky (see AccumulatedFileOrigin) — never downgrade an
-			// already-local entry back to cross-process.
-			// #1464: a foreign process touching this file invalidates whatever
-			// content this session's write path already delivered for it.
-			existing.contentDelivered = false;
-		} else {
-			_touched.set(mapKey, {
-				displayPath: entry.path,
-				reasons: new Set([entry.reason]),
-				origin: "cross-process",
-				contentDelivered: false,
-			});
-		}
-	}
+  if (!isAgentNudgeEnabled()) return;
+  for (const entry of entries) {
+    const mapKey = normalizeMapKey(entry.path);
+    const existing = _touched.get(mapKey);
+    if (existing) {
+      existing.reasons.add(entry.reason);
+      // "local" is sticky (see AccumulatedFileOrigin) — never downgrade an
+      // already-local entry back to cross-process.
+      // #1464: a foreign process touching this file invalidates whatever
+      // content this session's write path already delivered for it.
+      existing.contentDelivered = false;
+    } else {
+      _touched.set(mapKey, {
+        displayPath: entry.path,
+        reasons: new Set([entry.reason]),
+        origin: "cross-process",
+        contentDelivered: false,
+      });
+    }
+  }
 }
 
 /**
@@ -255,20 +254,17 @@ export function recordCrossProcessTouches(
  * suppress. Deferred-edit autofix at `agent_end` never reaches here — it
  * attaches nothing, so it keeps nudging.
  */
-export function noteAuthoritativeContentAttachment(
-	filePath: string,
-	attached: boolean,
-): void {
-	const entry = _touched.get(normalizeMapKey(filePath));
-	if (entry) entry.contentDelivered = attached;
+export function noteAuthoritativeContentAttachment(filePath: string, attached: boolean): void {
+  const entry = _touched.get(normalizeMapKey(filePath));
+  if (entry) entry.contentDelivered = attached;
 }
 
 export interface WireAgentNudgeSubscriberArgs {
-	/** `pi.events` from the extension API, or undefined on older hosts. */
-	events: { on?: (channel: string, handler: (data: unknown) => void) => () => void } | undefined;
-	/** Resolve the live ReadGuard lazily (session-scoped, created on first use). */
-	getReadGuard: () => ReadGuard | undefined;
-	dbg?: (msg: string) => void;
+  /** `pi.events` from the extension API, or undefined on older hosts. */
+  events: { on?: (channel: string, handler: (data: unknown) => void) => () => void } | undefined;
+  /** Resolve the live ReadGuard lazily (session-scoped, created on first use). */
+  getReadGuard: () => ReadGuard | undefined;
+  dbg?: (msg: string) => void;
 }
 
 /**
@@ -277,25 +273,23 @@ export interface WireAgentNudgeSubscriberArgs {
  * placement (clients/bus-publish.ts). No-ops silently when `pi.events` or
  * `.on` is unavailable (older pi host) — never throws.
  */
-export function wireAgentNudgeSubscriber(
-	args: WireAgentNudgeSubscriberArgs,
-): void {
-	const { events, getReadGuard, dbg } = args;
-	if (!events?.on) return;
+export function wireAgentNudgeSubscriber(args: WireAgentNudgeSubscriberArgs): void {
+  const { events, getReadGuard, dbg } = args;
+  if (!events?.on) return;
 
-	try {
-		events.on(BUS_FILES_TOUCHED_EVENT, (data: unknown) => {
-			if (!isAgentNudgeEnabled()) return;
-			if (!isValidPayload(data)) return;
-			try {
-				recordTouchedEvent(data, getReadGuard);
-			} catch (err) {
-				dbg?.(`agent-nudge: failed to record touched event: ${err}`);
-			}
-		});
-	} catch (err) {
-		dbg?.(`agent-nudge: subscribe failed (older pi host?): ${err}`);
-	}
+  try {
+    events.on(BUS_FILES_TOUCHED_EVENT, (data: unknown) => {
+      if (!isAgentNudgeEnabled()) return;
+      if (!isValidPayload(data)) return;
+      try {
+        recordTouchedEvent(data, getReadGuard);
+      } catch (err) {
+        dbg?.(`agent-nudge: failed to record touched event: ${err}`);
+      }
+    });
+  } catch (err) {
+    dbg?.(`agent-nudge: subscribe failed (older pi host?): ${err}`);
+  }
 }
 
 /**
@@ -347,102 +341,98 @@ export function wireAgentNudgeSubscriber(
  * batch that is ENTIRELY such paths injects nothing.
  */
 export function consumeAgentNudge(
-	dbg?: (msg: string) => void,
+  dbg?: (msg: string) => void,
 ): { messages: Array<{ role: "user"; content: string }> } | undefined {
-	const drained = Array.from(_touched.values());
-	_touched.clear();
-	const filesFiltered = _relevanceFilteredCount;
-	_relevanceFilteredCount = 0;
+  const drained = Array.from(_touched.values());
+  _touched.clear();
+  const filesFiltered = _relevanceFilteredCount;
+  _relevanceFilteredCount = 0;
 
-	if (!isAgentNudgeEnabled()) return undefined;
-	if (drained.length === 0) return undefined;
+  if (!isAgentNudgeEnabled()) return undefined;
+  if (drained.length === 0) return undefined;
 
-	try {
-		// #1464: a write whose post-fix bytes were attached to its own tool
-		// result already told the agent everything this nudge would. Drop those
-		// paths from the message but keep counting them, so over-suppression is
-		// visible in telemetry instead of only in the absence of complaints.
-		const entries = drained.filter((e) => !e.contentDelivered);
-		const filesContentDelivered = drained.length - entries.length;
-		const filesTotal = entries.length;
-		const shown = entries.slice(0, MAX_NAMES_SHOWN);
-		const remaining = filesTotal - shown.length;
+  try {
+    // #1464: a write whose post-fix bytes were attached to its own tool
+    // result already told the agent everything this nudge would. Drop those
+    // paths from the message but keep counting them, so over-suppression is
+    // visible in telemetry instead of only in the absence of complaints.
+    const entries = drained.filter((e) => !e.contentDelivered);
+    const filesContentDelivered = drained.length - entries.length;
+    const filesTotal = entries.length;
+    const shown = entries.slice(0, MAX_NAMES_SHOWN);
+    const remaining = filesTotal - shown.length;
 
-		// Determine a single verb covering every reason seen across all
-		// accumulated files (not just the shown subset) — most turns will have
-		// a single uniform reason, so keep that common case terse; a mix of
-		// autofix + format across the batch falls back to a combined verb.
-		const allReasons = new Set<FilesTouchedPayload["reason"]>();
-		for (const e of entries) {
-			for (const r of e.reasons) allReasons.add(r);
-		}
-		const verbLabel =
-			allReasons.size > 1
-				? "autofixed/reformatted"
-				: allReasons.has("format")
-					? "reformatted"
-					: "autofixed";
+    // Determine a single verb covering every reason seen across all
+    // accumulated files (not just the shown subset) — most turns will have
+    // a single uniform reason, so keep that common case terse; a mix of
+    // autofix + format across the batch falls back to a combined verb.
+    const allReasons = new Set<FilesTouchedPayload["reason"]>();
+    for (const e of entries) {
+      for (const r of e.reasons) allReasons.add(r);
+    }
+    const verbLabel =
+      allReasons.size > 1
+        ? "autofixed/reformatted"
+        : allReasons.has("format")
+          ? "reformatted"
+          : "autofixed";
 
-		const names = shown.map((e) => e.displayPath);
-		const nameList =
-			remaining > 0
-				? `${names.join(", ")}, and ${remaining} more`
-				: names.join(", ");
+    const names = shown.map((e) => e.displayPath);
+    const nameList =
+      remaining > 0 ? `${names.join(", ")}, and ${remaining} more` : names.join(", ");
 
-		const crossProcessCount = entries.filter(
-			(e) => e.origin === "cross-process",
-		).length;
-		const localCount = filesTotal - crossProcessCount;
+    const crossProcessCount = entries.filter((e) => e.origin === "cross-process").length;
+    const localCount = filesTotal - crossProcessCount;
 
-		logLatency({
-			type: "phase",
-			filePath: "<choco-pi-lsp>",
-			phase: "agent_nudge",
-			durationMs: 0,
-			metadata: {
-				filesTotal,
-				filesShown: shown.length,
-				// Relevance-filter drops since the last consume (files the session
-				// never read/edited) — NOT the display overflow, which is
-				// filesTotal - filesShown.
-				filesFiltered,
-				// #1464: drops because the write's own tool result already carried
-				// the post-fix bytes. A third, distinct count: these paths passed
-				// the relevance filter and were accumulated, then suppressed here.
-				filesContentDelivered,
-				reasonMix: Array.from(allReasons),
-				// #492: origin mix so cross-process pickup rate is observable
-				// alongside the existing relevance-filter metric.
-				originLocal: localCount,
-				originCrossProcess: crossProcessCount,
-			},
-		});
+    logLatency({
+      type: "phase",
+      filePath: "<choco-pi-lsp>",
+      phase: "agent_nudge",
+      durationMs: 0,
+      metadata: {
+        filesTotal,
+        filesShown: shown.length,
+        // Relevance-filter drops since the last consume (files the session
+        // never read/edited) — NOT the display overflow, which is
+        // filesTotal - filesShown.
+        filesFiltered,
+        // #1464: drops because the write's own tool result already carried
+        // the post-fix bytes. A third, distinct count: these paths passed
+        // the relevance filter and were accumulated, then suppressed here.
+        filesContentDelivered,
+        reasonMix: Array.from(allReasons),
+        // #492: origin mix so cross-process pickup rate is observable
+        // alongside the existing relevance-filter metric.
+        originLocal: localCount,
+        originCrossProcess: crossProcessCount,
+      },
+    });
 
-		// Everything drained was delivered in a write's own tool result — the
-		// row above records that it happened, and zero bytes get injected.
-		if (filesTotal === 0) return undefined;
+    // Everything drained was delivered in a write's own tool result — the
+    // row above records that it happened, and zero bytes get injected.
+    if (filesTotal === 0) return undefined;
 
-		// Three-way attribution (see the function doc): never assign a local
-		// file to another instance — a mixed batch keeps the local base framing
-		// and calls out the cross-process portion by exact count.
-		const attribution =
-			localCount === 0
-				? "by an automatic run outside your turn"
-				: crossProcessCount === 0
-					? "after your last turn"
-					: `after your last turn (${crossProcessCount} of them by an automatic run outside it)`;
-		const message = `choco-pi-lsp: ${filesTotal} file(s) were ${verbLabel} ${attribution}: ${nameList} — working-tree changes to these are expected; re-read before editing.`;
+    // Three-way attribution (see the function doc): never assign a local
+    // file to another instance — a mixed batch keeps the local base framing
+    // and calls out the cross-process portion by exact count.
+    const attribution =
+      localCount === 0
+        ? "by an automatic run outside your turn"
+        : crossProcessCount === 0
+          ? "after your last turn"
+          : `after your last turn (${crossProcessCount} of them by an automatic run outside it)`;
+    const message = `choco-pi-lsp: ${filesTotal} file(s) were ${verbLabel} ${attribution}: ${nameList} — working-tree changes to these are expected; re-read before editing.`;
 
-		return {
-			messages: [
-				{
-					role: "user",
-					content: `[choco-pi-lsp automated context — not a user request] ${message}`,
-				},
-			],
-		};
-	} catch (err) {
-		dbg?.(`agent-nudge: consume failed: ${err}`);
-		return undefined;
-	}
+    return {
+      messages: [
+        {
+          role: "user",
+          content: `[choco-pi-lsp automated context — not a user request] ${message}`,
+        },
+      ],
+    };
+  } catch (err) {
+    dbg?.(`agent-nudge: consume failed: ${err}`);
+    return undefined;
+  }
 }

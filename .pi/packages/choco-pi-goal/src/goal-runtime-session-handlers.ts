@@ -102,7 +102,9 @@ export function createSessionEventHandlers(deps: GoalRuntimeSessionHandlerContex
     }) satisfies ExtensionHandler<SessionBeforeCompactEvent>,
 
     onSessionCompact: (async (event, ctx) => {
-      if (runStaleQueuedWorkPlan(runtimeState.staleQueuedWorkGuard.planSessionCompact(), ctx, deps)) {
+      if (
+        runStaleQueuedWorkPlan(runtimeState.staleQueuedWorkGuard.planSessionCompact(), ctx, deps)
+      ) {
         return;
       }
 
@@ -130,7 +132,11 @@ export function createSessionEventHandlers(deps: GoalRuntimeSessionHandlerContex
       deps.providerLimitAutoResume.clear();
       continuation.clearPassthroughContinuationInput();
       continuation.clearContinuationTimer();
-      applyStaleQueuedWorkEffects(runtimeState.staleQueuedWorkGuard.planSessionShutdown().effects, ctx, deps);
+      applyStaleQueuedWorkEffects(
+        runtimeState.staleQueuedWorkGuard.planSessionShutdown().effects,
+        ctx,
+        deps,
+      );
 
       goalAccounting.accountProgress(ctx, false, 0, true);
       stateController.flushGoalPersistence("runtime");
@@ -160,11 +166,16 @@ export function pendingRecoveryShutdownReason({
   return reasonFromRecoveryPendingAttention(recoveryState.attention);
 }
 
-function hasPendingRecoveryAttention({ runtimeState, stateController }: GoalRuntimeSessionHandlerContext): boolean {
-  return pendingRecoveryShutdownReason({
-    recoveryState: runtimeState.recoveryState,
-    getGoal: stateController.getGoal,
-  }) !== null;
+function hasPendingRecoveryAttention({
+  runtimeState,
+  stateController,
+}: GoalRuntimeSessionHandlerContext): boolean {
+  return (
+    pendingRecoveryShutdownReason({
+      recoveryState: runtimeState.recoveryState,
+      getGoal: stateController.getGoal,
+    }) !== null
+  );
 }
 
 function pauseForPendingRecoveryShutdown(

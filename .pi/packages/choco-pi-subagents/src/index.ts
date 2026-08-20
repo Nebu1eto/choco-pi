@@ -12,31 +12,112 @@
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { defineTool, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, getAgentDir, getSettingsListTheme } from "@earendil-works/pi-coding-agent";
-import { Container, Key, matchesKey, type SettingItem, SettingsList, Spacer, Text } from "@earendil-works/pi-tui";
+import {
+  defineTool,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
+  getAgentDir,
+  getSettingsListTheme,
+} from "@earendil-works/pi-coding-agent";
+import {
+  Container,
+  Key,
+  matchesKey,
+  type SettingItem,
+  SettingsList,
+  Spacer,
+  Text,
+} from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { abortable } from "./abortable.ts";
 import { hasAgentBadge, renderAgentName } from "./agent-color.ts";
-import { buildNewAgentFile, disableInContent, enableInContent, isEmptyStub, locateAgentFile, personalAgentsDir, projectAgentsDir, serializeAgentFile } from "./agent-file-toggle.ts";
+import {
+  buildNewAgentFile,
+  disableInContent,
+  enableInContent,
+  isEmptyStub,
+  locateAgentFile,
+  personalAgentsDir,
+  projectAgentsDir,
+  serializeAgentFile,
+} from "./agent-file-toggle.ts";
 import { AgentManager } from "./agent-manager.ts";
-import { getAgentConversation, getDefaultMaxTurns, getGraceTurns, getRememberAgents, normalizeMaxTurns, SUBAGENT_TOOL_NAMES, setDefaultMaxTurns, setGraceTurns, setRememberAgents } from "./agent-runner.ts";
-import { BUILTIN_TOOL_NAMES, getAgentConfig, getAllTypes, getAvailableTypes, getConfig, getFallbackSubagent, isDefaultsDisabled, NO_FALLBACK, registerAgents, resolveSpawnType, resolveType, setDefaultsDisabled, setFallbackSubagent } from "./agent-types.ts";
+import {
+  getAgentConversation,
+  getDefaultMaxTurns,
+  getGraceTurns,
+  getRememberAgents,
+  normalizeMaxTurns,
+  SUBAGENT_TOOL_NAMES,
+  setDefaultMaxTurns,
+  setGraceTurns,
+  setRememberAgents,
+} from "./agent-runner.ts";
+import {
+  BUILTIN_TOOL_NAMES,
+  getAgentConfig,
+  getAllTypes,
+  getAvailableTypes,
+  getConfig,
+  getFallbackSubagent,
+  isDefaultsDisabled,
+  NO_FALLBACK,
+  registerAgents,
+  resolveSpawnType,
+  resolveType,
+  setDefaultsDisabled,
+  setFallbackSubagent,
+} from "./agent-types.ts";
 import { inChildSessionContext } from "./child-context.ts";
 import { type RpcHandle, registerRpcHandlers } from "./cross-extension-rpc.ts";
 import { loadCustomAgents } from "./custom-agents.ts";
 import { GroupJoinManager } from "./group-join.ts";
-import { isolationParam, resolveAgentInvocationConfig, resolveJoinMode } from "./invocation-config.ts";
-import { describeMention, handleBase, isReservedHandle, parseMention, resolveHandleToType, stripAgentPrefix } from "./mention.ts";
+import {
+  isolationParam,
+  resolveAgentInvocationConfig,
+  resolveJoinMode,
+} from "./invocation-config.ts";
+import {
+  describeMention,
+  handleBase,
+  isReservedHandle,
+  parseMention,
+  resolveHandleToType,
+  stripAgentPrefix,
+} from "./mention.ts";
 import { runMentionClone } from "./mention-clone.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
 import { checkModelScope, isScopeModelsEnabled, setScopeModelsEnabled } from "./model-scope.ts";
 import { getMaxSubagentDepth, setMaxSubagentDepth } from "./nested-tools.ts";
-import { createOutputFilePath, ensureOutputFile, getOutputTranscriptDefault, setOutputTranscriptDefault, streamToOutputFile, writeInitialEntry } from "./output-file.ts";
+import {
+  createOutputFilePath,
+  ensureOutputFile,
+  getOutputTranscriptDefault,
+  setOutputTranscriptDefault,
+  streamToOutputFile,
+  writeInitialEntry,
+} from "./output-file.ts";
 import { SubagentScheduler } from "./schedule.ts";
 import { resolveStorePath, ScheduleStore } from "./schedule-store.ts";
-import { applyAndEmitLoaded, loadSettings, type SubagentsSettings, saveAndEmitChanged, type ToolDescriptionMode } from "./settings.ts";
+import {
+  applyAndEmitLoaded,
+  loadSettings,
+  type SubagentsSettings,
+  saveAndEmitChanged,
+  type ToolDescriptionMode,
+} from "./settings.ts";
 import { getForegroundOutcomeNote, getStatusNote, partialOutputSuffix } from "./status-note.ts";
-import { type AgentConfig, type AgentInvocation, type AgentMentionMode, type AgentRecord, type JoinMode, type NotificationDetails, type SubagentType, type WidgetMode } from "./types.ts";
+import {
+  type AgentConfig,
+  type AgentInvocation,
+  type AgentMentionMode,
+  type AgentRecord,
+  type JoinMode,
+  type NotificationDetails,
+  type SubagentType,
+  type WidgetMode,
+} from "./types.ts";
 import { createMentionProvider, mentionRoster, type TypeInfo } from "./ui/agent-mention.ts";
 import {
   type AgentActivity,
@@ -60,7 +141,12 @@ import { continueRunningAgentNavigation, FocusedAgentController } from "./ui/foc
 import { showSchedulesMenu } from "./ui/schedule-menu.ts";
 import { resolveBtwType, SideConversationController } from "./ui/side-conversation.ts";
 import { selectItem } from "./ui/select-item.ts";
-import { addUsage, getLifetimeTotal, getSessionContextPercent, type LifetimeUsage } from "./usage.ts";
+import {
+  addUsage,
+  getLifetimeTotal,
+  getSessionContextPercent,
+  type LifetimeUsage,
+} from "./usage.ts";
 import { isWorktreeIsolationEnabled, setWorktreeIsolationEnabled } from "./worktree.ts";
 import {
   WorkflowDefinitionSchema,
@@ -84,7 +170,9 @@ export function renderRunningAgentStatus(
   theme: Pick<Theme, "fg">,
 ): Container {
   const container = new Container();
-  container.addChild(new Text(theme.fg("accent", frame) + (statsText ? " " + statsText : ""), 0, 0));
+  container.addChild(
+    new Text(theme.fg("accent", frame) + (statsText ? " " + statsText : ""), 0, 0),
+  );
   container.addChild(new Text(theme.fg("dim", `  ⎿  ${activity}`), 0, 0));
   return container;
 }
@@ -116,7 +204,10 @@ function createActivityTracker(maxTurns?: number, onStreamUpdate?: () => void) {
         state.activeTools.set(activity.toolName + "_" + Date.now(), activity.toolName);
       } else {
         for (const [key, name] of state.activeTools) {
-          if (name === activity.toolName) { state.activeTools.delete(key); break; }
+          if (name === activity.toolName) {
+            state.activeTools.delete(key);
+            break;
+          }
         }
         state.toolUses++;
       }
@@ -154,11 +245,16 @@ const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "ma
 /** Human-readable status label for agent completion. */
 function getStatusLabel(status: string, error?: string): string {
   switch (status) {
-    case "error": return `Error: ${error ?? "unknown"}`;
-    case "aborted": return "Aborted (max turns exceeded)";
-    case "steered": return "Wrapped up (turn limit)";
-    case "stopped": return "Stopped";
-    default: return "Done";
+    case "error":
+      return `Error: ${error ?? "unknown"}`;
+    case "aborted":
+      return "Aborted (max turns exceeded)";
+    case "steered":
+      return "Wrapped up (turn limit)";
+    case "stopped":
+      return "Stopped";
+    default:
+      return "Done";
   }
 }
 
@@ -173,12 +269,18 @@ function formatTaskNotification(record: AgentRecord, resultMaxLen: number): stri
   const durationMs = record.completedAt ? record.completedAt - record.startedAt : 0;
   const totalTokens = getLifetimeTotal(record.lifetimeUsage);
   const contextPercent = getSessionContextPercent(record.session);
-  const ctxXml = contextPercent !== null ? `<context_percent>${Math.round(contextPercent)}</context_percent>` : "";
-  const compactXml = record.compactionCount ? `<compactions>${record.compactionCount}</compactions>` : "";
+  const ctxXml =
+    contextPercent !== null
+      ? `<context_percent>${Math.round(contextPercent)}</context_percent>`
+      : "";
+  const compactXml = record.compactionCount
+    ? `<compactions>${record.compactionCount}</compactions>`
+    : "";
 
   const resultPreview = record.result
     ? record.result.length > resultMaxLen
-      ? record.result.slice(0, resultMaxLen) + "\n...(truncated, use get_subagent_result for full output)"
+      ? record.result.slice(0, resultMaxLen) +
+        "\n...(truncated, use get_subagent_result for full output)"
       : record.result
     : "No output.";
 
@@ -192,13 +294,24 @@ function formatTaskNotification(record: AgentRecord, resultMaxLen: number): stri
     `<result>${escapeXml(resultPreview)}</result>`,
     `<usage><total_tokens>${totalTokens}</total_tokens><tool_uses>${record.toolUses}</tool_uses>${ctxXml}${compactXml}<duration_ms>${durationMs}</duration_ms></usage>`,
     `</task-notification>`,
-  ].filter(Boolean).join('\n');
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** Build AgentDetails from a base + record-specific fields. */
 function buildDetails(
   base: Pick<AgentDetails, "displayName" | "description" | "subagentType" | "modelName" | "tags">,
-  record: { toolUses: number; startedAt: number; completedAt?: number; status: string; error?: string; id?: string; session?: any; lifetimeUsage: LifetimeUsage },
+  record: {
+    toolUses: number;
+    startedAt: number;
+    completedAt?: number;
+    status: string;
+    error?: string;
+    id?: string;
+    session?: any;
+    lifetimeUsage: LifetimeUsage;
+  },
   activity?: AgentActivity,
   overrides?: Partial<AgentDetails>,
 ): AgentDetails {
@@ -217,7 +330,11 @@ function buildDetails(
 }
 
 /** Build notification details for the custom message renderer. */
-function buildNotificationDetails(record: AgentRecord, resultMaxLen: number, activity?: AgentActivity): NotificationDetails {
+function buildNotificationDetails(
+  record: AgentRecord,
+  resultMaxLen: number,
+  activity?: AgentActivity,
+): NotificationDetails {
   const totalTokens = getLifetimeTotal(record.lifetimeUsage);
 
   return {
@@ -271,8 +388,8 @@ export function formatToolsSuffix(cfg: AgentConfig | undefined): string {
     return noExtensionTools ? "none" : "no built-ins, extension tools only";
   }
   const isFullSet =
-    tools.length === BUILTIN_TOOL_NAMES.length
-    && BUILTIN_TOOL_NAMES.every((t) => tools.includes(t));
+    tools.length === BUILTIN_TOOL_NAMES.length &&
+    BUILTIN_TOOL_NAMES.every((t) => tools.includes(t));
   return isFullSet ? "*" : tools.join(", ");
 }
 
@@ -292,9 +409,11 @@ export default function (pi: ExtensionAPI) {
       function renderOne(d: NotificationDetails): string {
         const isError = d.status === "error" || d.status === "stopped" || d.status === "aborted";
         const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
-        const statusText = isError ? d.status
-          : d.status === "steered" ? "completed (steered)"
-          : "completed";
+        const statusText = isError
+          ? d.status
+          : d.status === "steered"
+            ? "completed (steered)"
+            : "completed";
 
         // Line 1: icon + agent description + status
         let line = `${icon} ${theme.bold(d.description)} ${theme.fg("dim", statusText)}`;
@@ -306,7 +425,8 @@ export default function (pi: ExtensionAPI) {
         if (d.totalTokens > 0) parts.push(formatTokens(d.totalTokens));
         if (d.durationMs > 0) parts.push(formatMs(d.durationMs));
         if (parts.length) {
-          line += "\n  " + parts.map(p => theme.fg("dim", p)).join(" " + theme.fg("dim", "·") + " ");
+          line +=
+            "\n  " + parts.map((p) => theme.fg("dim", p)).join(" " + theme.fg("dim", "·") + " ");
         }
 
         // Line 3: result preview (collapsed) or full (expanded)
@@ -328,7 +448,7 @@ export default function (pi: ExtensionAPI) {
 
       const all = [d, ...(d.others ?? [])];
       return new Text(all.map(renderOne).join("\n"), 0, 0);
-    }
+    },
   );
 
   // Read directly rather than waiting for applyAndEmitLoaded below: this decides
@@ -359,10 +479,17 @@ export default function (pi: ExtensionAPI) {
 
   function scheduleNudge(key: string, send: () => void, delay = NUDGE_HOLD_MS) {
     cancelNudge(key);
-    pendingNudges.set(key, setTimeout(() => {
-      pendingNudges.delete(key);
-      try { send(); } catch { /* ignore stale completion side-effect errors */ }
-    }, delay));
+    pendingNudges.set(
+      key,
+      setTimeout(() => {
+        pendingNudges.delete(key);
+        try {
+          send();
+        } catch {
+          /* ignore stale completion side-effect errors */
+        }
+      }, delay),
+    );
   }
 
   function cancelNudge(key: string) {
@@ -375,17 +502,20 @@ export default function (pi: ExtensionAPI) {
 
   // ---- Individual nudge helper (async join mode) ----
   function emitIndividualNudge(record: AgentRecord) {
-    if (record.resultConsumed) return;  // re-check at send time
+    if (record.resultConsumed) return; // re-check at send time
 
     const notification = formatTaskNotification(record, 500);
-    const footer = record.outputFile ? `\nFull transcript available at: ${record.outputFile}` : '';
+    const footer = record.outputFile ? `\nFull transcript available at: ${record.outputFile}` : "";
 
-    pi.sendMessage<NotificationDetails>({
-      customType: "subagent-notification",
-      content: notification + footer,
-      display: true,
-      details: buildNotificationDetails(record, 500, agentActivity.get(record.id)),
-    }, { deliverAs: "followUp", triggerTurn: true });
+    pi.sendMessage<NotificationDetails>(
+      {
+        customType: "subagent-notification",
+        content: notification + footer,
+        display: true,
+        details: buildNotificationDetails(record, 500, agentActivity.get(record.id)),
+      },
+      { deliverAs: "followUp", triggerTurn: true },
+    );
   }
 
   function sendIndividualNudge(record: AgentRecord) {
@@ -397,51 +527,58 @@ export default function (pi: ExtensionAPI) {
   }
 
   // ---- Group join manager ----
-  const groupJoin = new GroupJoinManager(
-    (records, partial) => {
-      for (const r of records) { agentActivity.delete(r.id); widget.markFinished(r.id); fleet.onAgentFinished(r.id); }
+  const groupJoin = new GroupJoinManager((records, partial) => {
+    for (const r of records) {
+      agentActivity.delete(r.id);
+      widget.markFinished(r.id);
+      fleet.onAgentFinished(r.id);
+    }
 
-      const groupKey = `group:${records.map(r => r.id).join(",")}`;
-      scheduleNudge(groupKey, () => {
-        // Re-check at send time
-        const unconsumed = records.filter(r => !r.resultConsumed);
-        if (unconsumed.length === 0) { widget.update(); return; }
+    const groupKey = `group:${records.map((r) => r.id).join(",")}`;
+    scheduleNudge(groupKey, () => {
+      // Re-check at send time
+      const unconsumed = records.filter((r) => !r.resultConsumed);
+      if (unconsumed.length === 0) {
+        widget.update();
+        return;
+      }
 
-        const notifications = unconsumed.map(r => formatTaskNotification(r, 300)).join('\n\n');
-        const label = partial
-          ? `${unconsumed.length} agent(s) finished (partial — others still running)`
-          : `${unconsumed.length} agent(s) finished`;
+      const notifications = unconsumed.map((r) => formatTaskNotification(r, 300)).join("\n\n");
+      const label = partial
+        ? `${unconsumed.length} agent(s) finished (partial — others still running)`
+        : `${unconsumed.length} agent(s) finished`;
 
-        const [first, ...rest] = unconsumed;
-        const details = buildNotificationDetails(first, 300, agentActivity.get(first.id));
-        if (rest.length > 0) {
-          details.others = rest.map(r => buildNotificationDetails(r, 300, agentActivity.get(r.id)));
-        }
+      const [first, ...rest] = unconsumed;
+      const details = buildNotificationDetails(first, 300, agentActivity.get(first.id));
+      if (rest.length > 0) {
+        details.others = rest.map((r) => buildNotificationDetails(r, 300, agentActivity.get(r.id)));
+      }
 
-        pi.sendMessage<NotificationDetails>({
+      pi.sendMessage<NotificationDetails>(
+        {
           customType: "subagent-notification",
           content: `Background agent group completed: ${label}\n\n${notifications}\n\nUse get_subagent_result for full output.`,
           display: true,
           details,
-        }, { deliverAs: "followUp", triggerTurn: true });
-      });
-      widget.update();
-    },
-    30_000,
-  );
+        },
+        { deliverAs: "followUp", triggerTurn: true },
+      );
+    });
+    widget.update();
+  }, 30_000);
 
   /** Helper: build event data for lifecycle events from an AgentRecord. */
   function buildEventData(record: AgentRecord) {
-    const durationMs = record.completedAt ? record.completedAt - record.startedAt : Date.now() - record.startedAt;
+    const durationMs = record.completedAt
+      ? record.completedAt - record.startedAt
+      : Date.now() - record.startedAt;
     // All three fields are lifetime-accumulated (Σ over every assistant message_end),
     // so they survive compaction together — input + output ≤ total always.
     // tokens is omitted when nothing was ever produced (e.g. agent errored before
     // any message_end fired), preserving prior payload shape.
     const u = record.lifetimeUsage;
     const total = getLifetimeTotal(u);
-    const tokens = total > 0
-      ? { input: u.input, output: u.output, total }
-      : undefined;
+    const tokens = total > 0 ? { input: u.input, output: u.output, total } : undefined;
     return {
       id: record.id,
       type: record.type,
@@ -453,7 +590,10 @@ export default function (pi: ExtensionAPI) {
       durationMs,
       tokens,
       ...(record.sideConversation && { sideConversation: true }),
-      ...(record.workflowId && { workflowId: record.workflowId, workflowStepId: record.workflowStepId }),
+      ...(record.workflowId && {
+        workflowId: record.workflowId,
+        workflowStepId: record.workflowStepId,
+      }),
     };
   }
 
@@ -462,111 +602,128 @@ export default function (pi: ExtensionAPI) {
   let workflows: WorkflowManager | undefined;
 
   // Background completion: route through group join or send individual nudge
-  const manager = new AgentManager((record) => {
-    // Nested children report only through their owning parent's scoped tools.
-    // Keep them out of top-level lifecycle, transcript, notification, and UI channels.
-    if (record.parentAgentId) return;
+  const manager = new AgentManager(
+    (record) => {
+      // Nested children report only through their owning parent's scoped tools.
+      // Keep them out of top-level lifecycle, transcript, notification, and UI channels.
+      if (record.parentAgentId) return;
 
-    // Emit lifecycle event based on terminal status
-    const isError = record.status === "error" || record.status === "stopped" || record.status === "aborted";
-    const eventData = buildEventData(record);
-    if (isError) {
-      pi.events.emit("subagents:failed", eventData);
-    } else {
-      pi.events.emit("subagents:completed", eventData);
-    }
-
-    // Persist final record for cross-extension history reconstruction
-    pi.appendEntry("subagents:record", {
-      id: record.id, type: record.type, description: record.description,
-      status: record.status, result: record.result, error: record.error,
-      startedAt: record.startedAt, completedAt: record.completedAt,
-      ...(record.sideConversation && { sideConversation: true }),
-      ...(record.workflowId && { workflowId: record.workflowId, workflowStepId: record.workflowStepId }),
-    });
-
-    // Workflow steps remain ordinary top-level records for FleetView/focus and
-    // lifecycle events, but static workflows deliver one aggregate result. A
-    // dynamic workflow relays step completions so the orchestrator can adjust
-    // the still-open graph from the result.
-    if (record.workflowId) {
-      if (workflows?.shouldNotifySteps(record.workflowId)) {
-        sendIndividualNudge(record);
+      // Emit lifecycle event based on terminal status
+      const isError =
+        record.status === "error" || record.status === "stopped" || record.status === "aborted";
+      const eventData = buildEventData(record);
+      if (isError) {
+        pi.events.emit("subagents:failed", eventData);
       } else {
-        record.resultConsumed = true;
+        pi.events.emit("subagents:completed", eventData);
+      }
+
+      // Persist final record for cross-extension history reconstruction
+      pi.appendEntry("subagents:record", {
+        id: record.id,
+        type: record.type,
+        description: record.description,
+        status: record.status,
+        result: record.result,
+        error: record.error,
+        startedAt: record.startedAt,
+        completedAt: record.completedAt,
+        ...(record.sideConversation && { sideConversation: true }),
+        ...(record.workflowId && {
+          workflowId: record.workflowId,
+          workflowStepId: record.workflowStepId,
+        }),
+      });
+
+      // Workflow steps remain ordinary top-level records for FleetView/focus and
+      // lifecycle events, but static workflows deliver one aggregate result. A
+      // dynamic workflow relays step completions so the orchestrator can adjust
+      // the still-open graph from the result.
+      if (record.workflowId) {
+        if (workflows?.shouldNotifySteps(record.workflowId)) {
+          sendIndividualNudge(record);
+        } else {
+          record.resultConsumed = true;
+          agentActivity.delete(record.id);
+          widget.markFinished(record.id);
+          fleet.onAgentFinished(record.id);
+          widget.update();
+        }
+        return;
+      }
+
+      // Side answers stay out of the orchestrator transcript. Their controller
+      // keeps an open overlay live, or emits a non-turn-triggering UI notice when
+      // the user dismissed it. Shared lifecycle, widget and fleet bookkeeping
+      // still applies because this is an ordinary top-level record.
+      if (record.sideConversation) {
+        agentActivity.delete(record.id);
+        widget.markFinished(record.id);
+        fleet.onAgentFinished(record.id);
+        sideConversations.onAgentComplete(record);
+        widget.update();
+        return;
+      }
+
+      // Skip notification if result was already consumed via get_subagent_result
+      if (record.resultConsumed) {
         agentActivity.delete(record.id);
         widget.markFinished(record.id);
         fleet.onAgentFinished(record.id);
         widget.update();
+        return;
       }
-      return;
-    }
 
-    // Side answers stay out of the orchestrator transcript. Their controller
-    // keeps an open overlay live, or emits a non-turn-triggering UI notice when
-    // the user dismissed it. Shared lifecycle, widget and fleet bookkeeping
-    // still applies because this is an ordinary top-level record.
-    if (record.sideConversation) {
-      agentActivity.delete(record.id);
-      widget.markFinished(record.id);
-      fleet.onAgentFinished(record.id);
-      sideConversations.onAgentComplete(record);
-      widget.update();
-      return;
-    }
+      // If this agent is pending batch finalization (debounce window still open),
+      // don't send an individual nudge — finalizeBatch will pick it up retroactively.
+      if (currentBatchAgents.some((a) => a.id === record.id)) {
+        widget.update();
+        return;
+      }
 
-    // Skip notification if result was already consumed via get_subagent_result
-    if (record.resultConsumed) {
-      agentActivity.delete(record.id);
-      widget.markFinished(record.id);
-      fleet.onAgentFinished(record.id);
+      const result = groupJoin.onAgentComplete(record);
+      if (result === "pass") {
+        sendIndividualNudge(record);
+      }
+      // 'held' → do nothing, group will fire later
+      // 'delivered' → group callback already fired
       widget.update();
-      return;
-    }
-
-    // If this agent is pending batch finalization (debounce window still open),
-    // don't send an individual nudge — finalizeBatch will pick it up retroactively.
-    if (currentBatchAgents.some(a => a.id === record.id)) {
-      widget.update();
-      return;
-    }
-
-    const result = groupJoin.onAgentComplete(record);
-    if (result === 'pass') {
-      sendIndividualNudge(record);
-    }
-    // 'held' → do nothing, group will fire later
-    // 'delivered' → group callback already fired
-    widget.update();
-  }, undefined, (record) => {
-    if (record.parentAgentId) return;
-    // Agent-tool spawns refresh these surfaces in their tool handler, but RPC
-    // and scheduler spawns enter through the manager directly.
-    if (currentCtx?.hasUI) {
-      widget.ensureTimer();
-      widget.update();
-      fleet.ensureTimer();
-      fleet.update();
-    }
-    // Emit started event when agent transitions to running (including from queue)
-    pi.events.emit("subagents:started", {
-      id: record.id,
-      type: record.type,
-      description: record.description,
-      ...(record.workflowId && { workflowId: record.workflowId, workflowStepId: record.workflowStepId }),
-    });
-  }, (record, info) => {
-    if (record.parentAgentId) return;
-    // Emit compacted event when agent's session compacts (preserves count on record).
-    pi.events.emit("subagents:compacted", {
-      id: record.id,
-      type: record.type,
-      description: record.description,
-      reason: info.reason,
-      tokensBefore: info.tokensBefore,
-      compactionCount: record.compactionCount,
-    });
-  });
+    },
+    undefined,
+    (record) => {
+      if (record.parentAgentId) return;
+      // Agent-tool spawns refresh these surfaces in their tool handler, but RPC
+      // and scheduler spawns enter through the manager directly.
+      if (currentCtx?.hasUI) {
+        widget.ensureTimer();
+        widget.update();
+        fleet.ensureTimer();
+        fleet.update();
+      }
+      // Emit started event when agent transitions to running (including from queue)
+      pi.events.emit("subagents:started", {
+        id: record.id,
+        type: record.type,
+        description: record.description,
+        ...(record.workflowId && {
+          workflowId: record.workflowId,
+          workflowStepId: record.workflowStepId,
+        }),
+      });
+    },
+    (record, info) => {
+      if (record.parentAgentId) return;
+      // Emit compacted event when agent's session compacts (preserves count on record).
+      pi.events.emit("subagents:compacted", {
+        id: record.id,
+        type: record.type,
+        description: record.description,
+        reason: info.reason,
+        tokensBefore: info.tokensBefore,
+        compactionCount: record.compactionCount,
+      });
+    },
+  );
 
   // Expose manager via Symbol.for() global registry for cross-package access.
   // Standard Node.js pattern for cross-package singletons (used by OpenTelemetry, etc.).
@@ -678,7 +835,7 @@ export default function (pi: ExtensionAPI) {
   function startScheduler(ctx: ExtensionContext) {
     try {
       const sessionId = ctx.sessionManager?.getSessionId?.();
-      if (!sessionId) return;  // sessionId not yet available — try again on next event
+      if (!sessionId) return; // sessionId not yet available — try again on next event
       const path = resolveStorePath(ctx.cwd, sessionId);
       const store = new ScheduleStore(path);
       scheduler.start(pi, ctx, manager, store);
@@ -729,12 +886,12 @@ export default function (pi: ExtensionAPI) {
     // — print mode has no such method, and RPC mode's is a no-op.
     if (ctx.mode === "tui" && !mentionProviderRegistered) {
       mentionProviderRegistered = true;
-      ctx.ui.addAutocompleteProvider(current =>
+      ctx.ui.addAutocompleteProvider((current) =>
         createMentionProvider(
           current,
           // Plain text, not renderAgentName: the same label FleetView and the
           // widget show, but the autocomplete description cannot carry ANSI.
-          () => mentionRoster(manager, mentionTypes(), type => getConfig(type).displayName),
+          () => mentionRoster(manager, mentionTypes(), (type) => getConfig(type).displayName),
           isAgentMentionsEnabled,
         ),
       );
@@ -743,7 +900,10 @@ export default function (pi: ExtensionAPI) {
 
   /** Agent types `@` can start, in the shape the roster wants. */
   const mentionTypes = (): TypeInfo[] =>
-    getAvailableTypes().map(name => ({ name, description: getAgentConfig(name)?.description ?? name }));
+    getAvailableTypes().map((name) => ({
+      name,
+      description: getAgentConfig(name)?.description ?? name,
+    }));
 
   /**
    * `@handle message` typed at the prompt addresses that agent instead of the
@@ -785,14 +945,18 @@ export default function (pi: ExtensionAPI) {
     // that would otherwise read as a mention, so the prefix is dropped and the
     // rest goes to the model with its attachments intact.
     if (isReservedHandle(mention.handle)) {
-      return { action: "transform", text: mention.message, ...(event.images && { images: event.images }) };
+      return {
+        action: "transform",
+        text: mention.message,
+        ...(event.images && { images: event.images }),
+      };
     }
 
     // As typed first, so an agent actually called `agent-foo` wins over Claude
     // Code's `@agent-` + `foo` spelling rather than being shadowed by it.
     const alias = stripAgentPrefix(mention.handle);
-    const resolved = manager.resolveMention(mention.handle)
-      ?? (alias ? manager.resolveMention(alias) : undefined);
+    const resolved =
+      manager.resolveMention(mention.handle) ?? (alias ? manager.resolveMention(alias) : undefined);
 
     // Steering and resuming are direct in every mode, so headless they are not
     // available at all. Falling through here rather than dropping to the start
@@ -826,7 +990,9 @@ export default function (pi: ExtensionAPI) {
           maxTurns: normalizeMaxTurns(config?.maxTurns ?? getDefaultMaxTurns()),
         });
         ctx.ui.notify(
-          resumedRecord ? `Resuming ${target}` : `Could not resume ${target} — it is still running.`,
+          resumedRecord
+            ? `Resuming ${target}`
+            : `Could not resume ${target} — it is still running.`,
           resumedRecord ? "info" : "warning",
         );
         return { action: "handled" };
@@ -867,7 +1033,10 @@ export default function (pi: ExtensionAPI) {
       if (!dispatch.ok || dispatch.fellBackFrom !== undefined) {
         // The tombstone stays: re-enabling the agent makes the handle work
         // again, which a drop would foreclose.
-        ctx.ui.notify(`Could not resume ${target} — the ${entry.type} agent is no longer available.`, "warning");
+        ctx.ui.notify(
+          `Could not resume ${target} — the ${entry.type} agent is no longer available.`,
+          "warning",
+        );
         return { action: "handled" };
       }
 
@@ -902,8 +1071,9 @@ export default function (pi: ExtensionAPI) {
     // No agent under that handle — but the name may still be an agent type, in
     // which case the mention starts one.
     const typeHandle = mention.handle;
-    const type = resolveHandleToType(typeHandle, getAvailableTypes())
-      ?? (alias ? resolveHandleToType(alias, getAvailableTypes()) : undefined);
+    const type =
+      resolveHandleToType(typeHandle, getAvailableTypes()) ??
+      (alias ? resolveHandleToType(alias, getAvailableTypes()) : undefined);
     if (!type) return { action: "continue" };
 
     // Claude Code never starts the agent itself: `@agent-<type>` becomes an
@@ -929,25 +1099,24 @@ export default function (pi: ExtensionAPI) {
       // Not awaited: the clone runs a full model turn, and prompt() is blocked
       // until this hook returns. The user gets their prompt back immediately
       // and the agent appears in the widget when it starts.
-      void runMentionClone({ ctx, type, message: mention.message, agentTool })
-        .then((result) => {
-          if (result.spawned) return;
-          // A clone that could not run must not swallow the mention: start the
-          // agent the direct way rather than leaving the user with a toast and
-          // nothing running.
-          try {
-            spawnTopLevel(pi, ctx, type, mention.message, {
-              description: describeMention(mention.message),
-              isBackground: true,
-            });
-            ctx.ui.notify(`Started ${label} directly — ${result.error}`, "warning");
-          } catch (err) {
-            ctx.ui.notify(
-              `Could not start ${label}: ${err instanceof Error ? err.message : String(err)}`,
-              "error",
-            );
-          }
-        });
+      void runMentionClone({ ctx, type, message: mention.message, agentTool }).then((result) => {
+        if (result.spawned) return;
+        // A clone that could not run must not swallow the mention: start the
+        // agent the direct way rather than leaving the user with a toast and
+        // nothing running.
+        try {
+          spawnTopLevel(pi, ctx, type, mention.message, {
+            description: describeMention(mention.message),
+            isBackground: true,
+          });
+          ctx.ui.notify(`Started ${label} directly — ${result.error}`, "warning");
+        } catch (err) {
+          ctx.ui.notify(
+            `Could not start ${label}: ${err instanceof Error ? err.message : String(err)}`,
+            "error",
+          );
+        }
+      });
       return { action: "handled" };
     }
 
@@ -963,7 +1132,10 @@ export default function (pi: ExtensionAPI) {
       });
       ctx.ui.notify(`Started @${handleBase(type)}`, "info");
     } catch (err) {
-      ctx.ui.notify(`Could not start @${handleBase(type)}: ${err instanceof Error ? err.message : String(err)}`, "error");
+      ctx.ui.notify(
+        `Could not start @${handleBase(type)}: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
     }
     return { action: "handled" };
   });
@@ -1005,14 +1177,19 @@ export default function (pi: ExtensionAPI) {
   // the Agent tool result, so showing them here too is a duplicate, #118), keep
   // everything else; "off" = hide the widget entirely. Read live at render time.
   let widgetMode: WidgetMode = "background";
-  function getWidgetMode(): WidgetMode { return widgetMode; }
+  function getWidgetMode(): WidgetMode {
+    return widgetMode;
+  }
   const widget = new AgentWidget(manager, agentActivity, getWidgetMode);
-  function setWidgetMode(m: WidgetMode): void { widgetMode = m; widget.update(); }
+  function setWidgetMode(m: WidgetMode): void {
+    widgetMode = m;
+    widget.update();
+  }
 
   // Fullscreen focus replaces the main transcript renderer and binds the existing
   // prompt editor to manager.steer(), preserving every editor adapter already on it.
   const focus = new FocusedAgentController(manager, {
-    getActivity: id => agentActivity.get(id),
+    getActivity: (id) => agentActivity.get(id),
     onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
   });
 
@@ -1020,7 +1197,7 @@ export default function (pi: ExtensionAPI) {
   // the main agent. The controller owns only their dismissible overlay and
   // notice delivery; focus, concurrency and handles remain manager-owned.
   const sideConversations = new SideConversationController(manager, {
-    getActivity: id => agentActivity.get(id),
+    getActivity: (id) => agentActivity.get(id),
     onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
     focusAgent: (record, tui, theme) => focus.focus(record, tui, theme),
   });
@@ -1029,11 +1206,16 @@ export default function (pi: ExtensionAPI) {
   const fleet = new FleetList(manager, agentActivity, {
     focusAgent: (record, tui, theme) => focus.focus(record, tui, theme),
     isAgentFocused: () => focus.isFocused(),
-    openSideConversation: record => sideConversations.open(record),
+    openSideConversation: (record) => sideConversations.open(record),
   });
   let fleetViewEnabled = true;
-  function isFleetViewEnabled(): boolean { return fleetViewEnabled; }
-  function setFleetViewEnabled(b: boolean): void { fleetViewEnabled = b; fleet.setEnabled(b); }
+  function isFleetViewEnabled(): boolean {
+    return fleetViewEnabled;
+  }
+  function setFleetViewEnabled(b: boolean): void {
+    fleetViewEnabled = b;
+    fleet.setEnabled(b);
+  }
 
   const workflowManager = new WorkflowManager((result) => {
     pi.events.emit("subagents:workflow_completed", result);
@@ -1046,26 +1228,29 @@ export default function (pi: ExtensionAPI) {
       // A deliberate workflow_cancel is not a failure: report it as stopped.
       const cancelled = result.status === "cancelled";
       const failed = result.status === "error" || result.status === "completed_with_errors";
-      pi.sendMessage<NotificationDetails>({
-        customType: "subagent-notification",
-        content:
-          `<workflow-notification>\n` +
-          `<workflow-id>${escapeXml(result.workflowId)}</workflow-id>\n` +
-          `<status>${escapeXml(result.status)}</status>\n` +
-          `<summary>Workflow "${escapeXml(result.name)}" ${escapeXml(result.status)}: ${escapeXml(summary)}</summary>\n` +
-          `</workflow-notification>\nUse get_workflow_result for per-step outputs.`,
-        display: true,
-        details: {
-          id: result.workflowId,
-          description: `Workflow: ${result.name}`,
-          status: cancelled ? "stopped" : failed ? "error" : "completed",
-          toolUses: 0,
-          turnCount: 0,
-          totalTokens: 0,
-          durationMs: (result.completedAt ?? Date.now()) - result.startedAt,
-          resultPreview: summary,
+      pi.sendMessage<NotificationDetails>(
+        {
+          customType: "subagent-notification",
+          content:
+            `<workflow-notification>\n` +
+            `<workflow-id>${escapeXml(result.workflowId)}</workflow-id>\n` +
+            `<status>${escapeXml(result.status)}</status>\n` +
+            `<summary>Workflow "${escapeXml(result.name)}" ${escapeXml(result.status)}: ${escapeXml(summary)}</summary>\n` +
+            `</workflow-notification>\nUse get_workflow_result for per-step outputs.`,
+          display: true,
+          details: {
+            id: result.workflowId,
+            description: `Workflow: ${result.name}`,
+            status: cancelled ? "stopped" : failed ? "error" : "completed",
+            toolUses: 0,
+            turnCount: 0,
+            totalTokens: 0,
+            durationMs: (result.completedAt ?? Date.now()) - result.startedAt,
+            resultPreview: summary,
+          },
         },
-      }, { deliverAs: "followUp", triggerTurn: true });
+        { deliverAs: "followUp", triggerTurn: true },
+      );
     });
   });
   workflows = workflowManager;
@@ -1075,12 +1260,18 @@ export default function (pi: ExtensionAPI) {
   // immediately — the provider itself can never be unregistered (pi's wrapper
   // list is append-only), it just delegates everything when this is off.
   let agentMentionMode: AgentMentionMode = "model";
-  function getAgentMentionMode(): AgentMentionMode { return agentMentionMode; }
-  function setAgentMentionMode(mode: AgentMentionMode): void { agentMentionMode = mode; }
+  function getAgentMentionMode(): AgentMentionMode {
+    return agentMentionMode;
+  }
+  function setAgentMentionMode(mode: AgentMentionMode): void {
+    agentMentionMode = mode;
+  }
   // `model` and `direct` differ only in who starts a not-yet-running agent, so
   // everything that just asks "are mentions live at all" — the suggestion list,
   // the steer and resume branches — reads this instead of the mode.
-  function isAgentMentionsEnabled(): boolean { return agentMentionMode !== "off"; }
+  function isAgentMentionsEnabled(): boolean {
+    return agentMentionMode !== "off";
+  }
 
   // Project/global default for writing the subagent .output transcript lives in
   // output-file.ts (both spawn paths read it). A custom agent's
@@ -1088,9 +1279,13 @@ export default function (pi: ExtensionAPI) {
   // is silent, this default applies. Read live at spawn time.
 
   // ---- Join mode configuration ----
-  let defaultJoinMode: JoinMode = 'smart';
-  function getDefaultJoinMode(): JoinMode { return defaultJoinMode; }
-  function setDefaultJoinMode(mode: JoinMode) { defaultJoinMode = mode; }
+  let defaultJoinMode: JoinMode = "smart";
+  function getDefaultJoinMode(): JoinMode {
+    return defaultJoinMode;
+  }
+  function setDefaultJoinMode(mode: JoinMode) {
+    defaultJoinMode = mode;
+  }
 
   // Master switch for the schedule subagent feature. Defaults to enabled.
   // Read once at extension init (before tool registration) so the Agent tool's
@@ -1099,8 +1294,12 @@ export default function (pi: ExtensionAPI) {
   // immediately, but the schema-level removal only takes effect on next
   // extension load (next pi session). Documented in CHANGELOG/README.
   let schedulingEnabled = true;
-  function isSchedulingEnabled(): boolean { return schedulingEnabled; }
-  function setSchedulingEnabled(b: boolean) { schedulingEnabled = b; }
+  function isSchedulingEnabled(): boolean {
+    return schedulingEnabled;
+  }
+  function setSchedulingEnabled(b: boolean) {
+    schedulingEnabled = b;
+  }
 
   // ---- Disable default agents configuration ----
   // When enabled, the three hardcoded default agents (general-purpose, Explore,
@@ -1119,8 +1318,12 @@ export default function (pi: ExtensionAPI) {
   // swaps in a ~75% smaller one for small/local models (#91). Read once at
   // tool registration — flipping it applies on the next pi session.
   let toolDescriptionMode: ToolDescriptionMode = "full";
-  function getToolDescriptionMode(): ToolDescriptionMode { return toolDescriptionMode; }
-  function setToolDescriptionMode(mode: ToolDescriptionMode): void { toolDescriptionMode = mode; }
+  function getToolDescriptionMode(): ToolDescriptionMode {
+    return toolDescriptionMode;
+  }
+  function setToolDescriptionMode(mode: ToolDescriptionMode): void {
+    toolDescriptionMode = mode;
+  }
 
   // ---- Batch tracking for smart join mode ----
   // Collects background agent IDs spawned in the current turn for smart grouping.
@@ -1137,10 +1340,10 @@ export default function (pi: ExtensionAPI) {
     const batchAgents = [...currentBatchAgents];
     currentBatchAgents = [];
 
-    const smartAgents = batchAgents.filter(a => a.joinMode === 'smart' || a.joinMode === 'group');
+    const smartAgents = batchAgents.filter((a) => a.joinMode === "smart" || a.joinMode === "group");
     if (smartAgents.length >= 2) {
       const groupId = `batch-${++batchCounter}`;
-      const ids = smartAgents.map(a => a.id);
+      const ids = smartAgents.map((a) => a.id);
       groupJoin.registerGroup(groupId, ids);
       // Retroactively process agents that already completed during the debounce window.
       // Their onComplete fired but was deferred (agent was in currentBatchAgents),
@@ -1223,13 +1426,19 @@ export default function (pi: ExtensionAPI) {
       onStarted: () => {
         const rec = manager.getRecord(id);
         if (rec?.session && rec.outputFile) {
-          rec.outputCleanup = streamToOutputFile(rec.session, rec.outputFile, id, ctx.cwd, transcriptAnchor);
+          rec.outputCleanup = streamToOutputFile(
+            rec.session,
+            rec.outputFile,
+            id,
+            ctx.cwd,
+            transcriptAnchor,
+          );
         }
       },
     });
     if (!record) return undefined;
 
-    if (joinMode != null && joinMode !== 'async') {
+    if (joinMode != null && joinMode !== "async") {
       currentBatchAgents.push({ id, joinMode });
       if (batchFinalizeTimer) clearTimeout(batchFinalizeTimer);
       batchFinalizeTimer = setTimeout(finalizeBatch, 100);
@@ -1270,12 +1479,14 @@ export default function (pi: ExtensionAPI) {
   const buildTypeListText = () => {
     const available = getAvailableTypes();
 
-    return available.map((name) => {
-      const cfg = getAgentConfig(name);
-      const modelSuffix = cfg?.model ? ` (${getModelLabelFromConfig(cfg.model)})` : "";
-      const toolsSuffix = ` (Tools: ${formatToolsSuffix(cfg)})`;
-      return `- ${name}: ${cfg?.description ?? name}${modelSuffix}${toolsSuffix}`;
-    }).join("\n");
+    return available
+      .map((name) => {
+        const cfg = getAgentConfig(name);
+        const modelSuffix = cfg?.model ? ` (${getModelLabelFromConfig(cfg.model)})` : "";
+        const toolsSuffix = ` (Tools: ${formatToolsSuffix(cfg)})`;
+        return `- ${name}: ${cfg?.description ?? name}${modelSuffix}${toolsSuffix}`;
+      })
+      .join("\n");
   };
 
   /** First sentence of an agent description — for the compact type list. */
@@ -1286,10 +1497,12 @@ export default function (pi: ExtensionAPI) {
 
   /** Compact type list: one line per agent, first sentence only. */
   const buildCompactTypeListText = () =>
-    getAvailableTypes().map((name) => {
-      const cfg = getAgentConfig(name);
-      return `- ${name}: ${firstSentence(cfg?.description ?? name)} (Tools: ${formatToolsSuffix(cfg)})`;
-    }).join("\n");
+    getAvailableTypes()
+      .map((name) => {
+        const cfg = getAgentConfig(name);
+        return `- ${name}: ${firstSentence(cfg?.description ?? name)} (Tools: ${formatToolsSuffix(cfg)})`;
+      })
+      .join("\n");
 
   /** Derive a short model label from a model string. */
   function getModelLabelFromConfig(model: string): string {
@@ -1310,7 +1523,9 @@ export default function (pi: ExtensionAPI) {
       setDefaultJoinMode,
       setSchedulingEnabled,
       setScopeModels: setScopeModelsEnabled,
-      setStrictAgentFiles: (b) => { strictAgentFiles = b; },
+      setStrictAgentFiles: (b) => {
+        strictAgentFiles = b;
+      },
       setDisableDefaultAgents: setDisableDefaultAgents,
       setToolDescriptionMode: setToolDescriptionMode,
       setFleetView: setFleetViewEnabled,
@@ -1336,14 +1551,15 @@ export default function (pi: ExtensionAPI) {
     schedule: Type.Optional(
       Type.String({
         description:
-          'Opt-in only — fire later instead of now. Omit to run immediately (the default, almost always correct). ' +
+          "Opt-in only — fire later instead of now. Omit to run immediately (the default, almost always correct). " +
           'Formats: 6-field cron ("0 0 9 * * 1" = 9am Mon), interval ("5m"/"1h"), one-shot ("+10m" or ISO). ' +
-          'Forces run_in_background; incompatible with inherit_context and resume. Returns job ID.',
+          "Forces run_in_background; incompatible with inherit_context and resume. Returns job ID.",
       }),
     ),
   };
-  const scheduleParam: Partial<typeof scheduleParamShape> =
-    isSchedulingEnabled() ? scheduleParamShape : {};
+  const scheduleParam: Partial<typeof scheduleParamShape> = isSchedulingEnabled()
+    ? scheduleParamShape
+    : {};
 
   const scheduleGuideline = isSchedulingEnabled()
     ? `\n- Use \`schedule\` only when the user explicitly asked for scheduled / recurring / delayed execution (e.g. "every Monday", "in an hour"). Don't auto-schedule from vague intent like "monitor X" — run once now or ask.`
@@ -1435,7 +1651,9 @@ Terse command-style prompts produce shallow, generic work.
     // Replacement callback (not a string) — agent descriptions may contain `$&` etc.
     return template.replace(/\{\{(\w+)\}\}/g, (raw, name: string) => {
       if (vars[name]) return vars[name]();
-      console.warn(`[choco-pi-subagents] agent-tool-description.md: unknown placeholder ${raw} left as-is`);
+      console.warn(
+        `[choco-pi-subagents] agent-tool-description.md: unknown placeholder ${raw} left as-is`,
+      );
       return raw;
     });
   };
@@ -1451,7 +1669,9 @@ Terse command-style prompts produce shallow, generic work.
         if (text) return renderToolDescriptionTemplate(text);
         console.warn(`[choco-pi-subagents] ${path} is empty — ignoring`);
       } catch (err) {
-        console.warn(`[choco-pi-subagents] failed to read ${path}: ${err instanceof Error ? err.message : String(err)}`);
+        console.warn(
+          `[choco-pi-subagents] failed to read ${path}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
     return undefined;
@@ -1463,7 +1683,9 @@ Terse command-style prompts produce shallow, generic work.
     if (mode === "custom") {
       const custom = loadCustomToolDescription();
       if (custom) return custom;
-      console.warn('[choco-pi-subagents] toolDescriptionMode is "custom" but no agent-tool-description.md found — using "full"');
+      console.warn(
+        '[choco-pi-subagents] toolDescriptionMode is "custom" but no agent-tool-description.md found — using "full"',
+      );
     }
     return fullAgentToolDescription;
   })();
@@ -1511,18 +1733,21 @@ Terse command-style prompts produce shallow, generic work.
       ),
       max_turns: Type.Optional(
         Type.Number({
-          description: "Maximum number of agentic turns before stopping. Omit for unlimited (default).",
+          description:
+            "Maximum number of agentic turns before stopping. Omit for unlimited (default).",
           minimum: 1,
         }),
       ),
       run_in_background: Type.Optional(
         Type.Boolean({
-          description: "Set to true to run in background. Returns agent ID immediately. You will be notified on completion.",
+          description:
+            "Set to true to run in background. Returns agent ID immediately. You will be notified on completion.",
         }),
       ),
       resume: Type.Optional(
         Type.String({
-          description: "Optional agent ID to resume from. Continues from previous context. Combine with run_in_background to resume detached and be notified on completion. An agent can only be resumed once its current run has finished — use steer_subagent to reach one mid-run.",
+          description:
+            "Optional agent ID to resume from. Continues from previous context. Combine with run_in_background to resume detached and be notified on completion. An agent can only be resumed once its current run has finished — use steer_subagent to reach one mid-run.",
         }),
       ),
       isolated: Type.Optional(
@@ -1532,7 +1757,8 @@ Terse command-style prompts produce shallow, generic work.
       ),
       inherit_context: Type.Optional(
         Type.Boolean({
-          description: "If true, fork parent conversation into the agent. Default: false (fresh context).",
+          description:
+            "If true, fork parent conversation into the agent. Default: false (fresh context).",
         }),
       ),
       ...isolationParam(isWorktreeIsolationEnabled()),
@@ -1551,7 +1777,9 @@ Terse command-style prompts produce shallow, generic work.
       // any open span per line anyway. No badge means no tint, so an uncolored agent
       // renders exactly the line it always did.
       const rowBackground = hasAgentBadge(args.subagent_type)
-        ? theme.getBgAnsi(context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg")
+        ? theme.getBgAnsi(
+            context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg",
+          )
         : "";
       const desc = args.description ?? "";
       const name = renderAgentName(args.subagent_type, theme, {
@@ -1559,7 +1787,11 @@ Terse command-style prompts produce shallow, generic work.
         restoreBackground: rowBackground,
         bold: true,
       });
-      return new Text(rowBackground + "▸ " + name + (desc ? "  " + theme.fg("muted", desc) : ""), 0, 0);
+      return new Text(
+        rowBackground + "▸ " + name + (desc ? "  " + theme.fg("muted", desc) : ""),
+        0,
+        0,
+      );
     },
 
     renderResult(result, { expanded, isPartial }, theme, renderContext) {
@@ -1582,7 +1814,9 @@ Terse command-style prompts produce shallow, generic work.
         }
         if (d.toolUses > 0) parts.push(`${d.toolUses} tool use${d.toolUses === 1 ? "" : "s"}`);
         if (d.tokens) parts.push(d.tokens);
-        return parts.map(p => fgPreservingNestedStyles(theme, "dim", p)).join(" " + theme.fg("dim", "·") + " ");
+        return parts
+          .map((p) => fgPreservingNestedStyles(theme, "dim", p))
+          .join(" " + theme.fg("dim", "·") + " ");
       };
 
       // ---- While running (streaming) ----
@@ -1594,7 +1828,11 @@ Terse command-style prompts produce shallow, generic work.
 
       // ---- Background agent launched ----
       if (details.status === "background") {
-        return new Text(theme.fg("dim", `  ⎿  Running in background (ID: ${details.agentId})`), 0, 0);
+        return new Text(
+          theme.fg("dim", `  ⎿  Running in background (ID: ${details.agentId})`),
+          0,
+          0,
+        );
       }
 
       // ---- Completed / Steered ----
@@ -1614,7 +1852,9 @@ Terse command-style prompts produce shallow, generic work.
               line += "\n" + theme.fg("dim", `  ${l}`);
             }
             if (resultText.split("\n").length > 50) {
-              line += "\n" + theme.fg("muted", "  ... (use get_subagent_result with verbose for full output)");
+              line +=
+                "\n" +
+                theme.fg("muted", "  ... (use get_subagent_result with verbose for full output)");
             }
           }
         } else {
@@ -1682,9 +1922,10 @@ Terse command-style prompts produce shallow, generic work.
       // foreground path. Resume deliberately doesn't: it replays the stored
       // session and ignores `subagent_type` entirely, so a note about type
       // substitution would be describing something that didn't happen.
-      const fallbackNote = dispatch.ok && dispatch.fellBackFrom !== undefined
-        ? `Note: Unknown agent type "${dispatch.fellBackFrom}" — using ${resolveType(subagentType) ? subagentType : "the fallback agent config"}.\n\n`
-        : "";
+      const fallbackNote =
+        dispatch.ok && dispatch.fellBackFrom !== undefined
+          ? `Note: Unknown agent type "${dispatch.fellBackFrom}" — using ${resolveType(subagentType) ? subagentType : "the fallback agent config"}.\n\n`
+          : "";
 
       const displayName = getDisplayName(subagentType);
 
@@ -1740,9 +1981,10 @@ Terse command-style prompts produce shallow, generic work.
 
       const parentModelId = ctx.model?.id;
       const effectiveModelId = model?.id;
-      const modelName = effectiveModelId && effectiveModelId !== parentModelId
-        ? (model?.name ?? effectiveModelId).replace(/^Claude\s+/i, "").toLowerCase()
-        : undefined;
+      const modelName =
+        effectiveModelId && effectiveModelId !== parentModelId
+          ? (model?.name ?? effectiveModelId).replace(/^Claude\s+/i, "").toLowerCase()
+          : undefined;
       const effectiveMaxTurns = normalizeMaxTurns(resolvedConfig.maxTurns ?? getDefaultMaxTurns());
       const agentInvocation: AgentInvocation = {
         modelName,
@@ -1770,19 +2012,29 @@ Terse command-style prompts produce shallow, generic work.
       // ---- Schedule: register a job, don't spawn now ----
       if (params.schedule) {
         if (!isSchedulingEnabled()) {
-          return textResult("Scheduling is disabled in this project. Enable via /agents → Settings → Scheduling.");
+          return textResult(
+            "Scheduling is disabled in this project. Enable via /agents → Settings → Scheduling.",
+          );
         }
         if (params.resume) {
-          return textResult("Cannot combine `schedule` with `resume` — schedules create fresh agents.");
+          return textResult(
+            "Cannot combine `schedule` with `resume` — schedules create fresh agents.",
+          );
         }
         if (params.inherit_context) {
-          return textResult("Cannot combine `schedule` with `inherit_context` — there is no parent conversation at fire time.");
+          return textResult(
+            "Cannot combine `schedule` with `inherit_context` — there is no parent conversation at fire time.",
+          );
         }
         if (params.run_in_background === false) {
-          return textResult("Cannot combine `schedule` with `run_in_background: false` — scheduled jobs always run in background.");
+          return textResult(
+            "Cannot combine `schedule` with `run_in_background: false` — scheduled jobs always run in background.",
+          );
         }
         if (!scheduler.isActive()) {
-          return textResult("Scheduler is not active in this session yet. Try again after the session has fully started.");
+          return textResult(
+            "Scheduler is not active in this session yet. Try again after the session has fully started.",
+          );
         }
         try {
           const job = scheduler.addJob({
@@ -1802,8 +2054,8 @@ Terse command-style prompts produce shallow, generic work.
           const next = scheduler.getNextRun(job.id);
           return textResult(
             `${fallbackNote}Scheduled "${job.name}" (id: ${job.id}, type: ${job.scheduleType}). ` +
-            `Next run: ${next ?? "(unknown)"}. ` +
-            `Manage via /agents → Scheduled jobs.`,
+              `Next run: ${next ?? "(unknown)"}. ` +
+              `Manage via /agents → Scheduled jobs.`,
           );
         } catch (err) {
           return textResult(err instanceof Error ? err.message : String(err));
@@ -1834,7 +2086,7 @@ Terse command-style prompts produce shallow, generic work.
           if (existing.status === "running" || existing.status === "queued") {
             return textResult(
               `Agent "${params.resume}" is still ${existing.status} — it can only be resumed once its current run finishes.\n` +
-              `Use steer_subagent to send it a message mid-run, or get_subagent_result to wait for it.`,
+                `Use steer_subagent to send it a message mid-run, or get_subagent_result to wait for it.`,
             );
           }
 
@@ -1850,13 +2102,24 @@ Terse command-style prompts produce shallow, generic work.
           const isQueued = record.status === "queued";
           return textResult(
             `Agent ${isQueued ? "queued" : "resumed"} in background.\n` +
-            `Agent ID: ${id}\n` +
-            `Type: ${existing.type}\n` +
-            (record.outputFile ? `Output file: ${record.outputFile}\n` : "") +
-            (isQueued ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n` : "") +
-            `\nYou will be notified when this agent completes.\n` +
-            `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.`,
-            { ...detailBase, subagentType: existing.type, displayName: existing.type, toolUses: record.toolUses, tokens: "", durationMs: 0, status: "background" as const, agentId: id },
+              `Agent ID: ${id}\n` +
+              `Type: ${existing.type}\n` +
+              (record.outputFile ? `Output file: ${record.outputFile}\n` : "") +
+              (isQueued
+                ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n`
+                : "") +
+              `\nYou will be notified when this agent completes.\n` +
+              `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.`,
+            {
+              ...detailBase,
+              subagentType: existing.type,
+              displayName: existing.type,
+              toolUses: record.toolUses,
+              tokens: "",
+              durationMs: 0,
+              status: "background" as const,
+              agentId: id,
+            },
           );
         }
 
@@ -1867,12 +2130,12 @@ Terse command-style prompts produce shallow, generic work.
         // A failed resume surfaces the error, plus any partial output THIS
         // resume produced (never the previous turn's answer, #144).
         if (record.status === "error") {
-          return textResult(`Agent failed: ${record.error}${partialOutputSuffix(record)}`, buildDetails(detailBase, record));
+          return textResult(
+            `Agent failed: ${record.error}${partialOutputSuffix(record)}`,
+            buildDetails(detailBase, record),
+          );
         }
-        return textResult(
-          record.result?.trim() || "No output.",
-          buildDetails(detailBase, record),
-        );
+        return textResult(record.result?.trim() || "No output.", buildDetails(detailBase, record));
       }
 
       // Background execution
@@ -1920,7 +2183,7 @@ Terse command-style prompts produce shallow, generic work.
           attachTranscript(record, id);
         }
 
-        if (joinMode == null || joinMode === 'async') {
+        if (joinMode == null || joinMode === "async") {
           // Foreground/no join mode or explicit async — not part of any batch
         } else {
           // smart or group — add to current batch
@@ -1948,15 +2211,22 @@ Terse command-style prompts produce shallow, generic work.
         const isQueued = record?.status === "queued";
         return textResult(
           `${fallbackNote}Agent ${isQueued ? "queued" : "started"} in background.\n` +
-          `Agent ID: ${id}\n` +
-          `Type: ${displayName}\n` +
-          `Description: ${params.description}\n` +
-          (record?.outputFile ? `Output file: ${record.outputFile}\n` : "") +
-          (isQueued ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n` : "") +
-          `\nYou will be notified when this agent completes.\n` +
-          `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n` +
-          `Do not duplicate this agent's work.`,
-          { ...detailBase, toolUses: 0, tokens: "", durationMs: 0, status: "background" as const, agentId: id },
+            `Agent ID: ${id}\n` +
+            `Type: ${displayName}\n` +
+            `Description: ${params.description}\n` +
+            (record?.outputFile ? `Output file: ${record.outputFile}\n` : "") +
+            (isQueued ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n` : "") +
+            `\nYou will be notified when this agent completes.\n` +
+            `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n` +
+            `Do not duplicate this agent's work.`,
+          {
+            ...detailBase,
+            toolUses: 0,
+            tokens: "",
+            durationMs: 0,
+            status: "background" as const,
+            agentId: id,
+          },
         );
       }
 
@@ -1983,7 +2253,10 @@ Terse command-style prompts produce shallow, generic work.
         });
       };
 
-      const { state: fgState, callbacks: fgCallbacks } = createActivityTracker(effectiveMaxTurns, streamUpdate);
+      const { state: fgState, callbacks: fgCallbacks } = createActivityTracker(
+        effectiveMaxTurns,
+        streamUpdate,
+      );
 
       // Wire session creation: register in widget + stream to output file.
       // The output file path is set synchronously after spawn (below),
@@ -2020,25 +2293,32 @@ Terse command-style prompts produce shallow, generic work.
 
       let record: AgentRecord;
       try {
-        const fgResult = await manager.spawnAndWait(pi, ctx, subagentType, params.prompt, {
-          description: params.description,
-          name: params.name as string | undefined,
-          model,
-          maxTurns: effectiveMaxTurns,
-          isolated,
-          inheritContext,
-          thinkingLevel: thinking,
-          isolation,
-          invocation: agentInvocation,
-          signal,
-          rootSessionId: ctx.sessionManager.getSessionId(),
-          ...fgCallbacks,
-        }, (fgAgentId) => {
-          // onSpawned: called synchronously after spawn, before onSessionCreated fires.
-          // Set up the output file so streamToOutputFile can pick it up.
-          const fgRec = manager.getRecord(fgAgentId);
-          attachTranscript(fgRec, fgAgentId);
-        });
+        const fgResult = await manager.spawnAndWait(
+          pi,
+          ctx,
+          subagentType,
+          params.prompt,
+          {
+            description: params.description,
+            name: params.name as string | undefined,
+            model,
+            maxTurns: effectiveMaxTurns,
+            isolated,
+            inheritContext,
+            thinkingLevel: thinking,
+            isolation,
+            invocation: agentInvocation,
+            signal,
+            rootSessionId: ctx.sessionManager.getSessionId(),
+            ...fgCallbacks,
+          },
+          (fgAgentId) => {
+            // onSpawned: called synchronously after spawn, before onSessionCreated fires.
+            // Set up the output file so streamToOutputFile can pick it up.
+            const fgRec = manager.getRecord(fgAgentId);
+            attachTranscript(fgRec, fgAgentId);
+          },
+        );
         record = fgResult.record;
       } finally {
         // Runs on both paths, so a startup throw — which now propagates, see
@@ -2059,7 +2339,10 @@ Terse command-style prompts produce shallow, generic work.
 
       if (record.status === "error") {
         // Error headline + any partial output the run produced before failing.
-        return textResult(`${fallbackNote}Agent failed: ${record.error}${partialOutputSuffix(record)}`, details);
+        return textResult(
+          `${fallbackNote}Agent failed: ${record.error}${partialOutputSuffix(record)}`,
+          details,
+        );
       }
 
       const durationMs = (record.completedAt ?? Date.now()) - record.startedAt;
@@ -2067,7 +2350,7 @@ Terse command-style prompts produce shallow, generic work.
       if (tokenText) statsParts.push(tokenText);
       return textResult(
         `${fallbackNote}Agent completed in ${formatMs(durationMs)} (${statsParts.join(", ")})${getForegroundOutcomeNote(record.status)}.\n\n` +
-        (record.result?.trim() || "No output."),
+          (record.result?.trim() || "No output."),
         details,
       );
     },
@@ -2079,7 +2362,7 @@ Terse command-style prompts produce shallow, generic work.
   const resolveWorkflowType = (requested: string): string | undefined => {
     const available = getAvailableTypes();
     if (available.includes(requested)) return requested;
-    const matches = available.filter(type => type.toLowerCase() === requested.toLowerCase());
+    const matches = available.filter((type) => type.toLowerCase() === requested.toLowerCase());
     return matches.length === 1 ? matches[0] : undefined;
   };
 
@@ -2114,9 +2397,10 @@ Terse command-style prompts produce shallow, generic work.
       const parentModelId = ctx.model?.id;
       const effectiveModelId = model?.id;
       const invocation: AgentInvocation = {
-        modelName: effectiveModelId && effectiveModelId !== parentModelId
-          ? (model?.name ?? effectiveModelId).replace(/^Claude\s+/i, "").toLowerCase()
-          : undefined,
+        modelName:
+          effectiveModelId && effectiveModelId !== parentModelId
+            ? (model?.name ?? effectiveModelId).replace(/^Claude\s+/i, "").toLowerCase()
+            : undefined,
         thinking: resolvedConfig.thinking,
         maxTurns: normalizeMaxTurns(resolvedConfig.maxTurns),
         isolated: resolvedConfig.isolated,
@@ -2181,7 +2465,7 @@ Terse command-style prompts produce shallow, generic work.
       if (workflowContext.signal.aborted) abort();
       try {
         while (record.status === "queued") {
-          await new Promise<void>(resolve => setTimeout(resolve, QUEUE_WAIT_POLL_MS));
+          await new Promise<void>((resolve) => setTimeout(resolve, QUEUE_WAIT_POLL_MS));
         }
         if (record.promise) await record.promise;
       } finally {
@@ -2196,255 +2480,292 @@ Terse command-style prompts produce shallow, generic work.
             ? "cancelled"
             : "error",
         output: record.result,
-        error: successful ? undefined : record.error ?? `Agent ended with status ${record.status}.`,
+        error: successful
+          ? undefined
+          : (record.error ?? `Agent ended with status ${record.status}.`),
         agentId: id,
       };
     },
   });
 
-  pi.registerTool(defineTool({
-    name: "workflow_run",
-    label: "Run Workflow",
-    description:
-      "Launch a dependency-aware workflow of subagents. Independent steps run in parallel under the shared subagent concurrency limit. " +
-      "Use dynamic: true with workflow_update to add or change pending steps based on completed results. Workflow tools are available only to the root orchestrator; workflow steps cannot nest workflows.",
-    promptSnippet: "Launch a dynamic DAG workflow of subagents",
-    parameters: WorkflowDefinitionSchema,
-    execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
-      reloadCustomAgents();
-      try {
-        const result = workflowManager.start(
-          params,
-          resolveWorkflowType,
-          createWorkflowRunner(ctx),
-          manager.getMaxConcurrent(),
-        );
-        pi.events.emit("subagents:workflow_created", result);
-        return textResult(
-          `Workflow started.\nWorkflow ID: ${result.workflowId}\nName: ${result.name}\n` +
-          `Steps: ${result.steps.length}\nMode: ${result.dynamic ? "dynamic (call workflow_update with finish: true when the plan is complete)" : "automatic"}\n\n` +
-          "You will be notified when the workflow completes. Use get_workflow_result for aggregate status and per-step outputs.",
-        );
-      } catch (error) {
-        return textResult(error instanceof Error ? error.message : String(error));
-      }
-    },
-  }));
+  pi.registerTool(
+    defineTool({
+      name: "workflow_run",
+      label: "Run Workflow",
+      description:
+        "Launch a dependency-aware workflow of subagents. Independent steps run in parallel under the shared subagent concurrency limit. " +
+        "Use dynamic: true with workflow_update to add or change pending steps based on completed results. Workflow tools are available only to the root orchestrator; workflow steps cannot nest workflows.",
+      promptSnippet: "Launch a dynamic DAG workflow of subagents",
+      parameters: WorkflowDefinitionSchema,
+      execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+        reloadCustomAgents();
+        try {
+          const result = workflowManager.start(
+            params,
+            resolveWorkflowType,
+            createWorkflowRunner(ctx),
+            manager.getMaxConcurrent(),
+          );
+          pi.events.emit("subagents:workflow_created", result);
+          return textResult(
+            `Workflow started.\nWorkflow ID: ${result.workflowId}\nName: ${result.name}\n` +
+              `Steps: ${result.steps.length}\nMode: ${result.dynamic ? "dynamic (call workflow_update with finish: true when the plan is complete)" : "automatic"}\n\n` +
+              "You will be notified when the workflow completes. Use get_workflow_result for aggregate status and per-step outputs.",
+          );
+        } catch (error) {
+          return textResult(error instanceof Error ? error.message : String(error));
+        }
+      },
+    }),
+  );
 
-  pi.registerTool(defineTool({
-    name: "workflow_update",
-    label: "Update Workflow",
-    description:
-      "Add steps or replace pending steps in a running workflow. Dependencies and references are revalidated atomically. " +
-      "Set finish: true to seal a dynamic workflow; it completes after all remaining steps settle.",
-    promptSnippet: "Adjust a running subagent workflow",
-    parameters: Type.Object({
-      workflow_id: Type.String(),
-      steps: Type.Optional(Type.Array(WorkflowStepSchema, { minItems: 1 })),
-      finish: Type.Optional(Type.Boolean()),
-    }, { additionalProperties: false }),
-    execute: async (_toolCallId, params) => {
-      reloadCustomAgents();
-      if (!params.steps && params.finish !== true) {
-        return textResult("workflow_update requires `steps` or `finish: true`.");
-      }
-      try {
-        let result = params.steps
-          ? workflowManager.update(params.workflow_id, params.steps as WorkflowStepDefinition[], resolveWorkflowType)
-          : workflowManager.get(params.workflow_id);
+  pi.registerTool(
+    defineTool({
+      name: "workflow_update",
+      label: "Update Workflow",
+      description:
+        "Add steps or replace pending steps in a running workflow. Dependencies and references are revalidated atomically. " +
+        "Set finish: true to seal a dynamic workflow; it completes after all remaining steps settle.",
+      promptSnippet: "Adjust a running subagent workflow",
+      parameters: Type.Object(
+        {
+          workflow_id: Type.String(),
+          steps: Type.Optional(Type.Array(WorkflowStepSchema, { minItems: 1 })),
+          finish: Type.Optional(Type.Boolean()),
+        },
+        { additionalProperties: false },
+      ),
+      execute: async (_toolCallId, params) => {
+        reloadCustomAgents();
+        if (!params.steps && params.finish !== true) {
+          return textResult("workflow_update requires `steps` or `finish: true`.");
+        }
+        try {
+          let result = params.steps
+            ? workflowManager.update(
+                params.workflow_id,
+                params.steps as WorkflowStepDefinition[],
+                resolveWorkflowType,
+              )
+            : workflowManager.get(params.workflow_id);
+          if (!result) return textResult(`Workflow not found: "${params.workflow_id}".`);
+          if (params.finish === true) result = workflowManager.finish(params.workflow_id);
+          return textResult(JSON.stringify(result, null, 2));
+        } catch (error) {
+          return textResult(error instanceof Error ? error.message : String(error));
+        }
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
+      name: "get_workflow_result",
+      label: "Get Workflow Result",
+      description:
+        "Retrieve aggregate workflow status and per-step outputs. wait: true waits until terminal, or until an open dynamic workflow becomes idle and needs an update.",
+      promptSnippet: "Get aggregate subagent workflow results",
+      parameters: Type.Object(
+        {
+          workflow_id: Type.String(),
+          wait: Type.Optional(Type.Boolean()),
+        },
+        { additionalProperties: false },
+      ),
+      execute: async (_toolCallId, params, signal) => {
+        let result = workflowManager.get(params.workflow_id);
         if (!result) return textResult(`Workflow not found: "${params.workflow_id}".`);
-        if (params.finish === true) result = workflowManager.finish(params.workflow_id);
-        return textResult(JSON.stringify(result, null, 2));
-      } catch (error) {
-        return textResult(error instanceof Error ? error.message : String(error));
-      }
-    },
-  }));
+        if (params.wait && (result.status === "running" || result.status === "waiting")) {
+          const completion = workflowManager.wait(params.workflow_id);
+          if (completion) result = await abortable(completion, signal);
+        }
+        if (result.completedAt !== undefined) {
+          workflowManager.markConsumed(params.workflow_id);
+          cancelNudge(`workflow:${params.workflow_id}`);
+        }
+        const serialized = JSON.stringify(result, null, 2);
+        if (params.wait && result.dynamic && !result.sealed && result.status === "waiting") {
+          return textResult(
+            "Workflow is idle and remains open. Add steps with workflow_update, or seal it with workflow_update { finish: true }.\n\n" +
+              serialized,
+          );
+        }
+        return textResult(serialized);
+      },
+    }),
+  );
 
-  pi.registerTool(defineTool({
-    name: "get_workflow_result",
-    label: "Get Workflow Result",
-    description:
-      "Retrieve aggregate workflow status and per-step outputs. wait: true waits until terminal, or until an open dynamic workflow becomes idle and needs an update.",
-    promptSnippet: "Get aggregate subagent workflow results",
-    parameters: Type.Object({
-      workflow_id: Type.String(),
-      wait: Type.Optional(Type.Boolean()),
-    }, { additionalProperties: false }),
-    execute: async (_toolCallId, params, signal) => {
-      let result = workflowManager.get(params.workflow_id);
-      if (!result) return textResult(`Workflow not found: "${params.workflow_id}".`);
-      if (params.wait && (result.status === "running" || result.status === "waiting")) {
-        const completion = workflowManager.wait(params.workflow_id);
-        if (completion) result = await abortable(completion, signal);
-      }
-      if (result.completedAt !== undefined) {
-        workflowManager.markConsumed(params.workflow_id);
-        cancelNudge(`workflow:${params.workflow_id}`);
-      }
-      const serialized = JSON.stringify(result, null, 2);
-      if (params.wait && result.dynamic && !result.sealed && result.status === "waiting") {
-        return textResult(
-          "Workflow is idle and remains open. Add steps with workflow_update, or seal it with workflow_update { finish: true }.\n\n" +
-          serialized,
-        );
-      }
-      return textResult(serialized);
-    },
-  }));
-
-  pi.registerTool(defineTool({
-    name: "workflow_cancel",
-    label: "Cancel Workflow",
-    description: "Cancel a workflow. Pending steps are cancelled and running step agents are aborted.",
-    promptSnippet: "Cancel a running subagent workflow",
-    parameters: Type.Object({ workflow_id: Type.String() }, { additionalProperties: false }),
-    execute: async (_toolCallId, params) => {
-      try {
-        return textResult(JSON.stringify(workflowManager.cancel(params.workflow_id), null, 2));
-      } catch (error) {
-        return textResult(error instanceof Error ? error.message : String(error));
-      }
-    },
-  }));
+  pi.registerTool(
+    defineTool({
+      name: "workflow_cancel",
+      label: "Cancel Workflow",
+      description:
+        "Cancel a workflow. Pending steps are cancelled and running step agents are aborted.",
+      promptSnippet: "Cancel a running subagent workflow",
+      parameters: Type.Object({ workflow_id: Type.String() }, { additionalProperties: false }),
+      execute: async (_toolCallId, params) => {
+        try {
+          return textResult(JSON.stringify(workflowManager.cancel(params.workflow_id), null, 2));
+        } catch (error) {
+          return textResult(error instanceof Error ? error.message : String(error));
+        }
+      },
+    }),
+  );
 
   // ---- get_subagent_result tool ----
 
-  pi.registerTool(defineTool({
-    name: SUBAGENT_TOOL_NAMES.GET_RESULT,
-    label: "Get Agent Result",
-    description:
-      "Check status and retrieve results from a background agent. Use the agent ID returned by Agent with run_in_background.",
-    promptSnippet: "Check status and retrieve results from a background agent",
-    parameters: Type.Object({
-      agent_id: Type.String({
-        description: "The agent ID to check. The agent's handle also works — its `name` if you gave it one, otherwise its type (`explore`, `explore-2`).",
+  pi.registerTool(
+    defineTool({
+      name: SUBAGENT_TOOL_NAMES.GET_RESULT,
+      label: "Get Agent Result",
+      description:
+        "Check status and retrieve results from a background agent. Use the agent ID returned by Agent with run_in_background.",
+      promptSnippet: "Check status and retrieve results from a background agent",
+      parameters: Type.Object({
+        agent_id: Type.String({
+          description:
+            "The agent ID to check. The agent's handle also works — its `name` if you gave it one, otherwise its type (`explore`, `explore-2`).",
+        }),
+        wait: Type.Optional(
+          Type.Boolean({
+            description:
+              "If true, wait for the agent to complete before returning. Default: false.",
+          }),
+        ),
+        verbose: Type.Optional(
+          Type.Boolean({
+            description:
+              "If true, include the agent's full conversation (messages + tool calls). Default: false.",
+          }),
+        ),
       }),
-      wait: Type.Optional(
-        Type.Boolean({
-          description: "If true, wait for the agent to complete before returning. Default: false.",
-        }),
-      ),
-      verbose: Type.Optional(
-        Type.Boolean({
-          description: "If true, include the agent's full conversation (messages + tool calls). Default: false.",
-        }),
-      ),
+      execute: async (_toolCallId, params, signal, _onUpdate, _ctx) => {
+        const record = resolveAgentRef(params.agent_id);
+        if (!record || record.parentAgentId) {
+          return textResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
+        }
+
+        // Wait for completion if requested. Cancellation stops only this tool
+        // call; the background agent keeps running and remains unconsumed so its
+        // completion notification can still be delivered.
+        // Queued agents have no promise yet (it's created when the queue starts
+        // them), so poll until they leave the queue, then await like a running one.
+        if (params.wait && (record.status === "running" || record.status === "queued")) {
+          while (record.status === "queued") {
+            await abortable(
+              new Promise<void>((resolve) => setTimeout(resolve, QUEUE_WAIT_POLL_MS)),
+              signal,
+            );
+          }
+          if (record.promise) await abortable(record.promise, signal);
+        }
+
+        const displayName = getDisplayName(record.type);
+        const duration = formatDuration(record.startedAt, record.completedAt);
+        const tokens = formatLifetimeTokens(record);
+        const contextPercent = getSessionContextPercent(record.session);
+        const statsParts = [`Tool uses: ${record.toolUses}`];
+        if (tokens) statsParts.push(tokens);
+        if (contextPercent !== null) statsParts.push(`Context: ${Math.round(contextPercent)}%`);
+        if (record.compactionCount) statsParts.push(`Compactions: ${record.compactionCount}`);
+        statsParts.push(`Duration: ${duration}`);
+
+        let output =
+          `Agent: ${record.id}\n` +
+          `Type: ${displayName} | Status: ${record.status}${getStatusNote(record.status)} | ${statsParts.join(" | ")}\n` +
+          `Description: ${record.description}\n\n`;
+
+        if (record.status === "running") {
+          output += "Agent is still running. Use wait: true or check back later.";
+        } else if (record.status === "error") {
+          output += `Error: ${record.error}${partialOutputSuffix(record)}`;
+        } else {
+          output += record.result?.trim() || "No output.";
+        }
+
+        // Mark result as consumed — suppresses the completion notification
+        if (record.status !== "running" && record.status !== "queued") {
+          record.resultConsumed = true;
+          cancelNudge(params.agent_id);
+        }
+
+        // Verbose: include full conversation
+        if (params.verbose && record.session) {
+          const conversation = getAgentConversation(record.session);
+          if (conversation) {
+            output += `\n\n--- Agent Conversation ---\n${conversation}`;
+          }
+        }
+
+        return textResult(output);
+      },
     }),
-    execute: async (_toolCallId, params, signal, _onUpdate, _ctx) => {
-      const record = resolveAgentRef(params.agent_id);
-      if (!record || record.parentAgentId) {
-        return textResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
-      }
-
-      // Wait for completion if requested. Cancellation stops only this tool
-      // call; the background agent keeps running and remains unconsumed so its
-      // completion notification can still be delivered.
-      // Queued agents have no promise yet (it's created when the queue starts
-      // them), so poll until they leave the queue, then await like a running one.
-      if (params.wait && (record.status === "running" || record.status === "queued")) {
-        while (record.status === "queued") {
-          await abortable(
-            new Promise<void>((resolve) => setTimeout(resolve, QUEUE_WAIT_POLL_MS)),
-            signal,
-          );
-        }
-        if (record.promise) await abortable(record.promise, signal);
-      }
-
-      const displayName = getDisplayName(record.type);
-      const duration = formatDuration(record.startedAt, record.completedAt);
-      const tokens = formatLifetimeTokens(record);
-      const contextPercent = getSessionContextPercent(record.session);
-      const statsParts = [`Tool uses: ${record.toolUses}`];
-      if (tokens) statsParts.push(tokens);
-      if (contextPercent !== null) statsParts.push(`Context: ${Math.round(contextPercent)}%`);
-      if (record.compactionCount) statsParts.push(`Compactions: ${record.compactionCount}`);
-      statsParts.push(`Duration: ${duration}`);
-
-      let output =
-        `Agent: ${record.id}\n` +
-        `Type: ${displayName} | Status: ${record.status}${getStatusNote(record.status)} | ${statsParts.join(" | ")}\n` +
-        `Description: ${record.description}\n\n`;
-
-      if (record.status === "running") {
-        output += "Agent is still running. Use wait: true or check back later.";
-      } else if (record.status === "error") {
-        output += `Error: ${record.error}${partialOutputSuffix(record)}`;
-      } else {
-        output += record.result?.trim() || "No output.";
-      }
-
-      // Mark result as consumed — suppresses the completion notification
-      if (record.status !== "running" && record.status !== "queued") {
-        record.resultConsumed = true;
-        cancelNudge(params.agent_id);
-      }
-
-      // Verbose: include full conversation
-      if (params.verbose && record.session) {
-        const conversation = getAgentConversation(record.session);
-        if (conversation) {
-          output += `\n\n--- Agent Conversation ---\n${conversation}`;
-        }
-      }
-
-      return textResult(output);
-    },
-  }));
+  );
 
   // ---- steer_subagent tool ----
 
-  pi.registerTool(defineTool({
-    name: SUBAGENT_TOOL_NAMES.STEER,
-    label: "Steer Agent",
-    description:
-      "Send a steering message to a running agent. The message will interrupt the agent after its current tool execution " +
-      "and be injected into its conversation, allowing you to redirect its work mid-run. Only works on running agents.",
-    promptSnippet: "Send a steering message to redirect a running background agent",
-    parameters: Type.Object({
-      agent_id: Type.String({
-        description: "The agent ID to steer (must be currently running). The agent's handle also works — its `name` if you gave it one, otherwise its type (`explore`, `explore-2`).",
+  pi.registerTool(
+    defineTool({
+      name: SUBAGENT_TOOL_NAMES.STEER,
+      label: "Steer Agent",
+      description:
+        "Send a steering message to a running agent. The message will interrupt the agent after its current tool execution " +
+        "and be injected into its conversation, allowing you to redirect its work mid-run. Only works on running agents.",
+      promptSnippet: "Send a steering message to redirect a running background agent",
+      parameters: Type.Object({
+        agent_id: Type.String({
+          description:
+            "The agent ID to steer (must be currently running). The agent's handle also works — its `name` if you gave it one, otherwise its type (`explore`, `explore-2`).",
+        }),
+        message: Type.String({
+          description:
+            "The steering message to send. This will appear as a user message in the agent's conversation.",
+        }),
       }),
-      message: Type.String({
-        description: "The steering message to send. This will appear as a user message in the agent's conversation.",
-      }),
-    }),
-    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
-      const record = resolveAgentRef(params.agent_id);
-      if (!record || record.parentAgentId) {
-        return textResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
-      }
-      if (record.status !== "running") {
-        return textResult(`Agent "${params.agent_id}" is not running (status: ${record.status}). Cannot steer a non-running agent.`);
-      }
-      if (!record.session) {
-        // Session not ready yet — queue the steer for delivery once initialized
-        if (!record.pendingSteers) record.pendingSteers = [];
-        record.pendingSteers.push(params.message);
-        pi.events.emit("subagents:steered", { id: record.id, message: params.message });
-        return textResult(`Steering message queued for agent ${record.id}. It will be delivered once the session initializes.`);
-      }
+      execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+        const record = resolveAgentRef(params.agent_id);
+        if (!record || record.parentAgentId) {
+          return textResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
+        }
+        if (record.status !== "running") {
+          return textResult(
+            `Agent "${params.agent_id}" is not running (status: ${record.status}). Cannot steer a non-running agent.`,
+          );
+        }
+        if (!record.session) {
+          // Session not ready yet — queue the steer for delivery once initialized
+          if (!record.pendingSteers) record.pendingSteers = [];
+          record.pendingSteers.push(params.message);
+          pi.events.emit("subagents:steered", { id: record.id, message: params.message });
+          return textResult(
+            `Steering message queued for agent ${record.id}. It will be delivered once the session initializes.`,
+          );
+        }
 
-      // UI steering (overlay composer, prompt mentions and fullscreen focus)
-      // converges on this same manager path, including pre-session queueing.
-      if (!manager.steer(record.id, params.message)) {
-        return textResult(`Failed to steer agent ${record.id}. It is no longer running.`);
-      }
-      pi.events.emit("subagents:steered", { id: record.id, message: params.message });
-      const tokens = formatLifetimeTokens(record);
-      const contextPercent = getSessionContextPercent(record.session);
-      const stateParts: string[] = [];
-      if (tokens) stateParts.push(tokens);
-      stateParts.push(`${record.toolUses} tool ${record.toolUses === 1 ? "use" : "uses"}`);
-      if (contextPercent !== null) stateParts.push(`context ${Math.round(contextPercent)}% full`);
-      if (record.compactionCount) stateParts.push(`${record.compactionCount} compaction${record.compactionCount === 1 ? "" : "s"}`);
-      return textResult(
-        `Steering message sent to agent ${record.id}. The agent will process it after its current tool execution.\n` +
-        `Current state: ${stateParts.join(" · ")}`,
-      );
-    },
-  }));
+        // UI steering (overlay composer, prompt mentions and fullscreen focus)
+        // converges on this same manager path, including pre-session queueing.
+        if (!manager.steer(record.id, params.message)) {
+          return textResult(`Failed to steer agent ${record.id}. It is no longer running.`);
+        }
+        pi.events.emit("subagents:steered", { id: record.id, message: params.message });
+        const tokens = formatLifetimeTokens(record);
+        const contextPercent = getSessionContextPercent(record.session);
+        const stateParts: string[] = [];
+        if (tokens) stateParts.push(tokens);
+        stateParts.push(`${record.toolUses} tool ${record.toolUses === 1 ? "use" : "uses"}`);
+        if (contextPercent !== null) stateParts.push(`context ${Math.round(contextPercent)}% full`);
+        if (record.compactionCount)
+          stateParts.push(
+            `${record.compactionCount} compaction${record.compactionCount === 1 ? "" : "s"}`,
+          );
+        return textResult(
+          `Steering message sent to agent ${record.id}. The agent will process it after its current tool execution.\n` +
+            `Current state: ${stateParts.join(" · ")}`,
+        );
+      },
+    }),
+  );
 
   // ---- /agents interactive menu ----
 
@@ -2465,7 +2786,11 @@ Terse command-style prompts produce shallow, generic work.
     // e.g. a provider fallback or a looser version pin. Cosmetic separator/date
     // differences are normalized away so an effectively-identical match stays quiet.
     const resolvedFull = `${resolved.provider}/${resolved.id}`;
-    const norm = (s: string) => s.toLowerCase().replace(/\./g, "-").replace(/-\d{8}$/, "");
+    const norm = (s: string) =>
+      s
+        .toLowerCase()
+        .replace(/\./g, "-")
+        .replace(/-\d{8}$/, "");
     if (norm(cfg.model) === norm(resolvedFull)) return label;
     return `${label} (→ ${resolvedFull.replace(/-\d{8}$/, "")})`;
   }
@@ -2478,10 +2803,10 @@ Terse command-style prompts produce shallow, generic work.
     const options: string[] = [];
 
     // Running agents entry (only if there are active agents)
-    const agents = manager.listAgents().filter(a => !a.parentAgentId);
+    const agents = manager.listAgents().filter((a) => !a.parentAgentId);
     if (agents.length > 0) {
-      const running = agents.filter(a => a.status === "running" || a.status === "queued").length;
-      const done = agents.filter(a => a.status === "completed" || a.status === "steered").length;
+      const running = agents.filter((a) => a.status === "running" || a.status === "queued").length;
+      const done = agents.filter((a) => a.status === "completed" || a.status === "steered").length;
       options.push(`Running agents (${agents.length}) — ${running} running, ${done} done`);
     }
 
@@ -2500,11 +2825,12 @@ Terse command-style prompts produce shallow, generic work.
     options.push("Create new agent");
     options.push("Settings");
 
-    const noAgentsMsg = allNames.length === 0 && agents.length === 0
-      ? "No agents found. Create specialized subagents that can be delegated to.\n\n" +
-        "Each subagent has its own context window, custom system prompt, and specific tools.\n\n" +
-        "Try creating: Code Reviewer, Security Auditor, Test Writer, or Documentation Writer.\n\n"
-      : "";
+    const noAgentsMsg =
+      allNames.length === 0 && agents.length === 0
+        ? "No agents found. Create specialized subagents that can be delegated to.\n\n" +
+          "Each subagent has its own context window, custom system prompt, and specific tools.\n\n" +
+          "Try creating: Code Reviewer, Security Auditor, Test Writer, or Documentation Writer.\n\n"
+        : "";
 
     if (noAgentsMsg) {
       ctx.ui.notify(noAgentsMsg, "info");
@@ -2550,7 +2876,7 @@ Terse command-style prompts produce shallow, generic work.
     // One row per agent (name in the left column, model on the right); the
     // full description renders below the highlighted row via SettingsList,
     // exactly like the Settings menu — so long descriptions never wrap the list.
-    const items: SettingItem[] = allNames.map(name => {
+    const items: SettingItem[] = allNames.map((name) => {
       const cfg = getAgentConfig(name);
       const disabled = cfg?.enabled === false;
       const model = getModelLabel(name, ctx.modelRegistry);
@@ -2565,8 +2891,11 @@ Terse command-style prompts produce shallow, generic work.
       };
     });
 
-    const hasCustom = allNames.some(n => { const c = getAgentConfig(n); return c && !c.isDefault && c.enabled !== false; });
-    const hasDisabled = allNames.some(n => getAgentConfig(n)?.enabled === false);
+    const hasCustom = allNames.some((n) => {
+      const c = getAgentConfig(n);
+      return c && !c.isDefault && c.enabled !== false;
+    });
+    const hasDisabled = allNames.some((n) => getAgentConfig(n)?.enabled === false);
     const legendParts: string[] = [];
     if (hasCustom) legendParts.push("• = project  ◦ = global");
     if (hasDisabled) legendParts.push("✕ = disabled");
@@ -2577,12 +2906,13 @@ Terse command-style prompts produce shallow, generic work.
         items,
         Math.min(items.length, 12),
         slTheme,
-        id => done(id), // Enter/Space on a row → return that agent's name
+        (id) => done(id), // Enter/Space on a row → return that agent's name
         () => done(undefined), // Esc → cancel
       );
       const container = new Container();
       container.addChild(new Text("Agent types", 0, 0));
-      if (legendParts.length) container.addChild(new Text(slTheme.hint(legendParts.join("  ")), 0, 0));
+      if (legendParts.length)
+        container.addChild(new Text(slTheme.hint(legendParts.join("  ")), 0, 0));
       container.addChild(new Spacer(1));
       container.addChild(list);
       return {
@@ -2599,7 +2929,7 @@ Terse command-style prompts produce shallow, generic work.
   }
 
   async function showRunningAgents(ctx: ExtensionCommandContext): Promise<boolean> {
-    const agents = manager.listAgents().filter(a => !a.parentAgentId);
+    const agents = manager.listAgents().filter((a) => !a.parentAgentId);
     if (agents.length === 0) {
       ctx.ui.notify("No agents.", "info");
       return false;
@@ -2608,7 +2938,7 @@ Terse command-style prompts produce shallow, generic work.
     // Numbered + item-paired. Two same-type agents spawned together with the
     // same description render identically here, and resolving the choice by
     // string match would open whichever came first.
-    const record = await selectItem(ctx.ui, "Running agents", agents, a => {
+    const record = await selectItem(ctx.ui, "Running agents", agents, (a) => {
       const dn = getDisplayName(a.type);
       const dur = formatDuration(a.startedAt, a.completedAt);
       return `${dn} (${a.description}) · ${a.toolUses} tools · ${a.status} · ${dur}`;
@@ -2621,9 +2951,15 @@ Terse command-style prompts produce shallow, generic work.
     return continueRunningAgentNavigation(focused, () => showRunningAgents(ctx));
   }
 
-  async function viewAgentConversation(ctx: ExtensionCommandContext, record: AgentRecord): Promise<boolean> {
+  async function viewAgentConversation(
+    ctx: ExtensionCommandContext,
+    record: AgentRecord,
+  ): Promise<boolean> {
     if (!record.session) {
-      ctx.ui.notify(`Agent is ${record.status === "queued" ? "queued" : "expired"} — no session available.`, "info");
+      ctx.ui.notify(
+        `Agent is ${record.status === "queued" ? "queued" : "expired"} — no session available.`,
+        "info",
+      );
       return false;
     }
 
@@ -2634,19 +2970,30 @@ Terse command-style prompts produce shallow, generic work.
     let focusRequested = false;
     await ctx.ui.custom<undefined>(
       (tui, theme, keybindings, done) => {
-        return new ConversationViewer(tui, session, record, activity, theme, done, () => {
-          if (manager.abort(record.id)) {
-            ctx.ui.notify(`Stopped "${record.description}".`, "info");
-          }
-        }, keybindings, (message: string) => manager.steer(record.id, message), {
-          onFocus: () => {
-            focusRequested = true;
-            // Close this modal first: leaving it mounted makes Esc dismiss the
-            // overlay instead of exiting focus (the double-Esc defect).
-            done(undefined);
-            queueMicrotask(() => focus.focus(record, tui, theme));
+        return new ConversationViewer(
+          tui,
+          session,
+          record,
+          activity,
+          theme,
+          done,
+          () => {
+            if (manager.abort(record.id)) {
+              ctx.ui.notify(`Stopped "${record.description}".`, "info");
+            }
           },
-        });
+          keybindings,
+          (message: string) => manager.steer(record.id, message),
+          {
+            onFocus: () => {
+              focusRequested = true;
+              // Close this modal first: leaving it mounted makes Esc dismiss the
+              // overlay instead of exiting focus (the double-Esc defect).
+              done(undefined);
+              queueMicrotask(() => focus.focus(record, tui, theme));
+            },
+          },
+        );
       },
       {
         overlay: true,
@@ -2698,7 +3045,10 @@ Terse command-style prompts produce shallow, generic work.
       }
     } else if (choice === "Delete") {
       if (file) {
-        const confirmed = await ctx.ui.confirm("Delete agent", `Delete ${name} from ${file.location} (${file.path})?`);
+        const confirmed = await ctx.ui.confirm(
+          "Delete agent",
+          `Delete ${name} from ${file.location} (${file.path})?`,
+        );
         if (confirmed) {
           unlinkSync(file.path);
           reloadCustomAgents();
@@ -2706,7 +3056,10 @@ Terse command-style prompts produce shallow, generic work.
         }
       }
     } else if (choice === "Reset to default" && file) {
-      const confirmed = await ctx.ui.confirm("Reset to default", `Delete override ${file.path} and restore embedded default?`);
+      const confirmed = await ctx.ui.confirm(
+        "Reset to default",
+        `Delete override ${file.path} and restore embedded default?`,
+      );
       if (confirmed) {
         unlinkSync(file.path);
         reloadCustomAgents();
@@ -2734,7 +3087,10 @@ Terse command-style prompts produce shallow, generic work.
 
     const targetPath = join(targetDir, `${name}.md`);
     if (existsSync(targetPath)) {
-      const overwrite = await ctx.ui.confirm("Overwrite", `${targetPath} already exists. Overwrite?`);
+      const overwrite = await ctx.ui.confirm(
+        "Overwrite",
+        `${targetPath} already exists. Overwrite?`,
+      );
       if (!overwrite) return;
     }
 
@@ -2847,7 +3203,10 @@ Terse command-style prompts produce shallow, generic work.
 
     const targetPath = join(targetDir, `${name}.md`);
     if (existsSync(targetPath)) {
-      const overwrite = await ctx.ui.confirm("Overwrite", `${targetPath} already exists. Overwrite?`);
+      const overwrite = await ctx.ui.confirm(
+        "Overwrite",
+        `${targetPath} already exists. Overwrite?`,
+      );
       if (!overwrite) return;
     }
 
@@ -2916,7 +3275,10 @@ Write the file using the write tool. Only write the file, nothing else.`;
     if (existsSync(targetPath)) {
       ctx.ui.notify(`Created ${targetPath}`, "info");
     } else {
-      ctx.ui.notify("Agent generation completed but file was not created. Check the agent output.", "warning");
+      ctx.ui.notify(
+        "Agent generation completed but file was not created. Check the agent output.",
+        "warning",
+      );
     }
   }
 
@@ -2930,7 +3292,12 @@ Write the file using the write tool. Only write the file, nothing else.`;
     if (!description) return;
 
     // 3. Tools
-    const toolChoice = await ctx.ui.select("Tools", ["all", "none", "read-only (read, bash, grep, find, ls)", "custom..."]);
+    const toolChoice = await ctx.ui.select("Tools", [
+      "all",
+      "none",
+      "read-only (read, bash, grep, find, ls)",
+      "custom...",
+    ]);
     if (!toolChoice) return;
 
     let tools: string;
@@ -2941,7 +3308,10 @@ Write the file using the write tool. Only write the file, nothing else.`;
     } else if (toolChoice.startsWith("read-only")) {
       tools = "read, bash, grep, find, ls";
     } else {
-      const customTools = await ctx.ui.input("Tools (comma-separated)", BUILTIN_TOOL_NAMES.join(", "));
+      const customTools = await ctx.ui.input(
+        "Tools (comma-separated)",
+        BUILTIN_TOOL_NAMES.join(", "),
+      );
       if (!customTools) return;
       tools = customTools;
     }
@@ -2985,7 +3355,10 @@ Write the file using the write tool. Only write the file, nothing else.`;
     const targetPath = join(targetDir, `${name}.md`);
 
     if (existsSync(targetPath)) {
-      const overwrite = await ctx.ui.confirm("Overwrite", `${targetPath} already exists. Overwrite?`);
+      const overwrite = await ctx.ui.confirm(
+        "Overwrite",
+        `${targetPath} already exists. Overwrite?`,
+      );
       if (!overwrite) return;
     }
 
@@ -3043,7 +3416,12 @@ Write the file using the write tool. Only write the file, nothing else.`;
   const _settingsSnapshotIsComplete: _NoMissingSettingsKeys = true;
   void _settingsSnapshotIsComplete;
 
-  const NUMERIC_IDS = new Set(["maxConcurrent", "defaultMaxTurns", "graceTurns", "maxSubagentDepth"]);
+  const NUMERIC_IDS = new Set([
+    "maxConcurrent",
+    "defaultMaxTurns",
+    "graceTurns",
+    "maxSubagentDepth",
+  ]);
 
   async function showSettings(ctx: ExtensionCommandContext) {
     function buildItems(): SettingItem[] {
@@ -3084,7 +3462,8 @@ Write the file using the write tool. Only write the file, nothing else.`;
         {
           id: "maxSubagentDepth",
           label: "Nested depth",
-          description: "Hard cap on nested delegation — main is 0, its subagents 1 (0/1 = nesting off, Enter to type)",
+          description:
+            "Hard cap on nested delegation — main is 0, its subagents 1 (0/1 = nesting off, Enter to type)",
           currentValue: String(msd),
           values: [String(msd)],
         },
@@ -3098,7 +3477,8 @@ Write the file using the write tool. Only write the file, nothing else.`;
         {
           id: "schedulingEnabled",
           label: "Scheduling",
-          description: "Schedule subagent feature (off removes `schedule` param from Agent tool spec on next pi session)",
+          description:
+            "Schedule subagent feature (off removes `schedule` param from Agent tool spec on next pi session)",
           currentValue: isSchedulingEnabled() ? "on" : "off",
           values: ["on", "off"],
         },
@@ -3112,14 +3492,16 @@ Write the file using the write tool. Only write the file, nothing else.`;
         {
           id: "strictAgentFiles",
           label: "Strict agent files",
-          description: "Fail startup on an unreadable/unparseable agent .md instead of skipping it with a warning",
+          description:
+            "Fail startup on an unreadable/unparseable agent .md instead of skipping it with a warning",
           currentValue: strictAgentFiles ? "on" : "off",
           values: ["on", "off"],
         },
         {
           id: "disableDefaultAgents",
           label: "Disable defaults",
-          description: "Hide built-in agents (general-purpose, Explore, Plan) — custom agents are unaffected",
+          description:
+            "Hide built-in agents (general-purpose, Explore, Plan) — custom agents are unaffected",
           currentValue: isDefaultsDisabled() ? "on" : "off",
           values: ["on", "off"],
         },
@@ -3133,7 +3515,8 @@ Write the file using the write tool. Only write the file, nothing else.`;
         {
           id: "outputTranscript",
           label: "Output transcript",
-          description: "Write each subagent's .output transcript by default. A custom agent's output_transcript frontmatter overrides this.",
+          description:
+            "Write each subagent's .output transcript by default. A custom agent's output_transcript frontmatter overrides this.",
           currentValue: getOutputTranscriptDefault() ? "on" : "off",
           values: ["on", "off"],
         },
@@ -3148,35 +3531,40 @@ Write the file using the write tool. Only write the file, nothing else.`;
         {
           id: "fleetView",
           label: "Fleet view",
-          description: "Claude Code-style main+subagents list below the editor (↓/← to navigate, Enter to view)",
+          description:
+            "Claude Code-style main+subagents list below the editor (↓/← to navigate, Enter to view)",
           currentValue: isFleetViewEnabled() ? "on" : "off",
           values: ["on", "off"],
         },
         {
           id: "agentMentions",
           label: "Agent mentions",
-          description: "Route `@handle message` at the prompt to that agent. model = an off-screen clone of this conversation calls the Agent tool, so the agent gets a context-written prompt, a transcript and per-tool detail, and the chat stays clean; direct = started here from your text, no model call. Messaging and resuming are direct either way.",
+          description:
+            "Route `@handle message` at the prompt to that agent. model = an off-screen clone of this conversation calls the Agent tool, so the agent gets a context-written prompt, a transcript and per-tool detail, and the chat stays clean; direct = started here from your text, no model call. Messaging and resuming are direct either way.",
           currentValue: getAgentMentionMode(),
           values: ["model", "direct", "off"],
         },
         {
           id: "rememberAgents",
           label: "Remember agents",
-          description: "Persist subagent sessions so `@handle` can resume one long after it finished (they also appear in /resume)",
+          description:
+            "Persist subagent sessions so `@handle` can resume one long after it finished (they also appear in /resume)",
           currentValue: getRememberAgents() ? "on" : "off",
           values: ["on", "off"],
         },
         {
           id: "widgetMode",
           label: "Widget",
-          description: "Above-editor agent widget: all = every agent; background = hide foreground (they already render inline); off = hide the widget.",
+          description:
+            "Above-editor agent widget: all = every agent; background = hide foreground (they already render inline); off = hide the widget.",
           currentValue: getWidgetMode(),
           values: ["all", "background", "off"],
         },
         {
           id: "toolDescriptionMode",
           label: "Tool description",
-          description: "Agent tool description sent to the LLM: full (rich, default), compact (~75% fewer tokens, for small/local models), or custom (.pi/agent-tool-description.md with {{placeholders}})",
+          description:
+            "Agent tool description sent to the LLM: full (rich, default), compact (~75% fewer tokens, for small/local models), or custom (.pi/agent-tool-description.md with {{placeholders}})",
           currentValue: getToolDescriptionMode(),
           values: ["full", "compact", "custom"],
         },
@@ -3225,7 +3613,7 @@ Write the file using the write tool. Only write the file, nothing else.`;
           ctx.ui.notify(`Scheduling already ${enabled ? "enabled" : "disabled"}.`, "info");
         } else {
           setSchedulingEnabled(enabled);
-          if (!enabled) scheduler.stop();  // immediate kill — outstanding fires stop ticking
+          if (!enabled) scheduler.stop(); // immediate kill — outstanding fires stop ticking
           notifyApplied(
             ctx,
             `Scheduling ${enabled ? "enabled" : "disabled"}. Tool spec change takes effect on next pi session.`,
@@ -3238,11 +3626,17 @@ Write the file using the write tool. Only write the file, nothing else.`;
       } else if (id === "strictAgentFiles") {
         const enabled = value === "on";
         strictAgentFiles = enabled;
-        notifyApplied(ctx, `Strict agent files ${enabled ? "enabled" : "disabled"}. Takes effect on next pi session.`);
+        notifyApplied(
+          ctx,
+          `Strict agent files ${enabled ? "enabled" : "disabled"}. Takes effect on next pi session.`,
+        );
       } else if (id === "disableDefaultAgents") {
         const enabled = value === "on";
         setDisableDefaultAgents(enabled);
-        notifyApplied(ctx, `Default agents ${enabled ? "disabled" : "enabled"}. Tool spec change takes effect on next pi session.`);
+        notifyApplied(
+          ctx,
+          `Default agents ${enabled ? "disabled" : "enabled"}. Tool spec change takes effect on next pi session.`,
+        );
       } else if (id === "fallbackSubagent") {
         setFallbackSubagent(value);
         notifyApplied(
@@ -3338,21 +3732,23 @@ Write the file using the write tool. Only write the file, nothing else.`;
 
     // If a numeric field ID was returned, prompt for typed input
     if (result && NUMERIC_IDS.has(result)) {
-      const current = result === "maxConcurrent"
-        ? String(manager.getMaxConcurrent())
-        : result === "defaultMaxTurns"
-          ? String(getDefaultMaxTurns() ?? 0)
-          : result === "maxSubagentDepth"
-            ? String(getMaxSubagentDepth())
-            : String(getGraceTurns());
+      const current =
+        result === "maxConcurrent"
+          ? String(manager.getMaxConcurrent())
+          : result === "defaultMaxTurns"
+            ? String(getDefaultMaxTurns() ?? 0)
+            : result === "maxSubagentDepth"
+              ? String(getMaxSubagentDepth())
+              : String(getGraceTurns());
 
-      const label = result === "maxConcurrent"
-        ? "Max concurrency (1+)"
-        : result === "defaultMaxTurns"
-          ? "Default max turns (0 = unlimited)"
-          : result === "maxSubagentDepth"
-            ? "Nested depth (0/1 = nesting off)"
-            : "Grace turns (1+)";
+      const label =
+        result === "maxConcurrent"
+          ? "Max concurrency (1+)"
+          : result === "defaultMaxTurns"
+            ? "Default max turns (0 = unlimited)"
+            : result === "maxSubagentDepth"
+              ? "Nested depth (0/1 = nesting off)"
+              : "Grace turns (1+)";
 
       // Loop until user enters a valid integer or cancels (Esc / null).
       // Silently trims whitespace; rejects non-numeric input by re-prompting.
@@ -3422,7 +3818,9 @@ Write the file using the write tool. Only write the file, nothing else.`;
       return;
     }
 
-    const records = manager.listAgents().filter(record => record.sideConversation && !record.parentAgentId);
+    const records = manager
+      .listAgents()
+      .filter((record) => record.sideConversation && !record.parentAgentId);
     if (records.length === 0) {
       ctx.ui.notify("No BTW conversations. Start one with /btw <question>.", "info");
       return;
@@ -3430,7 +3828,7 @@ Write the file using the write tool. Only write the file, nothing else.`;
 
     let selected = records[0];
     if (records.length > 1) {
-      const choices = records.map(record => {
+      const choices = records.map((record) => {
         const handle = record.alias ?? record.handle ?? record.id;
         return `@${handle} · ${record.status} · ${record.description} · ${record.id.slice(0, 8)}`;
       });
@@ -3440,7 +3838,10 @@ Write the file using the write tool. Only write the file, nothing else.`;
     }
 
     if (!selected.session) {
-      ctx.ui.notify(`BTW conversation is ${selected.status}; its session is not available yet.`, "info");
+      ctx.ui.notify(
+        `BTW conversation is ${selected.status}; its session is not available yet.`,
+        "info",
+      );
       return;
     }
     sideConversations.open(selected);
@@ -3448,11 +3849,15 @@ Write the file using the write tool. Only write the file, nothing else.`;
 
   pi.registerCommand("btw", {
     description: "Ask a parallel read-only side conversation, or reopen one",
-    handler: async (args, ctx) => { await handleBtwCommand(args, ctx); },
+    handler: async (args, ctx) => {
+      await handleBtwCommand(args, ctx);
+    },
   });
 
   pi.registerCommand("agents", {
     description: "Manage agents",
-    handler: async (_args, ctx) => { await showAgentsMenu(ctx); },
+    handler: async (_args, ctx) => {
+      await showAgentsMenu(ctx);
+    },
   });
 }

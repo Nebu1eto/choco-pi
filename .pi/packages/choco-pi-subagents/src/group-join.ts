@@ -63,19 +63,19 @@ export class GroupJoinManager {
    * - 'held'      — result held, waiting for group completion
    * - 'delivered'  — this completion triggered the group notification
    */
-  onAgentComplete(record: AgentRecord): 'delivered' | 'held' | 'pass' {
+  onAgentComplete(record: AgentRecord): "delivered" | "held" | "pass" {
     const groupId = this.agentToGroup.get(record.id);
-    if (!groupId) return 'pass';
+    if (!groupId) return "pass";
 
     const group = this.groups.get(groupId);
-    if (!group || group.delivered) return 'pass';
+    if (!group || group.delivered) return "pass";
 
     group.completedRecords.set(record.id, record);
 
     // All done — deliver immediately
     if (group.completedRecords.size >= group.agentIds.size) {
       this.deliver(group, false);
-      return 'delivered';
+      return "delivered";
     }
 
     // First completion in this batch — start timeout
@@ -86,7 +86,7 @@ export class GroupJoinManager {
       }, timeout);
     }
 
-    return 'held';
+    return "held";
   }
 
   private onTimeout(group: AgentGroup): void {

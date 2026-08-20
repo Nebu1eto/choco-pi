@@ -1,5 +1,9 @@
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentToolResult,
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { goalToolResponse, toToolText, type GoalToolResponse } from "./format.js";
@@ -59,7 +63,8 @@ export function registerGoalTools(pi: ExtensionAPI, host: ToolHost): void {
     name: "get_goal",
     label: "Get Goal",
     description: "Get the current Codex-style goal and usage for this pi session.",
-    promptSnippet: "Inspect the current goal, status, token budget, tokens used, and active elapsed time.",
+    promptSnippet:
+      "Inspect the current goal, status, token budget, tokens used, and active elapsed time.",
     promptGuidelines: TOOL_PROMPT_GUIDELINES,
     parameters: EmptyParams,
     async execute() {
@@ -79,7 +84,8 @@ export function registerGoalTools(pi: ExtensionAPI, host: ToolHost): void {
     executionMode: "sequential",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const current = host.getGoal();
-      const shouldReplaceExisting = params.replace_existing === true && current !== null && current.status !== "complete";
+      const shouldReplaceExisting =
+        params.replace_existing === true && current !== null && current.status !== "complete";
       const result = shouldReplaceExisting
         ? replaceGoal(params.objective, params.token_budget ?? null)
         : createGoal(current, params.objective, params.token_budget ?? null);
@@ -96,7 +102,8 @@ export function registerGoalTools(pi: ExtensionAPI, host: ToolHost): void {
     label: "Update Goal",
     description:
       "Mark the current Codex-style goal complete only after the objective is actually achieved and no required work remains. Do not use this tool just because work is stopping, budget is low, or partial progress looks sufficient.",
-    promptSnippet: "Mark the current goal complete only after an evidence-backed completion audit proves no required work remains.",
+    promptSnippet:
+      "Mark the current goal complete only after an evidence-backed completion audit proves no required work remains.",
     promptGuidelines: TOOL_PROMPT_GUIDELINES,
     parameters: UpdateGoalParams,
     executionMode: "sequential",

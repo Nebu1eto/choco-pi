@@ -14,7 +14,9 @@ import open from "open";
 
 export type ElicitationValue = string | number | boolean | string[] | undefined;
 type FormProperty = ElicitRequestFormParams["requestedSchema"]["properties"][string];
-type FieldCollectionResult = { status: "cancelled" } | { status: "collected"; value: ElicitationValue };
+type FieldCollectionResult =
+  | { status: "cancelled" }
+  | { status: "collected"; value: ElicitationValue };
 
 export type ElicitationUIContext = Pick<ExtensionUIContext, "select" | "input" | "notify">;
 
@@ -25,11 +27,18 @@ export interface ElicitationHandlerOptions {
   onUrlAccepted?: (elicitationId: string) => void;
 }
 
-export type ServerElicitationConfig = Omit<ElicitationHandlerOptions, "serverName" | "onUrlAccepted">;
+export type ServerElicitationConfig = Omit<
+  ElicitationHandlerOptions,
+  "serverName" | "onUrlAccepted"
+>;
 
-export function registerElicitationHandler(client: Client, options: ElicitationHandlerOptions): void {
-  client.setRequestHandler("elicitation/create", request =>
-    handleElicitationRequest(options, request));
+export function registerElicitationHandler(
+  client: Client,
+  options: ElicitationHandlerOptions,
+): void {
+  client.setRequestHandler("elicitation/create", (request) =>
+    handleElicitationRequest(options, request),
+  );
 }
 
 export async function handleElicitationRequest(
@@ -63,15 +72,18 @@ export async function handleFormElicitation(
 
   while (true) {
     const content = coerceAndValidateFormValues(params, values);
-    const action = await options.ui.select(
-      formatReview(options.serverName, properties, content),
-      ["Submit", "Edit", "Decline"],
-    );
+    const action = await options.ui.select(formatReview(options.serverName, properties, content), [
+      "Submit",
+      "Edit",
+      "Decline",
+    ]);
     if (action === undefined) return { action: "cancel" };
     if (action === "Decline") return { action: "decline" };
     if (action === "Submit") return { action: "accept", content };
 
-    const labels = properties.map(([name, schema]) => `${schema.title ?? humanizeName(name)} (${name})`);
+    const labels = properties.map(
+      ([name, schema]) => `${schema.title ?? humanizeName(name)} (${name})`,
+    );
     const selected = await options.ui.select("Choose a field to edit", labels);
     if (selected === undefined) return { action: "cancel" };
     const property = properties[labels.indexOf(selected)];
@@ -95,14 +107,17 @@ async function collectValidField(
     const result = await collectField(ui, params, name, schema, current);
     if (result.status === "cancelled") return result;
     try {
-      coerceAndValidateFormValues({
-        ...params,
-        requestedSchema: {
-          type: "object",
-          properties: { [name]: schema },
-          ...(required ? { required: [name] } : {}),
+      coerceAndValidateFormValues(
+        {
+          ...params,
+          requestedSchema: {
+            type: "object",
+            properties: { [name]: schema },
+            ...(required ? { required: [name] } : {}),
+          },
         },
-      }, { [name]: result.value });
+        { [name]: result.value },
+      );
       return result;
     } catch (error) {
       ui.notify(error instanceof Error ? error.message : String(error), "error");
@@ -119,20 +134,32 @@ async function collectField(
   current?: ElicitationValue,
 ): Promise<FieldCollectionResult> {
   const required = params.requestedSchema.required?.includes(name) === true;
-  const title = [schema.title ?? humanizeName(name), required ? "(required)" : "", schema.description]
+  const title = [
+    schema.title ?? humanizeName(name),
+    required ? "(required)" : "",
+    schema.description,
+  ]
     .filter(Boolean)
     .join(" ");
 
   if (schema.type === "string" && ("enum" in schema || "oneOf" in schema)) {
-    const choices = "oneOf" in schema
-      ? schema.oneOf.map(option => ({ value: option.const, display: formatChoice(option.const, option.title) }))
-      : schema.enum.map((value, index) => ({
-          value,
-          display: formatChoice(value, "enumNames" in schema ? schema.enumNames?.[index] : undefined),
-        }));
-    const displays = uniqueLabels(choices.map(choice => choice.display));
+    const choices =
+      "oneOf" in schema
+        ? schema.oneOf.map((option) => ({
+            value: option.const,
+            display: formatChoice(option.const, option.title),
+          }))
+        : schema.enum.map((value, index) => ({
+            value,
+            display: formatChoice(
+              value,
+              "enumNames" in schema ? schema.enumNames?.[index] : undefined,
+            ),
+          }));
+    const displays = uniqueLabels(choices.map((choice) => choice.display));
     const actions = [...displays];
-    const useDefault = schema.default === undefined ? undefined : uniqueAction("Use default", actions);
+    const useDefault =
+      schema.default === undefined ? undefined : uniqueAction("Use default", actions);
     if (useDefault) actions.push(useDefault);
     const omit = required ? undefined : uniqueAction("Omit", actions);
     if (omit) actions.push(omit);
@@ -166,7 +193,11 @@ async function collectField(
     const choices = extractMultiSelectOptions(schema);
     const selected = new Set(Array.isArray(current) ? current : []);
     while (true) {
-      const displays = uniqueLabels(choices.map(choice => selected.has(choice.value) ? `✓ ${choice.display}` : choice.display));
+      const displays = uniqueLabels(
+        choices.map((choice) =>
+          selected.has(choice.value) ? `✓ ${choice.display}` : choice.display,
+        ),
+      );
       const done = uniqueAction("Done", displays);
       const picked = await ui.select(title, [...displays, done]);
       if (picked === undefined) return { status: "cancelled" };
@@ -205,15 +236,19 @@ export function coerceAndValidateFormValues(
       const stringValue = String(value);
       const limits = schema as typeof schema & { minLength?: number; maxLength?: number };
       if (limits.minLength !== undefined && stringValue.length < limits.minLength) {
-        throw new Error(`Elicitation field ${name} is shorter than minimum length ${limits.minLength}`);
+        throw new Error(
+          `Elicitation field ${name} is shorter than minimum length ${limits.minLength}`,
+        );
       }
       if (limits.maxLength !== undefined && stringValue.length > limits.maxLength) {
-        throw new Error(`Elicitation field ${name} is longer than maximum length ${limits.maxLength}`);
+        throw new Error(
+          `Elicitation field ${name} is longer than maximum length ${limits.maxLength}`,
+        );
       }
       if ("enum" in schema && !schema.enum.includes(stringValue)) {
         throw new Error(`Elicitation field ${name} is not an allowed value`);
       }
-      if ("oneOf" in schema && !schema.oneOf.some(option => option.const === stringValue)) {
+      if ("oneOf" in schema && !schema.oneOf.some((option) => option.const === stringValue)) {
         throw new Error(`Elicitation field ${name} is not an allowed value`);
       }
       output[name] = stringValue;
@@ -224,7 +259,8 @@ export function coerceAndValidateFormValues(
         throw new Error(`Elicitation field ${name} must be a number`);
       }
       const numberValue = typeof value === "number" ? value : Number(value);
-      if (!Number.isFinite(numberValue)) throw new Error(`Elicitation field ${name} must be a number`);
+      if (!Number.isFinite(numberValue))
+        throw new Error(`Elicitation field ${name} must be a number`);
       if (schema.type === "integer" && !Number.isInteger(numberValue)) {
         throw new Error(`Elicitation field ${name} must be an integer`);
       }
@@ -243,7 +279,7 @@ export function coerceAndValidateFormValues(
     }
     if (schema.type === "array") {
       if (!Array.isArray(value)) throw new Error(`Elicitation field ${name} must be a list`);
-      const allowed = new Set(extractMultiSelectOptions(schema).map(option => option.value));
+      const allowed = new Set(extractMultiSelectOptions(schema).map((option) => option.value));
       const arrayValue = value.map(String);
       if (schema.minItems !== undefined && arrayValue.length < schema.minItems) {
         throw new Error(`Elicitation field ${name} has fewer than ${schema.minItems} selections`);
@@ -251,14 +287,15 @@ export function coerceAndValidateFormValues(
       if (schema.maxItems !== undefined && arrayValue.length > schema.maxItems) {
         throw new Error(`Elicitation field ${name} has more than ${schema.maxItems} selections`);
       }
-      if (arrayValue.some(item => !allowed.has(item))) {
+      if (arrayValue.some((item) => !allowed.has(item))) {
         throw new Error(`Elicitation field ${name} contains an invalid selection`);
       }
       output[name] = arrayValue;
     }
   }
-  const validation = new AjvJsonSchemaValidator()
-    .getValidator(params.requestedSchema as JsonSchemaType)(output);
+  const validation = new AjvJsonSchemaValidator().getValidator(
+    params.requestedSchema as JsonSchemaType,
+  )(output);
   if (!validation.valid) {
     throw new Error(`Invalid elicitation response: ${validation.errorMessage}`);
   }
@@ -271,7 +308,7 @@ function formatChoice(value: string, title?: string): string {
 
 function uniqueLabels(labels: string[]): string[] {
   const used = new Set<string>();
-  return labels.map(label => {
+  return labels.map((label) => {
     let unique = label;
     while (used.has(unique)) unique += "…";
     used.add(unique);
@@ -285,11 +322,19 @@ function uniqueAction(label: string, choices: string[]): string {
   return unique;
 }
 
-function extractMultiSelectOptions(schema: Extract<FormProperty, { type: "array" }>): Array<{ value: string; display: string }> {
-  const items = schema.items as { enum?: string[]; anyOf?: Array<{ const: string; title: string }> };
+function extractMultiSelectOptions(
+  schema: Extract<FormProperty, { type: "array" }>,
+): Array<{ value: string; display: string }> {
+  const items = schema.items as {
+    enum?: string[];
+    anyOf?: Array<{ const: string; title: string }>;
+  };
   return items.anyOf
-    ? items.anyOf.map(option => ({ value: option.const, display: formatChoice(option.const, option.title) }))
-    : (items.enum ?? []).map(value => ({ value, display: value }));
+    ? items.anyOf.map((option) => ({
+        value: option.const,
+        display: formatChoice(option.const, option.title),
+      }))
+    : (items.enum ?? []).map((value) => ({ value, display: value }));
 }
 
 function formatReview(
@@ -297,8 +342,10 @@ function formatReview(
   properties: Array<[string, FormProperty]>,
   content: Record<string, string | number | boolean | string[]>,
 ): string {
-  const rows = properties.map(([name, schema]) =>
-    `${schema.title ?? humanizeName(name)}: ${content[name] === undefined ? "(omitted)" : String(content[name])}`);
+  const rows = properties.map(
+    ([name, schema]) =>
+      `${schema.title ?? humanizeName(name)}: ${content[name] === undefined ? "(omitted)" : String(content[name])}`,
+  );
   return [`Review input for ${serverName}`, "", ...rows].join("\n");
 }
 
@@ -306,36 +353,49 @@ export async function handleUrlElicitation(
   options: ElicitationHandlerOptions,
   params: ElicitRequestURLParams,
 ): Promise<ElicitResult> {
-  if (!options.allowUrl) throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation is not supported");
+  if (!options.allowUrl)
+    throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation is not supported");
 
   let parsed: URL;
   try {
     parsed = new URL(params.url);
   } catch {
-    throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation supplied an invalid URL");
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidParams,
+      "URL elicitation supplied an invalid URL",
+    );
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation only supports HTTP and HTTPS URLs");
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidParams,
+      "URL elicitation only supports HTTP and HTTPS URLs",
+    );
   }
 
-  const decision = await options.ui.select([
-    "MCP Browser Request",
-    `Server: ${options.serverName}`,
-    "",
-    params.message,
-    "",
-    `Host: ${parsed.host}`,
-    `Full URL: ${params.url}`,
-    "",
-    "Open this URL in your browser?",
-  ].join("\n"), ["Open", "Decline"]);
+  const decision = await options.ui.select(
+    [
+      "MCP Browser Request",
+      `Server: ${options.serverName}`,
+      "",
+      params.message,
+      "",
+      `Host: ${parsed.host}`,
+      `Full URL: ${params.url}`,
+      "",
+      "Open this URL in your browser?",
+    ].join("\n"),
+    ["Open", "Decline"],
+  );
   if (decision === undefined) return { action: "cancel" };
   if (decision === "Decline") return { action: "decline" };
 
   try {
     await open(params.url);
   } catch (error) {
-    options.ui.notify(`Could not open MCP elicitation URL: ${error instanceof Error ? error.message : String(error)}`, "error");
+    options.ui.notify(
+      `Could not open MCP elicitation URL: ${error instanceof Error ? error.message : String(error)}`,
+      "error",
+    );
     return { action: "cancel" };
   }
   options.onUrlAccepted?.(params.elicitationId);
@@ -344,5 +404,8 @@ export async function handleUrlElicitation(
 }
 
 function humanizeName(name: string): string {
-  return name.replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, char => char.toUpperCase());
+  return name
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/^./, (char) => char.toUpperCase());
 }

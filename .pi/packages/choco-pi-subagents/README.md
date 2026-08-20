@@ -11,7 +11,7 @@ of [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents)
 - Upstream's feature manual (agent frontmatter reference, every setting, the
   `/agents` menu tour) lives in the upstream repository. This fork changes no
   feature behavior, so it still applies — substitute `choco-pi-subagents` for
-  `pi-subagents` wherever an extension *name* is written.
+  `pi-subagents` wherever an extension _name_ is written.
 
 ## What it provides
 

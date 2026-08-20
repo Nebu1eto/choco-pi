@@ -8,10 +8,10 @@ severity: warning
 note: |
   Direct process.env access for sensitive values should go through
   a config service for testability and centralization.
-  
+
   BAD:  const key = process.env.API_KEY
         const { password } = process.env
-  
+
   GOOD: const key = config.apiKey
         constructor(private config: ConfigService) {}
 rule:

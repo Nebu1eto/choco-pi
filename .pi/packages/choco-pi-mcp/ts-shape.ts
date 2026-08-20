@@ -1,6 +1,14 @@
 type Schema = Record<string, unknown>;
 
-const UNSUPPORTED_KEYWORDS = ["if", "then", "else", "allOf", "not", "patternProperties", "additionalProperties"];
+const UNSUPPORTED_KEYWORDS = [
+  "if",
+  "then",
+  "else",
+  "allOf",
+  "not",
+  "patternProperties",
+  "additionalProperties",
+];
 
 /** Renders the useful JSON Schema subset as TypeScript, or null for unsupported schemas. */
 export function renderTsShape(inputSchema: unknown): string | null {
@@ -25,7 +33,10 @@ export function renderTsShape(inputSchema: unknown): string | null {
       let alias = aliases.get(definitionKey);
       if (alias) return alias;
       const name = definitionKey.slice(definitionKey.indexOf("/") + 1);
-      alias = /^[A-Za-z_$][\w$]*$/.test(name) && !usedAliases.has(name) ? name : `Definition${++aliasIndex}`;
+      alias =
+        /^[A-Za-z_$][\w$]*$/.test(name) && !usedAliases.has(name)
+          ? name
+          : `Definition${++aliasIndex}`;
       while (usedAliases.has(alias)) alias = `Definition${++aliasIndex}`;
       aliases.set(definitionKey, alias);
       usedAliases.add(alias);
@@ -57,20 +68,26 @@ export function renderTsShape(inputSchema: unknown): string | null {
         const variants = (schema.anyOf ?? schema.oneOf) as unknown[];
         if (variants.length === 0) return null;
         const rendered = variants.map(render);
-        return rendered.every((value): value is string => value !== null) ? rendered.join(" | ") : null;
+        return rendered.every((value): value is string => value !== null)
+          ? rendered.join(" | ")
+          : null;
       }
 
       if (schema.type === "object" || schema.properties !== undefined) {
         if (schema.properties === undefined) return "{}";
         if (!isSchema(schema.properties)) return null;
-        const required = new Set(Array.isArray(schema.required)
-          ? schema.required.filter((name): name is string => typeof name === "string")
-          : []);
+        const required = new Set(
+          Array.isArray(schema.required)
+            ? schema.required.filter((name): name is string => typeof name === "string")
+            : [],
+        );
         const properties: string[] = [];
         for (const [name, property] of Object.entries(schema.properties)) {
           const rendered = render(property);
           if (rendered === null) return null;
-          properties.push(`${formatPropertyName(name)}${required.has(name) ? "" : "?"}: ${rendered};`);
+          properties.push(
+            `${formatPropertyName(name)}${required.has(name) ? "" : "?"}: ${rendered};`,
+          );
         }
         return properties.length === 0 ? "{}" : `{ ${properties.join(" ")} }`;
       }
@@ -111,7 +128,7 @@ function isSchema(value: unknown): value is Schema {
 }
 
 function hasUnsupportedKeyword(schema: Schema): boolean {
-  return UNSUPPORTED_KEYWORDS.some(keyword => {
+  return UNSUPPORTED_KEYWORDS.some((keyword) => {
     if (!Object.hasOwn(schema, keyword)) return false;
     // `additionalProperties: false` is a closed-object constraint, not a shape that this renderer needs to understand.
     return keyword !== "additionalProperties" || schema.additionalProperties !== false;
@@ -124,19 +141,27 @@ function decodePointerToken(token: string): string {
 
 function renderType(type: unknown): string | null {
   switch (type) {
-    case "string": return "string";
+    case "string":
+      return "string";
     case "number":
-    case "integer": return "number";
-    case "boolean": return "boolean";
-    case "null": return "null";
-    case "object": return "{}";
-    case "array": return "unknown[]";
-    default: return null;
+    case "integer":
+      return "number";
+    case "boolean":
+      return "boolean";
+    case "null":
+      return "null";
+    case "object":
+      return "{}";
+    case "array":
+      return "unknown[]";
+    default:
+      return null;
   }
 }
 
 function renderLiteral(value: unknown): string | null {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (value === null || typeof value === "string" || typeof value === "boolean")
+    return JSON.stringify(value);
   return typeof value === "number" && Number.isFinite(value) ? String(value) : null;
 }
 

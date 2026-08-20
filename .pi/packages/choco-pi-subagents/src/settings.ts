@@ -209,9 +209,17 @@ export interface SettingsAppliers {
 export type SettingsEmit = (event: string, payload: unknown) => void;
 
 const VALID_JOIN_MODES: ReadonlySet<string> = new Set<JoinMode>(["async", "group", "smart"]);
-const VALID_TOOL_DESCRIPTION_MODES: ReadonlySet<string> = new Set<ToolDescriptionMode>(["full", "compact", "custom"]);
+const VALID_TOOL_DESCRIPTION_MODES: ReadonlySet<string> = new Set<ToolDescriptionMode>([
+  "full",
+  "compact",
+  "custom",
+]);
 const VALID_WIDGET_MODES: ReadonlySet<string> = new Set<WidgetMode>(["all", "background", "off"]);
-const VALID_AGENT_MENTION_MODES: ReadonlySet<string> = new Set<AgentMentionMode>(["model", "direct", "off"]);
+const VALID_AGENT_MENTION_MODES: ReadonlySet<string> = new Set<AgentMentionMode>([
+  "model",
+  "direct",
+  "off",
+]);
 
 // Sanity ceilings — prevent hand-edited configs from asking for values that
 // make no operational sense (e.g. 1e6 concurrent subagents). Permissive enough
@@ -269,7 +277,10 @@ function sanitize(raw: unknown): SubagentsSettings {
   if (typeof r.disableDefaultAgents === "boolean") {
     out.disableDefaultAgents = r.disableDefaultAgents;
   }
-  if (typeof r.toolDescriptionMode === "string" && VALID_TOOL_DESCRIPTION_MODES.has(r.toolDescriptionMode)) {
+  if (
+    typeof r.toolDescriptionMode === "string" &&
+    VALID_TOOL_DESCRIPTION_MODES.has(r.toolDescriptionMode)
+  ) {
     out.toolDescriptionMode = r.toolDescriptionMode as ToolDescriptionMode;
   }
   if (typeof r.fleetView === "boolean") {
@@ -279,7 +290,10 @@ function sanitize(raw: unknown): SubagentsSettings {
   // previously-written `true` means "on", which is now the default `model`.
   if (typeof r.agentMentions === "boolean") {
     out.agentMentions = r.agentMentions ? "model" : "off";
-  } else if (typeof r.agentMentions === "string" && VALID_AGENT_MENTION_MODES.has(r.agentMentions)) {
+  } else if (
+    typeof r.agentMentions === "string" &&
+    VALID_AGENT_MENTION_MODES.has(r.agentMentions)
+  ) {
     out.agentMentions = r.agentMentions as AgentMentionMode;
   }
   if (typeof r.rememberAgents === "boolean") {
@@ -363,7 +377,8 @@ export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers):
   if (typeof s.schedulingEnabled === "boolean") appliers.setSchedulingEnabled(s.schedulingEnabled);
   if (typeof s.scopeModels === "boolean") appliers.setScopeModels(s.scopeModels);
   if (typeof s.strictAgentFiles === "boolean") appliers.setStrictAgentFiles(s.strictAgentFiles);
-  if (typeof s.disableDefaultAgents === "boolean") appliers.setDisableDefaultAgents(s.disableDefaultAgents);
+  if (typeof s.disableDefaultAgents === "boolean")
+    appliers.setDisableDefaultAgents(s.disableDefaultAgents);
   if (s.toolDescriptionMode) appliers.setToolDescriptionMode(s.toolDescriptionMode);
   if (typeof s.fleetView === "boolean") appliers.setFleetView(s.fleetView);
   if (s.agentMentions) appliers.setAgentMentions(s.agentMentions);

@@ -7,7 +7,12 @@
  * `disableDefaults` lives in agent-types.ts: both entry points need it.
  */
 
-import { isModelInScope, type ModelRegistryRef, readEnabledModels, resolveEnabledModels } from "./enabled-models.ts";
+import {
+  isModelInScope,
+  type ModelRegistryRef,
+  readEnabledModels,
+  resolveEnabledModels,
+} from "./enabled-models.ts";
 
 /**
  * When enabled, subagent model choices are validated against `enabledModels`
@@ -18,8 +23,12 @@ import { isModelInScope, type ModelRegistryRef, readEnabledModels, resolveEnable
  */
 let scopeModelsEnabled = false;
 
-export function isScopeModelsEnabled(): boolean { return scopeModelsEnabled; }
-export function setScopeModelsEnabled(enabled: boolean): void { scopeModelsEnabled = enabled; }
+export function isScopeModelsEnabled(): boolean {
+  return scopeModelsEnabled;
+}
+export function setScopeModelsEnabled(enabled: boolean): void {
+  scopeModelsEnabled = enabled;
+}
 
 export type ModelScopeVerdict =
   /** In scope, or nothing to validate against (feature off / no allowlist). */
@@ -56,7 +65,10 @@ export function checkModelScope(args: {
   if (!allowed || isModelInScope(model, allowed)) return { kind: "ok" };
 
   if (callerSupplied) {
-    const list = [...allowed].sort().map(m => `  ${m}`).join("\n");
+    const list = [...allowed]
+      .sort()
+      .map((m) => `  ${m}`)
+      .join("\n");
     return {
       kind: "error",
       message: `Model not in scope: "${modelInput}".\n\nAllowed models (from enabledModels):\n${list}`,

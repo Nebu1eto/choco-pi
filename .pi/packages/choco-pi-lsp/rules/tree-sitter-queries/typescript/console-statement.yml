@@ -12,7 +12,7 @@ message: "{{METHOD}} — remove debug statements before committing"
 
 description: |
   Console statements are for debugging and should not be in production code.
-  
+
   ✅ FIX: Remove or use a proper logging library.
 
 query: |
@@ -22,7 +22,7 @@ query: |
       property: (property_identifier) @METHOD (#not-eq? @METHOD "dbg"))
     arguments: (arguments) @ARGS)
 
-post_filter: not_in_test_block  # skip test blocks — no-console-in-tests handles that case
+post_filter: not_in_test_block # skip test blocks — no-console-in-tests handles that case
 
 # Console output IS the point in a CLI script's own stdout contract and in a
 # logging implementation's console fallback/sink — flagging it there just
@@ -48,7 +48,7 @@ examples:
   bad: |
     console.log("debug info");
     console.error("error");
-  
+
   good: |
     // Use a logging library
     import { logger } from './logger';

@@ -19,11 +19,9 @@ import { CHOCO_PI_LSP_EVAL_STARTED_MS } from "./eval-timestamp.js";
  */
 
 /** "dist" when choco-pi-lsp loaded from compiled JS, "source" when jiti-transpiled. */
-export const CHOCO_PI_LSP_LOADED_FROM: "dist" | "source" = import.meta.url.endsWith(
-	".js",
-)
-	? "dist"
-	: "source";
+export const CHOCO_PI_LSP_LOADED_FROM: "dist" | "source" = import.meta.url.endsWith(".js")
+  ? "dist"
+  : "source";
 
 let loadMs: number | undefined;
 
@@ -34,15 +32,15 @@ let loadMs: number | undefined;
  * the first captured value.
  */
 export function markPiLensLoaded(): number {
-	if (loadMs === undefined) {
-		loadMs = Math.round(performance.now());
-	}
-	return loadMs;
+  if (loadMs === undefined) {
+    loadMs = Math.round(performance.now());
+  }
+  return loadMs;
 }
 
 /** ms from pi process start to choco-pi-lsp load-complete, or undefined if unmarked. */
 export function getPiLensLoadMs(): number | undefined {
-	return loadMs;
+  return loadMs;
 }
 
 /** ms from host process start until choco-pi-lsp evaluation began. */
@@ -50,7 +48,5 @@ export const CHOCO_PI_LSP_HOST_BOOT_MS = Math.round(CHOCO_PI_LSP_EVAL_STARTED_MS
 
 /** choco-pi-lsp module-graph evaluation time once markPiLensLoaded() has run. */
 export function getPiLensEvalMs(): number | undefined {
-	return loadMs === undefined
-		? undefined
-		: Math.max(0, loadMs - CHOCO_PI_LSP_HOST_BOOT_MS);
+  return loadMs === undefined ? undefined : Math.max(0, loadMs - CHOCO_PI_LSP_HOST_BOOT_MS);
 }

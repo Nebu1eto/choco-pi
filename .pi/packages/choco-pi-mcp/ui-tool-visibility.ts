@@ -1,6 +1,8 @@
 export type UiToolVisibility = "model" | "app";
 
-export function extractUiToolVisibility(meta: Record<string, unknown> | undefined): UiToolVisibility[] | undefined {
+export function extractUiToolVisibility(
+  meta: Record<string, unknown> | undefined,
+): UiToolVisibility[] | undefined {
   if (!meta || typeof meta !== "object") return undefined;
   const ui = meta.ui;
   if (!ui || typeof ui !== "object" || Array.isArray(ui)) return undefined;
@@ -16,10 +18,14 @@ export function extractUiToolVisibility(meta: Record<string, unknown> | undefine
   return values;
 }
 
-export function isUiToolVisibleToModel(visibility: readonly UiToolVisibility[] | undefined): boolean {
+export function isUiToolVisibleToModel(
+  visibility: readonly UiToolVisibility[] | undefined,
+): boolean {
   return visibility === undefined || visibility.includes("model");
 }
 
-export function isUiToolCallableByApp(visibility: readonly UiToolVisibility[] | undefined): boolean {
+export function isUiToolCallableByApp(
+  visibility: readonly UiToolVisibility[] | undefined,
+): boolean {
   return visibility === undefined || visibility.includes("app");
 }

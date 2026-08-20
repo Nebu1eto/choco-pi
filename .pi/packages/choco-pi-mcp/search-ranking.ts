@@ -1,6 +1,12 @@
 import type { McpExtensionState } from "./state.ts";
 import type { ServerEntry, ToolMetadata, ToolPrefix } from "./types.ts";
-import { getServerPrefix, getToolNameCandidates, isServerDisabled, matchesToolPattern, resolveToolPrefix } from "./types.ts";
+import {
+  getServerPrefix,
+  getToolNameCandidates,
+  isServerDisabled,
+  matchesToolPattern,
+  resolveToolPrefix,
+} from "./types.ts";
 
 /**
  * Shortest field token allowed to stem-match a longer query token.
@@ -36,7 +42,11 @@ export function resolveSearchKeywords(
 ): string[] {
   const map = definition?.searchKeywords;
   if (!map || typeof map !== "object" || Array.isArray(map)) return [];
-  const candidates = getToolNameCandidates(toolOriginalName, serverName, resolveToolPrefix(definition, globalPrefix));
+  const candidates = getToolNameCandidates(
+    toolOriginalName,
+    serverName,
+    resolveToolPrefix(definition, globalPrefix),
+  );
   const keywords: string[] = [];
   const seen = new Set<string>();
   for (const [pattern, values] of Object.entries(map)) {
@@ -61,10 +71,17 @@ export function normalizeSearchText(value: string): string {
 }
 
 export function tokenize(value: string): string[] {
-  return normalizeSearchText(value).split(/[^a-z0-9]+/).filter(Boolean);
+  return normalizeSearchText(value)
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
 }
 
-export function scoreToolMatch(tool: ToolMetadata, server: string, query: string, keywords?: string[]): number | null {
+export function scoreToolMatch(
+  tool: ToolMetadata,
+  server: string,
+  query: string,
+  keywords?: string[],
+): number | null {
   const normalizedQuery = normalizeSearchText(query).trim();
   const queryTokens = tokenize(query);
   if (queryTokens.length === 0) return null;
@@ -80,7 +97,9 @@ export function scoreToolMatch(tool: ToolMetadata, server: string, query: string
   let wholeFieldExact = false;
   const matchedTokens = new Set<string>();
 
-  for (const [field, value] of Object.entries(fields) as Array<[keyof typeof FIELD_WEIGHTS, string]>) {
+  for (const [field, value] of Object.entries(fields) as Array<
+    [keyof typeof FIELD_WEIGHTS, string]
+  >) {
     const weight = FIELD_WEIGHTS[field];
     const fieldTokens = tokenize(value);
     if (value === normalizedQuery) {
@@ -99,7 +118,13 @@ export function scoreToolMatch(tool: ToolMetadata, server: string, query: string
       if (fieldTokens.includes(token)) {
         score += weight * 4;
         matchedTokens.add(token);
-      } else if (fieldTokens.some(fieldToken => fieldToken.startsWith(token) || (fieldToken.length >= MIN_STEM_LENGTH && token.startsWith(fieldToken)))) {
+      } else if (
+        fieldTokens.some(
+          (fieldToken) =>
+            fieldToken.startsWith(token) ||
+            (fieldToken.length >= MIN_STEM_LENGTH && token.startsWith(fieldToken)),
+        )
+      ) {
         score += weight * 2;
         matchedTokens.add(token);
       } else if (value.includes(token)) {
@@ -114,7 +139,7 @@ export function scoreToolMatch(tool: ToolMetadata, server: string, query: string
   // which would phrase-match queries spanning two unrelated keywords.
   if (keywords !== undefined && keywords.length > 0) {
     const weight = FIELD_WEIGHTS.keywords;
-    const phrases = keywords.map(keyword => normalizeSearchText(keyword).trim()).filter(Boolean);
+    const phrases = keywords.map((keyword) => normalizeSearchText(keyword).trim()).filter(Boolean);
     let phraseScore = 0;
     for (const phrase of phrases) {
       if (phrase === normalizedQuery) {
@@ -136,10 +161,16 @@ export function scoreToolMatch(tool: ToolMetadata, server: string, query: string
       if (keywordTokens.includes(token)) {
         score += weight * 4;
         matchedTokens.add(token);
-      } else if (keywordTokens.some(keywordToken => keywordToken.startsWith(token) || (keywordToken.length >= MIN_STEM_LENGTH && token.startsWith(keywordToken)))) {
+      } else if (
+        keywordTokens.some(
+          (keywordToken) =>
+            keywordToken.startsWith(token) ||
+            (keywordToken.length >= MIN_STEM_LENGTH && token.startsWith(keywordToken)),
+        )
+      ) {
         score += weight * 2;
         matchedTokens.add(token);
-      } else if (phrases.some(phrase => phrase.includes(token))) {
+      } else if (phrases.some((phrase) => phrase.includes(token))) {
         score += weight;
         matchedTokens.add(token);
       }
@@ -180,7 +211,11 @@ export function rankToolMatches(
   return matches.sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name));
 }
 
-export function paginate<T>(items: T[], offset: number, limit: number): { items: T[]; total: number; hasMore: boolean; nextOffset: number | null } {
+export function paginate<T>(
+  items: T[],
+  offset: number,
+  limit: number,
+): { items: T[]; total: number; hasMore: boolean; nextOffset: number | null } {
   const safeOffset = Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0;
   const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 1;
   const total = items.length;
@@ -196,11 +231,16 @@ export function paginate<T>(items: T[], offset: number, limit: number): { items:
 
 export function rankSuggestions(state: McpExtensionState, name: string, limit: number): string[] {
   const stripped = Object.keys(state.config.mcpServers)
-    .flatMap(server => (["server", "short", "mcp"] as const)
-      .map(prefix => getServerPrefix(server, prefix)))
-    .filter((candidate): candidate is string => Boolean(candidate) && name.startsWith(`${candidate}_`))
+    .flatMap((server) =>
+      (["server", "short", "mcp"] as const).map((prefix) => getServerPrefix(server, prefix)),
+    )
+    .filter(
+      (candidate): candidate is string => Boolean(candidate) && name.startsWith(`${candidate}_`),
+    )
     .sort((a, b) => b.length - a.length)
-    .map(candidate => name.slice(candidate.length + 1));
+    .map((candidate) => name.slice(candidate.length + 1));
   const query = stripped[0] ?? name;
-  return rankToolMatches(state, query, undefined, false).slice(0, limit).map(match => match.tool.name);
+  return rankToolMatches(state, query, undefined, false)
+    .slice(0, limit)
+    .map((match) => match.tool.name);
 }

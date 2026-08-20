@@ -13,7 +13,7 @@ message: "Promise chain {{M1}} → {{M2}} → {{M3}} → {{M4}} — consider asy
 description: |
   Deep promise chains (4+ levels) are hard to read and debug.
   Async/await provides clearer control flow.
-  
+
   ✅ FIX: Convert to async/await
 
 query: |
@@ -57,7 +57,7 @@ examples:
       .then(data => data.items)
       .then(items => items[0])
       .then(first => process(first));
-  
+
   good: |
     async function fetchFirstItem() {
       try {

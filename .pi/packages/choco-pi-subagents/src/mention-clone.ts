@@ -109,7 +109,12 @@ export async function runMentionClone(opts: MentionCloneOptions): Promise<Mentio
       // agent would do it where nobody can see and nobody asked.
       if (spawned) {
         return Promise.resolve({
-          content: [{ type: "text" as const, text: "Already started an agent for this mention. Stop here." }],
+          content: [
+            {
+              type: "text" as const,
+              text: "Already started an agent for this mention. Stop here.",
+            },
+          ],
           details: undefined,
           isError: true,
         });

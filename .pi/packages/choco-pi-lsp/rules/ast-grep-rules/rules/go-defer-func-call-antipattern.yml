@@ -17,7 +17,7 @@ note: |
 rule:
   pattern:
     selector: defer_statement
-    context: 'defer $FN(t, failpoint.$METHOD($$$ARGS))'
+    context: "defer $FN(t, failpoint.$METHOD($$$ARGS))"
 fix: ""
 tags:
   - go

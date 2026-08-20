@@ -29,9 +29,7 @@ export async function runProviders(ctx: DispatchContext): Promise<void> {
 
   for (const provider of ordered) {
     // Skip if all provided facts are already present
-    const allPresent = provider.provides.every((key) =>
-      ctx.facts.hasFileFact(ctx.filePath, key),
-    );
+    const allPresent = provider.provides.every((key) => ctx.facts.hasFileFact(ctx.filePath, key));
     if (allPresent) continue;
 
     await provider.run(ctx, ctx.facts);

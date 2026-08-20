@@ -54,27 +54,27 @@ const LOGS_SUBDIR = path.join(LOG_DIR, "logs");
  * (real `~/.choco-pi-lsp`).
  */
 export function getManagedLogFiles(dir: string = LOG_DIR): string[] {
-	const names = new Set<string>();
+  const names = new Set<string>();
 
-	for (const absPath of getRegisteredLogFiles()) {
-		if (pathsEqual(path.dirname(absPath), dir)) {
-			names.add(path.basename(absPath));
-		}
-	}
+  for (const absPath of getRegisteredLogFiles()) {
+    if (pathsEqual(path.dirname(absPath), dir)) {
+      names.add(path.basename(absPath));
+    }
+  }
 
-	try {
-		if (fs.existsSync(dir)) {
-			for (const entry of fs.readdirSync(dir)) {
-				if (entry.endsWith(".log") && !ROTATED_BACKUP_RE.test(entry)) {
-					names.add(entry);
-				}
-			}
-		}
-	} catch {
-		// best-effort backstop — registry + straggler list still apply
-	}
+  try {
+    if (fs.existsSync(dir)) {
+      for (const entry of fs.readdirSync(dir)) {
+        if (entry.endsWith(".log") && !ROTATED_BACKUP_RE.test(entry)) {
+          names.add(entry);
+        }
+      }
+    }
+  } catch {
+    // best-effort backstop — registry + straggler list still apply
+  }
 
-	return [...names].sort((a, b) => a.localeCompare(b));
+  return [...names].sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -87,118 +87,115 @@ export function getManagedLogFiles(dir: string = LOG_DIR): string[] {
 export const ROTATED_BACKUP_RE = /(\.\d{4}-\d{2}-\d{2}T.*\.log|\.log\..+)$/;
 
 export interface LogCleanupConfig {
-	retentionDays: number;
-	maxSizeMB: number;
+  retentionDays: number;
+  maxSizeMB: number;
 }
 
 /** Rotation threshold for every active `~/.choco-pi-lsp/*.log`, in MB. */
 export function getMaxLogSizeMB(): number {
-	return Math.max(
-		1,
-		Number.parseInt(process.env.CHOCO_PI_LSP_MAX_LOG_SIZE_MB ?? "10", 10) || 10,
-	);
+  return Math.max(1, Number.parseInt(process.env.CHOCO_PI_LSP_MAX_LOG_SIZE_MB ?? "10", 10) || 10);
 }
 
 function getConfig(): LogCleanupConfig {
-	return {
-		retentionDays: Math.max(
-			1,
-			Number.parseInt(process.env.CHOCO_PI_LSP_LOG_RETENTION_DAYS ?? "7", 10) || 7,
-		),
-		maxSizeMB: getMaxLogSizeMB(),
-	};
+  return {
+    retentionDays: Math.max(
+      1,
+      Number.parseInt(process.env.CHOCO_PI_LSP_LOG_RETENTION_DAYS ?? "7", 10) || 7,
+    ),
+    maxSizeMB: getMaxLogSizeMB(),
+  };
 }
 
 function getFileAgeDays(filePath: string): number {
-	try {
-		const stats = fs.statSync(filePath);
-		const ageMs = Date.now() - stats.mtime.getTime();
-		return ageMs / (1000 * 60 * 60 * 24);
-	} catch {
-		return 0;
-	}
+  try {
+    const stats = fs.statSync(filePath);
+    const ageMs = Date.now() - stats.mtime.getTime();
+    return ageMs / (1000 * 60 * 60 * 24);
+  } catch {
+    return 0;
+  }
 }
 
 function getFileSizeMB(filePath: string): number {
-	try {
-		const stats = fs.statSync(filePath);
-		return stats.size / (1024 * 1024);
-	} catch {
-		return 0;
-	}
+  try {
+    const stats = fs.statSync(filePath);
+    return stats.size / (1024 * 1024);
+  } catch {
+    return 0;
+  }
 }
 
 /**
  * Delete files older than retentionDays
  */
 export function cleanupOldLogs(
-	directory: string,
-	pattern: RegExp,
-	retentionDays?: number,
+  directory: string,
+  pattern: RegExp,
+  retentionDays?: number,
 ): { deleted: string[]; errors: string[] } {
-	const config = getConfig();
-	const maxAge = retentionDays ?? config.retentionDays;
-	const deleted: string[] = [];
-	const errors: string[] = [];
+  const config = getConfig();
+  const maxAge = retentionDays ?? config.retentionDays;
+  const deleted: string[] = [];
+  const errors: string[] = [];
 
-	try {
-		if (!fs.existsSync(directory)) {
-			return { deleted, errors };
-		}
+  try {
+    if (!fs.existsSync(directory)) {
+      return { deleted, errors };
+    }
 
-		const files = fs.readdirSync(directory);
-		for (const file of files) {
-			if (!pattern.test(file)) continue;
+    const files = fs.readdirSync(directory);
+    for (const file of files) {
+      if (!pattern.test(file)) continue;
 
-			const filePath = path.join(directory, file);
-			const ageDays = getFileAgeDays(filePath);
+      const filePath = path.join(directory, file);
+      const ageDays = getFileAgeDays(filePath);
 
-			if (ageDays > maxAge) {
-				try {
-					fs.unlinkSync(filePath);
-					deleted.push(file);
-				} catch (err) {
-					errors.push(`${file}: ${err}`);
-				}
-			}
-		}
-	} catch (err) {
-		errors.push(`Directory read failed: ${err}`);
-	}
+      if (ageDays > maxAge) {
+        try {
+          fs.unlinkSync(filePath);
+          deleted.push(file);
+        } catch (err) {
+          errors.push(`${file}: ${err}`);
+        }
+      }
+    }
+  } catch (err) {
+    errors.push(`Directory read failed: ${err}`);
+  }
 
-	return { deleted, errors };
+  return { deleted, errors };
 }
 
 /**
  * Rotate a log file if it exceeds max size
  */
 export function rotateLogIfNeeded(
-	logFile: string,
-	maxSizeMB?: number,
+  logFile: string,
+  maxSizeMB?: number,
 ): { rotated: boolean; newFile?: string } {
-	const config = getConfig();
-	const maxSize = maxSizeMB ?? config.maxSizeMB;
-	const sizeMB = getFileSizeMB(logFile);
+  const config = getConfig();
+  const maxSize = maxSizeMB ?? config.maxSizeMB;
+  const sizeMB = getFileSizeMB(logFile);
 
-	if (sizeMB < maxSize) {
-		return { rotated: false };
-	}
+  if (sizeMB < maxSize) {
+    return { rotated: false };
+  }
 
-	try {
-		// Create timestamped backup
-		const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-		const ext = path.extname(logFile);
-		const base = logFile.slice(0, -ext.length);
-		const backupFile = `${base}.${timestamp}${ext}`;
+  try {
+    // Create timestamped backup
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const ext = path.extname(logFile);
+    const base = logFile.slice(0, -ext.length);
+    const backupFile = `${base}.${timestamp}${ext}`;
 
-		// Rename current to backup, create fresh file
-		fs.renameSync(logFile, backupFile);
-		fs.writeFileSync(logFile, "", "utf8");
+    // Rename current to backup, create fresh file
+    fs.renameSync(logFile, backupFile);
+    fs.writeFileSync(logFile, "", "utf8");
 
-		return { rotated: true, newFile: backupFile };
-	} catch {
-		return { rotated: false };
-	}
+    return { rotated: true, newFile: backupFile };
+  } catch {
+    return { rotated: false };
+  }
 }
 
 /**
@@ -206,116 +203,106 @@ export function rotateLogIfNeeded(
  * Cleans up all choco-pi-lsp log files based on retention policy
  */
 export function runLogCleanup(dbg?: (msg: string) => void): {
-	cleaned: number;
-	rotated: number;
-	report: string;
+  cleaned: number;
+  rotated: number;
+  report: string;
 } {
-	const config = getConfig();
-	const results = {
-		cleaned: 0,
-		rotated: 0,
-		report: "",
-	};
+  const config = getConfig();
+  const results = {
+    cleaned: 0,
+    rotated: 0,
+    report: "",
+  };
 
-	// Cleanup old daily diagnostic logs (*.jsonl)
-	const dailyLogs = cleanupOldLogs(
-		LOGS_SUBDIR,
-		/\.jsonl$/,
-		config.retentionDays,
-	);
-	results.cleaned += dailyLogs.deleted.length;
+  // Cleanup old daily diagnostic logs (*.jsonl)
+  const dailyLogs = cleanupOldLogs(LOGS_SUBDIR, /\.jsonl$/, config.retentionDays);
+  results.cleaned += dailyLogs.deleted.length;
 
-	// Cleanup old rotated log backups. This sweep runs unconditionally on every
-	// session start, so correcting the pattern self-heals any pre-existing
-	// backlog on the next launch — no separate migration needed. (The prior
-	// `/\.log\./` only matched the legacy `name.log.<ts>` shape, never the
-	// current `name.<ts>.log`, so backups accumulated indefinitely.)
-	const rotatedLogs = cleanupOldLogs(
-		LOG_DIR,
-		ROTATED_BACKUP_RE,
-		config.retentionDays,
-	);
-	results.cleaned += rotatedLogs.deleted.length;
+  // Cleanup old rotated log backups. This sweep runs unconditionally on every
+  // session start, so correcting the pattern self-heals any pre-existing
+  // backlog on the next launch — no separate migration needed. (The prior
+  // `/\.log\./` only matched the legacy `name.log.<ts>` shape, never the
+  // current `name.<ts>.log`, so backups accumulated indefinitely.)
+  const rotatedLogs = cleanupOldLogs(LOG_DIR, ROTATED_BACKUP_RE, config.retentionDays);
+  results.cleaned += rotatedLogs.deleted.length;
 
-	// Check main logs for rotation
-	const mainLogs = getManagedLogFiles().map((name) => path.join(LOG_DIR, name));
+  // Check main logs for rotation
+  const mainLogs = getManagedLogFiles().map((name) => path.join(LOG_DIR, name));
 
-	for (const logFile of mainLogs) {
-		const rotation = rotateLogIfNeeded(logFile, config.maxSizeMB);
-		if (rotation.rotated) {
-			results.rotated++;
-			if (rotation.newFile) {
-				const sizeMB = getFileSizeMB(rotation.newFile);
-				dbg?.(
-					`log_cleanup: rotated ${path.basename(logFile)} (${sizeMB.toFixed(1)}MB) → ${path.basename(rotation.newFile)}`,
-				);
-			}
-		}
-	}
+  for (const logFile of mainLogs) {
+    const rotation = rotateLogIfNeeded(logFile, config.maxSizeMB);
+    if (rotation.rotated) {
+      results.rotated++;
+      if (rotation.newFile) {
+        const sizeMB = getFileSizeMB(rotation.newFile);
+        dbg?.(
+          `log_cleanup: rotated ${path.basename(logFile)} (${sizeMB.toFixed(1)}MB) → ${path.basename(rotation.newFile)}`,
+        );
+      }
+    }
+  }
 
-	// Build report
-	const parts: string[] = [];
-	if (dailyLogs.deleted.length > 0) {
-		parts.push(`${dailyLogs.deleted.length} daily logs`);
-	}
-	if (rotatedLogs.deleted.length > 0) {
-		parts.push(`${rotatedLogs.deleted.length} rotated logs`);
-	}
-	if (results.rotated > 0) {
-		parts.push(`${results.rotated} active logs rotated`);
-	}
+  // Build report
+  const parts: string[] = [];
+  if (dailyLogs.deleted.length > 0) {
+    parts.push(`${dailyLogs.deleted.length} daily logs`);
+  }
+  if (rotatedLogs.deleted.length > 0) {
+    parts.push(`${rotatedLogs.deleted.length} rotated logs`);
+  }
+  if (results.rotated > 0) {
+    parts.push(`${results.rotated} active logs rotated`);
+  }
 
-	results.report =
-		parts.length > 0
-			? `log_cleanup: removed ${parts.join(", ")} (retention: ${config.retentionDays}d, maxSize: ${config.maxSizeMB}MB)`
-			: `log_cleanup: no cleanup needed (retention: ${config.retentionDays}d, maxSize: ${config.maxSizeMB}MB)`;
+  results.report =
+    parts.length > 0
+      ? `log_cleanup: removed ${parts.join(", ")} (retention: ${config.retentionDays}d, maxSize: ${config.maxSizeMB}MB)`
+      : `log_cleanup: no cleanup needed (retention: ${config.retentionDays}d, maxSize: ${config.maxSizeMB}MB)`;
 
-	if (dailyLogs.errors.length > 0 || rotatedLogs.errors.length > 0) {
-		dbg?.(
-			`log_cleanup errors: ${[...dailyLogs.errors, ...rotatedLogs.errors].join("; ")}`,
-		);
-	}
+  if (dailyLogs.errors.length > 0 || rotatedLogs.errors.length > 0) {
+    dbg?.(`log_cleanup errors: ${[...dailyLogs.errors, ...rotatedLogs.errors].join("; ")}`);
+  }
 
-	return results;
+  return results;
 }
 
 /**
  * Get current log storage summary
  */
 export function getLogStorageSummary(): {
-	totalMB: number;
-	files: { name: string; sizeMB: number; ageDays: number }[];
+  totalMB: number;
+  files: { name: string; sizeMB: number; ageDays: number }[];
 } {
-	const files: { name: string; sizeMB: number; ageDays: number }[] = [];
-	let totalMB = 0;
+  const files: { name: string; sizeMB: number; ageDays: number }[] = [];
+  let totalMB = 0;
 
-	// Main logs
-	for (const name of getManagedLogFiles()) {
-		const filePath = path.join(LOG_DIR, name);
-		if (fs.existsSync(filePath)) {
-			const sizeMB = getFileSizeMB(filePath);
-			const ageDays = getFileAgeDays(filePath);
-			files.push({ name, sizeMB, ageDays });
-			totalMB += sizeMB;
-		}
-	}
+  // Main logs
+  for (const name of getManagedLogFiles()) {
+    const filePath = path.join(LOG_DIR, name);
+    if (fs.existsSync(filePath)) {
+      const sizeMB = getFileSizeMB(filePath);
+      const ageDays = getFileAgeDays(filePath);
+      files.push({ name, sizeMB, ageDays });
+      totalMB += sizeMB;
+    }
+  }
 
-	// Daily logs
-	try {
-		if (fs.existsSync(LOGS_SUBDIR)) {
-			const dailyFiles = fs.readdirSync(LOGS_SUBDIR);
-			for (const name of dailyFiles) {
-				if (!name.endsWith(".jsonl")) continue;
-				const filePath = path.join(LOGS_SUBDIR, name);
-				const sizeMB = getFileSizeMB(filePath);
-				const ageDays = getFileAgeDays(filePath);
-				files.push({ name: `logs/${name}`, sizeMB, ageDays });
-				totalMB += sizeMB;
-			}
-		}
-	} catch {
-		// Ignore
-	}
+  // Daily logs
+  try {
+    if (fs.existsSync(LOGS_SUBDIR)) {
+      const dailyFiles = fs.readdirSync(LOGS_SUBDIR);
+      for (const name of dailyFiles) {
+        if (!name.endsWith(".jsonl")) continue;
+        const filePath = path.join(LOGS_SUBDIR, name);
+        const sizeMB = getFileSizeMB(filePath);
+        const ageDays = getFileAgeDays(filePath);
+        files.push({ name: `logs/${name}`, sizeMB, ageDays });
+        totalMB += sizeMB;
+      }
+    }
+  } catch {
+    // Ignore
+  }
 
-	return { totalMB, files };
+  return { totalMB, files };
 }

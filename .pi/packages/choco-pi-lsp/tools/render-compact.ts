@@ -25,24 +25,22 @@ import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 /** Minimal shape of the tool result handed to renderResult — kept structural so
  * this helper does not depend on the exact AgentToolResult generic. */
 export interface CompactResultLike<D = unknown> {
-	content?: Array<{ type: string; text?: string }>;
-	isError?: boolean;
-	details?: D;
+  content?: Array<{ type: string; text?: string }>;
+  isError?: boolean;
+  details?: D;
 }
 
 export interface CompactSummaryInput<D = unknown> {
-	details: D | undefined;
-	args: Record<string, unknown>;
-	isError: boolean;
-	/** Full model-facing text (all text content blocks joined). */
-	text: string;
-	/** Line count of the full text — handy for tools whose details lack counts. */
-	lineCount: number;
+  details: D | undefined;
+  args: Record<string, unknown>;
+  isError: boolean;
+  /** Full model-facing text (all text content blocks joined). */
+  text: string;
+  /** Line count of the full text — handy for tools whose details lack counts. */
+  lineCount: number;
 }
 
-export type CompactSummarizer<D = unknown> = (
-	input: CompactSummaryInput<D>,
-) => string;
+export type CompactSummarizer<D = unknown> = (input: CompactSummaryInput<D>) => string;
 
 /** How a rendered line should be styled. `brand` is choco-pi-lsp blue (our colour);
  * `error` and `output` defer to the active theme so red/normal stay legible. */
@@ -58,13 +56,12 @@ const RESET_FG = "\x1b[39m\x1b[22m";
 
 /** Join all text content blocks into the full model-facing string. */
 export function fullTextOf(result: CompactResultLike): string {
-	return (result.content ?? [])
-		.filter(
-			(c): c is { type: string; text: string } =>
-				c.type === "text" && typeof c.text === "string",
-		)
-		.map((c) => c.text)
-		.join("\n");
+  return (result.content ?? [])
+    .filter(
+      (c): c is { type: string; text: string } => c.type === "text" && typeof c.text === "string",
+    )
+    .map((c) => c.text)
+    .join("\n");
 }
 
 /**
@@ -72,48 +69,44 @@ export function fullTextOf(result: CompactResultLike): string {
  * tested without constructing a TUI component or a Theme.
  */
 export function selectCompactText<D = unknown>(
-	result: CompactResultLike<D>,
-	args: Record<string, unknown>,
-	expanded: boolean,
-	summarize: CompactSummarizer<D>,
+  result: CompactResultLike<D>,
+  args: Record<string, unknown>,
+  expanded: boolean,
+  summarize: CompactSummarizer<D>,
 ): { text: string; style: CompactStyle } {
-	const text = fullTextOf(result);
-	if (expanded) {
-		return {
-			text: text || "(no output)",
-			style: result.isError ? "error" : "output",
-		};
-	}
-	const lineCount = text ? text.split("\n").length : 0;
-	let summary: string;
-	try {
-		summary = summarize({
-			details: result.details,
-			args,
-			isError: result.isError === true,
-			text,
-			lineCount,
-		});
-	} catch {
-		// Never let a summarizer bug blank the row — fall back to the first line.
-		summary = text.split("\n")[0] ?? "";
-	}
-	// Collapsed summaries render in choco-pi-lsp blue; errors stay theme-red.
-	return { text: summary, style: result.isError ? "error" : "brand" };
+  const text = fullTextOf(result);
+  if (expanded) {
+    return {
+      text: text || "(no output)",
+      style: result.isError ? "error" : "output",
+    };
+  }
+  const lineCount = text ? text.split("\n").length : 0;
+  let summary: string;
+  try {
+    summary = summarize({
+      details: result.details,
+      args,
+      isError: result.isError === true,
+      text,
+      lineCount,
+    });
+  } catch {
+    // Never let a summarizer bug blank the row — fall back to the first line.
+    summary = text.split("\n")[0] ?? "";
+  }
+  // Collapsed summaries render in choco-pi-lsp blue; errors stay theme-red.
+  return { text: summary, style: result.isError ? "error" : "brand" };
 }
 
 /** Apply a CompactStyle to text. `brand` uses raw blue ANSI; the rest defer to
  * the theme so error-red and normal output stay consistent with the host. */
-export function paintCompact(
-	style: CompactStyle,
-	text: string,
-	theme: Theme,
-): string {
-	if (style === "brand") {
-		return `${CHOCO_PI_LSP_BLUE_FG}${text}${RESET_FG}`;
-	}
-	const color: ThemeColor = style === "error" ? "error" : "toolOutput";
-	return theme.fg(color, text);
+export function paintCompact(style: CompactStyle, text: string, theme: Theme): string {
+  if (style === "brand") {
+    return `${CHOCO_PI_LSP_BLUE_FG}${text}${RESET_FG}`;
+  }
+  const color: ThemeColor = style === "error" ? "error" : "toolOutput";
+  return theme.fg(color, text);
 }
 
 /**
@@ -121,30 +114,28 @@ export function paintCompact(
  * view from the structured result; the expanded view shows the full payload.
  */
 export function compactRenderResult<D = unknown>(summarize: CompactSummarizer<D>) {
-	return (
-		result: CompactResultLike<D>,
-		options: { expanded: boolean },
-		theme: Theme,
-		context: { lastComponent?: unknown; args?: unknown },
-	): Text => {
-		const component =
-			context.lastComponent instanceof Text
-				? context.lastComponent
-				: new Text("", 0, 0);
-		const { text, style } = selectCompactText(
-			result,
-			(context.args ?? {}) as Record<string, unknown>,
-			options.expanded === true,
-			summarize,
-		);
-		component.setText(paintCompact(style, text, theme));
-		return component;
-	};
+  return (
+    result: CompactResultLike<D>,
+    options: { expanded: boolean },
+    theme: Theme,
+    context: { lastComponent?: unknown; args?: unknown },
+  ): Text => {
+    const component =
+      context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+    const { text, style } = selectCompactText(
+      result,
+      (context.args ?? {}) as Record<string, unknown>,
+      options.expanded === true,
+      summarize,
+    );
+    component.setText(paintCompact(style, text, theme));
+    return component;
+  };
 }
 
 /** Shorten an absolute/relative path to its basename for the summary line. */
 export function baseName(p: unknown): string {
-	if (typeof p !== "string" || p.length === 0) return "";
-	const parts = p.split(/[\\/]/);
-	return parts[parts.length - 1] || p;
+  if (typeof p !== "string" || p.length === 0) return "";
+  const parts = p.split(/[\\/]/);
+  return parts[parts.length - 1] || p;
 }

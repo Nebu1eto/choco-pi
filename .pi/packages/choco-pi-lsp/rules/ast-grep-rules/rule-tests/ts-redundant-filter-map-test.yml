@@ -1,8 +1,8 @@
 id: ts-redundant-filter-map
 valid:
-  - 'arr.filter(fn)'
-  - 'arr.map(fn)'
-  - 'arr.flatMap(fn)'
+  - "arr.filter(fn)"
+  - "arr.map(fn)"
+  - "arr.flatMap(fn)"
 invalid:
-  - 'arr.filter(x => x).map(fn)'
-  - 'arr.filter(onlyPositive).map(double)'
+  - "arr.filter(x => x).map(fn)"
+  - "arr.filter(onlyPositive).map(double)"

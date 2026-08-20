@@ -13,17 +13,17 @@ message: "dangerouslySetInnerHTML — XSS risk, sanitize user input"
 description: |
   dangerouslySetInnerHTML allows arbitrary HTML injection.
   This is a major XSS vulnerability if user input is used.
-  
+
   ✅ FIX: Sanitize HTML with a library like DOMPurify
-  
+
   ```tsx
   import DOMPurify from 'dompurify';
-  
+
   <div dangerouslySetInnerHTML={{ 
     __html: DOMPurify.sanitize(userInput) 
   }} />
   ```
-  
+
   Or better, avoid using HTML altogether and use JSX.
 
 query: |
@@ -45,10 +45,10 @@ examples:
     function Component({ userInput }) {
       return <div dangerouslySetInnerHTML={{ __html: userInput }} />;
     }
-  
+
   good: |
     import DOMPurify from 'dompurify';
-    
+
     function Component({ userInput }) {
       return (
         <div dangerouslySetInnerHTML={{ 
@@ -56,7 +56,7 @@ examples:
         }} />
       );
     }
-    
+
     // Or better:
     function Component({ content }) {
       return <div>{content}</div>;  // Just use JSX

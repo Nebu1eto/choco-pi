@@ -12,9 +12,9 @@ message: "Debugger statement — remove before committing"
 
 description: |
   Debugger statements pause execution and should never be committed to production.
-  
+
   ✅ FIX: Remove the debugger statement before committing.
-  
+
   If you need to debug, use:
   - console.log() for quick checks
   - IDE debugger for stepping through
@@ -37,7 +37,7 @@ examples:
       debugger;  // ← Remove this!
       return x;
     }
-  
+
   good: |
     function process() {
       const x = calculate();

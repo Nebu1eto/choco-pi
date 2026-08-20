@@ -1,18 +1,18 @@
 {
-	"compilerOptions": {
-		"allowImportingTsExtensions": true,
-		"module": "NodeNext",
-		"moduleResolution": "NodeNext",
-		"noEmit": true,
-		"skipLibCheck": true,
-		"strict": true,
-		"noUncheckedIndexedAccess": true,
-		"exactOptionalPropertyTypes": true,
-		"noUnusedLocals": true,
-		"noUnusedParameters": true,
-		"target": "ES2023",
-		"lib": ["ES2023"],
-		"types": ["node"]
-	},
-	"include": ["src/**/*.ts"]
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
 }

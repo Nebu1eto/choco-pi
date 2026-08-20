@@ -54,18 +54,18 @@ let nextHoldId = 1;
 let idleWaiters: Array<() => void> = [];
 
 function flushIdleWaitersIfEmpty(): void {
-	if (holds.size > 0) return;
-	if (idleWaiters.length === 0) return;
-	const waiters = idleWaiters;
-	idleWaiters = [];
-	for (const waiter of waiters) {
-		try {
-			waiter();
-		} catch {
-			// Best-effort — a waiter failure must never propagate into the
-			// releasing/reaping call stack.
-		}
-	}
+  if (holds.size > 0) return;
+  if (idleWaiters.length === 0) return;
+  const waiters = idleWaiters;
+  idleWaiters = [];
+  for (const waiter of waiters) {
+    try {
+      waiter();
+    } catch {
+      // Best-effort — a waiter failure must never propagate into the
+      // releasing/reaping call stack.
+    }
+  }
 }
 
 /**
@@ -76,26 +76,26 @@ function flushIdleWaitersIfEmpty(): void {
  * timer and the sweep's own ceiling once did.
  */
 export function getWorkspaceSweepMaxHoldAgeMs(): number {
-	return getFullScanWallClockMs() + SWEEP_IDLE_SAFETY_MARGIN_MS;
+  return getFullScanWallClockMs() + SWEEP_IDLE_SAFETY_MARGIN_MS;
 }
 
 function reapStaleHolds(): void {
-	if (holds.size === 0) return;
-	const maxAgeMs = getWorkspaceSweepMaxHoldAgeMs();
-	const now = Date.now();
-	for (const [holdId, acquiredAt] of holds) {
-		const ageMs = now - acquiredAt;
-		if (ageMs <= maxAgeMs) continue;
-		holds.delete(holdId);
-		logLatency({
-			type: "phase",
-			phase: "lsp_workspace_sweep_hold_force_released",
-			filePath: "",
-			durationMs: ageMs,
-			metadata: { holdId, maxHoldAgeMs: maxAgeMs },
-		});
-	}
-	flushIdleWaitersIfEmpty();
+  if (holds.size === 0) return;
+  const maxAgeMs = getWorkspaceSweepMaxHoldAgeMs();
+  const now = Date.now();
+  for (const [holdId, acquiredAt] of holds) {
+    const ageMs = now - acquiredAt;
+    if (ageMs <= maxAgeMs) continue;
+    holds.delete(holdId);
+    logLatency({
+      type: "phase",
+      phase: "lsp_workspace_sweep_hold_force_released",
+      filePath: "",
+      durationMs: ageMs,
+      metadata: { holdId, maxHoldAgeMs: maxAgeMs },
+    });
+  }
+  flushIdleWaitersIfEmpty();
 }
 
 /**
@@ -106,20 +106,20 @@ function reapStaleHolds(): void {
  * force-released (session reset / max-age reap), is a no-op.
  */
 export function acquireWorkspaceSweepHold(): () => void {
-	const holdId = nextHoldId++;
-	holds.set(holdId, Date.now());
-	return () => {
-		if (!holds.delete(holdId)) return;
-		flushIdleWaitersIfEmpty();
-	};
+  const holdId = nextHoldId++;
+  holds.set(holdId, Date.now());
+  return () => {
+    if (!holds.delete(holdId)) return;
+    flushIdleWaitersIfEmpty();
+  };
 }
 
 /** True while at least one `runWorkspaceDiagnostics` sweep is in flight.
  *  Reaps stale holds first, so a leaked/hung hold can't permanently read as
  *  "active" past its own max age. */
 export function isWorkspaceSweepActive(): boolean {
-	reapStaleHolds();
-	return holds.size > 0;
+  reapStaleHolds();
+  return holds.size > 0;
 }
 
 /**
@@ -128,12 +128,12 @@ export function isWorkspaceSweepActive(): boolean {
  * one every non-sweep idle-reset arm/fire takes.
  */
 export function runWhenWorkspaceSweepIdle(cb: () => void): void {
-	reapStaleHolds();
-	if (holds.size === 0) {
-		cb();
-		return;
-	}
-	idleWaiters.push(cb);
+  reapStaleHolds();
+  if (holds.size === 0) {
+    cb();
+    return;
+  }
+  idleWaiters.push(cb);
 }
 
 /**
@@ -146,23 +146,23 @@ export function runWhenWorkspaceSweepIdle(cb: () => void): void {
  * silent.
  */
 export function clearWorkspaceSweepHoldForSessionStart(): void {
-	if (holds.size === 0) return;
-	logLatency({
-		type: "phase",
-		phase: "lsp_workspace_sweep_hold_session_reset",
-		filePath: "",
-		durationMs: 0,
-		metadata: { clearedHolds: holds.size },
-	});
-	holds.clear();
-	flushIdleWaitersIfEmpty();
+  if (holds.size === 0) return;
+  logLatency({
+    type: "phase",
+    phase: "lsp_workspace_sweep_hold_session_reset",
+    filePath: "",
+    durationMs: 0,
+    metadata: { clearedHolds: holds.size },
+  });
+  holds.clear();
+  flushIdleWaitersIfEmpty();
 }
 
 /** Test-only: reset the module-scope hold state between tests. */
 export function _resetWorkspaceSweepHoldForTests(): void {
-	holds = new Map();
-	idleWaiters = [];
-	nextHoldId = 1;
+  holds = new Map();
+  idleWaiters = [];
+  nextHoldId = 1;
 }
 
 /**
@@ -175,6 +175,6 @@ export function _resetWorkspaceSweepHoldForTests(): void {
  * override mid-run.
  */
 export function getFullScanWallClockMs(): number {
-	const raw = Number(process.env.CHOCO_PI_LSP_LENS_DIAGNOSTICS_FULL_TIMEOUT_MS);
-	return Number.isFinite(raw) && raw > 0 ? raw : 300_000; // 5 min default
+  const raw = Number(process.env.CHOCO_PI_LSP_LENS_DIAGNOSTICS_FULL_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 300_000; // 5 min default
 }

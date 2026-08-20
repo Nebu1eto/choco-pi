@@ -8,4 +8,4 @@ rule:
   kind: import_statement
   has:
     field: source
-    regex: "^\"(fs|path|os|crypto|buffer|http|https|url|stream|util|zlib|assert|events|child_process|cluster|dgram|dns|readline|tls|tty|v8|vm|worker_threads)\"$"
+    regex: '^"(fs|path|os|crypto|buffer|http|https|url|stream|util|zlib|assert|events|child_process|cluster|dgram|dns|readline|tls|tty|v8|vm|worker_threads)"$'

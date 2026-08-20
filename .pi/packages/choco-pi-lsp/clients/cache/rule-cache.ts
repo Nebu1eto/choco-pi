@@ -51,154 +51,140 @@ export const CACHE_VERSION = "v7";
  * already use for the ast-grep side of the same class (#1105): project-origin
  * trees get a content-hash CONFIRM, bundled trees stay mtime-cheap.
  */
-const BUNDLED_RULES_ROOT = resolvePackagePath(
-	import.meta.url,
-	"rules",
-	"tree-sitter-queries",
-);
+const BUNDLED_RULES_ROOT = resolvePackagePath(import.meta.url, "rules", "tree-sitter-queries");
 
 function isBundledRuleFile(resolvedFile: string): boolean {
-	return (
-		resolvedFile === BUNDLED_RULES_ROOT ||
-		resolvedFile.startsWith(BUNDLED_RULES_ROOT + path.sep)
-	);
+  return (
+    resolvedFile === BUNDLED_RULES_ROOT || resolvedFile.startsWith(BUNDLED_RULES_ROOT + path.sep)
+  );
 }
 
 export interface QueryCacheEntry {
-	version: string;
-	timestamp: number;
-	ruleHash: string;
-	queries: Array<{
-		id: string;
-		name: string;
-		severity: string;
-		language: string;
-		message: string;
-		query: string;
-		metavars: string[];
-		post_filter?: string;
-		post_filter_params?: Record<string, unknown>;
-		defect_class?: string;
-		inline_tier?: "blocking" | "warning" | "review";
-		skip_test_files?: boolean;
-		has_fix?: boolean;
-		fix_action?: string;
-		filePath?: string;
-	}>;
+  version: string;
+  timestamp: number;
+  ruleHash: string;
+  queries: Array<{
+    id: string;
+    name: string;
+    severity: string;
+    language: string;
+    message: string;
+    query: string;
+    metavars: string[];
+    post_filter?: string;
+    post_filter_params?: Record<string, unknown>;
+    defect_class?: string;
+    inline_tier?: "blocking" | "warning" | "review";
+    skip_test_files?: boolean;
+    has_fix?: boolean;
+    fix_action?: string;
+    filePath?: string;
+  }>;
 }
 
 export class RuleCache {
-	private cacheFile: string;
-	private cacheDir: string;
-	private language: string;
+  private cacheFile: string;
+  private cacheDir: string;
+  private language: string;
 
-	constructor(language: string, rootDir = process.cwd()) {
-		this.language = language;
-		this.cacheDir = path.join(getProjectDataDir(rootDir), "cache");
-		this.cacheFile = path.join(
-			this.cacheDir,
-			`${language}-rules-${CACHE_VERSION}.json`,
-		);
-	}
+  constructor(language: string, rootDir = process.cwd()) {
+    this.language = language;
+    this.cacheDir = path.join(getProjectDataDir(rootDir), "cache");
+    this.cacheFile = path.join(this.cacheDir, `${language}-rules-${CACHE_VERSION}.json`);
+  }
 
-	private ensureCacheDir(): void {
-		if (!fs.existsSync(this.cacheDir)) {
-			fs.mkdirSync(this.cacheDir, { recursive: true });
-		}
-	}
+  private ensureCacheDir(): void {
+    if (!fs.existsSync(this.cacheDir)) {
+      fs.mkdirSync(this.cacheDir, { recursive: true });
+    }
+  }
 
-	private computeRuleHash(ruleFiles: string[]): string {
-		const hash = crypto.createHash("sha256");
-		for (const file of ruleFiles.sort((a, b) => a.localeCompare(b))) {
-			const resolved = path.resolve(file);
-			if (!fs.existsSync(resolved)) continue;
-			const stat = fs.statSync(resolved);
-			hash.update(`${file}:${stat.mtimeMs}:${stat.size}`);
-			// Content-CONFIRM only the project-local, mutable subset (a handful of
-			// files) — mtime+size alone is a first filter, not proof of freshness,
-			// and a preserved-mtime+size edit here would otherwise replay (and
-			// re-persist) a stale compiled set. Bundled files (~705, immutable
-			// within a process) skip this: the metadata fingerprint stays their
-			// whole story, keeping the common no-project-rules case as cheap as v6.
-			if (!isBundledRuleFile(resolved)) {
-				hash.update(fs.readFileSync(resolved));
-			}
-		}
-		return hash.digest("hex").slice(0, 16);
-	}
+  private computeRuleHash(ruleFiles: string[]): string {
+    const hash = crypto.createHash("sha256");
+    for (const file of ruleFiles.sort((a, b) => a.localeCompare(b))) {
+      const resolved = path.resolve(file);
+      if (!fs.existsSync(resolved)) continue;
+      const stat = fs.statSync(resolved);
+      hash.update(`${file}:${stat.mtimeMs}:${stat.size}`);
+      // Content-CONFIRM only the project-local, mutable subset (a handful of
+      // files) — mtime+size alone is a first filter, not proof of freshness,
+      // and a preserved-mtime+size edit here would otherwise replay (and
+      // re-persist) a stale compiled set. Bundled files (~705, immutable
+      // within a process) skip this: the metadata fingerprint stays their
+      // whole story, keeping the common no-project-rules case as cheap as v6.
+      if (!isBundledRuleFile(resolved)) {
+        hash.update(fs.readFileSync(resolved));
+      }
+    }
+    return hash.digest("hex").slice(0, 16);
+  }
 
-	get(ruleFiles: string[]): QueryCacheEntry | null {
-		try {
-			this.ensureCacheDir();
-			if (!fs.existsSync(this.cacheFile)) return null;
+  get(ruleFiles: string[]): QueryCacheEntry | null {
+    try {
+      this.ensureCacheDir();
+      if (!fs.existsSync(this.cacheFile)) return null;
 
-			const currentHash = this.computeRuleHash(ruleFiles);
-			const cached = readJsonCache<QueryCacheEntry>(
-				this.cacheFile,
-				(parsed) => {
-					const entry = parsed as QueryCacheEntry;
-					if (
-						entry.version !== CACHE_VERSION ||
-						entry.ruleHash !== currentHash
-					) {
-						return undefined; // Cache invalid
-					}
-					return entry;
-				},
-			);
-			return cached ?? null;
-		} catch {
-			return null;
-		}
-	}
+      const currentHash = this.computeRuleHash(ruleFiles);
+      const cached = readJsonCache<QueryCacheEntry>(this.cacheFile, (parsed) => {
+        const entry = parsed as QueryCacheEntry;
+        if (entry.version !== CACHE_VERSION || entry.ruleHash !== currentHash) {
+          return undefined; // Cache invalid
+        }
+        return entry;
+      });
+      return cached ?? null;
+    } catch {
+      return null;
+    }
+  }
 
-	set(ruleFiles: string[], queries: QueryCacheEntry["queries"]): void {
-		try {
-			this.ensureCacheDir();
-			const entry: QueryCacheEntry = {
-				version: CACHE_VERSION,
-				timestamp: Date.now(),
-				ruleHash: this.computeRuleHash(ruleFiles),
-				queries,
-			};
-			writeFileAtomic(this.cacheFile, JSON.stringify(entry, null, 2));
-			this.pruneStaleVersions();
-		} catch {
-			// Cache write failure is non-fatal
-		}
-	}
+  set(ruleFiles: string[], queries: QueryCacheEntry["queries"]): void {
+    try {
+      this.ensureCacheDir();
+      const entry: QueryCacheEntry = {
+        version: CACHE_VERSION,
+        timestamp: Date.now(),
+        ruleHash: this.computeRuleHash(ruleFiles),
+        queries,
+      };
+      writeFileAtomic(this.cacheFile, JSON.stringify(entry, null, 2));
+      this.pruneStaleVersions();
+    } catch {
+      // Cache write failure is non-fatal
+    }
+  }
 
-	// Orphaned `<language>-rules-v<N>.json` files from a prior CACHE_VERSION
-	// (e.g. v3 entries left behind by the #448 v3→v4 bump) never got cleaned up
-	// on their own — nothing ever read or removed them again once the version
-	// bumped. Delete every sibling for this language that isn't the current file.
-	private pruneStaleVersions(): void {
-		const currentName = path.basename(this.cacheFile);
-		const pattern = new RegExp(`^${this.language}-rules-v\\d+\\.json$`);
-		let dirents: string[];
-		try {
-			dirents = fs.readdirSync(this.cacheDir);
-		} catch {
-			return;
-		}
-		for (const name of dirents) {
-			if (name === currentName || !pattern.test(name)) continue;
-			try {
-				fs.unlinkSync(path.join(this.cacheDir, name));
-			} catch {
-				// Best-effort; ENOENT (already gone) or any other removal failure
-				// shouldn't undo the write that already succeeded above.
-			}
-		}
-	}
+  // Orphaned `<language>-rules-v<N>.json` files from a prior CACHE_VERSION
+  // (e.g. v3 entries left behind by the #448 v3→v4 bump) never got cleaned up
+  // on their own — nothing ever read or removed them again once the version
+  // bumped. Delete every sibling for this language that isn't the current file.
+  private pruneStaleVersions(): void {
+    const currentName = path.basename(this.cacheFile);
+    const pattern = new RegExp(`^${this.language}-rules-v\\d+\\.json$`);
+    let dirents: string[];
+    try {
+      dirents = fs.readdirSync(this.cacheDir);
+    } catch {
+      return;
+    }
+    for (const name of dirents) {
+      if (name === currentName || !pattern.test(name)) continue;
+      try {
+        fs.unlinkSync(path.join(this.cacheDir, name));
+      } catch {
+        // Best-effort; ENOENT (already gone) or any other removal failure
+        // shouldn't undo the write that already succeeded above.
+      }
+    }
+  }
 
-	clear(): void {
-		try {
-			if (fs.existsSync(this.cacheFile)) {
-				fs.unlinkSync(this.cacheFile);
-			}
-		} catch {
-			// Ignore
-		}
-	}
+  clear(): void {
+    try {
+      if (fs.existsSync(this.cacheFile)) {
+        fs.unlinkSync(this.cacheFile);
+      }
+    } catch {
+      // Ignore
+    }
+  }
 }

@@ -1,7 +1,7 @@
 id: missing-component-decorator
 valid:
-  - '@Component() class A { ngOnInit() {} }'
-  - 'class A { constructor() {} }'
+  - "@Component() class A { ngOnInit() {} }"
+  - "class A { constructor() {} }"
 invalid:
-  - 'class A { ngOnInit() {} }'
-  - 'class A { ngOnDestroy() {} ngOnInit() {} }'
+  - "class A { ngOnInit() {} }"
+  - "class A { ngOnDestroy() {} ngOnInit() {} }"

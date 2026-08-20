@@ -50,33 +50,33 @@ There is currently no per-rule disable mechanism; if you need to suppress one bu
 
 See [`rules/tree-sitter-queries/rule-schema.json`](../rules/tree-sitter-queries/rule-schema.json) for a machine-readable schema (works with the VS Code YAML extension).
 
-| Field | Required | Type | Notes |
-|---|---|---|---|
-| `id` | ✅ | string | Unique across all rules for this language |
-| `query` | ✅ | string (block `\|`) | Tree-sitter S-expression; capture names use `@UPPER_SNAKE` |
-| `name` | — | string | Human-readable; defaults to `id` |
-| `severity` | — | `error` \| `warning` \| `info` | Defaults to `warning` |
-| `category` | — | string | Defaults to `"general"` |
-| `language` | — | string | Inferred from directory name; override only if the file lives in a shared dir |
-| `message` | — | string | Shown inline; defaults to `"Pattern: <id>"` |
-| `description` | — | string (block `\|`) | Extended explanation shown in the detail view |
-| `metavars` | — | string[] | Capture names to surface as evidence; auto-extracted from `@VAR` patterns if omitted |
-| `predicates` | — | Predicate[] | Native tree-sitter predicates (run in WASM, faster than post-filters) |
-| `inline_tier` | — | `blocking` \| `warning` \| `review` | Override dispatch tier for this rule |
-| `defect_class` | — | string | e.g. `injection`, `xss`, `logic` |
-| `confidence` | — | `low` \| `medium` \| `high` | |
-| `tags` | — | string[] | e.g. `[security, owasp-top-10]` |
-| `cwe` | — | string[] | e.g. `[CWE-89]` |
-| `owasp` | — | string[] | |
-| `has_fix` | — | boolean | Defaults to `false` |
-| `fix_action` | — | string | Short label for the fix suggestion |
-| `examples` | — | `{bad?, good?}` | Code strings shown in docs |
+| Field          | Required | Type                                | Notes                                                                                |
+| -------------- | -------- | ----------------------------------- | ------------------------------------------------------------------------------------ |
+| `id`           | ✅       | string                              | Unique across all rules for this language                                            |
+| `query`        | ✅       | string (block `\|`)                 | Tree-sitter S-expression; capture names use `@UPPER_SNAKE`                           |
+| `name`         | —        | string                              | Human-readable; defaults to `id`                                                     |
+| `severity`     | —        | `error` \| `warning` \| `info`      | Defaults to `warning`                                                                |
+| `category`     | —        | string                              | Defaults to `"general"`                                                              |
+| `language`     | —        | string                              | Inferred from directory name; override only if the file lives in a shared dir        |
+| `message`      | —        | string                              | Shown inline; defaults to `"Pattern: <id>"`                                          |
+| `description`  | —        | string (block `\|`)                 | Extended explanation shown in the detail view                                        |
+| `metavars`     | —        | string[]                            | Capture names to surface as evidence; auto-extracted from `@VAR` patterns if omitted |
+| `predicates`   | —        | Predicate[]                         | Native tree-sitter predicates (run in WASM, faster than post-filters)                |
+| `inline_tier`  | —        | `blocking` \| `warning` \| `review` | Override dispatch tier for this rule                                                 |
+| `defect_class` | —        | string                              | e.g. `injection`, `xss`, `logic`                                                     |
+| `confidence`   | —        | `low` \| `medium` \| `high`         |                                                                                      |
+| `tags`         | —        | string[]                            | e.g. `[security, owasp-top-10]`                                                      |
+| `cwe`          | —        | string[]                            | e.g. `[CWE-89]`                                                                      |
+| `owasp`        | —        | string[]                            |                                                                                      |
+| `has_fix`      | —        | boolean                             | Defaults to `false`                                                                  |
+| `fix_action`   | —        | string                              | Short label for the fix suggestion                                                   |
+| `examples`     | —        | `{bad?, good?}`                     | Code strings shown in docs                                                           |
 
 **Predicate shape:**
 
 ```yaml
 predicates:
-  - type: eq          # or: match, any-of
+  - type: eq # or: match, any-of
     var: "@FUNC_NAME"
     value: "dangerousMethod"
 ```
@@ -130,39 +130,39 @@ Rule discovery is recursive and accepts `.yml` or `.yaml`. The shared raw-LSP/NA
 
 See [`rules/ast-grep-rules/rule-schema.json`](../rules/ast-grep-rules/rule-schema.json) for a machine-readable schema.
 
-| Field | Required | Type | Notes |
-|---|---|---|---|
-| `id` | ✅ | string | |
-| `rule` | ✅ | RuleCondition | At least one of `pattern`, `kind`, `regex`, `has`, `any`, `all`, `not` |
-| `language` | — | string | See valid values below |
-| `severity` | — | `error` \| `warning` \| `info` | |
-| `message` | — | string | |
-| `note` | — | string (block `\|`) | Extended guidance shown in the detail view |
-| `fix` | — | string | Suggested replacement |
-| `metadata.weight` | — | number | Priority weight |
-| `metadata.category` | — | string | |
-| `constraints` | — | Record\<string, {regex}\> | Metavariable regex — `KEY: { regex: "..." }` narrows what `$KEY` will match. Supported by the napi engine + the ast-grep CLI/LSP. |
+| Field               | Required | Type                           | Notes                                                                                                                             |
+| ------------------- | -------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                | ✅       | string                         |                                                                                                                                   |
+| `rule`              | ✅       | RuleCondition                  | At least one of `pattern`, `kind`, `regex`, `has`, `any`, `all`, `not`                                                            |
+| `language`          | —        | string                         | See valid values below                                                                                                            |
+| `severity`          | —        | `error` \| `warning` \| `info` |                                                                                                                                   |
+| `message`           | —        | string                         |                                                                                                                                   |
+| `note`              | —        | string (block `\|`)            | Extended guidance shown in the detail view                                                                                        |
+| `fix`               | —        | string                         | Suggested replacement                                                                                                             |
+| `metadata.weight`   | —        | number                         | Priority weight                                                                                                                   |
+| `metadata.category` | —        | string                         |                                                                                                                                   |
+| `constraints`       | —        | Record\<string, {regex}\>      | Metavariable regex — `KEY: { regex: "..." }` narrows what `$KEY` will match. Supported by the napi engine + the ast-grep CLI/LSP. |
 
 Valid `language` values: `TypeScript` `JavaScript` `Python` `Go` `Rust` `Java` `C` `Cpp` `CSharp` `Kotlin` `Ruby` `Php`
 (Note: PascalCase, unlike tree-sitter directory names which are lowercase.)
 
 **RuleCondition fields:**
 
-| Field | Notes |
-|---|---|
-| `pattern` | Ast-grep pattern syntax. Accepts BOTH a string shorthand (`foo($A)`) AND the rich object form (`{context, selector}`) — the rich form matches a specific AST kind inside a syntactic context snippet. Avoid single-metavariable string patterns like `$VAR` (too broad). |
-| `kind` | AST node kind name |
-| `regex` | Regex match against node text |
-| `has` | Nested condition — node must have a descendant matching (default = direct child) |
-| `any` | Array — node matches if any item matches (OR) |
-| `all` | Array — node matches only if all items match (AND) |
-| `not` | Negation condition |
-| `inside` | Ancestor must match (default = direct parent; pair with `stopBy: end` to walk all ancestors) |
-| `follows` | Immediately-preceding sibling must match |
-| `precedes` | Immediately-following sibling must match |
-| `stopBy` | `neighbor` (default — direct parent/child/sibling) or `end` (walk to root/leaves) |
-| `field` | Field name constraint (e.g. `field: name` on an import specifier) |
-| `nthChild` | Match only the Nth child of its parent |
+| Field      | Notes                                                                                                                                                                                                                                                                    |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pattern`  | Ast-grep pattern syntax. Accepts BOTH a string shorthand (`foo($A)`) AND the rich object form (`{context, selector}`) — the rich form matches a specific AST kind inside a syntactic context snippet. Avoid single-metavariable string patterns like `$VAR` (too broad). |
+| `kind`     | AST node kind name                                                                                                                                                                                                                                                       |
+| `regex`    | Regex match against node text                                                                                                                                                                                                                                            |
+| `has`      | Nested condition — node must have a descendant matching (default = direct child)                                                                                                                                                                                         |
+| `any`      | Array — node matches if any item matches (OR)                                                                                                                                                                                                                            |
+| `all`      | Array — node matches only if all items match (AND)                                                                                                                                                                                                                       |
+| `not`      | Negation condition                                                                                                                                                                                                                                                       |
+| `inside`   | Ancestor must match (default = direct parent; pair with `stopBy: end` to walk all ancestors)                                                                                                                                                                             |
+| `follows`  | Immediately-preceding sibling must match                                                                                                                                                                                                                                 |
+| `precedes` | Immediately-following sibling must match                                                                                                                                                                                                                                 |
+| `stopBy`   | `neighbor` (default — direct parent/child/sibling) or `end` (walk to root/leaves)                                                                                                                                                                                        |
+| `field`    | Field name constraint (e.g. `field: name` on an import specifier)                                                                                                                                                                                                        |
+| `nthChild` | Match only the Nth child of its parent                                                                                                                                                                                                                                   |
 
 All of these are supported by the in-process napi runner (#206) and the ast-grep CLI / LSP — the runner delegates matching to napi's native engine (`root.findAll({rule})`), the same Rust core the CLI and LSP use.
 

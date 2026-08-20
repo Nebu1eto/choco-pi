@@ -13,9 +13,9 @@
 import { normalizeRuleId } from "./rule-id-normalize.js";
 
 export interface SuppressibleDiagnostic {
-	line?: number;
-	rule?: string;
-	id?: string;
+  line?: number;
+  rule?: string;
+  id?: string;
 }
 
 const SUPPRESS_RE = /(?:\/\/|#)\s*choco-pi-lsp-ignore:\s*(.+)/;
@@ -38,45 +38,45 @@ const SUPPRESS_RE = /(?:\/\/|#)\s*choco-pi-lsp-ignore:\s*(.+)/;
  * nothing is suppressed).
  */
 export function applyInlineSuppressions<T extends SuppressibleDiagnostic>(
-	diagnostics: T[],
-	content: string,
+  diagnostics: T[],
+  content: string,
 ): T[] {
-	if (!content || !diagnostics.length) return diagnostics;
+  if (!content || !diagnostics.length) return diagnostics;
 
-	// Build the set of (1-based line, rule-id) pairs that are suppressed.
-	const suppressed = new Set<string>();
-	const lines = content.split("\n");
-	for (let i = 0; i < lines.length; i++) {
-		const m = SUPPRESS_RE.exec(lines[i]);
-		if (!m) continue;
-		const rules = m[1]
-			.split(",")
-			.map((r) => r.trim())
-			.filter(Boolean);
-		const suppressedLine = i + 1; // same line (1-based)
-		const nextLine = i + 2; // next line (1-based)
-		for (const ruleId of rules) {
-			// #1087: normalize the COMMENT token too, not just the diagnostic id.
-			// The diagnostic side below matches raw OR normalized, so storing only
-			// the raw comment token made `// choco-pi-lsp-ignore: no-eval-js` fail to
-			// suppress a finding surfaced under the normalized `no-eval`, while the
-			// identical `disable: ["no-eval-js"]` config key worked (rule-policy
-			// normalizes both sides). Add the normalized form so the two suppression
-			// surfaces stay symmetric.
-			for (const key of new Set([ruleId, normalizeRuleId(ruleId)])) {
-				suppressed.add(`${suppressedLine}:${key}`);
-				suppressed.add(`${nextLine}:${key}`);
-			}
-		}
-	}
+  // Build the set of (1-based line, rule-id) pairs that are suppressed.
+  const suppressed = new Set<string>();
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const m = SUPPRESS_RE.exec(lines[i]);
+    if (!m) continue;
+    const rules = m[1]
+      .split(",")
+      .map((r) => r.trim())
+      .filter(Boolean);
+    const suppressedLine = i + 1; // same line (1-based)
+    const nextLine = i + 2; // next line (1-based)
+    for (const ruleId of rules) {
+      // #1087: normalize the COMMENT token too, not just the diagnostic id.
+      // The diagnostic side below matches raw OR normalized, so storing only
+      // the raw comment token made `// choco-pi-lsp-ignore: no-eval-js` fail to
+      // suppress a finding surfaced under the normalized `no-eval`, while the
+      // identical `disable: ["no-eval-js"]` config key worked (rule-policy
+      // normalizes both sides). Add the normalized form so the two suppression
+      // surfaces stay symmetric.
+      for (const key of new Set([ruleId, normalizeRuleId(ruleId)])) {
+        suppressed.add(`${suppressedLine}:${key}`);
+        suppressed.add(`${nextLine}:${key}`);
+      }
+    }
+  }
 
-	if (suppressed.size === 0) return diagnostics;
+  if (suppressed.size === 0) return diagnostics;
 
-	return diagnostics.filter((d) => {
-		const rawId = d.rule ?? d.id ?? "";
-		const line = d.line ?? 1;
-		if (suppressed.has(`${line}:${rawId}`)) return false;
-		const normId = normalizeRuleId(rawId);
-		return normId === rawId || !suppressed.has(`${line}:${normId}`);
-	});
+  return diagnostics.filter((d) => {
+    const rawId = d.rule ?? d.id ?? "";
+    const line = d.line ?? 1;
+    if (suppressed.has(`${line}:${rawId}`)) return false;
+    const normId = normalizeRuleId(rawId);
+    return normId === rawId || !suppressed.has(`${line}:${normId}`);
+  });
 }

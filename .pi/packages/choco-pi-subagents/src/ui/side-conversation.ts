@@ -10,7 +10,13 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentManager } from "../agent-manager.ts";
 import { captureMainSessionFork } from "../agent-runner.ts";
-import { getAvailableTypes, getFallbackSubagent, NO_FALLBACK, resolveSpawnType, type SpawnTypeResolution } from "../agent-types.ts";
+import {
+  getAvailableTypes,
+  getFallbackSubagent,
+  NO_FALLBACK,
+  resolveSpawnType,
+  type SpawnTypeResolution,
+} from "../agent-types.ts";
 import type { AgentRecord } from "../types.ts";
 import type { AgentActivity, Theme } from "./agent-widget.ts";
 import { ConversationViewer, VIEWPORT_HEIGHT_PCT } from "./conversation-viewer.ts";
@@ -127,40 +133,42 @@ export class SideConversationController {
     this.autoOpen.delete(record.id);
     this.openAgentId = record.id;
 
-    void ui.custom<undefined>(
-      (tui, theme, keybindings, done) => {
-        this.closeOverlay = () => done(undefined);
-        return new ConversationViewer(
-          tui,
-          session,
-          record,
-          this.options.getActivity?.(record.id),
-          theme,
-          done,
-          undefined,
-          keybindings,
-          (message) => this.reply(record, message),
-          {
-            allowReplyWhenFinished: true,
-            replyLabel: "reply",
-            onFocus: this.options.focusAgent
-              ? () => {
-                  this.closeOverlay?.();
-                  const focusAgent = this.options.focusAgent;
-                  queueMicrotask(() => focusAgent?.(record, tui, theme));
-                }
-              : undefined,
-          },
-        );
-      },
-      {
-        overlay: true,
-        overlayOptions: { anchor: "center", width: "90%", maxHeight: `${VIEWPORT_HEIGHT_PCT}%` },
-      },
-    ).then(
-      () => this.clearOverlay(record.id),
-      () => this.clearOverlay(record.id),
-    );
+    void ui
+      .custom<undefined>(
+        (tui, theme, keybindings, done) => {
+          this.closeOverlay = () => done(undefined);
+          return new ConversationViewer(
+            tui,
+            session,
+            record,
+            this.options.getActivity?.(record.id),
+            theme,
+            done,
+            undefined,
+            keybindings,
+            (message) => this.reply(record, message),
+            {
+              allowReplyWhenFinished: true,
+              replyLabel: "reply",
+              onFocus: this.options.focusAgent
+                ? () => {
+                    this.closeOverlay?.();
+                    const focusAgent = this.options.focusAgent;
+                    queueMicrotask(() => focusAgent?.(record, tui, theme));
+                  }
+                : undefined,
+            },
+          );
+        },
+        {
+          overlay: true,
+          overlayOptions: { anchor: "center", width: "90%", maxHeight: `${VIEWPORT_HEIGHT_PCT}%` },
+        },
+      )
+      .then(
+        () => this.clearOverlay(record.id),
+        () => this.clearOverlay(record.id),
+      );
     return true;
   }
 
@@ -170,7 +178,10 @@ export class SideConversationController {
     this.autoOpen.delete(record.id);
     if (this.openAgentId === record.id) return;
     const handle = record.alias ?? record.handle ?? record.id;
-    this.ui?.notify(`BTW @${handle} finished. Run /btw to open it.`, record.status === "error" ? "warning" : "info");
+    this.ui?.notify(
+      `BTW @${handle} finished. Run /btw to open it.`,
+      record.status === "error" ? "warning" : "info",
+    );
   }
 
   isOpen(id?: string): boolean {
@@ -196,7 +207,8 @@ export class SideConversationController {
       return;
     }
 
-    void this.manager.resume(record.id, message, undefined, { isBackground: true })
+    void this.manager
+      .resume(record.id, message, undefined, { isBackground: true })
       .then((resumed) => {
         if (!resumed) this.ui?.notify("This BTW conversation cannot be resumed.", "warning");
       })

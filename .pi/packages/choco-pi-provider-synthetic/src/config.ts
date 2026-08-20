@@ -21,11 +21,9 @@ export type SyntheticFeatureId =
   | "usageStatus"
   | "quotaWarnings";
 
-export const SYNTHETIC_EXTENSIONS_REQUEST_EVENT =
-  "synthetic:extensions:request" as const;
+export const SYNTHETIC_EXTENSIONS_REQUEST_EVENT = "synthetic:extensions:request" as const;
 
-export const SYNTHETIC_EXTENSIONS_REGISTER_EVENT =
-  "synthetic:extensions:register" as const;
+export const SYNTHETIC_EXTENSIONS_REGISTER_EVENT = "synthetic:extensions:register" as const;
 
 export interface SyntheticExtensionsRegisterPayload {
   feature: SyntheticFeatureId;
@@ -72,10 +70,11 @@ const migrations: Migration<SyntheticConfig>[] = [];
 const QUOTA_WARNING_THRESHOLDS_DESCRIPTION =
   "Toggle warnings when your quotas reach thresholds. Thresholds: warning at 80% projected usage, high at 90%, critical at 100% for fixed windows; dynamic windows use adaptive projected thresholds based on window progress.";
 
-export const configLoader = new ConfigLoader<
-  SyntheticConfig,
-  ResolvedSyntheticConfig
->("synthetic", DEFAULT_CONFIG, { migrations });
+export const configLoader = new ConfigLoader<SyntheticConfig, ResolvedSyntheticConfig>(
+  "synthetic",
+  DEFAULT_CONFIG,
+  { migrations },
+);
 
 /**
  * Seed the global config file on first use. When no config file exists in
@@ -95,8 +94,7 @@ export async function seedSyntheticConfigIfMissing(): Promise<void> {
   }
 }
 
-export const SYNTHETIC_CONFIG_UPDATED_EVENT =
-  "synthetic:config:updated" as const;
+export const SYNTHETIC_CONFIG_UPDATED_EVENT = "synthetic:config:updated" as const;
 
 export interface SyntheticConfigUpdatedPayload {
   config: ResolvedSyntheticConfig;
@@ -154,11 +152,9 @@ export function registerSyntheticSettings(
       const quotasCommand = tabConfig?.quotasCommand ?? resolved.quotasCommand;
       const usageStatus = tabConfig?.usageStatus ?? resolved.usageStatus;
       const quotaWarnings = tabConfig?.quotaWarnings ?? resolved.quotaWarnings;
-      const subBarIntegration =
-        tabConfig?.subBarIntegration ?? resolved.subBarIntegration;
+      const subBarIntegration = tabConfig?.subBarIntegration ?? resolved.subBarIntegration;
       const proxyUrl = tabConfig?.proxyUrl ?? resolved.proxyUrl;
-      const proxyRequiresAuth =
-        tabConfig?.proxyRequiresAuth ?? resolved.proxyRequiresAuth;
+      const proxyRequiresAuth = tabConfig?.proxyRequiresAuth ?? resolved.proxyRequiresAuth;
 
       const sections: SettingsSection[] = [];
 
@@ -180,9 +176,7 @@ export function registerSyntheticSettings(
                   tabConfig ?? (ctx.scope === "memory" ? resolved : {});
                 let nextProxyUrl = proxyUrl;
                 let nextProxyRequiresAuth =
-                  proxyUrl.trim() || proxyRequiresAuth
-                    ? proxyRequiresAuth
-                    : true;
+                  proxyUrl.trim() || proxyRequiresAuth ? proxyRequiresAuth : true;
 
                 const syncDraft = () => {
                   ctx.setDraft({
@@ -313,10 +307,7 @@ export function registerSyntheticSettings(
         "subBarIntegration",
       ]);
 
-      if (
-        featureIds.has(id) &&
-        !getLoadedFeatures().has(id as SyntheticFeatureId)
-      ) {
+      if (featureIds.has(id) && !getLoadedFeatures().has(id as SyntheticFeatureId)) {
         return null;
       }
 

@@ -39,7 +39,10 @@ export async function selectItem<T>(
     label: `${String(i + 1).padStart(width)}. ${format(item, i)}`,
   }));
 
-  const choice = await ui.select(title, rows.map(r => r.label));
+  const choice = await ui.select(
+    title,
+    rows.map((r) => r.label),
+  );
   if (!choice) return undefined;
-  return rows.find(r => r.label === choice)?.item;
+  return rows.find((r) => r.label === choice)?.item;
 }

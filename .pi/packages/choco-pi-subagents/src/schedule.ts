@@ -55,7 +55,12 @@ export class SubagentScheduler {
   private manager: AgentManager | undefined;
 
   /** Start the scheduler: bind to a session's store and arm enabled jobs. */
-  start(pi: ExtensionAPI, ctx: ExtensionContext, manager: AgentManager, store: ScheduleStore): void {
+  start(
+    pi: ExtensionAPI,
+    ctx: ExtensionContext,
+    manager: AgentManager,
+    store: ScheduleStore,
+  ): void {
     this.pi = pi;
     this.ctx = ctx;
     this.manager = manager;
@@ -187,14 +192,22 @@ export class SubagentScheduler {
         } else {
           // Past timestamp — disable, mark error, never fire
           store.update(job.id, { enabled: false, lastStatus: "error" });
-          this.emit({ type: "error", jobId: job.id, error: `Scheduled time ${job.schedule} is in the past` });
+          this.emit({
+            type: "error",
+            jobId: job.id,
+            error: `Scheduled time ${job.schedule} is in the past`,
+          });
         }
       } else {
         const cron = new Cron(job.schedule, () => this.executeJob(job.id));
         this.jobs.set(job.id, cron);
       }
     } catch (err) {
-      this.emit({ type: "error", jobId: job.id, error: err instanceof Error ? err.message : String(err) });
+      this.emit({
+        type: "error",
+        jobId: job.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -285,7 +298,8 @@ export class SubagentScheduler {
       record.promise
         .then(() => {
           const r = manager.getRecord(agentId);
-          const failed = r?.status === "error" || r?.status === "aborted" || r?.status === "stopped";
+          const failed =
+            r?.status === "error" || r?.status === "aborted" || r?.status === "stopped";
           finalize(failed ? "error" : "success");
         })
         .catch(() => finalize("error"));
@@ -311,7 +325,11 @@ export class SubagentScheduler {
    * Order matters: relative ("+10m") and interval ("5m") both match digit+unit;
    * relative requires the leading "+" to disambiguate.
    */
-  static detectSchedule(s: string): { type: "cron" | "once" | "interval"; intervalMs?: number; normalized: string } {
+  static detectSchedule(s: string): {
+    type: "cron" | "once" | "interval";
+    intervalMs?: number;
+    normalized: string;
+  } {
     const trimmed = s.trim();
     // "+10m" — relative one-shot
     const rel = SubagentScheduler.parseRelativeTime(trimmed);
@@ -335,7 +353,7 @@ export class SubagentScheduler {
     const cronCheck = SubagentScheduler.validateCronExpression(trimmed);
     if (cronCheck.valid) return { type: "cron", normalized: trimmed };
     throw new Error(
-      `Invalid schedule "${s}". Use 6-field cron (e.g. "0 0 9 * * 1" — 9am every Monday), interval ("5m"/"1h"), or one-shot ("+10m" / ISO).`
+      `Invalid schedule "${s}". Use 6-field cron (e.g. "0 0 9 * * 1" — 9am every Monday), interval ("5m"/"1h"), or one-shot ("+10m" / ISO).`,
     );
   }
 
@@ -361,7 +379,9 @@ export class SubagentScheduler {
   static parseRelativeTime(s: string): string | null {
     const m = s.match(/^\+(\d+)(s|m|h|d)$/);
     if (!m) return null;
-    const ms = parseInt(m[1], 10) * { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "s" | "m" | "h" | "d"];
+    const ms =
+      parseInt(m[1], 10) *
+      { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "s" | "m" | "h" | "d"];
     return new Date(Date.now() + ms).toISOString();
   }
 
@@ -369,6 +389,9 @@ export class SubagentScheduler {
   static parseInterval(s: string): number | null {
     const m = s.match(/^(\d+)(s|m|h|d)$/);
     if (!m) return null;
-    return parseInt(m[1], 10) * { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "s" | "m" | "h" | "d"];
+    return (
+      parseInt(m[1], 10) *
+      { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "s" | "m" | "h" | "d"]
+    );
   }
 }

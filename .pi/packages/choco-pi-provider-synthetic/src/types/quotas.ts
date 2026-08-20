@@ -56,11 +56,9 @@ export type ProjectionHint =
       timeToEmptyMs?: number;
     };
 
-export const SYNTHETIC_QUOTAS_UPDATED_EVENT =
-  "synthetic:quotas:updated" as const;
+export const SYNTHETIC_QUOTAS_UPDATED_EVENT = "synthetic:quotas:updated" as const;
 
-export const SYNTHETIC_QUOTAS_REQUEST_EVENT =
-  "synthetic:quotas:request" as const;
+export const SYNTHETIC_QUOTAS_REQUEST_EVENT = "synthetic:quotas:request" as const;
 
 export const SYNTHETIC_QUOTAS_READ_EVENT = "synthetic:quotas:read" as const;
 
@@ -70,8 +68,7 @@ export interface SyntheticQuotasSnapshotPayload {
   updatedAt: number; // epoch ms
 }
 
-export interface SyntheticQuotasUpdatedPayload
-  extends SyntheticQuotasSnapshotPayload {}
+export interface SyntheticQuotasUpdatedPayload extends SyntheticQuotasSnapshotPayload {}
 
 export interface SyntheticQuotasReadPayload {
   respond: (snapshot: SyntheticQuotasSnapshotPayload | undefined) => void;
@@ -81,12 +78,7 @@ export interface SyntheticQuotasRequestPayload {
   respond?: (snapshot: SyntheticQuotasSnapshotPayload | undefined) => void;
 }
 
-export type QuotasErrorKind =
-  | "cancelled"
-  | "timeout"
-  | "config"
-  | "http"
-  | "network";
+export type QuotasErrorKind = "cancelled" | "timeout" | "config" | "http" | "network";
 
 export type QuotasResult =
   | { success: true; data: { quotas: QuotasResponse } }
@@ -98,9 +90,7 @@ export function parseQuotaHeader(
   headers: Record<string, string> | undefined,
 ): QuotasResponse | undefined {
   if (!headers) return undefined;
-  const entry = Object.entries(headers).find(
-    ([key]) => key.toLowerCase() === "x-synthetic-quotas",
-  );
+  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === "x-synthetic-quotas");
   if (!entry?.[1]) return undefined;
   try {
     const parsed = JSON.parse(entry[1]);

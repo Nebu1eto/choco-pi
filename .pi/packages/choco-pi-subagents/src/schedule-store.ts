@@ -10,7 +10,14 @@
  * from disk, applies the change, atomic-writes via temp+rename, releases.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import type { ScheduledSubagent, ScheduleStoreData } from "./types.ts";
 
@@ -18,7 +25,12 @@ const LOCK_RETRY_MS = 50;
 const LOCK_MAX_RETRIES = 100;
 
 function isProcessRunning(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function acquireLock(lockPath: string): void {
@@ -34,9 +46,13 @@ function acquireLock(lockPath: string): void {
             unlinkSync(lockPath);
             continue;
           }
-        } catch { /* ignore — try again */ }
+        } catch {
+          /* ignore — try again */
+        }
         const start = Date.now();
-        while (Date.now() - start < LOCK_RETRY_MS) { /* busy wait */ }
+        while (Date.now() - start < LOCK_RETRY_MS) {
+          /* busy wait */
+        }
         continue;
       }
       throw e;
@@ -46,7 +62,11 @@ function acquireLock(lockPath: string): void {
 }
 
 function releaseLock(lockPath: string): void {
-  try { unlinkSync(lockPath); } catch { /* ignore */ }
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Resolve the storage path for a session-scoped store. */
@@ -77,7 +97,9 @@ export class ScheduleStore {
       const data: ScheduleStoreData = JSON.parse(readFileSync(this.filePath, "utf-8"));
       this.jobs.clear();
       for (const j of data.jobs ?? []) this.jobs.set(j.id, j);
-    } catch { /* corrupt — start fresh, next save rewrites */ }
+    } catch {
+      /* corrupt — start fresh, next save rewrites */
+    }
   }
 
   /** Atomic write via temp file + rename (POSIX-atomic). */
@@ -147,7 +169,11 @@ export class ScheduleStore {
   /** Delete the backing file (used when no jobs remain, optional cleanup). */
   deleteFileIfEmpty(): void {
     if (this.jobs.size === 0 && existsSync(this.filePath)) {
-      try { unlinkSync(this.filePath); } catch { /* ignore */ }
+      try {
+        unlinkSync(this.filePath);
+      } catch {
+        /* ignore */
+      }
     }
   }
 }

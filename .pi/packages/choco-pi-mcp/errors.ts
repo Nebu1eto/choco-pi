@@ -27,7 +27,7 @@ export class McpUiError extends Error {
       context?: McpUiErrorContext;
       recoveryHint?: string;
       cause?: Error;
-    }
+    },
   ) {
     super(message);
     this.name = "McpUiError";
@@ -58,11 +58,7 @@ export class McpUiError extends Error {
  * Error fetching a UI resource from the MCP server.
  */
 export class ResourceFetchError extends McpUiError {
-  constructor(
-    uri: string,
-    reason: string,
-    options?: { server?: string; cause?: Error }
-  ) {
+  constructor(uri: string, reason: string, options?: { server?: string; cause?: Error }) {
     super(`Failed to fetch UI resource "${uri}": ${reason}`, {
       code: "RESOURCE_FETCH_ERROR",
       context: { uri, ...(options?.server !== undefined ? { server: options.server } : {}) },
@@ -77,11 +73,7 @@ export class ResourceFetchError extends McpUiError {
  * Error parsing or validating UI resource content.
  */
 export class ResourceParseError extends McpUiError {
-  constructor(
-    uri: string,
-    reason: string,
-    options?: { server?: string; mimeType?: string }
-  ) {
+  constructor(uri: string, reason: string, options?: { server?: string; mimeType?: string }) {
     super(`Invalid UI resource "${uri}": ${reason}`, {
       code: "RESOURCE_PARSE_ERROR",
       context: {
@@ -103,7 +95,8 @@ export class BridgeConnectionError extends McpUiError {
     super(`AppBridge connection failed: ${reason}`, {
       code: "BRIDGE_CONNECTION_ERROR",
       context: options?.session !== undefined ? { session: options.session } : {},
-      recoveryHint: "Check browser console for detailed errors. The iframe may have failed to load.",
+      recoveryHint:
+        "Check browser console for detailed errors. The iframe may have failed to load.",
       ...(options?.cause !== undefined ? { cause: options.cause } : {}),
     });
     this.name = "BridgeConnectionError";
@@ -116,10 +109,7 @@ export class BridgeConnectionError extends McpUiError {
 export class ConsentError extends McpUiError {
   readonly denied: boolean;
 
-  constructor(
-    server: string,
-    options: { denied?: boolean; requiresApproval?: boolean }
-  ) {
+  constructor(server: string, options: { denied?: boolean; requiresApproval?: boolean }) {
     const message = options.denied
       ? `Tool calls for "${server}" were denied for this session`
       : `Tool call approval required for "${server}"`;
@@ -140,10 +130,7 @@ export class ConsentError extends McpUiError {
  * Error with UI server session management.
  */
 export class SessionError extends McpUiError {
-  constructor(
-    reason: string,
-    options?: { session?: string; cause?: Error }
-  ) {
+  constructor(reason: string, options?: { session?: string; cause?: Error }) {
     super(`Session error: ${reason}`, {
       code: "SESSION_ERROR",
       context: options?.session !== undefined ? { session: options.session } : {},
@@ -158,10 +145,7 @@ export class SessionError extends McpUiError {
  * Error starting or operating the UI server.
  */
 export class ServerError extends McpUiError {
-  constructor(
-    reason: string,
-    options?: { port?: number; cause?: Error }
-  ) {
+  constructor(reason: string, options?: { port?: number; cause?: Error }) {
     super(`UI server error: ${reason}`, {
       code: "SERVER_ERROR",
       context: options?.port !== undefined ? { port: options.port } : {},
@@ -176,11 +160,7 @@ export class ServerError extends McpUiError {
  * Error communicating with the MCP server.
  */
 export class McpServerError extends McpUiError {
-  constructor(
-    server: string,
-    reason: string,
-    options?: { tool?: string; cause?: Error }
-  ) {
+  constructor(server: string, reason: string, options?: { tool?: string; cause?: Error }) {
     super(`MCP server "${server}" error: ${reason}`, {
       code: "MCP_SERVER_ERROR",
       context: { server, ...(options?.tool !== undefined ? { tool: options.tool } : {}) },

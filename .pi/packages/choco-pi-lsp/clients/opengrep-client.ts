@@ -63,8 +63,8 @@ import { SecurityScanClient } from "./security-scan-client.js";
 
 /** A single opengrep finding location (semgrep-compatible JSON schema). */
 export interface OpengrepPosition {
-	line: number;
-	col: number;
+  line: number;
+  col: number;
 }
 
 /**
@@ -73,28 +73,28 @@ export interface OpengrepPosition {
  * real installed binary (opengrep 1.25.0), not assumed from upstream docs.
  */
 export interface OpengrepFinding {
-	checkId: string;
-	path: string;
-	startLine: number;
-	startCol: number;
-	endLine: number;
-	endCol: number;
-	message: string;
-	severity: string;
-	/** e.g. ["CWE-78: ..."] — carried through for the diagnostic message. */
-	cwe?: string[];
+  checkId: string;
+  path: string;
+  startLine: number;
+  startCol: number;
+  endLine: number;
+  endCol: number;
+  message: string;
+  severity: string;
+  /** e.g. ["CWE-78: ..."] — carried through for the diagnostic message. */
+  cwe?: string[];
 }
 
 export interface OpengrepResult {
-	success: boolean;
-	findings: OpengrepFinding[];
-	scannedAt: string;
-	summary?: string;
+  success: boolean;
+  findings: OpengrepFinding[];
+  scannedAt: string;
+  summary?: string;
 }
 
 const EMPTY_RESULT: Omit<OpengrepResult, "scannedAt"> = {
-	success: false,
-	findings: [],
+  success: false,
+  findings: [],
 };
 
 // opengrep loads/compiles a full rule pack (1000+ rules for `auto`) before
@@ -105,120 +105,119 @@ const SCAN_TIMEOUT_MS = 180_000;
 // --- Client ---
 
 export class OpengrepClient extends SecurityScanClient<OpengrepResult> {
-	constructor(verbose = false) {
-		super("opengrep", verbose);
-	}
+  constructor(verbose = false) {
+    super("opengrep", verbose);
+  }
 
-	/**
-	 * Structurally always-on (mirrors `opengrepInitialization` in
-	 * `clients/lsp/server.ts`) — `resolveOpengrepConfig(cwd, { enabled: true })`
-	 * only resolves WHICH rules to run, not whether opengrep runs at all.
-	 * Exported as a static so callers can gate/log without constructing.
-	 */
-	static resolveConfig(cwd: string): ReturnType<typeof resolveOpengrepConfig> {
-		return resolveOpengrepConfig(cwd, { enabled: true });
-	}
+  /**
+   * Structurally always-on (mirrors `opengrepInitialization` in
+   * `clients/lsp/server.ts`) — `resolveOpengrepConfig(cwd, { enabled: true })`
+   * only resolves WHICH rules to run, not whether opengrep runs at all.
+   * Exported as a static so callers can gate/log without constructing.
+   */
+  static resolveConfig(cwd: string): ReturnType<typeof resolveOpengrepConfig> {
+    return resolveOpengrepConfig(cwd, { enabled: true });
+  }
 
-	/**
-	 * opengrep's top-level `--version` (no `scan` subcommand) — matches the
-	 * installer's `checkArgs: ["--version"]` entry (`installer/index.ts`).
-	 */
-	protected doEnsureAvailable(): Promise<boolean> {
-		return this.ensureViaInstaller(["--version"]);
-	}
+  /**
+   * opengrep's top-level `--version` (no `scan` subcommand) — matches the
+   * installer's `checkArgs: ["--version"]` entry (`installer/index.ts`).
+   */
+  protected doEnsureAvailable(): Promise<boolean> {
+    return this.ensureViaInstaller(["--version"]);
+  }
 
-	/**
-	 * Scan a directory tree with opengrep's rule set (local config or `auto`).
-	 * Re-entrancy safe: concurrent calls against the same root share a single
-	 * opengrep process (mirrors `GitleaksClient`/`JscpdClient`).
-	 */
-	async scan(cwd: string): Promise<OpengrepResult> {
-		const targetDir = path.resolve(cwd);
-		const scannedAt = new Date().toISOString();
+  /**
+   * Scan a directory tree with opengrep's rule set (local config or `auto`).
+   * Re-entrancy safe: concurrent calls against the same root share a single
+   * opengrep process (mirrors `GitleaksClient`/`JscpdClient`).
+   */
+  async scan(cwd: string): Promise<OpengrepResult> {
+    const targetDir = path.resolve(cwd);
+    const scannedAt = new Date().toISOString();
 
-		if (!(await this.ensureAvailable())) {
-			return {
-				...EMPTY_RESULT,
-				scannedAt,
-				summary: "opengrep not installed",
-			};
-		}
+    if (!(await this.ensureAvailable())) {
+      return {
+        ...EMPTY_RESULT,
+        scannedAt,
+        summary: "opengrep not installed",
+      };
+    }
 
-		return this.dedupeScan(targetDir, () => this.runScan(targetDir));
-	}
+    return this.dedupeScan(targetDir, () => this.runScan(targetDir));
+  }
 
-	private async runScan(cwd: string): Promise<OpengrepResult> {
-		const scannedAt = new Date().toISOString();
-		const bin = this.binaryPath ?? "opengrep";
-		const resolved = OpengrepClient.resolveConfig(cwd);
-		const outDir = mkdtempSync(path.join(os.tmpdir(), "choco-pi-lsp-opengrep-"));
-		const reportPath = path.join(outDir, "opengrep-report.json");
-		try {
-			const result = await safeSpawnAsync(
-				bin,
-				[
-					"scan",
-					"--config",
-					resolved.configArg ?? "auto",
-					"--json",
-					"--json-output",
-					reportPath,
-					// Never fail the scan on findings — this is a read, not a gate
-					// (matches gitleaks's `--exit-code 0` intent).
-					"--no-error",
-					"--quiet",
-					"--disable-version-check",
-					// #1562 class fix: opengrep's own `.gitignore` respect covers the
-					// common case (scratch trees are usually gitignored), but not a
-					// scratch/cache tree that ISN'T (e.g. an un-gitignored worktree
-					// cache) — `--exclude` is semgrep-compatible, so a slash-free
-					// pattern matches that directory name anywhere in the tree,
-					// independent of gitignore. Same `EXCLUDED_DIRS`-derived list
-					// gitleaks/trivy use, so the three scanners can't drift apart.
-					...getScratchTreeDirNames().flatMap((name) => ["--exclude", name]),
-					cwd,
-				],
-				{ cwd, timeout: SCAN_TIMEOUT_MS },
-			);
+  private async runScan(cwd: string): Promise<OpengrepResult> {
+    const scannedAt = new Date().toISOString();
+    const bin = this.binaryPath ?? "opengrep";
+    const resolved = OpengrepClient.resolveConfig(cwd);
+    const outDir = mkdtempSync(path.join(os.tmpdir(), "choco-pi-lsp-opengrep-"));
+    const reportPath = path.join(outDir, "opengrep-report.json");
+    try {
+      const result = await safeSpawnAsync(
+        bin,
+        [
+          "scan",
+          "--config",
+          resolved.configArg ?? "auto",
+          "--json",
+          "--json-output",
+          reportPath,
+          // Never fail the scan on findings — this is a read, not a gate
+          // (matches gitleaks's `--exit-code 0` intent).
+          "--no-error",
+          "--quiet",
+          "--disable-version-check",
+          // #1562 class fix: opengrep's own `.gitignore` respect covers the
+          // common case (scratch trees are usually gitignored), but not a
+          // scratch/cache tree that ISN'T (e.g. an un-gitignored worktree
+          // cache) — `--exclude` is semgrep-compatible, so a slash-free
+          // pattern matches that directory name anywhere in the tree,
+          // independent of gitignore. Same `EXCLUDED_DIRS`-derived list
+          // gitleaks/trivy use, so the three scanners can't drift apart.
+          ...getScratchTreeDirNames().flatMap((name) => ["--exclude", name]),
+          cwd,
+        ],
+        { cwd, timeout: SCAN_TIMEOUT_MS },
+      );
 
-			if (result.error) {
-				this.log(`Scan error: ${result.error.message}`);
-				return {
-					...EMPTY_RESULT,
-					scannedAt,
-					summary: result.error.message.slice(0, 200),
-				};
-			}
+      if (result.error) {
+        this.log(`Scan error: ${result.error.message}`);
+        return {
+          ...EMPTY_RESULT,
+          scannedAt,
+          summary: result.error.message.slice(0, 200),
+        };
+      }
 
-			if (!fs.existsSync(reportPath)) {
-				return {
-					...EMPTY_RESULT,
-					scannedAt,
-					summary:
-						(result.stderr ?? "").trim().split("\n")[0] || "no report produced",
-				};
-			}
+      if (!fs.existsSync(reportPath)) {
+        return {
+          ...EMPTY_RESULT,
+          scannedAt,
+          summary: (result.stderr ?? "").trim().split("\n")[0] || "no report produced",
+        };
+      }
 
-			const findings = parseOpengrepReport(fs.readFileSync(reportPath, "utf-8"));
-			return {
-				success: true,
-				findings,
-				scannedAt,
-			};
-		} catch (err) {
-			return {
-				...EMPTY_RESULT,
-				scannedAt,
-				summary: err instanceof Error ? err.message.slice(0, 200) : String(err),
-			};
-		} finally {
-			try {
-				fs.rmSync(outDir, { recursive: true, force: true });
-			} catch {
-				// non-fatal
-			}
-		}
-	}
+      const findings = parseOpengrepReport(fs.readFileSync(reportPath, "utf-8"));
+      return {
+        success: true,
+        findings,
+        scannedAt,
+      };
+    } catch (err) {
+      return {
+        ...EMPTY_RESULT,
+        scannedAt,
+        summary: err instanceof Error ? err.message.slice(0, 200) : String(err),
+      };
+    } finally {
+      try {
+        fs.rmSync(outDir, { recursive: true, force: true });
+      } catch {
+        // non-fatal
+      }
+    }
+  }
 }
 
 // --- Parser ---
@@ -235,44 +234,42 @@ export class OpengrepClient extends SecurityScanClient<OpengrepResult> {
  * `--experimental` where semgrep's doesn't).
  */
 export function parseOpengrepReport(raw: string): OpengrepFinding[] {
-	if (!raw.trim()) return [];
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch {
-		return [];
-	}
-	if (!parsed || typeof parsed !== "object") return [];
-	const results = (parsed as Record<string, unknown>).results;
-	if (!Array.isArray(results)) return [];
-	const findings: OpengrepFinding[] = [];
-	for (const entry of results) {
-		if (!entry || typeof entry !== "object") continue;
-		const e = entry as Record<string, unknown>;
-		const checkId = typeof e.check_id === "string" ? e.check_id : undefined;
-		const filePath = typeof e.path === "string" ? e.path : undefined;
-		const start = e.start as { line?: unknown; col?: unknown } | undefined;
-		const end = e.end as { line?: unknown; col?: unknown } | undefined;
-		const startLine = typeof start?.line === "number" ? start.line : undefined;
-		if (!checkId || !filePath || !Number.isFinite(startLine)) continue;
-		const extra = (e.extra as Record<string, unknown> | undefined) ?? {};
-		const metadata =
-			(extra.metadata as Record<string, unknown> | undefined) ?? {};
-		const cwe = Array.isArray(metadata.cwe)
-			? metadata.cwe.filter((c): c is string => typeof c === "string")
-			: undefined;
-		findings.push({
-			checkId,
-			path: filePath,
-			startLine: startLine as number,
-			startCol: typeof start?.col === "number" ? start.col : 1,
-			endLine: typeof end?.line === "number" ? end.line : (startLine as number),
-			endCol: typeof end?.col === "number" ? end.col : 1,
-			message:
-				typeof extra.message === "string" ? extra.message : "opengrep finding",
-			severity: typeof extra.severity === "string" ? extra.severity : "WARNING",
-			cwe,
-		});
-	}
-	return findings;
+  if (!raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object") return [];
+  const results = (parsed as Record<string, unknown>).results;
+  if (!Array.isArray(results)) return [];
+  const findings: OpengrepFinding[] = [];
+  for (const entry of results) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const checkId = typeof e.check_id === "string" ? e.check_id : undefined;
+    const filePath = typeof e.path === "string" ? e.path : undefined;
+    const start = e.start as { line?: unknown; col?: unknown } | undefined;
+    const end = e.end as { line?: unknown; col?: unknown } | undefined;
+    const startLine = typeof start?.line === "number" ? start.line : undefined;
+    if (!checkId || !filePath || !Number.isFinite(startLine)) continue;
+    const extra = (e.extra as Record<string, unknown> | undefined) ?? {};
+    const metadata = (extra.metadata as Record<string, unknown> | undefined) ?? {};
+    const cwe = Array.isArray(metadata.cwe)
+      ? metadata.cwe.filter((c): c is string => typeof c === "string")
+      : undefined;
+    findings.push({
+      checkId,
+      path: filePath,
+      startLine: startLine as number,
+      startCol: typeof start?.col === "number" ? start.col : 1,
+      endLine: typeof end?.line === "number" ? end.line : (startLine as number),
+      endCol: typeof end?.col === "number" ? end.col : 1,
+      message: typeof extra.message === "string" ? extra.message : "opengrep finding",
+      severity: typeof extra.severity === "string" ? extra.severity : "WARNING",
+      cwe,
+    });
+  }
+  return findings;
 }

@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { type AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../src/agent-manager.ts";
-import { buildEffectivePrompt, captureMainSessionFork, type MainSessionFork } from "../src/agent-runner.ts";
+import {
+  buildEffectivePrompt,
+  captureMainSessionFork,
+  type MainSessionFork,
+} from "../src/agent-runner.ts";
 import type { AgentRecord } from "../src/types.ts";
 import { SideConversationController } from "../src/ui/side-conversation.ts";
 
@@ -90,25 +94,37 @@ function overlayHarness(record: AgentRecord) {
   let component: any;
   const notifications: string[] = [];
   const ui = {
-    notify(message: string) { notifications.push(message); },
+    notify(message: string) {
+      notifications.push(message);
+    },
     custom<T>(factory: any): Promise<T> {
       return new Promise<T>((resolve) => {
-        component = factory(
-          { terminal: { rows: 40 }, requestRender() {} },
-          theme,
-          {},
-          (value: T) => resolve(value),
+        component = factory({ terminal: { rows: 40 }, requestRender() {} }, theme, {}, (value: T) =>
+          resolve(value),
         );
       });
     },
   };
-  return { ui, notifications, get component() { return component; }, record };
+  return {
+    ui,
+    notifications,
+    get component() {
+      return component;
+    },
+    record,
+  };
 }
 
 test("side launch forks the main session state without a context preamble", () => {
   const manager = new AgentManager();
-  let capturedOptions: (Record<string, unknown> & { mainSessionFork?: MainSessionFork }) | undefined;
-  (manager as unknown as { startAgent: (...args: any[]) => void }).startAgent = (_id, _record, args) => {
+  let capturedOptions:
+    | (Record<string, unknown> & { mainSessionFork?: MainSessionFork })
+    | undefined;
+  (manager as unknown as { startAgent: (...args: any[]) => void }).startAgent = (
+    _id,
+    _record,
+    args,
+  ) => {
     capturedOptions = args.options;
   };
   const controller = new SideConversationController(manager);
@@ -164,7 +180,10 @@ test("side overlay presents the answer and Esc dismisses without stopping the ag
     getRecord: () => record,
     steer: () => true,
     resume: async () => record,
-    abort: () => { abortCalls++; return true; },
+    abort: () => {
+      abortCalls++;
+      return true;
+    },
   } as unknown as AgentManager;
   const harness = overlayHarness(record);
   const controller = new SideConversationController(manager);

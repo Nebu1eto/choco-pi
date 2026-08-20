@@ -26,221 +26,206 @@ const DEFAULT_FORMATTER_CONCURRENCY = 1;
 // --- Types ---
 
 export interface FormatOptions {
-	/** Skip auto-format even if enabled (manual mode) */
-	skip?: boolean;
-	/** Specific formatters to use (overrides detection) */
-	formatters?: string[];
+  /** Skip auto-format even if enabled (manual mode) */
+  skip?: boolean;
+  /** Specific formatters to use (overrides detection) */
+  formatters?: string[];
 }
 
 export interface FormatSummary {
-	filePath: string;
-	formatters: Array<{
-		name: string;
-		success: boolean;
-		changed: boolean;
-		error?: string;
-	}>;
-	anyChanged: boolean;
-	allSucceeded: boolean;
+  filePath: string;
+  formatters: Array<{
+    name: string;
+    success: boolean;
+    changed: boolean;
+    error?: string;
+  }>;
+  anyChanged: boolean;
+  allSucceeded: boolean;
 }
 
 // --- Format Service ---
 
 export class FormatService {
-	private fileTime: FileTime;
-	private enabled: boolean;
+  private fileTime: FileTime;
+  private enabled: boolean;
 
-	constructor(sessionID: string, enabled: boolean = true) {
-		this.fileTime = new FileTime(sessionID);
-		this.enabled = enabled;
-	}
+  constructor(sessionID: string, enabled: boolean = true) {
+    this.fileTime = new FileTime(sessionID);
+    this.enabled = enabled;
+  }
 
-	/**
-	 * Format a file with the single selected formatter for that file.
-	 */
-	async formatFile(
-		filePath: string,
-		options: FormatOptions = {},
-	): Promise<FormatSummary> {
-		const absolutePath = path.resolve(filePath);
-		const cwd = path.dirname(absolutePath);
+  /**
+   * Format a file with the single selected formatter for that file.
+   */
+  async formatFile(filePath: string, options: FormatOptions = {}): Promise<FormatSummary> {
+    const absolutePath = path.resolve(filePath);
+    const cwd = path.dirname(absolutePath);
 
-		// Skip if disabled
-		if (options.skip || !this.enabled) {
-			return {
-				filePath: absolutePath,
-				formatters: [],
-				anyChanged: false,
-				allSucceeded: true,
-			};
-		}
+    // Skip if disabled
+    if (options.skip || !this.enabled) {
+      return {
+        filePath: absolutePath,
+        formatters: [],
+        anyChanged: false,
+        allSucceeded: true,
+      };
+    }
 
-		// Check if file was modified externally (safety check)
-		if (this.fileTime.hasChanged(absolutePath)) {
-			logExtension({
-				subsystem: "format",
-				level: "warn",
-				message: `File ${absolutePath} modified externally, skipping format`,
-				metadata: { filePath: absolutePath },
-			});
-			return {
-				filePath: absolutePath,
-				formatters: [],
-				anyChanged: false,
-				allSucceeded: false,
-			};
-		}
+    // Check if file was modified externally (safety check)
+    if (this.fileTime.hasChanged(absolutePath)) {
+      logExtension({
+        subsystem: "format",
+        level: "warn",
+        message: `File ${absolutePath} modified externally, skipping format`,
+        metadata: { filePath: absolutePath },
+      });
+      return {
+        filePath: absolutePath,
+        formatters: [],
+        anyChanged: false,
+        allSucceeded: false,
+      };
+    }
 
-		// Get formatters for this file
-		const formatters = options.formatters
-			? await this.getFormattersByName(options.formatters)
-			: await (await loadFormatters()).getFormattersForFile(absolutePath, cwd);
+    // Get formatters for this file
+    const formatters = options.formatters
+      ? await this.getFormattersByName(options.formatters)
+      : await (await loadFormatters()).getFormattersForFile(absolutePath, cwd);
 
-		if (formatters.length === 0) {
-			return {
-				filePath: absolutePath,
-				formatters: [],
-				anyChanged: false,
-				allSucceeded: true,
-			};
-		}
+    if (formatters.length === 0) {
+      return {
+        filePath: absolutePath,
+        formatters: [],
+        anyChanged: false,
+        allSucceeded: true,
+      };
+    }
 
-		// Run formatters with limited concurrency
-		const results = await this.runFormattersWithConcurrency(
-			absolutePath,
-			formatters,
-		);
+    // Run formatters with limited concurrency
+    const results = await this.runFormattersWithConcurrency(absolutePath, formatters);
 
-		// Record new file state after formatting
-		this.fileTime.read(absolutePath);
+    // Record new file state after formatting
+    this.fileTime.read(absolutePath);
 
-		for (const [index, result] of results.entries()) {
-			recordFormatter(
-				absolutePath,
-				formatters[index]?.name ?? "unknown",
-				result.changed,
-				result.success,
-			);
-		}
+    for (const [index, result] of results.entries()) {
+      recordFormatter(
+        absolutePath,
+        formatters[index]?.name ?? "unknown",
+        result.changed,
+        result.success,
+      );
+    }
 
-		// Build summary
-		const anyChanged = results.some((r) => r.changed);
-		const allSucceeded = results.every((r) => r.success);
+    // Build summary
+    const anyChanged = results.some((r) => r.changed);
+    const allSucceeded = results.every((r) => r.success);
 
-		return {
-			filePath: absolutePath,
-			formatters: results.map((r, i) => ({
-				name: formatters[i].name,
-				success: r.success,
-				changed: r.changed,
-				error: r.error,
-			})),
-			anyChanged,
-			allSucceeded,
-		};
-	}
+    return {
+      filePath: absolutePath,
+      formatters: results.map((r, i) => ({
+        name: formatters[i].name,
+        success: r.success,
+        changed: r.changed,
+        error: r.error,
+      })),
+      anyChanged,
+      allSucceeded,
+    };
+  }
 
-	/**
-	 * Run the selected formatter with timeout protection.
-	 */
-	private async runFormattersWithConcurrency(
-		filePath: string,
-		formatters: FormatterInfo[],
-		_concurrency = DEFAULT_FORMATTER_CONCURRENCY,
-	): Promise<FormatterResult[]> {
-		const results: FormatterResult[] = [];
+  /**
+   * Run the selected formatter with timeout protection.
+   */
+  private async runFormattersWithConcurrency(
+    filePath: string,
+    formatters: FormatterInfo[],
+    _concurrency = DEFAULT_FORMATTER_CONCURRENCY,
+  ): Promise<FormatterResult[]> {
+    const results: FormatterResult[] = [];
 
-		for (const formatter of formatters) {
-			// #1097: keep the timer handle so it can be cleared once the race
-			// settles. An uncleared, REF'D 30s setTimeout that outlives a fast
-			// `formatFile` win would keep a one-shot `pi --print` process alive for
-			// up to 30s after completion (same uncleared-race-timeout class as the
-			// LSP client-wait leak fixed in clients/lsp/index.ts).
-			let formatTimer: ReturnType<typeof setTimeout> | undefined;
-			try {
-				const timeoutMs = 30000;
-				const timeoutPromise = new Promise<FormatterResult>((_, reject) => {
-					formatTimer = setTimeout(
-						() =>
-							reject(
-								new Error(
-									`Formatter ${formatter.name} timed out after ${timeoutMs}ms`,
-								),
-							),
-						timeoutMs,
-					);
-				});
+    for (const formatter of formatters) {
+      // #1097: keep the timer handle so it can be cleared once the race
+      // settles. An uncleared, REF'D 30s setTimeout that outlives a fast
+      // `formatFile` win would keep a one-shot `pi --print` process alive for
+      // up to 30s after completion (same uncleared-race-timeout class as the
+      // LSP client-wait leak fixed in clients/lsp/index.ts).
+      let formatTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timeoutMs = 30000;
+        const timeoutPromise = new Promise<FormatterResult>((_, reject) => {
+          formatTimer = setTimeout(
+            () => reject(new Error(`Formatter ${formatter.name} timed out after ${timeoutMs}ms`)),
+            timeoutMs,
+          );
+        });
 
-				const result = await Promise.race([
-					loadFormatters().then(({ formatFile }) => formatFile(filePath, formatter)),
-					timeoutPromise,
-				]);
-				results.push(result);
-			} catch (error) {
-				results.push({
-					success: false,
-					changed: false,
-					error: error instanceof Error ? error.message : String(error),
-				});
-			} finally {
-				if (formatTimer) clearTimeout(formatTimer);
-			}
-		}
+        const result = await Promise.race([
+          loadFormatters().then(({ formatFile }) => formatFile(filePath, formatter)),
+          timeoutPromise,
+        ]);
+        results.push(result);
+      } catch (error) {
+        results.push({
+          success: false,
+          changed: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        if (formatTimer) clearTimeout(formatTimer);
+      }
+    }
 
-		return results;
-	}
+    return results;
+  }
 
-	/**
-	 * Get formatters by name (for explicit formatter selection)
-	 */
-	private async getFormattersByName(names: string[]): Promise<FormatterInfo[]> {
-		const { listAllFormatters, ...formatters } = await loadFormatters();
-		const allNames = listAllFormatters();
+  /**
+   * Get formatters by name (for explicit formatter selection)
+   */
+  private async getFormattersByName(names: string[]): Promise<FormatterInfo[]> {
+    const { listAllFormatters, ...formatters } = await loadFormatters();
+    const allNames = listAllFormatters();
 
-		return names
-			.filter((name) => allNames.includes(name))
-			.map((name) => {
-				// Convert hyphenated name to camelCase then append Formatter
-				// e.g. "php-cs-fixer" → "phpCsFixerFormatter", "clang-format" → "clangFormatFormatter"
-				const camel = name.replace(/-([a-z])/g, (_, c: string) =>
-					c.toUpperCase(),
-				);
-				const key = `${camel}Formatter` as keyof typeof formatters;
-				return formatters[key] as FormatterInfo;
-			})
-			.filter(Boolean);
-	}
+    return names
+      .filter((name) => allNames.includes(name))
+      .map((name) => {
+        // Convert hyphenated name to camelCase then append Formatter
+        // e.g. "php-cs-fixer" → "phpCsFixerFormatter", "clang-format" → "clangFormatFormatter"
+        const camel = name.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+        const key = `${camel}Formatter` as keyof typeof formatters;
+        return formatters[key] as FormatterInfo;
+      })
+      .filter(Boolean);
+  }
 
-	/**
-	 * Assert file hasn't changed before editing
-	 * Throws FileTimeError if file modified externally
-	 */
-	assertUnchanged(filePath: string): void {
-		this.fileTime.assert(filePath);
-	}
+  /**
+   * Assert file hasn't changed before editing
+   * Throws FileTimeError if file modified externally
+   */
+  assertUnchanged(filePath: string): void {
+    this.fileTime.assert(filePath);
+  }
 
-	/**
-	 * Check if file has changed externally
-	 */
-	hasChanged(filePath: string): boolean {
-		return this.fileTime.hasChanged(filePath);
-	}
+  /**
+   * Check if file has changed externally
+   */
+  hasChanged(filePath: string): boolean {
+    return this.fileTime.hasChanged(filePath);
+  }
 
-	/**
-	 * Record file read (after agent reads file)
-	 */
-	recordRead(filePath: string): void {
-		this.fileTime.read(filePath);
-	}
+  /**
+   * Record file read (after agent reads file)
+   */
+  recordRead(filePath: string): void {
+    this.fileTime.read(filePath);
+  }
 
-	/**
-	 * Clear detection cache
-	 */
-	clearCache(): void {
-		void loadFormatters().then(({ clearFormatterRuntimeState }) =>
-			clearFormatterRuntimeState(),
-		);
-	}
+  /**
+   * Clear detection cache
+   */
+  clearCache(): void {
+    void loadFormatters().then(({ clearFormatterRuntimeState }) => clearFormatterRuntimeState());
+  }
 }
 
 // --- Singleton Instance ---
@@ -248,29 +233,23 @@ export class FormatService {
 let globalFormatService: FormatService | null = null;
 let currentSessionID: string | null = null;
 
-export function getFormatService(
-	sessionID?: string,
-	enabled: boolean = true,
-): FormatService {
-	// Create new instance if:
-	// 1. No service exists yet
-	// 2. Session ID changed (different session)
-	const shouldCreateNew =
-		!globalFormatService || (sessionID && sessionID !== currentSessionID);
+export function getFormatService(sessionID?: string, enabled: boolean = true): FormatService {
+  // Create new instance if:
+  // 1. No service exists yet
+  // 2. Session ID changed (different session)
+  const shouldCreateNew = !globalFormatService || (sessionID && sessionID !== currentSessionID);
 
-	if (shouldCreateNew) {
-		globalFormatService = new FormatService(sessionID ?? "default", enabled);
-		currentSessionID = sessionID ?? "default";
-	}
-	return globalFormatService!;
+  if (shouldCreateNew) {
+    globalFormatService = new FormatService(sessionID ?? "default", enabled);
+    currentSessionID = sessionID ?? "default";
+  }
+  return globalFormatService!;
 }
 
 export function resetFormatService(): void {
-	void loadFormatters().then(({ clearFormatterRuntimeState }) =>
-		clearFormatterRuntimeState(),
-	);
-	globalFormatService = null;
-	currentSessionID = null;
+  void loadFormatters().then(({ clearFormatterRuntimeState }) => clearFormatterRuntimeState());
+  globalFormatService = null;
+  currentSessionID = null;
 }
 
 /**
@@ -278,7 +257,7 @@ export function resetFormatService(): void {
  * Use this in tests to ensure complete isolation.
  */
 export function clearFormatServiceAndFileState(): void {
-	resetFormatService();
+  resetFormatService();
 }
 
 // Re-export for convenience

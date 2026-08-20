@@ -4,7 +4,9 @@ export const RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 
 const RESOURCE_URI_META_KEY = "ui/resourceUri";
 
-export function getToolUiResourceUri(tool: { _meta?: Record<string, unknown> | undefined }): string | undefined {
+export function getToolUiResourceUri(tool: {
+  _meta?: Record<string, unknown> | undefined;
+}): string | undefined {
   const meta = tool._meta;
   let resourceUri = getNestedResourceUri(meta);
   if (resourceUri === undefined) {

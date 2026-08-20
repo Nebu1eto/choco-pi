@@ -2,7 +2,7 @@ id: prefer-query-selector-js
 valid:
   - 'document.querySelector("#x")'
   - 'document.querySelectorAll(".y")'
-  - 'document.getElementById'
+  - "document.getElementById"
 invalid:
   - 'document.getElementById("x")'
   - 'document.getElementsByClassName("y")'

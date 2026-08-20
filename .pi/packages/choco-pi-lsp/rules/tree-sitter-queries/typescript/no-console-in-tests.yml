@@ -13,7 +13,7 @@ message: "console.{{METHOD}} in test block — use proper assertions or logging"
 description: |
   Console statements in tests are code smell. Tests should use assertions
   to verify behavior, not console output. Use proper test utilities instead.
-  
+
   ✅ FIX: Convert to assertions or remove.
 
 query: |
@@ -45,7 +45,7 @@ examples:
       console.log(result);  // ← Remove this!
       expect(result).toBe(true);
     });
-  
+
   good: |
     it('should work', () => {
       const result = doSomething();

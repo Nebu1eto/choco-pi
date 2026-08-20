@@ -59,7 +59,7 @@ import { EXCLUDED_DIRS, getExcludedDirGlobs } from "./file-utils.js";
 /** Directory-name entries only — drops glob entries (e.g. `*.dSYM`) that a
  * bare directory-name/regex exclude can't express. */
 function literalExcludedDirNames(): string[] {
-	return EXCLUDED_DIRS.filter((name) => !name.includes("*") && !name.includes("?"));
+  return EXCLUDED_DIRS.filter((name) => !name.includes("*") && !name.includes("?"));
 }
 
 /**
@@ -69,17 +69,17 @@ function literalExcludedDirNames(): string[] {
  * stay byte-for-byte in sync.
  */
 export function getScratchTreeGlobPatterns(): string[] {
-	return getExcludedDirGlobs();
+  return getExcludedDirGlobs();
 }
 
 function escapeRegExp(literal: string): string {
-	return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Bare directory names, for tools (opengrep/semgrep `--exclude`) that treat a
  * slash-free pattern as "this directory name, anywhere in the tree". */
 export function getScratchTreeDirNames(): string[] {
-	return literalExcludedDirNames();
+  return literalExcludedDirNames();
 }
 
 /**
@@ -87,7 +87,7 @@ export function getScratchTreeDirNames(): string[] {
  * vulture's `--exclude` — the format `dead-code-client.ts` needs.
  */
 export function getScratchTreeFnmatchPatterns(): string[] {
-	return literalExcludedDirNames().map((name) => `*/${name}/*`);
+  return literalExcludedDirNames().map((name) => `*/${name}/*`);
 }
 
 // --- Secrets-lane tier (#1562 review-round F1) ---
@@ -98,45 +98,45 @@ export function getScratchTreeFnmatchPatterns(): string[] {
 // the walker-parity-vs-secrets-lane distinction and the 9-path probe that
 // caught the original (too-broad) version of this fix.
 export const SECRETS_LANE_SCRATCH_DIR_NAMES: readonly string[] = [
-	// pi-ecosystem / coding-agent data + cache directories.
-	".pi",
-	".choco-pi-lsp",
-	".claude",
-	".codex",
-	".agents",
-	".worktrees",
-	".rescue",
-	".gstack",
-	".superpowers",
-	".guardrails",
-	".playwright-cli",
-	".playwright-mcp",
-	// git's own internal object storage — binary/compressed, not readable
-	// source; a byte-regex scan of it produces garbage, not real findings.
-	".git",
-	// Vendored/installed npm packages — third-party noise, not a first-party
-	// leak surface (unlike `vendor`/`third_party`, which are vendored SOURCE
-	// a project can carry an upstream leak in and stays in scope).
-	"node_modules",
-	// Generic build/package-manager CACHES — regenerated from source on every
-	// build/install, never a place a human commits a credential on purpose.
-	// Deliberately excludes build OUTPUT (`dist`/`build`/`out`/`target`/
-	// `coverage`) — a bundler/compiler CAN bake a real secret into output.
-	".turbo",
-	".cache",
-	".parcel-cache",
-	".svelte-kit",
-	".nuxt",
-	".yarn",
-	".pnpm-store",
-	".gradle",
-	".next",
-	".ruff_cache",
-	".tox",
-	".pytest_cache",
-	"venv",
-	".venv",
-	"__pycache__",
+  // pi-ecosystem / coding-agent data + cache directories.
+  ".pi",
+  ".choco-pi-lsp",
+  ".claude",
+  ".codex",
+  ".agents",
+  ".worktrees",
+  ".rescue",
+  ".gstack",
+  ".superpowers",
+  ".guardrails",
+  ".playwright-cli",
+  ".playwright-mcp",
+  // git's own internal object storage — binary/compressed, not readable
+  // source; a byte-regex scan of it produces garbage, not real findings.
+  ".git",
+  // Vendored/installed npm packages — third-party noise, not a first-party
+  // leak surface (unlike `vendor`/`third_party`, which are vendored SOURCE
+  // a project can carry an upstream leak in and stays in scope).
+  "node_modules",
+  // Generic build/package-manager CACHES — regenerated from source on every
+  // build/install, never a place a human commits a credential on purpose.
+  // Deliberately excludes build OUTPUT (`dist`/`build`/`out`/`target`/
+  // `coverage`) — a bundler/compiler CAN bake a real secret into output.
+  ".turbo",
+  ".cache",
+  ".parcel-cache",
+  ".svelte-kit",
+  ".nuxt",
+  ".yarn",
+  ".pnpm-store",
+  ".gradle",
+  ".next",
+  ".ruff_cache",
+  ".tox",
+  ".pytest_cache",
+  "venv",
+  ".venv",
+  "__pycache__",
 ];
 
 /**
@@ -150,10 +150,10 @@ export const SECRETS_LANE_SCRATCH_DIR_NAMES: readonly string[] = [
  * accepted in the anchor and in the "rest of path" tail.
  */
 export function getSecretsLaneAllowlistPaths(): string[] {
-	return SECRETS_LANE_SCRATCH_DIR_NAMES.map((name) => {
-		const escaped = escapeRegExp(name);
-		return `(?:^|[/\\\\])${escaped}(?:[/\\\\].*)?$`;
-	});
+  return SECRETS_LANE_SCRATCH_DIR_NAMES.map((name) => {
+    const escaped = escapeRegExp(name);
+    return `(?:^|[/\\\\])${escaped}(?:[/\\\\].*)?$`;
+  });
 }
 
 /**
@@ -164,9 +164,7 @@ export function getSecretsLaneAllowlistPaths(): string[] {
  * the config we hand it.
  */
 export function isUnderSecretsLaneScratchTree(relPath: string): boolean {
-	const names = new Set(
-		SECRETS_LANE_SCRATCH_DIR_NAMES.map((n) => n.toLowerCase()),
-	);
-	const segments = relPath.split(/[/\\]/).filter(Boolean);
-	return segments.some((segment) => names.has(segment.toLowerCase()));
+  const names = new Set(SECRETS_LANE_SCRATCH_DIR_NAMES.map((n) => n.toLowerCase()));
+  const segments = relPath.split(/[/\\]/).filter(Boolean);
+  return segments.some((segment) => names.has(segment.toLowerCase()));
 }

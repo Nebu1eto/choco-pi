@@ -44,9 +44,9 @@
  */
 
 import {
-	type InstanceEntry,
-	isInstanceRegistryEnabled,
-	readInstanceRegistry,
+  type InstanceEntry,
+  isInstanceRegistryEnabled,
+  readInstanceRegistry,
 } from "./instance-registry.js";
 import { realIsPidAlive, STALE_HEARTBEAT_MS } from "./instance-reaper.js";
 import { logLatency } from "./latency-logger.js";
@@ -58,7 +58,7 @@ export const DEFAULT_LSP_BUDGET_IDLE_TIMEOUT_MS = 60_000;
 /** `CHOCO_PI_LSP_CROSS_PROCESS_BUDGET=0` disables the budget check entirely —
  *  lazy env read (house style), never memoized so tests can flip it mid-run. */
 export function isCrossProcessBudgetEnabled(): boolean {
-	return process.env.CHOCO_PI_LSP_CROSS_PROCESS_BUDGET !== "0";
+  return process.env.CHOCO_PI_LSP_CROSS_PROCESS_BUDGET !== "0";
 }
 
 /** `CHOCO_PI_LSP_LSP_BUDGET_CEILING` overrides {@link DEFAULT_LSP_BUDGET_CEILING}.
@@ -66,42 +66,40 @@ export function isCrossProcessBudgetEnabled(): boolean {
  *  clients/runtime-config.ts) — falls back to the default rather than
  *  silently producing a ceiling of 0 (which would degrade every session). */
 export function getLspBudgetCeiling(): number {
-	const raw = Number(process.env.CHOCO_PI_LSP_LSP_BUDGET_CEILING);
-	return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_LSP_BUDGET_CEILING;
+  const raw = Number(process.env.CHOCO_PI_LSP_LSP_BUDGET_CEILING);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_LSP_BUDGET_CEILING;
 }
 
 /** Optional aggregate host + LSP-child RSS ceiling. Undefined means disabled. */
 export function getLspBudgetRssCeilingBytes(): number | undefined {
-	const raw = Number(process.env.CHOCO_PI_LSP_LSP_BUDGET_RSS_MB);
-	return Number.isFinite(raw) && raw > 0 ? raw * 1024 * 1024 : undefined;
+  const raw = Number(process.env.CHOCO_PI_LSP_LSP_BUDGET_RSS_MB);
+  return Number.isFinite(raw) && raw > 0 ? raw * 1024 * 1024 : undefined;
 }
 
 export function getLspBudgetIdleTimeoutMs(): number {
-	const raw = Number(process.env.CHOCO_PI_LSP_LSP_BUDGET_IDLE_TIMEOUT_MS);
-	return Number.isFinite(raw) && raw > 0
-		? raw
-		: DEFAULT_LSP_BUDGET_IDLE_TIMEOUT_MS;
+  const raw = Number(process.env.CHOCO_PI_LSP_LSP_BUDGET_IDLE_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_LSP_BUDGET_IDLE_TIMEOUT_MS;
 }
 
 export interface LspBudgetDecision {
-	/** Sum of `lspChildren.length` across every registry entry whose owning
-	 *  pid is currently alive. Entries whose parent pid is dead are excluded —
-	 *  their children are the orphan reaper's job (clients/instance-reaper.ts),
-	 *  not counted as "live" load here. */
-	totalLiveLspServers: number;
-	ceiling: number;
-	totalRssBytes?: number;
-	rssCeilingBytes?: number;
-	rssPressure: boolean;
-	overBudget: boolean;
-	/** The one degrade mechanism this prototype implements: skip auxiliary
-	 *  LSP servers for the current session. Equal to `overBudget` today —
-	 *  broken out as its own field so a future slice can add a second,
-	 *  independently-triggered mechanism (e.g. shorter idle-reaper timeout)
-	 *  without every caller needing to re-derive it from `overBudget`. */
-	degradeAuxiliary: boolean;
-	shortenIdleTimeout: boolean;
-	preferPullOnly: boolean;
+  /** Sum of `lspChildren.length` across every registry entry whose owning
+   *  pid is currently alive. Entries whose parent pid is dead are excluded —
+   *  their children are the orphan reaper's job (clients/instance-reaper.ts),
+   *  not counted as "live" load here. */
+  totalLiveLspServers: number;
+  ceiling: number;
+  totalRssBytes?: number;
+  rssCeilingBytes?: number;
+  rssPressure: boolean;
+  overBudget: boolean;
+  /** The one degrade mechanism this prototype implements: skip auxiliary
+   *  LSP servers for the current session. Equal to `overBudget` today —
+   *  broken out as its own field so a future slice can add a second,
+   *  independently-triggered mechanism (e.g. shorter idle-reaper timeout)
+   *  without every caller needing to re-derive it from `overBudget`. */
+  degradeAuxiliary: boolean;
+  shortenIdleTimeout: boolean;
+  preferPullOnly: boolean;
 }
 
 /**
@@ -117,57 +115,54 @@ export interface LspBudgetDecision {
  * hasn't been pruned from this snapshot yet).
  */
 export function decideLspBudget(
-	registry: readonly InstanceEntry[],
-	isPidAlive: (pid: number) => boolean,
-	ceiling: number,
-	rssCeilingBytes?: number,
-	now = Date.now(),
+  registry: readonly InstanceEntry[],
+  isPidAlive: (pid: number) => boolean,
+  ceiling: number,
+  rssCeilingBytes?: number,
+  now = Date.now(),
 ): LspBudgetDecision {
-	const liveInstances = registry.filter((instance) => isPidAlive(instance.pid));
-	const totalLiveLspServers = liveInstances.reduce(
-		(sum, instance) => sum + instance.lspChildren.length,
-		0,
-	);
-	const hasCompleteFreshSamples =
-		rssCeilingBytes !== undefined &&
-		liveInstances.length > 0 &&
-		liveInstances.every((instance) => {
-			const heartbeatMs = Date.parse(instance.heartbeatAt);
-			return (
-				Number.isFinite(heartbeatMs) &&
-				now - heartbeatMs <= STALE_HEARTBEAT_MS &&
-				Number.isFinite(instance.rssBytes) &&
-				instance.lspChildren.every((child) => Number.isFinite(child.rssBytes))
-			);
-		});
-	const totalRssBytes = hasCompleteFreshSamples
-		? liveInstances.reduce(
-				(sum, instance) =>
-					sum +
-					instance.rssBytes +
-					instance.lspChildren.reduce(
-						(childSum, child) => childSum + (child.rssBytes ?? 0),
-						0,
-					),
-				0,
-			)
-		: undefined;
-	const rssPressure =
-		totalRssBytes !== undefined &&
-		rssCeilingBytes !== undefined &&
-		totalRssBytes >= rssCeilingBytes;
-	const overBudget = totalLiveLspServers >= ceiling || rssPressure;
-	return {
-		totalLiveLspServers,
-		ceiling,
-		totalRssBytes,
-		rssCeilingBytes,
-		rssPressure,
-		overBudget,
-		degradeAuxiliary: overBudget,
-		shortenIdleTimeout: overBudget,
-		preferPullOnly: overBudget,
-	};
+  const liveInstances = registry.filter((instance) => isPidAlive(instance.pid));
+  const totalLiveLspServers = liveInstances.reduce(
+    (sum, instance) => sum + instance.lspChildren.length,
+    0,
+  );
+  const hasCompleteFreshSamples =
+    rssCeilingBytes !== undefined &&
+    liveInstances.length > 0 &&
+    liveInstances.every((instance) => {
+      const heartbeatMs = Date.parse(instance.heartbeatAt);
+      return (
+        Number.isFinite(heartbeatMs) &&
+        now - heartbeatMs <= STALE_HEARTBEAT_MS &&
+        Number.isFinite(instance.rssBytes) &&
+        instance.lspChildren.every((child) => Number.isFinite(child.rssBytes))
+      );
+    });
+  const totalRssBytes = hasCompleteFreshSamples
+    ? liveInstances.reduce(
+        (sum, instance) =>
+          sum +
+          instance.rssBytes +
+          instance.lspChildren.reduce((childSum, child) => childSum + (child.rssBytes ?? 0), 0),
+        0,
+      )
+    : undefined;
+  const rssPressure =
+    totalRssBytes !== undefined &&
+    rssCeilingBytes !== undefined &&
+    totalRssBytes >= rssCeilingBytes;
+  const overBudget = totalLiveLspServers >= ceiling || rssPressure;
+  return {
+    totalLiveLspServers,
+    ceiling,
+    totalRssBytes,
+    rssCeilingBytes,
+    rssPressure,
+    overBudget,
+    degradeAuxiliary: overBudget,
+    shortenIdleTimeout: overBudget,
+    preferPullOnly: overBudget,
+  };
 }
 
 // --- Module-scope decision cache, read by clients/dispatch/auxiliary-lsp.ts ---
@@ -186,20 +181,20 @@ let cachedDecision: LspBudgetDecision | undefined;
  *  `clients/dispatch/auxiliary-lsp.ts#enabledAuxiliaryLspServerIds`. Never
  *  throws; absent-decision (not yet checked, or disabled) reads as `false`. */
 export function shouldDegradeAuxiliaryLsp(): boolean {
-	return cachedDecision?.degradeAuxiliary ?? false;
+  return cachedDecision?.degradeAuxiliary ?? false;
 }
 
 export function shouldShortenLspIdleTimeout(): boolean {
-	return cachedDecision?.shortenIdleTimeout ?? false;
+  return cachedDecision?.shortenIdleTimeout ?? false;
 }
 
 export function shouldPreferPullOnlyDiagnostics(): boolean {
-	return cachedDecision?.preferPullOnly ?? false;
+  return cachedDecision?.preferPullOnly ?? false;
 }
 
 /** Test-only: reset the module-scope cache between tests. */
 export function _resetLspBudgetDecisionForTests(): void {
-	cachedDecision = undefined;
+  cachedDecision = undefined;
 }
 
 /**
@@ -212,41 +207,41 @@ export function _resetLspBudgetDecisionForTests(): void {
  *
  */
 export async function checkCrossProcessLspBudget(
-	testOverrides: {
-		registry?: readonly InstanceEntry[];
-		isPidAlive?: (pid: number) => boolean;
-	} = {},
+  testOverrides: {
+    registry?: readonly InstanceEntry[];
+    isPidAlive?: (pid: number) => boolean;
+  } = {},
 ): Promise<void> {
-	if (!isCrossProcessBudgetEnabled() || !isInstanceRegistryEnabled()) return;
-	try {
-		const registry = testOverrides.registry ?? (await readInstanceRegistry());
-		if (registry.length === 0) return; // nothing to be over budget against
-		const ceiling = getLspBudgetCeiling();
-		const decision = decideLspBudget(
-			registry,
-			testOverrides.isPidAlive ?? realIsPidAlive,
-			ceiling,
-			getLspBudgetRssCeilingBytes(),
-		);
-		cachedDecision = decision;
-		if (decision.overBudget) {
-			logLatency({
-				type: "phase",
-				phase: "cross_process_lsp_budget_degraded",
-				filePath: "",
-				durationMs: 0,
-				metadata: {
-					totalLiveLspServers: decision.totalLiveLspServers,
-					ceiling: decision.ceiling,
-					totalRssBytes: decision.totalRssBytes,
-					rssCeilingBytes: decision.rssCeilingBytes,
-					rssPressure: decision.rssPressure,
-					instanceCount: registry.length,
-				},
-			});
-		}
-	} catch {
-		// Best-effort observability-driven check — never throw out of
-		// session_start over this.
-	}
+  if (!isCrossProcessBudgetEnabled() || !isInstanceRegistryEnabled()) return;
+  try {
+    const registry = testOverrides.registry ?? (await readInstanceRegistry());
+    if (registry.length === 0) return; // nothing to be over budget against
+    const ceiling = getLspBudgetCeiling();
+    const decision = decideLspBudget(
+      registry,
+      testOverrides.isPidAlive ?? realIsPidAlive,
+      ceiling,
+      getLspBudgetRssCeilingBytes(),
+    );
+    cachedDecision = decision;
+    if (decision.overBudget) {
+      logLatency({
+        type: "phase",
+        phase: "cross_process_lsp_budget_degraded",
+        filePath: "",
+        durationMs: 0,
+        metadata: {
+          totalLiveLspServers: decision.totalLiveLspServers,
+          ceiling: decision.ceiling,
+          totalRssBytes: decision.totalRssBytes,
+          rssCeilingBytes: decision.rssCeilingBytes,
+          rssPressure: decision.rssPressure,
+          instanceCount: registry.length,
+        },
+      });
+    }
+  } catch {
+    // Best-effort observability-driven check — never throw out of
+    // session_start over this.
+  }
 }

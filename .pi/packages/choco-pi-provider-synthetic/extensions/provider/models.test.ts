@@ -22,9 +22,7 @@ async function fetchApiModels(): Promise<SyntheticApiModel[]> {
   });
 
   if (!response.ok) {
-    throw new Error(
-      `API request failed: ${response.status} ${response.statusText}`,
-    );
+    throw new Error(`API request failed: ${response.status} ${response.statusText}`);
   }
 
   const data: { data?: SyntheticApiModel[] } = await response.json();
@@ -111,8 +109,7 @@ function compareModels(
     }
 
     if (apiModel.supported_features !== undefined) {
-      const apiSupportsReasoning =
-        apiModel.supported_features.includes("reasoning");
+      const apiSupportsReasoning = apiModel.supported_features.includes("reasoning");
       if (apiSupportsReasoning !== hardcoded.reasoning) {
         discrepancies.push({
           model: hardcoded.id,
@@ -274,21 +271,13 @@ describe("Synthetic models", () => {
 
     const models = buildSyntheticProviderModelsFromApi(apiModels);
     expect(models[0]?.thinkingLevelMap).toEqual(
-      SYNTHETIC_MODELS.find((m) => m.id === "hf:moonshotai/Kimi-K3")
-        ?.thinkingLevelMap,
+      SYNTHETIC_MODELS.find((m) => m.id === "hf:moonshotai/Kimi-K3")?.thinkingLevelMap,
     );
   });
 
   it("static catalog thinkingLevelMaps match the API's declared efforts", async () => {
     const apiModels = await fetchApiModels();
-    const levelKeys = [
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-    ] as const;
+    const levelKeys = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
     for (const apiModel of apiModels) {
       const hardcoded = SYNTHETIC_MODELS.find((m) => m.id === apiModel.id);
       if (!hardcoded?.reasoning || !apiModel.reasoning_parameters) continue;

@@ -28,10 +28,14 @@ const agents = new Map<string, AgentConfig>();
 let disableDefaults = false;
 
 /** Check whether default agents are disabled. */
-export function isDefaultsDisabled(): boolean { return disableDefaults; }
+export function isDefaultsDisabled(): boolean {
+  return disableDefaults;
+}
 
 /** Set whether default agents are disabled. */
-export function setDefaultsDisabled(b: boolean): void { disableDefaults = b; }
+export function setDefaultsDisabled(b: boolean): void {
+  disableDefaults = b;
+}
 
 /** `fallbackSubagent` value that disables the fallback entirely (strict dispatch). */
 export const NO_FALLBACK = "none";
@@ -48,10 +52,14 @@ export const NO_FALLBACK = "none";
 let fallbackSubagent: string | undefined;
 
 /** Get the configured fallback agent type. undefined = general-purpose. */
-export function getFallbackSubagent(): string | undefined { return fallbackSubagent; }
+export function getFallbackSubagent(): string | undefined {
+  return fallbackSubagent;
+}
 
 /** Set the configured fallback agent type. undefined = general-purpose. */
-export function setFallbackSubagent(v: string | undefined): void { fallbackSubagent = v; }
+export function setFallbackSubagent(v: string | undefined): void {
+  fallbackSubagent = v;
+}
 
 /**
  * Build a registry map: DEFAULT_AGENTS first (unless disabled via settings),
@@ -96,12 +104,18 @@ function resolveKey(name: string): string | undefined {
 }
 
 /** Resolve a type name case-insensitively in a registry. Returns the canonical key or undefined. */
-export function resolveTypeIn(registry: Map<string, AgentConfig>, name: string): string | undefined {
+export function resolveTypeIn(
+  registry: Map<string, AgentConfig>,
+  name: string,
+): string | undefined {
   return resolveKeyIn(registry, name);
 }
 
 /** Get the agent config for a type (case-insensitive) from a registry. */
-export function getAgentConfigIn(registry: Map<string, AgentConfig>, name: string): AgentConfig | undefined {
+export function getAgentConfigIn(
+  registry: Map<string, AgentConfig>,
+  name: string,
+): AgentConfig | undefined {
   const key = resolveKeyIn(registry, name);
   return key ? registry.get(key) : undefined;
 }
@@ -127,10 +141,13 @@ export function getAvailableTypesIn(registry: Map<string, AgentConfig>): string[
  * directories), and picking whichever came first would silently dispatch a
  * different agent, model and tool policy than the caller meant.
  */
-function resolveUnambiguousKeyIn(registry: Map<string, AgentConfig>, name: string): string | undefined {
+function resolveUnambiguousKeyIn(
+  registry: Map<string, AgentConfig>,
+  name: string,
+): string | undefined {
   if (registry.has(name)) return name;
   const lower = name.toLowerCase();
-  const matches = [...registry.keys()].filter(key => key.toLowerCase() === lower);
+  const matches = [...registry.keys()].filter((key) => key.toLowerCase() === lower);
   return matches.length === 1 ? matches[0] : undefined;
 }
 
@@ -269,7 +286,7 @@ const MEMORY_TOOL_NAMES = ["read", "write", "edit"];
  * Get memory tool names (read/write/edit) not already in the provided set.
  */
 export function getMemoryToolNames(existingToolNames: Set<string>): string[] {
-  return MEMORY_TOOL_NAMES.filter(n => !existingToolNames.has(n));
+  return MEMORY_TOOL_NAMES.filter((n) => !existingToolNames.has(n));
 }
 
 /** Tool names needed for read-only memory access. */
@@ -279,7 +296,7 @@ const READONLY_MEMORY_TOOL_NAMES = ["read"];
  * Get read-only memory tool names not already in the provided set.
  */
 export function getReadOnlyMemoryToolNames(existingToolNames: Set<string>): string[] {
-  return READONLY_MEMORY_TOOL_NAMES.filter(n => !existingToolNames.has(n));
+  return READONLY_MEMORY_TOOL_NAMES.filter((n) => !existingToolNames.has(n));
 }
 
 /** Get built-in tool names for a type (case-insensitive). */
@@ -343,4 +360,3 @@ export function getConfig(type: string): {
     promptMode: "append",
   };
 }
-

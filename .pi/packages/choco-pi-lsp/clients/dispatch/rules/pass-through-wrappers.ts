@@ -9,7 +9,8 @@ const ALIAS_COMMENT_RE =
 
 function hasAliasCommentNear(line: number, comments: CommentSummary[]): boolean {
   return comments.some(
-    (comment) => comment.line >= line - 2 && comment.line <= line && ALIAS_COMMENT_RE.test(comment.text),
+    (comment) =>
+      comment.line >= line - 2 && comment.line <= line && ALIAS_COMMENT_RE.test(comment.text),
   );
 }
 
@@ -20,10 +21,7 @@ export const passThroughWrappersRule: FactRule = {
     return /\.tsx?$/.test(ctx.filePath) && !isTestFile(ctx.filePath);
   },
   evaluate(ctx, store) {
-    const summaries = store.getFileFact<FunctionSummary[]>(
-      ctx.filePath,
-      "file.functionSummaries",
-    );
+    const summaries = store.getFileFact<FunctionSummary[]>(ctx.filePath, "file.functionSummaries");
     const comments = store.getFileFact<CommentSummary[]>(ctx.filePath, "file.comments");
     if (!summaries || !comments) return [];
 

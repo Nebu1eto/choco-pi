@@ -8,13 +8,13 @@ valid:
         pass
   - |
     assert x is None
-  - 'bool(value)'
+  - "bool(value)"
 invalid:
   - |
     if NotImplemented:
         do_thing()
-  - 'assert NotImplemented'
-  - 'bool(NotImplemented)'
+  - "assert NotImplemented"
+  - "bool(NotImplemented)"
   - |
     if not NotImplemented:
         pass

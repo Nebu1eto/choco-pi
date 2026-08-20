@@ -1,18 +1,12 @@
 import { stat } from "node:fs/promises";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-	demotePastEofDiagnostics,
-	type LineCountCache,
-} from "./diagnostic-line-freshness.js";
+import { demotePastEofDiagnostics, type LineCountCache } from "./diagnostic-line-freshness.js";
 import { visibleWidth } from "./deps/pi-tui.js";
 import { normalizeEphemeralMapKey, normalizeMapKey } from "./path-utils.js";
 import { fitLine } from "./tui-fit.js";
 import { WriteOrderingGuard } from "./write-ordering-guard.js";
-import {
-	collectForwardImportMtimes,
-	MTIME_DRIFT_TOLERANCE_MS,
-} from "./blocker-freshness.js";
+import { collectForwardImportMtimes, MTIME_DRIFT_TOLERANCE_MS } from "./blocker-freshness.js";
 import { PAST_EOF_STALE_MARKER } from "./diagnostic-line-freshness.js";
 import { STALE_LINE_MARKER } from "./stale-marker.js";
 
@@ -38,7 +32,7 @@ import { STALE_LINE_MARKER } from "./stale-marker.js";
  * on the record's `filePath` (see `toDisplayPath`) for rendering/summaries.
  */
 function fileMapKey(filePath: string): string {
-	return normalizeEphemeralMapKey(filePath);
+  return normalizeEphemeralMapKey(filePath);
 }
 
 // The record keeps a real, human-readable display path in `FileRecord.filePath`
@@ -53,51 +47,51 @@ function fileMapKey(filePath: string): string {
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface WidgetDiagnostic {
-	severity: string;
-	semantic?: string;
-	message: string;
-	line?: number;
-	col?: number;
-	rule?: string;
-	tool?: string;
-	uri?: string;
-	/** Set when a `flagged` disposition (#690) is found for this diagnostic at
-	 * merge time — only populated where file content was already available
-	 * (mode=full's suppression pass), never computed for mode=all/delta to
-	 * keep those cache-only and instant. */
-	flagged?: boolean;
-	/**
-	 * Wall-clock time this specific diagnostic was OBSERVED (#1186). Per-ENTRY,
-	 * not per-record: a merged record (see `reconcileCascadeNeighborLspErrors`)
-	 * can hold a freshly-observed preserved entry alongside an incoming entry
-	 * replayed from an aging passive snapshot, each with its OWN stamp. The
-	 * per-entry stale gate (`reconcileStaleWidgetFiles`) compares THIS stamp to
-	 * the file's current mtime, so it drops only the genuinely-stale entries
-	 * instead of the whole record. A missing stamp (a pre-#1186 persisted record)
-	 * inherits the record's `touchedAt` — a safe, over-conservative default.
-	 */
-	observedAt?: number;
-	/**
-	 * Set when a freshness gate demoted this diagnostic. Two gates write it:
-	 * #1641's past-EOF gate (the cited `line` exceeds the file's CURRENT
-	 * on-disk line count) and #1631's dependency-drift gate
-	 * (`reconcileStaleWidgetDependencyBlockers`: a forward import changed on
-	 * disk after this diagnostic was observed). Demoted entries stay in the
-	 * set — the underlying issue may still be real — but are excluded from
-	 * blocking/error/warning tallies (`isBlocking`, `countDiagnostics`) and
-	 * rendered with a stale marker in place of a trusted coordinate (#1419
-	 * demote-not-drop).
-	 *
-	 * The past-EOF gate RE-DERIVES this on every read (`applyPastEofGate`),
-	 * never a one-way latch: a transient shrink that later restores clears it
-	 * back to `false` once the line is back in bounds (#1641 review round F3
-	 * — derive, don't latch). The dependency-drift gate likewise re-derives
-	 * from current import mtimes each sweep.
-	 */
-	stale?: boolean;
-	/** Which freshness gate demoted this entry: "past-eof" (#1641) or
-	 * "dependency-drift" (#1631). Each gate heals only its own demotions. */
-	staleReason?: string;
+  severity: string;
+  semantic?: string;
+  message: string;
+  line?: number;
+  col?: number;
+  rule?: string;
+  tool?: string;
+  uri?: string;
+  /** Set when a `flagged` disposition (#690) is found for this diagnostic at
+   * merge time — only populated where file content was already available
+   * (mode=full's suppression pass), never computed for mode=all/delta to
+   * keep those cache-only and instant. */
+  flagged?: boolean;
+  /**
+   * Wall-clock time this specific diagnostic was OBSERVED (#1186). Per-ENTRY,
+   * not per-record: a merged record (see `reconcileCascadeNeighborLspErrors`)
+   * can hold a freshly-observed preserved entry alongside an incoming entry
+   * replayed from an aging passive snapshot, each with its OWN stamp. The
+   * per-entry stale gate (`reconcileStaleWidgetFiles`) compares THIS stamp to
+   * the file's current mtime, so it drops only the genuinely-stale entries
+   * instead of the whole record. A missing stamp (a pre-#1186 persisted record)
+   * inherits the record's `touchedAt` — a safe, over-conservative default.
+   */
+  observedAt?: number;
+  /**
+   * Set when a freshness gate demoted this diagnostic. Two gates write it:
+   * #1641's past-EOF gate (the cited `line` exceeds the file's CURRENT
+   * on-disk line count) and #1631's dependency-drift gate
+   * (`reconcileStaleWidgetDependencyBlockers`: a forward import changed on
+   * disk after this diagnostic was observed). Demoted entries stay in the
+   * set — the underlying issue may still be real — but are excluded from
+   * blocking/error/warning tallies (`isBlocking`, `countDiagnostics`) and
+   * rendered with a stale marker in place of a trusted coordinate (#1419
+   * demote-not-drop).
+   *
+   * The past-EOF gate RE-DERIVES this on every read (`applyPastEofGate`),
+   * never a one-way latch: a transient shrink that later restores clears it
+   * back to `false` once the line is back in bounds (#1641 review round F3
+   * — derive, don't latch). The dependency-drift gate likewise re-derives
+   * from current import mtimes each sweep.
+   */
+  stale?: boolean;
+  /** Which freshness gate demoted this entry: "past-eof" (#1641) or
+   * "dependency-drift" (#1631). Each gate heals only its own demotions. */
+  staleReason?: string;
 }
 
 /**
@@ -111,42 +105,42 @@ export interface WidgetDiagnostic {
  * from what the footer counts.
  */
 export function isBlocking(d: WidgetDiagnostic): boolean {
-	// #1631: a dependency-drift-demoted finding is no longer a hard stop. The gate
-	// sets `stale` rather than dropping the entry (#1419 demote-not-drop), so every
-	// tally and render that asks "is this blocking?" must answer no once demoted.
-	if (d.stale) return false;
-	if (d.semantic === "blocking") return true;
-	if (d.semantic == null && d.severity === "error") return true;
-	return false;
+  // #1631: a dependency-drift-demoted finding is no longer a hard stop. The gate
+  // sets `stale` rather than dropping the entry (#1419 demote-not-drop), so every
+  // tally and render that asks "is this blocking?" must answer no once demoted.
+  if (d.stale) return false;
+  if (d.semantic === "blocking") return true;
+  if (d.semantic == null && d.severity === "error") return true;
+  return false;
 }
 
 interface FileRecord {
-	filePath: string;
-	runners: Map<string, { status: string; count: number; durationMs?: number }>;
-	formatters: Map<string, { changed: boolean; success: boolean }>;
-	/** Capped to MAX_STORED_DIAGNOSTICS_PER_FILE — drives the TUI widget. */
-	diagnostics: WidgetDiagnostic[];
-	/**
-	 * Full, uncapped diagnostics for this file. The TUI never renders these
-	 * (it uses the capped `diagnostics` + its own row limits); they exist so
-	 * the diagnostics_report tool can expose the complete set to the agent without
-	 * inheriting the widget's display cap.
-	 */
-	allDiagnostics: WidgetDiagnostic[];
-	diagnosticCounts: {
-		blocking: number;
-		errors: number;
-		warnings: number;
-	};
-	hasFinalDiagnosticsSnapshot: boolean;
-	touchedAt: number;
+  filePath: string;
+  runners: Map<string, { status: string; count: number; durationMs?: number }>;
+  formatters: Map<string, { changed: boolean; success: boolean }>;
+  /** Capped to MAX_STORED_DIAGNOSTICS_PER_FILE — drives the TUI widget. */
+  diagnostics: WidgetDiagnostic[];
+  /**
+   * Full, uncapped diagnostics for this file. The TUI never renders these
+   * (it uses the capped `diagnostics` + its own row limits); they exist so
+   * the diagnostics_report tool can expose the complete set to the agent without
+   * inheriting the widget's display cap.
+   */
+  allDiagnostics: WidgetDiagnostic[];
+  diagnosticCounts: {
+    blocking: number;
+    errors: number;
+    warnings: number;
+  };
+  hasFinalDiagnosticsSnapshot: boolean;
+  touchedAt: number;
 }
 
 interface LspRecord {
-	serverId: string;
-	root: string;
-	status: "spawning" | "ready" | "failed";
-	durationMs?: number;
+  serverId: string;
+  root: string;
+  status: "spawning" | "ready" | "failed";
+  durationMs?: number;
 }
 
 // ── Module state ─────────────────────────────────────────────────────────────
@@ -184,42 +178,38 @@ const MAX_LSP_SERVER_RECORDS = 128;
 let nextInactivePruneSize = MAX_INACTIVE_FILE_RECORDS + 1;
 
 function pruneInactiveFileRecords(now = Date.now()): void {
-	if (files.size <= MAX_INACTIVE_FILE_RECORDS) return;
-	const victims = [...files.entries()]
-		.filter(
-			([, rec]) =>
-				now - rec.touchedAt > ACTIVE_FILE_IDLE_MS &&
-				!hasLiveDiagnostic(rec),
-		)
-		.sort(([, a], [, b]) => a.touchedAt - b.touchedAt);
-	for (const [key] of victims) {
-		if (files.size <= MAX_INACTIVE_FILE_RECORDS) break;
-		files.delete(key);
-	}
+  if (files.size <= MAX_INACTIVE_FILE_RECORDS) return;
+  const victims = [...files.entries()]
+    .filter(([, rec]) => now - rec.touchedAt > ACTIVE_FILE_IDLE_MS && !hasLiveDiagnostic(rec))
+    .sort(([, a], [, b]) => a.touchedAt - b.touchedAt);
+  for (const [key] of victims) {
+    if (files.size <= MAX_INACTIVE_FILE_RECORDS) break;
+    files.delete(key);
+  }
 }
 
 function maybePruneInactiveFileRecords(): void {
-	if (files.size < nextInactivePruneSize) return;
-	pruneInactiveFileRecords();
-	// A live-heavy map may remain above the soft bound. Do not rescan it for
-	// every subsequent file; the next lifecycle starts with a fresh state map.
-	nextInactivePruneSize = Number.POSITIVE_INFINITY;
+  if (files.size < nextInactivePruneSize) return;
+  pruneInactiveFileRecords();
+  // A live-heavy map may remain above the soft bound. Do not rescan it for
+  // every subsequent file; the next lifecycle starts with a fresh state map.
+  nextInactivePruneSize = Number.POSITIVE_INFINITY;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function setRenderCallback(fn: () => void): void {
-	requestRenderFn = fn;
+  requestRenderFn = fn;
 }
 
 export function clearWidgetState(): void {
-	files.clear();
-	lspServers.clear();
-	sessionLanguages = [];
-	requestRenderFn = null;
-	diagnosticsWriteGuard.clear();
-	runnerWriteGuard.clear();
-	nextInactivePruneSize = MAX_INACTIVE_FILE_RECORDS + 1;
+  files.clear();
+  lspServers.clear();
+  sessionLanguages = [];
+  requestRenderFn = null;
+  diagnosticsWriteGuard.clear();
+  runnerWriteGuard.clear();
+  nextInactivePruneSize = MAX_INACTIVE_FILE_RECORDS + 1;
 }
 
 // v1 → v2 (#1186): per-entry `WidgetDiagnostic.observedAt`. v2 is a SUPERSET of
@@ -241,20 +231,18 @@ export const WIDGET_STATE_VERSION = 3;
 
 /** Serializable snapshot of the per-file diagnostic state (#190). */
 export interface PersistedWidgetState {
-	version: number;
-	sessionLanguages: string[];
-	files: Array<{
-		filePath: string;
-		runners: Array<
-			[string, { status: string; count: number; durationMs?: number }]
-		>;
-		formatters: Array<[string, { changed: boolean; success: boolean }]>;
-		diagnostics: WidgetDiagnostic[];
-		allDiagnostics: WidgetDiagnostic[];
-		diagnosticCounts: { blocking: number; errors: number; warnings: number };
-		hasFinalDiagnosticsSnapshot: boolean;
-		touchedAt: number;
-	}>;
+  version: number;
+  sessionLanguages: string[];
+  files: Array<{
+    filePath: string;
+    runners: Array<[string, { status: string; count: number; durationMs?: number }]>;
+    formatters: Array<[string, { changed: boolean; success: boolean }]>;
+    diagnostics: WidgetDiagnostic[];
+    allDiagnostics: WidgetDiagnostic[];
+    diagnosticCounts: { blocking: number; errors: number; warnings: number };
+    hasFinalDiagnosticsSnapshot: boolean;
+    touchedAt: number;
+  }>;
 }
 
 /**
@@ -263,20 +251,20 @@ export interface PersistedWidgetState {
  * launch), so restoring their "ready" status would be misleading.
  */
 export function exportWidgetState(): PersistedWidgetState {
-	return {
-		version: WIDGET_STATE_VERSION,
-		sessionLanguages: [...sessionLanguages],
-		files: [...files.values()].map((rec) => ({
-			filePath: rec.filePath,
-			runners: [...rec.runners.entries()],
-			formatters: [...rec.formatters.entries()],
-			diagnostics: rec.diagnostics,
-			allDiagnostics: rec.allDiagnostics,
-			diagnosticCounts: rec.diagnosticCounts,
-			hasFinalDiagnosticsSnapshot: rec.hasFinalDiagnosticsSnapshot,
-			touchedAt: rec.touchedAt,
-		})),
-	};
+  return {
+    version: WIDGET_STATE_VERSION,
+    sessionLanguages: [...sessionLanguages],
+    files: [...files.values()].map((rec) => ({
+      filePath: rec.filePath,
+      runners: [...rec.runners.entries()],
+      formatters: [...rec.formatters.entries()],
+      diagnostics: rec.diagnostics,
+      allDiagnostics: rec.allDiagnostics,
+      diagnosticCounts: rec.diagnosticCounts,
+      hasFinalDiagnosticsSnapshot: rec.hasFinalDiagnosticsSnapshot,
+      touchedAt: rec.touchedAt,
+    })),
+  };
 }
 
 /**
@@ -296,100 +284,93 @@ export function exportWidgetState(): PersistedWidgetState {
  * (#1348 precedent — see `WIDGET_STATE_VERSION`'s doc comment).
  */
 function migrateEntryStamps(
-	entries: WidgetDiagnostic[] | undefined,
-	recordTouchedAt: number,
+  entries: WidgetDiagnostic[] | undefined,
+  recordTouchedAt: number,
 ): WidgetDiagnostic[] {
-	return (entries ?? []).map((d) => {
-		const { stale: _stale, ...rest } = d;
-		return rest.observedAt == null
-			? { ...rest, observedAt: recordTouchedAt }
-			: rest;
-	});
+  return (entries ?? []).map((d) => {
+    const { stale: _stale, ...rest } = d;
+    return rest.observedAt == null ? { ...rest, observedAt: recordTouchedAt } : rest;
+  });
 }
 
 export function importWidgetState(state: PersistedWidgetState | undefined): boolean {
-	// Accept any known-or-older version and migrate (#1186): reject a missing
-	// snapshot, a missing/non-numeric `version` (NaN/undefined/null — the
-	// pre-#1186 guard `version !== WIDGET_STATE_VERSION` rejected these, and
-	// loosening that would silently admit a malformed/foreign snapshot), or a
-	// FUTURE version this build can't understand. Rejecting a v1
-	// (pre-per-entry-stamp) file, by contrast, would silently drop all resume
-	// diagnostics — so v1..current are accepted and migrated.
-	if (
-		!state ||
-		typeof state.version !== "number" ||
-		state.version < 1 ||
-		state.version > WIDGET_STATE_VERSION
-	) {
-		return false;
-	}
-	files.clear();
-	// A resumed session's writeIndex counter starts fresh (#190 rehydration is
-	// process-bound like lspServers, see the export above) — any ordering
-	// tokens tracked before the restore no longer correspond to anything, so
-	// drop them rather than risk a legitimate post-resume write being read as
-	// "superseded" against a stale token.
-	diagnosticsWriteGuard.clear();
-	runnerWriteGuard.clear();
-	for (const f of state.files ?? []) {
-		// Fold persisted keys through the same normalizer as live writes (#1020),
-		// or a persisted forward-slash key stays split from a fresh backslash key
-		// across a resumed session — a primary repro condition. Keep a readable
-		// display path on the record.
-		// #1186 migration: a v1 record's entries have no per-entry `observedAt`.
-		// Inherit the record's `touchedAt` (a safe, over-conservative default —
-		// the whole record shared that one stamp before), so the per-entry stale
-		// gate has a concrete observation time and never treats `undefined` as
-		// epoch-0 (which would drop every migrated entry on the first sweep).
-		const recordTouchedAt = f.touchedAt ?? Date.now();
-		// #1631 review V1: `diagnosticCounts` is DERIVED from `allDiagnostics`
-		// everywhere else in this module (see the `countDiagnostics(rec.allDiagnostics)`
-		// call sites) — it must be recomputed here too, from the just-migrated
-		// (stale-stripped) entries, not restored verbatim from the snapshot. The
-		// persisted counts were computed while a finding was still demoted
-		// (`blocking: 0`); once F3 strips `stale` so `isBlocking` reports true
-		// again, a verbatim count would still say `blocking: 0` for a record
-		// whose entries ARE blocking — inverting the one-predicate invariant
-		// `isBlocking` exists to hold. Every consumer (`getFileDiagnosticSummaries`,
-		// the record-tier classifier, the footer) trusts `diagnosticCounts`, not a
-		// live re-scan of the entries, so a derived count out of sync with its own
-		// entries is silently wrong everywhere at once.
-		const migratedAllDiagnostics = migrateEntryStamps(
-			f.allDiagnostics,
-			recordTouchedAt,
-		);
-		files.set(fileMapKey(f.filePath), {
-			filePath: f.filePath,
-			runners: new Map(f.runners ?? []),
-			// Failure entries do NOT survive a session restore (#1348 review):
-			// a fmt-failed marker is live advice about THIS session's last
-			// attempt; rehydrating one from a snapshot shows a stale failure the
-			// current session never observed (and same-mtime fixes would never
-			// clear it). Successes rehydrate as before.
-			formatters: new Map(
-				(f.formatters ?? []).filter(([, outcome]) => outcome?.success !== false),
-			),
-			diagnostics: migrateEntryStamps(f.diagnostics, recordTouchedAt),
-			allDiagnostics: migratedAllDiagnostics,
-			diagnosticCounts: countDiagnostics(migratedAllDiagnostics),
-			hasFinalDiagnosticsSnapshot: f.hasFinalDiagnosticsSnapshot ?? false,
-			touchedAt: recordTouchedAt,
-		});
-	}
-	pruneInactiveFileRecords();
-	sessionLanguages = state.sessionLanguages ?? [];
-	requestRenderFn?.();
-	return true;
+  // Accept any known-or-older version and migrate (#1186): reject a missing
+  // snapshot, a missing/non-numeric `version` (NaN/undefined/null — the
+  // pre-#1186 guard `version !== WIDGET_STATE_VERSION` rejected these, and
+  // loosening that would silently admit a malformed/foreign snapshot), or a
+  // FUTURE version this build can't understand. Rejecting a v1
+  // (pre-per-entry-stamp) file, by contrast, would silently drop all resume
+  // diagnostics — so v1..current are accepted and migrated.
+  if (
+    !state ||
+    typeof state.version !== "number" ||
+    state.version < 1 ||
+    state.version > WIDGET_STATE_VERSION
+  ) {
+    return false;
+  }
+  files.clear();
+  // A resumed session's writeIndex counter starts fresh (#190 rehydration is
+  // process-bound like lspServers, see the export above) — any ordering
+  // tokens tracked before the restore no longer correspond to anything, so
+  // drop them rather than risk a legitimate post-resume write being read as
+  // "superseded" against a stale token.
+  diagnosticsWriteGuard.clear();
+  runnerWriteGuard.clear();
+  for (const f of state.files ?? []) {
+    // Fold persisted keys through the same normalizer as live writes (#1020),
+    // or a persisted forward-slash key stays split from a fresh backslash key
+    // across a resumed session — a primary repro condition. Keep a readable
+    // display path on the record.
+    // #1186 migration: a v1 record's entries have no per-entry `observedAt`.
+    // Inherit the record's `touchedAt` (a safe, over-conservative default —
+    // the whole record shared that one stamp before), so the per-entry stale
+    // gate has a concrete observation time and never treats `undefined` as
+    // epoch-0 (which would drop every migrated entry on the first sweep).
+    const recordTouchedAt = f.touchedAt ?? Date.now();
+    // #1631 review V1: `diagnosticCounts` is DERIVED from `allDiagnostics`
+    // everywhere else in this module (see the `countDiagnostics(rec.allDiagnostics)`
+    // call sites) — it must be recomputed here too, from the just-migrated
+    // (stale-stripped) entries, not restored verbatim from the snapshot. The
+    // persisted counts were computed while a finding was still demoted
+    // (`blocking: 0`); once F3 strips `stale` so `isBlocking` reports true
+    // again, a verbatim count would still say `blocking: 0` for a record
+    // whose entries ARE blocking — inverting the one-predicate invariant
+    // `isBlocking` exists to hold. Every consumer (`getFileDiagnosticSummaries`,
+    // the record-tier classifier, the footer) trusts `diagnosticCounts`, not a
+    // live re-scan of the entries, so a derived count out of sync with its own
+    // entries is silently wrong everywhere at once.
+    const migratedAllDiagnostics = migrateEntryStamps(f.allDiagnostics, recordTouchedAt);
+    files.set(fileMapKey(f.filePath), {
+      filePath: f.filePath,
+      runners: new Map(f.runners ?? []),
+      // Failure entries do NOT survive a session restore (#1348 review):
+      // a fmt-failed marker is live advice about THIS session's last
+      // attempt; rehydrating one from a snapshot shows a stale failure the
+      // current session never observed (and same-mtime fixes would never
+      // clear it). Successes rehydrate as before.
+      formatters: new Map((f.formatters ?? []).filter(([, outcome]) => outcome?.success !== false)),
+      diagnostics: migrateEntryStamps(f.diagnostics, recordTouchedAt),
+      allDiagnostics: migratedAllDiagnostics,
+      diagnosticCounts: countDiagnostics(migratedAllDiagnostics),
+      hasFinalDiagnosticsSnapshot: f.hasFinalDiagnosticsSnapshot ?? false,
+      touchedAt: recordTouchedAt,
+    });
+  }
+  pruneInactiveFileRecords();
+  sessionLanguages = state.sessionLanguages ?? [];
+  requestRenderFn?.();
+  return true;
 }
 
 export function setSessionLanguages(langs: string[]): void {
-	sessionLanguages = langs;
-	requestRender();
+  sessionLanguages = langs;
+  requestRender();
 }
 
 /** File-kinds detected in use this session (#170 staleness scope). */
 export function getSessionLanguages(): string[] {
-	return [...sessionLanguages];
+  return [...sessionLanguages];
 }
 
 /**
@@ -398,50 +379,50 @@ export function getSessionLanguages(): string[] {
  * `selectLspStatus`, which joins this against the alive set and session kinds.
  */
 export function getFailedLspServerIds(): string[] {
-	const ids: string[] = [];
-	const seen = new Set<string>();
-	for (const rec of lspServers.values()) {
-		if (rec.status !== "failed" || seen.has(rec.serverId)) continue;
-		seen.add(rec.serverId);
-		ids.push(rec.serverId);
-	}
-	return ids;
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const rec of lspServers.values()) {
+    if (rec.status !== "failed" || seen.has(rec.serverId)) continue;
+    seen.add(rec.serverId);
+    ids.push(rec.serverId);
+  }
+  return ids;
 }
 
 export function recordFormatter(
-	filePath: string,
-	formatter: string,
-	changed: boolean,
-	success: boolean,
+  filePath: string,
+  formatter: string,
+  changed: boolean,
+  success: boolean,
 ): void {
-	const rec = getOrCreate(filePath);
-	rec.formatters.set(formatter, { changed, success });
-	rec.touchedAt = Date.now();
-	files.set(fileMapKey(filePath), rec);
-	requestRender();
+  const rec = getOrCreate(filePath);
+  rec.formatters.set(formatter, { changed, success });
+  rec.touchedAt = Date.now();
+  files.set(fileMapKey(filePath), rec);
+  requestRender();
 }
 
 export function recordRunner(
-	filePath: string,
-	runnerId: string,
-	status: string,
-	diagnosticCount: number,
-	durationMs?: number,
-	writeIndex?: number,
+  filePath: string,
+  runnerId: string,
+  status: string,
+  diagnosticCount: number,
+  durationMs?: number,
+  writeIndex?: number,
 ): void {
-	const key = fileMapKey(filePath);
-	if (!runnerWriteGuard.shouldWrite(key, writeIndex)) return;
-	// Advance the final-diagnostics guard too. A runner completion is part of
-	// this pipeline's ordered write, even though its immediate effect is only to
-	// mark the record pending. This prevents an older final replacement from
-	// landing after a newer runner state (and vice versa).
-	diagnosticsWriteGuard.shouldWrite(key, writeIndex);
-	const rec = getOrCreate(filePath);
-	rec.runners.set(runnerId, { status, count: diagnosticCount, durationMs });
-	rec.hasFinalDiagnosticsSnapshot = false;
-	rec.touchedAt = Date.now();
-	files.set(fileMapKey(filePath), rec);
-	requestRender();
+  const key = fileMapKey(filePath);
+  if (!runnerWriteGuard.shouldWrite(key, writeIndex)) return;
+  // Advance the final-diagnostics guard too. A runner completion is part of
+  // this pipeline's ordered write, even though its immediate effect is only to
+  // mark the record pending. This prevents an older final replacement from
+  // landing after a newer runner state (and vice versa).
+  diagnosticsWriteGuard.shouldWrite(key, writeIndex);
+  const rec = getOrCreate(filePath);
+  rec.runners.set(runnerId, { status, count: diagnosticCount, durationMs });
+  rec.hasFinalDiagnosticsSnapshot = false;
+  rec.touchedAt = Date.now();
+  files.set(fileMapKey(filePath), rec);
+  requestRender();
 }
 
 /**
@@ -452,58 +433,58 @@ export function recordRunner(
  * whitespace runs to a single space before storing.
  */
 function toSingleLineMessage(message: string | undefined): string {
-	return (message ?? "").replace(/\s+/g, " ").trim();
+  return (message ?? "").replace(/\s+/g, " ").trim();
 }
 
 export function recordDiagnostics(
-	filePath: string,
-	diagnostics: Array<{
-		tool?: string;
-		rule?: string;
-		id?: string;
-		message?: string;
-		line?: number;
-		column?: number;
-		severity?: string;
-		semantic?: string;
-	}>,
-	writeIndex?: number,
-	// #1093: when the truth was OBSERVED, not when it's being written. Defaults
-	// to `Date.now()` for the per-edit/live path (observed now). A reconcile
-	// replaying a CACHED view (e.g. the workspace-diagnostics cache-hit branch in
-	// `tools/lsp-diagnostics.ts`) must pass the cache entry's own scan timestamp
-	// here — otherwise a repeat "fresh check" that merely re-serves a stale
-	// cached view keeps bumping `touchedAt` to now(), permanently disarming
-	// `reconcileStaleWidgetFiles`'s `mtimeMs > touchedAt` gate so a resolved
-	// finding renders forever (the #1092 touchedAt-re-arming defect).
-	observedAt?: number,
+  filePath: string,
+  diagnostics: Array<{
+    tool?: string;
+    rule?: string;
+    id?: string;
+    message?: string;
+    line?: number;
+    column?: number;
+    severity?: string;
+    semantic?: string;
+  }>,
+  writeIndex?: number,
+  // #1093: when the truth was OBSERVED, not when it's being written. Defaults
+  // to `Date.now()` for the per-edit/live path (observed now). A reconcile
+  // replaying a CACHED view (e.g. the workspace-diagnostics cache-hit branch in
+  // `tools/lsp-diagnostics.ts`) must pass the cache entry's own scan timestamp
+  // here — otherwise a repeat "fresh check" that merely re-serves a stale
+  // cached view keeps bumping `touchedAt` to now(), permanently disarming
+  // `reconcileStaleWidgetFiles`'s `mtimeMs > touchedAt` gate so a resolved
+  // finding renders forever (the #1092 touchedAt-re-arming defect).
+  observedAt?: number,
 ): void {
-	// Drop a write that's superseded by a later same-turn edit to this file
-	// whose pipeline finished first (same race class as #555). No cache write,
-	// no count/timestamp update, no render trigger — the recorded state must
-	// stay exactly as the fresher write left it. `writeIndex` omitted (e.g.
-	// the `clients/mcp/analyze.ts` on-demand call site, which has no per-edit
-	// ordering token) always proceeds, same as version-less LSP servers in the
-	// #555 guard.
-	const key = fileMapKey(filePath);
-	if (!diagnosticsWriteGuard.shouldWrite(key, writeIndex)) return;
-	// Keep runner state ordered with the final diagnostic replacement. The
-	// guards are deliberately advanced in both directions because either verb
-	// may be the first completion from a pipeline.
-	runnerWriteGuard.shouldWrite(key, writeIndex);
+  // Drop a write that's superseded by a later same-turn edit to this file
+  // whose pipeline finished first (same race class as #555). No cache write,
+  // no count/timestamp update, no render trigger — the recorded state must
+  // stay exactly as the fresher write left it. `writeIndex` omitted (e.g.
+  // the `clients/mcp/analyze.ts` on-demand call site, which has no per-edit
+  // ordering token) always proceeds, same as version-less LSP servers in the
+  // #555 guard.
+  const key = fileMapKey(filePath);
+  if (!diagnosticsWriteGuard.shouldWrite(key, writeIndex)) return;
+  // Keep runner state ordered with the final diagnostic replacement. The
+  // guards are deliberately advanced in both directions because either verb
+  // may be the first completion from a pipeline.
+  runnerWriteGuard.shouldWrite(key, writeIndex);
 
-	// Resolve the observation time ONCE (#1186): every incoming entry is stamped
-	// with it, and it also seeds the record's `touchedAt`. A fresh write (no
-	// `observedAt`) is observed now.
-	const observedTs = observedAt ?? Date.now();
-	const rec = getOrCreate(filePath, key);
-	commitDiagnostics(
-		rec,
-		filePath,
-		normalizeDiagnostics(filePath, diagnostics, observedTs),
-		observedTs,
-		key,
-	);
+  // Resolve the observation time ONCE (#1186): every incoming entry is stamped
+  // with it, and it also seeds the record's `touchedAt`. A fresh write (no
+  // `observedAt`) is observed now.
+  const observedTs = observedAt ?? Date.now();
+  const rec = getOrCreate(filePath, key);
+  commitDiagnostics(
+    rec,
+    filePath,
+    normalizeDiagnostics(filePath, diagnostics, observedTs),
+    observedTs,
+    key,
+  );
 }
 
 /** Map the raw diagnostic shape callers pass into stored {@link WidgetDiagnostic}s.
@@ -511,38 +492,36 @@ export function recordDiagnostics(
  * of diagnostics was observed — so the per-entry stale gate can later drop just
  * the entries older than the file's mtime rather than the whole record. */
 function normalizeDiagnostics(
-	filePath: string,
-	diagnostics: Array<{
-		tool?: string;
-		rule?: string;
-		id?: string;
-		message?: string;
-		line?: number;
-		column?: number;
-		severity?: string;
-		semantic?: string;
-	}>,
-	observedTs: number,
+  filePath: string,
+  diagnostics: Array<{
+    tool?: string;
+    rule?: string;
+    id?: string;
+    message?: string;
+    line?: number;
+    column?: number;
+    severity?: string;
+    semantic?: string;
+  }>,
+  observedTs: number,
 ): WidgetDiagnostic[] {
-	const base = pathToFileURL(filePath).href;
-	return diagnostics.map((d) => {
-		const rule = d.rule ?? d.id;
-		const uri =
-			d.line != null
-				? `${base}#L${d.line}${d.column != null ? `:${d.column}` : ""}`
-				: base;
-		return {
-			severity: d.severity ?? "info",
-			semantic: d.semantic,
-			message: toSingleLineMessage(d.message),
-			line: d.line,
-			col: d.column,
-			rule,
-			tool: d.tool,
-			uri,
-			observedAt: observedTs,
-		} satisfies WidgetDiagnostic;
-	});
+  const base = pathToFileURL(filePath).href;
+  return diagnostics.map((d) => {
+    const rule = d.rule ?? d.id;
+    const uri =
+      d.line != null ? `${base}#L${d.line}${d.column != null ? `:${d.column}` : ""}` : base;
+    return {
+      severity: d.severity ?? "info",
+      semantic: d.semantic,
+      message: toSingleLineMessage(d.message),
+      line: d.line,
+      col: d.column,
+      rule,
+      tool: d.tool,
+      uri,
+      observedAt: observedTs,
+    } satisfies WidgetDiagnostic;
+  });
 }
 
 /** Store `normalized` as the record's complete diagnostic set: recompute counts,
@@ -550,62 +529,61 @@ function normalizeDiagnostics(
  * — #1093), persist, and re-render. The caller decides what `normalized`
  * contains (a full replace, or a merge — see `reconcileCascadeNeighborLspErrors`). */
 function commitDiagnostics(
-	rec: FileRecord,
-	filePath: string,
-	normalized: WidgetDiagnostic[],
-	observedAt: number | undefined,
-	key = fileMapKey(filePath),
+  rec: FileRecord,
+  filePath: string,
+  normalized: WidgetDiagnostic[],
+  observedAt: number | undefined,
+  key = fileMapKey(filePath),
 ): void {
-	rec.diagnosticCounts = countDiagnostics(normalized);
-	rec.diagnostics = capStoredDiagnostics(normalized);
-	rec.allDiagnostics = normalized;
-	rec.hasFinalDiagnosticsSnapshot = true;
-	// Record-level `touchedAt` is the FRESHEST per-entry observation in the merged
-	// set (#1186) — drives render recency and the empty-record stale gate. On a
-	// merge (`reconcileCascadeNeighborLspErrors`) this is the newest of the
-	// preserved + incoming entries, not the (possibly aging) incoming stamp, so a
-	// record holding a fresh preserved entry doesn't sort/gate as stale. Empty set
-	// falls back to the passed `observedAt` (or now).
-	rec.touchedAt = freshestObservation(normalized, observedAt ?? Date.now());
-	files.set(key, rec);
-	requestRender();
+  rec.diagnosticCounts = countDiagnostics(normalized);
+  rec.diagnostics = capStoredDiagnostics(normalized);
+  rec.allDiagnostics = normalized;
+  rec.hasFinalDiagnosticsSnapshot = true;
+  // Record-level `touchedAt` is the FRESHEST per-entry observation in the merged
+  // set (#1186) — drives render recency and the empty-record stale gate. On a
+  // merge (`reconcileCascadeNeighborLspErrors`) this is the newest of the
+  // preserved + incoming entries, not the (possibly aging) incoming stamp, so a
+  // record holding a fresh preserved entry doesn't sort/gate as stale. Empty set
+  // falls back to the passed `observedAt` (or now).
+  rec.touchedAt = freshestObservation(normalized, observedAt ?? Date.now());
+  files.set(key, rec);
+  requestRender();
 }
 
 /** Recompute the {blocking, errors, warnings} tally for a diagnostic set. */
 function countDiagnostics(diags: WidgetDiagnostic[]): {
-	blocking: number;
-	errors: number;
-	warnings: number;
+  blocking: number;
+  errors: number;
+  warnings: number;
 } {
-	let blocking = 0;
-	let errors = 0;
-	let warnings = 0;
-	for (const diagnostic of diags) {
-		if (isBlocking(diagnostic)) blocking++;
-		// A past-EOF stale entry keeps its severity for display purposes but is
-		// excluded from the error/warning tallies alongside blocking — its cited
-		// coordinate is no longer trustworthy, same reasoning as `isBlocking`.
-		// A dependency-drift demotion (#1631 criterion 3) is different: the
-		// finding itself is still real evidence, only its BLOCKING authority is
-		// revoked until re-confirmed, so it stays in the error/warning tally.
-		if (diagnostic.stale && (diagnostic.staleReason ?? "past-eof") === "past-eof")
-			continue;
-		if (diagnostic.severity === "error") errors++;
-		// #1777: `hint` and `info` tally alongside `warning`. The dispatch path
-		// now preserves all four ast-grep tiers; before, the runner collapsed
-		// them to "warning" here. An exact `=== "warning"` test would drop those
-		// findings out of the footer entirely, so a file with real findings would
-		// render clean. The footer stays a blocking/error/warning summary on
-		// purpose — the tier distinction is rendered by the code-quality-warnings
-		// advisory, not by these counters.
-		else if (
-			diagnostic.severity === "warning" ||
-			diagnostic.severity === "hint" ||
-			diagnostic.severity === "info"
-		)
-			warnings++;
-	}
-	return { blocking, errors, warnings };
+  let blocking = 0;
+  let errors = 0;
+  let warnings = 0;
+  for (const diagnostic of diags) {
+    if (isBlocking(diagnostic)) blocking++;
+    // A past-EOF stale entry keeps its severity for display purposes but is
+    // excluded from the error/warning tallies alongside blocking — its cited
+    // coordinate is no longer trustworthy, same reasoning as `isBlocking`.
+    // A dependency-drift demotion (#1631 criterion 3) is different: the
+    // finding itself is still real evidence, only its BLOCKING authority is
+    // revoked until re-confirmed, so it stays in the error/warning tally.
+    if (diagnostic.stale && (diagnostic.staleReason ?? "past-eof") === "past-eof") continue;
+    if (diagnostic.severity === "error") errors++;
+    // #1777: `hint` and `info` tally alongside `warning`. The dispatch path
+    // now preserves all four ast-grep tiers; before, the runner collapsed
+    // them to "warning" here. An exact `=== "warning"` test would drop those
+    // findings out of the footer entirely, so a file with real findings would
+    // render clean. The footer stays a blocking/error/warning summary on
+    // purpose — the tier distinction is rendered by the code-quality-warnings
+    // advisory, not by these counters.
+    else if (
+      diagnostic.severity === "warning" ||
+      diagnostic.severity === "hint" ||
+      diagnostic.severity === "info"
+    )
+      warnings++;
+  }
+  return { blocking, errors, warnings };
 }
 
 /**
@@ -634,32 +612,29 @@ function countDiagnostics(diags: WidgetDiagnostic[]): {
  * is nonzero.
  */
 function applyPastEofGate(rec: FileRecord, lineCountCache?: LineCountCache): void {
-	if (rec.allDiagnostics.length === 0) return;
-	const { diagnostics } = demotePastEofDiagnostics({
-		store: "widget-state",
-		cwd: process.cwd(),
-		filePath: rec.filePath,
-		diagnostics: rec.allDiagnostics,
-		lineCountCache,
-	});
-	rec.allDiagnostics = diagnostics;
-	rec.diagnostics = capStoredDiagnostics(diagnostics);
-	rec.diagnosticCounts = countDiagnostics(diagnostics);
+  if (rec.allDiagnostics.length === 0) return;
+  const { diagnostics } = demotePastEofDiagnostics({
+    store: "widget-state",
+    cwd: process.cwd(),
+    filePath: rec.filePath,
+    diagnostics: rec.allDiagnostics,
+    lineCountCache,
+  });
+  rec.allDiagnostics = diagnostics;
+  rec.diagnostics = capStoredDiagnostics(diagnostics);
+  rec.diagnosticCounts = countDiagnostics(diagnostics);
 }
 
 /** The newest per-entry `observedAt` in `diags`, or `fallback` when empty (or no
  * entry carries a stamp). Used as the record-level `touchedAt` (#1186). */
-function freshestObservation(
-	diags: WidgetDiagnostic[],
-	fallback: number,
-): number {
-	let newest: number | undefined;
-	for (const d of diags) {
-		if (d.observedAt != null && (newest === undefined || d.observedAt > newest)) {
-			newest = d.observedAt;
-		}
-	}
-	return newest ?? fallback;
+function freshestObservation(diags: WidgetDiagnostic[], fallback: number): number {
+  let newest: number | undefined;
+  for (const d of diags) {
+    if (d.observedAt != null && (newest === undefined || d.observedAt > newest)) {
+      newest = d.observedAt;
+    }
+  }
+  return newest ?? fallback;
 }
 
 /**
@@ -672,7 +647,7 @@ function freshestObservation(
  * errors-only LSP re-check is entitled to replace.
  */
 function isLspErrorEntry(d: WidgetDiagnostic): boolean {
-	return d.tool === "lsp" && (d.semantic === "blocking" || d.severity === "error");
+  return d.tool === "lsp" && (d.semantic === "blocking" || d.severity === "error");
 }
 
 /**
@@ -697,35 +672,35 @@ function isLspErrorEntry(d: WidgetDiagnostic): boolean {
  * `observedAt` behave exactly as in `recordDiagnostics`.
  */
 export function reconcileCascadeNeighborLspErrors(
-	filePath: string,
-	lspErrorDiagnostics: Array<{
-		tool?: string;
-		rule?: string;
-		id?: string;
-		message?: string;
-		line?: number;
-		column?: number;
-		severity?: string;
-		semantic?: string;
-	}>,
-	writeIndex?: number,
-	observedAt?: number,
+  filePath: string,
+  lspErrorDiagnostics: Array<{
+    tool?: string;
+    rule?: string;
+    id?: string;
+    message?: string;
+    line?: number;
+    column?: number;
+    severity?: string;
+    semantic?: string;
+  }>,
+  writeIndex?: number,
+  observedAt?: number,
 ): void {
-	const key = fileMapKey(filePath);
-	if (!diagnosticsWriteGuard.shouldWrite(key, writeIndex)) return;
-	runnerWriteGuard.shouldWrite(key, writeIndex);
-	// #1186: the INCOMING LSP errors are stamped at THIS observation time
-	// (`observedAt`, e.g. an aging passive snapshot's `entry.ts`, or now for a
-	// fresh active touch). The PRESERVED entries keep their OWN prior per-entry
-	// `observedAt` — a fresh per-edit finding preserved through this errors-only
-	// merge is NOT re-aged to the incoming stamp. That per-entry split is exactly
-	// what lets `reconcileStaleWidgetFiles` drop the stale incoming entry while
-	// keeping the newer preserved one, instead of dropping the whole record.
-	const observedTs = observedAt ?? Date.now();
-	const rec = getOrCreate(filePath);
-	const incoming = normalizeDiagnostics(filePath, lspErrorDiagnostics, observedTs);
-	const preserved = rec.allDiagnostics.filter((d) => !isLspErrorEntry(d));
-	commitDiagnostics(rec, filePath, [...incoming, ...preserved], observedTs);
+  const key = fileMapKey(filePath);
+  if (!diagnosticsWriteGuard.shouldWrite(key, writeIndex)) return;
+  runnerWriteGuard.shouldWrite(key, writeIndex);
+  // #1186: the INCOMING LSP errors are stamped at THIS observation time
+  // (`observedAt`, e.g. an aging passive snapshot's `entry.ts`, or now for a
+  // fresh active touch). The PRESERVED entries keep their OWN prior per-entry
+  // `observedAt` — a fresh per-edit finding preserved through this errors-only
+  // merge is NOT re-aged to the incoming stamp. That per-entry split is exactly
+  // what lets `reconcileStaleWidgetFiles` drop the stale incoming entry while
+  // keeping the newer preserved one, instead of dropping the whole record.
+  const observedTs = observedAt ?? Date.now();
+  const rec = getOrCreate(filePath);
+  const incoming = normalizeDiagnostics(filePath, lspErrorDiagnostics, observedTs);
+  const preserved = rec.allDiagnostics.filter((d) => !isLspErrorEntry(d));
+  commitDiagnostics(rec, filePath, [...incoming, ...preserved], observedTs);
 }
 
 /**
@@ -764,23 +739,23 @@ export function reconcileCascadeNeighborLspErrors(
  * observed now.
  */
 export function reconcileScanDiagnostics(
-	filePath: string,
-	diagnostics: Array<{
-		tool?: string;
-		rule?: string;
-		id?: string;
-		message?: string;
-		line?: number;
-		column?: number;
-		severity?: string;
-		semantic?: string;
-	}>,
-	confirmed: boolean,
-	writeIndex?: number,
-	observedAt?: number,
+  filePath: string,
+  diagnostics: Array<{
+    tool?: string;
+    rule?: string;
+    id?: string;
+    message?: string;
+    line?: number;
+    column?: number;
+    severity?: string;
+    semantic?: string;
+  }>,
+  confirmed: boolean,
+  writeIndex?: number,
+  observedAt?: number,
 ): void {
-	if (!confirmed) return;
-	recordDiagnostics(filePath, diagnostics, writeIndex, observedAt);
+  if (!confirmed) return;
+  recordDiagnostics(filePath, diagnostics, writeIndex, observedAt);
 }
 
 /**
@@ -794,75 +769,75 @@ export function reconcileScanDiagnostics(
  * clean).
  */
 export async function reconcileStaleWidgetFiles(): Promise<number> {
-	const entries = [...files.entries()];
-	const verdicts = await Promise.all(
-		// `mapKey` is the normalized `files` key (used for deletion); stat the
-		// record's real display path, not the lowercased key (#1020).
-		entries.map(async ([mapKey, rec]) => {
-			let mtimeMs: number;
-			try {
-				mtimeMs = (await stat(rec.filePath)).mtimeMs;
-			} catch {
-				return { mapKey, action: "drop" as const }; // deleted / unreadable → drop
-			}
-			// A clean record (no findings) has no per-entry stamps to consult —
-			// gate it on the record's own `touchedAt` exactly as before, so a ✓
-			// entry for a file that changed on disk still drops.
-			//
-			// #1631 review F11 follow-up: a THIRD site hitting the same Windows
-			// mtime-vs-`Date.now()` skew F2 named for `blocker-freshness.ts` and
-			// `reconcileStaleWidgetDependencyBlockers` — a file's mtime can lead
-			// `Date.now()` by up to ~11.4ms measured (#1491/#1498 precedent), so a
-			// record touched immediately after its own write dropped here at +1ms
-			// with zero real drift. Found investigating F11: `lens-diagnostics-
-			// mode-all-freshness.test.ts`'s "control" case (and its sibling) failed
-			// under this gate, not from cross-test state. Same tolerance, same
-			// constant, for the same reason.
-			if (rec.allDiagnostics.length === 0) {
-				return mtimeMs > rec.touchedAt + MTIME_DRIFT_TOLERANCE_MS
-					? { mapKey, action: "drop" as const }
-					: { mapKey, action: "keep" as const };
-			}
-			// #1186 per-ENTRY gate: drop only the entries observed BEFORE the file's
-			// current mtime; keep the rest. A merged record can hold a fresh
-			// preserved entry beside an entry replayed from an aging snapshot, so a
-			// per-RECORD gate over-cleared the whole record (the residual documented
-			// at dispatch/integration.ts). A missing per-entry stamp (a migrated
-			// pre-#1186 record) inherits the record's `touchedAt`. Tolerance matches
-			// the Windows host-clock skew rationale above.
-			const survivors = rec.allDiagnostics.filter(
-				(d) => !(mtimeMs > (d.observedAt ?? rec.touchedAt) + MTIME_DRIFT_TOLERANCE_MS),
-			);
-			if (survivors.length === rec.allDiagnostics.length) {
-				return { mapKey, action: "keep" as const }; // nothing stale
-			}
-			if (survivors.length === 0) {
-				return { mapKey, action: "drop" as const }; // every entry stale → drop record
-			}
-			return { mapKey, action: "prune" as const, survivors };
-		}),
-	);
-	let dropped = 0;
-	for (const v of verdicts) {
-		if (v.action === "keep") continue;
-		if (v.action === "drop") {
-			files.delete(v.mapKey);
-			dropped += 1;
-			continue;
-		}
-		// prune: the file changed and shed its stale entries but retains fresher
-		// ones — keep the record, recompute counts/cap from the survivors, and
-		// still count it as a changed file so the agent is told to rescan.
-		const rec = files.get(v.mapKey);
-		if (rec) {
-			rec.allDiagnostics = v.survivors;
-			rec.diagnostics = capStoredDiagnostics(v.survivors);
-			rec.diagnosticCounts = countDiagnostics(v.survivors);
-		}
-		dropped += 1;
-	}
-	if (dropped > 0) requestRenderFn?.();
-	return dropped;
+  const entries = [...files.entries()];
+  const verdicts = await Promise.all(
+    // `mapKey` is the normalized `files` key (used for deletion); stat the
+    // record's real display path, not the lowercased key (#1020).
+    entries.map(async ([mapKey, rec]) => {
+      let mtimeMs: number;
+      try {
+        mtimeMs = (await stat(rec.filePath)).mtimeMs;
+      } catch {
+        return { mapKey, action: "drop" as const }; // deleted / unreadable → drop
+      }
+      // A clean record (no findings) has no per-entry stamps to consult —
+      // gate it on the record's own `touchedAt` exactly as before, so a ✓
+      // entry for a file that changed on disk still drops.
+      //
+      // #1631 review F11 follow-up: a THIRD site hitting the same Windows
+      // mtime-vs-`Date.now()` skew F2 named for `blocker-freshness.ts` and
+      // `reconcileStaleWidgetDependencyBlockers` — a file's mtime can lead
+      // `Date.now()` by up to ~11.4ms measured (#1491/#1498 precedent), so a
+      // record touched immediately after its own write dropped here at +1ms
+      // with zero real drift. Found investigating F11: `lens-diagnostics-
+      // mode-all-freshness.test.ts`'s "control" case (and its sibling) failed
+      // under this gate, not from cross-test state. Same tolerance, same
+      // constant, for the same reason.
+      if (rec.allDiagnostics.length === 0) {
+        return mtimeMs > rec.touchedAt + MTIME_DRIFT_TOLERANCE_MS
+          ? { mapKey, action: "drop" as const }
+          : { mapKey, action: "keep" as const };
+      }
+      // #1186 per-ENTRY gate: drop only the entries observed BEFORE the file's
+      // current mtime; keep the rest. A merged record can hold a fresh
+      // preserved entry beside an entry replayed from an aging snapshot, so a
+      // per-RECORD gate over-cleared the whole record (the residual documented
+      // at dispatch/integration.ts). A missing per-entry stamp (a migrated
+      // pre-#1186 record) inherits the record's `touchedAt`. Tolerance matches
+      // the Windows host-clock skew rationale above.
+      const survivors = rec.allDiagnostics.filter(
+        (d) => !(mtimeMs > (d.observedAt ?? rec.touchedAt) + MTIME_DRIFT_TOLERANCE_MS),
+      );
+      if (survivors.length === rec.allDiagnostics.length) {
+        return { mapKey, action: "keep" as const }; // nothing stale
+      }
+      if (survivors.length === 0) {
+        return { mapKey, action: "drop" as const }; // every entry stale → drop record
+      }
+      return { mapKey, action: "prune" as const, survivors };
+    }),
+  );
+  let dropped = 0;
+  for (const v of verdicts) {
+    if (v.action === "keep") continue;
+    if (v.action === "drop") {
+      files.delete(v.mapKey);
+      dropped += 1;
+      continue;
+    }
+    // prune: the file changed and shed its stale entries but retains fresher
+    // ones — keep the record, recompute counts/cap from the survivors, and
+    // still count it as a changed file so the agent is told to rescan.
+    const rec = files.get(v.mapKey);
+    if (rec) {
+      rec.allDiagnostics = v.survivors;
+      rec.diagnostics = capStoredDiagnostics(v.survivors);
+      rec.diagnosticCounts = countDiagnostics(v.survivors);
+    }
+    dropped += 1;
+  }
+  if (dropped > 0) requestRenderFn?.();
+  return dropped;
 }
 
 /**
@@ -895,59 +870,59 @@ export async function reconcileStaleWidgetFiles(): Promise<number> {
  * untouched.
  */
 export interface WidgetDependencyBlockerReconcileResult {
-	demoted: number;
-	truncatedImports: number;
+  demoted: number;
+  truncatedImports: number;
 }
 
 export async function reconcileStaleWidgetDependencyBlockers(
-	cwd: string,
-	turnIndex?: number,
+  cwd: string,
+  turnIndex?: number,
 ): Promise<WidgetDependencyBlockerReconcileResult> {
-	let demoted = 0;
-	let truncatedImports = 0;
-	for (const [, rec] of files.entries()) {
-		// #1631 review F4: narrow demotion to LSP-sourced findings. The import-closure
-		// drift check only knows how to reason about IMPORT graphs — an ast-grep
-		// hardcoded-secret or a govulncheck CVE finding doesn't stop being true because
-		// a file this diagnostic's file imports changed; only a language-server verdict
-		// (`tool === "lsp"`, the same predicate `isLspErrorEntry` above uses) is actually
-		// invalidated by that shape of drift. Documented trade: a non-LSP blocking
-		// finding on a file with drifted imports stays fully authoritative until its own
-		// content changes or it is explicitly re-run.
-		if (!rec.allDiagnostics.some((d) => isBlocking(d) && d.tool === "lsp")) continue;
-		let importMtimes: Array<{ path: string; mtimeMs: number }> = [];
-		try {
-			const result = await collectForwardImportMtimes(cwd, rec.filePath, undefined, turnIndex);
-			importMtimes = result.mtimes;
-			if (result.truncated) truncatedImports += 1;
-		} catch {
-			importMtimes = [];
-		}
-		if (importMtimes.length === 0) continue;
-		let changed = false;
-		for (const d of rec.allDiagnostics) {
-			if (!isBlocking(d) || d.tool !== "lsp") continue;
-			const baseline = d.observedAt ?? rec.touchedAt;
-			// +50ms tolerance (#1631 review F2): a whole-millisecond `Date.now()`
-			// baseline vs. sub-millisecond mtime precision only needs +1ms, but on
-			// Windows a file's mtime can LEAD `Date.now()` by up to ~11.4ms (measured
-			// across 200 writes; #1491/#1498 precedent for the same host-clock skew).
-			// +1ms produced 42 false demotions in 50 runs on Windows; +50ms clears the
-			// measured skew while staying far below the gap between real edits.
-			if (importMtimes.some((im) => im.mtimeMs > baseline + MTIME_DRIFT_TOLERANCE_MS)) {
-				d.stale = true;
-				d.staleReason = "dependency-drift";
-				changed = true;
-				demoted += 1;
-			}
-		}
-		if (changed) {
-			rec.diagnosticCounts = countDiagnostics(rec.allDiagnostics);
-			rec.diagnostics = capStoredDiagnostics(rec.allDiagnostics);
-		}
-	}
-	if (demoted > 0) requestRenderFn?.();
-	return { demoted, truncatedImports };
+  let demoted = 0;
+  let truncatedImports = 0;
+  for (const [, rec] of files.entries()) {
+    // #1631 review F4: narrow demotion to LSP-sourced findings. The import-closure
+    // drift check only knows how to reason about IMPORT graphs — an ast-grep
+    // hardcoded-secret or a govulncheck CVE finding doesn't stop being true because
+    // a file this diagnostic's file imports changed; only a language-server verdict
+    // (`tool === "lsp"`, the same predicate `isLspErrorEntry` above uses) is actually
+    // invalidated by that shape of drift. Documented trade: a non-LSP blocking
+    // finding on a file with drifted imports stays fully authoritative until its own
+    // content changes or it is explicitly re-run.
+    if (!rec.allDiagnostics.some((d) => isBlocking(d) && d.tool === "lsp")) continue;
+    let importMtimes: Array<{ path: string; mtimeMs: number }> = [];
+    try {
+      const result = await collectForwardImportMtimes(cwd, rec.filePath, undefined, turnIndex);
+      importMtimes = result.mtimes;
+      if (result.truncated) truncatedImports += 1;
+    } catch {
+      importMtimes = [];
+    }
+    if (importMtimes.length === 0) continue;
+    let changed = false;
+    for (const d of rec.allDiagnostics) {
+      if (!isBlocking(d) || d.tool !== "lsp") continue;
+      const baseline = d.observedAt ?? rec.touchedAt;
+      // +50ms tolerance (#1631 review F2): a whole-millisecond `Date.now()`
+      // baseline vs. sub-millisecond mtime precision only needs +1ms, but on
+      // Windows a file's mtime can LEAD `Date.now()` by up to ~11.4ms (measured
+      // across 200 writes; #1491/#1498 precedent for the same host-clock skew).
+      // +1ms produced 42 false demotions in 50 runs on Windows; +50ms clears the
+      // measured skew while staying far below the gap between real edits.
+      if (importMtimes.some((im) => im.mtimeMs > baseline + MTIME_DRIFT_TOLERANCE_MS)) {
+        d.stale = true;
+        d.staleReason = "dependency-drift";
+        changed = true;
+        demoted += 1;
+      }
+    }
+    if (changed) {
+      rec.diagnosticCounts = countDiagnostics(rec.allDiagnostics);
+      rec.diagnostics = capStoredDiagnostics(rec.allDiagnostics);
+    }
+  }
+  if (demoted > 0) requestRenderFn?.();
+  return { demoted, truncatedImports };
 }
 
 /**
@@ -963,29 +938,29 @@ export async function reconcileStaleWidgetDependencyBlockers(
 let staleReconcileTimer: ReturnType<typeof setTimeout> | null = null;
 export const STALE_RECONCILE_DEBOUNCE_MS = 1500;
 export function scheduleStaleReconcile(): void {
-	if (staleReconcileTimer !== null) return;
-	staleReconcileTimer = setTimeout(() => {
-		staleReconcileTimer = null;
-		void reconcileStaleWidgetFiles().catch(() => {});
-	}, STALE_RECONCILE_DEBOUNCE_MS);
-	// Don't keep the process alive solely for this background sweep.
-	staleReconcileTimer?.unref?.();
+  if (staleReconcileTimer !== null) return;
+  staleReconcileTimer = setTimeout(() => {
+    staleReconcileTimer = null;
+    void reconcileStaleWidgetFiles().catch(() => {});
+  }, STALE_RECONCILE_DEBOUNCE_MS);
+  // Don't keep the process alive solely for this background sweep.
+  staleReconcileTimer?.unref?.();
 }
 
 /** Summary of current diagnostic counts across all files in the widget. */
 export interface FileDiagnosticSummary {
-	filePath: string;
-	blocking: number;
-	errors: number;
-	warnings: number;
-	hasFinalSnapshot: boolean;
-	/**
-	 * The full, uncapped diagnostics for this file (not limited by the TUI's
-	 * per-file storage cap). `blocking + errors + warnings` may exceed
-	 * `diagnostics.length` because a single diagnostic can be both blocking and
-	 * an error — these are the actual records, deduplicated by the runners.
-	 */
-	diagnostics: WidgetDiagnostic[];
+  filePath: string;
+  blocking: number;
+  errors: number;
+  warnings: number;
+  hasFinalSnapshot: boolean;
+  /**
+   * The full, uncapped diagnostics for this file (not limited by the TUI's
+   * per-file storage cap). `blocking + errors + warnings` may exceed
+   * `diagnostics.length` because a single diagnostic can be both blocking and
+   * an error — these are the actual records, deduplicated by the runners.
+   */
+  diagnostics: WidgetDiagnostic[];
 }
 
 /**
@@ -995,17 +970,17 @@ export interface FileDiagnosticSummary {
  * everything, not just the 12 the TUI keeps for rendering.
  */
 export function getFileDiagnosticSummaries(): FileDiagnosticSummary[] {
-	return [...files.values()].map((rec) => {
-		applyPastEofGate(rec);
-		return {
-			filePath: rec.filePath,
-			blocking: rec.diagnosticCounts.blocking,
-			errors: rec.diagnosticCounts.errors,
-			warnings: rec.diagnosticCounts.warnings,
-			hasFinalSnapshot: rec.hasFinalDiagnosticsSnapshot,
-			diagnostics: rec.allDiagnostics.map((d) => ({ ...d })),
-		};
-	});
+  return [...files.values()].map((rec) => {
+    applyPastEofGate(rec);
+    return {
+      filePath: rec.filePath,
+      blocking: rec.diagnosticCounts.blocking,
+      errors: rec.diagnosticCounts.errors,
+      warnings: rec.diagnosticCounts.warnings,
+      hasFinalSnapshot: rec.hasFinalDiagnosticsSnapshot,
+      diagnostics: rec.allDiagnostics.map((d) => ({ ...d })),
+    };
+  });
 }
 
 /**
@@ -1027,56 +1002,52 @@ export function getFileDiagnosticSummaries(): FileDiagnosticSummary[] {
  * would silently read as `undefined` under another (e.g. via bus-publish).
  */
 export function getFileDiagnostics(filePath: string): WidgetDiagnostic[] | undefined {
-	const rec = files.get(fileMapKey(filePath));
-	if (!rec) return undefined;
-	applyPastEofGate(rec);
-	return rec.allDiagnostics.map((d) => ({ ...d }));
+  const rec = files.get(fileMapKey(filePath));
+  if (!rec) return undefined;
+  applyPastEofGate(rec);
+  return rec.allDiagnostics.map((d) => ({ ...d }));
 }
 
 /** @internal Test-only helpers. Do not use in production code. */
 export const __testing = {
-	getWidgetStateSnapshot(): {
-		files: Array<{
-			filePath: string;
-			storedDiagnostics: number;
-			blocking: number;
-			errors: number;
-			warnings: number;
-		}>;
-	} {
-		return {
-			files: [...files.values()].map((rec) => ({
-				filePath: rec.filePath,
-				storedDiagnostics: rec.diagnostics.length,
-				blocking: rec.diagnosticCounts.blocking,
-				errors: rec.diagnosticCounts.errors,
-				warnings: rec.diagnosticCounts.warnings,
-			})),
-		};
-	},
+  getWidgetStateSnapshot(): {
+    files: Array<{
+      filePath: string;
+      storedDiagnostics: number;
+      blocking: number;
+      errors: number;
+      warnings: number;
+    }>;
+  } {
+    return {
+      files: [...files.values()].map((rec) => ({
+        filePath: rec.filePath,
+        storedDiagnostics: rec.diagnostics.length,
+        blocking: rec.diagnosticCounts.blocking,
+        errors: rec.diagnosticCounts.errors,
+        warnings: rec.diagnosticCounts.warnings,
+      })),
+    };
+  },
 };
 
 export function recordLsp(
-	serverId: string,
-	root: string,
-	status: "spawn_start" | "spawn_success" | "spawn_failed" | "unavailable",
-	durationMs?: number,
+  serverId: string,
+  root: string,
+  status: "spawn_start" | "spawn_success" | "spawn_failed" | "unavailable",
+  durationMs?: number,
 ): void {
-	const normalizedRoot = normalizeMapKey(root);
-	const key = `${serverId}@${normalizedRoot}`;
-	const mapped =
-		status === "spawn_start"
-			? "spawning"
-			: status === "spawn_success"
-				? "ready"
-				: "failed";
-	lspServers.set(key, { serverId, root, status: mapped, durationMs });
-	while (lspServers.size > MAX_LSP_SERVER_RECORDS) {
-		const oldest = lspServers.keys().next().value;
-		if (oldest === undefined) break;
-		lspServers.delete(oldest);
-	}
-	requestRender();
+  const normalizedRoot = normalizeMapKey(root);
+  const key = `${serverId}@${normalizedRoot}`;
+  const mapped =
+    status === "spawn_start" ? "spawning" : status === "spawn_success" ? "ready" : "failed";
+  lspServers.set(key, { serverId, root, status: mapped, durationMs });
+  while (lspServers.size > MAX_LSP_SERVER_RECORDS) {
+    const oldest = lspServers.keys().next().value;
+    if (oldest === undefined) break;
+    lspServers.delete(oldest);
+  }
+  requestRender();
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -1084,123 +1055,115 @@ export function recordLsp(
 const HORIZONTAL_MIN_WIDTH = 70;
 
 export function renderWidget(
-	width: number,
-	theme: {
-		fg: (color: string, s: string) => string;
-	},
+  width: number,
+  theme: {
+    fg: (color: string, s: string) => string;
+  },
 ): string[] {
-	const dim = (s: string) => theme.fg("dim", s);
-	const red = (s: string) => theme.fg("error", s);
-	const yellow = (s: string) => theme.fg("warning", s);
-	const green = (s: string) => theme.fg("success", s);
-	const cyan = (s: string) => theme.fg("accent", s);
-	const w = Math.max(1, width || 80);
-	const useHorizontal = w >= HORIZONTAL_MIN_WIDTH;
+  const dim = (s: string) => theme.fg("dim", s);
+  const red = (s: string) => theme.fg("error", s);
+  const yellow = (s: string) => theme.fg("warning", s);
+  const green = (s: string) => theme.fg("success", s);
+  const cyan = (s: string) => theme.fg("accent", s);
+  const w = Math.max(1, width || 80);
+  const useHorizontal = w >= HORIZONTAL_MIN_WIDTH;
 
-	if (files.size === 0 && lspServers.size === 0) return [];
+  if (files.size === 0 && lspServers.size === 0) return [];
 
-	const lines: string[] = [];
+  const lines: string[] = [];
 
-	// Header — counts from deduplicated files only
-	const deduped = dedupeByBasename([...files.values()]);
-	const recencySorted = deduped.filter(shouldRenderFile).slice(0, 5);
-	const langStr = sessionLanguages.slice(0, 6).join(" ");
-	const totalBlocking = countBlockingIn(deduped);
-	const totalErrors = countTotalIn("error", deduped);
-	const totalWarnings = countTotalIn("warning", deduped);
-	const hasPendingAnalysis = deduped.some(isPendingAnalysis);
-	const errorChunk =
-		totalErrors > 0
-			? (totalBlocking > 0 ? red : yellow)(`●${totalErrors}E`)
-			: "";
-	const warningChunk = totalWarnings > 0 ? yellow(`!${totalWarnings}W`) : "";
-	const summary = errorChunk
-		? errorChunk + (warningChunk ? " " + warningChunk : "")
-		: warningChunk
-			? warningChunk
-			: files.size > 0 && !hasPendingAnalysis
-				? green("✓ clean")
-				: "";
+  // Header — counts from deduplicated files only
+  const deduped = dedupeByBasename([...files.values()]);
+  const recencySorted = deduped.filter(shouldRenderFile).slice(0, 5);
+  const langStr = sessionLanguages.slice(0, 6).join(" ");
+  const totalBlocking = countBlockingIn(deduped);
+  const totalErrors = countTotalIn("error", deduped);
+  const totalWarnings = countTotalIn("warning", deduped);
+  const hasPendingAnalysis = deduped.some(isPendingAnalysis);
+  const errorChunk = totalErrors > 0 ? (totalBlocking > 0 ? red : yellow)(`●${totalErrors}E`) : "";
+  const warningChunk = totalWarnings > 0 ? yellow(`!${totalWarnings}W`) : "";
+  const summary = errorChunk
+    ? errorChunk + (warningChunk ? " " + warningChunk : "")
+    : warningChunk
+      ? warningChunk
+      : files.size > 0 && !hasPendingAnalysis
+        ? green("✓ clean")
+        : "";
 
-	// LSP spawning — folded into the header in horizontal mode, tail line otherwise
-	const spawning = [...lspServers.values()].filter(
-		(s) => s.status === "spawning",
-	);
-	const lspChip =
-		useHorizontal && spawning.length > 0 ? "  " + dim("LSP↑") : "";
+  // LSP spawning — folded into the header in horizontal mode, tail line otherwise
+  const spawning = [...lspServers.values()].filter((s) => s.status === "spawning");
+  const lspChip = useHorizontal && spawning.length > 0 ? "  " + dim("LSP↑") : "";
 
-	const header = ` ${cyan("choco-pi-lsp")}${langStr ? "  " + dim(langStr) : ""}${lspChip}${summary ? "  " + summary : ""}`;
-	lines.push(fitLine(header, w));
+  const header = ` ${cyan("choco-pi-lsp")}${langStr ? "  " + dim(langStr) : ""}${lspChip}${summary ? "  " + summary : ""}`;
+  lines.push(fitLine(header, w));
 
-	// File list — display order varies by mode
-	if (useHorizontal) {
-		const displayOrder = sortByTierThenRecency(recencySorted);
-		const rowLine = packHorizontalRow(displayOrder, w, theme);
-		if (rowLine.length > 0) lines.push(rowLine);
-	} else {
-		for (const rec of recencySorted) {
-			lines.push(fitLine(formatFileRowVertical(rec, theme), w));
-		}
-	}
+  // File list — display order varies by mode
+  if (useHorizontal) {
+    const displayOrder = sortByTierThenRecency(recencySorted);
+    const rowLine = packHorizontalRow(displayOrder, w, theme);
+    if (rowLine.length > 0) lines.push(rowLine);
+  } else {
+    for (const rec of recencySorted) {
+      lines.push(fitLine(formatFileRowVertical(rec, theme), w));
+    }
+  }
 
-	// Diagnostics — blocking (or dependency-drift-demoted) only, from the most
-	// recently touched file that has them. Vertical mode keeps the divider/filename
-	// context; horizontal already shows the filename on the packed row above, so
-	// we drop the extra header noise there.
-	//
-	// #1631 review F10: `isBlocking` answers false for a demoted (`stale`) finding
-	// by design (#1419 demote-not-drop) — but this render loop used that same
-	// predicate to pick which findings to SHOW, so a demoted finding vanished from
-	// the footer entirely instead of demoting visibly. `isBlockingOrDemoted` keeps
-	// it in the list; the per-entry render below distinguishes the two with a
-	// dimmed marker instead of the red dot.
-	const isBlockingOrDemoted = (d: WidgetDiagnostic) => isBlocking(d) || d.stale === true;
-	const withBlocking = recencySorted.filter((r) =>
-		r.diagnostics.some(isBlockingOrDemoted),
-	);
-	if (withBlocking.length > 0) {
-		const rec = withBlocking[0];
-		// #1641: gate only the ONE record whose line numbers are about to be
-		// rendered, not the whole (potentially session-long) `deduped` list the
-		// header counts read — one memoized stat per redraw, never a per-file
-		// scan of every file choco-pi-lsp has touched this session. A past-EOF
-		// citation demoted here can leave the header's aggregate blocking count
-		// one turn stale; `reconcileStaleWidgetFiles`'s existing debounced sweep
-		// (scheduleStaleReconcile) already re-derives that aggregate on its own
-		// cadence, so this is a bounded, self-correcting gap, not a silent one.
-		applyPastEofGate(rec);
-		if (!useHorizontal) {
-			lines.push(fitLine(dim("─".repeat(Math.min(w, 60))), w));
-			lines.push(fitLine(` ${dim(path.basename(rec.filePath))}`, w));
-		}
-		const blockers = rec.diagnostics.filter(isBlockingOrDemoted).slice(0, 5);
-		for (const d of blockers) {
-			// A past-EOF demotion's coordinate is untrustworthy — render the
-			// marker instead of the line (#1641); drift demotions keep theirs.
-			const pastEof = d.stale && (d.staleReason ?? "past-eof") === "past-eof";
-			// No link for a past-EOF demotion: the anchor would carry the same
-			// untrustworthy line the marker exists to replace.
-			const loc = pastEof
-				? PAST_EOF_STALE_MARKER
-				: d.line != null
-					? osc8(d.uri ?? "", `L${d.line}`)
-					: "";
-			const rule = d.rule ? dim(` ${d.rule}`) : "";
-			const staleTag = d.stale ? dim(` ${STALE_LINE_MARKER}`) : "";
-			const prefix = `   ${d.stale ? dim("○") : red("●")} ${loc}${rule}  `;
-			const msgWidth = Math.max(1, w - visibleWidth(prefix) - visibleWidth(staleTag));
-			const msg = fitLine(d.message, msgWidth, "…");
-			lines.push(fitLine(`${prefix}${msg}${staleTag}`, w));
-		}
-	}
+  // Diagnostics — blocking (or dependency-drift-demoted) only, from the most
+  // recently touched file that has them. Vertical mode keeps the divider/filename
+  // context; horizontal already shows the filename on the packed row above, so
+  // we drop the extra header noise there.
+  //
+  // #1631 review F10: `isBlocking` answers false for a demoted (`stale`) finding
+  // by design (#1419 demote-not-drop) — but this render loop used that same
+  // predicate to pick which findings to SHOW, so a demoted finding vanished from
+  // the footer entirely instead of demoting visibly. `isBlockingOrDemoted` keeps
+  // it in the list; the per-entry render below distinguishes the two with a
+  // dimmed marker instead of the red dot.
+  const isBlockingOrDemoted = (d: WidgetDiagnostic) => isBlocking(d) || d.stale === true;
+  const withBlocking = recencySorted.filter((r) => r.diagnostics.some(isBlockingOrDemoted));
+  if (withBlocking.length > 0) {
+    const rec = withBlocking[0];
+    // #1641: gate only the ONE record whose line numbers are about to be
+    // rendered, not the whole (potentially session-long) `deduped` list the
+    // header counts read — one memoized stat per redraw, never a per-file
+    // scan of every file choco-pi-lsp has touched this session. A past-EOF
+    // citation demoted here can leave the header's aggregate blocking count
+    // one turn stale; `reconcileStaleWidgetFiles`'s existing debounced sweep
+    // (scheduleStaleReconcile) already re-derives that aggregate on its own
+    // cadence, so this is a bounded, self-correcting gap, not a silent one.
+    applyPastEofGate(rec);
+    if (!useHorizontal) {
+      lines.push(fitLine(dim("─".repeat(Math.min(w, 60))), w));
+      lines.push(fitLine(` ${dim(path.basename(rec.filePath))}`, w));
+    }
+    const blockers = rec.diagnostics.filter(isBlockingOrDemoted).slice(0, 5);
+    for (const d of blockers) {
+      // A past-EOF demotion's coordinate is untrustworthy — render the
+      // marker instead of the line (#1641); drift demotions keep theirs.
+      const pastEof = d.stale && (d.staleReason ?? "past-eof") === "past-eof";
+      // No link for a past-EOF demotion: the anchor would carry the same
+      // untrustworthy line the marker exists to replace.
+      const loc = pastEof
+        ? PAST_EOF_STALE_MARKER
+        : d.line != null
+          ? osc8(d.uri ?? "", `L${d.line}`)
+          : "";
+      const rule = d.rule ? dim(` ${d.rule}`) : "";
+      const staleTag = d.stale ? dim(` ${STALE_LINE_MARKER}`) : "";
+      const prefix = `   ${d.stale ? dim("○") : red("●")} ${loc}${rule}  `;
+      const msgWidth = Math.max(1, w - visibleWidth(prefix) - visibleWidth(staleTag));
+      const msg = fitLine(d.message, msgWidth, "…");
+      lines.push(fitLine(`${prefix}${msg}${staleTag}`, w));
+    }
+  }
 
-	// LSP status tail — only in vertical mode; horizontal folds into header
-	if (!useHorizontal && spawning.length > 0) {
-		const ids = spawning.map((s) => s.serverId).join(" ");
-		lines.push(fitLine(` ${dim(`LSP spawning: ${ids}`)}`, w));
-	}
+  // LSP status tail — only in vertical mode; horizontal folds into header
+  if (!useHorizontal && spawning.length > 0) {
+    const ids = spawning.map((s) => s.serverId).join(" ");
+    lines.push(fitLine(` ${dim(`LSP spawning: ${ids}`)}`, w));
+  }
 
-	return lines;
+  return lines;
 }
 
 // ── File row layout ──────────────────────────────────────────────────────────
@@ -1208,278 +1171,265 @@ export function renderWidget(
 type FileTier = "blocking" | "warning" | "clean";
 
 function classifyFileTier(rec: FileRecord): FileTier {
-	if (rec.diagnosticCounts.blocking > 0) return "blocking";
-	if (rec.diagnosticCounts.errors > 0 || rec.diagnosticCounts.warnings > 0) {
-		return "warning";
-	}
-	return "clean";
+  if (rec.diagnosticCounts.blocking > 0) return "blocking";
+  if (rec.diagnosticCounts.errors > 0 || rec.diagnosticCounts.warnings > 0) {
+    return "warning";
+  }
+  return "clean";
 }
 
 function sortByTierThenRecency(recs: FileRecord[]): FileRecord[] {
-	const order: Record<FileTier, number> = {
-		blocking: 0,
-		warning: 1,
-		clean: 2,
-	};
-	return [...recs].sort((a, b) => {
-		const ta = order[classifyFileTier(a)];
-		const tb = order[classifyFileTier(b)];
-		if (ta !== tb) return ta - tb;
-		return b.touchedAt - a.touchedAt;
-	});
+  const order: Record<FileTier, number> = {
+    blocking: 0,
+    warning: 1,
+    clean: 2,
+  };
+  return [...recs].sort((a, b) => {
+    const ta = order[classifyFileTier(a)];
+    const tb = order[classifyFileTier(b)];
+    if (ta !== tb) return ta - tb;
+    return b.touchedAt - a.touchedAt;
+  });
 }
 
 function formatFileRowVertical(
-	rec: FileRecord,
-	theme: { fg: (color: string, s: string) => string },
+  rec: FileRecord,
+  theme: { fg: (color: string, s: string) => string },
 ): string {
-	const dim = (s: string) => theme.fg("dim", s);
-	const red = (s: string) => theme.fg("error", s);
-	const yellow = (s: string) => theme.fg("warning", s);
-	const green = (s: string) => theme.fg("success", s);
+  const dim = (s: string) => theme.fg("dim", s);
+  const red = (s: string) => theme.fg("error", s);
+  const yellow = (s: string) => theme.fg("warning", s);
+  const green = (s: string) => theme.fg("success", s);
 
-	const base = path.basename(rec.filePath);
-	const blocking = rec.diagnosticCounts.blocking;
-	const errors = rec.diagnosticCounts.errors;
-	const warnings = rec.diagnosticCounts.warnings;
-	const formatterFailed = hasFailedFormatter(rec);
-	// Diagnostic severity outranks formatter failure (#1348 review): a file
-	// with blocking diagnostics shows the blocking dot even if a format also
-	// failed -- same precedence as the horizontal renderer.
-	const dot =
-		blocking > 0
-			? red("●")
-			: formatterFailed
-				? red("x")
-				: warnings > 0 || errors > 0
-					? yellow("!")
-					: green("✓");
-	const runnerNames = [...rec.runners.entries()]
-		.filter(([, r]) => r.status !== "skipped")
-		.map(([id]) => id)
-		.join(" ");
-	const counts =
-		errors > 0
-			? " " +
-				(blocking > 0 ? red : yellow)(`${errors}E`) +
-				(warnings > 0 ? " " + yellow(`${warnings}W`) : "")
-			: warnings > 0
-				? " " + yellow(`${warnings}W`)
-				: " " + dim("clean");
-	const changedFormatters = [...rec.formatters.entries()]
-		.filter(([, f]) => f.changed && f.success)
-		.map(([name]) => name);
-	const failedFormatters = [...rec.formatters.entries()]
-		.filter(([, f]) => !f.success)
-		.map(([name]) => name);
-	const formatMark =
-		(failedFormatters.length > 0
-			? red(` fmt-failed:${failedFormatters.join(",")}`)
-			: "") +
-		(changedFormatters.length > 0 ? dim(` fmt:${changedFormatters.join(",")}`) : "");
-	return ` ${dot} ${base}  ${dim(runnerNames)}${formatMark}${counts}`;
+  const base = path.basename(rec.filePath);
+  const blocking = rec.diagnosticCounts.blocking;
+  const errors = rec.diagnosticCounts.errors;
+  const warnings = rec.diagnosticCounts.warnings;
+  const formatterFailed = hasFailedFormatter(rec);
+  // Diagnostic severity outranks formatter failure (#1348 review): a file
+  // with blocking diagnostics shows the blocking dot even if a format also
+  // failed -- same precedence as the horizontal renderer.
+  const dot =
+    blocking > 0
+      ? red("●")
+      : formatterFailed
+        ? red("x")
+        : warnings > 0 || errors > 0
+          ? yellow("!")
+          : green("✓");
+  const runnerNames = [...rec.runners.entries()]
+    .filter(([, r]) => r.status !== "skipped")
+    .map(([id]) => id)
+    .join(" ");
+  const counts =
+    errors > 0
+      ? " " +
+        (blocking > 0 ? red : yellow)(`${errors}E`) +
+        (warnings > 0 ? " " + yellow(`${warnings}W`) : "")
+      : warnings > 0
+        ? " " + yellow(`${warnings}W`)
+        : " " + dim("clean");
+  const changedFormatters = [...rec.formatters.entries()]
+    .filter(([, f]) => f.changed && f.success)
+    .map(([name]) => name);
+  const failedFormatters = [...rec.formatters.entries()]
+    .filter(([, f]) => !f.success)
+    .map(([name]) => name);
+  const formatMark =
+    (failedFormatters.length > 0 ? red(` fmt-failed:${failedFormatters.join(",")}`) : "") +
+    (changedFormatters.length > 0 ? dim(` fmt:${changedFormatters.join(",")}`) : "");
+  return ` ${dot} ${base}  ${dim(runnerNames)}${formatMark}${counts}`;
 }
 
 function packHorizontalRow(
-	recs: FileRecord[],
-	totalWidth: number,
-	theme: { fg: (color: string, s: string) => string },
+  recs: FileRecord[],
+  totalWidth: number,
+  theme: { fg: (color: string, s: string) => string },
 ): string {
-	if (recs.length === 0) return "";
-	const dim = (s: string) => theme.fg("dim", s);
-	const indent = "   ";
-	const sep = "  ";
-	// Reserve worst-case overflow space upfront so the marker always fits.
-	// " +NN" — 4 visible chars covers up to two-digit overflow.
-	const overflowReserve = 4;
-	let used = visibleWidth(indent);
-	const parts: string[] = [indent];
-	const addedTokenWidths: number[] = [];
-	let droppedAt = -1;
-	for (let i = 0; i < recs.length; i++) {
-		const sepWidth = parts.length > 1 ? visibleWidth(sep) : 0;
-		const willOverflow = i < recs.length - 1;
-		const reserve = willOverflow ? overflowReserve : 0;
-		const remaining = totalWidth - used - sepWidth - reserve;
-		if (remaining < 4) {
-			droppedAt = i;
-			break;
-		}
-		const token = formatFileTokenHorizontal(recs[i], remaining, theme);
-		const tokenWidth = visibleWidth(token);
-		if (token.length === 0 || used + sepWidth + tokenWidth > totalWidth) {
-			droppedAt = i;
-			break;
-		}
-		if (sepWidth > 0) {
-			parts.push(sep);
-			used += sepWidth;
-		}
-		parts.push(token);
-		used += tokenWidth;
-		addedTokenWidths.push(tokenWidth + sepWidth);
-	}
-	if (droppedAt >= 0) {
-		let dropped = recs.length - droppedAt;
-		let overflow = " " + dim(`+${dropped}`);
-		// If reservation was insufficient (e.g. last token grew because no
-		// reserve was applied), shed accepted tokens until overflow fits.
-		while (
-			used + visibleWidth(overflow) > totalWidth &&
-			addedTokenWidths.length > 0
-		) {
-			const lastWidth = addedTokenWidths.pop() as number;
-			used -= lastWidth;
-			parts.pop(); // token
-			if (parts.length > 1) parts.pop(); // preceding separator
-			dropped++;
-			overflow = " " + dim(`+${dropped}`);
-		}
-		if (used + visibleWidth(overflow) <= totalWidth) {
-			parts.push(overflow);
-		}
-	}
-	return fitLine(parts.join(""), totalWidth);
+  if (recs.length === 0) return "";
+  const dim = (s: string) => theme.fg("dim", s);
+  const indent = "   ";
+  const sep = "  ";
+  // Reserve worst-case overflow space upfront so the marker always fits.
+  // " +NN" — 4 visible chars covers up to two-digit overflow.
+  const overflowReserve = 4;
+  let used = visibleWidth(indent);
+  const parts: string[] = [indent];
+  const addedTokenWidths: number[] = [];
+  let droppedAt = -1;
+  for (let i = 0; i < recs.length; i++) {
+    const sepWidth = parts.length > 1 ? visibleWidth(sep) : 0;
+    const willOverflow = i < recs.length - 1;
+    const reserve = willOverflow ? overflowReserve : 0;
+    const remaining = totalWidth - used - sepWidth - reserve;
+    if (remaining < 4) {
+      droppedAt = i;
+      break;
+    }
+    const token = formatFileTokenHorizontal(recs[i], remaining, theme);
+    const tokenWidth = visibleWidth(token);
+    if (token.length === 0 || used + sepWidth + tokenWidth > totalWidth) {
+      droppedAt = i;
+      break;
+    }
+    if (sepWidth > 0) {
+      parts.push(sep);
+      used += sepWidth;
+    }
+    parts.push(token);
+    used += tokenWidth;
+    addedTokenWidths.push(tokenWidth + sepWidth);
+  }
+  if (droppedAt >= 0) {
+    let dropped = recs.length - droppedAt;
+    let overflow = " " + dim(`+${dropped}`);
+    // If reservation was insufficient (e.g. last token grew because no
+    // reserve was applied), shed accepted tokens until overflow fits.
+    while (used + visibleWidth(overflow) > totalWidth && addedTokenWidths.length > 0) {
+      const lastWidth = addedTokenWidths.pop() as number;
+      used -= lastWidth;
+      parts.pop(); // token
+      if (parts.length > 1) parts.pop(); // preceding separator
+      dropped++;
+      overflow = " " + dim(`+${dropped}`);
+    }
+    if (used + visibleWidth(overflow) <= totalWidth) {
+      parts.push(overflow);
+    }
+  }
+  return fitLine(parts.join(""), totalWidth);
 }
 
 function formatFileTokenHorizontal(
-	rec: FileRecord,
-	remainingWidth: number,
-	theme: { fg: (color: string, s: string) => string },
+  rec: FileRecord,
+  remainingWidth: number,
+  theme: { fg: (color: string, s: string) => string },
 ): string {
-	const dim = (s: string) => theme.fg("dim", s);
-	const red = (s: string) => theme.fg("error", s);
-	const yellow = (s: string) => theme.fg("warning", s);
+  const dim = (s: string) => theme.fg("dim", s);
+  const red = (s: string) => theme.fg("error", s);
+  const yellow = (s: string) => theme.fg("warning", s);
 
-	const blocking = rec.diagnosticCounts.blocking;
-	const errors = rec.diagnosticCounts.errors;
-	const warnings = rec.diagnosticCounts.warnings;
-	const formatterChanged = hasChangedFormatter(rec);
-	const formatterFailed = hasFailedFormatter(rec);
+  const blocking = rec.diagnosticCounts.blocking;
+  const errors = rec.diagnosticCounts.errors;
+  const warnings = rec.diagnosticCounts.warnings;
+  const formatterChanged = hasChangedFormatter(rec);
+  const formatterFailed = hasFailedFormatter(rec);
 
-	let dotChar: string;
-	if (blocking > 0) dotChar = red("●");
-	else if (errors > 0 || warnings > 0) dotChar = yellow("!");
-	else if (formatterChanged) dotChar = dim("✎");
-	else dotChar = dim("·");
+  let dotChar: string;
+  if (blocking > 0) dotChar = red("●");
+  else if (errors > 0 || warnings > 0) dotChar = yellow("!");
+  else if (formatterChanged) dotChar = dim("✎");
+  else dotChar = dim("·");
 
-	if (formatterFailed && blocking === 0 && errors === 0 && warnings === 0) {
-		dotChar = red("x");
-	}
+  if (formatterFailed && blocking === 0 && errors === 0 && warnings === 0) {
+    dotChar = red("x");
+  }
 
-	let countsStyled = "";
-	if (errors > 0 && warnings > 0) {
-		const eColor = blocking > 0 ? red : yellow;
-		countsStyled = " " + eColor(`${errors}E`) + yellow(`${warnings}W`);
-	} else if (errors > 0) {
-		const eColor = blocking > 0 ? red : yellow;
-		countsStyled = " " + eColor(`${errors}E`);
-	} else if (warnings > 0) {
-		countsStyled = " " + yellow(`${warnings}W`);
-	}
+  let countsStyled = "";
+  if (errors > 0 && warnings > 0) {
+    const eColor = blocking > 0 ? red : yellow;
+    countsStyled = " " + eColor(`${errors}E`) + yellow(`${warnings}W`);
+  } else if (errors > 0) {
+    const eColor = blocking > 0 ? red : yellow;
+    countsStyled = " " + eColor(`${errors}E`);
+  } else if (warnings > 0) {
+    countsStyled = " " + yellow(`${warnings}W`);
+  }
 
-	const fullBasename = path.basename(rec.filePath);
-	const fixedWidth = visibleWidth(dotChar) + 1 + visibleWidth(countsStyled);
-	const basenameBudget = remainingWidth - fixedWidth;
-	if (basenameBudget < 3) return "";
-	const truncated = truncateBasename(fullBasename, basenameBudget);
-	const linked = osc8(pathToFileURL(rec.filePath).href, truncated);
-	return `${dotChar} ${linked}${countsStyled}`;
+  const fullBasename = path.basename(rec.filePath);
+  const fixedWidth = visibleWidth(dotChar) + 1 + visibleWidth(countsStyled);
+  const basenameBudget = remainingWidth - fixedWidth;
+  if (basenameBudget < 3) return "";
+  const truncated = truncateBasename(fullBasename, basenameBudget);
+  const linked = osc8(pathToFileURL(rec.filePath).href, truncated);
+  return `${dotChar} ${linked}${countsStyled}`;
 }
 
 function truncateBasename(name: string, maxWidth: number): string {
-	if (visibleWidth(name) <= maxWidth) return name;
-	if (maxWidth < 2) return "…";
-	const ext = path.extname(name);
-	const stem = name.slice(0, name.length - ext.length);
-	const keep = maxWidth - ext.length - 1;
-	if (keep < 1) {
-		// Extension alone wouldn't fit; truncate the whole name.
-		return name.slice(0, maxWidth - 1) + "…";
-	}
-	return stem.slice(0, keep) + "…" + ext;
+  if (visibleWidth(name) <= maxWidth) return name;
+  if (maxWidth < 2) return "…";
+  const ext = path.extname(name);
+  const stem = name.slice(0, name.length - ext.length);
+  const keep = maxWidth - ext.length - 1;
+  if (keep < 1) {
+    // Extension alone wouldn't fit; truncate the whole name.
+    return name.slice(0, maxWidth - 1) + "…";
+  }
+  return stem.slice(0, keep) + "…" + ext;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function getOrCreate(filePath: string, key = fileMapKey(filePath)): FileRecord {
-	maybePruneInactiveFileRecords();
-	// Look up by the normalized key so mixed path forms of the same file share
-	// ONE record (#1020); keep the caller's verbatim path as the display path.
-	return (
-		files.get(key) ?? {
-			filePath,
-			runners: new Map(),
-			formatters: new Map(),
-			diagnostics: [],
-			allDiagnostics: [],
-			diagnosticCounts: { blocking: 0, errors: 0, warnings: 0 },
-			hasFinalDiagnosticsSnapshot: false,
-			touchedAt: Date.now(),
-		}
-	);
+  maybePruneInactiveFileRecords();
+  // Look up by the normalized key so mixed path forms of the same file share
+  // ONE record (#1020); keep the caller's verbatim path as the display path.
+  return (
+    files.get(key) ?? {
+      filePath,
+      runners: new Map(),
+      formatters: new Map(),
+      diagnostics: [],
+      allDiagnostics: [],
+      diagnosticCounts: { blocking: 0, errors: 0, warnings: 0 },
+      hasFinalDiagnosticsSnapshot: false,
+      touchedAt: Date.now(),
+    }
+  );
 }
 
 function hasChangedFormatter(rec: FileRecord): boolean {
-	return [...rec.formatters.values()].some((f) => f.changed && f.success);
+  return [...rec.formatters.values()].some((f) => f.changed && f.success);
 }
 
 function hasFailedFormatter(rec: FileRecord): boolean {
-	return [...rec.formatters.values()].some((f) => !f.success);
+  return [...rec.formatters.values()].some((f) => !f.success);
 }
 
 function shouldRenderFile(rec: FileRecord): boolean {
-	return rec.hasFinalDiagnosticsSnapshot || hasChangedFormatter(rec) || hasFailedFormatter(rec);
+  return rec.hasFinalDiagnosticsSnapshot || hasChangedFormatter(rec) || hasFailedFormatter(rec);
 }
 
 function hasLiveDiagnostic(rec: FileRecord): boolean {
-	return rec.hasFinalDiagnosticsSnapshot && rec.diagnostics.length > 0;
+  return rec.hasFinalDiagnosticsSnapshot && rec.diagnostics.length > 0;
 }
 
 function isPendingAnalysis(rec: FileRecord): boolean {
-	return rec.runners.size > 0 && !rec.hasFinalDiagnosticsSnapshot;
+  return rec.runners.size > 0 && !rec.hasFinalDiagnosticsSnapshot;
 }
 
-function capStoredDiagnostics(
-	diagnostics: WidgetDiagnostic[],
-): WidgetDiagnostic[] {
-	if (diagnostics.length <= MAX_STORED_DIAGNOSTICS_PER_FILE) return diagnostics;
-	const blockers = diagnostics.filter(isBlocking);
-	if (blockers.length >= MAX_STORED_DIAGNOSTICS_PER_FILE) {
-		return blockers.slice(0, MAX_STORED_DIAGNOSTICS_PER_FILE);
-	}
-	const rest = diagnostics.filter((d) => !isBlocking(d));
-	return [
-		...blockers,
-		...rest.slice(0, MAX_STORED_DIAGNOSTICS_PER_FILE - blockers.length),
-	];
+function capStoredDiagnostics(diagnostics: WidgetDiagnostic[]): WidgetDiagnostic[] {
+  if (diagnostics.length <= MAX_STORED_DIAGNOSTICS_PER_FILE) return diagnostics;
+  const blockers = diagnostics.filter(isBlocking);
+  if (blockers.length >= MAX_STORED_DIAGNOSTICS_PER_FILE) {
+    return blockers.slice(0, MAX_STORED_DIAGNOSTICS_PER_FILE);
+  }
+  const rest = diagnostics.filter((d) => !isBlocking(d));
+  return [...blockers, ...rest.slice(0, MAX_STORED_DIAGNOSTICS_PER_FILE - blockers.length)];
 }
 
-function countTotalIn(
-	severity: "error" | "warning",
-	recs: FileRecord[],
-): number {
-	let n = 0;
-	for (const rec of recs) {
-		if (severity === "error") n += rec.diagnosticCounts.errors;
-		else n += rec.diagnosticCounts.warnings;
-	}
-	return n;
+function countTotalIn(severity: "error" | "warning", recs: FileRecord[]): number {
+  let n = 0;
+  for (const rec of recs) {
+    if (severity === "error") n += rec.diagnosticCounts.errors;
+    else n += rec.diagnosticCounts.warnings;
+  }
+  return n;
 }
 
 function countBlockingIn(recs: FileRecord[]): number {
-	let n = 0;
-	for (const rec of recs) n += rec.diagnosticCounts.blocking;
-	return n;
+  let n = 0;
+  for (const rec of recs) n += rec.diagnosticCounts.blocking;
+  return n;
 }
 
 function requestRender(): void {
-	requestRenderFn?.();
+  requestRenderFn?.();
 }
 
 function osc8(uri: string, label: string): string {
-	if (!uri) return label;
-	return `\x1b]8;;${uri}\x1b\\${label}\x1b]8;;\x1b\\`;
+  if (!uri) return label;
+  return `\x1b]8;;${uri}\x1b\\${label}\x1b]8;;\x1b\\`;
 }
 
 // Dual-signature truncateToWidth handling lives in tui-fit.ts (shared with the
@@ -1487,9 +1437,9 @@ function osc8(uri: string, label: string): string {
 // the host on over-width lines — #513).
 
 function dedupeByBasename(recs: FileRecord[]): FileRecord[] {
-	const seen = new Map<string, FileRecord>();
-	for (const r of [...recs].sort((a, b) => a.touchedAt - b.touchedAt)) {
-		seen.set(path.basename(r.filePath), r);
-	}
-	return [...seen.values()].sort((a, b) => b.touchedAt - a.touchedAt);
+  const seen = new Map<string, FileRecord>();
+  for (const r of [...recs].sort((a, b) => a.touchedAt - b.touchedAt)) {
+    seen.set(path.basename(r.filePath), r);
+  }
+  return [...seen.values()].sort((a, b) => b.touchedAt - a.touchedAt);
 }

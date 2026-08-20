@@ -11,7 +11,7 @@ message: "{{METHOD}} — remove debug output before committing"
 description: |
   puts/p/pp are for debugging and should not appear in production code.
   Use a proper logger instead.
-  
+
   ✅ FIX:
     Rails.logger.debug("value: #{value}")
     logger.info("Processing complete")
@@ -44,7 +44,7 @@ examples:
       pp result
       result
     end
-  
+
   good: |
     def process(data)
       Rails.logger.debug("Processing: #{data}")

@@ -64,12 +64,7 @@ export class QuotaWarningNotifier {
     if (!state) return true;
 
     // Escalation always notifies immediately (none → warning → high → critical).
-    const severityOrder: RiskSeverity[] = [
-      "none",
-      "warning",
-      "high",
-      "critical",
-    ];
+    const severityOrder: RiskSeverity[] = ["none", "warning", "high", "critical"];
     const currentIndex = severityOrder.indexOf(severity);
     const lastIndex = severityOrder.indexOf(state.lastSeverity);
     return currentIndex > lastIndex;
@@ -126,8 +121,7 @@ export class QuotaWarningNotifier {
     }));
     const windowsToNotify = assessedWindows.filter(
       ({ window, assessment }) =>
-        assessment.severity !== "none" &&
-        this.shouldNotify(window.id, assessment.severity),
+        assessment.severity !== "none" && this.shouldNotify(window.id, assessment.severity),
     );
 
     for (const { window, assessment } of assessedWindows) {
@@ -141,9 +135,7 @@ export class QuotaWarningNotifier {
     const hasCritical = windowsToNotify.some(
       ({ assessment }) => assessment.severity === "critical",
     );
-    const hasHigh = windowsToNotify.some(
-      ({ assessment }) => assessment.severity === "high",
-    );
+    const hasHigh = windowsToNotify.some(({ assessment }) => assessment.severity === "high");
     const notifyLevel = hasCritical || hasHigh ? "error" : "warning";
 
     notify(message, notifyLevel);
@@ -162,9 +154,7 @@ function formatProjectionText(
 
   const horizon = formatProjectionDuration(horizonMs);
   const exhaustion =
-    timeToEmptyMs === null
-      ? ""
-      : `; 100% in ${formatProjectionDuration(timeToEmptyMs)}`;
+    timeToEmptyMs === null ? "" : `; 100% in ${formatProjectionDuration(timeToEmptyMs)}`;
   return `projected ${projectedPercent}% in ${horizon}${exhaustion}`;
 }
 

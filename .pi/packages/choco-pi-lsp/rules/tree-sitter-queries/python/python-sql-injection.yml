@@ -15,12 +15,12 @@ description: |
   Catches:
   - cursor.execute("SELECT " + var) — string concatenation (always unsafe)
   - cursor.execute(dynamic_sql) — variable with NO params arg (could be unsafe)
-  
+
   Suppressed:
   - cursor.execute(query, params) — parameterized query (safe)
   - session.execute(select(...)) — SQLAlchemy ORM (safe by construction)
   - cursor.execute(f"...") — f-string with literal-only interpolation (rare false positive)
-  
+
   ✅ FIX: use placeholders and parameter binding instead of string composition.
 
 query: |
@@ -52,6 +52,6 @@ tags:
 examples:
   bad: |
     cursor.execute("SELECT * FROM users WHERE id = " + user_id)
-  
+
   good: |
     cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))

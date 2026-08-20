@@ -10,14 +10,14 @@ import type { SettingsTab } from "./tabs.ts";
 export type { ConfigSetting } from "./config-items-shared.ts";
 
 export function buildConfigSettings(
-	tab: SettingsTab,
-	config: CodexConversionConfig,
-	theme: Theme,
-	configPath?: string | undefined,
+  tab: SettingsTab,
+  config: CodexConversionConfig,
+  theme: Theme,
+  configPath?: string | undefined,
 ): ConfigSetting[] {
-	if (tab === "adapter") return buildAdapterSettings(config, theme);
-	if (tab === "tools") return buildToolsSettings(config, theme, configPath);
-	if (tab === "openai") return buildOpenAISettings(config, theme);
-	if (tab === "display") return buildDisplaySettings(config);
-	return [];
+  if (tab === "adapter") return buildAdapterSettings(config, theme);
+  if (tab === "tools") return buildToolsSettings(config, theme, configPath);
+  if (tab === "openai") return buildOpenAISettings(config, theme);
+  if (tab === "display") return buildDisplaySettings(config);
+  return [];
 }

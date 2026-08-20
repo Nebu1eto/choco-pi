@@ -75,16 +75,13 @@ import { loadPiLensProjectConfig } from "./project-lsp-config.js";
  */
 export const DEFAULT_PROJECT_SCALE_BASE = 2_000;
 
-const _envBase = lazyEnvNumber(
-	"CHOCO_PI_LSP_MAX_PROJECT_FILES",
-	DEFAULT_PROJECT_SCALE_BASE,
-);
+const _envBase = lazyEnvNumber("CHOCO_PI_LSP_MAX_PROJECT_FILES", DEFAULT_PROJECT_SCALE_BASE);
 
 /** Test-only: clears the memoized `CHOCO_PI_LSP_MAX_PROJECT_FILES` read so a
  * subsequent call re-reads the env var (matching the `_resetForTests`
  * convention used across `env-utils.ts` consumers). */
 export function _resetProjectScaleBaseForTests(): void {
-	_envBase._resetForTests();
+  _envBase._resetForTests();
 }
 
 /**
@@ -97,12 +94,12 @@ export function _resetProjectScaleBaseForTests(): void {
  * (documented per-call-site in each subsystem's own comment).
  */
 export function getProjectScaleBase(cwd?: string): number {
-	if (cwd) {
-		const config = loadPiLensProjectConfig(cwd);
-		const configBase = toPositiveFinite(config.maxProjectFiles);
-		if (configBase > 0) return Math.floor(configBase);
-	}
-	return _envBase.get();
+  if (cwd) {
+    const config = loadPiLensProjectConfig(cwd);
+    const configBase = toPositiveFinite(config.maxProjectFiles);
+    if (configBase > 0) return Math.floor(configBase);
+  }
+  return _envBase.get();
 }
 
 /**
@@ -112,16 +109,16 @@ export function getProjectScaleBase(cwd?: string): number {
  * the single place that encodes the relationship between them.
  */
 export const PROJECT_SCALE_RATIOS = {
-	/** project-diagnostics scanner: files kept. 0.25 * 2,000 = 500. */
-	projectDiagnosticsScanner: 0.25,
-	/** review graph: files kept. 0.5 * 2,000 = 1,000. */
-	reviewGraph: 0.5,
-	/** startup scan: source files counted. 1 * 2,000 = 2,000. */
-	startupScan: 1,
-	/** jscpd: directory entries visited (its own gate, not source-filter's). 3 * 2,000 = 6,000. */
-	jscpd: 3,
-	/** word index: files indexed. 3 * 2,000 = 6,000. */
-	wordIndex: 3,
+  /** project-diagnostics scanner: files kept. 0.25 * 2,000 = 500. */
+  projectDiagnosticsScanner: 0.25,
+  /** review graph: files kept. 0.5 * 2,000 = 1,000. */
+  reviewGraph: 0.5,
+  /** startup scan: source files counted. 1 * 2,000 = 2,000. */
+  startupScan: 1,
+  /** jscpd: directory entries visited (its own gate, not source-filter's). 3 * 2,000 = 6,000. */
+  jscpd: 3,
+  /** word index: files indexed. 3 * 2,000 = 6,000. */
+  wordIndex: 3,
 } as const;
 
 /**
@@ -131,12 +128,12 @@ export const PROJECT_SCALE_RATIOS = {
  * knob).
  */
 export function deriveBudget(ratio: number, cwd?: string): number {
-	return Math.max(1, Math.round(getProjectScaleBase(cwd) * ratio));
+  return Math.max(1, Math.round(getProjectScaleBase(cwd) * ratio));
 }
 
 /** Derived project-diagnostics scanner budget (files). See {@link deriveBudget}. */
 export function getProjectDiagnosticsScannerMaxFiles(cwd?: string): number {
-	return deriveBudget(PROJECT_SCALE_RATIOS.projectDiagnosticsScanner, cwd);
+  return deriveBudget(PROJECT_SCALE_RATIOS.projectDiagnosticsScanner, cwd);
 }
 
 /**
@@ -208,17 +205,15 @@ export const REVIEW_GRAPH_HARD_CEILING = 5_000;
  * independent of `getProjectScaleBase`'s env/config resolution.
  */
 export function taperedReviewGraphMaxFiles(base: number): number {
-	const linearValue = base * PROJECT_SCALE_RATIOS.reviewGraph;
-	if (base <= REVIEW_GRAPH_LINEAR_CEILING_BASE) {
-		return Math.max(1, Math.round(linearValue));
-	}
-	const boundaryValue =
-		REVIEW_GRAPH_LINEAR_CEILING_BASE * PROJECT_SCALE_RATIOS.reviewGraph;
-	const excess = base - REVIEW_GRAPH_LINEAR_CEILING_BASE;
-	const taperedExtra =
-		(REVIEW_GRAPH_HARD_CEILING - boundaryValue) *
-		(excess / (excess + REVIEW_GRAPH_TAPER_SCALE));
-	return Math.max(1, Math.round(boundaryValue + taperedExtra));
+  const linearValue = base * PROJECT_SCALE_RATIOS.reviewGraph;
+  if (base <= REVIEW_GRAPH_LINEAR_CEILING_BASE) {
+    return Math.max(1, Math.round(linearValue));
+  }
+  const boundaryValue = REVIEW_GRAPH_LINEAR_CEILING_BASE * PROJECT_SCALE_RATIOS.reviewGraph;
+  const excess = base - REVIEW_GRAPH_LINEAR_CEILING_BASE;
+  const taperedExtra =
+    (REVIEW_GRAPH_HARD_CEILING - boundaryValue) * (excess / (excess + REVIEW_GRAPH_TAPER_SCALE));
+  return Math.max(1, Math.round(boundaryValue + taperedExtra));
 }
 
 /**
@@ -232,25 +227,25 @@ export function taperedReviewGraphMaxFiles(base: number): number {
  * wins outright, unchanged by this function.
  */
 export function getReviewGraphMaxFilesDerived(cwd?: string): number {
-	if (cwd) {
-		const config = loadPiLensProjectConfig(cwd);
-		const configOverride = config.reviewGraph?.maxFiles;
-		if (configOverride !== undefined) return configOverride;
-	}
-	return taperedReviewGraphMaxFiles(getProjectScaleBase(cwd));
+  if (cwd) {
+    const config = loadPiLensProjectConfig(cwd);
+    const configOverride = config.reviewGraph?.maxFiles;
+    if (configOverride !== undefined) return configOverride;
+  }
+  return taperedReviewGraphMaxFiles(getProjectScaleBase(cwd));
 }
 
 /** Derived startup-scan budget (source files). See {@link deriveBudget}. */
 export function getStartupScanMaxSourceFilesDerived(cwd?: string): number {
-	return deriveBudget(PROJECT_SCALE_RATIOS.startupScan, cwd);
+  return deriveBudget(PROJECT_SCALE_RATIOS.startupScan, cwd);
 }
 
 /** Derived jscpd budget (directory entries). See {@link deriveBudget}. */
 export function getJscpdMaxEntriesDerived(cwd?: string): number {
-	return deriveBudget(PROJECT_SCALE_RATIOS.jscpd, cwd);
+  return deriveBudget(PROJECT_SCALE_RATIOS.jscpd, cwd);
 }
 
 /** Derived word-index budget (files). See {@link deriveBudget}. */
 export function getWordIndexMaxFilesDerived(cwd?: string): number {
-	return deriveBudget(PROJECT_SCALE_RATIOS.wordIndex, cwd);
+  return deriveBudget(PROJECT_SCALE_RATIOS.wordIndex, cwd);
 }

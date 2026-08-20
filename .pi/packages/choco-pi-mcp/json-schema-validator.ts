@@ -11,9 +11,7 @@ import type {
 // ajv-formats types target its bundled ajv; the runtime accepts both instances.
 const addFormats = addFormatsImport as unknown as (instance: Ajv) => void;
 
-type SchemaDialect =
-  | { status: "unstamped" }
-  | { status: "stamped"; uri: string };
+type SchemaDialect = { status: "unstamped" } | { status: "stamped"; uri: string };
 
 const DRAFT_07_SCHEMA_URIS: ReadonlySet<string> = new Set([
   "http://json-schema.org/draft-07/schema",

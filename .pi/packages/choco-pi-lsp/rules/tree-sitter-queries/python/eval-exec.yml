@@ -13,7 +13,7 @@ message: "{{FUNC}}() detected — security risk, code injection vulnerability"
 description: |
   eval() and exec() execute arbitrary Python code and are major
   security vulnerabilities when used with untrusted input.
-  
+
   ✅ ALTERNATIVES:
   - ast.literal_eval() for parsing literals
   - json.loads() for JSON
@@ -38,14 +38,14 @@ examples:
   bad: |
     user_input = "os.system('rm -rf /')"
     eval(user_input)  # DANGEROUS!
-  
+
   good: |
     import ast
     import json
-    
+
     # For literals: use ast.literal_eval
     data = ast.literal_eval("[1, 2, 3]")
-    
+
     # For JSON: use json.loads
     data = json.loads(json_string)
 

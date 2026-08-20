@@ -18,12 +18,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-	type AvailabilityLatch,
-	classifyProbeFailure,
-	createAvailabilityLatch,
-	isTransientDecision,
-	logAvailabilityDecision,
-	startHostStallSampler,
+  type AvailabilityLatch,
+  classifyProbeFailure,
+  createAvailabilityLatch,
+  isTransientDecision,
+  logAvailabilityDecision,
+  startHostStallSampler,
 } from "./dispatch/runners/utils/availability-policy.js";
 import { safeSpawnAsync } from "./safe-spawn.js";
 
@@ -37,13 +37,11 @@ export type NodePackageManager = "npm" | "pnpm" | "yarn" | "bun";
 const PREFERENCE: readonly NodePackageManager[] = ["npm", "pnpm", "yarn", "bun"];
 
 function onWindows(): boolean {
-	return process.platform === "win32";
+  return process.platform === "win32";
 }
 
 function isNodePackageManager(value: string): value is NodePackageManager {
-	return (
-		value === "npm" || value === "pnpm" || value === "yarn" || value === "bun"
-	);
+  return value === "npm" || value === "pnpm" || value === "yarn" || value === "bun";
 }
 
 // ============================================================================
@@ -55,43 +53,39 @@ function isNodePackageManager(value: string): value is NodePackageManager {
  * whether it is installed. Lockfiles win over the corepack `packageManager`
  * field. Returns `undefined` when the project makes no declaration.
  */
-export function detectNodePackageManager(
-	targetPath: string,
-): NodePackageManager | undefined {
-	if (
-		fs.existsSync(path.join(targetPath, "bun.lockb")) ||
-		fs.existsSync(path.join(targetPath, "bun.lock"))
-	) {
-		return "bun";
-	}
-	if (fs.existsSync(path.join(targetPath, "pnpm-lock.yaml"))) {
-		return "pnpm";
-	}
-	if (fs.existsSync(path.join(targetPath, "yarn.lock"))) {
-		return "yarn";
-	}
-	if (fs.existsSync(path.join(targetPath, "package-lock.json"))) {
-		return "npm";
-	}
-	return readPackageManagerField(targetPath);
+export function detectNodePackageManager(targetPath: string): NodePackageManager | undefined {
+  if (
+    fs.existsSync(path.join(targetPath, "bun.lockb")) ||
+    fs.existsSync(path.join(targetPath, "bun.lock"))
+  ) {
+    return "bun";
+  }
+  if (fs.existsSync(path.join(targetPath, "pnpm-lock.yaml"))) {
+    return "pnpm";
+  }
+  if (fs.existsSync(path.join(targetPath, "yarn.lock"))) {
+    return "yarn";
+  }
+  if (fs.existsSync(path.join(targetPath, "package-lock.json"))) {
+    return "npm";
+  }
+  return readPackageManagerField(targetPath);
 }
 
 /** Read the corepack `"packageManager": "pnpm@8.15.0"` field from package.json. */
-function readPackageManagerField(
-	targetPath: string,
-): NodePackageManager | undefined {
-	try {
-		const pkgPath = path.join(targetPath, "package.json");
-		if (!fs.existsSync(pkgPath)) return undefined;
-		const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as {
-			packageManager?: unknown;
-		};
-		if (typeof pkg.packageManager !== "string") return undefined;
-		const name = pkg.packageManager.split("@")[0].trim().toLowerCase();
-		return isNodePackageManager(name) ? name : undefined;
-	} catch {
-		return undefined;
-	}
+function readPackageManagerField(targetPath: string): NodePackageManager | undefined {
+  try {
+    const pkgPath = path.join(targetPath, "package.json");
+    if (!fs.existsSync(pkgPath)) return undefined;
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as {
+      packageManager?: unknown;
+    };
+    if (typeof pkg.packageManager !== "string") return undefined;
+    const name = pkg.packageManager.split("@")[0].trim().toLowerCase();
+    return isNodePackageManager(name) ? name : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // ============================================================================
@@ -118,64 +112,64 @@ const availabilityLatches = new Map<NodePackageManager, AvailabilityLatch>();
 const inFlightProbes = new Map<NodePackageManager, Promise<boolean>>();
 
 function getLatch(pm: NodePackageManager): AvailabilityLatch {
-	let latch = availabilityLatches.get(pm);
-	if (!latch) {
-		latch = createAvailabilityLatch();
-		availabilityLatches.set(pm, latch);
-	}
-	return latch;
+  let latch = availabilityLatches.get(pm);
+  if (!latch) {
+    latch = createAvailabilityLatch();
+    availabilityLatches.set(pm, latch);
+  }
+  return latch;
 }
 
 async function probeAvailability(pm: NodePackageManager): Promise<boolean> {
-	const latch = getLatch(pm);
-	const startedAt = Date.now();
-	const finder = onWindows() ? "where" : "which";
-	const sampler = startHostStallSampler();
-	let result: Awaited<ReturnType<typeof safeSpawnAsync>>;
-	let hostStallMs: number;
-	try {
-		result = await safeSpawnAsync(finder, [pm], { timeout: PROBE_TIMEOUT_MS });
-	} finally {
-		hostStallMs = sampler.stop();
-	}
-	const elapsedMs = Date.now() - startedAt;
+  const latch = getLatch(pm);
+  const startedAt = Date.now();
+  const finder = onWindows() ? "where" : "which";
+  const sampler = startHostStallSampler();
+  let result: Awaited<ReturnType<typeof safeSpawnAsync>>;
+  let hostStallMs: number;
+  try {
+    result = await safeSpawnAsync(finder, [pm], { timeout: PROBE_TIMEOUT_MS });
+  } finally {
+    hostStallMs = sampler.stop();
+  }
+  const elapsedMs = Date.now() - startedAt;
 
-	if (result.status === 0 && !result.error) {
-		latch.noteAvailable();
-		logAvailabilityDecision({
-			tool: pm,
-			verdict: "available",
-			outcome: "success",
-			cause: "ok",
-			elapsedMs,
-			latched: true,
-			hostStallMs,
-			budgetMs: PROBE_TIMEOUT_MS,
-		});
-		return true;
-	}
+  if (result.status === 0 && !result.error) {
+    latch.noteAvailable();
+    logAvailabilityDecision({
+      tool: pm,
+      verdict: "available",
+      outcome: "success",
+      cause: "ok",
+      elapsedMs,
+      latched: true,
+      hostStallMs,
+      budgetMs: PROBE_TIMEOUT_MS,
+    });
+    return true;
+  }
 
-	const { outcome, cause, evidence } = classifyProbeFailure(result, {
-		hostStallMs,
-		// Preserve pre-#1496 meaning for anything the classifier can't place: a
-		// present manager that rejects its probe is durable, same as before.
-		unclassifiedFailureOutcome: "missing",
-	});
-	const retryAfterMs = latch.noteUnavailable(outcome, cause);
-	logAvailabilityDecision({
-		tool: pm,
-		verdict: "unavailable",
-		outcome,
-		cause,
-		elapsedMs,
-		latched: outcome !== "transient",
-		hostStallMs,
-		...(retryAfterMs > 0 && { retryAfterMs }),
-		budgetMs: PROBE_TIMEOUT_MS,
-		classifiedBy: "probe",
-		evidence,
-	});
-	return false;
+  const { outcome, cause, evidence } = classifyProbeFailure(result, {
+    hostStallMs,
+    // Preserve pre-#1496 meaning for anything the classifier can't place: a
+    // present manager that rejects its probe is durable, same as before.
+    unclassifiedFailureOutcome: "missing",
+  });
+  const retryAfterMs = latch.noteUnavailable(outcome, cause);
+  logAvailabilityDecision({
+    tool: pm,
+    verdict: "unavailable",
+    outcome,
+    cause,
+    elapsedMs,
+    latched: outcome !== "transient",
+    hostStallMs,
+    ...(retryAfterMs > 0 && { retryAfterMs }),
+    budgetMs: PROBE_TIMEOUT_MS,
+    classifiedBy: "probe",
+    evidence,
+  });
+  return false;
 }
 
 /**
@@ -193,39 +187,36 @@ async function probeAvailability(pm: NodePackageManager): Promise<boolean> {
  * exactly the boolean-collapse `getToolPath`'s `onTransient` plumbing (#1569)
  * was built to avoid, one layer up.
  */
-function isAvailable(
-	pm: NodePackageManager,
-	onTransient?: () => void,
-): Promise<boolean> {
-	const latch = getLatch(pm);
+function isAvailable(pm: NodePackageManager, onTransient?: () => void): Promise<boolean> {
+  const latch = getLatch(pm);
 
-	const reportIfTransient = (result: boolean): boolean => {
-		if (!result && isTransientDecision({ outcome: latch.getOutcome() })) {
-			onTransient?.();
-		}
-		return result;
-	};
+  const reportIfTransient = (result: boolean): boolean => {
+    if (!result && isTransientDecision({ outcome: latch.getOutcome() })) {
+      onTransient?.();
+    }
+    return result;
+  };
 
-	const memo = latch.read();
-	if (memo !== null) return Promise.resolve(reportIfTransient(memo));
+  const memo = latch.read();
+  if (memo !== null) return Promise.resolve(reportIfTransient(memo));
 
-	// A verdict can now expire, so concurrent callers arriving just after a
-	// cooldown must share ONE probe rather than each spawning their own.
-	const inFlight = inFlightProbes.get(pm);
-	if (inFlight) return inFlight.then(reportIfTransient);
+  // A verdict can now expire, so concurrent callers arriving just after a
+  // cooldown must share ONE probe rather than each spawning their own.
+  const inFlight = inFlightProbes.get(pm);
+  if (inFlight) return inFlight.then(reportIfTransient);
 
-	// #1653 review F1: a probe started before a session reset can settle AFTER
-	// a later session's own probe for the same manager is already in flight.
-	// An unconditional delete-by-key would evict that NEWER entry out from
-	// under it, so a third caller in the gap finds nothing in-flight and
-	// spawns a duplicate. Only remove the entry if it is still THIS call's
-	// promise — the same identity guard `resolveMadge` uses in
-	// dependency-checker.ts for the equivalent race.
-	const probe: Promise<boolean> = probeAvailability(pm).finally(() => {
-		if (inFlightProbes.get(pm) === probe) inFlightProbes.delete(pm);
-	});
-	inFlightProbes.set(pm, probe);
-	return probe.then(reportIfTransient);
+  // #1653 review F1: a probe started before a session reset can settle AFTER
+  // a later session's own probe for the same manager is already in flight.
+  // An unconditional delete-by-key would evict that NEWER entry out from
+  // under it, so a third caller in the gap finds nothing in-flight and
+  // spawns a duplicate. Only remove the entry if it is still THIS call's
+  // promise — the same identity guard `resolveMadge` uses in
+  // dependency-checker.ts for the equivalent race.
+  const probe: Promise<boolean> = probeAvailability(pm).finally(() => {
+    if (inFlightProbes.get(pm) === probe) inFlightProbes.delete(pm);
+  });
+  inFlightProbes.set(pm, probe);
+  return probe.then(reportIfTransient);
 }
 
 /**
@@ -242,8 +233,8 @@ function isAvailable(
  * `resetPsScriptAnalyzerAvailability()`; also used directly by tests.
  */
 export function _resetPackageManagerCache(): void {
-	availabilityLatches.clear();
-	inFlightProbes.clear();
+  availabilityLatches.clear();
+  inFlightProbes.clear();
 }
 
 // ============================================================================
@@ -256,16 +247,16 @@ export function _resetPackageManagerCache(): void {
  * `npm`.
  */
 export async function resolveNodePackageManager(
-	cwd: string = process.cwd(),
+  cwd: string = process.cwd(),
 ): Promise<NodePackageManager> {
-	const declared = detectNodePackageManager(cwd);
-	if (declared && (await isAvailable(declared))) {
-		return declared;
-	}
-	for (const pm of PREFERENCE) {
-		if (await isAvailable(pm)) return pm;
-	}
-	return "npm";
+  const declared = detectNodePackageManager(cwd);
+  if (declared && (await isAvailable(declared))) {
+    return declared;
+  }
+  for (const pm of PREFERENCE) {
+    if (await isAvailable(pm)) return pm;
+  }
+  return "npm";
 }
 
 // ============================================================================
@@ -274,25 +265,25 @@ export async function resolveNodePackageManager(
 
 /** Platform-specific executable name (`.cmd`/`.exe` on Windows). */
 export function pmBinary(pm: NodePackageManager): string {
-	if (!onWindows()) return pm;
-	return pm === "bun" ? "bun.exe" : `${pm}.cmd`;
+  if (!onWindows()) return pm;
+  return pm === "bun" ? "bun.exe" : `${pm}.cmd`;
 }
 
 /** Args to run a package.json script — `run <script>` works for all managers. */
 export function runScriptArgs(script: string): string[] {
-	return ["run", script];
+  return ["run", script];
 }
 
 /** Human-readable "run script" command for display (bare manager name). */
 export function formatRunScript(pm: NodePackageManager, script: string): string {
-	return `${pm} run ${script}`;
+  return `${pm} run ${script}`;
 }
 
 export interface InstallOptions {
-	/** Skip lifecycle scripts (`--ignore-scripts`). */
-	ignoreScripts?: boolean;
-	/** npm-only escape hatch for peer-dep conflicts (`--legacy-peer-deps`). */
-	legacyPeerDeps?: boolean;
+  /** Skip lifecycle scripts (`--ignore-scripts`). */
+  ignoreScripts?: boolean;
+  /** npm-only escape hatch for peer-dep conflicts (`--legacy-peer-deps`). */
+  legacyPeerDeps?: boolean;
 }
 
 /**
@@ -300,15 +291,15 @@ export interface InstallOptions {
  * `--legacy-peer-deps` is npm-only and silently dropped for other managers.
  */
 export function installArgs(
-	pm: NodePackageManager,
-	pkg: string,
-	options: InstallOptions = {},
+  pm: NodePackageManager,
+  pkg: string,
+  options: InstallOptions = {},
 ): string[] {
-	const args = [pm === "npm" ? "install" : "add"];
-	if (options.ignoreScripts) args.push("--ignore-scripts");
-	if (options.legacyPeerDeps && pm === "npm") args.push("--legacy-peer-deps");
-	args.push(pkg);
-	return args;
+  const args = [pm === "npm" ? "install" : "add"];
+  if (options.ignoreScripts) args.push("--ignore-scripts");
+  if (options.legacyPeerDeps && pm === "npm") args.push("--legacy-peer-deps");
+  args.push(pkg);
+  return args;
 }
 
 /**
@@ -323,14 +314,14 @@ export function installArgs(
  * though the declared caret range permitted 28 newer minors (#1730).
  */
 export function updateArgs(
-	pm: NodePackageManager,
-	pkg: string,
-	options: Pick<InstallOptions, "ignoreScripts"> = {},
+  pm: NodePackageManager,
+  pkg: string,
+  options: Pick<InstallOptions, "ignoreScripts"> = {},
 ): string[] {
-	const args = [pm === "yarn" ? "upgrade" : "update"];
-	if (options.ignoreScripts) args.push("--ignore-scripts");
-	args.push(pkg);
-	return args;
+  const args = [pm === "yarn" ? "upgrade" : "update"];
+  if (options.ignoreScripts) args.push("--ignore-scripts");
+  args.push(pkg);
+  return args;
 }
 
 /**
@@ -342,14 +333,14 @@ export function updateArgs(
  * manager's global bin dir.
  */
 export function globalInstallArgs(pm: NodePackageManager, pkg: string): string[] {
-	switch (pm) {
-		case "yarn":
-			return ["global", "add", pkg];
-		case "npm":
-			return ["install", "-g", pkg];
-		default: // pnpm, bun
-			return ["add", "-g", pkg];
-	}
+  switch (pm) {
+    case "yarn":
+      return ["global", "add", pkg];
+    case "npm":
+      return ["install", "-g", pkg];
+    default: // pnpm, bun
+      return ["add", "-g", pkg];
+  }
 }
 
 /**
@@ -357,24 +348,24 @@ export function globalInstallArgs(pm: NodePackageManager, pkg: string): string[]
  * `npx --no <pkg>` equivalent for each manager (`bun x`, `pnpm dlx`, `yarn dlx`).
  */
 export function execArgs(
-	pm: NodePackageManager,
-	pkg: string,
-	args: string[] = [],
+  pm: NodePackageManager,
+  pkg: string,
+  args: string[] = [],
 ): { command: string; args: string[] } {
-	switch (pm) {
-		case "bun":
-			return { command: pmBinary("bun"), args: ["x", pkg, ...args] };
-		case "pnpm":
-			return { command: pmBinary("pnpm"), args: ["dlx", pkg, ...args] };
-		case "yarn":
-			return { command: pmBinary("yarn"), args: ["dlx", pkg, ...args] };
-		default:
-			// --no prevents silently downloading an uncached package.
-			return {
-				command: onWindows() ? "npx.cmd" : "npx",
-				args: ["--no", pkg, ...args],
-			};
-	}
+  switch (pm) {
+    case "bun":
+      return { command: pmBinary("bun"), args: ["x", pkg, ...args] };
+    case "pnpm":
+      return { command: pmBinary("pnpm"), args: ["dlx", pkg, ...args] };
+    case "yarn":
+      return { command: pmBinary("yarn"), args: ["dlx", pkg, ...args] };
+    default:
+      // --no prevents silently downloading an uncached package.
+      return {
+        command: onWindows() ? "npx.cmd" : "npx",
+        args: ["--no", pkg, ...args],
+      };
+  }
 }
 
 // ============================================================================
@@ -383,29 +374,25 @@ export function execArgs(
 
 /** Directories where a given manager installs global binaries. */
 async function globalBinDirsFor(pm: NodePackageManager): Promise<string[]> {
-	if (pm === "bun") {
-		// bun has no per-call query cost — the global bin dir is deterministic.
-		const base = process.env.BUN_INSTALL || path.join(os.homedir(), ".bun");
-		return [path.join(base, "bin")];
-	}
+  if (pm === "bun") {
+    // bun has no per-call query cost — the global bin dir is deterministic.
+    const base = process.env.BUN_INSTALL || path.join(os.homedir(), ".bun");
+    return [path.join(base, "bin")];
+  }
 
-	const query =
-		pm === "npm"
-			? ["config", "get", "prefix"]
-			: pm === "pnpm"
-				? ["bin", "-g"]
-				: ["global", "bin"]; // yarn
-	const res = await safeSpawnAsync(pmBinary(pm), query, { timeout: 5000 });
-	if (res.status !== 0 || res.error) return [];
-	const out = res.stdout.trim();
-	if (!out) return [];
+  const query =
+    pm === "npm" ? ["config", "get", "prefix"] : pm === "pnpm" ? ["bin", "-g"] : ["global", "bin"]; // yarn
+  const res = await safeSpawnAsync(pmBinary(pm), query, { timeout: 5000 });
+  if (res.status !== 0 || res.error) return [];
+  const out = res.stdout.trim();
+  if (!out) return [];
 
-	// npm reports a prefix; binaries live in `<prefix>/bin` on Unix, `<prefix>`
-	// on Windows. pnpm/yarn already print the bin dir directly.
-	if (pm === "npm") {
-		return [onWindows() ? out : path.join(out, "bin")];
-	}
-	return [out];
+  // npm reports a prefix; binaries live in `<prefix>/bin` on Unix, `<prefix>`
+  // on Windows. pnpm/yarn already print the bin dir directly.
+  if (pm === "npm") {
+    return [onWindows() ? out : path.join(out, "bin")];
+  }
+  return [out];
 }
 
 /**
@@ -419,21 +406,19 @@ async function globalBinDirsFor(pm: NodePackageManager): Promise<string[]> {
  * installed" from "couldn't tell", so a caller that persists this result
  * needs the callback to know the answer may be incomplete (#1585).
  */
-export async function allAvailableGlobalBinDirs(
-	onTransient?: () => void,
-): Promise<string[]> {
-	const dirs: string[] = [];
-	const seen = new Set<string>();
-	for (const pm of PREFERENCE) {
-		if (!(await isAvailable(pm, onTransient))) continue;
-		for (const dir of await globalBinDirsFor(pm)) {
-			const normalized = path.resolve(dir);
-			if (seen.has(normalized)) continue;
-			seen.add(normalized);
-			dirs.push(normalized);
-		}
-	}
-	return dirs;
+export async function allAvailableGlobalBinDirs(onTransient?: () => void): Promise<string[]> {
+  const dirs: string[] = [];
+  const seen = new Set<string>();
+  for (const pm of PREFERENCE) {
+    if (!(await isAvailable(pm, onTransient))) continue;
+    for (const dir of await globalBinDirsFor(pm)) {
+      const normalized = path.resolve(dir);
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      dirs.push(normalized);
+    }
+  }
+  return dirs;
 }
 
 /**
@@ -448,24 +433,24 @@ export async function allAvailableGlobalBinDirs(
  * bare name; on Unix just the bare name.
  */
 export async function findGlobalBinary(
-	command: string,
-	windowsExt = ".cmd",
+  command: string,
+  windowsExt = ".cmd",
 ): Promise<string | undefined> {
-	const candidates = onWindows()
-		? [`${command}${windowsExt}`, `${command}.exe`, command]
-		: [command];
-	try {
-		for (const binDir of await allAvailableGlobalBinDirs()) {
-			for (const name of candidates) {
-				const full = path.join(binDir, name);
-				if (fs.existsSync(full)) return full;
-			}
-		}
-	} catch {
-		// Manager probes can fail (missing binary, spawn error) — treat as "not
-		// found" so callers fall through to their next resolution step.
-	}
-	return undefined;
+  const candidates = onWindows()
+    ? [`${command}${windowsExt}`, `${command}.exe`, command]
+    : [command];
+  try {
+    for (const binDir of await allAvailableGlobalBinDirs()) {
+      for (const name of candidates) {
+        const full = path.join(binDir, name);
+        if (fs.existsSync(full)) return full;
+      }
+    }
+  } catch {
+    // Manager probes can fail (missing binary, spawn error) — treat as "not
+    // found" so callers fall through to their next resolution step.
+  }
+  return undefined;
 }
 
 /**
@@ -477,24 +462,24 @@ export async function findGlobalBinary(
  * every run (knip, #1721) needs the filesystem half only.
  */
 export function findLocalBinUpwards(
-	tool: string,
-	startDir: string,
-	windowsExt = ".cmd",
+  tool: string,
+  startDir: string,
+  windowsExt = ".cmd",
 ): string | undefined {
-	const names = onWindows() ? [`${tool}${windowsExt}`, tool] : [tool];
-	let dir = path.resolve(startDir);
-	const root = path.parse(dir).root;
-	while (true) {
-		for (const name of names) {
-			const full = path.join(dir, "node_modules", ".bin", name);
-			if (fs.existsSync(full)) return full;
-		}
-		if (dir === root) break;
-		const parent = path.dirname(dir);
-		if (parent === dir) break;
-		dir = parent;
-	}
-	return undefined;
+  const names = onWindows() ? [`${tool}${windowsExt}`, tool] : [tool];
+  let dir = path.resolve(startDir);
+  const root = path.parse(dir).root;
+  while (true) {
+    for (const name of names) {
+      const full = path.join(dir, "node_modules", ".bin", name);
+      if (fs.existsSync(full)) return full;
+    }
+    if (dir === root) break;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
 }
 
 /**
@@ -509,12 +494,9 @@ export function findLocalBinUpwards(
  * without changing their npx fallback semantics.
  */
 export async function findNodeToolBinary(
-	tool: string,
-	cwd: string,
-	windowsExt = ".cmd",
+  tool: string,
+  cwd: string,
+  windowsExt = ".cmd",
 ): Promise<string | undefined> {
-	return (
-		findLocalBinUpwards(tool, cwd, windowsExt) ??
-		(await findGlobalBinary(tool, windowsExt))
-	);
+  return findLocalBinUpwards(tool, cwd, windowsExt) ?? (await findGlobalBinary(tool, windowsExt));
 }

@@ -14,10 +14,7 @@
 //     `await context.publish({ persist: entry })` (skip when aborted)
 // ---------------------------------------------------------------------------
 
-import type {
-  ModelsStoreEntry,
-  RefreshModelsContext,
-} from "@earendil-works/pi-ai";
+import type { ModelsStoreEntry, RefreshModelsContext } from "@earendil-works/pi-ai";
 
 type LegacyRefreshModelsContext = RefreshModelsContext & {
   store?: {
@@ -38,9 +35,7 @@ export async function readStoredModels(
   return readLegacyStore(context);
 }
 
-function readLegacyStore(
-  context: RefreshModelsContext,
-): Promise<ModelsStoreEntry | undefined> {
+function readLegacyStore(context: RefreshModelsContext): Promise<ModelsStoreEntry | undefined> {
   const legacy = context as LegacyRefreshModelsContext;
   return legacy.store ? legacy.store.read() : Promise.resolve(undefined);
 }

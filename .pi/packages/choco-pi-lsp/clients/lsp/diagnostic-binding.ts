@@ -35,10 +35,10 @@ export type BoundToCurrentDisk = boolean | "unknown";
  * matched the client's last-sent version for that document.
  */
 export interface StoredDiagnosticBinding {
-	/** The `publishDiagnostics.version` the diagnostics were computed against. */
-	version?: number;
-	/** sha256 of the EXACT didOpen/didChange payload text for that version. */
-	contentHash?: string;
+  /** The `publishDiagnostics.version` the diagnostics were computed against. */
+  version?: number;
+  /** sha256 of the EXACT didOpen/didChange payload text for that version. */
+  contentHash?: string;
 }
 
 /**
@@ -73,7 +73,7 @@ export interface StoredDiagnosticBinding {
  *     carry `inconclusive` as an enumerable response field for exactly this reason.
  */
 export interface DiagnosticBinding extends StoredDiagnosticBinding {
-	boundToCurrentDisk: BoundToCurrentDisk;
+  boundToCurrentDisk: BoundToCurrentDisk;
 }
 
 /**
@@ -119,87 +119,84 @@ export interface DiagnosticBinding extends StoredDiagnosticBinding {
  * gates need.
  */
 export interface TouchFileResult {
-	diags: import("./client.js").LSPDiagnostic[];
-	confirmation?: "confirmed" | "partial";
-	inconclusive?: boolean;
-	/**
-	 * #1549: WHICH servers made this touch inconclusive. Present only alongside
-	 * `inconclusive: true`, and only ever naming PRIMARY-role servers — an
-	 * auxiliary that never reported narrows the verdict to `"partial"` via
-	 * {@link touchCoverageGap} instead, so it can never appear here. Empty/absent
-	 * on an inconclusive touch means the attribution could not be derived (a
-	 * client without the per-path publication stamp), which fails closed to the
-	 * pre-#1549 "the touch is inconclusive, cause unattributed" state.
-	 */
-	inconclusiveServerIds?: string[];
-	/**
-	 * #1549: which deadline produced the verdict — the notify write that never
-	 * landed, the diagnostics wait that lapsed, or both. Named so a forensic sweep
-	 * of `latency.log`/`cascade.log` reads the cause instead of inferring it from
-	 * duration histograms.
-	 */
-	inconclusiveReason?: TouchInconclusiveReason;
-	/**
-	 * #1470/#1493: server ids this touch carries NO evidence for. Populated (and
-	 * `confirmation` narrowed to `"partial"`) for every auxiliary that never
-	 * reported — its push wait cut off by the aux grace timer (R8/#714's
-	 * `auxCutOffServerIds`) or settled with nothing published — and that has no
-	 * stored publication for this touch's content either. See
-	 * {@link auxiliaryCoverageGap}, which owns the rule. Absent when every spawned
-	 * server answered for itself.
-	 *
-	 * #1533 extends the same evidence to `clientScope: "all"` — the batch/directory
-	 * scan surface, where auxiliaries are spawned but the grace wait is never
-	 * entered. It derives the outcomes from post-wait state instead of waiting a
-	 * second time, so an `"all"`-scope sweep reports a silent scanner without
-	 * paying back the fan-out latency #1459's resync gate recovered.
-	 *
-	 * #1459 adds the two doors that open BEFORE any wait: a scanner whose circuit
-	 * breaker was open (so it never attached at all) and one whose `didOpen` resync
-	 * the fan-out gate deferred (so it never received this content). Neither used
-	 * to mark the result, which is how a 15 s opengrep cooldown read as a clean
-	 * security verdict for every file a cascade sweep touched inside it. A deferred
-	 * auxiliary reaches {@link auxiliaryCoverageGap} as outcome `"deferred"`, so a
-	 * stored publication whose content hash matches these exact bytes still keeps
-	 * it covered — the same exemption `cut_off` and `silent` get.
-	 */
-	unconfirmedServerIds?: string[];
-	binding?: DiagnosticBinding;
+  diags: import("./client.js").LSPDiagnostic[];
+  confirmation?: "confirmed" | "partial";
+  inconclusive?: boolean;
+  /**
+   * #1549: WHICH servers made this touch inconclusive. Present only alongside
+   * `inconclusive: true`, and only ever naming PRIMARY-role servers — an
+   * auxiliary that never reported narrows the verdict to `"partial"` via
+   * {@link touchCoverageGap} instead, so it can never appear here. Empty/absent
+   * on an inconclusive touch means the attribution could not be derived (a
+   * client without the per-path publication stamp), which fails closed to the
+   * pre-#1549 "the touch is inconclusive, cause unattributed" state.
+   */
+  inconclusiveServerIds?: string[];
+  /**
+   * #1549: which deadline produced the verdict — the notify write that never
+   * landed, the diagnostics wait that lapsed, or both. Named so a forensic sweep
+   * of `latency.log`/`cascade.log` reads the cause instead of inferring it from
+   * duration histograms.
+   */
+  inconclusiveReason?: TouchInconclusiveReason;
+  /**
+   * #1470/#1493: server ids this touch carries NO evidence for. Populated (and
+   * `confirmation` narrowed to `"partial"`) for every auxiliary that never
+   * reported — its push wait cut off by the aux grace timer (R8/#714's
+   * `auxCutOffServerIds`) or settled with nothing published — and that has no
+   * stored publication for this touch's content either. See
+   * {@link auxiliaryCoverageGap}, which owns the rule. Absent when every spawned
+   * server answered for itself.
+   *
+   * #1533 extends the same evidence to `clientScope: "all"` — the batch/directory
+   * scan surface, where auxiliaries are spawned but the grace wait is never
+   * entered. It derives the outcomes from post-wait state instead of waiting a
+   * second time, so an `"all"`-scope sweep reports a silent scanner without
+   * paying back the fan-out latency #1459's resync gate recovered.
+   *
+   * #1459 adds the two doors that open BEFORE any wait: a scanner whose circuit
+   * breaker was open (so it never attached at all) and one whose `didOpen` resync
+   * the fan-out gate deferred (so it never received this content). Neither used
+   * to mark the result, which is how a 15 s opengrep cooldown read as a clean
+   * security verdict for every file a cascade sweep touched inside it. A deferred
+   * auxiliary reaches {@link auxiliaryCoverageGap} as outcome `"deferred"`, so a
+   * stored publication whose content hash matches these exact bytes still keeps
+   * it covered — the same exemption `cut_off` and `silent` get.
+   */
+  unconfirmedServerIds?: string[];
+  binding?: DiagnosticBinding;
 }
 
 /**
  * #1549: which deadline made a touch inconclusive. `"mixed"` means both a
  * primary's notify write and the diagnostics wait lapsed on this touch.
  */
-export type TouchInconclusiveReason =
-	| "notify-write"
-	| "diagnostics-wait"
-	| "mixed";
+export type TouchInconclusiveReason = "notify-write" | "diagnostics-wait" | "mixed";
 
 /** The inputs {@link resolveTouchVerdict} decides a touch's honesty verdict from. */
 export interface TouchVerdictInput {
-	/**
-	 * PRIMARY-role servers whose `didOpen`/`didChange` write did not land inside
-	 * the notify budget (timed out or rejected). Auxiliary write failures are
-	 * deliberately NOT passed here — they are coverage gaps.
-	 */
-	primaryNotifyWriteTimedOutServerIds: readonly string[];
-	/** Did the diagnostics wait lapse in a way attributable to a primary? */
-	diagnosticsTimedOut: boolean;
-	/**
-	 * PRIMARY-role servers that produced no publication evidence for this touch
-	 * when the wait lapsed. May be empty when the attribution is unknowable
-	 * (a client with no per-path publication stamp) — the verdict then still
-	 * stands on `diagnosticsTimedOut`, just unattributed.
-	 */
-	diagnosticsUnansweredServerIds: readonly string[];
+  /**
+   * PRIMARY-role servers whose `didOpen`/`didChange` write did not land inside
+   * the notify budget (timed out or rejected). Auxiliary write failures are
+   * deliberately NOT passed here — they are coverage gaps.
+   */
+  primaryNotifyWriteTimedOutServerIds: readonly string[];
+  /** Did the diagnostics wait lapse in a way attributable to a primary? */
+  diagnosticsTimedOut: boolean;
+  /**
+   * PRIMARY-role servers that produced no publication evidence for this touch
+   * when the wait lapsed. May be empty when the attribution is unknowable
+   * (a client with no per-path publication stamp) — the verdict then still
+   * stands on `diagnosticsTimedOut`, just unattributed.
+   */
+  diagnosticsUnansweredServerIds: readonly string[];
 }
 
 /** The verdict fields {@link resolveTouchVerdict} produces. */
 export interface TouchVerdict {
-	inconclusive: boolean;
-	inconclusiveServerIds?: string[];
-	inconclusiveReason?: TouchInconclusiveReason;
+  inconclusive: boolean;
+  inconclusiveServerIds?: string[];
+  inconclusiveReason?: TouchInconclusiveReason;
 }
 
 /**
@@ -225,25 +222,25 @@ export interface TouchVerdict {
  * `inconclusive` can be audited against, and it is unit-tested directly.
  */
 export function resolveTouchVerdict(input: TouchVerdictInput): TouchVerdict {
-	const notifyIds = [...new Set(input.primaryNotifyWriteTimedOutServerIds)];
-	const waitIds = input.diagnosticsTimedOut
-		? [...new Set(input.diagnosticsUnansweredServerIds)]
-		: [];
-	if (notifyIds.length === 0 && !input.diagnosticsTimedOut) {
-		return { inconclusive: false };
-	}
-	const serverIds = [...new Set([...notifyIds, ...waitIds])];
-	const reason: TouchInconclusiveReason =
-		notifyIds.length > 0 && input.diagnosticsTimedOut
-			? "mixed"
-			: notifyIds.length > 0
-				? "notify-write"
-				: "diagnostics-wait";
-	return {
-		inconclusive: true,
-		...(serverIds.length > 0 && { inconclusiveServerIds: serverIds }),
-		inconclusiveReason: reason,
-	};
+  const notifyIds = [...new Set(input.primaryNotifyWriteTimedOutServerIds)];
+  const waitIds = input.diagnosticsTimedOut
+    ? [...new Set(input.diagnosticsUnansweredServerIds)]
+    : [];
+  if (notifyIds.length === 0 && !input.diagnosticsTimedOut) {
+    return { inconclusive: false };
+  }
+  const serverIds = [...new Set([...notifyIds, ...waitIds])];
+  const reason: TouchInconclusiveReason =
+    notifyIds.length > 0 && input.diagnosticsTimedOut
+      ? "mixed"
+      : notifyIds.length > 0
+        ? "notify-write"
+        : "diagnostics-wait";
+  return {
+    inconclusive: true,
+    ...(serverIds.length > 0 && { inconclusiveServerIds: serverIds }),
+    inconclusiveReason: reason,
+  };
 }
 
 /**
@@ -254,10 +251,8 @@ export function resolveTouchVerdict(input: TouchVerdictInput): TouchVerdict {
  * is outright wrong, because a partially-confirmed touch is deliberately NOT
  * inconclusive: the primary's answer is still trustworthy and must survive.
  */
-export function touchCoverageGap(
-	result: TouchFileResult | undefined,
-): readonly string[] {
-	return result?.unconfirmedServerIds ?? [];
+export function touchCoverageGap(result: TouchFileResult | undefined): readonly string[] {
+  return result?.unconfirmedServerIds ?? [];
 }
 
 /**
@@ -275,10 +270,8 @@ export function touchCoverageGap(
  * pointing the other way. Pair this with {@link touchCoverageGap}, which names
  * what the touch does not speak for.
  */
-export function touchCompletedConfirmationPolicy(
-	result: TouchFileResult | undefined,
-): boolean {
-	return result?.confirmation !== undefined;
+export function touchCompletedConfirmationPolicy(result: TouchFileResult | undefined): boolean {
+  return result?.confirmation !== undefined;
 }
 
 /**
@@ -307,24 +300,20 @@ export function touchCompletedConfirmationPolicy(
  *     scanner that HAD the content and published nothing, which is the whole
  *     subject of #1493 — recording a deferral there would corrupt it.
  */
-export type AuxiliaryWaitOutcome =
-	| "answered"
-	| "silent"
-	| "cut_off"
-	| "deferred";
+export type AuxiliaryWaitOutcome = "answered" | "silent" | "cut_off" | "deferred";
 
 /** One auxiliary's contribution to a touch, as {@link auxiliaryCoverageGap} reads it. */
 export interface AuxiliaryWaitEvidence {
-	serverId: string;
-	outcome: AuxiliaryWaitOutcome;
-	/**
-	 * #1493: independent proof this auxiliary already published for EXACTLY the
-	 * content this touch carries — a stored binding whose `contentHash` equals
-	 * the touch's content hash. Such an auxiliary has reported on this file's
-	 * current bytes, so a wait that produced nothing new withholds nothing.
-	 * Absent/false → this touch has no publication of its own to point at.
-	 */
-	publishedThisContent?: boolean;
+  serverId: string;
+  outcome: AuxiliaryWaitOutcome;
+  /**
+   * #1493: independent proof this auxiliary already published for EXACTLY the
+   * content this touch carries — a stored binding whose `contentHash` equals
+   * the touch's content hash. Such an auxiliary has reported on this file's
+   * current bytes, so a wait that produced nothing new withholds nothing.
+   * Absent/false → this touch has no publication of its own to point at.
+   */
+  publishedThisContent?: boolean;
 }
 
 /**
@@ -362,15 +351,10 @@ export interface AuxiliaryWaitEvidence {
  * depending on which timer happened to win. This stays fail-closed — it
  * un-narrows only against a content-hash match, never against a timer.
  */
-export function auxiliaryCoverageGap(
-	evidence: readonly AuxiliaryWaitEvidence[],
-): string[] {
-	return evidence
-		.filter(
-			(aux) =>
-				aux.outcome !== "answered" && aux.publishedThisContent !== true,
-		)
-		.map((aux) => aux.serverId);
+export function auxiliaryCoverageGap(evidence: readonly AuxiliaryWaitEvidence[]): string[] {
+  return evidence
+    .filter((aux) => aux.outcome !== "answered" && aux.publishedThisContent !== true)
+    .map((aux) => aux.serverId);
 }
 
 /**
@@ -380,7 +364,7 @@ export function auxiliaryCoverageGap(
  * CRLF and BOM bytes identically. See `createDiskBindingCache`.
  */
 export function hashDiagnosticContent(content: string): string {
-	return createHash("sha256").update(content).digest("hex");
+  return createHash("sha256").update(content).digest("hex");
 }
 
 /**
@@ -394,22 +378,20 @@ export function hashDiagnosticContent(content: string): string {
  * primary must not erase the primary's binding, only a real mismatch does.
  */
 export function composeBoundToCurrentDisk(
-	values: readonly BoundToCurrentDisk[],
+  values: readonly BoundToCurrentDisk[],
 ): BoundToCurrentDisk {
-	if (values.some((v) => v === false)) return false;
-	if (values.length === 0 || values.every((v) => v === "unknown")) {
-		return "unknown";
-	}
-	return true;
+  if (values.some((v) => v === false)) return false;
+  if (values.length === 0 || values.every((v) => v === "unknown")) {
+    return "unknown";
+  }
+  return true;
 }
 
 /** One-word summary of a binding verdict for latency/observability logs. */
-export function bindingStateLabel(
-	value: BoundToCurrentDisk,
-): "bound" | "mismatch" | "unknown" {
-	if (value === true) return "bound";
-	if (value === false) return "mismatch";
-	return "unknown";
+export function bindingStateLabel(value: BoundToCurrentDisk): "bound" | "mismatch" | "unknown" {
+  if (value === true) return "bound";
+  if (value === false) return "mismatch";
+  return "unknown";
 }
 
 /**
@@ -426,10 +408,7 @@ export function bindingStateLabel(
  * would make every Windows file spuriously mismatch.
  */
 export interface DiskBindingCache {
-	boundToCurrentDisk(
-		filePath: string,
-		stored: StoredDiagnosticBinding,
-	): BoundToCurrentDisk;
+  boundToCurrentDisk(filePath: string, stored: StoredDiagnosticBinding): BoundToCurrentDisk;
 }
 
 /**
@@ -442,40 +421,40 @@ export interface DiskBindingCache {
 const DISK_BINDING_MEMO_MAX = 4096;
 
 export function createDiskBindingCache(): DiskBindingCache {
-	// #1025: key through PathKeyedMap + normalizeEphemeralMapKey so two forms of
-	// the same path (`SUB\a.ts` vs `sub/a.ts`) can't produce a duplicate memo or a
-	// false miss. Ephemeral (slash-fold + win32-lowercase, no realpath I/O) — the
-	// keys are file paths this process is already stat'ing on the hot read path.
-	const diskHashByPath = new PathKeyedMap<{ mtimeMs: number; hash: string }>(
-		normalizeEphemeralMapKey,
-	);
-	return {
-		boundToCurrentDisk(filePath, stored) {
-			// No fingerprint captured (version-less server) → unknown, never false.
-			if (stored.contentHash === undefined) return "unknown";
-			let mtimeMs: number;
-			try {
-				mtimeMs = fs.statSync(filePath).mtimeMs;
-			} catch {
-				// Can't stat (deleted/unreadable): can't disprove the binding either,
-				// so stay honest — "unknown", never a manufactured false.
-				return "unknown";
-			}
-			let cached = diskHashByPath.get(filePath);
-			if (!cached || cached.mtimeMs !== mtimeMs) {
-				let diskHash: string;
-				try {
-					diskHash = hashDiagnosticContent(fs.readFileSync(filePath, "utf-8"));
-				} catch {
-					return "unknown";
-				}
-				cached = { mtimeMs, hash: diskHash };
-				if (diskHashByPath.size >= DISK_BINDING_MEMO_MAX) {
-					diskHashByPath.clear();
-				}
-				diskHashByPath.set(filePath, cached);
-			}
-			return cached.hash === stored.contentHash;
-		},
-	};
+  // #1025: key through PathKeyedMap + normalizeEphemeralMapKey so two forms of
+  // the same path (`SUB\a.ts` vs `sub/a.ts`) can't produce a duplicate memo or a
+  // false miss. Ephemeral (slash-fold + win32-lowercase, no realpath I/O) — the
+  // keys are file paths this process is already stat'ing on the hot read path.
+  const diskHashByPath = new PathKeyedMap<{ mtimeMs: number; hash: string }>(
+    normalizeEphemeralMapKey,
+  );
+  return {
+    boundToCurrentDisk(filePath, stored) {
+      // No fingerprint captured (version-less server) → unknown, never false.
+      if (stored.contentHash === undefined) return "unknown";
+      let mtimeMs: number;
+      try {
+        mtimeMs = fs.statSync(filePath).mtimeMs;
+      } catch {
+        // Can't stat (deleted/unreadable): can't disprove the binding either,
+        // so stay honest — "unknown", never a manufactured false.
+        return "unknown";
+      }
+      let cached = diskHashByPath.get(filePath);
+      if (!cached || cached.mtimeMs !== mtimeMs) {
+        let diskHash: string;
+        try {
+          diskHash = hashDiagnosticContent(fs.readFileSync(filePath, "utf-8"));
+        } catch {
+          return "unknown";
+        }
+        cached = { mtimeMs, hash: diskHash };
+        if (diskHashByPath.size >= DISK_BINDING_MEMO_MAX) {
+          diskHashByPath.clear();
+        }
+        diskHashByPath.set(filePath, cached);
+      }
+      return cached.hash === stored.contentHash;
+    },
+  };
 }

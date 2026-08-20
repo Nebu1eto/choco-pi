@@ -50,7 +50,8 @@ export function isReservedHandle(handle: string): boolean {
 
 /** Slug of an agent type or name, restricted to the `[\w-]` the grammar allows. */
 export function handleBase(type: string): string {
-  const slug = type.toLowerCase()
+  const slug = type
+    .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, MAX_HANDLE_LENGTH)
@@ -85,7 +86,7 @@ export function resolveHandleToType(handle: string, types: readonly string[]): s
   // A type slugging to a reserved name is unaddressable rather than shadowing
   // it — `assignHandle` refuses that name too, so its instances never hold one.
   if (RESERVED_HANDLES.has(wanted)) return undefined;
-  return types.find(type => handleBase(type) === wanted);
+  return types.find((type) => handleBase(type) === wanted);
 }
 
 /**

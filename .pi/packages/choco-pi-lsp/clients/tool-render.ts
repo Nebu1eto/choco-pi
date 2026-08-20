@@ -39,26 +39,25 @@ import { stripAnsi } from "./sanitize.js";
 import { fitLines } from "./tui-fit.js";
 
 const EMPTY_COMPONENT: Component = {
-	render: () => [],
-	invalidate: () => {},
+  render: () => [],
+  invalidate: () => {},
 };
 
 /** Minimal shape of a tool result — kept structural, mirrors
  * tools/render-compact.ts's CompactResultLike (duplicated per the layering
  * note above, not re-exported). */
 interface CompactLineResultLike {
-	content?: Array<{ type: string; text?: string }>;
-	isError?: boolean;
+  content?: Array<{ type: string; text?: string }>;
+  isError?: boolean;
 }
 
 function fullTextOf(result: CompactLineResultLike): string {
-	return (result.content ?? [])
-		.filter(
-			(c): c is { type: string; text: string } =>
-				c.type === "text" && typeof c.text === "string",
-		)
-		.map((c) => c.text)
-		.join("\n");
+  return (result.content ?? [])
+    .filter(
+      (c): c is { type: string; text: string } => c.type === "text" && typeof c.text === "string",
+    )
+    .map((c) => c.text)
+    .join("\n");
 }
 
 /**
@@ -73,23 +72,19 @@ function fullTextOf(result: CompactLineResultLike): string {
  * portion (`toolTitle`, bold), and the detail portion (`error`/`toolOutput`)
  * are each styled through semantic `Theme.fg` tokens — never a fixed color.
  */
-export function buildCompactToolLine(
-	summaryText: string,
-	isError: boolean,
-	theme: Theme,
-): string {
-	const glyph = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
-	const detailColor = isError ? "error" : "toolOutput";
-	const sepIndex = summaryText.indexOf(" — ");
-	if (sepIndex === -1) {
-		return `${glyph} ${theme.fg(detailColor, summaryText)}`;
-	}
-	const namePart = summaryText.slice(0, sepIndex);
-	const detailPart = summaryText.slice(sepIndex + " — ".length);
-	const styledName = theme.fg("toolTitle", theme.bold(namePart));
-	const styledDash = theme.fg("dim", "—");
-	const styledDetail = theme.fg(detailColor, detailPart);
-	return `${glyph} ${styledName} ${styledDash} ${styledDetail}`;
+export function buildCompactToolLine(summaryText: string, isError: boolean, theme: Theme): string {
+  const glyph = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
+  const detailColor = isError ? "error" : "toolOutput";
+  const sepIndex = summaryText.indexOf(" — ");
+  if (sepIndex === -1) {
+    return `${glyph} ${theme.fg(detailColor, summaryText)}`;
+  }
+  const namePart = summaryText.slice(0, sepIndex);
+  const detailPart = summaryText.slice(sepIndex + " — ".length);
+  const styledName = theme.fg("toolTitle", theme.bold(namePart));
+  const styledDash = theme.fg("dim", "—");
+  const styledDetail = theme.fg(detailColor, detailPart);
+  return `${glyph} ${styledName} ${styledDash} ${styledDetail}`;
 }
 
 /** Render a component at a wide probe width to capture its full text,
@@ -97,12 +92,12 @@ export function buildCompactToolLine(
  * module's own theme tokens rather than carrying over fixed-color escapes
  * (e.g. tools/render-compact.ts's brand-blue). */
 function captureComponentText(component: Component): string {
-	try {
-		const lines = component.render(4096);
-		return stripAnsi(lines.join(" ")).trim();
-	} catch {
-		return "";
-	}
+  try {
+    const lines = component.render(4096);
+    return stripAnsi(lines.join(" ")).trim();
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -114,77 +109,77 @@ function captureComponentText(component: Component): string {
  * function branching on a live flag read per render.
  */
 export function wrapToolForCompactLine<T extends ToolDefinition<any, any, any>>(tool: T): T {
-	const originalRenderResult = tool.renderResult;
-	if (!originalRenderResult) return tool;
-	const originalRenderCall = tool.renderCall;
+  const originalRenderResult = tool.renderResult;
+  if (!originalRenderResult) return tool;
+  const originalRenderCall = tool.renderCall;
 
-	const renderCall: ToolDefinition<any, any, any>["renderCall"] = (args, theme, context) => {
-		// Only blank the call row once a settled (non-partial) result exists —
-		// `renderResult` is about to paint the single combined line. While the
-		// tool is still running/streaming, keep showing the normal call row
-		// (mirrors the host's own createCallFallback) so the UI isn't blank.
-		if (!context.expanded && context.isPartial === false) {
-			return EMPTY_COMPONENT;
-		}
-		if (originalRenderCall) return originalRenderCall(args, theme, context);
-		// Mirrors the host's own createCallFallback exactly: styled `tool.name`
-		// (the registered name, e.g. "diagnostics_report"), not the display label.
-		const line = theme.fg("toolTitle", theme.bold(tool.name));
-		return {
-			render: (width: number) => fitLines([line], width),
-			invalidate: () => {},
-		};
-	};
+  const renderCall: ToolDefinition<any, any, any>["renderCall"] = (args, theme, context) => {
+    // Only blank the call row once a settled (non-partial) result exists —
+    // `renderResult` is about to paint the single combined line. While the
+    // tool is still running/streaming, keep showing the normal call row
+    // (mirrors the host's own createCallFallback) so the UI isn't blank.
+    if (!context.expanded && context.isPartial === false) {
+      return EMPTY_COMPONENT;
+    }
+    if (originalRenderCall) return originalRenderCall(args, theme, context);
+    // Mirrors the host's own createCallFallback exactly: styled `tool.name`
+    // (the registered name, e.g. "diagnostics_report"), not the display label.
+    const line = theme.fg("toolTitle", theme.bold(tool.name));
+    return {
+      render: (width: number) => fitLines([line], width),
+      invalidate: () => {},
+    };
+  };
 
-	const renderResult: ToolDefinition<any, any, any>["renderResult"] = (
-		result,
-		options,
-		theme,
-		context,
-	) => {
-		if (options.expanded) {
-			return originalRenderResult(result, options, theme, context);
-		}
-		let summaryText: string;
-		try {
-			// Probe the tool's OWN collapsed renderer to capture its already-built
-			// summary text; `lastComponent` is cleared so the probe never reuses
-			// (and thereby mutates) the real row's retained component.
-			const probeContext = { ...context, lastComponent: undefined };
-			const component = originalRenderResult(
-				result,
-				{ ...options, expanded: false },
-				theme,
-				probeContext,
-			);
-			summaryText = captureComponentText(component);
-		} catch {
-			summaryText = "";
-		}
-		const resultLike = result as CompactLineResultLike;
-		if (!summaryText) {
-			summaryText = stripAnsi(fullTextOf(resultLike).split("\n")[0] ?? "").trim();
-		}
-		// pi invokes tool renderers with `{ content, details }` -- the failure
-		// bit lives on `context.isError`, not the result (#1341 review). Keep
-		// `result.isError` as a fallback for direct/legacy callers.
-		const contextIsError = (context as { isError?: boolean } | undefined)?.isError;
-		const isError = contextIsError ?? resultLike.isError === true;
-		const line = buildCompactToolLine(summaryText, isError === true, theme);
-		return {
-			render: (width: number) => fitLines([line], width),
-			invalidate: () => {},
-		};
-	};
+  const renderResult: ToolDefinition<any, any, any>["renderResult"] = (
+    result,
+    options,
+    theme,
+    context,
+  ) => {
+    if (options.expanded) {
+      return originalRenderResult(result, options, theme, context);
+    }
+    let summaryText: string;
+    try {
+      // Probe the tool's OWN collapsed renderer to capture its already-built
+      // summary text; `lastComponent` is cleared so the probe never reuses
+      // (and thereby mutates) the real row's retained component.
+      const probeContext = { ...context, lastComponent: undefined };
+      const component = originalRenderResult(
+        result,
+        { ...options, expanded: false },
+        theme,
+        probeContext,
+      );
+      summaryText = captureComponentText(component);
+    } catch {
+      summaryText = "";
+    }
+    const resultLike = result as CompactLineResultLike;
+    if (!summaryText) {
+      summaryText = stripAnsi(fullTextOf(resultLike).split("\n")[0] ?? "").trim();
+    }
+    // pi invokes tool renderers with `{ content, details }` -- the failure
+    // bit lives on `context.isError`, not the result (#1341 review). Keep
+    // `result.isError` as a fallback for direct/legacy callers.
+    const contextIsError = (context as { isError?: boolean } | undefined)?.isError;
+    const isError = contextIsError ?? resultLike.isError === true;
+    const line = buildCompactToolLine(summaryText, isError === true, theme);
+    return {
+      render: (width: number) => fitLines([line], width),
+      invalidate: () => {},
+    };
+  };
 
-	return { ...tool, renderCall, renderResult };
+  return { ...tool, renderCall, renderResult };
 }
 
 /** Wrap every tool in an array — tools without `renderResult` pass through
  * unchanged. Used by index.ts's registerTool loop, only when the
  * `ui.compactToolLine` flag resolved on for this session. */
 export function wrapToolsForCompactLine<T extends ToolDefinition<any, any, any>>(
-	tools: readonly T[],
+  tools: readonly T[],
 ): T[] {
-	return tools.map((tool) => wrapToolForCompactLine(tool));
+  return tools.map((tool) => wrapToolForCompactLine(tool));
 }

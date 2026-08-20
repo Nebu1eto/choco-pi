@@ -209,7 +209,9 @@ export function completionBudgetReport(goal: ThreadGoal | null): string | null {
     parts.push(`time used: ${formatDuration(goal.usage.activeSeconds)}.`);
   }
   if (goal.tokenBudget !== null) {
-    parts.push(`tokens used: ${formatInteger(goal.usage.tokensUsed)} of ${formatInteger(goal.tokenBudget)}.`);
+    parts.push(
+      `tokens used: ${formatInteger(goal.usage.tokensUsed)} of ${formatInteger(goal.tokenBudget)}.`,
+    );
   } else if (goal.usage.tokensUsed > 0) {
     parts.push(`tokens used: ${formatInteger(goal.usage.tokensUsed)}.`);
   }
@@ -217,7 +219,10 @@ export function completionBudgetReport(goal: ThreadGoal | null): string | null {
   return `Goal achieved. Report final budget usage to the user: ${parts.join(" ")}`;
 }
 
-export function goalToolResponse(goal: ThreadGoal | null, includeCompletionBudgetReport = false): GoalToolResponse {
+export function goalToolResponse(
+  goal: ThreadGoal | null,
+  includeCompletionBudgetReport = false,
+): GoalToolResponse {
   return {
     goal: goal ? toToolGoal(goal) : null,
     remainingTokens: remainingTokens(goal),

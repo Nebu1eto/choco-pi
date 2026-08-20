@@ -94,10 +94,7 @@ export function registerQuotasCommand(pi: ExtensionAPI): void {
       if (result === undefined) {
         const fetchResult = await quotasClient.quotas();
         if (!fetchResult.success) {
-          ctx.ui.notify(
-            JSON.stringify({ error: fetchResult.error.message }),
-            "error",
-          );
+          ctx.ui.notify(JSON.stringify({ error: fetchResult.error.message }), "error");
           return;
         }
         ctx.ui.notify(JSON.stringify(fetchResult.data.quotas), "info");

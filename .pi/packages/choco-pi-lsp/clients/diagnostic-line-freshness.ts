@@ -86,24 +86,24 @@ const NEWLINE_SCAN_CHUNK_BYTES = 64 * 1024;
 const NEWLINE_BYTE = 0x0a;
 
 interface LineCountCacheEntry {
-	mtimeMs: number;
-	/**
-	 * Byte size at the time `lineCount` was computed. Required alongside
-	 * `mtimeMs` for a cache HIT (review round V1): mtime resolution on this
-	 * host is coarse enough (~1ms) that two writes in the same tick —
-	 * truncate-then-write, a formatter write-back, a checkout, choco-pi-lsp's own
-	 * auto-format immediately followed by the agent's write — can land on the
-	 * IDENTICAL `mtimeMs` while the content differs. Measured live: 207/300
-	 * shrink/restore cycles served the wrong line count keyed on mtime alone,
-	 * including a first-read-of-cycle returning a stale count for an 11-line
-	 * file. `size` is cheap (already on the same `fs.Stats` the mtime came
-	 * from) and, combined with mtime, makes a same-tick same-size DIFFERENT-
-	 * content collision the only residual gap — astronomically narrower than
-	 * mtime alone, and not the shape any of this gate's real inputs produce
-	 * (a shrink/restore cycle always changes size).
-	 */
-	size: number;
-	lineCount: number;
+  mtimeMs: number;
+  /**
+   * Byte size at the time `lineCount` was computed. Required alongside
+   * `mtimeMs` for a cache HIT (review round V1): mtime resolution on this
+   * host is coarse enough (~1ms) that two writes in the same tick —
+   * truncate-then-write, a formatter write-back, a checkout, choco-pi-lsp's own
+   * auto-format immediately followed by the agent's write — can land on the
+   * IDENTICAL `mtimeMs` while the content differs. Measured live: 207/300
+   * shrink/restore cycles served the wrong line count keyed on mtime alone,
+   * including a first-read-of-cycle returning a stale count for an 11-line
+   * file. `size` is cheap (already on the same `fs.Stats` the mtime came
+   * from) and, combined with mtime, makes a same-tick same-size DIFFERENT-
+   * content collision the only residual gap — astronomically narrower than
+   * mtime alone, and not the shape any of this gate's real inputs produce
+   * (a shrink/restore cycle always changes size).
+   */
+  size: number;
+  lineCount: number;
 }
 
 /**
@@ -117,7 +117,7 @@ export type LineCountCache = Map<string, LineCountCacheEntry>;
 
 /** Test-only isolation seam. Production code uses the shared default cache. */
 export function createLineCountCache(): LineCountCache {
-	return new Map();
+  return new Map();
 }
 
 // Shared across calls/render passes so N files touched once per session cost
@@ -130,24 +130,24 @@ const MAX_SHARED_CACHE_ENTRIES = 512;
 const sharedLineCountCache: LineCountCache = new Map();
 
 function rememberInSharedCache(
-	cache: LineCountCache,
-	filePath: string,
-	entry: LineCountCacheEntry,
+  cache: LineCountCache,
+  filePath: string,
+  entry: LineCountCacheEntry,
 ): void {
-	if (
-		cache === sharedLineCountCache &&
-		cache.size >= MAX_SHARED_CACHE_ENTRIES &&
-		!cache.has(filePath)
-	) {
-		const oldest = cache.keys().next().value;
-		if (oldest !== undefined) cache.delete(oldest);
-	}
-	cache.set(filePath, entry);
+  if (
+    cache === sharedLineCountCache &&
+    cache.size >= MAX_SHARED_CACHE_ENTRIES &&
+    !cache.has(filePath)
+  ) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(filePath, entry);
 }
 
 /** Test-only: drop the shared memo between test files/cases. */
 export function _resetSharedLineCountCacheForTests(): void {
-	sharedLineCountCache.clear();
+  sharedLineCountCache.clear();
 }
 
 /**
@@ -159,10 +159,10 @@ export function _resetSharedLineCountCacheForTests(): void {
  * test is actually verifying.
  */
 export function _seedSharedLineCountCacheForTests(
-	filePath: string,
-	entry: LineCountCacheEntry,
+  filePath: string,
+  entry: LineCountCacheEntry,
 ): void {
-	sharedLineCountCache.set(filePath, entry);
+  sharedLineCountCache.set(filePath, entry);
 }
 
 /**
@@ -174,25 +174,23 @@ export function _seedSharedLineCountCacheForTests(
  * equal `0x0A`).
  */
 function countNewlinesChunked(filePath: string, sizeBytes: number): number {
-	const fd = fs.openSync(filePath, "r");
-	try {
-		const buffer = Buffer.allocUnsafe(
-			Math.min(NEWLINE_SCAN_CHUNK_BYTES, sizeBytes) || 1,
-		);
-		let newlineCount = 0;
-		let position = 0;
-		while (position < sizeBytes) {
-			const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, position);
-			if (bytesRead <= 0) break;
-			for (let i = 0; i < bytesRead; i++) {
-				if (buffer[i] === NEWLINE_BYTE) newlineCount++;
-			}
-			position += bytesRead;
-		}
-		return newlineCount;
-	} finally {
-		fs.closeSync(fd);
-	}
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(Math.min(NEWLINE_SCAN_CHUNK_BYTES, sizeBytes) || 1);
+    let newlineCount = 0;
+    let position = 0;
+    while (position < sizeBytes) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, position);
+      if (bytesRead <= 0) break;
+      for (let i = 0; i < bytesRead; i++) {
+        if (buffer[i] === NEWLINE_BYTE) newlineCount++;
+      }
+      position += bytesRead;
+    }
+    return newlineCount;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /**
@@ -209,52 +207,52 @@ function countNewlinesChunked(filePath: string, sizeBytes: number): number {
  * must-distinguish-clean-from-errored screen).
  */
 export function getCachedLineCount(
-	filePath: string,
-	cache: LineCountCache = sharedLineCountCache,
+  filePath: string,
+  cache: LineCountCache = sharedLineCountCache,
 ): number | undefined {
-	let stat: fs.Stats;
-	try {
-		stat = fs.statSync(filePath);
-	} catch {
-		return undefined;
-	}
-	const cached = cache.get(filePath);
-	if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-		return cached.lineCount;
-	}
-	if (stat.size > MAX_GATE_BYTES) return undefined;
-	let newlineCount: number;
-	try {
-		newlineCount = countNewlinesChunked(filePath, stat.size);
-	} catch {
-		return undefined;
-	}
-	const lineCount = newlineCount + 1;
-	rememberInSharedCache(cache, filePath, {
-		mtimeMs: stat.mtimeMs,
-		size: stat.size,
-		lineCount,
-	});
-	return lineCount;
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    return undefined;
+  }
+  const cached = cache.get(filePath);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.lineCount;
+  }
+  if (stat.size > MAX_GATE_BYTES) return undefined;
+  let newlineCount: number;
+  try {
+    newlineCount = countNewlinesChunked(filePath, stat.size);
+  } catch {
+    return undefined;
+  }
+  const lineCount = newlineCount + 1;
+  rememberInSharedCache(cache, filePath, {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    lineCount,
+  });
+  return lineCount;
 }
 
 /** The minimal shape this gate needs from a rendered diagnostic. */
 export interface PastEofDiagnosticLike {
-	/** 1-based cited line, as stored on `WidgetDiagnostic`. */
-	line?: number;
-	/** Demotion marker, shared with sibling freshness gates. RE-DERIVED on
-	 * every call from the current line count — never trusted as a latch. */
-	stale?: boolean;
-	/** Which gate demoted this entry. This gate owns only "past-eof" (and
-	 * legacy entries with no reason): an entry another gate demoted (e.g.
-	 * #1631's "dependency-drift") is passed through untouched, so re-deriving
-	 * the past-EOF verdict cannot un-demote a sibling gate's finding. */
-	staleReason?: string;
+  /** 1-based cited line, as stored on `WidgetDiagnostic`. */
+  line?: number;
+  /** Demotion marker, shared with sibling freshness gates. RE-DERIVED on
+   * every call from the current line count — never trusted as a latch. */
+  stale?: boolean;
+  /** Which gate demoted this entry. This gate owns only "past-eof" (and
+   * legacy entries with no reason): an entry another gate demoted (e.g.
+   * #1631's "dependency-drift") is passed through untouched, so re-deriving
+   * the past-EOF verdict cannot un-demote a sibling gate's finding. */
+  staleReason?: string;
 }
 
 export interface PastEofGateResult<T> {
-	diagnostics: T[];
-	demotedCount: number;
+  diagnostics: T[];
+  demotedCount: number;
 }
 
 /**
@@ -269,64 +267,60 @@ export interface PastEofGateResult<T> {
  * Never throws, never mutates the input array.
  */
 export function demotePastEofDiagnostics<T extends PastEofDiagnosticLike>(args: {
-	/** Serving surface name as it appears in telemetry, e.g. `"diagnostics_report"`. */
-	store: string;
-	cwd: string;
-	filePath: string;
-	diagnostics: readonly T[];
-	/** Defaults to the shared, mtime-invalidated cache. Inject an isolated one in tests. */
-	lineCountCache?: LineCountCache;
-	resync?: (filePath: string) => void;
+  /** Serving surface name as it appears in telemetry, e.g. `"diagnostics_report"`. */
+  store: string;
+  cwd: string;
+  filePath: string;
+  diagnostics: readonly T[];
+  /** Defaults to the shared, mtime-invalidated cache. Inject an isolated one in tests. */
+  lineCountCache?: LineCountCache;
+  resync?: (filePath: string) => void;
 }): PastEofGateResult<T> {
-	const { diagnostics } = args;
-	if (diagnostics.length === 0) {
-		return { diagnostics: [], demotedCount: 0 };
-	}
-	const lineCount = getCachedLineCount(
-		args.filePath,
-		args.lineCountCache ?? sharedLineCountCache,
-	);
-	if (lineCount === undefined) {
-		// Fail open: no verdict available for this file right now. Leave
-		// whatever `stale` value each entry already carries untouched — this
-		// gate has nothing to say either direction.
-		return { diagnostics: [...diagnostics], demotedCount: 0 };
-	}
-	const risingEdgeLines: number[] = [];
-	const out = diagnostics.map((d) => {
-		// Another gate's demotion is not this gate's to heal (#1631 drift
-		// entries have in-bounds lines; re-deriving here would clear them).
-		if (d.stale && d.staleReason !== undefined && d.staleReason !== "past-eof")
-			return d;
-		const isPastEof = typeof d.line === "number" && d.line > lineCount;
-		if (isPastEof === !!d.stale) return d; // no transition either direction
-		if (isPastEof) risingEdgeLines.push(d.line as number);
-		return { ...d, stale: isPastEof, staleReason: isPastEof ? "past-eof" : undefined };
-	});
-	if (risingEdgeLines.length === 0) {
-		return { diagnostics: out, demotedCount: 0 };
-	}
-	logLatency({
-		type: "phase",
-		phase: "diagnostic_past_eof",
-		filePath: args.cwd,
-		durationMs: 0,
-		metadata: {
-			store: args.store,
-			file: toProjectRelativePath(args.filePath, args.cwd),
-			actualLineCount: lineCount,
-			demotedCount: risingEdgeLines.length,
-			sampleCitedLines: risingEdgeLines.slice(0, MAX_LOGGED_PAST_EOF_LINES),
-		},
-	});
-	if (args.resync) {
-		try {
-			args.resync(args.filePath);
-		} catch {
-			// Best-effort — a resync failure must never fail the render path.
-		}
-	}
-	return { diagnostics: out, demotedCount: risingEdgeLines.length };
+  const { diagnostics } = args;
+  if (diagnostics.length === 0) {
+    return { diagnostics: [], demotedCount: 0 };
+  }
+  const lineCount = getCachedLineCount(args.filePath, args.lineCountCache ?? sharedLineCountCache);
+  if (lineCount === undefined) {
+    // Fail open: no verdict available for this file right now. Leave
+    // whatever `stale` value each entry already carries untouched — this
+    // gate has nothing to say either direction.
+    return { diagnostics: [...diagnostics], demotedCount: 0 };
+  }
+  const risingEdgeLines: number[] = [];
+  const out = diagnostics.map((d) => {
+    // Another gate's demotion is not this gate's to heal (#1631 drift
+    // entries have in-bounds lines; re-deriving here would clear them).
+    if (d.stale && d.staleReason !== undefined && d.staleReason !== "past-eof") return d;
+    const isPastEof = typeof d.line === "number" && d.line > lineCount;
+    if (isPastEof === !!d.stale) return d; // no transition either direction
+    if (isPastEof) risingEdgeLines.push(d.line as number);
+    return { ...d, stale: isPastEof, staleReason: isPastEof ? "past-eof" : undefined };
+  });
+  if (risingEdgeLines.length === 0) {
+    return { diagnostics: out, demotedCount: 0 };
+  }
+  logLatency({
+    type: "phase",
+    phase: "diagnostic_past_eof",
+    filePath: args.cwd,
+    durationMs: 0,
+    metadata: {
+      store: args.store,
+      file: toProjectRelativePath(args.filePath, args.cwd),
+      actualLineCount: lineCount,
+      demotedCount: risingEdgeLines.length,
+      sampleCitedLines: risingEdgeLines.slice(0, MAX_LOGGED_PAST_EOF_LINES),
+    },
+  });
+  if (args.resync) {
+    try {
+      args.resync(args.filePath);
+    } catch {
+      // Best-effort — a resync failure must never fail the render path.
+    }
+  }
+  return { diagnostics: out, demotedCount: risingEdgeLines.length };
 }
 
 /**
@@ -346,17 +340,17 @@ export function demotePastEofDiagnostics<T extends PastEofDiagnosticLike>(args: 
  * silent no-op — the next successful touch/dispatch resyncs anyway.
  */
 export function resyncDocumentOnPastEof(filePath: string): void {
-	void (async () => {
-		try {
-			const [{ getLSPService }, content] = await Promise.all([
-				import("./lsp/index.js"),
-				fs.promises.readFile(filePath, "utf-8"),
-			]);
-			await getLSPService().openFile(filePath, content, {
-				preserveDiagnostics: false,
-			});
-		} catch {
-			// Best-effort heal only.
-		}
-	})();
+  void (async () => {
+    try {
+      const [{ getLSPService }, content] = await Promise.all([
+        import("./lsp/index.js"),
+        fs.promises.readFile(filePath, "utf-8"),
+      ]);
+      await getLSPService().openFile(filePath, content, {
+        preserveDiagnostics: false,
+      });
+    } catch {
+      // Best-effort heal only.
+    }
+  })();
 }

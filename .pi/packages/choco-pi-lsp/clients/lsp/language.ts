@@ -1,8 +1,8 @@
 import path from "node:path";
 import {
-	getLanguageId as getKindLanguageId,
-	KIND_EXTENSIONS,
-	SPECIAL_FILENAMES,
+  getLanguageId as getKindLanguageId,
+  KIND_EXTENSIONS,
+  SPECIAL_FILENAMES,
 } from "../file-kinds.js";
 import { getLspCapableKinds } from "../language-policy.js";
 
@@ -17,199 +17,199 @@ import { getLspCapableKinds } from "../language-policy.js";
 // cxx covers c and cpp), and some servers want a spelling the registry doesn't
 // use ("shellscript", not "shell"). These win over the derived fill-in below.
 const CURATED_LANGUAGE_EXTENSIONS: Record<string, string> = {
-	// JavaScript/TypeScript
-	".ts": "typescript",
-	".tsx": "typescriptreact",
-	".mts": "typescript",
-	".cts": "typescript",
-	".js": "javascript",
-	".jsx": "javascriptreact",
-	".mjs": "javascript",
-	".cjs": "javascript",
-	".svelte": "svelte",
-	".vue": "vue",
-	".astro": "astro",
+  // JavaScript/TypeScript
+  ".ts": "typescript",
+  ".tsx": "typescriptreact",
+  ".mts": "typescript",
+  ".cts": "typescript",
+  ".js": "javascript",
+  ".jsx": "javascriptreact",
+  ".mjs": "javascript",
+  ".cjs": "javascript",
+  ".svelte": "svelte",
+  ".vue": "vue",
+  ".astro": "astro",
 
-	// Python
-	".py": "python",
-	".pyi": "python",
+  // Python
+  ".py": "python",
+  ".pyi": "python",
 
-	// Go
-	".go": "go",
-	".mod": "go",
-	".sum": "go",
+  // Go
+  ".go": "go",
+  ".mod": "go",
+  ".sum": "go",
 
-	// Rust
-	".rs": "rust",
-	".ron": "rust",
+  // Rust
+  ".rs": "rust",
+  ".ron": "rust",
 
-	// C/C++
-	".c": "c",
-	".cpp": "cpp",
-	".cc": "cpp",
-	".cxx": "cpp",
-	".h": "c",
-	".hpp": "cpp",
-	".hh": "cpp",
+  // C/C++
+  ".c": "c",
+  ".cpp": "cpp",
+  ".cc": "cpp",
+  ".cxx": "cpp",
+  ".h": "c",
+  ".hpp": "cpp",
+  ".hh": "cpp",
 
-	// Java
-	".java": "java",
+  // Java
+  ".java": "java",
 
-	// Kotlin
-	".kt": "kotlin",
-	".kts": "kotlin",
+  // Kotlin
+  ".kt": "kotlin",
+  ".kts": "kotlin",
 
-	// Ruby
-	".rb": "ruby",
-	".rake": "ruby",
-	".gemspec": "ruby",
-	".ru": "ruby",
+  // Ruby
+  ".rb": "ruby",
+  ".rake": "ruby",
+  ".gemspec": "ruby",
+  ".ru": "ruby",
 
-	// PHP
-	".php": "php",
+  // PHP
+  ".php": "php",
 
-	// C#
-	".cs": "csharp",
+  // C#
+  ".cs": "csharp",
 
-	// F#
-	".fs": "fsharp",
-	".fsi": "fsharp",
-	".fsx": "fsharp",
+  // F#
+  ".fs": "fsharp",
+  ".fsi": "fsharp",
+  ".fsx": "fsharp",
 
-	// Swift
-	".swift": "swift",
+  // Swift
+  ".swift": "swift",
 
-	// Dart
-	".dart": "dart",
+  // Dart
+  ".dart": "dart",
 
-	// Lua
-	".lua": "lua",
+  // Lua
+  ".lua": "lua",
 
-	// Shell
-	".sh": "shellscript",
-	".bash": "shellscript",
-	".zsh": "shellscript",
-	".fish": "fish",
+  // Shell
+  ".sh": "shellscript",
+  ".bash": "shellscript",
+  ".zsh": "shellscript",
+  ".fish": "fish",
 
-	// CMake
-	".cmake": "cmake",
+  // CMake
+  ".cmake": "cmake",
 
-	// JSON/YAML
-	".json": "json",
-	".jsonc": "jsonc",
-	".yaml": "yaml",
-	".yml": "yaml",
+  // JSON/YAML
+  ".json": "json",
+  ".jsonc": "jsonc",
+  ".yaml": "yaml",
+  ".yml": "yaml",
 
-	// Markdown
-	".md": "markdown",
-	".mdx": "markdown",
+  // Markdown
+  ".md": "markdown",
+  ".mdx": "markdown",
 
-	// CSS
-	".css": "css",
-	".scss": "scss",
-	".sass": "sass",
-	".less": "less",
+  // CSS
+  ".css": "css",
+  ".scss": "scss",
+  ".sass": "sass",
+  ".less": "less",
 
-	// HTML
-	".html": "html",
-	".htm": "html",
+  // HTML
+  ".html": "html",
+  ".htm": "html",
 
-	// SQL
-	".sql": "sql",
+  // SQL
+  ".sql": "sql",
 
-	// Docker
-	".dockerfile": "dockerfile",
+  // Docker
+  ".dockerfile": "dockerfile",
 
-	// Terraform
-	".tf": "terraform",
-	".tfvars": "terraform",
+  // Terraform
+  ".tf": "terraform",
+  ".tfvars": "terraform",
 
-	// Nix
-	".nix": "nix",
+  // Nix
+  ".nix": "nix",
 
-	// Elixir
-	".ex": "elixir",
-	".exs": "elixir",
+  // Elixir
+  ".ex": "elixir",
+  ".exs": "elixir",
 
-	// Haskell
-	".hs": "haskell",
-	".lhs": "haskell",
+  // Haskell
+  ".hs": "haskell",
+  ".lhs": "haskell",
 
-	// OCaml
-	".ml": "ocaml",
-	".mli": "ocaml",
+  // OCaml
+  ".ml": "ocaml",
+  ".mli": "ocaml",
 
-	// Zig
-	".zig": "zig",
-	".zon": "zig",
+  // Zig
+  ".zig": "zig",
+  ".zon": "zig",
 
-	// Gleam
-	".gleam": "gleam",
+  // Gleam
+  ".gleam": "gleam",
 
-	// Clojure
-	".clj": "clojure",
-	".cljs": "clojure",
-	".cljc": "clojure",
-	".edn": "clojure",
+  // Clojure
+  ".clj": "clojure",
+  ".cljs": "clojure",
+  ".cljc": "clojure",
+  ".edn": "clojure",
 
-	// Scala
-	".scala": "scala",
-	".sc": "scala",
+  // Scala
+  ".scala": "scala",
+  ".sc": "scala",
 
-	// R
-	".r": "r",
-	".R": "r",
+  // R
+  ".r": "r",
+  ".R": "r",
 
-	// Julia
-	".jl": "julia",
+  // Julia
+  ".jl": "julia",
 
-	// Perl
-	".pl": "perl",
-	".pm": "perl",
+  // Perl
+  ".pl": "perl",
+  ".pm": "perl",
 
-	// Erlang
-	".erl": "erlang",
-	".hrl": "erlang",
+  // Erlang
+  ".erl": "erlang",
+  ".hrl": "erlang",
 
-	// Fortran
-	".f": "fortran",
-	".f90": "fortran",
-	".f95": "fortran",
+  // Fortran
+  ".f": "fortran",
+  ".f90": "fortran",
+  ".f95": "fortran",
 
-	// COBOL
-	".cob": "cobol",
-	".cbl": "cobol",
+  // COBOL
+  ".cob": "cobol",
+  ".cbl": "cobol",
 
-	// Pascal
-	".pas": "pascal",
-	".pp": "pascal",
+  // Pascal
+  ".pas": "pascal",
+  ".pp": "pascal",
 
-	// Ada
-	".adb": "ada",
-	".ads": "ada",
+  // Ada
+  ".adb": "ada",
+  ".ads": "ada",
 
-	// VHDL/Verilog
-	".vhd": "vhdl",
-	".vhdl": "vhdl",
-	".v": "verilog",
-	".sv": "systemverilog",
+  // VHDL/Verilog
+  ".vhd": "vhdl",
+  ".vhdl": "vhdl",
+  ".v": "verilog",
+  ".sv": "systemverilog",
 
-	// GraphQL
-	".graphql": "graphql",
-	".gql": "graphql",
+  // GraphQL
+  ".graphql": "graphql",
+  ".gql": "graphql",
 
-	// Protocol Buffers
-	".proto": "proto",
+  // Protocol Buffers
+  ".proto": "proto",
 
-	// TOML
-	".toml": "toml",
+  // TOML
+  ".toml": "toml",
 
-	// Prisma
-	".prisma": "prisma",
+  // Prisma
+  ".prisma": "prisma",
 
-	// Typst
-	".typ": "typst",
-	".typc": "typst",
+  // Typst
+  ".typ": "typst",
+  ".typc": "typst",
 } as const;
 
 /**
@@ -223,13 +223,13 @@ const CURATED_LANGUAGE_EXTENSIONS: Record<string, string> = {
  * this seam by being lspCapable.
  */
 export const LANGUAGE_EXTENSIONS: Record<string, string> = (() => {
-	const map: Record<string, string> = { ...CURATED_LANGUAGE_EXTENSIONS };
-	for (const kind of getLspCapableKinds()) {
-		for (const extension of KIND_EXTENSIONS[kind]) {
-			map[extension] ??= getKindLanguageId(kind);
-		}
-	}
-	return map;
+  const map: Record<string, string> = { ...CURATED_LANGUAGE_EXTENSIONS };
+  for (const kind of getLspCapableKinds()) {
+    for (const extension of KIND_EXTENSIONS[kind]) {
+      map[extension] ??= getKindLanguageId(kind);
+    }
+  }
+  return map;
 })();
 
 /**
@@ -241,45 +241,44 @@ export const LANGUAGE_EXTENSIONS: Record<string, string> = (() => {
  * lspCapable kind always resolves a language id here too (#1594).
  */
 const BASENAME_LANGUAGE_PATTERNS: ReadonlyArray<{
-	pattern: RegExp;
-	languageId: string;
+  pattern: RegExp;
+  languageId: string;
 }> = (() => {
-	const lspCapableKinds = new Set(getLspCapableKinds());
-	return SPECIAL_FILENAMES.filter(({ kind }) => lspCapableKinds.has(kind)).map(
-		({ pattern, kind }) => ({
-			pattern,
-			languageId: getKindLanguageId(kind),
-		}),
-	);
+  const lspCapableKinds = new Set(getLspCapableKinds());
+  return SPECIAL_FILENAMES.filter(({ kind }) => lspCapableKinds.has(kind)).map(
+    ({ pattern, kind }) => ({
+      pattern,
+      languageId: getKindLanguageId(kind),
+    }),
+  );
 })();
 
 function getBasenameLanguageId(base: string): string | undefined {
-	return BASENAME_LANGUAGE_PATTERNS.find(({ pattern }) => pattern.test(base))
-		?.languageId;
+  return BASENAME_LANGUAGE_PATTERNS.find(({ pattern }) => pattern.test(base))?.languageId;
 }
 
 /**
  * Get language ID for a file path
  */
 export function getLanguageId(filePath: string): string | undefined {
-	const ext = path.extname(filePath).toLowerCase();
-	if (ext && LANGUAGE_EXTENSIONS[ext]) {
-		return LANGUAGE_EXTENSIONS[ext];
-	}
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext && LANGUAGE_EXTENSIONS[ext]) {
+    return LANGUAGE_EXTENSIONS[ext];
+  }
 
-	const base = path.basename(filePath);
-	return (
-		LANGUAGE_EXTENSIONS[base] ??
-		LANGUAGE_EXTENSIONS[base.toLowerCase()] ??
-		getBasenameLanguageId(base)
-	);
+  const base = path.basename(filePath);
+  return (
+    LANGUAGE_EXTENSIONS[base] ??
+    LANGUAGE_EXTENSIONS[base.toLowerCase()] ??
+    getBasenameLanguageId(base)
+  );
 }
 
 /**
  * Get all extensions for a language ID
  */
 export function getExtensionsForLanguage(languageId: string): string[] {
-	return Object.entries(LANGUAGE_EXTENSIONS)
-		.filter(([, id]) => id === languageId)
-		.map(([ext]) => ext);
+  return Object.entries(LANGUAGE_EXTENSIONS)
+    .filter(([, id]) => id === languageId)
+    .map(([ext]) => ext);
 }

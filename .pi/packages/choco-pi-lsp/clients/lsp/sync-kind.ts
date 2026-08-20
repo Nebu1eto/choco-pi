@@ -24,7 +24,7 @@ export const TEXT_DOCUMENT_SYNC_KIND_FULL: TextDocumentSyncKind = 1;
 export const TEXT_DOCUMENT_SYNC_KIND_INCREMENTAL: TextDocumentSyncKind = 2;
 
 function isSyncKind(value: unknown): value is TextDocumentSyncKind {
-	return value === 0 || value === 1 || value === 2;
+  return value === 0 || value === 1 || value === 2;
 }
 
 /**
@@ -33,18 +33,15 @@ function isSyncKind(value: unknown): value is TextDocumentSyncKind {
  * behavior) when the server omits `textDocumentSync` entirely, or advertises
  * a shape/value this function doesn't recognize.
  */
-export function negotiateSyncKind(
-	serverCapabilities: unknown,
-): TextDocumentSyncKind {
-	const sync = (
-		serverCapabilities as { textDocumentSync?: unknown } | null | undefined
-	)?.textDocumentSync;
-	// Legacy shape: the whole field IS the kind.
-	if (isSyncKind(sync)) return sync;
-	// 3.0+ shape: `TextDocumentSyncOptions.change`.
-	if (sync && typeof sync === "object") {
-		const change = (sync as { change?: unknown }).change;
-		if (isSyncKind(change)) return change;
-	}
-	return TEXT_DOCUMENT_SYNC_KIND_FULL;
+export function negotiateSyncKind(serverCapabilities: unknown): TextDocumentSyncKind {
+  const sync = (serverCapabilities as { textDocumentSync?: unknown } | null | undefined)
+    ?.textDocumentSync;
+  // Legacy shape: the whole field IS the kind.
+  if (isSyncKind(sync)) return sync;
+  // 3.0+ shape: `TextDocumentSyncOptions.change`.
+  if (sync && typeof sync === "object") {
+    const change = (sync as { change?: unknown }).change;
+    if (isSyncKind(change)) return change;
+  }
+  return TEXT_DOCUMENT_SYNC_KIND_FULL;
 }

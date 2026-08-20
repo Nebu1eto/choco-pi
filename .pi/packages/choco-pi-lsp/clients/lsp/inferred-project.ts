@@ -25,9 +25,9 @@
 import * as path from "node:path";
 import type { LSPDiagnostic } from "./client.js";
 import {
-	fetchTsserverProjectIdentity,
-	type TsserverProjectIdentity,
-	type TsserverSyncCapableService,
+  fetchTsserverProjectIdentity,
+  type TsserverProjectIdentity,
+  type TsserverSyncCapableService,
 } from "./tsserver-sync.js";
 import { toProjectRelativePath } from "../path-utils.js";
 import { logLatency } from "../latency-logger.js";
@@ -41,18 +41,18 @@ import { logLatency } from "../latency-logger.js";
  * downstream renderer has to be taught about the demotion separately.
  */
 export const INFERRED_PROJECT_MARKER =
-	"not in any tsconfig project — checked with inferred settings";
+  "not in any tsconfig project — checked with inferred settings";
 
 /** Extensions tsserver owns. A file outside this set never reaches the probe. */
 const TS_PROJECT_EXTENSIONS = new Set([
-	".ts",
-	".tsx",
-	".mts",
-	".cts",
-	".js",
-	".jsx",
-	".mjs",
-	".cjs",
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
 ]);
 
 /**
@@ -64,11 +64,11 @@ const TS_PROJECT_EXTENSIONS = new Set([
 const TYPESCRIPT_DIAGNOSTIC_SOURCES = new Set(["typescript", "ts", "tsserver"]);
 
 export function isTsProjectFile(filePath: string): boolean {
-	return TS_PROJECT_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+  return TS_PROJECT_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
 
 export function isTypeScriptSourcedDiagnostic(d: LSPDiagnostic): boolean {
-	return TYPESCRIPT_DIAGNOSTIC_SOURCES.has((d.source ?? "").toLowerCase());
+  return TYPESCRIPT_DIAGNOSTIC_SOURCES.has((d.source ?? "").toLowerCase());
 }
 
 /**
@@ -79,20 +79,20 @@ export function isTypeScriptSourcedDiagnostic(d: LSPDiagnostic): boolean {
  * there is no containing directory to name.
  */
 export function suggestTsconfigInclude(filePath: string, cwd: string): string {
-	const relative = toProjectRelativePath(filePath, cwd);
-	if (path.posix.isAbsolute(relative) || /^[A-Za-z]:/.test(relative)) {
-		// Outside the project root: name the file's own directory instead of
-		// inventing a root-relative glob that would not match anything.
-		const dir = relative.slice(0, relative.lastIndexOf("/"));
-		return dir ? `${dir}/**` : relative;
-	}
-	const segments = relative.split("/").filter(Boolean);
-	return segments.length > 1 ? `${segments[0]}/**` : relative;
+  const relative = toProjectRelativePath(filePath, cwd);
+  if (path.posix.isAbsolute(relative) || /^[A-Za-z]:/.test(relative)) {
+    // Outside the project root: name the file's own directory instead of
+    // inventing a root-relative glob that would not match anything.
+    const dir = relative.slice(0, relative.lastIndexOf("/"));
+    return dir ? `${dir}/**` : relative;
+  }
+  const segments = relative.split("/").filter(Boolean);
+  return segments.length > 1 ? `${segments[0]}/**` : relative;
 }
 
 /** The full label appended to a demoted diagnostic's message. */
 export function inferredProjectNotice(filePath: string, cwd: string): string {
-	return `[${INFERRED_PROJECT_MARKER}; add ${suggestTsconfigInclude(filePath, cwd)} to a tsconfig for authoritative checking]`;
+  return `[${INFERRED_PROJECT_MARKER}; add ${suggestTsconfigInclude(filePath, cwd)} to a tsconfig for authoritative checking]`;
 }
 
 /**
@@ -104,42 +104,42 @@ export function inferredProjectNotice(filePath: string, cwd: string): string {
  * skip rebuilding their result objects.
  */
 export function applyInferredProjectDemotion(
-	diagnostics: LSPDiagnostic[],
-	filePath: string,
-	cwd: string,
+  diagnostics: LSPDiagnostic[],
+  filePath: string,
+  cwd: string,
 ): LSPDiagnostic[] {
-	if (!diagnostics.some(isDemotableDiagnostic)) return diagnostics;
-	const notice = inferredProjectNotice(filePath, cwd);
-	return diagnostics.map((d) =>
-		isDemotableDiagnostic(d)
-			? { ...d, severity: 2 as const, message: `${d.message} ${notice}` }
-			: d,
-	);
+  if (!diagnostics.some(isDemotableDiagnostic)) return diagnostics;
+  const notice = inferredProjectNotice(filePath, cwd);
+  return diagnostics.map((d) =>
+    isDemotableDiagnostic(d)
+      ? { ...d, severity: 2 as const, message: `${d.message} ${notice}` }
+      : d,
+  );
 }
 
 function isDemotableDiagnostic(d: LSPDiagnostic): boolean {
-	return d.severity === 1 && isTypeScriptSourcedDiagnostic(d);
+  return d.severity === 1 && isTypeScriptSourcedDiagnostic(d);
 }
 
 export interface InferredProjectDemotionOptions {
-	filePath: string;
-	cwd: string;
-	service: TsserverSyncCapableService;
-	/**
-	 * Per-call-batch memo so one sweep probes each file once. Deliberately
-	 * caller-owned and short-lived: a module-level cache would pin turn one's
-	 * verdict for the life of the process, and a tsconfig edit is exactly the
-	 * thing that changes the answer (AGENTS.md process-lifetime-latch screen).
-	 */
-	identityCache?: Map<string, TsserverProjectIdentity | undefined>;
-	/**
-	 * The caller's own abort signal. An already-aborted caller gets no probe:
-	 * the sweep that produced these diagnostics is signal-bounded, so a
-	 * post-abort probe would spend budget nobody is waiting for.
-	 */
-	signal?: AbortSignal;
-	/** Test seam: override the probe. */
-	fetchIdentity?: typeof fetchTsserverProjectIdentity;
+  filePath: string;
+  cwd: string;
+  service: TsserverSyncCapableService;
+  /**
+   * Per-call-batch memo so one sweep probes each file once. Deliberately
+   * caller-owned and short-lived: a module-level cache would pin turn one's
+   * verdict for the life of the process, and a tsconfig edit is exactly the
+   * thing that changes the answer (AGENTS.md process-lifetime-latch screen).
+   */
+  identityCache?: Map<string, TsserverProjectIdentity | undefined>;
+  /**
+   * The caller's own abort signal. An already-aborted caller gets no probe:
+   * the sweep that produced these diagnostics is signal-bounded, so a
+   * post-abort probe would spend budget nobody is waiting for.
+   */
+  signal?: AbortSignal;
+  /** Test seam: override the probe. */
+  fetchIdentity?: typeof fetchTsserverProjectIdentity;
 }
 
 /**
@@ -152,30 +152,30 @@ export interface InferredProjectDemotionOptions {
  * zero extra requests.
  */
 export async function demoteInferredProjectDiagnostics(
-	diagnostics: LSPDiagnostic[],
-	options: InferredProjectDemotionOptions,
+  diagnostics: LSPDiagnostic[],
+  options: InferredProjectDemotionOptions,
 ): Promise<LSPDiagnostic[]> {
-	const { filePath, cwd, service } = options;
-	if (!isTsProjectFile(filePath)) return diagnostics;
-	if (!diagnostics.some(isDemotableDiagnostic)) return diagnostics;
-	if (options.signal?.aborted) return diagnostics;
+  const { filePath, cwd, service } = options;
+  if (!isTsProjectFile(filePath)) return diagnostics;
+  if (!diagnostics.some(isDemotableDiagnostic)) return diagnostics;
+  if (options.signal?.aborted) return diagnostics;
 
-	const fetchIdentity = options.fetchIdentity ?? fetchTsserverProjectIdentity;
-	const cache = options.identityCache;
-	let identity: TsserverProjectIdentity | undefined;
-	if (cache?.has(filePath)) {
-		identity = cache.get(filePath);
-	} else {
-		identity = await fetchIdentity(service, filePath);
-		cache?.set(filePath, identity);
-	}
+  const fetchIdentity = options.fetchIdentity ?? fetchTsserverProjectIdentity;
+  const cache = options.identityCache;
+  let identity: TsserverProjectIdentity | undefined;
+  if (cache?.has(filePath)) {
+    identity = cache.get(filePath);
+  } else {
+    identity = await fetchIdentity(service, filePath);
+    cache?.set(filePath, identity);
+  }
 
-	// `undefined` (probe unavailable/failed) and "unassociated" (tsserver named
-	// no project at all) are both UNKNOWN, not "inferred". Demoting on either
-	// would downgrade real blockers on any server that does not speak the
-	// tsserverRequest escape hatch.
-	if (identity?.projectKind !== "inferred") return diagnostics;
-	return applyInferredProjectDemotion(diagnostics, filePath, cwd);
+  // `undefined` (probe unavailable/failed) and "unassociated" (tsserver named
+  // no project at all) are both UNKNOWN, not "inferred". Demoting on either
+  // would downgrade real blockers on any server that does not speak the
+  // tsserverRequest escape hatch.
+  if (identity?.projectKind !== "inferred") return diagnostics;
+  return applyInferredProjectDemotion(diagnostics, filePath, cwd);
 }
 
 /**
@@ -201,67 +201,70 @@ export const INFERRED_PROJECT_PROBE_BUDGET = 300;
  * an abort would spend budget on an answer nobody will read (#1645 review F1).
  */
 export async function demoteInferredProjectSweepResults<
-	T extends { filePath: string; diagnostics?: LSPDiagnostic[] },
+  T extends { filePath: string; diagnostics?: LSPDiagnostic[] },
 >(
-	results: T[],
-	cwd: string,
-	service: TsserverSyncCapableService,
-	signal?: AbortSignal,
+  results: T[],
+  cwd: string,
+  service: TsserverSyncCapableService,
+  signal?: AbortSignal,
 ): Promise<T[]> {
-	if (typeof service?.executeReadOnlyCommandOnLiveClient !== "function") {
-		return results;
-	}
-	const startedAt = Date.now();
-	const identityCache = new Map<string, TsserverProjectIdentity | undefined>();
-	const out: T[] = [];
-	let demotedFiles = 0;
-	let demotedDiagnostics = 0;
-	let budgetExhausted = false;
-	let aborted = false;
-	for (const result of results) {
-		const diagnostics = result.diagnostics ?? [];
-		if (signal?.aborted) {
-			// Carry the remaining results through UNCHANGED rather than dropping
-			// them — an abort must cost the demotion, never a finding.
-			aborted = true;
-			out.push(result);
-			continue;
-		}
-		if (identityCache.size >= INFERRED_PROJECT_PROBE_BUDGET && !identityCache.has(result.filePath)) {
-			budgetExhausted = true;
-			out.push(result);
-			continue;
-		}
-		const demoted = await demoteInferredProjectDiagnostics(diagnostics, {
-			filePath: result.filePath,
-			cwd,
-			service,
-			identityCache,
-			signal,
-		});
-		if (demoted === diagnostics) {
-			out.push(result);
-			continue;
-		}
-		demotedFiles += 1;
-		demotedDiagnostics += demoted.filter((d, i) => d !== diagnostics[i]).length;
-		out.push({ ...result, diagnostics: demoted });
-	}
-	if (demotedFiles > 0 || budgetExhausted || aborted) {
-		logLatency({
-			type: "phase",
-			phase: "lsp_inferred_project_demote",
-			filePath: cwd,
-			durationMs: Date.now() - startedAt,
-			metadata: {
-				filesConsidered: results.length,
-				filesProbed: identityCache.size,
-				demotedFiles,
-				demotedDiagnostics,
-				budgetExhausted,
-				aborted,
-			},
-		});
-	}
-	return out;
+  if (typeof service?.executeReadOnlyCommandOnLiveClient !== "function") {
+    return results;
+  }
+  const startedAt = Date.now();
+  const identityCache = new Map<string, TsserverProjectIdentity | undefined>();
+  const out: T[] = [];
+  let demotedFiles = 0;
+  let demotedDiagnostics = 0;
+  let budgetExhausted = false;
+  let aborted = false;
+  for (const result of results) {
+    const diagnostics = result.diagnostics ?? [];
+    if (signal?.aborted) {
+      // Carry the remaining results through UNCHANGED rather than dropping
+      // them — an abort must cost the demotion, never a finding.
+      aborted = true;
+      out.push(result);
+      continue;
+    }
+    if (
+      identityCache.size >= INFERRED_PROJECT_PROBE_BUDGET &&
+      !identityCache.has(result.filePath)
+    ) {
+      budgetExhausted = true;
+      out.push(result);
+      continue;
+    }
+    const demoted = await demoteInferredProjectDiagnostics(diagnostics, {
+      filePath: result.filePath,
+      cwd,
+      service,
+      identityCache,
+      signal,
+    });
+    if (demoted === diagnostics) {
+      out.push(result);
+      continue;
+    }
+    demotedFiles += 1;
+    demotedDiagnostics += demoted.filter((d, i) => d !== diagnostics[i]).length;
+    out.push({ ...result, diagnostics: demoted });
+  }
+  if (demotedFiles > 0 || budgetExhausted || aborted) {
+    logLatency({
+      type: "phase",
+      phase: "lsp_inferred_project_demote",
+      filePath: cwd,
+      durationMs: Date.now() - startedAt,
+      metadata: {
+        filesConsidered: results.length,
+        filesProbed: identityCache.size,
+        demotedFiles,
+        demotedDiagnostics,
+        budgetExhausted,
+        aborted,
+      },
+    });
+  }
+  return out;
 }

@@ -31,21 +31,21 @@ import { promises as fsPromises } from "node:fs";
  * it. `onError` itself is never allowed to throw the failure back out.
  */
 export function readJsonCache<T>(
-	path: string,
-	validate: (parsed: unknown) => T | undefined,
-	onError?: (err: unknown) => void,
+  path: string,
+  validate: (parsed: unknown) => T | undefined,
+  onError?: (err: unknown) => void,
 ): T | undefined {
-	try {
-		const parsed = JSON.parse(fs.readFileSync(path, "utf-8")) as unknown;
-		return validate(parsed);
-	} catch (err) {
-		try {
-			onError?.(err);
-		} catch {
-			/* onError must never mask the original fail-open behavior */
-		}
-		return undefined;
-	}
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path, "utf-8")) as unknown;
+    return validate(parsed);
+  } catch (err) {
+    try {
+      onError?.(err);
+    } catch {
+      /* onError must never mask the original fail-open behavior */
+    }
+    return undefined;
+  }
 }
 
 /**
@@ -53,20 +53,20 @@ export function readJsonCache<T>(
  * `fs.promises` API (e.g. `session-state-store.ts`). Same fail-open contract.
  */
 export async function readJsonCacheAsync<T>(
-	path: string,
-	validate: (parsed: unknown) => T | undefined,
-	onError?: (err: unknown) => void,
+  path: string,
+  validate: (parsed: unknown) => T | undefined,
+  onError?: (err: unknown) => void,
 ): Promise<T | undefined> {
-	try {
-		const raw = await fsPromises.readFile(path, "utf-8");
-		const parsed = JSON.parse(raw) as unknown;
-		return validate(parsed);
-	} catch (err) {
-		try {
-			onError?.(err);
-		} catch {
-			/* onError must never mask the original fail-open behavior */
-		}
-		return undefined;
-	}
+  try {
+    const raw = await fsPromises.readFile(path, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    return validate(parsed);
+  } catch (err) {
+    try {
+      onError?.(err);
+    } catch {
+      /* onError must never mask the original fail-open behavior */
+    }
+    return undefined;
+  }
 }

@@ -30,9 +30,7 @@ const RollingFiveHourLimitSchema = Type.Object({
  * Synthetic subscription accounts expose at least one subscription quota
  * window. PAYG accounts return an empty quota object or legacy tool windows.
  */
-export function detectBillingMode(
-  quotas: QuotasResponse | undefined,
-): BillingMode {
+export function detectBillingMode(quotas: QuotasResponse | undefined): BillingMode {
   return Value.Check(SubscriptionQuotaSchema, quotas?.subscription) ||
     Value.Check(WeeklyTokenLimitSchema, quotas?.weeklyTokenLimit) ||
     Value.Check(RollingFiveHourLimitSchema, quotas?.rollingFiveHourLimit)

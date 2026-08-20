@@ -9,7 +9,13 @@ export const UI_STREAM_STRUCTURED_CONTENT_KEY = "pi-mcp-adapter/stream";
 export const uiStreamModeSchema = z.enum(["eager", "stream-first"]);
 export type UiStreamMode = z.infer<typeof uiStreamModeSchema>;
 
-export const visualizationStreamPhaseSchema = z.enum(["shell", "narrative", "structure", "detail", "settled"]);
+export const visualizationStreamPhaseSchema = z.enum([
+  "shell",
+  "narrative",
+  "structure",
+  "detail",
+  "settled",
+]);
 export type VisualizationStreamPhase = z.infer<typeof visualizationStreamPhaseSchema>;
 
 export const visualizationStreamFrameTypeSchema = z.enum(["patch", "checkpoint", "final"]);
@@ -41,12 +47,14 @@ export const visualizationStreamEnvelopeSchema = z.object({
 });
 export type VisualizationStreamEnvelope = z.infer<typeof visualizationStreamEnvelopeSchema>;
 
-export const uiStreamCallToolResultSchema = z.object({
-  content: looseArraySchema.optional(),
-  structuredContent: looseRecordSchema.optional(),
-  isError: z.boolean().optional(),
-  _meta: looseRecordSchema.optional(),
-}).passthrough();
+export const uiStreamCallToolResultSchema = z
+  .object({
+    content: looseArraySchema.optional(),
+    structuredContent: looseRecordSchema.optional(),
+    isError: z.boolean().optional(),
+    _meta: looseRecordSchema.optional(),
+  })
+  .passthrough();
 export type UiStreamCallToolResult = z.infer<typeof uiStreamCallToolResultSchema>;
 
 export const uiStreamResultPatchNotificationSchema = z.object({
@@ -62,7 +70,9 @@ export const serverStreamResultPatchNotificationSchema = z.object({
     result: uiStreamCallToolResultSchema,
   }),
 });
-export type ServerStreamResultPatchNotification = z.infer<typeof serverStreamResultPatchNotificationSchema>;
+export type ServerStreamResultPatchNotification = z.infer<
+  typeof serverStreamResultPatchNotificationSchema
+>;
 
 export interface UiStreamSummary {
   streamId: string;
@@ -73,17 +83,27 @@ export interface UiStreamSummary {
   lastMessage?: string;
 }
 
-export function getUiStreamHostContext(hostContext: Record<string, unknown> | undefined): UiStreamHostContext | undefined {
+export function getUiStreamHostContext(
+  hostContext: Record<string, unknown> | undefined,
+): UiStreamHostContext | undefined {
   const candidate = hostContext?.[UI_STREAM_HOST_CONTEXT_KEY];
   const parsed = uiStreamHostContextSchema.safeParse(candidate);
   return parsed.success ? parsed.data : undefined;
 }
 
-export function getVisualizationStreamEnvelope(structuredContent: unknown): VisualizationStreamEnvelope | undefined {
-  if (!structuredContent || typeof structuredContent !== "object" || Array.isArray(structuredContent)) {
+export function getVisualizationStreamEnvelope(
+  structuredContent: unknown,
+): VisualizationStreamEnvelope | undefined {
+  if (
+    !structuredContent ||
+    typeof structuredContent !== "object" ||
+    Array.isArray(structuredContent)
+  ) {
     return undefined;
   }
-  const candidate = (structuredContent as Record<string, unknown>)[UI_STREAM_STRUCTURED_CONTENT_KEY];
+  const candidate = (structuredContent as Record<string, unknown>)[
+    UI_STREAM_STRUCTURED_CONTENT_KEY
+  ];
   const parsed = visualizationStreamEnvelopeSchema.safeParse(candidate);
   return parsed.success ? parsed.data : undefined;
 }

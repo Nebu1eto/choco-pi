@@ -11,13 +11,13 @@ valid:
             data = f.read()
     except OSError:
         return None
-  - 'CONSTANT = 42'
+  - "CONSTANT = 42"
 invalid:
-  - 'data = json.loads(raw)'
-  - 'f = open(path)'
-  - 'os.remove(path)'
-  - 'os.stat(path)'
-  - 'shutil.rmtree(path)'
+  - "data = json.loads(raw)"
+  - "f = open(path)"
+  - "os.remove(path)"
+  - "os.stat(path)"
+  - "shutil.rmtree(path)"
   - 'int("42")'
   - 'float("3.14")'
-  - 'int(user_input)'
+  - "int(user_input)"

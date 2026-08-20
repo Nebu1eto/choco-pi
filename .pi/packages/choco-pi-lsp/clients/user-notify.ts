@@ -28,24 +28,20 @@ let notifierGetter: (() => UserNotifier | undefined) | undefined;
 
 /** Called once from the extension entry with a getter over the live `ctx.ui.notify`. */
 export function wireUserNotifier(
-	portsOrGetter:
-		| import("./host-ports.js").HostPorts
-		| (() => UserNotifier | undefined),
+  portsOrGetter: import("./host-ports.js").HostPorts | (() => UserNotifier | undefined),
 ): void {
-	notifierGetter =
-		typeof portsOrGetter === "function"
-			? portsOrGetter
-			: () => portsOrGetter.notify.user;
+  notifierGetter =
+    typeof portsOrGetter === "function" ? portsOrGetter : () => portsOrGetter.notify.user;
 }
 
 /** Test/teardown-only: drop the wired host. */
 export function resetUserNotifier(): void {
-	notifierGetter = undefined;
+  notifierGetter = undefined;
 }
 
 /** True when a host render path is available (for callers that want to branch). */
 export function hasUserNotifier(): boolean {
-	return notifierGetter !== undefined;
+  return notifierGetter !== undefined;
 }
 
 /**
@@ -53,14 +49,11 @@ export function hasUserNotifier(): boolean {
  * `ctx` after a session replacement must degrade to a no-op, not break the
  * diagnostic path that called it.
  */
-export function notifyUserDegradation(
-	message: string,
-	level: UserNotifyLevel = "warning",
-): void {
-	try {
-		const notify = notifierGetter?.();
-		notify?.(message, level);
-	} catch {
-		// The ndjson sink already holds this message; a dead host is not an error.
-	}
+export function notifyUserDegradation(message: string, level: UserNotifyLevel = "warning"): void {
+  try {
+    const notify = notifierGetter?.();
+    notify?.(message, level);
+  } catch {
+    // The ndjson sink already holds this message; a dead host is not an error.
+  }
 }

@@ -8,37 +8,33 @@
  * only during full scans (blockingOnly === false).
  */
 
-import type {
-	DispatchContext,
-	RunnerDefinition,
-	RunnerResult,
-} from "../types.js";
+import type { DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
 import { PRIORITY } from "../priorities.js";
 import { evaluateRules } from "../fact-rule-runner.js";
 
 const factRulesRunner: RunnerDefinition = {
-	id: "fact-rules",
-	appliesTo: ["jsts", "python", "go", "rust", "ruby", "shell", "cmake"],
-	priority: PRIORITY.GENERAL_ANALYSIS + 1,
-	enabledByDefault: true,
+  id: "fact-rules",
+  appliesTo: ["jsts", "python", "go", "rust", "ruby", "shell", "cmake"],
+  priority: PRIORITY.GENERAL_ANALYSIS + 1,
+  enabledByDefault: true,
 
-	async run(ctx: DispatchContext): Promise<RunnerResult> {
-		const diagnostics = evaluateRules(ctx);
+  async run(ctx: DispatchContext): Promise<RunnerResult> {
+    const diagnostics = evaluateRules(ctx);
 
-		if (diagnostics.length === 0) {
-			return { status: "succeeded", diagnostics: [], semantic: "none" };
-		}
+    if (diagnostics.length === 0) {
+      return { status: "succeeded", diagnostics: [], semantic: "none" };
+    }
 
-		const hasBlocking = diagnostics.some(
-			(d) => d.semantic === "blocking" || d.severity === "error",
-		);
+    const hasBlocking = diagnostics.some(
+      (d) => d.semantic === "blocking" || d.severity === "error",
+    );
 
-		return {
-			status: hasBlocking ? "failed" : "succeeded",
-			diagnostics,
-			semantic: hasBlocking ? "blocking" : "warning",
-		};
-	},
+    return {
+      status: hasBlocking ? "failed" : "succeeded",
+      diagnostics,
+      semantic: hasBlocking ? "blocking" : "warning",
+    };
+  },
 };
 
 export default factRulesRunner;

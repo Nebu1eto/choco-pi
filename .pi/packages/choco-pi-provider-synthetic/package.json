@@ -1,32 +1,16 @@
 {
   "name": "choco-pi-provider-synthetic",
   "version": "0.1.0",
-  "license": "MIT",
-  "type": "module",
   "private": false,
   "keywords": [
-    "pi-package",
+    "pi",
     "pi-extension",
-    "pi"
+    "pi-package"
   ],
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/aliou/pi-synthetic"
-  },
-  "pi": {
-    "extensions": [
-      "./extensions/provider/index.ts",
-      "./extensions/web-search/index.ts",
-      "./extensions/command-quotas/index.ts",
-      "./extensions/sub-bar-integration/index.ts",
-      "./extensions/quota-warnings/index.ts",
-      "./extensions/usage-status/index.ts"
-    ],
-    "video": "https://assets.aliou.me/github/aliou/pi-synthetic/demo.mp4",
-    "image": "https://assets.aliou.me/github/aliou/pi-synthetic/banner.png"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "files": [
     "src",
@@ -35,11 +19,9 @@
     "!src/**/*.test.ts",
     "!extensions/**/*.test.ts"
   ],
-  "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.80.8",
-    "@earendil-works/pi-coding-agent": ">=0.80.8",
-    "@earendil-works/pi-tui": ">=0.80.8",
-    "typebox": "*"
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -71,11 +53,11 @@
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },
-  "pnpm": {
-    "overrides": {
-      "@earendil-works/pi-ai": "$@earendil-works/pi-coding-agent",
-      "@earendil-works/pi-tui": "$@earendil-works/pi-coding-agent"
-    }
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.80.8",
+    "@earendil-works/pi-coding-agent": ">=0.80.8",
+    "@earendil-works/pi-tui": ">=0.80.8",
+    "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {
@@ -91,5 +73,23 @@
       "optional": true
     }
   },
-  "packageManager": "pnpm@10.26.1"
+  "packageManager": "pnpm@10.26.1",
+  "pnpm": {
+    "overrides": {
+      "@earendil-works/pi-ai": "$@earendil-works/pi-coding-agent",
+      "@earendil-works/pi-tui": "$@earendil-works/pi-coding-agent"
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/provider/index.ts",
+      "./extensions/web-search/index.ts",
+      "./extensions/command-quotas/index.ts",
+      "./extensions/sub-bar-integration/index.ts",
+      "./extensions/quota-warnings/index.ts",
+      "./extensions/usage-status/index.ts"
+    ],
+    "video": "https://assets.aliou.me/github/aliou/pi-synthetic/demo.mp4",
+    "image": "https://assets.aliou.me/github/aliou/pi-synthetic/banner.png"
+  }
 }

@@ -1,12 +1,5 @@
 import { existsSync } from "node:fs";
-import {
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,9 +12,7 @@ const tempDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    tempDirectories
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
+    tempDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
 });
 
@@ -129,9 +120,7 @@ describe("QuotaHistory", () => {
     await quotaHistory.initialize();
 
     expect(quotaHistory.getSnapshots()).toHaveLength(1);
-    expect(
-      quotaHistory.getSnapshots()[0].quotas.weeklyTokenLimit?.remainingCredits,
-    ).toBe("$8.00");
+    expect(quotaHistory.getSnapshots()[0].quotas.weeklyTokenLimit?.remainingCredits).toBe("$8.00");
   });
 
   it("prunes files outside the retention window", async () => {
@@ -193,8 +182,6 @@ describe("QuotaHistory", () => {
         return contents.byteLength;
       }),
     );
-    expect(sizes.reduce((total, size) => total + size, 0)).toBeLessThanOrEqual(
-      700,
-    );
+    expect(sizes.reduce((total, size) => total + size, 0)).toBeLessThanOrEqual(700);
   });
 });

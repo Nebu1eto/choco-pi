@@ -39,33 +39,33 @@ Git으로 추적하는 [`.pi/zentui.json`](.pi/zentui.json)은 입력창의 모�
 
 ## 제공 기능
 
-| 영역 | 동작 |
-|---|---|
-| 운용 규칙 | [`.pi/SYSTEM.md`](.pi/SYSTEM.md)로 Pi 기본 프롬프트를 교체하고 매 turn 실제 `provider/model`을 주입 |
-| 프로젝트 인식 | 시작 시 루트 지침을 읽고, 하위 경로에 접근할 때 해당 경로의 `AGENTS.md`를 추가 적용 |
-| 글쓰기 | 별도 스킬 호출 없이 일반 답변과 작성 문서에 저장소 글쓰기 정책 적용 |
-| 작업 절차 | 직접 구현, 병렬 구현, 핫픽스, 리뷰, 환경 점검, 로컬 커밋 절차 제공 |
-| 에이전트 | 모델을 고정하지 않은 `general`, `planner`, `implementer`, `reviewer`, `handoff` 역할 제공 |
-| 독립 대화 | Pi 대화를 생성·조회·대기하고 queue·steer로 상호 제어 |
-| 문맥 관리 | 모델별 soft cap, 도구 지연 로딩, `/context` 사용량 분석과 OpenAI Responses 서버 컴팩션 지원 |
-| 공급자 | OpenAI Codex OAuth, Anthropic OAuth, Synthetic, 자동 discovery 방식 Callstack Apex 지원 |
-| 도구 | BM25 `tool_search`, MCP, Synthetic 웹 검색, LSP 진단, 전역 skill을 통한 브라우저 자동화, goal, 사이드 대화 추가 |
-| 인터페이스 | `nord-dark`, `choco-pi-ui`, 공급자 usage, effort 제어와 익숙한 세션 별칭 적용 |
+| 영역          | 동작                                                                                                            |
+| ------------- | --------------------------------------------------------------------------------------------------------------- |
+| 운용 규칙     | [`.pi/SYSTEM.md`](.pi/SYSTEM.md)로 Pi 기본 프롬프트를 교체하고 매 turn 실제 `provider/model`을 주입             |
+| 프로젝트 인식 | 시작 시 루트 지침을 읽고, 하위 경로에 접근할 때 해당 경로의 `AGENTS.md`를 추가 적용                             |
+| 글쓰기        | 별도 스킬 호출 없이 일반 답변과 작성 문서에 저장소 글쓰기 정책 적용                                             |
+| 작업 절차     | 직접 구현, 병렬 구현, 핫픽스, 리뷰, 환경 점검, 로컬 커밋 절차 제공                                              |
+| 에이전트      | 모델을 고정하지 않은 `general`, `planner`, `implementer`, `reviewer`, `handoff` 역할 제공                       |
+| 독립 대화     | Pi 대화를 생성·조회·대기하고 queue·steer로 상호 제어                                                            |
+| 문맥 관리     | 모델별 soft cap, 도구 지연 로딩, `/context` 사용량 분석과 OpenAI Responses 서버 컴팩션 지원                     |
+| 공급자        | OpenAI Codex OAuth, Anthropic OAuth, Synthetic, 자동 discovery 방식 Callstack Apex 지원                         |
+| 도구          | BM25 `tool_search`, MCP, Synthetic 웹 검색, LSP 진단, 전역 skill을 통한 브라우저 자동화, goal, 사이드 대화 추가 |
+| 인터페이스    | `nord-dark`, `choco-pi-ui`, 공급자 usage, effort 제어와 익숙한 세션 별칭 적용                                   |
 
 ## 설치 패키지
 
 패키지 경로는 [`.pi/settings.json`](.pi/settings.json)에 나열하고 버전은 각 로컬 manifest에 기록합니다.
 
-| 패키지 | 버전 | 용도 |
-|---|---:|---|
-| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) | 0.1.0 | Synthetic 공급자, 인증, usage와 웹 검색 |
-| [`choco-pi-ui`](.pi/packages/choco-pi-ui) | 0.1.0 | 편집기, 메시지 프레임, 상태줄과 Nord 테마 |
-| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents) | 0.1.0 | `@tintinweb/pi-subagents@0.17.1`의 로컬 fork. 서브 에이전트, workflow, 사이드 대화와 fleet UI 제공 |
-| [`choco-pi-goal`](.pi/packages/choco-pi-goal) | 0.1.0 | Codex 형태의 지속형 goal |
-| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp) | 0.1.0 | MCP 서버 지연 로딩 |
-| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp) | 0.1.0 | LSP, lint, AST와 semantic 진단 |
-| [`choco-pi-codex`](.pi/packages/choco-pi-codex) | 0.1.0 | Codex 호환 도구와 OpenAI Responses 컴팩션 |
-| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md) | 0.1.0 | 하위 `AGENTS.md` 로딩 |
+| 패키지                                                                    |  버전 | 용도                                                                                               |
+| ------------------------------------------------------------------------- | ----: | -------------------------------------------------------------------------------------------------- |
+| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) | 0.1.0 | Synthetic 공급자, 인증, usage와 웹 검색                                                            |
+| [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 | 0.1.0 | 편집기, 메시지 프레임, 상태줄과 Nord 테마                                                          |
+| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   | 0.1.0 | `@tintinweb/pi-subagents@0.17.1`의 로컬 fork. 서브 에이전트, workflow, 사이드 대화와 fleet UI 제공 |
+| [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             | 0.1.0 | Codex 형태의 지속형 goal                                                                           |
+| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               | 0.1.0 | MCP 서버 지연 로딩                                                                                 |
+| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               | 0.1.0 | LSP, lint, AST와 semantic 진단                                                                     |
+| [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           | 0.1.0 | Codex 호환 도구와 OpenAI Responses 컴팩션                                                          |
+| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   | 0.1.0 | 하위 `AGENTS.md` 로딩                                                                              |
 
 Voice, notebook, background-shell 기능은 의도적으로 포함하지 않습니다.
 
@@ -73,20 +73,20 @@ Voice, notebook, background-shell 기능은 의도적으로 포함하지 않습�
 
 ### 세션과 모델 제어
 
-| 명령 | 설명 |
-|---|---|
-| `/exit` | Pi를 정상 종료. `/quit` 별칭 |
-| `/delete` | 확인 후 현재 Pi 세션 기록을 영구 삭제하고 종료 |
-| `/clear` | 현재 세션 기록을 보존하고 새 세션 시작. `/new` 별칭 |
-| `/status` | Pi 버전, 세션 식별자, 모델과 공급자, context window, context file, skill, MCP 서버, agent 역할, theme 표시. Status/Usage 탭 뷰로 열림. 대화형 설정은 Pi 내장 `/settings`에서 유지 |
-| `/effort [level]` | 현재 모델이 지원하는 reasoning effort 선택 또는 직접 지정. 공백 뒤에는 가능한 값 자동 완성 |
-| `/fast [on\|off\|status]` | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환 |
-| `/context-cap` | 현재 모델에 적용된 soft context cap 확인 |
-| `/context [all]` | prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시 |
-| `/rewind` | 선택한 턴으로 현재 대화 branch, 파일과 Git index를 함께 rewind |
-| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | 로컬 human review 화면 열기. 인자가 없으면 대상 선택기 표시 |
-| `/usage` | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시. 같은 탭 뷰로 열림 |
-| `/apex-refresh` | Callstack Apex 모델을 즉시 다시 탐색 |
+| 명령                                                                              | 설명                                                                                                                                                                              |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/exit`                                                                           | Pi를 정상 종료. `/quit` 별칭                                                                                                                                                      |
+| `/delete`                                                                         | 확인 후 현재 Pi 세션 기록을 영구 삭제하고 종료                                                                                                                                    |
+| `/clear`                                                                          | 현재 세션 기록을 보존하고 새 세션 시작. `/new` 별칭                                                                                                                               |
+| `/status`                                                                         | Pi 버전, 세션 식별자, 모델과 공급자, context window, context file, skill, MCP 서버, agent 역할, theme 표시. Status/Usage 탭 뷰로 열림. 대화형 설정은 Pi 내장 `/settings`에서 유지 |
+| `/effort [level]`                                                                 | 현재 모델이 지원하는 reasoning effort 선택 또는 직접 지정. 공백 뒤에는 가능한 값 자동 완성                                                                                        |
+| `/fast [on\|off\|status]`                                                         | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환                                                                                                                  |
+| `/context-cap`                                                                    | 현재 모델에 적용된 soft context cap 확인                                                                                                                                          |
+| `/context [all]`                                                                  | prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시                                                                           |
+| `/rewind`                                                                         | 선택한 턴으로 현재 대화 branch, 파일과 Git index를 함께 rewind                                                                                                                    |
+| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | 로컬 human review 화면 열기. 인자가 없으면 대상 선택기 표시                                                                                                                       |
+| `/usage`                                                                          | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시. 같은 탭 뷰로 열림                                                                                                   |
+| `/apex-refresh`                                                                   | Callstack Apex 모델을 즉시 다시 탐색                                                                                                                                              |
 
 Fast mode는 OpenAI Codex 요청에만 `service_tier: "priority"`를 추가합니다. Standard보다 사용량이나 API credit을 빠르게 소비할 수 있습니다. Pi에 숨겨진 llama.cpp 공급자는 유지하지만 `/llama` 명령은 choco-pi의 명령 목록과 실행 경로에서 제거합니다.
 
@@ -96,14 +96,14 @@ MCP는 `choco-pi-mcp` gateway만 모델 context에 넣고 시작하며, cached M
 
 ### 작업 절차 명령
 
-| 명령 | 작업 절차 |
-|---|---|
-| `/check [범위]` | choco-pi 기본 환경과 작업별 선택 기능 확인 |
-| `/task-inline <작업>` | 메인 에이전트가 직접 구현. 기본 수정 절차 |
-| `/task <작업>` | 독립 구현 단위를 계획하고 서브 에이전트로 실행 |
-| `/task-hotfix <작업>` | 메인 에이전트가 좁은 범위의 긴급 수정 수행 |
+| 명령                   | 작업 절차                                            |
+| ---------------------- | ---------------------------------------------------- |
+| `/check [범위]`        | choco-pi 기본 환경과 작업별 선택 기능 확인           |
+| `/task-inline <작업>`  | 메인 에이전트가 직접 구현. 기본 수정 절차            |
+| `/task <작업>`         | 독립 구현 단위를 계획하고 서브 에이전트로 실행       |
+| `/task-hotfix <작업>`  | 메인 에이전트가 좁은 범위의 긴급 수정 수행           |
 | `/review-agent [대상]` | fresh reviewer로 수정 없는 에이전틱 적대적 리뷰 수행 |
-| `/commit [지침]` | push 없이 검증된 로컬 커밋 하나 생성 |
+| `/commit [지침]`       | push 없이 검증된 로컬 커밋 하나 생성                 |
 
 `/task`는 서로 독립적이고 병렬 실행의 이점이 있는 구현 단위가 두 개 이상일 때만 사용합니다. 파일 수가 많다는 이유만으로 선택하지 않습니다. 직접 구현과 핫픽스 절차는 구현을 위임하지 않습니다.
 
@@ -111,13 +111,13 @@ MCP는 `choco-pi-mcp` gateway만 모델 context에 넣고 시작하며, cached M
 
 ### 독립 대화 명령
 
-| 명령 | 설명 |
-|---|---|
-| `/session-new` | 모델, reasoning effort, 선택적 이름과 초기 사용자 프롬프트로 새 대화 생성 |
-| `/sessions [limit]` | 현재 프로젝트의 대화 목록 확인 |
-| `/session-send <id> <queue\|steer> <message>` | 다른 대화에 queue 또는 steering 메시지 전달 |
-| `/session-read <id> [limit] [include-tools]` | 최근 transcript와 현재 cursor 확인 |
-| `/session-wait <id> [seconds] [after-cursor]` | 지정 cursor 이후 진전과 idle 상태를 대기 |
+| 명령                                          | 설명                                                                      |
+| --------------------------------------------- | ------------------------------------------------------------------------- |
+| `/session-new`                                | 모델, reasoning effort, 선택적 이름과 초기 사용자 프롬프트로 새 대화 생성 |
+| `/sessions [limit]`                           | 현재 프로젝트의 대화 목록 확인                                            |
+| `/session-send <id> <queue\|steer> <message>` | 다른 대화에 queue 또는 steering 메시지 전달                               |
+| `/session-read <id> [limit] [include-tools]`  | 최근 transcript와 현재 cursor 확인                                        |
+| `/session-wait <id> [seconds] [after-cursor]` | 지정 cursor 이후 진전과 idle 상태를 대기                                  |
 
 에이전트도 `session_create`, `session_send`, `session_list`, `session_read`, `session_wait` 도구로 같은 기능을 호출할 수 있습니다.
 
@@ -151,13 +151,13 @@ packages/api/src/AGENTS.md
 
 패키지 기본 역할은 [`.pi/subagents.json`](.pi/subagents.json)에서 비활성화하고, 알 수 없는 역할은 fallback 없이 거부합니다. [`.pi/agents`](.pi/agents)에는 모델을 고정하지 않은 project-aware leaf role 다섯 개가 있습니다.
 
-| 역할 | 용도 | 쓰기 |
-|---|---|---:|
-| `general` | 범위가 정해진 범용 작업 | 가능 |
-| `planner` | 의존성, 충돌, 검증 계획 | 불가 |
-| `implementer` | 할당된 구현 단위 하나 | 가능 |
-| `reviewer` | fresh context 기반 근거 중심 리뷰 | 불가 |
-| `handoff` | 검증된 상태의 간결한 전달 | 불가 |
+| 역할          | 용도                              | 쓰기 |
+| ------------- | --------------------------------- | ---: |
+| `general`     | 범위가 정해진 범용 작업           | 가능 |
+| `planner`     | 의존성, 충돌, 검증 계획           | 불가 |
+| `implementer` | 할당된 구현 단위 하나             | 가능 |
+| `reviewer`    | fresh context 기반 근거 중심 리뷰 | 불가 |
+| `handoff`     | 검증된 상태의 간결한 전달         | 불가 |
 
 `/agents`에서 역할, 실행 중인 agent, transcript, schedule과 운영 기본값을 확인합니다. 역할이 값을 고정하지 않았다면 `Agent` 호출에서 `model`과 `thinking`을 지정할 수 있습니다. 값은 명시적 호출, 역할 설정, parent/runtime 기본값 순서로 결정합니다.
 
@@ -195,26 +195,26 @@ Pi의 `write`, `edit`, `apply_patch` 결과도 같은 renderer를 사용합니�
 작성한 코멘트는 diff 안에서 anchor된 줄 바로 아래에 줄 번호 또는 범위 라벨과 함께 표시되므로, 리뷰 중에도 푸터의 개수만이 아니라 내용이 그대로 보입니다.
 접힌 hunk의 placeholder는 안에 숨은 코멘트 개수를 함께 보여 줍니다.
 
-| 키 | 동작 |
-|---|---|
-| `j` / `k`, `↑` / `↓` | 줄 커서 이동 |
-| `]` / `[` | hunk 사이 이동 |
-| `n` / `p`, `→` / `←` | 파일 사이 이동 |
-| `PageUp` / `PageDown` | 줄 커서를 한 화면씩 이동 |
-| `Shift+↑` / `Shift+↓` | 줄 범위로 선택 확장. 일반 이동은 다시 한 줄로 |
-| `Space` | 현재 파일이나 hunk 접기·펼치기 |
-| `+` / `-` | 현재 hunk 위아래의 context 더 보기·줄이기 |
-| `/`, 이후 `N` / `P` | 변경 줄 검색과 검색 결과 이동 |
-| `c` | 선택한 줄 또는 범위에 comment 작성. `Enter` 저장, `Shift+Enter` 줄바꿈, `Esc` 취소 |
-| `a` | 현재 줄에 관해 agent에게 질문. `Enter` 전송, `Shift+Enter` 줄바꿈, `Esc` 닫기 |
-| `Tab` | 입력창에서 경로 자동완성. 리뷰 화면에서는 chat 열기 |
-| `Shift+Tab` | 리뷰와 chat 사이 focus 이동 |
-| `Ctrl+O` | chat의 도구 출력 접기/펼치기. 메인 세션과 동일 |
-| `e` / `E` | 설정한 editor에서 커서가 놓인 줄 또는 프로젝트 열기 |
-| `v` | unified·split diff 전환 |
-| `m` | 현재 hunk를 reviewed로 표시 |
-| `S` | 완료 후 저장. Pull request review는 제출하고 session review는 지시문을 입력창에 배치 |
-| `q` | 제출하지 않고 저장한 뒤 닫기 |
+| 키                    | 동작                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| `j` / `k`, `↑` / `↓`  | 줄 커서 이동                                                                         |
+| `]` / `[`             | hunk 사이 이동                                                                       |
+| `n` / `p`, `→` / `←`  | 파일 사이 이동                                                                       |
+| `PageUp` / `PageDown` | 줄 커서를 한 화면씩 이동                                                             |
+| `Shift+↑` / `Shift+↓` | 줄 범위로 선택 확장. 일반 이동은 다시 한 줄로                                        |
+| `Space`               | 현재 파일이나 hunk 접기·펼치기                                                       |
+| `+` / `-`             | 현재 hunk 위아래의 context 더 보기·줄이기                                            |
+| `/`, 이후 `N` / `P`   | 변경 줄 검색과 검색 결과 이동                                                        |
+| `c`                   | 선택한 줄 또는 범위에 comment 작성. `Enter` 저장, `Shift+Enter` 줄바꿈, `Esc` 취소   |
+| `a`                   | 현재 줄에 관해 agent에게 질문. `Enter` 전송, `Shift+Enter` 줄바꿈, `Esc` 닫기        |
+| `Tab`                 | 입력창에서 경로 자동완성. 리뷰 화면에서는 chat 열기                                  |
+| `Shift+Tab`           | 리뷰와 chat 사이 focus 이동                                                          |
+| `Ctrl+O`              | chat의 도구 출력 접기/펼치기. 메인 세션과 동일                                       |
+| `e` / `E`             | 설정한 editor에서 커서가 놓인 줄 또는 프로젝트 열기                                  |
+| `v`                   | unified·split diff 전환                                                              |
+| `m`                   | 현재 hunk를 reviewed로 표시                                                          |
+| `S`                   | 완료 후 저장. Pull request review는 제출하고 session review는 지시문을 입력창에 배치 |
+| `q`                   | 제출하지 않고 저장한 뒤 닫기                                                         |
 
 comment의 side는 커서가 놓인 줄을 따릅니다.
 추가된 줄은 `RIGHT`, 삭제된 줄과 context 줄은 `LEFT`이므로 삭제된 코드에도 그대로 코멘트를 달 수 있습니다.

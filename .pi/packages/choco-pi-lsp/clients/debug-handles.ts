@@ -51,10 +51,7 @@ import { createNdjsonLogger, type NdjsonLogger } from "./ndjson-logger.js";
 /** Read once at module load — see module docstring. Not re-read per call. */
 const DEBUG_HANDLES_ENABLED = process.env.CHOCO_PI_LSP_DEBUG_HANDLES === "1";
 
-const DEBUG_HANDLES_LOG_FILE = path.join(
-	getGlobalPiLensDir(),
-	"debug-handles.log",
-);
+const DEBUG_HANDLES_LOG_FILE = path.join(getGlobalPiLensDir(), "debug-handles.log");
 
 /** Cap on tracked in-flight creation sites (bounded past this). */
 export const TRACKER_MAX_ENTRIES = 500;
@@ -70,24 +67,23 @@ export const TRACKER_PROTECTED_COUNT = 100;
  *  (`PROMISE`, `FSREQCALLBACK`, ...) that would dominate the map with no
  *  "why is the process still alive" signal. */
 const TRACKED_TYPE_RE =
-	/^(Timeout|Immediate|TCPWRAP|TCPSOCKETWRAP|TCPCONNECTWRAP|PIPEWRAP|PIPECONNECTWRAP|UDPWRAP|UDPSENDWRAP|TTYWRAP|ProcessWrap|Signal)/;
+  /^(Timeout|Immediate|TCPWRAP|TCPSOCKETWRAP|TCPCONNECTWRAP|PIPEWRAP|PIPECONNECTWRAP|UDPWRAP|UDPSENDWRAP|TTYWRAP|ProcessWrap|Signal)/;
 
 interface TrackedResource {
-	type: string;
-	stack: string;
+  type: string;
+  stack: string;
 }
 
 function trimStack(raw: string | undefined): string {
-	if (!raw) return "";
-	// Drop the "Error" header line and this module's own init() frame; keep a
-	// bounded number of caller frames — enough to identify the call site
-	// without unbounded per-entry memory.
-	const lines = raw.split("\n").slice(1);
-	const callerLines = lines.filter(
-		(line) =>
-			!line.includes("debug-handles.js") && !line.includes("debug-handles.ts"),
-	);
-	return callerLines.slice(0, 8).join("\n").slice(0, 2000);
+  if (!raw) return "";
+  // Drop the "Error" header line and this module's own init() frame; keep a
+  // bounded number of caller frames — enough to identify the call site
+  // without unbounded per-entry memory.
+  const lines = raw.split("\n").slice(1);
+  const callerLines = lines.filter(
+    (line) => !line.includes("debug-handles.js") && !line.includes("debug-handles.ts"),
+  );
+  return callerLines.slice(0, 8).join("\n").slice(0, 2000);
 }
 
 /** Running total of tracker evictions this process (never reset) — surfaced
@@ -97,7 +93,7 @@ let trackedEvictedCount = 0;
 
 /** Test-only accessor for the running eviction total. */
 export function _evictedCountForTest(): number {
-	return trackedEvictedCount;
+  return trackedEvictedCount;
 }
 
 /** Record one tracked resource's creation site. Once the bounded cap is
@@ -106,119 +102,113 @@ export function _evictedCountForTest(): number {
  *  module docstring for why the earliest entries are protected instead of
  *  evicted. Shared by the real async_hooks `init` callback and the test-only
  *  simulator so the eviction policy has exactly one implementation. */
-function recordTrackedInit(
-	map: Map<number, TrackedResource>,
-	asyncId: number,
-	type: string,
-): void {
-	if (!TRACKED_TYPE_RE.test(type)) return;
-	if (map.size >= TRACKER_MAX_ENTRIES) {
-		let index = 0;
-		let evictKey: number | undefined;
-		for (const key of map.keys()) {
-			if (index >= TRACKER_PROTECTED_COUNT) {
-				evictKey = key;
-				break;
-			}
-			index++;
-		}
-		if (evictKey !== undefined) {
-			map.delete(evictKey);
-			trackedEvictedCount++;
-		}
-	}
-	map.set(asyncId, { type, stack: trimStack(new Error().stack) });
+function recordTrackedInit(map: Map<number, TrackedResource>, asyncId: number, type: string): void {
+  if (!TRACKED_TYPE_RE.test(type)) return;
+  if (map.size >= TRACKER_MAX_ENTRIES) {
+    let index = 0;
+    let evictKey: number | undefined;
+    for (const key of map.keys()) {
+      if (index >= TRACKER_PROTECTED_COUNT) {
+        evictKey = key;
+        break;
+      }
+      index++;
+    }
+    if (evictKey !== undefined) {
+      map.delete(evictKey);
+      trackedEvictedCount++;
+    }
+  }
+  map.set(asyncId, { type, stack: trimStack(new Error().stack) });
 }
 
 function installHandleTracker(): Map<number, TrackedResource> {
-	const map = new Map<number, TrackedResource>();
-	const hook = asyncHooks.createHook({
-		init(asyncId: number, type: string) {
-			recordTrackedInit(map, asyncId, type);
-		},
-		destroy(asyncId: number) {
-			map.delete(asyncId);
-		},
-	});
-	hook.enable();
-	return map;
+  const map = new Map<number, TrackedResource>();
+  const hook = asyncHooks.createHook({
+    init(asyncId: number, type: string) {
+      recordTrackedInit(map, asyncId, type);
+    },
+    destroy(asyncId: number) {
+      map.delete(asyncId);
+    },
+  });
+  hook.enable();
+  return map;
 }
 
 // Only ever constructed/installed when the flag is on — the entire cost of
 // this module when unset is this one boolean check per export below.
-const trackedResources: Map<number, TrackedResource> | null =
-	DEBUG_HANDLES_ENABLED ? installHandleTracker() : null;
+const trackedResources: Map<number, TrackedResource> | null = DEBUG_HANDLES_ENABLED
+  ? installHandleTracker()
+  : null;
 
 const writer: NdjsonLogger | null = DEBUG_HANDLES_ENABLED
-	? createNdjsonLogger({
-			filePath: DEBUG_HANDLES_LOG_FILE,
-			maxBytes: getMaxLogSizeMB() * 1024 * 1024,
-		})
-	: null;
+  ? createNdjsonLogger({
+      filePath: DEBUG_HANDLES_LOG_FILE,
+      maxBytes: getMaxLogSizeMB() * 1024 * 1024,
+    })
+  : null;
 
 /** True iff `CHOCO_PI_LSP_DEBUG_HANDLES=1` was set when this module first loaded. */
 export function isDebugHandlesEnabled(): boolean {
-	return DEBUG_HANDLES_ENABLED;
+  return DEBUG_HANDLES_ENABLED;
 }
 
 export function getDebugHandlesLogPath(): string {
-	return DEBUG_HANDLES_LOG_FILE;
+  return DEBUG_HANDLES_LOG_FILE;
 }
 
 /** Resolve once all enqueued debug-handles writes are on disk (tests). */
 export function flushDebugHandlesLog(): Promise<void> {
-	return writer ? writer.flush() : Promise.resolve();
+  return writer ? writer.flush() : Promise.resolve();
 }
 
 function safeGetActiveResourcesInfo(): string[] {
-	try {
-		const fn = (
-			process as unknown as { getActiveResourcesInfo?: () => string[] }
-		).getActiveResourcesInfo;
-		return typeof fn === "function" ? fn.call(process) : [];
-	} catch {
-		return [];
-	}
+  try {
+    const fn = (process as unknown as { getActiveResourcesInfo?: () => string[] })
+      .getActiveResourcesInfo;
+    return typeof fn === "function" ? fn.call(process) : [];
+  } catch {
+    return [];
+  }
 }
 
 interface CreationSiteSummary {
-	type: string;
-	count: number;
-	sampleStack: string;
+  type: string;
+  count: number;
+  sampleStack: string;
 }
 
 /** One representative stack per tracked TYPE (not per resource id) — keeps
  *  each dump line bounded regardless of how many live entries the capped
  *  map currently holds. */
-function summarizeCreationSites(
-	map: Map<number, TrackedResource>,
-): CreationSiteSummary[] {
-	const byType = new Map<string, CreationSiteSummary>();
-	for (const { type, stack } of map.values()) {
-		const existing = byType.get(type);
-		if (existing) {
-			existing.count++;
-		} else {
-			byType.set(type, { type, count: 1, sampleStack: stack });
-		}
-	}
-	return [...byType.values()];
+function summarizeCreationSites(map: Map<number, TrackedResource>): CreationSiteSummary[] {
+  const byType = new Map<string, CreationSiteSummary>();
+  for (const { type, stack } of map.values()) {
+    const existing = byType.get(type);
+    if (existing) {
+      existing.count++;
+    } else {
+      byType.set(type, { type, count: 1, sampleStack: stack });
+    }
+  }
+  return [...byType.values()];
 }
 
 export interface DebugHandlesLogEntry {
-	ts: string;
-	label: string;
-	total: number;
-	counts: Record<string, number>;
-	/** Present only when the async_hooks tracker was installed at startup. */
-	creationSites?: CreationSiteSummary[];
-	/** Running total of tracker-cap evictions since startup (present whenever
-	 *  `creationSites` is) — a nonzero value means attribution for this dump
-	 *  is INCOMPLETE: some in-flight resources' creation sites were evicted
-	 *  past the bounded cap and are no longer traceable. Always present (even
-	 *  at 0) rather than only-on-eviction so "no evictions" is an explicit,
-	 *  verifiable fact rather than an absent-field inference. */
-	evictedCount?: number;
+  ts: string;
+  label: string;
+  total: number;
+  counts: Record<string, number>;
+  /** Present only when the async_hooks tracker was installed at startup. */
+  creationSites?: CreationSiteSummary[];
+  /** Running total of tracker-cap evictions since startup (present whenever
+   *  `creationSites` is) — a nonzero value means attribution for this dump
+   *  is INCOMPLETE: some in-flight resources' creation sites were evicted
+   *  past the bounded cap and are no longer traceable. Always present (even
+   *  at 0) rather than only-on-eviction so "no evictions" is an explicit,
+   *  verifiable fact rather than an absent-field inference. */
+  evictedCount?: number;
 }
 
 /**
@@ -228,41 +218,38 @@ export interface DebugHandlesLogEntry {
  * when `CHOCO_PI_LSP_DEBUG_HANDLES` was unset at startup.
  */
 export function dumpActiveHandles(label: string): void {
-	if (!DEBUG_HANDLES_ENABLED || !writer) return;
-	const resources = safeGetActiveResourcesInfo();
-	const counts: Record<string, number> = {};
-	for (const type of resources) {
-		counts[type] = (counts[type] ?? 0) + 1;
-	}
-	const entry: DebugHandlesLogEntry = {
-		ts: new Date().toISOString(),
-		label,
-		total: resources.length,
-		counts,
-	};
-	if (trackedResources) {
-		entry.creationSites = summarizeCreationSites(trackedResources);
-		entry.evictedCount = trackedEvictedCount;
-	}
-	writer.log(entry);
+  if (!DEBUG_HANDLES_ENABLED || !writer) return;
+  const resources = safeGetActiveResourcesInfo();
+  const counts: Record<string, number> = {};
+  for (const type of resources) {
+    counts[type] = (counts[type] ?? 0) + 1;
+  }
+  const entry: DebugHandlesLogEntry = {
+    ts: new Date().toISOString(),
+    label,
+    total: resources.length,
+    counts,
+  };
+  if (trackedResources) {
+    entry.creationSites = summarizeCreationSites(trackedResources);
+    entry.evictedCount = trackedEvictedCount;
+  }
+  writer.log(entry);
 }
 
 /** Test-only view of the tracker's current size (bounded-cap assertions). */
 export function _trackedResourceCountForTest(): number {
-	return trackedResources?.size ?? 0;
+  return trackedResources?.size ?? 0;
 }
 
 /** Test-only: is `asyncId` still tracked? (protected-vs-evicted assertions). */
 export function _isTrackedForTest(asyncId: number): boolean {
-	return trackedResources?.has(asyncId) ?? false;
+  return trackedResources?.has(asyncId) ?? false;
 }
 
 /** Test-only: synthesize an `init` call against the installed tracker without
  *  depending on real async resource creation timing. No-op when disabled. */
-export function _simulateTrackedInitForTest(
-	asyncId: number,
-	type: string,
-): void {
-	if (!trackedResources) return;
-	recordTrackedInit(trackedResources, asyncId, type);
+export function _simulateTrackedInitForTest(asyncId: number, type: string): void {
+  if (!trackedResources) return;
+  recordTrackedInit(trackedResources, asyncId, type);
 }

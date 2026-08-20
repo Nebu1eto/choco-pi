@@ -15,16 +15,16 @@ import type { TodoScanner } from "./todo-scanner.js";
 // removed. The bootstrap seam and its fail-soft shape are preserved for the
 // remaining clients — see VENDORED.md.
 export interface BootstrapClients {
-	ruffClient: RuffClient;
-	biomeClient: BiomeClient;
-	todoScanner: TodoScanner;
-	testRunnerClient: TestRunnerClient;
-	metricsClient: MetricsClient;
-	complexityClient: ComplexityClient;
-	goClient: GoClient;
-	opengrepClient: OpengrepClient;
-	rustClient: RustClient;
-	agentBehaviorClient: AgentBehaviorClient;
+  ruffClient: RuffClient;
+  biomeClient: BiomeClient;
+  todoScanner: TodoScanner;
+  testRunnerClient: TestRunnerClient;
+  metricsClient: MetricsClient;
+  complexityClient: ComplexityClient;
+  goClient: GoClient;
+  opengrepClient: OpengrepClient;
+  rustClient: RustClient;
+  agentBehaviorClient: AgentBehaviorClient;
 }
 
 let bootstrapPromise: Promise<BootstrapClients> | null = null;
@@ -39,14 +39,14 @@ let bootstrapPromise: Promise<BootstrapClients> | null = null;
  * the same single-seam principle as the clients/deps/* accessors.
  */
 export function degradedClient<T extends object>(): T {
-	return new Proxy({} as T, {
-		get(_target, prop) {
-			// Not thenable (so `await stub` / Promise.resolve(stub) won't treat it
-			// as a promise), not iterable, no surprising coercion.
-			if (typeof prop === "symbol" || prop === "then") return undefined;
-			return () => undefined;
-		},
-	});
+  return new Proxy({} as T, {
+    get(_target, prop) {
+      // Not thenable (so `await stub` / Promise.resolve(stub) won't treat it
+      // as a promise), not iterable, no surprising coercion.
+      if (typeof prop === "symbol" || prop === "then") return undefined;
+      return () => undefined;
+    },
+  });
 }
 
 /**
@@ -56,33 +56,27 @@ export function degradedClient<T extends object>(): T {
  * environment fingerprint so a reporter can tell us exactly what failed and
  * where. Best-effort: never let the diagnostic itself mask the failure.
  */
-async function logBootstrapFailures(
-	failures: { name: string; err: unknown }[],
-): Promise<void> {
-	for (const { name, err } of failures) {
-		logExtension({
-			subsystem: "bootstrap",
-			message: `analyzer "${name}" disabled (degraded mode): ${
-				(err as Error)?.message ?? String(err)
-			}`,
-			metadata: { analyzer: name },
-		});
-	}
-	try {
-		const { collectInstallDiagnostics, formatInstallDiagnostics } = await import(
-			"./install-diagnostics.js"
-		);
-		logExtension({
-			subsystem: "bootstrap",
-			message: formatInstallDiagnostics(
-				collectInstallDiagnostics(),
-				failures[0]?.err,
-			),
-			metadata: { kind: "install_diagnostics" },
-		});
-	} catch {
-		// the per-analyzer lines above already named the failures
-	}
+async function logBootstrapFailures(failures: { name: string; err: unknown }[]): Promise<void> {
+  for (const { name, err } of failures) {
+    logExtension({
+      subsystem: "bootstrap",
+      message: `analyzer "${name}" disabled (degraded mode): ${
+        (err as Error)?.message ?? String(err)
+      }`,
+      metadata: { analyzer: name },
+    });
+  }
+  try {
+    const { collectInstallDiagnostics, formatInstallDiagnostics } =
+      await import("./install-diagnostics.js");
+    logExtension({
+      subsystem: "bootstrap",
+      message: formatInstallDiagnostics(collectInstallDiagnostics(), failures[0]?.err),
+      metadata: { kind: "install_diagnostics" },
+    });
+  } catch {
+    // the per-analyzer lines above already named the failures
+  }
 }
 
 /**
@@ -94,84 +88,71 @@ async function logBootstrapFailures(
  * rejected bootstrap for the rest of the process.
  */
 export function loadBootstrapClients(): Promise<BootstrapClients> {
-	bootstrapPromise ??= (async () => {
-		const failures: { name: string; err: unknown }[] = [];
-		// Load + construct one client in isolation; on failure record it and
-		// substitute a degraded no-op stub so the others still load — single-seam
-		// fail-soft, consumers never special-case it.
-		async function load<T extends object>(
-			name: string,
-			make: () => Promise<T>,
-		): Promise<T> {
-			try {
-				return await make();
-			} catch (err) {
-				failures.push({ name, err });
-				return degradedClient<T>();
-			}
-		}
+  bootstrapPromise ??= (async () => {
+    const failures: { name: string; err: unknown }[] = [];
+    // Load + construct one client in isolation; on failure record it and
+    // substitute a degraded no-op stub so the others still load — single-seam
+    // fail-soft, consumers never special-case it.
+    async function load<T extends object>(name: string, make: () => Promise<T>): Promise<T> {
+      try {
+        return await make();
+      } catch (err) {
+        failures.push({ name, err });
+        return degradedClient<T>();
+      }
+    }
 
-		const [
-			ruffClient,
-			biomeClient,
-			todoScanner,
-			testRunnerClient,
-			metricsClient,
-			complexityClient,
-			goClient,
-			opengrepClient,
-			rustClient,
-			agentBehaviorClient,
-		] = await Promise.all([
-			load("ruff", async () => new (await import("./ruff-client.js")).RuffClient()),
-			load("biome", async () => new (await import("./biome-client.js")).BiomeClient()),
-			load("todo", async () => new (await import("./todo-scanner.js")).TodoScanner()),
-			load(
-				"test-runner",
-				async () =>
-					new (await import("./test-runner-client.js")).TestRunnerClient(),
-			),
-			load(
-				"metrics",
-				async () => new (await import("./metrics-client.js")).MetricsClient(),
-			),
-			load(
-				"complexity",
-				async () =>
-					new (await import("./complexity-client.js")).ComplexityClient(),
-			),
-			load("go", async () => new (await import("./go-client.js")).GoClient()),
-			load(
-				"opengrep",
-				async () =>
-					new (await import("./opengrep-client.js")).OpengrepClient(),
-			),
-			load("rust", async () => new (await import("./rust-client.js")).RustClient()),
-			load(
-				"agent-behavior",
-				async () =>
-					new (await import("./agent-behavior-client.js")).AgentBehaviorClient(),
-			),
-		]);
+    const [
+      ruffClient,
+      biomeClient,
+      todoScanner,
+      testRunnerClient,
+      metricsClient,
+      complexityClient,
+      goClient,
+      opengrepClient,
+      rustClient,
+      agentBehaviorClient,
+    ] = await Promise.all([
+      load("ruff", async () => new (await import("./ruff-client.js")).RuffClient()),
+      load("biome", async () => new (await import("./biome-client.js")).BiomeClient()),
+      load("todo", async () => new (await import("./todo-scanner.js")).TodoScanner()),
+      load(
+        "test-runner",
+        async () => new (await import("./test-runner-client.js")).TestRunnerClient(),
+      ),
+      load("metrics", async () => new (await import("./metrics-client.js")).MetricsClient()),
+      load(
+        "complexity",
+        async () => new (await import("./complexity-client.js")).ComplexityClient(),
+      ),
+      load("go", async () => new (await import("./go-client.js")).GoClient()),
+      load("opengrep", async () => new (await import("./opengrep-client.js")).OpengrepClient()),
+      load("rust", async () => new (await import("./rust-client.js")).RustClient()),
+      load(
+        "agent-behavior",
+        async () => new (await import("./agent-behavior-client.js")).AgentBehaviorClient(),
+      ),
+    ]);
 
-		if (failures.length > 0) await logBootstrapFailures(failures);
+    if (failures.length > 0) await logBootstrapFailures(failures);
 
-		return {
-			ruffClient,
-			biomeClient,
-			todoScanner,
-			testRunnerClient,
-			metricsClient,
-			complexityClient,
-			goClient,
-			opengrepClient,
-			rustClient,
-			agentBehaviorClient,
-		};
-	})().catch((err: unknown) => {
-		bootstrapPromise = null;
-		throw err;
-	});
+    return {
+      ruffClient,
+      biomeClient,
+      todoScanner,
+      testRunnerClient,
+      metricsClient,
+      complexityClient,
+      goClient,
+      opengrepClient,
+      rustClient,
+      agentBehaviorClient,
+    };
+  })().catch((err: unknown) => {
+    bootstrapPromise = null;
+    throw err;
+  });
 
-	return bootstrapPromise;
+  return bootstrapPromise;
 }

@@ -55,7 +55,7 @@ examples:
             "Resource": "arn:aws:s3:::my-bucket/*",
         }],
     }
-  
+
   good: |
     policy = {
         "Version": "2012-10-17",

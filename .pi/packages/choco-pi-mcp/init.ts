@@ -1,6 +1,13 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import { formatToolName, isServerDisabled, resolveToolPrefix, type McpAdapterOptions, type PromptMetadata, type ToolMetadata } from "./types.ts";
+import {
+  formatToolName,
+  isServerDisabled,
+  resolveToolPrefix,
+  type McpAdapterOptions,
+  type PromptMetadata,
+  type ToolMetadata,
+} from "./types.ts";
 import { existsSync } from "node:fs";
 import { cloneMcpConfig, loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
@@ -27,7 +34,12 @@ import { formatMcpStatus, openUrl, parallelLimit, sanitizeTerminalText } from ".
 import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { getAuthStorageOptions } from "./mcp-auth.ts";
-import { createOAuthRuntime, hasPendingAuth, shutdownOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
+import {
+  createOAuthRuntime,
+  hasPendingAuth,
+  shutdownOAuth,
+  type McpOAuthRuntime,
+} from "./mcp-auth-flow.ts";
 import {
   combineAbortSignals,
   createMcpRuntimeOwner,
@@ -39,9 +51,14 @@ import { publishMcpStatusSnapshot } from "./mcp-status.ts";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
-const failureExpiryTimers = new WeakMap<McpExtensionState, Map<string, ReturnType<typeof setTimeout>>>();
+const failureExpiryTimers = new WeakMap<
+  McpExtensionState,
+  Map<string, ReturnType<typeof setTimeout>>
+>();
 
-function getFailureExpiryTimers(state: McpExtensionState): Map<string, ReturnType<typeof setTimeout>> {
+function getFailureExpiryTimers(
+  state: McpExtensionState,
+): Map<string, ReturnType<typeof setTimeout>> {
   let timers = failureExpiryTimers.get(state);
   if (!timers) {
     timers = new Map();
@@ -97,9 +114,10 @@ export async function initializeMcp(
 ): Promise<McpExtensionState> {
   // Pi guards ExtensionContext getters after reload. Snapshot all values that
   // can be used by asynchronous work before the first await.
-  const configPath = options.config !== undefined
-    ? undefined
-    : options.configPath ?? (pi.getFlag("mcp-config") as string | undefined);
+  const configPath =
+    options.config !== undefined
+      ? undefined
+      : (options.configPath ?? (pi.getFlag("mcp-config") as string | undefined));
   const cwd = ctx.cwd;
   const hasUI = ctx.hasUI;
   const mode = ctx.mode;
@@ -108,9 +126,8 @@ export async function initializeMcp(
   const initialSignal = ctx.signal;
   const ui = rawUi ? createOwnedUi(rawUi, owner) : undefined;
   const runtimeSignal = combineAbortSignals(owner.signal, initialSignal);
-  const config = options.config !== undefined
-    ? cloneMcpConfig(options.config)
-    : loadMcpConfig(configPath, cwd);
+  const config =
+    options.config !== undefined ? cloneMcpConfig(options.config) : loadMcpConfig(configPath, cwd);
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
 
   const ownsOAuthRuntime = options.oauthRuntime === undefined;
@@ -127,10 +144,9 @@ export async function initializeMcp(
       autoApprove: samplingAutoApprove,
       ...(ui !== undefined ? { ui } : {}),
       modelRegistry,
-      getCurrentModel: () => owner.isActive() ? ctx.model : undefined,
-      getSignal: () => owner.isActive()
-        ? combineAbortSignals(owner.signal, ctx.signal)
-        : owner.signal,
+      getCurrentModel: () => (owner.isActive() ? ctx.model : undefined),
+      getSignal: () =>
+        owner.isActive() ? combineAbortSignals(owner.signal, ctx.signal) : owner.signal,
     });
   }
   const elicitationEnabled = config.settings?.elicitation !== false && hasUI;
@@ -140,7 +156,9 @@ export async function initializeMcp(
       allowUrl: mode === "tui",
     });
   }
-  const lifecycle = new McpLifecycleManager(manager, (serverName) => hasPendingAuth(serverName, undefined, oauthRuntime));
+  const lifecycle = new McpLifecycleManager(manager, (serverName) =>
+    hasPendingAuth(serverName, undefined, oauthRuntime),
+  );
   const toolMetadata = new Map<string, ToolMetadata[]>();
   const resourceCounts = new Map<string, number>();
   const promptMetadata = new Map<string, PromptMetadata[]>();
@@ -187,10 +205,12 @@ export async function initializeMcp(
         deliver();
         return;
       }
-      void lifecycle.ensureConverged(owner.signal).then(deliver, error => {
+      void lifecycle.ensureConverged(owner.signal).then(deliver, (error) => {
         if (!owner.isActive() || isAbortError(error, owner.signal)) return;
         const detail = error instanceof Error ? error.message : String(error);
-        logger.debug(`MCP: pre-turn keep-alive convergence failed: ${sanitizeTerminalText(detail)}`);
+        logger.debug(
+          `MCP: pre-turn keep-alive convergence failed: ${sanitizeTerminalText(detail)}`,
+        );
         deliver();
       });
     },
@@ -222,7 +242,8 @@ export async function initializeMcp(
     return state;
   }
 
-  const idleSetting = typeof config.settings?.idleTimeout === "number" ? config.settings.idleTimeout : 10;
+  const idleSetting =
+    typeof config.settings?.idleTimeout === "number" ? config.settings.idleTimeout : 10;
   lifecycle.setGlobalIdleTimeout(idleSetting);
 
   const cachePath = getMetadataCachePath();
@@ -242,12 +263,13 @@ export async function initializeMcp(
 
   for (const [name, definition] of serverEntries) {
     const lifecycleMode = definition.lifecycle ?? "lazy";
-    const persistsAfterFirstSpawn = lifecycleMode === "eager" || lifecycleMode === "lazy-keep-alive";
+    const persistsAfterFirstSpawn =
+      lifecycleMode === "eager" || lifecycleMode === "lazy-keep-alive";
     const idleOverride = definition.idleTimeout ?? (persistsAfterFirstSpawn ? 0 : undefined);
     lifecycle.registerServer(
       name,
       definition,
-      idleOverride !== undefined ? { idleTimeout: idleOverride } : undefined
+      idleOverride !== undefined ? { idleTimeout: idleOverride } : undefined,
     );
     if (lifecycleMode === "keep-alive") {
       lifecycle.markKeepAlive(name, definition);
@@ -255,13 +277,23 @@ export async function initializeMcp(
 
     const cachedEntry = cache?.servers?.[name];
     if (cachedEntry && isServerCacheValid(cachedEntry, definition)) {
-      const metadata = reconstructToolMetadata(name, cachedEntry, prefix, definition, config.mcpServers, cache ?? undefined);
+      const metadata = reconstructToolMetadata(
+        name,
+        cachedEntry,
+        prefix,
+        definition,
+        config.mcpServers,
+        cache ?? undefined,
+      );
       toolMetadata.set(name, metadata);
       if (Array.isArray(cachedEntry.resources)) {
         resourceCounts.set(name, cachedEntry.resources.length);
       }
       if (cachedEntry.prompts?.length) {
-        promptMetadata.set(name, reconstructPromptMetadata(name, cachedEntry.prompts ?? [], prefix, definition));
+        promptMetadata.set(
+          name,
+          reconstructPromptMetadata(name, cachedEntry.prompts ?? [], prefix, definition),
+        );
       }
       if (cachedEntry.instructions) {
         serverInstructions.set(name, cachedEntry.instructions);
@@ -277,7 +309,10 @@ export async function initializeMcp(
       });
 
   if (ui && startupServers.length > 0) {
-    const status = formatMcpStatus(state.config, `connecting to ${startupServers.length} servers...`);
+    const status = formatMcpStatus(
+      state.config,
+      `connecting to ${startupServers.length} servers...`,
+    );
     ui.setStatus("mcp", status);
   }
 
@@ -285,7 +320,12 @@ export async function initializeMcp(
     try {
       const connection = await manager.connect(name, definition, runtimeSignal);
       if (connection.status === "needs-auth") {
-        return { name, definition, connection: null, error: `OAuth authentication required. Run /mcp-auth ${name}.` };
+        return {
+          name,
+          definition,
+          connection: null,
+          error: `OAuth authentication required. Run /mcp-auth ${name}.`,
+        };
       }
       return { name, definition, connection, error: null };
     } catch (error) {
@@ -306,20 +346,26 @@ export async function initializeMcp(
     if (!connection) continue;
     const effectivePrefix = resolveToolPrefix(definition, prefix);
     const metadata: ToolMetadata[] = [
-      ...connection.tools.filter(tool => tool?.name).map(tool => ({
-        name: formatToolName(tool.name, name, effectivePrefix),
-        originalName: tool.name,
-        description: tool.description ?? "",
-      })),
-      ...(definition.exposeResources !== false ? connection.resources.filter(resource => resource?.name && resource?.uri).map(resource => {
-        const originalName = `read_${resourceNameToToolName(resource.name)}`;
-        return {
-          name: formatToolName(originalName, name, effectivePrefix),
-          originalName,
-          description: resource.description ?? `Read resource: ${resource.uri}`,
-          resourceUri: resource.uri,
-        };
-      }) : []),
+      ...connection.tools
+        .filter((tool) => tool?.name)
+        .map((tool) => ({
+          name: formatToolName(tool.name, name, effectivePrefix),
+          originalName: tool.name,
+          description: tool.description ?? "",
+        })),
+      ...(definition.exposeResources !== false
+        ? connection.resources
+            .filter((resource) => resource?.name && resource?.uri)
+            .map((resource) => {
+              const originalName = `read_${resourceNameToToolName(resource.name)}`;
+              return {
+                name: formatToolName(originalName, name, effectivePrefix),
+                originalName,
+                description: resource.description ?? `Read resource: ${resource.uri}`,
+                resourceUri: resource.uri,
+              };
+            })
+        : []),
     ];
     startupKnownMetadata.set(name, metadata);
   }
@@ -337,11 +383,23 @@ export async function initializeMcp(
       continue;
     }
 
-    const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix, config.mcpServers, startupKnownMetadata, true);
+    const { metadata, failedTools } = buildToolMetadata(
+      connection.tools,
+      connection.resources,
+      definition,
+      name,
+      prefix,
+      config.mcpServers,
+      startupKnownMetadata,
+      true,
+    );
     toolMetadata.set(name, metadata);
     resourceCounts.set(name, connection.resources.length);
     if (!connection.promptDiscoveryFailed) {
-      promptMetadata.set(name, reconstructPromptMetadata(name, connection.prompts ?? [], prefix, definition));
+      promptMetadata.set(
+        name,
+        reconstructPromptMetadata(name, connection.prompts ?? [], prefix, definition),
+      );
       promptMetadataLive.add(name);
     }
     if (connection.instructions) {
@@ -354,32 +412,37 @@ export async function initializeMcp(
     markKeepAliveAfterConnect(state, name);
 
     if (failedTools.length > 0 && ui) {
-      ui.notify(
-        `MCP: ${name} - ${failedTools.length} tools skipped`,
-        "warning"
-      );
+      ui.notify(`MCP: ${name} - ${failedTools.length} tools skipped`, "warning");
     }
   }
 
-  const connectedCount = results.filter(r => r.connection).length;
-  const failedCount = results.filter(r => r.error).length;
+  const connectedCount = results.filter((r) => r.connection).length;
+  const failedCount = results.filter((r) => r.error).length;
   if (ui && connectedCount > 0 && config.settings?.notifyOnStartupConnect !== false) {
     const totalTools = totalToolCount(state);
-    const msg = failedCount > 0
-      ? `MCP: ${connectedCount}/${startupServers.length} servers connected (${totalTools} tools)`
-      : `MCP: ${connectedCount} servers connected (${totalTools} tools)`;
+    const msg =
+      failedCount > 0
+        ? `MCP: ${connectedCount}/${startupServers.length} servers connected (${totalTools} tools)`
+        : `MCP: ${connectedCount} servers connected (${totalTools} tools)`;
     ui.notify(msg, "info");
   }
 
   const envDirect = process.env.MCP_DIRECT_TOOLS;
   if (envDirect !== "__none__") {
     const currentCache = loadMetadataCache();
-    const envDirectToolOverride = envDirect?.split(",").map(selector => selector.trim()).filter(Boolean);
-    const missingCacheServers = getMissingConfiguredDirectToolServers(config, currentCache, envDirectToolOverride);
+    const envDirectToolOverride = envDirect
+      ?.split(",")
+      .map((selector) => selector.trim())
+      .filter(Boolean);
+    const missingCacheServers = getMissingConfiguredDirectToolServers(
+      config,
+      currentCache,
+      envDirectToolOverride,
+    );
 
     if (missingCacheServers.length > 0) {
       const bootstrapResults = await parallelLimit(
-        missingCacheServers.filter(name => !results.some(r => r.name === name && r.connection)),
+        missingCacheServers.filter((name) => !results.some((r) => r.name === name && r.connection)),
         10,
         async (name) => {
           try {
@@ -402,15 +465,20 @@ export async function initializeMcp(
             }
             const message = error instanceof Error ? error.message : String(error);
             recordFailure(state, name, message);
-            logger.debug(`MCP: direct-tools bootstrap failed for ${name}: ${sanitizeTerminalText(message)}`);
+            logger.debug(
+              `MCP: direct-tools bootstrap failed for ${name}: ${sanitizeTerminalText(message)}`,
+            );
             return { name, ok: false };
           }
         },
       );
-      const bootstrapped = bootstrapResults.filter(r => r.ok).map(r => r.name);
+      const bootstrapped = bootstrapResults.filter((r) => r.ok).map((r) => r.name);
       owner.throwIfInactive();
       if (bootstrapped.length > 0 && ui) {
-        ui.notify(`MCP: direct tools for ${bootstrapped.join(", ")} will be available after restart`, "info");
+        ui.notify(
+          `MCP: direct tools for ${bootstrapped.join(", ")} will be available after restart`,
+          "info",
+        );
       }
     }
   }
@@ -485,11 +553,22 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
 
   const prefix = state.config.settings?.toolPrefix ?? "server";
 
-  const { metadata } = buildToolMetadata(connection.tools, connection.resources, definition, serverName, prefix, state.config.mcpServers, state.toolMetadata);
+  const { metadata } = buildToolMetadata(
+    connection.tools,
+    connection.resources,
+    definition,
+    serverName,
+    prefix,
+    state.config.mcpServers,
+    state.toolMetadata,
+  );
   state.toolMetadata.set(serverName, metadata);
   state.resourceCounts?.set(serverName, connection.resources.length);
   if (!connection.promptDiscoveryFailed) {
-    state.promptMetadata?.set(serverName, reconstructPromptMetadata(serverName, connection.prompts ?? [], prefix, definition));
+    state.promptMetadata?.set(
+      serverName,
+      reconstructPromptMetadata(serverName, connection.prompts ?? [], prefix, definition),
+    );
     state.promptMetadataLive?.add(serverName);
   }
   if (connection.instructions) {
@@ -515,9 +594,12 @@ export function updateMetadataCache(
   const existingEntry = existing?.servers?.[serverName];
 
   const tools = serializeTools(connection.tools);
-  let resources = definition.exposeResources === false ? [] : serializeResources(connection.resources);
+  let resources =
+    definition.exposeResources === false ? [] : serializeResources(connection.resources);
   const prompts = connection.promptDiscoveryFailed
-    ? existingEntry?.configHash === configHash ? existingEntry.prompts : undefined
+    ? existingEntry?.configHash === configHash
+      ? existingEntry.prompts
+      : undefined
     : serializePrompts(connection.prompts ?? []);
 
   if (
@@ -542,7 +624,11 @@ export function updateMetadataCache(
   saveMetadataCache({ version: 1, servers: { [serverName]: entry } });
 }
 
-export function notifyToolMetadataUpdated(state: McpExtensionState, serverName: string, reason: string): void {
+export function notifyToolMetadataUpdated(
+  state: McpExtensionState,
+  serverName: string,
+  reason: string,
+): void {
   try {
     const result = state.onToolMetadataUpdated?.(serverName, reason);
     if (result && typeof (result as Promise<void>).catch === "function") {
@@ -578,7 +664,9 @@ export function updateStatusBar(state: McpExtensionState): void {
   }
   const connectedCount = [...state.manager.getAllConnections()].filter(([name, connection]) => {
     const definition = state.config.mcpServers[name];
-    return connection.status === "connected" && definition !== undefined && !isServerDisabled(definition);
+    return (
+      connection.status === "connected" && definition !== undefined && !isServerDisabled(definition)
+    );
   }).length;
   const footerStatus = state.config.settings?.mcpFooterStatus ?? "full";
   if (footerStatus === "off") {
@@ -586,14 +674,16 @@ export function updateStatusBar(state: McpExtensionState): void {
     return;
   }
 
-  let status = footerStatus === "compact"
-    ? `MCP ${connectedCount}/${enabledCount}`
-    : `${enabledCount} ${enabledCount === 1 ? "server" : "servers"} enabled`;
+  let status =
+    footerStatus === "compact"
+      ? `MCP ${connectedCount}/${enabledCount}`
+      : `${enabledCount} ${enabledCount === 1 ? "server" : "servers"} enabled`;
   if (footerStatus === "full") {
     if (connectedCount > 0) status += ` (${connectedCount} connected)`;
     if (disabledCount > 0) status += ` (${disabledCount} disabled)`;
   }
-  const formattedStatus = footerStatus === "compact" ? status : formatMcpStatus(state.config, status);
+  const formattedStatus =
+    footerStatus === "compact" ? status : formatMcpStatus(state.config, status);
   if (formattedStatus === undefined) {
     ui.setStatus("mcp", undefined);
     return;
@@ -614,7 +704,11 @@ export function getFailureMessage(state: McpExtensionState, serverName: string):
   return state.failureMessages?.get(serverName) ?? null;
 }
 
-export async function lazyConnect(state: McpExtensionState, serverName: string, signal?: AbortSignal): Promise<boolean> {
+export async function lazyConnect(
+  state: McpExtensionState,
+  serverName: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
   const connection = state.manager.getConnection(serverName);
@@ -664,10 +758,14 @@ export async function lazyConnect(state: McpExtensionState, serverName: string, 
 function getEffectiveIdleTimeoutMinutes(state: McpExtensionState, serverName: string): number {
   const definition = state.config.mcpServers[serverName];
   if (!definition) {
-    return typeof state.config.settings?.idleTimeout === "number" ? state.config.settings.idleTimeout : 10;
+    return typeof state.config.settings?.idleTimeout === "number"
+      ? state.config.settings.idleTimeout
+      : 10;
   }
   if (typeof definition.idleTimeout === "number") return definition.idleTimeout;
   const mode = definition.lifecycle ?? "lazy";
   if (mode === "eager" || mode === "lazy-keep-alive") return 0;
-  return typeof state.config.settings?.idleTimeout === "number" ? state.config.settings.idleTimeout : 10;
+  return typeof state.config.settings?.idleTimeout === "number"
+    ? state.config.settings.idleTimeout
+    : 10;
 }

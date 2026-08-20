@@ -1,26 +1,18 @@
 {
   "name": "choco-pi-goal",
   "version": "0.1.0",
-  "description": "Codex-style persistent goal tracking and continuation for choco-pi.",
-  "type": "module",
   "private": true,
-  "license": "MIT",
-  "main": "src/index.ts",
+  "description": "Codex-style persistent goal tracking and continuation for choco-pi.",
   "keywords": [
-    "pi-package",
+    "extension",
+    "goal",
     "pi",
     "pi-extension",
-    "extension",
-    "goal"
+    "pi-package"
   ],
-  "pi": {
-    "extensions": [
-      "./src/index.ts"
-    ],
-    "prompts": [
-      "./prompts"
-    ]
-  },
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
@@ -42,5 +34,13 @@
   },
   "engines": {
     "node": ">=24.0.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
   }
 }

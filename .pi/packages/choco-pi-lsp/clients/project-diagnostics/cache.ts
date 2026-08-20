@@ -4,10 +4,7 @@ import { getProjectDataDir } from "../file-utils.js";
 import { writeFileAtomic } from "../atomic-write.js";
 import { readJsonCache } from "../json-cache-read.js";
 import { MTIME_DRIFT_TOLERANCE_MS } from "../blocker-freshness.js";
-import type {
-	ProjectDiagnosticsDeltaReport,
-	ProjectDiagnosticsSnapshot,
-} from "./types.js";
+import type { ProjectDiagnosticsDeltaReport, ProjectDiagnosticsSnapshot } from "./types.js";
 
 // v2: cheap-tier scan now also runs ast-grep-napi (#308); invalidate older
 // snapshots so a pre-ast-grep cache isn't served as complete via refreshRunners=cached.
@@ -16,57 +13,55 @@ const SNAPSHOT_CACHE_FILE = "project-diagnostics.json";
 const DELTA_CACHE_FILE = "project-diagnostics-delta.json";
 
 function cachePath(cwd: string, fileName: string): string {
-	return path.join(getProjectDataDir(cwd), "cache", fileName);
+  return path.join(getProjectDataDir(cwd), "cache", fileName);
 }
 
 export function loadProjectDiagnosticsSnapshot(
-	cwd: string,
+  cwd: string,
 ): ProjectDiagnosticsSnapshot | undefined {
-	return readJsonCache<ProjectDiagnosticsSnapshot>(
-		cachePath(cwd, SNAPSHOT_CACHE_FILE),
-		(parsed) => {
-			if (!parsed || typeof parsed !== "object") return undefined;
-			const snapshot = parsed as ProjectDiagnosticsSnapshot;
-			if (snapshot.version !== PROJECT_DIAGNOSTICS_CACHE_VERSION)
-				return undefined;
-			if (!Array.isArray(snapshot.diagnostics)) return undefined;
-			return snapshot;
-		},
-	);
+  return readJsonCache<ProjectDiagnosticsSnapshot>(
+    cachePath(cwd, SNAPSHOT_CACHE_FILE),
+    (parsed) => {
+      if (!parsed || typeof parsed !== "object") return undefined;
+      const snapshot = parsed as ProjectDiagnosticsSnapshot;
+      if (snapshot.version !== PROJECT_DIAGNOSTICS_CACHE_VERSION) return undefined;
+      if (!Array.isArray(snapshot.diagnostics)) return undefined;
+      return snapshot;
+    },
+  );
 }
 
 export function saveProjectDiagnosticsSnapshot(
-	cwd: string,
-	snapshot: ProjectDiagnosticsSnapshot,
+  cwd: string,
+  snapshot: ProjectDiagnosticsSnapshot,
 ): void {
-	const filePath = cachePath(cwd, SNAPSHOT_CACHE_FILE);
-	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	writeFileAtomic(filePath, JSON.stringify(snapshot, null, 2));
+  const filePath = cachePath(cwd, SNAPSHOT_CACHE_FILE);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileAtomic(filePath, JSON.stringify(snapshot, null, 2));
 }
 
 export function loadProjectDiagnosticsDeltaReport(
-	cwd: string,
+  cwd: string,
 ): ProjectDiagnosticsDeltaReport | undefined {
-	return readJsonCache<ProjectDiagnosticsDeltaReport>(
-		cachePath(cwd, DELTA_CACHE_FILE),
-		(parsed) => {
-			if (!parsed || typeof parsed !== "object") return undefined;
-			const report = parsed as ProjectDiagnosticsDeltaReport;
-			if (report.version !== PROJECT_DIAGNOSTICS_CACHE_VERSION)
-				return undefined;
-			if (!Array.isArray(report.diagnostics)) return undefined;
-			return report;
-		},
-	);
+  return readJsonCache<ProjectDiagnosticsDeltaReport>(
+    cachePath(cwd, DELTA_CACHE_FILE),
+    (parsed) => {
+      if (!parsed || typeof parsed !== "object") return undefined;
+      const report = parsed as ProjectDiagnosticsDeltaReport;
+      if (report.version !== PROJECT_DIAGNOSTICS_CACHE_VERSION) return undefined;
+      if (!Array.isArray(report.diagnostics)) return undefined;
+      return report;
+    },
+  );
 }
 
 export function writeProjectDiagnosticsDeltaReport(
-	cwd: string,
-	report: ProjectDiagnosticsDeltaReport,
+  cwd: string,
+  report: ProjectDiagnosticsDeltaReport,
 ): void {
-	const filePath = cachePath(cwd, DELTA_CACHE_FILE);
-	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	writeFileAtomic(filePath, JSON.stringify(report, null, 2));
+  const filePath = cachePath(cwd, DELTA_CACHE_FILE);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileAtomic(filePath, JSON.stringify(report, null, 2));
 }
 
 /**
@@ -93,34 +88,34 @@ export function writeProjectDiagnosticsDeltaReport(
  * Fail-safe on an unparseable `scannedAt`: return the snapshot untouched rather
  * than risk dropping live findings on a clock/format anomaly.
  */
-export function reconcileProjectDiagnosticsSnapshot(
-	snapshot: ProjectDiagnosticsSnapshot,
-): { snapshot: ProjectDiagnosticsSnapshot; staleDropped: number } {
-	const scannedAtMs = Date.parse(snapshot.scannedAt);
-	if (!Number.isFinite(scannedAtMs)) return { snapshot, staleDropped: 0 };
+export function reconcileProjectDiagnosticsSnapshot(snapshot: ProjectDiagnosticsSnapshot): {
+  snapshot: ProjectDiagnosticsSnapshot;
+  staleDropped: number;
+} {
+  const scannedAtMs = Date.parse(snapshot.scannedAt);
+  if (!Number.isFinite(scannedAtMs)) return { snapshot, staleDropped: 0 };
 
-	const staleByFile = new Map<string, boolean>();
-	const isStale = (filePath: string): boolean => {
-		const cached = staleByFile.get(filePath);
-		if (cached !== undefined) return cached;
-		let stale: boolean;
-		try {
-			// MTIME_DRIFT_TOLERANCE_MS: a file scanned at scannedAt, or written
-			// within the tolerance window of the scan timestamp being captured,
-			// has mtime <= scannedAt + MTIME_DRIFT_TOLERANCE_MS.
-			stale =
-				fs.statSync(filePath).mtimeMs > scannedAtMs + MTIME_DRIFT_TOLERANCE_MS;
-		} catch {
-			stale = true; // deleted / unreadable → drop
-		}
-		staleByFile.set(filePath, stale);
-		return stale;
-	};
+  const staleByFile = new Map<string, boolean>();
+  const isStale = (filePath: string): boolean => {
+    const cached = staleByFile.get(filePath);
+    if (cached !== undefined) return cached;
+    let stale: boolean;
+    try {
+      // MTIME_DRIFT_TOLERANCE_MS: a file scanned at scannedAt, or written
+      // within the tolerance window of the scan timestamp being captured,
+      // has mtime <= scannedAt + MTIME_DRIFT_TOLERANCE_MS.
+      stale = fs.statSync(filePath).mtimeMs > scannedAtMs + MTIME_DRIFT_TOLERANCE_MS;
+    } catch {
+      stale = true; // deleted / unreadable → drop
+    }
+    staleByFile.set(filePath, stale);
+    return stale;
+  };
 
-	const kept = snapshot.diagnostics.filter((d) => !isStale(d.filePath));
-	if (kept.length === snapshot.diagnostics.length) {
-		return { snapshot, staleDropped: 0 };
-	}
-	const staleDropped = [...staleByFile.values()].filter(Boolean).length;
-	return { snapshot: { ...snapshot, diagnostics: kept }, staleDropped };
+  const kept = snapshot.diagnostics.filter((d) => !isStale(d.filePath));
+  if (kept.length === snapshot.diagnostics.length) {
+    return { snapshot, staleDropped: 0 };
+  }
+  const staleDropped = [...staleByFile.values()].filter(Boolean).length;
+  return { snapshot: { ...snapshot, diagnostics: kept }, staleDropped };
 }

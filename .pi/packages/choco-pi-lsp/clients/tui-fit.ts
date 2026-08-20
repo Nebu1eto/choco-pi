@@ -22,27 +22,27 @@ let truncateIsNative: boolean | null = null;
 
 /** Test-only: reset the signature probe between test cases. */
 export function _resetTruncateProbeForTests(): void {
-	truncateIsNative = null;
+  truncateIsNative = null;
 }
 
 export function fitLine(s: string, maxWidth: number, ellipsis = "..."): string {
-	const w = Math.max(0, maxWidth);
-	const fn = truncateToWidth as (...a: unknown[]) => string;
-	if (truncateIsNative === true) {
-		return fn(s, w, ELLIPSIS_KIND[ellipsis] ?? 1, false, 8);
-	}
-	if (truncateIsNative === false) {
-		return fn(s, w, ellipsis);
-	}
-	// first call: try the legacy string API; native binding rejects the string arg.
-	try {
-		const out = fn(s, w, ellipsis);
-		truncateIsNative = false;
-		return out;
-	} catch {
-		truncateIsNative = true;
-		return fn(s, w, ELLIPSIS_KIND[ellipsis] ?? 1, false, 8);
-	}
+  const w = Math.max(0, maxWidth);
+  const fn = truncateToWidth as (...a: unknown[]) => string;
+  if (truncateIsNative === true) {
+    return fn(s, w, ELLIPSIS_KIND[ellipsis] ?? 1, false, 8);
+  }
+  if (truncateIsNative === false) {
+    return fn(s, w, ellipsis);
+  }
+  // first call: try the legacy string API; native binding rejects the string arg.
+  try {
+    const out = fn(s, w, ellipsis);
+    truncateIsNative = false;
+    return out;
+  } catch {
+    truncateIsNative = true;
+    return fn(s, w, ELLIPSIS_KIND[ellipsis] ?? 1, false, 8);
+  }
 }
 
 /**
@@ -51,6 +51,6 @@ export function fitLine(s: string, maxWidth: number, ellipsis = "..."): string {
  * than emitting empty lines.
  */
 export function fitLines(lines: string[], width: number): string[] {
-	if (!Number.isFinite(width) || width <= 0) return lines;
-	return lines.map((line) => fitLine(line, width));
+  if (!Number.isFinite(width) || width <= 0) return lines;
+  return lines.map((line) => fitLine(line, width));
 }

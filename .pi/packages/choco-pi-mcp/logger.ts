@@ -125,7 +125,7 @@ class Logger {
 class ChildLogger {
   constructor(
     private parent: Logger,
-    private context: LogContext
+    private context: LogContext,
   ) {}
 
   debug(message: string, context?: LogContext): void {

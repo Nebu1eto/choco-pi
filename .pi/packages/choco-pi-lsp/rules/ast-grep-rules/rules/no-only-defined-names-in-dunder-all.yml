@@ -33,4 +33,4 @@ rule:
         stopBy: end
     - has:
         kind: identifier
-        regex: '^__all__$'
+        regex: "^__all__$"

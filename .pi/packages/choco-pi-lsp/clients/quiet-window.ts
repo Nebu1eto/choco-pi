@@ -30,31 +30,27 @@
  * and returns immediately.
  */
 
-import {
-	type HeartbeatPatch,
-	readInstanceRegistry,
-	updateHeartbeat,
-} from "./instance-registry.js";
+import { type HeartbeatPatch, readInstanceRegistry, updateHeartbeat } from "./instance-registry.js";
 import { logLatency } from "./latency-logger.js";
 import { sampleProcesses } from "./resource-sampler.js";
 import type { RuntimeCoordinator } from "./runtime-coordinator.js";
 import {
-	_resetQuietWindowEnabledForTests,
-	isQuietWindowEnabled,
-	quietWindowWaitMs,
+  _resetQuietWindowEnabledForTests,
+  isQuietWindowEnabled,
+  quietWindowWaitMs,
 } from "./quiet-window-config.js";
 
 export interface QuietWindowTaskResult {
-	name: string;
-	durationMs: number;
-	ok: boolean;
+  name: string;
+  durationMs: number;
+  ok: boolean;
 }
 
 export type QuietWindowTask = () => Promise<void> | void;
 
 interface RegisteredTask {
-	name: string;
-	fn: QuietWindowTask;
+  name: string;
+  fn: QuietWindowTask;
 }
 
 // Module-level registry so future work (#458 Tier-3 reconcile, #236
@@ -66,16 +62,13 @@ const _tasks: RegisteredTask[] = [];
  * isolated in its own try/catch — one throwing never prevents the rest from
  * running, and no failure propagates out of `runQuietWindow`.
  */
-export function registerQuietWindowTask(
-	name: string,
-	fn: QuietWindowTask,
-): void {
-	_tasks.push({ name, fn });
+export function registerQuietWindowTask(name: string, fn: QuietWindowTask): void {
+  _tasks.push({ name, fn });
 }
 
 /** Test-only: clear the task registry between test files/cases. */
 export function _resetQuietWindowTasksForTests(): void {
-	_tasks.length = 0;
+  _tasks.length = 0;
 }
 
 // --- Kill switch and wait budget ---
@@ -85,11 +78,7 @@ export function _resetQuietWindowTasksForTests(): void {
 // does not drag this module's `resource-sampler` → `pidusage` import in with
 // them. Re-exported here so every existing importer is unaffected and there is
 // still one memo behind `isQuietWindowEnabled`.
-export {
-	isQuietWindowEnabled,
-	quietWindowWaitMs,
-	_resetQuietWindowEnabledForTests,
-};
+export { isQuietWindowEnabled, quietWindowWaitMs, _resetQuietWindowEnabledForTests };
 
 // Re-entrancy guard: agent_settled can fire multiple times per session
 // (once per completed/aborted run). If a previous quiet-window run is still
@@ -97,9 +86,9 @@ export {
 let _inProgress = false;
 
 export interface QuietWindowDeps {
-	runtime: RuntimeCoordinator;
-	dbg: (msg: string) => void;
-	cwd?: string;
+  runtime: RuntimeCoordinator;
+  dbg: (msg: string) => void;
+  cwd?: string;
 }
 
 /**
@@ -109,72 +98,70 @@ export interface QuietWindowDeps {
  * fire-and-forget (do not await inside an SDK-awaited event handler).
  */
 export async function runQuietWindow(deps: QuietWindowDeps): Promise<void> {
-	// `runtime` is accepted for API symmetry with turn_end's deps shape and
-	// for future built-in tasks that may need it directly; today's built-ins
-	// close over `getRuntime` via registerBuiltinQuietWindowTasks instead.
-	const { dbg, cwd } = deps;
+  // `runtime` is accepted for API symmetry with turn_end's deps shape and
+  // for future built-in tasks that may need it directly; today's built-ins
+  // close over `getRuntime` via registerBuiltinQuietWindowTasks instead.
+  const { dbg, cwd } = deps;
 
-	if (!isQuietWindowEnabled()) {
-		logLatency({
-			type: "phase",
-			filePath: cwd ?? "<choco-pi-lsp>",
-			phase: "quiet_window",
-			durationMs: 0,
-			metadata: { skipped: "disabled" },
-		});
-		return;
-	}
+  if (!isQuietWindowEnabled()) {
+    logLatency({
+      type: "phase",
+      filePath: cwd ?? "<choco-pi-lsp>",
+      phase: "quiet_window",
+      durationMs: 0,
+      metadata: { skipped: "disabled" },
+    });
+    return;
+  }
 
-	if (_inProgress) {
-		dbg("quiet_window: skipping — a previous run is still in progress");
-		logLatency({
-			type: "phase",
-			filePath: cwd ?? "<choco-pi-lsp>",
-			phase: "quiet_window",
-			durationMs: 0,
-			metadata: { skipped: "in-progress" },
-		});
-		return;
-	}
+  if (_inProgress) {
+    dbg("quiet_window: skipping — a previous run is still in progress");
+    logLatency({
+      type: "phase",
+      filePath: cwd ?? "<choco-pi-lsp>",
+      phase: "quiet_window",
+      durationMs: 0,
+      metadata: { skipped: "in-progress" },
+    });
+    return;
+  }
 
-	_inProgress = true;
-	const totalStart = Date.now();
-	const results: QuietWindowTaskResult[] = [];
-	try {
-		for (const task of _tasks) {
-			const taskStart = Date.now();
-			let ok = true;
-			try {
-				await task.fn();
-			} catch (err) {
-				ok = false;
-				// Surface the stack (not just the message) so the next failure is
-				// diagnosable from the log alone — a task can fail dozens of times
-				// and `${err}` (message only) may not pin the throw site. Still
-				// non-fatal: the loop continues and runQuietWindow never rethrows
-				// (see the finally below), so one bad task can't break the turn.
-				const detail =
-					err instanceof Error
-						? (err.stack ?? `${err.name}: ${err.message}`)
-						: String(err);
-				dbg(`quiet_window: task "${task.name}" failed: ${detail}`);
-			}
-			results.push({
-				name: task.name,
-				durationMs: Date.now() - taskStart,
-				ok,
-			});
-		}
-	} finally {
-		_inProgress = false;
-		logLatency({
-			type: "phase",
-			filePath: cwd ?? "<choco-pi-lsp>",
-			phase: "quiet_window",
-			durationMs: Date.now() - totalStart,
-			metadata: { tasks: results },
-		});
-	}
+  _inProgress = true;
+  const totalStart = Date.now();
+  const results: QuietWindowTaskResult[] = [];
+  try {
+    for (const task of _tasks) {
+      const taskStart = Date.now();
+      let ok = true;
+      try {
+        await task.fn();
+      } catch (err) {
+        ok = false;
+        // Surface the stack (not just the message) so the next failure is
+        // diagnosable from the log alone — a task can fail dozens of times
+        // and `${err}` (message only) may not pin the throw site. Still
+        // non-fatal: the loop continues and runQuietWindow never rethrows
+        // (see the finally below), so one bad task can't break the turn.
+        const detail =
+          err instanceof Error ? (err.stack ?? `${err.name}: ${err.message}`) : String(err);
+        dbg(`quiet_window: task "${task.name}" failed: ${detail}`);
+      }
+      results.push({
+        name: task.name,
+        durationMs: Date.now() - taskStart,
+        ok,
+      });
+    }
+  } finally {
+    _inProgress = false;
+    logLatency({
+      type: "phase",
+      filePath: cwd ?? "<choco-pi-lsp>",
+      phase: "quiet_window",
+      durationMs: Date.now() - totalStart,
+      metadata: { tasks: results },
+    });
+  }
 }
 
 /**
@@ -189,20 +176,18 @@ export async function runQuietWindow(deps: QuietWindowDeps): Promise<void> {
  */
 let _builtinsRegistered = false;
 
-export function registerBuiltinQuietWindowTasks(
-	getRuntime: () => RuntimeCoordinator,
-): void {
-	if (_builtinsRegistered) return;
-	_builtinsRegistered = true;
+export function registerBuiltinQuietWindowTasks(getRuntime: () => RuntimeCoordinator): void {
+  if (_builtinsRegistered) return;
+  _builtinsRegistered = true;
 
-	registerQuietWindowTask("cascade_carry_over_settle", async () => {
-		const runtime = getRuntime();
-		await runtime.settleCascadeRuns(quietWindowWaitMs());
-	});
+  registerQuietWindowTask("cascade_carry_over_settle", async () => {
+    const runtime = getRuntime();
+    await runtime.settleCascadeRuns(quietWindowWaitMs());
+  });
 
-	registerQuietWindowTask("instance_registry_heartbeat", async () => {
-		await updateHeartbeat(await buildHeartbeatResourcePatchBounded());
-	});
+  registerQuietWindowTask("instance_registry_heartbeat", async () => {
+    await updateHeartbeat(await buildHeartbeatResourcePatchBounded());
+  });
 }
 
 /**
@@ -220,22 +205,22 @@ const HEARTBEAT_SAMPLE_TIMEOUT_MS = 2000;
  *  a timeout resolves to `{}` (same "leave everything untouched" semantics as
  *  any other sampling failure — see the module docstring below). */
 async function buildHeartbeatResourcePatchBounded(): Promise<HeartbeatPatch> {
-	// #1097: clear the timeout once the race settles. An uncleared, REF'D
-	// setTimeout would keep the event loop alive for the full
-	// HEARTBEAT_SAMPLE_TIMEOUT_MS after `agent_settled` fires the quiet window —
-	// a same-class sibling of the LSP client-wait leak: harmless in a long-lived
-	// session, but a keep-alive tail in a one-shot `pi --print` process.
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	try {
-		return await Promise.race([
-			buildHeartbeatResourcePatch(),
-			new Promise<HeartbeatPatch>((resolve) => {
-				timer = setTimeout(() => resolve({}), HEARTBEAT_SAMPLE_TIMEOUT_MS);
-			}),
-		]);
-	} finally {
-		if (timer) clearTimeout(timer);
-	}
+  // #1097: clear the timeout once the race settles. An uncleared, REF'D
+  // setTimeout would keep the event loop alive for the full
+  // HEARTBEAT_SAMPLE_TIMEOUT_MS after `agent_settled` fires the quiet window —
+  // a same-class sibling of the LSP client-wait leak: harmless in a long-lived
+  // session, but a keep-alive tail in a one-shot `pi --print` process.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      buildHeartbeatResourcePatch(),
+      new Promise<HeartbeatPatch>((resolve) => {
+        timer = setTimeout(() => resolve({}), HEARTBEAT_SAMPLE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -253,28 +238,28 @@ async function buildHeartbeatResourcePatchBounded(): Promise<HeartbeatPatch> {
  * never zeroed.
  */
 async function buildHeartbeatResourcePatch(): Promise<HeartbeatPatch> {
-	try {
-		const instances = await readInstanceRegistry();
-		const self = instances.find((instance) => instance.pid === process.pid);
-		const childPids = self?.lspChildren.map((child) => child.pid) ?? [];
-		const usage = await sampleProcesses([process.pid, ...childPids]);
+  try {
+    const instances = await readInstanceRegistry();
+    const self = instances.find((instance) => instance.pid === process.pid);
+    const childPids = self?.lspChildren.map((child) => child.pid) ?? [];
+    const usage = await sampleProcesses([process.pid, ...childPids]);
 
-		const childUsage: Record<number, { rssBytes?: number; cpuPercent?: number }> = {};
-		for (const pid of childPids) {
-			const sample = usage.get(pid);
-			if (sample) childUsage[pid] = sample;
-		}
+    const childUsage: Record<number, { rssBytes?: number; cpuPercent?: number }> = {};
+    for (const pid of childPids) {
+      const sample = usage.get(pid);
+      if (sample) childUsage[pid] = sample;
+    }
 
-		return {
-			cpuPercent: usage.get(process.pid)?.cpuPercent,
-			childUsage,
-		};
-	} catch {
-		return {};
-	}
+    return {
+      cpuPercent: usage.get(process.pid)?.cpuPercent,
+      childUsage,
+    };
+  } catch {
+    return {};
+  }
 }
 
 /** Test-only: undo registerBuiltinQuietWindowTasks' idempotency guard. */
 export function _resetBuiltinQuietWindowRegistrationForTests(): void {
-	_builtinsRegistered = false;
+  _builtinsRegistered = false;
 }

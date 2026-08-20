@@ -95,70 +95,70 @@ import type { ProjectDiagnostic } from "./types.js";
 import type { FailedProjectAnalyzer } from "./extractors.js";
 
 export interface FreshProjectDiagnosticsResult {
-	diagnostics: ProjectDiagnostic[];
-	/** Extractor ids that actually contributed findings this run. */
-	runners: string[];
-	/** Extractor ids skipped this run (not applicable / tool unavailable, OR
-	 *  aborted before settling — see `abortedIds`). */
-	cold: string[];
-	/**
-	 * #1623: the SPECIFIC reason each `cold` id was skipped, captured at the
-	 * exact gate that made the decision (e.g. "not a git repository" vs
-	 * "gitleaks binary unavailable" — both render as bare "gitleaks" in
-	 * `cold` alone). Single source of truth for the render layer's "not run
-	 * (<reason>)" note — the render side must read this map rather than
-	 * re-deriving a generic guess (that anti-pattern is what `warmTriggerFor`,
-	 * extractors.ts, used to be the ONLY option for; kept there as a
-	 * fallback for ids this map doesn't cover, e.g. a caller-supplied cold
-	 * list from an older cache). Not populated for `abortedIds` — those get
-	 * their own distinct "stopped mid-scan" reason at the render layer.
-	 */
-	coldReasons?: Record<string, string>;
-	/**
-	 * #1623: ms-old each id's data was when this call read it, keyed by
-	 * extractor id — present only for lanes that are a cache-read BY DESIGN
-	 * (today, only "test-runner"), so a caller can render "(cached, Xm old —
-	 * not re-run)" instead of implying the data came from a fresh scan this
-	 * call. A lane triggers-or-joins a genuine run whenever it's attempted
-	 * (see the module header), so this stays empty for every other id.
-	 */
-	cachedAgeMs?: Record<string, number>;
-	/** Analyzers that ran but explicitly reported failure. */
-	failed: FailedProjectAnalyzer[];
-	/** Wall-clock ms spent per extractor id that actually ran (join time
-	 *  included when this call joined an already-in-flight scan). */
-	timings: Record<string, number>;
-	/** True when `signal` fired before every analyzer settled — the result is
-	 *  partial by construction, not a confirmed "these ran clean". */
-	aborted?: boolean;
-	/** Extractor ids still in flight (or not yet started) when aborted. A
-	 *  subset of `cold` — kept separate so a caller can render a distinct
-	 *  "stopped mid-scan" reason instead of "not applicable to this project". */
-	abortedIds?: string[];
-	/** True when the fetch refused to run because `cwd` resolved at or above
-	 *  the home directory (#747) — every analyzer is listed in `cold`, and
-	 *  nothing was spawned. Kept separate from the per-analyzer skip reasons so
-	 *  a caller can render "unsafe root" instead of "not applicable". */
-	unsafeRoot?: boolean;
-	/**
-	 * Count of findings dropped by an agent/user disposition (false-positive
-	 * or suppress mark — #1617) before landing in `diagnostics`. Every
-	 * analyzer here previously had ZERO disposition wiring — a mark never
-	 * suppressed a project-scan finding, only a dispatch (per-edit) one. Kept
-	 * as a count, not silently dropped: the #1616 suppressed-bucket rule — a
-	 * finding must never vanish with no trace, even when the disposition that
-	 * dropped it is working exactly as intended.
-	 */
-	dispositionSuppressed?: number;
-	/**
-	 * Review-round F4 (#1617/#1625): the same count as `dispositionSuppressed`,
-	 * broken down per analyzer id — "gitleaks: 2, knip: 1" is actionable in a
-	 * way a bare total isn't (a caller can tell WHICH lane's marks are doing
-	 * the suppressing). Does not attempt to also flag a lane that is 100%
-	 * suppressed (so absent from both `runners` and `cold`) as distinct from
-	 * "ran clean" — that gap is #1623's lane-status territory, not this one.
-	 */
-	dispositionSuppressedByLane?: Record<string, number>;
+  diagnostics: ProjectDiagnostic[];
+  /** Extractor ids that actually contributed findings this run. */
+  runners: string[];
+  /** Extractor ids skipped this run (not applicable / tool unavailable, OR
+   *  aborted before settling — see `abortedIds`). */
+  cold: string[];
+  /**
+   * #1623: the SPECIFIC reason each `cold` id was skipped, captured at the
+   * exact gate that made the decision (e.g. "not a git repository" vs
+   * "gitleaks binary unavailable" — both render as bare "gitleaks" in
+   * `cold` alone). Single source of truth for the render layer's "not run
+   * (<reason>)" note — the render side must read this map rather than
+   * re-deriving a generic guess (that anti-pattern is what `warmTriggerFor`,
+   * extractors.ts, used to be the ONLY option for; kept there as a
+   * fallback for ids this map doesn't cover, e.g. a caller-supplied cold
+   * list from an older cache). Not populated for `abortedIds` — those get
+   * their own distinct "stopped mid-scan" reason at the render layer.
+   */
+  coldReasons?: Record<string, string>;
+  /**
+   * #1623: ms-old each id's data was when this call read it, keyed by
+   * extractor id — present only for lanes that are a cache-read BY DESIGN
+   * (today, only "test-runner"), so a caller can render "(cached, Xm old —
+   * not re-run)" instead of implying the data came from a fresh scan this
+   * call. A lane triggers-or-joins a genuine run whenever it's attempted
+   * (see the module header), so this stays empty for every other id.
+   */
+  cachedAgeMs?: Record<string, number>;
+  /** Analyzers that ran but explicitly reported failure. */
+  failed: FailedProjectAnalyzer[];
+  /** Wall-clock ms spent per extractor id that actually ran (join time
+   *  included when this call joined an already-in-flight scan). */
+  timings: Record<string, number>;
+  /** True when `signal` fired before every analyzer settled — the result is
+   *  partial by construction, not a confirmed "these ran clean". */
+  aborted?: boolean;
+  /** Extractor ids still in flight (or not yet started) when aborted. A
+   *  subset of `cold` — kept separate so a caller can render a distinct
+   *  "stopped mid-scan" reason instead of "not applicable to this project". */
+  abortedIds?: string[];
+  /** True when the fetch refused to run because `cwd` resolved at or above
+   *  the home directory (#747) — every analyzer is listed in `cold`, and
+   *  nothing was spawned. Kept separate from the per-analyzer skip reasons so
+   *  a caller can render "unsafe root" instead of "not applicable". */
+  unsafeRoot?: boolean;
+  /**
+   * Count of findings dropped by an agent/user disposition (false-positive
+   * or suppress mark — #1617) before landing in `diagnostics`. Every
+   * analyzer here previously had ZERO disposition wiring — a mark never
+   * suppressed a project-scan finding, only a dispatch (per-edit) one. Kept
+   * as a count, not silently dropped: the #1616 suppressed-bucket rule — a
+   * finding must never vanish with no trace, even when the disposition that
+   * dropped it is working exactly as intended.
+   */
+  dispositionSuppressed?: number;
+  /**
+   * Review-round F4 (#1617/#1625): the same count as `dispositionSuppressed`,
+   * broken down per analyzer id — "gitleaks: 2, knip: 1" is actionable in a
+   * way a bare total isn't (a caller can tell WHICH lane's marks are doing
+   * the suppressing). Does not attempt to also flag a lane that is 100%
+   * suppressed (so absent from both `runners` and `cold`) as distinct from
+   * "ran clean" — that gap is #1623's lane-status territory, not this one.
+   */
+  dispositionSuppressedByLane?: Record<string, number>;
 }
 
 /** The heavyweight analyzers surfaced in `diagnostics_report mode=full` — this is
@@ -170,16 +170,16 @@ export interface FreshProjectDiagnosticsResult {
  *  writer id is a member — the exact #585-class check that would have caught
  *  opengrep's (and then test-runner's, #1004) omission before it shipped. */
 export const ANALYZER_IDS = [
-	// choco-pi fork: knip, jscpd, madge, gitleaks, govulncheck, trivy, and
-	// dead-code are removed with their clients (see VENDORED.md). The lane
-	// shape and the cold/aborted honesty contract are unchanged for the two
-	// remaining analyzers.
-	"opengrep",
-	"test-runner",
+  // choco-pi fork: knip, jscpd, madge, gitleaks, govulncheck, trivy, and
+  // dead-code are removed with their clients (see VENDORED.md). The lane
+  // shape and the cold/aborted honesty contract are unchanged for the two
+  // remaining analyzers.
+  "opengrep",
+  "test-runner",
 ] as const;
 
 function pushUnique(list: string[], id: string): void {
-	if (!list.includes(id)) list.push(id);
+  if (!list.includes(id)) list.push(id);
 }
 
 /**
@@ -194,253 +194,239 @@ function pushUnique(list: string[], id: string): void {
  * spawns).
  */
 export async function fetchFreshProjectDiagnostics(
-	cacheManager: CacheManager,
-	cwd: string,
-	clients: BootstrapClients,
-	signal?: AbortSignal,
-	options: { homeDir?: string; runtime?: RuntimeCoordinator } = {},
+  cacheManager: CacheManager,
+  cwd: string,
+  clients: BootstrapClients,
+  signal?: AbortSignal,
+  options: { homeDir?: string; runtime?: RuntimeCoordinator } = {},
 ): Promise<FreshProjectDiagnosticsResult> {
-	const analysisRoot = path.resolve(cwd);
-	// #747: refuse to spawn any heavyweight analyzer when the analysis root is
-	// at — or above — the home directory (the #250/#253 escape class). Every
-	// analyzer here treats `analysisRoot` as a whole tree to walk; from $HOME
-	// that means scanning every unrelated repo under it (observed: a jscpd run
-	// from a WSL home reached 44 GB RSS and OOM-killed the whole instance).
-	// Same ceiling as startup-scan.ts / runtime-session.ts's resolveSnapshotRoot
-	// / review-graph's buildOrUpdateGraph; like the latter, there is no safe
-	// substitute root to fall back to — the caller's `paths` scope only filters
-	// REPORTED results, it never narrows what these analyzers walk.
-	const unsafeRootReason =
-		"the working directory resolves at or above the home directory; heavyweight analyzers refuse to walk from there (#747)";
-	if (isAtOrAboveHomeDir(analysisRoot, options.homeDir)) {
-		return {
-			diagnostics: [],
-			runners: [],
-			cold: [...ANALYZER_IDS],
-			coldReasons: Object.fromEntries(
-				ANALYZER_IDS.map((id) => [id, unsafeRootReason]),
-			),
-			failed: [],
-			timings: {},
-			unsafeRoot: true,
-		};
-	}
-	const diagnostics: ProjectDiagnostic[] = [];
-	const runners: string[] = [];
-	const cold: string[] = [];
-	// #1623: the specific reason each `cold` id was skipped, captured at the
-	// gate that decided it — see FreshProjectDiagnosticsResult.coldReasons.
-	const coldReasons: Record<string, string> = {};
-	const failed: FailedProjectAnalyzer[] = [];
-	const timings: Record<string, number> = {};
-	// #1623: ms-old each id's data was when this call read it, for lanes that
-	// are cache-reads by design (currently only test-runner — see its task
-	// below) rather than a fresh execution this call. Absent for every other
-	// key: this module's other lanes always trigger-or-join a genuine run
-	// when attempted (see the module header), so there is nothing to date.
-	const cachedAgeMs: Record<string, number> = {};
-	const settledIds = new Set<string>();
-	let dispositionSuppressed = 0;
-	const dispositionSuppressedByLane: Record<string, number> = {};
+  const analysisRoot = path.resolve(cwd);
+  // #747: refuse to spawn any heavyweight analyzer when the analysis root is
+  // at — or above — the home directory (the #250/#253 escape class). Every
+  // analyzer here treats `analysisRoot` as a whole tree to walk; from $HOME
+  // that means scanning every unrelated repo under it (observed: a jscpd run
+  // from a WSL home reached 44 GB RSS and OOM-killed the whole instance).
+  // Same ceiling as startup-scan.ts / runtime-session.ts's resolveSnapshotRoot
+  // / review-graph's buildOrUpdateGraph; like the latter, there is no safe
+  // substitute root to fall back to — the caller's `paths` scope only filters
+  // REPORTED results, it never narrows what these analyzers walk.
+  const unsafeRootReason =
+    "the working directory resolves at or above the home directory; heavyweight analyzers refuse to walk from there (#747)";
+  if (isAtOrAboveHomeDir(analysisRoot, options.homeDir)) {
+    return {
+      diagnostics: [],
+      runners: [],
+      cold: [...ANALYZER_IDS],
+      coldReasons: Object.fromEntries(ANALYZER_IDS.map((id) => [id, unsafeRootReason])),
+      failed: [],
+      timings: {},
+      unsafeRoot: true,
+    };
+  }
+  const diagnostics: ProjectDiagnostic[] = [];
+  const runners: string[] = [];
+  const cold: string[] = [];
+  // #1623: the specific reason each `cold` id was skipped, captured at the
+  // gate that decided it — see FreshProjectDiagnosticsResult.coldReasons.
+  const coldReasons: Record<string, string> = {};
+  const failed: FailedProjectAnalyzer[] = [];
+  const timings: Record<string, number> = {};
+  // #1623: ms-old each id's data was when this call read it, for lanes that
+  // are cache-reads by design (currently only test-runner — see its task
+  // below) rather than a fresh execution this call. Absent for every other
+  // key: this module's other lanes always trigger-or-join a genuine run
+  // when attempted (see the module header), so there is nothing to date.
+  const cachedAgeMs: Record<string, number> = {};
+  const settledIds = new Set<string>();
+  let dispositionSuppressed = 0;
+  const dispositionSuppressedByLane: Record<string, number> = {};
 
-	// #1617: this is the ONE choke point every analyzer's findings pass
-	// through on the way into `diagnostics`, so applying the agent/user
-	// disposition filter HERE covers the whole mode=full class (knip/jscpd/
-	// madge/gitleaks/govulncheck/opengrep/trivy/dead-code) in one place — the
-	// same anchor derivation `dispatcher.ts:924` uses, via
-	// `applyDispositionsMultiFile` (`diagnostic-dispositions.ts`), not a
-	// second cloned filter. Unlike the dispatch path's one-file-at-a-time
-	// shape, a project-wide scan's findings span many files, so this groups by
-	// each diagnostic's own `filePath` and reads each file's current content
-	// once — see that function's doc for the fail-open contract when a file
-	// can't be read.
-	function markCold(id: string, reason: string): void {
-		pushUnique(cold, id);
-		coldReasons[id] = reason;
-	}
+  // #1617: this is the ONE choke point every analyzer's findings pass
+  // through on the way into `diagnostics`, so applying the agent/user
+  // disposition filter HERE covers the whole mode=full class (knip/jscpd/
+  // madge/gitleaks/govulncheck/opengrep/trivy/dead-code) in one place — the
+  // same anchor derivation `dispatcher.ts:924` uses, via
+  // `applyDispositionsMultiFile` (`diagnostic-dispositions.ts`), not a
+  // second cloned filter. Unlike the dispatch path's one-file-at-a-time
+  // shape, a project-wide scan's findings span many files, so this groups by
+  // each diagnostic's own `filePath` and reads each file's current content
+  // once — see that function's doc for the fail-open contract when a file
+  // can't be read.
+  function markCold(id: string, reason: string): void {
+    pushUnique(cold, id);
+    coldReasons[id] = reason;
+  }
 
-	function record(id: string, adapted: ProjectDiagnostic[], elapsedMs: number): void {
-		timings[id] = (timings[id] ?? 0) + elapsedMs;
-		const kept = applyDispositionsMultiFile(
-			adapted,
-			analysisRoot,
-			(d) => d.filePath,
-		);
-		const suppressedHere = adapted.length - kept.length;
-		dispositionSuppressed += suppressedHere;
-		if (suppressedHere > 0) {
-			dispositionSuppressedByLane[id] =
-				(dispositionSuppressedByLane[id] ?? 0) + suppressedHere;
-		}
-		if (kept.length > 0) {
-			diagnostics.push(...kept);
-			pushUnique(runners, id);
-		}
-	}
+  function record(id: string, adapted: ProjectDiagnostic[], elapsedMs: number): void {
+    timings[id] = (timings[id] ?? 0) + elapsedMs;
+    const kept = applyDispositionsMultiFile(adapted, analysisRoot, (d) => d.filePath);
+    const suppressedHere = adapted.length - kept.length;
+    dispositionSuppressed += suppressedHere;
+    if (suppressedHere > 0) {
+      dispositionSuppressedByLane[id] = (dispositionSuppressedByLane[id] ?? 0) + suppressedHere;
+    }
+    if (kept.length > 0) {
+      diagnostics.push(...kept);
+      pushUnique(runners, id);
+    }
+  }
 
-	function recordFailed(
-		id: string,
-		result: { summary?: string } | object,
-	): void {
-		failed.push({
-			id,
-			summary:
-				"summary" in result && typeof result.summary === "string"
-					? result.summary
-					: "analyzer reported an unsuccessful run",
-		});
-	}
+  function recordFailed(id: string, result: { summary?: string } | object): void {
+    failed.push({
+      id,
+      summary:
+        "summary" in result && typeof result.summary === "string"
+          ? result.summary
+          : "analyzer reported an unsuccessful run",
+    });
+  }
 
-	function task(id: string, run: () => Promise<void>): Promise<void> {
-		return run().finally(() => settledIds.add(id));
-	}
+  function task(id: string, run: () => Promise<void>): Promise<void> {
+    return run().finally(() => settledIds.add(id));
+  }
 
-	const tasks: Promise<void>[] = [
-		// opengrep — full-workspace semgrep-grade security/quality findings via a
-		// single project-wide CLI scan (#584). Structurally always-on: mirrors
-		// session_start (`runtime-session.ts`) and the LSP auxiliary's own
-		// enablement (`OpengrepClient.resolveConfig` only picks WHICH rules run,
-		// never whether opengrep runs at all), so unlike gitleaks/govulncheck/trivy
-		// it carries NO static project-type gate — only an availability probe.
-		// Re-entrancy-safe like the other SecurityScanClient-family analyzers:
-		// `OpengrepClient.scan` routes through `SecurityScanClient.dedupeScan`, so a
-		// call here that races the session_start whole-tree scan of the same root
-		// JOINS the in-flight run instead of paying a second heavy scan (#883 single
-		// source of truth — the exact wiring gitleaks/trivy use above). #585: this
-		// was the one extractor registered in `extractors.ts` but MISSING here, so
-		// opengrep scanned+cached yet nothing production read it back into
-		// `diagnostics_report mode=full` — the honesty gap (#533) this task closes.
-		task("opengrep", async () => {
-			if (!(await clients.opengrepClient.ensureAvailable())) {
-				markCold(
-					"opengrep",
-					reasonFromAvailabilityVerdict(
-						"opengrep",
-						clients.opengrepClient.getAvailabilityVerdict?.(),
-					),
-				);
-				return;
-			}
-			const startMs = Date.now();
-			const result = await clients.opengrepClient.scan(analysisRoot);
-			if (!result.success) {
-				recordFailed("opengrep", result);
-				return;
-			}
-			cacheManager.writeCache("opengrep", result, analysisRoot, {
-				scanDurationMs: Date.now() - startMs,
-			});
-			record(
-				"opengrep",
-				opengrepResultToProjectDiagnostics(analysisRoot, result),
-				Date.now() - startMs,
-			);
-		}),
+  const tasks: Promise<void>[] = [
+    // opengrep — full-workspace semgrep-grade security/quality findings via a
+    // single project-wide CLI scan (#584). Structurally always-on: mirrors
+    // session_start (`runtime-session.ts`) and the LSP auxiliary's own
+    // enablement (`OpengrepClient.resolveConfig` only picks WHICH rules run,
+    // never whether opengrep runs at all), so unlike gitleaks/govulncheck/trivy
+    // it carries NO static project-type gate — only an availability probe.
+    // Re-entrancy-safe like the other SecurityScanClient-family analyzers:
+    // `OpengrepClient.scan` routes through `SecurityScanClient.dedupeScan`, so a
+    // call here that races the session_start whole-tree scan of the same root
+    // JOINS the in-flight run instead of paying a second heavy scan (#883 single
+    // source of truth — the exact wiring gitleaks/trivy use above). #585: this
+    // was the one extractor registered in `extractors.ts` but MISSING here, so
+    // opengrep scanned+cached yet nothing production read it back into
+    // `diagnostics_report mode=full` — the honesty gap (#533) this task closes.
+    task("opengrep", async () => {
+      if (!(await clients.opengrepClient.ensureAvailable())) {
+        markCold(
+          "opengrep",
+          reasonFromAvailabilityVerdict(
+            "opengrep",
+            clients.opengrepClient.getAvailabilityVerdict?.(),
+          ),
+        );
+        return;
+      }
+      const startMs = Date.now();
+      const result = await clients.opengrepClient.scan(analysisRoot);
+      if (!result.success) {
+        recordFailed("opengrep", result);
+        return;
+      }
+      cacheManager.writeCache("opengrep", result, analysisRoot, {
+        scanDurationMs: Date.now() - startMs,
+      });
+      record(
+        "opengrep",
+        opengrepResultToProjectDiagnostics(analysisRoot, result),
+        Date.now() - startMs,
+      );
+    }),
 
-		// test-runner — CACHE-READ only, unlike every task above (#1004). Its
-		// session cadence doesn't fit the "trigger-or-join a fresh run" shape the
-		// rest of this module uses: the actual scan is the per-edit turn_end fire
-		// in `runtime-turn.ts`, which only ever runs the (targeted, cascade-aware)
-		// test files touched by THIS turn's edits — there is no "whole project"
-		// test run to (re-)trigger here, and unconditionally spawning a full suite
-		// on every mode=full call would be the exact "heavy re-run on every call"
-		// cost this module's other tasks avoid via de-dupe/gating. So this task
-		// instead peeks at the `"test-runner-findings"` cache turn_end already
-		// wrote — the same cache key, the same adapter
-		// (`testRunnerFindingsToProjectDiagnostics`), and the same cache-only
-		// contract the pre-#585 `extractCachedProjectDiagnostics` registry's
-		// "test-runner" row used (see extractors.ts's removal note) — before #585
-		// dropped that reader without replacing this one row's semantics here.
-		// Deliberately never calls `writeCache`: there is nothing fresher to write
-		// back, only what turn_end already produced.
-		//
-		// No double-count / honesty gap (#533): `consumeTestFindings`
-		// (`runtime-context.ts`) reads-and-clears this SAME cache key once, to
-		// inject a one-shot "fix before continuing" message into the NEXT turn.
-		// This task only ever reads (never clears) it, so it can't race that
-		// consumption into re-delivering a message twice — at most it surfaces
-		// the same underlying failures a second time, through a different
-		// surface (the mode=full project snapshot) that was previously silently
-		// empty for this analyzer. If `consumeTestFindings` already cleared the
-		// cache before this runs, this task correctly sees nothing and reports
-		// `cold` rather than inventing stale data.
-		task("test-runner", async () => {
-			const startMs = Date.now();
-			const cached = cacheManager.readCache<TestRunnerFindingsCache>(
-				"test-runner-findings",
-				analysisRoot,
-			);
-			if (!cached?.data) {
-				markCold(
-					"test-runner",
-					"no turn_end test-runner cache entry yet this session",
-				);
-				return;
-			}
-			// #1623: unlike every other lane in this module, test-runner is a
-			// cache-read BY DESIGN (see the task's own header comment above) — it
-			// never performs a fresh run this call, so its age must be surfaced
-			// the same way a genuinely-stale cache read would be, rather than
-			// looking indistinguishable from a lane that just executed.
-			cachedAgeMs["test-runner"] =
-				Date.now() - new Date(cached.meta.timestamp).getTime();
-			record(
-				"test-runner",
-				testRunnerFindingsToProjectDiagnostics(cached.data, analysisRoot, options.runtime),
-				Date.now() - startMs,
-			);
-		}),
-	];
+    // test-runner — CACHE-READ only, unlike every task above (#1004). Its
+    // session cadence doesn't fit the "trigger-or-join a fresh run" shape the
+    // rest of this module uses: the actual scan is the per-edit turn_end fire
+    // in `runtime-turn.ts`, which only ever runs the (targeted, cascade-aware)
+    // test files touched by THIS turn's edits — there is no "whole project"
+    // test run to (re-)trigger here, and unconditionally spawning a full suite
+    // on every mode=full call would be the exact "heavy re-run on every call"
+    // cost this module's other tasks avoid via de-dupe/gating. So this task
+    // instead peeks at the `"test-runner-findings"` cache turn_end already
+    // wrote — the same cache key, the same adapter
+    // (`testRunnerFindingsToProjectDiagnostics`), and the same cache-only
+    // contract the pre-#585 `extractCachedProjectDiagnostics` registry's
+    // "test-runner" row used (see extractors.ts's removal note) — before #585
+    // dropped that reader without replacing this one row's semantics here.
+    // Deliberately never calls `writeCache`: there is nothing fresher to write
+    // back, only what turn_end already produced.
+    //
+    // No double-count / honesty gap (#533): `consumeTestFindings`
+    // (`runtime-context.ts`) reads-and-clears this SAME cache key once, to
+    // inject a one-shot "fix before continuing" message into the NEXT turn.
+    // This task only ever reads (never clears) it, so it can't race that
+    // consumption into re-delivering a message twice — at most it surfaces
+    // the same underlying failures a second time, through a different
+    // surface (the mode=full project snapshot) that was previously silently
+    // empty for this analyzer. If `consumeTestFindings` already cleared the
+    // cache before this runs, this task correctly sees nothing and reports
+    // `cold` rather than inventing stale data.
+    task("test-runner", async () => {
+      const startMs = Date.now();
+      const cached = cacheManager.readCache<TestRunnerFindingsCache>(
+        "test-runner-findings",
+        analysisRoot,
+      );
+      if (!cached?.data) {
+        markCold("test-runner", "no turn_end test-runner cache entry yet this session");
+        return;
+      }
+      // #1623: unlike every other lane in this module, test-runner is a
+      // cache-read BY DESIGN (see the task's own header comment above) — it
+      // never performs a fresh run this call, so its age must be surfaced
+      // the same way a genuinely-stale cache read would be, rather than
+      // looking indistinguishable from a lane that just executed.
+      cachedAgeMs["test-runner"] = Date.now() - new Date(cached.meta.timestamp).getTime();
+      record(
+        "test-runner",
+        testRunnerFindingsToProjectDiagnostics(cached.data, analysisRoot, options.runtime),
+        Date.now() - startMs,
+      );
+    }),
+  ];
 
-	// Swallow any later rejection so an aborted-and-abandoned task can never
-	// surface as an unhandled rejection once this function has already
-	// returned partial results below.
-	const allSettled = Promise.all(tasks)
-		.then(() => "completed" as const)
-		.catch(() => "completed" as const);
+  // Swallow any later rejection so an aborted-and-abandoned task can never
+  // surface as an unhandled rejection once this function has already
+  // returned partial results below.
+  const allSettled = Promise.all(tasks)
+    .then(() => "completed" as const)
+    .catch(() => "completed" as const);
 
-	const outcome = signal
-		? await Promise.race([
-				allSettled,
-				new Promise<"aborted">((resolve) => {
-					if (signal.aborted) {
-						resolve("aborted");
-						return;
-					}
-					signal.addEventListener("abort", () => resolve("aborted"), {
-						once: true,
-					});
-				}),
-			])
-		: await allSettled;
+  const outcome = signal
+    ? await Promise.race([
+        allSettled,
+        new Promise<"aborted">((resolve) => {
+          if (signal.aborted) {
+            resolve("aborted");
+            return;
+          }
+          signal.addEventListener("abort", () => resolve("aborted"), {
+            once: true,
+          });
+        }),
+      ])
+    : await allSettled;
 
-	if (outcome === "aborted") {
-		const abortedIds = ANALYZER_IDS.filter((id) => !settledIds.has(id));
-		for (const id of abortedIds) pushUnique(cold, id);
-		return {
-			diagnostics,
-			runners,
-			cold,
-			coldReasons,
-			failed,
-			timings,
-			cachedAgeMs,
-			aborted: true,
-			abortedIds,
-			dispositionSuppressed,
-			dispositionSuppressedByLane,
-		};
-	}
+  if (outcome === "aborted") {
+    const abortedIds = ANALYZER_IDS.filter((id) => !settledIds.has(id));
+    for (const id of abortedIds) pushUnique(cold, id);
+    return {
+      diagnostics,
+      runners,
+      cold,
+      coldReasons,
+      failed,
+      timings,
+      cachedAgeMs,
+      aborted: true,
+      abortedIds,
+      dispositionSuppressed,
+      dispositionSuppressedByLane,
+    };
+  }
 
-	return {
-		diagnostics,
-		runners,
-		cold,
-		coldReasons,
-		failed,
-		timings,
-		cachedAgeMs,
-		dispositionSuppressed,
-		dispositionSuppressedByLane,
-	};
+  return {
+    diagnostics,
+    runners,
+    cold,
+    coldReasons,
+    failed,
+    timings,
+    cachedAgeMs,
+    dispositionSuppressed,
+    dispositionSuppressedByLane,
+  };
 }

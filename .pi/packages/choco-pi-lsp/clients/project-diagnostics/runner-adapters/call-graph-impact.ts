@@ -1,9 +1,5 @@
 import * as path from "node:path";
-import {
-	parseSymbolKey,
-	type ImpactResult,
-	type SymbolKey,
-} from "../../call-graph.js";
+import { parseSymbolKey, type ImpactResult, type SymbolKey } from "../../call-graph.js";
 import { isTestRoleCollateral } from "../../collateral-test-role.js";
 import type { ProjectDiagnostic } from "../types.js";
 
@@ -14,13 +10,13 @@ import type { ProjectDiagnostic } from "../types.js";
  * edited.
  */
 export interface CallGraphImpactFinding {
-	/** The edited symbol whose callers are (potentially) impacted. */
-	calleeKey: SymbolKey;
-	results: ImpactResult[];
+  /** The edited symbol whose callers are (potentially) impacted. */
+  calleeKey: SymbolKey;
+  results: ImpactResult[];
 }
 
 function resolveImpactFile(cwd: string, filePath: string): string {
-	return path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
+  return path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
 }
 
 /**
@@ -32,7 +28,7 @@ function resolveImpactFile(cwd: string, filePath: string): string {
  * handles — so this is the canonical parser, not merely a shared copy of it.
  */
 function displayName(key: SymbolKey): string {
-	return parseSymbolKey(key).symbolName ?? key;
+  return parseSymbolKey(key).symbolName ?? key;
 }
 
 /**
@@ -58,21 +54,22 @@ function displayName(key: SymbolKey): string {
  * actionable WillBreak/MayBreak findings.
  */
 function severityFor(
-	severity: ImpactResult["severity"],
+  severity: ImpactResult["severity"],
 ): { severity: ProjectDiagnostic["severity"]; message: string } | null {
-	if (severity === "WillBreak") {
-		return {
-			severity: "warning",
-			message: "Direct caller of a symbol edited this turn — verify this call site still matches its new signature/behavior.",
-		};
-	}
-	if (severity === "MayBreak") {
-		return {
-			severity: "info",
-			message: "Indirect caller (one hop) of a symbol edited this turn — worth a quick check.",
-		};
-	}
-	return null;
+  if (severity === "WillBreak") {
+    return {
+      severity: "warning",
+      message:
+        "Direct caller of a symbol edited this turn — verify this call site still matches its new signature/behavior.",
+    };
+  }
+  if (severity === "MayBreak") {
+    return {
+      severity: "info",
+      message: "Indirect caller (one hop) of a symbol edited this turn — worth a quick check.",
+    };
+  }
+  return null;
 }
 
 /**
@@ -91,57 +88,57 @@ function severityFor(
  */
 /** Higher rank = surfaced preferentially when the same caller is deduped. */
 const SEVERITY_RANK: Record<ProjectDiagnostic["severity"], number> = {
-	error: 3,
-	warning: 2,
-	info: 1,
-	hint: 0,
+  error: 3,
+  warning: 2,
+  info: 1,
+  hint: 0,
 };
 
 export function callGraphImpactToProjectDiagnostics(
-	cwd: string,
-	findings: CallGraphImpactFinding[],
+  cwd: string,
+  findings: CallGraphImpactFinding[],
 ): ProjectDiagnostic[] {
-	// Dedupe: the same caller can be reached via more than one edited symbol
-	// in a turn (multiple callees in the same edited file). Keyed by
-	// resolved-file + caller symbolKey, keeping the highest-severity hit.
-	const byKey = new Map<string, ProjectDiagnostic>();
+  // Dedupe: the same caller can be reached via more than one edited symbol
+  // in a turn (multiple callees in the same edited file). Keyed by
+  // resolved-file + caller symbolKey, keeping the highest-severity hit.
+  const byKey = new Map<string, ProjectDiagnostic>();
 
-	for (const { calleeKey, results } of findings) {
-		const calleeName = displayName(calleeKey);
-		for (const result of results) {
-			const mapped = severityFor(result.severity);
-			if (!mapped) continue; // Review tier — see severityFor's doc comment.
+  for (const { calleeKey, results } of findings) {
+    const calleeName = displayName(calleeKey);
+    for (const result of results) {
+      const mapped = severityFor(result.severity);
+      if (!mapped) continue; // Review tier — see severityFor's doc comment.
 
-			const { filePath } = parseSymbolKey(result.symbolKey);
-			if (!filePath) continue; // Nothing real to attribute this to.
-			const resolvedFile = resolveImpactFile(cwd, filePath);
+      const { filePath } = parseSymbolKey(result.symbolKey);
+      if (!filePath) continue; // Nothing real to attribute this to.
+      const resolvedFile = resolveImpactFile(cwd, filePath);
 
-			// #1080: the call graph is derived from the tests-free review graph and is
-			// normally tests-free, but this adapter accepts arbitrary caller
-			// symbol keys — an old/fixture/expanded graph could supply a test-file
-			// caller. A KNOWN test-role caller must not be persisted as collateral
-			// call-graph impact. Fail-open: a classifier error retains the finding.
-			if (isTestRoleCollateral(resolvedFile)) continue;
+      // #1080: the call graph is derived from the tests-free review graph and is
+      // normally tests-free, but this adapter accepts arbitrary caller
+      // symbol keys — an old/fixture/expanded graph could supply a test-file
+      // caller. A KNOWN test-role caller must not be persisted as collateral
+      // call-graph impact. Fail-open: a classifier error retains the finding.
+      if (isTestRoleCollateral(resolvedFile)) continue;
 
-			const dedupeKey = `${resolvedFile}:${result.symbolKey}`;
-			const existing = byKey.get(dedupeKey);
-			if (existing && SEVERITY_RANK[existing.severity] >= SEVERITY_RANK[mapped.severity]) {
-				continue;
-			}
+      const dedupeKey = `${resolvedFile}:${result.symbolKey}`;
+      const existing = byKey.get(dedupeKey);
+      if (existing && SEVERITY_RANK[existing.severity] >= SEVERITY_RANK[mapped.severity]) {
+        continue;
+      }
 
-			const callerName = displayName(result.symbolKey);
-			byKey.set(dedupeKey, {
-				filePath: resolvedFile,
-				severity: mapped.severity,
-				semantic: "warning",
-				tool: "call-graph",
-				runner: "call-graph",
-				rule: `call-graph:${result.severity.toLowerCase()}`,
-				message: `${mapped.message} (${callerName} calls edited symbol '${calleeName}')`,
-				source: "project-scan",
-			});
-		}
-	}
+      const callerName = displayName(result.symbolKey);
+      byKey.set(dedupeKey, {
+        filePath: resolvedFile,
+        severity: mapped.severity,
+        semantic: "warning",
+        tool: "call-graph",
+        runner: "call-graph",
+        rule: `call-graph:${result.severity.toLowerCase()}`,
+        message: `${mapped.message} (${callerName} calls edited symbol '${calleeName}')`,
+        source: "project-scan",
+      });
+    }
+  }
 
-	return [...byKey.values()];
+  return [...byKey.values()];
 }

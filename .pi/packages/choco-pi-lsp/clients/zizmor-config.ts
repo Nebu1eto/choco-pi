@@ -3,12 +3,12 @@ import { type SpawnResult, safeSpawnAsync } from "./safe-spawn.js";
 import { findLocalToolConfig } from "./path-utils.js";
 import { incrementDegradationCount } from "./degradation-ledger.js";
 import {
-	type AvailabilityCause,
-	type AvailabilityOutcome,
-	classifyProbeFailure,
-	createAvailabilityLatch,
-	logAvailabilityDecision,
-	startHostStallSampler,
+  type AvailabilityCause,
+  type AvailabilityOutcome,
+  classifyProbeFailure,
+  createAvailabilityLatch,
+  logAvailabilityDecision,
+  startHostStallSampler,
 } from "./dispatch/runners/utils/availability-policy.js";
 
 /**
@@ -25,14 +25,14 @@ import {
 // chosen severities/ignores, so we let zizmor findings BLOCK in that workspace
 // (advisory-only otherwise, like Opengrep's local-rules gate).
 export const LOCAL_ZIZMOR_CONFIG_NAMES = [
-	path.join(".github", "zizmor.yml"),
-	path.join(".github", "zizmor.yaml"),
-	"zizmor.yml",
-	"zizmor.yaml",
+  path.join(".github", "zizmor.yml"),
+  path.join(".github", "zizmor.yaml"),
+  "zizmor.yml",
+  "zizmor.yaml",
 ] as const;
 
 export function findLocalZizmorConfig(startDir: string): string | undefined {
-	return findLocalToolConfig(startDir, LOCAL_ZIZMOR_CONFIG_NAMES);
+  return findLocalToolConfig(startDir, LOCAL_ZIZMOR_CONFIG_NAMES);
 }
 
 // zizmor's own input collection (see `zizmor --collect`) only ever audits three
@@ -52,12 +52,12 @@ export function findLocalZizmorConfig(startDir: string): string | undefined {
 // over-matching would leave the wasted-wait gap in place for common
 // non-GitHub YAML (docker-compose.yml, k8s manifests, …).
 export function isZizmorAuditTarget(filePath: string): boolean {
-	const normalized = filePath.replace(/\\/g, "/");
-	const base = path.basename(normalized).toLowerCase();
-	if (/(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/i.test(normalized)) return true;
-	if (base === "action.yml" || base === "action.yaml") return true;
-	if (/(^|\/)\.github\/dependabot\.ya?ml$/i.test(normalized)) return true;
-	return false;
+  const normalized = filePath.replace(/\\/g, "/");
+  const base = path.basename(normalized).toLowerCase();
+  if (/(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/i.test(normalized)) return true;
+  if (base === "action.yml" || base === "action.yaml") return true;
+  if (/(^|\/)\.github\/dependabot\.ya?ml$/i.test(normalized)) return true;
+  return false;
 }
 
 // A transient-aware latch for the `gh auth token` derivation (#1535, the
@@ -86,7 +86,7 @@ export function isZizmorAuditTarget(filePath: string): boolean {
 // review).
 const ZIZMOR_TOKEN_MAX_COOLDOWN_MS = 120_000;
 const ghTokenLatch = createAvailabilityLatch({
-	maxCooldownMs: ZIZMOR_TOKEN_MAX_COOLDOWN_MS,
+  maxCooldownMs: ZIZMOR_TOKEN_MAX_COOLDOWN_MS,
 });
 let cachedToken: string | undefined;
 
@@ -102,13 +102,13 @@ const GH_TOKEN_PROBE_TIMEOUT_MS = 5000;
  * availability latch.
  */
 export function resetZizmorTokenAvailability(): void {
-	ghTokenLatch.reset();
-	cachedToken = undefined;
+  ghTokenLatch.reset();
+  cachedToken = undefined;
 }
 
 /** Test-only alias — kept so existing tests don't need a rename. */
 export function _resetZizmorTokenCacheForTests(): void {
-	resetZizmorTokenAvailability();
+  resetZizmorTokenAvailability();
 }
 
 /**
@@ -124,87 +124,83 @@ export function _resetZizmorTokenCacheForTests(): void {
  * exit code — that IS gh's answer) and a proven-absent `gh` binary.
  */
 function classifyGhTokenFailure(
-	res: SpawnResult,
-	hostStallMs: number,
+  res: SpawnResult,
+  hostStallMs: number,
 ): { outcome: AvailabilityOutcome; cause: AvailabilityCause } {
-	// #1651 review F5: `!res.error` alone is not proof gh ran and answered.
-	// A `null` or negative `status` is Node's OWN signal that the process
-	// never completed a real run — no completed process exits with either —
-	// so this never trusts a bare-`error` check over that shape, regardless
-	// of whether `safeSpawnAsync` happened to attach an `error` for this
-	// particular result. OS-independent by construction: it reads the status
-	// Node reports, not a platform-specific errno.
-	const neverAnswered = res.status === null || (res.status ?? 0) < 0;
-	if (!res.error && !neverAnswered) {
-		// The process ran to completion with a real (nonzero, since the zero
-		// exit is handled before this is ever called) exit code — a genuine
-		// "not authenticated" (or otherwise rejected) answer, safe to cache.
-		return { outcome: "non-installable", cause: "probe-rejected" };
-	}
-	if (res.spawnFailure?.kind === "tool-not-found") {
-		// gh genuinely isn't on PATH — a durable fact about the machine.
-		return { outcome: "missing", cause: "not-found" };
-	}
-	const classified = classifyProbeFailure(res, { hostStallMs });
-	if (classified.outcome === "transient" || classified.outcome === "missing") {
-		return classified;
-	}
-	// Everything else (EACCES/permission-denied, cwd-unresolvable, a generic
-	// spawn-failed, or an unrecognized errno) means the child never launched —
-	// that's evidence about this moment, not about gh's auth state.
-	return { outcome: "transient", cause: classified.cause };
+  // #1651 review F5: `!res.error` alone is not proof gh ran and answered.
+  // A `null` or negative `status` is Node's OWN signal that the process
+  // never completed a real run — no completed process exits with either —
+  // so this never trusts a bare-`error` check over that shape, regardless
+  // of whether `safeSpawnAsync` happened to attach an `error` for this
+  // particular result. OS-independent by construction: it reads the status
+  // Node reports, not a platform-specific errno.
+  const neverAnswered = res.status === null || (res.status ?? 0) < 0;
+  if (!res.error && !neverAnswered) {
+    // The process ran to completion with a real (nonzero, since the zero
+    // exit is handled before this is ever called) exit code — a genuine
+    // "not authenticated" (or otherwise rejected) answer, safe to cache.
+    return { outcome: "non-installable", cause: "probe-rejected" };
+  }
+  if (res.spawnFailure?.kind === "tool-not-found") {
+    // gh genuinely isn't on PATH — a durable fact about the machine.
+    return { outcome: "missing", cause: "not-found" };
+  }
+  const classified = classifyProbeFailure(res, { hostStallMs });
+  if (classified.outcome === "transient" || classified.outcome === "missing") {
+    return classified;
+  }
+  // Everything else (EACCES/permission-denied, cwd-unresolvable, a generic
+  // spawn-failed, or an unrecognized errno) means the child never launched —
+  // that's evidence about this moment, not about gh's auth state.
+  return { outcome: "transient", cause: classified.cause };
 }
 
 async function deriveGhCliToken(): Promise<string | undefined> {
-	const sampler = startHostStallSampler();
-	const startedAt = Date.now();
-	// Best-effort: a missing/unauthenticated `gh` just leaves zizmor offline.
-	// ignoreAmbientSignal so a mid-turn Esc can't silently drop the server into
-	// offline mode; short timeout so a wedged `gh` never stalls the warm spawn.
-	// safeSpawnAsync never rejects (every failure resolves into `res`), so no
-	// try/finally is needed to guarantee the sampler stops.
-	const res = await safeSpawnAsync("gh", ["auth", "token"], {
-		timeout: GH_TOKEN_PROBE_TIMEOUT_MS,
-		ignoreAmbientSignal: true,
-	});
-	const hostStallMs = sampler.stop();
-	const elapsedMs = Date.now() - startedAt;
+  const sampler = startHostStallSampler();
+  const startedAt = Date.now();
+  // Best-effort: a missing/unauthenticated `gh` just leaves zizmor offline.
+  // ignoreAmbientSignal so a mid-turn Esc can't silently drop the server into
+  // offline mode; short timeout so a wedged `gh` never stalls the warm spawn.
+  // safeSpawnAsync never rejects (every failure resolves into `res`), so no
+  // try/finally is needed to guarantee the sampler stops.
+  const res = await safeSpawnAsync("gh", ["auth", "token"], {
+    timeout: GH_TOKEN_PROBE_TIMEOUT_MS,
+    ignoreAmbientSignal: true,
+  });
+  const hostStallMs = sampler.stop();
+  const elapsedMs = Date.now() - startedAt;
 
-	if (!res.error && res.status === 0) {
-		const token = res.stdout.trim();
-		if (token.length > 0) {
-			ghTokenLatch.noteAvailable();
-			logAvailabilityDecision({
-				tool: "zizmor-gh-token",
-				verdict: "available",
-				outcome: "success",
-				cause: "ok",
-				elapsedMs,
-				latched: true,
-				hostStallMs,
-				budgetMs: GH_TOKEN_PROBE_TIMEOUT_MS,
-			});
-			return token;
-		}
-		// `gh` ran cleanly and answered with nothing — a genuine, durable "no
-		// token" verdict (distinct from a rejected/nonzero exit), so it is safe
-		// to cache. Reviewer-caught #1535 gap: the pre-fix version of this
-		// branch called `noteAvailable()` / logged `verdict:"available"` here
-		// regardless of whether `token` was empty, so the record claimed the
-		// online audits ran while zizmor was actually about to launch offline
-		// — the #1535 silence moved into the telemetry instead of being fixed.
-		return recordGhTokenUnavailable(
-			{ outcome: "non-installable", cause: "empty-result" },
-			elapsedMs,
-			hostStallMs,
-		);
-	}
+  if (!res.error && res.status === 0) {
+    const token = res.stdout.trim();
+    if (token.length > 0) {
+      ghTokenLatch.noteAvailable();
+      logAvailabilityDecision({
+        tool: "zizmor-gh-token",
+        verdict: "available",
+        outcome: "success",
+        cause: "ok",
+        elapsedMs,
+        latched: true,
+        hostStallMs,
+        budgetMs: GH_TOKEN_PROBE_TIMEOUT_MS,
+      });
+      return token;
+    }
+    // `gh` ran cleanly and answered with nothing — a genuine, durable "no
+    // token" verdict (distinct from a rejected/nonzero exit), so it is safe
+    // to cache. Reviewer-caught #1535 gap: the pre-fix version of this
+    // branch called `noteAvailable()` / logged `verdict:"available"` here
+    // regardless of whether `token` was empty, so the record claimed the
+    // online audits ran while zizmor was actually about to launch offline
+    // — the #1535 silence moved into the telemetry instead of being fixed.
+    return recordGhTokenUnavailable(
+      { outcome: "non-installable", cause: "empty-result" },
+      elapsedMs,
+      hostStallMs,
+    );
+  }
 
-	return recordGhTokenUnavailable(
-		classifyGhTokenFailure(res, hostStallMs),
-		elapsedMs,
-		hostStallMs,
-	);
+  return recordGhTokenUnavailable(classifyGhTokenFailure(res, hostStallMs), elapsedMs, hostStallMs);
 }
 
 /**
@@ -214,28 +210,28 @@ async function deriveGhCliToken(): Promise<string | undefined> {
  * can't drift on which fields get set.
  */
 function recordGhTokenUnavailable(
-	{ outcome, cause }: { outcome: AvailabilityOutcome; cause: AvailabilityCause },
-	elapsedMs: number,
-	hostStallMs: number,
+  { outcome, cause }: { outcome: AvailabilityOutcome; cause: AvailabilityCause },
+  elapsedMs: number,
+  hostStallMs: number,
 ): undefined {
-	const retryAfterMs = ghTokenLatch.noteUnavailable(outcome, cause);
-	if (outcome === "transient") {
-		recordZizmorOfflineDegradation(
-			`gh auth token probe ${cause}; running offline until the next zizmor start (retry allowed in ${Math.round(retryAfterMs / 1000)}s)`,
-		);
-	}
-	logAvailabilityDecision({
-		tool: "zizmor-gh-token",
-		verdict: "unavailable",
-		outcome,
-		cause,
-		elapsedMs,
-		latched: outcome !== "transient",
-		hostStallMs,
-		...(retryAfterMs > 0 && { retryAfterMs }),
-		budgetMs: GH_TOKEN_PROBE_TIMEOUT_MS,
-	});
-	return undefined;
+  const retryAfterMs = ghTokenLatch.noteUnavailable(outcome, cause);
+  if (outcome === "transient") {
+    recordZizmorOfflineDegradation(
+      `gh auth token probe ${cause}; running offline until the next zizmor start (retry allowed in ${Math.round(retryAfterMs / 1000)}s)`,
+    );
+  }
+  logAvailabilityDecision({
+    tool: "zizmor-gh-token",
+    verdict: "unavailable",
+    outcome,
+    cause,
+    elapsedMs,
+    latched: outcome !== "transient",
+    hostStallMs,
+    ...(retryAfterMs > 0 && { retryAfterMs }),
+    budgetMs: GH_TOKEN_PROBE_TIMEOUT_MS,
+  });
+  return undefined;
 }
 
 /**
@@ -253,11 +249,11 @@ function recordGhTokenUnavailable(
  * lines.
  */
 function recordZizmorOfflineDegradation(reason: string): void {
-	incrementDegradationCount({
-		kind: "mode-suppression",
-		subject: "zizmor",
-		reason,
-	});
+  incrementDegradationCount({
+    kind: "mode-suppression",
+    subject: "zizmor",
+    reason,
+  });
 }
 
 /**
@@ -283,53 +279,51 @@ function recordZizmorOfflineDegradation(reason: string): void {
  * transient failure means the NEXT spawn goes online, not the current one.
  */
 export async function resolveZizmorGitHubToken(): Promise<string | undefined> {
-	// Respect an explicit offline request — never derive a token then.
-	if (process.env.ZIZMOR_OFFLINE) return undefined;
-	const fromEnv =
-		process.env.ZIZMOR_GITHUB_TOKEN ||
-		process.env.GH_TOKEN ||
-		process.env.GITHUB_TOKEN;
-	if (fromEnv) return fromEnv;
-	const memo = ghTokenLatch.read();
-	if (memo !== null) {
-		if (memo === false && ghTokenLatch.getOutcome() === "transient") {
-			// Served straight from the still-cooling latch: no new probe runs,
-			// so `deriveGhCliToken`'s own logging never fires. Without this, once
-			// the cooldown ladder crosses zizmor's own respawn cadence (bounded
-			// below `TRANSIENT_MAX_COOLDOWN_MS` via `ZIZMOR_TOKEN_MAX_COOLDOWN_MS`
-			// for exactly this reason) a spawn could start offline with nothing
-			// in latency.log or the degradation ledger to say so (#1535 review).
-			const cause = ghTokenLatch.getCause();
-			if (cause === null) {
-				// `getOutcome() === "transient"` is only ever set by `noteUnavailable`
-				// in the same call that sets `cause` — the two fields are written
-				// together, so this can't happen without the latch's own invariant
-				// breaking. Assert rather than fabricate a plausible-looking default
-				// (e.g. `?? "probe-timeout"`): a fake cause here would silently
-				// mislabel WHY the current cycle is offline, in exactly the spot
-				// this fix exists to make honest.
-				throw new Error(
-					"zizmor gh-token latch: transient outcome with no cause (invariant violated)",
-				);
-			}
-			const retryAfterMs = Math.max(0, ghTokenLatch.getRetryAtMs() - Date.now());
-			recordZizmorOfflineDegradation(
-				`gh auth token still cooling down (${cause}); serving cached offline verdict, retry allowed in ${Math.round(retryAfterMs / 1000)}s`,
-			);
-			logAvailabilityDecision({
-				tool: "zizmor-gh-token",
-				verdict: "unavailable",
-				outcome: "transient",
-				cause,
-				elapsedMs: 0,
-				latched: false,
-				hostStallMs: 0,
-				...(retryAfterMs > 0 && { retryAfterMs }),
-				budgetMs: GH_TOKEN_PROBE_TIMEOUT_MS,
-			});
-		}
-		return memo ? cachedToken : undefined;
-	}
-	cachedToken = await deriveGhCliToken();
-	return cachedToken;
+  // Respect an explicit offline request — never derive a token then.
+  if (process.env.ZIZMOR_OFFLINE) return undefined;
+  const fromEnv =
+    process.env.ZIZMOR_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  if (fromEnv) return fromEnv;
+  const memo = ghTokenLatch.read();
+  if (memo !== null) {
+    if (memo === false && ghTokenLatch.getOutcome() === "transient") {
+      // Served straight from the still-cooling latch: no new probe runs,
+      // so `deriveGhCliToken`'s own logging never fires. Without this, once
+      // the cooldown ladder crosses zizmor's own respawn cadence (bounded
+      // below `TRANSIENT_MAX_COOLDOWN_MS` via `ZIZMOR_TOKEN_MAX_COOLDOWN_MS`
+      // for exactly this reason) a spawn could start offline with nothing
+      // in latency.log or the degradation ledger to say so (#1535 review).
+      const cause = ghTokenLatch.getCause();
+      if (cause === null) {
+        // `getOutcome() === "transient"` is only ever set by `noteUnavailable`
+        // in the same call that sets `cause` — the two fields are written
+        // together, so this can't happen without the latch's own invariant
+        // breaking. Assert rather than fabricate a plausible-looking default
+        // (e.g. `?? "probe-timeout"`): a fake cause here would silently
+        // mislabel WHY the current cycle is offline, in exactly the spot
+        // this fix exists to make honest.
+        throw new Error(
+          "zizmor gh-token latch: transient outcome with no cause (invariant violated)",
+        );
+      }
+      const retryAfterMs = Math.max(0, ghTokenLatch.getRetryAtMs() - Date.now());
+      recordZizmorOfflineDegradation(
+        `gh auth token still cooling down (${cause}); serving cached offline verdict, retry allowed in ${Math.round(retryAfterMs / 1000)}s`,
+      );
+      logAvailabilityDecision({
+        tool: "zizmor-gh-token",
+        verdict: "unavailable",
+        outcome: "transient",
+        cause,
+        elapsedMs: 0,
+        latched: false,
+        hostStallMs: 0,
+        ...(retryAfterMs > 0 && { retryAfterMs }),
+        budgetMs: GH_TOKEN_PROBE_TIMEOUT_MS,
+      });
+    }
+    return memo ? cachedToken : undefined;
+  }
+  cachedToken = await deriveGhCliToken();
+  return cachedToken;
 }

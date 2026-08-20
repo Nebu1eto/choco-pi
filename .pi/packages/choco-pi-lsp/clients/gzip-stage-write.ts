@@ -7,35 +7,35 @@ import { createGzip } from "node:zlib";
 import { stagePathFor } from "./atomic-write-staging.js";
 
 export interface GzipStageWriteMetrics {
-	/** Uncompressed byte length of the serialized JSON. */
-	rawBytes: number;
-	/** On-disk size of the gzipped stage file. */
-	gzBytes: number;
-	serializeMs: number;
-	writeMs: number;
+  /** Uncompressed byte length of the serialized JSON. */
+  rawBytes: number;
+  /** On-disk size of the gzipped stage file. */
+  gzBytes: number;
+  serializeMs: number;
+  writeMs: number;
 }
 
 /** Common request envelope every gzip-stage persist worker receives. Concrete
  * workers extend this with their own routing fields (e.g. `cwd`, `elements`). */
 export interface GzipStageWorkerRequest {
-	id: number;
-	generation: number;
-	stagePath: string;
-	data: unknown;
-	testDelayMs?: number;
+  id: number;
+  generation: number;
+  stagePath: string;
+  data: unknown;
+  testDelayMs?: number;
 }
 
 /** Common result envelope: the routing fields the worker echoes back, plus the
  * write metrics (all optional — absent together with `error` set on failure). */
 export interface GzipStageWorkerResult {
-	id: number;
-	generation: number;
-	stagePath: string;
-	rawBytes?: number;
-	gzBytes?: number;
-	serializeMs?: number;
-	writeMs?: number;
-	error?: string;
+  id: number;
+  generation: number;
+  stagePath: string;
+  rawBytes?: number;
+  gzBytes?: number;
+  serializeMs?: number;
+  writeMs?: number;
+  error?: string;
 }
 
 /**
@@ -72,41 +72,37 @@ export interface GzipStageWorkerResult {
  * to a main-thread rewrite on an error result).
  */
 export async function writeGzipStageFile(
-	data: unknown,
-	stagePath: string,
-	testDelayMs?: number,
+  data: unknown,
+  stagePath: string,
+  testDelayMs?: number,
 ): Promise<GzipStageWriteMetrics> {
-	const tmpPath = stagePathFor(stagePath);
-	try {
-		if (testDelayMs) {
-			await new Promise((resolve) => setTimeout(resolve, testDelayMs));
-		}
-		const serializeStarted = performance.now();
-		const json = JSON.stringify(data);
-		const serializeMs = performance.now() - serializeStarted;
-		const rawBytes = Buffer.byteLength(json);
+  const tmpPath = stagePathFor(stagePath);
+  try {
+    if (testDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, testDelayMs));
+    }
+    const serializeStarted = performance.now();
+    const json = JSON.stringify(data);
+    const serializeMs = performance.now() - serializeStarted;
+    const rawBytes = Buffer.byteLength(json);
 
-		const writeStarted = performance.now();
-		await fs.promises.mkdir(path.dirname(stagePath), { recursive: true });
-		const chunks = function* () {
-			const chunkChars = 256 * 1024;
-			for (let offset = 0; offset < json.length; offset += chunkChars) {
-				yield json.slice(offset, offset + chunkChars);
-			}
-		};
-		await pipeline(
-			Readable.from(chunks()),
-			createGzip(),
-			fs.createWriteStream(tmpPath),
-		);
-		await fs.promises.rename(tmpPath, stagePath);
-		const writeMs = performance.now() - writeStarted;
-		const gzBytes = (await fs.promises.stat(stagePath)).size;
-		return { rawBytes, gzBytes, serializeMs, writeMs };
-	} catch (err) {
-		await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
-		throw err;
-	}
+    const writeStarted = performance.now();
+    await fs.promises.mkdir(path.dirname(stagePath), { recursive: true });
+    const chunks = function* () {
+      const chunkChars = 256 * 1024;
+      for (let offset = 0; offset < json.length; offset += chunkChars) {
+        yield json.slice(offset, offset + chunkChars);
+      }
+    };
+    await pipeline(Readable.from(chunks()), createGzip(), fs.createWriteStream(tmpPath));
+    await fs.promises.rename(tmpPath, stagePath);
+    const writeMs = performance.now() - writeStarted;
+    const gzBytes = (await fs.promises.stat(stagePath)).size;
+    return { rawBytes, gzBytes, serializeMs, writeMs };
+  } catch (err) {
+    await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 /**
@@ -119,32 +115,32 @@ export async function writeGzipStageFile(
  * request. Throws immediately if loaded outside a worker thread.
  */
 export function serveGzipStageWorker<
-	Req extends GzipStageWorkerRequest,
-	Base extends { id: number; generation: number; stagePath: string },
+  Req extends GzipStageWorkerRequest,
+  Base extends { id: number; generation: number; stagePath: string },
 >(buildBaseResult: (request: Req) => Base): void {
-	const port = parentPort;
-	if (!port) {
-		throw new Error("gzip stage persist worker requires a parent port");
-	}
-	port.on("message", (request: Req) => {
-		void (async () => {
-			const result: Base & GzipStageWorkerResult = {
-				...buildBaseResult(request),
-			};
-			try {
-				const metrics = await writeGzipStageFile(
-					request.data,
-					request.stagePath,
-					request.testDelayMs,
-				);
-				result.rawBytes = metrics.rawBytes;
-				result.gzBytes = metrics.gzBytes;
-				result.serializeMs = metrics.serializeMs;
-				result.writeMs = metrics.writeMs;
-			} catch (err) {
-				result.error = err instanceof Error ? err.message : String(err);
-			}
-			port.postMessage(result);
-		})();
-	});
+  const port = parentPort;
+  if (!port) {
+    throw new Error("gzip stage persist worker requires a parent port");
+  }
+  port.on("message", (request: Req) => {
+    void (async () => {
+      const result: Base & GzipStageWorkerResult = {
+        ...buildBaseResult(request),
+      };
+      try {
+        const metrics = await writeGzipStageFile(
+          request.data,
+          request.stagePath,
+          request.testDelayMs,
+        );
+        result.rawBytes = metrics.rawBytes;
+        result.gzBytes = metrics.gzBytes;
+        result.serializeMs = metrics.serializeMs;
+        result.writeMs = metrics.writeMs;
+      } catch (err) {
+        result.error = err instanceof Error ? err.message : String(err);
+      }
+      port.postMessage(result);
+    })();
+  });
 }

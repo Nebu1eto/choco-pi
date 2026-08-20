@@ -14,16 +14,16 @@ description: |
   Building regular expressions from user input or dynamic strings can
   lead to ReDoS attacks. An attacker can craft input that causes
   catastrophic backtracking.
-  
+
   ❌ NEVER:
   const regex = new RegExp(userInput, 'i');  // ReDoS risk!
   const pattern = new RegExp(`\\b${term}\\b`);  // Also risky!
-  
+
   ✅ SAFE ALTERNATIVES:
   1. Escape special regex characters before interpolation
   2. Use string methods instead of regex when possible
   3. Validate input against a whitelist
-  
+
   Example escaping:
   function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -58,19 +58,19 @@ examples:
   bad: |
     // ReDoS vulnerability!
     const searchRegex = new RegExp(`\\b${userSearch}\\b`, 'gi');
-    
+
     // Also vulnerable
     const validator = new RegExp(req.body.pattern);
-  
+
   good: |
     // Safe: Escape special characters
     function escapeRegExp(string: string): string {
       return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
     const safeRegex = new RegExp(escapeRegExp(userSearch), 'i');
-    
+
     // Safe: Use string methods
     const found = text.toLowerCase().includes(userSearch.toLowerCase());
-    
+
     // Safe: Static regex
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

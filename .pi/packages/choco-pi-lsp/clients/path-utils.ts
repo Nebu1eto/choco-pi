@@ -26,7 +26,7 @@ import { minimatch } from "./deps/minimatch.js";
  * rooted backslash at position zero (`\`) selects Windows parsing.
  */
 export function isWindowsPath(filePath: string): boolean {
-	return /^[A-Za-z]:/.test(filePath) || filePath.startsWith("\\");
+  return /^[A-Za-z]:/.test(filePath) || filePath.startsWith("\\");
 }
 
 /**
@@ -43,17 +43,17 @@ export function isWindowsPath(filePath: string): boolean {
  * becomes detectable.
  */
 export function toPosix(filePath: string): string {
-	return filePath.replace(/\\/g, "/");
+  return filePath.replace(/\\/g, "/");
 }
 
 /** Return whether `filePath` is fully qualified under Windows semantics. */
 export function isFullyQualifiedWin32(filePath: string): boolean {
-	return win32.isAbsolute(filePath) && win32.parse(filePath).root.length > 1;
+  return win32.isAbsolute(filePath) && win32.parse(filePath).root.length > 1;
 }
 
 /** Return whether `filePath` is fully qualified under POSIX semantics. */
 export function isFullyQualifiedPosix(filePath: string): boolean {
-	return path.posix.isAbsolute(filePath) && !isWindowsPath(filePath);
+  return path.posix.isAbsolute(filePath) && !isWindowsPath(filePath);
 }
 
 /**
@@ -63,9 +63,9 @@ export function isFullyQualifiedPosix(filePath: string): boolean {
  * dependent) but fully qualified under POSIX.
  */
 export function isFullyQualified(filePath: string): boolean {
-	return process.platform === "win32"
-		? isFullyQualifiedWin32(filePath)
-		: isFullyQualifiedPosix(filePath);
+  return process.platform === "win32"
+    ? isFullyQualifiedWin32(filePath)
+    : isFullyQualifiedPosix(filePath);
 }
 
 /**
@@ -76,7 +76,7 @@ export function isFullyQualified(filePath: string): boolean {
  * (leading slash, drive-root, doubled separators).
  */
 export function splitPathSegments(filePath: string): string[] {
-	return filePath.split(/[\\/]+/).filter(Boolean);
+  return filePath.split(/[\\/]+/).filter(Boolean);
 }
 
 /**
@@ -93,30 +93,30 @@ export function splitPathSegments(filePath: string): string[] {
  * Always converts backslashes to forward slashes for consistent Map keys.
  */
 export function normalizeFilePath(filePath: string): string {
-	// Convert backslashes to forward slashes first
-	const normalized = filePath.replace(/\\/g, "/");
+  // Convert backslashes to forward slashes first
+  const normalized = filePath.replace(/\\/g, "/");
 
-	if (process.platform !== "win32" && !isWindowsPath(normalized)) {
-		return normalized;
-	}
+  if (process.platform !== "win32" && !isWindowsPath(normalized)) {
+    return normalized;
+  }
 
-	// Windows: try realpathSync.native() for canonical casing
-	// This resolves symlinks and returns the actual filesystem casing
-	try {
-		const canonical = realpathSync.native(filePath);
-		return canonical.replace(/\\/g, "/");
-	} catch {
-		// File doesn't exist yet (new file) — resolve path and lowercase
-		// We need to walk up the directory tree to find the nearest existing
-		// parent, resolve its casing, then append the non-existent parts
-		try {
-			return resolveNonExisting(filePath);
-		} catch {
-			// Last resort: just lowercase the resolved path
-			const resolved = win32.normalize(win32.resolve(filePath));
-			return resolved.replace(/\\/g, "/").toLowerCase();
-		}
-	}
+  // Windows: try realpathSync.native() for canonical casing
+  // This resolves symlinks and returns the actual filesystem casing
+  try {
+    const canonical = realpathSync.native(filePath);
+    return canonical.replace(/\\/g, "/");
+  } catch {
+    // File doesn't exist yet (new file) — resolve path and lowercase
+    // We need to walk up the directory tree to find the nearest existing
+    // parent, resolve its casing, then append the non-existent parts
+    try {
+      return resolveNonExisting(filePath);
+    } catch {
+      // Last resort: just lowercase the resolved path
+      const resolved = win32.normalize(win32.resolve(filePath));
+      return resolved.replace(/\\/g, "/").toLowerCase();
+    }
+  }
 }
 
 /**
@@ -129,42 +129,42 @@ export function normalizeFilePath(filePath: string): string {
  * - Result: C:/Users/Foo/newdir/file.ts
  */
 function resolveNonExisting(filePath: string): string {
-	const resolved = win32.resolve(filePath);
-	let current = resolved;
-	const nonExistentParts: string[] = [];
+  const resolved = win32.resolve(filePath);
+  let current = resolved;
+  const nonExistentParts: string[] = [];
 
-	// Walk up until we find an existing directory
-	while (true) {
-		if (existsSync(current)) {
-			// Found existing ancestor — get its canonical casing
-			const canonical = realpathSync.native(current);
-			if (nonExistentParts.length === 0) {
-				return canonical.replace(/\\/g, "/");
-			}
-			// Append non-existent parts (lowercased for consistency)
-			const tail = nonExistentParts.reverse().join("/").toLowerCase();
-			const base = canonical.replace(/\\/g, "/");
-			return base.endsWith("/") ? base + tail : `${base}/${tail}`;
-		}
+  // Walk up until we find an existing directory
+  while (true) {
+    if (existsSync(current)) {
+      // Found existing ancestor — get its canonical casing
+      const canonical = realpathSync.native(current);
+      if (nonExistentParts.length === 0) {
+        return canonical.replace(/\\/g, "/");
+      }
+      // Append non-existent parts (lowercased for consistency)
+      const tail = nonExistentParts.reverse().join("/").toLowerCase();
+      const base = canonical.replace(/\\/g, "/");
+      return base.endsWith("/") ? base + tail : `${base}/${tail}`;
+    }
 
-		// Use win32.dirname (not the platform-default dirname) so a
-		// Windows-shaped path is parsed with win32 semantics regardless of the
-		// running OS — consistent with the win32.resolve/win32.normalize this
-		// branch already commits to. The platform-default POSIX dirname would
-		// find no separator in a win32-resolved "C:\repo\..." path (its only
-		// separators are backslashes), collapse to ".", stop the upward walk at
-		// cwd, and mangle the key on Linux CI (refs #1150, the #1024
-		// OS-divergence class).
-		const parent = win32.dirname(current);
-		if (parent === current) {
-			// Reached filesystem root without finding existing dir
-			// Fall back to full lowercase
-			throw new Error("No existing parent found");
-		}
+    // Use win32.dirname (not the platform-default dirname) so a
+    // Windows-shaped path is parsed with win32 semantics regardless of the
+    // running OS — consistent with the win32.resolve/win32.normalize this
+    // branch already commits to. The platform-default POSIX dirname would
+    // find no separator in a win32-resolved "C:\repo\..." path (its only
+    // separators are backslashes), collapse to ".", stop the upward walk at
+    // cwd, and mangle the key on Linux CI (refs #1150, the #1024
+    // OS-divergence class).
+    const parent = win32.dirname(current);
+    if (parent === current) {
+      // Reached filesystem root without finding existing dir
+      // Fall back to full lowercase
+      throw new Error("No existing parent found");
+    }
 
-		nonExistentParts.push(win32.basename(current));
-		current = parent;
-	}
+    nonExistentParts.push(win32.basename(current));
+    current = parent;
+  }
 }
 
 /**
@@ -172,13 +172,13 @@ function resolveNonExisting(filePath: string): string {
  * Handles URL decoding and Windows drive letter normalization.
  */
 export function uriToPath(uri: string): string {
-	try {
-		const filePath = fileURLToPath(uri);
-		return normalizeFilePath(filePath);
-	} catch {
-		// Not a valid file:// URI, treat as plain path
-		return normalizeFilePath(uri);
-	}
+  try {
+    const filePath = fileURLToPath(uri);
+    return normalizeFilePath(filePath);
+  } catch {
+    // Not a valid file:// URI, treat as plain path
+    return normalizeFilePath(uri);
+  }
 }
 
 /**
@@ -196,12 +196,12 @@ export function uriToPath(uri: string): string {
  * near-identity there).
  */
 export function uriToDiskPath(uri: string): string {
-	try {
-		return fileURLToPath(uri);
-	} catch {
-		// Not a valid file:// URI — treat as a plain path (matches uriToPath).
-		return uri;
-	}
+  try {
+    return fileURLToPath(uri);
+  } catch {
+    // Not a valid file:// URI — treat as a plain path (matches uriToPath).
+    return uri;
+  }
 }
 
 /**
@@ -209,7 +209,7 @@ export function uriToDiskPath(uri: string): string {
  * Does NOT normalize the path - URIs preserve original casing.
  */
 export function pathToUri(filePath: string): string {
-	return pathToFileURL(filePath).href;
+  return pathToFileURL(filePath).href;
 }
 
 /**
@@ -217,7 +217,7 @@ export function pathToUri(filePath: string): string {
  * Use this when getting/setting values in Maps that use file paths as keys.
  */
 export function normalizeMapKey(filePath: string): string {
-	return normalizeFilePath(filePath);
+  return normalizeFilePath(filePath);
 }
 
 /**
@@ -237,12 +237,12 @@ export function normalizeMapKey(filePath: string): string {
  * native paths are unchanged either way.
  */
 export function toProjectRelativePath(filePath: string, projectRoot: string): string {
-	const p = isWindowsPath(filePath) ? win32 : path;
-	if (!p.isAbsolute(filePath)) return filePath.replace(/\\/g, "/");
-	const relative = p.relative(p.resolve(projectRoot), filePath);
-	return relative && !relative.startsWith("..") && !p.isAbsolute(relative)
-		? relative.replace(/\\/g, "/")
-		: filePath.replace(/\\/g, "/");
+  const p = isWindowsPath(filePath) ? win32 : path;
+  if (!p.isAbsolute(filePath)) return filePath.replace(/\\/g, "/");
+  const relative = p.relative(p.resolve(projectRoot), filePath);
+  return relative && !relative.startsWith("..") && !p.isAbsolute(relative)
+    ? relative.replace(/\\/g, "/")
+    : filePath.replace(/\\/g, "/");
 }
 
 /**
@@ -267,12 +267,12 @@ export function toProjectRelativePath(filePath: string, projectRoot: string): st
  * real-casing resolution actually matters.
  */
 export function normalizeEphemeralMapKey(filePath: string): string {
-	// Most hot-path keys on POSIX are already canonical slash-separated strings.
-	// Preserve that identity instead of allocating a replacement string for each
-	// file in a large diagnostics reconciliation.
-	if (process.platform !== "win32" && !filePath.includes("\\")) return filePath;
-	const slashed = filePath.replace(/\\/g, "/");
-	return process.platform === "win32" ? slashed.toLowerCase() : slashed;
+  // Most hot-path keys on POSIX are already canonical slash-separated strings.
+  // Preserve that identity instead of allocating a replacement string for each
+  // file in a large diagnostics reconciliation.
+  if (process.platform !== "win32" && !filePath.includes("\\")) return filePath;
+  const slashed = filePath.replace(/\\/g, "/");
+  return process.platform === "win32" ? slashed.toLowerCase() : slashed;
 }
 
 /**
@@ -280,7 +280,7 @@ export function normalizeEphemeralMapKey(filePath: string): string {
  * and mixed separators (backslash vs forward slash).
  */
 export function pathsEqual(a: string, b: string): boolean {
-	return normalizeFilePath(a) === normalizeFilePath(b);
+  return normalizeFilePath(a) === normalizeFilePath(b);
 }
 
 /**
@@ -298,13 +298,13 @@ export function pathsEqual(a: string, b: string): boolean {
  * should use `findNearestContaining` instead.
  */
 export function* walkUpDirs(startDir: string): Generator<string> {
-	let current = path.resolve(startDir);
-	while (true) {
-		yield current;
-		const parent = path.dirname(current);
-		if (parent === current) return;
-		current = parent;
-	}
+  let current = path.resolve(startDir);
+  while (true) {
+    yield current;
+    const parent = path.dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
 }
 
 /**
@@ -316,15 +316,15 @@ export function* walkUpDirs(startDir: string): Generator<string> {
  *   // → "/repo/pkg" if pkg/package.json exists, "/repo" if only /repo/package.json
  */
 export function findNearestContaining(
-	startDir: string,
-	candidates: readonly string[],
+  startDir: string,
+  candidates: readonly string[],
 ): string | undefined {
-	for (const dir of walkUpDirs(startDir)) {
-		for (const name of candidates) {
-			if (existsSync(path.join(dir, name))) return dir;
-		}
-	}
-	return undefined;
+  for (const dir of walkUpDirs(startDir)) {
+    for (const name of candidates) {
+      if (existsSync(path.join(dir, name))) return dir;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -344,29 +344,29 @@ export function findNearestContaining(
  *   // → "/repo/typos.toml" if present, else undefined
  */
 export function findLocalToolConfig(
-	startDir: string,
-	names: readonly string[],
+  startDir: string,
+  names: readonly string[],
 ): string | undefined {
-	for (const dir of walkUpDirs(startDir || process.cwd())) {
-		for (const name of names) {
-			const candidate = path.join(dir, name);
-			if (existsSync(candidate)) return candidate;
-		}
-	}
-	return undefined;
+  for (const dir of walkUpDirs(startDir || process.cwd())) {
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return undefined;
 }
 
 export interface FindNearestMarkerRootOptions {
-	/**
-	 * Directory names/files that, if found BEFORE any of `markers`, stop the
-	 * walk and make it return `null` — e.g. `.git`/`.hg`/`.svn` so a search
-	 * starting inside a repo without its own project marker doesn't escape
-	 * past that repo's VCS boundary to pick up an unrelated parent's marker.
-	 * Omit for callers with no such boundary (default: none).
-	 */
-	boundaries?: readonly string[];
-	/** Override for `os.homedir()`, primarily for tests. */
-	homeDir?: string;
+  /**
+   * Directory names/files that, if found BEFORE any of `markers`, stop the
+   * walk and make it return `null` — e.g. `.git`/`.hg`/`.svn` so a search
+   * starting inside a repo without its own project marker doesn't escape
+   * past that repo's VCS boundary to pick up an unrelated parent's marker.
+   * Omit for callers with no such boundary (default: none).
+   */
+  boundaries?: readonly string[];
+  /** Override for `os.homedir()`, primarily for tests. */
+  homeDir?: string;
 }
 
 /**
@@ -392,22 +392,22 @@ export interface FindNearestMarkerRootOptions {
  * differently here to avoid confusion between the two.
  */
 export function findNearestMarkerRoot(
-	startDir: string,
-	markers: readonly string[],
-	options: FindNearestMarkerRootOptions = {},
+  startDir: string,
+  markers: readonly string[],
+  options: FindNearestMarkerRootOptions = {},
 ): string | null {
-	const boundaries = options.boundaries ?? [];
-	const homeDir = path.resolve(options.homeDir ?? os.homedir());
-	let current = path.resolve(startDir);
-	for (let depth = 0; depth < 64; depth++) {
-		if (isAtOrAboveHomeDir(current, homeDir)) return null;
-		if (markers.some((m) => existsSync(path.join(current, m)))) return current;
-		if (boundaries.some((m) => existsSync(path.join(current, m)))) return null;
-		const parent = path.dirname(current);
-		if (parent === current) return null;
-		current = parent;
-	}
-	return null;
+  const boundaries = options.boundaries ?? [];
+  const homeDir = path.resolve(options.homeDir ?? os.homedir());
+  let current = path.resolve(startDir);
+  for (let depth = 0; depth < 64; depth++) {
+    if (isAtOrAboveHomeDir(current, homeDir)) return null;
+    if (markers.some((m) => existsSync(path.join(current, m)))) return current;
+    if (boundaries.some((m) => existsSync(path.join(current, m)))) return null;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+  return null;
 }
 
 /**
@@ -420,34 +420,31 @@ export function findNearestMarkerRoot(
  * A normal project *under* home (e.g. `~/code/app`) is NOT at-or-above home,
  * so it still resolves fine. Refs #253.
  */
-export function isAtOrAboveHomeDir(
-	dir: string,
-	homeDir: string = os.homedir(),
-): boolean {
-	const resolvedDir = path.resolve(dir);
-	const resolvedHome = path.resolve(homeDir);
-	if (resolvedDir === resolvedHome) return true;
-	// `dir` is an ancestor of home ⇢ home lies inside dir ⇢ the relative path
-	// from dir to home has no leading `..` and is not absolute (cross-drive on
-	// Windows yields an absolute rel, correctly treated as "not above").
-	const rel = path.relative(resolvedDir, resolvedHome);
-	return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+export function isAtOrAboveHomeDir(dir: string, homeDir: string = os.homedir()): boolean {
+  const resolvedDir = path.resolve(dir);
+  const resolvedHome = path.resolve(homeDir);
+  if (resolvedDir === resolvedHome) return true;
+  // `dir` is an ancestor of home ⇢ home lies inside dir ⇢ the relative path
+  // from dir to home has no leading `..` and is not absolute (cross-drive on
+  // Windows yields an absolute rel, correctly treated as "not above").
+  const rel = path.relative(resolvedDir, resolvedHome);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
 export function isUnderDir(child: string, parent: string): boolean {
-	const normChild = normalizeFilePath(child);
-	const normParent = normalizeFilePath(parent);
-	// Ensure parent ends with / for prefix matching
-	const parentPrefix = normParent.endsWith("/") ? normParent : `${normParent}/`;
-	return normChild === normParent || normChild.startsWith(parentPrefix);
+  const normChild = normalizeFilePath(child);
+  const normParent = normalizeFilePath(parent);
+  // Ensure parent ends with / for prefix matching
+  const parentPrefix = normParent.endsWith("/") ? normParent : `${normParent}/`;
+  return normChild === normParent || normChild.startsWith(parentPrefix);
 }
 
 const VENDOR_DIR_NAMES = new Set([
-	"node_modules",
-	"vendor",
-	"vendors",
-	"third_party",
-	"third-party",
+  "node_modules",
+  "vendor",
+  "vendors",
+  "third_party",
+  "third-party",
 ]);
 
 /**
@@ -458,17 +455,14 @@ const VENDOR_DIR_NAMES = new Set([
  *   1. Outside the project root entirely (e.g. global npm packages, system files)
  *   2. Inside the project but under a vendor directory (node_modules, vendor, third_party, etc.)
  */
-export function isExternalOrVendorFile(
-	filePath: string,
-	projectRoot: string,
-): boolean {
-	if (!isUnderDir(filePath, projectRoot)) return true;
-	const normalized = normalizeFilePath(filePath);
-	const rootNorm = normalizeFilePath(projectRoot);
-	const rel = normalized.startsWith(rootNorm + "/")
-		? normalized.slice(rootNorm.length + 1)
-		: normalized;
-	return rel.split("/").some((seg) => VENDOR_DIR_NAMES.has(seg));
+export function isExternalOrVendorFile(filePath: string, projectRoot: string): boolean {
+  if (!isUnderDir(filePath, projectRoot)) return true;
+  const normalized = normalizeFilePath(filePath);
+  const rootNorm = normalizeFilePath(projectRoot);
+  const rel = normalized.startsWith(rootNorm + "/")
+    ? normalized.slice(rootNorm.length + 1)
+    : normalized;
+  return rel.split("/").some((seg) => VENDOR_DIR_NAMES.has(seg));
 }
 
 /**
@@ -482,10 +476,10 @@ export function isExternalOrVendorFile(
  * options.
  */
 export function nameMatchesMarkerGlob(name: string, pattern: string): boolean {
-	return minimatch(name, pattern, {
-		dot: true,
-		nocase: process.platform === "win32",
-	});
+  return minimatch(name, pattern, {
+    dot: true,
+    nocase: process.platform === "win32",
+  });
 }
 
 /**
@@ -493,15 +487,11 @@ export function nameMatchesMarkerGlob(name: string, pattern: string): boolean {
  * *directory* named like a marker (e.g. a `Foo.csproj/` dir) is not a project
  * file (#201).
  */
-export function direntsHaveMarkerGlobMatch(
-	entries: readonly Dirent[],
-	pattern: string,
-): boolean {
-	return entries.some(
-		(entry) =>
-			(entry.isFile() || entry.isSymbolicLink()) &&
-			nameMatchesMarkerGlob(entry.name, pattern),
-	);
+export function direntsHaveMarkerGlobMatch(entries: readonly Dirent[], pattern: string): boolean {
+  return entries.some(
+    (entry) =>
+      (entry.isFile() || entry.isSymbolicLink()) && nameMatchesMarkerGlob(entry.name, pattern),
+  );
 }
 
 /**
@@ -527,24 +517,20 @@ const HOST_UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
  * accept.
  */
 function hostNormalizeWindowsShellPath(filePath: string): string {
-	if (
-		!filePath.startsWith("/") ||
-		filePath.startsWith("//") ||
-		filePath.includes("\\")
-	) {
-		return filePath;
-	}
-	const match = filePath.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i);
-	if (!match) return filePath;
-	const suffix = match[2]?.replaceAll("/", "\\");
-	return `${match[1].toUpperCase()}:\\${suffix ?? ""}`;
+  if (!filePath.startsWith("/") || filePath.startsWith("//") || filePath.includes("\\")) {
+    return filePath;
+  }
+  const match = filePath.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i);
+  if (!match) return filePath;
+  const suffix = match[2]?.replaceAll("/", "\\");
+  return `${match[1].toUpperCase()}:\\${suffix ?? ""}`;
 }
 
 interface HostNormalizeOptions {
-	/** Fold the unicode space class to U+0020. */
-	normalizeUnicodeSpaces?: boolean;
-	/** Drop a single leading `@` (pi's file-mention prefix). */
-	stripAtPrefix?: boolean;
+  /** Fold the unicode space class to U+0020. */
+  normalizeUnicodeSpaces?: boolean;
+  /** Drop a single leading `@` (pi's file-mention prefix). */
+  stripAtPrefix?: boolean;
 }
 
 /**
@@ -561,40 +547,37 @@ interface HostNormalizeOptions {
  * Shape-based parsing here would DIVERGE from the host, not protect against
  * it.
  */
-export function normalizeHostToolPath(
-	input: string,
-	options: HostNormalizeOptions = {},
-): string {
-	let normalized = input;
-	if (options.normalizeUnicodeSpaces) {
-		normalized = normalized.replace(HOST_UNICODE_SPACES, " ");
-	}
-	if (options.stripAtPrefix && normalized.startsWith("@")) {
-		normalized = normalized.slice(1);
-	}
-	if (process.platform === "win32") {
-		normalized = hostNormalizeWindowsShellPath(normalized);
-	}
-	// `homedir()` is resolved inside the branch, as pi does. This runs on every
-	// tool_call and a `~` path is the rare case.
-	if (normalized === "~") return os.homedir();
-	if (
-		normalized.startsWith("~/") ||
-		(process.platform === "win32" && normalized.startsWith("~\\"))
-	) {
-		return path.join(os.homedir(), normalized.slice(2));
-	}
-	if (/^file:\/\//.test(normalized)) {
-		try {
-			return fileURLToPath(normalized);
-		} catch {
-			// pi lets a malformed file: URL throw out of normalizePath, but choco-pi-lsp
-			// is advisory instrumentation on the same event: a URL pi rejects must
-			// degrade to "no path" here, never take down the tool_call handler.
-			return normalized;
-		}
-	}
-	return normalized;
+export function normalizeHostToolPath(input: string, options: HostNormalizeOptions = {}): string {
+  let normalized = input;
+  if (options.normalizeUnicodeSpaces) {
+    normalized = normalized.replace(HOST_UNICODE_SPACES, " ");
+  }
+  if (options.stripAtPrefix && normalized.startsWith("@")) {
+    normalized = normalized.slice(1);
+  }
+  if (process.platform === "win32") {
+    normalized = hostNormalizeWindowsShellPath(normalized);
+  }
+  // `homedir()` is resolved inside the branch, as pi does. This runs on every
+  // tool_call and a `~` path is the rare case.
+  if (normalized === "~") return os.homedir();
+  if (
+    normalized.startsWith("~/") ||
+    (process.platform === "win32" && normalized.startsWith("~\\"))
+  ) {
+    return path.join(os.homedir(), normalized.slice(2));
+  }
+  if (/^file:\/\//.test(normalized)) {
+    try {
+      return fileURLToPath(normalized);
+    } catch {
+      // pi lets a malformed file: URL throw out of normalizePath, but choco-pi-lsp
+      // is advisory instrumentation on the same event: a URL pi rejects must
+      // degrade to "no path" here, never take down the tool_call handler.
+      return normalized;
+    }
+  }
+  return normalized;
 }
 
 /**
@@ -611,37 +594,37 @@ export function normalizeHostToolPath(
  *   - an already-absolute input is re-resolved on its own, ignoring the cwd.
  */
 export function resolveHostToolPath(input: string, baseDir: string): string {
-	const normalized = normalizeHostToolPath(input, {
-		normalizeUnicodeSpaces: true,
-		stripAtPrefix: true,
-	});
-	const normalizedBaseDir = normalizeHostToolPath(baseDir);
-	return path.isAbsolute(normalized)
-		? path.resolve(normalized)
-		: path.resolve(normalizedBaseDir, normalized);
+  const normalized = normalizeHostToolPath(input, {
+    normalizeUnicodeSpaces: true,
+    stripAtPrefix: true,
+  });
+  const normalizedBaseDir = normalizeHostToolPath(baseDir);
+  return path.isAbsolute(normalized)
+    ? path.resolve(normalized)
+    : path.resolve(normalizedBaseDir, normalized);
 }
 
 export interface HostPathVariantResolution {
-	/** The path to use: the first variant that exists, else the naive resolve. */
-	path: string;
-	/** Set when a VARIANT matched — `path` differs from the naive resolve. */
-	variant?: "narrow-nbsp" | "nfd" | "curly-quote" | "nfd-curly-quote";
-	/**
-	 * The naive resolve did not exist and no variant did either. Distinct from
-	 * "the naive resolve existed": callers that expect the file to be there use
-	 * this to record a `path-variant-unresolved` degradation instead of
-	 * returning silently (defect shape 10 — an empty result must say WHY).
-	 */
-	unresolved: boolean;
-	/**
-	 * Variant labels actually probed. Empty when the base resolve existed — and
-	 * ALSO empty when every candidate collapsed onto the base path (a plain
-	 * ASCII name with no quote and no AM/PM). Callers must therefore gate a
-	 * degradation on `unresolved`, never on this being non-empty: the
-	 * all-candidates-identical miss is a real miss, and gating it away is how
-	 * the base-normalization cases went silent (#1655 review F1).
-	 */
-	triedVariants: string[];
+  /** The path to use: the first variant that exists, else the naive resolve. */
+  path: string;
+  /** Set when a VARIANT matched — `path` differs from the naive resolve. */
+  variant?: "narrow-nbsp" | "nfd" | "curly-quote" | "nfd-curly-quote";
+  /**
+   * The naive resolve did not exist and no variant did either. Distinct from
+   * "the naive resolve existed": callers that expect the file to be there use
+   * this to record a `path-variant-unresolved` degradation instead of
+   * returning silently (defect shape 10 — an empty result must say WHY).
+   */
+  unresolved: boolean;
+  /**
+   * Variant labels actually probed. Empty when the base resolve existed — and
+   * ALSO empty when every candidate collapsed onto the base path (a plain
+   * ASCII name with no quote and no AM/PM). Callers must therefore gate a
+   * degradation on `unresolved`, never on this being non-empty: the
+   * all-candidates-identical miss is a real miss, and gating it away is how
+   * the base-normalization cases went silent (#1655 review F1).
+   */
+  triedVariants: string[];
 }
 
 /**
@@ -671,46 +654,43 @@ export interface HostPathVariantResolution {
  * @param fileExists injectable existence probe; defaults to `existsSync`
  */
 export function resolveHostPathVariants(
-	resolvedPath: string,
-	fileExists: (candidate: string) => boolean = existsSync,
+  resolvedPath: string,
+  fileExists: (candidate: string) => boolean = existsSync,
 ): HostPathVariantResolution {
-	if (fileExists(resolvedPath)) {
-		return { path: resolvedPath, unresolved: false, triedVariants: [] };
-	}
+  if (fileExists(resolvedPath)) {
+    return { path: resolvedPath, unresolved: false, triedVariants: [] };
+  }
 
-	const nfd = resolvedPath.normalize("NFD");
-	const candidates: Array<{
-		variant: NonNullable<HostPathVariantResolution["variant"]>;
-		candidate: string;
-	}> = [
-		{
-			variant: "narrow-nbsp",
-			candidate: resolvedPath.replace(
-				/ (AM|PM)\./gi,
-				`${NARROW_NO_BREAK_SPACE}$1.`,
-			),
-		},
-		{ variant: "nfd", candidate: nfd },
-		{
-			variant: "curly-quote",
-			candidate: resolvedPath.replaceAll("'", RIGHT_SINGLE_QUOTE),
-		},
-		{
-			variant: "nfd-curly-quote",
-			candidate: nfd.replaceAll("'", RIGHT_SINGLE_QUOTE),
-		},
-	];
+  const nfd = resolvedPath.normalize("NFD");
+  const candidates: Array<{
+    variant: NonNullable<HostPathVariantResolution["variant"]>;
+    candidate: string;
+  }> = [
+    {
+      variant: "narrow-nbsp",
+      candidate: resolvedPath.replace(/ (AM|PM)\./gi, `${NARROW_NO_BREAK_SPACE}$1.`),
+    },
+    { variant: "nfd", candidate: nfd },
+    {
+      variant: "curly-quote",
+      candidate: resolvedPath.replaceAll("'", RIGHT_SINGLE_QUOTE),
+    },
+    {
+      variant: "nfd-curly-quote",
+      candidate: nfd.replaceAll("'", RIGHT_SINGLE_QUOTE),
+    },
+  ];
 
-	const triedVariants: string[] = [];
-	for (const { variant, candidate } of candidates) {
-		// pi skips a candidate identical to the resolved path, so choco-pi-lsp does
-		// too — otherwise a no-op "variant" would be reported as a match.
-		if (candidate === resolvedPath) continue;
-		triedVariants.push(variant);
-		if (fileExists(candidate)) {
-			return { path: candidate, variant, unresolved: false, triedVariants };
-		}
-	}
+  const triedVariants: string[] = [];
+  for (const { variant, candidate } of candidates) {
+    // pi skips a candidate identical to the resolved path, so choco-pi-lsp does
+    // too — otherwise a no-op "variant" would be reported as a match.
+    if (candidate === resolvedPath) continue;
+    triedVariants.push(variant);
+    if (fileExists(candidate)) {
+      return { path: candidate, variant, unresolved: false, triedVariants };
+    }
+  }
 
-	return { path: resolvedPath, unresolved: true, triedVariants };
+  return { path: resolvedPath, unresolved: true, triedVariants };
 }

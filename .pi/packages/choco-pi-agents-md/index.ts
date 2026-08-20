@@ -6,5 +6,5 @@ import { registerAgentsMdAutoload } from "./src/subdir.ts";
  * See README.md for behavior and VENDORED.md for provenance.
  */
 export default function piChocoAgentsMd(pi: ExtensionAPI): void {
-	registerAgentsMdAutoload(pi);
+  registerAgentsMdAutoload(pi);
 }

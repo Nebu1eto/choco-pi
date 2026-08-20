@@ -39,5 +39,5 @@ rule:
         precedes:
           stopBy: end
           any:
-            - pattern: '$M, $$$ := $$$'
-            - pattern: '$M, $$$ = $$$'
+            - pattern: "$M, $$$ := $$$"
+            - pattern: "$M, $$$ = $$$"

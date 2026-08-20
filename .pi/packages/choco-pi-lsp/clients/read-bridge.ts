@@ -58,66 +58,63 @@
  */
 
 /** Stable Symbol key — identical across module reloads in the same process. */
-import {
-	captureReadContentBinding,
-	type ReadContentBinding,
-} from "./read-guard.js";
+import { captureReadContentBinding, type ReadContentBinding } from "./read-guard.js";
 
 export const READ_BRIDGE_KEY: unique symbol = Symbol.for("choco-pi-lsp:read-bridge");
 
 /** Payload a producer passes when recording a read. */
 export interface ReadBridgeEntry {
-	/** Absolute path to the file that was read. */
-	filePath: string;
-	/** First line read (1-indexed). Defaults to 1 when no offset was given. */
-	requestedOffset: number;
-	/**
-	 * Number of lines read. `undefined` means the whole file was requested;
-	 * choco-pi-lsp will treat the effective limit as the full file length.
-	 */
-	requestedLimit: number | undefined;
-	/**
-	 * Optional caller identity. Surfaced as `source: "bridge:<consumer>"`
-	 * in `read-guard.log` so the worklog shows which extension satisfied
-	 * the read-before-edit guard. Defaults to `"unknown"` when omitted.
-	 */
-	consumer?: string;
+  /** Absolute path to the file that was read. */
+  filePath: string;
+  /** First line read (1-indexed). Defaults to 1 when no offset was given. */
+  requestedOffset: number;
+  /**
+   * Number of lines read. `undefined` means the whole file was requested;
+   * choco-pi-lsp will treat the effective limit as the full file length.
+   */
+  requestedLimit: number | undefined;
+  /**
+   * Optional caller identity. Surfaced as `source: "bridge:<consumer>"`
+   * in `read-guard.log` so the worklog shows which extension satisfied
+   * the read-before-edit guard. Defaults to `"unknown"` when omitted.
+   */
+  consumer?: string;
 }
 
 /** The object mounted at `globalThis[READ_BRIDGE_KEY]`. */
 export interface ReadBridge {
-	/**
-	 * Bridge API version. Check this before calling `recordRead` — if the
-	 * version is not one you recognise, treat the bridge as unsupported.
-	 */
-	readonly version: 1;
-	recordRead(entry: ReadBridgeEntry): void;
+  /**
+   * Bridge API version. Check this before calling `recordRead` — if the
+   * version is not one you recognise, treat the bridge as unsupported.
+   */
+  readonly version: 1;
+  recordRead(entry: ReadBridgeEntry): void;
 }
 
 interface BridgeDeps {
-	getReadGuard(): {
-		recordRead(record: {
-			filePath: string;
-			requestedOffset: number;
-			requestedLimit: number;
-			effectiveOffset: number;
-			effectiveLimit: number;
-			expandedByLsp: boolean;
-			turnIndex: number;
-			writeIndex: number;
-			timestamp: number;
-			source?: string;
-			contentBinding?: ReadContentBinding;
-		}): void;
-	};
-	getTurnIndex(): number;
-	peekWriteIndex(): number;
-	/**
-	 * Return `true` when the entry should be forwarded to the read-guard.
-	 * Called on every `recordRead` invocation so flag / project-root changes
-	 * take effect immediately without re-registration.
-	 */
-	isRecordable(filePath: string): boolean;
+  getReadGuard(): {
+    recordRead(record: {
+      filePath: string;
+      requestedOffset: number;
+      requestedLimit: number;
+      effectiveOffset: number;
+      effectiveLimit: number;
+      expandedByLsp: boolean;
+      turnIndex: number;
+      writeIndex: number;
+      timestamp: number;
+      source?: string;
+      contentBinding?: ReadContentBinding;
+    }): void;
+  };
+  getTurnIndex(): number;
+  peekWriteIndex(): number;
+  /**
+   * Return `true` when the entry should be forwarded to the read-guard.
+   * Called on every `recordRead` invocation so flag / project-root changes
+   * take effect immediately without re-registration.
+   */
+  isRecordable(filePath: string): boolean;
 }
 
 /**
@@ -130,36 +127,36 @@ interface BridgeDeps {
  * rather than to enforce a security boundary.
  */
 function isValidEntry(entry: unknown): entry is ReadBridgeEntry {
-	if (typeof entry !== "object" || entry === null) return false;
-	const e = entry as Record<string, unknown>;
+  if (typeof entry !== "object" || entry === null) return false;
+  const e = entry as Record<string, unknown>;
 
-	// filePath must be a non-empty string (absolute paths are expected but
-	// we don't re-resolve here — `isRecordable` handles scope checks).
-	if (typeof e["filePath"] !== "string" || e["filePath"] === "") return false;
+  // filePath must be a non-empty string (absolute paths are expected but
+  // we don't re-resolve here — `isRecordable` handles scope checks).
+  if (typeof e["filePath"] !== "string" || e["filePath"] === "") return false;
 
-	// requestedOffset must be a finite integer ≥ 1.
-	const offset = e["requestedOffset"];
-	if (
-		typeof offset !== "number" ||
-		!Number.isFinite(offset) ||
-		offset < 1 ||
-		!Number.isInteger(offset)
-	)
-		return false;
+  // requestedOffset must be a finite integer ≥ 1.
+  const offset = e["requestedOffset"];
+  if (
+    typeof offset !== "number" ||
+    !Number.isFinite(offset) ||
+    offset < 1 ||
+    !Number.isInteger(offset)
+  )
+    return false;
 
-	// requestedLimit must be undefined or a finite positive integer.
-	const limit = e["requestedLimit"];
-	if (limit !== undefined) {
-		if (
-			typeof limit !== "number" ||
-			!Number.isFinite(limit) ||
-			limit < 1 ||
-			!Number.isInteger(limit)
-		)
-			return false;
-	}
+  // requestedLimit must be undefined or a finite positive integer.
+  const limit = e["requestedLimit"];
+  if (limit !== undefined) {
+    if (
+      typeof limit !== "number" ||
+      !Number.isFinite(limit) ||
+      limit < 1 ||
+      !Number.isInteger(limit)
+    )
+      return false;
+  }
 
-	return true;
+  return true;
 }
 
 /**
@@ -168,54 +165,50 @@ function isValidEntry(entry: unknown): entry is ReadBridgeEntry {
  * Subsequent calls are no-ops.
  */
 export function registerReadBridge(deps: BridgeDeps): void {
-	// Use `in` check so the frozen non-configurable property doesn't throw
-	// on a redundant defineProperty attempt.
-	if (READ_BRIDGE_KEY in (globalThis as object)) return;
+  // Use `in` check so the frozen non-configurable property doesn't throw
+  // on a redundant defineProperty attempt.
+  if (READ_BRIDGE_KEY in (globalThis as object)) return;
 
-	const bridge: ReadBridge = Object.freeze({
-		version: 1 as const,
-		recordRead(entry: ReadBridgeEntry): void {
-			// Validate the payload before doing anything else — this catches
-			// integration bugs in callers (malformed fields, bad numbers).
-			if (!isValidEntry(entry)) return;
+  const bridge: ReadBridge = Object.freeze({
+    version: 1 as const,
+    recordRead(entry: ReadBridgeEntry): void {
+      // Validate the payload before doing anything else — this catches
+      // integration bugs in callers (malformed fields, bad numbers).
+      if (!isValidEntry(entry)) return;
 
-			if (!deps.isRecordable(entry.filePath)) return;
+      if (!deps.isRecordable(entry.filePath)) return;
 
-			const offset = entry.requestedOffset;
-			// When no limit is given treat the whole file as covered — the guard
-			// clips to the actual line count via its own file-length probe.
-			const limit = entry.requestedLimit ?? Number.MAX_SAFE_INTEGER;
-			const contentBinding = captureReadContentBinding(
-				entry.filePath,
-				offset,
-				limit,
-			);
+      const offset = entry.requestedOffset;
+      // When no limit is given treat the whole file as covered — the guard
+      // clips to the actual line count via its own file-length probe.
+      const limit = entry.requestedLimit ?? Number.MAX_SAFE_INTEGER;
+      const contentBinding = captureReadContentBinding(entry.filePath, offset, limit);
 
-			deps.getReadGuard().recordRead({
-				filePath: entry.filePath,
-				requestedOffset: offset,
-				requestedLimit: limit,
-				effectiveOffset: offset,
-				effectiveLimit: limit,
-				expandedByLsp: false,
-				turnIndex: deps.getTurnIndex(),
-				writeIndex: deps.peekWriteIndex(),
-				// Stamp the timestamp here, matching exactly how the internal read
-				// path works (runtime-tool-call.ts always uses Date.now()).
-				timestamp: Date.now(),
-				// Provenance: identifies this record as bridge-sourced in read-guard.log.
-				source: `bridge:${entry.consumer ?? "unknown"}`,
-				...(contentBinding !== undefined && { contentBinding }),
-			});
-		},
-	});
+      deps.getReadGuard().recordRead({
+        filePath: entry.filePath,
+        requestedOffset: offset,
+        requestedLimit: limit,
+        effectiveOffset: offset,
+        effectiveLimit: limit,
+        expandedByLsp: false,
+        turnIndex: deps.getTurnIndex(),
+        writeIndex: deps.peekWriteIndex(),
+        // Stamp the timestamp here, matching exactly how the internal read
+        // path works (runtime-tool-call.ts always uses Date.now()).
+        timestamp: Date.now(),
+        // Provenance: identifies this record as bridge-sourced in read-guard.log.
+        source: `bridge:${entry.consumer ?? "unknown"}`,
+        ...(contentBinding !== undefined && { contentBinding }),
+      });
+    },
+  });
 
-	// Register as non-writable, non-configurable so no subsequent code can
-	// silently overwrite the bridge (first-wins is the contract).
-	Object.defineProperty(globalThis, READ_BRIDGE_KEY, {
-		value: bridge,
-		writable: false,
-		configurable: false,
-		enumerable: false,
-	});
+  // Register as non-writable, non-configurable so no subsequent code can
+  // silently overwrite the bridge (first-wins is the contract).
+  Object.defineProperty(globalThis, READ_BRIDGE_KEY, {
+    value: bridge,
+    writable: false,
+    configurable: false,
+    enumerable: false,
+  });
 }
