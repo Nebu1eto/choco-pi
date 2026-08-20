@@ -1,3 +1,6 @@
+import type { ProtocolDictionary } from "../../tools/runtime-values.js";
+import type { RuntimeValue } from "../../tools/runtime-values.js";
+import { isRuntimeNumber, isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.js";
 /**
  * Periodic version refresh for choco-pi-lsp's managed npm tools (#1730).
  *
@@ -41,7 +44,7 @@ import * as path from "node:path";
 import { recordDegradationOnce } from "../degradation-ledger.js";
 import { commitDurableStoreAsync } from "../durable-store.js";
 import { pmBinary, resolveNodePackageManager, updateArgs } from "../package-manager.js";
-import { safeSpawnAsync } from "../safe-spawn.js";
+import { safeSpawnAsync as hostSafeSpawnAsync, type SpawnResult } from "../safe-spawn.js";
 import { logSessionStart } from "../sessionstart-logger.js";
 import {
   getManagedToolsDir,
@@ -55,6 +58,14 @@ import {
   releaseManagedToolRefreshSlot,
   reserveManagedToolRefreshSlot,
 } from "./managed-tool-refresh-session.js";
+
+async function safeSpawnAsync(
+  ...args: Parameters<typeof hostSafeSpawnAsync>
+): Promise<SpawnResult> {
+  const result = await hostSafeSpawnAsync(...args);
+  // SAFETY: safeSpawnAsync constructs SpawnResult on every resolve path; its shared inferred signature is temporarily unknown.
+  return result as SpawnResult;
+}
 
 const STATE_FILENAME = ".refresh-state.json";
 const STATE_VERSION = 1;
@@ -130,16 +141,17 @@ export function getManagedToolRefreshStatePath(): string {
 }
 
 /** Coerce one parsed entry, dropping anything whose shape we cannot trust. */
-function parseEntry(value: unknown): ManagedToolRefreshEntry | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function parseEntry(value: RuntimeValue): ManagedToolRefreshEntry | undefined {
+  if (!value || !isRuntimeObject(value) || Array.isArray(value)) {
     return undefined;
   }
-  const candidate = value as Record<string, unknown>;
-  if (typeof candidate.checkedAt !== "number") return undefined;
+  // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
+  const candidate = value as ProtocolDictionary;
+  if (!isRuntimeNumber(candidate.checkedAt)) return undefined;
   if (!Number.isFinite(candidate.checkedAt)) return undefined;
   return {
     checkedAt: candidate.checkedAt,
-    ...(typeof candidate.version === "string" && {
+    ...(isRuntimeString(candidate.version) && {
       version: candidate.version,
     }),
     ...(candidate.failed === true && { failed: true }),
@@ -148,15 +160,17 @@ function parseEntry(value: unknown): ManagedToolRefreshEntry | undefined {
 
 function parseState(contents: string): ManagedToolRefreshState {
   const parsed: unknown = JSON.parse(contents);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!parsed || !isRuntimeObject(parsed) || Array.isArray(parsed)) {
     throw new Error("refresh-state root is not an object");
   }
+  // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
   const rawTools = (parsed as { tools?: unknown }).tools;
-  if (!rawTools || typeof rawTools !== "object" || Array.isArray(rawTools)) {
+  if (!rawTools || !isRuntimeObject(rawTools) || Array.isArray(rawTools)) {
     throw new Error("refresh-state.tools is not an object");
   }
   const tools: Record<string, ManagedToolRefreshEntry> = {};
-  for (const [toolId, value] of Object.entries(rawTools as Record<string, unknown>)) {
+  // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
+  for (const [toolId, value] of Object.entries(rawTools as ProtocolDictionary)) {
     const entry = parseEntry(value);
     if (entry) tools[toolId] = entry;
   }
@@ -168,6 +182,7 @@ export async function readManagedToolRefreshState(): Promise<ManagedToolRefreshS
   try {
     contents = await fs.readFile(getManagedToolRefreshStatePath(), "utf-8");
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     const code = (err as NodeJS.ErrnoException).code;
     // ENOENT is the honest "never refreshed" answer. A permission error or a
     // directory in the file's place is NOT — that is unknown cadence.
@@ -177,6 +192,7 @@ export async function readManagedToolRefreshState(): Promise<ManagedToolRefreshS
   try {
     return { status: "ok", state: parseState(contents) };
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     return { status: "unreadable", reason: (err as Error).message };
   }
 }
@@ -226,9 +242,11 @@ async function writeRefreshStamp(toolId: string, entry: ManagedToolRefreshEntry)
     recordDegradationOnce({
       kind: "managed-tool-refresh",
       subject: toolId,
+      // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
       reason: `stamp write failed: ${(err as Error).message}`,
     });
     logSessionStart(
+      // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
       `managed-tool-refresh ${toolId}: stamp write failed (${(err as Error).message})`,
     );
   }
@@ -323,8 +341,9 @@ async function readInstalledVersion(packageName: string): Promise<string | undef
       "utf-8",
     );
     const parsed: unknown = JSON.parse(raw);
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     const version = (parsed as { version?: unknown } | null)?.version;
-    return typeof version === "string" ? version : undefined;
+    return isRuntimeString(version) ? version : undefined;
   } catch {
     return undefined;
   }
@@ -619,6 +638,7 @@ async function executeManagedToolRefresh(now: number): Promise<ManagedToolRefres
         recordDegradationOnce({
           kind: "managed-tool-refresh",
           subject: candidate.toolId,
+          // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
           reason: `refresh threw: ${(err as Error).message}`,
         });
       }

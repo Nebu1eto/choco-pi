@@ -19,6 +19,8 @@
  * and the napi tag (`no-eval` / `no-eval-js`). Sharing the normalization keeps
  * the three surfaces from drifting.
  */
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { normalizeRuleId } from "./rule-id-normalize.js";
 
 export interface RulePolicyEntry {
@@ -37,6 +39,33 @@ export interface RulePolicyEntry {
  */
 export type RulePolicyMap = Record<string, RulePolicyEntry | undefined>;
 
+interface RulePolicyEvaluation {
+  dropped: boolean;
+}
+
+interface RulePolicyScan {
+  matched: boolean;
+  sawEntry: boolean;
+}
+
+const RulePolicyEntrySchema = Type.Object(
+  {
+    disable: Type.Optional(Type.Array(Type.String())),
+    select: Type.Optional(Type.Array(Type.String())),
+  },
+  { additionalProperties: true },
+);
+const RulePolicyContainerSchema = Type.Object({}, { additionalProperties: true });
+
+function parseRulePolicyMap<T>(value: T): RulePolicyMap | undefined {
+  if (!Value.Check(RulePolicyContainerSchema, value)) return undefined;
+  const policyMap: RulePolicyMap = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (Value.Check(RulePolicyEntrySchema, entry)) policyMap[key] = entry;
+  }
+  return policyMap;
+}
+
 /**
  * Decide whether a rule id (in the form it's emitted on a diagnostic — e.g.
  * `ast-grep:no-eval`, `no-eval-js`, `no-eval`, `ts:2322`) should be filtered
@@ -54,7 +83,7 @@ export type RulePolicyMap = Record<string, RulePolicyEntry | undefined>;
 export function evaluateRulePolicy(
   ruleId: string,
   policyMap: RulePolicyMap | undefined,
-): { dropped: boolean } {
+): RulePolicyEvaluation {
   if (!policyMap) return { dropped: false };
   const raw = ruleId || "";
   const norm = normalizeRuleId(raw);
@@ -76,7 +105,7 @@ function scanList(
   pick: (entry: RulePolicyEntry) => string[] | undefined,
   raw: string,
   norm: string,
-): { matched: boolean; sawEntry: boolean } {
+): RulePolicyScan {
   let sawEntry = false;
   for (const entry of Object.values(policyMap)) {
     for (const candidate of (entry && pick(entry)) ?? []) {
@@ -104,21 +133,19 @@ function matchesRule(entry: string, raw: string, normalized: string): boolean {
  * `mode=delta`/`mode=all`/`mode=full` paths so a project's own policy
  * applies consistently across every output surface.
  */
-export function applyRulePolicy<T extends { rule?: string; code?: string }>(
+export function applyRulePolicy<T extends { rule?: string; code?: string }, P>(
   diagnostics: T[],
-  policyMap: Record<string, unknown> | undefined,
+  rawPolicyMap: P | undefined,
 ): T[] {
+  if (!rawPolicyMap) return diagnostics;
+  const policyMap = parseRulePolicyMap(rawPolicyMap);
   if (!policyMap) return diagnostics;
   // Fast-path: if every entry has neither disable nor select, there is no
   // output filter to apply. Keeps the hot path (most projects have only
   // thresholds) cheap.
   let hasFilter = false;
-  for (const rawEntry of Object.values(policyMap)) {
-    if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) {
-      continue;
-    }
-    const entry = rawEntry as { disable?: string[]; select?: string[] };
-    if ((entry.disable?.length ?? 0) > 0 || (entry.select?.length ?? 0) > 0) {
+  for (const entry of Object.values(policyMap)) {
+    if ((entry?.disable?.length ?? 0) > 0 || (entry?.select?.length ?? 0) > 0) {
       hasFilter = true;
       break;
     }
@@ -128,7 +155,7 @@ export function applyRulePolicy<T extends { rule?: string; code?: string }>(
   return diagnostics.filter((d) => {
     const ruleId = d.rule ?? d.code;
     if (!ruleId) return true;
-    const { dropped } = evaluateRulePolicy(ruleId, policyMap as RulePolicyMap);
+    const { dropped } = evaluateRulePolicy(ruleId, policyMap);
     return !dropped;
   });
 }
@@ -140,24 +167,21 @@ export function applyRulePolicy<T extends { rule?: string; code?: string }>(
  * `threshold` (a threshold is a separate concern handled elsewhere) so the
  * filter step doesn't repeat the work.
  */
-export function rulePolicyMapFromConfig(
-  rules: Record<string, unknown> | undefined,
-): RulePolicyMap | undefined {
+export function rulePolicyMapFromConfig<T>(rules: T | undefined): RulePolicyMap | undefined {
   if (!rules) return undefined;
+  const parsed = parseRulePolicyMap(rules);
+  if (!parsed) return undefined;
   let built: RulePolicyMap | undefined;
-  for (const [key, rawEntry] of Object.entries(rules)) {
-    if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) {
-      continue;
-    }
-    const entry = rawEntry as { disable?: string[]; select?: string[] };
+  for (const [key, entry] of Object.entries(parsed)) {
+    if (!entry) continue;
     const hasDisable = (entry.disable?.length ?? 0) > 0;
     const hasSelect = (entry.select?.length ?? 0) > 0;
     if (!hasDisable && !hasSelect) continue;
     built ??= {};
-    built[key] = {
-      ...(hasDisable ? { disable: entry.disable } : {}),
-      ...(hasSelect ? { select: entry.select } : {}),
-    };
+    const policy: RulePolicyEntry = {};
+    if (hasDisable) policy.disable = entry.disable;
+    if (hasSelect) policy.select = entry.select;
+    built[key] = policy;
   }
   return built;
 }

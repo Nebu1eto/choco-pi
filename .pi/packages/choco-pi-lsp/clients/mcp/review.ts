@@ -17,8 +17,16 @@ import {
   resolveNodePackageManager,
   runScriptArgs,
 } from "../package-manager.js";
-import { safeSpawnAsync } from "../safe-spawn.js";
+import { safeSpawnAsync as hostSafeSpawnAsync, type SpawnResult } from "../safe-spawn.js";
 import type { AnalyzeFileOptions, McpAnalyzeResult } from "./analyze.js";
+
+async function safeSpawnAsync(
+  ...args: Parameters<typeof hostSafeSpawnAsync>
+): Promise<SpawnResult> {
+  const result = await hostSafeSpawnAsync(...args);
+  // SAFETY: safeSpawnAsync constructs SpawnResult on every resolve path; its shared inferred signature is temporarily unknown.
+  return result as SpawnResult;
+}
 
 /**
  * Which npm script rebuilds the layout the server is running from. A server at
@@ -94,6 +102,7 @@ export function analyzeFileFresh(
         return;
       }
       try {
+        // SAFETY: The parsed value is consumed only through the optional fields declared here and each field is validated before use.
         finish({ result: JSON.parse(stdout) as McpAnalyzeResult });
       } catch {
         finish({
@@ -178,11 +187,7 @@ export type ScanDiagnostic = {
  * `pilens_project_scan` tool returns a compact, scannable summary instead of
  * dumping ~100 raw objects into the agent's context.
  */
-export function summarizeScan(diagnostics: readonly ScanDiagnostic[]): {
-  deduped: ScanDiagnostic[];
-  byRule: Record<string, number>;
-  byFile: Record<string, number>;
-} {
+export function summarizeScan(diagnostics: readonly ScanDiagnostic[]) {
   const seen = new Set<string>();
   const deduped: ScanDiagnostic[] = [];
   const byRule: Record<string, number> = {};

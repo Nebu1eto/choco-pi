@@ -5,6 +5,8 @@
  * with the existing index.ts tool_result handler.
  */
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { getDiagnosticLogger, type LogContext } from "../diagnostic-logger.js";
 import type { FileKind } from "../file-kinds.js";
 import { detectFileKind } from "../file-kinds.js";
@@ -267,7 +269,7 @@ function trackSessionSlopStats(
   diagnostics: DispatchResult["diagnostics"],
 ): void {
   const lineCount = ctx.facts.getFileFact<number>(ctx.filePath, "file.lineCount");
-  if (typeof lineCount === "number" && Number.isFinite(lineCount) && lineCount > 0) {
+  if (lineCount !== undefined && Number.isFinite(lineCount) && lineCount > 0) {
     sessionWrittenLineCount += lineCount;
   }
 
@@ -331,7 +333,7 @@ function withSpotbugsGroup(
 }
 
 function withPrimaryPolicyGroup(
-  kind: keyof typeof TOOL_PLANS,
+  kind: FileKind,
   groups: RunnerGroup[],
   pi: PiAgentAPI,
 ): RunnerGroup[] {
@@ -349,7 +351,7 @@ function withPrimaryPolicyGroup(
         })
         .filter((group): group is RunnerGroup => group !== null);
 
-  const primary = getPrimaryDispatchGroup(kind as FileKind, lspEnabled);
+  const primary = getPrimaryDispatchGroup(kind, lspEnabled);
   if (!primary) return normalizedGroups;
 
   const alreadyHasPrimary = normalizedGroups.some((group) => {
@@ -362,17 +364,14 @@ function withPrimaryPolicyGroup(
   return [primary, ...normalizedGroups];
 }
 
-export function getDispatchGroupsForKind(
-  kind: keyof typeof TOOL_PLANS,
-  pi: PiAgentAPI,
-): RunnerGroup[] {
+export function getDispatchGroupsForKind(kind: FileKind, pi: PiAgentAPI): RunnerGroup[] {
   const plan = TOOL_PLANS[kind];
   if (!plan) {
     const lspEnabled = !pi.getFlag("no-lsp");
-    const policyGroup = getPrimaryDispatchGroup(kind as FileKind, lspEnabled);
+    const policyGroup = getPrimaryDispatchGroup(kind, lspEnabled);
     if (policyGroup) return [policyGroup];
-    if (lspEnabled && LSP_CAPABLE_KINDS.has(kind as FileKind)) {
-      return [{ mode: "all", runnerIds: ["lsp"], filterKinds: [kind as FileKind] }];
+    if (lspEnabled && LSP_CAPABLE_KINDS.has(kind)) {
+      return [{ mode: "all", runnerIds: ["lsp"], filterKinds: [kind] }];
     }
     return [];
   }
@@ -422,11 +421,7 @@ let cascadeSessionStats = {
   coldSnapshotTouches: 0,
 };
 
-export function getCascadeSessionStats(): {
-  runs: number;
-  diagnosticsSurfaced: number;
-  coldSnapshotTouches: number;
-} {
+export function getCascadeSessionStats() {
   return { ...cascadeSessionStats };
 }
 
@@ -448,10 +443,7 @@ const recentlyCleanNeighborCache = new Map<string, RecentlyCleanNeighborEntry>()
 
 /** O(1) entry counts of this module's turn-bounded caches (#1123 item 2
  *  memory attribution) — both are `Map.size` reads, never iterated. */
-export function getDispatchCascadeCacheStats(): {
-  neighborTouchCacheSize: number;
-  recentlyCleanNeighborCacheSize: number;
-} {
+export function getDispatchCascadeCacheStats() {
   return {
     neighborTouchCacheSize: neighborTouchCache.size,
     recentlyCleanNeighborCacheSize: recentlyCleanNeighborCache.size,
@@ -530,9 +522,29 @@ function cascadeReconcilableLspErrors(
  * mocked client, a non-collecting touch) — indistinguishable from "unknown" at
  * every call site, which is the intended pre-#1095 fall-through.
  */
-function readBoundToCurrentDisk(rawDiags: unknown): BoundToCurrentDisk | undefined {
-  return (rawDiags as { binding?: { boundToCurrentDisk?: BoundToCurrentDisk } })?.binding
-    ?.boundToCurrentDisk;
+const TouchMetadataSchema = Type.Object(
+  {
+    binding: Type.Optional(
+      Type.Object({
+        boundToCurrentDisk: Type.Optional(Type.Union([Type.Boolean(), Type.Literal("unknown")])),
+      }),
+    ),
+    inconclusive: Type.Optional(Type.Boolean()),
+    inconclusiveServerIds: Type.Optional(Type.Array(Type.String())),
+    inconclusiveReason: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
+
+interface InconclusiveAttribution {
+  inconclusiveServerIds?: string[];
+  inconclusiveReason?: string;
+}
+
+function readBoundToCurrentDisk<T>(rawDiags: T): BoundToCurrentDisk | undefined {
+  return Value.Check(TouchMetadataSchema, rawDiags)
+    ? rawDiags.binding?.boundToCurrentDisk
+    : undefined;
 }
 
 /**
@@ -565,8 +577,8 @@ function readBoundToCurrentDisk(rawDiags: unknown): BoundToCurrentDisk | undefin
  * `TouchFileResult` wrapper — read them off the wrapper (`rawDiags`), whose
  * `.diags` a downstream `.filter()`/copy operates on without touching the flags.
  */
-function readInconclusive(rawDiags: unknown): boolean {
-  return (rawDiags as { inconclusive?: boolean })?.inconclusive === true;
+function readInconclusive<T>(rawDiags: T): boolean {
+  return Value.Check(TouchMetadataSchema, rawDiags) && rawDiags.inconclusive === true;
 }
 
 /**
@@ -577,22 +589,16 @@ function readInconclusive(rawDiags: unknown): boolean {
  * into cascade.log so the record stands on its own. Read off the wrapper, like
  * every other flag here (#1179).
  */
-function readInconclusiveAttribution(rawDiags: unknown): {
-  inconclusiveServerIds?: string[];
-  inconclusiveReason?: string;
-} {
-  const wrapper = rawDiags as {
-    inconclusiveServerIds?: string[];
-    inconclusiveReason?: string;
-  };
-  return {
-    ...(wrapper?.inconclusiveServerIds?.length && {
-      inconclusiveServerIds: [...wrapper.inconclusiveServerIds],
-    }),
-    ...(wrapper?.inconclusiveReason && {
-      inconclusiveReason: wrapper.inconclusiveReason,
-    }),
-  };
+function readInconclusiveAttribution<T>(rawDiags: T): InconclusiveAttribution {
+  const attribution: InconclusiveAttribution = {};
+  if (!Value.Check(TouchMetadataSchema, rawDiags)) return attribution;
+  if (rawDiags.inconclusiveServerIds?.length) {
+    attribution.inconclusiveServerIds = [...rawDiags.inconclusiveServerIds];
+  }
+  if (rawDiags.inconclusiveReason) {
+    attribution.inconclusiveReason = rawDiags.inconclusiveReason;
+  }
+  return attribution;
 }
 
 function isConfirmedTouch(rawDiags: TouchFileResult): boolean {
@@ -880,7 +886,7 @@ export async function computeCascadeForFile(
         result: undefined,
         neighborCount: 0,
         diagnosticCount: 0,
-        skipReason: "blockers" as CascadeSkipReason,
+        skipReason: "blockers",
       };
     }
 
@@ -892,7 +898,7 @@ export async function computeCascadeForFile(
         result: undefined,
         neighborCount: 0,
         diagnosticCount: 0,
-        skipReason: "non_code" as CascadeSkipReason,
+        skipReason: "non_code",
       };
     }
 
@@ -1394,7 +1400,7 @@ export async function computeCascadeForFile(
         result: undefined,
         neighborCount: 0,
         diagnosticCount: 0,
-        skipReason: "non_code" as CascadeSkipReason,
+        skipReason: "non_code",
       };
     }
 

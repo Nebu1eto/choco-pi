@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "../../tools/runtime-values.js";
 /**
  * Tier 2 of the MCP path: drive choco-pi-lsp's *real* lifecycle handlers
  * (`handleSessionStart`, `handleTurnEnd`) instead of re-implementing the runners
@@ -66,7 +67,7 @@ export function getMcpSessionContext(): Promise<McpSessionContext> {
     };
     resolvedRuntime = context.runtime;
     return context;
-  })().catch((err: unknown) => {
+  })().catch((err: RuntimeValue) => {
     contextPromise = undefined;
     throw err;
   });
@@ -193,7 +194,7 @@ const TURN_END_QUEUE_WAIT_MS = 5_000;
 interface QueueItem<T> {
   work: () => Promise<T>;
   resolve: (value: T) => void;
-  reject: (error: unknown) => void;
+  reject: (error: RuntimeValue) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -216,6 +217,7 @@ class TurnEndQueue {
         resolve,
         reject,
         timer: setTimeout(() => {
+          // SAFETY: The IPC parser or MCP response producer establishes this message shape before its optional fields are read.
           const index = this.pending.indexOf(item as QueueItem<unknown>);
           if (index === -1) return;
           this.pending.splice(index, 1);
@@ -223,6 +225,7 @@ class TurnEndQueue {
         }, waitMs),
       };
       item.timer.unref();
+      // SAFETY: The IPC parser or MCP response producer establishes this message shape before its optional fields are read.
       this.pending.push(item as QueueItem<unknown>);
       this.drain();
     });

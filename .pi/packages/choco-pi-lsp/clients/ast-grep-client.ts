@@ -12,13 +12,10 @@ import { createSubsystemLogger } from "./extension-log.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { AstGrepRuleManager } from "./ast-grep-rule-manager.js";
-import type {
-  AstGrepDiagnostic,
-  AstGrepMatch,
-  RuleDescription,
-  SgMatch,
-} from "./ast-grep-types.js";
+import type { AstGrepDiagnostic, AstGrepMatch, RuleDescription } from "./ast-grep-types.js";
 import { resolvePackagePath } from "./package-root.js";
 import { SgRunner, type SgExecutionOptions, type SgScanResult } from "./sg-runner.js";
 
@@ -61,7 +58,7 @@ function snippetForRange(
 const MAX_VALIDATE_PATTERN_CHARS = 20_000;
 const MAX_VALIDATE_RULE_CHARS = 200_000;
 
-const VALIDATION_SNIPPETS: Record<string, { ext: string; source: string }> = {
+const VALIDATION_SNIPPETS = {
   bash: { ext: "sh", source: "echo pi_lens_validate\n" },
   c: { ext: "c", source: "int main(void) { return 0; }\n" },
   cpp: { ext: "cpp", source: "int main() { return 0; }\n" },
@@ -81,7 +78,7 @@ const VALIDATION_SNIPPETS: Record<string, { ext: string; source: string }> = {
   tsx: { ext: "tsx", source: "export function App() { return <div />; }\n" },
   typescript: { ext: "ts", source: "const piLensValidate = 1;\n" },
   yaml: { ext: "yaml", source: "piLensValidate: true\n" },
-};
+} satisfies Record<string, { ext: string; source: string }>;
 
 function validationSnippetFor(language: string): {
   ext: string;
@@ -89,14 +86,18 @@ function validationSnippetFor(language: string): {
 } {
   const key = language.toLowerCase().replace(/^"|"$/g, "");
   return (
-    VALIDATION_SNIPPETS[key] ?? {
+    Object.entries(VALIDATION_SNIPPETS).find(([name]) => name === key)?.[1] ?? {
       ext: key.replace(/[^a-z0-9_-]/gi, "") || "txt",
       source: "pi_lens_validate\n",
     }
   );
 }
 
-function validateInputShape(value: string, maxChars: number, label: string): string | undefined {
+function validateInputConstraints(
+  value: string,
+  maxChars: number,
+  label: string,
+): string | undefined {
   if (value.includes("\0")) return `${label} contains NUL bytes`;
   if (value.length > maxChars) {
     return `${label} is too large (${value.length} chars, max ${maxChars})`;
@@ -147,6 +148,47 @@ export interface AstGrepOutlineFile {
   path: string;
   language: string;
   items: AstGrepOutlineItem[];
+}
+
+interface AstGrepValidation {
+  valid: boolean;
+  warning?: string;
+}
+
+const AstGrepOutlineItemSchema = Type.Object({
+  role: Type.String(),
+  symbolType: Type.String(),
+  name: Type.String(),
+  range: Type.Object({
+    start: Type.Object({ line: Type.Number(), column: Type.Number() }),
+    end: Type.Object({ line: Type.Number(), column: Type.Number() }),
+  }),
+  signature: Type.String(),
+  astKind: Type.String(),
+  isImport: Type.Optional(Type.Boolean()),
+  isExported: Type.Optional(Type.Boolean()),
+  isPublic: Type.Optional(Type.Boolean()),
+  members: Type.Optional(Type.Array(Type.Unknown())),
+});
+const AstGrepOutlineFileSchema = Type.Object({
+  path: Type.String(),
+  language: Type.String(),
+  items: Type.Array(Type.Unknown()),
+});
+
+function isAstGrepOutlineItem<T>(value: T): value is T & AstGrepOutlineItem {
+  if (!Value.Check(AstGrepOutlineItemSchema, value)) return false;
+  return value.members === undefined || value.members.every(isAstGrepOutlineItem);
+}
+
+function isAstGrepOutline<T>(value: T): value is T & AstGrepOutlineFile[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (file) =>
+        Value.Check(AstGrepOutlineFileSchema, file) && file.items.every(isAstGrepOutlineItem),
+    )
+  );
 }
 
 export class AstGrepClient {
@@ -248,17 +290,17 @@ export class AstGrepClient {
     // Keep tests and older embedders that replace the runner with the historic
     // match-only seam working. The production SgRunner always has the detailed
     // method, so failures cannot be mistaken for an empty result there.
-    const detailed = (
-      this.runner as unknown as {
-        tempScanDetailedAsync?: (
-          dir: string,
-          ruleId: string,
-          ruleYaml: string,
-          timeout?: number,
-          options?: SgExecutionOptions,
-        ) => Promise<SgScanResult>;
-      }
-    ).tempScanDetailedAsync;
+    // SAFETY: Production uses SgRunner; historic test embedders provide this same optional method signature.
+    const compatibleRunner = this.runner as SgRunner & {
+      tempScanDetailedAsync?: (
+        dir: string,
+        ruleId: string,
+        ruleYaml: string,
+        timeout?: number,
+        options?: SgExecutionOptions,
+      ) => Promise<SgScanResult>;
+    };
+    const detailed = compatibleRunner.tempScanDetailedAsync;
     if (detailed) {
       return detailed.call(this.runner, dir, "agent-rule", ruleYaml, 30_000, options);
     }
@@ -344,8 +386,12 @@ export class AstGrepClient {
       strictness?: string;
     } & SgExecutionOptions,
   ): Promise<{ valid: boolean; warning?: string; error?: string }> {
-    const shapeError = validateInputShape(pattern, MAX_VALIDATE_PATTERN_CHARS, "pattern");
-    if (shapeError) return { valid: false, error: shapeError };
+    const validationError = validateInputConstraints(
+      pattern,
+      MAX_VALIDATE_PATTERN_CHARS,
+      "pattern",
+    );
+    if (validationError) return { valid: false, error: validationError };
 
     const snippet = validationSnippetFor(lang);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "choco-pi-lsp-sg-validate-"));
@@ -374,10 +420,9 @@ export class AstGrepClient {
       }
       if (stderrHasError(stderr)) return { valid: false, error: stderr };
       const warning = stderr || stdout || undefined;
-      return {
-        valid: true,
-        ...(warning ? { warning } : {}),
-      };
+      let validation: AstGrepValidation = { valid: true };
+      if (warning) validation = { ...validation, warning };
+      return validation;
     } finally {
       try {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -391,8 +436,8 @@ export class AstGrepClient {
     ruleYaml: string,
     options: SgExecutionOptions = {},
   ): Promise<{ valid: boolean; error?: string }> {
-    const shapeError = validateInputShape(ruleYaml, MAX_VALIDATE_RULE_CHARS, "rule");
-    if (shapeError) return { valid: false, error: shapeError };
+    const validationError = validateInputConstraints(ruleYaml, MAX_VALIDATE_RULE_CHARS, "rule");
+    if (validationError) return { valid: false, error: validationError };
 
     const language = /^\s*language:\s*([^\s#]+)/im.exec(ruleYaml)?.[1] ?? "typescript";
     const snippet = validationSnippetFor(language);
@@ -457,7 +502,10 @@ export class AstGrepClient {
       };
     }
     try {
-      return { output: JSON.parse(raw) as AstGrepOutlineFile[] };
+      const parsed = JSON.parse(raw);
+      return isAstGrepOutline(parsed)
+        ? { output: parsed }
+        : { output: [], error: "ast-grep outline returned malformed JSON" };
     } catch (err) {
       return {
         error: `failed to parse ast-grep outline JSON: ${
@@ -645,7 +693,7 @@ message: found
     }
 
     return Array.from(grouped.entries())
-      .filter(([_, functions]) => functions.length > 1)
+      .filter(([, functions]) => functions.length > 1)
       .map(([pattern, functions]) => ({ pattern, functions }));
   }
 
@@ -711,7 +759,7 @@ message: found
     showModeIndicator = false,
     maxItems = 50,
   ): string {
-    return this.runner.formatMatches(matches as SgMatch[], isDryRun, maxItems, showModeIndicator);
+    return this.runner.formatMatches(matches, isDryRun, maxItems, showModeIndicator);
   }
 
   /**

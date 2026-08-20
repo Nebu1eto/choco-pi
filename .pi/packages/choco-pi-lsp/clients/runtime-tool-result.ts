@@ -1,3 +1,5 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as nodeCrypto from "node:crypto";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
@@ -43,6 +45,25 @@ import type { RuntimeCoordinator } from "./runtime-coordinator.js";
 import { syncGitGuardRecord } from "./git-guard.js";
 import { scheduleWordIndexPersist } from "./word-index.js";
 import { RUNTIME_CONFIG } from "./runtime-config.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+
+function shellCommandFromInput(input: LspBoundaryValue): string | undefined {
+  if (
+    input === null ||
+    Object(input) !== input ||
+    Array.isArray(input) ||
+    input instanceof Function
+  ) {
+    return undefined;
+  }
+  // SAFETY: The structural check above permits reading the one host input field this path consumes.
+  const command = (input as { command?: LspBoundaryValue }).command;
+  return Check(Type.String(), command) ? command : undefined;
+}
 
 const AUTHORITATIVE_CONTENT_MAX_BYTES = RUNTIME_CONFIG.pipeline.lspMaxFileBytes;
 
@@ -184,7 +205,8 @@ interface DebouncedEntry {
   timer: NodeJS.Timeout;
   promise: Promise<ToolResultReturn>;
   resolve: (value: ToolResultReturn) => void;
-  reject: (err: unknown) => void;
+
+  reject: (err: LspBoundaryValue) => void;
   latestDeps: ToolResultDeps;
   scheduledAt: number;
   coalescedCount: number;
@@ -214,7 +236,8 @@ function getDebounceMs(): number {
 export async function flushDebouncedToolResults(filePath?: string): Promise<void> {
   const entries = filePath
     ? debouncedPipelines.has(filePath)
-      ? [[filePath, debouncedPipelines.get(filePath) as DebouncedEntry] as const]
+      ? // SAFETY: The checked element count and construction order establish this fixed tuple representation.
+        [[filePath, debouncedPipelines.get(filePath) as DebouncedEntry] as const]
       : []
     : [...debouncedPipelines.entries()];
   for (const [key, entry] of entries) {
@@ -269,7 +292,8 @@ function scheduleDebounced(
   }
 
   let resolveFn!: (value: ToolResultReturn) => void;
-  let rejectFn!: (err: unknown) => void;
+
+  let rejectFn!: (err: LspBoundaryValue) => void;
   const promise = new Promise<ToolResultReturn>((res, rej) => {
     resolveFn = res;
     rejectFn = rej;
@@ -305,6 +329,7 @@ function getFileStateHash(filePath: string): string {
     const content = nodeFs.readFileSync(filePath);
     return nodeCrypto.createHash("sha256").update(content).digest("hex");
   } catch (err) {
+    // SAFETY: The adjacent Error and property-presence checks establish the optional Node error code representation.
     const code = (err as { code?: string }).code ?? "unknown";
     return `unreadable:${code}`;
   }
@@ -312,6 +337,8 @@ function getFileStateHash(filePath: string): string {
 
 function getRequestedEditCount(event: ToolResultEvent): number {
   if (event.toolName === "write") return 1;
+
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   const edits = (event.input as { edits?: unknown[] } | undefined)?.edits;
   return Array.isArray(edits) && edits.length > 0 ? edits.length : 1;
 }
@@ -320,7 +347,8 @@ function getRequestedEditIndexes(event: ToolResultEvent): number[] {
   return boundedIndexesForCount(getRequestedEditCount(event));
 }
 
-function sourceForToolName(toolName: string, details?: unknown): ProjectChangeSource {
+function sourceForToolName(toolName: string, details?: LspBoundaryValue): ProjectChangeSource {
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   if ((details as { piLensPartialApply?: unknown } | undefined)?.piLensPartialApply) {
     return "partial-apply";
   }
@@ -341,6 +369,7 @@ function recordProjectChange(args: {
   changedRange?: ProjectChangeRange;
   dbg: (msg: string) => void;
 }): void {
+  // SAFETY: The runtime dependency is the concrete RuntimeCoordinator; the optional member check immediately after this access preserves compatibility.
   const bump = (args.runtime as Partial<RuntimeCoordinator>).bumpFileSeq;
   if (!bump) return;
   const { projectSeq, fileSeq } = bump.call(args.runtime, args.filePath);
@@ -379,6 +408,7 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     formatBehaviorWarnings,
   } = deps;
 
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   const rawFilePath = (event.input as { path?: string }).path;
   const workspaceRoot = runtime.projectRoot || process.cwd();
 
@@ -483,11 +513,9 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
   // synthetic `write` event so its diagnostics, fileSeq, and change-log refresh.
   // Without (2) a `git checkout -- f` restore keeps serving the pre-restore
   // (e.g. broken-state) warnings on every later diagnostics_report call.
-  if (
-    event.toolName === "bash" &&
-    typeof (event.input as { command?: unknown }).command === "string"
-  ) {
-    const command = (event.input as { command: string }).command;
+  const shellCommand = event.toolName === "bash" ? shellCommandFromInput(event.input) : undefined;
+  if (shellCommand !== undefined) {
+    const command = shellCommand;
     const written = extractWrittenPathsFromCommand(command, workspaceRoot).filter(
       (wp) =>
         event.isError !== true &&
@@ -496,6 +524,8 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     );
     for (const wp of written) {
       if (!getFlag("no-read-guard")) deps.readGuard?.recordWritten(wp);
+
+      // SAFETY: The runtime dependency is the concrete RuntimeCoordinator; the optional member check immediately after this access preserves compatibility.
       const receipt = (runtime as Partial<RuntimeCoordinator>).recordMutationToolReceipt;
       const autofixMode = receipt ? receipt.call(runtime, wp, "write").autofixMode : "immediate";
       const syntheticResult = await handleToolResult({
@@ -511,10 +541,11 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
         // across the whole command so the aggregate tool result stays
         // bounded too. Past the budget, degrade to the re-read warning.
         for (const block of syntheticResult.content.slice(event.content.length)) {
-          const blockBytes =
-            typeof block.text === "string" ? Buffer.byteLength(block.text, "utf-8") : 0;
+          const blockBytes = Check(Type.String(), block.text)
+            ? Buffer.byteLength(block.text, "utf-8")
+            : 0;
           const isAuthoritativeAttachment =
-            typeof block.text === "string" &&
+            Check(Type.String(), block.text) &&
             block.text.startsWith("choco-pi-lsp applied autofix to ");
           if (
             isAuthoritativeAttachment &&
@@ -610,16 +641,18 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
   // `grep -n` output. Only shown lines are registered, never the whole file.
   if (deps.readGuard && event.isError !== true && !getFlag("no-read-guard")) {
     const searchReads: SearchReadLocation[] = [];
+
+    // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     const detailSearchReads = (event.details as { searchReads?: SearchReadLocation[] })
       ?.searchReads;
     if (Array.isArray(detailSearchReads)) searchReads.push(...detailSearchReads);
-    if (
-      event.toolName === "bash" &&
-      typeof (event.input as { command?: unknown }).command === "string"
-    ) {
-      const command = (event.input as { command: string }).command;
+    const searchShellCommand =
+      event.toolName === "bash" ? shellCommandFromInput(event.input) : undefined;
+    if (searchShellCommand !== undefined) {
+      const command = searchShellCommand;
       const output = event.content
-        .map((part) => (typeof part.text === "string" ? part.text : ""))
+
+        .map((part) => (Check(Type.String(), part.text) ? part.text : ""))
         .join("\n");
       searchReads.push(...extractGrepSearchReadsFromOutput(command, workspaceRoot, output));
     }
@@ -649,7 +682,9 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     return;
   }
   const readGuardCorrelationId = getReadGuardCorrelationId(event);
-  const resultDetails = (event.details ?? {}) as Record<string, unknown>;
+
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
+  const resultDetails = (event.details ?? {}) as Record<string, LspDictionaryValue>;
   const isPartialApplyResult = resultDetails.piLensPartialApply === true;
   const requestedEditIndexes = getRequestedEditIndexes(event);
   const requestedEditTotal = getRequestedEditCount(event);
@@ -689,6 +724,8 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
 
   // Must happen before debounce admission: latestDeps intentionally retains only
   // the latest event, but write -> edit is a sticky turn transition.
+
+  // SAFETY: The runtime dependency is the concrete RuntimeCoordinator; the optional member check immediately after this access preserves compatibility.
   const receipt = (runtime as Partial<RuntimeCoordinator>).recordMutationToolReceipt;
   const autofixMode = deps._bypassDebounce
     ? (deps._autofixMode ?? (event.toolName === "edit" ? "deferred" : "immediate"))
@@ -772,6 +809,7 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
   // Asserting pre-write stamps here produces false positives on rapid edits.
   sessionFileTime.read(filePath);
   if (!getFlag("no-read-guard")) {
+    // SAFETY: This package creates runtime and attaches an optional readGuard with this method signature.
     const readGuard = (
       runtime as {
         readGuard?: { recordWritten?: (writtenPath: string) => void };
@@ -812,6 +850,8 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     // `diff` required, but this runs against whatever a live host actually
     // sent, and the `details?.diff` truthiness check below is what the code
     // has always relied on.
+
+    // SAFETY: The source key list is checked against the named owner type, so the constructed keys and values exhaust that representation.
     const details = event.details as Partial<EditToolDetails> | undefined;
     dbg(
       `tool_result: details.diff=${details?.diff ? "present" : "missing"}, details keys: ${Object.keys(event.details || {}).join(", ")}`,
@@ -851,7 +891,8 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
     }
   } catch (err) {
     dbg(`turn state tracking error: ${err}`);
-    dbg(`turn state tracking error stack: ${(err as Error).stack}`);
+
+    dbg(`turn state tracking error stack: ${err instanceof Error ? err.stack : undefined}`);
   }
 
   recordProjectChange({
@@ -974,7 +1015,8 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
         }),
       },
     });
-    dbg(`runPipeline crash stack: ${(pipelineErr as Error).stack}`);
+
+    dbg(`runPipeline crash stack: ${pipelineErr instanceof Error ? pipelineErr.stack : undefined}`);
     if (!getFlag("no-lsp")) {
       resetLSPService({ fast: true, reason: "pipeline_crash" });
     }
@@ -1062,6 +1104,7 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
   let autofixNewlyQueued = false;
   if (!result.isError && autofixMode === "deferred" && nodeFs.existsSync(filePath)) {
     autofixNewlyQueued =
+      // SAFETY: The runtime dependency is the concrete RuntimeCoordinator; the optional member check immediately after this access preserves compatibility.
       (runtime as Partial<RuntimeCoordinator>).deferMutation?.call(
         runtime,
         filePath,

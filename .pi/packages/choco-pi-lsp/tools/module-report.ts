@@ -1,3 +1,5 @@
+import type { RuntimeValue } from "./runtime-values.js";
+import { isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
 /**
  * module_report + read_symbol tool definitions (#245).
  *
@@ -25,7 +27,7 @@ function resolveFile(filePath: string, cwd: string | undefined): string {
   return path.isAbsolute(filePath) ? filePath : path.resolve(cwd || ".", filePath);
 }
 
-function errorMessage(err: unknown): string {
+function errorMessage<T>(err: T): string {
   return err instanceof Error ? err.message : String(err);
 }
 
@@ -116,7 +118,7 @@ export function createModuleReportTool(getProjectRoot: () => string) {
         maxCallGraphEntries?: number;
       },
       _signal: AbortSignal | undefined,
-      _onUpdate: unknown,
+      _onUpdate: RuntimeValue,
       ctx: { cwd?: string },
     ) {
       // Resolve the file against the agent's cwd (sibling-tool convention); build
@@ -193,8 +195,8 @@ function recordReadCoverage(
   if (
     !result.name ||
     !result.kind ||
-    typeof result.startLine !== "number" ||
-    typeof result.endLine !== "number"
+    !isRuntimeNumber(result.startLine) ||
+    !isRuntimeNumber(result.endLine)
   ) {
     return false;
   }
@@ -234,7 +236,7 @@ export function createReadSymbolTool(getProjectRoot: () => string, recordSymbolR
     }>(({ details, args, isError, lineCount }) => {
       const base = baseName(args.path);
       if (isError || details?.found === false) {
-        const sym = typeof args.symbol === "string" ? args.symbol : "?";
+        const sym = isRuntimeString(args.symbol) ? args.symbol : "?";
         return `read_symbol "${sym}" ${base} — not found`;
       }
       const range =
@@ -265,7 +267,7 @@ export function createReadSymbolTool(getProjectRoot: () => string, recordSymbolR
       _toolCallId: string,
       params: { path: string; symbol: string; kind?: string },
       _signal: AbortSignal | undefined,
-      _onUpdate: unknown,
+      _onUpdate: RuntimeValue,
       ctx: { cwd?: string },
     ) {
       const absFile = resolveFile(params.path, ctx.cwd);
@@ -302,9 +304,11 @@ export function createReadSymbolTool(getProjectRoot: () => string, recordSymbolR
           isError: true,
           details: {
             found: false,
-            ...(result.error ? { error: result.error } : {}),
-            ...(result.warnings ? { warnings: result.warnings } : {}),
-            ...(result.suggestions ? { suggestions: result.suggestions } : {}),
+            ...includePropertiesWhen(result.error, () => ({ error: result.error })),
+            ...includePropertiesWhen(result.warnings, () => ({ warnings: result.warnings })),
+            ...includePropertiesWhen(result.suggestions, () => ({
+              suggestions: result.suggestions,
+            })),
           },
         };
       }
@@ -334,7 +338,7 @@ export function createReadSymbolTool(getProjectRoot: () => string, recordSymbolR
           startLine: result.startLine,
           endLine: result.endLine,
           readRecorded,
-          ...(result.ambiguous ? { ambiguous: result.ambiguous } : {}),
+          ...includePropertiesWhen(result.ambiguous, () => ({ ambiguous: result.ambiguous })),
         },
       };
     },
@@ -361,7 +365,7 @@ export function createReadEnclosingTool(
     }>(({ details, args, isError }) => {
       const base = baseName(args.path);
       if (isError || details?.found === false) {
-        const ln = typeof args.line === "number" ? args.line : "?";
+        const ln = isRuntimeNumber(args.line) ? args.line : "?";
         return `read_enclosing ${base}:${ln} — no enclosing symbol`;
       }
       const range =
@@ -413,7 +417,7 @@ export function createReadEnclosingTool(
         aroundLine?: number;
       },
       _signal: AbortSignal | undefined,
-      _onUpdate: unknown,
+      _onUpdate: RuntimeValue,
       ctx: { cwd?: string },
     ) {
       const absFile = resolveFile(params.path, ctx.cwd);
@@ -454,16 +458,20 @@ export function createReadEnclosingTool(
           details: {
             found: false,
             line: result.line,
-            ...(result.name ? { name: result.name } : {}),
-            ...(result.kind ? { kind: result.kind } : {}),
-            ...(result.startLine ? { startLine: result.startLine } : {}),
-            ...(result.endLine ? { endLine: result.endLine } : {}),
-            ...(result.enclosingStartLine ? { enclosingStartLine: result.enclosingStartLine } : {}),
-            ...(result.enclosingEndLine ? { enclosingEndLine: result.enclosingEndLine } : {}),
-            ...(result.selection ? { selection: result.selection } : {}),
-            ...(result.outline ? { outline: result.outline } : {}),
-            ...(result.error ? { error: result.error } : {}),
-            ...(result.warnings ? { warnings: result.warnings } : {}),
+            ...includePropertiesWhen(result.name, () => ({ name: result.name })),
+            ...includePropertiesWhen(result.kind, () => ({ kind: result.kind })),
+            ...includePropertiesWhen(result.startLine, () => ({ startLine: result.startLine })),
+            ...includePropertiesWhen(result.endLine, () => ({ endLine: result.endLine })),
+            ...includePropertiesWhen(result.enclosingStartLine, () => ({
+              enclosingStartLine: result.enclosingStartLine,
+            })),
+            ...includePropertiesWhen(result.enclosingEndLine, () => ({
+              enclosingEndLine: result.enclosingEndLine,
+            })),
+            ...includePropertiesWhen(result.selection, () => ({ selection: result.selection })),
+            ...includePropertiesWhen(result.outline, () => ({ outline: result.outline })),
+            ...includePropertiesWhen(result.error, () => ({ error: result.error })),
+            ...includePropertiesWhen(result.warnings, () => ({ warnings: result.warnings })),
           },
         };
       }
@@ -499,9 +507,18 @@ export function createReadEnclosingTool(
           partial: result.partial,
           selection: result.selection,
           readRecorded,
-          ...(result.warnings ? { warnings: result.warnings } : {}),
+          ...includePropertiesWhen(result.warnings, () => ({ warnings: result.warnings })),
         },
       };
     },
   };
+}
+
+function includePropertiesWhen<T extends object, TInclude>(
+  include: TInclude,
+  createProperties: () => T,
+): Partial<T> {
+  const properties: Partial<T> = {};
+  if (include) Object.assign(properties, createProperties());
+  return properties;
 }

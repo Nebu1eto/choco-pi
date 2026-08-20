@@ -1,5 +1,7 @@
 /** Bounded, process-local telemetry for behavior degraded during one session. */
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { logExtension } from "./extension-log.js";
 
 export type DegradationKind =
@@ -275,19 +277,31 @@ export function incrementDegradationCount(record: DegradationRecord): boolean {
 
 /** Detached snapshot, grouped in first-seen kind order. */
 const LEDGER_FIELD_MAX = 200;
+const DegradationSummarySchema = Type.Array(
+  Type.Object({
+    kind: Type.String(),
+    count: Type.Number(),
+    latestReasons: Type.Array(
+      Type.Object({
+        subject: Type.String(),
+        reason: Type.String(),
+      }),
+    ),
+  }),
+);
 
-function normalizeForLedger(value: unknown): string {
+function normalizeForLedger<T>(value: T): string {
   return String(value ?? "unknown");
 }
 
-function boundedKind(value: unknown): string {
+function boundedKind<T>(value: T): string {
   const kind = truncateForLedger(value);
   if (groups.has(kind) || kind === OVERFLOW_KIND) return kind;
   // Keep one slot available for all kinds beyond the cardinality bound.
   return groups.size < MAX_DISTINCT_KINDS - 1 ? kind : OVERFLOW_KIND;
 }
 
-function truncateForLedger(value: unknown): string {
+function truncateForLedger<T>(value: T): string {
   const text = normalizeForLedger(value);
   return text.length > LEDGER_FIELD_MAX ? `${text.slice(0, LEDGER_FIELD_MAX)}…` : text;
 }
@@ -301,39 +315,30 @@ export function getDegradationSummary(): DegradationGroup[] {
   }));
 }
 
-function isRenderableSummary(value: unknown): value is DegradationGroup[] {
-  if (!Array.isArray(value)) return false;
-  return value.every((group) => {
-    if (group === null || typeof group !== "object") return false;
-    const candidate = group as Partial<DegradationGroup>;
-    return (
-      typeof candidate.kind === "string" &&
-      typeof candidate.count === "number" &&
-      Array.isArray(candidate.latestReasons) &&
-      candidate.latestReasons.every(
-        (entry) =>
-          entry !== null &&
-          typeof entry === "object" &&
-          typeof (entry as { subject?: unknown }).subject === "string" &&
-          typeof (entry as { reason?: unknown }).reason === "string",
-      )
-    );
-  });
+interface RenderableDegradationGroup {
+  kind: string;
+  count: number;
+  latestReasons: Array<{ subject: string; reason: string }>;
 }
 
-export function renderDegradationLines(summary: unknown = getDegradationSummary()): string[] {
-  if (!isRenderableSummary(summary)) return [];
-  if (summary.length === 0) return [];
+function parseRenderableSummary<T>(value: T): RenderableDegradationGroup[] | undefined {
+  return Value.Check(DegradationSummarySchema, value) ? value : undefined;
+}
+
+export function renderDegradationLines<T>(summary?: T): string[] {
+  const candidate = summary === undefined ? getDegradationSummary() : summary;
+  const parsed = parseRenderableSummary(candidate);
+  if (!parsed || parsed.length === 0) return [];
   return [
     "Degradations:",
-    ...summary.map((group) => {
+    ...parsed.map((group) => {
       const latest = group.latestReasons.at(-1);
       return `  ⚠ ${group.kind}: ${group.count}${latest ? ` — ${latest.subject}: ${latest.reason}` : ""}`;
     }),
   ];
 }
 
-function debugLedgerFailure(operation: string, error: unknown): void {
+function debugLedgerFailure<T>(operation: string, error: T): void {
   try {
     logExtension({
       subsystem: "degradation-ledger",

@@ -14,6 +14,8 @@
  * scan, LSP status, diagnostic stats, LSP config).
  */
 
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import * as path from "node:path";
 import { minimatch } from "./deps/minimatch.js";
 import { getDiagnosticTracker } from "./diagnostic-tracker.js";
@@ -38,6 +40,19 @@ import {
   searchWordIndex,
   triggerBackgroundWordIndexBuild,
 } from "./word-index.js";
+
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
 
 // --- Facades (re-exported so adapters import only this module) ---------------
 
@@ -321,7 +336,9 @@ export interface SymbolSearchOptions {
 // AGENTS.md's MCP-mirror layering note) — so this is symbol_search's own small
 // copy, scoped to what its `lang` filter needs (extension matching only, no
 // AST/LSP concerns).
-const SYMBOL_SEARCH_LANG_EXTENSIONS: Readonly<Record<string, readonly string[]>> = {
+
+interface SYMBOLSEARCHLANGEXTENSIONSValues extends Readonly<Record<string, readonly string[]>> {}
+const SYMBOL_SEARCH_LANG_EXTENSIONS: SYMBOLSEARCHLANGEXTENSIONSValues = {
   bash: [".sh", ".bash"],
   c: [".c", ".h"],
   cpp: [".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"],
@@ -401,14 +418,14 @@ function annotateSymbolSearchHitsWithGraph(
     let complexity: number | undefined;
     for (const symbolId of graph.symbolNodesByFile.get(normalized) ?? []) {
       const raw = graph.nodes.get(symbolId)?.metadata?.cyclomaticComplexity;
-      if (typeof raw === "number" && (complexity === undefined || raw > complexity)) {
+
+      if (Check(Type.Number(), raw) && (complexity === undefined || raw > complexity)) {
         complexity = raw;
       }
     }
-    hit.annotations = {
-      fanIn,
-      ...(complexity !== undefined ? { complexity } : {}),
-    };
+    hit.annotations = assignOptionalProperties({ fanIn }, complexity !== undefined, () => ({
+      complexity,
+    }));
   }
 }
 

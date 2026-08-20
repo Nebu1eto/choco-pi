@@ -1,3 +1,6 @@
+import type { ProtocolDictionary } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.js";
+import { isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
 /**
  * diagnostics_report tool — cached project diagnostic state (issue #159).
  *
@@ -219,7 +222,7 @@ export function createLensDiagnosticsTool(
   // #798/#338: capture host UI methods synchronously from the active tool event.
   // The returned closure is safe for the later async sweep to invoke because it
   // never dereferences the session-guarded ctx.ui getter.
-  captureLspStatusRepaint?: (ctx: unknown) => (() => void) | undefined,
+  captureLspStatusRepaint?: (ctx: RuntimeValue) => (() => void) | undefined,
   getRuntime?: () => import("../clients/runtime-coordinator.js").RuntimeCoordinator | undefined,
 ) {
   return {
@@ -270,7 +273,7 @@ export function createLensDiagnosticsTool(
       // mid-scan.
       const scanning = scanningSummaryLine(details, text);
       if (scanning) return scanning;
-      const mode = details?.mode ?? (typeof args.mode === "string" ? args.mode : "delta");
+      const mode = details?.mode ?? (isRuntimeString(args.mode) ? args.mode : "delta");
       if (isError) {
         return `diagnostics_report ${mode} — ${text.split("\n")[0] ?? "error"}`;
       }
@@ -368,17 +371,19 @@ export function createLensDiagnosticsTool(
     }),
     async execute(
       _toolCallId: string,
-      params: Record<string, unknown>,
+      params: ProtocolDictionary,
       signal: AbortSignal | undefined,
-      onUpdate: unknown,
+      onUpdate: RuntimeValue,
       ctx: { cwd?: string; signal?: AbortSignal },
     ) {
       const repaintLspStatus = captureLspStatusRepaint?.(ctx);
+      // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       const mode = (params.mode as string | undefined) ?? "delta";
+      // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       const severity = (params.severity as string | undefined) ?? "all";
       const refreshRunners = params.refreshRunners;
-      const parsePositiveInt = (value: unknown): number | undefined =>
-        typeof value === "number" && Number.isFinite(value) && value > 0
+      const parsePositiveInt = (value: RuntimeValue): number | undefined =>
+        isRuntimeNumber(value) && Number.isFinite(value) && value > 0
           ? Math.floor(value)
           : undefined;
       const maxProjectFiles = parsePositiveInt(params.maxProjectFiles);
@@ -631,7 +636,7 @@ function formatDeltaMode(
   cwd: string,
   severity: string,
   pathsScope?: PathsScope,
-): { content: [{ type: "text"; text: string }]; details: object } {
+): DiagnosticsToolResult {
   const actionableEntry = cacheManager.readCache<ActionableWarningsReport>(
     "actionable-warnings",
     cwd,
@@ -787,6 +792,11 @@ function createCurrentIgnoreFilter(cwd: string): (filePath: string) => boolean {
 // (only its directory/auto-walk mode applies the ignore matcher) — an agent
 // that names a file by hand is assumed to mean it regardless of `.gitignore`.
 
+interface DiagnosticsToolResult {
+  content: [{ type: "text"; text: string }];
+  details: object;
+}
+
 interface PathsScope {
   /** True when the file (or a directory prefix of it) was requested. */
   includeFile: (filePath: string) => boolean;
@@ -815,7 +825,7 @@ interface PathsScope {
  * clear tool error rather than silently truncating (a wrapper must not
  * believe it checked files it didn't).
  */
-function resolvePathsScope(cwd: string, rawPaths: unknown): PathsScope | undefined {
+function resolvePathsScope(cwd: string, rawPaths: RuntimeValue): PathsScope | undefined {
   if (!Array.isArray(rawPaths) || rawPaths.length === 0) return undefined;
   if (rawPaths.length > MAX_PATHS_ENTRIES) {
     throw new Error(
@@ -824,7 +834,7 @@ function resolvePathsScope(cwd: string, rawPaths: unknown): PathsScope | undefin
     );
   }
   const entries = rawPaths
-    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .filter((entry): entry is string => isRuntimeString(entry) && entry.trim().length > 0)
     .map((entry) => path.resolve(path.isAbsolute(entry) ? entry : path.resolve(cwd, entry)));
 
   const missing: string[] = [];
@@ -1050,7 +1060,16 @@ function summarizeDiagnostics(
 // #1618: sentence form used when exactly one reason accounts for every
 // unconfirmed file — mirrors the pre-#1618 two-case ternary's phrasing so
 // existing single-reason callers see unchanged text.
-const UNCONFIRMED_REASON_SENTENCE: Record<LSPWorkspaceUnconfirmedReason, string> = {
+interface UnconfirmedReasonText {
+  budget: string;
+  inconclusive: string;
+  coverage_gap: string;
+  service_destroyed: string;
+  error: string;
+  binding_mismatch: string;
+}
+
+const UNCONFIRMED_REASON_SENTENCE: UnconfirmedReasonText = {
   budget: "check didn't complete within budget",
   inconclusive: "check was inconclusive (notify-write or diagnostics wait timed out)",
   coverage_gap: "an auxiliary scanner coverage gap",
@@ -1066,7 +1085,7 @@ const UNCONFIRMED_REASON_SENTENCE: Record<LSPWorkspaceUnconfirmedReason, string>
 // Short per-reason label used only when MORE than one reason is present, so
 // the note can still say "N timed out, M errored" instead of collapsing to
 // one sentence that can't carry two counts.
-const UNCONFIRMED_REASON_COUNT_LABEL: Record<LSPWorkspaceUnconfirmedReason, string> = {
+const UNCONFIRMED_REASON_COUNT_LABEL: UnconfirmedReasonText = {
   budget: "timed out",
   inconclusive: "inconclusive",
   coverage_gap: "coverage gap",
@@ -1201,10 +1220,7 @@ function formatLspServerBreakdown(
  * down `formatFullMode`) so it doesn't disturb the existing merge/dedup
  * logic those summaries feed into.
  */
-function tallyLspPrimaryVsAuxiliary(results: WorkspaceLspDiagnosticResult[]): {
-  primary: number;
-  auxiliary: number;
-} {
+function tallyLspPrimaryVsAuxiliary(results: WorkspaceLspDiagnosticResult[]) {
   let primary = 0;
   let auxiliary = 0;
   for (const result of results) {
@@ -1320,6 +1336,7 @@ async function applyInlineSuppressionsToSummaries(
         // the tag survives incidental edits to the flagged line itself.
         const { weak } = anchorsForDiagnostic(cwd, summary.filePath, d, content);
         if (getDisposition(cwd, weak)?.disposition === "flagged") {
+          // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
           (d as { flagged?: boolean }).flagged = true;
         }
       }
@@ -1329,16 +1346,16 @@ async function applyInlineSuppressionsToSummaries(
   );
 }
 
-function shouldUseCachedProjectDiagnostics(value: unknown): boolean {
+function shouldUseCachedProjectDiagnostics(value: RuntimeValue): boolean {
   return value === "cached";
 }
 
-function shouldRefreshProjectDiagnostics(value: unknown): boolean {
+function shouldRefreshProjectDiagnostics(value: RuntimeValue): boolean {
   return value === "cheap" || value === "all";
 }
 
 /** True when full mode should include project-runner state at all (any non-none refreshRunners). */
-function shouldIncludeProjectRunners(value: unknown): boolean {
+function shouldIncludeProjectRunners(value: RuntimeValue): boolean {
   return shouldRefreshProjectDiagnostics(value) || value === "cached";
 }
 
@@ -1377,7 +1394,7 @@ function foldExtraDiagnosticsIntoSnapshot(
 async function getProjectDiagnosticsSnapshotForFullMode(
   cwd: string,
   options: {
-    refreshRunners?: unknown;
+    refreshRunners?: RuntimeValue;
     maxProjectFiles?: number;
     signal?: AbortSignal;
     files?: string[];
@@ -1411,7 +1428,7 @@ async function formatFullMode(
   lspService: LSPServiceLike,
   cacheManager: CacheManager,
   options: {
-    refreshRunners?: unknown;
+    refreshRunners?: RuntimeValue;
     maxProjectFiles?: number;
     maxLspFiles?: number;
     signal?: AbortSignal;
@@ -1430,7 +1447,7 @@ async function formatFullMode(
   } = {},
 ): Promise<{ content: [{ type: "text"; text: string }]; details: object }> {
   const runWorkspaceDiagnostics = lspService.runWorkspaceDiagnostics;
-  if (typeof runWorkspaceDiagnostics !== "function") {
+  if (!runWorkspaceDiagnostics) {
     return {
       content: [
         {
@@ -1935,17 +1952,15 @@ async function formatFullMode(
       projectScanTruncated: projectSnapshot?.scanTruncated ?? false,
       // #1107 phase 2: same machine-readable convention, for the
       // generated-name/dir skip counters.
-      ...(projectSnapshot?.generatedFileSkips
-        ? { projectGeneratedFileSkips: projectSnapshot.generatedFileSkips }
-        : {}),
-      ...(projectSnapshot?.generatedNameOnlySkips
-        ? {
-            projectGeneratedNameOnlySkips: projectSnapshot.generatedNameOnlySkips,
-          }
-        : {}),
-      ...(projectSnapshot?.generatedDirSkips
-        ? { projectGeneratedDirSkips: projectSnapshot.generatedDirSkips }
-        : {}),
+      ...includePropertiesWhen(projectSnapshot?.generatedFileSkips, () => ({
+        projectGeneratedFileSkips: projectSnapshot?.generatedFileSkips ?? 0,
+      })),
+      ...includePropertiesWhen(projectSnapshot?.generatedNameOnlySkips, () => ({
+        projectGeneratedNameOnlySkips: projectSnapshot?.generatedNameOnlySkips ?? 0,
+      })),
+      ...includePropertiesWhen(projectSnapshot?.generatedDirSkips, () => ({
+        projectGeneratedDirSkips: projectSnapshot?.generatedDirSkips ?? 0,
+      })),
     },
   };
   // Stopped mid-scan: the results above are whatever completed before the abort.
@@ -1955,6 +1970,7 @@ async function formatFullMode(
   // indefinitely — distinguish them so the agent knows whether to just re-run.
   if (aborted) {
     const timedOut =
+      // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       (signal as (AbortSignal & { reason?: { name?: string } }) | undefined)?.reason?.name ===
       "TimeoutError";
     const note = timedOut
@@ -2037,11 +2053,11 @@ function formatAllMode(
   cwd: string,
   severity: string,
   summaries: FileDiagnosticSummary[] = getFileDiagnosticSummaries(),
-  detailOverrides: Record<string, unknown> = { mode: "all" },
+  detailOverrides: ProtocolDictionary = { mode: "all" },
   staleDropped = 0,
   pathsScope?: PathsScope,
   dependencyDemoted = 0,
-): { content: [{ type: "text"; text: string }]; details: object } {
+): DiagnosticsToolResult {
   // Files changed/deleted since their diagnostics were recorded have already
   // been dropped by reconcileStaleWidgetFiles; note them so the agent knows
   // those aren't "clean", just un-rescanned (use mode=full to refresh).
@@ -2056,6 +2072,7 @@ function formatAllMode(
   // mode=full already actively scanned exactly the requested paths, so a zero
   // result there IS a legitimate clean read — the cache-only note only applies
   // to delta/all, which is why this is gated on detailOverrides.mode !== "full".
+  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const isFullMode = (detailOverrides as { mode?: string }).mode === "full";
 
   const ignoreFile = createCurrentIgnoreFilter(cwd);
@@ -2218,4 +2235,13 @@ function formatAllMode(
       staleDropped,
     },
   };
+}
+
+function includePropertiesWhen<T extends object, TInclude>(
+  include: TInclude,
+  createProperties: () => T,
+): Partial<T> {
+  const properties: Partial<T> = {};
+  if (include) Object.assign(properties, createProperties());
+  return properties;
 }

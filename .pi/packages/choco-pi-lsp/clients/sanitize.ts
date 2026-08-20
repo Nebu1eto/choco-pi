@@ -1,3 +1,6 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+
 /**
  * Tool Output Sanitization for choco-pi-lsp
  *
@@ -8,8 +11,11 @@
 // --- Constants ---
 
 // ANSI escape codes for colors and formatting
-const ANSI_ESCAPE = /\x1b\[[0-9;]*m/g;
-const ANSI_ESCAPE_EXTENDED = /\x1b\[[0-9;]*[A-Za-z]/g;
+
+const ANSI_ESCAPE_PREFIX = `${String.fromCharCode(27)}\\[`;
+const ANSI_ESCAPE = new RegExp(`${ANSI_ESCAPE_PREFIX}[0-9;]*m`, "g");
+
+const ANSI_ESCAPE_EXTENDED = new RegExp(`${ANSI_ESCAPE_PREFIX}[0-9;]*[A-Za-z]`, "g");
 
 // Common error patterns from different tools
 const ERROR_INDICATORS = [
@@ -92,7 +98,7 @@ export function sanitizeLine(line: string): string {
  * Returns cleaned lines, filtered to relevant content.
  */
 export function sanitizeOutput(output: string): string {
-  if (!output || typeof output !== "string") {
+  if (!output || !Check(Type.String(), output)) {
     return "";
   }
 
@@ -111,7 +117,7 @@ export function sanitizeOutput(output: string): string {
  * Returns the first line that contains error indicators, or the first non-empty line.
  */
 export function extractErrorMessage(output: string): string | undefined {
-  if (!output || typeof output !== "string") {
+  if (!output || !Check(Type.String(), output)) {
     return undefined;
   }
 
@@ -316,7 +322,7 @@ export function sanitizeToolOutput(
   output: string,
   maxSummaryLength: number = 140,
 ): SanitizedResult {
-  if (!output || typeof output !== "string") {
+  if (!output || !Check(Type.String(), output)) {
     return { summary: undefined, details: undefined, truncated: false };
   }
 

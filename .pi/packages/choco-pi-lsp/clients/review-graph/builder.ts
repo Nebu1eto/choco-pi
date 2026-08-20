@@ -1,3 +1,4 @@
+import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "../../tools/runtime-values.js";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -141,6 +142,7 @@ const MAIN_KINDS = new Set([
 // so a repo heavy in JSON/YAML/Markdown doesn't trip the cap on files the graph
 // would have filtered out anyway (the cap is on the walk, not on noise). #250.
 const MAIN_KIND_EXTENSIONS: string[] = Array.from(MAIN_KINDS).flatMap(
+  // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
   (kind) => KIND_EXTENSIONS[kind as keyof typeof KIND_EXTENSIONS] ?? [],
 );
 /** The bounded, source-filtered extension set shared by graph cache readers. */
@@ -521,7 +523,7 @@ export function getReviewGraphCacheIdentity(
     }
   }
   const version = graph?.version ?? cached.graph.version;
-  if (typeof version !== "string" || version.length === 0 || typeof cached.signature !== "string") {
+  if (!isRuntimeString(version) || version.length === 0 || !isRuntimeString(cached.signature)) {
     return undefined;
   }
   return { version, signature: cached.signature };
@@ -920,8 +922,8 @@ function recordBuildAttempt(
   _buildAttempts.set(key, {
     when: new Date().toISOString(),
     outcome,
-    ...(buildId === undefined ? {} : { buildId }),
-    ...(reason ? { reason } : {}),
+    ...includePropertiesWhen(!(buildId === undefined), () => ({ buildId })),
+    ...includePropertiesWhen(reason, () => ({ reason })),
   });
 }
 
@@ -955,17 +957,15 @@ function recordPersistFailure(
     phase: "persist_failed",
     reason,
     error,
-    ...(pending
-      ? {
-          observability: persistObservability(pending, {
-            status: "failed",
-            reason: workerState?.fallbackReason ?? reason,
-            workerStarted: workerState?.started,
-            workerCompleted: workerState?.completed,
-            ...(workerState?.fallbackReason ? { workerFallback: true } : {}),
-          }),
-        }
-      : {}),
+    ...includePropertiesWhen(Boolean(pending), () => ({
+      observability: persistObservability(pending!, {
+        status: "failed",
+        reason: workerState?.fallbackReason ?? reason,
+        workerStarted: workerState?.started,
+        workerCompleted: workerState?.completed,
+        ...includePropertiesWhen(workerState?.fallbackReason, () => ({ workerFallback: true })),
+      }),
+    })),
   });
 }
 
@@ -1066,12 +1066,12 @@ export async function getGraphSourceFiles(cwd: string): Promise<GraphSourceFiles
       // keeps (post-filter), not JSON/YAML/MD noise it would discard anyway.
       extensions: MAIN_KIND_EXTENSIONS,
       maxFiles: maxGraphFiles + 1,
-      ...(_reviewGraphEntryBudgetForTests === undefined
-        ? {}
-        : { maxScanEntries: _reviewGraphEntryBudgetForTests }),
-      ...(_reviewGraphEntryCounterForTests === undefined
-        ? {}
-        : { onEntryVisited: _reviewGraphEntryCounterForTests }),
+      ...includePropertiesWhen(!(_reviewGraphEntryBudgetForTests === undefined), () => ({
+        maxScanEntries: _reviewGraphEntryBudgetForTests,
+      })),
+      ...includePropertiesWhen(!(_reviewGraphEntryCounterForTests === undefined), () => ({
+        onEntryVisited: _reviewGraphEntryCounterForTests,
+      })),
     },
   );
   if (entryBudgetExceeded) {
@@ -1209,13 +1209,14 @@ function loadPersistedGraph(
     const raw = fs.existsSync(cachePath)
       ? gunzipSync(fs.readFileSync(cachePath)).toString("utf-8")
       : fs.readFileSync(legacyPath, "utf-8");
+    // SAFETY: The parsed value is consumed only through the optional fields declared here and each field is validated before use.
     const data = JSON.parse(raw) as PersistedGraphData;
     // Derived projections require a canonical source identity. Legacy or
     // malformed snapshots are unavailable, never a clean empty graph.
     if (
       data.version !== REVIEW_GRAPH_VERSION ||
-      typeof data.signature !== "string" ||
-      typeof data.builtAt !== "string" ||
+      !isRuntimeString(data.signature) ||
+      !isRuntimeString(data.builtAt) ||
       !Array.isArray(data.nodes) ||
       !Array.isArray(data.edges)
     )
@@ -1452,8 +1453,8 @@ function graphCoverage(
     persistedEdges: graph.edges.length,
     totalFiles: sourceFileCount,
     persistedFiles: countRetainedSourceFiles(graph, sourceFilePaths),
-    ...(sourceFilesTruncated ? { sourceFilesTruncated: true } : {}),
-    ...(inherited?.inProgress ? { inProgress: true } : {}),
+    ...includePropertiesWhen(sourceFilesTruncated, () => ({ sourceFilesTruncated: true })),
+    ...includePropertiesWhen(inherited?.inProgress, () => ({ inProgress: true })),
   };
 }
 
@@ -1509,10 +1510,13 @@ function capGraphForPersist(
     totalFiles:
       options.sourceFileCount ?? graph.persistCoverage?.totalFiles ?? graph.fileNodes.size,
     persistedFiles: 0,
-    ...(options.sourceFilesTruncated || graph.persistCoverage?.sourceFilesTruncated
-      ? { sourceFilesTruncated: true as const }
-      : {}),
-    ...(graph.persistCoverage?.inProgress ? { inProgress: true as const } : {}),
+    ...includePropertiesWhen(
+      options.sourceFilesTruncated || graph.persistCoverage?.sourceFilesTruncated,
+      () => ({ sourceFilesTruncated: true as const }),
+    ),
+    ...includePropertiesWhen(graph.persistCoverage?.inProgress, () => ({
+      inProgress: true as const,
+    })),
   };
   const capped: ReviewGraph = {
     ...graph,
@@ -1534,10 +1538,7 @@ function capGraphForPersist(
 function persistObservability(
   pending: PendingPersist,
   patch: Partial<ReviewGraphPersistenceMetadata>,
-): {
-  graph: ReviewGraphBuildMetadata;
-  persistence: ReviewGraphPersistenceMetadata;
-} {
+) {
   return {
     graph: pending.graphMetadata,
     persistence: { ...pending.persistenceMetadata, ...patch },
@@ -1576,7 +1577,7 @@ function logPersistSuccess(
       status: "succeeded",
       workerStarted: workerState.started,
       workerCompleted: workerState.completed,
-      ...(workerState.fallback ? { workerFallback: true } : {}),
+      ...includePropertiesWhen(workerState.fallback, () => ({ workerFallback: true })),
     }),
   });
 }
@@ -2115,13 +2116,11 @@ function persistGraph(
     generation,
     attemptId,
     status: "scheduled",
-    ...(priorGeneration === undefined
-      ? {}
-      : {
-          supersededGeneration: priorGeneration,
-          coalesced,
-          reason: coalesced ? "debounced_coalescing" : "in_flight_supersession",
-        }),
+    ...includePropertiesWhen(!(priorGeneration === undefined), () => ({
+      supersededGeneration: priorGeneration,
+      coalesced,
+      reason: coalesced ? "debounced_coalescing" : "in_flight_supersession",
+    })),
   };
   const pending: PendingPersist = {
     cacheDir,
@@ -2187,7 +2186,7 @@ function persistGraph(
   }
   const timer = setTimeout(() => writePending(key), debounce);
   // Don't keep the event loop alive solely for a cache write.
-  if (typeof timer.unref === "function") timer.unref();
+  if (isRuntimeFunction(timer.unref)) timer.unref();
   _persistTimers.set(key, timer);
   return persistReason;
 }
@@ -2429,6 +2428,7 @@ function loadReviewGraphCheckpoint(cwd: string): LoadedReviewGraphCheckpoint | n
   let data: ReviewGraphCheckpointData;
   try {
     if (!fs.existsSync(checkpointPath)) return null;
+    // SAFETY: The parsed value is consumed only through the optional fields declared here and each field is validated before use.
     data = JSON.parse(
       gunzipSync(fs.readFileSync(checkpointPath)).toString("utf-8"),
     ) as ReviewGraphCheckpointData;
@@ -2646,7 +2646,7 @@ export function _readReviewGraphCheckpointForTests(cwd: string): {
 
 /** Test hook: force any pending debounced persist to write immediately. */
 export function flushReviewGraphPersistsForTests(): void {
-  for (const key of [..._pendingPersist.keys()]) {
+  for (const key of Array.from(_pendingPersist.keys())) {
     const pending = _pendingPersist.get(key);
     if (!pending) continue;
     _pendingPersist.delete(key);
@@ -2731,7 +2731,7 @@ export function flushReviewGraphPersist(
   let pending = _pendingPersist.get(key);
   const removedWorkerRequests: PendingPersist[] = [];
   let selectedWorkerRequest: PendingPersist | undefined;
-  for (const [id, request] of [..._workerRequests]) {
+  for (const [id, request] of Array.from(_workerRequests)) {
     if (request.key !== key) continue;
     _workerRequests.delete(id);
     removedWorkerRequests.push(request.pending);
@@ -2946,6 +2946,7 @@ async function ensureReviewGraphFacts(
       cwd,
       phase: "build_skipped",
       reason: "structural_facts_disabled",
+      // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
       error: (err as Error)?.message ?? String(err),
     });
   }
@@ -3057,7 +3058,7 @@ function addJsTsFile(
       filePath: normalized,
       symbolName: fn.name,
       symbolKind: "function",
-      ...(qualifiedName ? { qualifiedName } : {}),
+      ...includePropertiesWhen(qualifiedName, () => ({ qualifiedName })),
       exported: new RegExp(
         String.raw`export\s+(?:async\s+)?(?:function|const|let|var)\s+${escapeRegExp(fn.name)}\b`,
       ).test(content),
@@ -3177,7 +3178,7 @@ function addJsTsFile(
         kind: "calls",
         metadata: {
           unresolvedName: callee,
-          ...(importHintFile ? { importHintFile } : {}),
+          ...includePropertiesWhen(importHintFile, () => ({ importHintFile })),
         },
         // A definite external call (`callee.includes(".")`) is never
         // ambiguous — no in-project candidate to collide with, so no
@@ -3185,7 +3186,7 @@ function addJsTsFile(
         // "name-only" and resolveDeferredSymbolEdges below may upgrade it
         // to "import" (when importHintFile narrows it) or "exact" once
         // every file has been added.
-        ...(callee.includes(".") ? {} : { resolution: "name-only" }),
+        ...includePropertiesWhen(!callee.includes("."), () => ({ resolution: "name-only" })),
       });
     }
   }
@@ -3308,10 +3309,12 @@ export async function captureReviewGraphStructuralIr(
     const parsed = await withTreeSitterRoot(filePath, content, () => true);
     if (!parsed.parsed) return { complete: false };
     const functionCoverage: ReviewGraphExtractionStatus =
+      // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
       (facts.getFileFact<string>(filePath, "file.functionFactsCoverage") as
         | ReviewGraphExtractionStatus
         | undefined) ?? "unavailable";
     const importCoverage: ReviewGraphExtractionStatus =
+      // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
       (facts.getFileFact<string>(filePath, "file.importFactsCoverage") as
         | ReviewGraphExtractionStatus
         | undefined) ?? "unavailable";
@@ -3372,7 +3375,11 @@ export async function captureReviewGraphStructuralIr(
 // for one symbol — so dedupe by (name, line, column) here, preferring the
 // more specific kind, keeping exactly one node per real declaration regardless
 // of how many query patterns matched it.
-const SYMBOL_KIND_SPECIFICITY: Record<string, number> = {
+interface SymbolKindSpecificity {
+  [kind: string]: number;
+}
+
+const SYMBOL_KIND_SPECIFICITY: SymbolKindSpecificity = {
   method: 2,
   property: 2,
 };
@@ -3441,7 +3448,7 @@ function addTreeSitterFile(
       filePath: normalized,
       symbolName: symbol.name,
       symbolKind: symbol.kind,
-      ...(qualifiedName ? { qualifiedName } : {}),
+      ...includePropertiesWhen(qualifiedName, () => ({ qualifiedName })),
       exported: symbol.isExported,
       metadata: {
         line: symbol.line,
@@ -3578,7 +3585,7 @@ export function addLspFallbackSymbols(
         filePath: normalized,
         symbolName: symbol.name,
         symbolKind: kind,
-        ...(qualifiedName ? { qualifiedName } : {}),
+        ...includePropertiesWhen(qualifiedName, () => ({ qualifiedName })),
         provenance: "lsp",
         metadata: {
           line,
@@ -3742,8 +3749,9 @@ async function addFileToGraph(
   // #260: tests aren't graph-relevant — guard the per-file chokepoint too so
   // the incremental/cascade path (a changed *.test.ts) never adds them either.
   if (detectFileRole(file) === "test") return;
-  const contentHash =
-    typeof contentOverride === "string" ? reviewGraphIrContentHash(contentOverride) : undefined;
+  const contentHash = isRuntimeString(contentOverride)
+    ? reviewGraphIrContentHash(contentOverride)
+    : undefined;
   const sharedIr = contentHash
     ? getFreshReviewGraphFileIr(cwd, file, contentHash)?.structural
     : undefined;
@@ -3914,6 +3922,7 @@ function resolveDeferredSymbolEdges(graph: ReviewGraph, rebuild = true): void {
     // `addJsTsFile`'s `importHintFile`). Narrow to that file BEFORE the
     // graph-wide uniqueness check — a name that's ambiguous project-wide can
     // still be unambiguous once scoped to the one file it was imported from.
+    // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
     const importHintFile = edge.metadata?.importHintFile as string | undefined;
     if (importHintFile) {
       const scoped = candidates.filter((id) => graph.nodes.get(id)?.filePath === importHintFile);
@@ -3970,11 +3979,7 @@ interface IncrementalCtx {
  * stale graph; a redundant re-extract is harmless). Also resets the
  * periodic-reverify clock/counter — this build IS the verify.
  */
-function verifiedCacheFields(seqAtBuildStart: number | undefined): {
-  builtAtProjectSeq?: number;
-  lastFullVerifyMs: number;
-  fastPathSinceVerify: number;
-} {
+function verifiedCacheFields(seqAtBuildStart: number | undefined) {
   return {
     builtAtProjectSeq: seqAtBuildStart,
     lastFullVerifyMs: Date.now(),
@@ -4090,7 +4095,7 @@ async function tryIncrementalFromCache(
   setGraphBuildInfo(graph, {
     reused: true,
     mode: "incremental",
-    ...(persistReason ? { persistReason } : {}),
+    ...includePropertiesWhen(persistReason, () => ({ persistReason })),
     graphChanged: true,
   });
   _graphImportChanges.set(graph, {
@@ -4280,7 +4285,7 @@ async function trySeqFastpath(
   setGraphBuildInfo(graph, {
     reused: true,
     mode: "seq-fastpath",
-    ...(persistReason ? { persistReason } : {}),
+    ...includePropertiesWhen(persistReason, () => ({ persistReason })),
     graphChanged: true,
   });
   _graphImportChanges.set(graph, {
@@ -4730,7 +4735,7 @@ async function _doBuildGraph(
     sourceFileCount,
     sourceFileCountTruncated: sourceFilesTruncated,
     seqFastpathFallback,
-    ...(persistReason ? { persistReason } : {}),
+    ...includePropertiesWhen(persistReason, () => ({ persistReason })),
     graphChanged: true,
   });
   graph.buildGeneration = generation;
@@ -4758,8 +4763,10 @@ export function buildOrUpdateGraph(
     observability: {
       graph: {
         buildId,
-        ...(startedProjectSeq === undefined ? {} : { projectSeq: startedProjectSeq }),
-        ...(seqHint === undefined ? {} : { seqHint: true }),
+        ...includePropertiesWhen(!(startedProjectSeq === undefined), () => ({
+          projectSeq: startedProjectSeq,
+        })),
+        ...includePropertiesWhen(!(seqHint === undefined), () => ({ seqHint: true })),
         nodes: 0,
         edges: 0,
       },
@@ -4796,7 +4803,7 @@ export function buildOrUpdateGraph(
           durationMs: Date.now() - startedAt,
           nodes: graph.nodes.size,
           edges: graph.edges.length,
-          ...(reason ? { reason } : {}),
+          ...includePropertiesWhen(reason, () => ({ reason })),
           observability: {
             graph: graphLogMetadata(graph, {
               buildId,
@@ -4824,12 +4831,13 @@ export function buildOrUpdateGraph(
         observability: {
           graph: {
             buildId,
-            ...(seqHint === undefined ? {} : { seqHint: true }),
+            ...includePropertiesWhen(!(seqHint === undefined), () => ({ seqHint: true })),
             nodes: 0,
             edges: 0,
           },
         },
       });
+      // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
       throw err as Error;
     });
   _buildCache.set(cacheKey, promise);
@@ -4844,11 +4852,7 @@ export function buildOrUpdateGraph(
  * retains unresolved/type-only evidence for bounded coverage accounting, but
  * buildCallGraph will not turn those records into concrete edges.
  */
-export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph): {
-  allSymbols: Map<string, import("../symbol-types.js").Symbol[]>;
-  allRefs: Map<string, import("../symbol-types.js").SymbolRef[]>;
-  coverage: CallGraphEvidenceCoverage;
-} {
+export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph) {
   const allSymbols = new Map<string, import("../symbol-types.js").Symbol[]>();
   const allRefs = new Map<string, import("../symbol-types.js").SymbolRef[]>();
   const nodeSymbols = new Map<string, import("../symbol-types.js").Symbol>();
@@ -4869,7 +4873,7 @@ export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph): {
 
   const numberMetadata = (node: ReviewGraphNode | undefined, key: string): number | undefined => {
     const value = node?.metadata?.[key];
-    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+    return isRuntimeNumber(value) && Number.isFinite(value) ? value : undefined;
   };
   const symbolKind = (node: ReviewGraphNode): SymbolKind => {
     switch (node.symbolKind) {
@@ -4946,12 +4950,12 @@ export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph): {
     const targetName =
       targetNode?.symbolName ??
       (edge.to.startsWith("symbol-name:") ? edge.to.slice("symbol-name:".length) : undefined);
-    const line =
-      typeof metadata.line === "number" ? metadata.line : (numberMetadata(fromNode, "line") ?? 1);
-    const column =
-      typeof metadata.column === "number"
-        ? metadata.column
-        : (numberMetadata(fromNode, "column") ?? 1);
+    const line = isRuntimeNumber(metadata.line)
+      ? metadata.line
+      : (numberMetadata(fromNode, "line") ?? 1);
+    const column = isRuntimeNumber(metadata.column)
+      ? metadata.column
+      : (numberMetadata(fromNode, "column") ?? 1);
     addRef({
       symbolId: targetName ? `${callerFile}:${targetName}` : edge.to,
       filePath: callerFile,
@@ -4987,6 +4991,7 @@ export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph): {
   for (const node of graph.nodes.values()) {
     if (node.kind !== "file") continue;
     sawRelevantFileNode = true;
+    // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
     const extraction = node.metadata?.extractionCoverage as
       | Record<string, "complete" | "partial" | "unavailable" | undefined>
       | undefined;
@@ -5017,4 +5022,13 @@ export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph): {
   if (!sawRelevantFileNode) coverage.complete = false;
 
   return { allSymbols, allRefs, coverage };
+}
+
+function includePropertiesWhen<T extends object, TInclude>(
+  include: TInclude,
+  createProperties: () => T,
+): Partial<T> {
+  const properties: Partial<T> = {};
+  if (include) Object.assign(properties, createProperties());
+  return properties;
 }

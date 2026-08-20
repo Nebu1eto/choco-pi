@@ -17,6 +17,8 @@
  * generated/codegen-produced (hand-written JS, Python, Go, Rust, etc.).
  */
 
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getProjectIgnoreMatcher } from "./file-utils.js";
@@ -34,6 +36,19 @@ import {
   walkTreeRecursiveSync,
   walkTreeStackAsync,
 } from "./source-walker.js";
+
+type CreateKeptFilesAccumulatorResultContract = {
+  push(file: string): void;
+  isFull(): boolean;
+  list(): string[];
+};
+type ClassifyEntryResultContract = { recurseInto?: string; keepFile?: string };
+type GetFilterStatsResultContract = {
+  total: number;
+  kept: number;
+  skipped: number;
+  byType: Record<string, number>;
+};
 
 /**
  * Per-walk memo of sibling-existence probe results (refs #191, item 1).
@@ -93,7 +108,9 @@ function probeExists(filePath: string, cache?: ArtifactProbeCache): boolean {
  * Mapping of file extension to the extensions it shadows (build artifacts).
  * Order matters: first entry has highest precedence.
  */
-export const SOURCE_PRECEDENCE: Record<string, string[]> = {
+
+interface SOURCEPRECEDENCEValues extends Record<string, string[]> {}
+export const SOURCE_PRECEDENCE: SOURCEPRECEDENCEValues = {
   ".ts": [".js", ".jsx", ".mjs", ".cjs"],
   ".tsx": [".jsx", ".js", ".mjs", ".cjs"],
   ".mts": [".mjs", ".js", ".jsx", ".cjs"],
@@ -261,9 +278,10 @@ export interface SourceCollectionOptions {
 function createKeptFilesAccumulator(
   maxFiles: number,
   prioritizeCodeKinds: boolean,
-): { push(file: string): void; isFull(): boolean; list(): string[] } {
+): CreateKeptFilesAccumulatorResultContract {
   if (!prioritizeCodeKinds) {
     const files: string[] = [];
+
     return {
       push: (file) => void files.push(file),
       isFull: () => files.length >= maxFiles,
@@ -272,6 +290,7 @@ function createKeptFilesAccumulator(
   }
   const codeFiles: string[] = [];
   const otherFiles: string[] = [];
+
   return {
     push(file) {
       if (isCodeKindFile(file)) codeFiles.push(file);
@@ -581,7 +600,7 @@ interface ResolvedCollectionConfig {
  * default, never `Infinity` (#250/#747/#760: an unbounded walk was the bug).
  */
 function resolveFiniteCap(raw: number | undefined, fallback: number): number {
-  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback;
+  return Check(Type.Number(), raw) && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback;
 }
 
 function resolveCollectionConfig(
@@ -623,7 +642,7 @@ function classifyEntry(
   cfg: ResolvedCollectionConfig,
   probeCache?: ArtifactProbeCache,
   skipCounters?: SourceWalkSkipCounters,
-): { recurseInto?: string; keepFile?: string } {
+): ClassifyEntryResultContract {
   const { ignoreMatcher, extraExcludePatterns, extensions, options } = cfg;
   if (entry.isDirectory()) {
     const canRecurse = shouldRecurseIntoDir(
@@ -643,12 +662,15 @@ function classifyEntry(
           }
         : undefined,
     );
+
     if (!canRecurse) return {};
+
     return { recurseInto: fullPath };
   }
   if (entry.isFile()) {
     if (ignoreMatcher.isIgnored(fullPath, false)) return {};
     const ext = path.extname(entry.name).toLowerCase();
+
     if (!extensions.has(ext)) return {};
     // Skip if this is a build artifact or generated/codegen output.
     // #1107: counted separately (both are observability-only — neither
@@ -657,6 +679,7 @@ function classifyEntry(
     // visible via `SourceCollectionResult` and the walk's rollup log line.
     if (isBuildArtifact(fullPath, probeCache)) {
       if (skipCounters) skipCounters.buildArtifactSkips += 1;
+
       return {};
     }
     // #1107 phase 2: the content-probe escape hatch can rescue a WEAK
@@ -674,13 +697,16 @@ function classifyEntry(
           skipCounters.generatedNameOnlySkips += 1;
         }
       }
+
       return {};
     }
     if (classification.verdict === "override" && skipCounters) {
       skipCounters.generatedNameOverrides += 1;
     }
+
     return { keepFile: fullPath };
   }
+
   return {};
 }
 
@@ -858,12 +884,7 @@ export async function collectSourceFilesWithBudgetAsync(
 export function getFilterStats(
   allFiles: string[],
   filteredFiles: string[],
-): {
-  total: number;
-  kept: number;
-  skipped: number;
-  byType: Record<string, number>;
-} {
+): GetFilterStatsResultContract {
   const skipped = allFiles.length - filteredFiles.length;
   const byType: Record<string, number> = {};
 

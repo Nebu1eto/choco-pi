@@ -45,12 +45,20 @@
  * host that removes `.on`) simply never wires the subscriber — no throw, no
  * behavior change beyond "no nudges".
  */
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { FilesTouchedPayload } from "./bus-publish.js";
 import { logLatency } from "./latency-logger.js";
 import { normalizeMapKey } from "./path-utils.js";
 import type { ReadGuard } from "./read-guard.js";
 
 const BUS_FILES_TOUCHED_EVENT = "pilens:files:touched";
+const FilesTouchedPayloadSchema = Type.Object({
+  v: Type.Literal(1),
+  source: Type.Literal("choco-pi-lsp"),
+  reason: Type.Union([Type.Literal("autofix"), Type.Literal("format")]),
+  paths: Type.Array(Type.String()),
+});
 const MAX_NAMES_SHOWN = 5;
 
 /**
@@ -126,15 +134,8 @@ export function isAgentNudgeEnabled(): boolean {
   return _enabledCache;
 }
 
-function isValidPayload(data: unknown): data is FilesTouchedPayload {
-  if (!data || typeof data !== "object") return false;
-  const p = data as Partial<FilesTouchedPayload>;
-  return (
-    p.v === 1 &&
-    p.source === "choco-pi-lsp" &&
-    (p.reason === "autofix" || p.reason === "format") &&
-    Array.isArray(p.paths)
-  );
+function isValidPayload<T>(data: T): data is T & FilesTouchedPayload {
+  return Value.Check(FilesTouchedPayloadSchema, data);
 }
 
 /**
@@ -261,7 +262,9 @@ export function noteAuthoritativeContentAttachment(filePath: string, attached: b
 
 export interface WireAgentNudgeSubscriberArgs {
   /** `pi.events` from the extension API, or undefined on older hosts. */
-  events: { on?: (channel: string, handler: (data: unknown) => void) => () => void } | undefined;
+  events:
+    | { on?: (channel: string, handler: (data: FilesTouchedPayload) => void) => () => void }
+    | undefined;
   /** Resolve the live ReadGuard lazily (session-scoped, created on first use). */
   getReadGuard: () => ReadGuard | undefined;
   dbg?: (msg: string) => void;
@@ -278,7 +281,7 @@ export function wireAgentNudgeSubscriber(args: WireAgentNudgeSubscriberArgs): vo
   if (!events?.on) return;
 
   try {
-    events.on(BUS_FILES_TOUCHED_EVENT, (data: unknown) => {
+    events.on(BUS_FILES_TOUCHED_EVENT, (data: FilesTouchedPayload) => {
       if (!isAgentNudgeEnabled()) return;
       if (!isValidPayload(data)) return;
       try {

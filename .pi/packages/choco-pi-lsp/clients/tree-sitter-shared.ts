@@ -18,6 +18,19 @@ import * as path from "node:path";
 import { type ParsedTreeOutcome, TreeSitterClient } from "./tree-sitter-client.js";
 import { logTreeSitter } from "./tree-sitter-logger.js";
 
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
 let _shared: TreeSitterClient | null = null;
 let _wasmAborted = false;
 let _wasmAbortedAt: string | undefined;
@@ -54,12 +67,15 @@ export function resetTreeSitterClientLoadState(): void {
 
 /** Machine-readable process-wide runtime health for status/reporting surfaces. */
 export function getTreeSitterRuntimeStatus(): TreeSitterRuntimeStatus {
-  return {
-    available: !_wasmAborted,
-    wasmAborted: _wasmAborted,
-    recovery: _wasmAborted ? "restart_required" : "not_required",
-    ...(_wasmAbortedAt ? { abortedAt: _wasmAbortedAt } : {}),
-  };
+  return assignOptionalProperties(
+    {
+      available: !_wasmAborted,
+      wasmAborted: _wasmAborted,
+      recovery: _wasmAborted ? "restart_required" : "not_required",
+    },
+    _wasmAbortedAt,
+    () => ({ abortedAt: _wasmAbortedAt }),
+  );
 }
 
 /**
@@ -106,7 +122,9 @@ export function _resetSharedTreeSitterClientForTests(): void {
 // being true when #877 moved typescript-rule inheritance into
 // `queriesForLanguage`). The scanner layers only java/kotlin on top, whose
 // grammars + rule dirs exist but are not wired into a per-edit runner `appliesTo`.
-export const EXT_TO_LANG: Record<string, string> = {
+
+interface EXTTOLANGValues extends Record<string, string> {}
+export const EXT_TO_LANG: EXTTOLANGValues = {
   ".ts": "typescript",
   ".mts": "typescript",
   ".cts": "typescript",
@@ -163,6 +181,7 @@ export async function withTreeSitterRoot<T>(
   const client = getSharedTreeSitterClient();
   if (!languageId || !client || !(await client.init())) return { parsed: false };
   return client.withParsedTree(filePath, languageId, content, (tree) =>
+    // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
     consume(tree.rootNode as TsNode),
   );
 }

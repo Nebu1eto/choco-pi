@@ -1,3 +1,5 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +24,27 @@ import {
   serializeWordIndex,
   type SerializedWordIndex,
 } from "./word-index.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
+type ReadSnapshotBodyResultContract = {
+  snapshot: ProjectSnapshot | null;
+  rawBytes: number;
+};
 
 // v2: added `wordIndex` (identifier inverted index + BM25, #162). Bumping the
 // version invalidates pre-v2 snapshots so they rebuild with the new field.
@@ -79,14 +102,17 @@ export interface ProjectSnapshot {
   conventions?: ProjectConventions;
 }
 
-function parseSequenceIndex(value: unknown): SnapshotSequenceIndex | undefined {
-  if (!value || typeof value !== "object") return undefined;
+function parseSequenceIndex(value: LspBoundaryValue): SnapshotSequenceIndex | undefined {
+  if (!value || !Check(Type.Object({}), value)) return undefined;
+
+  // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
   const index = value as Partial<SnapshotSequenceIndex>;
-  if (typeof index.projectSeq !== "number") return undefined;
+
+  if (!Check(Type.Number(), index.projectSeq)) return undefined;
   if (!Array.isArray(index.fileSeqByPath)) return undefined;
   const fileSeqByPath = index.fileSeqByPath.filter(
     (entry): entry is [string, number] =>
-      Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "number",
+      Array.isArray(entry) && Check(Type.String(), entry[0]) && Check(Type.Number(), entry[1]),
   );
   return { projectSeq: index.projectSeq, fileSeqByPath };
 }
@@ -126,13 +152,18 @@ export function isProjectSnapshotFresh(
   );
 }
 
-function parseSnapshot(value: unknown): ProjectSnapshot | null {
-  if (!value || typeof value !== "object") return null;
+function parseSnapshot(value: LspBoundaryValue): ProjectSnapshot | null {
+  if (!value || !Check(Type.Object({}), value)) return null;
+
+  // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
   const snapshot = value as Partial<ProjectSnapshot>;
   if (snapshot.version !== PROJECT_SNAPSHOT_VERSION) return null;
-  if (typeof snapshot.projectRoot !== "string") return null;
-  if (typeof snapshot.generatedAt !== "string") return null;
-  if (typeof snapshot.seq !== "number") return null;
+
+  if (!Check(Type.String(), snapshot.projectRoot)) return null;
+
+  if (!Check(Type.String(), snapshot.generatedAt)) return null;
+
+  if (!Check(Type.Number(), snapshot.seq)) return null;
   if (!Array.isArray(snapshot.cachedExports)) return null;
   return {
     version: PROJECT_SNAPSHOT_VERSION,
@@ -144,7 +175,7 @@ function parseSnapshot(value: unknown): ProjectSnapshot | null {
     reverseDeps: snapshot.reverseDeps ?? {},
     cachedExports: snapshot.cachedExports.filter(
       (entry): entry is [string, string] =>
-        Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string",
+        Array.isArray(entry) && Check(Type.String(), entry[0]) && Check(Type.String(), entry[1]),
     ),
     sequenceIndex: parseSequenceIndex(snapshot.sequenceIndex),
     wordIndex: snapshot.wordIndex,
@@ -168,13 +199,17 @@ export interface ProjectSnapshotMeta {
   sequenceIndex?: SnapshotSequenceIndex;
 }
 
-function parseSnapshotMeta(value: unknown): ProjectSnapshotMeta | null {
-  if (!value || typeof value !== "object") return null;
+function parseSnapshotMeta(value: LspBoundaryValue): ProjectSnapshotMeta | null {
+  if (!value || !Check(Type.Object({}), value)) return null;
+
+  // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
   const meta = value as Partial<ProjectSnapshotMeta>;
-  if (typeof meta.version !== "number") return null;
-  if (typeof meta.seq !== "number") return null;
+
+  if (!Check(Type.Number(), meta.version)) return null;
+
+  if (!Check(Type.Number(), meta.seq)) return null;
   return {
-    timestamp: typeof meta.timestamp === "string" ? meta.timestamp : "",
+    timestamp: Check(Type.String(), meta.timestamp) ? meta.timestamp : "",
     version: meta.version,
     seq: meta.seq,
     sequenceIndex: parseSequenceIndex(meta.sequenceIndex),
@@ -406,13 +441,7 @@ export function resetSnapshotBodyReadCountForTests(): void {
   _snapshotBodyReadCountForTests = 0;
 }
 
-function readSnapshotBody(
-  bodyPath: string,
-  gz: boolean,
-): {
-  snapshot: ProjectSnapshot | null;
-  rawBytes: number;
-} {
+function readSnapshotBody(bodyPath: string, gz: boolean): ReadSnapshotBodyResultContract {
   _snapshotBodyReadCountForTests++;
   if (!gz) {
     const snapshot =
@@ -424,11 +453,13 @@ function readSnapshotBody(
     } catch {
       /* best-effort */
     }
+
     return { snapshot, rawBytes };
   }
   try {
     const json = gunzipSync(fs.readFileSync(bodyPath)).toString("utf-8");
     const snapshot = parseSnapshot(JSON.parse(json)) ?? null;
+
     return { snapshot, rawBytes: Buffer.byteLength(json) };
   } catch (err) {
     // Corrupt / truncated gz, or a parse failure: fail open exactly like
@@ -442,6 +473,7 @@ function readSnapshotBody(
       durationMs: 0,
       metadata: { error: err instanceof Error ? err.message : String(err) },
     });
+
     return { snapshot: null, rawBytes: 0 };
   }
 }
@@ -901,17 +933,13 @@ export function saveProjectSnapshot(cwd: string, snapshot: ProjectSnapshot): voi
   // stale meta in place while the body writer stampedes ahead.
   writeFileAtomic(
     metaPath,
-    JSON.stringify({
-      timestamp: snapshot.generatedAt,
-      version: snapshot.version,
-      seq: snapshot.seq,
-      // #1019: mirror the derived sequence index (kept consistent with `seq`
-      // because both are stamped from the same runtime moment) so the
-      // interactive path can hydrate it from the tiny sidecar. Omitted when
-      // absent so a non-runtime side-write (word-index/reverse-deps) that
-      // carried no index doesn't stamp an empty one.
-      ...(snapshot.sequenceIndex ? { sequenceIndex: snapshot.sequenceIndex } : {}),
-    }),
+    JSON.stringify(
+      assignOptionalProperties(
+        { timestamp: snapshot.generatedAt, version: snapshot.version, seq: snapshot.seq },
+        snapshot.sequenceIndex,
+        () => ({ sequenceIndex: snapshot.sequenceIndex }),
+      ),
+    ),
     { bestEffort: false },
   );
 
@@ -1089,7 +1117,7 @@ export function saveRuntimeProjectSnapshot(args: {
   dbg?: (msg: string) => void;
 }): void {
   try {
-    if (typeof args.runtime.projectSeq !== "number") return;
+    if (!Check(Type.Number(), args.runtime.projectSeq)) return;
     const existing = loadProjectSnapshot(args.cwd);
     let conventions = args.conventions ?? existing?.conventions;
     if (!conventions) {

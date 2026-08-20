@@ -5,6 +5,8 @@
  * Handles: spawn, spawnSync, temp dir management, JSON parsing.
  */
 
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import { createSubsystemLogger } from "./extension-log.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -23,6 +25,25 @@ import {
   logAvailabilityDecision,
   startHostStallSampler,
 } from "./dispatch/runners/utils/availability-policy.js";
+
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
+type GetSgCommandResultContract = { cmd: string; argsPrefix: string[] };
+type PrepareTempScanResultContract = {
+  sessionDir: string;
+  configFile: string;
+};
 
 /**
  * Build the `bash -c` argv that runs `cmd` with `allArgs` as POSITIONAL
@@ -72,6 +93,14 @@ export interface SgMatch {
     transformed: Record<string, string>;
   };
 }
+
+const SgPositionSchema = Type.Object({ line: Type.Number(), column: Type.Number() });
+const SgMatchSchema = Type.Object({
+  file: Type.String(),
+  range: Type.Object({ start: SgPositionSchema, end: SgPositionSchema }),
+  text: Type.String(),
+});
+const SgMatchesSchema = Type.Array(SgMatchSchema);
 
 export interface SgResult {
   matches: SgMatch[];
@@ -149,8 +178,9 @@ function formatMetaVarCaptures(mv: SgMatch["metaVariables"]): string | undefined
 function tryParseSgMatches(stdout: string): SgMatch[] | null {
   try {
     const parsed = JSON.parse(stdout);
-    if (Array.isArray(parsed)) return parsed;
-    if (parsed !== null && typeof parsed === "object") return [parsed];
+    if (Check(SgMatchesSchema, parsed)) return parsed;
+
+    if (Check(SgMatchSchema, parsed)) return [parsed];
     return null;
   } catch {
     return null;
@@ -605,7 +635,7 @@ export class SgRunner {
   /**
    * Get the ast-grep command to use, plus any npx prefix arguments.
    */
-  private getSgCommand(): { cmd: string; argsPrefix: string[] } {
+  private getSgCommand(): GetSgCommandResultContract {
     return {
       cmd: this.sgPath || "ast-grep",
       argsPrefix: this.sgArgsPrefix,
@@ -670,14 +700,17 @@ export class SgRunner {
       maxOutputBytes: MAX_SG_OUTPUT_BYTES,
     });
     const failure = this.failureForSpawnResult(result);
-    return {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      status: result.status,
-      error: result.error?.message,
-      failure,
-      ...(result.outputTruncated ? { outputTruncated: true } : {}),
-    };
+    return assignOptionalProperties(
+      {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        status: result.status,
+        error: result.error?.message,
+        failure,
+      },
+      result.outputTruncated,
+      () => ({ outputTruncated: true }),
+    );
   }
 
   /**
@@ -770,19 +803,14 @@ export class SgRunner {
 
   // --- Shared helpers for temp-dir rule scans ---
 
-  private prepareTempScan(
-    ruleId: string,
-    ruleYaml: string,
-  ): {
-    sessionDir: string;
-    configFile: string;
-  } {
+  private prepareTempScan(ruleId: string, ruleYaml: string): PrepareTempScanResultContract {
     const sessionDir = path.join(os.tmpdir(), `choco-pi-lsp-temp-${ruleId}-${Date.now()}`);
     const rulesSubdir = path.join(sessionDir, "rules");
     const configFile = path.join(sessionDir, ".sgconfig.yml");
     fs.mkdirSync(rulesSubdir, { recursive: true });
     fs.writeFileSync(configFile, `ruleDirs:\n  - ./rules\n`);
     fs.writeFileSync(path.join(rulesSubdir, `${ruleId}.yml`), ruleYaml);
+
     return { sessionDir, configFile };
   }
 
@@ -790,7 +818,7 @@ export class SgRunner {
     try {
       fs.rmSync(sessionDir, { recursive: true, force: true });
     } catch (err) {
-      this.log(`Cleanup failed: ${(err as Error).message}`);
+      this.log(`Cleanup failed: ${err instanceof Error ? err.message : undefined}`);
     }
   }
 

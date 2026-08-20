@@ -77,7 +77,11 @@ export function collectInstallDiagnostics(): InstallDiagnostics {
     return String(pj.version ?? "unknown");
   }, "unknown");
 
-  const bunVersion = (globalThis as { Bun?: { version?: string } }).Bun?.version;
+  const bunRuntime = Object.getOwnPropertyDescriptor(globalThis, "Bun")?.value;
+  const bunVersion =
+    bunRuntime instanceof Object && "version" in bunRuntime && bunRuntime.version
+      ? String(bunRuntime.version)
+      : undefined;
   const runtime = bunVersion ? `bun ${bunVersion}` : `node ${process.versions.node}`;
   const platform = `${process.platform}-${process.arch}`;
 
@@ -99,9 +103,9 @@ export function collectInstallDiagnostics(): InstallDiagnostics {
       return {
         name,
         resolved: false,
-        error: `${(err as { code?: string })?.code ?? ""} ${
-          (err as Error)?.message ?? String(err)
-        }`.trim(),
+        error: `${
+          err instanceof Object && "code" in err ? String(err.code ?? "") : ""
+        } ${err instanceof Error ? err.message : String(err)}`.trim(),
       };
     }
   });
@@ -149,14 +153,14 @@ export function collectInstallDiagnostics(): InstallDiagnostics {
 }
 
 /** Render a compact, paste-able diagnostic block for a bug report. */
-export function formatInstallDiagnostics(
+export function formatInstallDiagnostics<T = undefined>(
   diag: InstallDiagnostics = collectInstallDiagnostics(),
-  cause?: unknown,
+  cause?: T,
 ): string {
   const lines: string[] = [];
   lines.push("──────── choco-pi-lsp install diagnostics ────────");
   if (cause) {
-    const msg = (cause as Error)?.message ?? String(cause);
+    const msg = cause instanceof Error ? cause.message : String(cause);
     lines.push(`LOAD ERROR: ${msg}`);
   }
   lines.push(`choco-pi-lsp:   ${diag.piLensVersion}`);

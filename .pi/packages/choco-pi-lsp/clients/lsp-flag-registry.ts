@@ -1,3 +1,11 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+
 /**
  * THE single declarative source of truth for every choco-pi-lsp toggle (#166).
  *
@@ -48,7 +56,8 @@ export interface LensFlagSpec {
    * Escape hatch for the one flag whose config key is not a boolean
    * (`format.mode`). Returns undefined when the key is absent.
    */
-  readGlobal?: (config: Record<string, unknown>) => boolean | undefined;
+
+  readGlobal?: (config: Record<string, LspDictionaryValue>) => boolean | undefined;
 }
 
 export const LENS_FLAGS: readonly LensFlagSpec[] = [
@@ -89,8 +98,11 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
     scope: "global",
     readGlobal: (config) => {
       const format = config.format;
-      if (!format || typeof format !== "object") return undefined;
-      const mode = (format as Record<string, unknown>).mode;
+
+      if (!format || !Check(Type.Object({}), format)) return undefined;
+
+      // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+      const mode = (format as Record<string, LspDictionaryValue>).mode;
       if (mode !== "immediate" && mode !== "deferred") return undefined;
       return mode === "immediate";
     },
@@ -286,19 +298,19 @@ export function flagConfigSectionKeys(flags: readonly LensFlagSpec[]): string[] 
   return [...new Set(flags.map((spec) => spec.configKey.split(".")[0]))];
 }
 
-function asConfigObject(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+function asConfigObject(value: LspBoundaryValue): Record<string, LspDictionaryValue> | undefined {
+  if (!value || !Check(Type.Object({}), value) || Array.isArray(value)) return undefined;
+  // SAFETY: TypeBox established a non-array object, so string-key access preserves its runtime values.
+  return value as Record<string, LspDictionaryValue>;
 }
 
 interface FlagConfigPath {
-  source: Record<string, unknown>;
+  source: Record<string, LspDictionaryValue>;
   segments: string[];
 }
 
 function resolveFlagConfigPath(
-  raw: Record<string, unknown>,
+  raw: Record<string, LspDictionaryValue>,
   configKey: string,
   warnInvalid?: (reason: string) => void,
 ): FlagConfigPath | undefined {
@@ -332,13 +344,19 @@ function resolveFlagConfigPath(
  * config object. Returns undefined when any segment is missing or the leaf is
  * not a boolean — callers treat that as "this tier does not decide".
  */
-export function readFlagConfigValue(config: unknown, configKey: string): boolean | undefined {
-  const path = resolveFlagConfigPath(config as Record<string, unknown>, configKey);
+
+export function readFlagConfigValue(
+  config: LspBoundaryValue,
+  configKey: string,
+): boolean | undefined {
+  // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+  const path = resolveFlagConfigPath(config as Record<string, LspDictionaryValue>, configKey);
   if (!path) return undefined;
 
   const leaf = path.segments[path.segments.length - 1];
   const value = path.source[leaf];
-  return typeof value === "boolean" ? value : undefined;
+
+  return Check(Type.Boolean(), value) ? value : undefined;
 }
 
 /** Turn a config-tier boolean into the flag's value, honoring `negated`. */
@@ -356,8 +374,9 @@ export function flagValueFromConfig(spec: LensFlagSpec, configValue: boolean): b
  * because this module imports nothing and cannot form a cycle.
  */
 export function assignFlagConfigSection(
-  raw: Record<string, unknown>,
-  out: Record<string, unknown>,
+  raw: Record<string, LspDictionaryValue>,
+
+  out: Record<string, LspDictionaryValue>,
   configKey: string,
   warnInvalid: (reason: string) => void,
 ): void {
@@ -367,11 +386,14 @@ export function assignFlagConfigSection(
   let target = out;
   for (const segment of path.segments.slice(0, -1)) {
     target[segment] ??= {};
-    target = target[segment] as Record<string, unknown>;
+
+    // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+    target = target[segment] as Record<string, LspDictionaryValue>;
   }
 
   const leaf = path.segments[path.segments.length - 1];
-  if (leaf in path.source && typeof path.source[leaf] !== "boolean") {
+
+  if (leaf in path.source && !Check(Type.Boolean(), path.source[leaf])) {
     warnInvalid(`${configKey} must be a boolean`);
     target[leaf] = undefined;
     return;

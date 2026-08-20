@@ -1,8 +1,12 @@
+import { type Static, Type } from "typebox";
 import * as path from "node:path";
 import { isTestMode } from "./env-utils.js";
 import { getGlobalPiLensDir } from "./file-utils.js";
 import { createNdjsonLogger } from "./ndjson-logger.js";
 import { getMaxLogSizeMB } from "./log-cleanup.js";
+
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 const LATENCY_LOG_DIR = getGlobalPiLensDir();
 const LATENCY_LOG_FILE = path.join(LATENCY_LOG_DIR, "latency.log");
@@ -39,7 +43,8 @@ export interface LatencyEntry {
   sumMs?: number;
   /** wallClockMs - sumMs ≥ 0 means parallelism saved this many ms */
   parallelGainMs?: number;
-  metadata?: Record<string, unknown>;
+
+  metadata?: Record<string, LspDictionaryValue>;
 }
 
 /** Bound on the `recentPhases` ring below — keeps the attribution record small. */

@@ -22,6 +22,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { PRIORITY } from "../priorities.js";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
@@ -67,6 +69,10 @@ function findShellcheckConfig(cwd: string): string | undefined {
  *
  * Levels: "error", "warning", "info", "style"
  */
+interface SeverityMap {
+  [severity: string]: "error" | "warning" | "info";
+}
+
 function parseShellcheckOutput(raw: string, filePath: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
 
@@ -75,19 +81,25 @@ function parseShellcheckOutput(raw: string, filePath: string): Diagnostic[] {
   }
 
   try {
-    const parsed = JSON.parse(raw) as Array<{
-      file?: string;
-      line?: number;
-      endLine?: number;
-      column?: number;
-      endColumn?: number;
-      level?: string;
-      code?: number;
-      message?: string;
-      fix?: unknown;
-    }>;
+    const parsed = JSON.parse(raw);
+    const schema = Type.Array(
+      Type.Object(
+        {
+          file: Type.Optional(Type.String()),
+          line: Type.Optional(Type.Number()),
+          endLine: Type.Optional(Type.Number()),
+          column: Type.Optional(Type.Number()),
+          endColumn: Type.Optional(Type.Number()),
+          level: Type.Optional(Type.String()),
+          code: Type.Optional(Type.Number()),
+          message: Type.Optional(Type.String()),
+          fix: Type.Optional(Type.Unknown()),
+        },
+        { additionalProperties: true },
+      ),
+    );
 
-    if (!Array.isArray(parsed)) {
+    if (!Value.Check(schema, parsed)) {
       return diagnostics;
     }
 
@@ -95,7 +107,7 @@ function parseShellcheckOutput(raw: string, filePath: string): Diagnostic[] {
       if (!item.message || !item.line) continue;
 
       // Map shellcheck levels to our severity
-      const severityMap: Record<string, "error" | "warning" | "info"> = {
+      const severityMap: SeverityMap = {
         error: "error",
         warning: "warning",
         info: "info",

@@ -162,10 +162,7 @@ export interface PublishDiagnosticsArgs {
   dbg?: (msg: string) => void;
 }
 
-function capDiagnostics(diagnostics: PilensDiagnosticEntry[]): {
-  capped: PilensDiagnosticEntry[];
-  truncated: boolean;
-} {
+function capDiagnostics(diagnostics: PilensDiagnosticEntry[]) {
   if (diagnostics.length <= MAX_DIAGNOSTICS_PER_FILE_EVENT) {
     return { capped: diagnostics, truncated: false };
   }

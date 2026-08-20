@@ -1,3 +1,5 @@
+import type { RuntimeValue } from "../../tools/runtime-values.js";
+import { isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { BoundedLruCache } from "../bounded-cache.js";
@@ -34,7 +36,7 @@ const cache = new BoundedLruCache<string, TsconfigPathMatcher[]>(64);
 const referencesCache = new BoundedLruCache<string, Map<string, string>>(64);
 
 /** Strip JSONC comments and trailing commas without touching string contents. */
-function parseJsonc(content: string): unknown {
+function parseJsonc(content: string): RuntimeValue {
   let output = "";
   let inString = false;
   let escaped = false;
@@ -82,16 +84,17 @@ function configDependencyPaths(configPath: string): string[] {
     paths.add(normalized);
     let json: TsconfigJson;
     try {
+      // SAFETY: The parsed value is consumed only through the optional fields declared here and each field is validated before use.
       json = parseJsonc(fs.readFileSync(normalized, "utf8")) as TsconfigJson;
     } catch {
       return;
     }
-    if (typeof json.extends === "string") {
+    if (isRuntimeString(json.extends)) {
       const parent = resolveExtends(normalized, json.extends);
       if (parent) visit(parent);
     }
     for (const reference of json.references ?? []) {
-      if (typeof reference?.path !== "string") continue;
+      if (!isRuntimeString(reference?.path)) continue;
       const referenced = resolveReferenceConfig(normalized, reference.path);
       if (referenced) visit(referenced);
     }
@@ -118,22 +121,22 @@ function readConfig(configPath: string, seen: Set<string>): ParsedConfig | undef
   seen.add(normalized);
   let json: TsconfigJson;
   try {
+    // SAFETY: The parsed value is consumed only through the optional fields declared here and each field is validated before use.
     json = parseJsonc(fs.readFileSync(normalized, "utf8")) as TsconfigJson;
   } catch {
     return undefined;
   }
   let inherited: ParsedConfig | undefined;
-  if (typeof json.extends === "string") {
+  if (isRuntimeString(json.extends)) {
     const parentPath = resolveExtends(normalized, json.extends);
     if (parentPath) inherited = readConfig(parentPath, seen);
   }
   const options = json.compilerOptions;
-  const baseUrl =
-    typeof options?.baseUrl === "string"
-      ? path.resolve(path.dirname(normalized), options.baseUrl)
-      : (inherited?.baseUrl ?? path.dirname(normalized));
+  const baseUrl = isRuntimeString(options?.baseUrl)
+    ? path.resolve(path.dirname(normalized), options.baseUrl)
+    : (inherited?.baseUrl ?? path.dirname(normalized));
   const paths =
-    options?.paths && typeof options.paths === "object"
+    options?.paths && isRuntimeObject(options.paths)
       ? Object.fromEntries(
           Object.entries(options.paths).map(([pattern, targets]) => [
             pattern,
@@ -143,17 +146,16 @@ function readConfig(configPath: string, seen: Set<string>): ParsedConfig | undef
           ]),
         )
       : inherited?.paths;
-  const rootDir =
-    typeof options?.rootDir === "string"
-      ? path.resolve(path.dirname(normalized), options.rootDir)
-      : inherited?.rootDir;
+  const rootDir = isRuntimeString(options?.rootDir)
+    ? path.resolve(path.dirname(normalized), options.rootDir)
+    : inherited?.rootDir;
   const include = Array.isArray(json.include)
-    ? json.include.filter((value): value is string => typeof value === "string")
+    ? json.include.filter((value): value is string => isRuntimeString(value))
     : inherited?.include;
   const references = Array.isArray(json.references)
     ? json.references
         .map((reference) => reference?.path)
-        .filter((value): value is string => typeof value === "string" && value.startsWith("."))
+        .filter((value): value is string => isRuntimeString(value) && value.startsWith("."))
     : [];
   return { baseUrl, paths, rootDir, include, references };
 }
@@ -224,10 +226,11 @@ function collectReferencedProjects(
       const entry = firstSourceEntry(referencedConfig, referenced);
       if (packageJsonPath && entry) {
         try {
+          // SAFETY: The parsed value is consumed only through the optional fields declared here and each field is validated before use.
           const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as {
             name?: unknown;
           };
-          if (typeof pkg.name === "string" && !result.has(pkg.name)) {
+          if (isRuntimeString(pkg.name) && !result.has(pkg.name)) {
             result.set(pkg.name, entry);
           }
         } catch {
@@ -259,7 +262,7 @@ export function parseTsconfigPaths(cwd: string, homeDir = os.homedir()): Tsconfi
   const matchers = Object.entries(parsed?.paths ?? {})
     .filter(
       (entry): entry is [string, string[]] =>
-        Array.isArray(entry[1]) && entry[1].every((target) => typeof target === "string"),
+        Array.isArray(entry[1]) && entry[1].every((target) => isRuntimeString(target)),
     )
     .map(([pattern, targets]) => {
       const star = pattern.indexOf("*");

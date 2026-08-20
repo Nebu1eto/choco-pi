@@ -211,18 +211,23 @@ export const importFactProvider: FactProvider = {
       // Telemetry: log when a file has dynamic imports or re-exports so we can
       // measure coverage and validate the implementation across real projects.
       if (dynamicCount > 0 || reexports.length > 0) {
-        logLatency({
-          type: "call_graph_facts" as any,
-          filePath: ctx.filePath,
-          durationMs: 0,
-          metadata: {
-            moduleType,
-            staticImports: imports.length - dynamicCount,
-            dynamicImports: dynamicCount,
-            reexports: reexports.length,
-            starReexports: reexports.filter((r) => r.names.length === 0).length,
+        // logLatency only special-cases `phase`; Object.assign preserves this legacy wire type.
+        const event = Object.assign(
+          { type: "phase" as const },
+          {
+            type: "call_graph_facts" as const,
+            filePath: ctx.filePath,
+            durationMs: 0,
+            metadata: {
+              moduleType,
+              staticImports: imports.length - dynamicCount,
+              dynamicImports: dynamicCount,
+              reexports: reexports.length,
+              starReexports: reexports.filter((r) => r.names.length === 0).length,
+            },
           },
-        });
+        );
+        logLatency(event);
       }
     });
     if (!parsed.parsed) setEmpty();

@@ -1,3 +1,5 @@
+import type { ProtocolDictionary } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.js";
 /**
  * ast_grep_replace tool definition
  *
@@ -75,6 +77,7 @@ export function createAstGrepReplaceTool(astGrepClient: AstGrepClient) {
         description: "Replacement using meta-variables from pattern",
       }),
       lang: Type.String({
+        // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
         enum: [...LANGUAGES] as string[],
         description: "Target language",
       }),
@@ -120,12 +123,13 @@ export function createAstGrepReplaceTool(astGrepClient: AstGrepClient) {
     }),
     async execute(
       _toolCallId: string,
-      params: Record<string, unknown>,
+      params: ProtocolDictionary,
       _signal: AbortSignal,
-      _onUpdate: unknown,
+      _onUpdate: RuntimeValue,
       ctx: { cwd?: string },
     ) {
       const startedAt = Date.now();
+      // SAFETY: The host validates params against this tool's TypeBox parameter schema before execute runs.
       const {
         pattern,
         rewrite,
@@ -150,6 +154,7 @@ export function createAstGrepReplaceTool(astGrepClient: AstGrepClient) {
         follows?: string;
         precedes?: string;
       };
+      // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       const lang = ((params as { lang: string }).lang ?? "").replace(/^"|"$/g, "");
       const pathsCount = paths?.length ?? 1;
       const applyFlag = apply ?? false;

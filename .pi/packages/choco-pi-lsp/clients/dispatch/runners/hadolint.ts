@@ -1,4 +1,6 @@
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { getLinterPolicyForCwd } from "../../tool-policy.js";
 import { PRIORITY } from "../priorities.js";
@@ -11,19 +13,29 @@ import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.js";
 
 const hadolint = createAvailabilityChecker("hadolint", ".exe");
 
-interface HadolintResult {
-  line: number;
-  code: string;
-  message: string;
-  column: number;
-  file: string;
-  level: "error" | "warning" | "info" | "style";
-}
+const HadolintOutputSchema = Type.Array(
+  Type.Object(
+    {
+      line: Type.Number(),
+      code: Type.String(),
+      message: Type.String(),
+      column: Type.Number(),
+      file: Type.String(),
+      level: Type.Union([
+        Type.Literal("error"),
+        Type.Literal("warning"),
+        Type.Literal("info"),
+        Type.Literal("style"),
+      ]),
+    },
+    { additionalProperties: true },
+  ),
+);
 
 function parseHadolintOutput(raw: string, filePath: string): Diagnostic[] {
   try {
-    const parsed = JSON.parse(raw) as HadolintResult[];
-    if (!Array.isArray(parsed)) return [];
+    const parsed = JSON.parse(raw);
+    if (!Value.Check(HadolintOutputSchema, parsed)) return [];
 
     return parsed.map((item) => {
       const severity = item.level === "error" ? "error" : "warning";

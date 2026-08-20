@@ -9,6 +9,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { walkUpDirs } from "../../path-utils.js";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { getJstsLintPolicyForCwd, hasVitePlusConfig } from "../../tool-policy.js";
@@ -131,6 +133,40 @@ interface OxlintJsonReport {
   diagnostics?: OxlintJsonDiagnostic[];
 }
 
+const OxlintJsonReportSchema = Type.Object(
+  {
+    diagnostics: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            message: Type.Optional(Type.String()),
+            code: Type.Optional(Type.String()),
+            severity: Type.Optional(Type.String()),
+            help: Type.Optional(Type.String()),
+            filename: Type.Optional(Type.String()),
+            labels: Type.Optional(
+              Type.Array(
+                Type.Object({
+                  span: Type.Optional(
+                    Type.Object({
+                      offset: Type.Optional(Type.Number()),
+                      length: Type.Optional(Type.Number()),
+                      line: Type.Optional(Type.Number()),
+                      column: Type.Optional(Type.Number()),
+                    }),
+                  ),
+                }),
+              ),
+            ),
+          },
+          { additionalProperties: true },
+        ),
+      ),
+    ),
+  },
+  { additionalProperties: true },
+);
+
 // Oxlint codes look like "eslint(no-debugger)" or "oxc(approx-constant)".
 // Strip the plugin prefix so the rule lines up with what users expect.
 // indexOf-based extraction avoids a regex hot-spot Sonar flagged for
@@ -149,7 +185,9 @@ function parseOxlintJson(raw: string, filePath: string): Diagnostic[] {
   if (!trimmed.startsWith("{")) return [];
   let parsed: OxlintJsonReport;
   try {
-    parsed = JSON.parse(trimmed) as OxlintJsonReport;
+    const value = JSON.parse(trimmed);
+    if (!Value.Check(OxlintJsonReportSchema, value)) return [];
+    parsed = value;
   } catch {
     return [];
   }

@@ -29,10 +29,13 @@ function isWithin(root: string, candidate: string): boolean {
   );
 }
 
-function diagnosticLocation(
-  message: string,
-  chartRoot: string,
-): { filePath: string; line?: number; message: string } {
+interface DiagnosticLocation {
+  filePath: string;
+  line?: number;
+  message: string;
+}
+
+function diagnosticLocation(message: string, chartRoot: string): DiagnosticLocation {
   const location = message.match(
     /(?:^|\s)([^:\r\n]+\.(?:ya?ml|tpl|json))(?::(\d+))?(?::\d+)?(?::|\s)/i,
   );

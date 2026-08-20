@@ -13,6 +13,8 @@ import { EventEmitter } from "node:events";
 import { access, readFile } from "node:fs/promises";
 import * as os from "node:os";
 import { pathToFileURL } from "node:url";
+import { type Static, Type } from "typebox";
+import { Value } from "typebox/value";
 import { emitBounded } from "../bounded-telemetry.js";
 import { withTimeout } from "../deadline-utils.js";
 import { incrementDegradationCount } from "../degradation-ledger.js";
@@ -91,6 +93,185 @@ function extractSpawnMarker(args: readonly string[] | undefined): string | undef
 
 // --- Types ---
 
+interface JsonObject {
+  [key: string]: JsonValue;
+}
+
+interface JsonRpcParams {
+  textDocument?: object;
+  position?: object;
+  context?: object;
+  range?: object;
+  query?: string;
+  newName?: string;
+  files?: object[];
+  item?: object;
+}
+
+interface LegacyDiagnosticsState {
+  diagnostics: Map<string, LSPDiagnostic[]> | undefined;
+}
+
+interface LegacyDiagnosticCacheState extends LegacyDiagnosticsState {
+  diagnosticTimestamps: Map<string, number> | undefined;
+}
+
+type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
+
+const JsonObjectSchema = Type.Object({}, { additionalProperties: true });
+
+const ErrorCodeSchema = Type.Object(
+  {
+    code: Type.Optional(Type.Union([Type.String(), Type.Number()])),
+  },
+  { additionalProperties: true },
+);
+
+interface ErrorDetails {
+  code?: string | number;
+  message?: string;
+}
+
+const ErrorDetailsSchema = Type.Object(
+  {
+    code: Type.Optional(Type.Union([Type.String(), Type.Number()])),
+    message: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
+
+const LspCodeActionSchema = Type.Object({ title: Type.String() }, { additionalProperties: true });
+
+const WorkspaceEditSchema = Type.Object(
+  {
+    changes: Type.Optional(
+      Type.Union([Type.Record(Type.String(), Type.Array(Type.Unknown())), Type.Null()]),
+    ),
+    documentChanges: Type.Optional(Type.Union([Type.Array(Type.Unknown()), Type.Null()])),
+    changeAnnotations: Type.Optional(Type.Union([JsonObjectSchema, Type.Null()])),
+  },
+  { additionalProperties: true },
+);
+
+const VersionedTextDocumentChangeSchema = Type.Object(
+  {
+    textDocument: Type.Object(
+      {
+        uri: Type.Optional(Type.String()),
+        version: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+      },
+      { additionalProperties: true },
+    ),
+  },
+  { additionalProperties: true },
+);
+
+function parseWorkspaceEditPayload<T>(value: T): LSPWorkspaceEdit | undefined {
+  if (!Value.Check(WorkspaceEditSchema, value)) return undefined;
+  const edit: LSPWorkspaceEdit = {};
+  if (value.changes) edit.changes = value.changes;
+  if (value.documentChanges) edit.documentChanges = value.documentChanges;
+  if (value.changeAnnotations) {
+    // SAFETY: JsonObjectSchema established a JSON object; TypeBox exposes its empty-object index type as object.
+    edit.changeAnnotations = value.changeAnnotations as JsonObject;
+  }
+  return edit;
+}
+
+const DiagnosticProviderSchema = Type.Union([
+  Type.Null(),
+  Type.Boolean(),
+  Type.Object(
+    { workspaceDiagnostics: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])) },
+    { additionalProperties: true },
+  ),
+]);
+
+const ProviderCapabilitySchema = Type.Union([
+  Type.Null(),
+  Type.Boolean(),
+  Type.Object({}, { additionalProperties: true }),
+]);
+
+const LspCapabilitiesSchema = Type.Object(
+  {
+    diagnosticProvider: Type.Optional(DiagnosticProviderSchema),
+    executeCommandProvider: Type.Optional(
+      Type.Union([
+        Type.Null(),
+        Type.Object(
+          { commands: Type.Optional(Type.Union([Type.Array(Type.Unknown()), Type.Null()])) },
+          { additionalProperties: true },
+        ),
+      ]),
+    ),
+    positionEncoding: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    textDocumentSync: Type.Optional(
+      Type.Union([
+        Type.Null(),
+        Type.Number(),
+        Type.Object(
+          { change: Type.Optional(Type.Union([Type.Number(), Type.Null()])) },
+          { additionalProperties: true },
+        ),
+      ]),
+    ),
+    definitionProvider: Type.Optional(ProviderCapabilitySchema),
+    typeDefinitionProvider: Type.Optional(ProviderCapabilitySchema),
+    declarationProvider: Type.Optional(ProviderCapabilitySchema),
+    referencesProvider: Type.Optional(ProviderCapabilitySchema),
+    hoverProvider: Type.Optional(ProviderCapabilitySchema),
+    signatureHelpProvider: Type.Optional(ProviderCapabilitySchema),
+    documentSymbolProvider: Type.Optional(ProviderCapabilitySchema),
+    workspaceSymbolProvider: Type.Optional(ProviderCapabilitySchema),
+    codeActionProvider: Type.Optional(ProviderCapabilitySchema),
+    renameProvider: Type.Optional(ProviderCapabilitySchema),
+    implementationProvider: Type.Optional(ProviderCapabilitySchema),
+    callHierarchyProvider: Type.Optional(ProviderCapabilitySchema),
+  },
+  { additionalProperties: true },
+);
+
+type LspCapabilities = Static<typeof LspCapabilitiesSchema>;
+
+const InitializeResultSchema = Type.Object(
+  { capabilities: Type.Optional(Type.Union([LspCapabilitiesSchema, Type.Null()])) },
+  { additionalProperties: true },
+);
+
+type InitializeResult = Static<typeof InitializeResultSchema>;
+
+const DynamicRegistrationParamsSchema = Type.Object({
+  registrations: Type.Optional(
+    Type.Array(
+      Type.Object({
+        id: Type.String(),
+        method: Type.String(),
+        registerOptions: Type.Optional(
+          Type.Union([
+            Type.Object(
+              {
+                commands: Type.Optional(Type.Unknown()),
+                identifier: Type.Optional(Type.Unknown()),
+                workspaceDiagnostics: Type.Optional(Type.Unknown()),
+              },
+              { additionalProperties: true },
+            ),
+            Type.Null(),
+          ]),
+        ),
+      }),
+    ),
+  ),
+});
+
+interface MutableDynamicRegistration {
+  method: string;
+  identifier?: string;
+  workspaceDiagnostics?: boolean;
+  commands?: string[];
+}
+
 export interface LSPDiagnostic {
   severity: 1 | 2 | 3 | 4; // Error, Warning, Info, Hint
   message: string;
@@ -152,7 +333,7 @@ export interface LSPCodeAction {
 export interface LSPWorkspaceEdit {
   changes?: Record<string, unknown[]>;
   documentChanges?: unknown[];
-  changeAnnotations?: Record<string, unknown>;
+  changeAnnotations?: JsonObject;
 }
 
 export interface LSPWorkspaceDiagnosticsSupport {
@@ -676,10 +857,10 @@ const LSP_CRASH_CODES = new Set([
 
 let crashGuardInstalled = false;
 
-function isIgnorableLspRuntimeCrash(err: unknown): boolean {
+function isIgnorableLspRuntimeCrash<T>(err: T): boolean {
   if (!(err instanceof Error)) return false;
-  const code = (err as { code?: string }).code;
-  if (code && LSP_CRASH_CODES.has(code)) return true;
+  const code = Value.Check(ErrorCodeSchema, err) ? err.code : undefined;
+  if (Value.Check(Type.String(), code) && LSP_CRASH_CODES.has(code)) return true;
   const msg = err.message.toLowerCase();
   const stack = (err.stack ?? "").toLowerCase();
   return (
@@ -948,8 +1129,8 @@ export async function killProcessTree(
     unref?: () => void;
     exitCode?: number | null;
     signalCode?: NodeJS.Signals | null;
-    once?: (event: "exit", listener: () => void) => unknown;
-    off?: (event: "exit", listener: () => void) => unknown;
+    once?: (event: "exit", listener: () => void) => void;
+    off?: (event: "exit", listener: () => void) => void;
   },
   pid: number,
   options: LSPShutdownOptions = {},
@@ -1185,8 +1366,9 @@ function getMergedDiagnosticsForPath(
   state: LSPClientState,
   normalizedPath: string,
 ): LSPDiagnostic[] {
-  const legacy = state as unknown as {
-    diagnostics?: Map<string, LSPDiagnostic[]>;
+  const legacy: LegacyDiagnosticsState = {
+    diagnostics: undefined,
+    ...state,
   };
   return mergeDiagnosticLists(
     state.pushDiagnostics?.get(normalizedPath) ?? legacy.diagnostics?.get(normalizedPath),
@@ -1324,7 +1506,7 @@ function retirePullSource(state: LSPClientState, identifier: string): void {
   const suffix = `${PULL_SOURCE_KEY_SEPARATOR}${identifier}`;
   for (const source of [state.pullResultIds, state.pullRequestSequences]) {
     if (!source) continue;
-    for (const key of [...source.keys()]) {
+    for (const key of source.keys()) {
       if (key.endsWith(suffix)) source.delete(key);
     }
   }
@@ -1377,9 +1559,10 @@ export function diagnosticsVersionForPath(state: LSPClientState, normalizedPath:
  * headline #1412 safety property (a stale versionless publication must never
  * land after the document content changed). */
 export function clearDiagnosticsForPath(state: LSPClientState, normalizedPath: string): void {
-  const legacy = state as unknown as {
-    diagnostics?: Map<string, LSPDiagnostic[]>;
-    diagnosticTimestamps?: Map<string, number>;
+  const legacy: LegacyDiagnosticCacheState = {
+    diagnostics: undefined,
+    diagnosticTimestamps: undefined,
+    ...state,
   };
   state.pushDiagnostics?.delete(normalizedPath);
   const pending = state.pendingDiagnostics?.get(normalizedPath);
@@ -1617,7 +1800,11 @@ function buildContentChanges(
 }
 
 // Methods that can be registered dynamically and map to operationSupport keys
-const DYNAMIC_OPERATION_METHOD_MAP: Record<string, keyof LSPOperationSupport> = {
+interface DynamicOperationMethodMap {
+  [method: string]: keyof LSPOperationSupport;
+}
+
+const DYNAMIC_OPERATION_METHOD_MAP: DynamicOperationMethodMap = {
   "textDocument/definition": "definition",
   "textDocument/typeDefinition": "typeDefinition",
   "textDocument/declaration": "declaration",
@@ -1686,17 +1873,18 @@ export function applyDynamicCapabilities(state: LSPClientState): void {
  * Exported for the #983 regression test.
  */
 export function resolveConfigurationSection(
-  initialization: Record<string, unknown> | undefined,
+  initialization: JsonObject | undefined,
   section: string | undefined,
-): unknown {
+): JsonValue | undefined {
   if (!initialization) return section ? null : {};
   if (!section) return initialization;
-  let cur: unknown = initialization;
+  let cur: JsonValue = initialization;
   for (const part of section.split(".")) {
-    if (typeof cur !== "object" || cur === null || !Object.hasOwn(cur, part)) {
+    if (!Value.Check(JsonObjectSchema, cur) || !Object.hasOwn(cur, part)) {
       return null;
     }
-    cur = (cur as Record<string, unknown>)[part];
+    // SAFETY: JsonObjectSchema rejected null, arrays, and primitive values before indexed access.
+    cur = (cur as JsonObject)[part];
   }
   return cur;
 }
@@ -1706,7 +1894,7 @@ export function resolveConfigurationSection(
 // a real language server. Not part of the public client API surface.
 export function setupIncomingHandlers(
   state: LSPClientState,
-  initialization: Record<string, unknown> | undefined,
+  initialization: JsonObject | undefined,
 ): void {
   state.connection.onNotification(
     "textDocument/publishDiagnostics",
@@ -1900,49 +2088,42 @@ export function setupIncomingHandlers(
   state.connection.onRequest("workspace/workspaceFolders", () => [
     { name: "workspace", uri: pathToFileURL(state.root).href },
   ]);
-  state.connection.onRequest(
-    "client/registerCapability",
-    async (params: {
-      registrations?: Array<{
-        id: string;
-        method: string;
-        registerOptions?: {
-          commands?: unknown;
-          identifier?: unknown;
-          workspaceDiagnostics?: unknown;
-        };
-      }>;
-    }) => {
-      for (const reg of params?.registrations ?? []) {
-        const options = reg.registerOptions;
-        const commands = Array.isArray(options?.commands)
-          ? options.commands.filter((cmd): cmd is string => typeof cmd === "string")
-          : undefined;
-        if (reg.id && reg.method) {
-          // #1667: keep the whole registration, not just its method. An empty
-          // `identifier` is treated as absent - it names no source, and
-          // sending `identifier: ""` would be a second, indistinguishable
-          // bare pull.
-          state.dynamicRegistrations.set(reg.id, {
-            method: reg.method,
-            ...(typeof options?.identifier === "string" && options.identifier
-              ? { identifier: options.identifier }
-              : {}),
-            ...(typeof options?.workspaceDiagnostics === "boolean"
-              ? { workspaceDiagnostics: options.workspaceDiagnostics }
-              : {}),
-            ...(commands ? { commands } : {}),
-          });
+  state.connection.onRequest("client/registerCapability", async (rawParams) => {
+    if (!Value.Check(DynamicRegistrationParamsSchema, rawParams)) return;
+    for (const reg of rawParams.registrations ?? []) {
+      const options = reg.registerOptions ?? undefined;
+      const commands = Array.isArray(options?.commands)
+        ? options.commands.filter((command): command is string =>
+            Value.Check(Type.String(), command),
+          )
+        : undefined;
+      const identifier = Value.Check(Type.String(), options?.identifier)
+        ? options.identifier
+        : undefined;
+      const workspaceDiagnostics = Value.Check(Type.Boolean(), options?.workspaceDiagnostics)
+        ? options.workspaceDiagnostics
+        : undefined;
+      if (reg.id && reg.method) {
+        // #1667: keep the whole registration, not just its method. An empty
+        // `identifier` is treated as absent - it names no source, and
+        // sending `identifier: ""` would be a second, indistinguishable
+        // bare pull.
+        const registration: MutableDynamicRegistration = { method: reg.method };
+        if (identifier) registration.identifier = identifier;
+        if (workspaceDiagnostics !== undefined) {
+          registration.workspaceDiagnostics = workspaceDiagnostics;
         }
-        // executeCommand commands can arrive dynamically too — merge them
-        // into the allowlist so dynamically-registered commands are runnable.
-        if (reg.method === "workspace/executeCommand" && commands) {
-          for (const cmd of commands) state.advertisedCommands.add(cmd);
-        }
+        if (commands) registration.commands = commands;
+        state.dynamicRegistrations.set(reg.id, registration);
       }
-      applyDynamicCapabilities(state);
-    },
-  );
+      // executeCommand commands can arrive dynamically too — merge them
+      // into the allowlist so dynamically-registered commands are runnable.
+      if (reg.method === "workspace/executeCommand" && commands) {
+        for (const cmd of commands) state.advertisedCommands.add(cmd);
+      }
+    }
+    applyDynamicCapabilities(state);
+  });
   state.connection.onRequest(
     "client/unregisterCapability",
     async (params: { unregisterations?: Array<{ id: string }> }) => {
@@ -1985,6 +2166,8 @@ export function setupIncomingHandlers(
       if (state.serverEditsAllowed <= 0 || !params?.edit) {
         return { applied: false, failureReason: "edit not solicited" };
       }
+      const edit = parseWorkspaceEditPayload(params.edit);
+      if (!edit) return { applied: false, failureReason: "malformed workspace edit" };
       const context =
         (state.activeMutationDepth ?? 0) === 1 ? state.activeMutationContext : undefined;
       const telemetryContext: LspMutationContext = context ?? {
@@ -1994,15 +2177,11 @@ export function setupIncomingHandlers(
         source: "lsp-edit",
       };
       try {
-        await applyWorkspaceEdit(
-          params.edit as Parameters<typeof applyWorkspaceEdit>[0],
-          state.root,
-          {
-            positionEncoding: state.positionEncoding,
-            documentVersions: state.documentVersions,
-            mutationContext: telemetryContext,
-          },
-        );
+        await applyWorkspaceEdit(edit, state.root, {
+          positionEncoding: state.positionEncoding,
+          documentVersions: state.documentVersions,
+          mutationContext: telemetryContext,
+        });
         return { applied: true };
       } catch (err) {
         return {
@@ -2550,7 +2729,7 @@ async function pullDiagnosticSource(
  * late-answer watch; a request that already failed fast has nothing further to
  * observe.
  */
-function isPullTimeoutError(err: unknown, timeoutMs: number): boolean {
+function isPullTimeoutError<T>(err: T, timeoutMs: number): boolean {
   return err instanceof Error && err.message === `Timeout after ${timeoutMs}ms`;
 }
 
@@ -2658,7 +2837,7 @@ function armLateAnswerTelemetry(args: {
         // Telemetry must never break the observed path.
       }
     },
-    (err: unknown) => {
+    (err) => {
       // #1774: the abandoned request eventually REJECTED rather than
       // answering. Behavior is unchanged — the rejection is still
       // swallowed here, exactly as before — but "timeout then silence"
@@ -2671,11 +2850,8 @@ function armLateAnswerTelemetry(args: {
       // the timeout count that gates it.
       try {
         const elapsedMs = Date.now() - args.requestStartedAt;
-        const candidate = err as { code?: unknown; message?: unknown };
-        const code =
-          typeof candidate?.code === "number" || typeof candidate?.code === "string"
-            ? candidate.code
-            : undefined;
+        const candidate: ErrorDetails = Value.Check(ErrorDetailsSchema, err) ? err : {};
+        const code = candidate.code;
         emitBounded(
           "lsp_pull_late_rejection",
           // #1774 review: prefix the server, same reason the timeout kind
@@ -2708,13 +2884,13 @@ function armLateAnswerTelemetry(args: {
 
 const PULL_FAILURE_HISTORY_LIMIT = 10;
 
-function recordPullFailure(
+function recordPullFailure<T>(
   state: LSPClientState,
   method: LSPPullFailure["method"],
-  error: unknown,
+  error: T,
 ): void {
-  const candidate = error as { code?: unknown; message?: unknown };
-  const message = typeof candidate.message === "string" ? candidate.message : "";
+  const candidate: ErrorDetails = Value.Check(ErrorDetailsSchema, error) ? error : {};
+  const message = candidate.message ?? "";
   const unsupportedMessage = /^(?:method not found|unknown method|unsupported method)(?::|$)/i;
   if (
     candidate.code === -32601 ||
@@ -2722,14 +2898,13 @@ function recordPullFailure(
     unsupportedMessage.test(message.trim())
   )
     return;
-  state.pullFailureHistory.push({
+  const failure: LSPPullFailure = {
     timestamp: Date.now(),
     method,
-    ...(typeof candidate.code === "number" || typeof candidate.code === "string"
-      ? { code: candidate.code }
-      : {}),
-    message: typeof candidate.message === "string" ? candidate.message : String(error),
-  });
+    message: candidate.message ?? String(error),
+  };
+  if (candidate.code !== undefined) failure.code = candidate.code;
+  state.pullFailureHistory.push(failure);
   if (state.pullFailureHistory.length > PULL_FAILURE_HISTORY_LIMIT) {
     state.pullFailureHistory.splice(
       0,
@@ -3445,7 +3620,7 @@ function navStaleDropEnabled(): boolean {
 export async function navRequest<T>(
   state: LSPClientState,
   method: string,
-  params: Record<string, unknown>,
+  params: JsonRpcParams,
   // When provided, the request is dropped if the document's version advances
   // (an edit landed) between send and response. Omit for non-single-file
   // requests (workspaceSymbol, call-hierarchy follow-ups) that have no version.
@@ -3469,7 +3644,7 @@ export async function navRequest<T>(
   // into the void with no way to observe it.
   const requestStartedAt = Date.now();
   const requestPromise = safeSendRequest<T>(state.connection, method, params, signal);
-  const result = (await withTimeout(requestPromise, timeoutMs).catch((err: unknown) => {
+  const result = await withTimeout(requestPromise, timeoutMs).catch((err) => {
     if (isNavTimeoutError(err, timeoutMs)) {
       recordNavTimeoutTelemetry({
         method,
@@ -3489,7 +3664,7 @@ export async function navRequest<T>(
       return undefined;
     }
     throw err;
-  })) as T | undefined;
+  });
   // requestVersion === undefined (never opened, or version-less) → unaffected,
   // matching the diagnostics path; the request timeout remains the backstop.
   if (normalizedPath !== undefined && requestVersion !== undefined && navStaleDropEnabled()) {
@@ -3511,7 +3686,7 @@ export async function navRequest<T>(
  * `startsWith` check afterward, unchanged, so this stricter check only gates
  * telemetry — never the existing timeout-handling behavior.
  */
-function isNavTimeoutError(err: unknown, timeoutMs: number): boolean {
+function isNavTimeoutError<T>(err: T, timeoutMs: number): boolean {
   return err instanceof Error && err.message === `Timeout after ${timeoutMs}ms`;
 }
 
@@ -3762,11 +3937,9 @@ function validateWorkspaceEditVersions(
   edit: { documentChanges?: unknown[] },
 ): void {
   for (const change of edit.documentChanges ?? []) {
-    if (typeof change !== "object" || change === null || !("textDocument" in change)) continue;
-    const textDocument = (change as { textDocument?: { uri?: unknown; version?: unknown } })
-      .textDocument;
-    if (!textDocument || typeof textDocument.uri !== "string" || textDocument.version == null)
-      continue;
+    if (!Value.Check(VersionedTextDocumentChangeSchema, change)) continue;
+    const textDocument = change.textDocument;
+    if (textDocument.uri === undefined || textDocument.version == null) continue;
     const current = state.documentVersions.get(normalizeMapKey(uriToPath(textDocument.uri)));
     if (current === undefined || current !== textDocument.version) {
       throw new Error(`stale workspace edit document version for ${textDocument.uri}`);
@@ -3789,22 +3962,19 @@ function stripDocumentVersions(edit: LSPWorkspaceEdit): LSPWorkspaceEdit {
   if (!Array.isArray(edit.documentChanges)) return edit;
   const documentChanges = edit.documentChanges.map((change) => {
     if (
-      typeof change === "object" &&
-      change !== null &&
-      "textDocument" in change &&
-      "edits" in change
+      Value.Check(VersionedTextDocumentChangeSchema, change) &&
+      Object.hasOwn(change, "edits") &&
+      change.textDocument.version !== undefined &&
+      change.textDocument.version !== null
     ) {
-      const textDocument = (change as { textDocument?: { version?: unknown } }).textDocument;
-      if (textDocument && typeof textDocument.version === "number") {
-        return {
-          ...(change as Record<string, unknown>),
-          textDocument: { ...textDocument, version: null },
-        };
-      }
+      return {
+        ...change,
+        textDocument: { ...change.textDocument, version: null },
+      };
     }
     return change;
   });
-  return { ...edit, documentChanges } as LSPWorkspaceEdit;
+  return { ...edit, documentChanges };
 }
 
 export async function normalizeClientWorkspaceEdit(
@@ -3812,11 +3982,7 @@ export async function normalizeClientWorkspaceEdit(
   edit: LSPWorkspaceEdit,
 ): Promise<LSPWorkspaceEdit> {
   validateWorkspaceEditVersions(state, edit);
-  const normalized = (await normalizeWorkspaceEditToUtf16(
-    edit,
-    state.positionEncoding,
-    state.root,
-  )) as LSPWorkspaceEdit;
+  const normalized = await normalizeWorkspaceEditToUtf16(edit, state.positionEncoding, state.root);
   return stripDocumentVersions(normalized);
 }
 
@@ -3826,39 +3992,51 @@ async function resolveCodeActionBestEffort(
 ): Promise<LSPCodeAction> {
   if (!isClientAlive(state)) return action;
   if (action.edit) {
+    const edit = parseWorkspaceEditPayload(action.edit);
+    if (!edit) return action;
     return {
       ...action,
-      edit: await normalizeClientWorkspaceEdit(state, action.edit as LSPWorkspaceEdit),
+      edit: await normalizeClientWorkspaceEdit(state, edit),
     };
   }
-  let resolved: LSPCodeAction | null | undefined;
+  let resolved: LSPCodeAction | undefined;
   try {
-    resolved = await withTimeout(
-      safeSendRequest<LSPCodeAction>(state.connection, "codeAction/resolve", action),
+    const rawResolved = await withTimeout(
+      safeSendRequest<JsonValue, LSPCodeAction>(state.connection, "codeAction/resolve", action),
       NAV_REQUEST_TIMEOUT_MS,
     );
+    resolved = Value.Check(LspCodeActionSchema, rawResolved) ? rawResolved : undefined;
   } catch {
     // codeAction/resolve is optional. Keep the original lightweight action when
     // the server does not support resolve or fails to populate an edit.
     return action;
   }
-  if (!resolved || typeof resolved !== "object") return action;
+  if (!resolved) return action;
   const merged = { ...action, ...resolved };
-  return merged.edit
-    ? {
-        ...merged,
-        edit: await normalizeClientWorkspaceEdit(state, merged.edit as LSPWorkspaceEdit),
-      }
-    : merged;
+  if (!merged.edit) return merged;
+  const edit = parseWorkspaceEditPayload(merged.edit);
+  if (!edit) return merged;
+  return {
+    ...merged,
+    edit: await normalizeClientWorkspaceEdit(state, edit),
+  };
 }
 
 // --- Client Factory ---
+
+interface LspStartupState {
+  exitCode: number | null;
+  exitSignal: NodeJS.Signals | null;
+  closeCode: number | null;
+  closeSignal: NodeJS.Signals | null;
+  stderr: string;
+}
 
 export async function createLSPClient(options: {
   serverId: string;
   process: LSPProcess;
   root: string;
-  initialization?: Record<string, unknown>;
+  initialization?: JsonObject;
   initializeTimeoutMs?: number;
   /** See `LSPServerInfo.spawn`'s `launchVariant` (server.ts) — which concrete
    *  binary/protocol variant was launched for this server id. Undefined =
@@ -3900,13 +4078,7 @@ export async function createLSPClient(options: {
     });
   });
 
-  const startupState: {
-    exitCode: number | null;
-    exitSignal: NodeJS.Signals | null;
-    closeCode: number | null;
-    closeSignal: NodeJS.Signals | null;
-    stderr: string;
-  } = {
+  const startupState: LspStartupState = {
     exitCode: null,
     exitSignal: null,
     closeCode: null,
@@ -3937,7 +4109,7 @@ export async function createLSPClient(options: {
       const tail = recentStderr(20);
       return `LSP server ${serverId} exited with code ${exited}${tail ? `. stderr: ${tail}` : ""}`;
     }
-    if ((lspProcess.process as { killed?: boolean }).killed) {
+    if (lspProcess.process.killed) {
       return `LSP server ${serverId} was killed`;
     }
     return undefined;
@@ -3952,7 +4124,7 @@ export async function createLSPClient(options: {
     startupState.closeSignal = signal;
   };
 
-  (lspProcess.stderr as NodeJS.ReadableStream).on("data", onStderr);
+  lspProcess.stderr.on("data", onStderr);
   lspProcess.process.on("exit", onProcessExit);
   lspProcess.process.on("close", onProcessClose);
 
@@ -3973,9 +4145,9 @@ export async function createLSPClient(options: {
     )
       return;
   };
-  (lspProcess.stdin as NodeJS.WritableStream).on("error", streamErrorHandler("stdin"));
-  (lspProcess.stdout as NodeJS.ReadableStream).on("error", streamErrorHandler("stdout"));
-  (lspProcess.stderr as NodeJS.ReadableStream).on("error", streamErrorHandler("stderr"));
+  lspProcess.stdin.on("error", streamErrorHandler("stdin"));
+  lspProcess.stdout.on("error", streamErrorHandler("stdout"));
+  lspProcess.stderr.on("error", streamErrorHandler("stderr"));
 
   const connection = createMessageConnection(
     new StreamMessageReader(lspProcess.stdout),
@@ -3988,7 +4160,13 @@ export async function createLSPClient(options: {
   const diagnosticEmitter = new EventEmitter();
   diagnosticEmitter.setMaxListeners(50);
 
-  const state: LSPClientState = {
+  let state: LSPClientState;
+  const watchQueue = new WatchedFilesQueue((changes) => {
+    if (!isClientAlive(state)) return;
+    void safeSendNotification(state.connection, "workspace/didChangeWatchedFiles", { changes });
+  });
+
+  state = {
     isConnected: true,
     isDestroyed: false,
     shutdownRequested: false,
@@ -4021,9 +4199,9 @@ export async function createLSPClient(options: {
     openDocumentUris: new Map(),
     pendingOpens: new Set(),
     projectIdentityProbedFiles: new Set(),
-    // these are filled in after initialize — cast to avoid two-phase init
-    workspaceDiagnosticsSupport: undefined as unknown as LSPWorkspaceDiagnosticsSupport,
-    operationSupport: undefined as unknown as LSPOperationSupport,
+    // These defaults are replaced by the parsed initialize response below.
+    workspaceDiagnosticsSupport: detectWorkspaceDiagnosticsSupport(undefined),
+    operationSupport: detectOperationSupport(undefined),
     staticDiagnosticsMode: "push-only",
     positionEncoding: "utf-16",
     syncKind: TEXT_DOCUMENT_SYNC_KIND_FULL,
@@ -4035,24 +4213,16 @@ export async function createLSPClient(options: {
     launchVariant,
     root,
     lspProcess,
-    // two-phase: the flush closure needs `state` (below)
-    watchQueue: undefined as unknown as WatchedFilesQueue,
+    watchQueue,
   };
-
-  // #271: batch per-file workspace/didChangeWatchedFiles into one notification
-  // per debounce window, so an N-file turn re-indexes the server once, not N×.
-  state.watchQueue = new WatchedFilesQueue((changes) => {
-    if (!isClientAlive(state)) return;
-    void safeSendNotification(state.connection, "workspace/didChangeWatchedFiles", { changes });
-  });
 
   setupIncomingHandlers(state, initialization);
   connection.listen();
   setupConnectionLifecycle(state, recentStderr);
 
-  let initResult: Awaited<ReturnType<typeof safeSendRequest>>;
+  let rawInitResult: Awaited<ReturnType<typeof safeSendRequest>>;
   try {
-    initResult = await withTimeout(
+    rawInitResult = await withTimeout(
       safeSendRequest(connection, "initialize", {
         processId: process.pid,
         rootUri: pathToFileURL(root).href,
@@ -4105,10 +4275,10 @@ export async function createLSPClient(options: {
     }, 2000);
     throw err;
   } finally {
-    (lspProcess.stderr as NodeJS.ReadableStream).off("data", onStderr);
+    lspProcess.stderr.off("data", onStderr);
   }
 
-  if (initResult === undefined) {
+  if (rawInitResult === undefined) {
     const compactStderr = startupState.stderr.replace(/\s+/g, " ").trim().slice(0, 320);
     const reinstallHint =
       serverId === "cpp"
@@ -4130,16 +4300,18 @@ export async function createLSPClient(options: {
     );
   }
 
-  state.workspaceDiagnosticsSupport = detectWorkspaceDiagnosticsSupport(initResult);
-  state.operationSupport = detectOperationSupport(initResult);
-  state.positionEncoding = negotiatePositionEncoding(
-    (initResult as { capabilities?: unknown })?.capabilities,
+  const initResult: InitializeResult = Value.Check(InitializeResultSchema, rawInitResult)
+    ? rawInitResult
+    : {};
+  const serverCapabilities = initResult.capabilities ?? undefined;
+  state.workspaceDiagnosticsSupport = detectWorkspaceDiagnosticsSupport(serverCapabilities);
+  state.operationSupport = detectOperationSupport(serverCapabilities);
+  state.positionEncoding = negotiatePositionEncoding(serverCapabilities);
+  state.syncKind = negotiateSyncKind(serverCapabilities);
+  state.rawCapabilityKeys = Object.keys(serverCapabilities ?? {}).sort((a, b) =>
+    a.localeCompare(b),
   );
-  state.syncKind = negotiateSyncKind((initResult as { capabilities?: unknown })?.capabilities);
-  state.rawCapabilityKeys = Object.keys(
-    (initResult as { capabilities?: Record<string, unknown> })?.capabilities ?? {},
-  ).sort((a, b) => a.localeCompare(b));
-  for (const cmd of detectExecuteCommands(initResult)) {
+  for (const cmd of detectExecuteCommands(serverCapabilities)) {
     state.advertisedCommands.add(cmd);
   }
   state.staticDiagnosticsMode = state.workspaceDiagnosticsSupport.mode;
@@ -4158,9 +4330,7 @@ export async function createLSPClient(options: {
     isAlive: () => isClientAlive(state),
 
     /** True if the server process has exited or been killed. */
-    processExited: () =>
-      lspProcess.process.exitCode !== null ||
-      (lspProcess.process as { killed?: boolean }).killed === true,
+    processExited: () => lspProcess.process.exitCode !== null || lspProcess.process.killed === true,
 
     /** #1127: mirrors `state.shutdownRequested` — see interface doc. */
     wasShutdownIntentional: () => state.shutdownRequested,
@@ -4420,7 +4590,7 @@ export async function createLSPClient(options: {
       // navRequest adds the shared withTimeout ceiling + single-file
       // stale-drop (matches documentSymbol); a hung server no longer awaits
       // forever, and code actions computed against superseded content drop.
-      const result = await navRequest<unknown[]>(
+      const result = await navRequest<JsonValue[]>(
         state,
         "textDocument/codeAction",
         {
@@ -4436,15 +4606,15 @@ export async function createLSPClient(options: {
         filePath,
       );
       if (!result || !Array.isArray(result)) return [];
-      const actions = result.filter(
-        (item): item is LSPCodeAction =>
-          typeof item === "object" && item !== null && "title" in item,
-      );
+      const actions: LSPCodeAction[] = [];
+      for (const item of result) {
+        if (Value.Check(LspCodeActionSchema, item)) actions.push(item);
+      }
       return Promise.all(actions.map((action) => resolveCodeActionBestEffort(state, action)));
     },
 
     async rename(filePath, line, character, newName) {
-      const result = await navRequest<LSPWorkspaceEdit>(
+      const result = await navRequest<JsonValue>(
         state,
         "textDocument/rename",
         {
@@ -4454,13 +4624,14 @@ export async function createLSPClient(options: {
         },
         filePath,
       );
-      return result ? await normalizeClientWorkspaceEdit(state, result) : null;
+      const edit = parseWorkspaceEditPayload(result);
+      return edit ? await normalizeClientWorkspaceEdit(state, edit) : null;
     },
 
     closeDocument: (filePath) => closeDocument(state, filePath),
 
     async willRenameFiles(oldFilePath, newFilePath) {
-      const result = await navRequest<LSPWorkspaceEdit>(state, "workspace/willRenameFiles", {
+      const result = await navRequest<JsonValue>(state, "workspace/willRenameFiles", {
         files: [
           {
             oldUri: pathToFileURL(oldFilePath).href,
@@ -4468,7 +4639,8 @@ export async function createLSPClient(options: {
           },
         ],
       });
-      return result ? await normalizeClientWorkspaceEdit(state, result) : null;
+      const edit = parseWorkspaceEditPayload(result);
+      return edit ? await normalizeClientWorkspaceEdit(state, edit) : null;
     },
 
     async didRenameFiles(oldFilePath, newFilePath, oldUri, newUri) {
@@ -4546,13 +4718,13 @@ export async function createLSPClient(options: {
  * it (the next Incremental range would be computed against content the
  * server never saw).
  */
-async function safeSendNotification(
+async function safeSendNotification<P>(
   connection: MessageConnection,
   method: string,
-  params: unknown,
+  params: P,
 ): Promise<boolean> {
   try {
-    await connection.sendNotification(method as never, params as never);
+    await connection.sendNotification(method, params);
     return true;
   } catch (err) {
     if (isStreamError(err)) {
@@ -4566,10 +4738,10 @@ async function safeSendNotification(
 const activeRequestsByConnection = new WeakMap<MessageConnection, number>();
 
 // Helper to safely send requests - catches stream destruction
-async function safeSendRequest<T>(
+async function safeSendRequest<T = JsonValue, P = object>(
   connection: MessageConnection,
   method: string,
-  params: unknown,
+  params: P,
   // When provided, aborting the signal cancels the in-flight request via
   // vscode-jsonrpc's CancellationToken → an LSP `$/cancelRequest` notification,
   // so a server stops computing a result the agent has already abandoned (#238
@@ -4591,8 +4763,8 @@ async function safeSendRequest<T>(
   // for the (many) requests without a signal.
   const send = () =>
     tokenSource
-      ? connection.sendRequest(method as never, params as never, tokenSource.token as never)
-      : connection.sendRequest(method as never, params as never);
+      ? connection.sendRequest<T>(method, params, tokenSource.token)
+      : connection.sendRequest<T>(method, params);
 
   activeRequestsByConnection.set(connection, (activeRequestsByConnection.get(connection) ?? 0) + 1);
   try {
@@ -4602,7 +4774,7 @@ async function safeSendRequest<T>(
     const MAX_ATTEMPTS = 2;
     for (let attempt = 1; ; attempt++) {
       try {
-        return (await send()) as T;
+        return await send();
       } catch (err) {
         if (isStreamError(err) || isCancellationError(err)) {
           // Stream destroyed, or we cancelled the request on abort — either
@@ -4633,16 +4805,16 @@ async function safeSendRequest<T>(
 // code is `RequestCancelled` (-32800) or `ServerCancelled` (-32802). Treat both
 // as "no result" rather than a failure. (isStreamError also matches the
 // "cancelled" message text; this adds the structured error-code path.)
-function isCancellationError(err: unknown): boolean {
-  const code = (err as { code?: unknown } | null)?.code;
-  return code === -32800 || code === -32802;
+function isCancellationError<T>(err: T): boolean {
+  if (!Value.Check(ErrorCodeSchema, err)) return false;
+  return err.code === -32800 || err.code === -32802;
 }
 
 // `ContentModified` (-32801): the document changed while the request was in
 // flight, so the server couldn't answer against a consistent state. Retryable —
 // the only LSP error code worth a second attempt on the edit hot path (#238).
-function isContentModifiedError(err: unknown): boolean {
-  return (err as { code?: unknown } | null)?.code === -32801;
+function isContentModifiedError<T>(err: T): boolean {
+  return Value.Check(ErrorCodeSchema, err) && err.code === -32801;
 }
 
 // Helper to detect stream destruction / connection disposal errors.
@@ -4652,18 +4824,19 @@ function isContentModifiedError(err: unknown): boolean {
 //   "Pending response rejected since connection got disposed"
 // Neither phrase contains "stream", "destroyed", or "closed", which is
 // why we must also match "disposed" and "cancelled" here.
-function isStreamError(err: unknown): boolean {
+function isStreamError<T>(err: T): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
+  const code = Value.Check(ErrorCodeSchema, err) ? err.code : undefined;
   return (
     msg.includes("stream") ||
     msg.includes("destroyed") ||
     msg.includes("closed") ||
     msg.includes("disposed") ||
     msg.includes("cancelled") ||
-    (err as { code?: string }).code === "ERR_STREAM_DESTROYED" ||
-    (err as { code?: string }).code === "ERR_STREAM_WRITE_AFTER_END" ||
-    (err as { code?: string }).code === "EPIPE"
+    code === "ERR_STREAM_DESTROYED" ||
+    code === "ERR_STREAM_WRITE_AFTER_END" ||
+    code === "EPIPE"
   );
 }
 
@@ -4677,11 +4850,9 @@ function positiveIntFromEnv(name: string, fallback: number): number {
   return parsed;
 }
 
-function detectWorkspaceDiagnosticsSupport(initResult: unknown): LSPWorkspaceDiagnosticsSupport {
-  const capabilities =
-    typeof initResult === "object" && initResult !== null
-      ? (initResult as { capabilities?: Record<string, unknown> }).capabilities
-      : undefined;
+function detectWorkspaceDiagnosticsSupport(
+  capabilities: LspCapabilities | undefined,
+): LSPWorkspaceDiagnosticsSupport {
   const diagnosticProvider = capabilities?.diagnosticProvider;
   if (!diagnosticProvider) {
     return {
@@ -4692,7 +4863,7 @@ function detectWorkspaceDiagnosticsSupport(initResult: unknown): LSPWorkspaceDia
     };
   }
 
-  if (typeof diagnosticProvider === "boolean") {
+  if (Value.Check(Type.Boolean(), diagnosticProvider)) {
     return {
       advertised: diagnosticProvider,
       mode: diagnosticProvider ? "pull" : "push-only",
@@ -4702,61 +4873,39 @@ function detectWorkspaceDiagnosticsSupport(initResult: unknown): LSPWorkspaceDia
     };
   }
 
-  if (typeof diagnosticProvider === "object") {
-    return {
-      advertised: true,
-      mode: "pull",
-      workspaceDiagnostics:
-        (diagnosticProvider as { workspaceDiagnostics?: unknown }).workspaceDiagnostics === true,
-      diagnosticProviderKind: "object",
-    };
-  }
-
   return {
-    advertised: false,
-    mode: "push-only",
-    workspaceDiagnostics: false,
-    diagnosticProviderKind: typeof diagnosticProvider,
+    advertised: true,
+    mode: "pull",
+    workspaceDiagnostics: diagnosticProvider.workspaceDiagnostics === true,
+    diagnosticProviderKind: "object",
   };
 }
 
-function detectExecuteCommands(initResult: unknown): string[] {
-  const capabilities =
-    typeof initResult === "object" && initResult !== null
-      ? (initResult as { capabilities?: Record<string, unknown> }).capabilities
-      : undefined;
-  const provider = capabilities?.executeCommandProvider;
-  if (typeof provider !== "object" || provider === null) return [];
-  const commands = (provider as { commands?: unknown }).commands;
-  if (!Array.isArray(commands)) return [];
-  return commands.filter((cmd): cmd is string => typeof cmd === "string");
+function detectExecuteCommands(capabilities: LspCapabilities | undefined): string[] {
+  const commands = capabilities?.executeCommandProvider?.commands;
+  return Array.isArray(commands)
+    ? commands.filter((command): command is string => Value.Check(Type.String(), command))
+    : [];
 }
 
-function detectOperationSupport(initResult: unknown): LSPOperationSupport {
-  const capabilities =
-    typeof initResult === "object" && initResult !== null
-      ? (initResult as { capabilities?: Record<string, unknown> }).capabilities
-      : undefined;
-
-  const hasProvider = (key: string): boolean => {
-    const value = capabilities?.[key];
+function detectOperationSupport(capabilities: LspCapabilities | undefined): LSPOperationSupport {
+  const hasProvider = (value: Static<typeof ProviderCapabilitySchema> | undefined): boolean => {
     if (value === undefined || value === null) return false;
-    if (typeof value === "boolean") return value;
-    return true;
+    return Value.Check(Type.Boolean(), value) ? value : true;
   };
 
   return {
-    definition: hasProvider("definitionProvider"),
-    typeDefinition: hasProvider("typeDefinitionProvider"),
-    declaration: hasProvider("declarationProvider"),
-    references: hasProvider("referencesProvider"),
-    hover: hasProvider("hoverProvider"),
-    signatureHelp: hasProvider("signatureHelpProvider"),
-    documentSymbol: hasProvider("documentSymbolProvider"),
-    workspaceSymbol: hasProvider("workspaceSymbolProvider"),
-    codeAction: hasProvider("codeActionProvider"),
-    rename: hasProvider("renameProvider"),
-    implementation: hasProvider("implementationProvider"),
-    callHierarchy: hasProvider("callHierarchyProvider"),
+    definition: hasProvider(capabilities?.definitionProvider),
+    typeDefinition: hasProvider(capabilities?.typeDefinitionProvider),
+    declaration: hasProvider(capabilities?.declarationProvider),
+    references: hasProvider(capabilities?.referencesProvider),
+    hover: hasProvider(capabilities?.hoverProvider),
+    signatureHelp: hasProvider(capabilities?.signatureHelpProvider),
+    documentSymbol: hasProvider(capabilities?.documentSymbolProvider),
+    workspaceSymbol: hasProvider(capabilities?.workspaceSymbolProvider),
+    codeAction: hasProvider(capabilities?.codeActionProvider),
+    rename: hasProvider(capabilities?.renameProvider),
+    implementation: hasProvider(capabilities?.implementationProvider),
+    callHierarchy: hasProvider(capabilities?.callHierarchyProvider),
   };
 }

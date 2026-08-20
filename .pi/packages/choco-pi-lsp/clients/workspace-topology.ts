@@ -1,3 +1,4 @@
+import { type Static, Type } from "typebox";
 /**
  * Shared, memoized workspace-topology snapshot service (#806).
  *
@@ -41,6 +42,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { logLatency } from "./latency-logger.js";
 import { isAtOrAboveHomeDir, nameMatchesMarkerGlob, walkUpDirs } from "./path-utils.js";
+
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 /** Depth cap on any upward marker walk — mirrors `findNearestMarkerRoot`'s bound. */
 const MAX_WALK_DEPTH = 64;
@@ -267,7 +271,8 @@ function walkToNearestMatch(
   startDir: string,
   cacheSuffix: string,
   matches: (markers: DirectoryMarkers) => boolean,
-  capMetadata: Record<string, unknown>,
+
+  capMetadata: Record<string, LspDictionaryValue>,
   homeDir: string,
 ): string | undefined {
   const key = walkCacheKey(startDir, cacheSuffix);

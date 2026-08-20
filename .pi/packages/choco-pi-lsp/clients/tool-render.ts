@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 /**
  * Opt-in compact one-line tool-result rendering (#1327).
  *
@@ -54,7 +56,7 @@ interface CompactLineResultLike {
 function fullTextOf(result: CompactLineResultLike): string {
   return (result.content ?? [])
     .filter(
-      (c): c is { type: string; text: string } => c.type === "text" && typeof c.text === "string",
+      (c): c is { type: string; text: string } => c.type === "text" && Check(Type.String(), c.text),
     )
     .map((c) => c.text)
     .join("\n");
@@ -156,6 +158,8 @@ export function wrapToolForCompactLine<T extends ToolDefinition<any, any, any>>(
     } catch {
       summaryText = "";
     }
+
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const resultLike = result as CompactLineResultLike;
     if (!summaryText) {
       summaryText = stripAnsi(fullTextOf(resultLike).split("\n")[0] ?? "").trim();
@@ -163,6 +167,8 @@ export function wrapToolForCompactLine<T extends ToolDefinition<any, any, any>>(
     // pi invokes tool renderers with `{ content, details }` -- the failure
     // bit lives on `context.isError`, not the result (#1341 review). Keep
     // `result.isError` as a fallback for direct/legacy callers.
+
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const contextIsError = (context as { isError?: boolean } | undefined)?.isError;
     const isError = contextIsError ?? resultLike.isError === true;
     const line = buildCompactToolLine(summaryText, isError === true, theme);

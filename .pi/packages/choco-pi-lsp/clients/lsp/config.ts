@@ -51,6 +51,8 @@ import { logExtension } from "../extension-log.js";
 import { notifyUserDegradation } from "../user-notify.js";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { BoundedLruCache } from "../bounded-cache.js";
 import { getGlobalPiLensDir } from "../file-utils.js";
 import { launchLSP } from "./launch.js";
@@ -71,12 +73,24 @@ export interface CustomServerConfig {
  * Per-server initializationOptions overrides for built-in servers.
  * Keys are built-in server IDs (e.g. "rust", "nix", "bash", "python", "go").
  */
+export interface InitializationOptions {
+  [key: string]: InitializationValue;
+}
+
+export type InitializationValue =
+  | string
+  | number
+  | boolean
+  | null
+  | InitializationOptions
+  | InitializationValue[];
+
 export interface ServerInitOverride {
   /**
    * Deep-merged onto the server's built-in initializationOptions defaults.
    * User values win on key conflicts at every nesting level.
    */
-  initializationOptions?: Record<string, unknown>;
+  initializationOptions?: InitializationOptions;
 }
 
 export interface LSPConfig {
@@ -101,9 +115,60 @@ interface RegisteredLSPConfig {
 
 // --- Config Loading ---
 
+const JsonObjectSchema = Type.Object({}, { additionalProperties: true });
+const CustomServerConfigSchema = Type.Object({
+  name: Type.String(),
+  extensions: Type.Array(Type.String()),
+  command: Type.String(),
+  args: Type.Optional(Type.Array(Type.String())),
+  rootMarkers: Type.Optional(Type.Array(Type.String())),
+  env: Type.Optional(Type.Record(Type.String(), Type.String())),
+});
+const ServerInitOverrideSchema = Type.Object({
+  initializationOptions: Type.Optional(JsonObjectSchema),
+});
+function isJsonObject(value: InitializationValue | undefined): value is InitializationOptions {
+  return Value.Check(JsonObjectSchema, value);
+}
+
+function stringArray(value: InitializationValue | undefined): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => Value.Check(Type.String(), entry))
+    : [];
+}
+
+function sanitizeLspConfig(value: InitializationValue): LSPConfig | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const config: LSPConfig = {};
+
+  if (isJsonObject(value.servers)) {
+    const servers: Record<string, CustomServerConfig> = {};
+    for (const [id, server] of Object.entries(value.servers)) {
+      if (Value.Check(CustomServerConfigSchema, server)) servers[id] = server;
+    }
+    config.servers = servers;
+  }
+
+  if (isJsonObject(value.serverOverrides)) {
+    const overrides: Record<string, ServerInitOverride> = {};
+    for (const [id, entry] of Object.entries(value.serverOverrides)) {
+      if (!Value.Check(ServerInitOverrideSchema, entry)) continue;
+      // SAFETY: The value came from parsed JSON and JsonObjectSchema rejected null and arrays.
+      overrides[id] = entry as ServerInitOverride;
+    }
+    config.serverOverrides = overrides;
+  }
+
+  if (Object.hasOwn(value, "disabledServers")) {
+    config.disabledServers = stringArray(value.disabledServers);
+  }
+  if (Object.hasOwn(value, "warmFiles")) config.warmFiles = stringArray(value.warmFiles);
+  return config;
+}
+
 const CONFIG_PATHS = [".choco-pi-lsp/lsp.json", ".choco-pi-lsp.json", "pi-lsp.json"];
 
-function warnInvalidLSPConfig(configPath: string, error: unknown): void {
+function warnInvalidLSPConfig<T>(configPath: string, error: T): void {
   const reason = error instanceof Error ? error.message : String(error);
   const message = `ignoring invalid LSP config ${configPath}: ${reason}`;
   logExtension({
@@ -129,11 +194,9 @@ async function readLSPConfig(configPath: string): Promise<LSPConfig | undefined>
   }
 
   try {
-    const parsed = JSON.parse(content) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new TypeError("expected a JSON object");
-    }
-    return parsed as LSPConfig;
+    const parsed = sanitizeLspConfig(JSON.parse(content));
+    if (!parsed) throw new TypeError("expected a valid LSP configuration object");
+    return parsed;
   } catch (error) {
     warnInvalidLSPConfig(configPath, error);
     return undefined;
@@ -276,18 +339,8 @@ export async function initLSPConfig(cwd: string): Promise<void> {
     const serverOverrides = new Map<string, ServerInitOverride>();
     if (config.serverOverrides) {
       for (const [id, entry] of Object.entries(config.serverOverrides)) {
-        if (entry && typeof entry === "object" && !Array.isArray(entry)) {
-          const initOpts = (entry as Record<string, unknown>).initializationOptions;
-          if (
-            initOpts !== undefined &&
-            typeof initOpts === "object" &&
-            initOpts !== null &&
-            !Array.isArray(initOpts)
-          ) {
-            serverOverrides.set(id, {
-              initializationOptions: initOpts as Record<string, unknown>,
-            });
-          }
+        if (entry.initializationOptions !== undefined) {
+          serverOverrides.set(id, entry);
         }
       }
     }

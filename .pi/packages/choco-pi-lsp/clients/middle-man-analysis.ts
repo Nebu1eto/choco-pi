@@ -33,7 +33,9 @@ import type { ModuleSymbolEntry } from "./module-report.js";
 /** Self-reference token + member-access separator, per languageId. Both the
  * self→field and field→method hops use the SAME separator in every language
  * covered here (true even for PHP's `$this->field->method()`). */
-const SELF_TOKEN: Record<string, { token: string; sep: string }> = {
+
+interface SELFTOKENValues extends Record<string, { token: string; sep: string }> {}
+const SELF_TOKEN: SELFTOKENValues = {
   typescript: { token: "this", sep: "." },
   tsx: { token: "this", sep: "." },
   javascript: { token: "this", sep: "." },
@@ -104,7 +106,7 @@ function paramNamesFromSignature(
     .map((raw) => {
       let name = raw;
       // Rest/spread params forward as themselves textually (`...args`).
-      const isRest = /^\.\.\./.test(name);
+      const isRest = name.startsWith("...");
       name = name.replace(/^\.\.\./, "");
       name = name.split("=")[0].trim(); // strip default value
       name = name.split(":")[0].trim(); // strip type annotation

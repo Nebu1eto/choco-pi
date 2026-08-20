@@ -1,3 +1,5 @@
+import type { ProtocolDictionary } from "../../tools/runtime-values.js";
+import { isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.js";
 /**
  * Internal-import resolution-to-file for tree-sitter languages (#249 follow-up).
  *
@@ -195,16 +197,18 @@ function findWorkspaceModuleForSpecifier(
  * `"exports": {".": {"import": "./index.js", ...}}` shapes. Anything more
  * exotic (subpath patterns, condition arrays) falls through to the
  * index.ts/js fallback below rather than guessing. */
-function pickExportsMain(exportsField: unknown): string | undefined {
-  if (typeof exportsField === "string") return exportsField;
-  if (!exportsField || typeof exportsField !== "object") return undefined;
-  const obj = exportsField as Record<string, unknown>;
+function pickExportsMain<T>(exportsField: T): string | undefined {
+  if (isRuntimeString(exportsField)) return exportsField;
+  if (!exportsField || !isRuntimeObject(exportsField)) return undefined;
+  // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
+  const obj = exportsField as ProtocolDictionary;
   const dot = obj["."] ?? obj;
-  if (typeof dot === "string") return dot;
-  if (dot && typeof dot === "object") {
+  if (isRuntimeString(dot)) return dot;
+  if (dot && isRuntimeObject(dot)) {
     for (const key of ["import", "require", "default"]) {
-      const v = (dot as Record<string, unknown>)[key];
-      if (typeof v === "string") return v;
+      // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
+      const v = (dot as ProtocolDictionary)[key];
+      if (isRuntimeString(v)) return v;
     }
   }
   return undefined;
@@ -215,6 +219,7 @@ function pickExportsMain(exportsField: unknown): string | undefined {
 function workspaceEntryCandidates(pkgRoot: string): string[] {
   let main: string | undefined;
   try {
+    // SAFETY: The parsed value is consumed only through the optional fields declared here and each field is validated before use.
     const pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, "package.json"), "utf-8")) as {
       main?: string;
       module?: string;

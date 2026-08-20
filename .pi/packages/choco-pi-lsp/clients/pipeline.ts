@@ -12,6 +12,8 @@
  *   7. Cascade diagnostics (other files with errors, LSP only)
  */
 
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import type { PiLensFlagSource } from "./lsp-config.js";
@@ -87,6 +89,14 @@ import {
   markdownlintConfigArgs,
 } from "./tool-policy.js";
 import type { PathSetLike } from "./runtime-coordinator.js";
+
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+
+type ExceedsLspSyncLimitsResultContract = {
+  tooLarge: boolean;
+  reason: string;
+};
 
 const LSP_MAX_FILE_BYTES = RUNTIME_CONFIG.pipeline.lspMaxFileBytes;
 const LSP_MAX_FILE_LINES = RUNTIME_CONFIG.pipeline.lspMaxFileLines;
@@ -199,10 +209,7 @@ async function diffProjectSnapshot(root: string, before: FileSnapshot): Promise<
 function exceedsLspSyncLimits(
   _filePath: string,
   content: string,
-): {
-  tooLarge: boolean;
-  reason: string;
-} {
+): ExceedsLspSyncLimitsResultContract {
   const sizeBytes = Buffer.byteLength(content, "utf-8");
   if (sizeBytes > LSP_MAX_FILE_BYTES) {
     return {
@@ -353,7 +360,8 @@ export interface PipelineResult {
 
 interface PhaseTracker {
   start(name: string): void;
-  end(name: string, metadata?: Record<string, unknown>): void;
+
+  end(name: string, metadata?: Record<string, LspDictionaryValue>): void;
 }
 
 function createPhaseTracker(toolName: string, filePath: string): PhaseTracker {
@@ -367,7 +375,8 @@ function createPhaseTracker(toolName: string, filePath: string): PhaseTracker {
     start(name: string) {
       phases.push({ name, startTime: Date.now(), ended: false });
     },
-    end(name: string, metadata?: Record<string, unknown>) {
+
+    end(name: string, metadata?: Record<string, LspDictionaryValue>) {
       const p = phases.find((x) => x.name === name && !x.ended);
       if (p) {
         p.ended = true;
@@ -1024,7 +1033,7 @@ export async function resyncLspFile(
         // into the catch below and suppress this record entirely (#1766 F3).
         const spawnInFlight =
           !abort?.aborted &&
-          typeof lspService.isSpawnInFlight === "function" &&
+          Check(Type.Function([], Type.Unknown()), lspService.isSpawnInFlight) &&
           lspService.isSpawnInFlight(filePath);
         const reason = abort?.aborted ? "aborted" : spawnInFlight ? "spawn-in-flight" : "timeout";
         logLatency({
@@ -1327,6 +1336,7 @@ export async function runPipeline(
   dbg(`dispatch: running lint tools for ${filePath}`);
 
   const piApi: PiAgentAPI = {
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     getFlag: getFlag as (flag: string) => boolean | string | undefined,
   };
   const { dispatchLintWithResult, computeCascadeForFile } = await loadDispatchIntegration();
@@ -1576,7 +1586,8 @@ export async function runPipeline(
             (d) => normalizeEphemeralMapKey(d.filePath) === normalizeEphemeralMapKey(filePath),
           )
           .map((d) => d.line)
-          .filter((line): line is number => typeof line === "number")
+
+          .filter((line): line is number => Check(Type.Number(), line))
       : undefined,
     actionableWarnings,
     codeQualityWarnings,

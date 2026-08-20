@@ -29,7 +29,7 @@
  * re-evaluated per call and a later grant must retry (#1350).
  */
 
-import { safeSpawnAsync } from "../../../safe-spawn.js";
+import { safeSpawnAsync, type SpawnResult } from "../../../safe-spawn.js";
 import { assertInstallAllowed } from "../../../project-trust.js";
 import { logExtension } from "../../../extension-log.js";
 import {
@@ -59,11 +59,13 @@ interface LazyInstallSpec {
 // golangci-lint.ts). A "golangci-lint" arm briefly lived in this map with no
 // caller reaching it through EITHER `tryLazyInstall` or
 // `tryLazyInstallForFormatter` — dead since introduction (#1572 sweep).
-const LAZY_INSTALL_SPECS: Record<LazyInstallTool, LazyInstallSpec> = {
+type LazyInstallSpecs = Record<LazyInstallTool, LazyInstallSpec>;
+
+const LAZY_INSTALL_SPECS = {
   rubocop: { command: "gem", args: ["install", "rubocop", "--no-document"] },
   "rust-clippy": { command: "rustup", args: ["component", "add", "clippy"] },
   rustfmt: { command: "rustup", args: ["component", "add", "rustfmt"] },
-};
+} satisfies LazyInstallSpecs;
 
 /**
  * Every lazy install ignores an ambient cancellation.
@@ -227,7 +229,7 @@ async function performInstall(
   cwd: string,
   spec: LazyInstallSpec,
 ): Promise<boolean> {
-  let result: Awaited<ReturnType<typeof safeSpawnAsync>>;
+  let result: SpawnResult;
   try {
     result = await safeSpawnAsync(spec.command, spec.args, {
       timeout: LAZY_INSTALL_TIMEOUT_MS,
@@ -237,13 +239,14 @@ async function performInstall(
   } catch (err) {
     // A throw from the spawn boundary is not evidence that the tool cannot be
     // installed, so it is transient like any other failure to get a fair run.
+    const error = err instanceof Error ? err : new Error(String(err));
     result = {
       stdout: "",
-      stderr: (err as Error)?.message ?? String(err),
+      stderr: error.message,
       status: null,
-      error: err as Error,
+      error,
       failure: "spawn",
-    } as Awaited<ReturnType<typeof safeSpawnAsync>>;
+    };
   }
 
   if (!result.error && result.status === 0) {
@@ -305,7 +308,7 @@ async function performInstall(
       transientAttempts,
       held: retryAtMs === 0,
       ...(retryAtMs > 0 && { retryAfterMs: retryAtMs - Date.now() }),
-      evidence: classified.evidence,
+      evidence: { ...classified.evidence },
     },
   });
   return false;

@@ -18,7 +18,8 @@ interface LanguagePolicy {
   startup?: StartupPolicy;
 }
 
-export const LANGUAGE_POLICY: Record<FileKind, LanguagePolicy> = {
+interface LANGUAGEPOLICYValues extends Record<FileKind, LanguagePolicy> {}
+export const LANGUAGE_POLICY: LANGUAGEPOLICYValues = {
   jsts: {
     lspCapable: true,
     startup: {
@@ -88,7 +89,8 @@ export const LANGUAGE_POLICY: Record<FileKind, LanguagePolicy> = {
   toml: { lspCapable: true, startup: { defaults: ["taplo"] } },
 };
 
-const PRIMARY_DISPATCH_GROUPS: Partial<Record<FileKind, RunnerGroup>> = {
+interface PRIMARYDISPATCHGROUPSValues extends Partial<Record<FileKind, RunnerGroup>> {}
+const PRIMARY_DISPATCH_GROUPS: PRIMARYDISPATCHGROUPSValues = {
   jsts: {
     mode: "fallback",
     runnerIds: ["lsp"],
@@ -244,6 +246,7 @@ const PRIMARY_DISPATCH_GROUPS: Partial<Record<FileKind, RunnerGroup>> = {
 };
 
 export function getLspCapableKinds(): FileKind[] {
+  // SAFETY: The source key list is checked against the named owner type, so the constructed keys and values exhaust that representation.
   return (Object.keys(LANGUAGE_POLICY) as FileKind[]).filter(
     (kind) => LANGUAGE_POLICY[kind].lspCapable,
   );

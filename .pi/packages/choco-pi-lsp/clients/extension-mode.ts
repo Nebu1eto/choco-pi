@@ -34,10 +34,13 @@
  * no latched global to go stale across a session replacement.
  */
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+
 /** `ExtensionMode` plus the "older host, no `mode` field" case. */
 export type ExtensionRunMode = "tui" | "rpc" | "json" | "print" | "unknown";
 
-const KNOWN_MODES = new Set<string>(["tui", "rpc", "json", "print"]);
+const ExtensionModeContextSchema = Type.Object({ mode: Type.String() });
 
 /**
  * Feature-detected read of `ctx.mode`.
@@ -47,11 +50,18 @@ const KNOWN_MODES = new Set<string>(["tui", "rpc", "json", "print"]);
  * unrecognized mode as "unknown" keeps current behavior rather than guessing
  * a suppression that could hide output).
  */
-export function readExtensionMode(ctx: unknown): ExtensionRunMode {
+export function readExtensionMode<T>(ctx: T): ExtensionRunMode {
   try {
-    const mode = (ctx as { mode?: unknown } | null | undefined)?.mode;
-    if (typeof mode !== "string" || !KNOWN_MODES.has(mode)) return "unknown";
-    return mode as ExtensionRunMode;
+    if (!Value.Check(ExtensionModeContextSchema, ctx)) return "unknown";
+    switch (ctx.mode) {
+      case "tui":
+      case "rpc":
+      case "json":
+      case "print":
+        return ctx.mode;
+      default:
+        return "unknown";
+    }
   } catch {
     return "unknown";
   }

@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { RuntimeCoordinator } from "./runtime-coordinator.js";
 import { logLatency } from "./latency-logger.js";
 import { normalizeMapKey, toProjectRelativePath } from "./path-utils.js";
@@ -8,6 +10,28 @@ import { resolveRunnerPath } from "./dispatch/runner-context.js";
 import { MTIME_DRIFT_TOLERANCE_MS } from "./blocker-freshness.js";
 
 export type AdvisoryFileRole = "source" | "test" | "affected";
+
+const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.String()) });
+const AdvisoryProvenanceSchema = Type.Object({
+  revision: Type.Object({
+    sessionId: Type.String(),
+    projectSeq: Type.Number(),
+    turnIndex: Type.Number(),
+    generation: Type.Number(),
+    capturedAt: Type.Number(),
+  }),
+  files: Type.Array(
+    Type.Object({
+      path: Type.String(),
+      role: Type.Union([Type.Literal("source"), Type.Literal("test"), Type.Literal("affected")]),
+      mtimeMs: Type.Number(),
+      size: Type.Number(),
+      sha256: Type.String({ pattern: "^(?:[a-f0-9]{64}|missing|unreadable:.*)$" }),
+    }),
+    { minItems: 1 },
+  ),
+  truncated: Type.Optional(Type.Boolean()),
+});
 
 export interface AdvisoryFileProvenance {
   path: string;
@@ -47,7 +71,7 @@ export function advisoryFileHash(filePath: string): string {
   try {
     return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? "unknown";
+    const code = Value.Check(ErrorCodeSchema, error) ? (error.code ?? "unknown") : "unknown";
     return code === "ENOENT" ? "missing" : `unreadable:${code}`;
   }
 }
@@ -68,7 +92,7 @@ function snapshotOne(
       sha256: advisoryFileHash(resolved),
     };
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? "unknown";
+    const code = Value.Check(ErrorCodeSchema, error) ? (error.code ?? "unknown") : "unknown";
     return {
       path: resolved,
       role,
@@ -95,7 +119,7 @@ export function snapshotAdvisoryProvenance(args: {
     seen.add(key);
     files.push(snapshotOne(file.path, args.cwd, file.role));
   }
-  return {
+  const provenance: AdvisoryProvenance = {
     revision: {
       sessionId: args.runtime.telemetrySessionId,
       projectSeq: args.runtime.projectSeq,
@@ -104,44 +128,13 @@ export function snapshotAdvisoryProvenance(args: {
       capturedAt: args.capturedAt ?? Date.now(),
     },
     files,
-    ...(args.truncated ? { truncated: true } : {}),
   };
+  if (args.truncated) provenance.truncated = true;
+  return provenance;
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function isCapturedHash(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    (/^[a-f0-9]{64}$/.test(value) || value === "missing" || value.startsWith("unreadable:"))
-  );
-}
-
-function isWellFormed(value: unknown): value is AdvisoryProvenance {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Partial<AdvisoryProvenance>;
-  const revision = record.revision;
-  return (
-    !!revision &&
-    typeof revision.sessionId === "string" &&
-    isFiniteNumber(revision.projectSeq) &&
-    isFiniteNumber(revision.turnIndex) &&
-    isFiniteNumber(revision.generation) &&
-    isFiniteNumber(revision.capturedAt) &&
-    Array.isArray(record.files) &&
-    record.files.length > 0 &&
-    record.files.every(
-      (file) =>
-        !!file &&
-        typeof file.path === "string" &&
-        (file.role === "source" || file.role === "test" || file.role === "affected") &&
-        isFiniteNumber(file.mtimeMs) &&
-        isFiniteNumber(file.size) &&
-        isCapturedHash(file.sha256),
-    )
-  );
+function parseAdvisoryProvenance<T>(value: T): AdvisoryProvenance | undefined {
+  return Value.Check(AdvisoryProvenanceSchema, value) ? value : undefined;
 }
 
 export function validateAdvisoryProvenance(
@@ -149,7 +142,8 @@ export function validateAdvisoryProvenance(
   cwd: string,
   runtime?: Pick<RuntimeCoordinator, "telemetrySessionId" | "projectSeq" | "turnIndex">,
 ): AdvisoryValidation {
-  if (!isWellFormed(record.provenance)) {
+  const provenance = parseAdvisoryProvenance(record.provenance);
+  if (!provenance) {
     return {
       status: "unknown",
       reasons: ["malformed-or-legacy-provenance"],
@@ -157,7 +151,6 @@ export function validateAdvisoryProvenance(
       changedPathCount: 0,
     };
   }
-  const provenance = record.provenance;
   const reasons: string[] = [];
   let unknown = provenance.truncated === true;
   if (unknown) reasons.push("truncated-provenance");
@@ -174,7 +167,7 @@ export function validateAdvisoryProvenance(
     try {
       stat = fs.statSync(resolved);
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code ?? "unknown";
+      const code = Value.Check(ErrorCodeSchema, error) ? (error.code ?? "unknown") : "unknown";
       if (code === "ENOENT") {
         if (captured.sha256 !== "missing") {
           deletedFiles += 1;
@@ -349,7 +342,7 @@ export function findingPathFreshness(
     }
     return "live";
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? "unknown";
+    const code = Value.Check(ErrorCodeSchema, error) ? (error.code ?? "unknown") : "unknown";
     // ENOTDIR: an ancestor component is no longer a directory — the cited
     // path cannot exist either, same as ENOENT.
     return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unknown";
@@ -358,6 +351,7 @@ export function findingPathFreshness(
 
 /** Existence-only probe. Retained for callers that have no scan timestamp. */
 export function findingPathExistence(resolvedPath: string): FindingPathExistence {
+  // SAFETY: Omitting scannedAt disables the only branch that can return "stale".
   return findingPathFreshness(resolvedPath) as FindingPathExistence;
 }
 
@@ -370,7 +364,7 @@ export function parseScannedAtMs(scannedAt: string | number | undefined): number
   if (scannedAt === undefined || scannedAt === null || scannedAt === "") {
     return undefined;
   }
-  const ms = typeof scannedAt === "number" ? scannedAt : Date.parse(scannedAt);
+  const ms = Value.Check(Type.Number(), scannedAt) ? scannedAt : Date.parse(scannedAt);
   return Number.isFinite(ms) ? ms : undefined;
 }
 
@@ -549,28 +543,50 @@ export function gateFindingsByPathFreshness<T>(args: {
   return { live: partition.live, stale: partition.stale };
 }
 
+interface DeadPathMetadata {
+  store: string;
+  droppedDeadPaths: number;
+  deadPathCount: number;
+  deliveredCount: number;
+  statCount: number;
+  samplePaths: string[];
+  truncated?: boolean;
+}
+
+interface StalePathMetadata {
+  store: string;
+  demotedStalePaths: number;
+  stalePathCount: number;
+  deliveredCount: number;
+  statCount: number;
+  samplePaths: string[];
+  scannedAt?: string;
+  truncated?: boolean;
+}
+
 function emitDeadPathDropRecord<T>(
   store: string,
   cwd: string,
   partition: FindingPathPartition<T>,
 ): void {
   if (partition.dropped.length === 0) return;
+  let metadata: DeadPathMetadata = {
+    store,
+    droppedDeadPaths: partition.dropped.length,
+    deadPathCount: partition.deadPaths.length,
+    deliveredCount: partition.live.length,
+    statCount: partition.statCount,
+    samplePaths: partition.deadPaths
+      .slice(0, MAX_LOGGED_DEAD_PATHS)
+      .map((deadPath) => toProjectRelativePath(deadPath, cwd)),
+  };
+  if (partition.truncated) metadata = { ...metadata, truncated: true };
   logLatency({
     type: "phase",
     phase: "finding_dead_path_drop",
     filePath: cwd,
     durationMs: 0,
-    metadata: {
-      store,
-      droppedDeadPaths: partition.dropped.length,
-      deadPathCount: partition.deadPaths.length,
-      deliveredCount: partition.live.length,
-      statCount: partition.statCount,
-      samplePaths: partition.deadPaths
-        .slice(0, MAX_LOGGED_DEAD_PATHS)
-        .map((deadPath) => toProjectRelativePath(deadPath, cwd)),
-      ...(partition.truncated ? { truncated: true } : {}),
-    },
+    metadata: { ...metadata },
   });
 }
 
@@ -586,27 +602,29 @@ function emitStaleLineDemoteRecord<T>(
   partition: FindingPathPartition<T>,
 ): void {
   if (partition.stale.length === 0) return;
+  let metadata: StalePathMetadata = {
+    store,
+    demotedStalePaths: partition.stale.length,
+    stalePathCount: partition.stalePaths.length,
+    deliveredCount: partition.live.length,
+    statCount: partition.statCount,
+    samplePaths: partition.stalePaths
+      .slice(0, MAX_LOGGED_DEAD_PATHS)
+      .map((stalePath) => toProjectRelativePath(stalePath, cwd)),
+  };
+  if (scannedAt !== undefined) metadata = { ...metadata, scannedAt: String(scannedAt) };
+  if (partition.truncated) metadata = { ...metadata, truncated: true };
   logLatency({
     type: "phase",
     phase: "finding_stale_line_demote",
     filePath: cwd,
     durationMs: 0,
-    metadata: {
-      store,
-      demotedStalePaths: partition.stale.length,
-      stalePathCount: partition.stalePaths.length,
-      deliveredCount: partition.live.length,
-      statCount: partition.statCount,
-      samplePaths: partition.stalePaths
-        .slice(0, MAX_LOGGED_DEAD_PATHS)
-        .map((stalePath) => toProjectRelativePath(stalePath, cwd)),
-      ...(scannedAt === undefined ? {} : { scannedAt: String(scannedAt) }),
-      ...(partition.truncated ? { truncated: true } : {}),
-    },
+    metadata: { ...metadata },
   });
 }
 
-export function provenanceStamp(provenance: unknown): string {
-  if (!isWellFormed(provenance)) return "session unknown / turn unknown / generation unknown";
-  return `session ${provenance.revision.sessionId} / turn ${provenance.revision.turnIndex} / generation ${provenance.revision.generation}`;
+export function provenanceStamp<T>(provenance: T): string {
+  const parsed = parseAdvisoryProvenance(provenance);
+  if (!parsed) return "session unknown / turn unknown / generation unknown";
+  return `session ${parsed.revision.sessionId} / turn ${parsed.revision.turnIndex} / generation ${parsed.revision.generation}`;
 }

@@ -224,14 +224,14 @@ const RUST: LangNodes = {
   nameChildTypes: ["identifier"],
 };
 
-const LANGUAGE_NODES: Record<string, LangNodes> = {
+const LANGUAGE_NODES = {
   typescript: JSTS,
   tsx: JSTS,
   javascript: JSTS,
   python: PYTHON,
   go: GO,
   rust: RUST,
-};
+} satisfies Record<string, LangNodes>;
 
 const COMMENT_TYPES = new Set(["comment", "line_comment", "block_comment"]);
 
@@ -336,7 +336,7 @@ function countTryCatch(root: TsNode, nodes: LangNodes): number {
   return count;
 }
 
-function countLines(content: string, root: TsNode): { codeLines: number; commentLines: number } {
+function countLines(content: string, root: TsNode) {
   const lines = content.split(/\r?\n/);
   const commentLineSet = new Set<number>();
   walk(root, (n) => {
@@ -459,7 +459,9 @@ export class ComplexityClient {
   async analyzeFile(filePath: string): Promise<FileComplexity | null> {
     const absolutePath = path.resolve(filePath);
     const languageId = resolveTreeSitterLanguage(absolutePath);
-    const nodes = languageId ? LANGUAGE_NODES[languageId] : undefined;
+    const nodes = languageId
+      ? Object.entries(LANGUAGE_NODES).find(([language]) => language === languageId)?.[1]
+      : undefined;
     if (!nodes) return null;
 
     let content: string;
@@ -467,7 +469,7 @@ export class ComplexityClient {
       if (!fs.existsSync(absolutePath)) return null;
       content = fs.readFileSync(absolutePath, "utf-8");
     } catch (err) {
-      this.log(`Read error for ${filePath}: ${(err as Error).message}`);
+      this.log(`Read error for ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
 
@@ -477,7 +479,9 @@ export class ComplexityClient {
       );
       return parsed.parsed ? parsed.value : null;
     } catch (err) {
-      this.log(`Analysis error for ${filePath}: ${(err as Error).message}`);
+      this.log(
+        `Analysis error for ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return null;
     }
   }
@@ -517,12 +521,7 @@ export class ComplexityClient {
     };
   }
 
-  private aggregateFunctionStats(functions: FunctionMetrics[]): {
-    avgLength: number;
-    maxLength: number;
-    avgCyclomatic: number;
-    maxCyclomatic: number;
-  } {
+  private aggregateFunctionStats(functions: FunctionMetrics[]) {
     if (functions.length === 0) {
       return { avgLength: 0, maxLength: 0, avgCyclomatic: 1, maxCyclomatic: 1 };
     }

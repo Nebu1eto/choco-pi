@@ -1,3 +1,6 @@
+import { type Static, Type } from "typebox";
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 /**
  * Shared memoized-import-with-eviction helper (#1570).
  *
@@ -45,7 +48,8 @@ export function createLazyImport<T>(load: () => Promise<T>): LazyImport<T> {
       // caller-supplied `load` is not guaranteed to keep that contract.
       return (cached ??= Promise.resolve()
         .then(() => load())
-        .catch((err: unknown) => {
+
+        .catch((err: LspBoundaryValue) => {
           cached = undefined;
           throw err;
         }));

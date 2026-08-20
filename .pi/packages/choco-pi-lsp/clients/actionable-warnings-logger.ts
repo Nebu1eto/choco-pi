@@ -16,11 +16,20 @@ const writer = createNdjsonLogger({
   backupPath: AW_LOG_BACKUP_FILE,
 });
 
+type ActionableWarningMetadataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | ActionableWarningMetadataValue[]
+  | { [key: string]: ActionableWarningMetadataValue };
+
 export interface ActionableWarningsLogEntry {
   event: string;
   sessionId?: string;
   filePath?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, ActionableWarningMetadataValue>;
 }
 
 export function logActionableWarningsEvent(entry: ActionableWarningsLogEntry): void {

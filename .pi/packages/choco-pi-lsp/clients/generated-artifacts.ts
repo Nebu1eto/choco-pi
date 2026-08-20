@@ -130,7 +130,7 @@ function pathSegments(filePath: string): string[] {
  * on win32 this is a no-op since `win32.basename` already equals the module
  * default there.
  */
-function basenameForShape(filePath: string): string {
+function generatedBasename(filePath: string): string {
   return isWindowsPath(filePath) ? path.win32.basename(filePath) : path.basename(filePath);
 }
 
@@ -139,7 +139,7 @@ export function isGeneratedArtifactDirectoryName(dirName: string): boolean {
 }
 
 export function isDeclarationFile(filePath: string): boolean {
-  const base = basenameForShape(filePath).toLowerCase();
+  const base = generatedBasename(filePath).toLowerCase();
   return DECLARATION_FILE_PATTERNS.some((pattern) => pattern.test(base));
 }
 
@@ -164,7 +164,7 @@ function hasStrongGeneratedArtifactPath(filePath: string): boolean {
     return true;
   }
 
-  const base = basenameForShape(filePath);
+  const base = generatedBasename(filePath);
   if (LOCKFILE_NAMES.has(base.toLowerCase())) return true;
   return MINIFIED_BUNDLE_FILE_PATTERNS.some((pattern) => pattern.test(base));
 }
@@ -183,7 +183,7 @@ function hasStrongGeneratedArtifactPath(filePath: string): boolean {
  * instead (the escape hatch's evidence checks are structurally dead for it).
  */
 function hasWeakGeneratedFileNamePattern(filePath: string): boolean {
-  const base = basenameForShape(filePath);
+  const base = generatedBasename(filePath);
   return GENERATED_FILE_PATTERNS.some((pattern) => pattern.test(base));
 }
 

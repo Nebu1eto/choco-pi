@@ -7,6 +7,8 @@
  * Credit: alexx-ftw (PR #1)
  */
 
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BoundedLruCache } from "./bounded-cache.js";
@@ -155,7 +157,8 @@ export function isStartupScanVerdictFresh(
 ): boolean {
   if (verdict.reason !== "too-many-source-files" && verdict.reason !== "too-many-entries")
     return true;
-  if (typeof verdict.computedAt !== "number") return false;
+
+  if (!Check(Type.Number(), verdict.computedAt)) return false;
   return now - verdict.computedAt < getStartupScanVerdictTtlMs();
 }
 

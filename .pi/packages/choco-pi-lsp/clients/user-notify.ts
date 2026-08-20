@@ -1,3 +1,6 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+
 /**
  * The HUMAN channel for degradations discovered deep in `clients/` (#1333).
  *
@@ -30,8 +33,9 @@ let notifierGetter: (() => UserNotifier | undefined) | undefined;
 export function wireUserNotifier(
   portsOrGetter: import("./host-ports.js").HostPorts | (() => UserNotifier | undefined),
 ): void {
-  notifierGetter =
-    typeof portsOrGetter === "function" ? portsOrGetter : () => portsOrGetter.notify.user;
+  notifierGetter = Check(Type.Function([], Type.Unknown()), portsOrGetter)
+    ? portsOrGetter
+    : () => portsOrGetter.notify.user;
 }
 
 /** Test/teardown-only: drop the wired host. */

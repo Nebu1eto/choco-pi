@@ -1,4 +1,8 @@
+import { type Static, Type } from "typebox";
 import { logLatency } from "./latency-logger.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 export type ToolSetMutationReason =
   | "fresh_session_lazy_deactivation"
@@ -45,7 +49,8 @@ export function supportsDeferredTools(model: DeferredToolModel | undefined): boo
  * again by the time our handler runs, while choco-pi-lsp's own extension closure
  * state survives. Those reasons must RESTORE the previous posture, not skip.
  */
-export function isFreshSessionStart(reason: unknown): boolean {
+
+export function isFreshSessionStart(reason: LspBoundaryValue): boolean {
   return reason === undefined || reason === "startup" || reason === "new";
 }
 

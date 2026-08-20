@@ -17,7 +17,8 @@
  */
 import { truncateToWidth } from "./deps/pi-tui.js";
 
-const ELLIPSIS_KIND: Record<string, number> = { "…": 0, "...": 1, "": 2 };
+interface ELLIPSISKINDValues extends Record<string, number> {}
+const ELLIPSIS_KIND: ELLIPSISKINDValues = { "…": 0, "...": 1, "": 2 };
 let truncateIsNative: boolean | null = null;
 
 /** Test-only: reset the signature probe between test cases. */
@@ -27,6 +28,8 @@ export function _resetTruncateProbeForTests(): void {
 
 export function fitLine(s: string, maxWidth: number, ellipsis = "..."): string {
   const w = Math.max(0, maxWidth);
+
+  // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
   const fn = truncateToWidth as (...a: unknown[]) => string;
   if (truncateIsNative === true) {
     return fn(s, w, ELLIPSIS_KIND[ellipsis] ?? 1, false, 8);

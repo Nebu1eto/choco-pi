@@ -1,7 +1,14 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as path from "node:path";
 import { isTestMode } from "./env-utils.js";
 import { getGlobalPiLensDir } from "./file-utils.js";
 import { createNdjsonLogger } from "./ndjson-logger.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 const READ_GUARD_LOG_DIR = getGlobalPiLensDir();
 const READ_GUARD_LOG_FILE = path.join(READ_GUARD_LOG_DIR, "read-guard.log");
@@ -67,8 +74,8 @@ export interface ReadGuardEditBatchSummary {
 
 let generatedCorrelationCounter = 0;
 
-export function sanitizeCorrelationId(value: unknown): string | undefined {
-  if (typeof value !== "string" && typeof value !== "number") return undefined;
+export function sanitizeCorrelationId(value: LspBoundaryValue): string | undefined {
+  if (!Check(Type.String(), value) && !Check(Type.Number(), value)) return undefined;
   const sanitized = String(value)
     .trim()
     .replace(/[^a-zA-Z0-9._:-]/g, "_")
@@ -77,9 +84,13 @@ export function sanitizeCorrelationId(value: unknown): string | undefined {
 }
 
 /** Prefer the host call token; otherwise create a bounded per-process token. */
-export function getReadGuardCorrelationId(event: unknown): string {
-  const value = (event ?? {}) as Record<string, unknown>;
-  const details = (value.details ?? {}) as Record<string, unknown>;
+
+export function getReadGuardCorrelationId(event: LspBoundaryValue): string {
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
+  const value = (event ?? {}) as Record<string, LspDictionaryValue>;
+
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
+  const details = (value.details ?? {}) as Record<string, LspDictionaryValue>;
   for (const candidate of [
     details.readGuardCorrelationId,
     details.toolCallId,
@@ -142,7 +153,7 @@ export function createReadGuardEditBatchSummary(args: {
   const rejectedIndexes = boundedEditIndexes(rejectedSource.map((entry) => entry.index));
   const appliedIndexes = boundedEditIndexes(appliedSource);
   const participantSource = (args.participantIds ?? []).filter(
-    (id): id is string => typeof id === "string" && id.length > 0,
+    (id): id is string => Check(Type.String(), id) && id.length > 0,
   );
   const participantIds = [...new Set(participantSource)].slice(0, MAX_EDIT_BATCH_ITEMS);
   const commitStatus = args.commitStatus ?? "not_attempted";
@@ -200,7 +211,8 @@ export interface ReadGuardLogEntry {
   symbolKind?: string;
   symbolStartLine?: number;
   symbolEndLine?: number;
-  metadata?: Record<string, unknown>;
+
+  metadata?: Record<string, LspDictionaryValue>;
 }
 
 function shouldLogEvent(event: string): boolean {
@@ -236,8 +248,12 @@ type BoundedTelemetry = {
   arrayTotals: Record<string, number>;
 };
 
-function boundTelemetryValue(value: unknown, pathName: string, depth: number): BoundedTelemetry {
-  if (typeof value === "string") {
+function boundTelemetryValue(
+  value: LspBoundaryValue,
+  pathName: string,
+  depth: number,
+): BoundedTelemetry {
+  if (Check(Type.String(), value)) {
     return value.length > MAX_TELEMETRY_STRING
       ? {
           value: `${value.slice(0, MAX_TELEMETRY_STRING)}…`,
@@ -264,10 +280,12 @@ function boundTelemetryValue(value: unknown, pathName: string, depth: number): B
       arrayTotals,
     };
   }
-  if (!value || typeof value !== "object" || depth >= 4) {
+
+  if (!value || !Check(Type.Object({}), value) || depth >= 4) {
     return { value, truncated: false, arrayTotals: {} };
   }
-  const output: Record<string, unknown> = {};
+
+  const output: Record<string, LspDictionaryValue> = {};
   let truncated = false;
   const arrayTotals: Record<string, number> = {};
   for (const [key, child] of Object.entries(value).slice(0, MAX_TELEMETRY_KEYS)) {
@@ -285,19 +303,22 @@ export function logReadGuardEvent(entry: ReadGuardLogEntry): void {
     return;
   }
   const rawMetadata = entry.correlationId
-    ? { ...(entry.metadata ?? {}), correlationId: entry.correlationId }
+    ? { ...entry.metadata, correlationId: entry.correlationId }
     : entry.metadata;
   const bounded = boundTelemetryValue(rawMetadata, "metadata", 0);
-  const metadata: Record<string, unknown> | undefined =
-    bounded.truncated && bounded.value && typeof bounded.value === "object"
+
+  let metadata: Record<string, LspDictionaryValue> | undefined;
+  if (bounded.value && Check(Type.Object({}), bounded.value)) {
+    // SAFETY: TypeBox established a non-null object before string-keyed telemetry access.
+    const boundedMetadata = bounded.value as Record<string, LspDictionaryValue>;
+    metadata = bounded.truncated
       ? {
-          ...(bounded.value as Record<string, unknown>),
+          ...boundedMetadata,
           telemetryTruncated: true,
           telemetryArrayTotals: bounded.arrayTotals,
         }
-      : bounded.value && typeof bounded.value === "object"
-        ? (bounded.value as Record<string, unknown>)
-        : undefined;
+      : boundedMetadata;
+  }
   const { correlationId: _correlationId, ...logEntry } = entry;
   writer.log({ ts: new Date().toISOString(), ...logEntry, metadata });
 }

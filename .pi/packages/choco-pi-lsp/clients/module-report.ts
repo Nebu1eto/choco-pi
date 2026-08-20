@@ -32,6 +32,8 @@
  * can record a read that legitimately satisfies the read-guard for that symbol.
  */
 
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { detectFileKind } from "./file-kinds.js";
@@ -50,6 +52,28 @@ import type { ReviewGraph, ReviewGraphEdgeKind } from "./review-graph/types.js";
 import type { Symbol as ExtractedSymbol } from "./symbol-types.js";
 import { getSharedTreeSitterClient, resolveTreeSitterLanguage } from "./tree-sitter-shared.js";
 import { type ImportRef, TreeSitterSymbolExtractor } from "./tree-sitter-symbol-extractor.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
+type ReadArgsForResultContract = { path: string; offset: number; limit: number };
+type CollectImportsResultContract = { external: string[]; internal: string[] };
+type ColdImportsResultContract = { external: string[]; internal: string[]; warnings: string[] };
+type BlastReadArgsResultContract = { path: string; offset: number; limit: number };
+type ClampSliceRangeResultContract = { startLine: number; endLine: number };
 
 // NOTE: live-LSP enrichment is NO LONGER called on this read path (#256). Firing
 // LSP per read — speculatively, on the agent's fan-out path — repeatedly OOM'd
@@ -410,7 +434,9 @@ export interface ReadEnclosingOptions {
 // #887). Using these gives the primary languages the same rich outline
 // (classes/interfaces/types/signatures) as every other language, not the
 // functions-only FunctionSummary.
-const KIND_TO_TS_LANG: Record<string, string> = {
+
+interface KINDTOTSLANGValues extends Record<string, string> {}
+const KIND_TO_TS_LANG: KINDTOTSLANGValues = {
   python: "python",
   go: "go",
   rust: "rust",
@@ -484,7 +510,7 @@ type ModuleReportNode = {
   endPosition: { row: number; column: number };
 };
 
-function diagnosticMessage(err: unknown): string {
+function diagnosticMessage(err: LspBoundaryValue): string {
   return err instanceof Error ? err.message : String(err);
 }
 
@@ -535,12 +561,7 @@ async function extractFile(
       let callbacks: ModuleCallbackEntry[] = [];
       let callbackError: string | undefined;
       try {
-        callbacks = extractCallbacks(
-          tree.rootNode as unknown as ModuleReportNode,
-          owners,
-          languageId,
-          warnings,
-        );
+        callbacks = extractCallbacks(tree.rootNode, owners, languageId, warnings);
       } catch (error) {
         callbackError = diagnosticMessage(error);
       }
@@ -578,9 +599,10 @@ function readArgsFor(
   filePath: string,
   startLine: number,
   endLine: number,
-): { path: string; offset: number; limit: number } {
+): ReadArgsForResultContract {
   const offset = Math.max(1, startLine);
   const limit = Math.max(1, endLine - startLine + 1);
+
   return { path: filePath, offset, limit };
 }
 
@@ -609,20 +631,18 @@ function resolveUsedBy(
     // Caller line: a symbol caller node carries metadata.line; a file-level
     // `references` edge carries the line on the edge metadata.
     const line =
-      (typeof from?.metadata?.line === "number" ? (from.metadata.line as number) : undefined) ??
-      (typeof edge.metadata?.line === "number" ? (edge.metadata.line as number) : 0);
+      // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
+      (Check(Type.Number(), from?.metadata?.line) ? (from.metadata.line as number) : undefined) ??
+      // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
+      (Check(Type.Number(), edge.metadata?.line) ? (edge.metadata.line as number) : 0);
     const key = `${file} ${symbol} ${edge.kind}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({
-      file,
-      symbol,
-      line,
-      relation: edge.kind,
-      ...(edge.resolution && edge.resolution !== "unresolved"
-        ? { resolution: edge.resolution }
-        : {}),
-    });
+    const usedByEntry: ModuleSymbolUsedBy = { file, symbol, line, relation: edge.kind };
+    if (edge.resolution && edge.resolution !== "unresolved") {
+      usedByEntry.resolution = edge.resolution;
+    }
+    out.push(usedByEntry);
     if (out.length >= cap) break;
   }
   return out;
@@ -640,7 +660,7 @@ function collectImports(
   graph: ReviewGraph,
   normalizedPath: string,
   projectRoot: string,
-): { external: string[]; internal: string[] } {
+): CollectImportsResultContract {
   const fileNodeId = graph.fileNodes.get(normalizedPath);
   const external = new Set<string>();
   const internal = new Set<string>();
@@ -658,6 +678,7 @@ function collectImports(
       }
     }
   }
+
   return {
     external: [...external].sort((a, b) => a.localeCompare(b)),
     internal: [...internal].sort((a, b) => a.localeCompare(b)),
@@ -704,7 +725,7 @@ function coldImports(
   languageId: string,
   absPath: string,
   projectRoot: string,
-): { external: string[]; internal: string[]; warnings: string[] } {
+): ColdImportsResultContract {
   const external = new Set<string>();
   const internal = new Set<string>();
   const warnings: string[] = [];
@@ -734,6 +755,7 @@ function coldImports(
       external.add(imp.source);
     }
   }
+
   return {
     external: [...external].sort((a, b) => a.localeCompare(b)),
     internal: [...internal].sort((a, b) => a.localeCompare(b)),
@@ -767,10 +789,9 @@ function toEntry(
   const node = graph?.nodes.get(symbolNodeId);
   const metadata = node?.metadata ?? {};
 
-  const complexity =
-    typeof metadata.cyclomaticComplexity === "number"
-      ? (metadata.cyclomaticComplexity as number)
-      : undefined;
+  const complexity = Check(Type.Number(), metadata.cyclomaticComplexity)
+    ? metadata.cyclomaticComplexity
+    : undefined;
   const fanout = graph
     ? (graph.edgesByFrom.get(symbolNodeId) ?? []).filter((edge) => edge.kind === "calls").length
     : undefined;
@@ -792,23 +813,30 @@ function toEntry(
 
   const usedBy = graph ? resolveUsedBy(graph, symbolNodeId, maxRefs, projectRoot) : undefined;
 
-  return {
-    name: sym.name,
-    kind: sym.kind,
-    startLine,
-    endLine,
-    exported,
-    ...(sym.visibility ? { visibility: sym.visibility } : {}),
-    ...(sym.decorators?.length ? { decorators: sym.decorators } : {}),
-    signature: sym.signature,
-    doc: sym.doc,
-    fanout: fanout && fanout > 0 ? fanout : undefined,
-    complexity,
-    // Empty flags array would waste ~3-5 tokens per entry on a 41-symbol
-    // outline (~200 tok total). Omit when there's nothing to report.
-    ...(flags.length > 0 ? { flags } : {}),
-    usedBy: usedBy && usedBy.length > 0 ? usedBy : undefined,
-  };
+  return Object.assign(
+    assignOptionalProperties(
+      Object.assign(
+        assignOptionalProperties(
+          assignOptionalProperties(
+            { name: sym.name, kind: sym.kind, startLine, endLine, exported },
+            sym.visibility,
+            () => ({ visibility: sym.visibility }),
+          ),
+          sym.decorators?.length,
+          () => ({ decorators: sym.decorators }),
+        ),
+        {
+          signature: sym.signature,
+          doc: sym.doc,
+          fanout: fanout && fanout > 0 ? fanout : undefined,
+          complexity,
+        },
+      ),
+      flags.length > 0,
+      () => ({ flags }),
+    ),
+    { usedBy: usedBy && usedBy.length > 0 ? usedBy : undefined },
+  );
 }
 
 // Nest members under their container by line-range containment (#301), mirroring
@@ -846,31 +874,57 @@ function nestEntries(entries: ModuleSymbolEntry[]): ModuleSymbolEntry[] {
 }
 
 function summarizeEntries(entries: ModuleSymbolEntry[]): ModuleSymbolEntry[] {
-  return entries.map((entry) => ({
-    name: entry.name,
-    kind: entry.kind,
-    startLine: entry.startLine,
-    endLine: entry.endLine,
-    exported: entry.exported,
-    ...(entry.visibility ? { visibility: entry.visibility } : {}),
-    ...(entry.signature ? { signature: entry.signature } : {}),
-    ...(entry.doc ? { doc: entry.doc } : {}),
-    ...(entry.flags ? { flags: entry.flags } : {}),
-    ...(entry.members
-      ? {
-          members: entry.members.map((member) => ({
-            name: member.name,
-            kind: member.kind,
-            startLine: member.startLine,
-            endLine: member.endLine,
-            exported: member.exported,
-            ...(member.visibility ? { visibility: member.visibility } : {}),
-            ...(member.signature ? { signature: member.signature } : {}),
-            ...(member.doc ? { doc: member.doc } : {}),
-          })),
-        }
-      : {}),
-  }));
+  return entries.map((entry) =>
+    assignOptionalProperties(
+      assignOptionalProperties(
+        assignOptionalProperties(
+          assignOptionalProperties(
+            assignOptionalProperties(
+              {
+                name: entry.name,
+                kind: entry.kind,
+                startLine: entry.startLine,
+                endLine: entry.endLine,
+                exported: entry.exported,
+              },
+              entry.visibility,
+              () => ({ visibility: entry.visibility }),
+            ),
+            entry.signature,
+            () => ({ signature: entry.signature }),
+          ),
+          entry.doc,
+          () => ({ doc: entry.doc }),
+        ),
+        entry.flags,
+        () => ({ flags: entry.flags }),
+      ),
+      entry.members,
+      (includedMembers) => ({
+        members: includedMembers.map((member) =>
+          assignOptionalProperties(
+            assignOptionalProperties(
+              assignOptionalProperties(
+                {
+                  name: member.name,
+                  kind: member.kind,
+                  startLine: member.startLine,
+                  endLine: member.endLine,
+                  exported: member.exported,
+                },
+                member.visibility,
+                () => ({ visibility: member.visibility }),
+              ),
+              member.signature,
+              () => ({ signature: member.signature }),
+            ),
+            member.doc,
+            () => ({ doc: member.doc }),
+          ),
+        ),
+      }),
+    ),
+  );
 }
 
 function normalizeFocus(focus: string | undefined): string[] {
@@ -969,16 +1023,14 @@ function rankRecommendedReads(
 const BLAST_RADIUS_FILE_CAP = 12;
 const BLAST_RADIUS_DEFAULT_READ_LIMIT = 400;
 
-function blastReadArgs(
-  graph: ReviewGraph,
-  normalizedFile: string,
-): { path: string; offset: number; limit: number } {
+function blastReadArgs(graph: ReviewGraph, normalizedFile: string): BlastReadArgsResultContract {
   const fileNodeId = graph.fileNodes.get(normalizedFile);
   const lineCount = fileNodeId ? graph.nodes.get(fileNodeId)?.metadata?.lineCount : undefined;
   const limit =
-    typeof lineCount === "number" && lineCount > 0 ? lineCount : BLAST_RADIUS_DEFAULT_READ_LIMIT;
+    Check(Type.Number(), lineCount) && lineCount > 0 ? lineCount : BLAST_RADIUS_DEFAULT_READ_LIMIT;
   // Machine field keeps the absolute (slash-normalized) path so the host's Read
   // resolves it unambiguously — same convention as ModuleSymbolEntry.read.
+
   return { path: normalizedFile, offset: 1, limit };
 }
 
@@ -1242,7 +1294,11 @@ function classifyGenericCallback(ctx: CallbackContext): CallbackClassification {
     !!propertyName ||
     !!assignedName ||
     flags.some((flag) => flag.startsWith("captures "));
-  return { kind, ...(flags.length > 0 ? { flags } : {}), include };
+
+  return Object.assign(
+    assignOptionalProperties({ kind }, flags.length > 0, () => ({ flags })),
+    { include },
+  );
 }
 
 const jstsCallbackRules: CallbackLanguageRules = {
@@ -1304,7 +1360,7 @@ const pythonCallbackRules: CallbackLanguageRules = {
         include: true,
       };
     }
-    if (/\.add_done_callback$/.test(callName)) {
+    if (callName.endsWith(".add_done_callback")) {
       return {
         kind: "future_callback",
         flags: withFlag(base.flags, "future completion"),
@@ -1331,11 +1387,12 @@ const rustCallbackRules: CallbackLanguageRules = {
         include: true,
       };
     }
-    return {
-      ...base,
-      ...(flags ? { flags } : {}),
-      include: base.include || isMove,
-    };
+    return Object.assign(
+      assignOptionalProperties(Object.assign({}, base), flags, () => ({ flags })),
+      {
+        include: base.include || isMove,
+      },
+    );
   },
 };
 
@@ -1367,7 +1424,13 @@ const swiftCallbackRules: CallbackLanguageRules = {
       flags = withFlag(flags, "captures self");
       include = true;
     }
-    return { ...base, ...(flags ? { flags } : {}), include };
+
+    return Object.assign(
+      assignOptionalProperties(Object.assign({}, base), flags, () => ({ flags })),
+      {
+        include,
+      },
+    );
   },
 };
 
@@ -1396,11 +1459,12 @@ const cppCallbackRules: CallbackLanguageRules = {
         include: true,
       };
     }
-    return {
-      ...base,
-      ...(flags ? { flags } : {}),
-      include: base.include || byRef,
-    };
+    return Object.assign(
+      assignOptionalProperties(Object.assign({}, base), flags, () => ({ flags })),
+      {
+        include: base.include || byRef,
+      },
+    );
   },
 };
 
@@ -1455,7 +1519,7 @@ const javaCallbackRules: CallbackLanguageRules = {
     const base = classifyGenericCallback(ctx);
     const obj = ancestorOfType(ctx.node, new Set(["object_creation_expression"]), 3);
     const created = obj?.children?.find((c) => c.type === "type_identifier");
-    if (created && /Thread$/.test(created.text)) {
+    if (created && created.text.endsWith("Thread")) {
       return {
         kind: "task",
         flags: withFlag(base.flags, "thread"),
@@ -1530,7 +1594,8 @@ const csharpCallbackRules: CallbackLanguageRules = {
   },
 };
 
-const CALLBACK_RULES: Record<string, CallbackLanguageRules> = {
+interface CALLBACKRULESValues extends Record<string, CallbackLanguageRules> {}
+const CALLBACK_RULES: CALLBACKRULESValues = {
   typescript: jstsCallbackRules,
   tsx: jstsCallbackRules,
   javascript: jstsCallbackRules,
@@ -1596,16 +1661,24 @@ function extractCallbacks(
               : eventName && callName
                 ? `${callName}(${eventName})`
                 : (callName ?? "callback"));
-        callbacks.push({
-          name: `${base}@${startLine}`,
-          kind: cls.kind,
-          rawKind: node.type,
-          startLine,
-          endLine,
-          signature: firstLine(node.text),
-          ...(owner ? { parentChain: [owner] } : {}),
-          ...(cls.flags ? { flags: cls.flags } : {}),
-        });
+        callbacks.push(
+          assignOptionalProperties(
+            assignOptionalProperties(
+              {
+                name: `${base}@${startLine}`,
+                kind: cls.kind,
+                rawKind: node.type,
+                startLine,
+                endLine,
+                signature: firstLine(node.text),
+              },
+              owner,
+              (includedOwner) => ({ parentChain: [includedOwner] }),
+            ),
+            cls.flags,
+            (includedFlags) => ({ flags: includedFlags }),
+          ),
+        );
       }
     }
     for (const child of node.children ?? []) visit(child, depth + 1);
@@ -1639,21 +1712,24 @@ function callGraphCoverage(coverage: CallGraphEvidenceCoverage): ModuleCallGraph
   const languages = coverage.languages;
   const complete =
     coverage.complete && Object.values(languages ?? {}).every((status) => status === "complete");
-  return {
-    status: complete ? "complete" : "partial",
-    complete,
-    totalEvidence: coverage.totalEvidence,
-    callsEvidence: coverage.callsEvidence,
-    referencesEvidence: coverage.referencesEvidence,
-    eligibleEvidence: coverage.eligibleEvidence,
-    resolvedEvidence: coverage.resolvedEvidence,
-    unresolvedEvidence: coverage.unresolvedEvidence,
-    typeOnlyEvidence: coverage.typeOnlyEvidence,
-    unsupportedEvidence: coverage.unsupportedEvidence,
-    sameFileEvidence: coverage.sameFileEvidence,
-    duplicateEvidence: coverage.duplicateEvidence,
-    ...(languages ? { languages } : {}),
-  };
+  return assignOptionalProperties(
+    {
+      status: complete ? "complete" : "partial",
+      complete,
+      totalEvidence: coverage.totalEvidence,
+      callsEvidence: coverage.callsEvidence,
+      referencesEvidence: coverage.referencesEvidence,
+      eligibleEvidence: coverage.eligibleEvidence,
+      resolvedEvidence: coverage.resolvedEvidence,
+      unresolvedEvidence: coverage.unresolvedEvidence,
+      typeOnlyEvidence: coverage.typeOnlyEvidence,
+      unsupportedEvidence: coverage.unsupportedEvidence,
+      sameFileEvidence: coverage.sameFileEvidence,
+      duplicateEvidence: coverage.duplicateEvidence,
+    },
+    languages,
+    () => ({ languages }),
+  );
 }
 
 function callGraphRelation(
@@ -1662,26 +1738,40 @@ function callGraphRelation(
   projectRoot: string,
 ): ModuleCallGraphRelation {
   const caller = kind === "caller";
-  return {
-    symbolId: caller ? edge.callerKey : edge.calleeKey,
-    targetSymbolId: caller ? edge.calleeKey : edge.callerKey,
-    file: toDisplayPath(caller ? edge.callerFile : edge.calleeFile, projectRoot),
-    ...(caller
-      ? {
-          symbol: edge.callerSymbol,
-          kind: edge.callerKind,
-          line: edge.callerLine,
-        }
-      : {
-          symbol: edge.calleeSymbol,
-          kind: edge.calleeKind,
-          line: edge.calleeLine,
-        }),
-    ...(edge.evidenceKind ? { evidenceKind: edge.evidenceKind } : {}),
-    ...(edge.resolution ? { resolution: edge.resolution } : {}),
-    ...(edge.evidenceCount && edge.evidenceCount > 1 ? { evidenceCount: edge.evidenceCount } : {}),
-    ...(edge.weight !== 1 ? { weight: edge.weight } : {}),
-  };
+  return assignOptionalProperties(
+    assignOptionalProperties(
+      assignOptionalProperties(
+        assignOptionalProperties(
+          Object.assign(
+            {
+              symbolId: caller ? edge.callerKey : edge.calleeKey,
+              targetSymbolId: caller ? edge.calleeKey : edge.callerKey,
+              file: toDisplayPath(caller ? edge.callerFile : edge.calleeFile, projectRoot),
+            },
+            caller
+              ? {
+                  symbol: edge.callerSymbol,
+                  kind: edge.callerKind,
+                  line: edge.callerLine,
+                }
+              : {
+                  symbol: edge.calleeSymbol,
+                  kind: edge.calleeKind,
+                  line: edge.calleeLine,
+                },
+          ),
+          edge.evidenceKind,
+          () => ({ evidenceKind: edge.evidenceKind }),
+        ),
+        edge.resolution,
+        () => ({ resolution: edge.resolution }),
+      ),
+      edge.evidenceCount && edge.evidenceCount > 1,
+      () => ({ evidenceCount: edge.evidenceCount }),
+    ),
+    edge.weight !== 1,
+    () => ({ weight: edge.weight }),
+  );
 }
 
 /**
@@ -1750,19 +1840,22 @@ function readCallGraph(
 }
 
 function unavailableReport(displayPath: string, error?: string): ModuleReport {
-  return {
-    available: false,
-    staleness: "unavailable",
-    path: displayPath,
-    ...(error ? { error } : {}),
-    summary: { imports: 0, exports: 0, symbols: 0 },
-    imports: { external: [], internal: [] },
-    api: [],
-    internal: [],
-    callbacks: [],
-    recommendedReads: [],
-    semantic: { source: "none", references: false, implementations: false },
-  };
+  return Object.assign(
+    assignOptionalProperties(
+      { available: false as const, staleness: "unavailable" as const, path: displayPath },
+      error,
+      (includedError) => ({ error: includedError }),
+    ),
+    {
+      summary: { imports: 0, exports: 0, symbols: 0 },
+      imports: { external: [], internal: [] },
+      api: [],
+      internal: [],
+      callbacks: [],
+      recommendedReads: [],
+      semantic: { source: "none" as const, references: false, implementations: false },
+    },
+  );
 }
 
 /**
@@ -1966,7 +2059,16 @@ export async function moduleReport(
     : callGraph?.reason === "file-cap"
       ? "unavailable:file-cap"
       : "none";
-  const report: ModuleReport = {
+  const provenance: NonNullable<ModuleReport["provenance"]> = {
+    symbols: languageId ? "syntax" : "none",
+    imports: importsProvenance,
+    usedBy: hasGraphNode ? "cached-review-graph" : unavailableGraphProvenance,
+    callbacks: languageId && !summaryView ? "heuristic-tree-sitter" : "none",
+  };
+  if (options?.blastRadius) provenance.blastRadius = blastRadiusProvenance;
+  if (options?.callGraph) provenance.callGraph = callGraphProvenance;
+
+  const reportBase: Omit<ModuleReport, "provenance" | "semantic"> = {
     available: entries.length > 0 || hasGraphNode,
     staleness: entries.length === 0 && !hasGraphNode ? "unavailable" : "fresh",
     path: toDisplayPath(absPath, cwd),
@@ -1978,34 +2080,27 @@ export async function moduleReport(
       symbols: entries.length,
     },
     imports,
-    ...(warnings.length > 0 ? { warnings } : {}),
     api: summaryView ? summarizeEntries(api) : api,
     internal: summaryView ? summarizeEntries(internal) : internal,
     callbacks: summaryView ? [] : callbacks,
     callbackSupport: callbackSupportFor(languageId),
     recommendedReads: rankRecommendedReads(entries, callbacks, 5, options?.focus),
-    ...(summaryView ? { view: "summary" } : {}),
-    ...(compactView ? { view: "compact" } : {}),
-    ...(blastRadius && !summaryView ? { blastRadius } : {}),
-    ...(callGraph ? { callGraph } : {}),
-    ...(graph ? { graphBuiltAt: graph.builtAt } : {}),
-    provenance: {
-      symbols: languageId ? "syntax" : "none",
-      imports: importsProvenance,
-      usedBy: hasGraphNode ? "cached-review-graph" : unavailableGraphProvenance,
-      callbacks: languageId && !summaryView ? "heuristic-tree-sitter" : "none",
-      ...(options?.blastRadius ? { blastRadius: blastRadiusProvenance } : {}),
-      ...(options?.callGraph ? { callGraph: callGraphProvenance } : {}),
-    },
-    semantic: {
-      // Provenance of who-uses-this / references. The AST review graph is the
-      // only source on this read path; "graph-lsp" is reserved for #236 (LSP
-      // writes provenance edges INTO the graph). Cold cache → "none".
-      source: hasGraphNode ? "review-graph" : unavailableGraphProvenance,
-      references: hasGraphNode,
-      implementations: false,
-    },
   };
+  if (warnings.length > 0) reportBase.warnings = warnings;
+  if (summaryView) reportBase.view = "summary";
+  if (compactView) reportBase.view = "compact";
+  if (blastRadius && !summaryView) reportBase.blastRadius = blastRadius;
+  if (callGraph) reportBase.callGraph = callGraph;
+  if (graph) reportBase.graphBuiltAt = graph.builtAt;
+  const semantic: ModuleReport["semantic"] = {
+    // Provenance of who-uses-this / references. The AST review graph is the
+    // only source on this read path; "graph-lsp" is reserved for #236 (LSP
+    // writes provenance edges INTO the graph). Cold cache → "none".
+    source: hasGraphNode ? "review-graph" : unavailableGraphProvenance,
+    references: hasGraphNode,
+    implementations: false,
+  };
+  const report: ModuleReport = Object.assign(reportBase, { provenance, semantic });
 
   // Observability (#256): record graph source (cached vs cold) so a future
   // regression is attributable per call. This path is read-only by contract —
@@ -2038,7 +2133,8 @@ function padRange(startLine: number, endLine: number, width: number): string {
   return `${startLine}-${endLine}`.padEnd(width);
 }
 
-const KIND_ABBREV: Record<string, string> = {
+interface KINDABBREVValues extends Record<string, string> {}
+const KIND_ABBREV: KINDABBREVValues = {
   function: "fn",
   method: "fn",
   class: "class",
@@ -2254,8 +2350,10 @@ function levenshteinDistance(a: string, b: string): number {
   const bl = b.length;
   if (al === 0) return bl;
   if (bl === 0) return al;
-  let prev = new Array<number>(bl + 1);
-  let curr = new Array<number>(bl + 1);
+
+  let prev = Array<number>(bl + 1);
+
+  let curr = Array<number>(bl + 1);
   for (let j = 0; j <= bl; j++) prev[j] = j;
   for (let i = 1; i <= al; i++) {
     curr[0] = i;
@@ -2375,17 +2473,20 @@ export async function readSymbol(
     const source = lines.slice(startLine - 1, endLine).join("\n");
 
     log(true);
-    return {
-      found: true,
-      path: absPath,
-      name: sym.name,
-      kind: sym.kind,
-      startLine,
-      endLine,
-      signature: sym.signature,
-      source,
-      ...(selection.ambiguous ? { ambiguous: selection.ambiguous } : {}),
-    };
+    return assignOptionalProperties(
+      {
+        found: true,
+        path: absPath,
+        name: sym.name,
+        kind: sym.kind,
+        startLine,
+        endLine,
+        signature: sym.signature,
+        source,
+      },
+      selection.ambiguous,
+      () => ({ ambiguous: selection.ambiguous }),
+    );
   }
 
   if (callbackError) {
@@ -2414,13 +2515,15 @@ export async function readSymbol(
       ...allCallbacks.map((c) => c.name),
     ];
     const suggestions = suggestSimilarNames(corpus, symbolName);
-    return {
-      found: false,
-      path: absPath,
-      name: symbolName,
-      ...(callbackWarnings.length > 0 ? { warnings: callbackWarnings } : {}),
-      ...(suggestions.length > 0 ? { suggestions } : {}),
-    };
+    return assignOptionalProperties(
+      assignOptionalProperties(
+        { found: false, path: absPath, name: symbolName },
+        callbackWarnings.length > 0,
+        () => ({ warnings: callbackWarnings }),
+      ),
+      suggestions.length > 0,
+      () => ({ suggestions }),
+    );
   }
   const source = lines.slice(callback.startLine - 1, callback.endLine).join("\n");
   log(true);
@@ -2498,10 +2601,11 @@ function clampSliceRange(
   startLine: number,
   endLine: number,
   limit: number,
-): { startLine: number; endLine: number } {
+): ClampSliceRangeResultContract {
   const boundedLimit = Math.max(1, Math.min(endLine - startLine + 1, limit));
   let sliceStart = targetLine - Math.floor(boundedLimit / 2);
   sliceStart = Math.max(startLine, Math.min(sliceStart, endLine - boundedLimit + 1));
+
   return { startLine: sliceStart, endLine: sliceStart + boundedLimit - 1 };
 }
 
@@ -2656,31 +2760,33 @@ export async function readEnclosing(
   const selected = candidates[0];
   if (!selected) {
     log(false);
-    return {
-      found: false,
-      path: absPath,
-      line: targetLine,
-      ...(warnings.length > 0 ? { warnings } : {}),
-    };
+    return assignOptionalProperties(
+      { found: false, path: absPath, line: targetLine },
+      warnings.length > 0,
+      () => ({ warnings }),
+    );
   }
 
   const lines = content.split(/\r?\n/);
   const limit = selected.endLine - selected.startLine + 1;
   if (options?.maxLines && limit > options.maxLines) {
     const oversize = options.onOversize ?? "error";
-    const base = {
-      path: absPath,
-      line: targetLine,
-      name: selected.name,
-      kind: selected.kind,
-      startLine: selected.startLine,
-      endLine: selected.endLine,
-      signature: selected.signature,
-      parentChain: selected.parentChain,
-      enclosingStartLine: selected.startLine,
-      enclosingEndLine: selected.endLine,
-      ...(warnings.length > 0 ? { warnings } : {}),
-    };
+    const base = assignOptionalProperties(
+      {
+        path: absPath,
+        line: targetLine,
+        name: selected.name,
+        kind: selected.kind,
+        startLine: selected.startLine,
+        endLine: selected.endLine,
+        signature: selected.signature,
+        parentChain: selected.parentChain,
+        enclosingStartLine: selected.startLine,
+        enclosingEndLine: selected.endLine,
+      },
+      warnings.length > 0,
+      () => ({ warnings }),
+    );
     if (oversize === "slice") {
       const sliceLimit = Math.max(1, Math.floor(options.aroundLine ?? options.maxLines ?? 80));
       const slice = clampSliceRange(targetLine, selected.startLine, selected.endLine, sliceLimit);
@@ -2723,24 +2829,29 @@ export async function readEnclosing(
   }
   const source = lines.slice(selected.startLine - 1, selected.endLine).join("\n");
   log(true);
-  return {
-    found: true,
-    path: absPath,
-    line: targetLine,
-    name: selected.name,
-    kind: selected.kind,
-    startLine: selected.startLine,
-    endLine: selected.endLine,
-    enclosingStartLine: selected.startLine,
-    enclosingEndLine: selected.endLine,
-    signature: selected.signature,
-    parentChain: selected.parentChain,
-    selection: {
-      strategy: "range-containment",
-      source: "tree-sitter",
-      confidence: "high",
-    },
-    ...(warnings.length > 0 ? { warnings } : {}),
-    source,
-  };
+  return Object.assign(
+    assignOptionalProperties(
+      {
+        found: true as const,
+        path: absPath,
+        line: targetLine,
+        name: selected.name,
+        kind: selected.kind,
+        startLine: selected.startLine,
+        endLine: selected.endLine,
+        enclosingStartLine: selected.startLine,
+        enclosingEndLine: selected.endLine,
+        signature: selected.signature,
+        parentChain: selected.parentChain,
+        selection: {
+          strategy: "range-containment" as const,
+          source: "tree-sitter" as const,
+          confidence: "high" as const,
+        },
+      },
+      warnings.length > 0,
+      () => ({ warnings }),
+    ),
+    { source },
+  );
 }

@@ -73,7 +73,7 @@ export async function raceToCompletion<T>(
     auxGraceMs?: number;
   } = { timeoutMs: 1500 },
 ): Promise<T[]> {
-  const results: (T | undefined)[] = new Array(promises.length).fill(undefined);
+  const results: (T | undefined)[] = Array.from({ length: promises.length });
   let graceTimer: ReturnType<typeof setTimeout> | undefined;
   let auxGraceTimer: ReturnType<typeof setTimeout> | undefined;
   let completed = false;
@@ -135,7 +135,7 @@ export async function raceToCompletion<T>(
       const pendingAuxBudgets = [...auxIndices]
         .filter((i) => results[i] === undefined)
         .map((i) => descriptors[i]?.budgetMs)
-        .filter((b): b is number => typeof b === "number" && b >= 0);
+        .filter((budget): budget is number => budget !== undefined && budget >= 0);
       const graceMs =
         pendingAuxBudgets.length > 0
           ? Math.min(ceilingMs, Math.max(...pendingAuxBudgets))

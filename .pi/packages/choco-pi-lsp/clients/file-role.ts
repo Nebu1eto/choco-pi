@@ -75,9 +75,11 @@ function isTypeStub(content: string): boolean {
  * — so native Windows classification is unchanged.
  */
 export function detectFileRole(filePath: string, content?: string): FileRole {
-  const windowsShaped = isWindowsPath(filePath);
-  const base = (windowsShaped ? win32.basename(filePath) : basename(filePath)).toLowerCase();
-  const dir = (windowsShaped ? win32.dirname(filePath) : dirname(filePath))
+  const usesWindowsPathSyntax = isWindowsPath(filePath);
+  const base = (
+    usesWindowsPathSyntax ? win32.basename(filePath) : basename(filePath)
+  ).toLowerCase();
+  const dir = (usesWindowsPathSyntax ? win32.dirname(filePath) : dirname(filePath))
     .replace(/\\/g, "/")
     .toLowerCase();
 

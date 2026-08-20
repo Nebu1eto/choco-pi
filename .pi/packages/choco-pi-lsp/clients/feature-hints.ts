@@ -115,10 +115,7 @@ export function inferTrustBoundaries(nameOrPath: string): TrustBoundary[] {
   return [...boundaries];
 }
 
-export function featureHintMetadata(nameOrPath: string): {
-  featureKind: FeatureHintKind;
-  trustBoundaries: TrustBoundary[];
-} {
+export function featureHintMetadata(nameOrPath: string) {
   return {
     featureKind: inferFeatureKind(nameOrPath),
     trustBoundaries: inferTrustBoundaries(nameOrPath),

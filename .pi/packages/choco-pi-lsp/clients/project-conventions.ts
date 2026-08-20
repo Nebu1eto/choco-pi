@@ -21,24 +21,26 @@ export interface ProjectConventions {
   agentDocs: AgentDocSummary[];
 }
 
-interface PackageJsonShape {
+interface PackageManifest {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   scripts?: Record<string, string>;
 }
 
-function readPackageJson(cwd: string): PackageJsonShape | undefined {
+function readPackageJson(cwd: string): PackageManifest | undefined {
   const pkgPath = path.join(cwd, "package.json");
   try {
     const raw = fs.readFileSync(pkgPath, "utf-8");
-    return JSON.parse(raw) as PackageJsonShape;
+
+    // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
+    return JSON.parse(raw) as PackageManifest;
   } catch {
     return undefined;
   }
 }
 
-function hasDep(pkg: PackageJsonShape | undefined, name: string): boolean {
+function hasDep(pkg: PackageManifest | undefined, name: string): boolean {
   if (!pkg) return false;
   return Boolean(
     pkg.dependencies?.[name] ?? pkg.devDependencies?.[name] ?? pkg.peerDependencies?.[name],
@@ -65,7 +67,8 @@ function dirExists(cwd: string, ...segments: string[]): boolean {
 
 function detectReact(
   _cwd: string,
-  pkg: PackageJsonShape | undefined,
+
+  pkg: PackageManifest | undefined,
 ): FrameworkDetection | undefined {
   const signals: string[] = [];
   if (hasDep(pkg, "react")) signals.push("package.json:dependencies.react");
@@ -78,7 +81,8 @@ function detectReact(
 
 function detectNext(
   cwd: string,
-  pkg: PackageJsonShape | undefined,
+
+  pkg: PackageManifest | undefined,
 ): FrameworkDetection | undefined {
   const signals: string[] = [];
   if (hasDep(pkg, "next")) signals.push("package.json:dependencies.next");
@@ -101,7 +105,8 @@ function detectNext(
 
 function detectVite(
   cwd: string,
-  pkg: PackageJsonShape | undefined,
+
+  pkg: PackageManifest | undefined,
 ): FrameworkDetection | undefined {
   const signals: string[] = [];
   if (hasDep(pkg, "vite")) signals.push("package.json:devDependencies.vite");
@@ -121,7 +126,8 @@ function detectVite(
 
 function detectVitest(
   cwd: string,
-  pkg: PackageJsonShape | undefined,
+
+  pkg: PackageManifest | undefined,
 ): FrameworkDetection | undefined {
   const signals: string[] = [];
   if (hasDep(pkg, "vitest")) signals.push("package.json:devDependencies.vitest");
@@ -168,7 +174,7 @@ export function detectProjectConventions(cwd: string): ProjectConventions {
 
   const pkg = readPackageJson(cwd);
   const detectors: Array<
-    (cwd: string, pkg: PackageJsonShape | undefined) => FrameworkDetection | undefined
+    (cwd: string, pkg: PackageManifest | undefined) => FrameworkDetection | undefined
   > = [detectReact, detectNext, detectVite, detectVitest];
   const frameworks: FrameworkDetection[] = [];
   for (const detector of detectors) {

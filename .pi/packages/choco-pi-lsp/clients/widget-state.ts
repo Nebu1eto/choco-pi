@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import { stat } from "node:fs/promises";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,6 +11,12 @@ import { WriteOrderingGuard } from "./write-ordering-guard.js";
 import { collectForwardImportMtimes, MTIME_DRIFT_TOLERANCE_MS } from "./blocker-freshness.js";
 import { PAST_EOF_STALE_MARKER } from "./diagnostic-line-freshness.js";
 import { STALE_LINE_MARKER } from "./stale-marker.js";
+
+type CountDiagnosticsResultContract = {
+  blocking: number;
+  errors: number;
+  warnings: number;
+};
 
 /**
  * Canonical key for the `files` map (and `diagnosticsWriteGuard`) — #1020.
@@ -303,7 +311,7 @@ export function importWidgetState(state: PersistedWidgetState | undefined): bool
   // diagnostics — so v1..current are accepted and migrated.
   if (
     !state ||
-    typeof state.version !== "number" ||
+    !Check(Type.Number(), state.version) ||
     state.version < 1 ||
     state.version > WIDGET_STATE_VERSION
   ) {
@@ -551,11 +559,7 @@ function commitDiagnostics(
 }
 
 /** Recompute the {blocking, errors, warnings} tally for a diagnostic set. */
-function countDiagnostics(diags: WidgetDiagnostic[]): {
-  blocking: number;
-  errors: number;
-  warnings: number;
-} {
+function countDiagnostics(diags: WidgetDiagnostic[]): CountDiagnosticsResultContract {
   let blocking = 0;
   let errors = 0;
   let warnings = 0;
@@ -583,6 +587,7 @@ function countDiagnostics(diags: WidgetDiagnostic[]): {
     )
       warnings++;
   }
+
   return { blocking, errors, warnings };
 }
 
@@ -1010,15 +1015,7 @@ export function getFileDiagnostics(filePath: string): WidgetDiagnostic[] | undef
 
 /** @internal Test-only helpers. Do not use in production code. */
 export const __testing = {
-  getWidgetStateSnapshot(): {
-    files: Array<{
-      filePath: string;
-      storedDiagnostics: number;
-      blocking: number;
-      errors: number;
-      warnings: number;
-    }>;
-  } {
+  getWidgetStateSnapshot() {
     return {
       files: [...files.values()].map((rec) => ({
         filePath: rec.filePath,
@@ -1179,7 +1176,8 @@ function classifyFileTier(rec: FileRecord): FileTier {
 }
 
 function sortByTierThenRecency(recs: FileRecord[]): FileRecord[] {
-  const order: Record<FileTier, number> = {
+  interface OrderValues extends Record<FileTier, number> {}
+  const order: OrderValues = {
     blocking: 0,
     warning: 1,
     clean: 2,
@@ -1286,6 +1284,7 @@ function packHorizontalRow(
     // If reservation was insufficient (e.g. last token grew because no
     // reserve was applied), shed accepted tokens until overflow fits.
     while (used + visibleWidth(overflow) > totalWidth && addedTokenWidths.length > 0) {
+      // SAFETY: The enclosing non-empty queue check guarantees this removal returns an element.
       const lastWidth = addedTokenWidths.pop() as number;
       used -= lastWidth;
       parts.pop(); // token

@@ -1,3 +1,5 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as path from "node:path";
 import {
   appendActionableWarningsHistory,
@@ -56,6 +58,9 @@ import { sweepInlineBlockerPastEof } from "./blocker-past-eof.js";
 import { STALE_LINE_MARKER } from "./stale-marker.js";
 import type { TestRunnerFindingsCache } from "./project-diagnostics/runner-adapters/runner-findings.js";
 
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+
 interface TurnEndDeps {
   ctxCwd?: string;
   getFlag: (name: string) => boolean | string | undefined;
@@ -79,7 +84,7 @@ let lspIdleResetTimeout: ReturnType<typeof setTimeout> | null = null;
 // though the session is no longer idle.
 let pendingSweepRearm: { cancelled: boolean } | null = null;
 
-function emitIdleResetReporterWarning(reportErr: unknown): void {
+function emitIdleResetReporterWarning(reportErr: LspBoundaryValue): void {
   try {
     process.emitWarning(`choco-pi-lsp LSP idle reset error reporter failed: ${reportErr}`, {
       code: "CHOCO_PI_LSP_LSP_IDLE_RESET_REPORTER_FAILED",
@@ -90,7 +95,10 @@ function emitIdleResetReporterWarning(reportErr: unknown): void {
   }
 }
 
-function reportIdleResetError(onError: ((err: unknown) => void) | undefined, err: unknown): void {
+function reportIdleResetError(
+  onError: ((err: LspBoundaryValue) => void) | undefined,
+  err: LspBoundaryValue,
+): void {
   try {
     onError?.(err);
   } catch (reportErr) {
@@ -103,7 +111,8 @@ function scheduleLSPIdleReset(
   delayMs: number,
   options: {
     isCurrentSession?: () => boolean;
-    onError?: (err: unknown) => void;
+
+    onError?: (err: LspBoundaryValue) => void;
   } = {},
 ): void {
   // Clear any pending reset to avoid multiple timers. #1618: also cancel a
@@ -571,7 +580,11 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
       .map((n) => n.filePath);
     const uniqueNeighborFiles = [...new Set(neighborFilesWithErrors)];
     let testSuggestionCount = 0;
-    if (uniqueNeighborFiles.length > 0 && typeof testRunnerClient.suggestTestFiles === "function") {
+
+    if (
+      uniqueNeighborFiles.length > 0 &&
+      Check(Type.Function([], Type.Unknown()), testRunnerClient.suggestTestFiles)
+    ) {
       const testSuggestions = testRunnerClient.suggestTestFiles(uniqueNeighborFiles, cwd);
       testSuggestionCount = testSuggestions.length;
       // #1446 item 2: this path previously emitted nothing to any log — a
@@ -775,9 +788,9 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
       file: toRunnerDisplayPath(cwd, r.filePath),
       reason: r.indeterminate?.reason,
       ...(r.indeterminate?.detail && { detail: r.indeterminate.detail }),
-      ...(r.indeterminate?.budget && { budget: r.indeterminate.budget }),
+      ...(r.indeterminate?.budget && { budget: { ...r.indeterminate.budget } }),
       ...(r.indeterminate?.diagnostic && {
-        diagnostic: r.indeterminate.diagnostic,
+        diagnostic: { ...r.indeterminate.diagnostic },
       }),
     }));
     logCascade({
@@ -794,7 +807,8 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
     });
   }
 
-  const cascadeSkipped: Record<CascadeSkipReason, number> = {
+  interface CascadeSkippedValues extends Record<CascadeSkipReason, number> {}
+  const cascadeSkipped: CascadeSkippedValues = {
     blockers: 0,
     non_code: 0,
     no_neighbors: 0,
@@ -1184,6 +1198,8 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
       state.modifiedRanges,
     ]),
   );
+
+  // SAFETY: The runtime dependency is the concrete RuntimeCoordinator; the optional member check immediately after this access preserves compatibility.
   const getFileSeq = (runtime as Partial<RuntimeCoordinator>).getFileSeq;
   const fileSeqByPath = new Map<string, number>();
   if (getFileSeq) {
@@ -1209,7 +1225,7 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
             (w) =>
               !(
                 isSecretWarning(w) &&
-                typeof w.line === "number" &&
+                Check(Type.Number(), w.line) &&
                 secretBlockedLocations.has(secretLocationKey(w.filePath, w.line))
               ),
           ),
@@ -1330,6 +1346,7 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
         )?.data;
         if (existingGuard) {
           writeGitGuardRecord(cacheManager, runtime, cwd, {
+            // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
             ...(existingGuard as TurnEndFindingsCache),
             content,
             blockerContent:

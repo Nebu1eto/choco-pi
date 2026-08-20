@@ -12,6 +12,8 @@
 import { createSubsystemLogger } from "./extension-log.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { getProjectDataDir } from "./file-utils.js";
 import { writeFileAtomic } from "./atomic-write.js";
 import { readJsonCache } from "./json-cache-read.js";
@@ -24,6 +26,35 @@ export interface CacheMeta {
   scanDurationMs?: number;
   fileCount?: number;
 }
+
+const CacheMetaSchema = Type.Object({
+  timestamp: Type.String(),
+  scanDurationMs: Type.Optional(Type.Number()),
+  fileCount: Type.Optional(Type.Number()),
+});
+const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.String()) });
+const TurnStateSchema = Type.Object({
+  files: Type.Record(
+    Type.String(),
+    Type.Object({
+      modifiedRanges: Type.Array(Type.Object({ start: Type.Number(), end: Type.Number() })),
+      importsChanged: Type.Boolean(),
+      lastEdit: Type.String(),
+    }),
+  ),
+  turnCycles: Type.Number(),
+  maxCycles: Type.Number(),
+  lastUpdated: Type.String(),
+  sessionId: Type.Optional(Type.String()),
+  owner: Type.Optional(
+    Type.Object({
+      kind: Type.Union([Type.Literal("pi"), Type.Literal("mcp")]),
+      id: Type.String(),
+      pid: Type.Number(),
+      lastSeen: Type.String(),
+    }),
+  ),
+});
 
 export interface CacheEntry<T> {
   data: T;
@@ -138,11 +169,15 @@ export class CacheManager {
     }
 
     try {
-      const onReadError = (err: unknown) => {
+      const onReadError = <T>(err: T) => {
         this.log(`Cache read error: ${scanner} — ${err}`);
       };
 
-      const meta = readJsonCache<CacheMeta>(metaPath, (parsed) => parsed as CacheMeta, onReadError);
+      const meta = readJsonCache<CacheMeta>(
+        metaPath,
+        (parsed) => (Value.Check(CacheMetaSchema, parsed) ? parsed : undefined),
+        onReadError,
+      );
       if (meta === undefined) return null;
 
       const age = Date.now() - new Date(meta.timestamp).getTime();
@@ -153,6 +188,8 @@ export class CacheManager {
         return null;
       }
 
+      // SAFETY: Each scanner key has one owner that writes and reads the same T through this manager;
+      // readJsonCache has already established valid JSON before restoring that owner type.
       const data = readJsonCache<T>(cachePath, (parsed) => parsed as T, onReadError);
       if (data === undefined) return null;
 
@@ -196,13 +233,15 @@ export class CacheManager {
       try {
         fs.statSync(cachePathname);
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+        if (Value.Check(ErrorCodeSchema, err) && err.code === "ENOENT") return "missing";
         return "unreadable";
       }
     }
     try {
-      const meta = readJsonCache<CacheMeta>(metaPath, (parsed) => parsed as CacheMeta);
-      if (!meta || typeof meta.timestamp !== "string") return "malformed";
+      const meta = readJsonCache<CacheMeta>(metaPath, (parsed) =>
+        Value.Check(CacheMetaSchema, parsed) ? parsed : undefined,
+      );
+      if (!meta) return "malformed";
       const timestamp = new Date(meta.timestamp).getTime();
       if (!Number.isFinite(timestamp)) return "malformed";
       const age = Date.now() - timestamp;
@@ -222,7 +261,9 @@ export class CacheManager {
     if (!fs.existsSync(metaPath)) return false;
 
     try {
-      const meta = readJsonCache<CacheMeta>(metaPath, (parsed) => parsed as CacheMeta);
+      const meta = readJsonCache<CacheMeta>(metaPath, (parsed) =>
+        Value.Check(CacheMetaSchema, parsed) ? parsed : undefined,
+      );
       if (meta === undefined) return false;
       const age = Date.now() - new Date(meta.timestamp).getTime();
       return age <= maxAgeMs;
@@ -242,7 +283,7 @@ export class CacheManager {
         fs.unlinkSync(p);
       } catch (err) {
         // ENOENT: file doesn't exist, other errors logged
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        if (!Value.Check(ErrorCodeSchema, err) || err.code !== "ENOENT") {
           this.log(`Failed to delete ${p}: ${err}`);
         }
       }
@@ -264,7 +305,9 @@ export class CacheManager {
       };
     }
 
-    const state = readJsonCache<TurnState>(statePath, (parsed) => parsed as TurnState);
+    const state = readJsonCache<TurnState>(statePath, (parsed) =>
+      Value.Check(TurnStateSchema, parsed) ? parsed : undefined,
+    );
     return (
       state ?? {
         ...DEFAULT_TURN_STATE,

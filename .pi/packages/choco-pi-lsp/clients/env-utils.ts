@@ -5,6 +5,9 @@
  * knobs to keep duplicated env-handling expressions in a single place.
  */
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+
 /**
  * True when choco-pi-lsp should suppress side-effecting log writes — e.g. inside
  * the vitest test runner, or when callers explicitly set `CHOCO_PI_LSP_TEST_MODE=1`.
@@ -39,8 +42,8 @@ export function isTestMode(): boolean {
  * );
  * ```
  */
-export function toPositiveFinite(value: unknown): number {
-  const num = typeof value === "number" ? value : Number(value);
+export function toPositiveFinite<T>(value: T): number {
+  const num = Value.Check(Type.Number(), value) ? value : Number(value);
   return Number.isFinite(num) && num > 0 ? num : 0;
 }
 
@@ -67,10 +70,7 @@ export function toPositiveFinite(value: unknown): number {
  * export const _resetStartupScanVerdictTtlForTests = _ttl._resetForTests;
  * ```
  */
-export function lazyEnvNumber(
-  envName: string,
-  fallback: number,
-): { get(): number; _resetForTests(): void } {
+export function lazyEnvNumber(envName: string, fallback: number) {
   let memo: number | undefined;
   return {
     get(): number {

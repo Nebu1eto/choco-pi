@@ -14,6 +14,8 @@
  *   3. `npm` as a final fallback so callers always get a usable value.
  */
 
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -26,6 +28,8 @@ import {
   startHostStallSampler,
 } from "./dispatch/runners/utils/availability-policy.js";
 import { safeSpawnAsync } from "./safe-spawn.js";
+
+type ExecArgsResultContract = { command: string; args: string[] };
 
 export type NodePackageManager = "npm" | "pnpm" | "yarn" | "bun";
 
@@ -77,10 +81,13 @@ function readPackageManagerField(targetPath: string): NodePackageManager | undef
   try {
     const pkgPath = path.join(targetPath, "package.json");
     if (!fs.existsSync(pkgPath)) return undefined;
+
+    // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as {
       packageManager?: unknown;
     };
-    if (typeof pkg.packageManager !== "string") return undefined;
+
+    if (!Check(Type.String(), pkg.packageManager)) return undefined;
     const name = pkg.packageManager.split("@")[0].trim().toLowerCase();
     return isNodePackageManager(name) ? name : undefined;
   } catch {
@@ -351,7 +358,7 @@ export function execArgs(
   pm: NodePackageManager,
   pkg: string,
   args: string[] = [],
-): { command: string; args: string[] } {
+): ExecArgsResultContract {
   switch (pm) {
     case "bun":
       return { command: pmBinary("bun"), args: ["x", pkg, ...args] };
@@ -361,6 +368,7 @@ export function execArgs(
       return { command: pmBinary("yarn"), args: ["dlx", pkg, ...args] };
     default:
       // --no prevents silently downloading an uncached package.
+
       return {
         command: onWindows() ? "npx.cmd" : "npx",
         args: ["--no", pkg, ...args],

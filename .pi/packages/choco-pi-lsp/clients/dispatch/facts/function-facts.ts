@@ -184,7 +184,12 @@ function getFunctionName(node: TsNode): string {
   return "<unknown>";
 }
 
-function isCallPassThrough(stmt: TsNode, paramNames: string[]): { pass: boolean; target?: string } {
+interface PassThroughResult {
+  pass: boolean;
+  target?: string;
+}
+
+function isCallPassThrough(stmt: TsNode, paramNames: string[]): PassThroughResult {
   if (stmt.type !== "return_statement") return { pass: false };
   const expr = firstNamedChild(stmt);
   if (!expr || expr.type !== "call_expression") return { pass: false };
@@ -265,8 +270,12 @@ function collectMemberCallSites(body: TsNode): MemberCallSite[] {
  * Best-effort receiver -> class-name map for one function (refs #655 phase
  * 2). Two clear, common shapes only — see {@link FunctionSummary.receiverTypes}.
  */
-function collectReceiverTypes(body: TsNode, params: TsNode[]): Record<string, string> {
-  const types: Record<string, string> = {};
+interface ReceiverTypes {
+  [receiver: string]: string;
+}
+
+function collectReceiverTypes(body: TsNode, params: TsNode[]): ReceiverTypes {
+  const types: ReceiverTypes = {};
   for (const param of params) {
     const id = firstNamedChild(param);
     if (!id || id.type !== "identifier") continue;

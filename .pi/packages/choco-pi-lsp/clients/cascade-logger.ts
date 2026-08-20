@@ -12,6 +12,15 @@ const writer = createNdjsonLogger({
   maxBytes: getMaxLogSizeMB() * 1024 * 1024,
 });
 
+type CascadeMetadataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | CascadeMetadataValue[]
+  | { [key: string]: CascadeMetadataValue };
+
 export interface CascadeLogEntry {
   ts?: string;
   phase:
@@ -66,7 +75,7 @@ export interface CascadeLogEntry {
   autoPropagate?: boolean;
   lspTouched?: boolean;
   error?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, CascadeMetadataValue>;
 }
 
 export function logCascade(entry: CascadeLogEntry): void {

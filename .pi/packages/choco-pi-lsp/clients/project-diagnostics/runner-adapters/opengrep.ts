@@ -8,10 +8,12 @@ import type { ProjectDiagnostic, ProjectDiagnosticSeverity } from "../types.js";
  * output). `ERROR` is treated as blocking — the same convention gitleaks
  * secrets and knip's "unlisted dependency" findings use.
  */
-function severityFor(raw: string): {
+interface OpengrepSeverity {
   severity: ProjectDiagnosticSeverity;
   blocking: boolean;
-} {
+}
+
+function severityFor(raw: string): OpengrepSeverity {
   switch (raw.toUpperCase()) {
     case "ERROR":
       return { severity: "error", blocking: true };

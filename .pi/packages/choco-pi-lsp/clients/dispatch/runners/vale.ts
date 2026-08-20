@@ -1,5 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { PRIORITY } from "../priorities.js";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
@@ -53,18 +55,43 @@ function findValeConfig(cwd: string): string | undefined {
  *   }
  * }
  */
-interface ValeAlert {
-  Line?: number;
-  Column?: number;
-  Severity?: string;
-  Message?: string;
-  Check?: string;
-  Action?: unknown;
-}
+const ValeOutputSchema = Type.Object(
+  {
+    Data: Type.Optional(
+      Type.Object({
+        Files: Type.Optional(
+          Type.Array(
+            Type.Object(
+              {
+                Path: Type.Optional(Type.String()),
+                Alerts: Type.Optional(
+                  Type.Array(
+                    Type.Object(
+                      {
+                        Line: Type.Optional(Type.Number()),
+                        Column: Type.Optional(Type.Number()),
+                        Severity: Type.Optional(Type.String()),
+                        Message: Type.Optional(Type.String()),
+                        Check: Type.Optional(Type.String()),
+                        Action: Type.Optional(Type.Unknown()),
+                      },
+                      { additionalProperties: true },
+                    ),
+                  ),
+                ),
+              },
+              { additionalProperties: true },
+            ),
+          ),
+        ),
+      }),
+    ),
+  },
+  { additionalProperties: true },
+);
 
-interface ValeFile {
-  Path?: string;
-  Alerts?: ValeAlert[];
+interface SeverityMap {
+  [severity: string]: "error" | "warning" | "info";
 }
 
 function parseValeOutput(raw: string, filePath: string): Diagnostic[] {
@@ -73,13 +100,10 @@ function parseValeOutput(raw: string, filePath: string): Diagnostic[] {
   if (!raw.trim()) return diagnostics;
 
   try {
-    const parsed = JSON.parse(raw) as {
-      Data?: {
-        Files?: ValeFile[];
-      };
-    };
+    const parsed = JSON.parse(raw);
+    if (!Value.Check(ValeOutputSchema, parsed)) return diagnostics;
 
-    const files = parsed?.Data?.Files;
+    const files = parsed.Data?.Files;
     if (!files) return diagnostics;
 
     for (const file of files) {
@@ -88,7 +112,7 @@ function parseValeOutput(raw: string, filePath: string): Diagnostic[] {
       for (const alert of file.Alerts) {
         if (!alert.Message) continue;
 
-        const severityMap: Record<string, "error" | "warning" | "info"> = {
+        const severityMap: SeverityMap = {
           error: "error",
           warning: "warning",
           info: "info",

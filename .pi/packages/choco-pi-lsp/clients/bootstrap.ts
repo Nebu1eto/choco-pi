@@ -1,4 +1,6 @@
 import { logExtension } from "./extension-log.js";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { AgentBehaviorClient } from "./agent-behavior-client.js";
 import type { BiomeClient } from "./biome-client.js";
 import type { ComplexityClient } from "./complexity-client.js";
@@ -39,11 +41,13 @@ let bootstrapPromise: Promise<BootstrapClients> | null = null;
  * the same single-seam principle as the clients/deps/* accessors.
  */
 export function degradedClient<T extends object>(): T {
+  // SAFETY: The proxy implements the degraded-client invariant for every property: callable members
+  // return undefined, while protocol-sensitive symbol/then members remain absent.
   return new Proxy({} as T, {
     get(_target, prop) {
       // Not thenable (so `await stub` / Promise.resolve(stub) won't treat it
       // as a promise), not iterable, no surprising coercion.
-      if (typeof prop === "symbol" || prop === "then") return undefined;
+      if (Value.Check(Type.Symbol(), prop) || prop === "then") return undefined;
       return () => undefined;
     },
   });
@@ -61,7 +65,7 @@ async function logBootstrapFailures(failures: { name: string; err: unknown }[]):
     logExtension({
       subsystem: "bootstrap",
       message: `analyzer "${name}" disabled (degraded mode): ${
-        (err as Error)?.message ?? String(err)
+        err instanceof Error ? err.message : String(err)
       }`,
       metadata: { analyzer: name },
     });
@@ -149,7 +153,7 @@ export function loadBootstrapClients(): Promise<BootstrapClients> {
       rustClient,
       agentBehaviorClient,
     };
-  })().catch((err: unknown) => {
+  })().catch((err) => {
     bootstrapPromise = null;
     throw err;
   });

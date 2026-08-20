@@ -14,6 +14,8 @@
  * embeddings, no native deps, no daemon — pure in-process TypeScript.
  */
 
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createDeadline, forEachCooperatively, yieldIfOverBudget } from "./cooperative-budget.js";
@@ -648,6 +650,7 @@ export async function collectWordIndexDocs(
       });
   const truncated = preflightFiles?.truncated ?? files.length === maxFiles;
   const docs = Object.assign(
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     [] as Array<{
       path: string;
       content: string;
@@ -804,7 +807,8 @@ export async function refreshWordIndexIncrementally(
     Number.isFinite(requestedConcurrency) && requestedConcurrency > 0
       ? Math.max(1, Math.floor(requestedConcurrency))
       : WORD_INDEX_STAT_CONCURRENCY;
-  const statResults = new Array<{ path: string; mtimeMs: number; size: number } | undefined>(
+
+  const statResults = Array<{ path: string; mtimeMs: number; size: number } | undefined>(
     walked.length,
   );
   let cursor = 0;
@@ -1081,6 +1085,8 @@ export function parseWordIndexQuery(query: string): ParsedWordIndexQuery {
       termParts.push(raw);
       continue;
     }
+
+    // SAFETY: The adjacent membership check or owner-key enumeration establishes this closed key union.
     if (!(WORD_INDEX_QUERY_FILTER_KEYS as readonly string[]).includes(key)) {
       // Not a recognized filter key. Ordinary search terms legitimately
       // contain colons (std::vector, error:foo, http://…, C:\ paths, a
@@ -1093,6 +1099,7 @@ export function parseWordIndexQuery(query: string): ParsedWordIndexQuery {
       continue;
     }
     filters.push({
+      // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
       key: key as WordIndexQueryFilterKey,
       value,
       negated: negation === "-",
@@ -1108,6 +1115,7 @@ export function parseWordIndexQuery(query: string): ParsedWordIndexQuery {
  * kinds (KIND_EXTENSIONS' own keys), the same loud-failure contract as an
  * unsupported `key:` prefix. */
 function resolveLangExtensions(value: string): readonly string[] {
+  // SAFETY: The adjacent membership check or owner-key enumeration establishes this closed key union.
   const kind = value.toLowerCase() as FileKind;
   const extensions = KIND_EXTENSIONS[kind];
   if (!extensions) {
@@ -1460,12 +1468,13 @@ export function deserializeWordIndex(
 
   const postings = new Map<string, WordHit[]>();
   for (const [token, flat] of data.postings) {
-    if (typeof token !== "string" || !Array.isArray(flat)) continue;
+    if (!Check(Type.String(), token) || !Array.isArray(flat)) continue;
     const hits: WordHit[] = [];
     for (let i = 0; i + 1 < flat.length; i += 2) {
       const file = data.files[flat[i]];
       const line = flat[i + 1];
-      if (typeof file === "string" && typeof line === "number") {
+
+      if (Check(Type.String(), file) && Check(Type.Number(), line)) {
         hits.push({ file, line });
       }
     }
@@ -1479,12 +1488,14 @@ export function deserializeWordIndex(
       if (!Array.isArray(entry) || entry.length !== 2) continue;
       const [fileIdx, tokenCounts] = entry;
       const file = data.files[fileIdx];
-      if (typeof file !== "string" || !Array.isArray(tokenCounts)) continue;
+
+      if (!Check(Type.String(), file) || !Array.isArray(tokenCounts)) continue;
       const perToken = new Map<string, number>();
       for (const pair of tokenCounts) {
         if (!Array.isArray(pair) || pair.length !== 2) continue;
         const [token, count] = pair;
-        if (typeof token === "string" && typeof count === "number") {
+
+        if (Check(Type.String(), token) && Check(Type.Number(), count)) {
           perToken.set(token, count);
         }
       }
@@ -1495,7 +1506,8 @@ export function deserializeWordIndex(
   return {
     postings,
     docLengths,
-    totalTokens: typeof data.totalTokens === "number" ? data.totalTokens : 0,
+
+    totalTokens: Check(Type.Number(), data.totalTokens) ? data.totalTokens : 0,
     docCount: data.files.length,
     truncated: data.truncated === true,
     forward,

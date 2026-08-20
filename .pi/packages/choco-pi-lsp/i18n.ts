@@ -1,7 +1,18 @@
+import type { RuntimeValue } from "./tools/runtime-values.js";
 type Locale = "en" | "es" | "fr" | "pt-BR";
 type Params = Record<string, string | number>;
 
-const translations: Record<Exclude<Locale, "en">, Record<string, string>> = {
+interface TranslationMessages {
+  [key: string]: string;
+}
+
+interface Translations {
+  es: TranslationMessages;
+  fr: TranslationMessages;
+  "pt-BR": TranslationMessages;
+}
+
+const translations: Translations = {
   es: {
     "lens.health.title": "🩺 SALUD DE PI-LENS",
     "lens.health.crashes": "Fallos de pipeline (sesión): {count}",
@@ -46,7 +57,7 @@ const translations: Record<Exclude<Locale, "en">, Record<string, string>> = {
 let currentLocale: Locale = "en";
 
 export function initI18n(pi: {
-  events?: { emit?: (event: string, payload: unknown) => void };
+  events?: { emit?: (event: string, payload: RuntimeValue) => void };
 }): void {
   pi.events?.emit?.("pi-core/i18n/registerBundle", {
     namespace: "choco-pi-lsp",

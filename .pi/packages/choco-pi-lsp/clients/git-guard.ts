@@ -1,5 +1,7 @@
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { CacheManager } from "./cache-manager.js";
 import type { RuntimeCoordinator } from "./runtime-coordinator.js";
 import { isPathIgnoredByProject } from "./file-utils.js";
@@ -14,6 +16,20 @@ import {
 } from "./advisory-provenance.js";
 
 /** The structured, single-source turn record used by context and git-guard. */
+const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.String()) });
+const TurnEndFindingsCacheSchema = Type.Object({
+  content: Type.String(),
+  hasBlockers: Type.Boolean(),
+  affectedFiles: Type.Array(Type.String()),
+  sessionId: Type.String(),
+  projectSeqStart: Type.Number(),
+  projectSeqEnd: Type.Number(),
+  fileSeqByPath: Type.Record(Type.String(), Type.Number()),
+  fileContentHashes: Type.Record(Type.String(), Type.String()),
+  affectedFilesTruncated: Type.Optional(Type.Boolean()),
+  blockingFiles: Type.Optional(Type.Array(Type.String())),
+});
+
 export interface TurnEndFindingsCache {
   content: string;
   hasBlockers: boolean;
@@ -60,19 +76,12 @@ function currentFileFingerprint(filePath: string): string {
     nodeFs.statSync(filePath);
     return fileFingerprint(filePath);
   } catch (err) {
-    return (err as { code?: string }).code === "ENOENT"
-      ? "missing"
-      : `unreadable:${(err as { code?: string }).code ?? "unknown"}`;
+    const code = Value.Check(ErrorCodeSchema, err) ? err.code : undefined;
+    return code === "ENOENT" ? "missing" : `unreadable:${code ?? "unknown"}`;
   }
 }
 
-function capAffectedFiles(
-  files: string[],
-  cwd: string,
-): {
-  files: string[];
-  truncated: boolean;
-} {
+function capAffectedFiles(files: string[], cwd: string) {
   const unique = [...new Set(files.map((file) => resolveGuardPath(file, cwd)))];
   return {
     files: unique.slice(0, MAX_ADVISORY_AFFECTED_FILES),
@@ -82,15 +91,12 @@ function capAffectedFiles(
 
 /** Recovery is safe only when blocker content and its file provenance agree. */
 function hasCompleteBlockingProvenance(
-  blockerContent: unknown,
-  blockingFiles: unknown,
+  blockerContent: string | undefined,
+  blockingFiles: string[] | undefined,
   cwd: string,
 ): blockingFiles is string[] {
-  if (typeof blockerContent !== "string" || blockerContent.length === 0) return false;
-  if (!Array.isArray(blockingFiles) || blockingFiles.length === 0) return false;
-  if (blockingFiles.some((file) => typeof file !== "string" || file.trim().length === 0)) {
-    return false;
-  }
+  if (!blockerContent || !blockingFiles || blockingFiles.length === 0) return false;
+  if (blockingFiles.some((file) => file.trim().length === 0)) return false;
   const provenanceKeys = blockingFiles.map((file) => guardPathKey(file, cwd));
   if (new Set(provenanceKeys).size !== provenanceKeys.length) return false;
   const blockerKeys = blockerContent.split("\n").map((line) => {
@@ -99,8 +105,8 @@ function hasCompleteBlockingProvenance(
     const file = line.slice(0, separator).trim();
     return file.length > 0 ? guardPathKey(file, cwd) : undefined;
   });
-  if (blockerKeys.some((key) => key === undefined)) return false;
-  const uniqueBlockerKeys = new Set(blockerKeys as string[]);
+  if (!Value.Check(Type.Array(Type.String()), blockerKeys)) return false;
+  const uniqueBlockerKeys = new Set(blockerKeys);
   return (
     uniqueBlockerKeys.size === blockerKeys.length &&
     uniqueBlockerKeys.size === provenanceKeys.length &&
@@ -108,12 +114,22 @@ function hasCompleteBlockingProvenance(
   );
 }
 
-function getShellCommand(input: unknown): string {
-  if (!input || typeof input !== "object") return "";
-  const raw = input as { command?: unknown; cmd?: unknown };
-  if (typeof raw.command === "string" && raw.command.trim()) return raw.command;
-  if (typeof raw.cmd === "string" && raw.cmd.trim()) return raw.cmd;
-  if (typeof raw.command === "string") return raw.command;
+function getShellCommand<T>(input: T): string {
+  if (
+    input === null ||
+    Object(input) !== input ||
+    Array.isArray(input) ||
+    input instanceof Function
+  ) {
+    return "";
+  }
+  // SAFETY: The structural check above permits reading the two host input aliases this path consumes.
+  const hostInput = input as { command?: unknown; cmd?: unknown };
+  const command = hostInput.command;
+  const cmd = hostInput.cmd;
+  if (Value.Check(Type.String(), command) && command.trim()) return command;
+  if (Value.Check(Type.String(), cmd) && cmd.trim()) return cmd;
+  if (Value.Check(Type.String(), command)) return command;
   return "";
 }
 
@@ -422,7 +438,7 @@ function containsCommitOrPush(tokens: string[], depth: number): boolean {
 }
 
 /** Analyze actual executable invocations, not substrings in shell text. */
-export function isGitCommitOrPushAttempt(toolName: string, input: unknown): boolean {
+export function isGitCommitOrPushAttempt<T>(toolName: string, input: T): boolean {
   if (toolName !== "bash") return false;
   const command = getShellCommand(input);
   if (!command) return false;
@@ -431,31 +447,8 @@ export function isGitCommitOrPushAttempt(toolName: string, input: unknown): bool
   return tokenizeShellCommand(canonical).some((segment) => containsCommitOrPush(segment.tokens, 0));
 }
 
-function isTurnEndFindingsCache(value: unknown): value is TurnEndFindingsCache {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Partial<TurnEndFindingsCache>;
-  return (
-    typeof record.content === "string" &&
-    typeof record.hasBlockers === "boolean" &&
-    Array.isArray(record.affectedFiles) &&
-    record.affectedFiles.every((file) => typeof file === "string") &&
-    typeof record.sessionId === "string" &&
-    typeof record.projectSeqStart === "number" &&
-    typeof record.projectSeqEnd === "number" &&
-    Number.isFinite(record.projectSeqStart) &&
-    Number.isFinite(record.projectSeqEnd) &&
-    !!record.fileSeqByPath &&
-    typeof record.fileSeqByPath === "object" &&
-    Object.values(record.fileSeqByPath).every(
-      (seq) => typeof seq === "number" && Number.isFinite(seq),
-    ) &&
-    !!record.fileContentHashes &&
-    typeof record.fileContentHashes === "object" &&
-    Object.values(record.fileContentHashes).every((hash) => typeof hash === "string") &&
-    (record.affectedFilesTruncated === undefined ||
-      typeof record.affectedFilesTruncated === "boolean") &&
-    (record.blockingFiles === undefined || Array.isArray(record.blockingFiles))
-  );
+function isTurnEndFindingsCache<T>(value: T): value is T & TurnEndFindingsCache {
+  return Value.Check(TurnEndFindingsCacheSchema, value);
 }
 
 function cacheRecord(cacheManager: CacheManager, cwd: string): TurnEndFindingsCache | undefined {
@@ -478,7 +471,7 @@ export function writeGitGuardRecord(
     Array.isArray(record.affectedFiles) ? record.affectedFiles : [],
     cwd,
   );
-  const fileSeqByPath = { ...(record.fileSeqByPath ?? {}) };
+  const fileSeqByPath = { ...record.fileSeqByPath };
   for (const file of capped.files) {
     const key = guardPathKey(file, cwd);
     if (fileSeqByPath[key] === undefined) {
@@ -516,11 +509,20 @@ export function writeGitGuardRecord(
   }
 }
 
+type GitDecisionMetadataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | GitDecisionMetadataValue[]
+  | { [key: string]: GitDecisionMetadataValue };
+
 function logDecision(
   cwd: string,
   decision: "blocked" | "allowed" | "unknown",
   reasonCategory: string,
-  metadata: Record<string, unknown> = {},
+  metadata: Record<string, GitDecisionMetadataValue> = {},
 ): void {
   logLatency({
     type: "phase",

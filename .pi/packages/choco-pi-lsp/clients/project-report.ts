@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 /**
  * Project Report (#773) — the top of the discovery funnel: `project_report` →
  * `module_report` → `read_symbol`. Answers "orient me in this project" from
@@ -38,6 +40,29 @@ import * as path from "node:path";
 import { normalizeMapKey, toProjectRelativePath } from "./path-utils.js";
 import { loadProjectSnapshotWithoutWordIndex } from "./project-snapshot.js";
 import type { ReviewGraph } from "./review-graph/types.js";
+
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
+type SuggestedNextResultContract = {
+  tool: "module_report";
+  path: string;
+};
+type ComputeEntryPointsResultContract = {
+  entryPoints: ProjectReportEntryPoint[];
+  entryPointFiles: Set<string>;
+};
+type ComputeDeadWeightResultContract = { files: DeadWeightFile[]; disclaimer: string };
 
 export interface ProjectReportOptions {
   /** Scales every ranked list's cap (default 10). A single knob, per #773's
@@ -209,10 +234,7 @@ export function _toDisplayPathForTests(p: string, projectRoot: string): string {
   return toDisplayPath(p, projectRoot);
 }
 
-function suggestedNext(displayPath: string): {
-  tool: "module_report";
-  path: string;
-} {
+function suggestedNext(displayPath: string): SuggestedNextResultContract {
   return { tool: "module_report", path: displayPath };
 }
 
@@ -420,7 +442,7 @@ function computeEntryPoints(
   cwd: string,
   limit: number,
   focusTerms: string[],
-): { entryPoints: ProjectReportEntryPoint[]; entryPointFiles: Set<string> } {
+): ComputeEntryPointsResultContract {
   const candidates = [...graph.fileNodes.entries()]
     .map(([filePath, fileNodeId]) => ({
       filePath,
@@ -447,6 +469,7 @@ function computeEntryPoints(
       suggestedNext: suggestedNext(display),
     };
   });
+
   return { entryPoints, entryPointFiles };
 }
 
@@ -630,7 +653,8 @@ function computeRiskHotspots(
       let maxComplexity = 0;
       for (const symbolId of symbolIds) {
         const complexity = graph.nodes.get(symbolId)?.metadata?.cyclomaticComplexity;
-        if (typeof complexity === "number" && complexity > maxComplexity) {
+
+        if (Check(Type.Number(), complexity) && complexity > maxComplexity) {
           maxComplexity = complexity;
         }
       }
@@ -665,7 +689,7 @@ function computeDeadWeight(
   entryPointFiles: Set<string>,
   cwd: string,
   limit: number,
-): { files: DeadWeightFile[]; disclaimer: string } {
+): ComputeDeadWeightResultContract {
   const candidates = [...graph.fileNodes.entries()]
     .filter(([filePath, nodeId]) => {
       if (entryPointFiles.has(filePath)) return false;
@@ -754,31 +778,43 @@ export async function projectReport(
     }
     if (sizeSkip) {
       const lastBuildAttempt = getLastReviewGraphBuildAttempt(cwd);
-      return {
-        available: false,
-        hint:
-          `review graph disabled: project has more than ${sizeSkip.maxFileCount} files ` +
-          `(cap ${sizeSkip.maxFileCount}) — raise maxProjectFiles in .choco-pi-lsp.json ` +
-          "or set CHOCO_PI_LSP_REVIEW_GRAPH_MAX_FILES; for CI/cron, run " +
-          "npx choco-pi-lsp build-graph after configuring the cap",
-        ...(lastBuildAttempt ? { lastBuildAttempt } : {}),
-        ...(view ? { view } : {}),
-      };
+      return assignOptionalProperties(
+        assignOptionalProperties(
+          {
+            available: false,
+            hint:
+              `review graph disabled: project has more than ${sizeSkip.maxFileCount} files ` +
+              `(cap ${sizeSkip.maxFileCount}) — raise maxProjectFiles in .choco-pi-lsp.json ` +
+              "or set CHOCO_PI_LSP_REVIEW_GRAPH_MAX_FILES; for CI/cron, run " +
+              "npx choco-pi-lsp build-graph after configuring the cap",
+          },
+          lastBuildAttempt,
+          () => ({ lastBuildAttempt }),
+        ),
+        view,
+        () => ({ view }),
+      );
     }
     const previousAttempt = getLastReviewGraphBuildAttempt(cwd);
     const kickedOff = triggerBackgroundGraphBuild(cwd);
     const lastBuildAttempt = previousAttempt ?? getLastReviewGraphBuildAttempt(cwd);
-    return {
-      available: false,
-      hint:
-        lastBuildAttempt?.outcome === "failed" || lastBuildAttempt?.outcome === "skipped"
-          ? `Review graph unavailable: ${lastBuildAttempt.reason ?? lastBuildAttempt.outcome}. A retry was ${kickedOff ? "started" : "not started"}.`
-          : kickedOff
-            ? "No review graph cached for this workspace yet — a build was kicked off in the background; retry this call shortly."
-            : "No review graph cached for this workspace yet — the background build is still running; retry this call shortly.",
-      ...(lastBuildAttempt ? { lastBuildAttempt } : {}),
-      ...(view ? { view } : {}),
-    };
+    return assignOptionalProperties(
+      assignOptionalProperties(
+        {
+          available: false,
+          hint:
+            lastBuildAttempt?.outcome === "failed" || lastBuildAttempt?.outcome === "skipped"
+              ? `Review graph unavailable: ${lastBuildAttempt.reason ?? lastBuildAttempt.outcome}. A retry was ${kickedOff ? "started" : "not started"}.`
+              : kickedOff
+                ? "No review graph cached for this workspace yet — a build was kicked off in the background; retry this call shortly."
+                : "No review graph cached for this workspace yet — the background build is still running; retry this call shortly.",
+        },
+        lastBuildAttempt,
+        () => ({ lastBuildAttempt }),
+      ),
+      view,
+      () => ({ view }),
+    );
   }
 
   const degrees = buildFileDegrees(graph);
@@ -796,17 +832,16 @@ export async function projectReport(
   const deadWeight = computeDeadWeight(graph, degrees, entryPointFiles, cwd, limit);
   const lastBuildAttempt = getLastReviewGraphBuildAttempt(cwd);
 
-  return {
-    available: true,
-    ...(lastBuildAttempt ? { lastBuildAttempt } : {}),
-    ...(view ? { view } : {}),
-    trust,
-    hubs,
-    entryPoints,
-    subsystems,
-    riskHotspots,
-    deadWeight,
-  };
+  return Object.assign(
+    assignOptionalProperties(
+      assignOptionalProperties({ available: true }, lastBuildAttempt, () => ({
+        lastBuildAttempt,
+      })),
+      view,
+      () => ({ view }),
+    ),
+    { trust, hubs, entryPoints, subsystems, riskHotspots, deadWeight },
+  );
 }
 
 // --- compact (line-oriented text) rendering -------------------------------------

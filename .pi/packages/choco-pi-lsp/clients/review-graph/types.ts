@@ -1,3 +1,4 @@
+import type { ProtocolDictionary } from "../../tools/runtime-values.js";
 export type ReviewGraphNodeKind = "file" | "symbol" | "module" | "external";
 export type ReviewGraphEdgeKind = "contains" | "defines" | "imports" | "calls" | "references";
 
@@ -25,14 +26,14 @@ export interface ReviewGraphNode {
   qualifiedName?: string;
   /** Origin of fallback-derived symbol data. Omitted for tree-sitter/fact nodes. */
   provenance?: "lsp";
-  metadata?: Record<string, unknown>;
+  metadata?: ProtocolDictionary;
 }
 
 export interface ReviewGraphEdge {
   from: string;
   to: string;
   kind: ReviewGraphEdgeKind;
-  metadata?: Record<string, unknown>;
+  metadata?: ProtocolDictionary;
   /**
    * Resolution confidence for a `calls`/`references` edge. A callee/reference
    * is initially matched by bare name only (the extractor sees no import/type

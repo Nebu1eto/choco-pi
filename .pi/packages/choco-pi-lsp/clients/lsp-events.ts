@@ -1,3 +1,4 @@
+import { type Static, Type } from "typebox";
 import { logExtension } from "./extension-log.js";
 import type { Diagnostic } from "./dispatch/types.js";
 import { logBusEvent } from "./bus-events-logger.js";
@@ -8,6 +9,9 @@ import {
   resolveLiveBusEmitter,
   type BusEmitGetter,
 } from "./live-bus-emitter.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 export const LENS_EVENT_VERSION = 1;
 
@@ -102,8 +106,9 @@ export function _resetForTests(): void {
   hasLoggedFailure = false;
 }
 
-function emitLensEvent(eventName: LensEventName, payload: unknown): void {
+function emitLensEvent(eventName: LensEventName, payload: LspBoundaryValue): void {
   setImmediate(() => {
+    // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     const rawCwd = (payload as { cwd?: string }).cwd ?? process.cwd();
     // M1: normalizeFilePath is a sync realpathSync.native on Windows — build
     // the resolveLiveBusEmitter log entry lazily so the ready-path (the

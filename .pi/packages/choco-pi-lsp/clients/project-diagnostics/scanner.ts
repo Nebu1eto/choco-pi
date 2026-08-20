@@ -62,7 +62,11 @@ const FACT_RULE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cj
 // this broad project scan runs them. scanner.test.ts asserts this map covers
 // every non-disabled rule dir whose grammar is loadable, so adding a language dir
 // fails a test until its extension is registered here (or in EXT_TO_LANG).
-export const TREE_SITTER_EXT_TO_LANG: Record<string, string> = {
+interface TreeSitterLanguageByExtension {
+  [extension: string]: string;
+}
+
+export const TREE_SITTER_EXT_TO_LANG: TreeSitterLanguageByExtension = {
   ...EXT_TO_LANG,
   ".java": "java",
   ".kt": "kotlin",

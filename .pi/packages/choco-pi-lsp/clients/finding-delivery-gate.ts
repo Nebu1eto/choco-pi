@@ -89,6 +89,9 @@
  * agent-facing surface is EITHER gated OR explicitly labeled — never neither.
  */
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+
 const MS_PER_MINUTE = 60_000;
 
 /**
@@ -105,7 +108,7 @@ export function formatCacheAgeLabel(
   if (scannedAt === undefined || scannedAt === null || scannedAt === "") {
     return "scan age unknown";
   }
-  const scannedAtMs = typeof scannedAt === "number" ? scannedAt : Date.parse(scannedAt);
+  const scannedAtMs = Value.Check(Type.Number(), scannedAt) ? scannedAt : Date.parse(scannedAt);
   if (!Number.isFinite(scannedAtMs)) return "scan age unknown";
   const ageMs = Math.max(0, nowMs - scannedAtMs);
   const ageMinutes = Math.round(ageMs / MS_PER_MINUTE);
@@ -245,7 +248,7 @@ function labeled(
 const RUNTIME_TURN_FILE = "clients/runtime-turn.ts";
 const LENS_DIAGNOSTICS_FILE = "tools/diagnostics-report.ts";
 
-export const DELIVERY_SURFACES: Record<string, DeliverySurfaceEntry> = {
+export const DELIVERY_SURFACES = {
   // Two tagged seams (the stale and live render branches below the same
   // `sweepInlineBlockerFreshness` call) legitimately share one evidence
   // occurrence — evidenceMin: 2 tells the exclusive-assignment check both
@@ -370,7 +373,7 @@ export const DELIVERY_SURFACES: Record<string, DeliverySurfaceEntry> = {
     ["reconcileProjectDiagnosticsSnapshot"],
     ["reconcileProjectDiagnosticsSnapshot("],
   ),
-};
+} satisfies Record<string, DeliverySurfaceEntry>;
 
 function assertPartialStatusHasReason(id: string, entry: DeliverySurfaceEntry): void {
   if (entry.status === "partial" && !entry.partialReason) {
@@ -380,7 +383,7 @@ function assertPartialStatusHasReason(id: string, entry: DeliverySurfaceEntry): 
   }
 }
 
-function assertGatedShapeIsWellFormed(id: string, entry: GatedDeliverySurface): void {
+function assertGatedEntryIsWellFormed(id: string, entry: GatedDeliverySurface): void {
   if (!Array.isArray(entry.gates) || entry.gates.length === 0) {
     throw new Error(`finding-delivery-gate: surface "${id}" is mode=gated but names no gate`);
   }
@@ -389,7 +392,7 @@ function assertGatedShapeIsWellFormed(id: string, entry: GatedDeliverySurface): 
   }
 }
 
-function assertLabeledShapeIsWellFormed(id: string, entry: LabeledDeliverySurface): void {
+function assertLabeledEntryIsWellFormed(id: string, entry: LabeledDeliverySurface): void {
   if (!entry.reason || !entry.ageSource) {
     throw new Error(
       `finding-delivery-gate: surface "${id}" is mode=labeled but is missing reason/ageSource`,
@@ -417,13 +420,15 @@ export function assertNoDeliveryBypass(
   for (const [id, entry] of Object.entries(registry)) {
     assertPartialStatusHasReason(id, entry);
     if (entry.mode === "gated") {
-      assertGatedShapeIsWellFormed(id, entry);
+      assertGatedEntryIsWellFormed(id, entry);
       continue;
     }
     if (entry.mode === "labeled") {
-      assertLabeledShapeIsWellFormed(id, entry);
+      assertLabeledEntryIsWellFormed(id, entry);
       continue;
     }
+    // SAFETY: This branch is reachable only for a malformed runtime registry entry; reading its
+    // optional mode is diagnostic-only and does not treat the entry as a valid delivery surface.
     throw new Error(
       `finding-delivery-gate: surface "${id}" has unrecognized mode ${JSON.stringify((entry as { mode?: unknown }).mode)} — must be "gated" or "labeled"`,
     );

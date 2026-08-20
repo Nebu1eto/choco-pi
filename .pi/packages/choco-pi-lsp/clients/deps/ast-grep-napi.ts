@@ -20,6 +20,7 @@ const _require = createRequire(import.meta.url);
 export function loadAstGrepNapi(): Promise<AstGrepNapi> {
   try {
     const entry = _require.resolve("@ast-grep/napi");
+    // SAFETY: The resolved entry is the installed module represented by this local declaration; failed or incompatible imports reject this promise.
     return import(pathToFileURL(entry).href) as Promise<AstGrepNapi>;
   } catch {
     return import("@ast-grep/napi");

@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { normalizeMapKey } from "./path-utils.js";
@@ -181,7 +183,8 @@ export function loadReverseDependencyIndexFromSnapshot(args: {
 }): ReverseDependencyIndex | null {
   const snapshot = loadProjectSnapshot(args.cwd);
   if (!snapshot) return null;
-  if (typeof args.currentProjectSeq === "number" && snapshot.seq !== args.currentProjectSeq) {
+
+  if (Check(Type.Number(), args.currentProjectSeq) && snapshot.seq !== args.currentProjectSeq) {
     return null;
   }
   return buildReverseDependencyIndexFromSnapshot(snapshot);
@@ -243,7 +246,9 @@ export function writeReverseDependencyIndexToSnapshot(args: {
     for (const [filePath, importers] of Object.entries(args.index.importedBy)) {
       reverseDeps[normalizeMapKey(filePath)] = sortedUnique(importers);
     }
-    const files: Record<string, ProjectSnapshotFile> = { ...snapshot.files };
+
+    interface FilesValues extends Record<string, ProjectSnapshotFile> {}
+    const files: FilesValues = { ...snapshot.files };
     for (const [filePath, imports] of Object.entries(args.index.imports)) {
       const normalized = normalizeMapKey(filePath);
       files[normalized] = {

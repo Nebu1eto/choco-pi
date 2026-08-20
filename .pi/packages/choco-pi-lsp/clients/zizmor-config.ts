@@ -11,6 +11,11 @@ import {
   startHostStallSampler,
 } from "./dispatch/runners/utils/availability-policy.js";
 
+type ClassifyGhTokenFailureResultContract = {
+  outcome: AvailabilityOutcome;
+  cause: AvailabilityCause;
+};
+
 /**
  * zizmor (GitHub Actions workflow security scanner) configuration discovery and
  * online-mode token resolution. zizmor runs as a cross-cutting auxiliary LSP
@@ -126,7 +131,7 @@ export function _resetZizmorTokenCacheForTests(): void {
 function classifyGhTokenFailure(
   res: SpawnResult,
   hostStallMs: number,
-): { outcome: AvailabilityOutcome; cause: AvailabilityCause } {
+): ClassifyGhTokenFailureResultContract {
   // #1651 review F5: `!res.error` alone is not proof gh ran and answered.
   // A `null` or negative `status` is Node's OWN signal that the process
   // never completed a real run — no completed process exits with either —
@@ -139,10 +144,12 @@ function classifyGhTokenFailure(
     // The process ran to completion with a real (nonzero, since the zero
     // exit is handled before this is ever called) exit code — a genuine
     // "not authenticated" (or otherwise rejected) answer, safe to cache.
+
     return { outcome: "non-installable", cause: "probe-rejected" };
   }
   if (res.spawnFailure?.kind === "tool-not-found") {
     // gh genuinely isn't on PATH — a durable fact about the machine.
+
     return { outcome: "missing", cause: "not-found" };
   }
   const classified = classifyProbeFailure(res, { hostStallMs });
@@ -152,6 +159,7 @@ function classifyGhTokenFailure(
   // Everything else (EACCES/permission-denied, cwd-unresolvable, a generic
   // spawn-failed, or an unrecognized errno) means the child never launched —
   // that's evidence about this moment, not about gh's auth state.
+
   return { outcome: "transient", cause: classified.cause };
 }
 

@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "./runtime-values.js";
 /**
  * project_report pi tool (#773) — the top of the discovery funnel:
  * project_report orients the agent in the project, module_report explains one
@@ -16,7 +17,7 @@ import {
 } from "../clients/lsp-engine.js";
 import { compactRenderResult } from "./render-compact.js";
 
-function errorMessage(err: unknown): string {
+function errorMessage<T>(err: T): string {
   return err instanceof Error ? err.message : String(err);
 }
 
@@ -67,7 +68,7 @@ export function createProjectReportTool(getProjectRoot: () => string) {
       _toolCallId: string,
       params: { limit?: number; focus?: string; view?: "default" | "compact" },
       _signal: AbortSignal | undefined,
-      _onUpdate: unknown,
+      _onUpdate: RuntimeValue,
       ctx: { cwd?: string },
     ) {
       const cwd = getProjectRoot() || ctx.cwd || ".";

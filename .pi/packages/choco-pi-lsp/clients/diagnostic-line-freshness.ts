@@ -292,9 +292,9 @@ export function demotePastEofDiagnostics<T extends PastEofDiagnosticLike>(args: 
     // Another gate's demotion is not this gate's to heal (#1631 drift
     // entries have in-bounds lines; re-deriving here would clear them).
     if (d.stale && d.staleReason !== undefined && d.staleReason !== "past-eof") return d;
-    const isPastEof = typeof d.line === "number" && d.line > lineCount;
+    const isPastEof = d.line !== undefined && d.line > lineCount;
     if (isPastEof === !!d.stale) return d; // no transition either direction
-    if (isPastEof) risingEdgeLines.push(d.line as number);
+    if (isPastEof && d.line !== undefined) risingEdgeLines.push(d.line);
     return { ...d, stale: isPastEof, staleReason: isPastEof ? "past-eof" : undefined };
   });
   if (risingEdgeLines.length === 0) {

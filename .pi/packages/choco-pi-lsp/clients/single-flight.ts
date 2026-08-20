@@ -1,3 +1,6 @@
+import { type Static, Type } from "typebox";
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 /**
  * `singleFlight` — at most one execution per key, clear owned by the primitive.
  *
@@ -166,7 +169,8 @@ export function createSingleFlight<T>(options: SingleFlightOptions = {}): Single
     // starting the work, which leaves a synchronous window where a reentrant
     // call starts a second flight for the same key.
     let settle!: (value: T) => void;
-    let fail!: (error: unknown) => void;
+
+    let fail!: (error: LspBoundaryValue) => void;
     const promise = new Promise<T>((resolve, reject) => {
       settle = resolve;
       fail = reject;

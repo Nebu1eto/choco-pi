@@ -1,5 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { getProjectDataDir } from "../file-utils.js";
 import { writeFileAtomic } from "../atomic-write.js";
 import { readJsonCache } from "../json-cache-read.js";
@@ -85,6 +87,14 @@ export interface WorkspaceDiagnosticsCache {
   version: number;
   entries: Record<string, WorkspaceDiagnosticsCacheEntry>;
 }
+
+const WorkspaceDiagnosticsCacheSchema = Type.Object(
+  {
+    version: Type.Literal(WORKSPACE_DIAGNOSTICS_CACHE_VERSION),
+    entries: Type.Record(Type.String(), Type.Unknown()),
+  },
+  { additionalProperties: true },
+);
 
 function cachePath(cwd: string): string {
   return path.join(getProjectDataDir(cwd), "cache", CACHE_FILE);
@@ -180,11 +190,9 @@ const _cacheEpochs = createGenerationMap("workspace-diagnostics-cache", {
  * `loadProjectDiagnosticsSnapshot`. */
 export function loadWorkspaceDiagnosticsCache(cwd: string): WorkspaceDiagnosticsCache | undefined {
   return readJsonCache<WorkspaceDiagnosticsCache>(cachePath(cwd), (parsed) => {
-    if (!parsed || typeof parsed !== "object") return undefined;
-    const cache = parsed as WorkspaceDiagnosticsCache;
-    if (cache.version !== WORKSPACE_DIAGNOSTICS_CACHE_VERSION) return undefined;
-    if (!cache.entries || typeof cache.entries !== "object") return undefined;
-    return cache;
+    if (!Value.Check(WorkspaceDiagnosticsCacheSchema, parsed)) return undefined;
+    // SAFETY: The shallow schema matches the legacy cache loader; each entry is checked for freshness before use.
+    return parsed as WorkspaceDiagnosticsCache;
   });
 }
 
@@ -386,9 +394,7 @@ export function createWorkspaceDiagnosticsCacheContext(
   // #1669: captured at load time — see the epoch doc comment above.
   const epoch = _cacheEpochs.capture(root);
   const existing = loadWorkspaceDiagnosticsCache(root);
-  const entries: Record<string, WorkspaceDiagnosticsCacheEntry> = {
-    ...(existing?.entries ?? {}),
-  };
+  const entries = { ...existing?.entries };
   const reverseDepsIndex = loadReverseDependencyIndexFromSnapshot({
     cwd: root,
   });

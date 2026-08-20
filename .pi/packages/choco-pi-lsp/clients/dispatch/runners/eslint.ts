@@ -57,10 +57,12 @@ interface EslintFileResult {
   messages: EslintMessage[];
 }
 
-function parseEslintJson(
-  raw: string,
-  filePath: string,
-): { diagnostics: Diagnostic[]; parseError?: string } {
+interface EslintParseResult {
+  diagnostics: Diagnostic[];
+  parseError?: string;
+}
+
+function parseEslintJson(raw: string, filePath: string): EslintParseResult {
   try {
     const results: EslintFileResult[] = JSON.parse(raw);
     const autofix = getAutofixCapability("eslint");

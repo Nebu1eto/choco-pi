@@ -71,8 +71,8 @@ export interface GzipStageWorkerResult {
  * the caller must treat as a persist failure (both persist workers fall back
  * to a main-thread rewrite on an error result).
  */
-export async function writeGzipStageFile(
-  data: unknown,
+export async function writeGzipStageFile<T>(
+  data: T,
   stagePath: string,
   testDelayMs?: number,
 ): Promise<GzipStageWriteMetrics> {

@@ -41,7 +41,7 @@ export function unrefChildAndPipes(child: ChildProcess): void {
     // optional-`unref` shape and guard, so an un-piped ("ignore") stream is a
     // no-op rather than a crash.
     for (const stream of [child.stdout, child.stderr, child.stdin]) {
-      (stream as { unref?: () => void } | null)?.unref?.();
+      if (stream && "unref" in stream && stream.unref instanceof Function) stream.unref();
     }
   } catch {
     // best-effort — unref must never throw out of a fire-and-forget spawn

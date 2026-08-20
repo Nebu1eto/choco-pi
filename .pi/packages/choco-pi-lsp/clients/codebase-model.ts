@@ -13,6 +13,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { getProjectDataDir } from "./file-utils.js";
 import { writeFileAtomic } from "./atomic-write.js";
 import { parseSymbolKey } from "./call-graph.js";
@@ -61,6 +63,32 @@ const MIN_IN_DEGREE = 0.5; // skip symbols with low centrality (avoids noise)
 
 /** Persisted model schema version. Bump when the persisted shape changes. */
 export const CODEBASE_MODEL_VERSION = 1;
+
+const CodebaseModelSchema = Type.Object({
+  version: Type.Literal(CODEBASE_MODEL_VERSION),
+  reviewGraphVersion: Type.String({ minLength: 1 }),
+  reviewGraphSignature: Type.String({ minLength: 1 }),
+  generatedAt: Type.String(),
+  totalSymbols: Type.Number(),
+  totalFiles: Type.Number(),
+  entries: Type.Array(
+    Type.Object({
+      file: Type.String(),
+      name: Type.String(),
+      kind: Type.Union([
+        Type.Literal("function"),
+        Type.Literal("method"),
+        Type.Literal("class"),
+        Type.Literal("unknown"),
+      ]),
+      calls: Type.Array(Type.String()),
+      calledBy: Type.Array(Type.String()),
+      inDegree: Type.Number(),
+      tokens: Type.Number(),
+    }),
+  ),
+  totalTokens: Type.Number(),
+});
 
 // ── Builder ───────────────────────────────────────────────────────────────────
 
@@ -214,23 +242,14 @@ export function loadCodebaseModel(
   expectedIdentity: CallGraphCacheIdentity,
 ): CodebaseModel | undefined {
   try {
-    const raw = JSON.parse(fs.readFileSync(cacheFilePath(cwd), "utf-8")) as Partial<CodebaseModel>;
-    if (
-      raw.version !== CODEBASE_MODEL_VERSION ||
-      typeof raw.reviewGraphVersion !== "string" ||
-      raw.reviewGraphVersion.length === 0 ||
-      typeof raw.reviewGraphSignature !== "string" ||
-      raw.reviewGraphSignature.length === 0 ||
-      typeof raw.generatedAt !== "string" ||
-      !Array.isArray(raw.entries)
-    )
-      return undefined;
+    const raw = JSON.parse(fs.readFileSync(cacheFilePath(cwd), "utf-8"));
+    if (!Value.Check(CodebaseModelSchema, raw)) return undefined;
     if (
       raw.reviewGraphVersion !== expectedIdentity.reviewGraphVersion ||
       raw.reviewGraphSignature !== expectedIdentity.reviewGraphSignature
     )
       return undefined;
-    return raw as CodebaseModel;
+    return raw;
   } catch {
     return undefined;
   }

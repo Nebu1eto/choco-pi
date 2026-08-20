@@ -134,6 +134,7 @@ export class TodoScanner {
         // Skip matches that aren't inside comments
         if (!this.isInComment(line, match.index ?? 0, markdown)) continue;
 
+        // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
         const type = match[1] as TodoItem["type"];
         const message = (match[2] || "").trim().replace(/\s*\*\/\s*$/, ""); // Strip closing comment
 

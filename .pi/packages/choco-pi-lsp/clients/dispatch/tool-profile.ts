@@ -8,7 +8,11 @@ const DEFAULT_TOOL_PROFILE: ToolProfile = {
   lintLike: false,
 };
 
-const TOOL_PROFILE_MAP: Record<string, ToolProfile> = {
+interface ToolProfileMap {
+  [tool: string]: ToolProfile;
+}
+
+const TOOL_PROFILE_MAP: ToolProfileMap = {
   "tree-sitter:silent-error": { dedupPriority: 200, lintLike: false },
   lsp: { dedupPriority: 120, lintLike: false },
   eslint: { dedupPriority: 110, lintLike: true },

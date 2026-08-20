@@ -65,6 +65,8 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { logLatency } from "../../latency-logger.js";
 import { PathKeyedMap } from "../../path-keyed-map.js";
 import { normalizeMapKey } from "../../path-utils.js";
@@ -93,6 +95,37 @@ const RENDER_TIMEOUT_MS = 30_000;
 /** Rendered manifests we are willing to read back, so a chart cannot flood us. */
 const MAX_RENDERED_FILES = 400;
 
+const HelmConfigSchema = Type.Object(
+  {
+    helm: Type.Optional(
+      Type.Object({
+        renderValidation: Type.Optional(Type.Object({ enabled: Type.Optional(Type.Boolean()) })),
+      }),
+    ),
+  },
+  { additionalProperties: true },
+);
+
+interface RenderedSourceMapping {
+  filePath: string;
+  mapped: boolean;
+}
+
+interface RenderedFileCollection {
+  files: string[];
+  truncated: boolean;
+}
+
+interface RenderedTree {
+  manifests: RenderedManifest[];
+  truncated: boolean;
+  unreadable: number;
+}
+
+interface RenderPassMetadata {
+  [key: string]: string | number | boolean | undefined;
+}
+
 const SKIPPED: RunnerResult = {
   status: "skipped",
   diagnostics: [],
@@ -120,10 +153,8 @@ function isWithin(root: string, candidate: string): boolean {
 export function isHelmRenderEnabled(workspaceRoot: string): boolean {
   try {
     const config = loadPiLensProjectConfig(workspaceRoot);
-    const helmConfig = (
-      config.raw as { helm?: { renderValidation?: { enabled?: unknown } } } | undefined
-    )?.helm;
-    return helmConfig?.renderValidation?.enabled === true;
+    if (!Value.Check(HelmConfigSchema, config.raw)) return false;
+    return config.raw.helm?.renderValidation?.enabled === true;
   } catch {
     return false;
   }
@@ -234,7 +265,7 @@ export function mapRenderedToSource(options: {
   chartRoot: string;
   /** Canonicalized chart root, hoisted by the per-pass caller. */
   realChartRoot?: string;
-}): { filePath: string; mapped: boolean } {
+}): RenderedSourceMapping {
   const { chartRoot, realChartRoot } = options;
   const annotation = SOURCE_ANNOTATION.exec(options.renderedContent);
   if (annotation) {
@@ -311,7 +342,7 @@ export function parseHelmTemplateFailure(raw: string, chartRoot: string): Diagno
  * checking (kubeconform) needs another binary plus installer, availability and
  * gate wiring, and is deliberately out of Slice B's scope.
  */
-export function checkManifestShape(options: {
+export function validateRenderedManifests(options: {
   renderedContent: string;
   renderedRelativePath: string;
   sourcePath: string;
@@ -346,6 +377,8 @@ export function checkManifestShape(options: {
   });
   return diagnostics;
 }
+
+export { validateRenderedManifests as "checkManifestShape" };
 
 /**
  * The runner could not start. Helm is the only tool that can reach this: an
@@ -439,15 +472,13 @@ function spawnFailureKind(result: {
  * `isDirectory()` nor `isFile()` and the walk cannot be led out of the scratch
  * directory. Keep it that way.
  */
-function collectRenderedFiles(root: string): {
-  files: string[];
-  truncated: boolean;
-} {
+function collectRenderedFiles(root: string): RenderedFileCollection {
   const files: string[] = [];
   const stack = [root];
   let truncated = false;
   while (stack.length > 0 && !truncated) {
-    const dir = stack.pop() as string;
+    const dir = stack.pop();
+    if (dir === undefined) continue;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -493,10 +524,7 @@ interface RenderedManifest {
 }
 
 /** Read the rendered tree back and resolve each file to its source template. */
-function readRenderedTree(
-  outputDir: string,
-  chartRoot: string,
-): { manifests: RenderedManifest[]; truncated: boolean; unreadable: number } {
+function readRenderedTree(outputDir: string, chartRoot: string): RenderedTree {
   const manifests: RenderedManifest[] = [];
   const walk = collectRenderedFiles(outputDir);
   // Hoisted: the chart root's realpath is one answer for the whole pass, and
@@ -569,7 +597,7 @@ function logRenderPass(
   filePath: string,
   chartRoot: string,
   startedAt: number,
-  metadata: Record<string, unknown>,
+  metadata: RenderPassMetadata,
 ): void {
   logLatency({
     type: "phase",
@@ -686,7 +714,7 @@ async function renderAndValidate(
     const diagnostics: Diagnostic[] = [];
     for (const manifest of tree.manifests) {
       diagnostics.push(
-        ...checkManifestShape({
+        ...validateRenderedManifests({
           renderedContent: manifest.content,
           renderedRelativePath: manifest.relativePath,
           sourcePath: manifest.sourcePath,

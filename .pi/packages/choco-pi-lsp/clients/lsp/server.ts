@@ -11,6 +11,8 @@ import { existsSync, mkdirSync } from "node:fs";
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import {
   getGlobalPiLensDir,
   getProjectIgnoreGlobs,
@@ -48,6 +50,15 @@ import { getRubyVersionDirNamesSync } from "./ruby-drive-dirs.js";
 // --- Types ---
 
 export type RootFunction = (file: string) => Promise<string | undefined>;
+
+const PackageVersionSchema = Type.Object(
+  { version: Type.String() },
+  { additionalProperties: true },
+);
+const FsErrorSchema = Type.Object(
+  { code: Type.Optional(Type.String()) },
+  { additionalProperties: true },
+);
 
 const FIXTURE_ROOT_SEGMENTS = new Set(["__fixtures__", "testdata"]);
 const FALLBACK_PROJECT_MARKERS = [
@@ -101,16 +112,16 @@ const PROJECT_BOUNDARY_MARKERS = [
 const loggedRootCeilingClamps = new Set<string>();
 
 function isSameOrWithin(ancestor: string, candidate: string): boolean {
-  const windowsShaped = isWindowsPath(ancestor) || isWindowsPath(candidate);
-  const pathApi = windowsShaped ? path.win32 : path;
+  const usesWindowsPaths = isWindowsPath(ancestor) || isWindowsPath(candidate);
+  const pathApi = usesWindowsPaths ? path.win32 : path;
   const relative = pathApi.relative(pathApi.resolve(ancestor), pathApi.resolve(candidate));
   return relative === "" || (!relative.startsWith("..") && !pathApi.isAbsolute(relative));
 }
 
 /** Enforce the session cwd as the hard boundary for LSP client root selection. */
 export function enforceLspRootCeiling(root: string, sessionCwd: string, filePath?: string): string {
-  const windowsShaped = isWindowsPath(root) || isWindowsPath(sessionCwd);
-  const pathApi = windowsShaped ? path.win32 : path;
+  const usesWindowsPaths = isWindowsPath(root) || isWindowsPath(sessionCwd);
+  const pathApi = usesWindowsPaths ? path.win32 : path;
   const resolvedRoot = pathApi.resolve(root);
   const resolvedCwd = pathApi.resolve(sessionCwd);
   // Callers may explicitly inspect an out-of-session file (notably isolated
@@ -269,7 +280,7 @@ export interface LSPServerInfo {
   ): Promise<
     | {
         process: LSPProcess;
-        initialization?: Record<string, unknown>;
+        initialization?: InitializationConfig;
         source?: "direct" | "managed" | "package-manager" | "interactive";
         /**
          * Which concrete binary/protocol variant was launched for this server
@@ -390,7 +401,7 @@ export async function resolveAndLaunch(
 ): Promise<{ process: LSPProcess; source: "direct" | "managed" | "package-manager" } | undefined> {
   const toolLabel = spec.managedToolId ?? spec.candidates[spec.candidates.length - 1] ?? "unknown";
   let lastRuntimeFailure: Error | undefined;
-  const trackRuntimeFailure = (err: unknown): void => {
+  const trackRuntimeFailure = <T>(err: T): void => {
     const message = err instanceof Error ? err.message : String(err);
     if (!hasSpawnFailureKind(err, "tool-not-found")) {
       lastRuntimeFailure = err instanceof Error ? err : new Error(message);
@@ -836,7 +847,22 @@ function rubyBinCandidates(baseName: string): string[] {
   return candidates;
 }
 
-type InitializationConfig = Record<string, unknown>;
+interface InitializationConfig {
+  [key: string]: InitializationValue;
+}
+
+type InitializationValue =
+  | string
+  | number
+  | boolean
+  | null
+  | InitializationConfig
+  | InitializationValue[];
+
+interface InteractiveLaunchOptions {
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+}
 
 interface InteractiveServerSpec {
   id: string;
@@ -863,10 +889,13 @@ function createInteractiveServer(spec: InteractiveServerSpec): LSPServerInfo {
     extensions: spec.extensions,
     root: spec.root,
     availabilityKey:
-      typeof spec.command === "string" && isSimpleCommand(spec.command) ? spec.command : undefined,
+      Value.Check(Type.String(), spec.command) && isSimpleCommand(spec.command)
+        ? spec.command
+        : undefined,
     async spawn(root) {
-      const command = typeof spec.command === "function" ? spec.command(root) : spec.command;
-      const args = typeof spec.args === "function" ? spec.args(root) : spec.args || [];
+      const command = Value.Check(Type.String(), spec.command) ? spec.command : spec.command(root);
+      const args =
+        spec.args === undefined ? [] : Array.isArray(spec.args) ? spec.args : spec.args(root);
       // Try to launch directly — no auto-install for language-runtime tools
       // (C#, Java, Swift, etc. require their SDK; cannot npm/pip install them)
       if (isSimpleCommand(command) && isDirectLspCommandTemporarilyUnavailable(command)) {
@@ -877,14 +906,11 @@ function createInteractiveServer(spec: InteractiveServerSpec): LSPServerInfo {
       // it launches instead of silently failing with no_clients.
       const runtimeEnv = spec.runtime === "java" ? await resolveJavaRuntimeEnv() : undefined;
       try {
-        const proc = await launchLSP(command, args, {
-          cwd: root,
-          ...(runtimeEnv ? { env: runtimeEnv } : {}),
-        });
+        const launchOptions: InteractiveLaunchOptions = { cwd: root };
+        if (runtimeEnv) launchOptions.env = runtimeEnv;
+        const proc = await launchLSP(command, args, launchOptions);
         const initialization =
-          typeof spec.initialization === "function"
-            ? spec.initialization(root)
-            : spec.initialization;
+          spec.initialization instanceof Function ? spec.initialization(root) : spec.initialization;
         return { process: proc, source: "direct", initialization };
       } catch (err) {
         if (hasSpawnFailureKind(err, "tool-not-found")) {
@@ -934,9 +960,9 @@ export function WorkspacePriorityRoot(
   return async (file: string) => PriorityRoot(markerGroups, excludePatterns, process.cwd())(file);
 }
 
-function isPermissionFsError(err: unknown): boolean {
-  const code = (err as { code?: unknown })?.code;
-  return code === "EACCES" || code === "EPERM";
+function isPermissionFsError<T>(err: T): boolean {
+  if (!Value.Check(FsErrorSchema, err)) return false;
+  return err.code === "EACCES" || err.code === "EPERM";
 }
 
 async function markerExists(dir: string, pattern: string): Promise<boolean> {
@@ -1251,15 +1277,8 @@ async function typescriptVersionForTsc(
     }
     let version: string;
     try {
-      const parsed: unknown = JSON.parse(manifest);
-      if (
-        typeof parsed !== "object" ||
-        parsed === null ||
-        !("version" in parsed) ||
-        typeof parsed.version !== "string"
-      ) {
-        return undefined;
-      }
+      const parsed = JSON.parse(manifest);
+      if (!Value.Check(PackageVersionSchema, parsed)) return undefined;
       version = parsed.version;
     } catch {
       return undefined;
@@ -1366,7 +1385,7 @@ async function findNativeTypeScriptLsp(root: string): Promise<NativeTypeScriptLs
     try {
       packageJsonText = await readFile(packageJsonPath, "utf8");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      if (!Value.Check(FsErrorSchema, error) || error.code !== "ENOENT") {
         return undefined;
       }
       // A `node_modules/typescript/` directory that exists but has no
@@ -1388,15 +1407,8 @@ async function findNativeTypeScriptLsp(root: string): Promise<NativeTypeScriptLs
 
     let version: string;
     try {
-      const parsed: unknown = JSON.parse(packageJsonText);
-      if (
-        typeof parsed !== "object" ||
-        parsed === null ||
-        !("version" in parsed) ||
-        typeof parsed.version !== "string"
-      ) {
-        return undefined;
-      }
+      const parsed = JSON.parse(packageJsonText);
+      if (!Value.Check(PackageVersionSchema, parsed)) return undefined;
       version = parsed.version;
     } catch {
       return undefined;
@@ -1819,10 +1831,11 @@ export const PythonServer: LSPServerInfo = {
     // Avoids the 5–14 s cold-start on large projects caused by workspace-wide
     // analysis on startup. Deep type checking is still available via the standalone
     // pyright CLI runner that runs in parallel.
-    const pyrightInit = (pythonPath?: string): Record<string, unknown> => ({
-      ...(pythonPath ? { pythonPath } : {}),
-      openFilesOnly: true,
-    });
+    const pyrightInit = (pythonPath?: string): InitializationConfig => {
+      const initialization: InitializationConfig = { openFilesOnly: true };
+      if (pythonPath) initialization.pythonPath = pythonPath;
+      return initialization;
+    };
 
     // Prefer pyright-langserver; basedpyright-langserver is a drop-in fork with
     // the same --stdio protocol and additional rules (e.g. reportUnusedExpression).
@@ -1923,9 +1936,11 @@ export const PythonJediServer: LSPServerInfo = {
     );
     if (!launched) return undefined;
     const pythonPath = await detectPythonVenv(root);
+    const initialization: InitializationConfig = {};
+    if (pythonPath) initialization.workspace = { environmentPath: pythonPath };
     return {
       ...launched,
-      initialization: pythonPath ? { workspace: { environmentPath: pythonPath } } : {},
+      initialization,
     };
   },
 };
@@ -3082,13 +3097,15 @@ const OPENGREP_KINDS = [
   "terraform",
   "yaml",
 ] as const;
+function extensionsForKind(kind: string): readonly string[] {
+  return Object.entries(KIND_EXTENSIONS).find(([candidate]) => candidate === kind)?.[1] ?? [];
+}
+
 const OPENGREP_EXTENSIONS: readonly string[] = Array.from(
-  new Set(
-    OPENGREP_KINDS.flatMap((k) => (KIND_EXTENSIONS as Record<string, readonly string[]>)[k] ?? []),
-  ),
+  new Set(OPENGREP_KINDS.flatMap(extensionsForKind)),
 );
 
-function opengrepInitialization(root: string): Record<string, unknown> {
+function opengrepInitialization(root: string): InitializationConfig {
   // As an always-on LSP server, enablement is structural (the server is
   // registered); resolveOpengrepConfig here only chooses WHICH rules — a local
   // rule file if present, otherwise `auto`.
@@ -3168,9 +3185,7 @@ const AST_GREP_KINDS = [
   "yaml",
 ] as const;
 const AST_GREP_EXTENSIONS: readonly string[] = Array.from(
-  new Set(
-    AST_GREP_KINDS.flatMap((k) => (KIND_EXTENSIONS as Record<string, readonly string[]>)[k] ?? []),
-  ),
+  new Set(AST_GREP_KINDS.flatMap(extensionsForKind)),
 );
 
 export const AstGrepServer: LSPServerInfo = {
@@ -3257,16 +3272,14 @@ export const ZizmorServer: LSPServerInfo = {
     // offline mode (the env vars + `gh auth token` are resolved once and merged
     // over process.env by launchLSP).
     const ghToken = await resolveZizmorGitHubToken();
-    return resolveAndLaunch(
-      {
-        candidates: ["zizmor"],
-        args: ["--lsp"],
-        cwd: root,
-        managedToolId: "zizmor",
-        ...(ghToken ? { env: { GH_TOKEN: ghToken } } : {}),
-      },
-      options?.allowInstall,
-    );
+    const launchSpec: ResolveAndLaunchSpec = {
+      candidates: ["zizmor"],
+      args: ["--lsp"],
+      cwd: root,
+      managedToolId: "zizmor",
+    };
+    if (ghToken) launchSpec.env = { GH_TOKEN: ghToken };
+    return resolveAndLaunch(launchSpec, options?.allowInstall);
   },
   autoInstall: async () => Boolean(await ensureTool("zizmor")),
 };
@@ -3294,7 +3307,7 @@ const TYPOS_EXTENSIONS: readonly string[] = Array.from(
 // be injected alongside ours (see findLocalTyposConfig below): honoring an
 // existing project config means injecting NOTHING, letting typos-lsp read the
 // project's file untouched.
-function typosInitialization(root: string): Record<string, unknown> | undefined {
+function typosInitialization(root: string): InitializationConfig | undefined {
   const localConfig = findLocalTyposConfig(root);
   if (localConfig) {
     logLatency({

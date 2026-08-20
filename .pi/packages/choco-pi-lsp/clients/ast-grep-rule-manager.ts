@@ -83,7 +83,8 @@ export class AstGrepRuleManager {
         .join("\n");
     }
 
-    if (result.id && result.message) {
+    if (result.id && result.message && result.severity) {
+      // SAFETY: All required RuleDescription fields were checked above; remaining fields are optional.
       return result as RuleDescription;
     }
     return null;

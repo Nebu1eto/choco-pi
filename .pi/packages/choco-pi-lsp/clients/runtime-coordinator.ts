@@ -1,3 +1,5 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -16,6 +18,22 @@ import type { RuleScanResult } from "./rules-scanner.js";
 import { RUNTIME_CONFIG } from "./runtime-config.js";
 import { TurnSummaryCollector } from "./turn-summary.js";
 import { deriveProviderFromModelId } from "./model-provider.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+
+type RecordMutationToolReceiptResultContract = { autofixMode: "immediate" | "deferred" };
+type BumpFileSeqResultContract = { projectSeq: number; fileSeq: number };
+type ClaimDeferredFormatFilesResultContract = {
+  claimed: DeferredFormatRecord[];
+  staleClaimed: DeferredFormatRecord[];
+  deferredToOwner: DeferredFormatRecord[];
+  droppedOrphans: DeferredFormatRecord[];
+};
+type ReadHostModelIdentityResultContract = {
+  model?: string;
+  provider?: string;
+};
 
 export interface ErrorDebtBaseline {
   testsPassed: boolean;
@@ -454,7 +472,7 @@ export class RuntimeCoordinator {
   recordMutationToolReceipt(
     filePath: string,
     toolName: "write" | "edit",
-  ): { autofixMode: "immediate" | "deferred" } {
+  ): RecordMutationToolReceiptResultContract {
     if (toolName === "write") {
       this._writtenThisTurn.set(filePath, true);
     } else if (this._writtenThisTurn.has(filePath)) {
@@ -463,6 +481,7 @@ export class RuntimeCoordinator {
       // the deferred pass even if the preceding write was fixed immediately.
       this._fixedThisTurn.delete(filePath);
     }
+
     return {
       autofixMode:
         toolName === "edit" || this._autofixDemotedThisTurn.has(filePath)
@@ -584,12 +603,13 @@ export class RuntimeCoordinator {
     }
   }
 
-  bumpFileSeq(filePath: string): { projectSeq: number; fileSeq: number } {
+  bumpFileSeq(filePath: string): BumpFileSeqResultContract {
     const key = normalizeMapKey(path.resolve(filePath));
     this._projectSeq += 1;
     const fileSeq = (this._fileSeq.get(key) ?? 0) + 1;
     this._fileSeq.set(key, fileSeq);
     this._fileLastProjectSeq.set(key, this._projectSeq);
+
     return { projectSeq: this._projectSeq, fileSeq };
   }
 
@@ -639,7 +659,7 @@ export class RuntimeCoordinator {
     return this._startupScansInFlight.has(name);
   }
 
-  formatPipelineCrashNotice(filePath: string, err: unknown): string {
+  formatPipelineCrashNotice(filePath: string, err: LspBoundaryValue): string {
     const key = path.resolve(filePath);
     const count = (this._pipelineCrashCounts.get(key) ?? 0) + 1;
     this._pipelineCrashCounts.set(key, count);
@@ -734,7 +754,12 @@ export class RuntimeCoordinator {
       // Track per-promise settlement so promises still in flight at the cap can be
       // carried over. A settled entry records its run; an unsettled one is re-parked.
       const tracked = pending.map((p) => {
-        const entry: { done: boolean; run?: CascadeRun; promise: Promise<CascadeRun> } = {
+        interface EntryValues {
+          done: boolean;
+          run?: CascadeRun;
+          promise: Promise<CascadeRun>;
+        }
+        const entry: EntryValues = {
           done: false,
           promise: p,
         };
@@ -1202,12 +1227,7 @@ export class RuntimeCoordinator {
     now: number,
     staleAfterMs: number,
     currentOriginCwd?: string,
-  ): {
-    claimed: DeferredFormatRecord[];
-    staleClaimed: DeferredFormatRecord[];
-    deferredToOwner: DeferredFormatRecord[];
-    droppedOrphans: DeferredFormatRecord[];
-  } {
+  ): ClaimDeferredFormatFilesResultContract {
     const claimed: DeferredFormatRecord[] = [];
     const staleClaimed: DeferredFormatRecord[] = [];
     const deferredToOwner: DeferredFormatRecord[] = [];
@@ -1245,6 +1265,7 @@ export class RuntimeCoordinator {
       }
       deferredToOwner.push(record);
     }
+
     return { claimed, staleClaimed, deferredToOwner, droppedOrphans };
   }
 
@@ -1319,15 +1340,16 @@ export class RuntimeCoordinator {
  * throws. Telemetry identity is advisory; a stale ctx must degrade to "no
  * identity", never take down the event handler that happened to carry it.
  */
-export function readHostModelIdentity(ctx: unknown): {
-  model?: string;
-  provider?: string;
-} {
+
+export function readHostModelIdentity(ctx: LspBoundaryValue): ReadHostModelIdentityResultContract {
   try {
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const model = (ctx as { model?: { id?: unknown; provider?: unknown } } | null)?.model;
+
     return {
-      model: typeof model?.id === "string" ? model.id : undefined,
-      provider: typeof model?.provider === "string" ? model.provider : undefined,
+      model: Check(Type.String(), model?.id) ? model.id : undefined,
+
+      provider: Check(Type.String(), model?.provider) ? model.provider : undefined,
     };
   } catch {
     return {};

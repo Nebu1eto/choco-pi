@@ -1,4 +1,6 @@
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { getAutofixCapability, getLinterPolicyForCwd } from "../../tool-policy.js";
 import { PRIORITY } from "../priorities.js";
@@ -22,14 +24,25 @@ interface KtlintResult {
   errors: KtlintError[];
 }
 
-function normalizeKtlintResults(parsed: unknown): KtlintResult[] | null {
-  if (Array.isArray(parsed)) {
-    return parsed as KtlintResult[];
-  }
-  if (parsed && typeof parsed === "object" && Array.isArray((parsed as KtlintResult).errors)) {
-    return [parsed as KtlintResult];
-  }
-  return null;
+const KtlintResultSchema = Type.Object(
+  {
+    file: Type.Optional(Type.String()),
+    errors: Type.Array(
+      Type.Object({
+        line: Type.Number(),
+        col: Type.Number(),
+        detail: Type.String(),
+        ruleId: Type.String(),
+      }),
+    ),
+  },
+  { additionalProperties: true },
+);
+const KtlintOutputSchema = Type.Union([KtlintResultSchema, Type.Array(KtlintResultSchema)]);
+
+function normalizeKtlintResults<T>(parsed: T): KtlintResult[] | null {
+  if (!Value.Check(KtlintOutputSchema, parsed)) return null;
+  return Array.isArray(parsed) ? parsed : [parsed];
 }
 
 function parseKtlintOutput(raw: string, filePath: string): Diagnostic[] | null {

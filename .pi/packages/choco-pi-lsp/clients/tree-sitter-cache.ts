@@ -12,10 +12,15 @@
  * oldest insertion, and hot per-edit files survive scan traffic (#890).
  */
 
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import { logTreeSitterDiagnostic } from "./tree-sitter-logger.js";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import { normalizeFilePath } from "./path-utils.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 const TREE_RETIREMENT_GRACE_MICROTASKS = 4;
 
@@ -59,9 +64,20 @@ export const TREE_CACHE_COUNTER_KEYS = [
 ] as const satisfies readonly (keyof TreeCacheCounters)[];
 
 export function createTreeCacheCounters(): TreeCacheCounters {
-  return Object.fromEntries(
-    TREE_CACHE_COUNTER_KEYS.map((key) => [key, 0]),
-  ) as unknown as TreeCacheCounters;
+  return {
+    lookups: 0,
+    hits: 0,
+    coldMisses: 0,
+    capacityMisses: 0,
+    contentChangedMisses: 0,
+    mtimeMisses: 0,
+    statFailedMisses: 0,
+    sets: 0,
+    replacements: 0,
+    evictions: 0,
+    clears: 0,
+    ghostHistoryDrops: 0,
+  };
 }
 
 export interface TreeCacheStats extends TreeCacheCounters {
@@ -122,14 +138,16 @@ export class TreeCache {
   private debug: (msg: string) => void;
   private counters = createTreeCacheCounters();
   private counterObserver: TreeCacheCounterObserver | undefined;
-  private treeErrorObserver: ((error: unknown) => void) | undefined;
+
+  private treeErrorObserver: ((error: LspBoundaryValue) => void) | undefined;
 
   constructor(
     maxSize = TREE_CACHE_DEFAULT_MAX_SIZE,
     debug = false,
     evictionHistoryMax = 4096,
     counterObserver?: TreeCacheCounterObserver,
-    treeErrorObserver?: (error: unknown) => void,
+
+    treeErrorObserver?: (error: LspBoundaryValue) => void,
   ) {
     this.maxSize = maxSize;
     this.evictionHistoryMax = Math.max(1, Math.floor(evictionHistoryMax));
@@ -191,7 +209,7 @@ export class TreeCache {
   // biome-ignore lint/suspicious/noExplicitAny: web-tree-sitter Tree
   private freeTree(tree: any): void {
     try {
-      if (tree && typeof tree.delete === "function") tree.delete();
+      if (tree && Check(Type.Function([], Type.Unknown()), tree.delete)) tree.delete();
     } catch (error) {
       this.treeErrorObserver?.(error);
     }

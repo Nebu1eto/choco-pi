@@ -5,7 +5,15 @@ import type { ExtensionRunMode } from "./extension-mode.js";
 import type { ProjectTrustState } from "./project-trust.js";
 import type { UserNotifyLevel } from "./user-notify.js";
 
-export type HostLogSink = (entry: Record<string, unknown>) => void;
+export type HostLogValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | HostLogValue[]
+  | { [key: string]: HostLogValue };
+export type HostLogSink = (entry: Record<string, HostLogValue>) => void;
 
 export interface HostPorts {
   readonly notify: {
@@ -21,7 +29,7 @@ export interface HostPorts {
   };
   readonly log: {
     extension(entry: ExtensionLogEntry): void;
-    debug(message: string, metadata?: Record<string, unknown>): void;
+    debug(message: string, metadata?: Record<string, HostLogValue>): void;
     sink(subsystem: string): HostLogSink;
   };
   readonly emit: {
@@ -32,7 +40,7 @@ export interface HostPorts {
      * as vestigial (#1415 review) rather than kept as a distinction with no
      * behavioral difference.
      */
-    bus(channel: string, payload: unknown): void;
+    bus<T>(channel: string, payload: T): void;
   };
   readonly status: {
     set(name: string, value: string): void;
@@ -90,10 +98,18 @@ export function createDefaultHostPorts(overrides: HostPortsOverrides = {}): Host
     flags: { get: () => undefined },
     tools: { has: async () => false, getActive: () => [], setActive: () => {} },
   };
-  return Object.fromEntries(
-    Object.entries(defaults).map(([group, value]) => [
-      group,
-      { ...value, ...(overrides[group as keyof HostPorts] ?? {}) },
-    ]),
-  ) as unknown as HostPorts;
+  return {
+    notify: { ...defaults.notify, ...overrides.notify },
+    trust: { ...defaults.trust, ...overrides.trust },
+    mode: { ...defaults.mode, ...overrides.mode },
+    log: { ...defaults.log, ...overrides.log },
+    emit: { ...defaults.emit, ...overrides.emit },
+    status: { ...defaults.status, ...overrides.status },
+    spawn: { ...defaults.spawn, ...overrides.spawn },
+    render: { ...defaults.render, ...overrides.render },
+    session: { ...defaults.session, ...overrides.session },
+    workspace: { ...defaults.workspace, ...overrides.workspace },
+    flags: { ...defaults.flags, ...overrides.flags },
+    tools: { ...defaults.tools, ...overrides.tools },
+  };
 }

@@ -18,9 +18,17 @@ import { findNearestDirWithAnyBasename } from "./workspace-topology.js";
 import { BoundedLruCache } from "./bounded-cache.js";
 
 /** Every registered kind participates in project-language detection (#894). */
-export const SUPPORTED_FILE_KINDS: readonly FileKind[] = Object.keys(KIND_EXTENSIONS) as FileKind[];
+function isRegisteredFileKind(value: string): value is FileKind {
+  return Object.hasOwn(KIND_EXTENSIONS, value);
+}
 
-const PROJECT_MARKERS_BY_KIND: Partial<Record<FileKind, readonly string[]>> = {
+export const SUPPORTED_FILE_KINDS: readonly FileKind[] =
+  Object.keys(KIND_EXTENSIONS).filter(isRegisteredFileKind);
+
+interface ProjectMarkersByKindValues extends Partial<Record<FileKind, readonly string[]>> {
+  [kind: string]: readonly string[] | undefined;
+}
+const PROJECT_MARKERS_BY_KIND: ProjectMarkersByKindValues = {
   jsts: ["package.json", "tsconfig.json", "jsconfig.json"],
   python: ["pyproject.toml", "requirements.txt", "setup.py", "setup.cfg"],
   go: ["go.mod"],
@@ -55,7 +63,10 @@ const PROJECT_MARKERS_BY_KIND: Partial<Record<FileKind, readonly string[]>> = {
   fsharp: DOTNET_FSHARP_ROOT_MARKERS,
 };
 
-const ROOT_MARKERS_BY_KIND: Partial<Record<FileKind, readonly string[]>> = {
+interface RootMarkersByKindValues extends Partial<Record<FileKind, readonly string[]>> {
+  [kind: string]: readonly string[] | undefined;
+}
+const ROOT_MARKERS_BY_KIND: RootMarkersByKindValues = {
   jsts: ["package.json", "tsconfig.json", "jsconfig.json", "pnpm-workspace.yaml"],
   python: ["pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile"],
   go: ["go.work", "go.mod", "go.sum"],
@@ -127,6 +138,7 @@ function computeProjectLanguageProfile(
   projectRoot: string,
   sourceFiles?: string[],
 ): ProjectLanguageProfile {
+  // SAFETY: The source key list is checked against the named owner type, so the constructed keys and values exhaust that representation.
   const present = Object.fromEntries(SUPPORTED_FILE_KINDS.map((kind) => [kind, false])) as Record<
     FileKind,
     boolean
@@ -138,7 +150,10 @@ function computeProjectLanguageProfile(
     if (!markers) continue;
     for (const marker of markers) {
       if (hasProjectMarker(projectRoot, marker)) {
+        // SAFETY: The adjacent membership check or owner-key enumeration establishes this closed key union.
         present[kind as FileKind] = true;
+
+        // SAFETY: The adjacent membership check or owner-key enumeration establishes this closed key union.
         configured[kind as FileKind] = true;
         break;
       }
@@ -189,6 +204,7 @@ export function isLanguageConfigured(profile: ProjectLanguageProfile, kind: File
 export function getDefaultStartupTools(profile: ProjectLanguageProfile): string[] {
   const tools = new Set<string>();
 
+  // SAFETY: The source key list is checked against the named owner type, so the constructed keys and values exhaust that representation.
   for (const kind of Object.keys(LANGUAGE_POLICY) as FileKind[]) {
     if (!profile.present[kind]) continue;
     const defaults = LANGUAGE_POLICY[kind].startup?.defaults ?? [];

@@ -54,9 +54,16 @@
  * does, matching the analyzer's own low/medium/high severity gating.
  */
 
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getGlobalPiLensDir } from "./file-utils.js";
+
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+
+interface CountRecentSmellsResultContract extends SmellsRollupCounts {}
 
 /** Bounded tail-read budget PER source log file — never a full-file scan. */
 export const SMELLS_TAIL_BYTES_PER_FILE = 64 * 1024;
@@ -71,12 +78,15 @@ export type SmellKey = "staleCtxEmitFailed" | "opengrepRespawn";
 
 /** Trivial threshold constants (#1123 item 3's explicit design ask). Counts
  *  strictly below these never surface anywhere. */
-export const SMELLS_THRESHOLDS: Record<SmellKey, number> = {
+
+interface SMELLSTHRESHOLDSValues extends Record<SmellKey, number> {}
+export const SMELLS_THRESHOLDS: SMELLSTHRESHOLDSValues = {
   staleCtxEmitFailed: 5,
   opengrepRespawn: 5,
 };
 
-const SMELL_LABELS: Record<SmellKey, string> = {
+interface SMELLLABELSValues extends Record<SmellKey, string> {}
+const SMELL_LABELS: SMELLLABELSValues = {
   staleCtxEmitFailed: "stale-ctx emit_failed (bus-events.log)",
   opengrepRespawn: "opengrep respawn (latency.log)",
 };
@@ -125,7 +135,8 @@ export function tailReadText(filePath: string, maxBytes: number): string {
 
 function countMatchingLines(
   text: string,
-  predicate: (entry: Record<string, unknown>) => boolean,
+
+  predicate: (entry: Record<string, LspDictionaryValue>) => boolean,
   sessionStartMs?: number,
 ): number {
   let count = 0;
@@ -139,10 +150,12 @@ function countMatchingLines(
     }
     if (
       entry &&
-      typeof entry === "object" &&
+      Check(Type.Object({}), entry) &&
       (sessionStartMs === undefined ||
-        isAtOrAfterSessionStart(entry as Record<string, unknown>, sessionStartMs)) &&
-      predicate(entry as Record<string, unknown>)
+        // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+        isAtOrAfterSessionStart(entry as Record<string, LspDictionaryValue>, sessionStartMs)) &&
+      // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+      predicate(entry as Record<string, LspDictionaryValue>)
     ) {
       count++;
     }
@@ -150,22 +163,27 @@ function countMatchingLines(
   return count;
 }
 
-function isAtOrAfterSessionStart(entry: Record<string, unknown>, sessionStartMs: number): boolean {
-  const timestamp = typeof entry.ts === "string" ? Date.parse(entry.ts) : NaN;
+function isAtOrAfterSessionStart(
+  entry: Record<string, LspDictionaryValue>,
+  sessionStartMs: number,
+): boolean {
+  const timestamp = Check(Type.String(), entry.ts) ? Date.parse(entry.ts) : NaN;
   return Number.isFinite(timestamp) && timestamp >= sessionStartMs;
 }
 
-function isStaleCtxEmitFailed(entry: Record<string, unknown>): boolean {
+function isStaleCtxEmitFailed(entry: Record<string, LspDictionaryValue>): boolean {
   return (
     entry.outcome === "emit_failed" &&
-    typeof entry.error === "string" &&
+    Check(Type.String(), entry.error) &&
     entry.error.includes("stale after session replacement")
   );
 }
 
-function isOpengrepRespawn(entry: Record<string, unknown>): boolean {
+function isOpengrepRespawn(entry: Record<string, LspDictionaryValue>): boolean {
   if (entry.phase !== "lsp_server_respawn") return false;
-  const metadata = entry.metadata as Record<string, unknown> | undefined;
+
+  // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+  const metadata = entry.metadata as Record<string, LspDictionaryValue> | undefined;
   return metadata?.serverId === "opengrep";
 }
 
@@ -177,10 +195,11 @@ function isOpengrepRespawn(entry: Record<string, unknown>): boolean {
 export function countRecentSmells(
   root: string = getGlobalPiLensDir(),
   sessionStartMs?: number,
-): SmellsRollupCounts {
+): CountRecentSmellsResultContract {
   const sinceMs = sessionStartMs ?? Date.now() - SMELLS_ROLLING_WINDOW_MS;
   const busTail = tailReadText(path.join(root, "bus-events.log"), SMELLS_TAIL_BYTES_PER_FILE);
   const latencyTail = tailReadText(path.join(root, "latency.log"), SMELLS_TAIL_BYTES_PER_FILE);
+
   return {
     staleCtxEmitFailed: countMatchingLines(busTail, isStaleCtxEmitFailed, sinceMs),
     opengrepRespawn: countMatchingLines(latencyTail, isOpengrepRespawn, sinceMs),

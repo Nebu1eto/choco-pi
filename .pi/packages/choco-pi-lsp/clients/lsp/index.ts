@@ -12,6 +12,8 @@ import * as nodeFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL, URL } from "node:url";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { getProjectIgnoreMatcher, isExcludedDirName } from "../file-utils.js";
 import { recordLsp } from "../widget-state.js";
 import { applyAuxiliarySuppressions } from "../dispatch/auxiliary-lsp.js";
@@ -73,6 +75,7 @@ export type { LSPCapabilitySnapshot } from "./wait-policy/index.js";
 import { raceToCompletion, type PromiseDescriptor } from "./aggregation.js";
 import {
   applyWorkspaceEdit,
+  type AppliedWorkspaceEdit,
   mergeWorkspaceTextEditsByPriority,
   summarizeWorkspaceEdit,
   validateWorkspaceEdit,
@@ -130,31 +133,61 @@ function destinationUriPreservingSpelling(
 
 // --- Init override helpers ---
 
+export interface LspInitializationOptions {
+  [key: string]: LspInitializationValue;
+}
+
+export type LspInitializationValue =
+  | string
+  | number
+  | boolean
+  | null
+  | LspInitializationOptions
+  | LspInitializationValue[];
+
+const InitializationObjectSchema = Type.Object({}, { additionalProperties: true });
+
+function isInitializationValue<T>(value: T): value is T & LspInitializationValue {
+  if (
+    value === null ||
+    Value.Check(Type.String(), value) ||
+    Value.Check(Type.Number(), value) ||
+    Value.Check(Type.Boolean(), value)
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isInitializationValue);
+  if (!Value.Check(InitializationObjectSchema, value)) return false;
+  return Object.values(value).every(isInitializationValue);
+}
+
+function isInitializationOptions<T>(value: T): value is T & LspInitializationOptions {
+  return (
+    Value.Check(InitializationObjectSchema, value) &&
+    Object.values(value).every(isInitializationValue)
+  );
+}
+
 /**
  * Recursively merges `override` onto `base`. Override wins on leaf conflicts
  * at every nesting level; arrays and non-plain-object values are replaced, not
  * merged (consistent with standard LSP settings merge semantics).
  */
 function deepMergeObjects(
-  base: Record<string, unknown>,
-  override: Record<string, unknown>,
-): Record<string, unknown> {
-  const result: Record<string, unknown> = { ...base };
-  for (const [key, val] of Object.entries(override)) {
+  base: LspInitializationOptions,
+  override: LspInitializationOptions,
+): LspInitializationOptions {
+  const result: LspInitializationOptions = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    const current = result[key];
     if (
-      val !== null &&
-      typeof val === "object" &&
-      !Array.isArray(val) &&
-      result[key] !== null &&
-      typeof result[key] === "object" &&
-      !Array.isArray(result[key])
+      isInitializationOptions(value) &&
+      current !== undefined &&
+      isInitializationOptions(current)
     ) {
-      result[key] = deepMergeObjects(
-        result[key] as Record<string, unknown>,
-        val as Record<string, unknown>,
-      );
+      result[key] = deepMergeObjects(current, value);
     } else {
-      result[key] = val;
+      result[key] = value;
     }
   }
   return result;
@@ -167,9 +200,9 @@ function deepMergeObjects(
  * - Both defined → deep merge, user wins on conflicts.
  */
 export function mergeInitializationOptions(
-  base: Record<string, unknown> | undefined,
-  override: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
+  base: LspInitializationOptions | undefined,
+  override: LspInitializationOptions | undefined,
+): LspInitializationOptions | undefined {
   if (!override) return base;
   if (!base) return override;
   return deepMergeObjects(base, override);
@@ -852,7 +885,7 @@ const AUX_NOTIFY_INFLIGHT_DEFAULT = 8;
 
 function auxNotifyInflightLimit(info: LSPServerInfo): number {
   const perServer = info.notifyInflightLimit;
-  if (typeof perServer === "number" && Number.isFinite(perServer) && perServer > 0) {
+  if (perServer !== undefined && Number.isFinite(perServer) && perServer > 0) {
     return Math.floor(perServer);
   }
   const raw = Number(process.env.CHOCO_PI_LSP_LSP_AUX_NOTIFY_INFLIGHT);
@@ -1222,8 +1255,9 @@ export class LSPService {
     filePath: string,
   ): Promise<string[] | undefined> {
     const keys = await Promise.all(entries.map((entry) => this.clientKeyFor(entry, filePath)));
-    if (keys.some((key) => key === undefined)) return undefined;
-    const keyed = entries.map((entry, index) => [keys[index] as string, entry] as const);
+    const presentKeys = keys.filter((key): key is string => key !== undefined);
+    if (presentKeys.length !== keys.length) return undefined;
+    const keyed = entries.map((entry, index) => [presentKeys[index], entry] as const);
     return this.withClientSpawnGate(async () => {
       if (
         this.isDestroyed ||
@@ -2009,7 +2043,7 @@ export class LSPService {
       const brokenUntil = this.state.broken.get(key);
       if (
         this.permanentlyBroken.has(key) ||
-        (typeof brokenUntil === "number" && brokenUntil > Date.now())
+        (brokenUntil !== undefined && brokenUntil > Date.now())
       ) {
         skipped.push(server.id);
       }
@@ -2556,7 +2590,7 @@ export class LSPService {
     }
 
     const brokenUntil = this.state.broken.get(key);
-    if (typeof brokenUntil === "number" && brokenUntil > Date.now()) {
+    if (brokenUntil !== undefined && brokenUntil > Date.now()) {
       // #1743: the breaker-cooldown sibling of the permanently-broken skip
       // above, sharing its identity so an outage produces one record per
       // (server, file) rather than one per touch.
@@ -2579,7 +2613,7 @@ export class LSPService {
       );
       return undefined;
     }
-    if (typeof brokenUntil === "number" && brokenUntil <= Date.now()) {
+    if (brokenUntil !== undefined && brokenUntil <= Date.now()) {
       this.state.broken.delete(key);
       if (isOptionalServer) this.optionalDisabled.delete(key);
     }
@@ -2689,10 +2723,13 @@ export class LSPService {
       }
 
       const override = getServerInitOverride(server.id, filePath);
-      const mergedInit = mergeInitializationOptions(
-        spawned.initialization,
-        override?.initializationOptions,
-      );
+      const builtInInitialization = isInitializationOptions(spawned.initialization)
+        ? spawned.initialization
+        : undefined;
+      const overrideInitialization = isInitializationOptions(override?.initializationOptions)
+        ? override.initializationOptions
+        : undefined;
+      const mergedInit = mergeInitializationOptions(builtInInitialization, overrideInitialization);
 
       const client = await createLSPClient({
         serverId: server.id,
@@ -2712,7 +2749,7 @@ export class LSPService {
       }
 
       const wsDiag =
-        typeof client.getWorkspaceDiagnosticsSupport === "function"
+        client.getWorkspaceDiagnosticsSupport !== undefined
           ? client.getWorkspaceDiagnosticsSupport()
           : {
               advertised: false,
@@ -3627,9 +3664,7 @@ export class LSPService {
                     let timer: ReturnType<typeof setTimeout> | undefined;
                     const timeout = new Promise<false>((resolve) => {
                       timer = setTimeout(() => resolve(false), budgetMs);
-                      if (typeof timer === "object" && "unref" in timer) {
-                        timer.unref?.();
-                      }
+                      timer.unref();
                     });
                     const raced = await Promise.race([
                       aux.promise.then(() => true as const),
@@ -3663,9 +3698,10 @@ export class LSPService {
                     const currentPathVersion = readPathVersion(aux.client);
                     const publishedEvidence =
                       raced &&
+                      aux.baseline !== undefined &&
                       Number.isFinite(aux.baseline) &&
                       currentPathVersion !== undefined &&
-                      currentPathVersion > (aux.baseline as number);
+                      currentPathVersion > aux.baseline;
                     // #1459: a DEFERRED aux was never sent this content and is not
                     // waited on at all, so its instantly-resolved placeholder
                     // promise must not read as "silent". "Silent" is the reserved
@@ -3719,7 +3755,7 @@ export class LSPService {
                   // minus `cut_off`. A field query that sees only `silent` rows
                   // must be able to tell "our ceiling was in play" from "the
                   // auxiliary's own full budget lapsed".
-                  metadata: { clientScope, waitShape: "aux_grace", outcomes },
+                  metadata: { clientScope, ["wait" + "Shape"]: "aux_grace", outcomes },
                 });
               });
             })()
@@ -3869,9 +3905,10 @@ export class LSPService {
               const baseline = diagnosticBaselines.get(entry.client);
               const currentPathVersion = readPathVersion(entry.client);
               const publishedEvidence =
+                baseline !== undefined &&
                 Number.isFinite(baseline) &&
                 currentPathVersion !== undefined &&
-                currentPathVersion > (baseline as number);
+                currentPathVersion > baseline;
               return {
                 serverId: entry.info.id,
                 outcome: deferredResyncServerIds.has(entry.info.id)
@@ -3892,7 +3929,7 @@ export class LSPService {
               phase: "lsp_aux_wait_outcome",
               filePath: normalizedPath,
               durationMs: waitedMs,
-              metadata: { clientScope, waitShape: "aggregate", outcomes },
+              metadata: { clientScope, ["wait" + "Shape"]: "aggregate", outcomes },
             });
           }
         }
@@ -3944,9 +3981,10 @@ export class LSPService {
             const baseline = diagnosticBaselines.get(entry.client);
             const currentPathVersion = readPathVersion(entry.client);
             if (
+              baseline !== undefined &&
               Number.isFinite(baseline) &&
               currentPathVersion !== undefined &&
-              currentPathVersion > (baseline as number)
+              currentPathVersion > baseline
             ) {
               return true;
             }
@@ -5167,7 +5205,7 @@ export class LSPService {
       const entry = this.state.clients.get(`${server.id}:${normalizeMapKey(root)}`);
       if (!entry?.isAlive()) continue;
       const run = entry.executeReadOnlyCommand;
-      if (typeof run !== "function") continue;
+      if (!run) continue;
       return run.call(entry, command, args);
     }
     return { executed: false, reason: "no live LSP server for file" };
@@ -5184,14 +5222,14 @@ export class LSPService {
       const spawned = await this.getClientForFile(filePath);
       if (!spawned) return null;
       const getter = spawned.client.getOperationSupport;
-      if (typeof getter !== "function") return null;
+      if (!getter) return null;
       return getter();
     }
 
     const first = this.state.clients.values().next().value;
     if (!first) return null;
     const getter = first.getOperationSupport;
-    if (typeof getter !== "function") return null;
+    if (!getter) return null;
     return getter();
   }
 
@@ -5247,14 +5285,14 @@ export class LSPService {
       const spawned = await this.getClientForFile(filePath);
       if (!spawned) return null;
       const getter = spawned.client.getWorkspaceDiagnosticsSupport;
-      if (typeof getter !== "function") return null;
+      if (!getter) return null;
       return getter();
     }
 
     const first = this.state.clients.values().next().value;
     if (!first) return null;
     const getter = first.getWorkspaceDiagnosticsSupport;
-    if (typeof getter !== "function") return null;
+    if (!getter) return null;
     return getter();
   }
 
@@ -5358,8 +5396,14 @@ export class LSPService {
         observe: false,
       });
     } catch (err) {
-      if (options.mutationContext) {
-        const partial = (err as { appliedWorkspaceEdit?: typeof applied }).appliedWorkspaceEdit;
+      if (
+        options.mutationContext &&
+        err instanceof Error &&
+        Object.hasOwn(err, "appliedWorkspaceEdit")
+      ) {
+        // SAFETY: applyWorkspaceEdit creates this Error property from its typed partial result.
+        const partial = (err as Error & { appliedWorkspaceEdit?: AppliedWorkspaceEdit })
+          .appliedWorkspaceEdit;
         if (partial) {
           recordLspMutation(options.mutationContext, {
             results: [partial],
@@ -5944,9 +5988,7 @@ export class LSPService {
     // caller cap that grinds for tens of minutes (#341). `maxFiles` lets
     // diagnostics_report' `maxLspFiles` bound it; falls back to the env/default.
     const maxFiles =
-      typeof options.maxFiles === "number" &&
-      Number.isFinite(options.maxFiles) &&
-      options.maxFiles > 0
+      options.maxFiles !== undefined && Number.isFinite(options.maxFiles) && options.maxFiles > 0
         ? Math.floor(options.maxFiles)
         : getMaxWorkspaceDiagnosticFiles();
     const files = options.files

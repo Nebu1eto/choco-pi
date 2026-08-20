@@ -1,4 +1,6 @@
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { pathsEqual } from "../../path-utils.js";
 import { getLinterPolicyForCwd } from "../../tool-policy.js";
@@ -19,24 +21,46 @@ interface TerragruntDiagnostic {
   };
 }
 
-interface TerragruntInvalidFile {
-  diagnostics?: TerragruntDiagnostic[];
-}
+const TerragruntDiagnosticSchema = Type.Object(
+  {
+    severity: Type.Optional(Type.Union([Type.String(), Type.Number()])),
+    summary: Type.Optional(Type.String()),
+    detail: Type.Optional(Type.String()),
+    range: Type.Optional(
+      Type.Object({
+        filename: Type.Optional(Type.String()),
+        start: Type.Optional(
+          Type.Object({
+            line: Type.Optional(Type.Number()),
+            column: Type.Optional(Type.Number()),
+          }),
+        ),
+      }),
+    ),
+  },
+  { additionalProperties: true },
+);
+const TerragruntOutputSchema = Type.Union([
+  Type.Array(TerragruntDiagnosticSchema),
+  Type.Object({
+    invalid_files: Type.Optional(
+      Type.Array(
+        Type.Object({ diagnostics: Type.Optional(Type.Array(TerragruntDiagnosticSchema)) }),
+      ),
+    ),
+  }),
+]);
 
-function normalizeSeverity(raw: unknown): "error" | "warning" {
-  if (typeof raw === "number") return raw === 1 ? "error" : "warning";
-  if (typeof raw === "string" && raw.toLowerCase() === "error") return "error";
+function normalizeSeverity(raw: TerragruntDiagnostic["severity"]): "error" | "warning" {
+  if (Value.Check(Type.Number(), raw)) return raw === 1 ? "error" : "warning";
+  if (Value.Check(Type.String(), raw) && raw.toLowerCase() === "error") return "error";
   return "warning";
 }
 
-function toRawDiagnostics(parsed: unknown): TerragruntDiagnostic[] {
-  if (Array.isArray(parsed)) return parsed as TerragruntDiagnostic[];
-  if (!parsed || typeof parsed !== "object") return [];
-  const invalidFiles = (parsed as { invalid_files?: unknown }).invalid_files;
-  if (!Array.isArray(invalidFiles)) return [];
-  return (invalidFiles as TerragruntInvalidFile[]).flatMap((f) =>
-    Array.isArray(f?.diagnostics) ? f.diagnostics : [],
-  );
+function toRawDiagnostics<T>(parsed: T): TerragruntDiagnostic[] {
+  if (!Value.Check(TerragruntOutputSchema, parsed)) return [];
+  if (Array.isArray(parsed)) return parsed;
+  return (parsed.invalid_files ?? []).flatMap((file) => file.diagnostics ?? []);
 }
 
 /**
@@ -75,7 +99,6 @@ export function parseTerragruntOutput(
   const unitDir = path.dirname(absPath);
   const diagnostics: Diagnostic[] = [];
   for (const d of toRawDiagnostics(parsed)) {
-    if (!d || typeof d !== "object") continue;
     const diagFile = d.range?.filename;
     if (diagFile && !pathsEqual(path.resolve(unitDir, diagFile), absPath)) continue;
     const line = d.range?.start?.line ?? 1;

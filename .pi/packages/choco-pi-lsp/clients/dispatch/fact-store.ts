@@ -15,10 +15,11 @@ export class FactStore implements ReadonlyFactStore {
   // Callers always pass raw/resolved paths — normalization is not their concern.
 
   getFileFact<T>(filePath: string, factId: string): T | undefined {
+    // SAFETY: Fact IDs pair each producer with consumers that request the producer's stored type.
     return this.fileFacts.get(normalizeMapKey(filePath))?.get(factId) as T | undefined;
   }
 
-  setFileFact(filePath: string, factId: string, value: unknown): void {
+  setFileFact<T>(filePath: string, factId: string, value: T): void {
     const key = normalizeMapKey(filePath);
     let facts = this.fileFacts.get(key);
     if (!facts) {
@@ -56,10 +57,11 @@ export class FactStore implements ReadonlyFactStore {
   }
 
   getSessionFact<T>(factId: string): T | undefined {
+    // SAFETY: Session fact IDs pair each producer with consumers that request the stored type.
     return this.sessionFacts.get(factId) as T | undefined;
   }
 
-  setSessionFact(factId: string, value: unknown): void {
+  setSessionFact<T>(factId: string, value: T): void {
     this.sessionFacts.set(factId, value);
   }
 

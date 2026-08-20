@@ -55,6 +55,8 @@
  */
 
 import { createHash } from "node:crypto";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { commitDurableStore } from "./durable-store.js";
@@ -113,6 +115,15 @@ export interface DispositionEntry {
 interface DispositionStateFile {
   dispositions?: Record<string, DispositionEntry>;
 }
+
+const DispositionStateFileSchema = Type.Object(
+  {
+    dispositions: Type.Optional(
+      Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()]),
+    ),
+  },
+  { additionalProperties: true },
+);
 
 // "defer" is session-ephemeral by design (#690) — held only in memory so it
 // resurfaces for free on the next process run, with no expiry/pruning logic
@@ -216,7 +227,7 @@ export function anchorsForDiagnostic(
   filePath: string,
   diagnostic: DispositionCandidate,
   content: string,
-): { strict: string; weak: string } {
+) {
   const args: DispositionAnchorArgs = {
     cwd,
     filePath,
@@ -304,8 +315,9 @@ function readState(cwd: string): DispositionStateFile {
   }
   let state: DispositionStateFile;
   try {
-    const parsed = JSON.parse(fs.readFileSync(p, "utf-8")) as unknown;
-    state = parsed && typeof parsed === "object" ? (parsed as DispositionStateFile) : {};
+    const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
+    // SAFETY: The shallow schema matches the legacy loader; individual fields remain guarded at use sites.
+    state = Value.Check(DispositionStateFileSchema, parsed) ? (parsed as DispositionStateFile) : {};
   } catch {
     // Now that writeState is tmp+rename atomic, a torn read (another process
     // mid-write) can no longer land here — this only fires on genuine
@@ -330,8 +342,9 @@ function readState(cwd: string): DispositionStateFile {
 
 function deserializeState(contents: string | undefined): DispositionStateFile {
   try {
-    const parsed = JSON.parse(contents ?? "") as unknown;
-    return parsed && typeof parsed === "object" ? (parsed as DispositionStateFile) : {};
+    const parsed = JSON.parse(contents ?? "");
+    // SAFETY: The shallow schema matches the legacy loader; individual fields remain guarded at use sites.
+    return Value.Check(DispositionStateFileSchema, parsed) ? (parsed as DispositionStateFile) : {};
   } catch {
     return {};
   }

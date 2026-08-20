@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 /**
  * #1479/#1480: one place decides whether a test run was actually timed, and
  * one place renders the answer.
@@ -36,7 +38,7 @@
  * number.
  */
 export function isMeasuredDuration(duration: number | null | undefined): duration is number {
-  return typeof duration === "number" && Number.isFinite(duration) && duration >= 0;
+  return Check(Type.Number(), duration) && Number.isFinite(duration) && duration >= 0;
 }
 
 /**

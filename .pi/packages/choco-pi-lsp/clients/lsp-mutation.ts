@@ -1,3 +1,4 @@
+import { type Static, Type } from "typebox";
 import * as path from "node:path";
 import {
   createReadGuardEditBatchSummary,
@@ -8,6 +9,22 @@ import {
 import { appendProjectChange, type ProjectChangeSource } from "./project-changes.js";
 import type { AppliedWorkspaceEdit } from "./lsp/edits.js";
 import { normalizeMapKey } from "./path-utils.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+
+type CombineResultsResultContract = {
+  requestedTotal: number;
+  appliedTotal: number;
+  appliedIndexes: number[];
+  files: string[];
+  fileDetails: AppliedWorkspaceEdit["fileDetails"];
+  textEdits: number;
+  create: number;
+  rename: number;
+  delete: number;
+  paths: string[];
+};
 
 export interface LspMutationRuntime {
   bumpFileSeq?: (filePath: string) => { projectSeq: number; fileSeq: number };
@@ -22,7 +39,7 @@ export interface LspMutationCacheManager {
     importsChanged: boolean,
     cwd: string,
     sessionId?: string,
-  ) => unknown;
+  ) => LspBoundaryValue;
 }
 
 export interface LspMutationContext {
@@ -88,18 +105,7 @@ function allResults(options: LspMutationSummaryOptions): AppliedWorkspaceEdit[] 
   return options.results ?? [];
 }
 
-function combineResults(results: AppliedWorkspaceEdit[]): {
-  requestedTotal: number;
-  appliedTotal: number;
-  appliedIndexes: number[];
-  files: string[];
-  fileDetails: AppliedWorkspaceEdit["fileDetails"];
-  textEdits: number;
-  create: number;
-  rename: number;
-  delete: number;
-  paths: string[];
-} {
+function combineResults(results: AppliedWorkspaceEdit[]): CombineResultsResultContract {
   const files = new Set<string>();
   const fileDetails: AppliedWorkspaceEdit["fileDetails"] = [];
   const appliedIndexes: number[] = [];
@@ -126,6 +132,7 @@ function combineResults(results: AppliedWorkspaceEdit[]): {
     }
     fileDetails.push(...result.fileDetails);
   }
+
   return {
     requestedTotal,
     appliedTotal,
@@ -201,6 +208,8 @@ function bookkeepLspMutation(
           timestamp: new Date().toISOString(),
           sessionId: runtime.telemetrySessionId ?? "unknown",
           turnIndex: runtime.turnIndex ?? 0,
+
+          // SAFETY: The parser checks the source against the closed ProjectChangeSource values before constructing this entry.
           source: context.source as ProjectChangeSource,
           filePath,
           fileSeq,

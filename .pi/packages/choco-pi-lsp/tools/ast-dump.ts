@@ -1,3 +1,6 @@
+import type { ProtocolDictionary } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.js";
+import { isRuntimeString } from "./runtime-values.js";
 import { Type } from "../clients/deps/typebox.js";
 import type { AstGrepClient } from "../clients/ast-grep-client.js";
 import { compactRenderResult } from "./render-compact.js";
@@ -12,7 +15,7 @@ function createAstDumpToolWithName(astGrepClient: AstGrepClient, name: "ast_grep
     promptSnippet: "Inspect AST node kinds before writing ast-grep patterns",
     renderResult: compactRenderResult<{ lang?: string }>(
       ({ details, args, isError, lineCount, text }) => {
-        const lang = details?.lang ?? (typeof args.lang === "string" ? args.lang : "");
+        const lang = details?.lang ?? (isRuntimeString(args.lang) ? args.lang : "");
         if (isError) {
           return `${name} ${lang} — ${text.split("\n")[0] ?? "error"}`.trim();
         }
@@ -24,6 +27,7 @@ function createAstDumpToolWithName(astGrepClient: AstGrepClient, name: "ast_grep
         description: "Source code snippet to parse and dump",
       }),
       lang: Type.String({
+        // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
         enum: [...LANGUAGES] as string[],
         description: "Target language",
       }),
@@ -35,12 +39,12 @@ function createAstDumpToolWithName(astGrepClient: AstGrepClient, name: "ast_grep
     }),
     async execute(
       _toolCallId: string,
-      params: Record<string, unknown>,
+      params: ProtocolDictionary,
       _signal: AbortSignal,
-      _onUpdate: unknown,
+      _onUpdate: RuntimeValue,
     ) {
-      const source = typeof params.source === "string" ? params.source : "";
-      const lang = typeof params.lang === "string" ? params.lang.replace(/^"|"$/g, "") : "";
+      const source = isRuntimeString(params.source) ? params.source : "";
+      const lang = isRuntimeString(params.lang) ? params.lang.replace(/^"|"$/g, "") : "";
       const includeAnonymous = params.includeAnonymous === true;
 
       try {

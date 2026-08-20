@@ -169,7 +169,11 @@ export interface DiagnosticStrategy {
   workspaceIndexingWarmWaitMs?: number;
 }
 
-export const SERVER_DIAGNOSTIC_STRATEGIES: Record<string, DiagnosticStrategy> = {
+interface ServerDiagnosticStrategyMap {
+  [serverId: string]: DiagnosticStrategy;
+}
+
+export const SERVER_DIAGNOSTIC_STRATEGIES: ServerDiagnosticStrategyMap = {
   typescript: {
     seedFirstPush: true,
     pullRetryBudgetMs: 0,

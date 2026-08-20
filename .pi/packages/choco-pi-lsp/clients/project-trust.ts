@@ -34,8 +34,13 @@
  * refreshed on each `session_start` and `turn_start`.
  */
 
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import { logExtension } from "./extension-log.js";
 import { recordDegradation } from "./degradation-ledger.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 export type ProjectTrustState = "trusted" | "untrusted" | "unknown";
 
@@ -70,12 +75,18 @@ function latchProjectTrustState(next: ProjectTrustState): void {
  * missing surface, because that would silently disable choco-pi-lsp on every older
  * host.
  */
-export function readProjectTrustFromContext(ctx: unknown): ProjectTrustState {
+
+export function readProjectTrustFromContext(ctx: LspBoundaryValue): ProjectTrustState {
   try {
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const accessor = (ctx as { isProjectTrusted?: unknown } | null | undefined)?.isProjectTrusted;
-    if (typeof accessor !== "function") return "unknown";
-    const trusted = (accessor as () => unknown).call(ctx);
-    if (typeof trusted !== "boolean") return "unknown";
+
+    if (!Check(Type.Function([], Type.Unknown()), accessor)) return "unknown";
+
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
+    const trusted = (accessor as () => LspBoundaryValue).call(ctx);
+
+    if (!Check(Type.Boolean(), trusted)) return "unknown";
     return trusted ? "trusted" : "untrusted";
   } catch (accessorErr) {
     // The accessor exists, so this is not the absent older-host signal. If it
@@ -112,7 +123,8 @@ export function setProjectTrustState(next: ProjectTrustState): void {
  * which fires again on fork/reload/resume — a re-read per session start is
  * exactly right, since the cwd (and therefore the trust decision) can change.
  */
-export function adoptProjectTrustFromContext(ctx: unknown): ProjectTrustState {
+
+export function adoptProjectTrustFromContext(ctx: LspBoundaryValue): ProjectTrustState {
   const next = readProjectTrustFromContext(ctx);
   const previous = trustState;
   latchProjectTrustState(next);

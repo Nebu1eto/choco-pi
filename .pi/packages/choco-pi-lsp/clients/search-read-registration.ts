@@ -59,6 +59,8 @@ export function registerSearchReads(
     }
 
     const start = Math.max(1, Math.floor(loc.startLine) - margin);
+
+    // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
     const endLine = Number.isFinite(loc.endLine) ? (loc.endLine as number) : loc.startLine;
     const end = Math.max(start, Math.floor(endLine) + margin);
     const limit = end - start + 1;
