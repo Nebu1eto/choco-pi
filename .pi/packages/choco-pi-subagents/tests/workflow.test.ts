@@ -169,6 +169,70 @@ test("dynamic workflow can add a result-dependent step while idle, then seal", a
   assert.equal(result.status, "completed");
 });
 
+test("waiting on an idle unsealed dynamic workflow returns promptly", async () => {
+  const runner = new DeferredRunner();
+  const manager = new WorkflowManager();
+  try {
+    const started = manager.start(definition([
+      { id: "inspect", subagent_type: "Explore", prompt: "inspect" },
+    ], true), resolveType, runner, 1);
+
+    await flush();
+    runner.finish("inspect");
+    await flush();
+
+    const snapshot = manager.get(started.workflowId);
+    assert.equal(snapshot?.status, "waiting");
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      manager.wait(started.workflowId)!,
+      new Promise<"timeout">(resolve => { timer = setTimeout(() => resolve("timeout"), 100); }),
+    ]);
+    if (timer) clearTimeout(timer);
+
+    assert.notEqual(result, "timeout", "idle dynamic wait must not remain pending");
+    assert.equal(typeof result === "string" ? undefined : result.status, "waiting");
+    assert.equal(typeof result === "string" ? undefined : result.sealed, false);
+  } finally {
+    manager.dispose();
+  }
+});
+
+test("workflow retention evicts only settled records older than ten minutes", async (t) => {
+  let now = 1_000;
+  t.mock.method(Date, "now", () => now);
+  const runner = new DeferredRunner();
+  const manager = new WorkflowManager();
+  try {
+    const old = manager.start(definition([
+      { id: "old", subagent_type: "Explore", prompt: "old" },
+    ]), resolveType, runner, 1);
+    await flush();
+    runner.finish("old");
+    await manager.wait(old.workflowId);
+    manager.markConsumed(old.workflowId);
+
+    now += 10 * 60_000 + 1;
+    const fresh = manager.start(definition([
+      { id: "fresh", subagent_type: "Explore", prompt: "fresh" },
+    ]), resolveType, runner, 1);
+    await flush();
+    runner.finish("fresh");
+    await manager.wait(fresh.workflowId);
+    manager.markConsumed(fresh.workflowId);
+
+    (manager as unknown as { cleanup(): void }).cleanup();
+
+    assert.equal(manager.get(old.workflowId), undefined);
+    assert.equal(manager.isConsumed(old.workflowId), false);
+    assert.equal(manager.get(fresh.workflowId)?.status, "completed");
+    assert.equal(manager.isConsumed(fresh.workflowId), true);
+  } finally {
+    manager.dispose();
+  }
+});
+
 test("cancelling a workflow aborts running steps and cancels pending steps", async () => {
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();

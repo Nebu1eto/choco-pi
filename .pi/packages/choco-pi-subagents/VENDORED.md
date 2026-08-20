@@ -141,10 +141,13 @@ scheduler fans out ready steps under `maxConcurrent`, renders bounded upstream
 outputs into dependent prompts, supports fail-fast or `continue_on_error`, and
 aggregates per-step status/output. Production steps use ordinary
 `AgentManager` records tagged for FleetView and fullscreen focus. Dynamic runs
-may wait idle for runtime additions before sealing; nested sessions receive no
-workflow tools. `tests/workflow.test.ts` uses a stub runner to pin validation,
-topological scheduling, result bounds, failure policies, dynamic updates and
-cancellation.
+may wait idle for runtime additions before sealing; an aggregate wait returns
+at that idle point with the `sealed` state so callers can update or finish the
+workflow. Settled workflow records remain queryable for 10 minutes, then a
+60-second cleanup timer evicts them and their consumed markers together. Nested
+sessions receive no workflow tools. `tests/workflow.test.ts` uses a stub runner
+to pin validation, topological scheduling, result bounds, failure policies,
+dynamic updates, idle waits, retention and cancellation.
 
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 

@@ -61,6 +61,7 @@ export type WorkflowResult = {
   workflowId: string;
   name: string;
   dynamic: boolean;
+  sealed: boolean;
   status: WorkflowStatus;
   startedAt: number;
   completedAt?: number;
@@ -223,6 +224,7 @@ class WorkflowController {
   private readonly onComplete?: (result: WorkflowResult) => void;
   private readonly states = new Map<string, WorkflowStepResult>();
   private readonly stepControllers = new Map<string, AbortController>();
+  private readonly progressWaiters = new Set<(result: WorkflowResult) => void>();
   private resolveCompletion!: (result: WorkflowResult) => void;
   private runningCount = 0;
   private sealed: boolean;
@@ -258,11 +260,23 @@ class WorkflowController {
       workflowId: this.id,
       name: this.definition.name,
       dynamic: this.definition.dynamic === true,
+      sealed: this.sealed,
       status: this.status,
       startedAt: this.startedAt,
       completedAt: this.completedAt,
       steps: this.definition.steps.map(step => ({ ...this.states.get(step.id)! })),
     };
+  }
+
+  wait(): Promise<WorkflowResult> {
+    if (this.settled || this.sealed || this.definition.dynamic !== true) return this.completion;
+    const result = this.snapshot();
+    if (result.status === "waiting") return Promise.resolve(result);
+    return new Promise(resolve => this.progressWaiters.add(resolve));
+  }
+
+  isSettledBefore(cutoff: number): boolean {
+    return this.completedAt !== undefined && this.completedAt < cutoff;
   }
 
   shouldNotifySteps(): boolean {
@@ -341,6 +355,9 @@ class WorkflowController {
     if (this.runningCount === 0 && !hasPending) {
       if (!this.sealed) {
         this.status = "waiting";
+        const result = this.snapshot();
+        for (const resolve of this.progressWaiters) resolve(result);
+        this.progressWaiters.clear();
         return;
       }
       const hasErrors = [...this.states.values()].some(state => state.status === "error");
@@ -432,6 +449,8 @@ class WorkflowController {
     this.completedAt = Date.now();
     const result = this.snapshot();
     this.resolveCompletion(result);
+    for (const resolve of this.progressWaiters) resolve(result);
+    this.progressWaiters.clear();
     try { this.onComplete?.(result); } catch { /* completion notifications are best effort */ }
   }
 }
@@ -439,10 +458,14 @@ class WorkflowController {
 export class WorkflowManager {
   private readonly workflows = new Map<string, WorkflowController>();
   private readonly consumed = new Set<string>();
+  private readonly cleanupInterval: ReturnType<typeof setInterval>;
   private readonly onComplete?: (result: WorkflowResult) => void;
 
   constructor(onComplete?: (result: WorkflowResult) => void) {
     this.onComplete = onComplete;
+    // Cleanup settled workflows after 10 minutes.
+    this.cleanupInterval = setInterval(() => this.cleanup(), 60_000);
+    this.cleanupInterval.unref();
   }
 
   start(
@@ -463,7 +486,7 @@ export class WorkflowManager {
   }
 
   wait(id: string): Promise<WorkflowResult> | undefined {
-    return this.workflows.get(id)?.completion;
+    return this.workflows.get(id)?.wait();
   }
 
   update(id: string, steps: WorkflowStepDefinition[], resolveType: WorkflowTypeResolver): WorkflowResult {
@@ -496,7 +519,17 @@ export class WorkflowManager {
     return this.consumed.has(id);
   }
 
+  private cleanup(): void {
+    const cutoff = Date.now() - 10 * 60_000;
+    for (const [id, workflow] of this.workflows) {
+      if (!workflow.isSettledBefore(cutoff)) continue;
+      this.workflows.delete(id);
+      this.consumed.delete(id);
+    }
+  }
+
   dispose(): void {
+    clearInterval(this.cleanupInterval);
     for (const workflow of this.workflows.values()) workflow.cancel();
     this.workflows.clear();
     this.consumed.clear();
