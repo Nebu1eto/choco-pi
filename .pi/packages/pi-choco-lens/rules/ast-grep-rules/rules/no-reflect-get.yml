@@ -1,0 +1,16 @@
+id: no-reflect-get
+language: TypeScript
+severity: warning
+message: "Reflect.get(obj, key) — use a typed property access (obj.prop or obj[key]) instead"
+note: |
+  Reflect.get reaches for reflection where a typed property access
+  already works. Prefer dot or bracket access.
+
+  Scoped to the 2-argument form only. The 3-argument form
+  (`Reflect.get(target, key, receiver)`) is the standard, correct way to
+  forward a `receiver` inside a Proxy `get` trap — an FP-scan of the
+  pi-lens codebase found 2 hits, both inside a Proxy trap using the
+  3-argument receiver-forwarding form, so that arity is excluded rather
+  than allowlisted by call site.
+rule:
+  pattern: Reflect.get($OBJ, $KEY)

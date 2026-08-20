@@ -1,0 +1,10 @@
+id: ts-void-zero
+language: typescript
+severity: warning
+message: void 0 for undefined - use undefined directly
+metadata:
+  weight: 2
+  category: slop
+rule:
+  kind: unary_expression
+  pattern: "void 0"

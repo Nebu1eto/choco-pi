@@ -1,0 +1,67 @@
+id: require-safety-comment-for-as-unknown-as
+language: TypeScript
+severity: hint
+message: "'x as unknown as T' with no nearby SAFETY: comment — state the invariant TypeScript can't check"
+note: |
+  Narrowed port of dmmulroy/anti-slop's
+  `require-safety-comment-for-type-assertion`
+  (src/rules/require-safety-comment-for-type-assertion.ts, MIT).
+  Upstream requires a `SAFETY:` comment before EVERY non-const type
+  assertion (`as`/angle-bracket), walking up through statement-owner
+  node kinds looking for a preceding comment. This port narrows the
+  target to `x as unknown as T` specifically — the two-hop cast through
+  `unknown` that `no-chained-type-assertions.yml` (this PR's strict
+  variant) now also flags. The 2026-08-19 audit found 2,180 non-const
+  assertions repo-wide and ZERO `SAFETY:` comments; requiring one on
+  every assertion would mean authoring ~1,750 comments in one PR, most
+  of them in tests where the assertion is fixture shaping, not a real
+  safety claim. `as unknown as` is the form that actually launders
+  evidence (routes through the top type rather than a single verifiable
+  hop), and it is also the exact shape AGENTS.md's defect shape 13
+  already asks for in ad-hoc prose: "when a call site hands the policy
+  an outcome it did NOT derive... justify it in a comment at the call
+  site." This rule makes that existing, unchecked convention checkable
+  for its most evidence-destroying form, without demanding the other
+  ~1,750 non-const assertions retroactively grow comments in this PR.
+
+  Shipped at `hint`: pi-lens's own tree has ~267 `as unknown as` sites
+  (this PR's `no-chained-type-assertions.yml` self-scan count) and zero
+  `SAFETY:` comments, so this rule is maximally noisy against pi-lens's
+  own history on day one. Self-scan note: do NOT try to make pi-lens's
+  own tree clean against this rule (#1718's baseline problem, and
+  arguably its own follow-up issue given the size); the adopting PR
+  records the hit count instead.
+
+  Scope and known gap: a comment is accepted if it directly precedes
+  the assertion as a structural sibling (inline, e.g. `/* SAFETY: ... */
+  x as unknown as T`), OR if it directly precedes the assertion's
+  containing expression/variable/return statement as a structural
+  sibling. Upstream walks an arbitrary number of statement-owner levels
+  looking for ANY preceding comment in the file; this port only checks
+  one level up from the assertion and one level up from its immediate
+  containing statement — a `SAFETY:` comment several statements above,
+  or attached to an enclosing block/function rather than the specific
+  statement, will not satisfy it. That is a narrower, more conservative
+  match (more likely to ask for a comment that already exists nearby in
+  spirit) rather than a wider one.
+
+  2026-08-20 (review round, refs #1718): `no-chained-type-assertions.yml`
+  now carries the IDENTICAL `SAFETY:` relational check as its own
+  escape valve from `error`, so a site that satisfies THIS hint also
+  clears that hard block — the two rules are a matched pair (this one
+  teaches the convention at `hint`; that one enforces it at `error`
+  once the comment is missing), not two independent checks a caller
+  could satisfy one of and still get blocked by the other.
+rule:
+  pattern: $X as unknown as $Y
+  not:
+    any:
+      - follows: { kind: comment, regex: 'SAFETY\s*:', stopBy: end }
+      - inside:
+          stopBy: end
+          any:
+            - kind: expression_statement
+            - kind: lexical_declaration
+            - kind: variable_declaration
+            - kind: return_statement
+          follows: { kind: comment, regex: 'SAFETY\s*:', stopBy: end }

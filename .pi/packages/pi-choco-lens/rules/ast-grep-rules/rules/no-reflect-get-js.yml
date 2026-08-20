@@ -1,0 +1,13 @@
+id: no-reflect-get-js
+language: JavaScript
+severity: warning
+message: "Reflect.get(obj, key) — use a typed property access (obj.prop or obj[key]) instead"
+note: |
+  Reflect.get reaches for reflection where a typed property access
+  already works. Prefer dot or bracket access.
+
+  Scoped to the 2-argument form only — see no-reflect-get.yml's note:
+  the 3-argument receiver-forwarding form is the standard Proxy `get`
+  trap idiom.
+rule:
+  pattern: Reflect.get($OBJ, $KEY)
