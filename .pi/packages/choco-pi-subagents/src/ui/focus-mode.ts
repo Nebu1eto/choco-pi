@@ -30,6 +30,7 @@ export type FocusUICtx = {
 
 export type FocusManager = {
   steer(id: string, message: string): boolean;
+  resume(id: string, message: string, signal?: AbortSignal, opts?: { isBackground?: boolean }): Promise<AgentRecord | undefined>;
 };
 
 export type FocusState =
@@ -234,9 +235,33 @@ export class FocusedAgentController {
     if (!active || !message) return;
 
     const { record } = active;
-    if (!this.manager.steer(record.id, message)) {
+    if (record.status !== "running" && record.status !== "queued") {
+      // A settled focused agent is RESUMED through the same path /btw replies
+      // use — focus must never eat user input for a resumable session.
+      if (record.session) {
+        record.resultConsumed = false;
+        editor.addToHistory?.(text);
+        editor.setText("");
+        this.options.onSteered?.(record.id, message);
+        const label = focusLabel(record);
+        this.ui?.notify(`Resuming ${label}…`, "info");
+        active.tui.requestRender();
+        void this.manager.resume(record.id, message, undefined, { isBackground: true })
+          .then((resumed) => {
+            if (resumed === undefined) this.ui?.notify(`Agent ${label} (${record.status}) cannot be resumed.`, "warning");
+          })
+          .catch((error) => {
+            this.ui?.notify(`Could not resume ${label}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+          });
+        return;
+      }
       // Pi's Editor clears before invoking onSubmit. Put the focused draft back
-      // when dispatch is rejected so a finished agent cannot eat user input.
+      // when nothing can receive it so a session-less record cannot eat input.
+      editor.setText(text);
+      this.ui?.notify(`Agent ${focusLabel(record)} is ${record.status} and cannot be steered.`, "info");
+      return;
+    }
+    if (!this.manager.steer(record.id, message)) {
       editor.setText(text);
       this.ui?.notify(`Agent ${focusLabel(record)} is ${record.status} and cannot be steered.`, "info");
       return;

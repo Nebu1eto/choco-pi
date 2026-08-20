@@ -9,7 +9,7 @@ const theme = {
   bold: (text: string) => text,
 };
 
-test("focus swaps transcript and editor steering, then restores exact predecessors", () => {
+test("focus swaps transcript and editor steering, then restores exact predecessors", async () => {
   const renderRequests: boolean[] = [];
   const listeners = new Set<() => void>();
   const session = {
@@ -58,6 +58,7 @@ test("focus swaps transcript and editor steering, then restores exact predecesso
   };
 
   const steerCalls: Array<{ id: string; message: string }> = [];
+  const resumeCalls: Array<{ id: string; message: string }> = [];
   const events: Array<{ id: string; message: string }> = [];
   const widgets = new Map<string, unknown>();
   const notifications: string[] = [];
@@ -66,6 +67,10 @@ test("focus swaps transcript and editor steering, then restores exact predecesso
       steer(id, message) {
         steerCalls.push({ id, message });
         return record.status === "running";
+      },
+      async resume(id, message) {
+        resumeCalls.push({ id, message });
+        return record;
       },
     },
     { onSteered: (id, message) => events.push({ id, message }) },
@@ -99,11 +104,23 @@ test("focus swaps transcript and editor steering, then restores exact predecesso
   assert.equal(editor.getText(), "");
 
   record.status = "completed";
+  editor.setText("follow up");
+  editor.handleInput("\r");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(orchestratorSubmits, []);
+  assert.equal(editor.getText(), "");
+  assert.deepEqual(resumeCalls, [{ id: "agent-7", message: "follow up" }]);
+  assert.match(notifications.at(-1) ?? "", /Resuming/);
+
+  // A session-less completed record cannot be resumed; the draft is restored.
+  const realSession = record.session;
+  record.session = undefined;
   editor.setText("must not reach main");
   editor.handleInput("\r");
-  assert.deepEqual(orchestratorSubmits, []);
   assert.equal(editor.getText(), "must not reach main");
+  assert.equal(resumeCalls.length, 1, "no second resume for a session-less record");
   assert.match(notifications.at(-1) ?? "", /cannot be steered/);
+  record.session = realSession;
 
   controller.unfocus();
   assert.deepEqual(controller.getState(), { kind: "orchestrator" });
