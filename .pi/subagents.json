@@ -1,4 +1,5 @@
 {
   "disableDefaultAgents": true,
-  "fallbackSubagent": "none"
+  "fallbackSubagent": "none",
+  "maxConcurrent": 8
 }
