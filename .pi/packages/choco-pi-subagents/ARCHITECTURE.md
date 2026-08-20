@@ -124,8 +124,11 @@ A finished agent may remain focused as a read-only transcript. Submitting text
 there is consumed and retained in the editor; it never falls through to the
 orchestrator. A running or queued target sends through `AgentManager.steer`, the
 same dispatch boundary used by `steer_subagent`, and emits
-`subagents:steered`. The focused agent owns any nested children, so steering is
-always addressed to its top-level record id rather than a child tool call.
+`subagents:steered`. A settled target with a live session is resumed in the
+background through `AgentManager.resume`, the same path `/btw` replies use; only
+a session-less record rejects input, with the draft restored. The focused agent
+owns any nested children, so steering is always addressed to its top-level
+record id rather than a child tool call.
 
 ### Host patches held while focused
 
