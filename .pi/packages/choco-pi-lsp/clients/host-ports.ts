@@ -1,4 +1,4 @@
-/** Host-neutral capabilities available to the pi-lens engine (#1358 S2). */
+/** Host-neutral capabilities available to the choco-pi-lsp engine (#1358 S2). */
 
 import type { ExtensionLogEntry } from "./extension-log.js";
 import type { ExtensionRunMode } from "./extension-mode.js";
@@ -26,7 +26,7 @@ export interface HostPorts {
 	};
 	readonly emit: {
 		/**
-		 * Every `pi.events` publish, including the `pi-lens/*` producer family
+		 * Every `pi.events` publish, including the `choco-pi-lsp/*` producer family
 		 * (clients/lsp-events.ts). A separate `.lens` port existed briefly but
 		 * was never wired to anything but this same `emit` function — removed
 		 * as vestigial (#1415 review) rather than kept as a distinction with no

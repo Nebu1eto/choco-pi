@@ -1,5 +1,5 @@
 /**
- * Tool Output Sanitization for pi-lens
+ * Tool Output Sanitization for choco-pi-lsp
  *
  * Cleans and normalizes tool output for display to users.
  * Removes ANSI codes, extracts key error messages, etc.

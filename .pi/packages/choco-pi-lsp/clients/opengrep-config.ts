@@ -46,7 +46,7 @@ export function normalizeOpengrepConfigArg(
 
 /**
  * Decide whether Opengrep dispatch runs, and with which `--config`. The surface
- * is intentionally seamless — there is no persisted `.pi-lens/opengrep.json` and
+ * is intentionally seamless — there is no persisted `.choco-pi-lsp/opengrep.json` and
  * no management command. Opengrep is enabled when EITHER:
  *
  *   - the repo carries a rule file (`.opengrep.yml`/`.semgrep.yml`, …) — the

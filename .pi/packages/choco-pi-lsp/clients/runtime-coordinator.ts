@@ -677,7 +677,7 @@ export class RuntimeCoordinator {
 		if (!shouldSurface) return "";
 
 		return [
-			"⚠️ pi-lens pipeline crashed while analyzing this write.",
+			"⚠️ choco-pi-lsp pipeline crashed while analyzing this write.",
 			`File: ${path.basename(filePath)} | crash count this session: ${count}`,
 			`Error: ${shortMessage}`,
 			"Recovery: LSP service was reset. If this repeats, rerun with --no-lsp and report the file + stack.",
@@ -906,7 +906,7 @@ export class RuntimeCoordinator {
 	 * whose cause lives in file G. Fixing G re-dispatches G, not F, so F's
 	 * verdict was never re-taken and "Unresolved from this turn" was re-injected
 	 * for the rest of the session. In the live case the agent then ran
-	 * `lsp_diagnostics` on F, pi-lens answered "confirmed clean", and the
+	 * `lsp_diagnostics` on F, choco-pi-lsp answered "confirmed clean", and the
 	 * blocker was STILL re-served on the next three turn ends: #571 wired that
 	 * tool's confirmed result into the widget footer and stopped there.
 	 *

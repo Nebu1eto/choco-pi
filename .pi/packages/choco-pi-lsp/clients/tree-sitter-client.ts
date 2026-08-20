@@ -1,5 +1,5 @@
 /**
- * Tree-sitter Structural Search Client for pi-lens
+ * Tree-sitter Structural Search Client for choco-pi-lsp
  *
  * Inspired by pi-lsp-extension's search-engine.ts and pattern-compiler.ts
  * Provides AST-aware structural search with metavariable capture.
@@ -369,12 +369,12 @@ export class TreeSitterClient {
 	private static readonly QUERY_BATCH_CACHE_MAX_ENTRIES = 256;
 
 	private queryCacheCap(): number {
-		const value = Number.parseInt(process.env.PI_LENS_TREE_SITTER_QUERY_CACHE_CAP ?? "", 10);
+		const value = Number.parseInt(process.env.CHOCO_PI_LSP_TREE_SITTER_QUERY_CACHE_CAP ?? "", 10);
 		return Number.isSafeInteger(value) && value > 0 ? value : TreeSitterClient.QUERY_CACHE_MAX_ENTRIES;
 	}
 
 	private queryBatchCacheCap(): number {
-		const value = Number.parseInt(process.env.PI_LENS_TREE_SITTER_QUERY_BATCH_CACHE_CAP ?? "", 10);
+		const value = Number.parseInt(process.env.CHOCO_PI_LSP_TREE_SITTER_QUERY_BATCH_CACHE_CAP ?? "", 10);
 		return Number.isSafeInteger(value) && value > 0 ? value : TreeSitterClient.QUERY_BATCH_CACHE_MAX_ENTRIES;
 	}
 
@@ -595,7 +595,7 @@ export class TreeSitterClient {
 	}
 
 	/**
-	 * The `grammars/` dir bundled inside the pi-lens package (the core grammars
+	 * The `grammars/` dir bundled inside the choco-pi-lsp package (the core grammars
 	 * shipped in the tarball, so common languages parse offline on every package
 	 * manager). Resolved from the package root; cached. Absent in a source
 	 * checkout where `prepare` hasn't populated it.
@@ -727,7 +727,7 @@ export class TreeSitterClient {
 			message:
 				`ignoring ${candidate}: the file is not a wasm module (missing the \\0asm preamble) — ` +
 				`most likely a captive-portal or proxy page written by an earlier download (#1548). ` +
-				`pi-lens will treat the grammar as missing and try to fetch it again.`,
+				`choco-pi-lsp will treat the grammar as missing and try to fetch it again.`,
 			metadata: { grammarFile, path: candidate, outcome: "not-wasm" },
 		});
 		incrementDegradationCount({
@@ -749,7 +749,7 @@ export class TreeSitterClient {
 		}
 
 		// Fallback: a real `tree-sitter-wasms` package, if the user installed one
-		// (it is not a pi-lens dependency — grammars ship bundled / lazy-fetched).
+		// (it is not a choco-pi-lsp dependency — grammars ship bundled / lazy-fetched).
 		try {
 			const wasmsOut = path.join(
 				path.dirname(_require.resolve("tree-sitter-wasms/package.json")),
@@ -829,7 +829,7 @@ export class TreeSitterClient {
 			}
 			if (!this.trustBlockedGrammarNotifications.has(grammarFile)) {
 				this.trustBlockedGrammarNotifications.add(grammarFile);
-				notifyUserDegradation(`pi-lens: ${unavailable}`);
+				notifyUserDegradation(`choco-pi-lsp: ${unavailable}`);
 			}
 			return false;
 		}
@@ -1007,7 +1007,7 @@ export class TreeSitterClient {
 		const unavailable = retryable
 			? `tree-sitter grammar '${grammarFile}' is unavailable — symbol search, ` +
 				`module reports and structural rules for this language will be degraded. ` +
-				`${detail} pi-lens will retry automatically in ${Math.round((retryDelayMs as number) / 1000)}s; ` +
+				`${detail} choco-pi-lsp will retry automatically in ${Math.round((retryDelayMs as number) / 1000)}s; ` +
 				`if the problem persists, allow the package manager's build scripts ` +
 				`(pnpm approve-builds / bun trustedDependencies) or restore network access.`
 			: `tree-sitter grammar '${grammarFile}' is unavailable — symbol search, ` +
@@ -1055,7 +1055,7 @@ export class TreeSitterClient {
 		const notifyKey = retryDelayMs ?? -1;
 		if (this.grammarLastNotifiedDelayMs.get(grammarFile) !== notifyKey) {
 			this.grammarLastNotifiedDelayMs.set(grammarFile, notifyKey);
-			notifyUserDegradation(`pi-lens: ${unavailable}`);
+			notifyUserDegradation(`choco-pi-lsp: ${unavailable}`);
 		}
 	}
 
@@ -4182,7 +4182,7 @@ export class TreeSitterClient {
 	 * pattern," passing every match through unfiltered. That's a silent fail-open on
 	 * #match?/#eq? predicates that rules rely on for correctness, and because this
 	 * runs for every match of every query, it would zero out ALL structural matches
-	 * across every language while pi-lens reports "no issues found." Fail loud (log
+	 * across every language while choco-pi-lsp reports "no issues found." Fail loud (log
 	 * once per client instance, record a degradation so it reaches the user) and
 	 * closed (report the query has no usable predicates) instead of guessing.
 	 *

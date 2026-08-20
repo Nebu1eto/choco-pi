@@ -57,15 +57,15 @@ import { getSharedTreeSitterClient } from "./tree-sitter-shared.js";
 const LSP_TOOLCALL_NAV_TOUCH_BUDGET_MS = Math.max(
 	0,
 	Number.parseInt(
-		process.env.PI_LENS_TOOLCALL_NAV_TOUCH_MS ??
-			process.env.PI_LENS_LSP_NAV_CLIENT_WAIT_MS ??
+		process.env.CHOCO_PI_LSP_TOOLCALL_NAV_TOUCH_MS ??
+			process.env.CHOCO_PI_LSP_LSP_NAV_CLIENT_WAIT_MS ??
 			"1500",
 		10,
 	) || 1500,
 );
 const LSP_TOOLCALL_TOUCH_BUDGET_MS = Math.max(
 	0,
-	Number.parseInt(process.env.PI_LENS_TOOLCALL_TOUCH_MS ?? "750", 10) || 750,
+	Number.parseInt(process.env.CHOCO_PI_LSP_TOOLCALL_TOUCH_MS ?? "750", 10) || 750,
 );
 
 function getToolCallRawFilePath(
@@ -180,7 +180,7 @@ function shouldSkipLspAutoTouch(
 	const normalized = path.resolve(filePath).replace(/\\/g, "/").toLowerCase();
 	const base = path.basename(filePath).toLowerCase();
 
-	if (normalized.includes("/.pi-lens/")) return true;
+	if (normalized.includes("/.choco-pi-lsp/")) return true;
 	if (normalized.includes("/.harness/")) return true;
 	if (isExternalOrVendorFile(filePath, projectRoot)) return true;
 	if (
@@ -329,15 +329,15 @@ export type ToolCallResult = { block: true; reason?: string } | void;
  * (`dist/core/agent-session.js:229-241`, source `agent-session.ts:~228-242`)
  * rethrows: `throw new Error("Extension failed, blocking execution: ...")`.
  *
- * So an unguarded throw anywhere in pi-lens's `tool_call` handler does not
- * degrade pi-lens — it BLOCKS the user's tool call outright. Advisory
+ * So an unguarded throw anywhere in choco-pi-lsp's `tool_call` handler does not
+ * degrade choco-pi-lsp — it BLOCKS the user's tool call outright. Advisory
  * instrumentation must never be able to do that. Every failure degrades to
- * "pi-lens did nothing for this call" (`undefined`, which pi reads as
+ * "choco-pi-lsp did nothing for this call" (`undefined`, which pi reads as
  * "no extension opinion") and lands one ledger entry per tool name.
  *
  * Returning `undefined` on a throw is deliberate: a partially-executed handler
  * cannot have earned a `{ block: true }` verdict, and inventing one would turn
- * a pi-lens bug into a refused user tool call — the exact outcome this guard
+ * a choco-pi-lsp bug into a refused user tool call — the exact outcome this guard
  * exists to prevent.
  *
  * #1642 F2 (inside the guard): a BLOCKED call (git-guard, read-guard
@@ -361,7 +361,7 @@ export async function handleToolCall(
 			// verdict: the read guard has already refused an edit-without-read, or
 			// the git guard has already refused a commit. Letting a throw out of
 			// bookkeeping reach the outer catch would convert that verdict into
-			// `undefined` — "pi-lens has no opinion" — and the refused edit would
+			// `undefined` — "choco-pi-lsp has no opinion" — and the refused edit would
 			// execute. A guard that fails OPEN because its telemetry broke is
 			// worse than no guard, so the verdict is returned regardless of what
 			// the cleanup does.
@@ -449,7 +449,7 @@ async function handleToolCallImpl(
 	// `Record<string, unknown>` and hands the SAME reference to every handler in
 	// turn (`@earendil-works/pi-coding-agent/dist/core/extensions/runner.js:701-716`
 	// passes `event` unchanged through the loop; source
-	// `src/core/extensions/types.ts:914-919`), and pi-lens itself rewrites it in
+	// `src/core/extensions/types.ts:914-919`), and choco-pi-lsp itself rewrites it in
 	// place further down (indent correction, hashline resolution, range
 	// relocation). `requestedEditIndexes` was already a snapshot; the totals
 	// below used to RE-READ `editInputForTelemetry.edits.length` from the live
@@ -560,7 +560,7 @@ async function handleToolCallImpl(
 		});
 	}
 	if (targetMissing) {
-		// #1655 item 5: this early return used to be the whole story — pi-lens
+		// #1655 item 5: this early return used to be the whole story — choco-pi-lsp
 		// did nothing, said nothing, and the file pi went on to read stayed
 		// invisible to the read guard, the LSP warm, and the dispatch. The
 		// variant ladder above now finds the macOS-shaped cases; when it probed

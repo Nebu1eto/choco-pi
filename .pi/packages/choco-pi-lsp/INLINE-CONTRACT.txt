@@ -1,6 +1,6 @@
 Inline Contract
 
-This document defines the user-visible inline contract for pi-lens.
+This document defines the user-visible inline contract for choco-pi-lsp.
 
 1) Blockers First
 

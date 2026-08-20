@@ -308,7 +308,7 @@ export async function handleAgentEnd({
 	};
 	// #502 fix provenance: per-path {tool, kind} entries accumulated across the
 	// deferred-format loop below, passed as `fixes` on the batch
-	// publishFilesTouched call so consumers can tell "pi-lens formatted this"
+	// publishFilesTouched call so consumers can tell "choco-pi-lsp formatted this"
 	// from an agent edit.
 	const deferredFormatFixes: Array<{
 		path: string;
@@ -683,7 +683,7 @@ export async function handleAgentEnd({
 			const enabledFiles = actionReport.data.files.filter((file) => {
 				// #1247: the per-edit dispatch surface gates ignored files before
 				// running; the turn-end autofix must apply the same filter or a
-				// `.pi-lens.json` `ignore` entry cannot protect a prose file
+				// `.choco-pi-lsp.json` `ignore` entry cannot protect a prose file
 				// (CHANGELOG.md / AGENTS.md) from being rewritten here.
 				if (
 					isPathIgnoredByProject(
@@ -812,7 +812,7 @@ export async function handleAgentEnd({
 				});
 				if (fixSummary.applied > 0) {
 					notify(
-						`pi-lens applied ${fixSummary.applied} conservative LSP warning quickfix(es)`,
+						`choco-pi-lsp applied ${fixSummary.applied} conservative LSP warning quickfix(es)`,
 						"info",
 					);
 				}
@@ -868,7 +868,7 @@ export async function handleAgentEnd({
 
 	if (summary.failed.length > 0) {
 		notify(
-			`pi-lens deferred format: ${summary.changed.length} changed, ${summary.failed.length} failed`,
+			`choco-pi-lsp deferred format: ${summary.changed.length} changed, ${summary.failed.length} failed`,
 			"warning",
 		);
 	} else if (summary.changed.length > 0 && !getFlag("lens-turn-summary")) {
@@ -877,7 +877,7 @@ export async function handleAgentEnd({
 		// transcript entry already carries. Failures above stay untouched either way.
 		const names = summary.changed.map((f) => path.basename(f)).join(", ");
 		notify(
-			`pi-lens deferred format applied to ${summary.changed.length} file(s): ${names}`,
+			`choco-pi-lsp deferred format applied to ${summary.changed.length} file(s): ${names}`,
 			"info",
 		);
 	}

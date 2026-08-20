@@ -1,5 +1,5 @@
 /**
- * Metrics History Tracker for pi-lens
+ * Metrics History Tracker for choco-pi-lsp
  *
  * Persists complexity metrics per commit to track trends over time.
  * Captures snapshots passively (session start) and explicitly (/lens-metrics).

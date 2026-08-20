@@ -5,21 +5,21 @@ import { performance } from "node:perf_hooks";
 // module measuring load time) would have silently installed the guard
 // wherever this file is imported, including test-only measurement code that
 // has no business flipping a global switch.
-import { PI_LENS_EVAL_STARTED_MS } from "./eval-timestamp.js";
+import { CHOCO_PI_LSP_EVAL_STARTED_MS } from "./eval-timestamp.js";
 
 /**
- * Startup timing for pi-lens.
+ * Startup timing for choco-pi-lsp.
  *
  * `performance.now()` is measured relative to `performance.timeOrigin`, which
- * is the moment the host pi process started. Capturing it the instant pi-lens
+ * is the moment the host pi process started. Capturing it the instant choco-pi-lsp
  * has finished loading therefore yields the wall-clock cost of pi loading +
- * (under source mode) jiti-transpiling every pi-lens module before any of our
+ * (under source mode) jiti-transpiling every choco-pi-lsp module before any of our
  * code runs. With the precompiled `dist/` (#182) that transpile cost is gone,
  * so this number is how we verify the startup win instead of guessing at it.
  */
 
-/** "dist" when pi-lens loaded from compiled JS, "source" when jiti-transpiled. */
-export const PI_LENS_LOADED_FROM: "dist" | "source" = import.meta.url.endsWith(
+/** "dist" when choco-pi-lsp loaded from compiled JS, "source" when jiti-transpiled. */
+export const CHOCO_PI_LSP_LOADED_FROM: "dist" | "source" = import.meta.url.endsWith(
 	".js",
 )
 	? "dist"
@@ -40,17 +40,17 @@ export function markPiLensLoaded(): number {
 	return loadMs;
 }
 
-/** ms from pi process start to pi-lens load-complete, or undefined if unmarked. */
+/** ms from pi process start to choco-pi-lsp load-complete, or undefined if unmarked. */
 export function getPiLensLoadMs(): number | undefined {
 	return loadMs;
 }
 
-/** ms from host process start until pi-lens evaluation began. */
-export const PI_LENS_HOST_BOOT_MS = Math.round(PI_LENS_EVAL_STARTED_MS);
+/** ms from host process start until choco-pi-lsp evaluation began. */
+export const CHOCO_PI_LSP_HOST_BOOT_MS = Math.round(CHOCO_PI_LSP_EVAL_STARTED_MS);
 
-/** pi-lens module-graph evaluation time once markPiLensLoaded() has run. */
+/** choco-pi-lsp module-graph evaluation time once markPiLensLoaded() has run. */
 export function getPiLensEvalMs(): number | undefined {
 	return loadMs === undefined
 		? undefined
-		: Math.max(0, loadMs - PI_LENS_HOST_BOOT_MS);
+		: Math.max(0, loadMs - CHOCO_PI_LSP_HOST_BOOT_MS);
 }

@@ -1,5 +1,5 @@
 /**
- * Project-level rule policy (`.pi-lens.json` `rules.<id>.disable` /
+ * Project-level rule policy (`.choco-pi-lsp.json` `rules.<id>.disable` /
  * `rules.<id>.select`) — output-only filtering of dispatches, so the project's
  * own policy narrows what the user actually sees without widening the trusted
  * surface area (widget state, baseline, dedup, and per-edit record stay

@@ -11,7 +11,7 @@ note: |
   arguments include untrusted input. An attacker can inject `../` sequences
   to escape the intended directory.
   Matches the catalog pattern exactly (any call to these functions).
-  The catalog severity is "hint"; pi-lens uses "warning" to surface for review.
+  The catalog severity is "hint"; choco-pi-lsp uses "warning" to surface for review.
 rule:
   any:
     - pattern: Rails.root.join($$$ARGS)

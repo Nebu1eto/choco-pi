@@ -103,7 +103,7 @@ interface SessionStartDeps {
 	/**
 	 * Host-provided startup-mode override. When set, the first-call-quick
 	 * heuristic (TUI cold-start latency mitigation) is skipped and this value
-	 * wins — but only when `PI_LENS_STARTUP_MODE` is NOT explicitly set in the
+	 * wins — but only when `CHOCO_PI_LSP_STARTUP_MODE` is NOT explicitly set in the
 	 * environment (an explicit env var still takes highest precedence).
 	 *
 	 * Use case: the MCP server has no TUI keystroke latency to protect and
@@ -227,7 +227,7 @@ function logProjectSnapshotProbe(args: {
 }
 
 function resolveStartupMode(): StartupMode {
-	const envMode = (process.env.PI_LENS_STARTUP_MODE ?? "").trim().toLowerCase();
+	const envMode = (process.env.CHOCO_PI_LSP_STARTUP_MODE ?? "").trim().toLowerCase();
 	if (envMode === "full" || envMode === "minimal" || envMode === "quick") {
 		return envMode;
 	}
@@ -243,10 +243,10 @@ function resolveStartupMode(): StartupMode {
 
 // #1162: bound the session_start sequence read to this budget. The default
 // mirrors the issue's ~250ms figure; overridable for tests (mirrors the
-// `PI_LENS_WARMUP_DELAY_MS` precedent above) so a regression can use a tiny
+// `CHOCO_PI_LSP_WARMUP_DELAY_MS` precedent above) so a regression can use a tiny
 // budget instead of racing a real 250ms wall-clock wait.
 function sequenceReadBudgetMs(): number {
-	const raw = Number(process.env.PI_LENS_SEQUENCE_READ_BUDGET_MS ?? 250);
+	const raw = Number(process.env.CHOCO_PI_LSP_SEQUENCE_READ_BUDGET_MS ?? 250);
 	return Number.isFinite(raw) && raw > 0 ? raw : 250;
 }
 
@@ -570,7 +570,7 @@ const MANAGED_TOOL_REFRESH_DELAY_MS = 30_000;
  */
 function scheduleManagedToolRefresh(dbg: SessionStartDeps["dbg"]): void {
 	const delayMs = Number(
-		process.env.PI_LENS_TOOL_REFRESH_DELAY_MS ?? MANAGED_TOOL_REFRESH_DELAY_MS,
+		process.env.CHOCO_PI_LSP_TOOL_REFRESH_DELAY_MS ?? MANAGED_TOOL_REFRESH_DELAY_MS,
 	);
 	const timer = setTimeout(() => {
 		void (async () => {
@@ -1248,7 +1248,7 @@ function scheduleDeferredToolProbes(
  * re-documenting it here would just pay the tokens twice every session.
  */
 export const SESSION_START_GUIDANCE: string[] = [
-	"📌 pi-lens active — automated checks run on every edit/write; blocking errors (including pre-existing) show inline and must be fixed.\n" +
+	"📌 choco-pi-lsp active — automated checks run on every edit/write; blocking errors (including pre-existing) show inline and must be fixed.\n" +
 		"Key tools (see each tool's own description for args):\n" +
 		"• diagnostics_report — session-wide diagnostic state; mode=all resurfaces stale blocking errors that dropped from turn context.\n" +
 		"• symbol_search → module_report → read_symbol/read_enclosing — ranked identifier search, then navigable outline/callback handles + exact body reads; cheaper than reading a whole file before editing.\n" +
@@ -1315,13 +1315,13 @@ export async function handleSessionStart(
 	//   - The user's first /new (or any subsequent session_start) sees
 	//     a cache hit on both walks and finishes the full path in <50ms.
 	//
-	// Opt-out: PI_LENS_COLD_START_QUICK=0 disables this behaviour.
-	// Override: PI_LENS_STARTUP_MODE explicitly set wins (we honour it).
+	// Opt-out: CHOCO_PI_LSP_COLD_START_QUICK=0 disables this behaviour.
+	// Override: CHOCO_PI_LSP_STARTUP_MODE explicitly set wins (we honour it).
 	//   deps.startupModeOverride lets a host (e.g. the MCP server, which has
 	//   no TUI keystroke latency to protect) skip the quick-mode heuristic
-	//   entirely — but only when PI_LENS_STARTUP_MODE is unset in the env
+	//   entirely — but only when CHOCO_PI_LSP_STARTUP_MODE is unset in the env
 	//   (an explicit env var still takes highest precedence).
-	// Tunable: PI_LENS_WARMUP_DELAY_MS adjusts the warmup delay.
+	// Tunable: CHOCO_PI_LSP_WARMUP_DELAY_MS adjusts the warmup delay.
 	let startupMode = resolveStartupMode();
 	const processGlobals = globalThis as unknown as {
 		__piLensFirstSessionDone?: boolean;
@@ -1330,8 +1330,8 @@ export async function handleSessionStart(
 	const isFirstSessionOfProcess = !processGlobals.__piLensFirstSessionDone;
 	if (
 		isFirstSessionOfProcess &&
-		process.env.PI_LENS_COLD_START_QUICK !== "0" &&
-		!process.env.PI_LENS_STARTUP_MODE
+		process.env.CHOCO_PI_LSP_COLD_START_QUICK !== "0" &&
+		!process.env.CHOCO_PI_LSP_STARTUP_MODE
 	) {
 		// Apply host-provided override (e.g. MCP server forces "full") before
 		// falling back to the TUI quick-mode heuristic.
@@ -1352,11 +1352,11 @@ export async function handleSessionStart(
 	if (
 		startupMode === "quick" &&
 		!isPrintMode() &&
-		process.env.PI_LENS_COLD_START_QUICK !== "0" &&
+		process.env.CHOCO_PI_LSP_COLD_START_QUICK !== "0" &&
 		!processGlobals.__piLensWarmupScheduled
 	) {
 		processGlobals.__piLensWarmupScheduled = true;
-		const warmupDelayMs = Number(process.env.PI_LENS_WARMUP_DELAY_MS ?? 2000);
+		const warmupDelayMs = Number(process.env.CHOCO_PI_LSP_WARMUP_DELAY_MS ?? 2000);
 		const warmupCwd = deps.ctxCwd ?? process.cwd();
 		const warmupDbg = deps.dbg;
 		// #1154: `.unref()` the warmup timer so — even for a warmup that IS
@@ -1592,7 +1592,7 @@ export async function handleSessionStart(
 	resetDispatchBaselines(ctxCwd);
 	// #806: drop the shared per-directory marker index (and any consumer
 	// cache layered on top, e.g. tsconfig-paths' matcher cache) so a
-	// `.pi-lens.json`/`tsconfig.json`/workspace-manifest edit made between
+	// `.choco-pi-lsp.json`/`tsconfig.json`/workspace-manifest edit made between
 	// sessions is picked up fresh instead of only on process restart — this
 	// also fixes #805's mid-session tsconfig staleness (the matcher cache was
 	// previously session-lived with no reset hook at all).
@@ -1920,7 +1920,7 @@ export async function handleSessionStart(
 	// #699: a persisted `too-many-source-files` verdict is only reused while
 	// still within its TTL (isStartupScanVerdictFresh) — the seq-based
 	// freshness check above (isProjectSnapshotFresh) never fires for that
-	// reason on its own, since pi-lens never wrote anything while
+	// reason on its own, since choco-pi-lsp never wrote anything while
 	// canWarmCaches was false, so the snapshot's seq never advances.
 	const cachedStartupScan =
 		freshSnapshot?.startupScan &&
@@ -2007,7 +2007,7 @@ export async function handleSessionStart(
 	);
 	if (slowFsVerdict.slow) {
 		notify(
-			`🐢 Slow filesystem detected (median ${slowFsVerdict.medianStatMicros.toFixed(0)}µs/stat) — reduced-scan mode engaged (set PI_LENS_ALLOW_SLOW_FS_SCAN=1 to override).`,
+			`🐢 Slow filesystem detected (median ${slowFsVerdict.medianStatMicros.toFixed(0)}µs/stat) — reduced-scan mode engaged (set CHOCO_PI_LSP_ALLOW_SLOW_FS_SCAN=1 to override).`,
 			"warning",
 		);
 	}
@@ -2129,7 +2129,7 @@ export async function handleSessionStart(
 		);
 		// #775: mirror the slow-fs notify above — a size-skipped warm pipeline is
 		// otherwise silent (debug-log only), so a large project can look like
-		// pi-lens just isn't scanning anything. Fires ONCE per session (this
+		// choco-pi-lsp just isn't scanning anything. Fires ONCE per session (this
 		// `else` branch runs once per handleSessionStart call — the
 		// dominant-language LSP pre-warm skip further down reuses this same
 		// verdict rather than notifying a second time).
@@ -2139,7 +2139,7 @@ export async function handleSessionStart(
 		) {
 			const overrideHint =
 				startupScan.reason === "too-many-entries"
-					? ` (set PI_LENS_STARTUP_SCAN_MAX_ENTRIES=<n> to override the ${getStartupScanMaxEntries()}-entry cap)`
+					? ` (set CHOCO_PI_LSP_STARTUP_SCAN_MAX_ENTRIES=<n> to override the ${getStartupScanMaxEntries()}-entry cap)`
 					: "";
 			notify(
 				`📦 Project-size limits disabled background warm scans (heavy scans, TODO scan, LSP pre-warm)${overrideHint}.`,

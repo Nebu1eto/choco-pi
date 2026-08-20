@@ -14,7 +14,7 @@
 //
 // Design borrowed from the community renderer extensions pi-tool-display and
 // pi-claude-style-tools (summary-by-default + expand-on-demand), but scoped to
-// pi-lens's own tools and driven off structured `details` rather than blind
+// choco-pi-lsp's own tools and driven off structured `details` rather than blind
 // truncation. Those extensions default to respecting a tool's own renderResult
 // (overrideExistingRenderers === false), so these renderers win and still coexist
 // with a globally-installed renderer extension.
@@ -44,16 +44,16 @@ export type CompactSummarizer<D = unknown> = (
 	input: CompactSummaryInput<D>,
 ) => string;
 
-/** How a rendered line should be styled. `brand` is pi-lens blue (our colour);
+/** How a rendered line should be styled. `brand` is choco-pi-lsp blue (our colour);
  * `error` and `output` defer to the active theme so red/normal stay legible. */
 export type CompactStyle = "brand" | "error" | "output";
 
-// pi-lens brand colour: blue characters on whatever background the pi tool shell
+// choco-pi-lsp brand colour: blue characters on whatever background the pi tool shell
 // paints (default success/error background is left untouched). Truecolor bold
 // foreground, theme-independent so the summary reads as ours regardless of the
 // active pi theme. We reset only the foreground (\x1b[39m) and bold (\x1b[22m) so
 // the shell background still composites.
-const PI_LENS_BLUE_FG = "\x1b[1m\x1b[38;2;96;165;250m"; // bold blue
+const CHOCO_PI_LSP_BLUE_FG = "\x1b[1m\x1b[38;2;96;165;250m"; // bold blue
 const RESET_FG = "\x1b[39m\x1b[22m";
 
 /** Join all text content blocks into the full model-facing string. */
@@ -98,7 +98,7 @@ export function selectCompactText<D = unknown>(
 		// Never let a summarizer bug blank the row — fall back to the first line.
 		summary = text.split("\n")[0] ?? "";
 	}
-	// Collapsed summaries render in pi-lens blue; errors stay theme-red.
+	// Collapsed summaries render in choco-pi-lsp blue; errors stay theme-red.
 	return { text: summary, style: result.isError ? "error" : "brand" };
 }
 
@@ -110,7 +110,7 @@ export function paintCompact(
 	theme: Theme,
 ): string {
 	if (style === "brand") {
-		return `${PI_LENS_BLUE_FG}${text}${RESET_FG}`;
+		return `${CHOCO_PI_LSP_BLUE_FG}${text}${RESET_FG}`;
 	}
 	const color: ThemeColor = style === "error" ? "error" : "toolOutput";
 	return theme.fg(color, text);

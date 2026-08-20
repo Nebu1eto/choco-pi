@@ -1722,7 +1722,7 @@ export function triggerBackgroundWordIndexBuild(
 const WORD_INDEX_PERSIST_DEBOUNCE_MS_DEFAULT = 1500;
 
 function wordIndexPersistDebounceMs(): number {
-	const raw = Number(process.env.PI_LENS_WORD_INDEX_PERSIST_DEBOUNCE_MS);
+	const raw = Number(process.env.CHOCO_PI_LSP_WORD_INDEX_PERSIST_DEBOUNCE_MS);
 	return Number.isFinite(raw) && raw >= 0
 		? raw
 		: WORD_INDEX_PERSIST_DEBOUNCE_MS_DEFAULT;
@@ -1806,8 +1806,8 @@ async function writeWordIndexSnapshot(
 /**
  * Schedule a debounced persist of `index` for `cwd`, coalescing a burst of
  * per-edit updates into one write after a quiet window (default 1500ms,
- * override via `PI_LENS_WORD_INDEX_PERSIST_DEBOUNCE_MS`, mirroring the review
- * graph's `PI_LENS_GRAPH_PERSIST_DEBOUNCE_MS`). Merges through the same
+ * override via `CHOCO_PI_LSP_WORD_INDEX_PERSIST_DEBOUNCE_MS`, mirroring the review
+ * graph's `CHOCO_PI_LSP_GRAPH_PERSIST_DEBOUNCE_MS`). Merges through the same
  * `saveProjectSnapshot` path phase 1 uses — preserves unrelated snapshot
  * fields and respects the seq-laundering guard (only ever writes wordIndex
  * for the CURRENT in-memory index, never re-stamps a stale one).

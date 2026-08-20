@@ -1,7 +1,7 @@
 /**
- * Declarative Tool Dispatcher for pi-lens
+ * Declarative Tool Dispatcher for choco-pi-lsp
  *
- * Redesigned to handle the full complexity of pi-lens's tool_result handler:
+ * Redesigned to handle the full complexity of choco-pi-lsp's tool_result handler:
  * - Multiple tools with different semantics (blocking, warning, silent)
  * - Delta mode (baseline tracking)
  * - Autofix handling
@@ -571,7 +571,7 @@ function buildCoverageNotice(
 		filePath: ctx.filePath,
 		severity: "warning",
 		semantic: "warning",
-		tool: "pi-lens",
+		tool: "choco-pi-lsp",
 	};
 }
 
@@ -883,12 +883,12 @@ export async function dispatchForFile(
 	const dedupedDiagnostics = dedupeOverlappingDiagnostics(allDiagnostics);
 	const fileContent =
 		ctx.facts.getFileFact<string>(ctx.filePath, "file.content") ?? "";
-	// Project rule policy (`.pi-lens.json` `rules.<id>.disable`/`select`).
+	// Project rule policy (`.choco-pi-lsp.json` `rules.<id>.disable`/`select`).
 	//
 	// Resolved from `ctx.projectRoot` (falling back to `ctx.cwd`), NOT
 	// `ctx.projectConfig` — `ctx.projectConfig` is loaded from the nested
 	// LANGUAGE root (`resolveLanguageRootForFile`), so in a monorepo where a
-	// package directory has its own `.pi-lens.json`, `discoverPiLensProjectConfig`'s
+	// package directory has its own `.choco-pi-lsp.json`, `discoverPiLensProjectConfig`'s
 	// upward walk stops there and never sees a repo-root policy.
 	// `diagnostics_report` loads its policy map from `runtime.projectRoot`; using
 	// the same root here keeps the two surfaces in agreement. `ctx.projectConfig`
@@ -898,7 +898,7 @@ export async function dispatchForFile(
 		loadPiLensProjectConfig(ctx.projectRoot ?? ctx.cwd).rules,
 	);
 	// The output-only filter pipeline: LSP/docker overlap suppression + inline
-	// `pi-lens-ignore` + agent/user dispositions + project rule policy. Applied
+	// `choco-pi-lsp-ignore` + agent/user dispositions + project rule policy. Applied
 	// AFTER dedupe so the pi renderer, widget, and delta all see one filtered
 	// set. #690: dispositions drop false-positive/suppress marks and anything
 	// deferred this session (flagged marks stay; diagnostics_report tags them at

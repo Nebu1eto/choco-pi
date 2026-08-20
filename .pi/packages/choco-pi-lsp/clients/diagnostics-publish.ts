@@ -3,7 +3,7 @@
  *
  * Sibling to `clients/bus-publish.ts` (the #482 `pilens:files:touched`
  * producer) rather than a new export crammed into that file: the two events
- * share the emit plumbing (`wireBusEmitter`) and the `PI_LENS_BUS_PUBLISH`
+ * share the emit plumbing (`wireBusEmitter`) and the `CHOCO_PI_LSP_BUS_PUBLISH`
  * kill switch, but this producer owns its OWN piece of module state (the
  * previously-reported-paths set for clean-transition tracking, the seq
  * counter) that has nothing to do with files-touched.
@@ -32,7 +32,7 @@
  *    Between an edit landing (a files:touched event) and the next
  *    diagnostics batch for that path, a consumer's previously-held
  *    diagnostics for that path are PROVISIONAL — the file has changed on
- *    disk but pi-lens hasn't re-analyzed it yet. Consumers that want to
+ *    disk but choco-pi-lsp hasn't re-analyzed it yet. Consumers that want to
  *    avoid rendering stale annotations across that window should treat a
  *    files:touched path as "diagnostics pending" until the next
  *    pilens:diagnostics event mentions it (at any seq).
@@ -106,7 +106,7 @@ export interface PilensDiagnosticsFileEntry {
  */
 export interface PilensDiagnosticsPayload {
 	v: typeof BUS_DIAGNOSTICS_VERSION;
-	source: "pi-lens";
+	source: "choco-pi-lsp";
 	cwd: string;
 	/** Monotonic per-emission counter (process-lifetime; NOT persisted). Higher seq always wins on out-of-order receipt. */
 	seq: number;
@@ -157,7 +157,7 @@ export interface PublishDiagnosticsFileInput {
 export interface PublishDiagnosticsArgs {
 	cwd: string;
 	files: PublishDiagnosticsFileInput[];
-	/** Loop guard, mirrors #482: set when triggered by an ingested bus event. Always false in practice (pi-lens consumes nothing today); exists so a future consumer can't wire a publish -> react -> publish cycle. */
+	/** Loop guard, mirrors #482: set when triggered by an ingested bus event. Always false in practice (choco-pi-lsp consumes nothing today); exists so a future consumer can't wire a publish -> react -> publish cycle. */
 	origin?: "bus";
 	dbg?: (msg: string) => void;
 }
@@ -257,7 +257,7 @@ export function publishDiagnostics(args: PublishDiagnosticsArgs): void {
 		seqCounter += 1;
 		const payload: PilensDiagnosticsPayload = {
 			v: BUS_DIAGNOSTICS_VERSION,
-			source: "pi-lens",
+			source: "choco-pi-lsp",
 			cwd: normalizeFilePath(args.cwd),
 			seq: seqCounter,
 			ts: Date.now(),

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "pi-lens tree-sitter query rule",
-  "description": "A single tree-sitter query rule loaded by pi-lens. Place files under rules/tree-sitter-queries/<language>/.",
+  "title": "choco-pi-lsp tree-sitter query rule",
+  "description": "A single tree-sitter query rule loaded by choco-pi-lsp. Place files under rules/tree-sitter-queries/<language>/.",
   "type": "object",
   "required": ["id", "query"],
   "additionalProperties": false,

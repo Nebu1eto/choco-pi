@@ -9,7 +9,7 @@ note: |
   the alias and let the (rare) genuine unknown-input site say so
   directly.
 
-  FP-scan finding (pi-lens codebase, clients/ tools/ mcp/ index.ts):
+  FP-scan finding (choco-pi-lsp codebase, clients/ tools/ mcp/ index.ts):
   the originally proposed wider fan-out — bare `unknown` return types,
   `unknown` parameters, and `Record<string, unknown>` / index-signature
   dictionaries — was dropped from this rule. Each of those arms fired

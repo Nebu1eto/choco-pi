@@ -520,7 +520,7 @@ export function extractWrittenPathsFromCommand(
 			// git ops that REWRITE working-tree files with explicit paths:
 			//   git checkout [<ref>] -- <files>   git restore [opts] <files>
 			// These restore content but never go through the edit tool, so without
-			// this pi-lens keeps stale diagnostics/fileSeq for the restored file.
+			// this choco-pi-lsp keeps stale diagnostics/fileSeq for the restored file.
 			// Whole-tree ops (reset --hard, stash pop, revert, merge, rebase, pull,
 			// or `git checkout <branch>`) don't name files and aren't handled here.
 			const sub = args[0];

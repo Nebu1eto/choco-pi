@@ -9,7 +9,7 @@
  *
  * This module is the registry that maps such a server to:
  *   - its enablement gate (default-on with an optional kill-switch flag), and
- *   - how to turn its raw LSP diagnostics into pi-lens diagnostics (tool name +
+ *   - how to turn its raw LSP diagnostics into choco-pi-lsp diagnostics (tool name +
  *     semantic policy + defect class), since the LSP `source` differs from our
  *     tool id and most auxiliaries should be advisory, not blocking.
  *
@@ -30,7 +30,7 @@ import type { DefectClass, Diagnostic, OutputSemantic } from "./types.js";
 export interface AuxiliaryLspProfile {
 	/** LSPServerInfo.id of the auxiliary server. */
 	serverId: string;
-	/** pi-lens tool id its diagnostics are tagged with. */
+	/** choco-pi-lsp tool id its diagnostics are tagged with. */
 	tool: string;
 	/** Matches `LSPDiagnostic.source` the server emits (e.g. Opengrep → "Semgrep"). */
 	sourceMatch: RegExp;
@@ -50,7 +50,7 @@ export interface AuxiliaryLspProfile {
 	defectClass?: (d: LSPDiagnostic) => DefectClass | undefined;
 	/** Per-diagnostic suppression via the tool's NATIVE inline comment (e.g.
 	 *  semgrep's `# nosemgrep`, #441). Given the file content; return true to drop
-	 *  the finding. Distinct from pi-lens's own `# pi-lens-ignore` — this honors the
+	 *  the finding. Distinct from choco-pi-lsp's own `# choco-pi-lsp-ignore` — this honors the
 	 *  suppression syntax the tool's own users already know. */
 	isSuppressed?: (d: LSPDiagnostic, content: string) => boolean;
 	/** Drop this profile's findings on files with `fileRole: "test"` (#687).
@@ -172,7 +172,7 @@ export const AUXILIARY_LSP_PROFILES: readonly AuxiliaryLspProfile[] = [
 		// LSP surface, which had no test-file gating of its own.
 		skipTestFiles: true,
 		// The ast-grep LSP runs either the repo's own sgconfig (when present) or
-		// pi-lens's shipped baseline sgconfig. In both cases the rule severity is
+		// choco-pi-lsp's shipped baseline sgconfig. In both cases the rule severity is
 		// deliberate, so preserve ast-grep's severity semantics: ERROR can block,
 		// WARNING/INFO stay advisory.
 		allowBlocking: () => true,
@@ -239,7 +239,7 @@ export function enabledAuxiliaryLspServerIds(getFlag: GetFlag): string[] {
 	// #449 slice 2 (budget): skip auxiliaries when machine-wide LSP budget is
 	// exceeded. #713 (subagent light mode): reuse the same seam — a subagent
 	// session also skips auxiliaries; the parent session already runs them on
-	// the same cwd. PI_LENS_SUBAGENT_FULL=1 restores full behavior via
+	// the same cwd. CHOCO_PI_LSP_SUBAGENT_FULL=1 restores full behavior via
 	// isSubagentSession() returning false.
 	if (shouldDegradeAuxiliaryLsp() || isSubagentSession()) return [];
 	return AUXILIARY_LSP_PROFILES.flatMap((p) =>

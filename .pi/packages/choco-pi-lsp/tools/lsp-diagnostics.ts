@@ -192,7 +192,7 @@ type BatchFileOutcome =
 	| "inconclusive";
 
 function batchFileDeadlineMs(): number {
-	const raw = Number(process.env.PI_LENS_LSP_BATCH_FILE_MS);
+	const raw = Number(process.env.CHOCO_PI_LSP_LSP_BATCH_FILE_MS);
 	return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_BATCH_FILE_DEADLINE_MS;
 }
 
@@ -317,7 +317,7 @@ async function mapWithConcurrency<R>(
 
 /**
  * Project-ignore predicate rooted at `root`, fail-open. Lets a directory scan
- * honor the user's `.pi-lens.json` / `.gitignore` patterns — not just the
+ * honor the user's `.choco-pi-lsp.json` / `.gitignore` patterns — not just the
  * canonical dir-name list — so `lsp_diagnostics` stays consistent with the
  * workspace-diagnostics walk and every other scan surface (#243/#297/#298). A
  * config-probe error never blocks a scan (matches the walkers' behaviour).
@@ -390,7 +390,7 @@ export function createLspDiagnosticsTool(
 	nextWriteIndex?: () => number,
 	// #1561: #571 wired this tool's confirmed result into the widget footer and
 	// stopped there. The inline-blocker map is a SECOND agent-facing store fed by
-	// the same dispatch verdict, and nothing retired it — so pi-lens kept
+	// the same dispatch verdict, and nothing retired it — so choco-pi-lsp kept
 	// injecting "Unresolved from this turn" for three more turns after answering
 	// "confirmed clean" for the same file. index.ts injects
 	// `runtime.retireInlineBlockerOnConfirmedClean`. Optional/undefined in tests.

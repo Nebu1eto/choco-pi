@@ -1,5 +1,5 @@
 /**
- * Rule Cache for pi-lens
+ * Rule Cache for choco-pi-lsp
  *
  * Provides disk-based caching for parsed tree-sitter rules with
  * automatic invalidation based on rule file modification times.

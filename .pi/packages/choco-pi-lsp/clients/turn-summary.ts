@@ -1,7 +1,7 @@
 /**
  * Turn-summary collector (#484).
  *
- * Opt-in, transcript-persistent record of what pi-lens did: diagnostics
+ * Opt-in, transcript-persistent record of what choco-pi-lsp did: diagnostics
  * found, autofixes applied, autoformats applied. Accumulated per-file across
  * the RUN's write/edit pipeline runs + the agent_end deferred-format pass,
  * then emitted as ONE `pi.sendMessage` custom entry at the `agent_settled`
@@ -182,7 +182,7 @@ function formatToolCounts(byTool: Record<string, number>): string {
 /**
  * Build the collapsed, tool-grouped one-line fallback text (also used as the
  * plain-text `content` for hosts without the custom renderer).
- * Example: "pi-lens: 3 diagnostics (eslint 2, tsserver 1) · 2 autofixed (ruff) · 1 reformatted (prettier)"
+ * Example: "choco-pi-lsp: 3 diagnostics (eslint 2, tsserver 1) · 2 autofixed (ruff) · 1 reformatted (prettier)"
  */
 export function formatTurnSummaryLine(details: TurnSummaryDetails): string {
 	const parts: string[] = [];
@@ -201,8 +201,8 @@ export function formatTurnSummaryLine(details: TurnSummaryDetails): string {
 		const byTool = formatToolCounts(counts.byTool.format);
 		parts.push(`${counts.formats} reformatted${byTool ? ` (${byTool})` : ""}`);
 	}
-	if (parts.length === 0) return "pi-lens: turn summary (empty)";
-	return `pi-lens: ${parts.join(" · ")}`;
+	if (parts.length === 0) return "choco-pi-lsp: turn summary (empty)";
+	return `choco-pi-lsp: ${parts.join(" · ")}`;
 }
 
 export const TURN_SUMMARY_CUSTOM_TYPE = "pilens:turn-summary";

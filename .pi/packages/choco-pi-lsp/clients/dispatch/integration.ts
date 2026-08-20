@@ -168,7 +168,7 @@ registerRule(corsWildcardRule);
 registerRule(commentedCredentialsRule);
 
 /**
- * Load a project's `.pi-lens.json` config.
+ * Load a project's `.choco-pi-lsp.json` config.
  *
  * Rule thresholds are consumed from `DispatchContext.projectConfig` during rule
  * evaluation, not applied to process-global module state. Keeping this helper as
@@ -420,7 +420,7 @@ export function getDispatchGroupsForKind(
  * Reset baselines — call on session_start so a new session
  * starts with a clean slate.
  *
- * Pass `cwd` to also re-apply the project's `.pi-lens.json` rule thresholds
+ * Pass `cwd` to also re-apply the project's `.choco-pi-lsp.json` rule thresholds
  * (a no-op when the file is absent or unchanged, since the loader is
  * mtime-cached). Optional for backward compatibility with tests that don't
  * care about per-project thresholds.
@@ -668,7 +668,7 @@ const REVERSE_DEPS_IDLE_EVICT_MS_DEFAULT = 20 * 60_000;
 
 function reverseDepsIdleEvictMs(): number {
 	const value = Number.parseInt(
-		process.env.PI_LENS_REVERSE_DEPS_IDLE_EVICT_MS ?? "",
+		process.env.CHOCO_PI_LSP_REVERSE_DEPS_IDLE_EVICT_MS ?? "",
 		10,
 	);
 	return Number.isSafeInteger(value) && value > 0
@@ -718,7 +718,7 @@ function setReverseDepsEntry(
 }
 
 function reverseDepsReuseEnabled(): boolean {
-	const raw = process.env.PI_LENS_REVERSE_DEPS_REUSE;
+	const raw = process.env.CHOCO_PI_LSP_REVERSE_DEPS_REUSE;
 	return raw !== "0" && raw !== "false";
 }
 
@@ -750,7 +750,7 @@ export function _seedReverseDepsIndexCacheForTests(
 // env-tunable; set depth to 1 to restore the old one-hop-only behaviour.
 const CASCADE_TRANSITIVE_DEPTH = Math.max(
 	1,
-	Number.parseInt(process.env.PI_LENS_CASCADE_TRANSITIVE_DEPTH ?? "2", 10) || 2,
+	Number.parseInt(process.env.CHOCO_PI_LSP_CASCADE_TRANSITIVE_DEPTH ?? "2", 10) || 2,
 );
 // #1462: the cap itself, and the derivation that narrows it when this run has
 // already spent the settle window, live in clients/cascade-budget.ts alongside
@@ -781,10 +781,10 @@ export const CASCADE_GRAPH_KINDS = new Set([
  */
 /**
  * Whether a cascade neighbour is suppressed by the project's ignore config
- * (`.pi-lens.json` / `.gitignore` / global `~/.pi-lens/config.json`), via the
+ * (`.choco-pi-lsp.json` / `.gitignore` / global `~/.choco-pi-lsp/config.json`), via the
  * same `getProjectIgnoreMatcher` every other scan surface uses. Cascade surfaces
  * collateral diagnostics in OTHER files an edit touched; a file the user ignores
- * (e.g. a `*.test.ts` glob in `.pi-lens.json`) must not be re-surfaced here just
+ * (e.g. a `*.test.ts` glob in `.choco-pi-lsp.json`) must not be re-surfaced here just
  * because it imports the edited file — project walk and diagnostics_report already
  * filter it, and cascade was the last surface that didn't (#297). Fail-open: a
  * config-probe error never drops a neighbour, matching the walkers' behaviour.
@@ -1186,7 +1186,7 @@ export async function computeCascadeForFile(
 		impact = computeImpactCascade(graph, normalizedFile, cwd);
 		// #1023: buildOrUpdateGraph returns an EMPTY graph (seeded only with the
 		// changed file's own symbols) when the repo is over
-		// PI_LENS_REVIEW_GRAPH_MAX_FILES (`too_many_files`) or the root is unsafe
+		// CHOCO_PI_LSP_REVIEW_GRAPH_MAX_FILES (`too_many_files`) or the root is unsafe
 		// (`unsafe_root`) — both stamp mode "skipped" on the already-read
 		// graphBuildInfo. A capped or entry-budget-truncated graph is also not a
 		// complete dependent set even though it has nodes, so it must not look like

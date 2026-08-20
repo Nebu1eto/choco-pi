@@ -6,19 +6,19 @@
  */
 
 /**
- * True when pi-lens should suppress side-effecting log writes — e.g. inside
- * the vitest test runner, or when callers explicitly set `PI_LENS_TEST_MODE=1`.
+ * True when choco-pi-lsp should suppress side-effecting log writes — e.g. inside
+ * the vitest test runner, or when callers explicitly set `CHOCO_PI_LSP_TEST_MODE=1`.
  *
  * Resolution:
- *   - `PI_LENS_TEST_MODE === "1"` → true (explicit opt-in)
- *   - `VITEST` set and `PI_LENS_TEST_MODE !== "0"` → true (vitest default, with explicit opt-out)
+ *   - `CHOCO_PI_LSP_TEST_MODE === "1"` → true (explicit opt-in)
+ *   - `VITEST` set and `CHOCO_PI_LSP_TEST_MODE !== "0"` → true (vitest default, with explicit opt-out)
  *   - otherwise false
  *
  * Replaces the boolean previously duplicated verbatim in ~10 logger modules.
  */
 export function isTestMode(): boolean {
-	if (process.env.PI_LENS_TEST_MODE === "1") return true;
-	if (process.env.VITEST && process.env.PI_LENS_TEST_MODE !== "0") return true;
+	if (process.env.CHOCO_PI_LSP_TEST_MODE === "1") return true;
+	if (process.env.VITEST && process.env.CHOCO_PI_LSP_TEST_MODE !== "0") return true;
 	return false;
 }
 
@@ -33,7 +33,7 @@ export function isTestMode(): boolean {
  * @example
  * ```ts
  * const floor = Math.max(
- *   toPositiveFinite(process.env.PI_LENS_KNOB_MS),
+ *   toPositiveFinite(process.env.CHOCO_PI_LSP_KNOB_MS),
  *   toPositiveFinite(loadedConfig?.knobMs),
  *   0,
  * );
@@ -62,7 +62,7 @@ export function toPositiveFinite(value: unknown): number {
  *
  * @example
  * ```ts
- * const _ttl = lazyEnvNumber("PI_LENS_STARTUP_SCAN_VERDICT_TTL_MS", DEFAULT_TTL_MS);
+ * const _ttl = lazyEnvNumber("CHOCO_PI_LSP_STARTUP_SCAN_VERDICT_TTL_MS", DEFAULT_TTL_MS);
  * export const getStartupScanVerdictTtlMs = _ttl.get;
  * export const _resetStartupScanVerdictTtlForTests = _ttl._resetForTests;
  * ```

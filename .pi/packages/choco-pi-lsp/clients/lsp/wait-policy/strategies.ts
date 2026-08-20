@@ -5,12 +5,12 @@
  * session. Keep this module free of session-local state: it must not import
  * runtime-session, runtime-turn, or warm-attach.
  *
- * Per-Server Diagnostic Strategies for pi-lens LSP
+ * Per-Server Diagnostic Strategies for choco-pi-lsp LSP
  *
  * Codifies known server behavior so timing decisions (debounce, retry budget,
  * first-push seeding) are automatic rather than one-size-fits-all.
  *
- * Env var overrides (PI_LENS_LSP_*) always take precedence over strategy values.
+ * Env var overrides (CHOCO_PI_LSP_LSP_*) always take precedence over strategy values.
  */
 
 import { createRequire } from "node:module";

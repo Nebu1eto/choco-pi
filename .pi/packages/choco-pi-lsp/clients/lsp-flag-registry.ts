@@ -1,12 +1,12 @@
 /**
- * THE single declarative source of truth for every pi-lens toggle (#166).
+ * THE single declarative source of truth for every choco-pi-lsp toggle (#166).
  *
  * One entry per flag drives all four consumers that previously kept their own
  * hand-maintained list and drifted apart:
  *
  *   - `index.ts` — `pi.registerFlag` for the CLI surface (name, description,
  *     default), as a loop over this array.
- *   - `clients/lsp-config.ts` — parsing the key out of `~/.pi-lens/config.json`
+ *   - `clients/lsp-config.ts` — parsing the key out of `~/.choco-pi-lsp/config.json`
  *     AND resolving the precedence chain, both keyed by `configKey`.
  *   - `clients/project-lsp-config.ts` — the closest-wins nested walk for the
  *     `scope: "project"` entries.
@@ -14,7 +14,7 @@
  *     than restated.
  *
  * Every entry is settable BOTH ways: `--<name>` on the CLI and `configKey` in
- * `~/.pi-lens/config.json`. Adding a toggle means adding one entry here; there
+ * `~/.choco-pi-lsp/config.json`. Adding a toggle means adding one entry here; there
  * is no second place to remember.
  */
 
@@ -25,8 +25,8 @@ export interface LensFlagSpec {
 	name: string;
 	description: string;
 	/**
-	 * Dotted path to this flag's boolean in `~/.pi-lens/config.json` (and, for
-	 * `scope: "project"` entries, the identical path in `.pi-lens.json`).
+	 * Dotted path to this flag's boolean in `~/.choco-pi-lsp/config.json` (and, for
+	 * `scope: "project"` entries, the identical path in `.choco-pi-lsp.json`).
 	 */
 	configKey: string;
 	/**
@@ -37,7 +37,7 @@ export interface LensFlagSpec {
 	/** Value when neither env, CLI, project config, nor global config decides. */
 	default: boolean;
 	/**
-	 * `"project"` flags also read `.pi-lens.json` and nested per-directory
+	 * `"project"` flags also read `.choco-pi-lsp.json` and nested per-directory
 	 * configs (closest-wins per edited file); `"global"` flags resolve
 	 * CLI → global → default.
 	 */
@@ -55,7 +55,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "no-lens",
 		description:
-			"Start pi-lens disabled for this session. Re-enable with /lens-toggle. Also via lens.enabled=false in ~/.pi-lens/config.json.",
+			"Start choco-pi-lsp disabled for this session. Re-enable with /lens-toggle. Also via lens.enabled=false in ~/.choco-pi-lsp/config.json.",
 		configKey: "lens.enabled",
 		negated: true,
 		default: false,
@@ -64,7 +64,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "no-lsp",
 		description:
-			"Disable unified LSP diagnostics and use language-specific fallbacks (for example pyright). Also via lsp.enabled=false in ~/.pi-lens/config.json.",
+			"Disable unified LSP diagnostics and use language-specific fallbacks (for example pyright). Also via lsp.enabled=false in ~/.choco-pi-lsp/config.json.",
 		configKey: "lsp.enabled",
 		negated: true,
 		default: false,
@@ -107,7 +107,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "no-tests",
 		description:
-			"Disable test runner on write. Also via tests.enabled=false in ~/.pi-lens/config.json.",
+			"Disable test runner on write. Also via tests.enabled=false in ~/.choco-pi-lsp/config.json.",
 		configKey: "tests.enabled",
 		negated: true,
 		default: false,
@@ -116,7 +116,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "no-delta",
 		description:
-			"Disable delta mode (show all diagnostics, not just new ones). Also via delta.enabled=false in ~/.pi-lens/config.json.",
+			"Disable delta mode (show all diagnostics, not just new ones). Also via delta.enabled=false in ~/.choco-pi-lsp/config.json.",
 		configKey: "delta.enabled",
 		negated: true,
 		default: false,
@@ -125,7 +125,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "lens-guard",
 		description:
-			"Experimental: block git commit/push when unresolved pi-lens blockers exist. Also via guard.enabled=true in ~/.pi-lens/config.json.",
+			"Experimental: block git commit/push when unresolved choco-pi-lsp blockers exist. Also via guard.enabled=true in ~/.choco-pi-lsp/config.json.",
 		configKey: "guard.enabled",
 		negated: false,
 		default: false,
@@ -134,7 +134,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "no-opengrep",
 		description:
-			"Disable the Opengrep security scanner (a default-on auxiliary LSP; auto-installs, uses repo rules if present else the login-free 'auto' ruleset). Also via opengrep.enabled=false in ~/.pi-lens/config.json.",
+			"Disable the Opengrep security scanner (a default-on auxiliary LSP; auto-installs, uses repo rules if present else the login-free 'auto' ruleset). Also via opengrep.enabled=false in ~/.choco-pi-lsp/config.json.",
 		configKey: "opengrep.enabled",
 		negated: true,
 		default: false,
@@ -143,7 +143,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "no-read-guard",
 		description:
-			"Disable read-before-edit behavior monitor. Also via readGuard.enabled=false in ~/.pi-lens/config.json.",
+			"Disable read-before-edit behavior monitor. Also via readGuard.enabled=false in ~/.choco-pi-lsp/config.json.",
 		configKey: "readGuard.enabled",
 		negated: true,
 		default: false,
@@ -152,17 +152,17 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "no-lens-context",
 		description:
-			"Disable automatic context injection (session-start guidance, turn-end & test findings) while keeping tools, LSP, read-guard, and formatting active. Toggle with /lens-context-toggle. Also via contextInjection.enabled=false in config or PI_LENS_NO_CONTEXT_INJECTION=1.",
+			"Disable automatic context injection (session-start guidance, turn-end & test findings) while keeping tools, LSP, read-guard, and formatting active. Toggle with /lens-context-toggle. Also via contextInjection.enabled=false in config or CHOCO_PI_LSP_NO_CONTEXT_INJECTION=1.",
 		configKey: "contextInjection.enabled",
 		negated: true,
 		default: false,
 		scope: "global",
-		env: "PI_LENS_NO_CONTEXT_INJECTION",
+		env: "CHOCO_PI_LSP_NO_CONTEXT_INJECTION",
 	},
 	{
 		name: "lens-turn-summary",
 		description:
-			"Opt-in: persist a per-turn transcript entry summarizing diagnostics found, autofixes applied, and autoformats applied this turn (#484). Collapsed one-line, expandable in place. Default off. Also via turnSummary.enabled=true in ~/.pi-lens/config.json.",
+			"Opt-in: persist a per-turn transcript entry summarizing diagnostics found, autofixes applied, and autoformats applied this turn (#484). Collapsed one-line, expandable in place. Default off. Also via turnSummary.enabled=true in ~/.choco-pi-lsp/config.json.",
 		configKey: "turnSummary.enabled",
 		negated: false,
 		default: false,
@@ -171,7 +171,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "lens-actionable-warnings",
 		description:
-			"Write turn-delta fixable warning reports and inject a short advisory. Also via actionableWarnings.enabled=true in ~/.pi-lens/config.json.",
+			"Write turn-delta fixable warning reports and inject a short advisory. Also via actionableWarnings.enabled=true in ~/.choco-pi-lsp/config.json.",
 		configKey: "actionableWarnings.enabled",
 		negated: false,
 		default: false,
@@ -180,7 +180,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "lens-actionable-warning-actions",
 		description:
-			"Enrich actionable-warning reports with LSP code-action titles (requires an active language server). Also via actionableWarnings.includeLspCodeActions=true in ~/.pi-lens/config.json.",
+			"Enrich actionable-warning reports with LSP code-action titles (requires an active language server). Also via actionableWarnings.includeLspCodeActions=true in ~/.choco-pi-lsp/config.json.",
 		configKey: "actionableWarnings.includeLspCodeActions",
 		negated: false,
 		default: false,
@@ -198,7 +198,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "lens-actionable-warning-all",
 		description:
-			"Report every actionable warning, not just those introduced this turn. Also via actionableWarnings.deltaOnly=false in ~/.pi-lens/config.json.",
+			"Report every actionable warning, not just those introduced this turn. Also via actionableWarnings.deltaOnly=false in ~/.choco-pi-lsp/config.json.",
 		configKey: "actionableWarnings.deltaOnly",
 		negated: true,
 		default: false,
@@ -207,7 +207,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "lens-compact-tool-line",
 		description:
-			"Opt-in (#1327): collapse a pi-lens tool's call+result rows into ONE theme-aware line (status glyph + name + summary) instead of two. Preserves expand-to-view-full-output. Default off. Also via ui.compactToolLine=true in ~/.pi-lens/config.json.",
+			"Opt-in (#1327): collapse a choco-pi-lsp tool's call+result rows into ONE theme-aware line (status glyph + name + summary) instead of two. Preserves expand-to-view-full-output. Default off. Also via ui.compactToolLine=true in ~/.choco-pi-lsp/config.json.",
 		configKey: "ui.compactToolLine",
 		negated: false,
 		default: false,
@@ -216,7 +216,7 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
 	{
 		name: "no-lazy-tools",
 		description:
-			"Keep all pi-lens tools active to avoid tool-list cache changes. Also via tools.lazy=false in ~/.pi-lens/config.json.",
+			"Keep all choco-pi-lsp tools active to avoid tool-list cache changes. Also via tools.lazy=false in ~/.choco-pi-lsp/config.json.",
 		configKey: "tools.lazy",
 		negated: true,
 		default: false,
@@ -230,12 +230,12 @@ export function getLensFlagSpec(name: string): LensFlagSpec | undefined {
 	return byName.get(name);
 }
 
-/** The `scope: "project"` subset — the flags a `.pi-lens.json` may also set. */
+/** The `scope: "project"` subset — the flags a `.choco-pi-lsp.json` may also set. */
 export const PROJECT_SCOPED_LENS_FLAGS: readonly LensFlagSpec[] =
 	LENS_FLAGS.filter((spec) => spec.scope === "project");
 
 /**
- * Recognized TOP-LEVEL sections of `~/.pi-lens/config.json` that are NOT
+ * Recognized TOP-LEVEL sections of `~/.choco-pi-lsp/config.json` that are NOT
  * derived from the flag registry — the non-flag namespaces the global loader
  * parses by hand (`ignore`, `dispatch`, `widget`) plus `$schema` for editor
  * JSON-schema association. Declared here, beside {@link LENS_FLAGS}, so the
@@ -259,7 +259,7 @@ export const GLOBAL_NON_FLAG_CONFIG_SECTIONS: readonly string[] = [
 
 /**
  * Foreign top-level namespaces that legitimately appear in a SHARED
- * `.pi-lens.json` but belong to a DIFFERENT loader: the LSP config loader
+ * `.choco-pi-lsp.json` but belong to a DIFFERENT loader: the LSP config loader
  * (`clients/lsp/config.ts`) reads `servers` / `serverOverrides` /
  * `disabledServers` / `warmFiles` out of the very same file. The project-lens
  * loader must TOLERATE these (never warn "unknown key") — they are not typos,

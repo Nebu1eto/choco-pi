@@ -1,6 +1,6 @@
 /**
  * Renderer for the #484 turn-summary custom message
- * (`pilens:turn-summary`). Collapsed = one tool-grouped line (pi-lens brand
+ * (`pilens:turn-summary`). Collapsed = one tool-grouped line (choco-pi-lsp brand
  * accent). Expanded = file-major: each touched file lists its
  * formats/autofixes/diagnostics with tool + rule id + line.
  *
@@ -55,7 +55,7 @@ function eventLine(theme: Theme, event: TurnSummaryEvent): string {
 
 function buildExpandedLines(details: TurnSummaryDetails, theme: Theme): string[] {
 	const lines: string[] = [];
-	lines.push(theme.fg("accent", theme.bold("pi-lens turn summary")));
+	lines.push(theme.fg("accent", theme.bold("choco-pi-lsp turn summary")));
 	const sortedFiles = [...details.files].sort((a, b) =>
 		a.displayPath.localeCompare(b.displayPath),
 	);

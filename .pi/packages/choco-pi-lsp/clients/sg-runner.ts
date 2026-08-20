@@ -833,7 +833,7 @@ export class SgRunner {
 	} {
 		const sessionDir = path.join(
 			os.tmpdir(),
-			`pi-lens-temp-${ruleId}-${Date.now()}`,
+			`choco-pi-lsp-temp-${ruleId}-${Date.now()}`,
 		);
 		const rulesSubdir = path.join(sessionDir, "rules");
 		const configFile = path.join(sessionDir, ".sgconfig.yml");

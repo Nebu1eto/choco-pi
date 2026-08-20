@@ -2,8 +2,8 @@
  * Cross-process LSP budget (#449 slice 2 — PROTOTYPE).
  *
  * Slice 1 (#472/#474/#475, `clients/instance-registry.ts` +
- * `clients/instance-reaper.ts`) made every concurrent pi-lens process visible
- * to every other one via `~/.pi-lens/instances.json`. This module is the
+ * `clients/instance-reaper.ts`) made every concurrent choco-pi-lsp process visible
+ * to every other one via `~/.choco-pi-lsp/instances.json`. This module is the
  * first thing that DOES something with that visibility: a machine-wide cap
  * on total live LSP server processes. When a NEW session starts and the
  * machine is already over budget, it degrades its OWN spawn plan — it never
@@ -34,10 +34,10 @@
  * for a first cut — the goal is to catch the "25 concurrent node.exe, several
  * at 600MB-2GB RSS" pathological pile-up this was written in response to
  * (dogfooding note, 2026-07-12/13), not to micromanage the common 2-4-agent
- * case. `PI_LENS_LSP_BUDGET_CEILING` overrides it once real-world data (#620)
+ * case. `CHOCO_PI_LSP_LSP_BUDGET_CEILING` overrides it once real-world data (#620)
  * says otherwise.
  *
- * Kill switch: `PI_LENS_CROSS_PROCESS_BUDGET=0` disables this module
+ * Kill switch: `CHOCO_PI_LSP_CROSS_PROCESS_BUDGET=0` disables this module
  * entirely (every session always spawns its full fleet, today's behavior) —
  * lazy env read, never memoized, matching the house style
  * (session-lifecycle.ts / runtime-config.ts).
@@ -55,29 +55,29 @@ import { logLatency } from "./latency-logger.js";
 export const DEFAULT_LSP_BUDGET_CEILING = 16;
 export const DEFAULT_LSP_BUDGET_IDLE_TIMEOUT_MS = 60_000;
 
-/** `PI_LENS_CROSS_PROCESS_BUDGET=0` disables the budget check entirely —
+/** `CHOCO_PI_LSP_CROSS_PROCESS_BUDGET=0` disables the budget check entirely —
  *  lazy env read (house style), never memoized so tests can flip it mid-run. */
 export function isCrossProcessBudgetEnabled(): boolean {
-	return process.env.PI_LENS_CROSS_PROCESS_BUDGET !== "0";
+	return process.env.CHOCO_PI_LSP_CROSS_PROCESS_BUDGET !== "0";
 }
 
-/** `PI_LENS_LSP_BUDGET_CEILING` overrides {@link DEFAULT_LSP_BUDGET_CEILING}.
+/** `CHOCO_PI_LSP_LSP_BUDGET_CEILING` overrides {@link DEFAULT_LSP_BUDGET_CEILING}.
  *  Non-finite/non-positive overrides are ignored (NaN-guard house style, see
  *  clients/runtime-config.ts) — falls back to the default rather than
  *  silently producing a ceiling of 0 (which would degrade every session). */
 export function getLspBudgetCeiling(): number {
-	const raw = Number(process.env.PI_LENS_LSP_BUDGET_CEILING);
+	const raw = Number(process.env.CHOCO_PI_LSP_LSP_BUDGET_CEILING);
 	return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_LSP_BUDGET_CEILING;
 }
 
 /** Optional aggregate host + LSP-child RSS ceiling. Undefined means disabled. */
 export function getLspBudgetRssCeilingBytes(): number | undefined {
-	const raw = Number(process.env.PI_LENS_LSP_BUDGET_RSS_MB);
+	const raw = Number(process.env.CHOCO_PI_LSP_LSP_BUDGET_RSS_MB);
 	return Number.isFinite(raw) && raw > 0 ? raw * 1024 * 1024 : undefined;
 }
 
 export function getLspBudgetIdleTimeoutMs(): number {
-	const raw = Number(process.env.PI_LENS_LSP_BUDGET_IDLE_TIMEOUT_MS);
+	const raw = Number(process.env.CHOCO_PI_LSP_LSP_BUDGET_IDLE_TIMEOUT_MS);
 	return Number.isFinite(raw) && raw > 0
 		? raw
 		: DEFAULT_LSP_BUDGET_IDLE_TIMEOUT_MS;

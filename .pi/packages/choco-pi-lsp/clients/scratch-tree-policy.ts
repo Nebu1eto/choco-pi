@@ -3,7 +3,7 @@
  * runner that hands a DIRECTORY to an external binary and lets that binary do
  * its own tree walk.
  *
- * pi-lens's own in-process walkers (`source-filter.ts`/`source-walker.ts`,
+ * choco-pi-lsp's own in-process walkers (`source-filter.ts`/`source-walker.ts`,
  * `getProjectIgnoreMatcher`) already route every entry through
  * `isExcludedDirName`/`EXCLUDED_DIRS` (`file-utils.ts`) — that's how knip,
  * jscpd, and the tree-sitter project scan skip `.pi/`, `node_modules/`, etc.
@@ -100,7 +100,7 @@ export function getScratchTreeFnmatchPatterns(): string[] {
 export const SECRETS_LANE_SCRATCH_DIR_NAMES: readonly string[] = [
 	// pi-ecosystem / coding-agent data + cache directories.
 	".pi",
-	".pi-lens",
+	".choco-pi-lsp",
 	".claude",
 	".codex",
 	".agents",

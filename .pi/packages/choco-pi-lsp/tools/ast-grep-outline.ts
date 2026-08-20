@@ -49,9 +49,9 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
 		description:
 			"Syntax-only code structure (symbols, imports, exports, and members) via " +
 			"`ast-grep outline`. Fast, local, no index/LSP/cross-file semantics — useful " +
-			"for languages or structures where pi-lens's own extractor is weak, or for a " +
+			"for languages or structures where choco-pi-lsp's own extractor is weak, or for a " +
 			"raw second opinion.\n\n" +
-			"Prefer module_report for pi-lens-aware navigation (who-uses-this, " +
+			"Prefer module_report for choco-pi-lsp-aware navigation (who-uses-this, " +
 			"complexity/fanout, recommendedReads, blast radius, callback handles). Use " +
 			"ast_grep_outline when you want the syntax tree's own view of a file or a " +
 			"whole directory.\n\n" +

@@ -2,8 +2,8 @@
  * Cross-process instance registry (#449 slice 1).
  *
  * Observability substrate for multi-agent LSP resource sharing. Records, in
- * a single machine-global file (`~/.pi-lens/instances.json`), every live
- * pi-lens process: its pid, project root, live LSP child servers, RSS, and a
+ * a single machine-global file (`~/.choco-pi-lsp/instances.json`), every live
+ * choco-pi-lsp process: its pid, project root, live LSP child servers, RSS, and a
  * heartbeat timestamp. Later slices (cross-process budget, same-root warm
  * attach) build on this; slice 1 is purely observational — it changes no
  * dispatch/LSP behavior, it only records state and reaps stale entries /
@@ -96,13 +96,13 @@ function registryPath(): string {
 let _enabledCache: boolean | undefined;
 
 /**
- * `PI_LENS_INSTANCE_REGISTRY=0` disables the registry entirely: every
+ * `CHOCO_PI_LSP_INSTANCE_REGISTRY=0` disables the registry entirely: every
  * exported function in this module becomes a no-op (including the reaper
  * sweep in clients/instance-reaper.ts, which checks this too).
  */
 export function isInstanceRegistryEnabled(): boolean {
 	if (_enabledCache !== undefined) return _enabledCache;
-	_enabledCache = process.env.PI_LENS_INSTANCE_REGISTRY !== "0";
+	_enabledCache = process.env.CHOCO_PI_LSP_INSTANCE_REGISTRY !== "0";
 	return _enabledCache;
 }
 
@@ -450,14 +450,14 @@ export interface ResourceFootprint {
 	 *  registered instance. This is a SUM, not an average — on a multi-core
 	 *  box it can exceed 100 even for a single busy process (matches
 	 *  `pidusage`'s per-process convention), so read it as "how much CPU is
-	 *  attributable to pi-lens", not "% of one core". */
+	 *  attributable to choco-pi-lsp", not "% of one core". */
 	totalCpuPercent: number;
 	totalLspChildCount: number;
 	perInstance: InstanceFootprint[];
 }
 
 /**
- * PURE aggregation over a registry snapshot: "how much CPU/RAM is pi-lens
+ * PURE aggregation over a registry snapshot: "how much CPU/RAM is choco-pi-lsp
  * attributable to, right now, across every process it owns" (#620) — the
  * host of every registered instance plus every one of its live LSP children.
  * Missing/unsampled `rssBytes`/`cpuPercent` (best-effort sampling can fail)
@@ -537,7 +537,7 @@ export function computeResourceFootprint(
 
 /**
  * Read the live registry and compute the aggregate footprint — the query
- * side of "how much CPU/RAM is pi-lens using right now" (#620). Best-effort
+ * side of "how much CPU/RAM is choco-pi-lsp using right now" (#620). Best-effort
  * (readInstanceRegistry never throws); the answer only reflects whatever
  * heartbeats have landed so far.
  *

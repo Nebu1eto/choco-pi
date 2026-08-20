@@ -1,5 +1,5 @@
 /**
- * Tier 2 of the MCP path: drive pi-lens's *real* lifecycle handlers
+ * Tier 2 of the MCP path: drive choco-pi-lsp's *real* lifecycle handlers
  * (`handleSessionStart`, `handleTurnEnd`) instead of re-implementing the runners
  * they orchestrate. This is what exposes the layers the per-edit dispatch slice
  * doesn't — session-start warms the dominant-language LSP (so warm `analyze` is
@@ -107,7 +107,7 @@ export interface SessionStartOutcome {
 }
 
 /**
- * Run pi-lens's real session_start. Much of the work (scans, baseline, LSP warm)
+ * Run choco-pi-lsp's real session_start. Much of the work (scans, baseline, LSP warm)
  * runs in the background, so the immediate return carries the synchronous
  * guidance + whatever baseline/LSP state is ready; query `diagnostics_report` /
  * `lsp_health` afterwards for the scan results as they land.
@@ -124,7 +124,7 @@ export async function runSessionStart(
 		// first-call-quick heuristic must not apply. Force "full" mode so
 		// the dominant-language LSP pre-warm, scans, and error-debt baseline
 		// all run on the first (and only) session_start of the process.
-		// An explicit PI_LENS_STARTUP_MODE env var still wins (handled in
+		// An explicit CHOCO_PI_LSP_STARTUP_MODE env var still wins (handled in
 		// handleSessionStart — the override is only checked when the env var
 		// is unset).
 		startupModeOverride: "full",
@@ -269,7 +269,7 @@ const pendingTurnEndDeliveries = new Map<string, PendingTurnEndDelivery>();
 const inFlightIpcTurnEnds = new Map<string, Promise<TurnEndDelivery>>();
 
 /**
- * Run pi-lens's real turn_end over the files edited this "turn". The handler
+ * Run choco-pi-lsp's real turn_end over the files edited this "turn". The handler
  * reads edited files from turn-state, so we register the caller-supplied files
  * first (a full-file range, importsChanged=true so dep/knip re-check broadly).
  */

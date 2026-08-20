@@ -227,7 +227,7 @@ export async function configureWarmAttach(cwd: string): Promise<void> {
 	state.cwd = path.resolve(cwd);
 	state.incumbentPid = undefined;
 	state.local = true;
-	if (process.env.PI_LENS_WARM_ATTACH !== "1") {
+	if (process.env.CHOCO_PI_LSP_WARM_ATTACH !== "1") {
 		record("disabled", state.cwd, "opt-in-not-enabled");
 		return;
 	}

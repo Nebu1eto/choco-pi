@@ -1,5 +1,5 @@
 /**
- * opengrep CLI client for pi-lens — bulk/full-workspace project-diagnostics
+ * opengrep CLI client for choco-pi-lsp — bulk/full-workspace project-diagnostics
  * extractor (#584).
  *
  * opengrep already runs as an always-on LSP auxiliary (`clients/lsp/server.ts`
@@ -151,7 +151,7 @@ export class OpengrepClient extends SecurityScanClient<OpengrepResult> {
 		const scannedAt = new Date().toISOString();
 		const bin = this.binaryPath ?? "opengrep";
 		const resolved = OpengrepClient.resolveConfig(cwd);
-		const outDir = mkdtempSync(path.join(os.tmpdir(), "pi-lens-opengrep-"));
+		const outDir = mkdtempSync(path.join(os.tmpdir(), "choco-pi-lsp-opengrep-"));
 		const reportPath = path.join(outDir, "opengrep-report.json");
 		try {
 			const result = await safeSpawnAsync(

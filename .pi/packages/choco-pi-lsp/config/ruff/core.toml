@@ -1,4 +1,4 @@
-# pi-lens bundled ruff config
+# choco-pi-lsp bundled ruff config
 # Applied when no project-level ruff config is found.
 # Projects can override everything by adding [tool.ruff] to pyproject.toml
 # or creating ruff.toml / .ruff.toml at the project root.
@@ -26,14 +26,14 @@ select = [
 # pre-existing codebase would drown the security signal `S` adds in the same
 # pass. C90 is a maintainability metric, not a Bandit-equivalent security
 # check, so it stays out of scope for this issue. Revisit as its own opt-in
-# if pi-lens grows a "code health" ruleset.
+# if choco-pi-lsp grows a "code health" ruleset.
 
 # S sub-rules excluded below were triaged by running `ruff check --select S`
 # against tests/fixtures/real-bugs/python/silent-and-security.py (this repo's
 # own security fixture — 3/3 true positives: S110, S105, S307) and against the
 # `requests` and `pip` packages installed under a local Python 3.11 (394
 # combined S findings across two mature, widely-audited real-world
-# codebases) — chosen as the "2-3 real fixtures" because pi-lens's own repo
+# codebases) — chosen as the "2-3 real fixtures" because choco-pi-lsp's own repo
 # only has ~15 Python files, too small to expose over-firing sub-rules.
 ignore = [
   "E501",   # line too long — formatter handles this

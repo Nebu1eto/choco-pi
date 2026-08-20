@@ -22,10 +22,10 @@ import { toPositiveFinite } from "./env-utils.js";
 
 let _enabledCache: boolean | undefined;
 
-/** `PI_LENS_QUIET_WINDOW=0` disables the whole scheduler (no-op, no logging). */
+/** `CHOCO_PI_LSP_QUIET_WINDOW=0` disables the whole scheduler (no-op, no logging). */
 export function isQuietWindowEnabled(): boolean {
 	if (_enabledCache !== undefined) return _enabledCache;
-	_enabledCache = process.env.PI_LENS_QUIET_WINDOW !== "0";
+	_enabledCache = process.env.CHOCO_PI_LSP_QUIET_WINDOW !== "0";
 	return _enabledCache;
 }
 
@@ -47,6 +47,6 @@ const DEFAULT_QUIET_WINDOW_WAIT_MS = 15_000;
  * "how long will the pipeline actually keep working on this" must check both.
  */
 export function quietWindowWaitMs(): number {
-	const raw = toPositiveFinite(process.env.PI_LENS_QUIET_WINDOW_WAIT_MS);
+	const raw = toPositiveFinite(process.env.CHOCO_PI_LSP_QUIET_WINDOW_WAIT_MS);
 	return raw > 0 ? raw : DEFAULT_QUIET_WINDOW_WAIT_MS;
 }

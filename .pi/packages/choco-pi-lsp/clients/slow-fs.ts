@@ -15,12 +15,12 @@
  * collectors instead.
  *
  * Escape hatches:
- *   - `PI_LENS_ALLOW_SLOW_FS_SCAN=1` — disable slow-FS mode entirely (full
+ *   - `CHOCO_PI_LSP_ALLOW_SLOW_FS_SCAN=1` — disable slow-FS mode entirely (full
  *     normal behavior even when the probe would flag the FS as slow).
- *   - `PI_LENS_FORCE_SLOW_FS=1` — force slow-FS mode on regardless of the
+ *   - `CHOCO_PI_LSP_FORCE_SLOW_FS=1` — force slow-FS mode on regardless of the
  *     probe (testing/CI, or a user who knows their FS is slow but the probe
  *     under-fires).
- *   - `PI_LENS_SLOW_FS_THRESHOLD_US` — override the median-microseconds
+ *   - `CHOCO_PI_LSP_SLOW_FS_THRESHOLD_US` — override the median-microseconds
  *     threshold (default 500).
  *
  * Follows the lazy-memoized-config house style (see `runtime-config.ts`): env
@@ -50,7 +50,7 @@ export interface SlowFsProbeResult {
 }
 
 function resolveThresholdMicros(): number {
-	const envValue = toPositiveFinite(process.env.PI_LENS_SLOW_FS_THRESHOLD_US);
+	const envValue = toPositiveFinite(process.env.CHOCO_PI_LSP_SLOW_FS_THRESHOLD_US);
 	return envValue > 0 ? envValue : DEFAULT_SLOW_FS_THRESHOLD_US;
 }
 
@@ -113,15 +113,15 @@ const slowFsVerdictCache = new BoundedLruCache<string, SlowFsProbeResult>(32);
 
 /**
  * Resolve (and memoize) the slow-FS verdict for `cwd`. Resolution order:
- *   1. `PI_LENS_ALLOW_SLOW_FS_SCAN=1` — kill switch, always false.
- *   2. `PI_LENS_FORCE_SLOW_FS=1` — always true, probe skipped entirely.
+ *   1. `CHOCO_PI_LSP_ALLOW_SLOW_FS_SCAN=1` — kill switch, always false.
+ *   2. `CHOCO_PI_LSP_FORCE_SLOW_FS=1` — always true, probe skipped entirely.
  *   3. Measured probe (memoized per cwd for the process lifetime).
  */
 export function getSlowFsVerdict(cwd: string): SlowFsProbeResult {
-	if (process.env.PI_LENS_ALLOW_SLOW_FS_SCAN === "1") {
+	if (process.env.CHOCO_PI_LSP_ALLOW_SLOW_FS_SCAN === "1") {
 		return { slow: false, medianStatMicros: 0, samples: 0 };
 	}
-	if (process.env.PI_LENS_FORCE_SLOW_FS === "1") {
+	if (process.env.CHOCO_PI_LSP_FORCE_SLOW_FS === "1") {
 		return { slow: true, medianStatMicros: 0, samples: 0 };
 	}
 
@@ -153,5 +153,5 @@ export const SLOW_FS_REDUCED_MAX_FILES = 500;
 /** Human-readable degradation notice surfaced once per session when slow-FS
  * mode engages, so a user never sees a silently-empty scan result. */
 export function slowFsDegradationNotice(): string {
-	return "slow filesystem detected (set PI_LENS_ALLOW_SLOW_FS_SCAN=1 to override)";
+	return "slow filesystem detected (set CHOCO_PI_LSP_ALLOW_SLOW_FS_SCAN=1 to override)";
 }

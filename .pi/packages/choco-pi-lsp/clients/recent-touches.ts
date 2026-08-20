@@ -2,7 +2,7 @@
  * Cross-process touched-files record (#492).
  *
  * #485 (clients/agent-nudge.ts) delivers an inline "these files were
- * autoformatted by pi-lens" context nudge, fed by the IN-PROCESS
+ * autoformatted by choco-pi-lsp" context nudge, fed by the IN-PROCESS
  * `pilens:files:touched` bus event (#482, clients/bus-publish.ts). That
  * covers every run/turn of the SAME pi process, but subagents spawn real
  * child `pi` processes — a separate process, a separate in-memory bus, a
@@ -13,12 +13,12 @@
  *     a child asked to commit runs `git status`, finds unexplained `M`
  *     files, burns turns investigating.
  *   - Parent blind to child: the child is ephemeral, but the parent keeps
- *     working in the same tree after the child returns and its pi-lens
+ *     working in the same tree after the child returns and its choco-pi-lsp
  *     autoformatted on top of the child's edits.
  *
  * This module is the shared substrate: a single project-scoped
  * `recent-touches.json` (via `getProjectDataDir(cwd)` — NEVER a hardcoded
- * `.pi-lens` path) that every pi-lens instance (parent or child) both
+ * `.choco-pi-lsp` path) that every choco-pi-lsp instance (parent or child) both
  * appends to (on publish) and reads from (session_start / turn_start). Ring
  * buffer capped at ~50 entries; atomic tmp+rename writes, same pattern as
  * the instance registry (#474, clients/instance-registry.ts). `pid` is what
@@ -70,7 +70,7 @@ let _enabledCache: boolean | undefined;
 
 export function isRecentTouchesEnabled(): boolean {
 	if (_enabledCache === undefined) {
-		_enabledCache = process.env.PI_LENS_AGENT_NUDGE !== "0";
+		_enabledCache = process.env.CHOCO_PI_LSP_AGENT_NUDGE !== "0";
 	}
 	return _enabledCache;
 }

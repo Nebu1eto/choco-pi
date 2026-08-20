@@ -61,8 +61,8 @@ const DEFAULT_STARTUP_FAILURE_WINDOW_MS = 50;
 const WINDOWS_NAV_STARTUP_FAILURE_WINDOW_MS = 500;
 const SESSIONSTART_LOG_DIR = getGlobalPiLensDir();
 const SESSIONSTART_LOG = path.join(SESSIONSTART_LOG_DIR, "sessionstart.log");
-const PI_LENS_BIN_DIR = path.join(getGlobalPiLensDir(), "bin");
-const PI_LENS_TOOLS_BIN_DIR = path.join(
+const CHOCO_PI_LSP_BIN_DIR = path.join(getGlobalPiLensDir(), "bin");
+const CHOCO_PI_LSP_TOOLS_BIN_DIR = path.join(
 	getGlobalPiLensDir(),
 	"tools",
 	"node_modules",
@@ -176,8 +176,8 @@ async function buildAugmentedPath(basePath?: string): Promise<string> {
 		candidates.push(path.join(home, ".cargo", "bin"));
 		candidates.push(path.join(home, "go", "bin"));
 		candidates.push(path.join(home, ".dotnet", "tools"));
-		candidates.push(PI_LENS_BIN_DIR);
-		candidates.push(PI_LENS_TOOLS_BIN_DIR);
+		candidates.push(CHOCO_PI_LSP_BIN_DIR);
+		candidates.push(CHOCO_PI_LSP_TOOLS_BIN_DIR);
 		candidates.push(path.join(driveRoot, "Program Files", "Go", "bin"));
 		candidates.push(path.join(driveRoot, "Go", "bin"));
 		// Ruby installer drops versioned dirs (e.g. Ruby34-x64) on the drive root.

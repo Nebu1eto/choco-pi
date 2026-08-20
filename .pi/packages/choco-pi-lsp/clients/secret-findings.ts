@@ -2,7 +2,7 @@
  * Cross-source secret-finding dedup (acceptance gate for #131 Mode 3).
  *
  * Hardcoded / committed secrets can be reported by up to three independent
- * pi-lens sources for the *same* line:
+ * choco-pi-lsp sources for the *same* line:
  *   - gitleaks       (session scan, #130) — rule id e.g. `aws-access-token`
  *   - trivy secret   (session scan, #131) — rule id e.g. `aws-access-key-id`
  *   - ast-grep rules (per-edit dispatch)  — rule id e.g. `*-hardcoded-secret-*`

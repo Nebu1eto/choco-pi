@@ -1,5 +1,5 @@
 /**
- * Shared file path utilities for pi-lens
+ * Shared file path utilities for choco-pi-lsp
  */
 
 import * as fs from "node:fs";
@@ -21,25 +21,25 @@ import {
 import { safeSpawnAsync } from "./safe-spawn.js";
 
 /**
- * Return the directory where pi-lens stores project-specific data
+ * Return the directory where choco-pi-lsp stores project-specific data
  * (caches, indexes, worklogs, etc.).
  *
- * Default: reuse <project>/.pi-lens if it already exists, otherwise use
- * ~/.pi-lens/projects/<project-slug>
+ * Default: reuse <project>/.choco-pi-lsp if it already exists, otherwise use
+ * ~/.choco-pi-lsp/projects/<project-slug>
  *
  * Override: set PILENS_DATA_DIR=/some/path — each project gets its own
  * subdirectory named after a sanitized form of its absolute path, e.g.
- *   PILENS_DATA_DIR=~/.pi-lens/projects
- *   → ~/.pi-lens/projects/home-user-myapp/
+ *   PILENS_DATA_DIR=~/.choco-pi-lsp/projects
+ *   → ~/.choco-pi-lsp/projects/home-user-myapp/
  *
- * This keeps project folders clean and avoids creating .pi-lens folders
+ * This keeps project folders clean and avoids creating .choco-pi-lsp folders
  * inside user projects.
  */
 export function getProjectDataDir(cwd: string): string {
-	const legacyProjectDir = path.join(cwd, ".pi-lens");
+	const localProjectDir = path.join(cwd, ".choco-pi-lsp");
 	const configuredBase = process.env.PILENS_DATA_DIR?.trim();
-	if (!configuredBase && fs.existsSync(legacyProjectDir)) {
-		return legacyProjectDir;
+	if (!configuredBase && fs.existsSync(localProjectDir)) {
+		return localProjectDir;
 	}
 	const base = configuredBase || path.join(getGlobalPiLensDir(), "projects");
 	const normalized = normalizeFilePath(path.resolve(cwd));
@@ -53,31 +53,31 @@ export function getProjectDataDir(cwd: string): string {
 }
 
 /**
- * Machine-global pi-lens directory: `~/.pi-lens/` by default.
+ * Machine-global choco-pi-lsp directory: `~/.choco-pi-lsp/` by default.
  *
  * Used for logs (latency, cascade, read-guard, tree-sitter, actionable-warnings,
- * sessionstart), tool binaries (`~/.pi-lens/tools/`, `~/.pi-lens/bin/`), the
+ * sessionstart), tool binaries (`~/.choco-pi-lsp/tools/`, `~/.choco-pi-lsp/bin/`), the
  * cross-process instance registry (`instances.json`, #449/#525), the
  * auto-install probe cache, and other state that is intentionally NOT
- * project-scoped — it spans every project pi-lens has touched.
+ * project-scoped — it spans every project choco-pi-lsp has touched.
  *
- * Override: set `PI_LENS_HOME=/some/path` to relocate this ENTIRE root (every
+ * Override: set `CHOCO_PI_LSP_HOME=/some/path` to relocate this ENTIRE root (every
  * caller below routes through this one function, so one env var covers all of
  * them — see #525). Tests MUST set this to a per-worker temp dir in
  * `tests/support/vitest-setup.ts` rather than mocking each caller separately;
  * otherwise a test that exercises `registerInstance`/`sweepOrphans` or any
- * logger writes into the developer's REAL `~/.pi-lens` (dogfooded live: a
+ * logger writes into the developer's REAL `~/.choco-pi-lsp` (dogfooded live: a
  * test-fixture instance survived in the real `instances.json` for 17h).
  *
  * Distinct from `getProjectDataDir(cwd)`, which respects `PILENS_DATA_DIR`
  * (project-scoped) and produces per-project subdirectories. Callers writing
  * project caches, snapshots, or worklogs should use `getProjectDataDir(cwd)`
- * instead — `PI_LENS_HOME` is the MACHINE-scoped sibling of that override.
+ * instead — `CHOCO_PI_LSP_HOME` is the MACHINE-scoped sibling of that override.
  */
 export function getGlobalPiLensDir(): string {
-	const override = process.env.PI_LENS_HOME?.trim();
+	const override = process.env.CHOCO_PI_LSP_HOME?.trim();
 	if (override) return path.resolve(override);
-	return path.join(os.homedir(), ".pi-lens");
+	return path.join(os.homedir(), ".choco-pi-lsp");
 }
 
 /**
@@ -100,7 +100,7 @@ export const EXCLUDED_DIRS = [
 	".pnpm-store",
 	".gradle",
 	".next",
-	".pi-lens",
+	".choco-pi-lsp",
 	".pi", // pi agent directory
 	".ruff_cache", // Python linter cache
 	".worktrees",
@@ -136,13 +136,13 @@ export const EXCLUDED_DIRS = [
  * never ignored" rule:
  *   - `global` / `gitignore` emulate git itself, so they inherit that rule —
  *     a winning match from either NEVER excludes a file git tracks.
- *   - `pilens` (`.pi-lens.json`'s `ignore` field) is pi-lens-native user
+ *   - `pilens` (`.choco-pi-lsp.json`'s `ignore` field) is choco-pi-lsp-native user
  *     intent ("don't analyze this"), not a git emulation, so it excludes
  *     regardless of tracked status.
  *
- * `pilens` patterns can come from the root `.pi-lens.json` (loaded once at
+ * `pilens` patterns can come from the root `.choco-pi-lsp.json` (loaded once at
  * matcher-construction time in `createProjectIgnoreMatcher`) OR from a
- * package-local `.pi-lens.json` layered in per ancestor directory by
+ * package-local `.choco-pi-lsp.json` layered in per ancestor directory by
  * `buildProjectIgnoreMatcher`'s `patternsForDir` (#783) — both are tagged
  * `"pilens"` and share the same tracked-file-rescue exemption.
  */
@@ -330,7 +330,7 @@ function buildProjectIgnoreMatcher(
 			patterns: GitignorePattern[];
 		}
 	>();
-	// #783: layer a NESTED `.pi-lens.json`'s `ignore` field the same way a
+	// #783: layer a NESTED `.choco-pi-lsp.json`'s `ignore` field the same way a
 	// nested `.gitignore` is already layered — each ancestor directory between
 	// `resolvedRoot` and the target is checked for its OWN config file (no
 	// upward walk; `findPiLensConfigInDir`/`loadPiLensConfigInDir` look only
@@ -470,7 +470,7 @@ function buildProjectIgnoreMatcher(
 			if (!verdict.ignored) return false;
 			// #703 layer semantics: a winning positive match from `global` or
 			// `gitignore` emulates git, so it inherits git's "a tracked file is
-			// never ignored" rule. A winning match from `pilens` is pi-lens-native
+			// never ignored" rule. A winning match from `pilens` is choco-pi-lsp-native
 			// intent and stays excluded regardless of tracked status. Directory
 			// queries are never tracked-rescued — the tracked set is a file-id
 			// set, not a directory set.
@@ -493,11 +493,11 @@ export function createProjectIgnoreMatcher(
 ): ProjectIgnoreMatcher {
 	const resolvedRoot = resolveGitIgnoreRoot(rootDir);
 	// Precedence is gitignore order: LATER patterns override earlier ones. So
-	// global (lowest) → project .gitignore → project .pi-lens.json (highest),
+	// global (lowest) → project .gitignore → project .choco-pi-lsp.json (highest),
 	// which lets a project `!negation` re-include a globally-ignored path (#252).
 	// Each layer is tagged (#703) so `isIgnored` can tell a git-emulating match
 	// (`global`/`gitignore` — subject to "a tracked file is never ignored")
-	// apart from pi-lens-native intent (`pilens` — excludes regardless).
+	// apart from choco-pi-lsp-native intent (`pilens` — excludes regardless).
 	const patterns = [
 		...parseGitignoreContent(globalPatterns.join("\n"), "global"),
 		...readGitignorePatterns(resolvedRoot, "gitignore"),
@@ -520,7 +520,7 @@ const projectIgnoreMatcherCache = new Map<
 		 * stat that already produced `lensConfigMtimeMs`. */
 		lensConfigSize: number;
 		globalConfigMtimeMs: number;
-		/** #1105 second axis for the global `~/.pi-lens/config.json`. */
+		/** #1105 second axis for the global `~/.choco-pi-lsp/config.json`. */
 		globalConfigSize: number;
 		matcher: ProjectIgnoreMatcher;
 	}
@@ -531,7 +531,7 @@ const projectIgnoreMatcherCache = new Map<
  * misses an in-place edit that preserves the timestamp (git checkout, a
  * same-second rewrite) but changes length; size is the free second axis (the
  * same stat already reads it) that catches it. Every ignore-matcher freshness
- * gate below (root + nested `.gitignore` and `.pi-lens.json`) compares BOTH
+ * gate below (root + nested `.gitignore` and `.choco-pi-lsp.json`) compares BOTH
  * axes so a preserved-mtime, length-changing edit can no longer replay a stale
  * matcher. `{ mtimeMs: -1, size: -1 }` when the file is absent.
  */
@@ -561,7 +561,7 @@ function gitignoreSignature(rootDir: string): FreshnessSignature {
  * The project config file found by the same upward walk as the loader. Cache
  * invalidation must track the actual file found, not only a file directly under
  * the git root: nested worktrees/submodules can legitimately inherit a
- * `.pi-lens.json` from a parent directory.
+ * `.choco-pi-lsp.json` from a parent directory.
  */
 function lensConfigInfo(rootDir: string): {
 	info: ReturnType<typeof findPiLensProjectConfig>;

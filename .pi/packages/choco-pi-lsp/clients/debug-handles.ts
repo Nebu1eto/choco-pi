@@ -7,8 +7,8 @@
  * "process won't exit" report is a one-line diagnostic instead of a fresh
  * multi-hour expedition.
  *
- * `PI_LENS_DEBUG_HANDLES=1` (read ONCE at module load — i.e. must be set
- * before pi-lens starts, not toggled mid-session):
+ * `CHOCO_PI_LSP_DEBUG_HANDLES=1` (read ONCE at module load — i.e. must be set
+ * before choco-pi-lsp starts, not toggled mid-session):
  *   - OFF (default): every export below is a no-op that returns immediately
  *     on the flag check — no writer constructed, no async_hooks hook
  *     installed, zero allocations on any hot path. `dumpActiveHandles` is
@@ -16,9 +16,9 @@
  *     `session_shutdown`), so this module must cost nothing when unset.
  *   - ON: (a) `dumpActiveHandles(label)` calls `process.getActiveResourcesInfo()`,
  *     tallies counts by resource type, and writes one ndjson line to
- *     `~/.pi-lens/debug-handles.log` via the standard `createNdjsonLogger`
+ *     `~/.choco-pi-lsp/debug-handles.log` via the standard `createNdjsonLogger`
  *     family (size-bounded, log-cleanup registered — the same rotation
- *     bounds every other pi-lens log gets, #1101-era registry via
+ *     bounds every other choco-pi-lsp log gets, #1101-era registry via
  *     clients/ndjson-logger.ts's self-registration + clients/log-cleanup.ts).
  *     (b) an `async_hooks` creation-site tracker, installed at module load
  *     ONLY when the flag is on, records a trimmed `Error().stack` per
@@ -49,7 +49,7 @@ import { getMaxLogSizeMB } from "./log-cleanup.js";
 import { createNdjsonLogger, type NdjsonLogger } from "./ndjson-logger.js";
 
 /** Read once at module load — see module docstring. Not re-read per call. */
-const DEBUG_HANDLES_ENABLED = process.env.PI_LENS_DEBUG_HANDLES === "1";
+const DEBUG_HANDLES_ENABLED = process.env.CHOCO_PI_LSP_DEBUG_HANDLES === "1";
 
 const DEBUG_HANDLES_LOG_FILE = path.join(
 	getGlobalPiLensDir(),
@@ -156,7 +156,7 @@ const writer: NdjsonLogger | null = DEBUG_HANDLES_ENABLED
 		})
 	: null;
 
-/** True iff `PI_LENS_DEBUG_HANDLES=1` was set when this module first loaded. */
+/** True iff `CHOCO_PI_LSP_DEBUG_HANDLES=1` was set when this module first loaded. */
 export function isDebugHandlesEnabled(): boolean {
 	return DEBUG_HANDLES_ENABLED;
 }
@@ -225,7 +225,7 @@ export interface DebugHandlesLogEntry {
  * Dump `process.getActiveResourcesInfo()` counts-by-type (and, when the
  * tracker was installed at startup, per-type creation-site attribution) to
  * `debug-handles.log`. A pure no-op — no allocation past the flag check —
- * when `PI_LENS_DEBUG_HANDLES` was unset at startup.
+ * when `CHOCO_PI_LSP_DEBUG_HANDLES` was unset at startup.
  */
 export function dumpActiveHandles(label: string): void {
 	if (!DEBUG_HANDLES_ENABLED || !writer) return;

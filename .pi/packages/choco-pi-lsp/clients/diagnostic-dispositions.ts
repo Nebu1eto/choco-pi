@@ -5,10 +5,10 @@
  *   false-positive — the rule misfired. Project-persistent, routed nowhere
  *                     special yet (telemetry hookup is a fast-follow).
  *   suppress       — real finding, deliberate policy not to fix. Persistent,
- *                     but the mechanism is an inline `pi-lens-ignore` comment
+ *                     but the mechanism is an inline `choco-pi-lsp-ignore` comment
  *                     written into the source (see suppress-writer.ts), not
  *                     just a store entry — portable, git-visible, discoverable
- *                     without pi-lens's own store. The store entry here is an
+ *                     without choco-pi-lsp's own store. The store entry here is an
  *                     audit-trail mirror, not the enforcement point.
  *   defer          — fix later, not now. Session-ephemeral: held in memory
  *                     only, so it naturally resurfaces on process restart —
@@ -574,7 +574,7 @@ export function applyDispositions<T extends DispositionCandidate>(
 			return false;
 		}
 		if (dispositions?.[strict]?.disposition === "false-positive") return false;
-		// Belt-and-braces: the inline `pi-lens-ignore` comment is the real
+		// Belt-and-braces: the inline `choco-pi-lsp-ignore` comment is the real
 		// suppress enforcement (see suppress-writer.ts) and normally already
 		// dropped this finding upstream via applyInlineSuppressions. This is a
 		// harmless second cover for the store-only audit trail case — gated

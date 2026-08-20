@@ -36,7 +36,7 @@ note: |
   audit explicitly ranked it below the top 5 for that reason), and an
   annotated `Record<K, V>` initializer is frequently deliberate (a
   lookup table whose value type is genuinely uniform across keys).
-  Self-scan note: do NOT try to make pi-lens's own tree clean against
+  Self-scan note: do NOT try to make choco-pi-lsp's own tree clean against
   this rule; the adopting PR records the 2026-08-19 hit count instead.
 rule:
   pattern:

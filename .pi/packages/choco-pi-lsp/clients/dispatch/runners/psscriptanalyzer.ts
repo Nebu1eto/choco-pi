@@ -346,7 +346,7 @@ const psScriptAnalyzerRunner: RunnerDefinition = {
 		const absPath = path.resolve(cwd, ctx.filePath);
 
 		// Write script to temp file so we avoid cmd.exe quoting entirely
-		const tmpScript = path.join(os.tmpdir(), `pi-lens-psa-${process.pid}.ps1`);
+		const tmpScript = path.join(os.tmpdir(), `choco-pi-lsp-psa-${process.pid}.ps1`);
 		await fs.writeFile(tmpScript, PS_SCRIPT, "utf-8");
 
 		try {

@@ -12,15 +12,15 @@ note: |
   would replace (`PackageJsonManifest`, `usesWindowsSeparators`).
 
   Explicitly NOT self-applied: AGENTS.md's own "Recurring defect shapes"
-  catalog uses "shape" as load-bearing review vocabulary, and pi-lens's
+  catalog uses "shape" as load-bearing review vocabulary, and choco-pi-lsp's
   own code mirrors it — `ProbeFailureShape`, `windowsShaped`,
   `basenameForShape`, 27 distinct identifiers / 291 occurrences in the
   2026-08-19 audit. Banning the word in THIS repo would fight the
   convention its own review process runs on. That is a reason not to
-  wire this rule into pi-lens's self-scan (#1718's decision to make),
+  wire this rule into choco-pi-lsp's self-scan (#1718's decision to make),
   not a reason to withhold it from the catalog — a repo without that
   convention gets real signal from it. Self-scan note: do NOT try to
-  make pi-lens's own tree clean against this rule; the adopting PR
+  make choco-pi-lsp's own tree clean against this rule; the adopting PR
   records the 2026-08-19 hit count instead.
 
   Scope: `identifier`, `property_identifier`, `private_property_identifier`,

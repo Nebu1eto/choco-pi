@@ -1,5 +1,5 @@
 /**
- * Symbol types for pi-lens
+ * Symbol types for choco-pi-lsp
  * Shared between SymbolService and runners
  */
 

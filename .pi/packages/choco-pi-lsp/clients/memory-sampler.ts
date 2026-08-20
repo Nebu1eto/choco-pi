@@ -13,7 +13,7 @@
  *
  * HARD CONSTRAINT: every field here is an O(1) `Map`/array `.size`/`.length`
  * read, or a `process.memoryUsage()` call — nothing here iterates a large
- * structure's contents, and nothing takes a heap snapshot. `PI_LENS_DEBUG_HEAP`
+ * structure's contents, and nothing takes a heap snapshot. `CHOCO_PI_LSP_DEBUG_HEAP`
  * (item 4's memory sibling) is a SEPARATE, explicitly opt-in mechanism, out of
  * scope here.
  *

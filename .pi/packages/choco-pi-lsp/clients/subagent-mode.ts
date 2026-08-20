@@ -12,7 +12,7 @@
  *   `PI_SUBAGENT_CHILD_AGENT` + `PI_SUBAGENT_PARENT_PID` instead (#507,
  *   grep-verified against avtc-pi-subagent@1.0.3).
  *
- * Every child currently loads pi-lens fully by default, so a fan-out of N
+ * Every child currently loads choco-pi-lsp fully by default, so a fan-out of N
  * subagents pays N full LSP pre-warms + N sets of heavyweight startup scans
  * in the same cwd — mostly wasted on short-lived task agents.
  *
@@ -26,7 +26,7 @@
  * heavyweight external-CLI startup scans on `isSubagentSession()`. Per-edit
  * LSP dispatch is untouched — light mode must not disable diagnostics.
  *
- * Escape hatch: `PI_LENS_SUBAGENT_FULL=1` forces full (non-light) behavior
+ * Escape hatch: `CHOCO_PI_LSP_SUBAGENT_FULL=1` forces full (non-light) behavior
  * even inside a detected subagent session, for either vocabulary.
  *
  * Follows the lazy-memoized-config house style (see `runtime-config.ts` /
@@ -64,12 +64,12 @@ function classifySubagentSession(): SubagentClassification {
 	return cachedClassification;
 }
 
-/** True iff pi-lens is running inside a detected subagent child `pi` process
+/** True iff choco-pi-lsp is running inside a detected subagent child `pi` process
  * (nicobailon/pi-subagents' `PI_SUBAGENT_CHILD=1`, or avtc-pi-subagent's
  * `PI_SUBAGENT_CHILD_AGENT` + `PI_SUBAGENT_PARENT_PID` pair), and the caller
  * has not forced full behavior via the escape hatch. */
 export function isSubagentSession(): boolean {
-	if (process.env.PI_LENS_SUBAGENT_FULL === "1") return false;
+	if (process.env.CHOCO_PI_LSP_SUBAGENT_FULL === "1") return false;
 	return classifySubagentSession().isSubagent;
 }
 
@@ -113,7 +113,7 @@ export function getSubagentIdentity(): SubagentIdentity | undefined {
 /** Human-readable degradation notice surfaced once per session when subagent
  * light mode engages, so a subagent never sees a silently-empty scan result. */
 export function subagentLightModeNotice(): string {
-	return "subagent session — skipped background code-quality scans (set PI_LENS_SUBAGENT_FULL=1 to override)";
+	return "subagent session — skipped background code-quality scans (set CHOCO_PI_LSP_SUBAGENT_FULL=1 to override)";
 }
 
 /** Test-only: clears the memoized classification so tests can flip env vars

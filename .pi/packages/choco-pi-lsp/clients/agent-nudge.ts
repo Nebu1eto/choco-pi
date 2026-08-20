@@ -7,9 +7,9 @@
  * told to re-read what they already hold (`noteAuthoritativeContentAttachment`
  * below). Everything that lands AFTER the tool result
  * (deferred-cascade autofixes settling at turn_end, quiet-window work (#483),
- * and — later — writes by other extensions once pi-lens consumes bus events)
+ * and — later — writes by other extensions once choco-pi-lsp consumes bus events)
  * is invisible to the model. This module closes that gap: it subscribes to
- * the `pilens:files:touched` bus event pi-lens itself publishes (#482,
+ * the `pilens:files:touched` bus event choco-pi-lsp itself publishes (#482,
  * clients/bus-publish.ts), accumulates touched paths per turn-gap, filters
  * them down to files the session actually read or edited (the read-guard
  * already tracks this — an untouched file's autoformat is not the agent's
@@ -20,7 +20,7 @@
  * first call of a brand-new `agent_start` run in the same session — not just
  * mid-run turn boundaries. That matters: the primary real-world case this
  * solves is an agent that runs `git status` at the start of a fresh run and
- * finds files it did not knowingly modify, because pi-lens autoformatted
+ * finds files it did not knowingly modify, because choco-pi-lsp autoformatted
  * them at a PREVIOUS run's turn_end. The accumulator therefore survives
  * across agent_end/agent_settled — it is only ever cleared inside
  * `consumeAgentNudge`, i.e. at actual injection time.
@@ -59,7 +59,7 @@ const MAX_NAMES_SHOWN = 5;
  * "local" — this process's own in-process bus reported the touch (the
  * original #485 path). "cross-process" — the file was first learned about
  * from the shared `recent-touches.json` record (clients/recent-touches.ts),
- * written by ANOTHER pi-lens instance (a parent or a subagent child).
+ * written by ANOTHER choco-pi-lsp instance (a parent or a subagent child).
  *
  * Merge rule when the SAME file is seen via both channels (e.g. a bus event
  * arrives for a file that was already recorded via the cross-process feed,
@@ -118,10 +118,10 @@ export function _resetAgentNudgeForTests(): void {
 
 let _enabledCache: boolean | undefined;
 
-/** `PI_LENS_AGENT_NUDGE=0` disables accumulation and injection outright. */
+/** `CHOCO_PI_LSP_AGENT_NUDGE=0` disables accumulation and injection outright. */
 export function isAgentNudgeEnabled(): boolean {
 	if (_enabledCache === undefined) {
-		_enabledCache = process.env.PI_LENS_AGENT_NUDGE !== "0";
+		_enabledCache = process.env.CHOCO_PI_LSP_AGENT_NUDGE !== "0";
 	}
 	return _enabledCache;
 }
@@ -131,7 +131,7 @@ function isValidPayload(data: unknown): data is FilesTouchedPayload {
 	const p = data as Partial<FilesTouchedPayload>;
 	return (
 		p.v === 1 &&
-		p.source === "pi-lens" &&
+		p.source === "choco-pi-lsp" &&
 		(p.reason === "autofix" || p.reason === "format") &&
 		Array.isArray(p.paths)
 	);
@@ -301,12 +301,12 @@ export function wireAgentNudgeSubscriber(
 /**
  * Consume the accumulated touched-file set and produce (at most) one context
  * message, e.g.:
- *   "pi-lens: 2 file(s) were autoformatted after your last turn: a.ts, b.ts —
+ *   "choco-pi-lsp: 2 file(s) were autoformatted after your last turn: a.ts, b.ts —
  *    working-tree changes to these are expected; re-read before editing."
- * The provenance framing ("pi-lens ... expected") matters: the primary pain
+ * The provenance framing ("choco-pi-lsp ... expected") matters: the primary pain
  * case is an agent running `git status` (often at the START of a brand-new
  * run/session, not just mid-run) and burning turns investigating diffs it
- * did not knowingly make. Naming pi-lens as the source lets the agent act
+ * did not knowingly make. Naming choco-pi-lsp as the source lets the agent act
  * (re-read, proceed) instead of investigating.
  *
  * #492: attribution is three-way by the batch's origin mix (see
@@ -324,7 +324,7 @@ export function wireAgentNudgeSubscriber(
  *                         precisely, so no local file is ever misattributed.
  *
  * The cross-process wording names the ACTION, not the process identity. It
- * used to read "by another pi-lens instance (e.g. a subagent's)", which sent
+ * used to read "by another choco-pi-lsp instance (e.g. a subagent's)", which sent
  * agents investigating what other instance was running — the exact behavior
  * this nudge exists to prevent. Which process formatted the file is an
  * implementation detail the reading agent cannot act on; that it was an
@@ -396,7 +396,7 @@ export function consumeAgentNudge(
 
 		logLatency({
 			type: "phase",
-			filePath: "<pi-lens>",
+			filePath: "<choco-pi-lsp>",
 			phase: "agent_nudge",
 			durationMs: 0,
 			metadata: {
@@ -431,13 +431,13 @@ export function consumeAgentNudge(
 				: crossProcessCount === 0
 					? "after your last turn"
 					: `after your last turn (${crossProcessCount} of them by an automatic run outside it)`;
-		const message = `pi-lens: ${filesTotal} file(s) were ${verbLabel} ${attribution}: ${nameList} — working-tree changes to these are expected; re-read before editing.`;
+		const message = `choco-pi-lsp: ${filesTotal} file(s) were ${verbLabel} ${attribution}: ${nameList} — working-tree changes to these are expected; re-read before editing.`;
 
 		return {
 			messages: [
 				{
 					role: "user",
-					content: `[pi-lens automated context — not a user request] ${message}`,
+					content: `[choco-pi-lsp automated context — not a user request] ${message}`,
 				},
 			],
 		};

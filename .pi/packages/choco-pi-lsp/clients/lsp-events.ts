@@ -12,9 +12,9 @@ import {
 export const LENS_EVENT_VERSION = 1;
 
 export const LENS_EVENT_NAMES = {
-	analysisComplete: "pi-lens/analysis-complete",
-	findings: "pi-lens/findings",
-	turnFindings: "pi-lens/turn-findings",
+	analysisComplete: "choco-pi-lsp/analysis-complete",
+	findings: "choco-pi-lsp/findings",
+	turnFindings: "choco-pi-lsp/turn-findings",
 } as const;
 
 type LensEventName = (typeof LENS_EVENT_NAMES)[keyof typeof LENS_EVENT_NAMES];
@@ -28,7 +28,7 @@ export interface LensTelemetryPayload {
 
 export interface LensAnalysisPayload extends LensTelemetryPayload {
 	version: typeof LENS_EVENT_VERSION;
-	source: "pi-lens";
+	source: "choco-pi-lsp";
 	timestamp: string;
 	cwd: string;
 	filePath: string;
@@ -46,7 +46,7 @@ export interface LensAnalysisPayload extends LensTelemetryPayload {
 
 export interface LensTurnFindingsPayload {
 	version: typeof LENS_EVENT_VERSION;
-	source: "pi-lens";
+	source: "choco-pi-lsp";
 	timestamp: string;
 	cwd: string;
 	filePaths: string[];
@@ -146,7 +146,7 @@ function emitLensEvent(eventName: LensEventName, payload: unknown): void {
 				recordStaleBusFailure(eventName, err);
 			}
 			// Inter-extension events are observational. A listener must never break
-			// the pi-lens hook path or delay agent progress.
+			// the choco-pi-lsp hook path or delay agent progress.
 		}
 	});
 }
@@ -170,7 +170,7 @@ export function emitLensAnalysisComplete(
 ): void {
 	const normalized: LensAnalysisPayload = {
 		version: LENS_EVENT_VERSION,
-		source: "pi-lens",
+		source: "choco-pi-lsp",
 		timestamp: new Date().toISOString(),
 		...payload,
 		diagnostics: normalizeDiagnostics(payload.diagnostics),
@@ -200,7 +200,7 @@ export function emitLensTurnFindings(
 ): void {
 	emitLensEvent(LENS_EVENT_NAMES.turnFindings, {
 		version: LENS_EVENT_VERSION,
-		source: "pi-lens",
+		source: "choco-pi-lsp",
 		timestamp: new Date().toISOString(),
 		...payload,
 		content: truncateText(payload.content, 8_000) ?? "",

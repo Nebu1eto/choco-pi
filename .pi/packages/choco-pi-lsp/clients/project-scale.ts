@@ -1,5 +1,5 @@
 /**
- * Single "project scale" knob deriving pi-lens's five independent
+ * Single "project scale" knob deriving choco-pi-lsp's five independent
  * project-size budgets (#776).
  *
  * Before this module, five subsystems each hardcoded their own file/entry
@@ -40,14 +40,14 @@
  *
  * `maxProjectFiles` resolution order (highest priority first) — NOTE this is
  * the base-value chain only; each subsystem's own PRE-EXISTING per-subsystem
- * env override (e.g. `PI_LENS_REVIEW_GRAPH_MAX_FILES`,
- * `PI_LENS_STARTUP_SCAN_MAX_ENTRIES`) is still checked at the call site
+ * env override (e.g. `CHOCO_PI_LSP_REVIEW_GRAPH_MAX_FILES`,
+ * `CHOCO_PI_LSP_STARTUP_SCAN_MAX_ENTRIES`) is still checked at the call site
  * BEFORE falling back to this module's derived value, so it always wins:
  *
- *   1. `maxProjectFiles` in the project's `.pi-lens.json` (per-project — see
+ *   1. `maxProjectFiles` in the project's `.choco-pi-lsp.json` (per-project — see
  *      `clients/project-lsp-config.ts`). Requires a `cwd`; a call site with
  *      no cwd in hand skips straight to (2).
- *   2. `PI_LENS_MAX_PROJECT_FILES` environment variable.
+ *   2. `CHOCO_PI_LSP_MAX_PROJECT_FILES` environment variable.
  *   3. Default: {@link DEFAULT_PROJECT_SCALE_BASE} (2,000).
  *
  * Two entry-UNIT budgets were deliberately left OUT of this derivation:
@@ -76,11 +76,11 @@ import { loadPiLensProjectConfig } from "./project-lsp-config.js";
 export const DEFAULT_PROJECT_SCALE_BASE = 2_000;
 
 const _envBase = lazyEnvNumber(
-	"PI_LENS_MAX_PROJECT_FILES",
+	"CHOCO_PI_LSP_MAX_PROJECT_FILES",
 	DEFAULT_PROJECT_SCALE_BASE,
 );
 
-/** Test-only: clears the memoized `PI_LENS_MAX_PROJECT_FILES` read so a
+/** Test-only: clears the memoized `CHOCO_PI_LSP_MAX_PROJECT_FILES` read so a
  * subsequent call re-reads the env var (matching the `_resetForTests`
  * convention used across `env-utils.ts` consumers). */
 export function _resetProjectScaleBaseForTests(): void {
@@ -91,9 +91,9 @@ export function _resetProjectScaleBaseForTests(): void {
  * Resolve the base `maxProjectFiles` value.
  *
  * Pass the caller's project root as `cwd` whenever one is available — that's
- * what lets a per-project `.pi-lens.json` override win. Call sites that only
+ * what lets a per-project `.choco-pi-lsp.json` override win. Call sites that only
  * have a bare module-level constant today (no cwd in hand) may omit it; they
- * fall back to the `PI_LENS_MAX_PROJECT_FILES` env var / default chain only
+ * fall back to the `CHOCO_PI_LSP_MAX_PROJECT_FILES` env var / default chain only
  * (documented per-call-site in each subsystem's own comment).
  */
 export function getProjectScaleBase(cwd?: string): number {
@@ -223,11 +223,11 @@ export function taperedReviewGraphMaxFiles(base: number): number {
 
 /**
  * Derived review-graph budget (files), honoring — in priority order — the
- * project's `.pi-lens.json#reviewGraph.maxFiles` knob (#775 R2, an explicit
+ * project's `.choco-pi-lsp.json#reviewGraph.maxFiles` knob (#775 R2, an explicit
  * opt-in for repos that want a bigger graph than the taper would derive;
  * see `project-lsp-config.ts`), then {@link taperedReviewGraphMaxFiles} of
  * the resolved `maxProjectFiles` base. Callers still check their own
- * PRE-EXISTING `PI_LENS_REVIEW_GRAPH_MAX_FILES` env override BEFORE calling
+ * PRE-EXISTING `CHOCO_PI_LSP_REVIEW_GRAPH_MAX_FILES` env override BEFORE calling
  * this (see `review-graph/builder.ts#getReviewGraphMaxFiles`) — that always
  * wins outright, unchanged by this function.
  */

@@ -117,7 +117,7 @@ export async function runQuietWindow(deps: QuietWindowDeps): Promise<void> {
 	if (!isQuietWindowEnabled()) {
 		logLatency({
 			type: "phase",
-			filePath: cwd ?? "<pi-lens>",
+			filePath: cwd ?? "<choco-pi-lsp>",
 			phase: "quiet_window",
 			durationMs: 0,
 			metadata: { skipped: "disabled" },
@@ -129,7 +129,7 @@ export async function runQuietWindow(deps: QuietWindowDeps): Promise<void> {
 		dbg("quiet_window: skipping — a previous run is still in progress");
 		logLatency({
 			type: "phase",
-			filePath: cwd ?? "<pi-lens>",
+			filePath: cwd ?? "<choco-pi-lsp>",
 			phase: "quiet_window",
 			durationMs: 0,
 			metadata: { skipped: "in-progress" },
@@ -169,7 +169,7 @@ export async function runQuietWindow(deps: QuietWindowDeps): Promise<void> {
 		_inProgress = false;
 		logLatency({
 			type: "phase",
-			filePath: cwd ?? "<pi-lens>",
+			filePath: cwd ?? "<choco-pi-lsp>",
 			phase: "quiet_window",
 			durationMs: Date.now() - totalStart,
 			metadata: { tasks: results },

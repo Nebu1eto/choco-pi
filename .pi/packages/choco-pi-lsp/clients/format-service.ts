@@ -1,5 +1,5 @@
 /**
- * Format Service for pi-lens
+ * Format Service for choco-pi-lsp
  *
  * Concurrent formatter execution using Effect-TS.
  * Auto-formats files on write with a single selected formatter per file.

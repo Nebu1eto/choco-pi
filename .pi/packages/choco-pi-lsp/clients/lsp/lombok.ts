@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-const LOMBOK_ENV_KEYS = ["PI_LENS_LOMBOK_JAR", "LOMBOK_JAR"] as const;
+const LOMBOK_ENV_KEYS = ["CHOCO_PI_LSP_LOMBOK_JAR", "LOMBOK_JAR"] as const;
 const LOMBOK_PROJECT_FILES = [
 	"lombok.config",
 	"pom.xml",
@@ -167,7 +167,7 @@ function resolveLombokJavaAgentArg(
 	root: string,
 	baseEnv: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
-	if (baseEnv.PI_LENS_JAVA_LOMBOK === "0") return undefined;
+	if (baseEnv.CHOCO_PI_LSP_JAVA_LOMBOK === "0") return undefined;
 	if (hasLombokJavaAgent(baseEnv.JDTLS_JVM_ARGS)) return undefined;
 
 	const explicitJar = envJarCandidate(baseEnv);

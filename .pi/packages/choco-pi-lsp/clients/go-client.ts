@@ -1,5 +1,5 @@
 /**
- * Go Client for pi-lens
+ * Go Client for choco-pi-lsp
  *
  * Provides Go type checking and linting via gopls and go vet.
  *

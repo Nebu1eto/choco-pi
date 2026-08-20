@@ -2,7 +2,7 @@
  * lsp_activate_tools — the loader tool that bootstraps pi's dynamic
  * tooling (registered-but-inactive tools activated via `pi.setActiveTools`).
  *
- * A handful of pi-lens tools are situational (structural ast-grep
+ * A handful of choco-pi-lsp tools are situational (structural ast-grep
  * search/replace/outline/dump, LSP go-to-definition/references/rename) —
  * useful on many turns, but not every turn. On hosts that support it, pi
  * lets an extension register such tools inactive and expose a small
@@ -38,7 +38,7 @@ export interface ActivateToolsOptions {
 	 * Called with every lazy tool name the model asked for, so the extension
 	 * can remember this logical session's activations and restore them after
 	 * the host rebuilds the session — fork/reload/resume construct a fresh
-	 * AgentSession with every registered tool active again, while pi-lens's
+	 * AgentSession with every registered tool active again, while choco-pi-lsp's
 	 * closure state survives (see clients/tool-set-policy.ts).
 	 */
 	onActivated?: (names: string[]) => void;
@@ -61,9 +61,9 @@ export function createActivateToolsTool(
 
 	return {
 		name: "lsp_activate_tools" as const,
-		label: "Activate pi-lens Tools",
+		label: "Activate choco-pi-lsp Tools",
 		description:
-			"Activate one or more situational pi-lens tools that stay registered but inactive by default, so the default tool list stays lean. " +
+			"Activate one or more situational choco-pi-lsp tools that stay registered but inactive by default, so the default tool list stays lean. " +
 			"Call this ONCE with the tools you need before using them — they become callable starting the NEXT turn. " +
 			`Available:\n${catalog}`,
 		promptSnippet:

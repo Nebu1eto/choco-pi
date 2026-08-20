@@ -1,31 +1,31 @@
 /**
- * Generic read-recording bridge for pi-lens.
+ * Generic read-recording bridge for choco-pi-lsp.
  *
  * ## Trust model — explicitly advisory
  *
  * This bridge is an **advisory, trust-based protocol** for same-process Pi
  * extensions. Any code sharing the same Node.js process already has full
- * access to pi-lens's internal state, so the bridge cannot and does not
+ * access to choco-pi-lsp's internal state, so the bridge cannot and does not
  * provide a meaningful security boundary. What it *does* provide is:
  *
- * - A stable API surface so extensions do not need to import pi-lens
+ * - A stable API surface so extensions do not need to import choco-pi-lsp
  *   internals directly.
  * - A single place for flag/scope checks (no-read-guard, ignored paths).
  * - Basic defensive validation to catch integration bugs early (malformed
  *   payloads).
  *
  * Mounts a `ReadBridge` object at `globalThis[READ_BRIDGE_KEY]` that any
- * co-process extension can call to register a file read against pi-lens's
+ * co-process extension can call to register a file read against choco-pi-lsp's
  * read-guard — without either party needing to know about the other.
  *
  * Protocol (producer side)
  * ────────────────────────
- * A co-process Pi extension that performs file reads outside pi-lens's
+ * A co-process Pi extension that performs file reads outside choco-pi-lsp's
  * awareness (e.g. via a custom registered tool) can forward those reads so
  * that a subsequent `edit` call on the same file is not blocked by the
  * read-before-edit guard:
  *
- *   const bridge = (globalThis as any)[Symbol.for("pi-lens:read-bridge")];
+ *   const bridge = (globalThis as any)[Symbol.for("choco-pi-lsp:read-bridge")];
  *   bridge?.recordRead({
  *     filePath,          // absolute path
  *     requestedOffset,   // 1-indexed first line (default 1)
@@ -40,11 +40,11 @@
  * The timestamp is stamped by the bridge itself (Date.now()) to match
  * exactly how the internal read path works.
  *
- * Calling before pi-lens is loaded, or when the guard is disabled via
- * `PI_LENS_NO_READ_GUARD`, is safe — the bridge is absent or the call is
+ * Calling before choco-pi-lsp is loaded, or when the guard is disabled via
+ * `CHOCO_PI_LSP_NO_READ_GUARD`, is safe — the bridge is absent or the call is
  * silently dropped.
  *
- * Protocol (registration side, internal to pi-lens)
+ * Protocol (registration side, internal to choco-pi-lsp)
  * ──────────────────────────────────────────────────
  * `registerReadBridge` is called once from inside the extension factory
  * (after `getLensFlag` is available) via the `_readBridgeRegistered`
@@ -63,7 +63,7 @@ import {
 	type ReadContentBinding,
 } from "./read-guard.js";
 
-export const READ_BRIDGE_KEY: unique symbol = Symbol.for("pi-lens:read-bridge");
+export const READ_BRIDGE_KEY: unique symbol = Symbol.for("choco-pi-lsp:read-bridge");
 
 /** Payload a producer passes when recording a read. */
 export interface ReadBridgeEntry {
@@ -73,7 +73,7 @@ export interface ReadBridgeEntry {
 	requestedOffset: number;
 	/**
 	 * Number of lines read. `undefined` means the whole file was requested;
-	 * pi-lens will treat the effective limit as the full file length.
+	 * choco-pi-lsp will treat the effective limit as the full file length.
 	 */
 	requestedLimit: number | undefined;
 	/**

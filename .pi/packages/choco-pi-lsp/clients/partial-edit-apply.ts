@@ -20,7 +20,7 @@ type HostEdit = EditToolInput["edits"][number];
 
 export interface PartiallyApplicableEdit {
 	oldText: HostEdit["oldText"];
-	// Widened vs the host: pi-lens models a pure deletion as an absent newText.
+	// Widened vs the host: choco-pi-lsp models a pure deletion as an absent newText.
 	newText: HostEdit["newText"] | undefined;
 	originalIndex: number;
 }

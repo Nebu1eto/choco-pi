@@ -128,7 +128,7 @@ export interface ProbeEvidence {
 	 * hand-mapped per runner, since a second, parallel list drifts out of sync
 	 * with the registry the moment either one changes:
 	 *
-	 *   * `"managed-dir"`  — an npm-strategy install into pi-lens's managed
+	 *   * `"managed-dir"`  — an npm-strategy install into choco-pi-lsp's managed
 	 *     tools directory (gitleaks, trivy, opengrep, pyright, jscpd, knip, …).
 	 *   * `"go-install"`   — a Go-toolchain install (govulncheck).
 	 *   * `"pip-user"`     — a pip --user install (ruff).
@@ -833,7 +833,7 @@ export function describeUnavailability(options: {
  */
 export function logAvailabilityDecision(
 	decision: AvailabilityDecision,
-	filePath = "<pi-lens>",
+	filePath = "<choco-pi-lsp>",
 ): void {
 	logLatency({
 		type: "phase",

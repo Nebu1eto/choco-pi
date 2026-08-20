@@ -1998,7 +1998,7 @@ export function hasOxfmtConfig(cwd: string): boolean {
 //   - `svelte` package installed, flag on  -> exit 0, formats the file
 // Per https://oxc.rs/docs/guide/usage/formatter/language-support.html, oxfmt
 // also requires the npm-distributed binary (not the standalone GitHub-release
-// binary) for `.svelte` — pi-lens already resolves oxfmt via `findInNodeModules`/
+// binary) for `.svelte` — choco-pi-lsp already resolves oxfmt via `findInNodeModules`/
 // `which`, which favors the npm-installed binary, so that requirement is not
 // separately re-checked here.
 //
@@ -2037,7 +2037,7 @@ export function hasOxfmtSvelteConfig(cwd: string): boolean {
 				if (cfg.svelte === true) return true;
 			} catch {}
 		}
-		// oxfmt.toml is TOML; pi-lens has no TOML parser dependency, so this is
+		// oxfmt.toml is TOML; choco-pi-lsp has no TOML parser dependency, so this is
 		// a targeted line match for the single boolean key rather than a full
 		// parse (same pragmatic style as hasVitePlusConfig's content.includes
 		// check above) — presence of the file alone is NOT sufficient, since a
@@ -2493,7 +2493,7 @@ export function hasDetektConfig(cwd: string): boolean {
 	return false;
 }
 
-// ktfmt has no native config file format; these are pi-lens opt-in markers plus
+// ktfmt has no native config file format; these are choco-pi-lsp opt-in markers plus
 // the gradle-plugin signal, so a project that uses ktfmt elects it as its Kotlin
 // formatter instead of the ktlint smart-default (#129).
 const KTFMT_CONFIG_FILES = [".ktfmt", ".ktfmt.kts"];
@@ -2774,7 +2774,7 @@ export function hasVitePlusConfig(cwd: string): boolean {
 
 // Per https://oxc.rs/docs/guide/usage/linter/config.html, oxlint auto-discovers
 // `.oxlintrc.json`, `.oxlintrc.jsonc`, `oxlint.config.ts`, and `oxlint.config.mts`
-// (in addition to the legacy `oxlint.json` name pi-lens already recognized).
+// (in addition to the legacy `oxlint.json` name choco-pi-lsp already recognized).
 const OXLINT_CONFIGS = [
 	".oxlintrc.json",
 	".oxlintrc.jsonc",

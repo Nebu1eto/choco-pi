@@ -11,7 +11,7 @@ const READ_GUARD_LOG_BACKUP_FILE = path.join(
 );
 const MAX_LOG_BYTES = Math.max(
 	128 * 1024,
-	Number.parseInt(process.env.PI_LENS_READ_GUARD_MAX_BYTES ?? "1048576", 10) ||
+	Number.parseInt(process.env.CHOCO_PI_LSP_READ_GUARD_MAX_BYTES ?? "1048576", 10) ||
 		1048576,
 );
 const writer = createNdjsonLogger({
@@ -20,11 +20,11 @@ const writer = createNdjsonLogger({
 	backupPath: READ_GUARD_LOG_BACKUP_FILE,
 });
 const VERBOSE_READ_GUARD_LOG =
-	process.env.PI_LENS_READ_GUARD_VERBOSE === "1" ||
-	process.env.PI_LENS_READ_GUARD_LOG === "verbose";
-const LOG_ALLOWED_EDITS = process.env.PI_LENS_READ_GUARD_LOG_ALLOWS === "1";
+	process.env.CHOCO_PI_LSP_READ_GUARD_VERBOSE === "1" ||
+	process.env.CHOCO_PI_LSP_READ_GUARD_LOG === "verbose";
+const LOG_ALLOWED_EDITS = process.env.CHOCO_PI_LSP_READ_GUARD_LOG_ALLOWS === "1";
 const SNAPSHOT_LOG_SETTING = (
-	process.env.PI_LENS_READ_GUARD_LOG_SNAPSHOTS ?? "1"
+	process.env.CHOCO_PI_LSP_READ_GUARD_LOG_SNAPSHOTS ?? "1"
 ).toLowerCase();
 const LOG_SNAPSHOT_VALIDATION = !["0", "false", "off"].includes(
 	SNAPSHOT_LOG_SETTING,

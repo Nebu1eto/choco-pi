@@ -4,7 +4,7 @@
  * writers.
  *
  * Same race class as #555 (`clients/lsp/client.ts`'s `isSupersededPush`
- * guard on `publishDiagnostics`): pi-lens deliberately allows concurrent
+ * guard on `publishDiagnostics`): choco-pi-lsp deliberately allows concurrent
  * pipeline runs for the SAME file across DIFFERENT same-turn edits (dedupe
  * key is `filePath + contentHash`, not just `filePath` — see
  * `clients/runtime-tool-result.ts`). If an OLDER edit's pipeline is slower

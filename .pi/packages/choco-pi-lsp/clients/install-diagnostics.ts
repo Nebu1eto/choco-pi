@@ -16,7 +16,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const ISSUES_URL = "https://github.com/apmantza/pi-lens/issues";
+const ISSUES_URL = "https://github.com/apmantza/choco-pi-lsp/issues";
 
 /** Runtime third-party deps whose resolution is the documented failure surface. */
 const CRITICAL_DEPS = [
@@ -156,12 +156,12 @@ export function formatInstallDiagnostics(
 	cause?: unknown,
 ): string {
 	const lines: string[] = [];
-	lines.push("──────── pi-lens install diagnostics ────────");
+	lines.push("──────── choco-pi-lsp install diagnostics ────────");
 	if (cause) {
 		const msg = (cause as Error)?.message ?? String(cause);
 		lines.push(`LOAD ERROR: ${msg}`);
 	}
-	lines.push(`pi-lens:   ${diag.piLensVersion}`);
+	lines.push(`choco-pi-lsp:   ${diag.piLensVersion}`);
 	lines.push(`runtime:   ${diag.runtime}`);
 	lines.push(`platform:  ${diag.platform}`);
 	lines.push(`install:   ${diag.packageManager}${diag.behindSymlink ? " (behind symlink)" : ""}`);

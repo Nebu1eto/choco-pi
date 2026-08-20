@@ -191,7 +191,7 @@ function workspaceCacheEpoch(key: string): number {
 }
 
 function reviewGraphIdleEvictMs(): number {
-	const value = Number.parseInt(process.env.PI_LENS_REVIEW_GRAPH_IDLE_EVICT_MS ?? "", 10);
+	const value = Number.parseInt(process.env.CHOCO_PI_LSP_REVIEW_GRAPH_IDLE_EVICT_MS ?? "", 10);
 	return Number.isSafeInteger(value) && value > 0 ? value : REVIEW_GRAPH_IDLE_EVICT_MS_DEFAULT;
 }
 
@@ -319,7 +319,7 @@ function graphLogMetadata(
 }
 
 function seqFastpathEnabled(): boolean {
-	const raw = process.env.PI_LENS_GRAPH_SEQ_FASTPATH;
+	const raw = process.env.CHOCO_PI_LSP_GRAPH_SEQ_FASTPATH;
 	return raw !== "0" && raw !== "false";
 }
 
@@ -801,7 +801,7 @@ interface SignatureDelta {
  * #202: structural delta between two source-signature maps. The predecessor
  * (changedSignatureFiles) returned undefined on ANY count change, so a single
  * newly-created file forced a full whole-repo rebuild — the dominant cause of
- * the multi-second graph_build spikes during a burst of new files (pi-lens has
+ * the multi-second graph_build spikes during a burst of new files (choco-pi-lsp has
  * no fs-watcher, so it learns of N new sibling files all at once on the next
  * edit). Reporting added / removed / changed explicitly lets an add-only or
  * change-only delta be applied incrementally — see {@link tryIncrementalFromCache}.
@@ -824,7 +824,7 @@ function diffSignatureMaps(
 	return { added, removed, changed };
 }
 
-// #776: `PI_LENS_REVIEW_GRAPH_MAX_FILES` (the existing per-subsystem env
+// #776: `CHOCO_PI_LSP_REVIEW_GRAPH_MAX_FILES` (the existing per-subsystem env
 // override) still wins outright; below it, the derived `maxProjectFiles`
 // scale-knob value (see `project-scale.ts`) replaces the old hardcoded
 // `RUNTIME_CONFIG.reviewGraph.maxFiles` constant as the fallback — the ratio
@@ -832,7 +832,7 @@ function diffSignatureMaps(
 // is behavior-neutral when nothing is configured.
 export function getReviewGraphMaxFiles(cwd?: string): number {
 	const override = Number.parseInt(
-		process.env.PI_LENS_REVIEW_GRAPH_MAX_FILES ?? "",
+		process.env.CHOCO_PI_LSP_REVIEW_GRAPH_MAX_FILES ?? "",
 		10,
 	);
 	return Number.isFinite(override) && override > 0
@@ -842,7 +842,7 @@ export function getReviewGraphMaxFiles(cwd?: string): number {
 
 function getReviewGraphMaxFileBytes(): number {
 	const override = Number.parseInt(
-		process.env.PI_LENS_REVIEW_GRAPH_MAX_FILE_BYTES ?? "",
+		process.env.CHOCO_PI_LSP_REVIEW_GRAPH_MAX_FILE_BYTES ?? "",
 		10,
 	);
 	return Number.isFinite(override) && override > 0
@@ -878,12 +878,12 @@ function isWithinReviewGraphSizeLimit(file: string): boolean {
 //
 // TTL default matches project-report.ts's STALE_THRESHOLD_MS (15 minutes):
 // long enough that a single flag isn't thrashed by back-to-back builds, short
-// enough that a repo shrink or a `.pi-lens.json`/env cap raise is noticed
+// enough that a repo shrink or a `.choco-pi-lsp.json`/env cap raise is noticed
 // without restarting the process.
 const DEFAULT_REVIEW_GRAPH_SIZE_SKIP_TTL_MS = 15 * 60_000;
 
 const _sizeSkipTtl = lazyEnvNumber(
-	"PI_LENS_REVIEW_GRAPH_SIZE_SKIP_TTL_MS",
+	"CHOCO_PI_LSP_REVIEW_GRAPH_SIZE_SKIP_TTL_MS",
 	DEFAULT_REVIEW_GRAPH_SIZE_SKIP_TTL_MS,
 );
 
@@ -896,7 +896,7 @@ export interface ReviewGraphSizeSkipVerdict {
 	 * This is the maxFileCount+1 sentinel, NOT the project's exact file count.
 	 */
 	sourceFileCount: number;
-	/** The cap (derived `maxProjectFiles` or `PI_LENS_REVIEW_GRAPH_MAX_FILES`) that was exceeded. */
+	/** The cap (derived `maxProjectFiles` or `CHOCO_PI_LSP_REVIEW_GRAPH_MAX_FILES`) that was exceeded. */
 	maxFileCount: number;
 	/** `sourceFileCount` is maxFileCount+1 sentinel data, not an exact total. */
 	sourceFileCountTruncated: true;
@@ -1384,14 +1384,14 @@ const GRAPH_PERSIST_DEBOUNCE_MS_DEFAULT = 1500;
 export const GRAPH_PERSIST_MAX_ELEMENTS_DEFAULT = 500_000;
 
 function graphPersistDebounceMs(): number {
-	const raw = Number(process.env.PI_LENS_GRAPH_PERSIST_DEBOUNCE_MS);
+	const raw = Number(process.env.CHOCO_PI_LSP_GRAPH_PERSIST_DEBOUNCE_MS);
 	return Number.isFinite(raw) && raw >= 0
 		? raw
 		: GRAPH_PERSIST_DEBOUNCE_MS_DEFAULT;
 }
 
 function graphPersistMaxElements(): number {
-	const raw = Number(process.env.PI_LENS_GRAPH_PERSIST_MAX_ELEMENTS);
+	const raw = Number(process.env.CHOCO_PI_LSP_GRAPH_PERSIST_MAX_ELEMENTS);
 	return Number.isFinite(raw) && raw > 0
 		? raw
 		: GRAPH_PERSIST_MAX_ELEMENTS_DEFAULT;
@@ -1997,7 +1997,7 @@ function writePending(key: string): void {
 		elements: pending.elementCount,
 		testDelayMs:
 			process.env.NODE_ENV === "test"
-				? Number(process.env.PI_LENS_TEST_PERSIST_WORKER_DELAY_MS) || undefined
+				? Number(process.env.CHOCO_PI_LSP_TEST_PERSIST_WORKER_DELAY_MS) || undefined
 				: undefined,
 	};
 	_workerRequests.set(id, { key, pending });
@@ -2299,14 +2299,14 @@ const GRAPH_CHECKPOINT_EVERY_FILES_DEFAULT = 250;
 const GRAPH_CHECKPOINT_MIN_INTERVAL_MS_DEFAULT = 5_000;
 
 function graphCheckpointEveryFiles(): number {
-	const raw = Number(process.env.PI_LENS_GRAPH_CHECKPOINT_EVERY_FILES);
+	const raw = Number(process.env.CHOCO_PI_LSP_GRAPH_CHECKPOINT_EVERY_FILES);
 	return Number.isFinite(raw) && raw > 0
 		? Math.floor(raw)
 		: GRAPH_CHECKPOINT_EVERY_FILES_DEFAULT;
 }
 
 function graphCheckpointMinIntervalMs(): number {
-	const raw = Number(process.env.PI_LENS_GRAPH_CHECKPOINT_MIN_INTERVAL_MS);
+	const raw = Number(process.env.CHOCO_PI_LSP_GRAPH_CHECKPOINT_MIN_INTERVAL_MS);
 	return Number.isFinite(raw) && raw >= 0
 		? raw
 		: GRAPH_CHECKPOINT_MIN_INTERVAL_MS_DEFAULT;
@@ -2450,7 +2450,7 @@ function writeReviewGraphCheckpoint(
 		elements: graph.nodes.size + graph.edges.length,
 		testDelayMs:
 			process.env.NODE_ENV === "test"
-				? Number(process.env.PI_LENS_TEST_PERSIST_WORKER_DELAY_MS) || undefined
+				? Number(process.env.CHOCO_PI_LSP_TEST_PERSIST_WORKER_DELAY_MS) || undefined
 				: undefined,
 	};
 	worker.postMessage(request);
@@ -3048,7 +3048,7 @@ async function ensureReviewGraphFacts(
 		// populated before the graph reads them.
 		await importFactProvider.run(ctx, facts);
 		await functionFactProvider.run(ctx, facts);
-		// pi-lens-ignore: missing-error-propagation
+		// choco-pi-lsp-ignore: missing-error-propagation
 	} catch (err) {
 		logReviewGraph({
 			cwd,
@@ -4813,7 +4813,7 @@ async function _doBuildGraph(
 	const checkpointEvery = graphCheckpointEveryFiles();
 	const checkpointMinIntervalMs = graphCheckpointMinIntervalMs();
 	const testStopAfter = Number(
-		process.env.PI_LENS_GRAPH_CHECKPOINT_TEST_STOP_AFTER,
+		process.env.CHOCO_PI_LSP_GRAPH_CHECKPOINT_TEST_STOP_AFTER,
 	);
 	let filesSinceCheckpoint = 0;
 	let lastCheckpointMs = Date.now();

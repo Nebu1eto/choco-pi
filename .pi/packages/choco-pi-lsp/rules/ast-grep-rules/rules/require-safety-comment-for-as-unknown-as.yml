@@ -24,10 +24,10 @@ note: |
   for its most evidence-destroying form, without demanding the other
   ~1,750 non-const assertions retroactively grow comments in this PR.
 
-  Shipped at `hint`: pi-lens's own tree has ~267 `as unknown as` sites
+  Shipped at `hint`: choco-pi-lsp's own tree has ~267 `as unknown as` sites
   (this PR's `no-chained-type-assertions.yml` self-scan count) and zero
-  `SAFETY:` comments, so this rule is maximally noisy against pi-lens's
-  own history on day one. Self-scan note: do NOT try to make pi-lens's
+  `SAFETY:` comments, so this rule is maximally noisy against choco-pi-lsp's
+  own history on day one. Self-scan note: do NOT try to make choco-pi-lsp's
   own tree clean against this rule (#1718's baseline problem, and
   arguably its own follow-up issue given the size); the adopting PR
   records the hit count instead.

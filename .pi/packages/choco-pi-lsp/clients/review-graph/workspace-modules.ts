@@ -72,7 +72,7 @@ function readJsonSafe(filePath: string): unknown {
 /**
  * Presence checks for the four workspace-manifest markers are sourced from
  * the shared workspace-topology marker index (#806) — one `readdir` pass at
- * `cwd` collects them alongside `.pi-lens.json`/`tsconfig.json` other
+ * `cwd` collects them alongside `.choco-pi-lsp.json`/`tsconfig.json` other
  * consumers need for the SAME directory, instead of four independent
  * `existsSync` probes. Manifest CONTENT (workspace globs, the `[workspace]`
  * TOML section, the `workspaces` package.json field) is still read and
@@ -494,7 +494,7 @@ export function getDownstreamModules(
  *   can alias a write with the preceding walk;
  * - the ignore matcher is compared by object identity —
  *   `getProjectIgnoreMatcher` returns a fresh object whenever a
- *   `.gitignore`/`.pi-lens.json`/global-config input's size:mtimeMs changes,
+ *   `.gitignore`/`.choco-pi-lsp.json`/global-config input's size:mtimeMs changes,
  *   so ignore-rule edits re-walk too.
  * Cleared with the module-graph cache (`clearModuleGraphCache`).
  */

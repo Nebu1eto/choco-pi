@@ -5,14 +5,14 @@
  * `ServerCapabilities.textDocumentSync`, either as a bare
  * `TextDocumentSyncKind` number (the legacy pre-3.0 shape) or as a
  * `TextDocumentSyncOptions` object whose `change` field carries the kind.
- * pi-lens always sent a single whole-document `{ text }` change event — valid
+ * choco-pi-lsp always sent a single whole-document `{ text }` change event — valid
  * for `Full` (1) and harmless for `None` (0, since the server ignores content
  * changes entirely), but out of spec for `Incremental` (2): an
  * Incremental-only server expects every change event to carry a `range`.
  *
  * This module is the pure negotiation core, mirroring `position-encoding.ts`'s
  * shape: read the kind from the server's `initialize` reply, defaulting to
- * `Full` when the server doesn't advertise one — the same shape pi-lens has
+ * `Full` when the server doesn't advertise one — the same shape choco-pi-lsp has
  * always sent, so an unrecognized/absent value never regresses `Full`/`None`
  * behavior.
  */
@@ -29,7 +29,7 @@ function isSyncKind(value: unknown): value is TextDocumentSyncKind {
 
 /**
  * The `change` sync kind the server negotiated, read from its `initialize`
- * reply. Defaults to `Full` (pi-lens's historical always-whole-document
+ * reply. Defaults to `Full` (choco-pi-lsp's historical always-whole-document
  * behavior) when the server omits `textDocumentSync` entirely, or advertises
  * a shape/value this function doesn't recognize.
  */

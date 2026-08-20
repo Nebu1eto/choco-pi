@@ -2,13 +2,13 @@
  * Log Cleanup Utility — manages log retention and rotation
  *
  * Environment variables:
- *   PI_LENS_LOG_RETENTION_DAYS - Days to keep logs (default: 7)
- *   PI_LENS_MAX_LOG_SIZE_MB    - Max size before rotation (default: 10)
+ *   CHOCO_PI_LSP_LOG_RETENTION_DAYS - Days to keep logs (default: 7)
+ *   CHOCO_PI_LSP_MAX_LOG_SIZE_MB    - Max size before rotation (default: 10)
  *
  * Scope:
- *   - ~/.pi-lens/*.log (every global log — see getManagedLogFiles())
- *   - ~/.pi-lens/logs/*.jsonl (daily diagnostic logs)
- *   - ~/.pi-lens/<name>.<timestamp>.log (rotated backups, and legacy .log.<ts>)
+ *   - ~/.choco-pi-lsp/*.log (every global log — see getManagedLogFiles())
+ *   - ~/.choco-pi-lsp/logs/*.jsonl (daily diagnostic logs)
+ *   - ~/.choco-pi-lsp/<name>.<timestamp>.log (rotated backups, and legacy .log.<ts>)
  *
  * Excluded (intentionally NOT cleaned - project-scoped or persistent):
  *   - <project-data>/worklog.jsonl                - Agent fixable diagnostics
@@ -31,7 +31,7 @@ const LOG_DIR = getGlobalPiLensDir();
 const LOGS_SUBDIR = path.join(LOG_DIR, "logs");
 
 /**
- * Every global `.log` pi-lens writes under ~/.pi-lens, resolved dynamically so
+ * Every global `.log` choco-pi-lsp writes under ~/.choco-pi-lsp, resolved dynamically so
  * rotation and the storage summary can't drift out of sync with what's
  * actually written — that drift is exactly what left
  * actionable-warnings/ast-grep-tools/dead-code, and later bus-events.log,
@@ -44,14 +44,14 @@ const LOGS_SUBDIR = path.join(LOG_DIR, "logs");
  *      zero action here, as long as it's imported before this runs (true for
  *      the whole current codebase — every logger module is statically
  *      imported from index.ts's transitive graph before session start).
- *   2. A direct `~/.pi-lens/*.log` directory read, excluding rotated-backup
+ *   2. A direct `~/.choco-pi-lsp/*.log` directory read, excluding rotated-backup
  *      names — a defensive backstop in case some future logger module is only
  *      *dynamically* imported and hasn't registered yet when this runs. Once
  *      a file has content on disk, this catches it regardless of import
  *      timing; an unregistered file that doesn't exist yet has nothing to
  *      clean up anyway.
  * `dir` is overridable for tests; production callers use the default
- * (real `~/.pi-lens`).
+ * (real `~/.choco-pi-lsp`).
  */
 export function getManagedLogFiles(dir: string = LOG_DIR): string[] {
 	const names = new Set<string>();
@@ -91,11 +91,11 @@ export interface LogCleanupConfig {
 	maxSizeMB: number;
 }
 
-/** Rotation threshold for every active `~/.pi-lens/*.log`, in MB. */
+/** Rotation threshold for every active `~/.choco-pi-lsp/*.log`, in MB. */
 export function getMaxLogSizeMB(): number {
 	return Math.max(
 		1,
-		Number.parseInt(process.env.PI_LENS_MAX_LOG_SIZE_MB ?? "10", 10) || 10,
+		Number.parseInt(process.env.CHOCO_PI_LSP_MAX_LOG_SIZE_MB ?? "10", 10) || 10,
 	);
 }
 
@@ -103,7 +103,7 @@ function getConfig(): LogCleanupConfig {
 	return {
 		retentionDays: Math.max(
 			1,
-			Number.parseInt(process.env.PI_LENS_LOG_RETENTION_DAYS ?? "7", 10) || 7,
+			Number.parseInt(process.env.CHOCO_PI_LSP_LOG_RETENTION_DAYS ?? "7", 10) || 7,
 		),
 		maxSizeMB: getMaxLogSizeMB(),
 	};
@@ -203,7 +203,7 @@ export function rotateLogIfNeeded(
 
 /**
  * Main cleanup function - call on session start
- * Cleans up all pi-lens log files based on retention policy
+ * Cleans up all choco-pi-lsp log files based on retention policy
  */
 export function runLogCleanup(dbg?: (msg: string) => void): {
 	cleaned: number;

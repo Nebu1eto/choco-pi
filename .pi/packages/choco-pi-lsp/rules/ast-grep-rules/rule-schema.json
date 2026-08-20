@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "pi-lens ast-grep rule",
-  "description": "A single ast-grep rule loaded by pi-lens. Place files under rules/ast-grep-rules/rules/. Supports multiple documents per file separated by ---.",
+  "title": "choco-pi-lsp ast-grep rule",
+  "description": "A single ast-grep rule loaded by choco-pi-lsp. Place files under rules/ast-grep-rules/rules/. Supports multiple documents per file separated by ---.",
   "type": "object",
   "required": ["id", "rule"],
   "additionalProperties": false,

@@ -50,7 +50,7 @@ import { RUNTIME_CONFIG } from "./runtime-config.js";
 const AUTHORITATIVE_CONTENT_MAX_BYTES = RUNTIME_CONFIG.pipeline.lspMaxFileBytes;
 
 /**
- * The `tool_result` payload pi-lens actually receives.
+ * The `tool_result` payload choco-pi-lsp actually receives.
  *
  * Kept aligned with what pi BUILDS, not with what a payload might plausibly
  * carry. `AgentSession._installAgentToolHooks`'s `afterToolCall` constructs the
@@ -73,7 +73,7 @@ const AUTHORITATIVE_CONTENT_MAX_BYTES = RUNTIME_CONFIG.pipeline.lspMaxFileBytes;
 interface ToolResultEvent {
 	toolName: string;
 	toolCallId?: string | number;
-	/** Host tool_result status; distinct from pi-lens PipelineResult.isError. */
+	/** Host tool_result status; distinct from choco-pi-lsp PipelineResult.isError. */
 	isError?: boolean;
 	input: unknown;
 	details?: unknown;
@@ -203,7 +203,7 @@ const DEFAULT_DEBOUNCE_MS = 0;
 const MAX_DEBOUNCE_MS = 1000;
 
 function getDebounceMs(): number {
-	const raw = Number(process.env.PI_LENS_TOOL_RESULT_DEBOUNCE_MS);
+	const raw = Number(process.env.CHOCO_PI_LSP_TOOL_RESULT_DEBOUNCE_MS);
 	if (!Number.isFinite(raw) || raw < 0) return DEFAULT_DEBOUNCE_MS;
 	// Cap at 1s so turn_end and agent_end don't block on the timer for
 	// pathologically long windows. flushDebouncedToolResults below also
@@ -549,7 +549,7 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
 							: 0;
 					const isAuthoritativeAttachment =
 						typeof block.text === "string" &&
-						block.text.startsWith("pi-lens applied autofix to ");
+						block.text.startsWith("choco-pi-lsp applied autofix to ");
 					if (
 						isAuthoritativeAttachment &&
 						syntheticAttachmentBytes + blockBytes >
@@ -612,8 +612,8 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
 		// existing enqueue site fires on first open and can only emit type 1/2.
 		// Extract the command's likely delete targets, confirm each by existence
 		// (never scan the workspace — only the paths the command named), and only
-		// act on paths pi-lens already knows about (a read or a write this
-		// session) so an `rm` on something pi-lens never touched is not treated
+		// act on paths choco-pi-lsp already knows about (a read or a write this
+		// session) so an `rm` on something choco-pi-lsp never touched is not treated
 		// as a signal. Each match is routed to already-active LSP clients as a
 		// type-3 watched-files event through the same #271 coalescing queue a
 		// burst of deletes still flushes as one notification per server.
@@ -1105,7 +1105,7 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
 		stateHash: getFileStateHash(filePath),
 	});
 
-	// The model's write/edit and pi-lens' own immediate format/autofix are now
+	// The model's write/edit and choco-pi-lsp' own immediate format/autofix are now
 	// reflected on disk. Refresh read-guard staleness stamps so a follow-up edit
 	// is judged by read-range coverage, not by our own previous write.
 	if (!getFlag("no-read-guard")) {
@@ -1195,7 +1195,7 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
 				turnStateCwd,
 			);
 			dbg(
-				`tool_result: tracking pi-lens side-effect change for ${resolvedChanged}`,
+				`tool_result: tracking choco-pi-lsp side-effect change for ${resolvedChanged}`,
 			);
 		} catch (err) {
 			dbg(
@@ -1331,7 +1331,7 @@ export async function handleToolResult(deps: ToolResultDeps): Promise<{
 				...event.content,
 				{
 					type: "text",
-					text: `pi-lens applied autofix to ${postMutation!.filePath}. The following full content is authoritative for subsequent edits:\n\n${postMutation!.content}`,
+					text: `choco-pi-lsp applied autofix to ${postMutation!.filePath}. The following full content is authoritative for subsequent edits:\n\n${postMutation!.content}`,
 				},
 			]
 		: event.content;

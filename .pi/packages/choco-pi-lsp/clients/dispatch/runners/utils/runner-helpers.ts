@@ -1,5 +1,5 @@
 /**
- * Shared runner utilities for pi-lens dispatch system
+ * Shared runner utilities for choco-pi-lsp dispatch system
  *
  * Extracted common patterns from multiple runners to reduce duplication:
  * - Venv-aware command finders
@@ -122,7 +122,7 @@ if (typeof __dirname !== "undefined") {
 	_thisDir = __dirname;
 }
 
-// Managed tools directory (~/.pi-lens/tools) — where ensureTool() installs binaries
+// Managed tools directory (~/.choco-pi-lsp/tools) — where ensureTool() installs binaries
 const _managedToolsDir = path.join(getGlobalPiLensDir(), "tools");
 
 /**
@@ -130,7 +130,7 @@ const _managedToolsDir = path.join(getGlobalPiLensDir(), "tools");
  * preference order (`getToolPath`'s managed-first branch: `.cmd`, then `.exe`,
  * then extensionless on Windows; extensionless elsewhere).
  *
- * The pi-lens dir is read per call, never memoized at module load, so tests that
+ * The choco-pi-lsp dir is read per call, never memoized at module load, so tests that
  * point `getGlobalPiLensDir` at a temp home still see their own tree.
  */
 function managedNodeToolCandidates(tool: string): string[] {
@@ -296,7 +296,7 @@ async function verifyManagedCandidate(
 }
 
 /**
- * The managed shim for a Node CLI tool (`~/.pi-lens/tools/node_modules/.bin/<tool>`),
+ * The managed shim for a Node CLI tool (`~/.choco-pi-lsp/tools/node_modules/.bin/<tool>`),
  * or null when no candidate on disk actually runs.
  *
  * Verification uses the installer's own `verifyToolBinary`, the same check its
@@ -356,7 +356,7 @@ export function createVenvFinder(
 			}
 		}
 
-		// Managed-dir install (~/.pi-lens/tools/node_modules/.bin/<command>) — the
+		// Managed-dir install (~/.choco-pi-lsp/tools/node_modules/.bin/<command>) — the
 		// same shim `ensureTool()` installs npm-strategy tools into. Checked BEFORE
 		// the bare-name PATH fallback (#1638): without this, a tool that only
 		// exists in the managed dir never resolves here, so `resolveAvailableOrInstall`

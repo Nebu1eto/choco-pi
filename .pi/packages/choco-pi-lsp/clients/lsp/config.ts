@@ -1,10 +1,10 @@
 /**
- * LSP Configuration for pi-lens
+ * LSP Configuration for choco-pi-lsp
  *
  * Allows users to define custom LSP servers and override initialization options
  * for built-in servers via configuration.
  *
- * Config file: .pi-lens/lsp.json (or .pi-lens.json, pi-lsp.json)
+ * Config file: .choco-pi-lsp/lsp.json (or .choco-pi-lsp.json, pi-lsp.json)
  *
  * Example — custom server:
  * {
@@ -105,7 +105,7 @@ interface RegisteredLSPConfig {
 
 // --- Config Loading ---
 
-const CONFIG_PATHS = [".pi-lens/lsp.json", ".pi-lens.json", "pi-lsp.json"];
+const CONFIG_PATHS = [".choco-pi-lsp/lsp.json", ".choco-pi-lsp.json", "pi-lsp.json"];
 
 function warnInvalidLSPConfig(configPath: string, error: unknown): void {
 	const reason = error instanceof Error ? error.message : String(error);
@@ -117,7 +117,7 @@ function warnInvalidLSPConfig(configPath: string, error: unknown): void {
 		metadata: { configPath, reason },
 	});
 	// HUMAN-audience too: the user's own lsp.json is being ignored (#1333).
-	notifyUserDegradation(`pi-lens: ${message}`);
+	notifyUserDegradation(`choco-pi-lsp: ${message}`);
 }
 
 async function readLSPConfig(configPath: string): Promise<LSPConfig | undefined> {
@@ -177,7 +177,7 @@ function mergeLSPConfigs(
 
 /**
  * Load LSP configuration, with project settings overriding machine-global
- * settings from ~/.pi-lens/lsp.json.
+ * settings from ~/.choco-pi-lsp/lsp.json.
  */
 export async function loadLSPConfig(cwd: string): Promise<LSPConfig> {
 	let projectConfig: LSPConfig | undefined;
@@ -285,7 +285,7 @@ export async function initLSPConfig(cwd: string): Promise<void> {
 					const server = createCustomServer(serverConfig, id);
 					customServers.push(server);
 				} catch {
-					// pi-lens-ignore: missing-error-propagation — per-server registration, skip bad entries
+					// choco-pi-lsp-ignore: missing-error-propagation — per-server registration, skip bad entries
 				}
 			}
 		}

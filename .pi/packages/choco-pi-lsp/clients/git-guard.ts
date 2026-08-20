@@ -22,7 +22,7 @@ export interface TurnEndFindingsCache {
 	projectSeqStart: number;
 	projectSeqEnd: number;
 	fileSeqByPath: Record<string, number>;
-	/** Content fingerprints catch edits made outside pi-lens between turns. */
+	/** Content fingerprints catch edits made outside choco-pi-lsp between turns. */
 	fileContentHashes: Record<string, string>;
 	/** A capped record is never treated as complete/allowable. */
 	affectedFilesTruncated?: boolean;
@@ -542,7 +542,7 @@ function unknown(cwd: string, reasonCategory: string, metadata = {}): GuardDecis
 	return {
 		block: true,
 		unknown: true,
-		reason: `🔴 COMMIT BLOCKED (--lens-guard): blocker state is unknown (${reasonCategory}). Re-run pi-lens checks or start a fresh session, then retry.`,
+		reason: `🔴 COMMIT BLOCKED (--lens-guard): blocker state is unknown (${reasonCategory}). Re-run choco-pi-lsp checks or start a fresh session, then retry.`,
 	};
 }
 

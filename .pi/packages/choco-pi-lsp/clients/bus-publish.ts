@@ -1,8 +1,8 @@
 /**
  * Publishes `pilens:files:touched` on pi's shared `pi.events` bus (#482).
  *
- * This is pi-lens's FIRST `pi.events` broadcast surface: it exists so other
- * extensions in the same session can observe files pi-lens writes
+ * This is choco-pi-lsp's FIRST `pi.events` broadcast surface: it exists so other
+ * extensions in the same session can observe files choco-pi-lsp writes
  * autonomously (autofix/format runners) without reverse-engineering us —
  * writes the agent makes itself via its own tool calls are NOT ours to
  * broadcast; the host already knows about those (see the seam audit in
@@ -35,7 +35,7 @@ export type FilesTouchedReason = "autofix" | "format";
 
 /**
  * Fix-provenance entry (#502, additive field). Lets a consumer distinguish a
- * pi-lens-mechanical hunk (autofix/format) from an agent edit when rendering
+ * choco-pi-lsp-mechanical hunk (autofix/format) from an agent edit when rendering
  * a diff — the slopchop/diff-review use case from #502. Additive-only: old
  * consumers that don't know this field ignore it (frozen-additive discipline,
  * same as every other field on this payload).
@@ -52,7 +52,7 @@ export interface FixProvenanceEntry {
 
 export interface FilesTouchedPayload {
 	v: typeof BUS_FILES_TOUCHED_VERSION;
-	source: "pi-lens";
+	source: "choco-pi-lsp";
 	reason: FilesTouchedReason;
 	paths: string[];
 	cwd: string;
@@ -102,13 +102,13 @@ export function _resetForTests(): void {
 let _envCache: boolean | undefined;
 
 /**
- * Lazy env read (house style) so tests can flip `PI_LENS_BUS_PUBLISH` at
+ * Lazy env read (house style) so tests can flip `CHOCO_PI_LSP_BUS_PUBLISH` at
  * runtime via `_resetForTests` + re-set the env var. Kill switch: set to `0`
  * to disable publishing outright.
  */
 export function isBusPublishEnabled(): boolean {
 	if (_envCache === undefined) {
-		_envCache = process.env.PI_LENS_BUS_PUBLISH !== "0";
+		_envCache = process.env.CHOCO_PI_LSP_BUS_PUBLISH !== "0";
 	}
 	return _envCache;
 }
@@ -119,8 +119,8 @@ export interface PublishFilesTouchedArgs {
 	cwd: string;
 	/**
 	 * Loop guard: set when the write being reported was itself triggered by
-	 * an INGESTED bus event (something pi-lens consumed from `pi.events`).
-	 * pi-lens does not consume any events today (see #482 non-goals), so this
+	 * an INGESTED bus event (something choco-pi-lsp consumed from `pi.events`).
+	 * choco-pi-lsp does not consume any events today (see #482 non-goals), so this
 	 * is always false in practice — the flag exists so a future consumer
 	 * can't accidentally wire a publish -> react -> publish cycle. When true,
 	 * this is a structural no-op regardless of the kill switch or wiring.
@@ -198,7 +198,7 @@ export function publishFilesTouched(args: PublishFilesTouchedArgs): void {
 	try {
 		const payload: FilesTouchedPayload = {
 			v: BUS_FILES_TOUCHED_VERSION,
-			source: "pi-lens",
+			source: "choco-pi-lsp",
 			reason: args.reason,
 			paths: args.paths.map((p) => normalizeFilePath(p)),
 			cwd: normalizeFilePath(args.cwd),

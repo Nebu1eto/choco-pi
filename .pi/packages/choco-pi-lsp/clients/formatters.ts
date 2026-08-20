@@ -1,5 +1,5 @@
 /**
- * Formatter Definitions for pi-lens
+ * Formatter Definitions for choco-pi-lsp
  *
  * Auto-detects formatters based on:
  * - Config files (biome.json, .prettierrc, etc.)
@@ -1254,7 +1254,7 @@ export const styluaFormatter: FormatterInfo = {
 	command: ["stylua", "$FILE"],
 	extensions: [".lua"],
 	async resolveCommand(filePath, cwd) {
-		// Project binary first (#1731, discipline B): stylua has no pi-lens
+		// Project binary first (#1731, discipline B): stylua has no choco-pi-lsp
 		// managed install, so before this the ONLY resolution was a bare
 		// `stylua` PATH lookup — a project-local install via npm
 		// `@johnnymorganz/stylua` (`node_modules/.bin/stylua`) was invisible.
@@ -1618,7 +1618,7 @@ export async function getFormattersForFile(
 			const { detected, error, outcome } = await detectCandidate(formatter, cwd);
 			candidateOutcomes.push(outcome);
 			if (error !== undefined) {
-				// pi-lens-ignore: missing-error-propagation — optional formatter detection, skip on failure
+				// choco-pi-lsp-ignore: missing-error-propagation — optional formatter detection, skip on failure
 				logExtension({
 					subsystem: "format",
 					message: `Detection failed for ${formatter.name}: ${

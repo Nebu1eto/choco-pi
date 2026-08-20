@@ -75,7 +75,7 @@ function classesSignature(classesDir: string): string {
 	return `${count}:${newest}`;
 }
 
-// SpotBugs bug categories → pi-lens defect taxonomy (per #133).
+// SpotBugs bug categories → choco-pi-lsp defect taxonomy (per #133).
 function mapCategory(category: string): DefectClass {
 	switch (category.toUpperCase()) {
 		case "CORRECTNESS":
@@ -247,7 +247,7 @@ const spotbugsRunner: RunnerDefinition = {
 
 		const tmpXml = path.join(
 			os.tmpdir(),
-			`pi-lens-spotbugs-${process.pid}-${Date.now()}.xml`,
+			`choco-pi-lsp-spotbugs-${process.pid}-${Date.now()}.xml`,
 		);
 		const result = await safeSpawnAsync(
 			cmd,

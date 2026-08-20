@@ -1,5 +1,5 @@
 /**
- * Shared diagnostic output parsers for pi-lens runners
+ * Shared diagnostic output parsers for choco-pi-lsp runners
  *
  * Common patterns for parsing tool output into standardized diagnostics.
  * Supports the common `file:line:col: message` format used by most linters.

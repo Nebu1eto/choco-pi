@@ -2,7 +2,7 @@
  * Host-neutral analysis facade for the MCP path.
  *
  * This is the heart of the "real review loop": it runs the *same* per-edit
- * dispatch pipeline pi-lens runs inside pi (`dispatchLintWithResult`) on a file,
+ * dispatch pipeline choco-pi-lsp runs inside pi (`dispatchLintWithResult`) on a file,
  * and returns a structured, JSON-serializable result — diagnostics plus the
  * latency record for that dispatch, in the same schema pi writes to latency.log.
  *
@@ -81,14 +81,14 @@ function positiveEnv(name: string, fallback: number): number {
 
 function idleEvictMs(): number {
 	return positiveEnv(
-		"PI_LENS_WORD_INDEX_IDLE_EVICT_MS",
+		"CHOCO_PI_LSP_WORD_INDEX_IDLE_EVICT_MS",
 		DEFAULT_WORD_INDEX_IDLE_EVICT_MS,
 	);
 }
 
 function maxWarmRoots(): number {
 	return positiveEnv(
-		"PI_LENS_WORD_INDEX_MAX_WARM_ROOTS",
+		"CHOCO_PI_LSP_WORD_INDEX_MAX_WARM_ROOTS",
 		DEFAULT_WORD_INDEX_MAX_WARM_ROOTS,
 	);
 }
@@ -486,7 +486,7 @@ export async function analyzeFile(
 		// oversized file is REMOVED, never partially indexed; the update is
 		// synchronous (no interleaving hazard — MCP is single-process, same as
 		// pi); a successful update schedules the SAME debounced persist
-		// (`scheduleWordIndexPersist`, `PI_LENS_WORD_INDEX_PERSIST_DEBOUNCE_MS`)
+		// (`scheduleWordIndexPersist`, `CHOCO_PI_LSP_WORD_INDEX_PERSIST_DEBOUNCE_MS`)
 		// pi's path uses — no second persist mechanism.
 		//
 		// Key shape: `absPath` (`path.resolve` of the tool-input path). Since #1025

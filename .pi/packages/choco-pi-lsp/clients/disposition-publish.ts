@@ -10,7 +10,7 @@
  * full-replace state snapshots, so the seq counter, the
  * previously-reported-dirty set, and the whole staleness/replace consumer
  * contract over there simply don't apply here. Only the emit plumbing shape
- * and the `PI_LENS_BUS_PUBLISH` kill switch (`isBusPublishEnabled`, imported
+ * and the `CHOCO_PI_LSP_BUS_PUBLISH` kill switch (`isBusPublishEnabled`, imported
  * from bus-publish.ts) are shared, same as every other producer sibling.
  *
  * Fire-and-forget: publishing must never affect the mark path's success or
@@ -37,7 +37,7 @@ export const BUS_DISPOSITION_VERSION = 1;
 
 export interface PilensDispositionPayload {
 	v: typeof BUS_DISPOSITION_VERSION;
-	source: "pi-lens";
+	source: "choco-pi-lsp";
 	cwd: string;
 	/** Absolute, normalized path (forward slashes — same normalization as #482 `paths`). */
 	filePath: string;
@@ -127,7 +127,7 @@ export function publishDisposition(args: PublishDispositionArgs): void {
 	try {
 		const payload: PilensDispositionPayload = {
 			v: BUS_DISPOSITION_VERSION,
-			source: "pi-lens",
+			source: "choco-pi-lsp",
 			cwd: normalizeFilePath(args.cwd),
 			filePath: normalizeFilePath(args.filePath),
 			disposition: args.disposition,

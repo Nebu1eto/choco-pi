@@ -498,7 +498,7 @@ const DIAGNOSTIC_SEVERITY_TIERS = new Set<Diagnostic["severity"]>([
 /**
  * Map a rule's declared YAML severity onto a `Diagnostic.severity` tier (#1777).
  *
- * A rule that declares nothing, or declares a value pi-lens does not model
+ * A rule that declares nothing, or declares a value choco-pi-lsp does not model
  * (ast-grep also accepts `off`), falls back to `warning` — the tier every such
  * rule already reported at before #1777, so reviving hint/info never silently
  * demotes an existing rule.

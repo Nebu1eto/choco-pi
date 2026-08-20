@@ -1,5 +1,5 @@
 /**
- * Auto-Installation System for pi-lens
+ * Auto-Installation System for choco-pi-lsp
  *
  * Minimal auto-install: Core tools that run frequently.
  * Other tools require manual installation with clear instructions.
@@ -40,7 +40,7 @@
  * Strategies:
  * - npm packages via npx/bun
  * - pip packages
- * - GitHub releases (platform-specific binaries → ~/.pi-lens/bin/)
+ * - GitHub releases (platform-specific binaries → ~/.choco-pi-lsp/bin/)
  */
 
 import { logExtension } from "../extension-log.js";
@@ -76,7 +76,7 @@ import {
 	safeSpawnAsync,
 } from "../safe-spawn.js";
 
-// Global installation directory for pi-lens tools
+// Global installation directory for choco-pi-lsp tools
 const TOOLS_DIR = path.join(getGlobalPiLensDir(), "tools");
 const INSTALL_LOCK_PATH = path.join(TOOLS_DIR, ".install.lock");
 const activeInstallLocks = new Set<string>();
@@ -85,7 +85,7 @@ let installLockExitCleanupRegistered = false;
 /**
  * The managed tools tree, for callers that need to tell a path `getToolPath()`
  * returned from the managed install apart from a global/PATH hit (the tool
- * registry is this module's business — don't re-derive `<pi-lens home>/tools`).
+ * registry is this module's business — don't re-derive `<choco-pi-lsp home>/tools`).
  */
 export function getManagedToolsDir(): string {
 	return TOOLS_DIR;
@@ -111,11 +111,11 @@ async function acquireInstallLock(): Promise<{
 }> {
 	await fs.mkdir(TOOLS_DIR, { recursive: true });
 	// #946 review F2: the waiter's bound must exceed the owner's install bound
-	// (PI_LENS_INSTALL_TIMEOUT_MS, default 120s) — a 30s waiter gave up on a
+	// (CHOCO_PI_LSP_INSTALL_TIMEOUT_MS, default 120s) — a 30s waiter gave up on a
 	// legitimate slow install and reported the tool unavailable for the whole
 	// session even though it arrived seconds later.
 	const timeoutMs =
-		Number(process.env.PI_LENS_INSTALL_LOCK_TIMEOUT_MS) || 150_000;
+		Number(process.env.CHOCO_PI_LSP_INSTALL_LOCK_TIMEOUT_MS) || 150_000;
 	const deadline = Date.now() + timeoutMs;
 	let lastOwner = "unknown owner";
 
@@ -161,7 +161,7 @@ async function acquireInstallLock(): Promise<{
 				// than any legitimate install (owner install bound + slack) is
 				// stale regardless of what the PID now points at.
 				const maxAgeMs =
-					(Number(process.env.PI_LENS_INSTALL_TIMEOUT_MS) || 120_000) +
+					(Number(process.env.CHOCO_PI_LSP_INSTALL_TIMEOUT_MS) || 120_000) +
 					60_000;
 				const expired =
 					Number.isFinite(owner.createdAt) &&
@@ -183,7 +183,7 @@ async function acquireInstallLock(): Promise<{
 				try {
 					const stat = await fs.stat(INSTALL_LOCK_PATH);
 					const maxAgeMs =
-						(Number(process.env.PI_LENS_INSTALL_TIMEOUT_MS) || 120_000) +
+						(Number(process.env.CHOCO_PI_LSP_INSTALL_TIMEOUT_MS) || 120_000) +
 						60_000;
 					if (Date.now() - stat.mtimeMs > maxAgeMs) {
 						await fs.rm(INSTALL_LOCK_PATH, { force: true });
@@ -205,13 +205,13 @@ async function acquireInstallLock(): Promise<{
 // Directory for GitHub-downloaded binaries
 const GITHUB_BIN_DIR = path.join(getGlobalPiLensDir(), "bin");
 
-// Debug flag - set via PI_LENS_DEBUG=1 or --debug
+// Debug flag - set via CHOCO_PI_LSP_DEBUG=1 or --debug
 const DEBUG =
-	process.env.PI_LENS_DEBUG === "1" || process.argv.includes("--debug");
+	process.env.CHOCO_PI_LSP_DEBUG === "1" || process.argv.includes("--debug");
 
 /** Test-only platform seam for Windows resource-layout coverage on Linux CI. */
 function installerPlatform(): NodeJS.Platform {
-	const override = process.env.PI_LENS_TEST_PLATFORM;
+	const override = process.env.CHOCO_PI_LSP_TEST_PLATFORM;
 	if (override === "win32" || override === "linux") {
 		return override;
 	}
@@ -297,7 +297,7 @@ export interface ArchiveSpec {
 	 * sibling `.bat`. OMIT for a TREE BUNDLE (a multi-folder module distribution
 	 * with no single launcher binary, e.g. PowerShellEditorServices) — the whole
 	 * extracted tree is the artifact and the install resolves to the extract dir
-	 * (`~/.pi-lens/tools/<id>`) rather than a shim. The consuming server then
+	 * (`~/.choco-pi-lsp/tools/<id>`) rather than a shim. The consuming server then
 	 * launches a runtime (pwsh/java/node) against a bootstrap inside the tree.
 	 */
 	launcher?: string;
@@ -1390,7 +1390,7 @@ export function getInstallFailureReason(toolId: string): string | undefined {
  * What the last install attempt for a tool actually DID (#1500 review).
  *
  * `installFailureReasons` cannot answer this and never could: it is a REFUSAL
- * map, written by the `PI_LENS_DISABLE_TOOL_INSTALL` branches and the install-lock
+ * map, written by the `CHOCO_PI_LSP_DISABLE_TOOL_INSTALL` branches and the install-lock
  * skip, and by nothing on the genuine-failure or success paths. Inferring
  * attempt-ness from it inverts the answer in both directions — a kill-switch
  * decline reads as a failed download, and a failed download reads as a policy
@@ -1982,7 +1982,7 @@ function extractVersionToken(output: string): string | undefined {
 }
 
 /**
- * Version reported by the last successful `--version` probe of a pi-lens
+ * Version reported by the last successful `--version` probe of a choco-pi-lsp
  * managed local npm install, keyed by toolId. Populated only inside
  * getToolPath()'s managed-local-install checks below — i.e. only when that
  * code path already spawns verifyToolBinary anyway (cache hits in
@@ -2114,7 +2114,7 @@ export type ToolSource =
 	| "global-path"
 	| "npm-global"
 	| "pip-user"
-	| "pi-lens-auto"
+	| "choco-pi-lsp-auto"
 	| "github-release"
 	| "maven-jar"
 	| "archive-dist"
@@ -2216,7 +2216,7 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
 			}
 		}
 
-		// 4. Check managed bin (~/.pi-lens/bin/) — github releases + maven/archive launchers
+		// 4. Check managed bin (~/.choco-pi-lsp/bin/) — github releases + maven/archive launchers
 		if (
 			tool.installStrategy === "github" ||
 			tool.installStrategy === "maven" ||
@@ -2237,7 +2237,7 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
 			}
 		}
 
-		// 5. Check pi-lens auto-install (~/.pi-lens/tools/)
+		// 5. Check choco-pi-lsp auto-install (~/.choco-pi-lsp/tools/)
 		const localBase = path.join(
 			TOOLS_DIR,
 			"node_modules",
@@ -2250,7 +2250,7 @@ export async function getAllToolStatuses(): Promise<ToolStatus[]> {
 			await fs.access(localPath);
 			if (await verifyToolBinary(localPath)) {
 				status.installed = true;
-				status.source = "pi-lens-auto";
+				status.source = "choco-pi-lsp-auto";
 				status.path = localPath;
 				statuses.push(status);
 				continue;
@@ -2481,8 +2481,8 @@ async function getToolPathResolved(
 		);
 	}
 
-	// For github/maven tools, prefer the managed install (~/.pi-lens/bin/) over
-	// PATH. Managed installs are known-good binaries/launchers pi-lens downloaded
+	// For github/maven tools, prefer the managed install (~/.choco-pi-lsp/bin/) over
+	// PATH. Managed installs are known-good binaries/launchers choco-pi-lsp downloaded
 	// as a fallback when a PATH-resolved tool was broken or missing. Checking
 	// before PATH ensures force-reinstall flows find the newly downloaded binary.
 	if (
@@ -2790,7 +2790,7 @@ function httpsGet(
 		https
 			.get(
 				url,
-				{ headers: { "User-Agent": "pi-lens/1.0", ...headers } },
+				{ headers: { "User-Agent": "choco-pi-lsp/1.0", ...headers } },
 				(res) => {
 					if (
 						res.statusCode &&
@@ -3291,7 +3291,7 @@ async function installMavenTool(
  * Install a tool that ships as a distribution archive (.tgz/.zip with a lib/ of
  * JARs + bin/ launchers — e.g. SpotBugs), not a single runnable binary or fat
  * JAR. Downloads the archive, extracts it (top-level dir stripped) into
- * ~/.pi-lens/tools/<id>/, then writes a thin launcher shim into the managed bin
+ * ~/.choco-pi-lsp/tools/<id>/, then writes a thin launcher shim into the managed bin
  * so the tool resolves like any other via findGitHubToolPath. Extraction uses
  * `tar` (present on Windows 10+ as bsdtar, which also reads .zip).
  */
@@ -3479,7 +3479,7 @@ async function installNpmTool(
 		} catch {
 			await writeFileAtomicAsync(
 				packageJsonPath,
-				JSON.stringify({ name: "pi-lens-tools", version: "1.0.0" }, null, 2),
+				JSON.stringify({ name: "choco-pi-lsp-tools", version: "1.0.0" }, null, 2),
 				{ bestEffort: false },
 			);
 		}
@@ -3488,8 +3488,8 @@ async function installNpmTool(
 		const isWindows = installerPlatform() === "win32";
 		const pm = await resolveNodePackageManager(TOOLS_DIR);
 		const testNpmScript =
-			process.env.PI_LENS_TEST_MODE === "1"
-				? process.env.PI_LENS_TEST_NPM_SCRIPT
+			process.env.CHOCO_PI_LSP_TEST_MODE === "1"
+				? process.env.CHOCO_PI_LSP_TEST_NPM_SCRIPT
 				: undefined;
 		const pmCommand = testNpmScript ? process.execPath : pmBinary(pm);
 		// Use --ignore-scripts unless the package explicitly needs postinstall
@@ -3500,7 +3500,7 @@ async function installNpmTool(
 		});
 
 		const INSTALL_TIMEOUT_MS =
-			Number(process.env.PI_LENS_INSTALL_TIMEOUT_MS) || 120_000;
+			Number(process.env.CHOCO_PI_LSP_INSTALL_TIMEOUT_MS) || 120_000;
 		const runInstallAttempt = async (
 			args: string[],
 		): Promise<{ ok: boolean; stderr: string }> => {
@@ -3815,18 +3815,18 @@ async function finishInstallAttempt(
  * Install a tool by ID
  */
 export async function installTool(toolId: string): Promise<boolean> {
-	if (process.env.PI_LENS_DISABLE_TOOL_INSTALL === "1") {
+	if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_INSTALL === "1") {
 		installFailureReasons.set(
 			toolId,
-			"installation disabled by PI_LENS_DISABLE_TOOL_INSTALL=1",
+			"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
 		);
 		noteInstallAttempt(
 			toolId,
 			"declined",
-			"installation disabled by PI_LENS_DISABLE_TOOL_INSTALL=1",
+			"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
 		);
 		logSessionStart(
-			`auto-install ${toolId}: refused — PI_LENS_DISABLE_TOOL_INSTALL=1`,
+			`auto-install ${toolId}: refused — CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1`,
 		);
 		return false;
 	}
@@ -3993,18 +3993,18 @@ async function ensureToolResolved(
 			);
 			return cacheResolvedPath(await getToolPath(toolId));
 		}
-		if (process.env.PI_LENS_DISABLE_TOOL_INSTALL === "1") {
+		if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_INSTALL === "1") {
 			installFailureReasons.set(
 				toolId,
-				"installation disabled by PI_LENS_DISABLE_TOOL_INSTALL=1",
+				"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
 			);
 			noteInstallAttempt(
 				toolId,
 				"declined",
-				"installation disabled by PI_LENS_DISABLE_TOOL_INSTALL=1",
+				"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
 			);
 			logSessionStart(
-				`auto-install ensure ${toolId}: refused — PI_LENS_DISABLE_TOOL_INSTALL=1`,
+				`auto-install ensure ${toolId}: refused — CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1`,
 			);
 			return undefined;
 		}
@@ -4140,7 +4140,7 @@ async function ensureToolResolved(
 
 		// Discovery and install are SEPARATE concerns. getToolPath() above already
 		// probed PATH / npm-global / managed bin — offline-safe, no download. When the
-		// caller forbids installs (allowInstall:false, e.g. PI_LENS_DISABLE_LSP_INSTALL=1)
+		// caller forbids installs (allowInstall:false, e.g. CHOCO_PI_LSP_DISABLE_LSP_INSTALL=1)
 		// we must still return a discovered binary and only skip the actual install.
 		if (opts?.allowInstall === false) {
 			noteInstallAttempt(toolId, "declined", "install disabled by caller");
@@ -4149,18 +4149,18 @@ async function ensureToolResolved(
 			);
 			return undefined;
 		}
-		if (process.env.PI_LENS_DISABLE_TOOL_INSTALL === "1") {
+		if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_INSTALL === "1") {
 			installFailureReasons.set(
 				toolId,
-				"installation disabled by PI_LENS_DISABLE_TOOL_INSTALL=1",
+				"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
 			);
 			noteInstallAttempt(
 				toolId,
 				"declined",
-				"installation disabled by PI_LENS_DISABLE_TOOL_INSTALL=1",
+				"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
 			);
 			logSessionStart(
-				`auto-install ensure ${toolId}: refused — PI_LENS_DISABLE_TOOL_INSTALL=1 (${Date.now() - ensureStartMs}ms)`,
+				`auto-install ensure ${toolId}: refused — CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1 (${Date.now() - ensureStartMs}ms)`,
 			);
 			return undefined;
 		}

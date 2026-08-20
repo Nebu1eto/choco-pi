@@ -1,7 +1,7 @@
 /**
  * Production event-loop occupancy monitor (#192 Phase 2).
  *
- * pi-lens runs on pi's TUI event loop; a long synchronous block freezes
+ * choco-pi-lsp runs on pi's TUI event loop; a long synchronous block freezes
  * keystrokes. Our telemetry historically logged phase *durations*, which can't
  * distinguish a TUI-freezing synchronous burst from harmless async/subprocess
  * time — that blind spot let a ~1.5s enumeration freeze through (#188/#191).
@@ -24,7 +24,7 @@
  * independent pids because the HDR histogram quantizes ~290 s into one bucket;
  * (2) a later silent host exit with zero sleep events but twelve
  * Resource-Exhaustion-Detector (id 2004) events at 97% commit charge — the
- * process was paging, not sleeping. Both are machine artifacts, not pi-lens
+ * process was paging, not sleeping. Both are machine artifacts, not choco-pi-lsp
  * work; latency.log also held multi-*hour* "blocks" that can only be overnight
  * sleep.
  *
@@ -127,7 +127,7 @@ const safeMs = (ns: number): number =>
  * native histogram or a real machine sleep.
  *
  * A block is system-stall-suspected only when it is both (a) larger than any
- * plausible synchronous pi-lens stall (`floorMs`, default 20 s — the real tier
+ * plausible synchronous choco-pi-lsp stall (`floorMs`, default 20 s — the real tier
  * observed in latency.log tops out ~15 s) and (b) unaccounted for by the
  * window's CPU budget (`windowCpuMs + slopMs < maxMs`). The floor keeps a real
  * multi-second I/O-bound block (low CPU, but genuine) from being mislabeled,
@@ -137,7 +137,7 @@ const safeMs = (ns: number): number =>
  * can spot a shorter paging stall by hand.
  *
  * KNOWN AMBIGUITY (honest, not fully resolvable from CPU alone): a genuine
- * pi-lens block that is BLOCKED IN A SYSCALL for >20 s — e.g. a `readdirSync` /
+ * choco-pi-lsp block that is BLOCKED IN A SYSCALL for >20 s — e.g. a `readdirSync` /
  * `statSync` stalled on a OneDrive/cloud-backed path fetching a dehydrated file,
  * or an antivirus-throttled read — also consumes ~0 CPU while wall time
  * advances, so it is CPU-indistinguishable from a suspend and WILL be tagged

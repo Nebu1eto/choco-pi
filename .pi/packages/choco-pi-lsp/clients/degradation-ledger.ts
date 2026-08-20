@@ -45,7 +45,7 @@ export type DegradationKind =
 	| "cascade-budget-override-disarmed"
 	| "lsp-pull-unconfirmed"
 	/**
-	 * A pi-lens `tool_call` handler threw. pi's `emitToolCall` has no
+	 * A choco-pi-lsp `tool_call` handler threw. pi's `emitToolCall` has no
 	 * per-handler catch, so an escaped throw blocks the user's tool call —
 	 * this kind means the total guard absorbed one (#1655 item 1).
 	 */
@@ -75,7 +75,7 @@ export type DegradationKind =
 	/**
 	 * A managed npm tool's periodic version refresh did not complete, or the
 	 * refresh state file could not be read (#1730). The tool keeps serving on
-	 * the version already installed — this kind means pi-lens cannot prove that
+	 * the version already installed — this kind means choco-pi-lsp cannot prove that
 	 * version is the newest the tool's declared range permits.
 	 */
 	| "managed-tool-refresh"

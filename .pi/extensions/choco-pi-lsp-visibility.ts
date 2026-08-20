@@ -1,9 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 
-const LSP_STATUS_KEY = "pi-lens-lsp";
-const LSP_WIDGET_KEY = "pi-lens";
-const INSTALLATION = Symbol.for("choco-pi.pi-lens-visibility");
+const LSP_STATUS_KEY = "choco-pi-lsp";
+const LSP_WIDGET_KEY = "choco-pi-lsp";
+const INSTALLATION = Symbol.for("choco-pi.choco-pi-lsp-visibility");
 
 type Ui = ExtensionContext["ui"];
 type SetWidget = Ui["setWidget"];

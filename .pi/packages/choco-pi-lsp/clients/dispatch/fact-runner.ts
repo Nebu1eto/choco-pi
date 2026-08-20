@@ -17,7 +17,7 @@ export function clearProviders(): void {
  *
  * Providers + fact rules are registered eagerly at `integration.ts` import (the
  * dispatch entry) — including the tree-sitter-backed providers. That's safe for
- * pi-lens's eager graph because the parsing stack loads `web-tree-sitter` (an
+ * choco-pi-lsp's eager graph because the parsing stack loads `web-tree-sitter` (an
  * optional dep) via a dynamic `import()` inside `client.init()`, not at module
  * import, so an unavailable grammar/runtime degrades there rather than crashing
  * the extension at load. As of #402 nothing here uses the `typescript` compiler,

@@ -8,7 +8,7 @@ note: |
   Ported from RealHarshThakur/ast-grep-go (NOASSERTION license), with
   one improvement over the upstream rule:
 
-  **Multi-assign suppression** (NEW in pi-lens):
+  **Multi-assign suppression** (NEW in choco-pi-lsp):
   `var m map[K]V; m, err = f()` is safe when `f()` returns
   `(map[K]V, error)`. The rule's `not: precedes:` looks for a
   single-line multi-assignment statement immediately after the `var`

@@ -38,9 +38,16 @@ The retained model-facing tool names are `diagnostics_report`,
 `diagnostic_mark`, and `lsp_activate_tools`; legacy health references use
 `lsp_health`. This package has no underscore-form health tool registration;
 its health interface is the intentionally preserved `/lens-health` command.
-Internal compatibility ids remain unchanged, including `pi-lens-lsp`,
-`pi-lens`, `PI_LENS_*`, `~/.pi-lens`, `/lens-*` command ids,
-`lens_diagnostics_full`, registry symbols, and TypeScript `Lens` identifiers.
+
+The runtime status and widget keys are both `choco-pi-lsp`; the host stores
+statuses and widgets in separate registries, so the shared text does not
+collide. Exact upstream runtime source and namespace labels now use
+`choco-pi-lsp`, environment variables use the `CHOCO_PI_LSP_*` prefix, and the
+visibility installation symbol is `choco-pi.choco-pi-lsp-visibility`. The
+default machine state directory is `~/.choco-pi-lsp`; the fork reads and writes
+only that directory and performs no migration or compatibility fallback.
+Internal `/lens-*` command ids, `lens_diagnostics_full`, and TypeScript `Lens`
+identifiers remain unchanged.
 
 ### Vendored runtime dependencies
 
@@ -79,8 +86,8 @@ the runtime provenance check reads it.
 
 - LSP service and clients, diagnostic pipeline, wait policies, warm/cold
   management, `lsp_diagnostics`, lazy-activated `lsp_navigation`.
-- Footer status key `pi-lens-lsp` and widget key `pi-lens` — byte-identical;
-  `.pi/extensions/pi-lens-visibility.ts` patches those keys.
+- Footer status and widget key `choco-pi-lsp`;
+  `.pi/extensions/choco-pi-lsp-visibility.ts` patches both registrations.
 - Tree-sitter structural rules and ast-grep scanners (`rules/`), semantic
   index tools (`symbol_search`, `module_report`, `read_symbol`,
   `read_enclosing`), `diagnostics_report`, `ast_grep_search` family,
@@ -121,9 +128,9 @@ the same machinery as upstream's `--no-lsp` flag (`lsp.enabled` config key):
   `getFlag("no-lsp")` consumer reacts immediately;
 - `/lsp off` also stops the running language servers
   (`resetLSPService({ fast: true })`) and persists `lsp.enabled=false` to
-  `~/.pi-lens/config.json` (`persistPiLensGlobalConfigKey`); `/lsp on`
+  `~/.choco-pi-lsp/config.json` (`persistPiLensGlobalConfigKey`); `/lsp on`
   persists `lsp.enabled=true`;
-- while disabled, the `pi-lens-lsp` status renders "LSP Inactive (disabled)",
+- while disabled, the `choco-pi-lsp` status renders "LSP Inactive (disabled)",
   which the visibility patch hides (status and widget), and
   `lsp_diagnostics`/`lsp_navigation` return a graceful "disabled" message
   instead of spawning servers (upstream gated only `lsp_navigation` on the
