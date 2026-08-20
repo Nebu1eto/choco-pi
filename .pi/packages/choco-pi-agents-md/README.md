@@ -6,12 +6,12 @@ TypeScript source, no build step).
 
 ## What it does
 
-When a tool call touches a path (`read`, `grep`, `find`, `ls`, or a shell
-`bash` command recognized as a file/path discovery command), the extension
-walks the directory chain from the session's working directory down to the
-touched path's directory and injects any `AGENTS.md` files found along the
-way into the tool result, ordered root-first / leaf-last (closest-to-the-file
-guidance appears last, right before the model reads it).
+When a direct or Pi code-mode nested tool call touches a path (`read`, `grep`,
+`find`, `ls`, or a recognized shell discovery command), the extension walks
+the directory chain from the session's working directory down to the touched
+path's directory and injects any `AGENTS.md` files found along the way into the
+tool result, ordered root-first / leaf-last (closest-to-the-file guidance
+appears last, right before the model reads it).
 
 The injected block looks like:
 
