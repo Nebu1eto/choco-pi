@@ -23,8 +23,8 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
 	// Launching Agent inevitably leads to checking on or redirecting the
 	// background agent it started; deferring these guarantees a mid-session
 	// tool_search activation (and a full prompt-cache rewrite) in every
-	// delegating session. Provided by @tintinweb/pi-subagents; if that
-	// package is absent or renames a tool, these names simply never appear
+	// delegating session. Provided by choco-pi-subagents; if that package is
+	// absent or renames a tool, these names simply never appear
 	// in getActiveTools() and are dropped silently (see applyLeanSurface).
 	"get_subagent_result",
 	"steer_subagent",

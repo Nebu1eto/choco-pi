@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-choco-pi는 [Pi 코딩 에이전트](https://pi.dev/)를 프로젝트 중심으로 운용하기 위한 개인화 설정 저장소입니다. 운용 규칙, 재사용 가능한 작업 절차, 모델·공급자 제어, 서브 에이전트, 독립 대화, 컴팩션, MCP, 웹·브라우저 도구와 Nord 기반 터미널 UI를 한 설정으로 제공합니다.
+choco-pi는 [Pi 코딩 에이전트](https://pi.dev/)를 프로젝트 중심으로 운용하기 위한 개인화 설정 저장소입니다. 운용 규칙, 재사용 가능한 작업 절차, 모델·공급자 제어, 서브 에이전트, 독립 대화, 컴팩션, MCP, 웹 검색, 브라우저 자동화와 Nord 기반 터미널 UI를 한 설정으로 제공합니다.
 
 Git에는 공유 가능한 설정만 저장합니다. OAuth 토큰과 API 키는 Pi의 사용자 전용 인증 저장소에 두며 저장소에 커밋하지 않습니다.
 
@@ -23,22 +23,14 @@ pi
 
 설치기는 credential과 runtime 상태를 보존하고 checkout 경로를 반영한 `~/.pi/agent/settings.json`을 생성한 뒤 Git으로 추적하는 공개 profile을 `~/.pi/agent`에 연결합니다. 전역 settings에 사용자가 추가한 패키지는 보존하되 저장소가 추적하는 패키지의 중복 pin은 교체하고, 사용자 추가 항목끼리 버전이 겹치면 최신 버전만 남깁니다. 충돌 파일은 교체하지 않고 중단합니다. 파일을 확인한 뒤 `npm run install:profile -- --backup`을 실행하면 기존 파일을 백업하고 추적 버전을 설치합니다.
 
-Pi는 [`.pi/settings.json`](.pi/settings.json)에 고정된 패키지를 설치합니다. npm이 네이티브 설치 스크립트를 보류하면 현재 확장에서 사용하는 두 패키지만 허용합니다.
-
-```sh
-cd .pi/npm
-npm install-scripts approve --allow-scripts-pin @ast-grep/cli tree-sitter-bash
-npm rebuild @ast-grep/cli tree-sitter-bash
-```
-
-`.pi` 아래 파일을 바꾼 뒤에는 `/reload`를 실행합니다.
+Pi는 [`.pi/settings.json`](.pi/settings.json)에 나열한 로컬 패키지를 불러옵니다. `.pi` 아래 파일을 바꾼 뒤에는 `/reload`를 실행합니다.
 
 ## 전역 profile
 
 현재 checkout은 이 컴퓨터의 `~/.pi/agent` 전역 Pi profile 원본으로도 사용합니다.
 
-- `settings.json`은 같은 고정 버전 패키지를 설치하고 이 checkout의 `extensions`, `skills`, `prompts` 디렉터리를 참조합니다.
-- `SYSTEM.md`, 글쓰기·리뷰 정책, 서브 에이전트·Zentui 설정, agent 정의와 공급자 설정 파일은 이 checkout으로 연결한 symbolic link입니다. MCP 설정은 예외로, `~/.pi/agent/mcp.json`에 직접 두며 이 checkout으로 연결하지 않습니다.
+- `settings.json`은 같은 로컬 패키지를 불러오고 이 checkout의 `extensions`, `skills`, `prompts` 디렉터리를 참조합니다.
+- `SYSTEM.md`, 글쓰기·리뷰 정책, 서브 에이전트·UI 설정, agent 정의와 공급자 설정 파일은 이 checkout으로 연결한 symbolic link입니다. MCP 설정은 예외로, `~/.pi/agent/mcp.json`에 직접 두며 이 checkout으로 연결하지 않습니다.
 - 따라서 다른 디렉터리에서 Pi를 실행해도 choco-pi가 사용자 기본 설정으로 적용됩니다. 신뢰한 프로젝트에 별도 `.pi` 설정이나 `SYSTEM.md`가 있으면 Pi의 기존 우선순위에 따라 전역 기본값을 덮어쓸 수 있습니다.
 
 전역 profile이 이 checkout을 직접 가리키므로 경로를 옮기거나 삭제하지 마십시오. 원본 파일을 바꾼 뒤 Pi를 다시 시작하거나 `/reload`를 실행합니다.
@@ -57,27 +49,25 @@ Git으로 추적하는 [`.pi/zentui.json`](.pi/zentui.json)은 입력창의 모�
 | 독립 대화 | Pi 대화를 생성·조회·대기하고 queue·steer로 상호 제어 |
 | 문맥 관리 | 모델별 soft cap, 도구 지연 로딩, `/context` 사용량 분석과 OpenAI Responses 서버 컴팩션 지원 |
 | 공급자 | OpenAI Codex OAuth, Anthropic OAuth, Synthetic, 자동 discovery 방식 Callstack Apex 지원 |
-| 도구 | BM25 `tool_search`, MCP, 웹 검색, 본문 추출, LSP 진단, 브라우저 자동화, goal, 사이드 대화 추가 |
-| 인터페이스 | `nord-dark`, `pi-zentui`, 공급자 usage, effort 제어와 익숙한 세션 별칭 적용 |
+| 도구 | BM25 `tool_search`, MCP, Synthetic 웹 검색, LSP 진단, 전역 skill을 통한 브라우저 자동화, goal, 사이드 대화 추가 |
+| 인터페이스 | `nord-dark`, `choco-pi-ui`, 공급자 usage, effort 제어와 익숙한 세션 별칭 적용 |
 
 ## 설치 패키지
 
-버전은 [`.pi/settings.json`](.pi/settings.json)에 고정합니다.
+패키지 경로는 [`.pi/settings.json`](.pi/settings.json)에 나열하고 버전은 각 로컬 manifest에 기록합니다.
 
 | 패키지 | 버전 | 용도 |
 |---|---:|---|
-| [`@aliou/pi-synthetic`](https://github.com/aliou/pi-synthetic) | 0.24.3 | Synthetic 공급자와 인증 |
-| [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents) | 0.15.0 | Claude Code 형태의 서브 에이전트, background 실행, steering, resume와 fleet UI |
-| [`pi-codex-goal`](https://pi.dev/packages/pi-codex-goal) | 0.2.0 | Codex 형태의 지속형 goal |
-| [`pi-mcp-adapter`](https://pi.dev/packages/pi-mcp-adapter) | 2.21.2 | MCP 서버 지연 로딩 |
-| [`pi-lens`](https://pi.dev/packages/pi-lens) | 3.8.74 | LSP, lint, AST 진단 |
-| [`@howaboua/pi-codex-conversion`](https://pi.dev/packages/@howaboua/pi-codex-conversion) | 3.0.12 | Codex 호환 도구와 OpenAI Responses 컴팩션 |
-| [`pi-web-access`](https://github.com/nicobailon/pi-web-access) | 0.20.0 | 웹 검색과 문서 본문 추출 |
-| [`pi-btw`](https://pi.dev/packages/pi-btw) | 0.4.1 | 작업 중 사이드 대화 |
-| [`pi-zentui`](https://pi.dev/packages/pi-zentui) | 0.18.1 | 편집기, 메시지 프레임과 상태줄 |
-| [`pi-agent-browser-native`](https://github.com/fitchmultz/pi-agent-browser-native) | 0.3.0 | 네이티브 `agent-browser` 연동 |
-| [`@howaboua/pi-markdown-workflows`](https://pi.dev/packages/@howaboua/pi-markdown-workflows) | 0.2.20 | 하위 `AGENTS.md`와 Markdown workflow |
-| [`@maddeye/pi-nord`](https://pi.dev/packages/@maddeye/pi-nord?name=nord&type=theme) | 1.0.0 | Nord 테마 |
+| [`@aliou/pi-synthetic`](https://github.com/aliou/pi-synthetic) | 0.24.3 | Synthetic 공급자, 인증, usage와 웹 검색 |
+| [`choco-pi-ui`](.pi/packages/choco-pi-ui) | 0.20.1 | 편집기, 메시지 프레임, 상태줄과 Nord 테마 |
+| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents) | 0.17.1-choco.0 | `@tintinweb/pi-subagents@0.17.1`의 로컬 fork. 서브 에이전트, workflow, 사이드 대화와 fleet UI 제공 |
+| [`choco-pi-goal`](.pi/packages/choco-pi-goal) | 0.2.0 | Codex 형태의 지속형 goal |
+| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp) | 2.26.1 | MCP 서버 지연 로딩 |
+| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp) | 4.0.1-choco.0 | LSP, lint, AST와 semantic 진단 |
+| [`choco-pi-codex`](.pi/packages/choco-pi-codex) | 3.0.18-choco.0 | Codex 호환 도구와 OpenAI Responses 컴팩션 |
+| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md) | 0.1.0 | 하위 `AGENTS.md` 로딩 |
+
+Voice, notebook, background-shell 기능은 의도적으로 포함하지 않습니다.
 
 ## 명령
 
@@ -102,7 +92,7 @@ Fast mode는 OpenAI Codex 요청에만 `service_tier: "priority"`를 추가합�
 
 `Ctrl+S`는 현재 입력, 커서 위치와 접힌 paste를 임시 보관하고 입력창을 비웁니다. 빈 입력창에서 다시 누르면 복원합니다. 이 stash는 현재 Pi 프로세스에서만 유지됩니다.
 
-MCP는 adapter gateway만 모델 context에 넣고 시작하며, cached MCP 도구를 direct tool로 등록하지 않습니다. 모델은 `tool_search`에 자연어 capability를 전달해 compact parameter 요약을 포함한 BM25 상위 결과를 최대 5개만 받습니다. MCP 결과는 `mcp`를 통해 호출하고 Pi 도구는 세션에 additive하게 활성화합니다. 따라서 시작 시 대량 tool schema와 adapter의 direct-tool 경고가 발생하지 않습니다. `/context all`에서 active/deferred 도구 목록을 확인할 수 있습니다.
+MCP는 `choco-pi-mcp` gateway만 모델 context에 넣고 시작하며, cached MCP 도구를 direct tool로 등록하지 않습니다. 모델은 `tool_search`에 자연어 capability를 전달해 compact parameter 요약을 포함한 BM25 상위 결과를 최대 5개만 받습니다. MCP 결과는 `mcp`를 통해 호출하고 Pi 도구는 세션에 additive하게 활성화합니다. 따라서 시작 시 대량 tool schema와 direct-tool 경고가 발생하지 않습니다. `/context all`에서 active/deferred 도구 목록을 확인할 수 있습니다.
 
 ### 작업 절차 명령
 
@@ -147,7 +137,7 @@ MCP는 adapter gateway만 모델 context에 넣고 시작하며, cached MCP 도�
 
 [`runtime-writing-prompt.ts`](.pi/extensions/runtime-writing-prompt.ts)는 [`.pi/writing-policy.md`](.pi/writing-policy.md)를 main과 child 프롬프트에 추가합니다.
 
-Pi는 시작 경로의 context file을 읽습니다. `@howaboua/pi-markdown-workflows`는 에이전트가 더 깊은 경로를 읽거나 작업할 때 하위 지침을 추가합니다. 예를 들어 `packages/api/src/service.ts`에 접근하면 다음 파일을 순서대로 적용할 수 있습니다.
+Pi는 시작 경로의 context file을 읽습니다. `choco-pi-agents-md`는 에이전트가 더 깊은 경로를 읽거나 작업할 때 하위 `AGENTS.md` 지침을 추가합니다. 예를 들어 `packages/api/src/service.ts`에 접근하면 다음 파일을 순서대로 적용할 수 있습니다.
 
 ```text
 packages/AGENTS.md
@@ -155,7 +145,7 @@ packages/api/AGENTS.md
 packages/api/src/AGENTS.md
 ```
 
-읽은 지침은 세션에 유지하며 파일이 바뀌면 다시 불러옵니다. 이 패키지는 `/workflows`, `/skills`, `/learn`과 `workflows_create`도 제공합니다.
+읽은 지침은 세션에 유지하며 파일이 바뀌면 다시 불러옵니다.
 
 ## 서브 에이전트
 
@@ -238,9 +228,9 @@ comment의 side는 커서가 놓인 줄을 따릅니다.
 접힌 파일과 hunk도 선택 가능한 한 줄을 차지하므로 `k`로 되돌아가 `Space`로 다시 펼칠 수 있습니다.
 하단은 현재 위치와 리뷰 상태, comment·chat 입력, 현재 모드에서 쓸 수 있는 키 두 줄로 나뉩니다.
 
-두 입력창은 `pi-zentui`가 메인 프롬프트에 적용된 스타일 그대로 그립니다.
+두 입력창은 `choco-pi-ui`가 메인 프롬프트에 적용된 스타일 그대로 그립니다.
 `opencode` 계열이면 rail과 모델·provider·effort 줄이, `minimalist`면 상자가 나오고 자동완성 목록도 그 안에 렌더링됩니다.
-zentui가 없으면 pi-tui 기본 입력창을 쓰고 모델과 effort는 키 줄에 표시됩니다.
+UI 패키지가 없으면 pi-tui 기본 입력창을 쓰고 모델과 effort는 키 줄에 표시됩니다.
 
 `+`와 `-`는 현재 hunk의 위아래 context를 hunk 안 어느 줄에서든 10줄씩, 가장자리당 최대 100줄까지 드러내고 되돌립니다.
 파일 경계나 다음 hunk가 이미 드러낸 영역에 닿으면 멈춥니다.
@@ -333,7 +323,7 @@ Native context window가 1,000,000 tokens 이상인 모델은 soft cap을 600,00
 - `null`은 해당 모델의 두 override를 모두 끕니다. Object의 개별 필드에도 `null`을 지정할 수 있습니다.
 - `/context-cap`은 현재 세션에 적용된 값을 표시합니다.
 
-OpenAI Codex에서는 `/codex openai`로 native Responses compaction을 켭니다. 추적하는 [`.pi/pi-codex-conversion.json`](.pi/pi-codex-conversion.json)은 `npm run install:profile` 실행 시 `~/.pi/agent/pi-codex-conversion.json`에 링크되므로 `/codex` 설정도 프로젝트와 동기화됩니다. Fast mode의 기본값은 꺼짐입니다.
+OpenAI Codex에서는 `/codex openai`로 native Responses compaction을 켭니다. 추적하는 [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json)은 `npm run install:profile` 실행 시 `~/.pi/agent/choco-pi-codex.json`에 링크되므로 `/codex` 설정도 프로젝트와 동기화됩니다. Fast mode의 기본값은 꺼짐입니다.
 
 compaction만 지정하는 최소 설정은 다음과 같습니다.
 
@@ -410,25 +400,24 @@ Apex가 Responses API를 지원한다고 확인하기 전에는 `openai-completi
 - [`.pi/mcp.example.json`](.pi/mcp.example.json)을 `~/.pi/agent/mcp.json`으로 복사하고 로컬 OAuth client 설정을 추가합니다. 이 checkout 안에는 두지 않습니다. Pi는 `~/.pi/agent/mcp.json`과 프로젝트의 `.pi/mcp.json`을 서로 다른 소스로 읽으므로, choco-pi 안에 사본을 두면 이 디렉터리에서 Pi를 실행할 때 모든 서버가 두 번 등록됩니다. 반대로 Git에서 제외된 그 파일이 사라지면 서버가 하나도 없는 상태로 조용히 시작합니다. `/mcp`에서 설정과 실행 상태를 확인합니다.
 - 인증 서버가 dynamic client registration을 지원하지 않으면 사전 등록한 client가 필요합니다. 해당 서버 항목에 `oauth.clientId`와 `oauth.clientSecret`을 넣습니다. `clientSecret` 값이 `!`로 시작하면 나머지를 셸 명령으로 실행하므로 비밀값을 파일에 남기지 않을 수 있습니다. 공급자에는 redirect URL로 `http://localhost:19876/callback`을 등록합니다.
 - `/create-goal <목표>`로 지속형 goal을 만들고 `/goal`에서 상태와 사용량을 확인합니다.
-- `web_search`, `fetch_content`는 `pi-web-access`를 통해 검색과 본문 추출을 수행합니다.
-- `/btw <질문>`은 메인 에이전트가 작업 중일 때 별도 대화를 시작합니다.
+- `synthetic_web_search`는 Synthetic 패키지를 통해 웹을 검색합니다.
+- `/btw <질문>`은 메인 에이전트가 작업 중일 때 읽기 전용 사이드 대화를 시작합니다.
 - `/btw:model`, `/btw:thinking`은 사이드 대화의 모델과 effort를 지정합니다.
 - `/btw:inject`, `/btw:summarize`는 선택한 사이드 대화 내용을 메인 세션에 전달합니다.
 
 ## TUI와 브라우저 자동화
 
-기본 테마는 `nord-dark`입니다. `pi-zentui`가 편집기, 사용자 메시지 프레임과 상태줄을 제공하며 `/zentui`에서 각 영역을 설정합니다. 사용자 설정은 `~/.pi/agent/zentui.json`에 저장합니다.
+기본 테마는 `nord-dark`입니다. `choco-pi-ui`가 편집기, 사용자 메시지 프레임, 상태줄과 테마를 제공하며 `/zentui`에서 각 영역을 설정합니다. 사용자 설정은 `~/.pi/agent/choco-pi-ui.json`에 저장합니다. 패키지는 기존 `pi-choco-ui.json`과 `zentui.json`도 계속 읽습니다.
 
-`pi-agent-browser-native`는 `agent_browser` 도구를 제공하지만 브라우저 실행 파일을 포함하지 않습니다. 호환 버전을 별도로 설치합니다.
+브라우저 자동화는 Pi plugin이 아니라 전역 `agent-browser` skill과 CLI를 사용합니다. 호환 버전을 별도로 설치합니다.
 
 ```sh
 npm install --global --allow-scripts=agent-browser agent-browser@0.33.2
 agent-browser install
 agent-browser --version
-npm exec --yes --package pi-agent-browser-native@0.3.0 -- pi-agent-browser-doctor
 ```
 
-설치 후 페이지 열기, interactive snapshot, 클릭, 입력, screenshot과 인증된 browser profile을 사용할 수 있습니다. `ffmpeg`는 WebM 녹화에만 필요합니다. 확장의 선택형 Exa·Brave 검색은 끄고 웹 검색에는 `pi-web-access`를 사용합니다.
+설치 후 skill로 페이지 열기, interactive snapshot, 클릭, 입력, screenshot과 인증된 browser profile을 사용할 수 있습니다. `ffmpeg`는 WebM 녹화에만 필요합니다.
 
 ## 사용량 조회
 
@@ -464,7 +453,7 @@ examples/                   사용자 전역 설정 예시
 /check
 ```
 
-이 검사는 credential을 읽지 않고 Node·Pi 버전, 설정, 설치 패키지 버전, 필수 harness resource, command alias와 선택형 browser runtime을 확인합니다.
+이 검사는 credential을 읽지 않고 Node·Pi 버전, 로컬 package manifest, 필수 harness resource, command alias와 semantic-tool asset을 확인합니다.
 
 ## Q&A
 

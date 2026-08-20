@@ -2,7 +2,7 @@
 
 [한국어](README.ko.md)
 
-choco-pi is an opinionated, project-aware profile for the [Pi coding agent](https://pi.dev/). It combines custom operating rules, reusable workflows, model and provider controls, sub-agents, independent conversations, compaction settings, MCP, web access, browser automation, and a Nord-based terminal interface.
+choco-pi is an opinionated, project-aware profile for the [Pi coding agent](https://pi.dev/). It combines custom operating rules, reusable workflows, model and provider controls, sub-agents, independent conversations, compaction settings, MCP, web search, browser automation, and a Nord-based terminal interface.
 
 The repository tracks shareable configuration only. OAuth tokens and API keys remain in Pi's user-level credential store and must not be committed.
 
@@ -23,22 +23,14 @@ pi
 
 The installer keeps credentials and runtime state intact, generates `~/.pi/agent/settings.json` with checkout-relative paths, and links the tracked public profile into `~/.pi/agent`. User-added packages in the global settings are preserved, but duplicate pins of tracked packages are replaced by the tracked one, and duplicate user-added pins keep only the newer version. It stops rather than replacing a conflicting file; inspect it, then rerun with `npm run install:profile -- --backup` to preserve the old file and install the tracked version.
 
-Pi installs the packages pinned in [`.pi/settings.json`](.pi/settings.json). If npm defers native install scripts, approve only the two packages used by the configured extensions:
-
-```sh
-cd .pi/npm
-npm install-scripts approve --allow-scripts-pin @ast-grep/cli tree-sitter-bash
-npm rebuild @ast-grep/cli tree-sitter-bash
-```
-
-Run `/reload` after changing files under `.pi`.
+Pi loads the local packages listed in [`.pi/settings.json`](.pi/settings.json). Run `/reload` after changing files under `.pi`.
 
 ## Global profile
 
 This checkout is also the source of the current machine's global Pi profile under `~/.pi/agent`:
 
-- `settings.json` installs the same pinned packages and references this checkout's `extensions`, `skills`, and `prompts` directories.
-- `SYSTEM.md`, writing and review policy, sub-agent and Zentui configuration, agent definitions, and provider configuration files are symbolic links to this checkout. MCP configuration is the exception: it lives directly at `~/.pi/agent/mcp.json` and is not linked from here.
+- `settings.json` loads the same local packages and references this checkout's `extensions`, `skills`, and `prompts` directories.
+- `SYSTEM.md`, writing and review policy, sub-agent and UI configuration, agent definitions, and provider configuration files are symbolic links to this checkout. MCP configuration is the exception: it lives directly at `~/.pi/agent/mcp.json` and is not linked from here.
 - Pi launched from another directory therefore receives choco-pi as its user-level default. A trusted project's own `.pi` settings and `SYSTEM.md` can still override the global defaults through Pi's normal precedence rules.
 
 Keep this checkout at a stable path because the global profile points to it. Restart Pi or run `/reload` after changing the source files.
@@ -57,27 +49,25 @@ The tracked [`.pi/zentui.json`](.pi/zentui.json) renders the editor model in bol
 | Conversations | Creates and coordinates independent Pi sessions with create, list, read, wait, queue, and steer operations |
 | Context | Applies model-specific soft caps, deferred tool loading, `/context` usage analysis, and OpenAI Responses server-side compaction |
 | Providers | Configures OpenAI Codex OAuth, Anthropic OAuth, Synthetic, and discovery-based Callstack Apex support |
-| Tools | Adds BM25 `tool_search`, MCP, web search, content extraction, LSP diagnostics, browser automation, goals, and side conversations |
-| Interface | Uses `nord-dark`, `pi-zentui`, provider usage views, model effort controls, and familiar session aliases |
+| Tools | Adds BM25 `tool_search`, MCP, Synthetic web search, LSP diagnostics, browser automation through the global skill, goals, and side conversations |
+| Interface | Uses `nord-dark`, `choco-pi-ui`, provider usage views, model effort controls, and familiar session aliases |
 
 ## Installed packages
 
-Versions are pinned in [`.pi/settings.json`](.pi/settings.json).
+The package paths are listed in [`.pi/settings.json`](.pi/settings.json); each local manifest records its version.
 
 | Package | Version | Purpose |
 |---|---:|---|
-| [`@aliou/pi-synthetic`](https://github.com/aliou/pi-synthetic) | 0.24.3 | Synthetic provider and authentication |
-| [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents) | 0.15.0 | Claude Code-style sub-agents, background execution, steering, resume, and fleet UI |
-| [`pi-codex-goal`](https://pi.dev/packages/pi-codex-goal) | 0.2.0 | Persistent Codex-style goals |
-| [`pi-mcp-adapter`](https://pi.dev/packages/pi-mcp-adapter) | 2.21.2 | Lazy MCP server loading |
-| [`pi-lens`](https://pi.dev/packages/pi-lens) | 3.8.74 | LSP, lint, and AST diagnostics |
-| [`@howaboua/pi-codex-conversion`](https://pi.dev/packages/@howaboua/pi-codex-conversion) | 3.0.12 | Codex-compatible tools and OpenAI Responses compaction |
-| [`pi-web-access`](https://github.com/nicobailon/pi-web-access) | 0.20.0 | Web search and document extraction |
-| [`pi-btw`](https://pi.dev/packages/pi-btw) | 0.4.1 | Side conversations during an active task |
-| [`pi-zentui`](https://pi.dev/packages/pi-zentui) | 0.18.1 | Editor, message framing, and status line |
-| [`pi-agent-browser-native`](https://github.com/fitchmultz/pi-agent-browser-native) | 0.3.0 | Native `agent-browser` integration |
-| [`@howaboua/pi-markdown-workflows`](https://pi.dev/packages/@howaboua/pi-markdown-workflows) | 0.2.20 | Descendant `AGENTS.md` loading and Markdown workflows |
-| [`@maddeye/pi-nord`](https://pi.dev/packages/@maddeye/pi-nord?name=nord&type=theme) | 1.0.0 | Nord themes |
+| [`@aliou/pi-synthetic`](https://github.com/aliou/pi-synthetic) | 0.24.3 | Synthetic provider, authentication, usage, and web search |
+| [`choco-pi-ui`](.pi/packages/choco-pi-ui) | 0.20.1 | Editor, message framing, status line, and Nord themes |
+| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents) | 0.17.1-choco.0 | Local fork of `@tintinweb/pi-subagents@0.17.1` with sub-agents, workflows, side conversations, and fleet UI |
+| [`choco-pi-goal`](.pi/packages/choco-pi-goal) | 0.2.0 | Persistent Codex-style goals |
+| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp) | 2.26.1 | Lazy MCP server loading |
+| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp) | 4.0.1-choco.0 | LSP, lint, AST, and semantic diagnostics |
+| [`choco-pi-codex`](.pi/packages/choco-pi-codex) | 3.0.18-choco.0 | Codex-compatible tools and OpenAI Responses compaction |
+| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md) | 0.1.0 | Descendant `AGENTS.md` loading |
+
+Voice, notebook, and background-shell features are intentionally not included.
 
 ## Commands
 
@@ -102,7 +92,7 @@ Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can 
 
 `Ctrl+S` stashes the current input, cursor position, and collapsed paste content, then clears the editor. On an empty editor it restores the stash. The stash lasts only for the current Pi process.
 
-MCP starts with only the adapter gateway in model context; cached MCP tools are not registered as direct tools. The model passes a natural-language capability to `tool_search`, which returns at most five BM25 matches with compact parameter summaries. MCP matches are called through `mcp`; Pi matches are activated additively for the session. This avoids large startup tool schemas and the adapter's direct-tool warning. Use `/context all` to inspect active and deferred inventories.
+MCP starts with only the `choco-pi-mcp` gateway in model context; cached MCP tools are not registered as direct tools. The model passes a natural-language capability to `tool_search`, which returns at most five BM25 matches with compact parameter summaries. MCP matches are called through `mcp`; Pi matches are activated additively for the session. This avoids large startup tool schemas and direct-tool warnings. Use `/context all` to inspect active and deferred inventories.
 
 ### Workflow commands
 
@@ -147,7 +137,7 @@ Each conversation has its own Pi session ID and reloads project context, extensi
 
 [`runtime-writing-prompt.ts`](.pi/extensions/runtime-writing-prompt.ts) injects [`.pi/writing-policy.md`](.pi/writing-policy.md) into main and child prompts.
 
-Pi loads context files from the startup path. `@howaboua/pi-markdown-workflows` adds descendant instructions when the agent reads or works in a deeper path. For example, accessing `packages/api/src/service.ts` can add, in order:
+Pi loads context files from the startup path. `choco-pi-agents-md` adds descendant `AGENTS.md` instructions when the agent reads or works in a deeper path. For example, accessing `packages/api/src/service.ts` can add, in order:
 
 ```text
 packages/AGENTS.md
@@ -155,7 +145,7 @@ packages/api/AGENTS.md
 packages/api/src/AGENTS.md
 ```
 
-Loaded instructions persist in the session and refresh on change. The package also provides `/workflows`, `/skills`, `/learn`, and `workflows_create`.
+Loaded instructions persist in the session and refresh on change.
 
 ## Sub-agents
 
@@ -220,7 +210,7 @@ A range stays inside one hunk and one side, because a GitHub comment range canno
 
 Both inputs carry the prompt's own completion provider, rooted at the worktree under review rather than the process directory, so `Tab` completes a path from the code being reviewed and `@` searches the tree when `fd` is available. Each input keeps its own history, so `↑` recalls earlier comments in the comment box and earlier questions in the chat, and neither replays the other. History lives only as long as the review is open.
 
-`pi-zentui` draws both inputs in the style it is configured to draw the session prompt with, whether that is the rails and the model, provider, and effort row of the `opencode` styles or the `minimalist` box, and the completion list renders inside that chrome. Without zentui the inputs keep pi-tui's plain editor and the key row carries the model and effort instead.
+`choco-pi-ui` draws both inputs in the style it is configured to draw the session prompt with, whether that is the rails and the model, provider, and effort row of the `opencode` styles or the `minimalist` box, and the completion list renders inside that chrome. Without the UI package, the inputs keep pi-tui's plain editor and the key row carries the model and effort instead.
 
 A folded file or hunk still occupies one selectable row, so `k` returns to it and `Space` expands it again. The bottom four rows are split between the comment or chat input, the current position and review state, and the keys available in the current mode.
 
@@ -283,7 +273,7 @@ Configure project-specific caps in [`.pi/extensions/context-cap.json`](.pi/exten
 - `null` disables both overrides for that model. Either object field can also be `null` to disable only that override.
 - `/context-cap` reports the effective value for the current session.
 
-For OpenAI Codex, enable native Responses compaction with `/codex openai`. The tracked [`.pi/pi-codex-conversion.json`](.pi/pi-codex-conversion.json) is linked to `~/.pi/agent/pi-codex-conversion.json` by `npm run install:profile`, so `/codex` settings are synchronized with the project. It keeps Fast mode off by default.
+For OpenAI Codex, enable native Responses compaction with `/codex openai`. The tracked [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json) is linked to `~/.pi/agent/choco-pi-codex.json` by `npm run install:profile`, so `/codex` settings are synchronized with the project. It keeps Fast mode off by default.
 
 The minimal compaction-only configuration is:
 
@@ -355,30 +345,29 @@ The extension requests `${baseUrl}/models` with Bearer authentication. It accept
 
 Use `openai-completions` unless Apex has been confirmed to support the Responses API. Selecting `openai-responses` does not enable server-side compaction by itself. Run `/apex-refresh` after login or whenever the model catalog changes; successful discovery is cached for up to four hours.
 
-## MCP, goals, web access, and side conversations
+## MCP, goals, web search, and side conversations
 
 - Copy [`.pi/mcp.example.json`](.pi/mcp.example.json) to `~/.pi/agent/mcp.json` and add any local OAuth client settings there. Keep it outside this checkout. Pi reads `~/.pi/agent/mcp.json` and a project `.pi/mcp.json` as separate sources, so a copy inside choco-pi registers every server twice whenever Pi runs from this directory, and a checkout that lacks the ignored file silently starts with no servers at all. `/mcp` shows configuration and runtime state.
 - A server whose authorization server does not support dynamic client registration needs a pre-registered client. Add `oauth.clientId` and `oauth.clientSecret` to that server's entry; a `clientSecret` beginning with `!` runs the rest as a shell command, which keeps the secret out of the file. Register `http://localhost:19876/callback` as the redirect URL with the provider.
 - `/create-goal <objective>` creates a persistent goal. `/goal` shows its state and usage.
-- `web_search` and `fetch_content` provide search and document extraction through `pi-web-access`.
-- `/btw <question>` starts a side conversation while the main agent is working.
+- `synthetic_web_search` provides web search through the Synthetic package.
+- `/btw <question>` starts a read-only side conversation while the main agent is working.
 - `/btw:model` and `/btw:thinking` select the side conversation model and effort.
 - `/btw:inject` and `/btw:summarize` bring selected side-conversation context into the main session.
 
 ## TUI and browser automation
 
-The default theme is `nord-dark`. `pi-zentui` supplies the editor, framed user messages, and status line; `/zentui` configures those regions and stores user preferences in `~/.pi/agent/zentui.json`.
+The default theme is `nord-dark`. `choco-pi-ui` supplies the editor, framed user messages, status line, and themes; `/zentui` configures those regions and stores user preferences in `~/.pi/agent/choco-pi-ui.json`. The package still reads legacy `pi-choco-ui.json` and `zentui.json` files.
 
-`pi-agent-browser-native` provides the `agent_browser` tool but does not bundle the browser runtime. Install the compatible executable separately:
+Browser automation uses the global `agent-browser` skill and CLI rather than a Pi plugin. Install the compatible executable separately:
 
 ```sh
 npm install --global --allow-scripts=agent-browser agent-browser@0.33.2
 agent-browser install
 agent-browser --version
-npm exec --yes --package pi-agent-browser-native@0.3.0 -- pi-agent-browser-doctor
 ```
 
-After installation the agent can open pages, capture interactive snapshots, click, type, take screenshots, and use authenticated browser profiles. `ffmpeg` is required only for WebM recording. choco-pi disables the extension's optional Exa and Brave search integrations and uses `pi-web-access` for web search.
+After installation the skill can open pages, capture interactive snapshots, click, type, take screenshots, and use authenticated browser profiles. `ffmpeg` is required only for WebM recording.
 
 ## Usage reporting
 
@@ -414,7 +403,7 @@ Run the baseline check after installation or configuration changes:
 /check
 ```
 
-The check validates Node and Pi versions, settings, installed package versions, required harness resources, command aliases, and the optional browser runtime without reading credentials.
+The check validates Node and Pi versions, local package manifests, required harness resources, command aliases, and semantic-tool assets without reading credentials.
 
 ## Q&A
 

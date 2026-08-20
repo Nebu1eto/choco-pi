@@ -21,9 +21,9 @@ const PROFILE_LINKS = [
 	[".pi/SYSTEM.md", "SYSTEM.md"],
 	[".pi/writing-policy.md", "writing-policy.md"],
 	[".pi/review-policy.md", "review-policy.md"],
-	[".pi/pi-codex-conversion.json", "pi-codex-conversion.json"],
+	[".pi/choco-pi-codex.json", "choco-pi-codex.json"],
 	[".pi/subagents.json", "subagents.json"],
-	[".pi/zentui.json", "zentui.json"],
+	[".pi/zentui.json", "choco-pi-ui.json"],
 	[".pi/models.json", "models.json"],
 	[".pi/keybindings.json", "keybindings.json"],
 	[".pi/agents/general.md", "agents/general.md"],
@@ -56,14 +56,14 @@ function unique(values) {
 }
 
 function packageIdentity(spec) {
-	if (path.isAbsolute(spec) && spec.endsWith(`${path.sep}.pi${path.sep}packages${path.sep}pi-synthetic`)) {
-		return "local:pi-synthetic";
+	const relativeMatch = spec.match(/^\.\/packages\/([^/]+)$/);
+	if (relativeMatch) return `local:${relativeMatch[1]}`;
+	if (path.isAbsolute(spec)) {
+		const packageDir = path.dirname(spec);
+		if (path.basename(packageDir) === "packages" && path.basename(path.dirname(packageDir)) === ".pi") {
+			return `local:${path.basename(spec)}`;
+		}
 	}
-	if (spec === "./packages/pi-synthetic") return "local:pi-synthetic";
-	if (path.isAbsolute(spec) && spec.endsWith(`${path.sep}.pi${path.sep}packages${path.sep}pi-zentui`)) {
-		return "local:pi-zentui";
-	}
-	if (spec === "./packages/pi-zentui") return "local:pi-zentui";
 	if (spec.startsWith("npm:")) return `npm:${npmPackageName(spec.slice(4))}`;
 	return spec;
 }
