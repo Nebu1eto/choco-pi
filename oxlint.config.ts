@@ -8,7 +8,15 @@ import { defineConfig } from "oxlint";
  * is never linted.
  */
 export default defineConfig({
-  ignorePatterns: ["**/node_modules/**", ".pi/npm/**", ".pi/git/**", "tools/oxlint/anti-slop/**"],
+  ignorePatterns: [
+    "**/node_modules/**",
+    ".pi/npm/**",
+    ".pi/git/**",
+    "tools/oxlint/anti-slop/**",
+    // Build output, not authored source: linting a minified bundle is
+    // meaningless, and editing one diverges it from whatever produced it.
+    "**/*.bundle.js",
+  ],
   jsPlugins: [{ name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" }],
   rules: {
     "anti-slop/no-chained-type-assertions": "error",
