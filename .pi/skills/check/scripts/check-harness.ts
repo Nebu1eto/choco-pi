@@ -243,14 +243,14 @@ try {
 	const version = isRecord(manifest) && typeof manifest.version === "string" ? manifest.version : undefined;
 	const grammarPresent = await exists(path.join(lspRoot, "grammars", "tree-sitter-typescript.wasm"));
 	const astGrepPresent = await exists(path.join(lspRoot, "node_modules", "@ast-grep", "napi"));
-	const valid = version === "4.0.1-choco.0" && grammarPresent && astGrepPresent;
+	const valid = version === "0.1.0" && grammarPresent && astGrepPresent;
 	add(
 		"choco-pi-lsp",
 		valid ? "pass" : "fail",
 		valid
 			? `choco-pi-lsp ${version}; semantic tools available`
 			: [
-				version === "4.0.1-choco.0" ? null : `expected version 4.0.1-choco.0, found ${version ?? "unknown"}`,
+				version === "0.1.0" ? null : `expected version 0.1.0, found ${version ?? "unknown"}`,
 				grammarPresent ? null : "tree-sitter-typescript.wasm is missing",
 				astGrepPresent ? null : "@ast-grep/napi is missing",
 			].filter((value): value is string => value !== null).join("; "),

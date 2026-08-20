@@ -58,13 +58,13 @@ The package paths are listed in [`.pi/settings.json`](.pi/settings.json); each l
 
 | Package | Version | Purpose |
 |---|---:|---|
-| [`@aliou/pi-synthetic`](https://github.com/aliou/pi-synthetic) | 0.24.3 | Synthetic provider, authentication, usage, and web search |
-| [`choco-pi-ui`](.pi/packages/choco-pi-ui) | 0.20.1 | Editor, message framing, status line, and Nord themes |
-| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents) | 0.17.1-choco.0 | Local fork of `@tintinweb/pi-subagents@0.17.1` with sub-agents, workflows, side conversations, and fleet UI |
-| [`choco-pi-goal`](.pi/packages/choco-pi-goal) | 0.2.0 | Persistent Codex-style goals |
-| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp) | 2.26.1 | Lazy MCP server loading |
-| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp) | 4.0.1-choco.0 | LSP, lint, AST, and semantic diagnostics |
-| [`choco-pi-codex`](.pi/packages/choco-pi-codex) | 3.0.18-choco.0 | Codex-compatible tools and OpenAI Responses compaction |
+| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) | 0.1.0 | Synthetic provider, authentication, usage, and web search |
+| [`choco-pi-ui`](.pi/packages/choco-pi-ui) | 0.1.0 | Editor, message framing, status line, and Nord themes |
+| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents) | 0.1.0 | Local fork of `@tintinweb/pi-subagents@0.17.1` with sub-agents, workflows, side conversations, and fleet UI |
+| [`choco-pi-goal`](.pi/packages/choco-pi-goal) | 0.1.0 | Persistent Codex-style goals |
+| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp) | 0.1.0 | Lazy MCP server loading |
+| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp) | 0.1.0 | LSP, lint, AST, and semantic diagnostics |
+| [`choco-pi-codex`](.pi/packages/choco-pi-codex) | 0.1.0 | Codex-compatible tools and OpenAI Responses compaction |
 | [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md) | 0.1.0 | Descendant `AGENTS.md` loading |
 
 Voice, notebook, and background-shell features are intentionally not included.

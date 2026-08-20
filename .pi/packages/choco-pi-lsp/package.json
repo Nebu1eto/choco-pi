@@ -1,6 +1,6 @@
 {
 	"name": "choco-pi-lsp",
-	"version": "4.0.1-choco.0",
+	"version": "0.1.0",
 	"private": true,
 	"type": "module",
 	"description": "choco-pi fork of pi-lens: LSP, tree-sitter/ast-grep structural analysis, semantic index tools, and format/autofix feedback, loaded from TypeScript source as a local pi package.",
