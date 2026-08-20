@@ -410,7 +410,7 @@ function buildAppearanceItems(config: PolishedTuiConfig): SettingItem[] {
 		{
 			id: "selectorBordersEnabled",
 			label: "Selector borders",
-			description: "Enable or disable Zentui borders around Pi selectors.",
+			description: "Enable or disable choco-ui borders around Pi selectors.",
 			currentValue: featureValue(component.enabled),
 			values: featureStateValues,
 		},
@@ -444,7 +444,7 @@ function buildEditorItems(config: PolishedTuiConfig): SettingItem[] {
 		{
 			id: "editorEnabled",
 			label: "Editor",
-			description: "Enable or disable Zentui's custom editor.",
+			description: "Enable or disable choco-ui's custom editor.",
 			currentValue: featureValue(editor.enabled),
 			values: featureStateValues,
 		},
@@ -687,7 +687,7 @@ function buildFooterItems(config: PolishedTuiConfig): SettingItem[] {
 		{
 			id: "footerStyle",
 			label: "Footer style",
-			description: "Use Pi's native footer, Zentui's Starship footer, or no footer rows.",
+			description: "Use Pi's native footer, choco-ui's Starship footer, or no footer rows.",
 			currentValue: footerStyleLabel(footer.style),
 			values: footerStyleValues,
 		},
@@ -998,7 +998,7 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 	};
 
 	pi.registerCommand("zentui", {
-		description: "Configure Zentui",
+		description: "Configure choco-ui",
 		getArgumentCompletions: argumentCompletions,
 		handler: async (_args, ctx) => {
 			const args = typeof _args === "string" ? _args : "";
@@ -1056,7 +1056,7 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 				} catch (error) {
 					if (ctx.hasUI)
 						ctx.ui.notify(
-							`Could not update Zentui settings: ${error instanceof Error ? error.message : String(error)}`,
+							`Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
 							"error",
 						);
 				}
@@ -1190,7 +1190,7 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 												);
 											} catch (error) {
 												ctx.ui.notify(
-													`Could not update Zentui settings: ${error instanceof Error ? error.message : String(error)}`,
+													`Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
 													"error",
 												);
 											}
@@ -1565,7 +1565,7 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 									settingsList = makeSettingsList(id);
 									tui.requestRender();
 									ctx.ui.notify(
-										`Could not update Zentui settings: ${error instanceof Error ? error.message : String(error)}`,
+										`Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
 										"error",
 									);
 								}
@@ -1688,7 +1688,7 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 						}
 					} catch (error) {
 						ctx.ui.notify(
-							`Could not update Zentui settings: ${error instanceof Error ? error.message : String(error)}`,
+							`Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
 							"error",
 						);
 					}
@@ -1709,7 +1709,7 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 					}
 				} catch (error) {
 					ctx.ui.notify(
-						`Could not update Zentui settings: ${error instanceof Error ? error.message : String(error)}`,
+						`Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
 						"error",
 					);
 				}

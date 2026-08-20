@@ -136,7 +136,7 @@ export const FRAME_BORDER_WIDTH = 4;
  */
 export const FRAME_BORDER_ROWS = 2;
 
-const ZENTUI_PACKAGE = "pi-zentui";
+const ZENTUI_PACKAGES = ["pi-choco-ui", "pi-zentui"];
 const ZENTUI_MINIMALIST_EDITOR = "extensions/zentui/minimalist-editor.ts";
 const ZENTUI_CONFIG = "extensions/zentui/config.ts";
 const ZENTUI_UI = "extensions/zentui/ui.ts";
@@ -176,16 +176,19 @@ function resolutionBases(): string[] {
 }
 
 /**
- * Directories a fork pinned by path can sit in. A `./packages/pi-zentui` entry
- * in Pi's settings is loaded from that directory and never installed under the
- * package name, so name resolution alone would miss the very copy the session
- * is running.
+ * Directories a fork pinned by path can sit in. A `./packages/pi-choco-ui`
+ * entry in Pi's settings is loaded from that directory and never installed
+ * under the package name, so name resolution alone would miss the very copy
+ * the session is running. The legacy `pi-zentui` name stays as fallback for
+ * profiles not yet migrated.
  */
 function localForkCandidates(subpath: string): string[] {
 	const candidates: string[] = [];
 	let directory = dirname(fileURLToPath(import.meta.url));
 	for (;;) {
-		candidates.push(join(directory, "packages", ZENTUI_PACKAGE, subpath));
+		for (const pkg of ZENTUI_PACKAGES) {
+			candidates.push(join(directory, "packages", pkg, subpath));
+		}
 		const parent = dirname(directory);
 		if (parent === directory) return candidates;
 		directory = parent;
@@ -199,12 +202,14 @@ export function resolveZentuiFile(subpath: string): string | undefined {
 	for (const candidate of localForkCandidates(subpath)) {
 		if (existsSync(candidate)) return candidate;
 	}
-	const specifier = `${ZENTUI_PACKAGE}/${subpath}`;
-	for (const base of resolutionBases()) {
-		try {
-			return createRequire(base).resolve(specifier);
-		} catch {
-			// Not installed relative to this base; try the next one.
+	for (const pkg of ZENTUI_PACKAGES) {
+		const specifier = `${pkg}/${subpath}`;
+		for (const base of resolutionBases()) {
+			try {
+				return createRequire(base).resolve(specifier);
+			} catch {
+				// Not installed relative to this base; try the next one.
+			}
 		}
 	}
 	return undefined;

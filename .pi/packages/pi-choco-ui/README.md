@@ -1,14 +1,22 @@
-# Zentui
+# pi-choco-ui
 
-A Starship-inspired statusline and Opencode-style TUI for [Pi](https://pi.dev).
+choco-pi's TUI package: a Starship-inspired statusline, an Opencode-style
+editor, framed user messages, and the Nord themes for [Pi](https://pi.dev).
+
+The extension sources are a pinned fork of
+[pi-zentui](https://github.com/lmilojevicc/pi-zentui) and the themes are a
+vendored copy of [@maddeye/pi-nord](https://github.com/maddeye/pi-nord); see
+[`VENDORED.md`](./VENDORED.md) for provenance and local changes. The `/zentui`
+command and the `zentui` style IDs are kept from upstream so existing user
+config keeps working.
 
 ## Screenshots
 
-![Screenshot of Zentui with a framed user message, spacious Opencode Editor, model metadata, and Starship Footer.](./assets/main-cover.png)
+![Screenshot of choco-ui with a framed user message, spacious Opencode Editor, model metadata, and Starship Footer.](./assets/main-cover.png)
 
 ## What is this?
 
-Zentui styles four major Pi surfaces independently:
+choco-ui styles four major Pi surfaces independently:
 
 - **Editor** — selectable opencode, low-rail opencode, and minimalist input frames inspired by [Opencode](https://github.com/opencode-ai/opencode)
 - **User messages** — selectable framed, framed copy-friendly, compact, and labeled transcript messages
@@ -45,15 +53,15 @@ Editor styles:
 
 <h4 align="center"><code>opencode</code></h4>
 
-![Zentui Opencode editor with an accent rail, model metadata, Nerd Font Git branch, and Starship footer.](./assets/screenshots/editor-opencode.png)
+![choco-ui Opencode editor with an accent rail, model metadata, Nerd Font Git branch, and Starship footer.](./assets/screenshots/editor-opencode.png)
 
 <h4 align="center"><code>opencode-copy-friendly</code></h4>
 
-![Zentui copy-friendly Opencode editor with model metadata, Nerd Font Git branch, and Starship footer.](./assets/screenshots/editor-opencode-copy-friendly.png)
+![choco-ui copy-friendly Opencode editor with model metadata, Nerd Font Git branch, and Starship footer.](./assets/screenshots/editor-opencode-copy-friendly.png)
 
 <h4 align="center"><code>minimalist</code></h4>
 
-![Zentui Minimalist editor with session, cost, model, Git, and path metadata in a rounded frame with the Footer hidden.](./assets/screenshots/editor-minimalist.png)
+![choco-ui Minimalist editor with session, cost, model, Git, and path metadata in a rounded frame with the Footer hidden.](./assets/screenshots/editor-minimalist.png)
 
 ### User messages
 
@@ -68,19 +76,19 @@ User-message previews:
 
 <h4 align="center"><code>framed</code></h4>
 
-![Zentui Framed user-message style with horizontal borders, spacer rows, and an accent rail.](./assets/screenshots/user-message-framed.png)
+![choco-ui Framed user-message style with horizontal borders, spacer rows, and an accent rail.](./assets/screenshots/user-message-framed.png)
 
 <h4 align="center"><code>framed-copy-friendly</code></h4>
 
-![Zentui copy-friendly Framed user-message style with horizontal borders, spacer rows, and a copyable left edge.](./assets/screenshots/user-message-framed-copy-friendly.png)
+![choco-ui copy-friendly Framed user-message style with horizontal borders, spacer rows, and a copyable left edge.](./assets/screenshots/user-message-framed-copy-friendly.png)
 
 <h4 align="center"><code>compact</code></h4>
 
-![Zentui Compact user-message style with a slim accent rail and no surrounding borders.](./assets/screenshots/user-message-compact.png)
+![choco-ui Compact user-message style with a slim accent rail and no surrounding borders.](./assets/screenshots/user-message-compact.png)
 
 <h4 align="center"><code>labeled</code></h4>
 
-![Zentui Labeled user-message style in a rounded frame with the label User.](./assets/screenshots/user-message-labeled.png)
+![choco-ui Labeled user-message style in a rounded frame with the label User.](./assets/screenshots/user-message-labeled.png)
 
 ### Working line
 
@@ -114,7 +122,7 @@ Both speeds accept safe integers from `30` through `1000` ms. Static ignores tex
 
 ### Runtime Detection
 
-Detects Starship Nerd Font runtime/language modules, uses the Starship Nerd Font symbols, and keeps Starship-style defaults such as `bold green` for Node.js. By default Zentui maps those styles through your active Pi theme; switch the Starship/footer color source to `terminal` in `/zentui` if you want your terminal colorscheme to supply the exact ANSI colors.
+Detects Starship Nerd Font runtime/language modules, uses the Starship Nerd Font symbols, and keeps Starship-style defaults such as `bold green` for Node.js. By default choco-ui maps those styles through your active Pi theme; switch the Starship/footer color source to `terminal` in `/zentui` if you want your terminal colorscheme to supply the exact ANSI colors.
 
 | Runtime/language | Detection examples                                            |
 | ---------------- | ------------------------------------------------------------- |
@@ -178,17 +186,23 @@ Detects Starship Nerd Font runtime/language modules, uses the Starship Nerd Font
 
 ## Install
 
-```bash
-# From npm
-pi install npm:pi-zentui
+This package is loaded from the repository, not from npm. `.pi/settings.json`
+lists it as a path package:
 
-# From git
-pi install git:github.com/lmilojevicc/pi-zentui
+```json
+{
+  "packages": ["./packages/pi-choco-ui"]
+}
 ```
+
+It supplies both the extension and the `nord`, `nord-dark`, and `nord-light`
+themes, so `"theme": "nord-dark"` needs no separate theme package.
 
 ## Config
 
-User config lives at `~/.pi/agent/zentui.json`. The file is optional: missing or invalid known values fall back to Zentui defaults, unknown keys are ignored at runtime, and `/zentui` can patch color-source settings, UI feature toggles, built-in footer segment visibility, and active third-party status placements.
+User config lives at `~/.pi/agent/pi-choco-ui.json`; a pre-existing
+`~/.pi/agent/zentui.json` is still read and written when the new file is
+absent. The file is optional: missing or invalid known values fall back to choco-ui defaults, unknown keys are ignored at runtime, and `/zentui` can patch color-source settings, UI feature toggles, built-in footer segment visibility, and active third-party status placements.
 
 The interactive `/zentui` menu is split into exactly eight component-oriented sections, in this order. Use `Tab` and `Shift+Tab` to switch sections:
 
@@ -201,7 +215,7 @@ The interactive `/zentui` menu is split into exactly eight component-oriented se
 7. **Git** — Starship Git segment and probe controls.
 8. **Extensions** — Starship extension-status placement and color controls for active keys.
 
-Editor, User messages, and Working line retain independent configuration. Editor and User-message previews use fixed synthetic content and remain visible while their component is disabled; the Working-line preview reflects its current configured sample, state, and animation. Each preview appears above its settings. Only the Working-line preview owns an animation timer. Footer's single style selects Pi's built-in Footer (`Native`), Zentui's Starship Footer, or an owned zero-row Footer (`Hidden`). Color and model-label rows update only their owning component.
+Editor, User messages, and Working line retain independent configuration. Editor and User-message previews use fixed synthetic content and remain visible while their component is disabled; the Working-line preview reflects its current configured sample, state, and animation. Each preview appears above its settings. Only the Working-line preview owns an animation timer. Footer's single style selects Pi's built-in Footer (`Native`), choco-ui's Starship Footer, or an owned zero-row Footer (`Hidden`). Color and model-label rows update only their owning component.
 
 Starship-specific Footer rows are shown only while Starship is selected. The **Segments**, **Git**, and **Extensions** sections remain available for preconfiguration under every Footer style. Free-form values such as custom formats, Opencode metadata format, raw colors/styles, and inactive extension keys remain JSON-only; Working-line speed accepts validated custom milliseconds in `/zentui`.
 
@@ -426,8 +440,8 @@ Default config values — copy this and change any value you want:
 - Style values can be Starship/terminal strings (`bold purple`, `fg:202`, `#89b` / `#89b4fa`, `bg:blue fg:bright-green`) or Pi theme tokens (`accent`, `borderMuted`, `thinkingHigh`). Short `#rgb` hex values expand to `#rrggbb`.
 - `projectRefreshIntervalMs`: project status polling interval; `0` disables polling. Values `1..4999` clamp up to `5000` (minimum 5s); invalid/non-finite values fall back to `30000`.
 - `components.editor`: owns editor enablement, `opencode | opencode-copy-friendly | minimalist` style selection, color source, border mode, model label, viewport indicators, and all three editor-style configurations.
-- `components.userMessages`: owns message enablement, `framed | framed-copy-friendly | compact | labeled` style selection, and color source. `framed-copy-friendly` remains Zentui-rendered; disabling the component delegates to Pi's native renderer.
-- `components.workingLine`: `enabled` is the sole ownership switch. While enabled, Zentui owns both the Working-row message and indicator and renders the full row. It configures `braille | star-bloom | pinwheel | claude-inspired | pulse`, independent spinner/text speeds, optional Classic/KITT spinner-color participation, `classic | kitt | disabled` text animation, color source, the default-on `messages.custom` toggle and editable 16-value list, plus Tool/Elapsed/Thinking/Tokens segments. Thinking only controls the live row; measurement and final summaries continue while it is hidden. Custom-off and empty-list fallback both render owned `Working…`; Static keeps glyph motion but ignores text speed and spinner-color participation.
+- `components.userMessages`: owns message enablement, `framed | framed-copy-friendly | compact | labeled` style selection, and color source. `framed-copy-friendly` remains choco-ui-rendered; disabling the component delegates to Pi's native renderer.
+- `components.workingLine`: `enabled` is the sole ownership switch. While enabled, choco-ui owns both the Working-row message and indicator and renders the full row. It configures `braille | star-bloom | pinwheel | claude-inspired | pulse`, independent spinner/text speeds, optional Classic/KITT spinner-color participation, `classic | kitt | disabled` text animation, color source, the default-on `messages.custom` toggle and editable 16-value list, plus Tool/Elapsed/Thinking/Tokens segments. Thinking only controls the live row; measurement and final summaries continue while it is hidden. Custom-off and empty-list fallback both render owned `Working…`; Static keeps glyph motion but ignores text speed and spinner-color participation.
 - Optional `colors.workingLineLow`, `colors.workingLineMid`, and `colors.workingLineHigh` override its palette. Without overrides, theme mode uses `dim`, `muted`, and `bold accent`; terminal mode uses `bright-black`, `cyan`, and `bold cyan`.
 - `components.selectorBorders`: owns selector-border enablement, the fixed `zentui` style, and its color source.
 - `components.footer`: owns `native | starship | hidden` style selection, Footer color source, Footer model label, and every Starship option under `styles.starship` (formats, segments, context thresholds, path, Git, and extension statuses). Native restores Pi's built-in Footer; Hidden installs an empty component with zero rows.
@@ -437,7 +451,7 @@ Default config values — copy this and change any value you want:
 - Explicit unsupported future component style IDs are preserved unchanged on disk but fail open at runtime: Editor, User-message, and selector-border customization stay disabled, while Footer behavior is Native. Missing, empty, or malformed style values continue normal default and legacy migration behavior.
 - The flat properties returned by `mergeConfig`, `loadConfig`, and save helpers are deprecated compatibility output and will remain available until at least the next major release. This output deprecation is separate from accepted legacy flat JSON input.
 - `polished` and `polished-copy-friendly` remain read-only migration aliases for `opencode` and `opencode-copy-friendly`. Legacy `features.copyFriendly` and the old nested Editor/message `copyFriendly` fields are read-only migration inputs: message copy-friendly `true` selects `framed-copy-friendly` rather than disabling custom rendering. Explicit Editor or User-message style saves remove only the corresponding obsolete nested flag; raw released feature keys, unknown fields, and unknown style data remain preserved as user-owned migration data.
-- The shown `editor*` values match the default `theme` source. Omit those keys to keep Zentui's source-aware defaults when switching between `theme` and `terminal`.
+- The shown `editor*` values match the default `theme` source. Omit those keys to keep choco-ui's source-aware defaults when switching between `theme` and `terminal`.
 - `editorAccent` styles Editor and User-message accent rails and the labeled message label.
 - `editorPrompt` styles the `opencode-copy-friendly` Editor prompt glyph. Omit it to use `editorAccent`, then the default accent fallback.
 - `editorBorder` styles the `framed` and `framed-copy-friendly` previous-message top/bottom borders and the active editor in static border color mode; the border glyph stays `─`.
@@ -449,15 +463,15 @@ Tip: with `opencode-copy-friendly`, setting Pi's `editorPaddingX` to `1` in `~/.
 
 Set `components.editor.style` to `minimalist` or select it from the `/zentui` **Editor** tab. The rounded frame shows viewport counts, Bash state, the current/completed turn duration, and the explicit Pi session name at top left; cost, model, thinking level, and context usage at top right; viewport count plus Git branch/status at bottom left; and the configured path at bottom right. Unnamed sessions add no placeholder. Autocomplete stays inside the frame when Pi's existing editor output can be split safely. Unknown third-party editor layouts fail open without decoration.
 
-The Minimalist editor is inspired by [pi-custom-input](https://github.com/VinhLe1410/pi-custom-input), with an independent implementation in Zentui.
+The Minimalist editor is inspired by [pi-custom-input](https://github.com/VinhLe1410/pi-custom-input), with an independent implementation in choco-ui.
 
-While `minimalist` is selected, the `/zentui` **Editor** area shows its focused controls without repeating the style name on every row. Path examples are `src` (`compact`), `zentui/src` (`project`), and `~/Projects/zentui/src` (`full`). Context can render as `11%`, `11%/372k`, or—with the gauge enabled and enough room—`[█░░░░] 11%/372k`. The gauge shortens or disappears before the context text at narrow widths. Session name, timer, cost, and Git can be hidden independently; model, thinking, and context remain structurally stable.
+While `minimalist` is selected, the `/zentui` **Editor** area shows its focused controls without repeating the style name on every row. Path examples are `src` (`compact`), `choco-pi/src` (`project`), and `~/Projects/choco-pi/src` (`full`). Context can render as `11%`, `11%/372k`, or—with the gauge enabled and enough room—`[█░░░░] 11%/372k`. The gauge shortens or disappears before the context text at narrow widths. Session name, timer, cost, and Git can be hidden independently; model, thinking, and context remain structurally stable.
 
 Footer visibility is controlled by `components.footer.style`: use `starship`, `native`, or `hidden`. Minimalist editor decoration and the Starship Footer may be shown together, including at narrow widths or after decoration fallback. Minimalist style does not remove Pi's header.
 
 ## Editor Metadata Format
 
-Set `metadataFormat` under either opencode style in `~/.pi/agent/zentui.json` to customize that style's metadata row. The two variants retain independent values:
+Set `metadataFormat` under either opencode style in `~/.pi/agent/pi-choco-ui.json` to customize that style's metadata row. The two variants retain independent values:
 
 ```json
 {
@@ -483,7 +497,7 @@ The syntax follows the Footer Format Template conventions: `$variable` and `${va
 | `$model`        | label selected by `components.editor.modelLabel` (`id`, or name with ID fallback)            |
 | `$model_id`     | active Pi model ID                                                                            |
 | `$model_name`   | active Pi model display name; empty when no name is set                                       |
-| `$provider`     | provider label using Zentui's existing formatting                                             |
+| `$provider`     | provider label using choco-ui's existing formatting                                             |
 | `$thinking`     | current thinking level; empty when thinking is `off`                                          |
 | `$session_name` | current Pi session name; empty when unnamed                                                    |
 
@@ -591,11 +605,11 @@ Pi 0.84 introduces a native fullscreen TUI with a sticky editor and Footer plus 
 }
 ```
 
-You can also select fullscreen from Pi's `/settings` UI or start Pi with `--tui-mode fullscreen`. Zentui does not enable fullscreen automatically: Pi owns terminal layout, scrolling, and sticky placement, while Zentui supplies the configured editor and Footer components. Pi 0.80.5–0.83 remain supported for Zentui styling, without native sticky placement.
+You can also select fullscreen from Pi's `/settings` UI or start Pi with `--tui-mode fullscreen`. choco-ui does not enable fullscreen automatically: Pi owns terminal layout, scrolling, and sticky placement, while choco-ui supplies the configured editor and Footer components. Pi 0.80.5–0.83 remain supported for choco-ui styling, without native sticky placement.
 
 ## Acknowledgments
 
-The minimalist frame's information hierarchy was inspired by [VinhLe1410/pi-custom-input](https://github.com/VinhLe1410/pi-custom-input) and is integrated with Zentui's existing editor, state, configuration, and compatibility layers.
+The minimalist frame's information hierarchy was inspired by [VinhLe1410/pi-custom-input](https://github.com/VinhLe1410/pi-custom-input) and is integrated with choco-ui's existing editor, state, configuration, and compatibility layers.
 
 ## Requirements
 
@@ -630,11 +644,18 @@ PI_BIN=/path/to/pi npm run pi:dev
 
 ## Credits
 
+Built on:
+
+- [pi-zentui](https://github.com/lmilojevicc/pi-zentui) — the upstream extension this package forks
+- [@maddeye/pi-nord](https://github.com/maddeye/pi-nord) — the vendored Nord themes
+
 Inspired by:
 
 - [Starship](https://starship.rs/) — the minimal, blazing-fast, and infinitely customizable prompt
 - [Opencode](https://github.com/opencode-ai/opencode) — terminal-based AI coding assistant
+- [Nord](https://www.nordtheme.com/) — the theme palette
 
 ## License
 
-MIT
+MIT. Upstream copyrights are kept in `LICENSE` (extension sources) and
+`LICENSE.pi-nord` (themes).
