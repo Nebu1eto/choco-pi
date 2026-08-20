@@ -209,6 +209,13 @@ export interface AgentRecord {
   isBackground?: boolean;
   /** Resolved spawn params, captured for UI display. Fixed at spawn time. */
   invocation?: AgentInvocation;
+  /**
+   * Orchestrator-owned BTW side conversation. These remain top-level records
+   * (`parentAgentId` is unset), so maxConcurrent, handles, FleetView and focus
+   * mode treat them like every other root subagent while the UI can label and
+   * deliver them differently.
+   */
+  sideConversation?: boolean;
   /** Nesting depth: top-level subagent = 1. */
   depth?: number;
   /** Parent agent ID for ownership-scoped nested controls. */

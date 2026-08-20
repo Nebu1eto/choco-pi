@@ -109,6 +109,10 @@ interface SpawnOptions {
   inheritContext?: boolean;
   thinkingLevel?: ThinkingLevel;
   isBackground?: boolean;
+  /** Orchestrator-owned BTW side conversation marker. */
+  sideConversation?: boolean;
+  /** Restrict the child session to read/grep/find/ls and no extensions. */
+  readOnly?: boolean;
   /**
    * Skip the maxConcurrent queue check for this spawn — start immediately even
    * if the configured concurrency limit would otherwise queue it. Used by the
@@ -277,6 +281,7 @@ export class AgentManager {
       // have no inline surface — stay visible instead of vanishing.
       isBackground: options.isBackground,
       invocation: options.invocation,
+      sideConversation: options.sideConversation,
       depth: options.depth ?? 1,
       parentAgentId: options.parentAgentId,
       maxSubagentDepth: options.maxSubagentDepth,
@@ -368,6 +373,7 @@ export class AgentManager {
       isolated: options.isolated,
       inheritContext: options.inheritContext,
       thinkingLevel: options.thinkingLevel,
+      readOnly: options.readOnly,
       resumeSessionFile: options.resumeSessionFile,
       nested: options.parentAgentId !== undefined,
       // Worktree wins for the working dir (the agent must run in the copy —

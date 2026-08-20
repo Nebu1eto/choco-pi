@@ -43,6 +43,9 @@ export const SUBAGENT_TOOL_NAMES = {
 /** Names of tools registered by this extension that subagents must NOT inherit. */
 const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
 
+/** Built-ins available to read-only side conversations. No shell or write path. */
+const READ_ONLY_TOOL_NAMES = new Set(["read", "grep", "find", "ls"]);
+
 /**
  * Canonical name of an extension for `extensions: [...]` allowlist matching.
  * Lowercased — extension names match case-insensitively so `extensions: [Mcp]`
@@ -382,6 +385,8 @@ export interface RunOptions {
   isolated?: boolean;
   inheritContext?: boolean;
   thinkingLevel?: ThinkingLevel;
+  /** Use only read/grep/find/ls, load no extensions, and disable delegation. */
+  readOnly?: boolean;
   /**
    * Reopen this pi session file rather than starting an empty conversation.
    * `createAgentSession` seeds itself from whatever its SessionManager holds,
@@ -574,12 +579,15 @@ export async function runAgent(
   // Build prompt extras (memory, skill preloading)
   const extras: PromptExtras = {};
   if (options.worktreeBase) extras.worktreeBase = options.worktreeBase;
+  if (options.readOnly) extras.readOnly = true;
 
-  // Resolve extensions/skills: isolated overrides to false
-  const extensions = options.isolated ? false : config.extensions;
-  // Nulling excludes under isolated also suppresses the orphaned-exclude warning —
-  // isolation is an intentional override, not a misconfiguration.
-  const excludeExtensions = options.isolated ? undefined : config.excludeExtensions;
+  // Isolated runs load neither extensions nor skills. Read-only side
+  // conversations keep skills available as instructions, but load no extension
+  // code or tools: the only callable capabilities are the static allowlist below.
+  const extensions = options.isolated || options.readOnly ? false : config.extensions;
+  // Nulling excludes under either override also suppresses the orphaned-exclude
+  // warning — both are intentional restrictions, not misconfiguration.
+  const excludeExtensions = options.isolated || options.readOnly ? undefined : config.excludeExtensions;
   const skills = options.isolated ? false : config.skills;
 
   // Skill preloading: when skills is string[], preload their content into prompt
@@ -591,6 +599,9 @@ export async function runAgent(
   }
 
   let toolNames = getToolNamesForType(type);
+  if (options.readOnly) {
+    toolNames = toolNames.filter(name => READ_ONLY_TOOL_NAMES.has(name));
+  }
 
   // Persistent memory: detect write capability and branch accordingly.
   // Account for disallowedTools — a tool in the base set but on the denylist is not truly available.
@@ -649,7 +660,7 @@ export async function runAgent(
   // which extensions load. `ext:foo` against an extension that `extensions:` excluded
   // is an orphan and warns after reload. `isolated` means no extension tools at all.
   const { extNames, narrowing } = parseExtSelectors(
-    options.isolated ? [] : (agentConfig?.extSelectors ?? []),
+    options.isolated || options.readOnly ? [] : (agentConfig?.extSelectors ?? []),
   );
   const noExtensions = extensions === false;
 
@@ -795,7 +806,7 @@ export async function runAgent(
   const nestedRuntime = options.nestedRuntime && options.nestedRuntime.depth < effectiveMaxDepth
     ? options.nestedRuntime
     : undefined;
-  const nestedTools = agentConfig?.allowedSubagents && nestedRuntime && !options.isolated
+  const nestedTools = agentConfig?.allowedSubagents && nestedRuntime && !options.isolated && !options.readOnly
     ? createNestedSubagentTools({
         manager: nestedRuntime.manager,
         pi: options.pi,

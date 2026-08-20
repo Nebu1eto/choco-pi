@@ -6,9 +6,9 @@ conversations, and dynamic workflow fan-out. It maps the modules that matter and
 names the exact attachment point for each of those three, so a later phase does
 not have to re-derive them from a 3,000-line entry file.
 
-Most sections are a module map. Seam A also records the implemented focus-mode
-design because later phases must compose with its host patches and restoration
-order.
+Most sections are a module map. Seams A and B also record the implemented
+focus-mode and side-conversation designs because later phases must compose with
+their UI ownership and delivery rules.
 
 ## Load path
 
@@ -72,7 +72,8 @@ this extension out must stay completely silent.
 | --- | --- |
 | `ui/agent-widget.ts` | The `aboveEditor` widget and the `subagents` status-bar key. `WidgetMode` (`all`/`background`/`off`) is read live at render. |
 | `ui/fleet-list.ts` | The `belowEditor` FleetView. All key handling goes through `ui.onTerminalInput`, gated on pi's prompt editor being the focused component. |
-| `ui/conversation-viewer.ts` | The live conversation overlay: scroll, stop (two-press), and the inline steering composer. |
+| `ui/conversation-viewer.ts` | The live conversation overlay: scroll, stop (two-press), inline steering/reply composer, and focus handoff. |
+| `ui/side-conversation.ts` | BTW launch defaults, dismissible overlay ownership, continuation, and notice-only completion delivery. |
 | `ui/schedule-menu.ts`, `ui/select-item.ts`, `ui/viewer-keys.ts` | Scheduled-job menu, list row formatting, keybinding resolution through `tui.select.*`. |
 
 ## The choco-pi role convention is not an upstream feature
@@ -157,48 +158,56 @@ global input while focus is active.
 
 ## Seam B — dismissible side-conversation overlay
 
-**What exists.** Addressing an agent from the prompt already works end to end,
-and the whole flow funnels through one handler.
+`/btw <question>` launches an ordinary top-level `AgentRecord` with
+`sideConversation: true`. It uses the resolved `general-purpose` type, carries
+no `parentAgentId` (the package's representation of orchestrator ownership), and
+sets `isBackground: true`, so `AgentManager` applies the same `maxConcurrent`
+queue as every other root background agent. The child session is persisted and
+nested under the main pi session by the existing session-manager path.
 
-- `pi.on("input", …)` in `index.ts` is the only place typed text is claimed.
-  It returns `{ action: "continue" | "transform" | "handled" }`, so a side
-  conversation is a fourth branch of an existing decision, not a new hook.
-- `mention.ts::parseMention` decides what counts as a mention; only a leading
-  `@handle` followed by a message qualifies.
-- `AgentManager.resolveMention(handle)` returns `{ kind: "live", record }`,
-  `{ kind: "tombstone", entry }`, or nothing — the three states a side
-  conversation would have to render differently.
-- `mention-clone.ts::runMentionClone` starts an agent from conversation context
-  through a throwaway session clone, without a visible main-model turn. That is
-  the existing precedent for "do work without putting a turn in the transcript",
-  which is the same property a side conversation needs.
-- `ui/agent-mention.ts::createMentionProvider` is stacked on pi's autocomplete
-  via `ctx.ui.addAutocompleteProvider`; handle rows are merged into pi's own
-  suggestion list rather than replacing it.
+### Context and capability profile
 
-**Where a side conversation attaches.**
+The launch sets `inheritContext: true`; `agent-runner.ts` therefore prepends
+`buildParentContext(ctx)` through the existing subagent context-fork path before
+the BTW question. No main-model turn is created and no side answer is injected
+as a main-session message.
 
-1. *Entry*: a new branch in the `input` handler, after `parseMention` and after
-   the `@main` reservation check, returning `{ action: "handled" }` so no main
-   turn is spent. `agentMentions` (`"model" | "direct" | "off"`) is the existing
-   mode setting; a side-conversation mode belongs in that union rather than in a
-   parallel flag.
-2. *Surface*: a sibling of `ConversationViewer` opened through the same
-   `ctx.ui.custom(..., { overlay: true })` path. "Dismissible" is the difference
-   that matters: `ConversationViewer` is modal and calls `done(undefined)` on
-   `Esc`/`q`, and `FleetList` tracks exactly one open overlay through
-   `viewerClose`/`viewingAgentId`. A dismissible overlay that survives dismissal
-   needs its own owner — that single-viewer assumption in `FleetList` is what a
-   later phase has to revisit, and it is confined to those two fields.
-3. *Reply delivery*: `AgentManager` completion callbacks already fan out to
-   `groupJoin.onAgentComplete`, `sendIndividualNudge`, the widget refresh and
-   the lifecycle events. A side conversation is another consumer of that same
-   completion callback, addressed by record id.
-4. *Identity*: handles, aliases (`Agent(name:)`) and tombstones already give a
-   stable address that outlives the in-memory record, including reopening a
-   session from disk under `rememberAgents`. A side conversation should address
-   agents by handle, not by record id, or it inherits the ~10-minute eviction
-   bug that tombstones were added to fix.
+Side conversations set the internal `readOnly` spawn option. The runner:
+
+- admits only `read`, `grep`, `find`, and `ls` built-ins;
+- loads no extensions and injects no nested delegation tools;
+- keeps configured skills available as instructions;
+- adds an explicit read-only side-conversation block to the child system prompt.
+
+`spawnTopLevel` strips both `sideConversation` and `readOnly`, so RPC and global
+registry callers cannot forge the marker to suppress ordinary result delivery.
+The `/btw` controller calls the manager directly after resolving the type.
+
+### Overlay lifecycle
+
+`ui/side-conversation.ts::SideConversationController` waits for
+`onSessionCreated`, then opens the existing `ConversationViewer` through
+`ctx.ui.custom(..., { overlay: true })`. The viewer renders a `[btw]` tag and
+uses its inline composer in `reply` mode. During an active run, submit routes to
+`AgentManager.steer`. After settlement, submit calls background
+`AgentManager.resume`, preserving the same child session and read-only tool
+registry. Only one BTW overlay is shown at a time; multiple side records may run
+concurrently.
+
+`Esc` or `q` closes only the overlay. It does not call `AgentManager.abort`, so
+the record keeps running or remains completed and reopenable. Dismissal also
+cancels automatic presentation for that run: completion never steals focus.
+When a dismissed side conversation settles, the manager completion callback
+uses `ctx.ui.notify` and does not call `pi.sendMessage`, so no follow-up turn or
+main transcript message is produced. `/btw` with no question lists current side
+records and reopens the selected one.
+
+FleetView includes side conversations as normal root agents, prefixes their row
+with `[btw]`, and delegates Enter to the side controller's replyable overlay.
+Its existing `f` path and the overlay's `f focus` callback both feed the same
+`FocusedAgentController` used for ordinary subagents. Session switch dismisses
+the overlay before focus restoration; shutdown disposes it before manager
+cleanup.
 
 ## Seam C — dynamic workflow fan-out
 

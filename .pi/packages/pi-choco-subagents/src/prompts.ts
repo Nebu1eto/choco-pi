@@ -16,6 +16,8 @@ export interface PromptExtras {
    * to stay in the copy.
    */
   worktreeBase?: string;
+  /** Restrict this run to read-only side-conversation behavior. */
+  readOnly?: boolean;
 }
 
 /**
@@ -69,6 +71,13 @@ Work only inside it — never in ${extras.worktreeBase}, even if other instructi
     for (const skill of extras.skillBlocks) {
       extraSections.push(`\n# Preloaded Skill: ${skill.name}\n${skill.content}`);
     }
+  }
+  if (extras?.readOnly) {
+    extraSections.push(`<read_only_side_conversation>
+You are answering a parallel side conversation owned by the main orchestrator.
+Use the inherited conversation only as context. Do not edit files, run commands, delegate work, or alter the main conversation.
+You may inspect the project with read, grep, find, and ls when needed, then answer the user's question directly.
+</read_only_side_conversation>`);
   }
   const extrasSuffix = extraSections.length > 0 ? "\n\n" + extraSections.join("\n") : "";
 
