@@ -23,8 +23,8 @@ export function getBundledToolBinaryPath(toolName: string, target: { platform?: 
 	if (custom) {
 		const customBinary = join(custom, exe);
 		if (existsSync(customBinary)) return customBinary;
-		// Fork addition: this fork ships no bundled binaries, so also accept a
-		// directory laid out like the upstream package's src/tools tree
+		// Fork addition: besides the flat layout, also accept a directory laid
+		// out like the upstream package's src/tools tree
 		// (<dir>/<tool>/bin/<platform>-<arch>/<exe>).
 		const customTreeBinary = join(custom, toolDir, "bin", `${platform}-${arch}`, exe);
 		if (existsSync(customTreeBinary)) return customTreeBinary;
