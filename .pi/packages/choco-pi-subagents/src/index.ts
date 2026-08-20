@@ -56,7 +56,7 @@ import {
   type UICtx,
 } from "./ui/agent-widget.ts";
 import { FleetList, type FleetUICtx } from "./ui/fleet-list.ts";
-import { FocusedAgentController } from "./ui/focus-mode.ts";
+import { continueRunningAgentNavigation, FocusedAgentController } from "./ui/focus-mode.ts";
 import { showSchedulesMenu } from "./ui/schedule-menu.ts";
 import { resolveBtwType, SideConversationController } from "./ui/side-conversation.ts";
 import { selectItem } from "./ui/select-item.ts";
@@ -2504,8 +2504,8 @@ Terse command-style prompts produce shallow, generic work.
     if (!choice) return;
 
     if (choice.startsWith("Running agents (")) {
-      await showRunningAgents(ctx);
-      await showAgentsMenu(ctx);
+      const focused = await showRunningAgents(ctx);
+      if (!focused) await showAgentsMenu(ctx);
     } else if (choice.startsWith("Agent types (")) {
       await showAllAgentsList(ctx);
       await showAgentsMenu(ctx);
@@ -2588,11 +2588,11 @@ Terse command-style prompts produce shallow, generic work.
     }
   }
 
-  async function showRunningAgents(ctx: ExtensionCommandContext) {
+  async function showRunningAgents(ctx: ExtensionCommandContext): Promise<boolean> {
     const agents = manager.listAgents().filter(a => !a.parentAgentId);
     if (agents.length === 0) {
       ctx.ui.notify("No agents.", "info");
-      return;
+      return false;
     }
 
     // Numbered + item-paired. Two same-type agents spawned together with the
@@ -2603,11 +2603,12 @@ Terse command-style prompts produce shallow, generic work.
       const dur = formatDuration(a.startedAt, a.completedAt);
       return `${dn} (${a.description}) · ${a.toolUses} tools · ${a.status} · ${dur}`;
     });
-    if (!record) return;
+    if (!record) return false;
 
     const focused = await viewAgentConversation(ctx, record);
-    // Back-navigation: re-show the list unless the modal became fullscreen focus.
-    if (!focused) await showRunningAgents(ctx);
+    // Back-navigation re-shows the list, but a focus request must propagate all
+    // the way through the parent Agents menu or its selector steals the first Esc.
+    return continueRunningAgentNavigation(focused, () => showRunningAgents(ctx));
   }
 
   async function viewAgentConversation(ctx: ExtensionCommandContext, record: AgentRecord): Promise<boolean> {

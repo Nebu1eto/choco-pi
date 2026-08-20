@@ -42,6 +42,14 @@ export type FocusControllerOptions = {
   onSteered?: (id: string, message: string) => void;
 };
 
+/** Preserve fullscreen focus while unwinding nested `/agents` menus. */
+export async function continueRunningAgentNavigation(
+  focusRequested: boolean,
+  reopenList: () => Promise<boolean>,
+): Promise<boolean> {
+  return focusRequested ? true : reopenList();
+}
+
 type ActiveFocus = {
   record: AgentRecord;
   tui: TUI;
