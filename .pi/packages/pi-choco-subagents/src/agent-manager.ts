@@ -111,6 +111,9 @@ interface SpawnOptions {
   isBackground?: boolean;
   /** Orchestrator-owned BTW side conversation marker. */
   sideConversation?: boolean;
+  /** Aggregate workflow identity; issued only by the root workflow scheduler. */
+  workflowId?: string;
+  workflowStepId?: string;
   /** Restrict the child session to read/grep/find/ls and no extensions. */
   readOnly?: boolean;
   /**
@@ -282,6 +285,8 @@ export class AgentManager {
       isBackground: options.isBackground,
       invocation: options.invocation,
       sideConversation: options.sideConversation,
+      workflowId: options.workflowId,
+      workflowStepId: options.workflowStepId,
       depth: options.depth ?? 1,
       parentAgentId: options.parentAgentId,
       maxSubagentDepth: options.maxSubagentDepth,
@@ -893,6 +898,12 @@ export class AgentManager {
       this.queue = this.queue.filter(q => q.id !== id);
       record.status = "stopped";
       record.completedAt = Date.now();
+      // Ordinary queued Agent calls historically settle without a completion
+      // nudge. Workflow controllers still need this transition to reach their
+      // aggregate/UI bookkeeping after cancellation.
+      if (record.workflowId) {
+        try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
+      }
       return true;
     }
 

@@ -62,6 +62,13 @@ import { SideConversationController } from "./ui/side-conversation.ts";
 import { selectItem } from "./ui/select-item.ts";
 import { addUsage, getLifetimeTotal, getSessionContextPercent, type LifetimeUsage } from "./usage.ts";
 import { isWorktreeIsolationEnabled, setWorktreeIsolationEnabled } from "./worktree.ts";
+import {
+  WorkflowDefinitionSchema,
+  WorkflowManager,
+  WorkflowStepSchema,
+  type WorkflowStepDefinition,
+  type WorkflowStepRunner,
+} from "./workflow.ts";
 
 // ---- Shared helpers ----
 
@@ -446,8 +453,13 @@ export default function (pi: ExtensionAPI) {
       durationMs,
       tokens,
       ...(record.sideConversation && { sideConversation: true }),
+      ...(record.workflowId && { workflowId: record.workflowId, workflowStepId: record.workflowStepId }),
     };
   }
+
+  // Assigned after the shared UI controllers are constructed. Agent completion
+  // callbacks can still consult it because no child settles synchronously.
+  let workflows: WorkflowManager | undefined;
 
   // Background completion: route through group join or send individual nudge
   const manager = new AgentManager((record) => {
@@ -470,7 +482,25 @@ export default function (pi: ExtensionAPI) {
       status: record.status, result: record.result, error: record.error,
       startedAt: record.startedAt, completedAt: record.completedAt,
       ...(record.sideConversation && { sideConversation: true }),
+      ...(record.workflowId && { workflowId: record.workflowId, workflowStepId: record.workflowStepId }),
     });
+
+    // Workflow steps remain ordinary top-level records for FleetView/focus and
+    // lifecycle events, but static workflows deliver one aggregate result. A
+    // dynamic workflow relays step completions so the orchestrator can adjust
+    // the still-open graph from the result.
+    if (record.workflowId) {
+      if (workflows?.shouldNotifySteps(record.workflowId)) {
+        sendIndividualNudge(record);
+      } else {
+        record.resultConsumed = true;
+        agentActivity.delete(record.id);
+        widget.markFinished(record.id);
+        fleet.onAgentFinished(record.id);
+        widget.update();
+      }
+      return;
+    }
 
     // Side answers stay out of the orchestrator transcript. Their controller
     // keeps an open overlay live, or emits a non-turn-triggering UI notice when
@@ -523,6 +553,7 @@ export default function (pi: ExtensionAPI) {
       id: record.id,
       type: record.type,
       description: record.description,
+      ...(record.workflowId && { workflowId: record.workflowId, workflowStepId: record.workflowStepId }),
     });
   }, (record, info) => {
     if (record.parentAgentId) return;
@@ -591,6 +622,8 @@ export default function (pi: ExtensionAPI) {
     // callers cannot forge it to suppress ordinary result delivery.
     delete safeOptions.sideConversation;
     delete safeOptions.readOnly;
+    delete safeOptions.workflowId;
+    delete safeOptions.workflowStepId;
     return spawnResolved(piRef, ctxRef, type, prompt, safeOptions);
   };
 
@@ -955,6 +988,7 @@ export default function (pi: ExtensionAPI) {
       delete (globalThis as any)[MANAGER_KEY];
     }
     scheduler.stop();
+    workflowManager.dispose();
     manager.abortAll();
     for (const timer of pendingNudges.values()) clearTimeout(timer);
     pendingNudges.clear();
@@ -999,6 +1033,39 @@ export default function (pi: ExtensionAPI) {
   let fleetViewEnabled = true;
   function isFleetViewEnabled(): boolean { return fleetViewEnabled; }
   function setFleetViewEnabled(b: boolean): void { fleetViewEnabled = b; fleet.setEnabled(b); }
+
+  const workflowManager = new WorkflowManager((result) => {
+    pi.events.emit("subagents:workflow_completed", result);
+    pi.appendEntry("subagents:workflow_record", result);
+    scheduleNudge(`workflow:${result.workflowId}`, () => {
+      if (workflowManager.isConsumed(result.workflowId)) return;
+      const counts = new Map<string, number>();
+      for (const step of result.steps) counts.set(step.status, (counts.get(step.status) ?? 0) + 1);
+      const summary = [...counts].map(([status, count]) => `${count} ${status}`).join(", ");
+      const failed = result.status === "error" || result.status === "cancelled" || result.status === "completed_with_errors";
+      pi.sendMessage<NotificationDetails>({
+        customType: "subagent-notification",
+        content:
+          `<workflow-notification>\n` +
+          `<workflow-id>${escapeXml(result.workflowId)}</workflow-id>\n` +
+          `<status>${escapeXml(result.status)}</status>\n` +
+          `<summary>Workflow "${escapeXml(result.name)}" ${escapeXml(result.status)}: ${escapeXml(summary)}</summary>\n` +
+          `</workflow-notification>\nUse get_workflow_result for per-step outputs.`,
+        display: true,
+        details: {
+          id: result.workflowId,
+          description: `Workflow: ${result.name}`,
+          status: failed ? "error" : "completed",
+          toolUses: 0,
+          turnCount: 0,
+          totalTokens: 0,
+          durationMs: (result.completedAt ?? Date.now()) - result.startedAt,
+          resultPreview: summary,
+        },
+      }, { deliverAs: "followUp", triggerTurn: true });
+    });
+  });
+  workflows = workflowManager;
 
   // Claude Code-style `@handle message` prompt mentions. Read live by both the
   // `input` hook and the stacked autocomplete provider, so the toggle applies
@@ -2003,6 +2070,233 @@ Terse command-style prompts produce shallow, generic work.
     },
   });
   pi.registerTool(agentTool);
+
+  // ---- dynamic workflow tools ----
+
+  const resolveWorkflowType = (requested: string): string | undefined => {
+    const available = getAvailableTypes();
+    if (available.includes(requested)) return requested;
+    const matches = available.filter(type => type.toLowerCase() === requested.toLowerCase());
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+
+  const createWorkflowRunner = (ctx: ExtensionContext): WorkflowStepRunner => ({
+    run: async (step, prompt, workflowContext) => {
+      const config = getAgentConfig(step.subagent_type);
+      const resolvedConfig = resolveAgentInvocationConfig(config, step, {
+        worktreeAllowed: isWorktreeIsolationEnabled(),
+      });
+
+      let model = ctx.model;
+      if (resolvedConfig.modelInput) {
+        const resolved = resolveModel(resolvedConfig.modelInput, ctx.modelRegistry);
+        if (typeof resolved === "string") {
+          if (resolvedConfig.modelFromParams) throw new Error(resolved);
+        } else {
+          model = resolved;
+        }
+      }
+      const scopeVerdict = checkModelScope({
+        model,
+        cwd: ctx.cwd,
+        modelRegistry: ctx.modelRegistry,
+        callerSupplied: resolvedConfig.modelFromParams,
+        agentLabel: config?.displayName ?? step.subagent_type,
+        modelInput: resolvedConfig.modelInput,
+      });
+      if (scopeVerdict.kind === "error") throw new Error(scopeVerdict.message);
+      if (scopeVerdict.kind === "warn") ctx.ui.notify(scopeVerdict.message, "warning");
+
+      const effectiveMaxTurns = normalizeMaxTurns(resolvedConfig.maxTurns ?? getDefaultMaxTurns());
+      const parentModelId = ctx.model?.id;
+      const effectiveModelId = model?.id;
+      const invocation: AgentInvocation = {
+        modelName: effectiveModelId && effectiveModelId !== parentModelId
+          ? (model?.name ?? effectiveModelId).replace(/^Claude\s+/i, "").toLowerCase()
+          : undefined,
+        thinking: resolvedConfig.thinking,
+        maxTurns: normalizeMaxTurns(resolvedConfig.maxTurns),
+        isolated: resolvedConfig.isolated,
+        inheritContext: false,
+        runInBackground: true,
+        isolation: resolvedConfig.isolation,
+      };
+      const { state, callbacks } = createActivityTracker(effectiveMaxTurns);
+      const outputTranscript = config?.outputTranscript ?? getOutputTranscriptDefault();
+
+      let id = "";
+      const originalOnSessionCreated = callbacks.onSessionCreated;
+      callbacks.onSessionCreated = (session: any) => {
+        originalOnSessionCreated(session);
+        const record = manager.getRecord(id);
+        if (record?.outputFile) {
+          record.outputCleanup = streamToOutputFile(session, record.outputFile, id, ctx.cwd);
+        }
+      };
+
+      id = manager.spawn(pi, ctx, step.subagent_type, prompt, {
+        description: `Workflow step: ${step.id}`,
+        model,
+        maxTurns: effectiveMaxTurns,
+        isolated: resolvedConfig.isolated,
+        inheritContext: false,
+        thinkingLevel: resolvedConfig.thinking,
+        isBackground: true,
+        isolation: resolvedConfig.isolation,
+        invocation,
+        signal: workflowContext.signal,
+        workflowId: workflowContext.workflowId,
+        workflowStepId: step.id,
+        rootSessionId: ctx.sessionManager.getSessionId(),
+        ...callbacks,
+      });
+      workflowContext.onAgentStarted(id);
+
+      const record = manager.getRecord(id);
+      if (!record) throw new Error(`Workflow step "${step.id}" disappeared after launch.`);
+      record.resultConsumed = !workflowManager.shouldNotifySteps(workflowContext.workflowId);
+      if (outputTranscript) {
+        record.outputFile = createOutputFilePath(ctx.cwd, id, ctx.sessionManager.getSessionId());
+        writeInitialEntry(record.outputFile, id, prompt, ctx.cwd);
+      }
+      agentActivity.set(id, state);
+      widget.ensureTimer();
+      widget.update();
+      fleet.ensureTimer();
+      fleet.update();
+      pi.events.emit("subagents:created", {
+        id,
+        type: step.subagent_type,
+        description: record.description,
+        isBackground: true,
+        workflowId: workflowContext.workflowId,
+        workflowStepId: step.id,
+      });
+
+      const abort = () => manager.abort(id);
+      workflowContext.signal.addEventListener("abort", abort, { once: true });
+      if (workflowContext.signal.aborted) abort();
+      try {
+        while (record.status === "queued") {
+          await new Promise<void>(resolve => setTimeout(resolve, QUEUE_WAIT_POLL_MS));
+        }
+        if (record.promise) await record.promise;
+      } finally {
+        workflowContext.signal.removeEventListener("abort", abort);
+      }
+
+      const successful = record.status === "completed" || record.status === "steered";
+      return {
+        status: successful
+          ? "completed"
+          : workflowContext.signal.aborted && record.status === "stopped"
+            ? "cancelled"
+            : "error",
+        output: record.result,
+        error: successful ? undefined : record.error ?? `Agent ended with status ${record.status}.`,
+        agentId: id,
+      };
+    },
+  });
+
+  pi.registerTool(defineTool({
+    name: "workflow_run",
+    label: "Run Workflow",
+    description:
+      "Launch a dependency-aware workflow of subagents. Independent steps run in parallel under the shared subagent concurrency limit. " +
+      "Use dynamic: true with workflow_update to add or change pending steps based on completed results. Workflow tools are available only to the root orchestrator; workflow steps cannot nest workflows.",
+    promptSnippet: "Launch a dynamic DAG workflow of subagents",
+    parameters: WorkflowDefinitionSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+      reloadCustomAgents();
+      try {
+        const result = workflowManager.start(
+          params,
+          resolveWorkflowType,
+          createWorkflowRunner(ctx),
+          manager.getMaxConcurrent(),
+        );
+        pi.events.emit("subagents:workflow_created", result);
+        return textResult(
+          `Workflow started.\nWorkflow ID: ${result.workflowId}\nName: ${result.name}\n` +
+          `Steps: ${result.steps.length}\nMode: ${result.dynamic ? "dynamic (call workflow_update with finish: true when the plan is complete)" : "automatic"}\n\n` +
+          "You will be notified when the workflow completes. Use get_workflow_result for aggregate status and per-step outputs.",
+        );
+      } catch (error) {
+        return textResult(error instanceof Error ? error.message : String(error));
+      }
+    },
+  }));
+
+  pi.registerTool(defineTool({
+    name: "workflow_update",
+    label: "Update Workflow",
+    description:
+      "Add steps or replace pending steps in a running workflow. Dependencies and references are revalidated atomically. " +
+      "Set finish: true to seal a dynamic workflow; it completes after all remaining steps settle.",
+    promptSnippet: "Adjust a running subagent workflow",
+    parameters: Type.Object({
+      workflow_id: Type.String(),
+      steps: Type.Optional(Type.Array(WorkflowStepSchema, { minItems: 1 })),
+      finish: Type.Optional(Type.Boolean()),
+    }, { additionalProperties: false }),
+    execute: async (_toolCallId, params) => {
+      reloadCustomAgents();
+      if (!params.steps && params.finish !== true) {
+        return textResult("workflow_update requires `steps` or `finish: true`.");
+      }
+      try {
+        let result = params.steps
+          ? workflowManager.update(params.workflow_id, params.steps as WorkflowStepDefinition[], resolveWorkflowType)
+          : workflowManager.get(params.workflow_id);
+        if (!result) return textResult(`Workflow not found: "${params.workflow_id}".`);
+        if (params.finish === true) result = workflowManager.finish(params.workflow_id);
+        return textResult(JSON.stringify(result, null, 2));
+      } catch (error) {
+        return textResult(error instanceof Error ? error.message : String(error));
+      }
+    },
+  }));
+
+  pi.registerTool(defineTool({
+    name: "get_workflow_result",
+    label: "Get Workflow Result",
+    description:
+      "Retrieve aggregate workflow status and per-step outputs. wait: true waits until terminal; a dynamic workflow must first be sealed with workflow_update finish: true.",
+    promptSnippet: "Get aggregate subagent workflow results",
+    parameters: Type.Object({
+      workflow_id: Type.String(),
+      wait: Type.Optional(Type.Boolean()),
+    }, { additionalProperties: false }),
+    execute: async (_toolCallId, params, signal) => {
+      let result = workflowManager.get(params.workflow_id);
+      if (!result) return textResult(`Workflow not found: "${params.workflow_id}".`);
+      if (params.wait && (result.status === "running" || result.status === "waiting")) {
+        const completion = workflowManager.wait(params.workflow_id);
+        if (completion) result = await abortable(completion, signal);
+      }
+      if (result.completedAt !== undefined) {
+        workflowManager.markConsumed(params.workflow_id);
+        cancelNudge(`workflow:${params.workflow_id}`);
+      }
+      return textResult(JSON.stringify(result, null, 2));
+    },
+  }));
+
+  pi.registerTool(defineTool({
+    name: "workflow_cancel",
+    label: "Cancel Workflow",
+    description: "Cancel a workflow. Pending steps are cancelled and running step agents are aborted.",
+    promptSnippet: "Cancel a running subagent workflow",
+    parameters: Type.Object({ workflow_id: Type.String() }, { additionalProperties: false }),
+    execute: async (_toolCallId, params) => {
+      try {
+        return textResult(JSON.stringify(workflowManager.cancel(params.workflow_id), null, 2));
+      } catch (error) {
+        return textResult(error instanceof Error ? error.message : String(error));
+      }
+    },
+  }));
 
   // ---- get_subagent_result tool ----
 

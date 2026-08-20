@@ -425,8 +425,9 @@ export class FleetList {
       ? { fallbackColor: "text", bold: hasAgentBadge(record.type) }
       : { fallbackColor: "muted" });
     const sideTag = record.sideConversation ? theme.fg("accent", "[btw] ") : "";
+    const workflowTag = record.workflowStepId ? theme.fg("accent", `[wf:${record.workflowStepId}] `) : "";
     const description = selected ? theme.fg("text", record.description) : record.description;
-    const left = `  ${this.bullet(rosterIndex, sel, theme)} ${sideTag}${name}  ${description}`;
+    const left = `  ${this.bullet(rosterIndex, sel, theme)} ${sideTag}${workflowTag}${name}  ${description}`;
     const tokens = getLifetimeTotal(this.agentActivity.get(record.id)?.lifetimeUsage ?? record.lifetimeUsage);
     const elapsedMs = (record.completedAt ?? Date.now()) - record.startedAt; // freezes once finished
     const stats = `${formatFleetElapsed(elapsedMs)} · ${formatFleetTokens(tokens)}`;

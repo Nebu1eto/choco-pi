@@ -216,6 +216,9 @@ export interface AgentRecord {
    * deliver them differently.
    */
   sideConversation?: boolean;
+  /** Aggregate workflow and step identity for FleetView grouping/tagging. */
+  workflowId?: string;
+  workflowStepId?: string;
   /** Nesting depth: top-level subagent = 1. */
   depth?: number;
   /** Parent agent ID for ownership-scoped nested controls. */
