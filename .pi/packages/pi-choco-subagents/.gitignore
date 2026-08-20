@@ -1,0 +1,6 @@
+# The runtime dependencies under node_modules/ are vendored on purpose (see
+# VENDORED.md) and must be committed: this package is loaded from source with no
+# install step, so nothing would restore them. Re-include them here rather than
+# relying on `git add -f`, which the repository-root `node_modules/` rule would
+# otherwise require on every change.
+!node_modules/

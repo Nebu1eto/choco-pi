@@ -4,10 +4,13 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 test("implementer role remains selected with model and thinking overrides", async () => {
-	const packageRoot = resolve(".pi/npm/node_modules/@tintinweb/pi-subagents/dist");
-	const { loadCustomAgents } = await import(pathToFileURL(resolve(packageRoot, "custom-agents.js")).href);
+	// The fork ships TypeScript source only (`pi.extensions: ["./src/index.ts"]`),
+	// so these load straight from `src/` under Node's type stripping instead of
+	// from a built `dist/`.
+	const packageRoot = resolve(".pi/packages/pi-choco-subagents/src");
+	const { loadCustomAgents } = await import(pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href);
 	const { resolveAgentInvocationConfig } = await import(
-		pathToFileURL(resolve(packageRoot, "invocation-config.js")).href
+		pathToFileURL(resolve(packageRoot, "invocation-config.ts")).href
 	);
 	const agents = loadCustomAgents(process.cwd());
 	const implementer = agents.get("implementer");
