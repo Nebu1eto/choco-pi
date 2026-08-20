@@ -1,4 +1,4 @@
-// pi-choco-codex: choco-pi fork of @howaboua/pi-codex-conversion.
+// choco-pi-codex: choco-pi fork of @howaboua/pi-codex-conversion.
 // Registers the kept feature set only: the Codex adapter (openai-codex /
 // openai-responses providers with server-side compaction), apply_patch,
 // web_run, imagegen, view_image, Code Mode, and the OpenAI websocket options.

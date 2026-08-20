@@ -1,4 +1,4 @@
-# VENDORED — pi-choco-lens
+# VENDORED — choco-pi-lsp
 
 choco-pi fork of **pi-lens**, loaded as a local TypeScript-source pi package.
 

@@ -1,5 +1,5 @@
 {
-	"name": "pi-choco-ui",
+	"name": "choco-pi-ui",
 	"version": "0.20.1",
 	"description": "choco-pi's TUI package: Starship-style footer, Opencode-style editor, and the Nord themes.",
 	"type": "module",

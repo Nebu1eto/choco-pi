@@ -1,4 +1,4 @@
-# Vendored: pi-choco-codex
+# Vendored: choco-pi-codex
 
 This directory is a **vendored, renamed, stripped fork** of the upstream
 open-source package **@howaboua/pi-codex-conversion**. This is not the original

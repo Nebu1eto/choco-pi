@@ -1,4 +1,4 @@
-# pi-choco-ui
+# choco-pi-ui
 
 choco-pi's TUI package: a Starship-inspired statusline, an Opencode-style
 editor, framed user messages, and the Nord themes for [Pi](https://pi.dev).
@@ -191,7 +191,7 @@ lists it as a path package:
 
 ```json
 {
-  "packages": ["./packages/pi-choco-ui"]
+  "packages": ["./packages/choco-pi-ui"]
 }
 ```
 
@@ -200,9 +200,9 @@ themes, so `"theme": "nord-dark"` needs no separate theme package.
 
 ## Config
 
-User config lives at `~/.pi/agent/pi-choco-ui.json`; a pre-existing
-`~/.pi/agent/zentui.json` is still read and written when the new file is
-absent. The file is optional: missing or invalid known values fall back to choco-ui defaults, unknown keys are ignored at runtime, and `/zentui` can patch color-source settings, UI feature toggles, built-in footer segment visibility, and active third-party status placements.
+User config lives at `~/.pi/agent/choco-pi-ui.json`; a pre-existing
+`~/.pi/agent/pi-choco-ui.json` or `~/.pi/agent/zentui.json` is still read and
+written when the preferred file is absent. The file is optional: missing or invalid known values fall back to choco-ui defaults, unknown keys are ignored at runtime, and `/zentui` can patch color-source settings, UI feature toggles, built-in footer segment visibility, and active third-party status placements.
 
 The interactive `/zentui` menu is split into exactly eight component-oriented sections, in this order. Use `Tab` and `Shift+Tab` to switch sections:
 
@@ -471,7 +471,7 @@ Footer visibility is controlled by `components.footer.style`: use `starship`, `n
 
 ## Editor Metadata Format
 
-Set `metadataFormat` under either opencode style in `~/.pi/agent/pi-choco-ui.json` to customize that style's metadata row. The two variants retain independent values:
+Set `metadataFormat` under either opencode style in `~/.pi/agent/choco-pi-ui.json` to customize that style's metadata row. The two variants retain independent values:
 
 ```json
 {

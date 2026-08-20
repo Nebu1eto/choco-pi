@@ -1,6 +1,6 @@
-# Vendored: pi-choco-ui
+# Vendored: choco-pi-ui
 
-`pi-choco-ui` is choco-pi's local TUI package. It is not original work: it
+`choco-pi-ui` is choco-pi's local TUI package. It is not original work: it
 combines a pinned fork of the upstream **pi-zentui** extension with the theme
 files of the upstream **@maddeye/pi-nord** theme package. Both upstreams are
 MIT-licensed and keep their own copyright.
@@ -24,9 +24,10 @@ the style IDs are user-config values on disk.
 ### choco-pi change: config file name
 
 `extensions/zentui/config.ts` now resolves its config file as
-`<agent dir>/pi-choco-ui.json`, falling back to `<agent dir>/zentui.json` when
-only the legacy file exists. Reads and saves always use the same resolved file,
-so an existing `zentui.json` keeps working untouched.
+`<agent dir>/choco-pi-ui.json`, falling back first to
+`<agent dir>/pi-choco-ui.json` and then to `<agent dir>/zentui.json`. Reads and
+saves always use the same resolved file, so existing legacy files keep working
+untouched.
 
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
 

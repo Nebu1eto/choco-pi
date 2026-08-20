@@ -1,5 +1,5 @@
 {
-  "name": "pi-choco-goal",
+  "name": "choco-pi-goal",
   "version": "0.2.0",
   "description": "Codex-style persistent goal tracking and continuation for choco-pi.",
   "type": "module",

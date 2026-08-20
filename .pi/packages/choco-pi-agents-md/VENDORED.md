@@ -1,4 +1,4 @@
-# Vendored: pi-choco-agents-md
+# Vendored: choco-pi-agents-md
 
 This directory is **not** a vendored copy of any upstream package. It is a
 from-scratch reimplementation written for choco-pi.

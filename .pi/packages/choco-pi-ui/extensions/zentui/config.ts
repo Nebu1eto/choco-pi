@@ -404,20 +404,24 @@ export const FOOTER_FORMAT_ALIASES: Record<string, string> = {
 };
 
 /** Canonical config file name for this package. */
-export const CONFIG_FILE_NAME = "pi-choco-ui.json";
-/** Pre-rename file name, still read when the canonical file is absent. */
-export const LEGACY_CONFIG_FILE_NAME = "zentui.json";
+export const CONFIG_FILE_NAME = "choco-pi-ui.json";
+/** Previous package config name, still read when the canonical file is absent. */
+export const LEGACY_CONFIG_FILE_NAME = "pi-choco-ui.json";
+/** Original upstream config name, used as the final migration fallback. */
+export const UPSTREAM_CONFIG_FILE_NAME = "zentui.json";
 
 /**
- * Prefer the canonical file; fall back to the legacy one only while it exists
- * on its own, so an existing install keeps both reads and saves on the file the
- * user already has. With neither present, saves create the canonical file.
+ * Prefer the canonical file, then each migration fallback in rename order, so
+ * an existing install keeps both reads and saves on the file the user already
+ * has. With none present, saves create the canonical file.
  */
 function resolveConfigPath(agentDir: string = getAgentDir()): string {
 	const canonical = join(agentDir, CONFIG_FILE_NAME);
 	if (existsSync(canonical)) return canonical;
 	const legacy = join(agentDir, LEGACY_CONFIG_FILE_NAME);
-	return existsSync(legacy) ? legacy : canonical;
+	if (existsSync(legacy)) return legacy;
+	const upstream = join(agentDir, UPSTREAM_CONFIG_FILE_NAME);
+	return existsSync(upstream) ? upstream : canonical;
 }
 
 export const configPath = resolveConfigPath();

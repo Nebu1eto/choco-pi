@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 // The package ships TypeScript source only (`pi.extensions: ["./index.ts"]`),
 // so these load straight from `src/` under Node's type stripping instead of
 // from a built `dist/`. Mirrors tests/subagent-config.test.ts.
-const packageRoot = resolve(".pi/packages/pi-choco-agents-md/src");
+const packageRoot = resolve(".pi/packages/choco-pi-agents-md/src");
 
 async function loadSubdir() {
 	return import(pathToFileURL(resolve(packageRoot, "subdir.ts")).href);
@@ -46,7 +46,7 @@ function createStubPi() {
 }
 
 function makeTmpTree(): string {
-	return fs.mkdtempSync(path.join(os.tmpdir(), "pi-choco-agents-md-"));
+	return fs.mkdtempSync(path.join(os.tmpdir(), "choco-pi-agents-md-"));
 }
 
 function writeAgents(dir: string, content: string): void {
