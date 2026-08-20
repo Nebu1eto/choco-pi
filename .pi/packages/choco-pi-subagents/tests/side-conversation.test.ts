@@ -15,11 +15,23 @@ const theme = {
   bold: (text: string) => text,
 };
 
+function partialFixture<T extends object>(fixture: Partial<T>): T {
+  // SAFETY: Each test supplies the named slice exercised by its subject.
+  return fixture as T;
+}
+
+function startAgentHarness(manager: AgentManager): StartAgentHarness {
+  // SAFETY: This test replaces only the named startAgent private seam.
+  return manager as StartAgentHarness;
+}
+
 function makeMainContext() {
   const sessionManager = SessionManager.inMemory("/project");
   sessionManager.appendThinkingLevelChange("high");
   sessionManager.appendModelChange("openai", "main-model");
+  // SAFETY: This is a complete user message accepted by SessionManager's runtime message union.
   sessionManager.appendMessage({ role: "user", content: "Remember ZEBRA-41." } as never);
+  // SAFETY: This fixture supplies every assistant-message field consumed by SessionManager.
   sessionManager.appendMessage({
     role: "assistant",
     content: [
@@ -32,6 +44,7 @@ function makeMainContext() {
     stopReason: "toolUse",
     timestamp: Date.now(),
   } as never);
+  // SAFETY: This fixture supplies every tool-result field consumed by SessionManager.
   sessionManager.appendMessage({
     role: "toolResult",
     toolCallId: "read-1",
@@ -40,6 +53,7 @@ function makeMainContext() {
     isError: false,
     timestamp: Date.now(),
   } as never);
+  // SAFETY: This fixture supplies every assistant-message field consumed by SessionManager.
   sessionManager.appendMessage({
     role: "assistant",
     content: [{ type: "text", text: "The workflow cancel path is under review." }],
@@ -50,6 +64,7 @@ function makeMainContext() {
     timestamp: Date.now(),
   } as never);
 
+  // SAFETY: Fork capture reads only the context fields implemented by this fixture.
   return {
     cwd: "/project",
     sessionManager,
@@ -61,7 +76,7 @@ function makeMainContext() {
 
 function makeSession(answer = "side answer") {
   const listeners = new Set<() => void>();
-  return {
+  return partialFixture<AgentSession>({
     messages: [
       { role: "user", content: "quick question" },
       { role: "assistant", content: [{ type: "text", text: answer }] },
@@ -70,7 +85,7 @@ function makeSession(answer = "side answer") {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-  } as unknown as AgentSession;
+  });
 }
 
 function makeRecord(session = makeSession()): AgentRecord {
@@ -115,22 +130,29 @@ function overlayHarness(record: AgentRecord) {
   };
 }
 
+interface CapturedRunOptions {
+  mainSessionFork?: MainSessionFork;
+  inheritContext?: boolean;
+  readOnly?: boolean;
+  rootSessionId?: string;
+}
+
+interface StartAgentHarness {
+  startAgent: (_id: string, _record: AgentRecord, args: { options: CapturedRunOptions }) => void;
+}
+
 test("side launch forks the main session state without a context preamble", () => {
   const manager = new AgentManager();
-  let capturedOptions:
-    | (Record<string, unknown> & { mainSessionFork?: MainSessionFork })
-    | undefined;
-  (manager as unknown as { startAgent: (...args: any[]) => void }).startAgent = (
-    _id,
-    _record,
-    args,
-  ) => {
+  let capturedOptions: CapturedRunOptions | undefined;
+  const managerHarness = startAgentHarness(manager);
+  managerHarness.startAgent = (_id, _record, args) => {
     capturedOptions = args.options;
   };
   const controller = new SideConversationController(manager);
 
   const ctx = makeMainContext();
   const question = "How does focus mode compose?";
+  // SAFETY: The stubbed startAgent path does not inspect the ExtensionAPI fixture.
   const id = controller.launch({} as never, ctx, "general-purpose", question);
   const record = manager.getRecord(id);
 
@@ -154,6 +176,7 @@ test("side launch forks the main session state without a context preamble", () =
   assert.equal(fork.model, ctx.model);
   assert.equal(fork.thinkingLevel, "high");
 
+  // SAFETY: Captured launch options contain the two fields buildEffectivePrompt reads.
   const effectivePrompt = buildEffectivePrompt(ctx, question, capturedOptions as never);
   assert.equal(effectivePrompt, question);
   assert.doesNotMatch(effectivePrompt, /# Parent Conversation Context/);
@@ -166,6 +189,7 @@ test("capturing a main-session fork does not move or append to the main branch",
   const parentLeaf = ctx.sessionManager.getLeafId();
 
   const fork = captureMainSessionFork(ctx);
+  // SAFETY: This is a complete user message accepted by SessionManager's runtime message union.
   fork.sessionManager.appendMessage({ role: "user", content: "side-only turn" } as never);
 
   assert.equal(ctx.sessionManager.getLeafId(), parentLeaf);
@@ -176,7 +200,7 @@ test("capturing a main-session fork does not move or append to the main branch",
 test("side overlay presents the answer and Esc dismisses without stopping the agent", async () => {
   const record = makeRecord(makeSession("answer visible in overlay"));
   let abortCalls = 0;
-  const manager = {
+  const manager = partialFixture<AgentManager>({
     getRecord: () => record,
     steer: () => true,
     resume: async () => record,
@@ -184,7 +208,7 @@ test("side overlay presents the answer and Esc dismisses without stopping the ag
       abortCalls++;
       return true;
     },
-  } as unknown as AgentManager;
+  });
   const harness = overlayHarness(record);
   const controller = new SideConversationController(manager);
   controller.setUICtx(harness.ui);
@@ -205,14 +229,14 @@ test("side overlay composer routes input to the side agent", () => {
   const record = makeRecord();
   const steers: Array<{ id: string; message: string }> = [];
   const events: Array<{ id: string; message: string }> = [];
-  const manager = {
+  const manager = partialFixture<AgentManager>({
     getRecord: () => record,
     steer(id: string, message: string) {
       steers.push({ id, message });
       return true;
     },
     resume: async () => record,
-  } as unknown as AgentManager;
+  });
   const harness = overlayHarness(record);
   const controller = new SideConversationController(manager, {
     onSteered: (id, message) => events.push({ id, message }),

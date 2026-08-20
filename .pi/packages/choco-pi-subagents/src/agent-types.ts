@@ -130,7 +130,7 @@ export function isValidTypeIn(registry: Map<string, AgentConfig>, type: string):
 /** Get all enabled type names in a registry (for spawning and tool descriptions). */
 export function getAvailableTypesIn(registry: Map<string, AgentConfig>): string[] {
   return [...registry.entries()]
-    .filter(([_, config]) => config.enabled !== false)
+    .filter(([, config]) => config.enabled !== false)
     .map(([name]) => name);
 }
 
@@ -159,9 +159,9 @@ function resolveUnambiguousKeyIn(
  */
 export function resolveEnabledTypeIn(
   registry: Map<string, AgentConfig>,
-  requested: unknown,
+  requested: string | null | undefined,
 ): string | undefined {
-  const raw = typeof requested === "string" ? requested.trim() : "";
+  const raw = requested?.trim() ?? "";
   if (!raw) return undefined;
   const key = resolveUnambiguousKeyIn(registry, raw);
   return key !== undefined && registry.get(key)?.enabled !== false ? key : undefined;
@@ -190,9 +190,9 @@ export type SpawnTypeResolution =
  */
 export function resolveSpawnTypeIn(
   registry: Map<string, AgentConfig>,
-  requested: unknown,
+  requested: string | null | undefined,
 ): SpawnTypeResolution {
-  const raw = typeof requested === "string" ? requested.trim() : "";
+  const raw = requested?.trim() ?? "";
   const available = () => getAvailableTypesIn(registry).join(", ") || "(none)";
 
   const key = resolveEnabledTypeIn(registry, raw);
@@ -205,7 +205,7 @@ export function resolveSpawnTypeIn(
 
   // Trimmed like `requested`: a padded value set programmatically would
   // otherwise be reported as a missing agent.
-  const configured = typeof fallbackSubagent === "string" ? fallbackSubagent.trim() : undefined;
+  const configured = fallbackSubagent?.trim();
 
   if (configured !== undefined && configured.toLowerCase() === NO_FALLBACK) {
     return { ok: false, message: `${reason} Available: ${available()}.` };
@@ -236,7 +236,7 @@ export function resolveSpawnTypeIn(
 }
 
 /** Resolve a caller-supplied agent type against the process-wide registry. */
-export function resolveSpawnType(requested: unknown): SpawnTypeResolution {
+export function resolveSpawnType(requested: string | null | undefined): SpawnTypeResolution {
   return resolveSpawnTypeIn(agents, requested);
 }
 
@@ -263,14 +263,14 @@ export function getAllTypes(): string[] {
 /** Get names of default agents currently in the registry. */
 export function getDefaultAgentNames(): string[] {
   return [...agents.entries()]
-    .filter(([_, config]) => config.isDefault === true)
+    .filter(([, config]) => config.isDefault === true)
     .map(([name]) => name);
 }
 
 /** Get names of user-defined agents (non-defaults) currently in the registry. */
 export function getUserAgentNames(): string[] {
   return [...agents.entries()]
-    .filter(([_, config]) => config.isDefault !== true)
+    .filter(([, config]) => config.isDefault !== true)
     .map(([name]) => name);
 }
 
@@ -309,8 +309,7 @@ export function getToolNamesForType(type: string): string[] {
   return config?.builtinToolNames ?? [...BUILTIN_TOOL_NAMES];
 }
 
-/** Get config for a type (case-insensitive, returns a SubagentTypeConfig-compatible object). Falls back to general-purpose. */
-export function getConfig(type: string): {
+export interface ResolvedAgentConfig {
   displayName: string;
   color?: string;
   description: string;
@@ -319,7 +318,10 @@ export function getConfig(type: string): {
   excludeExtensions?: string[];
   skills: true | string[] | false;
   promptMode: "replace" | "append";
-} {
+}
+
+/** Get config for a type (case-insensitive, returns a SubagentTypeConfig-compatible object). Falls back to general-purpose. */
+export function getConfig(type: string): ResolvedAgentConfig {
   const key = resolveKey(type);
   const config = key ? agents.get(key) : undefined;
   if (config && config.enabled !== false) {

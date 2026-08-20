@@ -73,6 +73,18 @@ import { runInChildSessionContext } from "./child-context.ts";
 import { agentMentionReminder } from "./mention.ts";
 import type { SubagentType, ThinkingLevel } from "./types.ts";
 
+interface ModelRegistryWithRuntime {
+  runtime?: unknown;
+}
+
+interface ContextWithThinkingLevel {
+  thinkingLevel?: ThinkingLevel;
+}
+
+interface MentionAgentToolParams {
+  run_in_background?: boolean;
+}
+
 export interface MentionCloneOptions {
   /** The MAIN session's context — what the spawn is attributed to, and the
    * source of both the conversation and the live system prompt. */
@@ -125,9 +137,10 @@ export async function runMentionClone(opts: MentionCloneOptions): Promise<Mentio
       // false, and a foreground agent answers through its TOOL RESULT — which
       // here is delivered into a session that is disposed moments later, so the
       // agent would run, appear in the widget and the fleet, and reach nobody.
+      // SAFETY: Agent tool execution accepts an absent tool-call id for this synthetic in-memory call.
       return agentTool.execute(
         undefined as never,
-        { ...(params as Record<string, unknown>), run_in_background: true } as typeof params,
+        { ...(params as MentionAgentToolParams), run_in_background: true },
         signal,
         onUpdate,
         ctx,
@@ -140,7 +153,9 @@ export async function runMentionClone(opts: MentionCloneOptions): Promise<Mentio
     // Pi 0.80.8 moved createAgentSession from modelRegistry to modelRuntime;
     // agent-runner.ts carries the same shim for the same reason — pass both so
     // the clone keeps the parent's providers across the supported range.
-    const parentModelRuntime = (ctx.modelRegistry as unknown as { runtime?: unknown }).runtime;
+    // SAFETY: Supported Pi registries may expose the optional runtime field before their public facade types do.
+    const registryFacade = Object(ctx.modelRegistry) as ModelRegistryWithRuntime;
+    const parentModelRuntime = registryFacade.runtime;
     // The conversation as the main session resolves it: compaction applied,
     // branch summaries substituted.
     const conversation = buildSessionContext(
@@ -150,7 +165,9 @@ export async function runMentionClone(opts: MentionCloneOptions): Promise<Mentio
     // Pi 0.82.0 added this; below it the field is absent and the clone takes
     // the settings level instead, which is what a session that never ran
     // `/think` is on anyway. Same shim shape as `modelRuntime` below.
-    const thinkingLevel = (ctx as { thinkingLevel?: ThinkingLevel }).thinkingLevel;
+    // SAFETY: Pi 0.82+ ExtensionContext instances own this optional documented thinking level.
+    const thinkingLevel = (ctx as ContextWithThinkingLevel).thinkingLevel;
+    // SAFETY: The compatibility-only modelRuntime and model generic match the parent session that owns both values.
     const created = await runInChildSessionContext(() =>
       createAgentSession({
         cwd: ctx.cwd,

@@ -33,6 +33,25 @@ export type ScheduleChangeEvent =
   | { type: "error"; jobId: string; error: string };
 
 /** Params accepted at job creation — ID, timestamps, and state are derived. */
+export interface ScheduleDetection {
+  type: "cron" | "once" | "interval";
+  intervalMs?: number;
+  normalized: string;
+}
+
+export interface CronValidation {
+  valid: boolean;
+  error?: string;
+}
+
+function durationUnitMs(unit: string | undefined): number {
+  if (unit === "s") return 1000;
+  if (unit === "m") return 60_000;
+  if (unit === "h") return 3_600_000;
+  if (unit === "d") return 86_400_000;
+  return Number.NaN;
+}
+
 export interface NewJobInput {
   name: string;
   description: string;
@@ -246,8 +265,14 @@ export class SubagentScheduler {
     // if resolution fails; the spawn path handles undefined model gracefully.
     let resolvedModel: any | undefined;
     if (job.model) {
-      const r = resolveModel(job.model, ctx.modelRegistry);
-      if (typeof r !== "string") resolvedModel = r;
+      const resolution = resolveModel(job.model, ctx.modelRegistry);
+      switch (resolution.tag) {
+        case "resolved":
+          resolvedModel = resolution.model;
+          break;
+        case "error":
+          break;
+      }
     }
 
     let agentId: string;
@@ -325,11 +350,7 @@ export class SubagentScheduler {
    * Order matters: relative ("+10m") and interval ("5m") both match digit+unit;
    * relative requires the leading "+" to disambiguate.
    */
-  static detectSchedule(s: string): {
-    type: "cron" | "once" | "interval";
-    intervalMs?: number;
-    normalized: string;
-  } {
+  static detectSchedule(s: string): ScheduleDetection {
     const trimmed = s.trim();
     // "+10m" — relative one-shot
     const rel = SubagentScheduler.parseRelativeTime(trimmed);
@@ -358,7 +379,7 @@ export class SubagentScheduler {
   }
 
   /** 6-field cron — 'second minute hour dom month dow'. */
-  static validateCronExpression(expr: string): { valid: boolean; error?: string } {
+  static validateCronExpression(expr: string): CronValidation {
     const fields = expr.trim().split(/\s+/);
     if (fields.length !== 6) {
       return {
@@ -379,9 +400,7 @@ export class SubagentScheduler {
   static parseRelativeTime(s: string): string | null {
     const m = s.match(/^\+(\d+)(s|m|h|d)$/);
     if (!m) return null;
-    const ms =
-      parseInt(m[1], 10) *
-      { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "s" | "m" | "h" | "d"];
+    const ms = parseInt(m[1], 10) * durationUnitMs(m[2]);
     return new Date(Date.now() + ms).toISOString();
   }
 
@@ -389,9 +408,6 @@ export class SubagentScheduler {
   static parseInterval(s: string): number | null {
     const m = s.match(/^(\d+)(s|m|h|d)$/);
     if (!m) return null;
-    return (
-      parseInt(m[1], 10) *
-      { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "s" | "m" | "h" | "d"]
-    );
+    return parseInt(m[1], 10) * durationUnitMs(m[2]);
   }
 }

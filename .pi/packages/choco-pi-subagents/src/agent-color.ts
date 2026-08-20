@@ -9,40 +9,52 @@
 
 import { getConfig } from "./agent-types.ts";
 
-const NAMED_AGENT_COLORS: Readonly<Record<string, string>> = {
-  // Claude Code's eight subagent colors, as its default theme renders them.
-  red: "#DC2626",
-  blue: "#6A9BCC",
-  green: "#16A34A",
-  yellow: "#CA8A04",
-  purple: "#827DBD",
-  orange: "#D97757",
-  pink: "#C46686",
-  cyan: "#0891B2",
-  // Agency Agents palette aliases.
-  amber: "#F59E0B",
-  teal: "#008080",
-  indigo: "#6366F1",
-  gold: "#EAB308",
-  "neon-green": "#10B981",
-  "neon-cyan": "#06B6D4",
-  "metallic-blue": "#3B82F6",
-  violet: "#8B5CF6",
-  rose: "#F43F5E",
-  lime: "#84CC16",
-  gray: "#6B7280",
-  grey: "#6B7280",
-  fuchsia: "#D946EF",
-  slate: "#64748B",
-  navy: "#1E3A8A",
-};
+const NAMED_AGENT_COLORS = new Map(
+  Object.entries({
+    // Claude Code's eight subagent colors, as its default theme renders them.
+    red: "#DC2626",
+    blue: "#6A9BCC",
+    green: "#16A34A",
+    yellow: "#CA8A04",
+    purple: "#827DBD",
+    orange: "#D97757",
+    pink: "#C46686",
+    cyan: "#0891B2",
+    // Agency Agents palette aliases.
+    amber: "#F59E0B",
+    teal: "#008080",
+    indigo: "#6366F1",
+    gold: "#EAB308",
+    "neon-green": "#10B981",
+    "neon-cyan": "#06B6D4",
+    "metallic-blue": "#3B82F6",
+    violet: "#8B5CF6",
+    rose: "#F43F5E",
+    lime: "#84CC16",
+    gray: "#6B7280",
+    grey: "#6B7280",
+    fuchsia: "#D946EF",
+    slate: "#64748B",
+    navy: "#1E3A8A",
+  }),
+);
 
 const CUBE_VALUES = [0, 95, 135, 175, 215, 255];
 const GRAY_VALUES = Array.from({ length: 24 }, (_, i) => 8 + i * 10);
 const BLACK = { r: 0, g: 0, b: 0 };
 const WHITE = { r: 255, g: 255, b: 255 };
 
-type Rgb = { r: number; g: number; b: number };
+interface Rgb {
+  r: number;
+  g: number;
+  b: number;
+}
+
+interface QuantizedColor {
+  index: number;
+  rgb: Rgb;
+}
+
 type ColorMode = "truecolor" | "256color";
 
 export interface AgentNameTheme {
@@ -63,7 +75,7 @@ export interface AgentNameStyle {
 export function resolveAgentColor(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const normalized = value.trim().toLowerCase();
-  const resolved = NAMED_AGENT_COLORS[normalized] ?? normalized;
+  const resolved = NAMED_AGENT_COLORS.get(normalized) ?? normalized;
   return /^#[0-9a-f]{6}$/i.test(resolved) ? resolved.toUpperCase() : undefined;
 }
 
@@ -88,7 +100,7 @@ function nearest(values: readonly number[], value: number): number {
  * the index to emit and the color the terminal will actually show — badge
  * contrast is judged against the latter.
  */
-function rgbTo256({ r, g, b }: Rgb): { index: number; rgb: Rgb } {
+function rgbTo256({ r, g, b }: Rgb): QuantizedColor {
   const [rIndex, gIndex, bIndex] = [r, g, b].map((channel) => nearest(CUBE_VALUES, channel));
   const distance = ({ r: cr, g: cg, b: cb }: Rgb) =>
     0.299 * (r - cr) ** 2 + 0.587 * (g - cg) ** 2 + 0.114 * (b - cb) ** 2;
@@ -102,11 +114,14 @@ function rgbTo256({ r, g, b }: Rgb): { index: number; rgb: Rgb } {
   return { index: 16 + 36 * rIndex + 6 * gIndex + bIndex, rgb: cube };
 }
 
-function ansiColor(layer: "foreground" | "background", color: Rgb | number): string {
+function ansiIndexedColor(layer: "foreground" | "background", color: number): string {
   const code = layer === "foreground" ? 38 : 48;
-  return typeof color === "number"
-    ? `\u001b[${code};5;${color}m`
-    : `\u001b[${code};2;${color.r};${color.g};${color.b}m`;
+  return `\u001b[${code};5;${color}m`;
+}
+
+function ansiRgbColor(layer: "foreground" | "background", color: Rgb): string {
+  const code = layer === "foreground" ? 38 : 48;
+  return `\u001b[${code};2;${color.r};${color.g};${color.b}m`;
 }
 
 function relativeLuminance({ r, g, b }: Rgb): number {
@@ -142,13 +157,13 @@ export function renderAgentNameLabel(
   const contrasting = relativeLuminance(shown) > 0.179 ? BLACK : WHITE;
   const label = style.bold ? theme.bold(` ${name} `) : ` ${name} `;
 
-  return (
-    ansiColor("background", quantized?.index ?? rgb) +
-    ansiColor("foreground", quantized ? rgbTo256(contrasting).index : contrasting) +
-    label +
-    "\u001b[39m" +
-    (style.restoreBackground ?? "\u001b[49m")
-  );
+  const background = quantized
+    ? ansiIndexedColor("background", quantized.index)
+    : ansiRgbColor("background", rgb);
+  const foreground = quantized
+    ? ansiIndexedColor("foreground", rgbTo256(contrasting).index)
+    : ansiRgbColor("foreground", contrasting);
+  return background + foreground + label + "\u001b[39m" + (style.restoreBackground ?? "\u001b[49m");
 }
 
 /** Whether an agent renders as a badge — i.e. it has a valid configured color. */

@@ -32,6 +32,33 @@ import type { AgentConfig } from "./types.ts";
 
 export type AgentFileLocation = "project" | "workspace" | "personal";
 
+export interface AgentFileReference {
+  path: string;
+  location: AgentFileLocation;
+}
+
+interface FrontmatterBlock {
+  lines: string[];
+  openIdx: number;
+  closeIdx: number;
+  eol: string;
+}
+
+interface EnabledFrontmatter {
+  [key: string]: string | number | boolean | null | undefined;
+  enabled?: string | number | boolean | null;
+}
+
+export interface DisableResult {
+  content: string;
+  outcome: DisableOutcome;
+}
+
+export interface EnableResult {
+  content: string;
+  changed: boolean;
+}
+
 export const projectAgentsDir = (cwd: string = process.cwd()) => join(cwd, ".pi", "agents");
 export const workspaceAgentsDir = (cwd: string = process.cwd()) => join(cwd, ".agents", "agents");
 export const personalAgentsDir = () => join(getAgentDir(), "agents");
@@ -45,7 +72,7 @@ export const personalAgentsDir = () => join(getAgentDir(), "agents");
 export function findAgentFile(
   name: string,
   cwd: string = process.cwd(),
-): { path: string; location: AgentFileLocation } | undefined {
+): AgentFileReference | undefined {
   const projectPath = join(projectAgentsDir(cwd), `${name}.md`);
   if (existsSync(projectPath)) return { path: projectPath, location: "project" };
   const workspacePath = join(workspaceAgentsDir(cwd), `${name}.md`);
@@ -73,7 +100,7 @@ export function locateAgentFile(
   name: string,
   sourcePath: string | undefined,
   cwd: string = process.cwd(),
-): { path: string; location: AgentFileLocation } | undefined {
+): AgentFileReference | undefined {
   if (sourcePath && existsSync(sourcePath)) {
     return { path: sourcePath, location: classifyAgentDir(sourcePath, cwd) };
   }
@@ -108,9 +135,7 @@ const FENCE = /^---[ \t]*$/;
  * usable block — notably for a BOM-prefixed file, which the parser also reads
  * as having none, so writing a key into it would change nothing on load.
  */
-function splitFrontmatter(
-  content: string,
-): { lines: string[]; openIdx: number; closeIdx: number; eol: string } | undefined {
+function splitFrontmatter(content: string): FrontmatterBlock | undefined {
   const lines = content.split(/(?<=\n)/);
   if (lines.length === 0 || !FENCE.test(lines[0].replace(/\r?\n$/, ""))) return undefined;
   const closeIdx = lines.findIndex((l, i) => i > 0 && FENCE.test(l.replace(/\r?\n$/, "")));
@@ -131,7 +156,7 @@ function splitFrontmatter(
  */
 export function isDisabledContent(content: string): boolean {
   try {
-    return parseFrontmatter<Record<string, unknown>>(content).frontmatter.enabled === false;
+    return parseFrontmatter<EnabledFrontmatter>(content).frontmatter.enabled === false;
   } catch {
     return false;
   }
@@ -143,7 +168,7 @@ export function isDisabledContent(content: string): boolean {
  * `outcome` distinguishes a real edit from a no-op so the caller can report
  * honestly instead of unconditionally claiming success.
  */
-export function disableInContent(content: string): { content: string; outcome: DisableOutcome } {
+export function disableInContent(content: string): DisableResult {
   const block = splitFrontmatter(content);
   if (!block) return { content, outcome: "no-frontmatter" };
   if (isDisabledContent(content)) return { content, outcome: "already-disabled" };
@@ -160,7 +185,7 @@ export function disableInContent(content: string): { content: string; outcome: D
  * `changed` is false when the key wasn't found, so the caller can avoid
  * reporting "Enabled <name>" for a write that did nothing.
  */
-export function enableInContent(content: string): { content: string; changed: boolean } {
+export function enableInContent(content: string): EnableResult {
   const block = splitFrontmatter(content);
   if (!block) return { content, changed: false };
   const kept = block.lines.filter(

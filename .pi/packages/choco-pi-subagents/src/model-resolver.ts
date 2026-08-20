@@ -14,14 +14,15 @@ export interface ModelRegistry {
   getAvailable?(): any[];
 }
 
+export type ModelResolution = { tag: "resolved"; model: any } | { tag: "error"; message: string };
+
 /**
  * Resolve a model string to a Model instance.
  * Tries exact match first ("provider/modelId"), then fuzzy match against all available models.
- * Returns the Model on success, or an error message string on failure.
  */
-export function resolveModel(input: string, registry: ModelRegistry): any | string {
+export function resolveModel(input: string, registry: ModelRegistry): ModelResolution {
   // Available models (those with auth configured)
-  const all = (registry.getAvailable?.() ?? registry.getAll()) as ModelEntry[];
+  const all: ModelEntry[] = registry.getAvailable?.() ?? registry.getAll();
   const availableSet = new Set(all.map((m) => `${m.provider}/${m.id}`.toLowerCase()));
 
   // 1. Exact match: "provider/modelId" — only if available (has auth)
@@ -31,7 +32,7 @@ export function resolveModel(input: string, registry: ModelRegistry): any | stri
     const modelId = input.slice(slashIdx + 1);
     if (availableSet.has(input.toLowerCase())) {
       const found = registry.find(provider, modelId);
-      if (found) return found;
+      if (found) return { tag: "resolved", model: found };
     }
   }
 
@@ -82,7 +83,7 @@ export function resolveModel(input: string, registry: ModelRegistry): any | stri
 
   if (bestMatch && bestScore >= 20) {
     const found = registry.find(bestMatch.provider, bestMatch.id);
-    if (found) return found;
+    if (found) return { tag: "resolved", model: found };
   }
 
   // 3. Provider fallback: a "provider/modelId" query that didn't match under the
@@ -91,7 +92,12 @@ export function resolveModel(input: string, registry: ModelRegistry): any | stri
   // so the same model from another provider beats falling back to "inherit".
   if (slashIdx !== -1) {
     const bare = resolveModel(input.slice(slashIdx + 1), registry);
-    if (typeof bare !== "string") return bare;
+    switch (bare.tag) {
+      case "resolved":
+        return bare;
+      case "error":
+        break;
+    }
   }
 
   // 4. No match — list available models
@@ -99,5 +105,8 @@ export function resolveModel(input: string, registry: ModelRegistry): any | stri
     .map((m) => `  ${m.provider}/${m.id}`)
     .sort()
     .join("\n");
-  return `Model not found: "${input}".\n\nAvailable models:\n${modelList}`;
+  return {
+    tag: "error",
+    message: `Model not found: "${input}".\n\nAvailable models:\n${modelList}`,
+  };
 }

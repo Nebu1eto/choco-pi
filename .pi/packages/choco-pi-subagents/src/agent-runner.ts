@@ -17,6 +17,8 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import {
   BUILTIN_TOOL_NAMES,
   getAgentConfig,
@@ -42,6 +44,56 @@ import {
 } from "./prompts.ts";
 import { preloadSkills } from "./skill-loader.ts";
 import type { SubagentType, ThinkingLevel } from "./types.ts";
+
+interface ModelRegistryWithRuntime {
+  runtime?: unknown;
+}
+
+interface HostAssistantTrace {
+  errorMessage?: any;
+  usage?: any;
+}
+
+interface HostToolCallTrace {
+  type?: string;
+  name?: any;
+  toolName?: any;
+}
+
+interface AssistantUsage {
+  input: number;
+  output: number;
+  cacheWrite: number;
+}
+
+const HostStringSchema = Type.String();
+const HostNumberSchema = Type.Number();
+
+function hostString(value: any): string | undefined {
+  return Value.Check(HostStringSchema, value) ? value : undefined;
+}
+
+function hostNumber(value: any): number | undefined {
+  return Value.Check(HostNumberSchema, value) ? value : undefined;
+}
+
+function assistantErrorMessage(message: HostAssistantTrace): string | undefined {
+  return hostString(message.errorMessage)?.trim();
+}
+
+function assistantUsage(message: HostAssistantTrace): AssistantUsage | undefined {
+  const usage = message.usage;
+  if (!usage || Object(usage) !== usage) return undefined;
+  return {
+    input: hostNumber(usage.input) ?? 0,
+    output: hostNumber(usage.output) ?? 0,
+    cacheWrite: hostNumber(usage.cacheWrite) ?? 0,
+  };
+}
+
+function hostToolCallName(trace: HostToolCallTrace): string {
+  return hostString(trace.name) ?? hostString(trace.toolName) ?? "unknown";
+}
 
 /**
  * Tool names registered by THIS extension. Single source of truth so the
@@ -112,13 +164,19 @@ function extensionPackageName(extPath: string): string | undefined {
       continue;
     }
     // First package.json wins — it's the package root; decide here.
+    const packageName = hostString(pkg.name);
     const entries = pkg.pi?.extensions;
     if (
-      typeof pkg.name === "string" &&
+      packageName !== undefined &&
       Array.isArray(entries) &&
-      entries.some((e) => typeof e === "string" && resolve(dir, e) === entry)
+      entries.some((candidate) => {
+        const extensionEntry = hostString(candidate);
+        return extensionEntry !== undefined && resolve(dir, extensionEntry) === entry;
+      })
     ) {
-      const short = pkg.name.startsWith("@") ? pkg.name.slice(pkg.name.indexOf("/") + 1) : pkg.name;
+      const short = packageName.startsWith("@")
+        ? packageName.slice(packageName.indexOf("/") + 1)
+        : packageName;
       return short.toLowerCase();
     }
     return undefined;
@@ -150,10 +208,13 @@ export function extensionCanonicalNames(extPath: string): string[] {
  * everything by canonical name, so path-loaded extensions are matched via their name
  * rather than their post-staging `Extension.path`.
  */
-export function parseExtensionsSpec(
-  entries: string[],
-  cwd: string,
-): { names: Set<string>; paths: string[]; wildcard: boolean } {
+export interface ExtensionSelection {
+  names: Set<string>;
+  paths: string[];
+  wildcard: boolean;
+}
+
+export function parseExtensionsSpec(entries: string[], cwd: string): ExtensionSelection {
   const names = new Set<string>();
   const paths: string[] = [];
   let wildcard = false;
@@ -189,10 +250,12 @@ export function parseExtensionsSpec(
  * `ext:foo` alongside `ext:foo/bar` leaves narrowing in effect (narrowing wins).
  * The split is on the first `/`; extension canonical names never contain `/`.
  */
-export function parseExtSelectors(entries: string[]): {
+export interface ExtensionToolSelection {
   extNames: Set<string>;
   narrowing: Map<string, Set<string>>;
-} {
+}
+
+export function parseExtSelectors(entries: string[]): ExtensionToolSelection {
   const extNames = new Set<string>();
   const narrowing = new Map<string, Set<string>>();
   for (const raw of entries) {
@@ -436,6 +499,7 @@ export function captureMainSessionFork(ctx: ExtensionContext): MainSessionFork {
     let clonedId: string | undefined;
     switch (entry.type) {
       case "message":
+        // SAFETY: Branch message entries carry the same host Message union appendMessage accepts.
         clonedId = fork.appendMessage(
           entry.message as Parameters<SessionManager["appendMessage"]>[0],
         );
@@ -499,8 +563,7 @@ export function captureMainSessionFork(ctx: ExtensionContext): MainSessionFork {
     sessionManager: fork,
     systemPrompt: ctx.getSystemPrompt(),
     model: ctx.model,
-    thinkingLevel:
-      ctx.thinkingLevel === "off" ? undefined : (ctx.thinkingLevel as ThinkingLevel | undefined),
+    thinkingLevel: ctx.thinkingLevel === "off" ? undefined : ctx.thinkingLevel,
   };
 }
 
@@ -675,9 +738,7 @@ function finalTurnError(session: AgentSession, startIndex = 0): string | undefin
     const msg = session.messages[i];
     if (msg.role !== "assistant") continue;
     if (msg.stopReason === "error") {
-      return (
-        (msg as { errorMessage?: string }).errorMessage?.trim() || "provider error with no output"
-      );
+      return assistantErrorMessage(msg) || "provider error with no output";
     }
     if (msg.stopReason === "length" && !extractText(msg.content).trim()) {
       return "run hit the output token limit before producing any text";
@@ -1077,7 +1138,9 @@ export async function runAgent(
   // Pi 0.80.8 replaced createAgentSession's modelRegistry option with
   // modelRuntime, but ExtensionContext still exposes only the registry facade.
   // Pass both so the full supported Pi range retains the parent's providers.
-  const parentModelRuntime = (ctx.modelRegistry as unknown as { runtime?: unknown }).runtime;
+  // SAFETY: Supported Pi registries may expose the optional runtime field before their public facade types do.
+  const registryFacade = Object(ctx.modelRegistry) as ModelRegistryWithRuntime;
+  const parentModelRuntime = registryFacade.runtime;
   const sessionOpts: Parameters<typeof createAgentSession>[0] & {
     modelRegistry: ExtensionContext["modelRegistry"];
     modelRuntime?: unknown;
@@ -1091,6 +1154,7 @@ export async function runAgent(
     // pre-0.80.8 the field exists only via the `modelRuntime?: unknown` shim
     // above, while newer Pi types it as `ModelRuntime` — a shape an opaque
     // `unknown` read off the private facade field can never satisfy.
+    // SAFETY: This compatibility field comes from the same parent registry facade passed above.
     ...(parentModelRuntime !== undefined && { modelRuntime: parentModelRuntime as never }),
     model,
     tools: sessionTools,
@@ -1180,13 +1244,8 @@ export async function runAgent(
       options.onToolActivity?.({ type: "end", toolName: event.toolName });
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
-      const u = (event.message as any).usage;
-      if (u)
-        options.onAssistantUsage?.({
-          input: u.input ?? 0,
-          output: u.output ?? 0,
-          cacheWrite: u.cacheWrite ?? 0,
-        });
+      const usage = assistantUsage(event.message);
+      if (usage) options.onAssistantUsage?.(usage);
     }
     if (event.type === "compaction_end" && !event.aborted && event.result) {
       options.onCompaction?.({ reason: event.reason, tokensBefore: event.result.tokensBefore });
@@ -1252,13 +1311,8 @@ export async function resumeAgent(
           if (event.type === "tool_execution_end")
             options.onToolActivity?.({ type: "end", toolName: event.toolName });
           if (event.type === "message_end" && event.message.role === "assistant") {
-            const u = (event.message as any).usage;
-            if (u)
-              options.onAssistantUsage?.({
-                input: u.input ?? 0,
-                output: u.output ?? 0,
-                cacheWrite: u.cacheWrite ?? 0,
-              });
+            const usage = assistantUsage(event.message);
+            if (usage) options.onAssistantUsage?.(usage);
           }
           if (event.type === "compaction_end" && !event.aborted && event.result) {
             options.onCompaction?.({
@@ -1299,15 +1353,14 @@ export function getAgentConversation(session: AgentSession): string {
 
   for (const msg of session.messages) {
     if (msg.role === "user") {
-      const text = typeof msg.content === "string" ? msg.content : extractText(msg.content);
+      const text = Array.isArray(msg.content) ? extractText(msg.content) : msg.content;
       if (text.trim()) parts.push(`[User]: ${text.trim()}`);
     } else if (msg.role === "assistant") {
       const textParts: string[] = [];
       const toolCalls: string[] = [];
       for (const c of msg.content) {
         if (c.type === "text" && c.text) textParts.push(c.text);
-        else if (c.type === "toolCall")
-          toolCalls.push(`  Tool: ${(c as any).name ?? (c as any).toolName ?? "unknown"}`);
+        else if (c.type === "toolCall") toolCalls.push(`  Tool: ${hostToolCallName(c)}`);
       }
       if (textParts.length > 0) parts.push(`[Assistant]: ${textParts.join("\n")}`);
       if (toolCalls.length > 0) parts.push(`[Tool Calls]:\n${toolCalls.join("\n")}`);

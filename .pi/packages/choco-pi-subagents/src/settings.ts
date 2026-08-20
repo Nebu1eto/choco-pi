@@ -5,6 +5,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import { NO_FALLBACK } from "./agent-types.ts";
 import type { AgentMentionMode, JoinMode, WidgetMode } from "./types.ts";
 
@@ -205,21 +207,13 @@ export interface SettingsAppliers {
   setFallbackSubagent: (v: string | undefined) => void;
 }
 
-/** Emit callback — a subset of `pi.events.emit` to keep helpers testable. */
-export type SettingsEmit = (event: string, payload: unknown) => void;
+/** Payloads emitted when settings are loaded or changed. */
+export type SettingsEventPayload =
+  | { settings: SubagentsSettings }
+  | { settings: SubagentsSettings; persisted: boolean };
 
-const VALID_JOIN_MODES: ReadonlySet<string> = new Set<JoinMode>(["async", "group", "smart"]);
-const VALID_TOOL_DESCRIPTION_MODES: ReadonlySet<string> = new Set<ToolDescriptionMode>([
-  "full",
-  "compact",
-  "custom",
-]);
-const VALID_WIDGET_MODES: ReadonlySet<string> = new Set<WidgetMode>(["all", "background", "off"]);
-const VALID_AGENT_MENTION_MODES: ReadonlySet<string> = new Set<AgentMentionMode>([
-  "model",
-  "direct",
-  "off",
-]);
+/** Emit callback — a subset of `pi.events.emit` to keep helpers testable. */
+export type SettingsEmit = (event: string, payload: SettingsEventPayload) => void;
 
 // Sanity ceilings — prevent hand-edited configs from asking for values that
 // make no operational sense (e.g. 1e6 concurrent subagents). Permissive enough
@@ -229,94 +223,105 @@ const MAX_TURNS_CEILING = 10_000;
 const GRACE_TURNS_CEILING = 1_000;
 const SUBAGENT_DEPTH_CEILING = 16;
 
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+type JsonObject = { [key: string]: JsonValue };
+
+const JsonNumberSchema = Type.Number();
+const JsonBooleanSchema = Type.Boolean();
+const JsonStringSchema = Type.String();
+
+function isJsonObject(value: JsonValue): value is JsonObject {
+  return value !== null && !Array.isArray(value) && Object(value) === value;
+}
+
+function asNumber(value: JsonValue | undefined): number | undefined {
+  return Value.Check(JsonNumberSchema, value) ? value : undefined;
+}
+
+function asBoolean(value: JsonValue | undefined): boolean | undefined {
+  return Value.Check(JsonBooleanSchema, value) ? value : undefined;
+}
+
+function asString(value: JsonValue | undefined): string | undefined {
+  return Value.Check(JsonStringSchema, value) ? value : undefined;
+}
+
+function boundedInteger(
+  value: JsonValue | undefined,
+  min: number,
+  max: number,
+): number | undefined {
+  const parsed = asNumber(value);
+  return parsed !== undefined && Number.isInteger(parsed) && parsed >= min && parsed <= max
+    ? parsed
+    : undefined;
+}
+
+function parseJoinMode(value: JsonValue | undefined): JoinMode | undefined {
+  return value === "async" || value === "group" || value === "smart" ? value : undefined;
+}
+
+function parseToolDescriptionMode(value: JsonValue | undefined): ToolDescriptionMode | undefined {
+  return value === "full" || value === "compact" || value === "custom" ? value : undefined;
+}
+
+function parseWidgetMode(value: JsonValue | undefined): WidgetMode | undefined {
+  return value === "all" || value === "background" || value === "off" ? value : undefined;
+}
+
+function parseAgentMentionMode(value: JsonValue | undefined): AgentMentionMode | undefined {
+  if (value === true) return "model";
+  if (value === false) return "off";
+  return value === "model" || value === "direct" || value === "off" ? value : undefined;
+}
+
 /** Drop fields that don't match the expected shape. Silent — garbage becomes absent. */
-function sanitize(raw: unknown): SubagentsSettings {
-  if (!raw || typeof raw !== "object") return {};
-  const r = raw as Record<string, unknown>;
+function sanitize(raw: JsonValue): SubagentsSettings {
+  if (!isJsonObject(raw)) return {};
   const out: SubagentsSettings = {};
-  if (
-    Number.isInteger(r.maxConcurrent) &&
-    (r.maxConcurrent as number) >= 1 &&
-    (r.maxConcurrent as number) <= MAX_CONCURRENT_CEILING
-  ) {
-    out.maxConcurrent = r.maxConcurrent as number;
-  }
-  if (
-    Number.isInteger(r.defaultMaxTurns) &&
-    (r.defaultMaxTurns as number) >= 0 &&
-    (r.defaultMaxTurns as number) <= MAX_TURNS_CEILING
-  ) {
-    out.defaultMaxTurns = r.defaultMaxTurns as number;
-  }
-  if (
-    Number.isInteger(r.graceTurns) &&
-    (r.graceTurns as number) >= 1 &&
-    (r.graceTurns as number) <= GRACE_TURNS_CEILING
-  ) {
-    out.graceTurns = r.graceTurns as number;
-  }
-  if (
-    Number.isInteger(r.maxSubagentDepth) &&
-    (r.maxSubagentDepth as number) >= 0 &&
-    (r.maxSubagentDepth as number) <= SUBAGENT_DEPTH_CEILING
-  ) {
-    out.maxSubagentDepth = r.maxSubagentDepth as number;
-  }
-  if (typeof r.defaultJoinMode === "string" && VALID_JOIN_MODES.has(r.defaultJoinMode)) {
-    out.defaultJoinMode = r.defaultJoinMode as JoinMode;
-  }
-  if (typeof r.schedulingEnabled === "boolean") {
-    out.schedulingEnabled = r.schedulingEnabled;
-  }
-  if (typeof r.scopeModels === "boolean") {
-    out.scopeModels = r.scopeModels;
-  }
-  if (typeof r.strictAgentFiles === "boolean") {
-    out.strictAgentFiles = r.strictAgentFiles;
-  }
-  if (typeof r.disableDefaultAgents === "boolean") {
-    out.disableDefaultAgents = r.disableDefaultAgents;
-  }
-  if (
-    typeof r.toolDescriptionMode === "string" &&
-    VALID_TOOL_DESCRIPTION_MODES.has(r.toolDescriptionMode)
-  ) {
-    out.toolDescriptionMode = r.toolDescriptionMode as ToolDescriptionMode;
-  }
-  if (typeof r.fleetView === "boolean") {
-    out.fleetView = r.fleetView;
-  }
-  // Was a boolean before the `model` mode existed. A hand-written or
-  // previously-written `true` means "on", which is now the default `model`.
-  if (typeof r.agentMentions === "boolean") {
-    out.agentMentions = r.agentMentions ? "model" : "off";
-  } else if (
-    typeof r.agentMentions === "string" &&
-    VALID_AGENT_MENTION_MODES.has(r.agentMentions)
-  ) {
-    out.agentMentions = r.agentMentions as AgentMentionMode;
-  }
-  if (typeof r.rememberAgents === "boolean") {
-    out.rememberAgents = r.rememberAgents;
-  }
-  if (typeof r.widgetMode === "string" && VALID_WIDGET_MODES.has(r.widgetMode)) {
-    out.widgetMode = r.widgetMode as WidgetMode;
-  }
-  if (typeof r.outputTranscript === "boolean") {
-    out.outputTranscript = r.outputTranscript;
-  }
-  if (typeof r.worktreeIsolation === "boolean") {
-    out.worktreeIsolation = r.worktreeIsolation;
-  }
-  if (r.fallbackSubagent === false) {
+  const maxConcurrent = boundedInteger(raw.maxConcurrent, 1, MAX_CONCURRENT_CEILING);
+  if (maxConcurrent !== undefined) out.maxConcurrent = maxConcurrent;
+  const defaultMaxTurns = boundedInteger(raw.defaultMaxTurns, 0, MAX_TURNS_CEILING);
+  if (defaultMaxTurns !== undefined) out.defaultMaxTurns = defaultMaxTurns;
+  const graceTurns = boundedInteger(raw.graceTurns, 1, GRACE_TURNS_CEILING);
+  if (graceTurns !== undefined) out.graceTurns = graceTurns;
+  const maxSubagentDepth = boundedInteger(raw.maxSubagentDepth, 0, SUBAGENT_DEPTH_CEILING);
+  if (maxSubagentDepth !== undefined) out.maxSubagentDepth = maxSubagentDepth;
+  const defaultJoinMode = parseJoinMode(raw.defaultJoinMode);
+  if (defaultJoinMode !== undefined) out.defaultJoinMode = defaultJoinMode;
+  const schedulingEnabled = asBoolean(raw.schedulingEnabled);
+  if (schedulingEnabled !== undefined) out.schedulingEnabled = schedulingEnabled;
+  const scopeModels = asBoolean(raw.scopeModels);
+  if (scopeModels !== undefined) out.scopeModels = scopeModels;
+  const strictAgentFiles = asBoolean(raw.strictAgentFiles);
+  if (strictAgentFiles !== undefined) out.strictAgentFiles = strictAgentFiles;
+  const disableDefaultAgents = asBoolean(raw.disableDefaultAgents);
+  if (disableDefaultAgents !== undefined) out.disableDefaultAgents = disableDefaultAgents;
+  const toolDescriptionMode = parseToolDescriptionMode(raw.toolDescriptionMode);
+  if (toolDescriptionMode !== undefined) out.toolDescriptionMode = toolDescriptionMode;
+  const fleetView = asBoolean(raw.fleetView);
+  if (fleetView !== undefined) out.fleetView = fleetView;
+  const agentMentions = parseAgentMentionMode(raw.agentMentions);
+  if (agentMentions !== undefined) out.agentMentions = agentMentions;
+  const rememberAgents = asBoolean(raw.rememberAgents);
+  if (rememberAgents !== undefined) out.rememberAgents = rememberAgents;
+  const widgetMode = parseWidgetMode(raw.widgetMode);
+  if (widgetMode !== undefined) out.widgetMode = widgetMode;
+  const outputTranscript = asBoolean(raw.outputTranscript);
+  if (outputTranscript !== undefined) out.outputTranscript = outputTranscript;
+  const worktreeIsolation = asBoolean(raw.worktreeIsolation);
+  if (worktreeIsolation !== undefined) out.worktreeIsolation = worktreeIsolation;
+  const fallbackSubagent = asString(raw.fallbackSubagent);
+  if (raw.fallbackSubagent === false) {
     // The only non-string spelling worth accepting: a boolean would otherwise be
     // dropped, silently leaving the PERMISSIVE default in place. Every string is
     // an agent name except the `none` sentinel, which the resolver recognizes —
     // so a mistaken "off" fails loudly at dispatch instead of meaning something
     // different here than it does there.
     out.fallbackSubagent = NO_FALLBACK;
-  } else if (typeof r.fallbackSubagent === "string" && r.fallbackSubagent.trim()) {
-    out.fallbackSubagent = r.fallbackSubagent.trim();
+  } else if (fallbackSubagent?.trim()) {
+    out.fallbackSubagent = fallbackSubagent.trim();
   }
   return out;
 }
@@ -368,24 +373,24 @@ export function saveSettings(s: SubagentsSettings, cwd: string = process.cwd()):
 
 /** Apply persisted settings to the in-memory state via caller-supplied setters. */
 export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers): void {
-  if (typeof s.maxConcurrent === "number") appliers.setMaxConcurrent(s.maxConcurrent);
-  if (typeof s.defaultMaxTurns === "number") appliers.setDefaultMaxTurns(s.defaultMaxTurns);
-  if (typeof s.graceTurns === "number") appliers.setGraceTurns(s.graceTurns);
-  if (typeof s.maxSubagentDepth === "number") appliers.setMaxSubagentDepth(s.maxSubagentDepth);
-  if (typeof s.fallbackSubagent === "string") appliers.setFallbackSubagent(s.fallbackSubagent);
+  if (s.maxConcurrent !== undefined) appliers.setMaxConcurrent(s.maxConcurrent);
+  if (s.defaultMaxTurns !== undefined) appliers.setDefaultMaxTurns(s.defaultMaxTurns);
+  if (s.graceTurns !== undefined) appliers.setGraceTurns(s.graceTurns);
+  if (s.maxSubagentDepth !== undefined) appliers.setMaxSubagentDepth(s.maxSubagentDepth);
+  if (s.fallbackSubagent !== undefined) appliers.setFallbackSubagent(s.fallbackSubagent);
   if (s.defaultJoinMode) appliers.setDefaultJoinMode(s.defaultJoinMode);
-  if (typeof s.schedulingEnabled === "boolean") appliers.setSchedulingEnabled(s.schedulingEnabled);
-  if (typeof s.scopeModels === "boolean") appliers.setScopeModels(s.scopeModels);
-  if (typeof s.strictAgentFiles === "boolean") appliers.setStrictAgentFiles(s.strictAgentFiles);
-  if (typeof s.disableDefaultAgents === "boolean")
+  if (s.schedulingEnabled !== undefined) appliers.setSchedulingEnabled(s.schedulingEnabled);
+  if (s.scopeModels !== undefined) appliers.setScopeModels(s.scopeModels);
+  if (s.strictAgentFiles !== undefined) appliers.setStrictAgentFiles(s.strictAgentFiles);
+  if (s.disableDefaultAgents !== undefined)
     appliers.setDisableDefaultAgents(s.disableDefaultAgents);
   if (s.toolDescriptionMode) appliers.setToolDescriptionMode(s.toolDescriptionMode);
-  if (typeof s.fleetView === "boolean") appliers.setFleetView(s.fleetView);
+  if (s.fleetView !== undefined) appliers.setFleetView(s.fleetView);
   if (s.agentMentions) appliers.setAgentMentions(s.agentMentions);
-  if (typeof s.rememberAgents === "boolean") appliers.setRememberAgents(s.rememberAgents);
+  if (s.rememberAgents !== undefined) appliers.setRememberAgents(s.rememberAgents);
   if (s.widgetMode) appliers.setWidgetMode(s.widgetMode);
-  if (typeof s.outputTranscript === "boolean") appliers.setOutputTranscript(s.outputTranscript);
-  if (typeof s.worktreeIsolation === "boolean") appliers.setWorktreeIsolation(s.worktreeIsolation);
+  if (s.outputTranscript !== undefined) appliers.setOutputTranscript(s.outputTranscript);
+  if (s.worktreeIsolation !== undefined) appliers.setWorktreeIsolation(s.worktreeIsolation);
 }
 
 /**

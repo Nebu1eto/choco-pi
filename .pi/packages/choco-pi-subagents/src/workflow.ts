@@ -125,13 +125,22 @@ export type WorkflowStepRunner = {
 
 export type WorkflowTypeResolver = (requested: string) => string | undefined;
 
-function schemaError(input: unknown): string | undefined {
-  if (Value.Check(WorkflowDefinitionSchema, input)) return undefined;
+type WorkflowBoundaryValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | WorkflowBoundaryValue[]
+  | { [key: string]: WorkflowBoundaryValue };
+
+function parseWorkflowDefinition(input: WorkflowBoundaryValue): WorkflowDefinition {
+  if (Value.Check(WorkflowDefinitionSchema, input)) return structuredClone(input);
   for (const error of Value.Errors(WorkflowDefinitionSchema, input)) {
     const path = error.path || "/";
-    return `${path}: ${error.message}`;
+    throw new Error(`Invalid workflow definition: ${path}: ${error.message}`);
   }
-  return "invalid workflow definition";
+  throw new Error("Invalid workflow definition: invalid workflow definition");
 }
 
 function templateReferences(prompt: string): { id: string; field: string }[] {
@@ -157,13 +166,10 @@ function ancestorsOf(id: string, byId: Map<string, WorkflowStepDefinition>): Set
 
 /** Validate structure, agent types, dependencies, cycles, and template references. */
 export function validateWorkflowDefinition(
-  input: unknown,
+  input: WorkflowBoundaryValue,
   resolveType: WorkflowTypeResolver,
 ): WorkflowDefinition {
-  const structural = schemaError(input);
-  if (structural) throw new Error(`Invalid workflow definition: ${structural}`);
-
-  const definition = structuredClone(input as WorkflowDefinition);
+  const definition = parseWorkflowDefinition(input);
   const byId = new Map<string, WorkflowStepDefinition>();
   for (const step of definition.steps) {
     if (byId.has(step.id))
@@ -562,7 +568,7 @@ export class WorkflowManager {
   }
 
   start(
-    input: unknown,
+    input: WorkflowBoundaryValue,
     resolveType: WorkflowTypeResolver,
     runner: WorkflowStepRunner,
     maxConcurrent: number,

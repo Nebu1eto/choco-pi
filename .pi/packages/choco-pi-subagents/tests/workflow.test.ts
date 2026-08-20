@@ -9,6 +9,10 @@ import {
   type WorkflowStepRunner,
 } from "../src/workflow.ts";
 
+interface CleanupHarness {
+  cleanup(): void;
+}
+
 const resolveType = (name: string) =>
   new Set(["Explore", "Plan", "implementer"]).has(name) ? name : undefined;
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -259,8 +263,9 @@ test("waiting on an idle unsealed dynamic workflow returns promptly", async () =
     if (timer) clearTimeout(timer);
 
     assert.notEqual(result, "timeout", "idle dynamic wait must not remain pending");
-    assert.equal(typeof result === "string" ? undefined : result.status, "waiting");
-    assert.equal(typeof result === "string" ? undefined : result.sealed, false);
+    if (result === "timeout") assert.fail("idle dynamic wait must not remain pending");
+    assert.equal(result.status, "waiting");
+    assert.equal(result.sealed, false);
   } finally {
     manager.dispose();
   }
@@ -295,7 +300,9 @@ test("workflow retention evicts only settled records older than ten minutes", as
     await manager.wait(fresh.workflowId);
     manager.markConsumed(fresh.workflowId);
 
-    (manager as unknown as { cleanup(): void }).cleanup();
+    // SAFETY: WorkflowManager owns a zero-argument cleanup method invoked by its retention timer.
+    const cleanupHarness = manager as CleanupHarness;
+    cleanupHarness.cleanup();
 
     assert.equal(manager.get(old.workflowId), undefined);
     assert.equal(manager.isConsumed(old.workflowId), false);

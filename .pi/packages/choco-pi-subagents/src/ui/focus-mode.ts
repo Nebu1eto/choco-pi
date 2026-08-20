@@ -1,5 +1,6 @@
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import type { AgentRecord } from "../types.ts";
 import type { AgentActivity, Theme } from "./agent-widget.ts";
 import { ConversationViewer } from "./conversation-viewer.ts";
@@ -63,33 +64,56 @@ type ActiveFocus = {
   document: RenderTarget;
 };
 
-function isEditorLike(value: unknown): value is EditorLike {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<EditorLike>;
+type TUIWithFocusedComponent = TUI & { getFocusedComponent?: () => any };
+
+const HostNumberSchema = Type.Number();
+const HostStringSchema = Type.String();
+
+function isHostObject(value: any): boolean {
   return (
-    typeof candidate.handleInput === "function" &&
-    typeof candidate.getText === "function" &&
-    typeof candidate.setText === "function"
+    value !== null &&
+    Object(value) === value &&
+    !Array.isArray(value) &&
+    !(value instanceof Function)
   );
 }
 
-function childrenOf(value: unknown): unknown[] {
-  if (!value || typeof value !== "object") return [];
-  const children = (value as { children?: unknown }).children;
-  return Array.isArray(children) ? children : [];
+function isEditorLike(value: any): value is EditorLike {
+  return (
+    isHostObject(value) &&
+    value.handleInput instanceof Function &&
+    value.getText instanceof Function &&
+    value.setText instanceof Function
+  );
+}
+
+function isRenderTarget(value: any): value is RenderTarget {
+  return isHostObject(value) && value.render instanceof Function;
+}
+
+function childrenOf(value: any): any[] {
+  if (!value || Object(value) !== value) return [];
+  return Array.isArray(value.children) ? value.children : [];
+}
+
+function hostNumber(value: any): number | undefined {
+  return Value.Check(HostNumberSchema, value) ? value : undefined;
+}
+
+function hostString(value: any): string | undefined {
+  return Value.Check(HostStringSchema, value) ? value : undefined;
 }
 
 /** Pi mounts the transcript document first in both regular and fullscreen TUI modes. */
 function findDocument(tui: TUI): RenderTarget | undefined {
-  const candidate = tui.children[0] as Partial<RenderTarget> | undefined;
-  return candidate && typeof candidate.render === "function"
-    ? (candidate as RenderTarget)
-    : undefined;
+  const candidate = tui.children[0];
+  return isRenderTarget(candidate) ? candidate : undefined;
 }
 
 function findEditor(tui: TUI): EditorLike | undefined {
-  const getFocused = (tui as TUI & { getFocusedComponent?: () => unknown }).getFocusedComponent;
-  const focused = typeof getFocused === "function" ? getFocused.call(tui) : undefined;
+  // SAFETY: Pi's TUI may expose this optional private accessor; its result is parsed by isEditorLike.
+  const getFocused = (tui as TUIWithFocusedComponent).getFocusedComponent;
+  const focused = getFocused instanceof Function ? getFocused.call(tui) : undefined;
   if (isEditorLike(focused)) return focused;
 
   // The editor container is a top-level root. Search only two levels so chat
@@ -153,7 +177,7 @@ export class FocusedAgentController {
     this.unfocus(false);
     const viewer = new ConversationViewer(
       tui,
-      record.session as AgentSession,
+      record.session,
       record,
       this.options.getActivity?.(record.id),
       theme,
@@ -171,7 +195,7 @@ export class FocusedAgentController {
       "focused-conversation-render",
       ({ args }) => {
         this.ensureEditorPatch();
-        const width = typeof args[0] === "number" ? args[0] : tui.terminal.columns;
+        const width = hostNumber(args[0]) ?? tui.terminal.columns;
         return viewer.render(width);
       },
     );
@@ -225,19 +249,20 @@ export class FocusedAgentController {
       "handleInput",
       "focused-editor-input",
       ({ predecessor, receiver, args }) => {
-        if (!this.active) return Reflect.apply(predecessor, receiver, args);
-        const data = typeof args[0] === "string" ? args[0] : "";
+        if (!this.active) return Function.prototype.apply.call(predecessor, receiver, args);
+        const data = hostString(args[0]) ?? "";
         if (matchesKey(data, "escape")) {
           this.unfocus();
           return undefined;
         }
 
+        // SAFETY: This adapter is installed only on the EditorLike value found above.
         const target = receiver as EditorLike;
         const originalSubmit = target.onSubmit;
         const focusedSubmit = (text: string): void => this.submitFocused(text, target);
         target.onSubmit = focusedSubmit;
         try {
-          return Reflect.apply(predecessor, receiver, args);
+          return Function.prototype.apply.call(predecessor, receiver, args);
         } finally {
           if (target.onSubmit === focusedSubmit) target.onSubmit = originalSubmit;
         }
