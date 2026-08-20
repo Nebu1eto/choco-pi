@@ -285,7 +285,10 @@ A caller can replace only pending steps or add new steps atomically through
 workflow may be updated while work remains. A definition with `dynamic: true`
 stays `waiting` when idle so the orchestrator can inspect a completed result,
 add result-dependent steps, and finally seal the graph with
-`workflow_update({ finish: true })`.
+`workflow_update({ finish: true })`. `get_workflow_result({ wait: true })`
+blocks while an open workflow has running steps, then returns when it becomes
+idle; the result's `sealed` field distinguishes an updateable idle graph from a
+sealed run that will settle normally.
 
 ### Result passing, limits and delivery
 
@@ -306,7 +309,9 @@ focus continue to operate on the underlying session. Static workflows suppress
 individual result nudges and send one aggregate completion notification.
 Dynamic workflows relay step completion notifications while open, allowing the
 orchestrator to choose the next update, and send the aggregate notification
-once sealed and settled.
+once sealed and settled. Settled aggregate records remain available for repeat
+result reads for 10 minutes; a 60-second cleanup timer then removes the workflow
+and its consumed marker together.
 
 ## Invariants a later phase should not casually break
 

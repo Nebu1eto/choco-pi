@@ -2262,7 +2262,7 @@ Terse command-style prompts produce shallow, generic work.
     name: "get_workflow_result",
     label: "Get Workflow Result",
     description:
-      "Retrieve aggregate workflow status and per-step outputs. wait: true waits until terminal; a dynamic workflow must first be sealed with workflow_update finish: true.",
+      "Retrieve aggregate workflow status and per-step outputs. wait: true waits until terminal, or until an open dynamic workflow becomes idle and needs an update.",
     promptSnippet: "Get aggregate subagent workflow results",
     parameters: Type.Object({
       workflow_id: Type.String(),
@@ -2279,7 +2279,14 @@ Terse command-style prompts produce shallow, generic work.
         workflowManager.markConsumed(params.workflow_id);
         cancelNudge(`workflow:${params.workflow_id}`);
       }
-      return textResult(JSON.stringify(result, null, 2));
+      const serialized = JSON.stringify(result, null, 2);
+      if (params.wait && result.dynamic && !result.sealed && result.status === "waiting") {
+        return textResult(
+          "Workflow is idle and remains open. Add steps with workflow_update, or seal it with workflow_update { finish: true }.\n\n" +
+          serialized,
+        );
+      }
+      return textResult(serialized);
     },
   }));
 
