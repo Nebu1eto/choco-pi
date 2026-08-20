@@ -111,9 +111,12 @@ extends FleetView and `ConversationViewer` with fullscreen focus. `f` on a
 selected FleetView row (or in its modal viewer) replaces Pi's main transcript
 rendering with that agent's live conversation and binds the existing main editor
 to `AgentManager.steer`; Esc restores the exact orchestrator renderer and editor
-input predecessor. The method registry uses an additive, instance-scoped wrapper
-so pi-zentui and prompt-editor adapters remain composed. `tests/focus-mode.test.ts`
-pins transcript swapping, streaming refresh, steering ownership and restoration.
+input predecessor. `/agents` propagates a focus request through both nested menu
+levels instead of reopening the parent selector, which would consume the first
+Esc. The method registry uses an additive, instance-scoped wrapper so pi-zentui
+and prompt-editor adapters remain composed. `tests/focus-mode.test.ts` pins
+transcript swapping, streaming refresh, steering ownership, focus propagation,
+single-Esc exit and restoration.
 
 ### BTW side conversations
 

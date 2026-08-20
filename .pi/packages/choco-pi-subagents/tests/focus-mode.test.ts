@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentRecord } from "../src/types.ts";
-import { FocusedAgentController } from "../src/ui/focus-mode.ts";
+import { continueRunningAgentNavigation, FocusedAgentController } from "../src/ui/focus-mode.ts";
 import { installMethodPatch } from "../src/ui/method-patch-registry.ts";
 
 const theme = {
@@ -9,7 +9,7 @@ const theme = {
   bold: (text: string) => text,
 };
 
-test("focus swaps transcript and editor steering, then restores exact predecessors", async () => {
+test("focus exits on one Esc and restores exact predecessors", async () => {
   const renderRequests: boolean[] = [];
   const listeners = new Set<() => void>();
   const session = {
@@ -122,7 +122,7 @@ test("focus swaps transcript and editor steering, then restores exact predecesso
   assert.match(notifications.at(-1) ?? "", /cannot be steered/);
   record.session = realSession;
 
-  controller.unfocus();
+  editor.handleInput("\x1b");
   assert.deepEqual(controller.getState(), { kind: "orchestrator" });
   assert.equal(document.render, orchestratorRender);
   assert.equal(editor.handleInput, orchestratorInput);
@@ -135,6 +135,24 @@ test("focus swaps transcript and editor steering, then restores exact predecesso
   editor.handleInput("\r");
   assert.deepEqual(orchestratorSubmits, ["back on main"]);
   assert.equal(renderRequests.includes(true), true);
+});
+
+test("focused running-agent navigation does not reopen a key-consuming selector", async () => {
+  let reopenCalls = 0;
+  const focused = await continueRunningAgentNavigation(true, async () => {
+    reopenCalls += 1;
+    return false;
+  });
+
+  assert.equal(focused, true);
+  assert.equal(reopenCalls, 0);
+
+  const propagated = await continueRunningAgentNavigation(false, async () => {
+    reopenCalls += 1;
+    return true;
+  });
+  assert.equal(propagated, true, "a nested focus request propagates to the parent menu");
+  assert.equal(reopenCalls, 1);
 });
 
 test("patch cleanup leaves a newer extension wrapper installed", () => {
