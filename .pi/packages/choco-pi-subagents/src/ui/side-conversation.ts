@@ -141,7 +141,11 @@ export class SideConversationController {
             allowReplyWhenFinished: true,
             replyLabel: "reply",
             onFocus: this.options.focusAgent
-              ? () => queueMicrotask(() => this.options.focusAgent?.(record, tui, theme))
+              ? () => {
+                  this.closeOverlay?.();
+                  const focusAgent = this.options.focusAgent;
+                  queueMicrotask(() => focusAgent?.(record, tui, theme));
+                }
               : undefined,
           },
         );

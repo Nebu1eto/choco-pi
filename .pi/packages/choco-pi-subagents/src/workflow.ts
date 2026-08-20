@@ -87,10 +87,12 @@ export type WorkflowStepRunner = {
 export type WorkflowTypeResolver = (requested: string) => string | undefined;
 
 function schemaError(input: unknown): string | undefined {
-  const first = Value.Errors(WorkflowDefinitionSchema, input).First();
-  if (!first) return undefined;
-  const path = first.path || "/";
-  return `${path}: ${first.message}`;
+  if (Value.Check(WorkflowDefinitionSchema, input)) return undefined;
+  for (const error of Value.Errors(WorkflowDefinitionSchema, input)) {
+    const path = error.path || "/";
+    return `${path}: ${error.message}`;
+  }
+  return "invalid workflow definition";
 }
 
 function templateReferences(prompt: string): { id: string; field: string }[] {
