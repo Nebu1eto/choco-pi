@@ -5,7 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { assistantTurnTokens, isAbortedAssistantMessage } from "./goal-accounting.js";
-import { isErrorAssistantMessage, type AssistantErrorMessage } from "./recovery.js";
+import { isErrorAssistantMessage } from "./recovery.js";
 import {
   handleAgentErrorMessage,
   recordAssistantContextOverflow,
@@ -49,7 +49,7 @@ export function createAgentEventHandlers(deps: GoalRuntimeAgentHandlerContext) {
       }
       const errorMessages = event.messages.filter(isErrorAssistantMessage);
       if (errorMessages.length > 0) {
-        const lastError = errorMessages.at(-1) as AssistantErrorMessage | undefined;
+        const lastError = errorMessages.at(-1);
         if (lastError) {
           handleAgentErrorMessage(lastError, ctx, deps);
         }

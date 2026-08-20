@@ -133,8 +133,7 @@ export function createInputContextEventHandlers(
       continuation.clearContinuationStateFor(queuedGoalId);
       if (stateController.isCurrentActiveGoalId(queuedGoalId)) {
         runtimeState.staleQueuedWorkGuard.noteRunnableWorkStarted();
-        const details =
-          "details" in event.message ? (event.message as { details?: unknown }).details : undefined;
+        const details = "details" in event.message ? event.message.details : undefined;
         if (isActiveGoalQueuedDetails(details) && details.kind === "continuation") {
           runtimeState.agentRunFromContinuation = true;
         }

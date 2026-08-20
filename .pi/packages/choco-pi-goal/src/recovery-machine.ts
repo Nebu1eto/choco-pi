@@ -42,6 +42,11 @@ export interface GoalRecoveryMachineState {
   phase: RecoveryPhase;
 }
 
+export interface HostOverflowRecoveryStart {
+  attention: RecoveryAttention;
+  persistHostOverflowCapReset: boolean;
+}
+
 export function createGoalRecoveryMachine(): GoalRecoveryMachineState {
   return {
     counters: createErrorRecoveryCounters(),
@@ -137,10 +142,9 @@ export function requireHostOverflowUserReset(state: GoalRecoveryMachineState): b
   return persistHostOverflowCapReset;
 }
 
-export function beginHostOverflowRecovery(state: GoalRecoveryMachineState): {
-  attention: RecoveryAttention;
-  persistHostOverflowCapReset: boolean;
-} {
+export function beginHostOverflowRecovery(
+  state: GoalRecoveryMachineState,
+): HostOverflowRecoveryStart {
   const persistHostOverflowCapReset = !recoveryPhaseNeedsUserStartTurn(state.phase);
   state.phase = hostOverflowRecoveringNeedsUserStartPhase();
   const attention = setRecoveryPendingAttention(state, HOST_OVERFLOW_RECOVERY_REASON);

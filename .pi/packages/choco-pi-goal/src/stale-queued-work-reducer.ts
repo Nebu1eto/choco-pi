@@ -78,15 +78,17 @@ function cloneState(state: StaleQueuedWorkState): StaleQueuedWorkState {
   switch (state.kind) {
     case "idle":
       return { kind: "idle" };
-    case "observingTurn":
-      return {
+    case "observingTurn": {
+      const cloned: Extract<StaleQueuedWorkState, { kind: "observingTurn" }> = {
         kind: "observingTurn",
         staleGoalIds: new Set(state.staleGoalIds),
         hasRunnableWork: state.hasRunnableWork,
-        ...(state.terminalCleanup
-          ? { terminalCleanup: cloneTerminalCleanup(state.terminalCleanup) }
-          : {}),
       };
+      if (state.terminalCleanup) {
+        cloned.terminalCleanup = cloneTerminalCleanup(state.terminalCleanup);
+      }
+      return cloned;
+    }
     case "abortingTurn":
       return {
         kind: "abortingTurn",
@@ -108,12 +110,15 @@ function cloneState(state: StaleQueuedWorkState): StaleQueuedWorkState {
 function beginObservingFromIdleOrAwaiting(
   state: Extract<StaleQueuedWorkState, { kind: "idle" | "awaitingTerminalCleanup" }>,
 ): Extract<StaleQueuedWorkState, { kind: "observingTurn" }> {
-  return {
+  const observing: Extract<StaleQueuedWorkState, { kind: "observingTurn" }> = {
     kind: "observingTurn",
     staleGoalIds: new Set(),
     hasRunnableWork: false,
-    ...(state.kind === "awaitingTerminalCleanup" ? { terminalCleanup: state.terminalCleanup } : {}),
   };
+  if (state.kind === "awaitingTerminalCleanup") {
+    observing.terminalCleanup = state.terminalCleanup;
+  }
+  return observing;
 }
 
 function finishObservingTurn(
