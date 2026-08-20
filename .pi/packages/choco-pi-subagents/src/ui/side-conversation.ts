@@ -9,6 +9,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentManager } from "../agent-manager.ts";
+import { getAvailableTypes, getFallbackSubagent, NO_FALLBACK, resolveSpawnType, type SpawnTypeResolution } from "../agent-types.ts";
 import type { AgentRecord } from "../types.ts";
 import type { AgentActivity, Theme } from "./agent-widget.ts";
 import { ConversationViewer, VIEWPORT_HEIGHT_PCT } from "./conversation-viewer.ts";
@@ -31,6 +32,30 @@ export type SideConversationOptions = {
   onSteered?: (id: string, message: string) => void;
   focusAgent?: (record: AgentRecord, tui: any, theme: Theme) => boolean;
 };
+
+/**
+ * Pick the agent type for a side conversation. `general-purpose` is preferred,
+ * but harnesses run with default agents disabled (`fallbackSubagent: "none"`),
+ * so fall through the configured fallback, then `general`, then every
+ * registered type. A BTW conversation must work in any viable fleet.
+ */
+export function resolveBtwType(): SpawnTypeResolution {
+  const candidates: string[] = ["general-purpose"];
+  const configured = getFallbackSubagent();
+  if (configured && configured.toLowerCase() !== NO_FALLBACK) candidates.push(configured);
+  candidates.push("general", ...getAvailableTypes());
+  const seen = new Set<string>();
+  let lastMessage = "No available agent type for a BTW conversation.";
+  for (const candidate of candidates) {
+    const key = candidate.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const dispatch = resolveSpawnType(candidate);
+    if (dispatch.ok) return dispatch;
+    lastMessage = dispatch.message;
+  }
+  return { ok: false, message: lastMessage };
+}
 
 function describeQuestion(question: string): string {
   const oneLine = question.replace(/\s+/g, " ").trim();
