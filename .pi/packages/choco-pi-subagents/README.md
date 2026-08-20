@@ -1,4 +1,4 @@
-# pi-choco-subagents
+# choco-pi-subagents
 
 Claude Code-style autonomous sub-agents for pi. This is choco-pi's in-tree fork
 of [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents)
@@ -10,7 +10,7 @@ of [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents)
   this core: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - Upstream's feature manual (agent frontmatter reference, every setting, the
   `/agents` menu tour) lives in the upstream repository. This fork changes no
-  feature behavior, so it still applies — substitute `pi-choco-subagents` for
+  feature behavior, so it still applies — substitute `choco-pi-subagents` for
   `pi-subagents` wherever an extension *name* is written.
 
 ## What it provides
@@ -32,7 +32,7 @@ The modal also offers `f focus`.
 
 ```json
 {
-  "packages": ["./packages/pi-choco-subagents"]
+  "packages": ["./packages/choco-pi-subagents"]
 }
 ```
 
@@ -59,7 +59,7 @@ There is no build step and no `dist/`. Pi loads `src/index.ts` through jiti.
 
 ```bash
 # typecheck against the @earendil-works 0.84.2 types in the repo root
-cd .pi/packages/pi-choco-subagents && npx tsc --noEmit
+cd .pi/packages/choco-pi-subagents && npx tsc --noEmit
 
 # focused transcript/editor takeover regression
 node --experimental-strip-types --test tests/focus-mode.test.ts

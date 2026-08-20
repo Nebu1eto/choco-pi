@@ -7,7 +7,7 @@ test("implementer role remains selected with model and thinking overrides", asyn
 	// The fork ships TypeScript source only (`pi.extensions: ["./src/index.ts"]`),
 	// so these load straight from `src/` under Node's type stripping instead of
 	// from a built `dist/`.
-	const packageRoot = resolve(".pi/packages/pi-choco-subagents/src");
+	const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
 	const { loadCustomAgents } = await import(pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href);
 	const { resolveAgentInvocationConfig } = await import(
 		pathToFileURL(resolve(packageRoot, "invocation-config.ts")).href

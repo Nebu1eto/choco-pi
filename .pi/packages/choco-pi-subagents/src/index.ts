@@ -685,7 +685,7 @@ export default function (pi: ExtensionAPI) {
     } catch (err) {
       // Scheduling is non-essential — log and move on so the rest of the
       // extension keeps working if e.g. .pi/ is unwritable.
-      console.warn("[pi-choco-subagents] Failed to start scheduler:", err);
+      console.warn("[choco-pi-subagents] Failed to start scheduler:", err);
     }
   }
 
@@ -1432,7 +1432,7 @@ Terse command-style prompts produce shallow, generic work.
     // Replacement callback (not a string) — agent descriptions may contain `$&` etc.
     return template.replace(/\{\{(\w+)\}\}/g, (raw, name: string) => {
       if (vars[name]) return vars[name]();
-      console.warn(`[pi-choco-subagents] agent-tool-description.md: unknown placeholder ${raw} left as-is`);
+      console.warn(`[choco-pi-subagents] agent-tool-description.md: unknown placeholder ${raw} left as-is`);
       return raw;
     });
   };
@@ -1446,9 +1446,9 @@ Terse command-style prompts produce shallow, generic work.
         if (!existsSync(path)) continue;
         const text = readFileSync(path, "utf-8").trim();
         if (text) return renderToolDescriptionTemplate(text);
-        console.warn(`[pi-choco-subagents] ${path} is empty — ignoring`);
+        console.warn(`[choco-pi-subagents] ${path} is empty — ignoring`);
       } catch (err) {
-        console.warn(`[pi-choco-subagents] failed to read ${path}: ${err instanceof Error ? err.message : String(err)}`);
+        console.warn(`[choco-pi-subagents] failed to read ${path}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     return undefined;
@@ -1460,7 +1460,7 @@ Terse command-style prompts produce shallow, generic work.
     if (mode === "custom") {
       const custom = loadCustomToolDescription();
       if (custom) return custom;
-      console.warn('[pi-choco-subagents] toolDescriptionMode is "custom" but no agent-tool-description.md found — using "full"');
+      console.warn('[choco-pi-subagents] toolDescriptionMode is "custom" but no agent-tool-description.md found — using "full"');
     }
     return fullAgentToolDescription;
   })();

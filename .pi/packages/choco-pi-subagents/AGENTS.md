@@ -1,4 +1,4 @@
-# pi-choco-subagents — working rules
+# choco-pi-subagents — working rules
 
 Vendored fork of `@tintinweb/pi-subagents@0.17.1`. Read `VENDORED.md` before
 changing anything under `src/`, and `ARCHITECTURE.md` before adding a feature.
@@ -21,7 +21,7 @@ changing anything under `src/`, and `ARCHITECTURE.md` before adding a feature.
 ## Before finishing a change
 
 ```bash
-cd .pi/packages/pi-choco-subagents && npx tsc --noEmit
+cd .pi/packages/choco-pi-subagents && npx tsc --noEmit
 cd <repo root> && node --test tests/subagent-config.test.ts
 ```
 

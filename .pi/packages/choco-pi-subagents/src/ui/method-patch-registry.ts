@@ -1,4 +1,4 @@
-export const SUBAGENT_METHOD_PATCH_REGISTRY = Symbol.for("pi-choco-subagents.method-patch-registry");
+export const SUBAGENT_METHOD_PATCH_REGISTRY = Symbol.for("choco-pi-subagents.method-patch-registry");
 
 type PatchAdapter = "focused-conversation-render" | "focused-editor-input";
 type PatchMethod = "render" | "handleInput";

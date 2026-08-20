@@ -155,7 +155,7 @@ export function createMentionProvider(
         // extension's other non-fatal failures.
         if (!warnedInnerFailure) {
           warnedInnerFailure = true;
-          console.warn("[pi-choco-subagents] the autocomplete provider below us failed; showing agent rows only:", err);
+          console.warn("[choco-pi-subagents] the autocomplete provider below us failed; showing agent rows only:", err);
         }
         theirs = null;
       }

@@ -1,4 +1,4 @@
-// Persistence for pi-choco-subagents operational settings.
+// Persistence for choco-pi-subagents operational settings.
 // - Global:  ~/.pi/agent/subagents.json (via getAgentDir()) — manual defaults, never written here
 // - Project: <cwd>/.pi/subagents.json — written by /agents → Settings; overrides global on load
 
@@ -326,7 +326,7 @@ function readSettingsFile(path: string): SubagentsSettings {
     return sanitize(JSON.parse(readFileSync(path, "utf-8")));
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    console.warn(`[pi-choco-subagents] Ignoring malformed settings at ${path}: ${reason}`);
+    console.warn(`[choco-pi-subagents] Ignoring malformed settings at ${path}: ${reason}`);
     return {};
   }
 }
