@@ -403,7 +403,24 @@ export const FOOTER_FORMAT_ALIASES: Record<string, string> = {
 	separator: "sep",
 };
 
-export const configPath = join(getAgentDir(), "zentui.json");
+/** Canonical config file name for this package. */
+export const CONFIG_FILE_NAME = "pi-choco-ui.json";
+/** Pre-rename file name, still read when the canonical file is absent. */
+export const LEGACY_CONFIG_FILE_NAME = "zentui.json";
+
+/**
+ * Prefer the canonical file; fall back to the legacy one only while it exists
+ * on its own, so an existing install keeps both reads and saves on the file the
+ * user already has. With neither present, saves create the canonical file.
+ */
+function resolveConfigPath(agentDir: string = getAgentDir()): string {
+	const canonical = join(agentDir, CONFIG_FILE_NAME);
+	if (existsSync(canonical)) return canonical;
+	const legacy = join(agentDir, LEGACY_CONFIG_FILE_NAME);
+	return existsSync(legacy) ? legacy : canonical;
+}
+
+export const configPath = resolveConfigPath();
 
 const defaultFooterSegments: FooterSegmentsConfig = {
 	cwd: true,
@@ -915,7 +932,7 @@ function mutateConfig(path: string, mutate: (record: ConfigRecord) => void): Pol
 	if (state.kind === "corrupt") {
 		const detail = state.error instanceof Error ? ` (${state.error.message})` : "";
 		throw new Error(
-			`Refusing to save Zentui config because ${path} is corrupt or unreadable; fix or remove it first.${detail}`,
+			`Refusing to save choco-ui config because ${path} is corrupt or unreadable; fix or remove it first.${detail}`,
 		);
 	}
 	mutate(state.record);

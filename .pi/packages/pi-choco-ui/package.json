@@ -1,17 +1,9 @@
 {
-	"name": "pi-zentui",
+	"name": "pi-choco-ui",
 	"version": "0.20.1",
-	"description": "A Starship-inspired statusline and Opencode-style TUI for Pi.",
+	"description": "choco-pi's TUI package: Starship-style footer, Opencode-style editor, and the Nord themes.",
 	"type": "module",
 	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/lmilojevicc/pi-zentui.git"
-	},
-	"homepage": "https://github.com/lmilojevicc/pi-zentui#readme",
-	"bugs": {
-		"url": "https://github.com/lmilojevicc/pi-zentui/issues"
-	},
 	"keywords": [
 		"pi-package",
 		"pi-extension",
@@ -20,7 +12,8 @@
 		"tui"
 	],
 	"files": [
-		"extensions"
+		"extensions",
+		"themes"
 	],
 	"scripts": {
 		"lint": "biome check .",
@@ -43,7 +36,9 @@
 		"extensions": [
 			"./extensions"
 		],
-		"image": "https://raw.githubusercontent.com/lmilojevicc/pi-zentui/main/assets/zentui.png"
+		"themes": [
+			"./themes"
+		]
 	},
 	"publishConfig": {
 		"access": "public"
