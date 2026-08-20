@@ -17,14 +17,29 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { BUILTIN_TOOL_NAMES, getAgentConfig, getConfig, getMemoryToolNames, getReadOnlyMemoryToolNames, getToolNamesForType } from "./agent-types.ts";
+import {
+  BUILTIN_TOOL_NAMES,
+  getAgentConfig,
+  getConfig,
+  getMemoryToolNames,
+  getReadOnlyMemoryToolNames,
+  getToolNamesForType,
+} from "./agent-types.ts";
 import { runInChildSessionContext } from "./child-context.ts";
 import { buildParentContext, extractText } from "./context.ts";
 import { DEFAULT_AGENTS } from "./default-agents.ts";
 import { detectEnv } from "./env.ts";
 import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.ts";
-import { createNestedSubagentTools, getMaxSubagentDepth, type NestedAgentManager } from "./nested-tools.ts";
-import { buildAgentPrompt, buildReadOnlySideConversationPrompt, type PromptExtras } from "./prompts.ts";
+import {
+  createNestedSubagentTools,
+  getMaxSubagentDepth,
+  type NestedAgentManager,
+} from "./nested-tools.ts";
+import {
+  buildAgentPrompt,
+  buildReadOnlySideConversationPrompt,
+  type PromptExtras,
+} from "./prompts.ts";
 import { preloadSkills } from "./skill-loader.ts";
 import type { SubagentType, ThinkingLevel } from "./types.ts";
 
@@ -55,9 +70,10 @@ const READ_ONLY_TOOL_NAMES = new Set(["read", "grep", "find", "ls"]);
  */
 export function extensionCanonicalName(extPath: string): string {
   const base = basename(extPath);
-  const name = base === "index.ts" || base === "index.js"
-    ? basename(dirname(extPath))
-    : base.replace(/\.(ts|js)$/, "");
+  const name =
+    base === "index.ts" || base === "index.js"
+      ? basename(dirname(extPath))
+      : base.replace(/\.(ts|js)$/, "");
   return name.toLowerCase();
 }
 
@@ -272,7 +288,10 @@ export function installExtensionToolScope(
 
   const renarrow = () => {
     const allowed = inScope();
-    const next = session.getAllTools().map((t) => t.name).filter((n) => allowed.has(n));
+    const next = session
+      .getAllTools()
+      .map((t) => t.name)
+      .filter((n) => allowed.has(n));
     const current = session.getActiveToolNames();
     // setActiveToolsByName unconditionally rebuilds the system prompt, so skip
     // the no-op that steady-state turns would otherwise pay for every turn.
@@ -311,9 +330,13 @@ export function normalizeMaxTurns(n: number | undefined): number | undefined {
 }
 
 /** Get the default max turns value. undefined = unlimited. */
-export function getDefaultMaxTurns(): number | undefined { return defaultMaxTurns; }
+export function getDefaultMaxTurns(): number | undefined {
+  return defaultMaxTurns;
+}
 /** Set the default max turns value. undefined or 0 = unlimited, otherwise minimum 1. */
-export function setDefaultMaxTurns(n: number | undefined): void { defaultMaxTurns = normalizeMaxTurns(n); }
+export function setDefaultMaxTurns(n: number | undefined): void {
+  defaultMaxTurns = normalizeMaxTurns(n);
+}
 
 /**
  * Project default for `persist_session`, from the `rememberAgents` setting.
@@ -325,17 +348,25 @@ export function setDefaultMaxTurns(n: number | undefined): void { defaultMaxTurn
 let rememberAgents = true;
 
 /** Whether subagent sessions are persisted by default. */
-export function getRememberAgents(): boolean { return rememberAgents; }
+export function getRememberAgents(): boolean {
+  return rememberAgents;
+}
 /** Set whether subagent sessions are persisted by default. */
-export function setRememberAgents(b: boolean): void { rememberAgents = b; }
+export function setRememberAgents(b: boolean): void {
+  rememberAgents = b;
+}
 
 /** Additional turns allowed after the soft limit steer message. */
 let graceTurns = 5;
 
 /** Get the grace turns value. */
-export function getGraceTurns(): number { return graceTurns; }
+export function getGraceTurns(): number {
+  return graceTurns;
+}
 /** Set the grace turns value (minimum 1). */
-export function setGraceTurns(n: number): void { graceTurns = Math.max(1, n); }
+export function setGraceTurns(n: number): void {
+  graceTurns = Math.max(1, n);
+}
 
 /**
  * Try to find the right model for an agent type.
@@ -343,7 +374,10 @@ export function setGraceTurns(n: number): void { graceTurns = Math.max(1, n); }
  */
 export function resolveDefaultModel(
   parentModel: Model<any> | undefined,
-  registry: { find(provider: string, modelId: string): Model<any> | undefined; getAvailable?(): Model<any>[] },
+  registry: {
+    find(provider: string, modelId: string): Model<any> | undefined;
+    getAvailable?(): Model<any>[];
+  },
   configModel?: string,
 ): Model<any> | undefined {
   if (configModel) {
@@ -402,7 +436,9 @@ export function captureMainSessionFork(ctx: ExtensionContext): MainSessionFork {
     let clonedId: string | undefined;
     switch (entry.type) {
       case "message":
-        clonedId = fork.appendMessage(entry.message as Parameters<SessionManager["appendMessage"]>[0]);
+        clonedId = fork.appendMessage(
+          entry.message as Parameters<SessionManager["appendMessage"]>[0],
+        );
         break;
       case "thinking_level_change":
         clonedId = fork.appendThinkingLevelChange(entry.thinkingLevel);
@@ -413,7 +449,9 @@ export function captureMainSessionFork(ctx: ExtensionContext): MainSessionFork {
       case "compaction": {
         const firstKeptEntryId = clonedIds.get(entry.firstKeptEntryId);
         if (!firstKeptEntryId) {
-          throw new Error(`Cannot fork main session: compaction entry ${entry.id} references a missing branch entry.`);
+          throw new Error(
+            `Cannot fork main session: compaction entry ${entry.id} references a missing branch entry.`,
+          );
         }
         clonedId = fork.appendCompaction(
           entry.summary,
@@ -461,7 +499,8 @@ export function captureMainSessionFork(ctx: ExtensionContext): MainSessionFork {
     sessionManager: fork,
     systemPrompt: ctx.getSystemPrompt(),
     model: ctx.model,
-    thinkingLevel: ctx.thinkingLevel === "off" ? undefined : ctx.thinkingLevel as ThinkingLevel | undefined,
+    thinkingLevel:
+      ctx.thinkingLevel === "off" ? undefined : (ctx.thinkingLevel as ThinkingLevel | undefined),
   };
 }
 
@@ -548,7 +587,10 @@ export interface RunOptions {
    * Called when the session successfully compacts. `tokensBefore` is upstream's
    * pre-compaction context size estimate. Aborted compactions don't fire.
    */
-  onCompaction?: (info: { reason: "manual" | "threshold" | "overflow"; tokensBefore: number }) => void;
+  onCompaction?: (info: {
+    reason: "manual" | "threshold" | "overflow";
+    tokensBefore: number;
+  }) => void;
   /** Runtime bridge for opt-in child-safe nested delegation. */
   nestedRuntime?: {
     manager: NestedAgentManager;
@@ -633,7 +675,9 @@ function finalTurnError(session: AgentSession, startIndex = 0): string | undefin
     const msg = session.messages[i];
     if (msg.role !== "assistant") continue;
     if (msg.stopReason === "error") {
-      return (msg as { errorMessage?: string }).errorMessage?.trim() || "provider error with no output";
+      return (
+        (msg as { errorMessage?: string }).errorMessage?.trim() || "provider error with no output"
+      );
     }
     if (msg.stopReason === "length" && !extractText(msg.content).trim()) {
       return "run hit the output token limit before producing any text";
@@ -654,9 +698,13 @@ function forwardAbortSignal(session: AgentSession, signal?: AbortSignal): () => 
   return () => signal.removeEventListener("abort", onAbort);
 }
 
-function resolveConfiguredSessionDir(sessionDir: string | undefined, cwd: string): string | undefined {
+function resolveConfiguredSessionDir(
+  sessionDir: string | undefined,
+  cwd: string,
+): string | undefined {
   if (!sessionDir) return undefined;
-  if (sessionDir === "~" || sessionDir.startsWith("~/")) return resolve(homedir(), sessionDir.slice(2));
+  if (sessionDir === "~" || sessionDir.startsWith("~/"))
+    return resolve(homedir(), sessionDir.slice(2));
   if (isAbsolute(sessionDir)) return sessionDir;
   return resolve(cwd, sessionDir);
 }
@@ -692,7 +740,8 @@ export async function runAgent(
   const extensions = options.isolated || options.readOnly ? false : config.extensions;
   // Nulling excludes under either override also suppresses the orphaned-exclude
   // warning — both are intentional restrictions, not misconfiguration.
-  const excludeExtensions = options.isolated || options.readOnly ? undefined : config.excludeExtensions;
+  const excludeExtensions =
+    options.isolated || options.readOnly ? undefined : config.excludeExtensions;
   const skills = options.isolated ? false : config.skills;
 
   // Skill preloading: when skills is string[], preload their content into prompt
@@ -705,7 +754,7 @@ export async function runAgent(
 
   let toolNames = getToolNamesForType(type);
   if (options.readOnly) {
-    toolNames = toolNames.filter(name => READ_ONLY_TOOL_NAMES.has(name));
+    toolNames = toolNames.filter((name) => READ_ONLY_TOOL_NAMES.has(name));
   }
 
   // Persistent memory: detect write capability and branch accordingly.
@@ -725,7 +774,11 @@ export async function runAgent(
       // Read-only memory: only add read tool name, use read-only prompt
       const extraNames = getReadOnlyMemoryToolNames(existingNames);
       if (extraNames.length > 0) toolNames = [...toolNames, ...extraNames];
-      extras.memoryBlock = buildReadOnlyMemoryBlock(agentConfig.name, agentConfig.memory, configCwd);
+      extras.memoryBlock = buildReadOnlyMemoryBlock(
+        agentConfig.name,
+        agentConfig.memory,
+        configCwd,
+      );
     }
   }
 
@@ -733,7 +786,8 @@ export async function runAgent(
   // effective identity verbatim, adding only the read-only capability notice.
   let systemPrompt: string;
   if (options.mainSessionFork) {
-    if (!options.readOnly) throw new Error("Main-session forks are restricted to read-only side conversations.");
+    if (!options.readOnly)
+      throw new Error("Main-session forks are restricted to read-only side conversations.");
     systemPrompt = buildReadOnlySideConversationPrompt(options.mainSessionFork.systemPrompt);
   } else if (agentConfig) {
     systemPrompt = buildAgentPrompt(agentConfig, effectiveCwd, env, parentSystemPrompt, extras);
@@ -742,12 +796,19 @@ export async function runAgent(
     // unreachable in practice since index.ts resolves unknown types before calling runAgent).
     const fallback = DEFAULT_AGENTS.get("general-purpose");
     if (!fallback) throw new Error(`No fallback config available for unknown type "${type}"`);
-    systemPrompt = buildAgentPrompt({ ...fallback, name: type }, effectiveCwd, env, parentSystemPrompt, extras);
+    systemPrompt = buildAgentPrompt(
+      { ...fallback, name: type },
+      effectiveCwd,
+      env,
+      parentSystemPrompt,
+      extras,
+    );
   }
 
   // When skills is string[], we've already preloaded them into the prompt.
   // Still pass noSkills: true since we don't need the skill loader to load them again.
-  const noSkills = options.mainSessionFork !== undefined || skills === false || Array.isArray(skills);
+  const noSkills =
+    options.mainSessionFork !== undefined || skills === false || Array.isArray(skills);
 
   const agentDir = getAgentDir();
 
@@ -796,7 +857,9 @@ export async function runAgent(
     noExtensions || (loadAll && !hasExcludes)
       ? undefined
       : (base) => {
-          discoveredNames = new Set(base.extensions.flatMap((e) => extensionCanonicalNames(e.path)));
+          discoveredNames = new Set(
+            base.extensions.flatMap((e) => extensionCanonicalNames(e.path)),
+          );
           return {
             ...base,
             extensions: base.extensions.filter((e) => {
@@ -894,12 +957,12 @@ export async function runAgent(
   // Resolve model: explicit option > config.model > parent model
   const model = options.mainSessionFork
     ? options.mainSessionFork.model
-    : options.model ?? resolveDefaultModel(ctx.model, ctx.modelRegistry, agentConfig?.model);
+    : (options.model ?? resolveDefaultModel(ctx.model, ctx.modelRegistry, agentConfig?.model));
 
   // A BTW fork inherits the main runtime identity, not the selected record type.
   const thinkingLevel = options.mainSessionFork
     ? options.mainSessionFork.thinkingLevel
-    : options.thinkingLevel ?? agentConfig?.thinking;
+    : (options.thinkingLevel ?? agentConfig?.thinking);
 
   const disallowedSet = agentConfig?.disallowedTools
     ? new Set(agentConfig.disallowedTools)
@@ -914,21 +977,23 @@ export async function runAgent(
   // to fetch from or steer either — inject nothing rather than three tools whose
   // every call is an error. This is also what makes `maxSubagentDepth` 0/1 mean
   // "nesting off" instead of "nesting always fails".
-  const nestedRuntime = options.nestedRuntime && options.nestedRuntime.depth < effectiveMaxDepth
-    ? options.nestedRuntime
-    : undefined;
-  const nestedTools = agentConfig?.allowedSubagents && nestedRuntime && !options.isolated && !options.readOnly
-    ? createNestedSubagentTools({
-        manager: nestedRuntime.manager,
-        pi: options.pi,
-        parentAgentId: nestedRuntime.parentAgentId,
-        depth: nestedRuntime.depth,
-        maxSubagentDepth: effectiveMaxDepth,
-        allowedSubagents: agentConfig.allowedSubagents,
-        configCwd,
-      })
-    : [];
-  const nestedToolNames = new Set(nestedTools.map(tool => tool.name));
+  const nestedRuntime =
+    options.nestedRuntime && options.nestedRuntime.depth < effectiveMaxDepth
+      ? options.nestedRuntime
+      : undefined;
+  const nestedTools =
+    agentConfig?.allowedSubagents && nestedRuntime && !options.isolated && !options.readOnly
+      ? createNestedSubagentTools({
+          manager: nestedRuntime.manager,
+          pi: options.pi,
+          parentAgentId: nestedRuntime.parentAgentId,
+          depth: nestedRuntime.depth,
+          maxSubagentDepth: effectiveMaxDepth,
+          allowedSubagents: agentConfig.allowedSubagents,
+          configCwd,
+        })
+      : [];
+  const nestedToolNames = new Set(nestedTools.map((tool) => tool.name));
 
   // ─── Tool scoping ───────────────────────────────────────────────────────
   //
@@ -965,17 +1030,13 @@ export async function runAgent(
     // Strict allowlist: built-ins the agent asked for, plus any opt-in nested
     // tools (whose names would otherwise be dropped as EXCLUDED_TOOL_NAMES).
     sessionTools = [
-      ...toolNames.filter(
-        (t) => !EXCLUDED_TOOL_NAMES.includes(t) && !disallowedSet?.has(t),
-      ),
+      ...toolNames.filter((t) => !EXCLUDED_TOOL_NAMES.includes(t) && !disallowedSet?.has(t)),
       ...[...nestedToolNames].filter((t) => !disallowedSet?.has(t)),
     ];
   } else {
     // Deny the orchestration tools EXCEPT the nested ones this agent opted into —
     // those are injected as customTools and must survive the registry gate.
-    const denyTools = new Set<string>(
-      EXCLUDED_TOOL_NAMES.filter((t) => !nestedToolNames.has(t)),
-    );
+    const denyTools = new Set<string>(EXCLUDED_TOOL_NAMES.filter((t) => !nestedToolNames.has(t)));
     // Keep only the built-ins the agent asked for — deny the rest.
     for (const name of BUILTIN_TOOL_NAMES) {
       if (!builtinToolNameSet.has(name)) denyTools.add(name);
@@ -989,7 +1050,8 @@ export async function runAgent(
 
   const settingsManager = SettingsManager.create(configCwd, agentDir);
   const configuredSessionDir = resolveConfiguredSessionDir(agentConfig?.sessionDir, effectiveCwd);
-  const defaultSessionDir = process.env.PI_CODING_AGENT_SESSION_DIR ?? settingsManager.getSessionDir?.();
+  const defaultSessionDir =
+    process.env.PI_CODING_AGENT_SESSION_DIR ?? settingsManager.getSessionDir?.();
   // Frontmatter wins when it says anything; otherwise the project default,
   // which `rememberAgents` supplies for top-level agents only. Same precedence
   // as `outputTranscript`.
@@ -997,20 +1059,20 @@ export async function runAgent(
   const sessionManager = options.mainSessionFork
     ? options.mainSessionFork.sessionManager
     : options.resumeSessionFile
-    // Reopening an existing conversation: the file already carries its own
-    // header (cwd, parent) and history, so none of the create-time options
-    // apply. `sessionDir` still matters for a later /new or /branch off it.
-    ? SessionManager.open(options.resumeSessionFile, configuredSessionDir ?? defaultSessionDir)
-    : persistSession
-      ? SessionManager.create(effectiveCwd, configuredSessionDir ?? defaultSessionDir, {
-          // Optional metadata — it only nests the subagent under its spawner in
-          // `/resume`. Until `rememberAgents` this ran solely for the rare
-          // `persist_session: true` agent; now it runs for every spawn, so a
-          // context without a session manager (a bare programmatic ctx) must
-          // still persist rather than take the whole spawn down.
-          parentSession: ctx.sessionManager?.getSessionFile?.(),
-        })
-      : SessionManager.inMemory(effectiveCwd);
+      ? // Reopening an existing conversation: the file already carries its own
+        // header (cwd, parent) and history, so none of the create-time options
+        // apply. `sessionDir` still matters for a later /new or /branch off it.
+        SessionManager.open(options.resumeSessionFile, configuredSessionDir ?? defaultSessionDir)
+      : persistSession
+        ? SessionManager.create(effectiveCwd, configuredSessionDir ?? defaultSessionDir, {
+            // Optional metadata — it only nests the subagent under its spawner in
+            // `/resume`. Until `rememberAgents` this ran solely for the rare
+            // `persist_session: true` agent; now it runs for every spawn, so a
+            // context without a session manager (a bare programmatic ctx) must
+            // still persist rather than take the whole spawn down.
+            parentSession: ctx.sessionManager?.getSessionFile?.(),
+          })
+        : SessionManager.inMemory(effectiveCwd);
 
   // Pi 0.80.8 replaced createAgentSession's modelRegistry option with
   // modelRuntime, but ExtensionContext still exposes only the registry facade.
@@ -1095,7 +1157,9 @@ export async function runAgent(
       if (maxTurns != null) {
         if (!softLimitReached && turnCount >= maxTurns) {
           softLimitReached = true;
-          session.steer("You have reached your turn limit. Wrap up immediately — provide your final answer now.");
+          session.steer(
+            "You have reached your turn limit. Wrap up immediately — provide your final answer now.",
+          );
         } else if (softLimitReached && turnCount >= maxTurns + graceTurns) {
           aborted = true;
           session.abort();
@@ -1117,11 +1181,12 @@ export async function runAgent(
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
       const u = (event.message as any).usage;
-      if (u) options.onAssistantUsage?.({
-        input: u.input ?? 0,
-        output: u.output ?? 0,
-        cacheWrite: u.cacheWrite ?? 0,
-      });
+      if (u)
+        options.onAssistantUsage?.({
+          input: u.input ?? 0,
+          output: u.output ?? 0,
+          cacheWrite: u.cacheWrite ?? 0,
+        });
     }
     if (event.type === "compaction_end" && !event.aborted && event.result) {
       options.onCompaction?.({ reason: event.reason, tokensBefore: event.result.tokensBefore });
@@ -1147,7 +1212,13 @@ export async function runAgent(
   }
 
   const responseText = collector.getText().trim() || getLastAssistantText(session, startLen);
-  return { responseText, session, aborted, steered: softLimitReached, failure: finalTurnError(session, startLen) };
+  return {
+    responseText,
+    session,
+    aborted,
+    steered: softLimitReached,
+    failure: finalTurnError(session, startLen),
+  };
 }
 
 /**
@@ -1159,7 +1230,10 @@ export async function resumeAgent(
   options: {
     onToolActivity?: (activity: ToolActivity) => void;
     onAssistantUsage?: (usage: { input: number; output: number; cacheWrite: number }) => void;
-    onCompaction?: (info: { reason: "manual" | "threshold" | "overflow"; tokensBefore: number }) => void;
+    onCompaction?: (info: {
+      reason: "manual" | "threshold" | "overflow";
+      tokensBefore: number;
+    }) => void;
     signal?: AbortSignal;
   } = {},
 ): Promise<{ text: string; failure?: string }> {
@@ -1170,23 +1244,30 @@ export async function resumeAgent(
   const collector = collectResponseText(session);
   const cleanupAbort = forwardAbortSignal(session, options.signal);
 
-  const unsubEvents = (options.onToolActivity || options.onAssistantUsage || options.onCompaction)
-    ? session.subscribe((event: AgentSessionEvent) => {
-        if (event.type === "tool_execution_start") options.onToolActivity?.({ type: "start", toolName: event.toolName });
-        if (event.type === "tool_execution_end") options.onToolActivity?.({ type: "end", toolName: event.toolName });
-        if (event.type === "message_end" && event.message.role === "assistant") {
-          const u = (event.message as any).usage;
-          if (u) options.onAssistantUsage?.({
-            input: u.input ?? 0,
-            output: u.output ?? 0,
-            cacheWrite: u.cacheWrite ?? 0,
-          });
-        }
-        if (event.type === "compaction_end" && !event.aborted && event.result) {
-          options.onCompaction?.({ reason: event.reason, tokensBefore: event.result.tokensBefore });
-        }
-      })
-    : () => {};
+  const unsubEvents =
+    options.onToolActivity || options.onAssistantUsage || options.onCompaction
+      ? session.subscribe((event: AgentSessionEvent) => {
+          if (event.type === "tool_execution_start")
+            options.onToolActivity?.({ type: "start", toolName: event.toolName });
+          if (event.type === "tool_execution_end")
+            options.onToolActivity?.({ type: "end", toolName: event.toolName });
+          if (event.type === "message_end" && event.message.role === "assistant") {
+            const u = (event.message as any).usage;
+            if (u)
+              options.onAssistantUsage?.({
+                input: u.input ?? 0,
+                output: u.output ?? 0,
+                cacheWrite: u.cacheWrite ?? 0,
+              });
+          }
+          if (event.type === "compaction_end" && !event.aborted && event.result) {
+            options.onCompaction?.({
+              reason: event.reason,
+              tokensBefore: event.result.tokensBefore,
+            });
+          }
+        })
+      : () => {};
 
   try {
     await session.prompt(prompt);
@@ -1206,10 +1287,7 @@ export async function resumeAgent(
  * Send a steering message to a running subagent.
  * The message will interrupt the agent after its current tool execution.
  */
-export async function steerAgent(
-  session: AgentSession,
-  message: string,
-): Promise<void> {
+export async function steerAgent(session: AgentSession, message: string): Promise<void> {
   await session.steer(message);
 }
 
@@ -1221,16 +1299,15 @@ export function getAgentConversation(session: AgentSession): string {
 
   for (const msg of session.messages) {
     if (msg.role === "user") {
-      const text = typeof msg.content === "string"
-        ? msg.content
-        : extractText(msg.content);
+      const text = typeof msg.content === "string" ? msg.content : extractText(msg.content);
       if (text.trim()) parts.push(`[User]: ${text.trim()}`);
     } else if (msg.role === "assistant") {
       const textParts: string[] = [];
       const toolCalls: string[] = [];
       for (const c of msg.content) {
         if (c.type === "text" && c.text) textParts.push(c.text);
-        else if (c.type === "toolCall") toolCalls.push(`  Tool: ${(c as any).name ?? (c as any).toolName ?? "unknown"}`);
+        else if (c.type === "toolCall")
+          toolCalls.push(`  Tool: ${(c as any).name ?? (c as any).toolName ?? "unknown"}`);
       }
       if (textParts.length > 0) parts.push(`[Assistant]: ${textParts.join("\n")}`);
       if (toolCalls.length > 0) parts.push(`[Tool Calls]:\n${toolCalls.join("\n")}`);

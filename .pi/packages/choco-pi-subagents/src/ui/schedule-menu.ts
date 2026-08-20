@@ -93,7 +93,7 @@ export async function showSchedulesMenu(
     ctx.ui,
     `Scheduled jobs (${jobs.length}) — select to cancel`,
     jobs,
-    j => formatJob(j, scheduler),
+    (j) => formatJob(j, scheduler),
   );
   if (!job) return;
 

@@ -52,10 +52,7 @@ import { toPositiveFinite } from "./env-utils.js";
 // business depending on a task registry to read two numbers (#1462 review N4).
 // Note it buys nothing at load time: `runtime-config.js` below already reaches
 // `pidusage` via `lsp-config.js`.
-import {
-	isQuietWindowEnabled,
-	quietWindowWaitMs,
-} from "./quiet-window-config.js";
+import { isQuietWindowEnabled, quietWindowWaitMs } from "./quiet-window-config.js";
 import { RUNTIME_CONFIG } from "./runtime-config.js";
 
 /**
@@ -67,8 +64,8 @@ import { RUNTIME_CONFIG } from "./runtime-config.js";
  * restore the 5000 ms default.
  */
 export function cascadeSettleWaitMs(): number {
-	const raw = Number(process.env.CHOCO_PI_LSP_CASCADE_SETTLE_WAIT_MS);
-	return Number.isFinite(raw) && raw >= 0 ? raw : 5000;
+  const raw = Number(process.env.CHOCO_PI_LSP_CASCADE_SETTLE_WAIT_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 5000;
 }
 
 /** The budget floor, and the minimum any env override of the cap can produce. */
@@ -81,9 +78,9 @@ const MIN_NEIGHBOUR_BUDGET = RUNTIME_CONFIG.pipeline.cascadeMaxFiles;
 const DEFAULT_NEIGHBOUR_BUDGET = 40;
 
 export const CASCADE_NEIGHBOUR_BUDGET = Math.max(
-	MIN_NEIGHBOUR_BUDGET,
-	Number.parseInt(process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_BUDGET ?? "40", 10) ||
-		DEFAULT_NEIGHBOUR_BUDGET,
+  MIN_NEIGHBOUR_BUDGET,
+  Number.parseInt(process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_BUDGET ?? "40", 10) ||
+    DEFAULT_NEIGHBOUR_BUDGET,
 );
 
 /**
@@ -95,8 +92,8 @@ export const CASCADE_NEIGHBOUR_BUDGET = Math.max(
  * it describes.
  */
 const NEIGHBOUR_BUDGET_OVERRIDDEN =
-	process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_BUDGET !== undefined &&
-	CASCADE_NEIGHBOUR_BUDGET !== DEFAULT_NEIGHBOUR_BUDGET;
+  process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_BUDGET !== undefined &&
+  CASCADE_NEIGHBOUR_BUDGET !== DEFAULT_NEIGHBOUR_BUDGET;
 
 /**
  * Marginal wall-clock cost of one more neighbour in the walk, in ms. Calibrated
@@ -114,52 +111,45 @@ const DEFAULT_NEIGHBOUR_COST_MS = 100;
 
 /** Read per call — sized once per cascade run, never on a hot path. */
 function neighbourCostMs(): number {
-	return (
-		toPositiveFinite(process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_COST_MS) ||
-		DEFAULT_NEIGHBOUR_COST_MS
-	);
+  return (
+    toPositiveFinite(process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_COST_MS) ||
+    DEFAULT_NEIGHBOUR_COST_MS
+  );
 }
 
 function neighbourFloor(): number {
-	return (
-		toPositiveFinite(process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_FLOOR) ||
-		MIN_NEIGHBOUR_BUDGET
-	);
+  return toPositiveFinite(process.env.CHOCO_PI_LSP_CASCADE_NEIGHBOUR_FLOOR) || MIN_NEIGHBOUR_BUDGET;
 }
 
 /** Which of the four rules decided this run's budget. */
-export type CascadeBudgetZone =
-	| "fits"
-	| "narrowed"
-	| "past-rescue"
-	| "no-rescue-window";
+export type CascadeBudgetZone = "fits" | "narrowed" | "past-rescue" | "no-rescue-window";
 
 export interface CascadeBudgetDecision {
-	/** Neighbours this run may walk — the budget in force. */
-	budget: number;
-	/** The flat cap. `budget < ceiling` means the rescue band narrowed the walk. */
-	ceiling: number;
-	/** On-time window left when the walk was sized; negative means overspent. */
-	remainingMs: number;
-	/** Which rule decided it — the whole reason, in one field. */
-	zone: CascadeBudgetZone;
-	/**
-	 * How long the delivery pipeline keeps a slow run alive before it needs a
-	 * later turn_end: the turn_end settle plus the `agent_settled` quiet-window
-	 * drain. RECORDED, not a divisor — it puts the second window on the record
-	 * so a reader of `cascade_result` sees the whole deadline stack instead of
-	 * just the 5000 ms one. It does NOT feed any zone: kill the quiet window and
-	 * every budget this function returns is unchanged. What lets `past-rescue`
-	 * keep the full budget is `beginTurn` never clearing `_pendingCascadeRuns`
-	 * (`runtime-coordinator.ts`), which retains a slow compute until it resolves
-	 * however long that takes; the drain only gets it there sooner.
-	 *
-	 * Counts the drain only when it will actually run: `CHOCO_PI_LSP_QUIET_WINDOW=0`
-	 * disables the scheduler while `quietWindowWaitMs()` keeps returning its
-	 * budget, so reading the budget alone would claim 15 s of drain that no
-	 * longer exists (#1462 review N3).
-	 */
-	deliveryWindowMs: number;
+  /** Neighbours this run may walk — the budget in force. */
+  budget: number;
+  /** The flat cap. `budget < ceiling` means the rescue band narrowed the walk. */
+  ceiling: number;
+  /** On-time window left when the walk was sized; negative means overspent. */
+  remainingMs: number;
+  /** Which rule decided it — the whole reason, in one field. */
+  zone: CascadeBudgetZone;
+  /**
+   * How long the delivery pipeline keeps a slow run alive before it needs a
+   * later turn_end: the turn_end settle plus the `agent_settled` quiet-window
+   * drain. RECORDED, not a divisor — it puts the second window on the record
+   * so a reader of `cascade_result` sees the whole deadline stack instead of
+   * just the 5000 ms one. It does NOT feed any zone: kill the quiet window and
+   * every budget this function returns is unchanged. What lets `past-rescue`
+   * keep the full budget is `beginTurn` never clearing `_pendingCascadeRuns`
+   * (`runtime-coordinator.ts`), which retains a slow compute until it resolves
+   * however long that takes; the drain only gets it there sooner.
+   *
+   * Counts the drain only when it will actually run: `CHOCO_PI_LSP_QUIET_WINDOW=0`
+   * disables the scheduler while `quietWindowWaitMs()` keeps returning its
+   * budget, so reading the budget alone would claim 15 s of drain that no
+   * longer exists (#1462 review N3).
+   */
+  deliveryWindowMs: number;
 }
 
 /**
@@ -176,90 +166,85 @@ export interface CascadeBudgetDecision {
  * pure function; the function itself does not observe a deferred run's age.
  */
 export function deriveCascadeNeighbourBudget(options: {
-	elapsedMs: number;
-	settleWaitMs?: number;
-	quietDrainMs?: number;
-	ceiling?: number;
-	floor?: number;
-	perNeighbourMs?: number;
+  elapsedMs: number;
+  settleWaitMs?: number;
+  quietDrainMs?: number;
+  ceiling?: number;
+  floor?: number;
+  perNeighbourMs?: number;
 }): CascadeBudgetDecision {
-	const ceiling = options.ceiling ?? CASCADE_NEIGHBOUR_BUDGET;
-	// The floor can never exceed the ceiling — a floor above the cap would make
-	// the derived budget LARGER than the flat one it exists to bound.
-	const floor = Math.min(ceiling, options.floor ?? neighbourFloor());
-	const onTimeMs = options.settleWaitMs ?? cascadeSettleWaitMs();
-	const perNeighbourMs = options.perNeighbourMs ?? neighbourCostMs();
-	const elapsedMs = toPositiveFinite(options.elapsedMs);
-	const remainingMs = onTimeMs - elapsedMs;
-	const deliveryWindowMs =
-		onTimeMs +
-		(options.quietDrainMs ??
-			(isQuietWindowEnabled() ? quietWindowWaitMs() : 0));
-	const full = { budget: ceiling, ceiling, remainingMs, deliveryWindowMs };
+  const ceiling = options.ceiling ?? CASCADE_NEIGHBOUR_BUDGET;
+  // The floor can never exceed the ceiling — a floor above the cap would make
+  // the derived budget LARGER than the flat one it exists to bound.
+  const floor = Math.min(ceiling, options.floor ?? neighbourFloor());
+  const onTimeMs = options.settleWaitMs ?? cascadeSettleWaitMs();
+  const perNeighbourMs = options.perNeighbourMs ?? neighbourCostMs();
+  const elapsedMs = toPositiveFinite(options.elapsedMs);
+  const remainingMs = onTimeMs - elapsedMs;
+  const deliveryWindowMs =
+    onTimeMs + (options.quietDrainMs ?? (isQuietWindowEnabled() ? quietWindowWaitMs() : 0));
+  const full = { budget: ceiling, ceiling, remainingMs, deliveryWindowMs };
 
-	// No on-time window at all, or one too small to ever fit a full walk. There
-	// is no late run to rescue here, only every run to shrink — stand down.
-	//
-	// Boundary, acknowledged rather than special-cased: at exactly
-	// `onTimeMs === ceiling * perNeighbourMs` this does not fire and the `fits`
-	// zone has zero width, so ANY prelude narrows. Not slightly, either — at
-	// 4000/100/40 a 2 s prelude gives 20 and a 3.5 s prelude gives the floor.
-	// Left alone because the narrowing is honest at that setting: with the
-	// window sized to exactly one full walk, a run that has spent any of it
-	// really would miss, so every one of those cuts is a genuine rescue rather
-	// than the `no-rescue-window` case this guard exists to catch. What it does
-	// cost is headroom — see the divisor bands in the bench's `--sweep` text.
-	if (onTimeMs <= 0 || onTimeMs < ceiling * perNeighbourMs) {
-		// #1462 review F-E: name the override, once per session, when it is the
-		// REASON the derivation stood down — not when a caller under test asked
-		// for a specific ceiling, and not on every one of the cascades this
-		// disarms for the rest of the session.
-		if (options.ceiling === undefined && NEIGHBOUR_BUDGET_OVERRIDDEN) {
-			recordDegradationOnce({
-				kind: "cascade-budget-override-disarmed",
-				subject: "cascade-neighbour-budget",
-				reason:
-					`CHOCO_PI_LSP_CASCADE_NEIGHBOUR_BUDGET=${CASCADE_NEIGHBOUR_BUDGET} needs ` +
-					`${ceiling * perNeighbourMs}ms to walk the full cap, which exceeds ` +
-					`the ${onTimeMs}ms settle window — the rescue band is disarmed and ` +
-					`every cascade keeps the flat (overridden) cap`,
-			});
-		}
-		return { ...full, zone: "no-rescue-window" };
-	}
-	// The full walk still fits. Nothing to buy.
-	if (remainingMs >= ceiling * perNeighbourMs) {
-		return { ...full, zone: "fits" };
-	}
-	// Past rescue: not even a floor-sized walk fits, so narrowing would drop the
-	// tail permanently and still miss the window. The carry-over delivers the
-	// whole set one turn later instead.
-	//
-	// #1462 review F-B, kept rather than shrunk: one dogfood log measured this
-	// zone at 0/1090 cascades, and asked whether a 3-zone module earns its keep
-	// at that frequency. It was measured against the WRITE-relative clock this
-	// same round fixed, which charges elapsed time no cascade actually spent
-	// waiting — so it under-counts how often a genuinely slow compute (a cold
-	// graph build, ~19 s) overlaps an already-running settle window, which is
-	// exactly what this zone exists to catch (F3, a real regression the first
-	// review round found: a floor-sized stub on that cold-start case is
-	// strictly worse than pre-#1462). Reachability under the corrected clock
-	// has not been re-measured; shrinking on a stale sample would trade a
-	// cheap, already-tested guard against a proven regression for a paper
-	// simplification. Revisit if a post-fix dogfood window confirms it still
-	// never fires.
-	if (remainingMs < floor * perNeighbourMs) {
-		return { ...full, zone: "past-rescue" };
-	}
-	// The rescue band: a shorter walk lands on time.
-	return {
-		budget: Math.min(
-			ceiling,
-			Math.max(floor, Math.floor(remainingMs / perNeighbourMs)),
-		),
-		ceiling,
-		remainingMs,
-		deliveryWindowMs,
-		zone: "narrowed",
-	};
+  // No on-time window at all, or one too small to ever fit a full walk. There
+  // is no late run to rescue here, only every run to shrink — stand down.
+  //
+  // Boundary, acknowledged rather than special-cased: at exactly
+  // `onTimeMs === ceiling * perNeighbourMs` this does not fire and the `fits`
+  // zone has zero width, so ANY prelude narrows. Not slightly, either — at
+  // 4000/100/40 a 2 s prelude gives 20 and a 3.5 s prelude gives the floor.
+  // Left alone because the narrowing is honest at that setting: with the
+  // window sized to exactly one full walk, a run that has spent any of it
+  // really would miss, so every one of those cuts is a genuine rescue rather
+  // than the `no-rescue-window` case this guard exists to catch. What it does
+  // cost is headroom — see the divisor bands in the bench's `--sweep` text.
+  if (onTimeMs <= 0 || onTimeMs < ceiling * perNeighbourMs) {
+    // #1462 review F-E: name the override, once per session, when it is the
+    // REASON the derivation stood down — not when a caller under test asked
+    // for a specific ceiling, and not on every one of the cascades this
+    // disarms for the rest of the session.
+    if (options.ceiling === undefined && NEIGHBOUR_BUDGET_OVERRIDDEN) {
+      recordDegradationOnce({
+        kind: "cascade-budget-override-disarmed",
+        subject: "cascade-neighbour-budget",
+        reason:
+          `CHOCO_PI_LSP_CASCADE_NEIGHBOUR_BUDGET=${CASCADE_NEIGHBOUR_BUDGET} needs ` +
+          `${ceiling * perNeighbourMs}ms to walk the full cap, which exceeds ` +
+          `the ${onTimeMs}ms settle window — the rescue band is disarmed and ` +
+          `every cascade keeps the flat (overridden) cap`,
+      });
+    }
+    return { ...full, zone: "no-rescue-window" };
+  }
+  // The full walk still fits. Nothing to buy.
+  if (remainingMs >= ceiling * perNeighbourMs) {
+    return { ...full, zone: "fits" };
+  }
+  // Past rescue: not even a floor-sized walk fits, so narrowing would drop the
+  // tail permanently and still miss the window. The carry-over delivers the
+  // whole set one turn later instead.
+  //
+  // #1462 review F-B, kept rather than shrunk: one dogfood log measured this
+  // zone at 0/1090 cascades, and asked whether a 3-zone module earns its keep
+  // at that frequency. It was measured against the WRITE-relative clock this
+  // same round fixed, which charges elapsed time no cascade actually spent
+  // waiting — so it under-counts how often a genuinely slow compute (a cold
+  // graph build, ~19 s) overlaps an already-running settle window, which is
+  // exactly what this zone exists to catch (F3, a real regression the first
+  // review round found: a floor-sized stub on that cold-start case is
+  // strictly worse than pre-#1462). Reachability under the corrected clock
+  // has not been re-measured; shrinking on a stale sample would trade a
+  // cheap, already-tested guard against a proven regression for a paper
+  // simplification. Revisit if a post-fix dogfood window confirms it still
+  // never fires.
+  if (remainingMs < floor * perNeighbourMs) {
+    return { ...full, zone: "past-rescue" };
+  }
+  // The rescue band: a shorter walk lands on time.
+  return {
+    budget: Math.min(ceiling, Math.max(floor, Math.floor(remainingMs / perNeighbourMs))),
+    ceiling,
+    remainingMs,
+    deliveryWindowMs,
+    zone: "narrowed",
+  };
 }

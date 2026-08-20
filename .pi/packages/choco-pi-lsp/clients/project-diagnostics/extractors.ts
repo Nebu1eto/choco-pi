@@ -1,6 +1,6 @@
 import type {
-	AvailabilityCause,
-	AvailabilityOutcome,
+  AvailabilityCause,
+  AvailabilityOutcome,
 } from "../dispatch/runners/utils/availability-policy.js";
 
 /**
@@ -27,8 +27,8 @@ import type {
  */
 
 export interface FailedProjectAnalyzer {
-	id: string;
-	summary: string;
+  id: string;
+  summary: string;
 }
 
 /**
@@ -38,15 +38,15 @@ export interface FailedProjectAnalyzer {
  * reports in its `cold` list — keep in sync with that module's `ANALYZER_IDS`.
  */
 const WARM_TRIGGER: Record<string, string> = {
-	// choco-pi fork: only the opengrep and test-runner lanes remain — the
-	// other heavyweight analyzers are removed (see VENDORED.md).
-	opengrep: "runs at session-start",
-	"test-runner":
-		"fires per-edit at turn_end (only after a source file with a discoverable test companion is edited)",
+  // choco-pi fork: only the opengrep and test-runner lanes remain — the
+  // other heavyweight analyzers are removed (see VENDORED.md).
+  opengrep: "runs at session-start",
+  "test-runner":
+    "fires per-edit at turn_end (only after a source file with a discoverable test companion is edited)",
 };
 
 export function warmTriggerFor(analyzerId: string): string {
-	return WARM_TRIGGER[analyzerId] ?? "runs at session-start";
+  return WARM_TRIGGER[analyzerId] ?? "runs at session-start";
 }
 
 /**
@@ -58,13 +58,13 @@ export function warmTriggerFor(analyzerId: string): string {
  * the latter only remains a fallback for a `cold` id this map doesn't cover.
  */
 export function formatNotRunEntry(
-	analyzerId: string,
-	coldReasons: Record<string, string> | undefined,
+  analyzerId: string,
+  coldReasons: Record<string, string> | undefined,
 ): string {
-	const reason = coldReasons?.[analyzerId];
-	return reason
-		? `${analyzerId} — not run (${reason})`
-		: `${analyzerId} — not run (${warmTriggerFor(analyzerId)})`;
+  const reason = coldReasons?.[analyzerId];
+  return reason
+    ? `${analyzerId} — not run (${reason})`
+    : `${analyzerId} — not run (${warmTriggerFor(analyzerId)})`;
 }
 
 /**
@@ -74,22 +74,22 @@ export function formatNotRunEntry(
  * seconds don't matter, "12m" vs "3h" does.
  */
 export function formatCacheAge(ms: number): string {
-	// #1623 fix-round F4: `CacheManager.readCache` accepts a missing/corrupt
-	// `meta.timestamp` as a HIT (the timestamp only gates staleness, not
-	// validity), so `Date.now() - new Date(badTimestamp).getTime()` reaches
-	// here as NaN. Rendering "NaNh old" is a worse honesty gap than the one
-	// this whole module exists to close — say the age is unknown instead of
-	// fabricating one. Mirrors the sibling `Number.isFinite` guard in
-	// `./cache.ts`'s `reconcileProjectDiagnosticsSnapshot` (fail-safe on an
-	// unparseable timestamp rather than propagate NaN).
-	if (!Number.isFinite(ms)) return "age unknown";
-	if (ms < 0) return "0m";
-	const totalMinutes = Math.round(ms / 60_000);
-	if (totalMinutes < 1) return "under 1m";
-	if (totalMinutes < 60) return `${totalMinutes}m`;
-	const hours = Math.floor(totalMinutes / 60);
-	const minutes = totalMinutes % 60;
-	return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`;
+  // #1623 fix-round F4: `CacheManager.readCache` accepts a missing/corrupt
+  // `meta.timestamp` as a HIT (the timestamp only gates staleness, not
+  // validity), so `Date.now() - new Date(badTimestamp).getTime()` reaches
+  // here as NaN. Rendering "NaNh old" is a worse honesty gap than the one
+  // this whole module exists to close — say the age is unknown instead of
+  // fabricating one. Mirrors the sibling `Number.isFinite` guard in
+  // `./cache.ts`'s `reconcileProjectDiagnosticsSnapshot` (fail-safe on an
+  // unparseable timestamp rather than propagate NaN).
+  if (!Number.isFinite(ms)) return "age unknown";
+  if (ms < 0) return "0m";
+  const totalMinutes = Math.round(ms / 60_000);
+  if (totalMinutes < 1) return "under 1m";
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`;
 }
 
 /**
@@ -100,10 +100,10 @@ export function formatCacheAge(ms: number): string {
  * runner-helpers.ts) minus the fields this caller doesn't need.
  */
 export interface AvailabilityVerdictLike {
-	outcome: AvailabilityOutcome | null;
-	cause: AvailabilityCause | null;
-	/** Epoch ms after which a transient verdict may be re-probed; 0 = latched. */
-	retryAtMs: number;
+  outcome: AvailabilityOutcome | null;
+  cause: AvailabilityCause | null;
+  /** Epoch ms after which a transient verdict may be re-probed; 0 = latched. */
+  retryAtMs: number;
 }
 
 /**
@@ -123,21 +123,21 @@ export interface AvailabilityVerdictLike {
  * repeat, one layer up, exactly the dispatch-layer defect #1467 fixed.
  */
 export function reasonFromAvailabilityVerdict(
-	tool: string,
-	verdict: AvailabilityVerdictLike | undefined,
+  tool: string,
+  verdict: AvailabilityVerdictLike | undefined,
 ): string {
-	if (!verdict || verdict.outcome === null) return `${tool} binary unavailable`;
-	const { outcome, cause } = verdict;
-	if (outcome === "transient") {
-		if (cause === "install-retry-exhausted") {
-			return `${tool} install kept timing out and hit its retry ceiling this session (not reported missing)`;
-		}
-		const remainingMs = verdict.retryAtMs - Date.now();
-		const remainingS = remainingMs > 0 ? Math.round(remainingMs / 1000) : 0;
-		return `${tool} availability probe — retry cooldown (${remainingS}s), not a missing install`;
-	}
-	if (outcome === "non-installable") {
-		return `${tool} unavailable on this host (non-installable)`;
-	}
-	return `${tool} binary unavailable`;
+  if (!verdict || verdict.outcome === null) return `${tool} binary unavailable`;
+  const { outcome, cause } = verdict;
+  if (outcome === "transient") {
+    if (cause === "install-retry-exhausted") {
+      return `${tool} install kept timing out and hit its retry ceiling this session (not reported missing)`;
+    }
+    const remainingMs = verdict.retryAtMs - Date.now();
+    const remainingS = remainingMs > 0 ? Math.round(remainingMs / 1000) : 0;
+    return `${tool} availability probe — retry cooldown (${remainingS}s), not a missing install`;
+  }
+  if (outcome === "non-installable") {
+    return `${tool} unavailable on this host (non-installable)`;
+  }
+  return `${tool} binary unavailable`;
 }

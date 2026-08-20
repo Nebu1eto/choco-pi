@@ -7,7 +7,10 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { continuationGoalIdFromPrompt } from "./prompts.js";
-import { applyQueuedGoalProviderContextRewrites, extensionQueuedGoalWorkMessageId } from "./queued-goal-work.js";
+import {
+  applyQueuedGoalProviderContextRewrites,
+  extensionQueuedGoalWorkMessageId,
+} from "./queued-goal-work.js";
 import {
   isActiveGoalQueuedDetails,
   isCommandResumeQueuedGoalMessage,
@@ -24,7 +27,14 @@ export function createInputContextEventHandlers(
   deps: GoalRuntimeInputContextHandlerContext,
   queuedGoalWorkMessageIdForRuntime: QueuedGoalWorkMessageIdResolver,
 ) {
-  const { runtimeState, stateController, continuation, recoveryRuntime, status, resetErrorRecovery } = deps;
+  const {
+    runtimeState,
+    stateController,
+    continuation,
+    recoveryRuntime,
+    status,
+    resetErrorRecovery,
+  } = deps;
 
   return {
     onInput: (async (event, ctx) => {

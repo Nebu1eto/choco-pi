@@ -11,38 +11,42 @@ const CODEX_VOICE_MODE_MESSAGE_TYPE = "codex-voice-mode";
 const NOTEBOOK_TREE_EPOCH_ENTRY = "pi-codex-conversion-notebook-tree-epoch";
 
 const ADAPTER_CONTEXT_EXCLUDED_CUSTOM_MESSAGE_TYPES = new Set([
-	NATIVE_COMPACTION_DISPLAY_MESSAGE_TYPE,
-	EXECUTION_MODE_SESSION_ENTRY,
-	NOTEBOOK_TREE_EPOCH_ENTRY,
+  NATIVE_COMPACTION_DISPLAY_MESSAGE_TYPE,
+  EXECUTION_MODE_SESSION_ENTRY,
+  NOTEBOOK_TREE_EPOCH_ENTRY,
 ]);
 
 function isVoiceContextExcludedMessage(message: {
-	role: string;
-	customType?: string | undefined;
-	content?: unknown;
+  role: string;
+  customType?: string | undefined;
+  content?: unknown;
 }): boolean {
-	if (message.role !== "custom") return false;
-	if (message.customType === REALTIME_VOICE_MESSAGE_TYPE) return true;
-	return (
-		message.customType === CODEX_VOICE_MODE_MESSAGE_TYPE &&
-		(typeof message.content !== "string" ||
-			!message.content.startsWith('<realtime_voice_session state="'))
-	);
+  if (message.role !== "custom") return false;
+  if (message.customType === REALTIME_VOICE_MESSAGE_TYPE) return true;
+  return (
+    message.customType === CODEX_VOICE_MODE_MESSAGE_TYPE &&
+    (typeof message.content !== "string" ||
+      !message.content.startsWith('<realtime_voice_session state="'))
+  );
 }
 
 export function isProviderContextExcludedMessage(message: {
-	role: string;
-	customType?: string | undefined;
-	content?: unknown;
+  role: string;
+  customType?: string | undefined;
+  content?: unknown;
 }): boolean {
-	return isVoiceContextExcludedMessage(message)
-		|| (message.role === "custom" && typeof message.customType === "string" && ADAPTER_CONTEXT_EXCLUDED_CUSTOM_MESSAGE_TYPES.has(message.customType));
+  return (
+    isVoiceContextExcludedMessage(message) ||
+    (message.role === "custom" &&
+      typeof message.customType === "string" &&
+      ADAPTER_CONTEXT_EXCLUDED_CUSTOM_MESSAGE_TYPES.has(message.customType))
+  );
 }
 
 export function isProviderContextExcludedCustomMessageEntry(entry: CustomMessageEntry): boolean {
-	return isProviderContextExcludedMessage({
-		role: "custom",
-		customType: entry.customType,
-		content: entry.content,
-	});
+  return isProviderContextExcludedMessage({
+    role: "custom",
+    customType: entry.customType,
+    content: entry.content,
+  });
 }

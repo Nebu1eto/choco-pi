@@ -2,7 +2,7 @@ id: throw-new-error
 valid:
   - 'throw new Error("x")'
   - 'throw new TypeError("x")'
-  - 'throw err'
+  - "throw err"
 invalid:
   - 'throw Error("x")'
   - 'throw TypeError("x")'

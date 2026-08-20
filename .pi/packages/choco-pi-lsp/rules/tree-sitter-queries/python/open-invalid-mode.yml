@@ -51,7 +51,7 @@ examples:
     f = open("file.txt", "rwb")  # ValueError: invalid mode (contains b but invalid combo)
     f = open("file.txt", "rrr")  # ValueError: invalid mode (duplicate)
     f = open("file.txt", "qq")   # ValueError: invalid mode (bad chars)
-  
+
   good: |
     f = open("file.txt", "r")    # OK
     f = open("file.txt", "rb+")  # OK

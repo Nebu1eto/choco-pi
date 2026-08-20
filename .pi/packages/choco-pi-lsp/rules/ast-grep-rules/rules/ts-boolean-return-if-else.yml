@@ -8,5 +8,5 @@ metadata:
 rule:
   kind: if_statement
   any:
-  - pattern: "if ($COND) { return true; } else { return false; }"
-  - pattern: "if ($COND) { return false; } else { return true; }"
+    - pattern: "if ($COND) { return true; } else { return false; }"
+    - pattern: "if ($COND) { return false; } else { return true; }"

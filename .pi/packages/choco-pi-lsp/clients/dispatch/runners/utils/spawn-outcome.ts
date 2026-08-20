@@ -20,8 +20,8 @@ import type { SpawnResult } from "../../../safe-spawn.js";
  * streams rather than just one.
  */
 export function spawnFailedWithNoOutput(
-	result: SpawnResult,
-	output: string = result.stdout,
+  result: SpawnResult,
+  output: string = result.stdout,
 ): boolean {
-	return (Boolean(result.error) || result.status !== 0) && !output?.trim();
+  return (Boolean(result.error) || result.status !== 0) && !output?.trim();
 }

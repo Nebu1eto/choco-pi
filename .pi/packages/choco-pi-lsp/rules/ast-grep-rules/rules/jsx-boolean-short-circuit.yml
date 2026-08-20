@@ -23,7 +23,7 @@ rule:
   all:
     - has:
         field: operator
-        regex: '&&'
+        regex: "&&"
     - has:
         field: right
         kind: jsx_element
@@ -36,5 +36,5 @@ rule:
             kind: member_expression
             has:
               field: property
-              regex: '^length$'
+              regex: "^length$"
 fix: "{$COND ? $JSX : null}"

@@ -1,11 +1,11 @@
 {
-	"colors": {
-		"editorModel": "bold accent",
-		"editorThinking": "italic muted",
-		"editorThinkingMinimal": "italic thinkingMinimal",
-		"editorThinkingLow": "italic thinkingLow",
-		"editorThinkingMedium": "italic thinkingMedium",
-		"editorThinkingHigh": "italic thinkingHigh",
-		"editorThinkingXhigh": "italic thinkingXhigh"
-	}
+  "colors": {
+    "editorModel": "bold accent",
+    "editorThinking": "italic muted",
+    "editorThinkingMinimal": "italic thinkingMinimal",
+    "editorThinkingLow": "italic thinkingLow",
+    "editorThinkingMedium": "italic thinkingMedium",
+    "editorThinkingHigh": "italic thinkingHigh",
+    "editorThinkingXhigh": "italic thinkingXhigh"
+  }
 }

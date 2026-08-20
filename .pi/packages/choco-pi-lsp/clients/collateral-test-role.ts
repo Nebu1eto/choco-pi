@@ -32,9 +32,9 @@ import { detectFileRole } from "./file-role.js";
  * returns `false` (retain the candidate).
  */
 export function isTestRoleCollateral(filePath: string): boolean {
-	try {
-		return detectFileRole(filePath) === "test";
-	} catch {
-		return false;
-	}
+  try {
+    return detectFileRole(filePath) === "test";
+  } catch {
+    return false;
+  }
 }

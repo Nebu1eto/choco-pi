@@ -39,10 +39,7 @@ export interface ModelRegistryRef {
 
 /** Paths to pi's settings.json files: [project, global] (project takes precedence). */
 function settingsPaths(cwd: string): [project: string, global: string] {
-  return [
-    join(cwd, ".pi", "settings.json"),
-    join(getAgentDir(), "settings.json"),
-  ];
+  return [join(cwd, ".pi", "settings.json"), join(getAgentDir(), "settings.json")];
 }
 
 /** Read `enabledModels` from a single settings.json file. Undefined when missing or absent. */
@@ -125,7 +122,7 @@ export function resolveEnabledModels(
 
   for (const pattern of patterns) {
     const trimmed = pattern.trim();
-    if (!trimmed) continue;  // skip empty/whitespace
+    if (!trimmed) continue; // skip empty/whitespace
     resolveExact(trimmed, available, allowed);
   }
 
@@ -135,8 +132,6 @@ export function resolveEnabledModels(
   cachedAllowed = result;
   return result;
 }
-
-
 
 /**
  * True when `model` is in the allowed set. Centralizes the key format
@@ -158,11 +153,7 @@ function modelKey(model: { provider: string; id: string }): string {
 /**
  * Resolve exact model pattern. Example: "google/gemma-4-31b-it".
  */
-function resolveExact(
-  pattern: string,
-  available: ModelEntry[],
-  allowed: Set<string>,
-): void {
+function resolveExact(pattern: string, available: ModelEntry[], allowed: Set<string>): void {
   // "provider/modelId" — exact (colon is part of id, not split)
   const slashIdx = pattern.indexOf("/");
   if (slashIdx === -1) return; // bare modelId not supported
@@ -170,11 +161,9 @@ function resolveExact(
   const provider = pattern.slice(0, slashIdx).toLowerCase();
   const modelId = pattern.slice(slashIdx + 1).toLowerCase();
   const exact = available.find(
-    m => m.provider.toLowerCase() === provider && m.id.toLowerCase() === modelId,
+    (m) => m.provider.toLowerCase() === provider && m.id.toLowerCase() === modelId,
   );
   if (exact) {
     allowed.add(modelKey(exact));
   }
 }
-
-

@@ -32,54 +32,54 @@ this extension out must stay completely silent.
 
 ### Orchestration core
 
-| Module | Role |
-| --- | --- |
-| `index.ts` | Extension factory: tool registration (`Agent`, `get_subagent_result`, `steer_subagent`), the `/agents` command tree, settings menus, the `input` mention hook, batch grouping, and every lifecycle handler. |
-| `agent-manager.ts` | Record lifecycle: spawn, queue, concurrency, abort, steer, resume, completion callbacks, handle allocation and tombstones, `maxConcurrent` scheduling. Workflow steps carry aggregate/step ids but otherwise use this lifecycle unchanged. |
-| `workflow.ts` | TypeBox workflow definition, graph/type/reference validation, bounded prompt rendering, mutable DAG scheduler, failure policy, cancellation and aggregate results. The runner interface keeps scheduling tests independent of live agents. |
-| `agent-runner.ts` | Builds and drives the child `AgentSession`: tool allow/denylists, `ext:` narrowing, extension filtering, model runtime inheritance, turn limits, final-status classification. |
-| `agent-types.ts` | The registry of spawnable types: defaults overlaid by user agents, `enabled` filtering, `resolveType`/`resolveSpawnType`, fallback policy. |
-| `nested-tools.ts` | The scoped `Agent`/`get_subagent_result`/`steer_subagent` a subagent receives when its frontmatter sets `allowed_subagents`, plus the depth cap. |
-| `cross-extension-rpc.ts` | `subagents:rpc:ping` / `:spawn` / `:stop` over the `pi.events` bus, with scoped reply channels. |
+| Module                   | Role                                                                                                                                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `index.ts`               | Extension factory: tool registration (`Agent`, `get_subagent_result`, `steer_subagent`), the `/agents` command tree, settings menus, the `input` mention hook, batch grouping, and every lifecycle handler.                                |
+| `agent-manager.ts`       | Record lifecycle: spawn, queue, concurrency, abort, steer, resume, completion callbacks, handle allocation and tombstones, `maxConcurrent` scheduling. Workflow steps carry aggregate/step ids but otherwise use this lifecycle unchanged. |
+| `workflow.ts`            | TypeBox workflow definition, graph/type/reference validation, bounded prompt rendering, mutable DAG scheduler, failure policy, cancellation and aggregate results. The runner interface keeps scheduling tests independent of live agents. |
+| `agent-runner.ts`        | Builds and drives the child `AgentSession`: tool allow/denylists, `ext:` narrowing, extension filtering, model runtime inheritance, turn limits, final-status classification.                                                              |
+| `agent-types.ts`         | The registry of spawnable types: defaults overlaid by user agents, `enabled` filtering, `resolveType`/`resolveSpawnType`, fallback policy.                                                                                                 |
+| `nested-tools.ts`        | The scoped `Agent`/`get_subagent_result`/`steer_subagent` a subagent receives when its frontmatter sets `allowed_subagents`, plus the depth cap.                                                                                           |
+| `cross-extension-rpc.ts` | `subagents:rpc:ping` / `:spawn` / `:stop` over the `pi.events` bus, with scoped reply channels.                                                                                                                                            |
 
 ### Configuration
 
-| Module | Role |
-| --- | --- |
-| `custom-agents.ts` | Parses `agents/*.md` frontmatter into `AgentConfig`. Discovery precedence: global < `.agents/agents/` < `.pi/agents/`. Unparseable files are skipped with a warning unless `strictAgentFiles`. |
-| `default-agents.ts` | The three built-ins (`general-purpose`, `Explore`, `Plan`), skipped entirely under `disableDefaultAgents`. |
-| `settings.ts` | `.pi/subagents.json` load/save and the `subagents:settings_loaded` / `changed` events. |
-| `invocation-config.ts` | Collapses agent frontmatter and caller parameters into one invocation (`resolveAgentInvocationConfig`), and owns the shared `isolation` parameter schema. |
-| `model-resolver.ts`, `model-scope.ts`, `enabled-models.ts` | Forgiving `model:` resolution and the Model Scope gate. |
-| `skill-loader.ts`, `memory.ts` | Skill inheritance and per-agent memory scopes. |
+| Module                                                     | Role                                                                                                                                                                                           |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `custom-agents.ts`                                         | Parses `agents/*.md` frontmatter into `AgentConfig`. Discovery precedence: global < `.agents/agents/` < `.pi/agents/`. Unparseable files are skipped with a warning unless `strictAgentFiles`. |
+| `default-agents.ts`                                        | The three built-ins (`general-purpose`, `Explore`, `Plan`), skipped entirely under `disableDefaultAgents`.                                                                                     |
+| `settings.ts`                                              | `.pi/subagents.json` load/save and the `subagents:settings_loaded` / `changed` events.                                                                                                         |
+| `invocation-config.ts`                                     | Collapses agent frontmatter and caller parameters into one invocation (`resolveAgentInvocationConfig`), and owns the shared `isolation` parameter schema.                                      |
+| `model-resolver.ts`, `model-scope.ts`, `enabled-models.ts` | Forgiving `model:` resolution and the Model Scope gate.                                                                                                                                        |
+| `skill-loader.ts`, `memory.ts`                             | Skill inheritance and per-agent memory scopes.                                                                                                                                                 |
 
 ### Execution context
 
-| Module | Role |
-| --- | --- |
-| `worktree.ts` | `isolation: "worktree"` — create, work-path resolution for a subdirectory cwd, base-SHA capture, `--no-verify` preservation commit, prune. |
-| `schedule.ts`, `schedule-store.ts` | Cron and interval jobs (`croner`), persisted across sessions. |
-| `group-join.ts` | Holds a group of background agents and delivers one consolidated notification. |
-| `output-file.ts` | Per-agent `.output` JSON-lines transcript under `<tmpdir>/choco-pi-subagents-<uid>/`, compaction-safe streaming. |
-| `abortable.ts`, `child-context.ts`, `context.ts`, `env.ts`, `usage.ts`, `status-note.ts`, `prompts.ts` | Cancellation, child-session detection, message extraction, environment block, token accounting, result status notes, prompt assembly. |
+| Module                                                                                                 | Role                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `worktree.ts`                                                                                          | `isolation: "worktree"` — create, work-path resolution for a subdirectory cwd, base-SHA capture, `--no-verify` preservation commit, prune. |
+| `schedule.ts`, `schedule-store.ts`                                                                     | Cron and interval jobs (`croner`), persisted across sessions.                                                                              |
+| `group-join.ts`                                                                                        | Holds a group of background agents and delivers one consolidated notification.                                                             |
+| `output-file.ts`                                                                                       | Per-agent `.output` JSON-lines transcript under `<tmpdir>/choco-pi-subagents-<uid>/`, compaction-safe streaming.                           |
+| `abortable.ts`, `child-context.ts`, `context.ts`, `env.ts`, `usage.ts`, `status-note.ts`, `prompts.ts` | Cancellation, child-session detection, message extraction, environment block, token accounting, result status notes, prompt assembly.      |
 
 ### Prompt mentions (`@handle`)
 
-| Module | Role |
-| --- | --- |
-| `mention.ts` | `parseMention`, handle derivation and collision numbering, `@main` reservation, `@agent-` alias stripping. |
-| `mention-clone.ts` | The off-screen session clone that writes an agent's starting prompt from the conversation, holding only the `Agent` tool. |
-| `ui/agent-mention.ts` | The autocomplete provider stacked on pi's own, merging handle rows into the file suggestions. |
+| Module                | Role                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `mention.ts`          | `parseMention`, handle derivation and collision numbering, `@main` reservation, `@agent-` alias stripping.                |
+| `mention-clone.ts`    | The off-screen session clone that writes an agent's starting prompt from the conversation, holding only the `Agent` tool. |
+| `ui/agent-mention.ts` | The autocomplete provider stacked on pi's own, merging handle rows into the file suggestions.                             |
 
 ### UI
 
-| Module | Role |
-| --- | --- |
-| `ui/agent-widget.ts` | The `aboveEditor` widget and the `subagents` status-bar key. `WidgetMode` (`all`/`background`/`off`) is read live at render. |
-| `ui/fleet-list.ts` | The `belowEditor` FleetView. All key handling goes through `ui.onTerminalInput`, gated on pi's prompt editor being the focused component. |
-| `ui/conversation-viewer.ts` | The live conversation overlay: scroll, stop (two-press), inline steering/reply composer, and focus handoff. |
-| `ui/side-conversation.ts` | BTW launch defaults, dismissible overlay ownership, continuation, and notice-only completion delivery. |
-| `ui/schedule-menu.ts`, `ui/select-item.ts`, `ui/viewer-keys.ts` | Scheduled-job menu, list row formatting, keybinding resolution through `tui.select.*`. |
+| Module                                                          | Role                                                                                                                                      |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `ui/agent-widget.ts`                                            | The `aboveEditor` widget and the `subagents` status-bar key. `WidgetMode` (`all`/`background`/`off`) is read live at render.              |
+| `ui/fleet-list.ts`                                              | The `belowEditor` FleetView. All key handling goes through `ui.onTerminalInput`, gated on pi's prompt editor being the focused component. |
+| `ui/conversation-viewer.ts`                                     | The live conversation overlay: scroll, stop (two-press), inline steering/reply composer, and focus handoff.                               |
+| `ui/side-conversation.ts`                                       | BTW launch defaults, dismissible overlay ownership, continuation, and notice-only completion delivery.                                    |
+| `ui/schedule-menu.ts`, `ui/select-item.ts`, `ui/viewer-keys.ts` | Scheduled-job menu, list row formatting, keybinding resolution through `tui.select.*`.                                                    |
 
 ## The choco-pi role convention is not an upstream feature
 
@@ -92,7 +92,7 @@ That is deliberate and load-bearing: because the role file leaves
 lets the caller's spawn parameters win (`modelFromParams: true`). The
 `default_*` keys are read by the **orchestrating agent** as documented baselines
 it may adjust per unit, never by this extension. A later phase that wants the
-extension itself to honor them must add the fields in `custom-agents.ts` *and*
+extension itself to honor them must add the fields in `custom-agents.ts` _and_
 decide the precedence question the current split avoids — pinning `model:`
 there would make every spawn override inert.
 

@@ -22,7 +22,12 @@ function clipboardCommandsForPlatform(platform: NodeJS.Platform): ClipboardComma
       { command: "clip.exe", args: [] },
       {
         command: "powershell.exe",
-        args: ["-NoProfile", "-NonInteractive", "-Command", "Set-Clipboard -Value ([Console]::In.ReadToEnd())"],
+        args: [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+        ],
       },
     ];
   }
@@ -34,7 +39,10 @@ function clipboardCommandsForPlatform(platform: NodeJS.Platform): ClipboardComma
   ];
 }
 
-function runClipboardCommand({ command, args }: ClipboardCommand, text: string): Promise<ClipboardCopyResult> {
+function runClipboardCommand(
+  { command, args }: ClipboardCommand,
+  text: string,
+): Promise<ClipboardCopyResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, { stdio: ["pipe", "ignore", "pipe"] });
     let settled = false;
@@ -71,7 +79,12 @@ function runClipboardCommand({ command, args }: ClipboardCommand, text: string):
         return;
       }
       const detail = stderr.trim();
-      finish({ ok: false, message: detail ? `${command}: ${detail}` : `${command} exited with code ${code ?? "unknown"}` });
+      finish({
+        ok: false,
+        message: detail
+          ? `${command}: ${detail}`
+          : `${command} exited with code ${code ?? "unknown"}`,
+      });
     });
 
     child.stdin?.end(text);

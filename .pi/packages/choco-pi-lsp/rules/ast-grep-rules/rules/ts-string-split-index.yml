@@ -7,6 +7,6 @@ metadata:
   category: slop
 rule:
   any:
-  - pattern: "$S.split($SEP)[1]"
-  - pattern: "$S.split($SEP)[2]"
-  - pattern: "$S.split($SEP)[3]"
+    - pattern: "$S.split($SEP)[1]"
+    - pattern: "$S.split($SEP)[2]"
+    - pattern: "$S.split($SEP)[3]"

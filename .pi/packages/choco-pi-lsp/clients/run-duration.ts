@@ -35,12 +35,8 @@
  * garbled parse must degrade to "we did not measure this", never to a wrong
  * number.
  */
-export function isMeasuredDuration(
-	duration: number | null | undefined,
-): duration is number {
-	return (
-		typeof duration === "number" && Number.isFinite(duration) && duration >= 0
-	);
+export function isMeasuredDuration(duration: number | null | undefined): duration is number {
+  return typeof duration === "number" && Number.isFinite(duration) && duration >= 0;
 }
 
 /**
@@ -51,14 +47,10 @@ export function isMeasuredDuration(
  * out the absent case itself.
  */
 export function toMeasuredDurationMs(duration: number): number | undefined {
-	return isMeasuredDuration(duration) ? Math.round(duration) : undefined;
+  return isMeasuredDuration(duration) ? Math.round(duration) : undefined;
 }
 
 /** Render a duration for a log line: `123ms`, or `unmeasured` when absent. */
-export function formatRunDurationMs(
-	duration: number | null | undefined,
-): string {
-	return isMeasuredDuration(duration)
-		? `${Math.round(duration)}ms`
-		: "unmeasured";
+export function formatRunDurationMs(duration: number | null | undefined): string {
+  return isMeasuredDuration(duration) ? `${Math.round(duration)}ms` : "unmeasured";
 }

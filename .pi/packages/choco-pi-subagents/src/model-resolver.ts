@@ -19,13 +19,10 @@ export interface ModelRegistry {
  * Tries exact match first ("provider/modelId"), then fuzzy match against all available models.
  * Returns the Model on success, or an error message string on failure.
  */
-export function resolveModel(
-  input: string,
-  registry: ModelRegistry,
-): any | string {
+export function resolveModel(input: string, registry: ModelRegistry): any | string {
   // Available models (those with auth configured)
   const all = (registry.getAvailable?.() ?? registry.getAll()) as ModelEntry[];
-  const availableSet = new Set(all.map(m => `${m.provider}/${m.id}`.toLowerCase()));
+  const availableSet = new Set(all.map((m) => `${m.provider}/${m.id}`.toLowerCase()));
 
   // 1. Exact match: "provider/modelId" — only if available (has auth)
   const slashIdx = input.indexOf("/");
@@ -66,7 +63,13 @@ export function resolveModel(
       // undated registry id like "claude-haiku-4-5".
       query
         .split(/[\s\-/]+/)
-        .every(part => /^\d{8}$/.test(part) || id.includes(part) || name.includes(part) || m.provider.toLowerCase().includes(part))
+        .every(
+          (part) =>
+            /^\d{8}$/.test(part) ||
+            id.includes(part) ||
+            name.includes(part) ||
+            m.provider.toLowerCase().includes(part),
+        )
     ) {
       score = 20; // all parts present somewhere
     }
@@ -93,7 +96,7 @@ export function resolveModel(
 
   // 4. No match — list available models
   const modelList = all
-    .map(m => `  ${m.provider}/${m.id}`)
+    .map((m) => `  ${m.provider}/${m.id}`)
     .sort()
     .join("\n");
   return `Model not found: "${input}".\n\nAvailable models:\n${modelList}`;

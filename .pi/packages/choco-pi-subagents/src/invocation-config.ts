@@ -100,7 +100,8 @@ export function resolveAgentInvocationConfig(
   // an agent file's "off" only outranks a caller's "worktree" while it is still
   // a value. Everything downstream then sees "worktree" or nothing at all.
   const requested = agentConfig?.isolation ?? params.isolation;
-  const isolation = requested === "worktree" && opts?.worktreeAllowed !== false ? "worktree" : undefined;
+  const isolation =
+    requested === "worktree" && opts?.worktreeAllowed !== false ? "worktree" : undefined;
 
   return {
     modelInput: agentConfig?.model ?? params.model,
@@ -114,6 +115,9 @@ export function resolveAgentInvocationConfig(
   };
 }
 
-export function resolveJoinMode(defaultJoinMode: JoinMode, runInBackground: boolean): JoinMode | undefined {
+export function resolveJoinMode(
+  defaultJoinMode: JoinMode,
+  runInBackground: boolean,
+): JoinMode | undefined {
   return runInBackground ? defaultJoinMode : undefined;
 }

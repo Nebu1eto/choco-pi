@@ -40,21 +40,21 @@ export function getAgentPath(...segments: string[]): string {
  * Falls back to "pi", which is what pi's own APP_NAME resolves to.
  */
 function readPiConfig(): { name?: unknown; configDir?: unknown; clientUri?: unknown } | undefined {
-  const dir = process.env.PI_PACKAGE_DIR?.trim()
-  if (!dir) return undefined
+  const dir = process.env.PI_PACKAGE_DIR?.trim();
+  if (!dir) return undefined;
   try {
     const manifest = JSON.parse(readFileSync(join(resolve(dir), "package.json"), "utf8")) as {
-      piConfig?: { name?: unknown; configDir?: unknown; clientUri?: unknown }
-    }
-    return manifest.piConfig
+      piConfig?: { name?: unknown; configDir?: unknown; clientUri?: unknown };
+    };
+    return manifest.piConfig;
   } catch {
-    return undefined
+    return undefined;
   }
 }
 
 export function getAppName(): string {
-  const name = readPiConfig()?.name
-  return typeof name === "string" && name.trim() ? name.trim() : "pi"
+  const name = readPiConfig()?.name;
+  return typeof name === "string" && name.trim() ? name.trim() : "pi";
 }
 
 /**
@@ -63,6 +63,6 @@ export function getAppName(): string {
  * URL, so this is the one place it can come from without guessing.
  */
 export function getAppClientUri(): string | undefined {
-  const uri = readPiConfig()?.clientUri
-  return typeof uri === "string" && uri.trim() ? uri.trim() : undefined
+  const uri = readPiConfig()?.clientUri;
+  return typeof uri === "string" && uri.trim() ? uri.trim() : undefined;
 }

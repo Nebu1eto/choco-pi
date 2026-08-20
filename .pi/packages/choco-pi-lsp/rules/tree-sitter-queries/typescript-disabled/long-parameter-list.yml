@@ -13,7 +13,7 @@ message: "Function has {{PARAM_COUNT}} parameters — use object pattern"
 description: |
   Functions with many parameters are hard to use and maintain.
   Use an options object instead.
-  
+
   ✅ FIX: Convert to options object pattern
 
 query: |
@@ -45,7 +45,7 @@ examples:
     ) {
       // ...
     }
-  
+
   good: |
     interface CreateUserOptions {
       firstName: string;
@@ -56,7 +56,7 @@ examples:
       role: string;
       status: string;
     }
-    
+
     function createUser(options: CreateUserOptions) {
       // ...
     }

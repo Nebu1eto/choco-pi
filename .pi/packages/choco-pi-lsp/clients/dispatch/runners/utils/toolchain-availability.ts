@@ -13,35 +13,35 @@
  */
 
 import {
-	type AvailabilityCause,
-	type ProbeEvidence,
-	createAvailabilityLatch,
-	logAvailabilityDecision,
+  type AvailabilityCause,
+  type ProbeEvidence,
+  createAvailabilityLatch,
+  logAvailabilityDecision,
 } from "./availability-policy.js";
 import { probeAvailabilityCandidates } from "./candidate-probe.js";
 
 export interface ToolchainAvailabilityConfig {
-	/** Tool name as it appears in the `availability_decision` record. */
-	tool: string;
-	/** Human label for the "found" log line, e.g. `Go`, `Cargo`. */
-	label: string;
-	/** Candidates probed on Windows, in order. */
-	windowsPaths: readonly string[];
-	/** Candidates probed everywhere else, in order. */
-	unixPaths: readonly string[];
-	/** Version-probe arguments for the bare PATH candidate. */
-	probeArgs: readonly string[];
-	/** Host-side budget for one probe, ms. */
-	budgetMs: number;
-	/** Verbose-mode logger; a no-op when the client is quiet. */
-	log: (msg: string) => void;
+  /** Tool name as it appears in the `availability_decision` record. */
+  tool: string;
+  /** Human label for the "found" log line, e.g. `Go`, `Cargo`. */
+  label: string;
+  /** Candidates probed on Windows, in order. */
+  windowsPaths: readonly string[];
+  /** Candidates probed everywhere else, in order. */
+  unixPaths: readonly string[];
+  /** Version-probe arguments for the bare PATH candidate. */
+  probeArgs: readonly string[];
+  /** Host-side budget for one probe, ms. */
+  budgetMs: number;
+  /** Verbose-mode logger; a no-op when the client is quiet. */
+  log: (msg: string) => void;
 }
 
 export interface ToolchainAvailability {
-	/** Resolved executable path, memoized once a candidate answers. */
-	findPath: () => Promise<string | null>;
-	/** Availability verdict, behind the transient-aware latch. */
-	isAvailable: () => Promise<boolean>;
+  /** Resolved executable path, memoized once a candidate answers. */
+  findPath: () => Promise<string | null>;
+  /** Availability verdict, behind the transient-aware latch. */
+  isAvailable: () => Promise<boolean>;
 }
 
 /**
@@ -51,94 +51,89 @@ export interface ToolchainAvailability {
  * for the life of the process.
  */
 export function createToolchainAvailability(
-	config: ToolchainAvailabilityConfig,
+  config: ToolchainAvailabilityConfig,
 ): ToolchainAvailability {
-	const availabilityLatch = createAvailabilityLatch();
-	let toolPath: string | null = null;
-	/** Classification of the candidate sweep, for the retry decision. */
-	let sweepSawTransient = false;
-	let sweepTransientCause: AvailabilityCause = "probe-timeout";
-	let sweepHostStallMs = 0;
-	/** What the last classified candidate returned, for the decision record. */
-	let sweepEvidence: ProbeEvidence | undefined;
-	let ensureInFlight: Promise<boolean> | null = null;
+  const availabilityLatch = createAvailabilityLatch();
+  let toolPath: string | null = null;
+  /** Classification of the candidate sweep, for the retry decision. */
+  let sweepSawTransient = false;
+  let sweepTransientCause: AvailabilityCause = "probe-timeout";
+  let sweepHostStallMs = 0;
+  /** What the last classified candidate returned, for the decision record. */
+  let sweepEvidence: ProbeEvidence | undefined;
+  let ensureInFlight: Promise<boolean> | null = null;
 
-	async function findPath(): Promise<string | null> {
-		if (toolPath) return toolPath;
+  async function findPath(): Promise<string | null> {
+    if (toolPath) return toolPath;
 
-		const paths =
-			process.platform === "win32" ? config.windowsPaths : config.unixPaths;
-		const sweep = await probeAvailabilityCandidates(
-			paths,
-			config.probeArgs,
-			config.budgetMs,
-		);
-		sweepSawTransient = sweep.sawTransient;
-		sweepTransientCause = sweep.transientCause;
-		sweepHostStallMs = sweep.hostStallMs;
-		sweepEvidence = sweep.evidence;
-		if (sweep.foundPath) toolPath = sweep.foundPath;
-		return sweep.foundPath;
-	}
+    const paths = process.platform === "win32" ? config.windowsPaths : config.unixPaths;
+    const sweep = await probeAvailabilityCandidates(paths, config.probeArgs, config.budgetMs);
+    sweepSawTransient = sweep.sawTransient;
+    sweepTransientCause = sweep.transientCause;
+    sweepHostStallMs = sweep.hostStallMs;
+    sweepEvidence = sweep.evidence;
+    if (sweep.foundPath) toolPath = sweep.foundPath;
+    return sweep.foundPath;
+  }
 
-	async function resolveAvailability(): Promise<boolean> {
-		const startedAt = Date.now();
-		const found = (await findPath()) !== null;
-		if (found) {
-			availabilityLatch.noteAvailable();
-			config.log(`${config.label} found: ${toolPath}`);
-			logAvailabilityDecision({
-				tool: config.tool,
-				verdict: "available",
-				outcome: "success",
-				cause: "ok",
-				elapsedMs: Date.now() - startedAt,
-				latched: true,
-				hostStallMs: sweepHostStallMs,
-				budgetMs: config.budgetMs,
-				classifiedBy: "probe",
-				...(sweepEvidence !== undefined && { evidence: sweepEvidence }),
-			});
-			return true;
-		}
-		// A timed-out version probe is evidence about this moment, not about
-		// whether the toolchain is installed; it expires instead of latching.
-		const outcome = sweepSawTransient ? "transient" : "missing";
-		const cause = sweepSawTransient ? sweepTransientCause : "not-found";
-		const retryAfterMs = availabilityLatch.noteUnavailable(outcome, cause);
-		logAvailabilityDecision({
-			tool: config.tool,
-			verdict: "unavailable",
-			outcome,
-			cause,
-			elapsedMs: Date.now() - startedAt,
-			latched: outcome !== "transient",
-			hostStallMs: sweepHostStallMs,
-			...(retryAfterMs > 0 && { retryAfterMs }),
-			budgetMs: config.budgetMs,
-			// Derived from the sweep's own candidate probes, and carrying what the
-			// last of them returned (#1500).
-			classifiedBy: "probe",
-			...(sweepEvidence !== undefined && { evidence: sweepEvidence }),
-		});
-		return false;
-	}
+  async function resolveAvailability(): Promise<boolean> {
+    const startedAt = Date.now();
+    const found = (await findPath()) !== null;
+    if (found) {
+      availabilityLatch.noteAvailable();
+      config.log(`${config.label} found: ${toolPath}`);
+      logAvailabilityDecision({
+        tool: config.tool,
+        verdict: "available",
+        outcome: "success",
+        cause: "ok",
+        elapsedMs: Date.now() - startedAt,
+        latched: true,
+        hostStallMs: sweepHostStallMs,
+        budgetMs: config.budgetMs,
+        classifiedBy: "probe",
+        ...(sweepEvidence !== undefined && { evidence: sweepEvidence }),
+      });
+      return true;
+    }
+    // A timed-out version probe is evidence about this moment, not about
+    // whether the toolchain is installed; it expires instead of latching.
+    const outcome = sweepSawTransient ? "transient" : "missing";
+    const cause = sweepSawTransient ? sweepTransientCause : "not-found";
+    const retryAfterMs = availabilityLatch.noteUnavailable(outcome, cause);
+    logAvailabilityDecision({
+      tool: config.tool,
+      verdict: "unavailable",
+      outcome,
+      cause,
+      elapsedMs: Date.now() - startedAt,
+      latched: outcome !== "transient",
+      hostStallMs: sweepHostStallMs,
+      ...(retryAfterMs > 0 && { retryAfterMs }),
+      budgetMs: config.budgetMs,
+      // Derived from the sweep's own candidate probes, and carrying what the
+      // last of them returned (#1500).
+      classifiedBy: "probe",
+      ...(sweepEvidence !== undefined && { evidence: sweepEvidence }),
+    });
+    return false;
+  }
 
-	async function isAvailable(): Promise<boolean> {
-		// `read()` returns null when the last verdict was transient and its
-		// cooldown expired, which re-enters the candidate sweep (#1476).
-		const memo = availabilityLatch.read();
-		if (memo !== null) return memo;
-		// Now that a verdict can expire, concurrent callers arriving just after a
-		// cooldown must share ONE sweep rather than each spawning their own.
-		if (ensureInFlight) return ensureInFlight;
-		ensureInFlight = resolveAvailability();
-		try {
-			return await ensureInFlight;
-		} finally {
-			ensureInFlight = null;
-		}
-	}
+  async function isAvailable(): Promise<boolean> {
+    // `read()` returns null when the last verdict was transient and its
+    // cooldown expired, which re-enters the candidate sweep (#1476).
+    const memo = availabilityLatch.read();
+    if (memo !== null) return memo;
+    // Now that a verdict can expire, concurrent callers arriving just after a
+    // cooldown must share ONE sweep rather than each spawning their own.
+    if (ensureInFlight) return ensureInFlight;
+    ensureInFlight = resolveAvailability();
+    try {
+      return await ensureInFlight;
+    } finally {
+      ensureInFlight = null;
+    }
+  }
 
-	return { findPath, isAvailable };
+  return { findPath, isAvailable };
 }

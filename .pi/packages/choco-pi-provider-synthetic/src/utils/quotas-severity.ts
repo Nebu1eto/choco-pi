@@ -74,10 +74,7 @@ export function toWindows(quotas: QuotasResponse): QuotaWindow[] {
     windows.push({
       id: "weeklyTokenLimit",
       label: "Credits / week",
-      usedPercent: Math.max(
-        0,
-        Math.min(100, 100 - weeklyTokenLimit.percentRemaining),
-      ),
+      usedPercent: Math.max(0, Math.min(100, 100 - weeklyTokenLimit.percentRemaining)),
       resetsAt: new Date(weeklyTokenLimit.nextRegenAt),
       windowSeconds: 24 * 60 * 60,
       usedValue: limitValue - remainingValue,
@@ -94,8 +91,7 @@ export function toWindows(quotas: QuotasResponse): QuotaWindow[] {
   if (quotas.rollingFiveHourLimit && quotas.rollingFiveHourLimit.max > 0) {
     const { rollingFiveHourLimit } = quotas;
     const used = rollingFiveHourLimit.max - rollingFiveHourLimit.remaining;
-    const tickAmount =
-      rollingFiveHourLimit.tickPercent * rollingFiveHourLimit.max;
+    const tickAmount = rollingFiveHourLimit.tickPercent * rollingFiveHourLimit.max;
     windows.push({
       id: "rollingFiveHourLimit",
       label: "Requests / 5h",
@@ -131,10 +127,7 @@ export function toWindows(quotas: QuotasResponse): QuotaWindow[] {
     windows.push({
       id: "freeToolCalls",
       label: "Free Tool Calls / day",
-      usedPercent: safePercent(
-        quotas.freeToolCalls.requests,
-        quotas.freeToolCalls.limit,
-      ),
+      usedPercent: safePercent(quotas.freeToolCalls.requests, quotas.freeToolCalls.limit),
       resetsAt: new Date(quotas.freeToolCalls.renewsAt),
       windowSeconds: 24 * 60 * 60,
       usedValue: quotas.freeToolCalls.requests,
@@ -156,24 +149,17 @@ export function getPacePercent(window: QuotaWindow): number | null {
   return Math.max(0, Math.min(100, (elapsedMs / totalMs) * 100));
 }
 
-export function getProjectedPercent(
-  usedPercent: number,
-  pacePercent: number | null,
-): number {
+export function getProjectedPercent(usedPercent: number, pacePercent: number | null): number {
   if (pacePercent === null) return usedPercent;
   const effectivePace = Math.max(MIN_PACE_PERCENT, pacePercent);
   return Math.max(0, (usedPercent / effectivePace) * 100);
 }
 
-export function assessWindow(
-  window: QuotaWindow,
-  projection?: ProjectionHint,
-): RiskAssessment {
+export function assessWindow(window: QuotaWindow, projection?: ProjectionHint): RiskAssessment {
   // Respect showPace/paceScale: only compute pace when the window opts in,
   // then apply any provider-specific normalization.
   const rawPace = window.showPace ? getPacePercent(window) : null;
-  const pacePercent =
-    rawPace !== null ? rawPace * (window.paceScale ?? 1) : null;
+  const pacePercent = rawPace !== null ? rawPace * (window.paceScale ?? 1) : null;
   const projectedPercent = getProjectedPercent(window.usedPercent, pacePercent);
 
   // Calculate progress (0 to 1) through the window
@@ -295,9 +281,7 @@ export function formatTimeRemaining(date: Date): string {
   return totalMins >= 1 ? `${totalMins}m` : `${totalSecs}s`;
 }
 
-export function getSeverityColor(
-  severity: RiskSeverity,
-): "success" | "warning" | "error" {
+export function getSeverityColor(severity: RiskSeverity): "success" | "warning" | "error" {
   switch (severity) {
     case "critical":
     case "high":

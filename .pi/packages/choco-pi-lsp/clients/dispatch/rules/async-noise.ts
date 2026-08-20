@@ -10,16 +10,14 @@ export const asyncNoiseRule: FactRule = {
     return /\.tsx?$/.test(ctx.filePath) && !isTestFile(ctx.filePath);
   },
   evaluate(ctx, store) {
-    const summaries = store.getFileFact<FunctionSummary[]>(
-      ctx.filePath,
-      "file.functionSummaries",
-    );
+    const summaries = store.getFileFact<FunctionSummary[]>(ctx.filePath, "file.functionSummaries");
     if (!summaries) return [];
 
     const diagnostics: Diagnostic[] = [];
     // Function name patterns that legitimately declare async for interface compliance
     // or future-proofing (lifecycle hooks, event handlers, middleware, abstract stubs)
-    const ASYNC_INTERFACE_PATTERN = /^(on[A-Z]|handle[A-Z]|before[A-Z]|after[A-Z]|setup|teardown|init|dispose|connect|disconnect|open|close|start|stop|run|execute|invoke|dispatch|middleware)/;
+    const ASYNC_INTERFACE_PATTERN =
+      /^(on[A-Z]|handle[A-Z]|before[A-Z]|after[A-Z]|setup|teardown|init|dispose|connect|disconnect|open|close|start|stop|run|execute|invoke|dispatch|middleware)/;
 
     for (const fn of summaries) {
       if (

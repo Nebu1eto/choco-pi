@@ -1,41 +1,41 @@
 {
-	"name": "choco-pi-lsp",
-	"version": "0.1.0",
-	"private": true,
-	"type": "module",
-	"description": "choco-pi fork of choco-pi-lsp: LSP, tree-sitter/ast-grep structural analysis, semantic index tools, and format/autofix feedback, loaded from TypeScript source as a local pi package.",
-	"license": "MIT",
-	"main": "./index.ts",
-	"keywords": [
-		"pi-package",
-		"pi-extension",
-		"lsp",
-		"ast-grep",
-		"tree-sitter",
-		"code-quality"
-	],
-	"scripts": {
-		"typecheck": "tsc --noEmit"
-	},
-	"dependencies": {
-		"@ast-grep/napi": "0.45.1",
-		"js-yaml": "5.2.3",
-		"minimatch": "10.2.6",
-		"pidusage": "4.0.1",
-		"vscode-jsonrpc": "9.0.1",
-		"web-tree-sitter": "0.25.10"
-	},
-	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": ">=0.84.2",
-		"@earendil-works/pi-tui": ">=0.84.2",
-		"typebox": "*"
-	},
-	"pi": {
-		"extensions": [
-			"./index.ts"
-		],
-		"skills": [
-			"./skills"
-		]
-	}
+  "name": "choco-pi-lsp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "choco-pi fork of choco-pi-lsp: LSP, tree-sitter/ast-grep structural analysis, semantic index tools, and format/autofix feedback, loaded from TypeScript source as a local pi package.",
+  "keywords": [
+    "ast-grep",
+    "code-quality",
+    "lsp",
+    "pi-extension",
+    "pi-package",
+    "tree-sitter"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ast-grep/napi": "0.45.1",
+    "js-yaml": "5.2.3",
+    "minimatch": "10.2.6",
+    "pidusage": "4.0.1",
+    "vscode-jsonrpc": "9.0.1",
+    "web-tree-sitter": "0.25.10"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.2",
+    "@earendil-works/pi-tui": ">=0.84.2",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
 }

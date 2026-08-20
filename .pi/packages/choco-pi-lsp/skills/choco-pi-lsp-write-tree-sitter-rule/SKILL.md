@@ -15,8 +15,8 @@ Project rules merge with built-ins (both run). To disable a language's built-ins
 ```yaml
 id: no-eval
 severity: error
-inline_tier: blocking       # blocking | warning | review
-language: typescript        # lowercase, inferred from dir if omitted
+inline_tier: blocking # blocking | warning | review
+language: typescript # lowercase, inferred from dir if omitted
 message: "eval() is dangerous — use a safer alternative"
 query: |
   (call_expression
@@ -49,7 +49,7 @@ has_fix: false
 
 ```yaml
 predicates:
-  - type: eq       # eq | match | any-of
+  - type: eq # eq | match | any-of
     var: "@FN"
     value: "dangerousMethod"
   - type: match
@@ -59,11 +59,11 @@ predicates:
 
 ## inline_tier
 
-| Value | Effect |
-|---|---|
+| Value      | Effect                                      |
+| ---------- | ------------------------------------------- |
 | `blocking` | Blocks agent turn — 🔴 injected immediately |
-| `warning` | Advisory only |
-| `review` | Low-priority suggestion |
+| `warning`  | Advisory only                               |
+| `review`   | Low-priority suggestion                     |
 
 ## Gotchas
 

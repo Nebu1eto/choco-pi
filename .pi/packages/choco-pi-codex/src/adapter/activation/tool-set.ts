@@ -2,33 +2,66 @@ export const STATUS_KEY = "codex-adapter";
 export const STATUS_TEXT = "Codex adapter";
 
 interface StatusTheme {
-	fg(role: string, text: string): string;
+  fg(role: string, text: string): string;
 }
 
 function formatStatusText(suffix: string, theme?: StatusTheme | undefined): string {
-	if (!theme) return `${STATUS_TEXT}${suffix}`;
-	return `${theme.fg("accent", STATUS_TEXT)}${suffix ? theme.fg("dim", suffix) : ""}`;
+  if (!theme) return `${STATUS_TEXT}${suffix}`;
+  return `${theme.fg("accent", STATUS_TEXT)}${suffix ? theme.fg("dim", suffix) : ""}`;
 }
 
-export function buildExtraToolsOnlyStatusText(tools: string[], theme?: StatusTheme | undefined): string {
-	return formatStatusText(` • extra tools${tools.length > 0 ? `: ${tools.join(", ")}` : ""}`, theme);
+export function buildExtraToolsOnlyStatusText(
+  tools: string[],
+  theme?: StatusTheme | undefined,
+): string {
+  return formatStatusText(
+    ` • extra tools${tools.length > 0 ? `: ${tools.join(", ")}` : ""}`,
+    theme,
+  );
 }
 
-export function buildStatusText(options: { mode?: "normal" | "code" | "notebook" | undefined; verbosity?: string | undefined; webSearch?: boolean | undefined; imageGeneration?: boolean | undefined; fast: boolean; useOnAllModels: boolean; additionalProvider?: boolean | undefined; compaction?: boolean | undefined; weeklyUsageLeft?: number | undefined }, theme?: StatusTheme | undefined): string {
-	const extras = [
-		options.mode === "notebook" ? "notebook mode" : options.mode === "code" ? "code mode" : undefined,
-		options.useOnAllModels ? "all models" : undefined,
-		options.additionalProvider ? "additional provider" : undefined,
-		options.webSearch ? "web search" : undefined,
-		options.imageGeneration ? "image gen" : undefined,
-		options.compaction ? "compact v2" : undefined,
-		options.fast ? "fast" : undefined,
-		options.weeklyUsageLeft === undefined ? undefined : `weekly: ${Math.round(options.weeklyUsageLeft)}% left`,
-	]
-		.filter(Boolean)
-		.join(" • ");
-	const verbosity = options.verbosity === "medium" ? "mid" : options.verbosity === "high" ? "hi" : options.verbosity;
-	return formatStatusText(`${verbosity ? ` V: ${verbosity}` : ""}${extras ? ` • ${extras}` : ""}`, theme);
+export function buildStatusText(
+  options: {
+    mode?: "normal" | "code" | "notebook" | undefined;
+    verbosity?: string | undefined;
+    webSearch?: boolean | undefined;
+    imageGeneration?: boolean | undefined;
+    fast: boolean;
+    useOnAllModels: boolean;
+    additionalProvider?: boolean | undefined;
+    compaction?: boolean | undefined;
+    weeklyUsageLeft?: number | undefined;
+  },
+  theme?: StatusTheme | undefined,
+): string {
+  const extras = [
+    options.mode === "notebook"
+      ? "notebook mode"
+      : options.mode === "code"
+        ? "code mode"
+        : undefined,
+    options.useOnAllModels ? "all models" : undefined,
+    options.additionalProvider ? "additional provider" : undefined,
+    options.webSearch ? "web search" : undefined,
+    options.imageGeneration ? "image gen" : undefined,
+    options.compaction ? "compact v2" : undefined,
+    options.fast ? "fast" : undefined,
+    options.weeklyUsageLeft === undefined
+      ? undefined
+      : `weekly: ${Math.round(options.weeklyUsageLeft)}% left`,
+  ]
+    .filter(Boolean)
+    .join(" • ");
+  const verbosity =
+    options.verbosity === "medium"
+      ? "mid"
+      : options.verbosity === "high"
+        ? "hi"
+        : options.verbosity;
+  return formatStatusText(
+    `${verbosity ? ` V: ${verbosity}` : ""}${extras ? ` • ${extras}` : ""}`,
+    theme,
+  );
 }
 
 export const DEFAULT_TOOL_NAMES = ["read", "bash", "edit", "write"];

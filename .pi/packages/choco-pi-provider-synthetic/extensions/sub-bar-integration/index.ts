@@ -12,11 +12,7 @@ import {
   type SyntheticQuotasUpdatedPayload,
 } from "../../src/types/quotas";
 import { formatResetTime } from "../../src/utils/quotas";
-import {
-  type QuotaWindow,
-  safePercent,
-  toWindows,
-} from "../../src/utils/quotas-severity";
+import { type QuotaWindow, safePercent, toWindows } from "../../src/utils/quotas-severity";
 import { requestQuotas } from "../_shared/quota-events";
 
 interface RateWindow {
@@ -54,10 +50,7 @@ function toUsageSnapshot(quotas: QuotasResponse): UsageSnapshot {
     windows.push({
       id: "rollingFiveHourLimit",
       label: "Requests / 5h",
-      usedPercent: safePercent(
-        quotas.subscription.requests,
-        quotas.subscription.limit,
-      ),
+      usedPercent: safePercent(quotas.subscription.requests, quotas.subscription.limit),
       resetsAt: new Date(quotas.subscription.renewsAt),
       windowSeconds: 5 * 60 * 60,
       usedValue: quotas.subscription.requests,

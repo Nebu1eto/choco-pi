@@ -13,9 +13,9 @@ message: "Unreachable except clause — earlier except catches all"
 description: |
   When a bare 'except' or 'except Exception' comes before specific
   exception handlers, those specific handlers are never reached.
-  
+
   ✅ FIX: Order from specific to general
-  
+
   ```python
   try:
       process()
@@ -50,7 +50,7 @@ examples:
         handle_all()
     except ValueError:  # UNREACHABLE!
         handle_value()
-  
+
   good: |
     try:
         process()

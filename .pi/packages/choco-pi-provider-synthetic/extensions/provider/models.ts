@@ -350,15 +350,7 @@ function apiModelSupportsReasoning(model: SyntheticApiModel): boolean {
   return model.supported_features?.includes("reasoning") ?? false;
 }
 
-const THINKING_LEVELS = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-] as const;
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
@@ -406,9 +398,7 @@ function apiModelToSyntheticModel(model: SyntheticApiModel): SyntheticModel {
     maxTokens: model.max_output_length,
     ...(model.reasoning_parameters?.efforts
       ? {
-          thinkingLevelMap: buildThinkingLevelMapFromApiEfforts(
-            model.reasoning_parameters.efforts,
-          ),
+          thinkingLevelMap: buildThinkingLevelMapFromApiEfforts(model.reasoning_parameters.efforts),
         }
       : {}),
   };
@@ -490,10 +480,7 @@ export function buildSyntheticProviderModelsFromApi(
             : String(index);
         throw new Error(`Synthetic API returned invalid model entry "${id}"`);
       }
-      return mergeWithStaticOverride(
-        apiModelToSyntheticModel(model),
-        overrides.get(model.id),
-      );
+      return mergeWithStaticOverride(apiModelToSyntheticModel(model), overrides.get(model.id));
     })
     .map(finalizeModel);
 }

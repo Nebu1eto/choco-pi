@@ -27,7 +27,12 @@ async function execOpen(pi: ExtensionAPI, target: string, browser?: string, sign
     : pi.exec("xdg-open", [target], signal ? { signal } : {});
 }
 
-export async function openUrl(pi: ExtensionAPI, url: string, browser?: string, signal?: AbortSignal): Promise<void> {
+export async function openUrl(
+  pi: ExtensionAPI,
+  url: string,
+  browser?: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const result = await execOpen(pi, url, browser, signal);
   if (result.code !== 0) {
     throw new Error(result.stderr || `Failed to open browser (exit code ${result.code})`);
@@ -44,7 +49,7 @@ export async function openPath(pi: ExtensionAPI, targetPath: string): Promise<vo
 export async function parallelLimit<T, R>(
   items: T[],
   limit: number,
-  fn: (item: T) => Promise<R>
+  fn: (item: T) => Promise<R>,
 ): Promise<R[]> {
   const results: R[] = [];
   const iterator = items.entries();
@@ -58,7 +63,9 @@ export async function parallelLimit<T, R>(
     }
   }
 
-  const workers = Array(Math.min(limit, items.length)).fill(null).map(() => worker());
+  const workers = Array(Math.min(limit, items.length))
+    .fill(null)
+    .map(() => worker());
   await Promise.all(workers);
   return results;
 }
@@ -104,13 +111,14 @@ function interpolateSecretExpression(value: string): string {
   return value.startsWith("!") ? value : interpolateEnvVars(value);
 }
 
-export function interpolateEnvRecord(values: Record<string, string> | undefined): Record<string, string> | undefined {
+export function interpolateEnvRecord(
+  values: Record<string, string> | undefined,
+): Record<string, string> | undefined {
   if (!values) return undefined;
 
-  return Object.fromEntries(Object.entries(values).map(([key, value]) => [
-    key,
-    interpolateSecretExpression(value),
-  ]));
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, interpolateSecretExpression(value)]),
+  );
 }
 
 const COMMAND_SECRET_TIMEOUT_MS = 10_000;
@@ -119,8 +127,14 @@ const COMMAND_SECRET_MAX_OUTPUT_BYTES = 1024 * 1024;
 /** Resolve a secret value, executing only a single leading `!` command marker. */
 export function resolveCommandSecret(value: string, context: string): string;
 export function resolveCommandSecret(value: undefined, context: string): undefined;
-export function resolveCommandSecret(value: string | undefined, context: string): string | undefined;
-export function resolveCommandSecret(value: string | undefined, context: string): string | undefined {
+export function resolveCommandSecret(
+  value: string | undefined,
+  context: string,
+): string | undefined;
+export function resolveCommandSecret(
+  value: string | undefined,
+  context: string,
+): string | undefined {
   if (value === undefined) return undefined;
   if (value.startsWith("!!")) return interpolateEnvVars(value.slice(1));
   if (!value.startsWith("!")) return interpolateEnvVars(value);
@@ -135,15 +149,18 @@ export function resolveCommandSecret(value: string | undefined, context: string)
   });
   if (result.error) {
     const code = (result.error as NodeJS.ErrnoException).code;
-    const reason = code === "ETIMEDOUT"
-      ? "command timed out after 10 seconds"
-      : code === "ENOBUFS"
-        ? "command output exceeded 1 MiB"
-        : "command failed to start";
+    const reason =
+      code === "ETIMEDOUT"
+        ? "command timed out after 10 seconds"
+        : code === "ENOBUFS"
+          ? "command output exceeded 1 MiB"
+          : "command failed to start";
     throw new Error(`Failed to resolve ${context}: ${reason}`);
   }
   if (result.status !== 0) {
-    throw new Error(`Failed to resolve ${context}: command exited with code ${result.status ?? "unknown"}`);
+    throw new Error(
+      `Failed to resolve ${context}: command exited with code ${result.status ?? "unknown"}`,
+    );
   }
 
   const resolved = result.stdout.trim();
@@ -158,10 +175,9 @@ export function resolveCommandSecretsRecord(
 ): Record<string, string> | undefined {
   if (!values) return undefined;
 
-  return Object.fromEntries(Object.entries(values).map(([key, value]) => [
-    key,
-    resolveCommandSecret(value, context(key)),
-  ]));
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, resolveCommandSecret(value, context(key))]),
+  );
 }
 
 export function resolveServerUrl(definition: Pick<ServerEntry, "url">): string | undefined {
@@ -172,14 +188,18 @@ export function resolveServerUrl(definition: Pick<ServerEntry, "url">): string |
 
   const missing = getMissingEnvVars(definition.url);
   if (missing.length > 0) {
-    throw new Error(`Missing environment variable${missing.length === 1 ? "" : "s"} in MCP server URL: ${missing.join(", ")}`);
+    throw new Error(
+      `Missing environment variable${missing.length === 1 ? "" : "s"} in MCP server URL: ${missing.join(", ")}`,
+    );
   }
 
   const resolved = interpolateEnvVars(definition.url);
   try {
     new URL(resolved);
   } catch (error) {
-    throw new Error(`Invalid MCP server URL after environment interpolation: ${resolved}`, { cause: error });
+    throw new Error(`Invalid MCP server URL after environment interpolation: ${resolved}`, {
+      cause: error,
+    });
   }
   return resolved;
 }
@@ -195,7 +215,9 @@ export function resolveConfigPath(value: string | undefined): string | undefined
   return resolved;
 }
 
-export function resolveBearerToken(definition: Pick<ServerEntry, "bearerToken" | "bearerTokenEnv">): string | undefined {
+export function resolveBearerToken(
+  definition: Pick<ServerEntry, "bearerToken" | "bearerTokenEnv">,
+): string | undefined {
   if (definition.bearerToken !== undefined) {
     return interpolateSecretExpression(definition.bearerToken);
   }
@@ -240,7 +262,8 @@ export function formatTerminalError(error: unknown): string {
   const seen = new Set<unknown>();
   const collect = (value: unknown) => {
     if (seen.has(value)) return;
-    if ((typeof value === "object" && value !== null) || typeof value === "function") seen.add(value);
+    if ((typeof value === "object" && value !== null) || typeof value === "function")
+      seen.add(value);
 
     if (value instanceof AggregateError) {
       const countBefore = messages.length;
@@ -275,9 +298,10 @@ export function truncateAtWord(text: string, target: number): string {
 }
 
 export function normalizeDirectToolInputSchema(schema: unknown): Record<string, unknown> {
-  const inputSchema = schema && typeof schema === "object" && !Array.isArray(schema)
-    ? schema as Record<string, unknown>
-    : { type: "object", properties: {} };
+  const inputSchema =
+    schema && typeof schema === "object" && !Array.isArray(schema)
+      ? (schema as Record<string, unknown>)
+      : { type: "object", properties: {} };
   const { $schema, additionalProperties, ...normalized } = inputSchema;
   return normalized;
 }
@@ -291,7 +315,10 @@ export function formatAuthRequiredMessage(
   return template ? template.replaceAll("${server}", serverName) : defaultMessage;
 }
 
-export function formatMcpStatus(config: Pick<McpConfig, "settings">, message: string): string | undefined {
+export function formatMcpStatus(
+  config: Pick<McpConfig, "settings">,
+  message: string,
+): string | undefined {
   if (config.settings?.mcpFooterStatus === "off") return undefined;
   return `${config.settings?.showStatusIcon === false ? "MCP: " : "🔌 MCP: "}${message}`;
 }
@@ -299,7 +326,9 @@ export function formatMcpStatus(config: Pick<McpConfig, "settings">, message: st
 /**
  * Extract the adapter-owned UI stream mode from tool metadata.
  */
-export function extractToolUiStreamMode(toolMeta: Record<string, unknown> | undefined): "eager" | "stream-first" | undefined {
+export function extractToolUiStreamMode(
+  toolMeta: Record<string, unknown> | undefined,
+): "eager" | "stream-first" | undefined {
   const uiMeta = toolMeta?.ui;
   if (!uiMeta || typeof uiMeta !== "object") return undefined;
   const streamMode = (uiMeta as Record<string, unknown>)["pi-mcp-adapter.streamMode"];

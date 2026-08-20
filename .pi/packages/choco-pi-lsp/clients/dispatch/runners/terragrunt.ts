@@ -1,49 +1,42 @@
 import * as path from "node:path";
 import { safeSpawnAsync } from "../../safe-spawn.js";
-import { pathsEqual } from "../../path-utils.js";import { getLinterPolicyForCwd } from "../../tool-policy.js";
+import { pathsEqual } from "../../path-utils.js";
+import { getLinterPolicyForCwd } from "../../tool-policy.js";
 import { PRIORITY } from "../priorities.js";
-import type {
-	Diagnostic,
-	DispatchContext,
-	RunnerDefinition,
-	RunnerResult,
-} from "../types.js";
-import {
-	createAvailabilityChecker,
-	resolveAvailableOrInstall,
-} from "./utils/runner-helpers.js";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
+import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.js";
 import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.js";
 
 const terragrunt = createAvailabilityChecker("terragrunt", ".exe");
 
 interface TerragruntDiagnostic {
-	severity?: string | number;
-	summary?: string;
-	detail?: string;
-	range?: {
-		filename?: string;
-		start?: { line?: number; column?: number };
-	};
+  severity?: string | number;
+  summary?: string;
+  detail?: string;
+  range?: {
+    filename?: string;
+    start?: { line?: number; column?: number };
+  };
 }
 
 interface TerragruntInvalidFile {
-	diagnostics?: TerragruntDiagnostic[];
+  diagnostics?: TerragruntDiagnostic[];
 }
 
 function normalizeSeverity(raw: unknown): "error" | "warning" {
-	if (typeof raw === "number") return raw === 1 ? "error" : "warning";
-	if (typeof raw === "string" && raw.toLowerCase() === "error") return "error";
-	return "warning";
+  if (typeof raw === "number") return raw === 1 ? "error" : "warning";
+  if (typeof raw === "string" && raw.toLowerCase() === "error") return "error";
+  return "warning";
 }
 
 function toRawDiagnostics(parsed: unknown): TerragruntDiagnostic[] {
-	if (Array.isArray(parsed)) return parsed as TerragruntDiagnostic[];
-	if (!parsed || typeof parsed !== "object") return [];
-	const invalidFiles = (parsed as { invalid_files?: unknown }).invalid_files;
-	if (!Array.isArray(invalidFiles)) return [];
-	return (invalidFiles as TerragruntInvalidFile[]).flatMap((f) =>
-		Array.isArray(f?.diagnostics) ? f.diagnostics : [],
-	);
+  if (Array.isArray(parsed)) return parsed as TerragruntDiagnostic[];
+  if (!parsed || typeof parsed !== "object") return [];
+  const invalidFiles = (parsed as { invalid_files?: unknown }).invalid_files;
+  if (!Array.isArray(invalidFiles)) return [];
+  return (invalidFiles as TerragruntInvalidFile[]).flatMap((f) =>
+    Array.isArray(f?.diagnostics) ? f.diagnostics : [],
+  );
 }
 
 /**
@@ -64,56 +57,55 @@ function toRawDiagnostics(parsed: unknown): TerragruntDiagnostic[] {
  * Malformed/unparseable input returns [].
  */
 export function parseTerragruntOutput(
-	raw: string,
-	filePath: string,
-	absPath: string = path.resolve(filePath),
+  raw: string,
+  filePath: string,
+  absPath: string = path.resolve(filePath),
 ): Diagnostic[] {
-	if (!raw.trim()) return [];
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch {
-		return [];
-	}
+  if (!raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
 
-	// Resolved against the unit dir, not compared by basename: a unit that
-	// includes its parent via find_in_parent_folders() gets diagnostics from a
-	// parent terragrunt.hcl, whose basename matches but whose lines do not.
-	const unitDir = path.dirname(absPath);
-	const diagnostics: Diagnostic[] = [];
-	for (const d of toRawDiagnostics(parsed)) {
-		if (!d || typeof d !== "object") continue;
-		const diagFile = d.range?.filename;
-		if (diagFile && !pathsEqual(path.resolve(unitDir, diagFile), absPath))
-			continue;
-		const line = d.range?.start?.line ?? 1;
-		const column = d.range?.start?.column ?? 1;
-		const severity = normalizeSeverity(d.severity);
-		const message = d.summary ?? d.detail ?? "terragrunt hcl validate error";
-		// No rule code in hcl validate output, so the message carries the identity.
-		const idMessage = message
-			.toLowerCase()
-			.replace(/[^a-z0-9]+/g, "-")
-			.slice(0, 80);
-		diagnostics.push({
-			id: `terragrunt-hclvalidate-${line}-${column}-${idMessage}`,
-			message,
-			filePath,
-			line,
-			column,
-			severity,
-			semantic: severity === "error" ? "blocking" : "warning",
-			tool: "terragrunt",
-			fixable: false,
-		});
-	}
-	return diagnostics;
+  // Resolved against the unit dir, not compared by basename: a unit that
+  // includes its parent via find_in_parent_folders() gets diagnostics from a
+  // parent terragrunt.hcl, whose basename matches but whose lines do not.
+  const unitDir = path.dirname(absPath);
+  const diagnostics: Diagnostic[] = [];
+  for (const d of toRawDiagnostics(parsed)) {
+    if (!d || typeof d !== "object") continue;
+    const diagFile = d.range?.filename;
+    if (diagFile && !pathsEqual(path.resolve(unitDir, diagFile), absPath)) continue;
+    const line = d.range?.start?.line ?? 1;
+    const column = d.range?.start?.column ?? 1;
+    const severity = normalizeSeverity(d.severity);
+    const message = d.summary ?? d.detail ?? "terragrunt hcl validate error";
+    // No rule code in hcl validate output, so the message carries the identity.
+    const idMessage = message
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .slice(0, 80);
+    diagnostics.push({
+      id: `terragrunt-hclvalidate-${line}-${column}-${idMessage}`,
+      message,
+      filePath,
+      line,
+      column,
+      severity,
+      semantic: severity === "error" ? "blocking" : "warning",
+      tool: "terragrunt",
+      fixable: false,
+    });
+  }
+  return diagnostics;
 }
 
 const SKIPPED: RunnerResult = {
-	status: "skipped",
-	diagnostics: [],
-	semantic: "none",
+  status: "skipped",
+  diagnostics: [],
+  semantic: "none",
 };
 
 /**
@@ -149,58 +141,48 @@ const SKIPPED: RunnerResult = {
  * (either clean or a plain HCL diagnostic, never a spurious hard blocker).
  */
 const terragruntRunner: RunnerDefinition = {
-	id: "terragrunt",
-	appliesTo: ["terragrunt"],
-	priority: PRIORITY.GENERAL_ANALYSIS,
-	enabledByDefault: true,
-	skipTestFiles: false,
+  id: "terragrunt",
+  appliesTo: ["terragrunt"],
+  priority: PRIORITY.GENERAL_ANALYSIS,
+  enabledByDefault: true,
+  skipTestFiles: false,
 
-	async run(ctx: DispatchContext): Promise<RunnerResult> {
-		const cwd = ctx.cwd || process.cwd();
-		const policy = getLinterPolicyForCwd(ctx.filePath, cwd);
-		if (policy && !policy.preferredRunners.includes("terragrunt"))
-			return SKIPPED;
+  async run(ctx: DispatchContext): Promise<RunnerResult> {
+    const cwd = ctx.cwd || process.cwd();
+    const policy = getLinterPolicyForCwd(ctx.filePath, cwd);
+    if (policy && !policy.preferredRunners.includes("terragrunt")) return SKIPPED;
 
-		let cmd: string | null = null;
-		if (await terragrunt.isAvailableAsync(cwd)) {
-			cmd = terragrunt.getCommand(cwd);
-		} else {
-			const managed = await resolveAvailableOrInstall(
-				terragrunt,
-				"terragrunt",
-				cwd,
-			);
-			if (managed) cmd = managed;
-		}
+    let cmd: string | null = null;
+    if (await terragrunt.isAvailableAsync(cwd)) {
+      cmd = terragrunt.getCommand(cwd);
+    } else {
+      const managed = await resolveAvailableOrInstall(terragrunt, "terragrunt", cwd);
+      if (managed) cmd = managed;
+    }
 
-		if (!cmd) return SKIPPED;
+    if (!cmd) return SKIPPED;
 
-		const absPath = path.resolve(cwd, ctx.filePath);
-		const fileDir = path.dirname(absPath);
-		const result = await safeSpawnAsync(
-			cmd,
-			["hcl", "validate", "--json", "--non-interactive"],
-			{ cwd: fileDir, timeout: 30000 },
-		);
+    const absPath = path.resolve(cwd, ctx.filePath);
+    const fileDir = path.dirname(absPath);
+    const result = await safeSpawnAsync(cmd, ["hcl", "validate", "--json", "--non-interactive"], {
+      cwd: fileDir,
+      timeout: 30000,
+    });
 
-		if (spawnFailedWithNoOutput(result)) return SKIPPED;
+    if (spawnFailedWithNoOutput(result)) return SKIPPED;
 
-		const diagnostics = parseTerragruntOutput(
-			result.stdout || "",
-			ctx.filePath,
-			absPath,
-		);
-		if (diagnostics.length === 0) {
-			return { status: "succeeded", diagnostics: [], semantic: "none" };
-		}
+    const diagnostics = parseTerragruntOutput(result.stdout || "", ctx.filePath, absPath);
+    if (diagnostics.length === 0) {
+      return { status: "succeeded", diagnostics: [], semantic: "none" };
+    }
 
-		const hasErrors = diagnostics.some((d) => d.severity === "error");
-		return {
-			status: hasErrors ? "failed" : "succeeded",
-			diagnostics,
-			semantic: hasErrors ? "blocking" : "warning",
-		};
-	},
+    const hasErrors = diagnostics.some((d) => d.severity === "error");
+    return {
+      status: hasErrors ? "failed" : "succeeded",
+      diagnostics,
+      semantic: hasErrors ? "blocking" : "warning",
+    };
+  },
 };
 
 export default terragruntRunner;

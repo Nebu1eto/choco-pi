@@ -55,7 +55,7 @@ examples:
   bad: |
     pattern = req.GET["q"]   # attacker-controlled
     re.search(pattern, text)  # BAD - dynamic pattern
-  
+
   good: |
     re.search(r"static_pattern", text)        # OK - literal pattern
     re.search(re.escape(user_input), text)    # OK - escaped

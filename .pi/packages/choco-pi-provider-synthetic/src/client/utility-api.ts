@@ -1,27 +1,16 @@
-import type {
-  SyntheticClientOptions,
-  SyntheticUtilityApiConfig,
-} from "./types";
+import type { SyntheticClientOptions, SyntheticUtilityApiConfig } from "./types";
 
 export const DEFAULT_SYNTHETIC_API_BASE_URL = "https://api.synthetic.new";
 
-export function hasSyntheticUtilityApiProxy(
-  config: SyntheticUtilityApiConfig,
-): boolean {
+export function hasSyntheticUtilityApiProxy(config: SyntheticUtilityApiConfig): boolean {
   return !!config.proxyUrl?.trim();
 }
 
-export function syntheticUtilityApiRequiresAuth(
-  config: SyntheticUtilityApiConfig,
-): boolean {
-  return (
-    !hasSyntheticUtilityApiProxy(config) || config.proxyRequiresAuth !== false
-  );
+export function syntheticUtilityApiRequiresAuth(config: SyntheticUtilityApiConfig): boolean {
+  return !hasSyntheticUtilityApiProxy(config) || config.proxyRequiresAuth !== false;
 }
 
-export function validateSyntheticUtilityApiProxyUrl(
-  value: string,
-): string | null {
+export function validateSyntheticUtilityApiProxyUrl(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
@@ -52,9 +41,7 @@ export function syntheticUtilityApiUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
-export function formatSyntheticUtilityApiProxySummary(
-  config: SyntheticUtilityApiConfig,
-): string {
+export function formatSyntheticUtilityApiProxySummary(config: SyntheticUtilityApiConfig): string {
   if (!hasSyntheticUtilityApiProxy(config)) return "direct";
   const auth = syntheticUtilityApiRequiresAuth(config) ? "auth" : "no auth";
   return `${config.proxyUrl?.trim()} · ${auth}`;

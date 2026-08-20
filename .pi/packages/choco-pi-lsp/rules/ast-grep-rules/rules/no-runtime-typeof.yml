@@ -76,24 +76,25 @@ rule:
           has:
             stopBy: neighbor
             kind: identifier
-            regex: '^(parse|decode|validate|is|assert)'
+            regex: "^(parse|decode|validate|is|assert)"
       - inside:
           stopBy: end
           kind: function_expression
           has:
             stopBy: neighbor
             kind: identifier
-            regex: '^(parse|decode|validate|is|assert)'
+            regex: "^(parse|decode|validate|is|assert)"
       - inside:
           stopBy: end
           kind: method_definition
           has:
             stopBy: neighbor
             kind: property_identifier
-            regex: '^(parse|decode|validate|is|assert)'
+            regex: "^(parse|decode|validate|is|assert)"
       - inside:
           stopBy: end
           kind: variable_declarator
           all:
-            - has: { stopBy: neighbor, kind: identifier, regex: '^(parse|decode|validate|is|assert)' }
+            - has:
+                { stopBy: neighbor, kind: identifier, regex: "^(parse|decode|validate|is|assert)" }
             - has: { stopBy: neighbor, kind: arrow_function }

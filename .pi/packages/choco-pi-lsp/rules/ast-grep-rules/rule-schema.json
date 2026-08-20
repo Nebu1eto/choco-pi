@@ -75,10 +75,18 @@
       "type": "string",
       "description": "Language this rule applies to.",
       "enum": [
-        "TypeScript", "JavaScript",
-        "Python", "Go", "Rust",
-        "Java", "C", "Cpp", "CSharp",
-        "Kotlin", "Ruby", "Php"
+        "TypeScript",
+        "JavaScript",
+        "Python",
+        "Go",
+        "Rust",
+        "Java",
+        "C",
+        "Cpp",
+        "CSharp",
+        "Kotlin",
+        "Ruby",
+        "Php"
       ]
     },
     "severity": {

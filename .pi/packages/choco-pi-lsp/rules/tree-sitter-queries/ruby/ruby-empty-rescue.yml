@@ -11,7 +11,7 @@ message: "Empty rescue block — handle or re-raise the exception"
 description: |
   A rescue block with no body silently swallows the exception.
   This makes debugging impossible and can hide serious errors.
-  
+
   ✅ FIX (choose one):
     rescue => e
       logger.error("Failed: #{e.message}")
@@ -39,7 +39,7 @@ examples:
     rescue => e
       # nothing here - error silently swallowed
     end
-  
+
   good: |
     begin
       risky_operation

@@ -49,7 +49,12 @@ function getMaterializedResourceSession(scope?: object): MaterializedResourceSes
   return session;
 }
 
-type BinaryResource = { uri?: string | undefined; text?: string | undefined; mimeType?: string | undefined; blob: string };
+type BinaryResource = {
+  uri?: string | undefined;
+  text?: string | undefined;
+  mimeType?: string | undefined;
+  blob: string;
+};
 type McpResourceContent = {
   uri: string;
   text?: string | undefined;
@@ -103,7 +108,9 @@ function drainPendingCleanupDirectories(): void {
 }
 
 export function cleanupMaterializedBinaryResources(scope?: object): void {
-  const session = scope ? scopedMaterializedResourceSessions.get(scope) : defaultMaterializedResourceSession;
+  const session = scope
+    ? scopedMaterializedResourceSessions.get(scope)
+    : defaultMaterializedResourceSession;
   if (session?.directory) pendingCleanupDirectories.add(session.directory);
   if (session) {
     session.directory = undefined;
@@ -123,11 +130,14 @@ function replaceBlob(resource: BinaryResource, text: string): string {
 }
 
 function omitBinaryResource(resource: BinaryResource, reason: string): string {
-  return replaceBlob(resource, [
-    `[Resource: ${resource.uri ?? "(no URI)"}]`,
-    `Binary content omitted: ${reason}`,
-    `MIME type: ${resource.mimeType ?? "application/octet-stream"}`,
-  ].join("\n"));
+  return replaceBlob(
+    resource,
+    [
+      `[Resource: ${resource.uri ?? "(no URI)"}]`,
+      `Binary content omitted: ${reason}`,
+      `MIME type: ${resource.mimeType ?? "application/octet-stream"}`,
+    ].join("\n"),
+  );
 }
 
 function materializeBinaryResource(resource: BinaryResource, scope?: object): string {
@@ -166,26 +176,36 @@ function materializeBinaryResource(resource: BinaryResource, scope?: object): st
     return omitBinaryResource(resource, "could not be saved");
   }
 
-  return replaceBlob(resource, [
-    `[Resource: ${resource.uri ?? "(no URI)"}]`,
-    `Binary content saved to ${filePath}`,
-    `MIME type: ${resource.mimeType ?? "application/octet-stream"}`,
-  ].join("\n"));
+  return replaceBlob(
+    resource,
+    [
+      `[Resource: ${resource.uri ?? "(no URI)"}]`,
+      `Binary content saved to ${filePath}`,
+      `MIME type: ${resource.mimeType ?? "application/octet-stream"}`,
+    ].join("\n"),
+  );
 }
 
 /**
  * Transform MCP content types to Pi content blocks.
  */
-export function transformMcpResourceContents(contents: McpResourceContent[], scope?: object): ContentBlock[] {
-  return contents.map(resource => {
+export function transformMcpResourceContents(
+  contents: McpResourceContent[],
+  scope?: object,
+): ContentBlock[] {
+  return contents.map((resource) => {
     if (typeof resource.text === "string") return { type: "text" as const, text: resource.text };
-    if (typeof resource.blob === "string") return { type: "text" as const, text: materializeBinaryResource(resource as BinaryResource, scope) };
+    if (typeof resource.blob === "string")
+      return {
+        type: "text" as const,
+        text: materializeBinaryResource(resource as BinaryResource, scope),
+      };
     return { type: "text" as const, text: JSON.stringify(resource) };
   });
 }
 
 export function transformMcpContent(content: McpContent[], scope?: object): ContentBlock[] {
-  return content.map(c => {
+  return content.map((c) => {
     if (c.type === "text") {
       return { type: "text" as const, text: c.text ?? "" };
     }
@@ -199,13 +219,17 @@ export function transformMcpContent(content: McpContent[], scope?: object): Cont
     if (c.type === "resource") {
       const resourceUri = c.resource?.uri ?? "(no URI)";
       if (c.resource && "blob" in c.resource && typeof c.resource.blob === "string") {
-        const binaryResource = c.resource as typeof c.resource & { mimeType?: string; blob: string };
+        const binaryResource = c.resource as typeof c.resource & {
+          mimeType?: string;
+          blob: string;
+        };
         return {
           type: "text" as const,
           text: materializeBinaryResource(binaryResource, scope),
         };
       }
-      const resourceContent = c.resource?.text ?? (c.resource ? JSON.stringify(c.resource) : "(no content)");
+      const resourceContent =
+        c.resource?.text ?? (c.resource ? JSON.stringify(c.resource) : "(no content)");
       return {
         type: "text" as const,
         text: `[Resource: ${resourceUri}]\n${resourceContent}`,
@@ -233,8 +257,14 @@ export function transformMcpContent(content: McpContent[], scope?: object): Cont
  * Resolve a tool result's content blocks, falling back to structuredContent
  * when content is empty.
  */
-export function resolveMcpResultContent(result: Record<string, unknown>, scope?: object): ContentBlock[] {
-  const blocks = transformMcpContent((Array.isArray(result.content) ? result.content : []) as McpContent[], scope);
+export function resolveMcpResultContent(
+  result: Record<string, unknown>,
+  scope?: object,
+): ContentBlock[] {
+  const blocks = transformMcpContent(
+    (Array.isArray(result.content) ? result.content : []) as McpContent[],
+    scope,
+  );
   if (blocks.length > 0) return blocks;
 
   if (result.structuredContent !== undefined && result.structuredContent !== null) {

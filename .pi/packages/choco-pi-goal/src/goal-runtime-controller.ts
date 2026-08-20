@@ -33,7 +33,11 @@ export interface GoalRuntimeController extends GoalRuntimeEventHandlers {
   clearGoal(source: GoalEntrySource, ctx: ExtensionContext): void;
   completeGoal(source: GoalEntrySource, ctx: ExtensionContext): GoalResult;
   cancelProviderLimitAutoResume(goalId: string, ctx: StatusContext): void;
-  resumeGoalWithContinuation(goalId: string, source: GoalEntrySource, ctx: StatusContext): GoalResult;
+  resumeGoalWithContinuation(
+    goalId: string,
+    source: GoalEntrySource,
+    ctx: StatusContext,
+  ): GoalResult;
 }
 
 export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeController {
@@ -59,7 +63,11 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
   let autoResumeContext: ExtensionContext | null = null;
   const providerLimitAutoResume = createProviderLimitAutoResumeScheduler({
     onTimer(goalId) {
-      if (!autoResumeContext || !autoResumeContext.isIdle() || autoResumeContext.hasPendingMessages()) {
+      if (
+        !autoResumeContext ||
+        !autoResumeContext.isIdle() ||
+        autoResumeContext.hasPendingMessages()
+      ) {
         return false;
       }
       resumeGoalWithContinuation(goalId, "runtime", autoResumeContext);

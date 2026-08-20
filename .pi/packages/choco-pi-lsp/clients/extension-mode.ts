@@ -48,13 +48,13 @@ const KNOWN_MODES = new Set<string>(["tui", "rpc", "json", "print"]);
  * a suppression that could hide output).
  */
 export function readExtensionMode(ctx: unknown): ExtensionRunMode {
-	try {
-		const mode = (ctx as { mode?: unknown } | null | undefined)?.mode;
-		if (typeof mode !== "string" || !KNOWN_MODES.has(mode)) return "unknown";
-		return mode as ExtensionRunMode;
-	} catch {
-		return "unknown";
-	}
+  try {
+    const mode = (ctx as { mode?: unknown } | null | undefined)?.mode;
+    if (typeof mode !== "string" || !KNOWN_MODES.has(mode)) return "unknown";
+    return mode as ExtensionRunMode;
+  } catch {
+    return "unknown";
+  }
 }
 
 /**
@@ -62,7 +62,7 @@ export function readExtensionMode(ctx: unknown): ExtensionRunMode {
  * be mounted. `"unknown"` mounts — older hosts must behave exactly as before.
  */
 export function supportsTuiWidget(mode: ExtensionRunMode): boolean {
-	return mode === "tui" || mode === "unknown";
+  return mode === "tui" || mode === "unknown";
 }
 
 /**
@@ -70,10 +70,10 @@ export function supportsTuiWidget(mode: ExtensionRunMode): boolean {
  * True only for the two non-interactive one-shot modes.
  */
 export function suppressesUserNotify(mode: ExtensionRunMode): boolean {
-	return mode === "print" || mode === "json";
+  return mode === "print" || mode === "json";
 }
 
 /** Short human-readable reason for a suppression, for the ndjson/debug log. */
 export function modeSuppressionNote(mode: ExtensionRunMode): string {
-	return `suppressed in "${mode}" mode (no interactive TUI)`;
+  return `suppressed in "${mode}" mode (no interactive TUI)`;
 }

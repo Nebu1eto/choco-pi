@@ -76,28 +76,24 @@
  */
 
 import * as fs from "node:fs";
-export {
-	STAGE_TMP_PATTERN,
-	stageOwnerPidFromName,
-	stagePathFor,
-} from "./atomic-write-staging.js";
+export { STAGE_TMP_PATTERN, stageOwnerPidFromName, stagePathFor } from "./atomic-write-staging.js";
 import { stagePathFor } from "./atomic-write-staging.js";
 
 export interface WriteFileAtomicOptions {
-	/**
-	 * `true` (default): swallow write/rename failures after best-effort tmp
-	 * cleanup — the update is simply lost. `false`: rethrow the failure after
-	 * the same best-effort cleanup (the #757 disposition-store policy).
-	 */
-	bestEffort?: boolean;
-	/**
-	 * POSIX file mode (e.g. `0o750` for an installed executable) applied at
-	 * staging-file CREATION, so it travels with the file across the rename
-	 * rather than needing a separate `chmod` after publication. Ignored on
-	 * Windows (Node's `fs` mode support is POSIX-only there). Omit for the
-	 * default (umask-governed) mode.
-	 */
-	mode?: number;
+  /**
+   * `true` (default): swallow write/rename failures after best-effort tmp
+   * cleanup — the update is simply lost. `false`: rethrow the failure after
+   * the same best-effort cleanup (the #757 disposition-store policy).
+   */
+  bestEffort?: boolean;
+  /**
+   * POSIX file mode (e.g. `0o750` for an installed executable) applied at
+   * staging-file CREATION, so it travels with the file across the rename
+   * rather than needing a separate `chmod` after publication. Ignored on
+   * Windows (Node's `fs` mode support is POSIX-only there). Omit for the
+   * default (umask-governed) mode.
+   */
+  mode?: number;
 }
 
 /**
@@ -164,26 +160,26 @@ export interface WriteFileAtomicOptions {
  * already does its own mkdir as a separate step).
  */
 export function writeFileAtomic(
-	targetPath: string,
-	data: string | Uint8Array,
-	options?: WriteFileAtomicOptions,
+  targetPath: string,
+  data: string | Uint8Array,
+  options?: WriteFileAtomicOptions,
 ): void {
-	const bestEffort = options?.bestEffort ?? true;
-	const tmpPath = stagePathFor(targetPath);
-	try {
-		fs.writeFileSync(tmpPath, data, {
-			encoding: typeof data === "string" ? "utf-8" : undefined,
-			mode: options?.mode,
-		});
-		fs.renameSync(tmpPath, targetPath);
-	} catch (err) {
-		try {
-			fs.rmSync(tmpPath, { force: true });
-		} catch {
-			// ignore — best-effort cleanup of our own tmp file
-		}
-		if (!bestEffort) throw err;
-	}
+  const bestEffort = options?.bestEffort ?? true;
+  const tmpPath = stagePathFor(targetPath);
+  try {
+    fs.writeFileSync(tmpPath, data, {
+      encoding: typeof data === "string" ? "utf-8" : undefined,
+      mode: options?.mode,
+    });
+    fs.renameSync(tmpPath, targetPath);
+  } catch (err) {
+    try {
+      fs.rmSync(tmpPath, { force: true });
+    } catch {
+      // ignore — best-effort cleanup of our own tmp file
+    }
+    if (!bestEffort) throw err;
+  }
 }
 
 /**
@@ -193,24 +189,24 @@ export function writeFileAtomic(
  * cleanup, and `bestEffort` semantics.
  */
 export async function writeFileAtomicAsync(
-	targetPath: string,
-	data: string | Uint8Array,
-	options?: WriteFileAtomicOptions,
+  targetPath: string,
+  data: string | Uint8Array,
+  options?: WriteFileAtomicOptions,
 ): Promise<void> {
-	const bestEffort = options?.bestEffort ?? true;
-	const tmpPath = stagePathFor(targetPath);
-	try {
-		await fs.promises.writeFile(tmpPath, data, {
-			encoding: typeof data === "string" ? "utf-8" : undefined,
-			mode: options?.mode,
-		});
-		await fs.promises.rename(tmpPath, targetPath);
-	} catch (err) {
-		try {
-			await fs.promises.rm(tmpPath, { force: true });
-		} catch {
-			// ignore — best-effort cleanup of our own tmp file
-		}
-		if (!bestEffort) throw err;
-	}
+  const bestEffort = options?.bestEffort ?? true;
+  const tmpPath = stagePathFor(targetPath);
+  try {
+    await fs.promises.writeFile(tmpPath, data, {
+      encoding: typeof data === "string" ? "utf-8" : undefined,
+      mode: options?.mode,
+    });
+    await fs.promises.rename(tmpPath, targetPath);
+  } catch (err) {
+    try {
+      await fs.promises.rm(tmpPath, { force: true });
+    } catch {
+      // ignore — best-effort cleanup of our own tmp file
+    }
+    if (!bestEffort) throw err;
+  }
 }

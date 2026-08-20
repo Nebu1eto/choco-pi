@@ -47,9 +47,9 @@ export function loadCustomAgents(cwd: string, strict = false): Map<string, Agent
   const projectDir = join(cwd, ".pi", "agents");
 
   const agents = new Map<string, AgentConfig>();
-  loadFromDir(globalDir, agents, "global", strict);            // lowest priority
+  loadFromDir(globalDir, agents, "global", strict); // lowest priority
   loadFromDir(workspaceProjectDir, agents, "project", strict); // shared workspace
-  loadFromDir(projectDir, agents, "project", strict);          // highest priority (overwrites)
+  loadFromDir(projectDir, agents, "project", strict); // highest priority (overwrites)
 
   warnedLastLoad = warnedThisLoad;
   warnedThisLoad = new Set();
@@ -57,12 +57,17 @@ export function loadCustomAgents(cwd: string, strict = false): Map<string, Agent
 }
 
 /** Load agent configs from a directory into the map. */
-function loadFromDir(dir: string, agents: Map<string, AgentConfig>, source: "project" | "global", strict: boolean): void {
+function loadFromDir(
+  dir: string,
+  agents: Map<string, AgentConfig>,
+  source: "project" | "global",
+  strict: boolean,
+): void {
   if (!existsSync(dir)) return;
 
   let files: string[];
   try {
-    files = readdirSync(dir).filter(f => f.endsWith(".md"));
+    files = readdirSync(dir).filter((f) => f.endsWith(".md"));
   } catch {
     return;
   }
@@ -88,8 +93,8 @@ function loadFromDir(dir: string, agents: Map<string, AgentConfig>, source: "pro
       // under its filename, so `Agent({subagent_type})` would succeed against
       // an agent whose declared identity nothing honoured.
       warnIfNew(
-        `Agent file ${path} declares name "${declared}", which contains "${RESERVED_IN_TYPE}" — reserved for `
-        + "plugin-scoped identifiers. Rename it, or move the label to `display_name:`. Skipping.",
+        `Agent file ${path} declares name "${declared}", which contains "${RESERVED_IN_TYPE}" — reserved for ` +
+          "plugin-scoped identifiers. Rename it, or move the label to `display_name:`. Skipping.",
       );
       // No `warnSkippedOverride`: this file would have registered under its
       // *declared* name, which nothing else can hold (a colon keeps it out of
@@ -132,7 +137,7 @@ function loadFromDir(dir: string, agents: Map<string, AgentConfig>, source: "pro
       isolated: fm.isolated != null ? fm.isolated === true : undefined,
       memory: parseMemory(fm.memory),
       isolation: parseIsolation(fm.isolation),
-      enabled: fm.enabled !== false,  // default true; explicitly false disables
+      enabled: fm.enabled !== false, // default true; explicitly false disables
       source,
       sourcePath: path,
     });
@@ -151,7 +156,10 @@ function loadFromDir(dir: string, agents: Map<string, AgentConfig>, source: "pro
  * Under `strict` the same failure rethrows, still naming the path, so callers
  * that opted into failing closed stop rather than run a substituted agent.
  */
-function readAgentFile(path: string, strict: boolean): { frontmatter: Record<string, unknown>; body: string } | undefined {
+function readAgentFile(
+  path: string,
+  strict: boolean,
+): { frontmatter: Record<string, unknown>; body: string } | undefined {
   try {
     return parseFrontmatter<Record<string, unknown>>(readFileSync(path, "utf-8"));
   } catch (err) {
@@ -210,7 +218,10 @@ function parseCsvField(val: unknown): string[] | undefined {
   if (val === undefined || val === null) return undefined;
   const s = String(val).trim();
   if (!s || s === "none") return undefined;
-  const items = s.split(",").map(t => t.trim()).filter(Boolean);
+  const items = s
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
   return items.length > 0 ? items : undefined;
 }
 
@@ -227,7 +238,7 @@ function parseAllowedSubagents(val: unknown): "all" | string[] | undefined {
   if (typeof val === "boolean") return val ? "all" : undefined;
   const items = parseCsvField(val);
   if (!items) return undefined;
-  return items.some(i => i === "*" || i.toLowerCase() === "all") ? "all" : items;
+  return items.some((i) => i === "*" || i.toLowerCase() === "all") ? "all" : items;
 }
 
 /**
@@ -246,12 +257,15 @@ function csvList(val: unknown, defaults: string[]): string[] {
  * selectors parsed later by the runner. omitted → all built-ins, no selectors.
  * `tools:` present with only `ext:` entries → zero built-ins (use `*`).
  */
-function parseToolsField(val: unknown): { builtinToolNames: string[]; extSelectors: string[] | undefined } {
+function parseToolsField(val: unknown): {
+  builtinToolNames: string[];
+  extSelectors: string[] | undefined;
+} {
   const entries = csvList(val, BUILTIN_TOOL_NAMES);
   const isWildcard = (e: string) => e === "*" || e.toLowerCase() === "all";
   const hasWildcard = entries.some(isWildcard);
-  const plain = entries.filter(e => !isWildcard(e) && !e.startsWith("ext:"));
-  const extEntries = entries.filter(e => e.startsWith("ext:"));
+  const plain = entries.filter((e) => !isWildcard(e) && !e.startsWith("ext:"));
+  const extEntries = entries.filter((e) => e.startsWith("ext:"));
   return {
     builtinToolNames: hasWildcard ? [...new Set([...BUILTIN_TOOL_NAMES, ...plain])] : plain,
     extSelectors: extEntries.length > 0 ? extEntries : undefined,

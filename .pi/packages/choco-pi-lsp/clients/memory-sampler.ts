@@ -42,61 +42,61 @@ export const MEMORY_SAMPLE_TURN_INTERVAL = 10;
  *  resident yet at session start). Pure so the cadence is unit-testable
  *  without driving a real turn loop. */
 export function shouldEmitMemorySample(turnIndex: number): boolean {
-	return turnIndex > 0 && turnIndex % MEMORY_SAMPLE_TURN_INTERVAL === 0;
+  return turnIndex > 0 && turnIndex % MEMORY_SAMPLE_TURN_INTERVAL === 0;
 }
 
 export interface MemoryProcessUsage {
-	rssBytes: number;
-	heapUsedBytes: number;
-	heapTotalBytes: number;
-	externalBytes: number;
-	arrayBuffersBytes: number;
+  rssBytes: number;
+  heapUsedBytes: number;
+  heapTotalBytes: number;
+  externalBytes: number;
+  arrayBuffersBytes: number;
 }
 
 /** PURE: reshape Node's `process.memoryUsage()` into this module's field
  *  names — testable without touching the real process. */
 export function toMemoryProcessUsage(mem: NodeJS.MemoryUsage): MemoryProcessUsage {
-	return {
-		rssBytes: mem.rss,
-		heapUsedBytes: mem.heapUsed,
-		heapTotalBytes: mem.heapTotal,
-		externalBytes: mem.external,
-		arrayBuffersBytes: mem.arrayBuffers,
-	};
+  return {
+    rssBytes: mem.rss,
+    heapUsedBytes: mem.heapUsed,
+    heapTotalBytes: mem.heapTotal,
+    externalBytes: mem.external,
+    arrayBuffersBytes: mem.arrayBuffers,
+  };
 }
 
 export interface MemorySampleSubsystems {
-	reviewGraph: {
-		cacheEntries: number;
-		totalNodes: number;
-		totalEdges: number;
-	};
-	/** `null` when no word index has been built yet this session. */
-	wordIndex: {
-		docs: number;
-		postings: number;
-		forwardEntries: number;
-	} | null;
-	/** `null` when the shared tree-sitter client hasn't been created yet
-	 *  (WASM runtime never touched this session) or has aborted. */
-	treeSitter: {
-		languagesLoaded: number;
-		parsersLoaded: number;
-		queryCacheSize: number;
-		queryBatchCacheSize: number;
-		treeCacheSize: number;
-		treeCacheMaxSize: number;
-		treeCacheTotalBytes: number;
-	} | null;
-	dispatchCaches: {
-		neighborTouchCacheSize: number;
-		recentlyCleanNeighborCacheSize: number;
-	};
+  reviewGraph: {
+    cacheEntries: number;
+    totalNodes: number;
+    totalEdges: number;
+  };
+  /** `null` when no word index has been built yet this session. */
+  wordIndex: {
+    docs: number;
+    postings: number;
+    forwardEntries: number;
+  } | null;
+  /** `null` when the shared tree-sitter client hasn't been created yet
+   *  (WASM runtime never touched this session) or has aborted. */
+  treeSitter: {
+    languagesLoaded: number;
+    parsersLoaded: number;
+    queryCacheSize: number;
+    queryBatchCacheSize: number;
+    treeCacheSize: number;
+    treeCacheMaxSize: number;
+    treeCacheTotalBytes: number;
+  } | null;
+  dispatchCaches: {
+    neighborTouchCacheSize: number;
+    recentlyCleanNeighborCacheSize: number;
+  };
 }
 
 export interface MemorySample {
-	process: MemoryProcessUsage;
-	subsystems: MemorySampleSubsystems;
+  process: MemoryProcessUsage;
+  subsystems: MemorySampleSubsystems;
 }
 
 /**
@@ -104,51 +104,49 @@ export interface MemorySample {
  * process-global singletons) but every individual read is a `.size`/`.length`
  * access — see the module docstring's hard constraint.
  */
-export function collectMemorySampleSubsystems(
-	wordIndex: WordIndex | null,
-): MemorySampleSubsystems {
-	const reviewGraph = getReviewGraphWorkspaceCacheSnapshot();
+export function collectMemorySampleSubsystems(wordIndex: WordIndex | null): MemorySampleSubsystems {
+  const reviewGraph = getReviewGraphWorkspaceCacheSnapshot();
 
-	const treeSitterClient = getSharedTreeSitterClient();
-	const treeSitter = treeSitterClient
-		? (() => {
-				const runtimeStats = treeSitterClient.getRuntimeStats();
-				const cacheStats = treeSitterClient.getParseCacheStats();
-				return {
-					...runtimeStats,
-					treeCacheSize: cacheStats.size,
-					treeCacheMaxSize: cacheStats.maxSize,
-					treeCacheTotalBytes: cacheStats.totalBytes,
-				};
-			})()
-		: null;
+  const treeSitterClient = getSharedTreeSitterClient();
+  const treeSitter = treeSitterClient
+    ? (() => {
+        const runtimeStats = treeSitterClient.getRuntimeStats();
+        const cacheStats = treeSitterClient.getParseCacheStats();
+        return {
+          ...runtimeStats,
+          treeCacheSize: cacheStats.size,
+          treeCacheMaxSize: cacheStats.maxSize,
+          treeCacheTotalBytes: cacheStats.totalBytes,
+        };
+      })()
+    : null;
 
-	const dispatchCaches = getDispatchCascadeCacheStats();
+  const dispatchCaches = getDispatchCascadeCacheStats();
 
-	return {
-		reviewGraph,
-		wordIndex: wordIndex
-			? {
-					docs: wordIndex.docLengths.size,
-					postings: wordIndex.postings.size,
-					forwardEntries: wordIndex.forward?.size ?? 0,
-				}
-			: null,
-		treeSitter,
-		dispatchCaches,
-	};
+  return {
+    reviewGraph,
+    wordIndex: wordIndex
+      ? {
+          docs: wordIndex.docLengths.size,
+          postings: wordIndex.postings.size,
+          forwardEntries: wordIndex.forward?.size ?? 0,
+        }
+      : null,
+    treeSitter,
+    dispatchCaches,
+  };
 }
 
 /** Assemble one full sample. `mem` is injectable for tests; defaults to a
  *  live `process.memoryUsage()` read. */
 export function buildMemorySample(
-	wordIndex: WordIndex | null,
-	mem: NodeJS.MemoryUsage = process.memoryUsage(),
+  wordIndex: WordIndex | null,
+  mem: NodeJS.MemoryUsage = process.memoryUsage(),
 ): MemorySample {
-	return {
-		process: toMemoryProcessUsage(mem),
-		subsystems: collectMemorySampleSubsystems(wordIndex),
-	};
+  return {
+    process: toMemoryProcessUsage(mem),
+    subsystems: collectMemorySampleSubsystems(wordIndex),
+  };
 }
 
 const toMb = (bytes: number): number => Math.round(bytes / (1024 * 1024));
@@ -164,13 +162,13 @@ const toMb = (bytes: number): number => Math.round(bytes / (1024 * 1024));
  * breakdown table — that's what latency.log's `memory_sample` is for).
  */
 export function formatMemoryHealthLine(sample: MemorySample): string {
-	const { process: proc, subsystems } = sample;
-	const treeCache = subsystems.treeSitter
-		? `${toMb(subsystems.treeSitter.treeCacheTotalBytes)}MB (${subsystems.treeSitter.treeCacheSize} trees)`
-		: "n/a";
-	const graph = `${subsystems.reviewGraph.totalNodes}n/${subsystems.reviewGraph.totalEdges}e (${subsystems.reviewGraph.cacheEntries} cwd)`;
-	return (
-		`Memory: RSS ${toMb(proc.rssBytes)}MB · heap ${toMb(proc.heapUsedBytes)}/${toMb(proc.heapTotalBytes)}MB` +
-		` · external ${toMb(proc.externalBytes)}MB · tree-sitter cache ${treeCache} · review-graph ${graph}`
-	);
+  const { process: proc, subsystems } = sample;
+  const treeCache = subsystems.treeSitter
+    ? `${toMb(subsystems.treeSitter.treeCacheTotalBytes)}MB (${subsystems.treeSitter.treeCacheSize} trees)`
+    : "n/a";
+  const graph = `${subsystems.reviewGraph.totalNodes}n/${subsystems.reviewGraph.totalEdges}e (${subsystems.reviewGraph.cacheEntries} cwd)`;
+  return (
+    `Memory: RSS ${toMb(proc.rssBytes)}MB · heap ${toMb(proc.heapUsedBytes)}/${toMb(proc.heapTotalBytes)}MB` +
+    ` · external ${toMb(proc.externalBytes)}MB · tree-sitter cache ${treeCache} · review-graph ${graph}`
+  );
 }

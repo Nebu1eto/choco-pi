@@ -54,21 +54,17 @@ import path from "node:path";
 import { BoundedLruCache } from "../bounded-cache.js";
 import { getGlobalPiLensDir } from "../file-utils.js";
 import { launchLSP } from "./launch.js";
-import {
-	createRootDetector,
-	LSP_SERVERS,
-	type LSPServerInfo,
-} from "./server.js";
+import { createRootDetector, LSP_SERVERS, type LSPServerInfo } from "./server.js";
 
 // --- Types ---
 
 export interface CustomServerConfig {
-	name: string;
-	extensions: string[];
-	command: string;
-	args?: string[];
-	rootMarkers?: string[];
-	env?: Record<string, string>;
+  name: string;
+  extensions: string[];
+  command: string;
+  args?: string[];
+  rootMarkers?: string[];
+  env?: Record<string, string>;
 }
 
 /**
@@ -76,31 +72,31 @@ export interface CustomServerConfig {
  * Keys are built-in server IDs (e.g. "rust", "nix", "bash", "python", "go").
  */
 export interface ServerInitOverride {
-	/**
-	 * Deep-merged onto the server's built-in initializationOptions defaults.
-	 * User values win on key conflicts at every nesting level.
-	 */
-	initializationOptions?: Record<string, unknown>;
+  /**
+   * Deep-merged onto the server's built-in initializationOptions defaults.
+   * User values win on key conflicts at every nesting level.
+   */
+  initializationOptions?: Record<string, unknown>;
 }
 
 export interface LSPConfig {
-	servers?: Record<string, CustomServerConfig>;
-	/**
-	 * Override initializationOptions for built-in servers.
-	 * Keys are built-in server IDs (e.g. "rust", "nix", "bash", "python").
-	 * Each entry's `initializationOptions` is deep-merged onto the server's
-	 * built-in defaults so you only need to specify the keys you want to change.
-	 */
-	serverOverrides?: Record<string, ServerInitOverride>;
-	disabledServers?: string[];
-	/** Files to open at session start to seed lazy LSP indexing (e.g., clangd). */
-	warmFiles?: string[];
+  servers?: Record<string, CustomServerConfig>;
+  /**
+   * Override initializationOptions for built-in servers.
+   * Keys are built-in server IDs (e.g. "rust", "nix", "bash", "python").
+   * Each entry's `initializationOptions` is deep-merged onto the server's
+   * built-in defaults so you only need to specify the keys you want to change.
+   */
+  serverOverrides?: Record<string, ServerInitOverride>;
+  disabledServers?: string[];
+  /** Files to open at session start to seed lazy LSP indexing (e.g., clangd). */
+  warmFiles?: string[];
 }
 
 interface RegisteredLSPConfig {
-	customServers: LSPServerInfo[];
-	disabledServerIds: Set<string>;
-	serverOverrides: Map<string, ServerInitOverride>;
+  customServers: LSPServerInfo[];
+  disabledServerIds: Set<string>;
+  serverOverrides: Map<string, ServerInitOverride>;
 }
 
 // --- Config Loading ---
@@ -108,71 +104,64 @@ interface RegisteredLSPConfig {
 const CONFIG_PATHS = [".choco-pi-lsp/lsp.json", ".choco-pi-lsp.json", "pi-lsp.json"];
 
 function warnInvalidLSPConfig(configPath: string, error: unknown): void {
-	const reason = error instanceof Error ? error.message : String(error);
-	const message = `ignoring invalid LSP config ${configPath}: ${reason}`;
-	logExtension({
-		subsystem: "lsp-config",
-		level: "warn",
-		message,
-		metadata: { configPath, reason },
-	});
-	// HUMAN-audience too: the user's own lsp.json is being ignored (#1333).
-	notifyUserDegradation(`choco-pi-lsp: ${message}`);
+  const reason = error instanceof Error ? error.message : String(error);
+  const message = `ignoring invalid LSP config ${configPath}: ${reason}`;
+  logExtension({
+    subsystem: "lsp-config",
+    level: "warn",
+    message,
+    metadata: { configPath, reason },
+  });
+  // HUMAN-audience too: the user's own lsp.json is being ignored (#1333).
+  notifyUserDegradation(`choco-pi-lsp: ${message}`);
 }
 
 async function readLSPConfig(configPath: string): Promise<LSPConfig | undefined> {
-	let content: string;
-	try {
-		content = await fs.readFile(configPath, "utf-8");
-	} catch (error) {
-		if (
-			error instanceof Error &&
-			"code" in error &&
-			error.code === "ENOENT"
-		) {
-			return undefined;
-		}
-		warnInvalidLSPConfig(configPath, error);
-		return undefined;
-	}
+  let content: string;
+  try {
+    content = await fs.readFile(configPath, "utf-8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return undefined;
+    }
+    warnInvalidLSPConfig(configPath, error);
+    return undefined;
+  }
 
-	try {
-		const parsed = JSON.parse(content) as unknown;
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-			throw new TypeError("expected a JSON object");
-		}
-		return parsed as LSPConfig;
-	} catch (error) {
-		warnInvalidLSPConfig(configPath, error);
-		return undefined;
-	}
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new TypeError("expected a JSON object");
+    }
+    return parsed as LSPConfig;
+  } catch (error) {
+    warnInvalidLSPConfig(configPath, error);
+    return undefined;
+  }
 }
 
-function mergeLSPConfigs(
-	globalConfig: LSPConfig,
-	projectConfig: LSPConfig,
-): LSPConfig {
-	const merged: LSPConfig = { ...globalConfig, ...projectConfig };
+function mergeLSPConfigs(globalConfig: LSPConfig, projectConfig: LSPConfig): LSPConfig {
+  const merged: LSPConfig = { ...globalConfig, ...projectConfig };
 
-	const servers = { ...globalConfig.servers, ...projectConfig.servers };
-	if (Object.keys(servers).length > 0) merged.servers = servers;
+  const servers = { ...globalConfig.servers, ...projectConfig.servers };
+  if (Object.keys(servers).length > 0) merged.servers = servers;
 
-	const serverOverrides = {
-		...globalConfig.serverOverrides,
-		...projectConfig.serverOverrides,
-	};
-	if (Object.keys(serverOverrides).length > 0) {
-		merged.serverOverrides = serverOverrides;
-	}
+  const serverOverrides = {
+    ...globalConfig.serverOverrides,
+    ...projectConfig.serverOverrides,
+  };
+  if (Object.keys(serverOverrides).length > 0) {
+    merged.serverOverrides = serverOverrides;
+  }
 
-	if (!Object.hasOwn(projectConfig, "disabledServers")) {
-		merged.disabledServers = globalConfig.disabledServers;
-	}
-	if (!Object.hasOwn(projectConfig, "warmFiles")) {
-		merged.warmFiles = globalConfig.warmFiles;
-	}
+  if (!Object.hasOwn(projectConfig, "disabledServers")) {
+    merged.disabledServers = globalConfig.disabledServers;
+  }
+  if (!Object.hasOwn(projectConfig, "warmFiles")) {
+    merged.warmFiles = globalConfig.warmFiles;
+  }
 
-	return merged;
+  return merged;
 }
 
 /**
@@ -180,27 +169,26 @@ function mergeLSPConfigs(
  * settings from ~/.choco-pi-lsp/lsp.json.
  */
 export async function loadLSPConfig(cwd: string): Promise<LSPConfig> {
-	let projectConfig: LSPConfig | undefined;
-	let dir = path.resolve(cwd);
-	while (true) {
-		for (const configPath of CONFIG_PATHS) {
-			const fullPath = path.join(dir, configPath);
-			const config = await readLSPConfig(fullPath);
-			if (config) {
-				projectConfig = config;
-				break;
-			}
-		}
-		if (projectConfig) break;
+  let projectConfig: LSPConfig | undefined;
+  let dir = path.resolve(cwd);
+  while (true) {
+    for (const configPath of CONFIG_PATHS) {
+      const fullPath = path.join(dir, configPath);
+      const config = await readLSPConfig(fullPath);
+      if (config) {
+        projectConfig = config;
+        break;
+      }
+    }
+    if (projectConfig) break;
 
-		const parent = path.dirname(dir);
-		if (parent === dir) break;
-		dir = parent;
-	}
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
 
-	const globalConfig =
-		(await readLSPConfig(path.join(getGlobalPiLensDir(), "lsp.json"))) ?? {};
-	return mergeLSPConfigs(globalConfig, projectConfig ?? {});
+  const globalConfig = (await readLSPConfig(path.join(getGlobalPiLensDir(), "lsp.json"))) ?? {};
+  return mergeLSPConfigs(globalConfig, projectConfig ?? {});
 }
 
 // --- Custom Server Factory ---
@@ -208,33 +196,28 @@ export async function loadLSPConfig(cwd: string): Promise<LSPConfig> {
 /**
  * Create LSPServerInfo from user configuration
  */
-export function createCustomServer(
-	config: CustomServerConfig,
-	id: string,
-): LSPServerInfo {
-	return {
-		id,
-		name: config.name,
-		extensions: config.extensions,
-		root: config.rootMarkers
-			? createRootDetector(config.rootMarkers)
-			: async () => process.cwd(),
-		async spawn(root) {
-			const proc = await launchLSP(config.command, config.args ?? ["--stdio"], {
-				cwd: root,
-				env: config.env ? { ...process.env, ...config.env } : process.env,
-			});
-			return { process: proc };
-		},
-	};
+export function createCustomServer(config: CustomServerConfig, id: string): LSPServerInfo {
+  return {
+    id,
+    name: config.name,
+    extensions: config.extensions,
+    root: config.rootMarkers ? createRootDetector(config.rootMarkers) : async () => process.cwd(),
+    async spawn(root) {
+      const proc = await launchLSP(config.command, config.args ?? ["--stdio"], {
+        cwd: root,
+        env: config.env ? { ...process.env, ...config.env } : process.env,
+      });
+      return { process: proc };
+    },
+  };
 }
 
 // --- Registry Management ---
 
 const EMPTY_CONFIG: RegisteredLSPConfig = {
-	customServers: [],
-	disabledServerIds: new Set(),
-	serverOverrides: new Map(),
+  customServers: [],
+  disabledServerIds: new Set(),
+  serverOverrides: new Map(),
 };
 
 const workspaceConfigs = new BoundedLruCache<string, RegisteredLSPConfig>(32);
@@ -242,26 +225,26 @@ const workspaceConfigs = new BoundedLruCache<string, RegisteredLSPConfig>(32);
 const configInFlight = new Map<string, Promise<void>>();
 
 function normalizeWorkspacePath(cwd: string): string {
-	return path.resolve(cwd);
+  return path.resolve(cwd);
 }
 
 function isSameOrChildPath(filePath: string, candidateRoot: string): boolean {
-	if (filePath === candidateRoot) return true;
-	return filePath.startsWith(`${candidateRoot}${path.sep}`);
+  if (filePath === candidateRoot) return true;
+  return filePath.startsWith(`${candidateRoot}${path.sep}`);
 }
 
 function getConfigForFile(filePath: string): RegisteredLSPConfig {
-	const resolvedFilePath = path.resolve(filePath);
-	let bestMatch: { root: string; config: RegisteredLSPConfig } | undefined;
+  const resolvedFilePath = path.resolve(filePath);
+  let bestMatch: { root: string; config: RegisteredLSPConfig } | undefined;
 
-	for (const [root, config] of workspaceConfigs) {
-		if (!isSameOrChildPath(resolvedFilePath, root)) continue;
-		if (!bestMatch || root.length > bestMatch.root.length) {
-			bestMatch = { root, config };
-		}
-	}
+  for (const [root, config] of workspaceConfigs) {
+    if (!isSameOrChildPath(resolvedFilePath, root)) continue;
+    if (!bestMatch || root.length > bestMatch.root.length) {
+      bestMatch = { root, config };
+    }
+  }
 
-	return bestMatch?.config ?? EMPTY_CONFIG;
+  return bestMatch?.config ?? EMPTY_CONFIG;
 }
 
 /**
@@ -269,93 +252,93 @@ function getConfigForFile(filePath: string): RegisteredLSPConfig {
  * Deduplicates concurrent calls for the same workspace.
  */
 export async function initLSPConfig(cwd: string): Promise<void> {
-	const normalizedCwd = normalizeWorkspacePath(cwd);
+  const normalizedCwd = normalizeWorkspacePath(cwd);
 
-	const existing = configInFlight.get(normalizedCwd);
-	if (existing) return existing;
+  const existing = configInFlight.get(normalizedCwd);
+  if (existing) return existing;
 
-	const promise = (async () => {
-		const config = await loadLSPConfig(cwd);
-		const customServers: LSPServerInfo[] = [];
-		const disabledServerIds = new Set(config.disabledServers ?? []);
+  const promise = (async () => {
+    const config = await loadLSPConfig(cwd);
+    const customServers: LSPServerInfo[] = [];
+    const disabledServerIds = new Set(config.disabledServers ?? []);
 
-		if (config.servers) {
-			for (const [id, serverConfig] of Object.entries(config.servers)) {
-				try {
-					const server = createCustomServer(serverConfig, id);
-					customServers.push(server);
-				} catch {
-					// choco-pi-lsp-ignore: missing-error-propagation — per-server registration, skip bad entries
-				}
-			}
-		}
+    if (config.servers) {
+      for (const [id, serverConfig] of Object.entries(config.servers)) {
+        try {
+          const server = createCustomServer(serverConfig, id);
+          customServers.push(server);
+        } catch {
+          // choco-pi-lsp-ignore: missing-error-propagation — per-server registration, skip bad entries
+        }
+      }
+    }
 
-		const serverOverrides = new Map<string, ServerInitOverride>();
-		if (config.serverOverrides) {
-			for (const [id, entry] of Object.entries(config.serverOverrides)) {
-				if (entry && typeof entry === "object" && !Array.isArray(entry)) {
-					const initOpts = (entry as Record<string, unknown>).initializationOptions;
-					if (
-						initOpts !== undefined &&
-						typeof initOpts === "object" &&
-						initOpts !== null &&
-						!Array.isArray(initOpts)
-					) {
-						serverOverrides.set(id, {
-							initializationOptions: initOpts as Record<string, unknown>,
-						});
-					}
-				}
-			}
-		}
+    const serverOverrides = new Map<string, ServerInitOverride>();
+    if (config.serverOverrides) {
+      for (const [id, entry] of Object.entries(config.serverOverrides)) {
+        if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+          const initOpts = (entry as Record<string, unknown>).initializationOptions;
+          if (
+            initOpts !== undefined &&
+            typeof initOpts === "object" &&
+            initOpts !== null &&
+            !Array.isArray(initOpts)
+          ) {
+            serverOverrides.set(id, {
+              initializationOptions: initOpts as Record<string, unknown>,
+            });
+          }
+        }
+      }
+    }
 
-		workspaceConfigs.set(normalizedCwd, {
-			customServers,
-			disabledServerIds,
-			serverOverrides,
-		});
-	})();
+    workspaceConfigs.set(normalizedCwd, {
+      customServers,
+      disabledServerIds,
+      serverOverrides,
+    });
+  })();
 
-	configInFlight.set(normalizedCwd, promise);
-	try {
-		await promise;
-	} finally {
-		configInFlight.delete(normalizedCwd);
-	}
+  configInFlight.set(normalizedCwd, promise);
+  try {
+    await promise;
+  } finally {
+    configInFlight.delete(normalizedCwd);
+  }
 }
 
 /**
  * Get all available servers (built-in + custom, minus disabled)
  */
 export function getAllServers(filePath?: string): LSPServerInfo[] {
-	const config = filePath ? getConfigForFile(filePath) : EMPTY_CONFIG;
-	const all = [...LSP_SERVERS, ...config.customServers];
-	return all.filter((s) => !config.disabledServerIds.has(s.id));
+  const config = filePath ? getConfigForFile(filePath) : EMPTY_CONFIG;
+  const all = [...LSP_SERVERS, ...config.customServers];
+  return all.filter((s) => !config.disabledServerIds.has(s.id));
 }
 
 /**
  * Check if a server is disabled
  */
 export function isServerDisabled(serverId: string, filePath?: string): boolean {
-	const config = filePath ? getConfigForFile(filePath) : EMPTY_CONFIG;
-	return config.disabledServerIds.has(serverId);
+  const config = filePath ? getConfigForFile(filePath) : EMPTY_CONFIG;
+  return config.disabledServerIds.has(serverId);
 }
 
 // --- Override getServersForFile to include custom servers
 
 export function getServersForFileWithConfig(filePath: string): LSPServerInfo[] {
-	const ext = path.extname(filePath).toLowerCase();
-	const base = path.basename(filePath).toLowerCase();
-	return getAllServers(filePath).filter((server) => {
-		const extensions = server.extensions.map((value) => value.toLowerCase());
-		const extensionMatch = extensions.includes(ext) || extensions.includes(base);
-		if (!extensionMatch) return false;
-		// #636: a server's extension match can be intentionally broader than what
-		// it can usefully act on (zizmor attaches to "yaml" but only ever reports
-		// on GitHub Actions workflow/action/dependabot paths). `pathFilter`, when
-		// present, is an ADDITIONAL narrowing gate — never a widening one.
-		return server.pathFilter ? server.pathFilter(filePath) : true;
-	});
+  const ext = path.extname(filePath).toLowerCase();
+  const base = path.basename(filePath).toLowerCase();
+  return getAllServers(filePath).filter((server) => {
+    const extensions = server.extensions.map((value) => value.toLowerCase());
+    const extensionMatch = extensions.includes(ext) || extensions.includes(base);
+    if (!extensionMatch) return false;
+    // #636: a server's extension match can be intentionally broader than what
+    // it can usefully act on (zizmor attaches to "yaml" but only ever reports
+    // on GitHub Actions workflow/action/dependabot paths). `pathFilter`, when
+    // present, is an ADDITIONAL narrowing gate — never a widening one.
+    return server.pathFilter ? server.pathFilter(filePath) : true;
+  });
 }
 
 /**
@@ -374,8 +357,7 @@ export function getServersForFileWithConfig(filePath: string): LSPServerInfo[] {
  * now report the same primary-vs-auxiliary split for the same file.
  */
 export function primaryServerId(filePath: string): string | undefined {
-	return getServersForFileWithConfig(filePath).find((s) => s.role !== "auxiliary")
-		?.id;
+  return getServersForFileWithConfig(filePath).find((s) => s.role !== "auxiliary")?.id;
 }
 
 /**
@@ -388,14 +370,14 @@ export function primaryServerId(filePath: string): string | undefined {
  *                  workspace config that was loaded for this directory tree)
  */
 export function getServerInitOverride(
-	serverId: string,
-	filePath: string,
+  serverId: string,
+  filePath: string,
 ): ServerInitOverride | undefined {
-	return getConfigForFile(filePath).serverOverrides.get(serverId);
+  return getConfigForFile(filePath).serverOverrides.get(serverId);
 }
 
 export function resetLSPConfigStateForTests(): void {
-	workspaceConfigs.clear();
+  workspaceConfigs.clear();
 }
 
 // Re-export with config support

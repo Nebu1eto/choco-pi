@@ -27,10 +27,7 @@ describe("formatWebSearchResults", () => {
     expect(formatted.resultDetails).toHaveLength(4);
     expect(formatted.resultDetails.every((item) => item.truncated)).toBe(true);
     expect(
-      formatted.resultDetails.reduce(
-        (total, item) => total + item.excerptBytes,
-        0,
-      ),
+      formatted.resultDetails.reduce((total, item) => total + item.excerptBytes, 0),
     ).toBeLessThanOrEqual(200);
     expect(writeResultFile).toHaveBeenCalledTimes(4);
   });
@@ -93,14 +90,11 @@ describe("formatWebSearchResults", () => {
     const writeResultFile = vi.fn(async () => {});
     const character = "\u{1f600}";
     const text = character.repeat(30);
-    const formatted = await formatWebSearchResults(
-      [result("long-line", text)],
-      {
-        maxInlineBytes: 50,
-        maxInlineBytesPerResult: 50,
-        writeResultFile,
-      },
-    );
+    const formatted = await formatWebSearchResults([result("long-line", text)], {
+      maxInlineBytes: 50,
+      maxInlineBytesPerResult: 50,
+      writeResultFile,
+    });
 
     expect(formatted.content).toContain("Full result saved to:");
     expect(formatted.content).toContain(character.repeat(12));
@@ -110,10 +104,6 @@ describe("formatWebSearchResults", () => {
       excerptBytes: 48,
       tempFilePath: expect.any(String),
     });
-    expect(writeResultFile).toHaveBeenCalledWith(
-      expect.any(String),
-      text,
-      "utf8",
-    );
+    expect(writeResultFile).toHaveBeenCalledWith(expect.any(String), text, "utf8");
   });
 });

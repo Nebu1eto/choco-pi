@@ -38,23 +38,23 @@ let activeSessionId: string | undefined;
 let secondarySessionCount = 0;
 
 export type SessionStartClassification =
-	| "primary"
-	| "sequential-replacement"
-	| "concurrent-secondary";
+  | "primary"
+  | "sequential-replacement"
+  | "concurrent-secondary";
 
 export interface ClassifySessionStartInput {
-	/** Whether a primary session was already registered in this process. */
-	hasPrior: boolean;
-	/**
-	 * Result of probing the prior primary's ctx via {@link probeCtxActive}:
-	 * `true` = still active, `false` = confirmed invalidated (stale-ctx
-	 * throw), `undefined` = probe inconclusive (ctx shape unexpected /
-	 * accessor missing / prior ctx unavailable to probe).
-	 */
-	priorCtxActive: boolean | undefined;
-	/** Whether this session_start carries the SAME stable session id as the
-	 * registered primary (e.g. resume/reload re-announcing itself). */
-	sameSessionId: boolean;
+  /** Whether a primary session was already registered in this process. */
+  hasPrior: boolean;
+  /**
+   * Result of probing the prior primary's ctx via {@link probeCtxActive}:
+   * `true` = still active, `false` = confirmed invalidated (stale-ctx
+   * throw), `undefined` = probe inconclusive (ctx shape unexpected /
+   * accessor missing / prior ctx unavailable to probe).
+   */
+  priorCtxActive: boolean | undefined;
+  /** Whether this session_start carries the SAME stable session id as the
+   * registered primary (e.g. resume/reload re-announcing itself). */
+  sameSessionId: boolean;
 }
 
 /**
@@ -74,23 +74,21 @@ export interface ClassifySessionStartInput {
  *  5. Prior exists, `priorCtxActive === undefined` (probe inconclusive) →
  *     `sequential-replacement` (fail toward today's behavior).
  */
-export function classifySessionStart(
-	input: ClassifySessionStartInput,
-): SessionStartClassification {
-	const { hasPrior, priorCtxActive, sameSessionId } = input;
+export function classifySessionStart(input: ClassifySessionStartInput): SessionStartClassification {
+  const { hasPrior, priorCtxActive, sameSessionId } = input;
 
-	if (!hasPrior) return "primary";
-	if (sameSessionId) return "sequential-replacement";
-	if (priorCtxActive === false) return "sequential-replacement";
-	if (priorCtxActive === true) return "concurrent-secondary";
-	// priorCtxActive === undefined: inconclusive probe — fail-safe.
-	return "sequential-replacement";
+  if (!hasPrior) return "primary";
+  if (sameSessionId) return "sequential-replacement";
+  if (priorCtxActive === false) return "sequential-replacement";
+  if (priorCtxActive === true) return "concurrent-secondary";
+  // priorCtxActive === undefined: inconclusive probe — fail-safe.
+  return "sequential-replacement";
 }
 
 /** Lazy env read (house style) — never memoized, so tests can flip it
  * mid-run via `process.env` without a reset hook. */
 function guardEnabled(): boolean {
-	return process.env.CHOCO_PI_LSP_CONCURRENT_SESSION_GUARD !== "0";
+  return process.env.CHOCO_PI_LSP_CONCURRENT_SESSION_GUARD !== "0";
 }
 
 /**
@@ -121,25 +119,21 @@ function guardEnabled(): boolean {
  * Never throws out of this function; every branch is wrapped.
  */
 export function probeCtxActive(ctx: unknown): boolean | undefined {
-	try {
-		const candidate = ctx as { isIdle?: unknown } | null | undefined;
-		if (
-			candidate === null ||
-			candidate === undefined ||
-			typeof candidate.isIdle !== "function"
-		) {
-			return undefined;
-		}
-		(candidate.isIdle as () => unknown)();
-		return true;
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		if (message.includes("stale after session replacement")) {
-			return false;
-		}
-		// Threw, but not the SDK's known stale-ctx error — don't guess.
-		return undefined;
-	}
+  try {
+    const candidate = ctx as { isIdle?: unknown } | null | undefined;
+    if (candidate === null || candidate === undefined || typeof candidate.isIdle !== "function") {
+      return undefined;
+    }
+    (candidate.isIdle as () => unknown)();
+    return true;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("stale after session replacement")) {
+      return false;
+    }
+    // Threw, but not the SDK's known stale-ctx error — don't guess.
+    return undefined;
+  }
 }
 
 /** Register the current session as the process's primary. Called for both
@@ -147,15 +141,15 @@ export function probeCtxActive(ctx: unknown): boolean | undefined {
  * replacement re-registers itself as the (new) primary, matching today's
  * one-active-session-at-a-time behavior. */
 export function registerPrimarySession(ctx: unknown, sessionId: string | undefined): void {
-	activeCtx = ctx;
-	activeSessionId = sessionId;
-	secondarySessionCount = 0;
+  activeCtx = ctx;
+  activeSessionId = sessionId;
+  secondarySessionCount = 0;
 }
 
 /** Register a concurrently-bound secondary (subagent) session. Does not
  * touch the primary's ctx/session id. */
 export function registerSecondarySession(): void {
-	secondarySessionCount += 1;
+  secondarySessionCount += 1;
 }
 
 export type SessionShutdownClassification = "primary" | "secondary";
@@ -183,35 +177,35 @@ export type SessionShutdownClassification = "primary" | "secondary";
  * classify `secondary`.
  */
 export function noteSessionShutdown(
-	// Load-bearing: ctx OBJECT IDENTITY is the definitive discriminator when
-	// available — if the shutting-down handler's ctx IS the registered
-	// primary's ctx, this is the primary regardless of session-id reads.
-	// (Note: pi's ExtensionRunner.emit() builds a FRESH ctx object per emit,
-	// so identity match is not expected with today's SDK — this check is
-	// defense-in-depth for SDK versions/paths that reuse a ctx.)
-	ctx: unknown,
-	sessionId: string | undefined,
+  // Load-bearing: ctx OBJECT IDENTITY is the definitive discriminator when
+  // available — if the shutting-down handler's ctx IS the registered
+  // primary's ctx, this is the primary regardless of session-id reads.
+  // (Note: pi's ExtensionRunner.emit() builds a FRESH ctx object per emit,
+  // so identity match is not expected with today's SDK — this check is
+  // defense-in-depth for SDK versions/paths that reuse a ctx.)
+  ctx: unknown,
+  sessionId: string | undefined,
 ): SessionShutdownClassification {
-	if (ctx !== undefined && ctx === activeCtx) {
-		return "primary";
-	}
-	if (activeCtx === undefined && activeSessionId === undefined) {
-		return "primary";
-	}
-	if (sessionId !== undefined && sessionId === activeSessionId) {
-		return "primary";
-	}
-	// Uncertainty guard: if EITHER side's session id is unknown we cannot
-	// positively establish "different session", so never classify secondary.
-	if (sessionId === undefined || activeSessionId === undefined) {
-		return "primary";
-	}
-	const primaryStillActive = probeCtxActive(activeCtx);
-	if (primaryStillActive === true) {
-		return "secondary";
-	}
-	// primaryStillActive is false or undefined: fail-safe to primary.
-	return "primary";
+  if (ctx !== undefined && ctx === activeCtx) {
+    return "primary";
+  }
+  if (activeCtx === undefined && activeSessionId === undefined) {
+    return "primary";
+  }
+  if (sessionId !== undefined && sessionId === activeSessionId) {
+    return "primary";
+  }
+  // Uncertainty guard: if EITHER side's session id is unknown we cannot
+  // positively establish "different session", so never classify secondary.
+  if (sessionId === undefined || activeSessionId === undefined) {
+    return "primary";
+  }
+  const primaryStillActive = probeCtxActive(activeCtx);
+  if (primaryStillActive === true) {
+    return "secondary";
+  }
+  // primaryStillActive is false or undefined: fail-safe to primary.
+  return "primary";
 }
 
 /**
@@ -233,27 +227,27 @@ export function noteSessionShutdown(
  * `decideSessionStart` already skips `handleSessionStart`.
  */
 export function classifyCurrentSessionEmission(
-	ctx: unknown,
-	sessionId: string | undefined,
+  ctx: unknown,
+  sessionId: string | undefined,
 ): "primary" | "concurrent-secondary" {
-	if (!guardEnabled()) return "primary";
-	if (activeCtx === undefined && activeSessionId === undefined) return "primary";
-	if (ctx !== undefined && ctx === activeCtx) return "primary";
-	if (sessionId !== undefined && sessionId === activeSessionId) return "primary";
-	// Uncertainty guard: if EITHER side's session id is unknown we cannot
-	// positively establish "different session", so never classify secondary.
-	if (sessionId === undefined || activeSessionId === undefined) return "primary";
-	const primaryStillActive = probeCtxActive(activeCtx);
-	if (primaryStillActive === true) return "concurrent-secondary";
-	return "primary";
+  if (!guardEnabled()) return "primary";
+  if (activeCtx === undefined && activeSessionId === undefined) return "primary";
+  if (ctx !== undefined && ctx === activeCtx) return "primary";
+  if (sessionId !== undefined && sessionId === activeSessionId) return "primary";
+  // Uncertainty guard: if EITHER side's session id is unknown we cannot
+  // positively establish "different session", so never classify secondary.
+  if (sessionId === undefined || activeSessionId === undefined) return "primary";
+  const primaryStillActive = probeCtxActive(activeCtx);
+  if (primaryStillActive === true) return "concurrent-secondary";
+  return "primary";
 }
 
 export function getSecondarySessionCount(): number {
-	return secondarySessionCount;
+  return secondarySessionCount;
 }
 
 export function decrementSecondarySessionCount(): void {
-	if (secondarySessionCount > 0) secondarySessionCount -= 1;
+  if (secondarySessionCount > 0) secondarySessionCount -= 1;
 }
 
 /**
@@ -262,28 +256,28 @@ export function decrementSecondarySessionCount(): void {
  * behave exactly as if this module didn't exist).
  */
 export function classifySessionStartGuarded(
-	input: ClassifySessionStartInput,
+  input: ClassifySessionStartInput,
 ): SessionStartClassification {
-	if (!guardEnabled()) return input.hasPrior ? "sequential-replacement" : "primary";
-	return classifySessionStart(input);
+  if (!guardEnabled()) return input.hasPrior ? "sequential-replacement" : "primary";
+  return classifySessionStart(input);
 }
 
 /** Test-only: clears all module-scope state (house style — see
  * `_resetSubagentModeForTests` / `slow-fs.ts`). */
 export function _resetSessionLifecycleForTests(): void {
-	activeCtx = undefined;
-	activeSessionId = undefined;
-	secondarySessionCount = 0;
+  activeCtx = undefined;
+  activeSessionId = undefined;
+  secondarySessionCount = 0;
 }
 
 export interface SessionStartGuardDecision {
-	classification: SessionStartClassification;
-	/** True iff the caller should proceed with `handleSessionStart` + the
-	 * rest of today's session_start body exactly as before. False means a
-	 * concurrent secondary was detected — the caller must skip
-	 * `handleSessionStart` (and `updateRuntimeIdentityFromEvent`) entirely. */
-	runFullSessionStart: boolean;
-	secondaryCount: number;
+  classification: SessionStartClassification;
+  /** True iff the caller should proceed with `handleSessionStart` + the
+   * rest of today's session_start body exactly as before. False means a
+   * concurrent secondary was detected — the caller must skip
+   * `handleSessionStart` (and `updateRuntimeIdentityFromEvent`) entirely. */
+  runFullSessionStart: boolean;
+  secondaryCount: number;
 }
 
 /**
@@ -298,42 +292,41 @@ export interface SessionStartGuardDecision {
  * (`ctx.sessionManager.getSessionId()`), which may be `undefined`.
  */
 export function decideSessionStart(
-	ctx: unknown,
-	sessionId: string | undefined,
+  ctx: unknown,
+  sessionId: string | undefined,
 ): SessionStartGuardDecision {
-	const hasPrior = activeCtx !== undefined || activeSessionId !== undefined;
-	const priorCtxActive = hasPrior ? probeCtxActive(activeCtx) : undefined;
-	// ctx OBJECT IDENTITY: if the SDK ever hands the SAME ctx object to a
-	// repeated session_start, that is by definition the same session
-	// re-announcing itself — sequential, never concurrent. (Not expected with
-	// today's SDK — ExtensionRunner.emit() builds a fresh ctx per emit — but
-	// identity is the one signal that can't false-positive, so honor it.)
-	const sameCtx = hasPrior && ctx !== undefined && ctx === activeCtx;
-	const sameSessionId =
-		sameCtx ||
-		(hasPrior && sessionId !== undefined && sessionId === activeSessionId);
+  const hasPrior = activeCtx !== undefined || activeSessionId !== undefined;
+  const priorCtxActive = hasPrior ? probeCtxActive(activeCtx) : undefined;
+  // ctx OBJECT IDENTITY: if the SDK ever hands the SAME ctx object to a
+  // repeated session_start, that is by definition the same session
+  // re-announcing itself — sequential, never concurrent. (Not expected with
+  // today's SDK — ExtensionRunner.emit() builds a fresh ctx per emit — but
+  // identity is the one signal that can't false-positive, so honor it.)
+  const sameCtx = hasPrior && ctx !== undefined && ctx === activeCtx;
+  const sameSessionId =
+    sameCtx || (hasPrior && sessionId !== undefined && sessionId === activeSessionId);
 
-	const classification = classifySessionStartGuarded({
-		hasPrior,
-		priorCtxActive,
-		sameSessionId,
-	});
+  const classification = classifySessionStartGuarded({
+    hasPrior,
+    priorCtxActive,
+    sameSessionId,
+  });
 
-	if (classification === "concurrent-secondary") {
-		registerSecondarySession();
-		return {
-			classification,
-			runFullSessionStart: false,
-			secondaryCount: secondarySessionCount,
-		};
-	}
+  if (classification === "concurrent-secondary") {
+    registerSecondarySession();
+    return {
+      classification,
+      runFullSessionStart: false,
+      secondaryCount: secondarySessionCount,
+    };
+  }
 
-	// "primary" or "sequential-replacement": register as the (new) primary
-	// and proceed exactly as today.
-	registerPrimarySession(ctx, sessionId);
-	return {
-		classification,
-		runFullSessionStart: true,
-		secondaryCount: secondarySessionCount,
-	};
+  // "primary" or "sequential-replacement": register as the (new) primary
+  // and proceed exactly as today.
+  registerPrimarySession(ctx, sessionId);
+  return {
+    classification,
+    runFullSessionStart: true,
+    secondaryCount: secondarySessionCount,
+  };
 }

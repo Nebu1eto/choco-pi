@@ -47,7 +47,9 @@ export function saveOnboardingState(state: McpOnboardingState): void {
   renameSync(tmpPath, path);
 }
 
-export function updateOnboardingState(updater: (state: McpOnboardingState) => McpOnboardingState): McpOnboardingState {
+export function updateOnboardingState(
+  updater: (state: McpOnboardingState) => McpOnboardingState,
+): McpOnboardingState {
   const next = updater(loadOnboardingState());
   saveOnboardingState(next);
   return next;

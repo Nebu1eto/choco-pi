@@ -2,7 +2,12 @@ import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tu
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
 import type { ImportKind } from "./types.ts";
 import { getConfigDirName } from "./agent-dir.ts";
-import { KNOWN_SERVER_PRESETS, type ConfigWritePreview, type KnownServerPreset, type McpDiscoverySummary } from "./config.ts";
+import {
+  KNOWN_SERVER_PRESETS,
+  type ConfigWritePreview,
+  type KnownServerPreset,
+  type McpDiscoverySummary,
+} from "./config.ts";
 import type { McpOnboardingState } from "./onboarding-state.ts";
 
 interface SetupTheme {
@@ -139,24 +144,65 @@ export class McpSetupPanel {
   private getActions(): Action[] {
     const actions: Action[] = [];
     if (this.screen === "empty") {
-      actions.push({ id: "run-setup", label: "Run setup", description: "Inspect detected configs, adopt imports, and scaffold a minimal `.mcp.json`." });
+      actions.push({
+        id: "run-setup",
+        label: "Run setup",
+        description: "Inspect detected configs, adopt imports, and scaffold a minimal `.mcp.json`.",
+      });
     }
     if (this.discovery.imports.length > 0) {
-      actions.push({ id: "adopt-imports", label: "Adopt detected compatibility imports", description: `Choose which host-specific MCP configs Pi should import into its own override file. ${this.discovery.imports.length} source${this.discovery.imports.length === 1 ? "" : "s"} found.` });
+      actions.push({
+        id: "adopt-imports",
+        label: "Adopt detected compatibility imports",
+        description: `Choose which host-specific MCP configs Pi should import into its own override file. ${this.discovery.imports.length} source${this.discovery.imports.length === 1 ? "" : "s"} found.`,
+      });
     }
-    actions.push({ id: "view-example", label: "View example `.mcp.json`", description: "Preview a working shared MCP config you can paste or adapt." });
+    actions.push({
+      id: "view-example",
+      label: "View example `.mcp.json`",
+      description: "Preview a working shared MCP config you can paste or adapt.",
+    });
     if (!this.discovery.sources.some((source) => source.id === "shared-project" && source.exists)) {
-      actions.push({ id: "scaffold-project", label: "Scaffold project `.mcp.json`", description: "Write a minimal project config using the standard shared MCP file path, then reload Pi." });
+      actions.push({
+        id: "scaffold-project",
+        label: "Scaffold project `.mcp.json`",
+        description:
+          "Write a minimal project config using the standard shared MCP file path, then reload Pi.",
+      });
     }
-    actions.push({ id: "show-precedence", label: "Explain config precedence", description: "Show the read order and where Pi writes compatibility settings." });
+    actions.push({
+      id: "show-precedence",
+      label: "Explain config precedence",
+      description: "Show the read order and where Pi writes compatibility settings.",
+    });
     if (this.getDetectedPaths().length > 0) {
-      actions.push({ id: "open-paths", label: "Open detected config paths", description: "Browse the actual config files that Pi discovered on this machine." });
+      actions.push({
+        id: "open-paths",
+        label: "Open detected config paths",
+        description: "Browse the actual config files that Pi discovered on this machine.",
+      });
     }
     for (const preset of KNOWN_SERVER_PRESETS) {
-      actions.push({ id: "add-known-server", label: preset.name, description: preset.summary, preset });
+      actions.push({
+        id: "add-known-server",
+        label: preset.name,
+        description: preset.summary,
+        preset,
+      });
     }
-    if (!this.discovery.repoPrompt.configured && this.discovery.repoPrompt.executablePath && this.discovery.repoPrompt.targetPath && this.discovery.repoPrompt.entry && this.discovery.repoPrompt.serverName) {
-      actions.push({ id: "add-repoprompt", label: "Add RepoPrompt to shared MCP config", description: "Write a standard MCP entry for RepoPrompt to the recommended shared target, then reload MCP in-session." });
+    if (
+      !this.discovery.repoPrompt.configured &&
+      this.discovery.repoPrompt.executablePath &&
+      this.discovery.repoPrompt.targetPath &&
+      this.discovery.repoPrompt.entry &&
+      this.discovery.repoPrompt.serverName
+    ) {
+      actions.push({
+        id: "add-repoprompt",
+        label: "Add RepoPrompt to shared MCP config",
+        description:
+          "Write a standard MCP entry for RepoPrompt to the recommended shared target, then reload MCP in-session.",
+      });
     }
     actions.push({ id: "close", label: "Close", description: "Exit the onboarding flow." });
     return actions;
@@ -297,7 +343,10 @@ export class McpSetupPanel {
       await this.runBusy(async () => {
         const result = await this.callbacks.scaffoldProjectConfig();
         this.callbacks.markSetupCompleted();
-        this.notice = { text: `Wrote starter config to ${result.path}. Pi will reload after this panel closes.`, tone: "success" };
+        this.notice = {
+          text: `Wrote starter config to ${result.path}. Pi will reload after this panel closes.`,
+          tone: "success",
+        };
       });
       return;
     }
@@ -305,7 +354,10 @@ export class McpSetupPanel {
       await this.runBusy(async () => {
         const result = await this.callbacks.addRepoPrompt();
         this.callbacks.markSetupCompleted();
-        this.notice = { text: `Added ${result.serverName} to ${result.path}. Pi will reload after this panel closes.`, tone: "success" };
+        this.notice = {
+          text: `Added ${result.serverName} to ${result.path}. Pi will reload after this panel closes.`,
+          tone: "success",
+        };
       });
       return;
     }
@@ -314,7 +366,10 @@ export class McpSetupPanel {
       await this.runBusy(async () => {
         const result = await this.callbacks.addKnownServer(preset);
         this.callbacks.markSetupCompleted();
-        this.notice = { text: `Added ${result.serverName} to ${result.path}. Pi will reload after this panel closes.`, tone: "success" };
+        this.notice = {
+          text: `Added ${result.serverName} to ${result.path}. Pi will reload after this panel closes.`,
+          tone: "success",
+        };
       });
       return;
     }
@@ -324,12 +379,17 @@ export class McpSetupPanel {
       return;
     }
 
-    this.notice = { text: "Review the details below. Press Enter on an action with a side effect to apply it.", tone: "muted" };
+    this.notice = {
+      text: "Review the details below. Press Enter on an action with a side effect to apply it.",
+      tone: "muted",
+    };
     this.tui.requestRender();
   }
 
   private async applySelectedImports(): Promise<void> {
-    const selected = this.discovery.imports.filter((entry) => this.selectedImports.has(entry.kind)).map((entry) => entry.kind);
+    const selected = this.discovery.imports
+      .filter((entry) => this.selectedImports.has(entry.kind))
+      .map((entry) => entry.kind);
     if (selected.length === 0) {
       this.notice = { text: "Select at least one compatibility import first.", tone: "warning" };
       this.tui.requestRender();
@@ -339,9 +399,13 @@ export class McpSetupPanel {
     await this.runBusy(async () => {
       const result = await this.callbacks.adoptImports(selected);
       this.callbacks.markSetupCompleted();
-      this.notice = result.added.length > 0
-        ? { text: `Added ${result.added.join(", ")} to ${result.path}. Pi will reload after this panel closes.`, tone: "success" }
-        : { text: `No changes needed in ${result.path}.`, tone: "muted" };
+      this.notice =
+        result.added.length > 0
+          ? {
+              text: `Added ${result.added.join(", ")} to ${result.path}. Pi will reload after this panel closes.`,
+              tone: "success",
+            }
+          : { text: `No changes needed in ${result.path}.`, tone: "muted" };
       this.screen = this.discovery.hasAnyConfig ? "setup" : "empty";
       this.actionCursor = 0;
     });
@@ -381,7 +445,12 @@ export class McpSetupPanel {
     lines.push(this.padLine("", innerW));
 
     if (this.notice) {
-      const tone = this.notice.tone === "success" ? this.t.success : this.notice.tone === "warning" ? this.t.warning : this.t.hint;
+      const tone =
+        this.notice.tone === "success"
+          ? this.t.success
+          : this.notice.tone === "warning"
+            ? this.t.warning
+            : this.t.hint;
       for (const line of wrapText(this.notice.text, contentW)) {
         lines.push(this.padLine(fg(tone, line), innerW));
       }
@@ -416,12 +485,20 @@ export class McpSetupPanel {
     for (let index = start; index < end; index++) {
       const action = actions[index];
       if (!action) continue;
-      if (action.id === "add-known-server" && (index === start || actions[index - 1]?.id !== "add-known-server")) {
+      if (
+        action.id === "add-known-server" &&
+        (index === start || actions[index - 1]?.id !== "add-known-server")
+      ) {
         lines.push(this.padLine(fg(this.t.title, "Add a known server"), innerW));
       }
       const selected = index === this.actionCursor;
       const cursor = selected ? fg(this.t.selected, "›") : " ";
-      lines.push(this.padLine(`${cursor} ${truncateToWidth(action.label, this.contentWidth(innerW) - 2)}`, innerW));
+      lines.push(
+        this.padLine(
+          `${cursor} ${truncateToWidth(action.label, this.contentWidth(innerW) - 2)}`,
+          innerW,
+        ),
+      );
     }
     if (end < actions.length) {
       lines.push(this.padLine(fg(this.t.muted, `… ${actions.length - end} more below`), innerW));
@@ -433,14 +510,21 @@ export class McpSetupPanel {
       lines.push(this.padLine(line, innerW));
     }
     lines.push(this.padLine("", innerW));
-    const hint = compact ? "Enter select · Esc back" : "Enter selects, Esc goes back, Ctrl+C closes.";
+    const hint = compact
+      ? "Enter select · Esc back"
+      : "Enter selects, Esc goes back, Ctrl+C closes.";
     lines.push(this.padLine(fg(this.t.muted, hint), innerW));
     return lines;
   }
 
   private renderImports(innerW: number): string[] {
     const lines: string[] = [];
-    lines.push(this.padLine("Select compatibility imports. Space toggles, Enter saves, Esc goes back.", innerW));
+    lines.push(
+      this.padLine(
+        "Select compatibility imports. Space toggles, Enter saves, Esc goes back.",
+        innerW,
+      ),
+    );
     lines.push(this.padLine("", innerW));
     for (let index = 0; index < this.discovery.imports.length; index++) {
       const entry = this.discovery.imports[index];
@@ -450,9 +534,16 @@ export class McpSetupPanel {
       lines.push(this.padLine(`${cursor} ${selected} ${entry.kind}  ${entry.path}`, innerW));
     }
     lines.push(this.padLine("", innerW));
-    const selected = this.discovery.imports.filter((entry) => this.selectedImports.has(entry.kind)).map((entry) => entry.kind);
+    const selected = this.discovery.imports
+      .filter((entry) => this.selectedImports.has(entry.kind))
+      .map((entry) => entry.kind);
     const preview = this.callbacks.previewImports(selected);
-    for (const line of this.formatWritePreview("Compatibility import write preview", preview, [], this.previewWidth(innerW))) {
+    for (const line of this.formatWritePreview(
+      "Compatibility import write preview",
+      preview,
+      [],
+      this.previewWidth(innerW),
+    )) {
       lines.push(this.padLine(line, innerW));
     }
     return lines;
@@ -460,7 +551,9 @@ export class McpSetupPanel {
 
   private renderPaths(innerW: number): string[] {
     const lines: string[] = [];
-    lines.push(this.padLine("Select a detected config path to open. Enter opens it, Esc goes back.", innerW));
+    lines.push(
+      this.padLine("Select a detected config path to open. Enter opens it, Esc goes back.", innerW),
+    );
     lines.push(this.padLine("", innerW));
     const paths = this.getDetectedPaths();
     for (let index = 0; index < paths.length; index++) {
@@ -473,27 +566,45 @@ export class McpSetupPanel {
 
   private discoverySummaryLine(): string {
     if (!this.discovery.hasAnyConfig) {
-      return fg(this.t.warning, this.options.onboardingState.setupCompleted
-        ? "No MCP servers are active right now."
-        : "No MCP config is active yet.");
+      return fg(
+        this.t.warning,
+        this.options.onboardingState.setupCompleted
+          ? "No MCP servers are active right now."
+          : "No MCP config is active yet.",
+      );
     }
 
-    if (this.discovery.totalServerCount === 0 && (this.discovery.imports.length > 0 || !!this.discovery.repoPrompt.executablePath)) {
-      return fg(this.t.warning, "Pi found MCP-related setup options, but none are active in Pi yet.");
+    if (
+      this.discovery.totalServerCount === 0 &&
+      (this.discovery.imports.length > 0 || !!this.discovery.repoPrompt.executablePath)
+    ) {
+      return fg(
+        this.t.warning,
+        "Pi found MCP-related setup options, but none are active in Pi yet.",
+      );
     }
 
-    const shared = this.discovery.sources.filter((source) => source.kind === "shared" && source.serverCount > 0).length;
-    const piOwned = this.discovery.sources.filter((source) => source.kind === "pi" && source.serverCount > 0).length;
-    return fg(this.t.hint, `Detected ${this.discovery.totalServerCount} configured servers across ${shared} shared and ${piOwned} Pi-owned source${shared + piOwned === 1 ? "" : "s"}.`);
+    const shared = this.discovery.sources.filter(
+      (source) => source.kind === "shared" && source.serverCount > 0,
+    ).length;
+    const piOwned = this.discovery.sources.filter(
+      (source) => source.kind === "pi" && source.serverCount > 0,
+    ).length;
+    return fg(
+      this.t.hint,
+      `Detected ${this.discovery.totalServerCount} configured servers across ${shared} shared and ${piOwned} Pi-owned source${shared + piOwned === 1 ? "" : "s"}.`,
+    );
   }
 
   private secondarySummaryLine(): string {
-    const hostNote = this.discovery.hostConfigs.length > 0
-      ? ` Host discovery is ${this.discovery.hostConfigDiscovery}; ${this.discovery.hostConfigs.length} host source${this.discovery.hostConfigs.length === 1 ? "" : "s"} detected.`
-      : "";
-    const conflictNote = this.discovery.conflicts.length > 0
-      ? ` ${this.discovery.conflicts.length} same-name conflict${this.discovery.conflicts.length === 1 ? "" : "s"} reported.`
-      : "";
+    const hostNote =
+      this.discovery.hostConfigs.length > 0
+        ? ` Host discovery is ${this.discovery.hostConfigDiscovery}; ${this.discovery.hostConfigs.length} host source${this.discovery.hostConfigs.length === 1 ? "" : "s"} detected.`
+        : "";
+    const conflictNote =
+      this.discovery.conflicts.length > 0
+        ? ` ${this.discovery.conflicts.length} same-name conflict${this.discovery.conflicts.length === 1 ? "" : "s"} reported.`
+        : "";
     if (!this.discovery.hasAnyConfig) {
       return `Create a shared .mcp.json, adopt host imports, or quick-add RepoPrompt from this screen.${hostNote}${conflictNote}`;
     }
@@ -506,7 +617,10 @@ export class McpSetupPanel {
   private visibleActionRange(total: number): { start: number; end: number } {
     if (total <= COMPACT_ACTION_ROWS) return { start: 0, end: total };
     const half = Math.floor(COMPACT_ACTION_ROWS / 2);
-    const start = Math.min(Math.max(0, this.actionCursor - half), Math.max(0, total - COMPACT_ACTION_ROWS));
+    const start = Math.min(
+      Math.max(0, this.actionCursor - half),
+      Math.max(0, total - COMPACT_ACTION_ROWS),
+    );
     return { start, end: Math.min(total, start + COMPACT_ACTION_ROWS) };
   }
 
@@ -521,13 +635,20 @@ export class McpSetupPanel {
   private getActionPreview(action?: Action, previewW = DESKTOP_PREVIEW_WIDTH): string[] {
     switch (action?.id) {
       case "run-setup":
-        return this.formatPreview([
-          "Run setup to adopt host-specific imports, inspect detected paths, and scaffold a minimal `.mcp.json` if needed.",
-        ], previewW);
+        return this.formatPreview(
+          [
+            "Run setup to adopt host-specific imports, inspect detected paths, and scaffold a minimal `.mcp.json` if needed.",
+          ],
+          previewW,
+        );
       case "adopt-imports":
         return this.formatWritePreview(
           "Compatibility import write preview",
-          this.callbacks.previewImports(this.discovery.imports.filter((entry) => this.selectedImports.has(entry.kind)).map((entry) => entry.kind)),
+          this.callbacks.previewImports(
+            this.discovery.imports
+              .filter((entry) => this.selectedImports.has(entry.kind))
+              .map((entry) => entry.kind),
+          ),
           [
             `Detected imports: ${this.discovery.imports.map((entry) => `${entry.kind} (${entry.serverCount} servers)`).join(", ")}`,
             "Selected imports are written into the Pi agent dir config as Pi-owned compatibility state.",
@@ -535,44 +656,59 @@ export class McpSetupPanel {
           previewW,
         );
       case "view-example":
-        return this.formatPreview([
-          "Example shared `.mcp.json`:",
-          "{",
-          '  "mcpServers": {',
-          '    "chrome-devtools": {',
-          '      "command": "npx",',
-          '      "args": ["-y", "chrome-devtools-mcp@1.6.0"]',
-          "    }",
-          "  }",
-          "}",
-          "",
-          "Use Scaffold project `.mcp.json` when you want a safe empty shell instead of a live example server.",
-        ], previewW);
+        return this.formatPreview(
+          [
+            "Example shared `.mcp.json`:",
+            "{",
+            '  "mcpServers": {',
+            '    "chrome-devtools": {',
+            '      "command": "npx",',
+            '      "args": ["-y", "chrome-devtools-mcp@1.6.0"]',
+            "    }",
+            "  }",
+            "}",
+            "",
+            "Use Scaffold project `.mcp.json` when you want a safe empty shell instead of a live example server.",
+          ],
+          previewW,
+        );
       case "show-precedence":
-        return this.formatPreview([
-          "Read order (later entries win):",
-          "0. detected host configs (opt-in lowest-precedence fallback)",
-          "1. ~/.config/mcp/mcp.json",
-          "2. ~/.agents/mcp.json",
-          "3. ~/.agents/mcp/mcp.json",
-          "4. <Pi agent dir>/mcp.json",
-          "5. .mcp.json",
-          `6. ${getConfigDirName()}/mcp.json`,
-          `Host discovery: ${this.discovery.hostConfigDiscovery}. Conflicts reported: ${this.discovery.conflicts.length}.`,
-          ...this.discovery.conflicts.slice(0, 8).map((conflict) =>
-            `${conflict.serverName}: ${conflict.sources.map((source) => source.path).join(" -> ")} (winner: ${conflict.winner.path})`,
-          ),
-          "Pi writes compatibility imports and adapter-only overrides to Pi-owned files."
-        ], previewW);
+        return this.formatPreview(
+          [
+            "Read order (later entries win):",
+            "0. detected host configs (opt-in lowest-precedence fallback)",
+            "1. ~/.config/mcp/mcp.json",
+            "2. ~/.agents/mcp.json",
+            "3. ~/.agents/mcp/mcp.json",
+            "4. <Pi agent dir>/mcp.json",
+            "5. .mcp.json",
+            `6. ${getConfigDirName()}/mcp.json`,
+            `Host discovery: ${this.discovery.hostConfigDiscovery}. Conflicts reported: ${this.discovery.conflicts.length}.`,
+            ...this.discovery.conflicts
+              .slice(0, 8)
+              .map(
+                (conflict) =>
+                  `${conflict.serverName}: ${conflict.sources.map((source) => source.path).join(" -> ")} (winner: ${conflict.winner.path})`,
+              ),
+            "Pi writes compatibility imports and adapter-only overrides to Pi-owned files.",
+          ],
+          previewW,
+        );
       case "open-paths":
-        return this.formatPreview(this.getDetectedPaths().length > 0
-          ? ["Detected paths:", ...this.getDetectedPaths()]
-          : ["No config paths were detected."], previewW);
+        return this.formatPreview(
+          this.getDetectedPaths().length > 0
+            ? ["Detected paths:", ...this.getDetectedPaths()]
+            : ["No config paths were detected."],
+          previewW,
+        );
       case "add-repoprompt": {
         const repoPrompt = this.discovery.repoPrompt;
         const preview = this.callbacks.previewRepoPrompt();
         if (!preview) {
-          return this.formatPreview(["RepoPrompt is not available to add from this setup screen."], previewW);
+          return this.formatPreview(
+            ["RepoPrompt is not available to add from this setup screen."],
+            previewW,
+          );
         }
         return this.formatWritePreview(
           "RepoPrompt write preview",
@@ -619,14 +755,26 @@ export class McpSetupPanel {
     return preview;
   }
 
-  private formatWritePreview(title: string, preview: ConfigWritePreview, intro: string[] = [], width = DESKTOP_PREVIEW_WIDTH): string[] {
+  private formatWritePreview(
+    title: string,
+    preview: ConfigWritePreview,
+    intro: string[] = [],
+    width = DESKTOP_PREVIEW_WIDTH,
+  ): string[] {
     const lines: string[] = [];
     for (const line of intro) {
       lines.push(...wrapText(line, width));
     }
     if (intro.length > 0) lines.push("");
     lines.push(...wrapText(`${title}: ${preview.path}`, width));
-    lines.push(...wrapText(preview.existed ? "Existing file detected. Showing exact before/after diff." : "New file will be created. Showing exact content diff.", width));
+    lines.push(
+      ...wrapText(
+        preview.existed
+          ? "Existing file detected. Showing exact before/after diff."
+          : "New file will be created. Showing exact content diff.",
+        width,
+      ),
+    );
     lines.push("");
     const diffLines = preview.diffText.split("\n");
     const maxLines = 18;
@@ -635,7 +783,12 @@ export class McpSetupPanel {
       lines.push(...wrapText(line, width));
     }
     if (diffLines.length > maxLines) {
-      lines.push(...wrapText(`… ${diffLines.length - maxLines} more diff line${diffLines.length - maxLines === 1 ? "" : "s"}`, width));
+      lines.push(
+        ...wrapText(
+          `… ${diffLines.length - maxLines} more diff line${diffLines.length - maxLines === 1 ? "" : "s"}`,
+          width,
+        ),
+      );
     }
     return lines;
   }

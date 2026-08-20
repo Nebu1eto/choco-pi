@@ -7,7 +7,7 @@ valid:
   - |
     try { execSync(cmd) } catch (e) {}
 invalid:
-  - 'JSON.parse(raw)'
-  - 'new URL(s)'
-  - 'execSync(cmd)'
-  - 'execSync(cmd, opts)'
+  - "JSON.parse(raw)"
+  - "new URL(s)"
+  - "execSync(cmd)"
+  - "execSync(cmd, opts)"

@@ -14,9 +14,22 @@ import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resumeAgent, runAgent, type MainSessionFork, type ToolActivity } from "./agent-runner.ts";
 import { assignHandle, handleBase } from "./mention.ts";
-import type { AgentInvocation, AgentRecord, AgentTombstone, IsolationMode, MentionResolution, SubagentType, ThinkingLevel } from "./types.ts";
+import type {
+  AgentInvocation,
+  AgentRecord,
+  AgentTombstone,
+  IsolationMode,
+  MentionResolution,
+  SubagentType,
+  ThinkingLevel,
+} from "./types.ts";
 import { addUsage } from "./usage.ts";
-import { cleanupWorktree, createWorktree, isWorktreeIsolationEnabled, pruneWorktrees, } from "./worktree.ts";
+import {
+  cleanupWorktree,
+  createWorktree,
+  isWorktreeIsolationEnabled,
+  pruneWorktrees,
+} from "./worktree.ts";
 
 export type OnAgentComplete = (record: AgentRecord) => void;
 export type OnAgentStart = (record: AgentRecord) => void;
@@ -263,11 +276,12 @@ export class AgentManager {
       // Nested children are filtered out of every top-level surface, so no
       // handle: nothing can address them and they must not consume a name a
       // top-level sibling could otherwise take.
-      handle: options.parentAgentId !== undefined
-        ? undefined
-        // A reclaimed handle is used as-is: it belongs to the conversation this
-        // spawn is reopening, and re-deriving it would lose the numbering.
-        : options.reclaim?.handle ?? assignHandle(handleBase(type), this.takenHandles()),
+      handle:
+        options.parentAgentId !== undefined
+          ? undefined
+          : // A reclaimed handle is used as-is: it belongs to the conversation this
+            // spawn is reopening, and re-deriving it would lose the numbering.
+            (options.reclaim?.handle ?? assignHandle(handleBase(type), this.takenHandles())),
       description: options.description,
       // Reclaimed here, or filled in below from `name` — in which case it must
       // see the handle this record just took, since both come out of the same
@@ -304,7 +318,11 @@ export class AgentManager {
 
     const args: SpawnArgs = { pi, ctx, type, prompt, options };
 
-    if (occupiesPoolSlot(record) && !options.bypassQueue && this.runningBackground >= this.maxConcurrent) {
+    if (
+      occupiesPoolSlot(record) &&
+      !options.bypassQueue &&
+      this.runningBackground >= this.maxConcurrent
+    ) {
       // Queue it — will be started when a running agent completes
       this.queue.push({ id, start: () => this.startAgent(id, record, args) });
       return id;
@@ -322,7 +340,11 @@ export class AgentManager {
   }
 
   /** Actually start an agent (called immediately or from queue drain). */
-  private startAgent(id: string, record: AgentRecord, { pi, ctx, type, prompt, options }: SpawnArgs) {
+  private startAgent(
+    id: string,
+    record: AgentRecord,
+    { pi, ctx, type, prompt, options }: SpawnArgs,
+  ) {
     // Re-validate a caller-supplied cwd: queued spawns can start minutes after
     // spawn()'s check, and the directory may be gone by then (TOCTOU). Same
     // curated errors; drainQueue parks a throw on the record as an error.
@@ -344,7 +366,7 @@ export class AgentManager {
       if (!wt) {
         throw new Error(
           'Cannot run with isolation: "worktree" — not a git repo, no commits yet, or `git worktree add` failed. ' +
-          'Initialize git and commit at least once, or omit `isolation`.',
+            "Initialize git and commit at least once, or omit `isolation`.",
         );
       }
       record.worktree = wt;
@@ -370,7 +392,10 @@ export class AgentManager {
       options.signal.addEventListener("abort", onParentAbort, { once: true });
       detachParentSignal = () => options.signal!.removeEventListener("abort", onParentAbort);
     }
-    const detach = () => { detachParentSignal?.(); detachParentSignal = undefined; };
+    const detach = () => {
+      detachParentSignal?.();
+      detachParentSignal = undefined;
+    };
 
     const promise = runAgent(ctx, type, prompt, {
       pi,
@@ -460,7 +485,11 @@ export class AgentManager {
 
         // Final flush of streaming output file
         if (record.outputCleanup) {
-          try { record.outputCleanup(); } catch { /* ignore */ }
+          try {
+            record.outputCleanup();
+          } catch {
+            /* ignore */
+          }
           record.outputCleanup = undefined;
         }
 
@@ -472,7 +501,8 @@ export class AgentManager {
             // With a caller-supplied cwd the branch lives in THAT repo, not the
             // parent session's — say so, or the orchestrator merges in the wrong repo.
             const repoNote = customCwd !== undefined ? ` in \`${baseCwd}\`` : "";
-            record.result = (record.result ?? "") +
+            record.result =
+              (record.result ?? "") +
               `\n\n---\nChanges saved to branch \`${wtResult.branch}\`${repoNote}. Merge with: \`git merge ${wtResult.branch}\`${customCwd !== undefined ? ` (run in \`${baseCwd}\`)` : ""}`;
           }
         }
@@ -483,10 +513,18 @@ export class AgentManager {
         // Mark resultConsumed so the callback skips notifications (result returned inline).
         if (!options.isBackground) {
           record.resultConsumed = true;
-          try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
+          try {
+            this.onComplete?.(record);
+          } catch {
+            /* ignore completion side-effect errors */
+          }
         } else {
           if (occupiesPoolSlot(record)) this.runningBackground--;
-          try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
+          try {
+            this.onComplete?.(record);
+          } catch {
+            /* ignore completion side-effect errors */
+          }
           this.drainQueue();
         }
         return responseText;
@@ -503,7 +541,11 @@ export class AgentManager {
 
         // Final flush of streaming output file on error
         if (record.outputCleanup) {
-          try { record.outputCleanup(); } catch { /* ignore */ }
+          try {
+            record.outputCleanup();
+          } catch {
+            /* ignore */
+          }
           record.outputCleanup = undefined;
         }
 
@@ -512,7 +554,9 @@ export class AgentManager {
           try {
             const wtResult = cleanupWorktree(baseCwd, record.worktree, options.description);
             record.worktreeResult = wtResult;
-          } catch { /* ignore cleanup errors */ }
+          } catch {
+            /* ignore cleanup errors */
+          }
         }
 
         this.abortOwnedChildren(id);
@@ -737,20 +781,32 @@ export class AgentManager {
 
     // Per-run side effects (output streaming) — see ResumeOptions.onStarted.
     // After the record is in its running shape, before the run is kicked off.
-    try { options.onStarted?.(); } catch { /* ignore caller wiring errors */ }
+    try {
+      options.onStarted?.();
+    } catch {
+      /* ignore caller wiring errors */
+    }
 
     const settle = () => {
       detachParentSignal?.();
       detachParentSignal = undefined;
       // Final flush of streaming output file
       if (record.outputCleanup) {
-        try { record.outputCleanup(); } catch { /* ignore */ }
+        try {
+          record.outputCleanup();
+        } catch {
+          /* ignore */
+        }
         record.outputCleanup = undefined;
       }
       // Children spawned during the resumed turn must not outlive it.
       this.abortOwnedChildren(id);
       if (occupiesPoolSlot(record)) this.runningBackground--;
-      try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
+      try {
+        this.onComplete?.(record);
+      } catch {
+        /* ignore completion side-effect errors */
+      }
       this.drainQueue();
     };
 
@@ -851,17 +907,24 @@ export class AgentManager {
       if (record.parentAgentId !== undefined) continue;
       // Handle and alias share one namespace, so at most one agent answers a
       // name and it makes no difference which of the two matched.
-      if (record.handle?.toLowerCase() !== wanted && record.alias?.toLowerCase() !== wanted) continue;
-      if (record.status === "running" || record.status === "queued") return { kind: "live", record };
+      if (record.handle?.toLowerCase() !== wanted && record.alias?.toLowerCase() !== wanted)
+        continue;
+      if (record.status === "running" || record.status === "queued")
+        return { kind: "live", record };
       if (!fallback || record.startedAt > fallback.startedAt) fallback = record;
     }
     if (fallback) return { kind: "live", record: fallback };
     const byId = this.agents.get(name);
-    if (byId?.parentAgentId === undefined && byId !== undefined) return { kind: "live", record: byId };
+    if (byId?.parentAgentId === undefined && byId !== undefined)
+      return { kind: "live", record: byId };
     // Only once nothing live answers: a tombstone is a conversation to reopen,
     // and reopening one while its record still exists would fork the session.
     for (const entry of this.tombstones.values()) {
-      if (entry.handle.toLowerCase() === wanted || entry.alias?.toLowerCase() === wanted || entry.id === name) {
+      if (
+        entry.handle.toLowerCase() === wanted ||
+        entry.alias?.toLowerCase() === wanted ||
+        entry.id === name
+      ) {
         return { kind: "tombstone", entry };
       }
     }
@@ -887,9 +950,7 @@ export class AgentManager {
   }
 
   listAgents(): AgentRecord[] {
-    return [...this.agents.values()].sort(
-      (a, b) => b.startedAt - a.startedAt,
-    );
+    return [...this.agents.values()].sort((a, b) => b.startedAt - a.startedAt);
   }
 
   abort(id: string): boolean {
@@ -898,14 +959,18 @@ export class AgentManager {
 
     // Remove from queue if queued
     if (record.status === "queued") {
-      this.queue = this.queue.filter(q => q.id !== id);
+      this.queue = this.queue.filter((q) => q.id !== id);
       record.status = "stopped";
       record.completedAt = Date.now();
       // Ordinary queued Agent calls historically settle without a completion
       // nudge. Workflow controllers still need this transition to reach their
       // aggregate/UI bookkeeping after cancellation.
       if (record.workflowId) {
-        try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
+        try {
+          this.onComplete?.(record);
+        } catch {
+          /* ignore completion side-effect errors */
+        }
       }
       return true;
     }
@@ -945,7 +1010,9 @@ export class AgentManager {
     // Bound the memory a long session can accumulate. Oldest first, since the
     // agent someone still wants to reach is the one they used most recently.
     while (this.tombstones.size > MAX_TOMBSTONES) {
-      const oldest = [...this.tombstones.values()].reduce((a, b) => (a.completedAt <= b.completedAt ? a : b));
+      const oldest = [...this.tombstones.values()].reduce((a, b) =>
+        a.completedAt <= b.completedAt ? a : b,
+      );
       this.tombstones.delete(oldest.handle);
     }
   }
@@ -982,9 +1049,7 @@ export class AgentManager {
 
   /** Whether any agents are still running or queued. */
   hasRunning(): boolean {
-    return [...this.agents.values()].some(
-      r => r.status === "running" || r.status === "queued",
-    );
+    return [...this.agents.values()].some((r) => r.status === "running" || r.status === "queued");
   }
 
   /** Abort all running and queued agents immediately. */
@@ -1019,8 +1084,8 @@ export class AgentManager {
     while (true) {
       this.drainQueue();
       const pending = [...this.agents.values()]
-        .filter(r => r.status === "running" || r.status === "queued")
-        .map(r => r.promise)
+        .filter((r) => r.status === "running" || r.status === "queued")
+        .map((r) => r.promise)
         .filter(Boolean);
       if (pending.length === 0) break;
       await Promise.allSettled(pending);
@@ -1036,11 +1101,19 @@ export class AgentManager {
     }
     this.agents.clear();
     // Prune any orphaned git worktrees (crash recovery)
-    try { pruneWorktrees(process.cwd()); } catch { /* ignore */ }
+    try {
+      pruneWorktrees(process.cwd());
+    } catch {
+      /* ignore */
+    }
     // Also prune repos that caller-supplied cwds created worktrees in — a clean
     // exit with in-flight agents would otherwise leave stale registrations there.
     for (const repo of this.worktreeRepos) {
-      try { pruneWorktrees(repo); } catch { /* ignore */ }
+      try {
+        pruneWorktrees(repo);
+      } catch {
+        /* ignore */
+      }
     }
   }
 }

@@ -77,7 +77,10 @@ function parseHex(hex: string): Rgb {
 
 /** Index of the entry in `values` closest to `value`. */
 function nearest(values: readonly number[], value: number): number {
-  return values.reduce((best, v, i) => (Math.abs(value - v) < Math.abs(value - values[best]) ? i : best), 0);
+  return values.reduce(
+    (best, v, i) => (Math.abs(value - v) < Math.abs(value - values[best]) ? i : best),
+    0,
+  );
 }
 
 /**
@@ -87,7 +90,8 @@ function nearest(values: readonly number[], value: number): number {
  */
 function rgbTo256({ r, g, b }: Rgb): { index: number; rgb: Rgb } {
   const [rIndex, gIndex, bIndex] = [r, g, b].map((channel) => nearest(CUBE_VALUES, channel));
-  const distance = ({ r: cr, g: cg, b: cb }: Rgb) => 0.299 * (r - cr) ** 2 + 0.587 * (g - cg) ** 2 + 0.114 * (b - cb) ** 2;
+  const distance = ({ r: cr, g: cg, b: cb }: Rgb) =>
+    0.299 * (r - cr) ** 2 + 0.587 * (g - cg) ** 2 + 0.114 * (b - cb) ** 2;
   const grayIndex = nearest(GRAY_VALUES, Math.round(0.299 * r + 0.587 * g + 0.114 * b));
   const gray = { r: GRAY_VALUES[grayIndex], g: GRAY_VALUES[grayIndex], b: GRAY_VALUES[grayIndex] };
   const cube = { r: CUBE_VALUES[rIndex], g: CUBE_VALUES[gIndex], b: CUBE_VALUES[bIndex] };
@@ -132,16 +136,19 @@ export function renderAgentNameLabel(
   }
 
   const rgb = parseHex(resolved);
-  const quantized = (theme.getColorMode?.() ?? "truecolor") === "256color" ? rgbTo256(rgb) : undefined;
+  const quantized =
+    (theme.getColorMode?.() ?? "truecolor") === "256color" ? rgbTo256(rgb) : undefined;
   const shown = quantized?.rgb ?? rgb;
   const contrasting = relativeLuminance(shown) > 0.179 ? BLACK : WHITE;
   const label = style.bold ? theme.bold(` ${name} `) : ` ${name} `;
 
-  return ansiColor("background", quantized?.index ?? rgb)
-    + ansiColor("foreground", quantized ? rgbTo256(contrasting).index : contrasting)
-    + label
-    + "\u001b[39m"
-    + (style.restoreBackground ?? "\u001b[49m");
+  return (
+    ansiColor("background", quantized?.index ?? rgb) +
+    ansiColor("foreground", quantized ? rgbTo256(contrasting).index : contrasting) +
+    label +
+    "\u001b[39m" +
+    (style.restoreBackground ?? "\u001b[49m")
+  );
 }
 
 /** Whether an agent renders as a badge — i.e. it has a valid configured color. */

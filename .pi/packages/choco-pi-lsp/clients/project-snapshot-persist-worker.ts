@@ -1,7 +1,7 @@
 import {
-	type GzipStageWorkerRequest,
-	type GzipStageWorkerResult,
-	serveGzipStageWorker,
+  type GzipStageWorkerRequest,
+  type GzipStageWorkerResult,
+  serveGzipStageWorker,
 } from "./gzip-stage-write.js";
 
 /**
@@ -18,9 +18,9 @@ export type ProjectSnapshotPersistWorkerRequest = GzipStageWorkerRequest;
 export type ProjectSnapshotPersistWorkerResult = GzipStageWorkerResult;
 
 serveGzipStageWorker<ProjectSnapshotPersistWorkerRequest, ProjectSnapshotPersistWorkerResult>(
-	(request) => ({
-		id: request.id,
-		generation: request.generation,
-		stagePath: request.stagePath,
-	}),
+  (request) => ({
+    id: request.id,
+    generation: request.generation,
+    stagePath: request.stagePath,
+  }),
 );

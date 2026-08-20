@@ -17,5 +17,5 @@
  * `runtime-session.ts`'s `resolveStartupMode` — keep them a single source.
  */
 export function isPrintMode(argv: readonly string[] = process.argv): boolean {
-	return argv.includes("--print") || argv.includes("-p");
+  return argv.includes("--print") || argv.includes("-p");
 }

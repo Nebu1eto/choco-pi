@@ -16,57 +16,58 @@
 
 /** LSP `FileChangeType`: 1 Created, 2 Changed, 3 Deleted. */
 export interface WatchedFileChange {
-	uri: string;
-	type: number;
+  uri: string;
+  type: number;
 }
 
 export const WATCH_DEBOUNCE_MS = 100;
 
 export class WatchedFilesQueue {
-	// uri → latest FileChangeType. A Map collapses repeated events for the same
-	// URI (last-type-wins) while preserving first-seen insertion order.
-	private readonly pending = new Map<string, number>();
-	private timer: ReturnType<typeof setTimeout> | null = null;
+  // uri → latest FileChangeType. A Map collapses repeated events for the same
+  // URI (last-type-wins) while preserving first-seen insertion order.
+  private readonly pending = new Map<string, number>();
+  private timer: ReturnType<typeof setTimeout> | null = null;
 
-	constructor(
-		private readonly flushFn: (changes: WatchedFileChange[]) => void,
-		private readonly debounceMs: number = WATCH_DEBOUNCE_MS,
-	) {}
+  constructor(
+    private readonly flushFn: (changes: WatchedFileChange[]) => void,
+    private readonly debounceMs: number = WATCH_DEBOUNCE_MS,
+  ) {}
 
-	/** Queue a change; arms the debounce timer if not already pending. */
-	enqueue(uri: string, type: number): void {
-		this.pending.set(uri, type);
-		if (this.timer) return;
-		this.timer = setTimeout(() => this.flush(), this.debounceMs);
-		// Never hold the event loop open for a pending watched-files flush.
-		this.timer.unref?.();
-	}
+  /** Queue a change; arms the debounce timer if not already pending. */
+  enqueue(uri: string, type: number): void {
+    this.pending.set(uri, type);
+    if (this.timer) return;
+    this.timer = setTimeout(() => this.flush(), this.debounceMs);
+    // Never hold the event loop open for a pending watched-files flush.
+    this.timer.unref?.();
+  }
 
-	/** Emit all queued changes as one notification (no-op when empty). */
-	flush(): void {
-		if (this.timer) {
-			clearTimeout(this.timer);
-			this.timer = null;
-		}
-		if (this.pending.size === 0) return;
-		const changes: WatchedFileChange[] = [...this.pending.entries()].map(
-			([uri, type]) => ({ uri, type }),
-		);
-		this.pending.clear();
-		this.flushFn(changes);
-	}
+  /** Emit all queued changes as one notification (no-op when empty). */
+  flush(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.pending.size === 0) return;
+    const changes: WatchedFileChange[] = [...this.pending.entries()].map(([uri, type]) => ({
+      uri,
+      type,
+    }));
+    this.pending.clear();
+    this.flushFn(changes);
+  }
 
-	/** Drop the timer + any queued changes without emitting (client teardown). */
-	cancel(): void {
-		if (this.timer) {
-			clearTimeout(this.timer);
-			this.timer = null;
-		}
-		this.pending.clear();
-	}
+  /** Drop the timer + any queued changes without emitting (client teardown). */
+  cancel(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.pending.clear();
+  }
 
-	/** Number of distinct URIs currently queued (for tests/introspection). */
-	get size(): number {
-		return this.pending.size;
-	}
+  /** Number of distinct URIs currently queued (for tests/introspection). */
+  get size(): number {
+    return this.pending.size;
+  }
 }

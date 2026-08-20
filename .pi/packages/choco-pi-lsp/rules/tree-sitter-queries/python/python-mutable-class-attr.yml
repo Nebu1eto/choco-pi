@@ -11,11 +11,11 @@ message: "Class attribute '{{VARNAME}}' is mutable — shared across all instanc
 description: |
   Mutable class-level attributes (list, dict, set) are shared across every instance.
   Modifying them on one instance modifies ALL instances.
-  
+
   ❌ BUG:
     class Node:
         children = []  # shared! Node().children is Node().children
-  
+
   ✅ FIX: Initialise in __init__:
     class Node:
         def __init__(self):
@@ -51,7 +51,7 @@ examples:
     class Node:
         children = []   # all Node instances share one list
         metadata = {}   # all Node instances share one dict
-  
+
   good: |
     class Node:
         def __init__(self):

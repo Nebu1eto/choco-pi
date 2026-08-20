@@ -108,9 +108,9 @@ const FENCE = /^---[ \t]*$/;
  * usable block — notably for a BOM-prefixed file, which the parser also reads
  * as having none, so writing a key into it would change nothing on load.
  */
-function splitFrontmatter(content: string):
-  | { lines: string[]; openIdx: number; closeIdx: number; eol: string }
-  | undefined {
+function splitFrontmatter(
+  content: string,
+): { lines: string[]; openIdx: number; closeIdx: number; eol: string } | undefined {
   const lines = content.split(/(?<=\n)/);
   if (lines.length === 0 || !FENCE.test(lines[0].replace(/\r?\n$/, ""))) return undefined;
   const closeIdx = lines.findIndex((l, i) => i > 0 && FENCE.test(l.replace(/\r?\n$/, "")));
@@ -236,15 +236,19 @@ export function serializeAgentFile(cfg: AgentConfig): string {
   if (cfg.thinking) fmFields.push(`thinking: ${cfg.thinking}`);
   if (cfg.maxTurns) fmFields.push(`max_turns: ${cfg.maxTurns}`);
   if (cfg.allowedSubagents !== undefined) {
-    fmFields.push(`allowed_subagents: ${cfg.allowedSubagents === "all" ? "all" : cfg.allowedSubagents.join(", ")}`);
+    fmFields.push(
+      `allowed_subagents: ${cfg.allowedSubagents === "all" ? "all" : cfg.allowedSubagents.join(", ")}`,
+    );
   }
   fmFields.push(`prompt_mode: ${cfg.promptMode}`);
   if (cfg.extensions === false) fmFields.push("extensions: false");
   else if (Array.isArray(cfg.extensions)) fmFields.push(`extensions: ${cfg.extensions.join(", ")}`);
-  if (cfg.excludeExtensions?.length) fmFields.push(`exclude_extensions: ${cfg.excludeExtensions.join(", ")}`);
+  if (cfg.excludeExtensions?.length)
+    fmFields.push(`exclude_extensions: ${cfg.excludeExtensions.join(", ")}`);
   if (cfg.skills === false) fmFields.push("skills: false");
   else if (Array.isArray(cfg.skills)) fmFields.push(`skills: ${cfg.skills.join(", ")}`);
-  if (cfg.disallowedTools?.length) fmFields.push(`disallowed_tools: ${cfg.disallowedTools.join(", ")}`);
+  if (cfg.disallowedTools?.length)
+    fmFields.push(`disallowed_tools: ${cfg.disallowedTools.join(", ")}`);
   if (cfg.inheritContext) fmFields.push("inherit_context: true");
   if (cfg.runInBackground) fmFields.push("run_in_background: true");
   if (cfg.outputTranscript === false) fmFields.push("output_transcript: false");

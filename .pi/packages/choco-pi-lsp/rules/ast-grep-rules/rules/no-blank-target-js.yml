@@ -22,4 +22,4 @@ rule:
       regex: '<a[^>]*target="_blank"[^>]*>'
     - not:
         kind: jsx_element
-        regex: '<a[^>]*rel='
+        regex: "<a[^>]*rel="

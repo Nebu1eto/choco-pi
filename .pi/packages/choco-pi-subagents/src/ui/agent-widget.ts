@@ -10,7 +10,12 @@ import { renderAgentName } from "../agent-color.ts";
 import type { AgentManager } from "../agent-manager.ts";
 import { getConfig } from "../agent-types.ts";
 import type { AgentInvocation, SubagentType, WidgetMode } from "../types.ts";
-import { getLifetimeTotal, getSessionContextPercent, type LifetimeUsage, type SessionLike } from "../usage.ts";
+import {
+  getLifetimeTotal,
+  getSessionContextPercent,
+  type LifetimeUsage,
+  type SessionLike,
+} from "../usage.ts";
 
 // ---- Constants ----
 
@@ -72,7 +77,15 @@ export interface AgentDetails {
   toolUses: number;
   tokens: string;
   durationMs: number;
-  status: "queued" | "running" | "completed" | "steered" | "aborted" | "stopped" | "error" | "background";
+  status:
+    | "queued"
+    | "running"
+    | "completed"
+    | "steered"
+    | "aborted"
+    | "stopped"
+    | "error"
+    | "background";
   /** Human-readable description of what the agent is currently doing. */
   activity?: string;
   /** Current spinner frame index (for animated running indicator). */
@@ -95,7 +108,10 @@ export interface AgentDetails {
 export function fgPreservingNestedStyles(theme: Theme, color: string, text: string): string {
   const styledEmpty = theme.fg(color, "");
   const styleStart = styledEmpty.replace(/\u001b\[(?:0|39)m/g, "");
-  return theme.fg(color, text.replace(/\u001b\[(?:0|39)m/g, reset => `${reset}${styleStart}`));
+  return theme.fg(
+    color,
+    text.replace(/\u001b\[(?:0|39)m/g, (reset) => `${reset}${styleStart}`),
+  );
 }
 
 /** Format a token count compactly: "33.8k token", "1.2M token". */
@@ -162,9 +178,10 @@ export function getPromptModeLabel(type: SubagentType): string | undefined {
 }
 
 /** Mode label is not included — callers add it where they want it. */
-export function buildInvocationTags(
-  invocation: AgentInvocation | undefined,
-): { modelName?: string; tags: string[] } {
+export function buildInvocationTags(invocation: AgentInvocation | undefined): {
+  modelName?: string;
+  tags: string[];
+} {
   const tags: string[] = [];
   if (!invocation) return { tags };
   if (invocation.thinking) tags.push(`thinking: ${invocation.thinking}`);
@@ -178,7 +195,11 @@ export function buildInvocationTags(
 
 /** Truncate text to a single line, max `len` chars. */
 function truncateLine(text: string, len = 60): string {
-  const line = text.split("\n").find(l => l.trim())?.trim() ?? "";
+  const line =
+    text
+      .split("\n")
+      .find((l) => l.trim())
+      ?.trim() ?? "";
   if (line.length <= len) return line;
   return line.slice(0, len) + "…";
 }
@@ -262,11 +283,14 @@ export class AgentWidget {
    *   - `all`: every agent.
    */
   private widgetAgents() {
-    const all = this.manager.listAgents().filter(a => !a.parentAgentId);
+    const all = this.manager.listAgents().filter((a) => !a.parentAgentId);
     switch (this.mode()) {
-      case "off": return [];
-      case "background": return all.filter(a => a.isBackground !== false);
-      default: return all;
+      case "off":
+        return [];
+      case "background":
+        return all.filter((a) => a.isBackground !== false);
+      default:
+        return all;
     }
   }
 
@@ -328,7 +352,19 @@ export class AgentWidget {
   }
 
   /** Render a finished agent line. */
-  private renderFinishedLine(a: { id: string; type: SubagentType; status: string; description: string; toolUses: number; startedAt: number; completedAt?: number; error?: string }, theme: Theme): string {
+  private renderFinishedLine(
+    a: {
+      id: string;
+      type: SubagentType;
+      status: string;
+      description: string;
+      toolUses: number;
+      startedAt: number;
+      completedAt?: number;
+      error?: string;
+    },
+    theme: Theme,
+  ): string {
     const modeLabel = getPromptModeLabel(a.type);
     const duration = formatMs((a.completedAt ?? Date.now()) - a.startedAt);
 
@@ -369,11 +405,14 @@ export class AgentWidget {
    */
   private renderWidget(tui: any, theme: Theme): string[] {
     const allAgents = this.widgetAgents();
-    const running = allAgents.filter(a => a.status === "running");
-    const queued = allAgents.filter(a => a.status === "queued");
-    const finished = allAgents.filter(a =>
-      a.status !== "running" && a.status !== "queued" && a.completedAt
-      && this.shouldShowFinished(a.id, a.status),
+    const running = allAgents.filter((a) => a.status === "running");
+    const queued = allAgents.filter((a) => a.status === "queued");
+    const finished = allAgents.filter(
+      (a) =>
+        a.status !== "running" &&
+        a.status !== "queued" &&
+        a.completedAt &&
+        this.shouldShowFinished(a.id, a.status),
     );
 
     const hasActive = running.length > 0 || queued.length > 0;
@@ -406,7 +445,8 @@ export class AgentWidget {
       const toolUses = bg?.toolUses ?? a.toolUses;
       const tokens = getLifetimeTotal(bg?.lifetimeUsage);
       const contextPercent = getSessionContextPercent(bg?.session);
-      const tokenText = tokens > 0 ? formatSessionTokens(tokens, contextPercent, theme, a.compactionCount) : "";
+      const tokenText =
+        tokens > 0 ? formatSessionTokens(tokens, contextPercent, theme, a.compactionCount) : "";
 
       const parts: string[] = [];
       if (bg) parts.push(formatTurns(bg.turnCount, bg.maxTurns));
@@ -418,20 +458,29 @@ export class AgentWidget {
       const activity = bg ? describeActivity(bg.activeTools, bg.responseText) : "thinking…";
 
       runningLines.push([
-        truncate(theme.fg("dim", "├─") + ` ${theme.fg("accent", frame)} ${renderAgentName(a.type, theme, { bold: true })}${modeTag}  ${theme.fg("muted", a.description)} ${theme.fg("dim", "·")} ${fgPreservingNestedStyles(theme, "dim", statsText)}`),
+        truncate(
+          theme.fg("dim", "├─") +
+            ` ${theme.fg("accent", frame)} ${renderAgentName(a.type, theme, { bold: true })}${modeTag}  ${theme.fg("muted", a.description)} ${theme.fg("dim", "·")} ${fgPreservingNestedStyles(theme, "dim", statsText)}`,
+        ),
         truncate(theme.fg("dim", "│  ") + theme.fg("dim", `  ⎿  ${activity}`)),
       ]);
     }
 
-    const queuedLine = queued.length > 0
-      ? truncate(theme.fg("dim", "├─") + ` ${theme.fg("muted", "◦")} ${theme.fg("dim", `${queued.length} queued`)}`)
-      : undefined;
+    const queuedLine =
+      queued.length > 0
+        ? truncate(
+            theme.fg("dim", "├─") +
+              ` ${theme.fg("muted", "◦")} ${theme.fg("dim", `${queued.length} queued`)}`,
+          )
+        : undefined;
 
     // Assemble with overflow cap (heading + overflow indicator = 2 reserved lines).
     const maxBody = MAX_WIDGET_LINES - 1; // heading takes 1 line
     const totalBody = finishedLines.length + runningLines.length * 2 + (queuedLine ? 1 : 0);
 
-    const lines: string[] = [truncate(theme.fg(headingColor, headingIcon) + " " + theme.fg(headingColor, "Agents"))];
+    const lines: string[] = [
+      truncate(theme.fg(headingColor, headingIcon) + " " + theme.fg(headingColor, "Agents")),
+    ];
 
     if (totalBody <= maxBody) {
       // Everything fits — add all lines and fix up connectors for the last item.
@@ -502,7 +551,11 @@ export class AgentWidget {
       if (hiddenRunning > 0) overflowParts.push(`${hiddenRunning} running`);
       if (hiddenFinished > 0) overflowParts.push(`${hiddenFinished} finished`);
       const overflowText = overflowParts.join(", ");
-      lines.push(truncate(theme.fg("dim", "└─") + ` ${theme.fg("dim", `+${hiddenRunning + hiddenFinished} more (${overflowText})`)}`)
+      lines.push(
+        truncate(
+          theme.fg("dim", "└─") +
+            ` ${theme.fg("dim", `+${hiddenRunning + hiddenFinished} more (${overflowText})`)}`,
+        ),
       );
     }
 
@@ -519,9 +572,13 @@ export class AgentWidget {
     let queuedCount = 0;
     let hasFinished = false;
     for (const a of allAgents) {
-      if (a.status === "running") { runningCount++; }
-      else if (a.status === "queued") { queuedCount++; }
-      else if (a.completedAt && this.shouldShowFinished(a.id, a.status)) { hasFinished = true; }
+      if (a.status === "running") {
+        runningCount++;
+      } else if (a.status === "queued") {
+        queuedCount++;
+      } else if (a.completedAt && this.shouldShowFinished(a.id, a.status)) {
+        hasFinished = true;
+      }
     }
     const hasActive = runningCount > 0 || queuedCount > 0;
 
@@ -536,10 +593,13 @@ export class AgentWidget {
         this.uiCtx.setStatus("subagents", undefined);
         this.lastStatusText = undefined;
       }
-      if (this.widgetInterval) { clearInterval(this.widgetInterval); this.widgetInterval = undefined; }
+      if (this.widgetInterval) {
+        clearInterval(this.widgetInterval);
+        this.widgetInterval = undefined;
+      }
       // Clean up stale entries
       for (const [id] of this.finishedTurnAge) {
-        if (!allAgents.some(a => a.id === id)) this.finishedTurnAge.delete(id);
+        if (!allAgents.some((a) => a.id === id)) this.finishedTurnAge.delete(id);
       }
       return;
     }
@@ -563,17 +623,21 @@ export class AgentWidget {
     // Register widget callback once; subsequent updates use requestRender()
     // which re-invokes render() without replacing the component (avoids layout thrashing).
     if (!this.widgetRegistered) {
-      this.uiCtx.setWidget("agents", (tui, theme) => {
-        this.tui = tui;
-        return {
-          render: () => this.renderWidget(tui, theme),
-          invalidate: () => {
-            // Theme changed — force re-registration so factory captures fresh theme.
-            this.widgetRegistered = false;
-            this.tui = undefined;
-          },
-        };
-      }, { placement: "aboveEditor" });
+      this.uiCtx.setWidget(
+        "agents",
+        (tui, theme) => {
+          this.tui = tui;
+          return {
+            render: () => this.renderWidget(tui, theme),
+            invalidate: () => {
+              // Theme changed — force re-registration so factory captures fresh theme.
+              this.widgetRegistered = false;
+              this.tui = undefined;
+            },
+          };
+        },
+        { placement: "aboveEditor" },
+      );
       this.widgetRegistered = true;
     } else {
       // Widget already registered — just request a re-render of existing components.

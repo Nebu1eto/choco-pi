@@ -1,7 +1,11 @@
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 import { formatWithOptions } from "node:util";
 import { Worker } from "node:worker_threads";
-import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
+import {
+  guardMcpOutput,
+  guardedMcpDetails,
+  resolveMcpOutputGuardOptions,
+} from "./mcp-output-guard.ts";
 import { executeCall } from "./proxy-modes.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
@@ -32,10 +36,22 @@ type WorkerMessage =
 type WorkerResultMessage = { type: "result"; id: number; envelope: unknown };
 
 function needsInspectableFormatting(value: unknown, stack = new WeakSet<object>()): boolean {
-  if (value === undefined || typeof value === "bigint" || typeof value === "function" || typeof value === "symbol") return true;
+  if (
+    value === undefined ||
+    typeof value === "bigint" ||
+    typeof value === "function" ||
+    typeof value === "symbol"
+  )
+    return true;
   if (typeof value !== "object" || value === null) return false;
   if (stack.has(value)) return true;
-  if (value instanceof Map || value instanceof Set || value instanceof WeakMap || value instanceof WeakSet) return true;
+  if (
+    value instanceof Map ||
+    value instanceof Set ||
+    value instanceof WeakMap ||
+    value instanceof WeakSet
+  )
+    return true;
   stack.add(value);
   try {
     return Object.values(value).some((entry) => needsInspectableFormatting(entry, stack));
@@ -63,7 +79,11 @@ function toContentBlock(value: unknown): ContentBlock {
     if (block.type === "text" && typeof block.text === "string") {
       return { type: "text", text: block.text };
     }
-    if (block.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string") {
+    if (
+      block.type === "image" &&
+      typeof block.data === "string" &&
+      typeof block.mimeType === "string"
+    ) {
       return { type: "image", data: block.data, mimeType: block.mimeType };
     }
   }
@@ -85,18 +105,27 @@ function parseWorkerMessage(value: unknown): WorkerMessage | null {
   if (typeof value !== "object" || value === null) return null;
   const message = value as Record<string, unknown>;
   if (message.type === "emit" && "block" in message) return { type: "emit", block: message.block };
-  if (message.type === "call" && typeof message.id === "number" && typeof message.path === "string") {
+  if (
+    message.type === "call" &&
+    typeof message.id === "number" &&
+    typeof message.path === "string"
+  ) {
     return "args" in message
       ? { type: "call", id: message.id, path: message.path, args: message.args }
       : { type: "call", id: message.id, path: message.path };
   }
-  if ((message.type === "search" || message.type === "describe") && typeof message.id === "number") {
+  if (
+    (message.type === "search" || message.type === "describe") &&
+    typeof message.id === "number"
+  ) {
     return "input" in message
       ? { type: message.type, id: message.id, input: message.input }
       : { type: message.type, id: message.id };
   }
   if (message.type === "done") {
-    return "returnBlock" in message ? { type: "done", returnBlock: message.returnBlock } : { type: "done" };
+    return "returnBlock" in message
+      ? { type: "done", returnBlock: message.returnBlock }
+      : { type: "done" };
   }
   if (message.type === "error" && typeof message.message === "string") {
     return { type: "error", message: message.message };
@@ -111,9 +140,10 @@ export async function runMcpScript(
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
 ) {
-  const resolvedTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
-    ? Math.floor(timeoutMs)
-    : DEFAULT_MCP_SCRIPT_TIMEOUT_MS;
+  const resolvedTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? Math.floor(timeoutMs)
+      : DEFAULT_MCP_SCRIPT_TIMEOUT_MS;
   const output: ContentBlock[] = [];
   const externalSignal = combineAbortSignals(state.owner?.signal, signal);
   const timeoutController = new AbortController();
@@ -128,36 +158,70 @@ export async function runMcpScript(
     | { operation: "describe"; path: string; ok: false; error: string; durationMs: number };
   type TrackedScriptOperation = ScriptOperation & { startedAt: number };
   const calls: TrackedScriptOperation[] = [];
-  const snapshotCalls = (): ScriptOperation[] => calls.map(({ startedAt, ...operation }) => ({
-    ...operation,
-    durationMs: "error" in operation && operation.error === "incomplete"
-      ? Math.max(0, Date.now() - startedAt)
-      : operation.durationMs,
-  }));
+  const snapshotCalls = (): ScriptOperation[] =>
+    calls.map(({ startedAt, ...operation }) => ({
+      ...operation,
+      durationMs:
+        "error" in operation && operation.error === "incomplete"
+          ? Math.max(0, Date.now() - startedAt)
+          : operation.durationMs,
+    }));
   let callsSnapshot: ScriptOperation[] | undefined;
   const callTool = async (path: string, args?: Record<string, unknown>) => {
     // Record before dispatch so calls still in flight at timeout/abort appear in the trace.
     const startedAt = Date.now();
-    const index = calls.push({ operation: "call", path, ok: false, error: "incomplete", durationMs: 0, startedAt }) - 1;
-    const result = await executeCall(state, path, args, undefined, getPiTools, callSignal, "script");
+    const index =
+      calls.push({
+        operation: "call",
+        path,
+        ok: false,
+        error: "incomplete",
+        durationMs: 0,
+        startedAt,
+      }) - 1;
+    const result = await executeCall(
+      state,
+      path,
+      args,
+      undefined,
+      getPiTools,
+      callSignal,
+      "script",
+    );
     const details = result.details;
     if (details.error !== undefined) {
       const errorCode = String(details.error);
       const suggestions = Array.isArray(details.suggestions)
-        ? details.suggestions.filter((suggestion): suggestion is string => typeof suggestion === "string")
+        ? details.suggestions.filter(
+            (suggestion): suggestion is string => typeof suggestion === "string",
+          )
         : [];
-      const message = errorCode === "tool_not_found"
-        ? `Tool "${path}" not found. Use await tools.search({ query: "..." }) inside mcpScript.${suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : ""}`
-        : typeof details.message === "string"
-          ? details.message
-          : textFromContent(result.content);
-      calls[index] = { operation: "call", path, ok: false, error: errorCode, durationMs: Date.now() - startedAt, startedAt };
+      const message =
+        errorCode === "tool_not_found"
+          ? `Tool "${path}" not found. Use await tools.search({ query: "..." }) inside mcpScript.${suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : ""}`
+          : typeof details.message === "string"
+            ? details.message
+            : textFromContent(result.content);
+      calls[index] = {
+        operation: "call",
+        path,
+        ok: false,
+        error: errorCode,
+        durationMs: Date.now() - startedAt,
+        startedAt,
+      };
       return {
         ok: false as const,
         error: { code: errorCode, message },
       };
     }
-    calls[index] = { operation: "call", path, ok: true, durationMs: Date.now() - startedAt, startedAt };
+    calls[index] = {
+      operation: "call",
+      path,
+      ok: true,
+      durationMs: Date.now() - startedAt,
+      startedAt,
+    };
     return {
       ok: true as const,
       data: details.mcpResult !== undefined ? details.mcpResult : textFromContent(result.content),
@@ -190,9 +254,18 @@ export async function runMcpScript(
       error = caught;
       throw caught;
     } finally {
-      calls.push(error === undefined
-        ? { operation: "search", query, ok: true, durationMs: Date.now() - startedAt, startedAt }
-        : { operation: "search", query, ok: false, error: error instanceof Error ? error.message : String(error), durationMs: Date.now() - startedAt, startedAt });
+      calls.push(
+        error === undefined
+          ? { operation: "search", query, ok: true, durationMs: Date.now() - startedAt, startedAt }
+          : {
+              operation: "search",
+              query,
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+              durationMs: Date.now() - startedAt,
+              startedAt,
+            },
+      );
     }
   };
 
@@ -205,7 +278,7 @@ export async function runMcpScript(
         const tool = findToolByName(metadata, path);
         if (!tool) continue;
         const inputTypeScript = tool.inputSchema
-          ? renderTsShape(tool.inputSchema) ?? formatSchema(tool.inputSchema)
+          ? (renderTsShape(tool.inputSchema) ?? formatSchema(tool.inputSchema))
           : null;
         return {
           path: tool.name,
@@ -229,9 +302,18 @@ export async function runMcpScript(
       error = caught;
       throw caught;
     } finally {
-      calls.push(error === undefined
-        ? { operation: "describe", path, ok: true, durationMs: Date.now() - startedAt, startedAt }
-        : { operation: "describe", path, ok: false, error: error instanceof Error ? error.message : String(error), durationMs: Date.now() - startedAt, startedAt });
+      calls.push(
+        error === undefined
+          ? { operation: "describe", path, ok: true, durationMs: Date.now() - startedAt, startedAt }
+          : {
+              operation: "describe",
+              path,
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+              durationMs: Date.now() - startedAt,
+              startedAt,
+            },
+      );
     }
   };
 
@@ -275,7 +357,10 @@ export async function runMcpScript(
         void (async () => {
           let envelope: unknown;
           if (message.type === "call") {
-            envelope = await callTool(message.path, message.args as Record<string, unknown> | undefined);
+            envelope = await callTool(
+              message.path,
+              message.args as Record<string, unknown> | undefined,
+            );
           } else if (message.type === "search") {
             envelope = searchTools(message.input as SearchInput | undefined);
           } else {
@@ -287,7 +372,8 @@ export async function runMcpScript(
       });
       activeWorker.once("error", reject);
       activeWorker.once("exit", (code) => {
-        if (!completed && code !== 0) reject(new Error(`mcpScript worker exited with code ${code}`));
+        if (!completed && code !== 0)
+          reject(new Error(`mcpScript worker exited with code ${code}`));
       });
     });
     const timeoutError = new McpScriptTimeoutError(resolvedTimeoutMs);

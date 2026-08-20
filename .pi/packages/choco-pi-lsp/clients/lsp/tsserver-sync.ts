@@ -42,34 +42,34 @@ import { normalizeMapKey } from "../path-utils.js";
 // ---------------------------------------------------------------------------
 
 export interface TsserverSyncRawDiagnostic {
-	message: string;
-	category: string;
-	code?: number;
-	startLocation?: { line: number; offset: number };
-	endLocation?: { line: number; offset: number };
+  message: string;
+  category: string;
+  code?: number;
+  startLocation?: { line: number; offset: number };
+  endLocation?: { line: number; offset: number };
 }
 
 /** Minimal LSP-service-shaped interface this module needs — avoids importing
  * the full LSPService class and keeps the extracted module test-friendly. */
 export interface TsserverSyncCapableService {
-	getAdvertisedCommands?: (filePath?: string) => Promise<string[]>;
-	executeCommand?: (
-		filePath: string | undefined,
-		command: string,
-		args?: unknown[],
-	) => Promise<{ executed: boolean; result?: unknown; reason?: string }>;
-	/**
-	 * #1640: the non-spawning, non-mutating probe channel
-	 * (`LSPService.executeReadOnlyCommandOnLiveClient`). Optional so older test
-	 * doubles keep working — but a caller that NEEDS probe semantics must treat
-	 * its absence as "unknown" rather than falling back to `executeCommand`,
-	 * which is the mutation channel and spawns a server fleet to answer.
-	 */
-	executeReadOnlyCommandOnLiveClient?: (
-		filePath: string,
-		command: string,
-		args?: unknown[],
-	) => Promise<{ executed: boolean; result?: unknown; reason?: string }>;
+  getAdvertisedCommands?: (filePath?: string) => Promise<string[]>;
+  executeCommand?: (
+    filePath: string | undefined,
+    command: string,
+    args?: unknown[],
+  ) => Promise<{ executed: boolean; result?: unknown; reason?: string }>;
+  /**
+   * #1640: the non-spawning, non-mutating probe channel
+   * (`LSPService.executeReadOnlyCommandOnLiveClient`). Optional so older test
+   * doubles keep working — but a caller that NEEDS probe semantics must treat
+   * its absence as "unknown" rather than falling back to `executeCommand`,
+   * which is the mutation channel and spawns a server fleet to answer.
+   */
+  executeReadOnlyCommandOnLiveClient?: (
+    filePath: string,
+    command: string,
+    args?: unknown[],
+  ) => Promise<{ executed: boolean; result?: unknown; reason?: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,32 +79,32 @@ export interface TsserverSyncCapableService {
 export const TSSERVER_REQUEST_COMMAND = "typescript.tsserverRequest";
 
 export interface TsserverProjectIdentityCommandChannel {
-	executeCommand?: (
-		command: string,
-		args?: unknown[],
-	) => Promise<{ executed: boolean; result?: unknown; reason?: string }>;
+  executeCommand?: (
+    command: string,
+    args?: unknown[],
+  ) => Promise<{ executed: boolean; result?: unknown; reason?: string }>;
 }
 
 export interface TsserverProjectIdentityProbeOptions {
-	serverId: string;
-	launchVariant?: "classic" | "native-ts7";
-	clientRoot: string;
-	file: string;
-	/**
-	 * #1412 L2: caller-supplied `normalizeMapKey(file)`. `handleNotifyOpen`
-	 * already computes this before calling in (client.ts) — recomputing it here
-	 * would just repeat the same normalization for every first open. Falls back
-	 * to normalizing `file` locally if a caller (e.g. an older test) omits it.
-	 */
-	normalizedFile?: string;
-	probedFiles: Set<string>;
-	commandChannel: TsserverProjectIdentityCommandChannel;
+  serverId: string;
+  launchVariant?: "classic" | "native-ts7";
+  clientRoot: string;
+  file: string;
+  /**
+   * #1412 L2: caller-supplied `normalizeMapKey(file)`. `handleNotifyOpen`
+   * already computes this before calling in (client.ts) — recomputing it here
+   * would just repeat the same normalization for every first open. Falls back
+   * to normalizing `file` locally if a caller (e.g. an older test) omits it.
+   */
+  normalizedFile?: string;
+  probedFiles: Set<string>;
+  commandChannel: TsserverProjectIdentityCommandChannel;
 }
 
 export interface TsserverProjectIdentity {
-	projectKind: "configured" | "inferred" | "unassociated";
-	configFile?: string;
-	association: "associated" | "unassociated" | "language-service-disabled";
+  projectKind: "configured" | "inferred" | "unassociated";
+  configFile?: string;
+  association: "associated" | "unassociated" | "language-service-disabled";
 }
 
 /**
@@ -124,8 +124,7 @@ export interface TsserverProjectIdentity {
  * sentinel through win32 path handling before it reaches us; the `/dev/null`
  * prefix is still required.
  */
-const INFERRED_PROJECT_SENTINEL =
-	/^(?:[A-Za-z]:)?[/\\]dev[/\\]null[/\\]inferredProject\d*\*?$/i;
+const INFERRED_PROJECT_SENTINEL = /^(?:[A-Za-z]:)?[/\\]dev[/\\]null[/\\]inferredProject\d*\*?$/i;
 
 /**
  * Classify one tsserver `projectInfo` response body.
@@ -143,34 +142,32 @@ const INFERRED_PROJECT_SENTINEL =
  * configFileName test would be a parallel source of truth for the same verdict.
  */
 export function classifyProjectInfo(body: unknown): TsserverProjectIdentity {
-	if (!body || typeof body !== "object") {
-		return { projectKind: "unassociated", association: "unassociated" };
-	}
-	const info = body as Record<string, unknown>;
-	const configFile =
-		typeof info.configFileName === "string" && info.configFileName.length > 0
-			? info.configFileName
-			: undefined;
-	const inferred = configFile
-		? INFERRED_PROJECT_SENTINEL.test(configFile)
-		: false;
-	const projectKind = configFile
-		? inferred
-			? "inferred"
-			: /(?:^|[/\\])(?:tsconfig|jsconfig)\.json$/i.test(configFile)
-				? "configured"
-				: "unassociated"
-		: "unassociated";
-	return {
-		projectKind,
-		...(configFile ? { configFile } : {}),
-		association:
-			info.languageServiceDisabled === true
-				? "language-service-disabled"
-				: projectKind === "unassociated"
-					? "unassociated"
-					: "associated",
-	};
+  if (!body || typeof body !== "object") {
+    return { projectKind: "unassociated", association: "unassociated" };
+  }
+  const info = body as Record<string, unknown>;
+  const configFile =
+    typeof info.configFileName === "string" && info.configFileName.length > 0
+      ? info.configFileName
+      : undefined;
+  const inferred = configFile ? INFERRED_PROJECT_SENTINEL.test(configFile) : false;
+  const projectKind = configFile
+    ? inferred
+      ? "inferred"
+      : /(?:^|[/\\])(?:tsconfig|jsconfig)\.json$/i.test(configFile)
+        ? "configured"
+        : "unassociated"
+    : "unassociated";
+  return {
+    projectKind,
+    ...(configFile ? { configFile } : {}),
+    association:
+      info.languageServiceDisabled === true
+        ? "language-service-disabled"
+        : projectKind === "unassociated"
+          ? "unassociated"
+          : "associated",
+  };
 }
 
 /**
@@ -179,62 +176,81 @@ export function classifyProjectInfo(body: unknown): TsserverProjectIdentity {
  * executeCommand channel owns the existing bounded anti-deadlock backstop.
  */
 export async function probeTsserverProjectIdentity(
-	options: TsserverProjectIdentityProbeOptions,
+  options: TsserverProjectIdentityProbeOptions,
 ): Promise<void> {
-	const normalizedFile = options.normalizedFile ?? normalizeMapKey(options.file);
-	const startedAt = Date.now();
-	// Logging starts only once a probe is actually eligible and attempted:
-	// ineligible servers (wrong serverId/launchVariant, no command channel) and
-	// already-probed dedupe are both routine, high-volume, and per-server — a
-	// bare return keeps them out of the telemetry stream entirely instead of
-	// writing an `lsp_typescript_project_identity` row per didOpen on every
-	// server (python, go, opengrep, ...).
-	const logOutcome = (outcome: "ok" | "not-executed" | "no-response" | "unsuccessful" | "threw", metadata: Record<string, unknown> = {}) => logLatency({
-		type: "phase", phase: "lsp_typescript_project_identity", filePath: normalizedFile,
-		durationMs: Date.now() - startedAt,
-		metadata: { serverId: options.serverId, launchVariant: options.launchVariant, clientRoot: options.clientRoot, outcome, ...metadata },
-	});
-	if (
-		options.serverId !== "typescript" ||
-		options.launchVariant !== "classic" ||
-		typeof options.commandChannel.executeCommand !== "function"
-	) {
-		return;
-	}
-	if (options.probedFiles.has(normalizedFile)) return;
-	// Claim before yielding so concurrent opens cannot issue duplicate probes.
-	options.probedFiles.add(normalizedFile);
-	try {
-		const outcome = await options.commandChannel.executeCommand(
-			TSSERVER_REQUEST_COMMAND,
-			["projectInfo", { file: options.file, needFileNameList: false }],
-		);
-		if (!outcome.executed) { logOutcome("not-executed"); return; }
-		const response = outcome.result as
-			| { success?: boolean; body?: unknown }
-			| undefined;
-		if (!response) { logOutcome("no-response"); return; }
-		if (response.success !== true) { logOutcome("unsuccessful"); return; }
-		const identity = classifyProjectInfo(response.body);
-		logLatency({
-			type: "phase",
-			phase: "lsp_typescript_project_identity",
-			filePath: normalizedFile,
-			durationMs: Date.now() - startedAt,
-			metadata: {
-				outcome: "ok",
-				serverId: options.serverId,
-				launchVariant: options.launchVariant,
-				clientRoot: options.clientRoot,
-				projectKind: identity.projectKind,
-				configFile: identity.configFile,
-				association: identity.association,
-			},
-		});
-	} catch {
-		logOutcome("threw");
-		// Best-effort telemetry: command errors/timeouts never reach diagnostics.
-	}
+  const normalizedFile = options.normalizedFile ?? normalizeMapKey(options.file);
+  const startedAt = Date.now();
+  // Logging starts only once a probe is actually eligible and attempted:
+  // ineligible servers (wrong serverId/launchVariant, no command channel) and
+  // already-probed dedupe are both routine, high-volume, and per-server — a
+  // bare return keeps them out of the telemetry stream entirely instead of
+  // writing an `lsp_typescript_project_identity` row per didOpen on every
+  // server (python, go, opengrep, ...).
+  const logOutcome = (
+    outcome: "ok" | "not-executed" | "no-response" | "unsuccessful" | "threw",
+    metadata: Record<string, unknown> = {},
+  ) =>
+    logLatency({
+      type: "phase",
+      phase: "lsp_typescript_project_identity",
+      filePath: normalizedFile,
+      durationMs: Date.now() - startedAt,
+      metadata: {
+        serverId: options.serverId,
+        launchVariant: options.launchVariant,
+        clientRoot: options.clientRoot,
+        outcome,
+        ...metadata,
+      },
+    });
+  if (
+    options.serverId !== "typescript" ||
+    options.launchVariant !== "classic" ||
+    typeof options.commandChannel.executeCommand !== "function"
+  ) {
+    return;
+  }
+  if (options.probedFiles.has(normalizedFile)) return;
+  // Claim before yielding so concurrent opens cannot issue duplicate probes.
+  options.probedFiles.add(normalizedFile);
+  try {
+    const outcome = await options.commandChannel.executeCommand(TSSERVER_REQUEST_COMMAND, [
+      "projectInfo",
+      { file: options.file, needFileNameList: false },
+    ]);
+    if (!outcome.executed) {
+      logOutcome("not-executed");
+      return;
+    }
+    const response = outcome.result as { success?: boolean; body?: unknown } | undefined;
+    if (!response) {
+      logOutcome("no-response");
+      return;
+    }
+    if (response.success !== true) {
+      logOutcome("unsuccessful");
+      return;
+    }
+    const identity = classifyProjectInfo(response.body);
+    logLatency({
+      type: "phase",
+      phase: "lsp_typescript_project_identity",
+      filePath: normalizedFile,
+      durationMs: Date.now() - startedAt,
+      metadata: {
+        outcome: "ok",
+        serverId: options.serverId,
+        launchVariant: options.launchVariant,
+        clientRoot: options.clientRoot,
+        projectKind: identity.projectKind,
+        configFile: identity.configFile,
+        association: identity.association,
+      },
+    });
+  } catch {
+    logOutcome("threw");
+    // Best-effort telemetry: command errors/timeouts never reach diagnostics.
+  }
 }
 
 /**
@@ -261,56 +277,51 @@ export async function probeTsserverProjectIdentity(
  * (AGENTS.md shape 10: an empty result must distinguish clean from unavailable).
  */
 export async function fetchTsserverProjectIdentity(
-	svc: TsserverSyncCapableService,
-	file: string,
+  svc: TsserverSyncCapableService,
+  file: string,
 ): Promise<TsserverProjectIdentity | undefined> {
-	try {
-		if (typeof svc.executeReadOnlyCommandOnLiveClient !== "function") {
-			return undefined;
-		}
-		// No `getAdvertisedCommands` pre-flight: that helper routes through
-		// `getClientForFile`, which SPAWNS. The read-only channel already enforces
-		// allowlist-by-advertisement server-side and answers `executed:false` for
-		// a server that never advertised the command.
-		const outcome = await svc.executeReadOnlyCommandOnLiveClient(
-			file,
-			TSSERVER_REQUEST_COMMAND,
-			["projectInfo", { file, needFileNameList: false }],
-		);
-		if (!outcome.executed) return undefined;
-		const response = outcome.result as
-			| { success?: boolean; body?: unknown }
-			| undefined;
-		if (!response || response.success !== true) return undefined;
-		return classifyProjectInfo(response.body);
-	} catch {
-		return undefined;
-	}
+  try {
+    if (typeof svc.executeReadOnlyCommandOnLiveClient !== "function") {
+      return undefined;
+    }
+    // No `getAdvertisedCommands` pre-flight: that helper routes through
+    // `getClientForFile`, which SPAWNS. The read-only channel already enforces
+    // allowlist-by-advertisement server-side and answers `executed:false` for
+    // a server that never advertised the command.
+    const outcome = await svc.executeReadOnlyCommandOnLiveClient(file, TSSERVER_REQUEST_COMMAND, [
+      "projectInfo",
+      { file, needFileNameList: false },
+    ]);
+    if (!outcome.executed) return undefined;
+    const response = outcome.result as { success?: boolean; body?: unknown } | undefined;
+    if (!response || response.success !== true) return undefined;
+    return classifyProjectInfo(response.body);
+  } catch {
+    return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function isTsserverSyncRawDiagnostic(
-	value: unknown,
-): value is TsserverSyncRawDiagnostic {
-	if (!value || typeof value !== "object") return false;
-	const v = value as Record<string, unknown>;
-	return typeof v.message === "string" && typeof v.category === "string";
+export function isTsserverSyncRawDiagnostic(value: unknown): value is TsserverSyncRawDiagnostic {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.message === "string" && typeof v.category === "string";
 }
 
 export function tsserverSeverityFromCategory(category: string): 1 | 2 | 3 | 4 {
-	switch (category) {
-		case "error":
-			return 1;
-		case "warning":
-			return 2;
-		case "suggestion":
-			return 4; // Hint
-		default:
-			return 3; // "message" or unrecognized -> Info
-	}
+  switch (category) {
+    case "error":
+      return 1;
+    case "warning":
+      return 2;
+    case "suggestion":
+      return 4; // Hint
+    default:
+      return 3; // "message" or unrecognized -> Info
+  }
 }
 
 /**
@@ -318,29 +329,21 @@ export function tsserverSeverityFromCategory(category: string): 1 | 2 | 3 | 4 {
  * `LSPDiagnostic`. Both `line`/`offset` are 1-based in tsserver's protocol
  * and 0-based in LSP — this conversion handles that.
  */
-export function tsserverSyncDiagnosticToLsp(
-	d: TsserverSyncRawDiagnostic,
-): LSPDiagnostic {
-	const startLine = Math.max(0, (d.startLocation?.line ?? 1) - 1);
-	const startChar = Math.max(0, (d.startLocation?.offset ?? 1) - 1);
-	const endLine = Math.max(
-		0,
-		(d.endLocation?.line ?? d.startLocation?.line ?? 1) - 1,
-	);
-	const endChar = Math.max(
-		0,
-		(d.endLocation?.offset ?? d.startLocation?.offset ?? 1) - 1,
-	);
-	return {
-		severity: tsserverSeverityFromCategory(d.category),
-		message: d.message,
-		range: {
-			start: { line: startLine, character: startChar },
-			end: { line: endLine, character: endChar },
-		},
-		code: d.code,
-		source: "typescript",
-	};
+export function tsserverSyncDiagnosticToLsp(d: TsserverSyncRawDiagnostic): LSPDiagnostic {
+  const startLine = Math.max(0, (d.startLocation?.line ?? 1) - 1);
+  const startChar = Math.max(0, (d.startLocation?.offset ?? 1) - 1);
+  const endLine = Math.max(0, (d.endLocation?.line ?? d.startLocation?.line ?? 1) - 1);
+  const endChar = Math.max(0, (d.endLocation?.offset ?? d.startLocation?.offset ?? 1) - 1);
+  return {
+    severity: tsserverSeverityFromCategory(d.category),
+    message: d.message,
+    range: {
+      start: { line: startLine, character: startChar },
+      end: { line: endLine, character: endChar },
+    },
+    code: d.code,
+    source: "typescript",
+  };
 }
 
 /**
@@ -351,23 +354,21 @@ export function tsserverSyncDiagnosticToLsp(
  * any error is thrown.
  */
 export async function runTsserverSyncCommand(
-	svc: TsserverSyncCapableService,
-	file: string,
-	command: "semanticDiagnosticsSync" | "syntacticDiagnosticsSync",
+  svc: TsserverSyncCapableService,
+  file: string,
+  command: "semanticDiagnosticsSync" | "syntacticDiagnosticsSync",
 ): Promise<TsserverSyncRawDiagnostic[] | undefined> {
-	if (typeof svc.executeCommand !== "function") return undefined;
-	const outcome = await svc.executeCommand(file, TSSERVER_REQUEST_COMMAND, [
-		command,
-		{ file, includeLinePosition: true },
-	]);
-	if (!outcome.executed) return undefined;
-	const result = outcome.result as
-		| { success?: boolean; body?: unknown }
-		| undefined;
-	if (!result || result.success !== true || !Array.isArray(result.body)) {
-		return undefined;
-	}
-	return result.body.filter(isTsserverSyncRawDiagnostic);
+  if (typeof svc.executeCommand !== "function") return undefined;
+  const outcome = await svc.executeCommand(file, TSSERVER_REQUEST_COMMAND, [
+    command,
+    { file, includeLinePosition: true },
+  ]);
+  if (!outcome.executed) return undefined;
+  const result = outcome.result as { success?: boolean; body?: unknown } | undefined;
+  if (!result || result.success !== true || !Array.isArray(result.body)) {
+    return undefined;
+  }
+  return result.body.filter(isTsserverSyncRawDiagnostic);
 }
 
 /**
@@ -395,22 +396,22 @@ export async function runTsserverSyncCommand(
  * unavailable, fall through to existing behavior.
  */
 export async function attemptTsserverSyncDiagnostics(
-	file: string,
-	svc: TsserverSyncCapableService,
+  file: string,
+  svc: TsserverSyncCapableService,
 ): Promise<LSPDiagnostic[] | undefined> {
-	try {
-		if (typeof svc.getAdvertisedCommands !== "function") return undefined;
-		const advertised = await svc.getAdvertisedCommands(file);
-		if (!advertised.includes(TSSERVER_REQUEST_COMMAND)) return undefined;
+  try {
+    if (typeof svc.getAdvertisedCommands !== "function") return undefined;
+    const advertised = await svc.getAdvertisedCommands(file);
+    if (!advertised.includes(TSSERVER_REQUEST_COMMAND)) return undefined;
 
-		const [semantic, syntactic] = await Promise.all([
-			runTsserverSyncCommand(svc, file, "semanticDiagnosticsSync"),
-			runTsserverSyncCommand(svc, file, "syntacticDiagnosticsSync"),
-		]);
-		if (semantic === undefined || syntactic === undefined) return undefined;
+    const [semantic, syntactic] = await Promise.all([
+      runTsserverSyncCommand(svc, file, "semanticDiagnosticsSync"),
+      runTsserverSyncCommand(svc, file, "syntacticDiagnosticsSync"),
+    ]);
+    if (semantic === undefined || syntactic === undefined) return undefined;
 
-		return [...syntactic, ...semantic].map(tsserverSyncDiagnosticToLsp);
-	} catch {
-		return undefined;
-	}
+    return [...syntactic, ...semantic].map(tsserverSyncDiagnosticToLsp);
+  } catch {
+    return undefined;
+  }
 }

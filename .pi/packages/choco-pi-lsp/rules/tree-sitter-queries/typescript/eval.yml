@@ -13,7 +13,7 @@ message: "eval() detected — security risk, never use eval"
 description: |
   eval() executes arbitrary code and is a major security vulnerability.
   It allows code injection attacks.
-  
+
   ✅ ALTERNATIVES:
   - JSON.parse() for parsing JSON
   - Function constructor for dynamic functions (still risky)
@@ -39,11 +39,11 @@ examples:
   bad: |
     const userCode = "alert('hacked')";
     eval(userCode);  // DON'T DO THIS
-  
+
   good: |
     // Use JSON.parse for JSON
     const data = JSON.parse(jsonString);
-    
+
     // Use template literals
     const message = `Hello, ${name}`;
 

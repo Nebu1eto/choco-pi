@@ -9,10 +9,7 @@ export const errorObscuringRule: FactRule = {
     return /\.tsx?$/.test(ctx.filePath);
   },
   evaluate(ctx, store) {
-    const summaries = store.getFileFact<TryCatchSummary[]>(
-      ctx.filePath,
-      "file.tryCatchSummaries",
-    );
+    const summaries = store.getFileFact<TryCatchSummary[]>(ctx.filePath, "file.tryCatchSummaries");
     if (!summaries) return [];
 
     const diagnostics: Diagnostic[] = [];

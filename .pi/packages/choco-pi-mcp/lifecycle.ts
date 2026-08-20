@@ -67,7 +67,11 @@ export class McpLifecycleManager {
     this.keepAliveServers.set(name, definition);
   }
 
-  registerServer(name: string, definition: ServerDefinition, settings?: { idleTimeout?: number }): void {
+  registerServer(
+    name: string,
+    definition: ServerDefinition,
+    settings?: { idleTimeout?: number },
+  ): void {
     if (isServerDisabled(definition)) return;
     this.allServers.set(name, definition);
     if (settings?.idleTimeout !== undefined) this.serverSettings.set(name, settings);
@@ -99,7 +103,7 @@ export class McpLifecycleManager {
     this.healthCheckInterval = setInterval(() => {
       if (this.stopped || signal?.aborted || this.activeHealthCheck) return;
       const check = this.checkConnections(signal)
-        .catch(error => {
+        .catch((error) => {
           console.error(`MCP: Health check failed: ${formatTerminalError(error)}`);
         })
         .finally(() => {
@@ -198,7 +202,8 @@ export class McpLifecycleManager {
       return;
     }
     if (!definition.url) return;
-    const hadSessionId = (connection.transport as { sessionId?: string } | undefined)?.sessionId != null;
+    const hadSessionId =
+      (connection.transport as { sessionId?: string } | undefined)?.sessionId != null;
     let refreshResult: Awaited<ReturnType<McpServerManager["refreshTools"]>>;
     try {
       refreshResult = await this.manager.refreshTools(name, connection, signal);
@@ -206,7 +211,13 @@ export class McpLifecycleManager {
       if (this.stopped || signal?.aborted) return;
       const current = this.manager.getConnection(name);
       if (current !== connection || connection.status !== "connected") {
-        await this.handleSupersededConnection(name, definition, connection, signal, retrySuperseded);
+        await this.handleSupersededConnection(
+          name,
+          definition,
+          connection,
+          signal,
+          retrySuperseded,
+        );
         return;
       }
       if (!shouldReconnectAfterRefresh(error, hadSessionId)) {
@@ -222,7 +233,12 @@ export class McpLifecycleManager {
         freshConnection = await this.manager.reconnect(name, definition, connection, signal);
       } catch (reconnectError) {
         if (this.stopped || signal?.aborted) return;
-        this.reportConnectionFailure(name, reconnectError, "reconnect", this.manager.getConnection(name));
+        this.reportConnectionFailure(
+          name,
+          reconnectError,
+          "reconnect",
+          this.manager.getConnection(name),
+        );
         return;
       }
       if (this.stopped || signal?.aborted) return;
@@ -278,7 +294,10 @@ export class McpLifecycleManager {
     }
   }
 
-  private async publishConnectedMetadata(name: string, connection: ServerConnection): Promise<void> {
+  private async publishConnectedMetadata(
+    name: string,
+    connection: ServerConnection,
+  ): Promise<void> {
     this.pendingMetadataPublications.add(name);
     try {
       await this.onReconnect?.(name);
@@ -297,7 +316,9 @@ export class McpLifecycleManager {
       await this.onAuthRequired?.(name);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.debug(`MCP: auth-required callback failed for ${name}: ${sanitizeTerminalText(message)}`);
+      logger.debug(
+        `MCP: auth-required callback failed for ${name}: ${sanitizeTerminalText(message)}`,
+      );
     }
   }
 
@@ -330,11 +351,12 @@ export class McpLifecycleManager {
     });
     this.onReconnectFailure?.(name, error);
     const message = error instanceof Error ? error.message : String(error);
-    const target = action === "reconnect"
-      ? `reconnect to ${name}`
-      : action === "publish"
-        ? `publish metadata for ${name}`
-        : `refresh ${name}`;
+    const target =
+      action === "reconnect"
+        ? `reconnect to ${name}`
+        : action === "publish"
+          ? `publish metadata for ${name}`
+          : `refresh ${name}`;
     console.error(`MCP: Failed to ${target}: ${sanitizeTerminalText(message)}`);
   }
 
@@ -375,6 +397,8 @@ export class McpLifecycleManager {
 
 function shouldReconnectAfterRefresh(error: unknown, hadSessionId: boolean): boolean {
   if (isTerminatedSession(error, hadSessionId)) return true;
-  return error instanceof SdkError
-    && (error.code === SdkErrorCode.NotConnected || error.code === SdkErrorCode.ConnectionClosed);
+  return (
+    error instanceof SdkError &&
+    (error.code === SdkErrorCode.NotConnected || error.code === SdkErrorCode.ConnectionClosed)
+  );
 }

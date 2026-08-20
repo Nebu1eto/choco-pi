@@ -52,14 +52,14 @@ const INSTALL_REFUSAL_WARNING_CAP = 200;
 let trustGeneration = 0;
 
 export function getProjectTrustGeneration(): number {
-	return trustGeneration;
+  return trustGeneration;
 }
 
 function latchProjectTrustState(next: ProjectTrustState): void {
-	if (next === trustState) return;
-	trustState = next;
-	installRefusalWarnings.clear();
-	trustGeneration += 1;
+  if (next === trustState) return;
+  trustState = next;
+  installRefusalWarnings.clear();
+  trustGeneration += 1;
 }
 
 /**
@@ -71,41 +71,40 @@ function latchProjectTrustState(next: ProjectTrustState): void {
  * host.
  */
 export function readProjectTrustFromContext(ctx: unknown): ProjectTrustState {
-	try {
-		const accessor = (ctx as { isProjectTrusted?: unknown } | null | undefined)
-			?.isProjectTrusted;
-		if (typeof accessor !== "function") return "unknown";
-		const trusted = (accessor as () => unknown).call(ctx);
-		if (typeof trusted !== "boolean") return "unknown";
-		return trusted ? "trusted" : "untrusted";
-	} catch (accessorErr) {
-		// The accessor exists, so this is not the absent older-host signal. If it
-		// fails, executable content must remain gated until a later adoption works.
-		// Log it (#1350 delta review): a host whose accessor throws on every call
-		// permanently gates installs/LSP, and without this line the only trace is
-		// indirect refusal logs.
-		logExtension({
-			subsystem: "project-trust",
-			level: "warn",
-			message: "isProjectTrusted() threw -- latching untrusted (fail-closed)",
-			metadata: { error: String(accessorErr) },
-		});
-		return "untrusted";
-	}
+  try {
+    const accessor = (ctx as { isProjectTrusted?: unknown } | null | undefined)?.isProjectTrusted;
+    if (typeof accessor !== "function") return "unknown";
+    const trusted = (accessor as () => unknown).call(ctx);
+    if (typeof trusted !== "boolean") return "unknown";
+    return trusted ? "trusted" : "untrusted";
+  } catch (accessorErr) {
+    // The accessor exists, so this is not the absent older-host signal. If it
+    // fails, executable content must remain gated until a later adoption works.
+    // Log it (#1350 delta review): a host whose accessor throws on every call
+    // permanently gates installs/LSP, and without this line the only trace is
+    // indirect refusal logs.
+    logExtension({
+      subsystem: "project-trust",
+      level: "warn",
+      message: "isProjectTrusted() threw -- latching untrusted (fail-closed)",
+      metadata: { error: String(accessorErr) },
+    });
+    return "untrusted";
+  }
 }
 
 /** Latch a trust state directly (tests, and the ctx adoption path below). */
 export function setProjectTrustState(next: ProjectTrustState): void {
-	const previous = trustState;
-	latchProjectTrustState(next);
-	if (previous !== next) {
-		logExtension({
-			subsystem: "project-trust",
-			level: "debug",
-			message: `project trust state transitioned: ${previous} -> ${next}`,
-			metadata: { previous, next },
-		});
-	}
+  const previous = trustState;
+  latchProjectTrustState(next);
+  if (previous !== next) {
+    logExtension({
+      subsystem: "project-trust",
+      level: "debug",
+      message: `project trust state transitioned: ${previous} -> ${next}`,
+      metadata: { previous, next },
+    });
+  }
 }
 
 /**
@@ -114,37 +113,37 @@ export function setProjectTrustState(next: ProjectTrustState): void {
  * exactly right, since the cwd (and therefore the trust decision) can change.
  */
 export function adoptProjectTrustFromContext(ctx: unknown): ProjectTrustState {
-	const next = readProjectTrustFromContext(ctx);
-	const previous = trustState;
-	latchProjectTrustState(next);
-	if (previous !== next) {
-		logExtension({
-			subsystem: "project-trust",
-			level: "debug",
-			message: `project trust state transitioned: ${previous} -> ${next}`,
-			metadata: { previous, next },
-		});
-	}
-	return next;
+  const next = readProjectTrustFromContext(ctx);
+  const previous = trustState;
+  latchProjectTrustState(next);
+  if (previous !== next) {
+    logExtension({
+      subsystem: "project-trust",
+      level: "debug",
+      message: `project trust state transitioned: ${previous} -> ${next}`,
+      metadata: { previous, next },
+    });
+  }
+  return next;
 }
 
 /** Adopt through the canonical host capability boundary. */
 export function adoptProjectTrustFromPorts(
-	ports: import("./host-ports.js").HostPorts,
+  ports: import("./host-ports.js").HostPorts,
 ): ProjectTrustState {
-	const next = ports.trust.isProjectTrusted();
-	setProjectTrustState(next);
-	return next;
+  const next = ports.trust.isProjectTrusted();
+  setProjectTrustState(next);
+  return next;
 }
 
 export function getProjectTrustState(): ProjectTrustState {
-	return trustState;
+  return trustState;
 }
 
 /** Test/teardown-only: back to the fail-open default. */
 export function resetProjectTrust(): void {
-	latchProjectTrustState("unknown");
-	installRefusalWarnings.clear();
+  latchProjectTrustState("unknown");
+  installRefusalWarnings.clear();
 }
 
 /**
@@ -152,30 +151,30 @@ export function resetProjectTrust(): void {
  * (download + execute), never plain discovery of an already-present binary.
  */
 export function isToolInstallAllowedByTrust(): boolean {
-	return trustState !== "untrusted";
+  return trustState !== "untrusted";
 }
 
 /** Central gate for operations that may download or install executable content. */
 export function assertInstallAllowed(context: string): boolean {
-	if (isToolInstallAllowedByTrust()) return true;
-	recordDegradation({
-		kind: "trust-refusal",
-		subject: context,
-		reason: projectTrustDenialReason() ?? "project trust denied",
-	});
-	if (!installRefusalWarnings.has(context)) {
-		if (installRefusalWarnings.size >= INSTALL_REFUSAL_WARNING_CAP) {
-			installRefusalWarnings.clear();
-		}
-		installRefusalWarnings.add(context);
-		logExtension({
-			subsystem: "project-trust",
-			level: "warn",
-			message: `install/materialization blocked: ${context}`,
-			metadata: { context, trustState },
-		});
-	}
-	return false;
+  if (isToolInstallAllowedByTrust()) return true;
+  recordDegradation({
+    kind: "trust-refusal",
+    subject: context,
+    reason: projectTrustDenialReason() ?? "project trust denied",
+  });
+  if (!installRefusalWarnings.has(context)) {
+    if (installRefusalWarnings.size >= INSTALL_REFUSAL_WARNING_CAP) {
+      installRefusalWarnings.clear();
+    }
+    installRefusalWarnings.add(context);
+    logExtension({
+      subsystem: "project-trust",
+      level: "warn",
+      message: `install/materialization blocked: ${context}`,
+      metadata: { context, trustState },
+    });
+  }
+  return false;
 }
 
 /**
@@ -183,12 +182,12 @@ export function assertInstallAllowed(context: string): boolean {
  * process spawns.
  */
 export function isLspSpawnAllowedByTrust(): boolean {
-	return trustState !== "untrusted";
+  return trustState !== "untrusted";
 }
 
 /** Human/log-readable reason, or undefined when nothing is being blocked. */
 export function projectTrustDenialReason(): string | undefined {
-	return trustState === "untrusted"
-		? "project is not trusted (host isProjectTrusted() === false)"
-		: undefined;
+  return trustState === "untrusted"
+    ? "project is not trusted (host isProjectTrusted() === false)"
+    : undefined;
 }

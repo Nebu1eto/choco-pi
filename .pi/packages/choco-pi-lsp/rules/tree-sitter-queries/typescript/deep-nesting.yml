@@ -97,7 +97,7 @@ examples:
         }
       }
     }
-    
+
     function loop(items) {
       for (const item of items) {
         if (item.active) {
@@ -107,7 +107,7 @@ examples:
         }
       }
     }
-  
+
   good: |
     function process(user) {
       if (!user) return null;

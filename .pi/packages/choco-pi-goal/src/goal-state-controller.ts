@@ -23,7 +23,12 @@ import {
   reconstructHostOverflowCapNeedsUserReset,
   updateGoalStatus,
 } from "./state.js";
-import { CUSTOM_ENTRY_TYPE, type GoalEntrySource, type GoalResult, type ThreadGoal } from "./types.js";
+import {
+  CUSTOM_ENTRY_TYPE,
+  type GoalEntrySource,
+  type GoalResult,
+  type ThreadGoal,
+} from "./types.js";
 
 interface GoalStateControllerDeps {
   pi: Pick<ExtensionAPI, "appendEntry">;
@@ -34,10 +39,7 @@ interface GoalStateControllerDeps {
 }
 
 export interface GoalStateController {
-  applyGoalTransition: (
-    request: GoalTransitionRequest,
-    ctx: StatusContext | null,
-  ) => boolean;
+  applyGoalTransition: (request: GoalTransitionRequest, ctx: StatusContext | null) => boolean;
   beginOverflowRecovery: (ctx: StatusContext) => void;
   completeGoal: (source: GoalEntrySource, ctx: ExtensionContext) => GoalResult;
   flushGoalPersistence: GoalPersistence["flushGoalPersistence"];

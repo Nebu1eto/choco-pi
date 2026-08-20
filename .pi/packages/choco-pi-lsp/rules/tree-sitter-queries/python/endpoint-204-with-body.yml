@@ -54,7 +54,7 @@ examples:
     @app.delete("/x", status_code=204)
     def delete():
         return {"deleted": True}  # BAD - 204 must have empty body
-  
+
   good: |
     @app.delete("/x", status_code=204)
     def delete():

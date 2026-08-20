@@ -27,6 +27,7 @@ export SYNTHETIC_API_KEY="your-api-key-here"
 ```
 
 Credentials are resolved in this order:
+
 1. CLI `--api-key` flag
 2. `auth.json` entry for `synthetic`
 3. Environment variable `SYNTHETIC_API_KEY`
@@ -177,6 +178,7 @@ pnpm install && pnpm prepare
 ```
 
 Pre-commit hooks run on every commit:
+
 - TypeScript type checking
 - Biome linting
 - Biome formatting with auto-fix

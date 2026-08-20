@@ -11,7 +11,14 @@
  * can `consume` keys — gated on `getEditorText() === ""` so normal typing is untouched.
  */
 
-import { Editor, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  Editor,
+  isKeyRelease,
+  Key,
+  matchesKey,
+  truncateToWidth,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 import { hasAgentBadge, renderAgentName } from "../agent-color.ts";
 import type { AgentManager } from "../agent-manager.ts";
 import type { AgentRecord } from "../types.ts";
@@ -39,14 +46,26 @@ const FINISHED_LINGER_MS = 4000;
 export type FleetUICtx = {
   setWidget(
     key: string,
-    content: undefined | ((tui: any, theme: Theme) => { render(width: number): string[]; invalidate(): void; dispose?(): void }),
+    content:
+      | undefined
+      | ((
+          tui: any,
+          theme: Theme,
+        ) => { render(width: number): string[]; invalidate(): void; dispose?(): void }),
     options?: { placement?: "aboveEditor" | "belowEditor" },
   ): void;
-  onTerminalInput(handler: (data: string) => { consume?: boolean; data?: string } | undefined): () => void;
+  onTerminalInput(
+    handler: (data: string) => { consume?: boolean; data?: string } | undefined,
+  ): () => void;
   getEditorText(): string;
   notify(message: string, type?: "info" | "warning" | "error"): void;
   custom<T>(
-    factory: (tui: any, theme: Theme, keybindings: any, done: (result: T) => void) => { render(width: number): string[]; invalidate(): void; dispose?(): void },
+    factory: (
+      tui: any,
+      theme: Theme,
+      keybindings: any,
+      done: (result: T) => void,
+    ) => { render(width: number): string[]; invalidate(): void; dispose?(): void },
     options?: { overlay?: boolean; overlayOptions?: unknown; onHandle?: (handle: unknown) => void },
   ): Promise<T>;
 };
@@ -105,7 +124,11 @@ export class FleetList {
   private agentActivity: Map<string, AgentActivity>;
   private focusOptions: FleetFocusOptions;
 
-  constructor(manager: AgentManager, agentActivity: Map<string, AgentActivity>, focusOptions: FleetFocusOptions = {}) {
+  constructor(
+    manager: AgentManager,
+    agentActivity: Map<string, AgentActivity>,
+    focusOptions: FleetFocusOptions = {},
+  ) {
     this.manager = manager;
     this.agentActivity = agentActivity;
     this.focusOptions = focusOptions;
@@ -127,7 +150,7 @@ export class FleetList {
     this.ui = ui;
     this.widgetRegistered = false;
     this.tui = undefined;
-    this.inputUnsub = ui.onTerminalInput(data => this.handleKey(data));
+    this.inputUnsub = ui.onTerminalInput((data) => this.handleKey(data));
   }
 
   /** Ensure the re-render timer is running (called when an agent spawns). */
@@ -144,10 +167,16 @@ export class FleetList {
   }
 
   dispose(): void {
-    if (this.timer) { clearInterval(this.timer); this.timer = undefined; }
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
     this.inputUnsub?.();
     this.inputUnsub = undefined;
-    if (this.viewerClose) { this.viewerClose(); this.viewerClose = undefined; }
+    if (this.viewerClose) {
+      this.viewerClose();
+      this.viewerClose = undefined;
+    }
     this.viewingAgentId = undefined;
     if (this.ui && this.widgetRegistered) this.ui.setWidget(FLEET_KEY, undefined);
     this.widgetRegistered = false;
@@ -169,7 +198,10 @@ export class FleetList {
         this.widgetRegistered = false;
         this.tui = undefined;
       }
-      if (this.timer) { clearInterval(this.timer); this.timer = undefined; }
+      if (this.timer) {
+        clearInterval(this.timer);
+        this.timer = undefined;
+      }
       this.active = false;
       this.selectedIndex = 0;
       return;
@@ -179,14 +211,21 @@ export class FleetList {
     this.ensureTimer(); // keep stats ticking whenever the list is shown (e.g. after a re-enable)
 
     if (!this.widgetRegistered) {
-      this.ui.setWidget(FLEET_KEY, (tui, theme) => {
-        this.tui = tui;
-        this.theme = theme;
-        return {
-          render: (w: number) => this.renderBar(w, theme),
-          invalidate: () => { this.widgetRegistered = false; this.tui = undefined; },
-        };
-      }, { placement: "belowEditor" });
+      this.ui.setWidget(
+        FLEET_KEY,
+        (tui, theme) => {
+          this.tui = tui;
+          this.theme = theme;
+          return {
+            render: (w: number) => this.renderBar(w, theme),
+            invalidate: () => {
+              this.widgetRegistered = false;
+              this.tui = undefined;
+            },
+          };
+        },
+        { placement: "belowEditor" },
+      );
       this.widgetRegistered = true;
     } else {
       this.tui?.requestRender();
@@ -205,17 +244,25 @@ export class FleetList {
    */
   private agentRecords(): AgentRecord[] {
     const now = Date.now();
-    return this.manager.listAgents()
-      .filter(a => !a.parentAgentId && a.session && (
-        a.status === "running" || a.status === "queued"
-        || a.id === this.viewingAgentId
-        || (a.completedAt != null && now - a.completedAt < FINISHED_LINGER_MS)
-      ))
+    return this.manager
+      .listAgents()
+      .filter(
+        (a) =>
+          !a.parentAgentId &&
+          a.session &&
+          (a.status === "running" ||
+            a.status === "queued" ||
+            a.id === this.viewingAgentId ||
+            (a.completedAt != null && now - a.completedAt < FINISHED_LINGER_MS)),
+      )
       .sort((a, b) => a.startedAt - b.startedAt);
   }
 
   private roster(): FleetEntry[] {
-    return [{ kind: "main" }, ...this.agentRecords().map(record => ({ kind: "agent" as const, record }))];
+    return [
+      { kind: "main" },
+      ...this.agentRecords().map((record) => ({ kind: "agent" as const, record })),
+    ];
   }
 
   private clampSelection(): void {
@@ -264,14 +311,26 @@ export class FleetList {
       return { consume: true };
     }
     if (matchesKey(data, "up")) {
-      if (this.selectedIndex === 0) { this.deactivate(); return { consume: true }; }
+      if (this.selectedIndex === 0) {
+        this.deactivate();
+        return { consume: true };
+      }
       this.selectedIndex -= 1;
       this.update();
       return { consume: true };
     }
-    if (matchesKey(data, "escape")) { this.deactivate(); return { consume: true }; }
-    if (matchesKey(data, Key.enter)) { this.openSelected(); return { consume: true }; }
-    if (matchesKey(data, "f")) { this.focusSelected(); return { consume: true }; }
+    if (matchesKey(data, "escape")) {
+      this.deactivate();
+      return { consume: true };
+    }
+    if (matchesKey(data, Key.enter)) {
+      this.openSelected();
+      return { consume: true };
+    }
+    if (matchesKey(data, "f")) {
+      this.focusSelected();
+      return { consume: true };
+    }
 
     // Any other key cancels navigation and flows to the editor.
     this.deactivate();
@@ -334,33 +393,39 @@ export class FleetList {
     const activity = this.agentActivity.get(record.id);
     this.viewingAgentId = record.id;
 
-    void this.ui.custom<undefined>(
-      (tui, theme, keybindings, done) => {
-        this.viewerClose = () => done(undefined);
-        return new ConversationViewer(
-          tui,
-          session,
-          record,
-          activity,
-          theme,
-          done,
-          () => {
-            if (this.manager.abort(record.id)) this.ui?.notify(`Stopped "${record.description}".`, "info");
-          },
-          keybindings,
-          (message: string) => this.manager.steer(record.id, message),
-          {
-            onFocus: this.focusOptions.focusAgent
-              ? () => queueMicrotask(() => this.focusOptions.focusAgent?.(record, tui, theme))
-              : undefined,
-          },
-        );
-      },
-      {
-        overlay: true,
-        overlayOptions: { anchor: "center", width: "90%", maxHeight: `${VIEWPORT_HEIGHT_PCT}%` },
-      },
-    ).then(() => this.clearViewer(), () => this.clearViewer());
+    void this.ui
+      .custom<undefined>(
+        (tui, theme, keybindings, done) => {
+          this.viewerClose = () => done(undefined);
+          return new ConversationViewer(
+            tui,
+            session,
+            record,
+            activity,
+            theme,
+            done,
+            () => {
+              if (this.manager.abort(record.id))
+                this.ui?.notify(`Stopped "${record.description}".`, "info");
+            },
+            keybindings,
+            (message: string) => this.manager.steer(record.id, message),
+            {
+              onFocus: this.focusOptions.focusAgent
+                ? () => queueMicrotask(() => this.focusOptions.focusAgent?.(record, tui, theme))
+                : undefined,
+            },
+          );
+        },
+        {
+          overlay: true,
+          overlayOptions: { anchor: "center", width: "90%", maxHeight: `${VIEWPORT_HEIGHT_PCT}%` },
+        },
+      )
+      .then(
+        () => this.clearViewer(),
+        () => this.clearViewer(),
+      );
   }
 
   /** Reset overlay state and return to the list (on close, auto-close, or error). */
@@ -370,7 +435,9 @@ export class FleetList {
     // while the overlay was open. If that agent is gone, leave the index for
     // update()'s clamp to settle.
     if (this.viewingAgentId) {
-      const idx = this.roster().findIndex(e => e.kind === "agent" && e.record.id === this.viewingAgentId);
+      const idx = this.roster().findIndex(
+        (e) => e.kind === "agent" && e.record.id === this.viewingAgentId,
+      );
       if (idx >= 0) this.selectedIndex = idx;
     }
     this.viewerClose = undefined;
@@ -406,7 +473,8 @@ export class FleetList {
     for (let a = start; a < start + visible; a++) {
       lines.push(this.renderAgentRow(a + 1, sel, agents[a].record, width, theme));
     }
-    if (hiddenBelow > 0) lines.push(rightAlign("", theme.fg("dim", `↓ ${hiddenBelow} more`), width));
+    if (hiddenBelow > 0)
+      lines.push(rightAlign("", theme.fg("dim", `↓ ${hiddenBelow} more`), width));
 
     return lines;
   }
@@ -415,20 +483,34 @@ export class FleetList {
     return rosterIndex === sel ? theme.fg("accent", "●") : theme.fg("dim", "○");
   }
 
-  private renderAgentRow(rosterIndex: number, sel: number, record: AgentRecord, width: number, theme: Theme): string {
+  private renderAgentRow(
+    rosterIndex: number,
+    sel: number,
+    record: AgentRecord,
+    width: number,
+    theme: Theme,
+  ): string {
     // The selected row renders in the theme's primary text color so it reads as
     // one selection (#230). A configured badge survives — Claude Code's FleetView
     // keeps the agent color on the selected row too and only bolds it — which also
     // keeps the row's width fixed as the selection moves.
     const selected = rosterIndex === sel;
-    const name = renderAgentName(record.type, theme, selected
-      ? { fallbackColor: "text", bold: hasAgentBadge(record.type) }
-      : { fallbackColor: "muted" });
+    const name = renderAgentName(
+      record.type,
+      theme,
+      selected
+        ? { fallbackColor: "text", bold: hasAgentBadge(record.type) }
+        : { fallbackColor: "muted" },
+    );
     const sideTag = record.sideConversation ? theme.fg("accent", "[btw] ") : "";
-    const workflowTag = record.workflowStepId ? theme.fg("accent", `[wf:${record.workflowStepId}] `) : "";
+    const workflowTag = record.workflowStepId
+      ? theme.fg("accent", `[wf:${record.workflowStepId}] `)
+      : "";
     const description = selected ? theme.fg("text", record.description) : record.description;
     const left = `  ${this.bullet(rosterIndex, sel, theme)} ${sideTag}${workflowTag}${name}  ${description}`;
-    const tokens = getLifetimeTotal(this.agentActivity.get(record.id)?.lifetimeUsage ?? record.lifetimeUsage);
+    const tokens = getLifetimeTotal(
+      this.agentActivity.get(record.id)?.lifetimeUsage ?? record.lifetimeUsage,
+    );
     const elapsedMs = (record.completedAt ?? Date.now()) - record.startedAt; // freezes once finished
     const stats = `${formatFleetElapsed(elapsedMs)} · ${formatFleetTokens(tokens)}`;
     const right = selected ? theme.fg("text", stats) : theme.fg("dim", stats);

@@ -27,31 +27,31 @@
  * recover from a broken compiled module mid-process."
  */
 export interface LazyImport<T> {
-	/** Start (or reuse) the load. A rejected load evicts itself first, so the
-	 * next call retries instead of replaying the same rejection forever. */
-	get(): Promise<T>;
-	/** Test-only: drop the memo unconditionally, independent of settlement. */
-	resetForTests(): void;
+  /** Start (or reuse) the load. A rejected load evicts itself first, so the
+   * next call retries instead of replaying the same rejection forever. */
+  get(): Promise<T>;
+  /** Test-only: drop the memo unconditionally, independent of settlement. */
+  resetForTests(): void;
 }
 
 export function createLazyImport<T>(load: () => Promise<T>): LazyImport<T> {
-	let cached: Promise<T> | undefined;
-	return {
-		get(): Promise<T> {
-			// `Promise.resolve().then(load)` (not a bare `load()`) so a loader
-			// that throws SYNCHRONOUSLY — rather than returning a rejected
-			// promise — still yields a rejected promise instead of throwing out
-			// of `get()` itself. `import(...)` never throws synchronously, but a
-			// caller-supplied `load` is not guaranteed to keep that contract.
-			return (cached ??= Promise.resolve()
-				.then(() => load())
-				.catch((err: unknown) => {
-					cached = undefined;
-					throw err;
-				}));
-		},
-		resetForTests(): void {
-			cached = undefined;
-		},
-	};
+  let cached: Promise<T> | undefined;
+  return {
+    get(): Promise<T> {
+      // `Promise.resolve().then(load)` (not a bare `load()`) so a loader
+      // that throws SYNCHRONOUSLY — rather than returning a rejected
+      // promise — still yields a rejected promise instead of throwing out
+      // of `get()` itself. `import(...)` never throws synchronously, but a
+      // caller-supplied `load` is not guaranteed to keep that contract.
+      return (cached ??= Promise.resolve()
+        .then(() => load())
+        .catch((err: unknown) => {
+          cached = undefined;
+          throw err;
+        }));
+    },
+    resetForTests(): void {
+      cached = undefined;
+    },
+  };
 }

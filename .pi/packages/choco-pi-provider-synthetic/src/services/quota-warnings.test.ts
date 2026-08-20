@@ -1,12 +1,4 @@
-import {
-  afterEach,
-  assert,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectionHint, QuotasResponse } from "../types/quotas";
 import { assessWindow, type QuotaWindow } from "../utils/quotas-severity";
 import { type NotifyFn, QuotaWarningNotifier } from "./quota-warnings";
@@ -63,9 +55,7 @@ describe("QuotaWarningNotifier", () => {
       expect(notifier.shouldNotify("weeklyTokenLimit", "high")).toBe(true);
 
       notifier.markObserved("rollingFiveHourLimit", "high");
-      expect(notifier.shouldNotify("rollingFiveHourLimit", "critical")).toBe(
-        true,
-      );
+      expect(notifier.shouldNotify("rollingFiveHourLimit", "critical")).toBe(true);
     });
 
     it("notifies when a recovered window becomes risky again", () => {
@@ -101,9 +91,7 @@ describe("QuotaWarningNotifier", () => {
       notifier.markObserved("weeklyTokenLimit", "warning");
       expect(notifier.shouldNotify("weeklyTokenLimit", "warning")).toBe(false);
 
-      expect(notifier.shouldNotify("rollingFiveHourLimit", "warning")).toBe(
-        true,
-      );
+      expect(notifier.shouldNotify("rollingFiveHourLimit", "warning")).toBe(true);
     });
 
     it("records recovery so the next risk is a new transition", () => {
@@ -146,9 +134,7 @@ describe("QuotaWarningNotifier", () => {
         },
       };
       const risks = notifier.findHighRiskWindows(quotas);
-      const fiveHourRisk = risks.find(
-        (r) => r.window.label === "Requests / 5h",
-      );
+      const fiveHourRisk = risks.find((r) => r.window.label === "Requests / 5h");
       assert(fiveHourRisk, "fiveHourRisk should exist");
       expect(fiveHourRisk.assessment.severity).toBe("high");
     });
@@ -166,9 +152,7 @@ describe("QuotaWarningNotifier", () => {
         },
       };
       const risks = notifier.findHighRiskWindows(quotas);
-      const fiveHourRisk = risks.find(
-        (r) => r.window.label === "Requests / 5h",
-      );
+      const fiveHourRisk = risks.find((r) => r.window.label === "Requests / 5h");
       assert(fiveHourRisk, "fiveHourRisk should exist");
       expect(fiveHourRisk.assessment.severity).toBe("critical");
     });
@@ -245,9 +229,7 @@ describe("QuotaWarningNotifier", () => {
         limitValue: 100,
         showPace: false,
       };
-      const msg = notifier.formatWarningMessage([
-        { window: w, assessment: assessWindow(w) },
-      ]);
+      const msg = notifier.formatWarningMessage([{ window: w, assessment: assessWindow(w) }]);
       expect(msg).toMatch(/\(high\)/);
     });
 
@@ -418,9 +400,7 @@ describe("QuotaWarningNotifier", () => {
       const notifier = new QuotaWarningNotifier();
       const calls: Array<[string, string]> = [];
       const notify: NotifyFn = (msg, lvl) => calls.push([msg, lvl]);
-      const projections = new Map<string, ProjectionHint>([
-        [FIVE_HOUR_ID, { kind: "stable" }],
-      ]);
+      const projections = new Map<string, ProjectionHint>([[FIVE_HOUR_ID, { kind: "stable" }]]);
 
       notifier.evaluate(quotasAt(92), notify, projections);
       expect(calls).toHaveLength(0);
@@ -432,10 +412,7 @@ describe("QuotaWarningNotifier", () => {
       const calls: Array<[string, string]> = [];
       const notify: NotifyFn = (msg, lvl) => calls.push([msg, lvl]);
       const projections = new Map<string, ProjectionHint>([
-        [
-          FIVE_HOUR_ID,
-          { kind: "projected", usedPercent: 79, horizonMs: 3600_000 },
-        ],
+        [FIVE_HOUR_ID, { kind: "projected", usedPercent: 79, horizonMs: 3600_000 }],
       ]);
 
       notifier.evaluate(quotasAt(82), notify, projections);
@@ -447,10 +424,7 @@ describe("QuotaWarningNotifier", () => {
       const calls: Array<[string, string]> = [];
       const notify: NotifyFn = (msg, lvl) => calls.push([msg, lvl]);
       const projections = new Map<string, ProjectionHint>([
-        [
-          FIVE_HOUR_ID,
-          { kind: "projected", usedPercent: 86, horizonMs: 3600_000 },
-        ],
+        [FIVE_HOUR_ID, { kind: "projected", usedPercent: 86, horizonMs: 3600_000 }],
       ]);
 
       notifier.evaluate(quotasAt(82), notify, projections);
@@ -464,10 +438,7 @@ describe("QuotaWarningNotifier", () => {
       const calls: Array<[string, string]> = [];
       const notify: NotifyFn = (msg, lvl) => calls.push([msg, lvl]);
       const projections = new Map<string, ProjectionHint>([
-        [
-          FIVE_HOUR_ID,
-          { kind: "projected", usedPercent: 100, horizonMs: 3600_000 },
-        ],
+        [FIVE_HOUR_ID, { kind: "projected", usedPercent: 100, horizonMs: 3600_000 }],
       ]);
 
       notifier.evaluate(quotasAt(82), notify, projections);

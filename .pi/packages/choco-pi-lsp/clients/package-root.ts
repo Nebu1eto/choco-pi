@@ -15,30 +15,27 @@ const packageRootCache = new Map<string, string>();
  * Credit: alexx-ftw (PR #1)
  */
 export function getPackageRoot(importMetaUrl: string): string {
-	const cached = packageRootCache.get(importMetaUrl);
-	if (cached) return cached;
+  const cached = packageRootCache.get(importMetaUrl);
+  if (cached) return cached;
 
-	let current = path.dirname(fileURLToPath(importMetaUrl));
-	while (true) {
-		if (fs.existsSync(path.join(current, "package.json"))) {
-			packageRootCache.set(importMetaUrl, current);
-			return current;
-		}
-		const parent = path.dirname(current);
-		if (parent === current) {
-			packageRootCache.set(importMetaUrl, current);
-			return current;
-		}
-		current = parent;
-	}
+  let current = path.dirname(fileURLToPath(importMetaUrl));
+  while (true) {
+    if (fs.existsSync(path.join(current, "package.json"))) {
+      packageRootCache.set(importMetaUrl, current);
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      packageRootCache.set(importMetaUrl, current);
+      return current;
+    }
+    current = parent;
+  }
 }
 
 /**
  * Resolve a path relative to the installed package root.
  */
-export function resolvePackagePath(
-	importMetaUrl: string,
-	...segments: string[]
-): string {
-	return path.join(getPackageRoot(importMetaUrl), ...segments);
+export function resolvePackagePath(importMetaUrl: string, ...segments: string[]): string {
+  return path.join(getPackageRoot(importMetaUrl), ...segments);
 }

@@ -24,7 +24,10 @@ const COMMANDS = ["pause", "resume", "resume cancel", "clear", "copy"] as const;
 
 type CopyText = (text: string) => Promise<ClipboardCopyResult>;
 
-export type GoalCommandPi = Pick<ExtensionAPI, "registerCommand" | "sendMessage" | "sendUserMessage">;
+export type GoalCommandPi = Pick<
+  ExtensionAPI,
+  "registerCommand" | "sendMessage" | "sendUserMessage"
+>;
 
 export interface GoalCommandContext {
   hasUI: boolean;
@@ -39,7 +42,11 @@ function completions(prefix: string) {
   }));
 }
 
-function queueGoalTurn(pi: GoalCommandPi, goal: ThreadGoal, kind: "command_start" | "command_resume"): void {
+function queueGoalTurn(
+  pi: GoalCommandPi,
+  goal: ThreadGoal,
+  kind: "command_start" | "command_resume",
+): void {
   pi.sendMessage(
     {
       customType: CUSTOM_ENTRY_TYPE,
@@ -88,7 +95,9 @@ export async function handleGoalCommand(
     const result = await copyText(goal.objective);
     if (!result.ok) {
       ctx.ui.notify(
-        result.message ? `Could not copy goal objective: ${result.message}` : "Could not copy goal objective.",
+        result.message
+          ? `Could not copy goal objective: ${result.message}`
+          : "Could not copy goal objective.",
         "error",
       );
       return;

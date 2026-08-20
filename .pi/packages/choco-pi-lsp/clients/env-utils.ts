@@ -17,9 +17,9 @@
  * Replaces the boolean previously duplicated verbatim in ~10 logger modules.
  */
 export function isTestMode(): boolean {
-	if (process.env.CHOCO_PI_LSP_TEST_MODE === "1") return true;
-	if (process.env.VITEST && process.env.CHOCO_PI_LSP_TEST_MODE !== "0") return true;
-	return false;
+  if (process.env.CHOCO_PI_LSP_TEST_MODE === "1") return true;
+  if (process.env.VITEST && process.env.CHOCO_PI_LSP_TEST_MODE !== "0") return true;
+  return false;
 }
 
 /**
@@ -40,8 +40,8 @@ export function isTestMode(): boolean {
  * ```
  */
 export function toPositiveFinite(value: unknown): number {
-	const num = typeof value === "number" ? value : Number(value);
-	return Number.isFinite(num) && num > 0 ? num : 0;
+  const num = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(num) && num > 0 ? num : 0;
 }
 
 /**
@@ -68,19 +68,19 @@ export function toPositiveFinite(value: unknown): number {
  * ```
  */
 export function lazyEnvNumber(
-	envName: string,
-	fallback: number,
+  envName: string,
+  fallback: number,
 ): { get(): number; _resetForTests(): void } {
-	let memo: number | undefined;
-	return {
-		get(): number {
-			if (memo !== undefined) return memo;
-			const envValue = toPositiveFinite(process.env[envName]);
-			memo = envValue > 0 ? envValue : fallback;
-			return memo;
-		},
-		_resetForTests(): void {
-			memo = undefined;
-		},
-	};
+  let memo: number | undefined;
+  return {
+    get(): number {
+      if (memo !== undefined) return memo;
+      const envValue = toPositiveFinite(process.env[envName]);
+      memo = envValue > 0 ? envValue : fallback;
+      return memo;
+    },
+    _resetForTests(): void {
+      memo = undefined;
+    },
+  };
 }

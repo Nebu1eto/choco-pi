@@ -40,9 +40,15 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
   const orchestratorSubmits: string[] = [];
   const editor = {
     text: "orchestrator draft",
-    onSubmit(text: string) { orchestratorSubmits.push(text); },
-    getText() { return this.text; },
-    setText(text: string) { this.text = text; },
+    onSubmit(text: string) {
+      orchestratorSubmits.push(text);
+    },
+    getText() {
+      return this.text;
+    },
+    setText(text: string) {
+      this.text = text;
+    },
     addToHistory(_text: string) {},
     handleInput(data: string) {
       if (data === "\r") this.onSubmit?.(this.text);
@@ -54,7 +60,9 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
     children: [document, editorContainer],
     terminal: { columns: 100, rows: 40 },
     getFocusedComponent: () => editor,
-    requestRender(force?: boolean) { renderRequests.push(force === true); },
+    requestRender(force?: boolean) {
+      renderRequests.push(force === true);
+    },
   };
 
   const steerCalls: Array<{ id: string; message: string }> = [];
@@ -80,7 +88,9 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
       if (content === undefined) widgets.delete(key);
       else widgets.set(key, content);
     },
-    notify(message) { notifications.push(message); },
+    notify(message) {
+      notifications.push(message);
+    },
   });
 
   assert.equal(controller.focus(record, tui as never, theme as never), true);
@@ -91,7 +101,10 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
   assert.equal(widgets.has("subagent-focus"), true);
   assert.equal(editor.getText(), "");
 
-  session.messages.push({ role: "assistant", content: [{ type: "text", text: "streamed progress" }] });
+  session.messages.push({
+    role: "assistant",
+    content: [{ type: "text", text: "streamed progress" }],
+  });
   for (const listener of listeners) listener();
   assert.match(document.render(100).join("\n"), /streamed progress/);
   assert.equal(renderRequests.length > 0, true);
@@ -106,7 +119,7 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
   record.status = "completed";
   editor.setText("follow up");
   editor.handleInput("\r");
-  await new Promise(resolve => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(orchestratorSubmits, []);
   assert.equal(editor.getText(), "");
   assert.deepEqual(resumeCalls, [{ id: "agent-7", message: "follow up" }]);
@@ -157,12 +170,9 @@ test("focused running-agent navigation does not reopen a key-consuming selector"
 
 test("patch cleanup leaves a newer extension wrapper installed", () => {
   const target = { render: () => ["main"] };
-  const cleanup = installMethodPatch(
-    target,
-    "render",
-    "focused-conversation-render",
-    () => ["focused"],
-  );
+  const cleanup = installMethodPatch(target, "render", "focused-conversation-render", () => [
+    "focused",
+  ]);
   const focusedWrapper = target.render;
   const newerWrapper = () => ["newer", ...focusedWrapper()];
   target.render = newerWrapper;

@@ -21,11 +21,11 @@ import { logBusEvent } from "./bus-events-logger.js";
 import { normalizeFilePath } from "./path-utils.js";
 import { appendRecentTouches } from "./recent-touches.js";
 import {
-	createLiveBusEmitter,
-	recordStaleBusFailure,
-	resolveLiveBusEmitter,
-	type BusEmitFn,
-	type BusEmitGetter,
+  createLiveBusEmitter,
+  recordStaleBusFailure,
+  resolveLiveBusEmitter,
+  type BusEmitFn,
+  type BusEmitGetter,
 } from "./live-bus-emitter.js";
 
 export const BUS_FILES_TOUCHED_EVENT = "pilens:files:touched";
@@ -41,29 +41,29 @@ export type FilesTouchedReason = "autofix" | "format";
  * same as every other field on this payload).
  */
 export interface FixProvenanceEntry {
-	/** Absolute, normalized path (same normalization as `paths`). */
-	path: string;
-	/** Tool that made the fix (e.g. "prettier", "ruff", "lsp-quickfix"). */
-	tool: string;
-	/** Rule/category id, when applicable. */
-	ruleId?: string;
-	kind: "autofix" | "format";
+  /** Absolute, normalized path (same normalization as `paths`). */
+  path: string;
+  /** Tool that made the fix (e.g. "prettier", "ruff", "lsp-quickfix"). */
+  tool: string;
+  /** Rule/category id, when applicable. */
+  ruleId?: string;
+  kind: "autofix" | "format";
 }
 
 export interface FilesTouchedPayload {
-	v: typeof BUS_FILES_TOUCHED_VERSION;
-	source: "choco-pi-lsp";
-	reason: FilesTouchedReason;
-	paths: string[];
-	cwd: string;
-	/**
-	 * #502: optional fix-provenance breakdown for this batch. Best-effort
-	 * attribution — some producers (e.g. multi-tool autofix runs) can only
-	 * attribute at the tool level across the whole changed-file set, not
-	 * confirm which specific file each tool changed; see call sites in
-	 * clients/pipeline.ts / clients/runtime-agent-end.ts for per-site notes.
-	 */
-	fixes?: FixProvenanceEntry[];
+  v: typeof BUS_FILES_TOUCHED_VERSION;
+  source: "choco-pi-lsp";
+  reason: FilesTouchedReason;
+  paths: string[];
+  cwd: string;
+  /**
+   * #502: optional fix-provenance breakdown for this batch. Best-effort
+   * attribution — some producers (e.g. multi-tool autofix runs) can only
+   * attribute at the tool level across the whole changed-file set, not
+   * confirm which specific file each tool changed; see call sites in
+   * clients/pipeline.ts / clients/runtime-agent-end.ts for per-site notes.
+   */
+  fixes?: FixProvenanceEntry[];
 }
 
 const liveEmitter = createLiveBusEmitter();
@@ -83,20 +83,20 @@ let hasLoggedDisabled = false;
  * no `pi.events`).
  */
 export function wireBusEmitter(emitFn: BusEmitFn | undefined): void {
-	liveEmitter.wire(emitFn);
+  liveEmitter.wire(emitFn);
 }
 
 export function wireBusEmitterGetter(getter: BusEmitGetter | undefined): void {
-	liveEmitter.wireGetter(getter);
+  liveEmitter.wireGetter(getter);
 }
 
 /** Test-only: reset module state between test files. */
 export function _resetForTests(): void {
-	liveEmitter.reset();
-	hasLoggedFailure = false;
-	hasLoggedUnwired = false;
-	hasLoggedDisabled = false;
-	_envCache = undefined;
+  liveEmitter.reset();
+  hasLoggedFailure = false;
+  hasLoggedUnwired = false;
+  hasLoggedDisabled = false;
+  _envCache = undefined;
 }
 
 let _envCache: boolean | undefined;
@@ -107,30 +107,30 @@ let _envCache: boolean | undefined;
  * to disable publishing outright.
  */
 export function isBusPublishEnabled(): boolean {
-	if (_envCache === undefined) {
-		_envCache = process.env.CHOCO_PI_LSP_BUS_PUBLISH !== "0";
-	}
-	return _envCache;
+  if (_envCache === undefined) {
+    _envCache = process.env.CHOCO_PI_LSP_BUS_PUBLISH !== "0";
+  }
+  return _envCache;
 }
 
 export interface PublishFilesTouchedArgs {
-	reason: FilesTouchedReason;
-	paths: string[];
-	cwd: string;
-	/**
-	 * Loop guard: set when the write being reported was itself triggered by
-	 * an INGESTED bus event (something choco-pi-lsp consumed from `pi.events`).
-	 * choco-pi-lsp does not consume any events today (see #482 non-goals), so this
-	 * is always false in practice — the flag exists so a future consumer
-	 * can't accidentally wire a publish -> react -> publish cycle. When true,
-	 * this is a structural no-op regardless of the kill switch or wiring.
-	 */
-	origin?: "bus";
-	/** Stable session id, for the #492 cross-process record's `sessionId` field. */
-	sessionId?: string;
-	/** #502: optional fix-provenance breakdown for this batch (paths pre-normalization; normalized alongside `paths` below). */
-	fixes?: FixProvenanceEntry[];
-	dbg?: (msg: string) => void;
+  reason: FilesTouchedReason;
+  paths: string[];
+  cwd: string;
+  /**
+   * Loop guard: set when the write being reported was itself triggered by
+   * an INGESTED bus event (something choco-pi-lsp consumed from `pi.events`).
+   * choco-pi-lsp does not consume any events today (see #482 non-goals), so this
+   * is always false in practice — the flag exists so a future consumer
+   * can't accidentally wire a publish -> react -> publish cycle. When true,
+   * this is a structural no-op regardless of the kill switch or wiring.
+   */
+  origin?: "bus";
+  /** Stable session id, for the #492 cross-process record's `sessionId` field. */
+  sessionId?: string;
+  /** #502: optional fix-provenance breakdown for this batch (paths pre-normalization; normalized alongside `paths` below). */
+  fixes?: FixProvenanceEntry[];
+  dbg?: (msg: string) => void;
 }
 
 /**
@@ -151,88 +151,88 @@ export interface PublishFilesTouchedArgs {
  * and dbg-logged (never break the publish path).
  */
 export function publishFilesTouched(args: PublishFilesTouchedArgs): void {
-	if (args.origin === "bus") return;
-	if (args.paths.length === 0) return;
-	if (!isBusPublishEnabled()) {
-		if (!hasLoggedDisabled) {
-			hasLoggedDisabled = true;
-			logBusEvent({
-				event: BUS_FILES_TOUCHED_EVENT,
-				outcome: "skipped_disabled",
-				cwd: normalizeFilePath(args.cwd),
-				reason: args.reason,
-			});
-		}
-		return;
-	}
+  if (args.origin === "bus") return;
+  if (args.paths.length === 0) return;
+  if (!isBusPublishEnabled()) {
+    if (!hasLoggedDisabled) {
+      hasLoggedDisabled = true;
+      logBusEvent({
+        event: BUS_FILES_TOUCHED_EVENT,
+        outcome: "skipped_disabled",
+        cwd: normalizeFilePath(args.cwd),
+        reason: args.reason,
+      });
+    }
+    return;
+  }
 
-	void appendRecentTouches({
-		cwd: args.cwd,
-		reason: args.reason,
-		paths: args.paths,
-		sessionId: args.sessionId,
-	}).catch((err) => {
-		args.dbg?.(`bus-publish: recent-touches append failed: ${err}`);
-	});
+  void appendRecentTouches({
+    cwd: args.cwd,
+    reason: args.reason,
+    paths: args.paths,
+    sessionId: args.sessionId,
+  }).catch((err) => {
+    args.dbg?.(`bus-publish: recent-touches append failed: ${err}`);
+  });
 
-	const resolution = resolveLiveBusEmitter(liveEmitter, () => ({
-		event: BUS_FILES_TOUCHED_EVENT,
-		cwd: normalizeFilePath(args.cwd),
-		reason: args.reason,
-	}));
-	if (resolution.outcome === "stale-session") return;
-	if (resolution.outcome === "unwired") {
-		if (!hasLoggedUnwired) {
-			hasLoggedUnwired = true;
-			logBusEvent({
-				event: BUS_FILES_TOUCHED_EVENT,
-				outcome: "skipped_unwired",
-				cwd: normalizeFilePath(args.cwd),
-				reason: args.reason,
-			});
-		}
-		return;
-	}
-	const busEmit = resolution.emit;
+  const resolution = resolveLiveBusEmitter(liveEmitter, () => ({
+    event: BUS_FILES_TOUCHED_EVENT,
+    cwd: normalizeFilePath(args.cwd),
+    reason: args.reason,
+  }));
+  if (resolution.outcome === "stale-session") return;
+  if (resolution.outcome === "unwired") {
+    if (!hasLoggedUnwired) {
+      hasLoggedUnwired = true;
+      logBusEvent({
+        event: BUS_FILES_TOUCHED_EVENT,
+        outcome: "skipped_unwired",
+        cwd: normalizeFilePath(args.cwd),
+        reason: args.reason,
+      });
+    }
+    return;
+  }
+  const busEmit = resolution.emit;
 
-	try {
-		const payload: FilesTouchedPayload = {
-			v: BUS_FILES_TOUCHED_VERSION,
-			source: "choco-pi-lsp",
-			reason: args.reason,
-			paths: args.paths.map((p) => normalizeFilePath(p)),
-			cwd: normalizeFilePath(args.cwd),
-		};
-		if (args.fixes && args.fixes.length > 0) {
-			payload.fixes = args.fixes.map((f) => ({
-				...f,
-				path: normalizeFilePath(f.path),
-			}));
-		}
-		busEmit(BUS_FILES_TOUCHED_EVENT, payload);
-		hasLoggedFailure = false;
-		logBusEvent({
-			event: BUS_FILES_TOUCHED_EVENT,
-			outcome: "emitted",
-			cwd: payload.cwd,
-			reason: args.reason,
-			fileCount: payload.paths.length,
-		});
-	} catch (err) {
-		logBusEvent({
-			event: BUS_FILES_TOUCHED_EVENT,
-			outcome: "emit_failed",
-			cwd: normalizeFilePath(args.cwd),
-			reason: args.reason,
-			error: String(err),
-			ctxSource: resolution.ctxSource,
-		});
-		if (!hasLoggedFailure) {
-			hasLoggedFailure = true;
-			recordStaleBusFailure(BUS_FILES_TOUCHED_EVENT, err);
-			args.dbg?.(
-				`bus-publish: pilens:files:touched emit failed (further failures suppressed): ${err}`,
-			);
-		}
-	}
+  try {
+    const payload: FilesTouchedPayload = {
+      v: BUS_FILES_TOUCHED_VERSION,
+      source: "choco-pi-lsp",
+      reason: args.reason,
+      paths: args.paths.map((p) => normalizeFilePath(p)),
+      cwd: normalizeFilePath(args.cwd),
+    };
+    if (args.fixes && args.fixes.length > 0) {
+      payload.fixes = args.fixes.map((f) => ({
+        ...f,
+        path: normalizeFilePath(f.path),
+      }));
+    }
+    busEmit(BUS_FILES_TOUCHED_EVENT, payload);
+    hasLoggedFailure = false;
+    logBusEvent({
+      event: BUS_FILES_TOUCHED_EVENT,
+      outcome: "emitted",
+      cwd: payload.cwd,
+      reason: args.reason,
+      fileCount: payload.paths.length,
+    });
+  } catch (err) {
+    logBusEvent({
+      event: BUS_FILES_TOUCHED_EVENT,
+      outcome: "emit_failed",
+      cwd: normalizeFilePath(args.cwd),
+      reason: args.reason,
+      error: String(err),
+      ctxSource: resolution.ctxSource,
+    });
+    if (!hasLoggedFailure) {
+      hasLoggedFailure = true;
+      recordStaleBusFailure(BUS_FILES_TOUCHED_EVENT, err);
+      args.dbg?.(
+        `bus-publish: pilens:files:touched emit failed (further failures suppressed): ${err}`,
+      );
+    }
+  }
 }

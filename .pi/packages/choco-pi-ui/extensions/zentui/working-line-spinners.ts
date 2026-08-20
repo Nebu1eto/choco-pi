@@ -36,19 +36,19 @@ import type { WorkingLineSpinner } from "./config";
 
 /** Spinner definitions contain frames only; spinnerIntervalMs remains user-controlled. */
 export const WORKING_LINE_SPINNERS = {
-	braille: {
-		frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
-	},
-	"star-bloom": {
-		frames: ["·", "✦", "✧", "✶", "✧", "✦"],
-	},
-	pinwheel: {
-		frames: ["-", "\\", "|", "/"],
-	},
-	"claude-inspired": {
-		frames: ["·", "✢", "✳", "✶", "✻", "✽"],
-	},
-	pulse: {
-		frames: ["⠀⠶⠀", "⠰⣿⠆", "⢾⣉⡷", "⣏⠀⣹", "⡁⠀⢈"],
-	},
+  braille: {
+    frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+  },
+  "star-bloom": {
+    frames: ["·", "✦", "✧", "✶", "✧", "✦"],
+  },
+  pinwheel: {
+    frames: ["-", "\\", "|", "/"],
+  },
+  "claude-inspired": {
+    frames: ["·", "✢", "✳", "✶", "✻", "✽"],
+  },
+  pulse: {
+    frames: ["⠀⠶⠀", "⠰⣿⠆", "⢾⣉⡷", "⣏⠀⣹", "⡁⠀⢈"],
+  },
 } as const satisfies Record<WorkingLineSpinner, { frames: readonly string[] }>;

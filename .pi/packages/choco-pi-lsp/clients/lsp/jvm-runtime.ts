@@ -16,10 +16,10 @@ import { existsSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-	classifyProbeFailure,
-	createAvailabilityLatch,
-	logAvailabilityDecision,
-	startHostStallSampler,
+  classifyProbeFailure,
+  createAvailabilityLatch,
+  logAvailabilityDecision,
+  startHostStallSampler,
 } from "../dispatch/runners/utils/availability-policy.js";
 import { getGlobalPiLensDir } from "../file-utils.js";
 import { safeSpawnAsync } from "../safe-spawn.js";
@@ -35,10 +35,10 @@ const MIN_JAVA_MAJOR = 17;
  * (`<dir>/bin/java`) or a macOS bundle (`<dir>/Contents/Home/bin/java`).
  */
 function jdkHomeFrom(dir: string): string | undefined {
-	if (existsSync(path.join(dir, "bin", JAVA_EXE))) return dir;
-	const macHome = path.join(dir, "Contents", "Home");
-	if (existsSync(path.join(macHome, "bin", JAVA_EXE))) return macHome;
-	return undefined;
+  if (existsSync(path.join(dir, "bin", JAVA_EXE))) return dir;
+  const macHome = path.join(dir, "Contents", "Home");
+  if (existsSync(path.join(macHome, "bin", JAVA_EXE))) return macHome;
+  return undefined;
 }
 
 /**
@@ -47,65 +47,65 @@ function jdkHomeFrom(dir: string): string | undefined {
  * when unparseable (still a usable candidate, just lowest priority).
  */
 function parseMajorVersion(name: string): number {
-	// Legacy "1.8.0" scheme (Java 8 and earlier): a "1." NOT preceded by another
-	// digit (so it never false-matches inside "21.0.11" or "jdk-11").
-	const legacy = name.match(/(?<!\d)1\.(\d+)/);
-	if (legacy) return Number.parseInt(legacy[1], 10);
-	// Modern scheme: the first 1–2 digit run at a non-digit boundary (jdk-21 → 21).
-	const modern = name.match(/(?<!\d)(\d{1,2})/);
-	return modern ? Number.parseInt(modern[1], 10) : 0;
+  // Legacy "1.8.0" scheme (Java 8 and earlier): a "1." NOT preceded by another
+  // digit (so it never false-matches inside "21.0.11" or "jdk-11").
+  const legacy = name.match(/(?<!\d)1\.(\d+)/);
+  if (legacy) return Number.parseInt(legacy[1], 10);
+  // Modern scheme: the first 1–2 digit run at a non-digit boundary (jdk-21 → 21).
+  const modern = name.match(/(?<!\d)(\d{1,2})/);
+  return modern ? Number.parseInt(modern[1], 10) : 0;
 }
 
 /** Immediate child directories of `base`, or [] if `base` is absent/unreadable. */
 function childDirs(base: string): string[] {
-	try {
-		return readdirSync(base, { withFileTypes: true })
-			.filter((e) => e.isDirectory() || e.isSymbolicLink())
-			.map((e) => path.join(base, e.name));
-	} catch {
-		return [];
-	}
+  try {
+    return readdirSync(base, { withFileTypes: true })
+      .filter((e) => e.isDirectory() || e.isSymbolicLink())
+      .map((e) => path.join(base, e.name));
+  } catch {
+    return [];
+  }
 }
 
 /** Per-platform roots whose immediate children are individual JDK installs. */
 function candidateRoots(): string[] {
-	const home = os.homedir();
-	const roots: string[] = [];
-	// JetBrains and choco-pi-lsp managed (Tier 2 download target) — all platforms.
-	roots.push(path.join(home, ".jdks"));
-	roots.push(path.join(getGlobalPiLensDir(), "tools"));
+  const home = os.homedir();
+  const roots: string[] = [];
+  // JetBrains and choco-pi-lsp managed (Tier 2 download target) — all platforms.
+  roots.push(path.join(home, ".jdks"));
+  roots.push(path.join(getGlobalPiLensDir(), "tools"));
 
-	if (process.platform === "win32") {
-		const progFiles = [
-			process.env.ProgramFiles,
-			process.env["ProgramFiles(x86)"],
-			process.env.ProgramW6432,
-			path.join(process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "Programs"),
-		].filter((p): p is string => Boolean(p));
-		for (const base of progFiles) {
-			roots.push(path.join(base, "Eclipse Adoptium"));
-			roots.push(path.join(base, "Java"));
-			roots.push(path.join(base, "Microsoft"));
-			roots.push(path.join(base, "Zulu"));
-			roots.push(path.join(base, "Amazon Corretto"));
-			roots.push(path.join(base, "BellSoft"));
-		}
-	} else if (process.platform === "darwin") {
-		roots.push("/Library/Java/JavaVirtualMachines");
-		roots.push(path.join(home, "Library", "Java", "JavaVirtualMachines"));
-		roots.push("/opt/homebrew/opt");
-		roots.push("/usr/local/opt");
-	} else {
-		roots.push("/usr/lib/jvm");
-		roots.push("/usr/java");
-		roots.push("/opt/java");
-	}
-	return roots;
+  if (process.platform === "win32") {
+    const progFiles = [
+      process.env.ProgramFiles,
+      process.env["ProgramFiles(x86)"],
+      process.env.ProgramW6432,
+      path.join(process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "Programs"),
+    ].filter((p): p is string => Boolean(p));
+    for (const base of progFiles) {
+      roots.push(path.join(base, "Eclipse Adoptium"));
+      roots.push(path.join(base, "Java"));
+      roots.push(path.join(base, "Microsoft"));
+      roots.push(path.join(base, "Zulu"));
+      roots.push(path.join(base, "Amazon Corretto"));
+      roots.push(path.join(base, "BellSoft"));
+    }
+  } else if (process.platform === "darwin") {
+    roots.push("/Library/Java/JavaVirtualMachines");
+    roots.push(path.join(home, "Library", "Java", "JavaVirtualMachines"));
+    roots.push("/opt/homebrew/opt");
+    roots.push("/usr/local/opt");
+  } else {
+    roots.push("/usr/lib/jvm");
+    roots.push("/usr/java");
+    roots.push("/opt/java");
+  }
+  return roots;
 }
 
 interface JdkCandidate {
-	home: string;
-	major: number;
+  home: string;
+  major: number;
 }
 
 /**
@@ -114,31 +114,31 @@ interface JdkCandidate {
  * stat/readdir — no spawning, no network.
  */
 export function discoverJdkHome(
-	roots: string[] = candidateRoots(),
-	javaHome: string | undefined = process.env.JAVA_HOME,
+  roots: string[] = candidateRoots(),
+  javaHome: string | undefined = process.env.JAVA_HOME,
 ): string | undefined {
-	const found: JdkCandidate[] = [];
+  const found: JdkCandidate[] = [];
 
-	if (javaHome) {
-		const resolved = jdkHomeFrom(javaHome);
-		// Trust an explicit JAVA_HOME regardless of how its name parses.
-		if (resolved) found.push({ home: resolved, major: Number.MAX_SAFE_INTEGER });
-	}
+  if (javaHome) {
+    const resolved = jdkHomeFrom(javaHome);
+    // Trust an explicit JAVA_HOME regardless of how its name parses.
+    if (resolved) found.push({ home: resolved, major: Number.MAX_SAFE_INTEGER });
+  }
 
-	for (const root of roots) {
-		for (const dir of childDirs(root)) {
-			const resolved = jdkHomeFrom(dir);
-			if (!resolved) continue;
-			found.push({ home: resolved, major: parseMajorVersion(path.basename(dir)) });
-		}
-	}
+  for (const root of roots) {
+    for (const dir of childDirs(root)) {
+      const resolved = jdkHomeFrom(dir);
+      if (!resolved) continue;
+      found.push({ home: resolved, major: parseMajorVersion(path.basename(dir)) });
+    }
+  }
 
-	// Require a parseable major ≥ 17 (jdtls's floor). An explicit JAVA_HOME is
-	// stamped MAX above, so it always passes regardless of how its name parses.
-	const usable = found.filter((c) => c.major >= MIN_JAVA_MAJOR);
-	if (usable.length === 0) return undefined;
-	usable.sort((a, b) => b.major - a.major);
-	return usable[0].home;
+  // Require a parseable major ≥ 17 (jdtls's floor). An explicit JAVA_HOME is
+  // stamped MAX above, so it always passes regardless of how its name parses.
+  const usable = found.filter((c) => c.major >= MIN_JAVA_MAJOR);
+  if (usable.length === 0) return undefined;
+  usable.sort((a, b) => b.major - a.major);
+  return usable[0].home;
 }
 
 let _cachedEnv: { value: NodeJS.ProcessEnv | undefined } | undefined;
@@ -163,9 +163,9 @@ const javaAvailabilityLatch = createAvailabilityLatch();
 let inFlightJavaProbe: Promise<boolean | undefined> | null = null;
 
 export function _resetJvmRuntimeCacheForTests(): void {
-	_cachedEnv = undefined;
-	javaAvailabilityLatch.reset();
-	inFlightJavaProbe = null;
+  _cachedEnv = undefined;
+  javaAvailabilityLatch.reset();
+  inFlightJavaProbe = null;
 }
 
 /**
@@ -187,90 +187,87 @@ export function _resetJvmRuntimeCacheForTests(): void {
  * `outcome` distinguishes the two; a durable verdict is never `"transient"`.
  */
 function probeJavaOnPath(): Promise<boolean | undefined> {
-	const memo = javaAvailabilityLatch.read();
-	if (memo !== null) {
-		if (javaAvailabilityLatch.getOutcome() === "transient") {
-			// Served from the memo, but the cooldown from the earlier stall
-			// hasn't expired — this is NOT a durable verdict. Log it (otherwise
-			// this state leaves zero record in latency.log) and surface
-			// `undefined` so the caller never writes the session cache.
-			logAvailabilityDecision({
-				tool: "java",
-				verdict: "unavailable",
-				outcome: "transient",
-				cause: javaAvailabilityLatch.getCause() ?? "probe-timeout",
-				elapsedMs: 0,
-				latched: false,
-				retryAfterMs: Math.max(
-					0,
-					javaAvailabilityLatch.getRetryAtMs() - Date.now(),
-				),
-				budgetMs: JAVA_PROBE_TIMEOUT_MS,
-			});
-			return Promise.resolve(undefined);
-		}
-		return Promise.resolve(memo);
-	}
+  const memo = javaAvailabilityLatch.read();
+  if (memo !== null) {
+    if (javaAvailabilityLatch.getOutcome() === "transient") {
+      // Served from the memo, but the cooldown from the earlier stall
+      // hasn't expired — this is NOT a durable verdict. Log it (otherwise
+      // this state leaves zero record in latency.log) and surface
+      // `undefined` so the caller never writes the session cache.
+      logAvailabilityDecision({
+        tool: "java",
+        verdict: "unavailable",
+        outcome: "transient",
+        cause: javaAvailabilityLatch.getCause() ?? "probe-timeout",
+        elapsedMs: 0,
+        latched: false,
+        retryAfterMs: Math.max(0, javaAvailabilityLatch.getRetryAtMs() - Date.now()),
+        budgetMs: JAVA_PROBE_TIMEOUT_MS,
+      });
+      return Promise.resolve(undefined);
+    }
+    return Promise.resolve(memo);
+  }
 
-	if (inFlightJavaProbe) return inFlightJavaProbe;
-	inFlightJavaProbe = runJavaProbe().finally(() => {
-		inFlightJavaProbe = null;
-	});
-	return inFlightJavaProbe;
+  if (inFlightJavaProbe) return inFlightJavaProbe;
+  inFlightJavaProbe = runJavaProbe().finally(() => {
+    inFlightJavaProbe = null;
+  });
+  return inFlightJavaProbe;
 }
 
 /** The actual `where`/`which java` spawn + classification. Never call this
  * directly — go through `probeJavaOnPath()`, which memoizes and dedupes it. */
 async function runJavaProbe(): Promise<boolean | undefined> {
-	const finder = process.platform === "win32" ? "where" : "which";
-	const startedAt = Date.now();
-	const sampler = startHostStallSampler();
-	let result: Awaited<ReturnType<typeof safeSpawnAsync>>;
-	let hostStallMs: number;
-	try {
-		result = await safeSpawnAsync(finder, ["java"], {
-			timeout: JAVA_PROBE_TIMEOUT_MS,
-		});
-	} finally {
-		hostStallMs = sampler.stop();
-	}
-	const elapsedMs = Date.now() - startedAt;
+  const finder = process.platform === "win32" ? "where" : "which";
+  const startedAt = Date.now();
+  const sampler = startHostStallSampler();
+  let result: Awaited<ReturnType<typeof safeSpawnAsync>>;
+  let hostStallMs: number;
+  try {
+    result = await safeSpawnAsync(finder, ["java"], {
+      timeout: JAVA_PROBE_TIMEOUT_MS,
+    });
+  } finally {
+    hostStallMs = sampler.stop();
+  }
+  const elapsedMs = Date.now() - startedAt;
 
-	if (result.status === 0 && !result.error) {
-		javaAvailabilityLatch.noteAvailable();
-		logAvailabilityDecision({
-			tool: "java",
-			verdict: "available",
-			outcome: "success",
-			cause: "ok",
-			elapsedMs,
-			latched: true,
-			hostStallMs,
-			budgetMs: JAVA_PROBE_TIMEOUT_MS,
-		});
-		return true;
-	}
+  if (result.status === 0 && !result.error) {
+    javaAvailabilityLatch.noteAvailable();
+    logAvailabilityDecision({
+      tool: "java",
+      verdict: "available",
+      outcome: "success",
+      cause: "ok",
+      elapsedMs,
+      latched: true,
+      hostStallMs,
+      budgetMs: JAVA_PROBE_TIMEOUT_MS,
+    });
+    return true;
+  }
 
-	// A `where`/`which` that ran fine and found nothing is a genuine absence,
-	// same as a pre-existing #1496/#1467 sibling; anything else (timeout,
-	// abort, host stall) is transient and must not latch.
-	const { outcome, cause } = classifyProbeFailure(result, {
-		hostStallMs,
-		unclassifiedFailureOutcome: "missing",
-	});
-	const retryAfterMs = javaAvailabilityLatch.noteUnavailable(outcome, cause);
-	logAvailabilityDecision({
-		tool: "java",
-		verdict: "unavailable",
-		outcome,
-		cause,
-		elapsedMs,
-		latched: outcome !== "transient",
-		hostStallMs,
-		...(retryAfterMs > 0 && { retryAfterMs }),
-		budgetMs: JAVA_PROBE_TIMEOUT_MS,
-	});
-	return outcome === "transient" ? undefined : false;
+  // A `where`/`which` that ran fine and found nothing is a genuine absence,
+  // same as a pre-existing #1496/#1467 sibling; anything else (timeout,
+  // abort, host stall) is transient and must not latch.
+  const { outcome, cause } = classifyProbeFailure(result, {
+    hostStallMs,
+    unclassifiedFailureOutcome: "missing",
+  });
+  const retryAfterMs = javaAvailabilityLatch.noteUnavailable(outcome, cause);
+  logAvailabilityDecision({
+    tool: "java",
+    verdict: "unavailable",
+    outcome,
+    cause,
+    elapsedMs,
+    latched: outcome !== "transient",
+    hostStallMs,
+    ...(retryAfterMs > 0 && { retryAfterMs }),
+    budgetMs: JAVA_PROBE_TIMEOUT_MS,
+  });
+  return outcome === "transient" ? undefined : false;
 }
 
 /**
@@ -285,36 +282,34 @@ async function runJavaProbe(): Promise<boolean | undefined> {
  * call re-probes (respecting the latch's own cooldown) instead of pinning a
  * "no override" verdict that a stalled probe never earned (#1538).
  */
-export async function resolveJavaRuntimeEnv(): Promise<
-	NodeJS.ProcessEnv | undefined
-> {
-	if (_cachedEnv) return _cachedEnv.value;
+export async function resolveJavaRuntimeEnv(): Promise<NodeJS.ProcessEnv | undefined> {
+  if (_cachedEnv) return _cachedEnv.value;
 
-	// `java` already on PATH — nothing to inject; defer to the user's runtime.
-	const javaOnPath = await probeJavaOnPath();
-	if (javaOnPath === true) {
-		_cachedEnv = { value: undefined };
-		return undefined;
-	}
+  // `java` already on PATH — nothing to inject; defer to the user's runtime.
+  const javaOnPath = await probeJavaOnPath();
+  if (javaOnPath === true) {
+    _cachedEnv = { value: undefined };
+    return undefined;
+  }
 
-	const home = discoverJdkHome();
-	if (home) {
-		const binDir = path.join(home, "bin");
-		const currentPath = process.env.PATH ?? process.env.Path ?? "";
-		_cachedEnv = {
-			value: {
-				JAVA_HOME: home,
-				PATH: binDir + path.delimiter + currentPath,
-			},
-		};
-		return _cachedEnv.value;
-	}
+  const home = discoverJdkHome();
+  if (home) {
+    const binDir = path.join(home, "bin");
+    const currentPath = process.env.PATH ?? process.env.Path ?? "";
+    _cachedEnv = {
+      value: {
+        JAVA_HOME: home,
+        PATH: binDir + path.delimiter + currentPath,
+      },
+    };
+    return _cachedEnv.value;
+  }
 
-	// No JDK discovered. Cache "no override" only when the PATH probe gave a
-	// durable "not found" — a transient probe (timeout/host-stall) must not
-	// pin this session to `undefined` forever.
-	if (javaOnPath === false) {
-		_cachedEnv = { value: undefined };
-	}
-	return undefined;
+  // No JDK discovered. Cache "no override" only when the PATH probe gave a
+  // durable "not found" — a transient probe (timeout/host-stall) must not
+  // pin this session to `undefined` forever.
+  if (javaOnPath === false) {
+    _cachedEnv = { value: undefined };
+  }
+  return undefined;
 }

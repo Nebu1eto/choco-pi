@@ -54,10 +54,7 @@ import path from "node:path";
 import { writeFileAtomicAsync } from "../atomic-write.js";
 import { BoundedLruCache } from "../bounded-cache.js";
 import { isFullyQualified } from "../path-utils.js";
-import {
-	assertInstallAllowed,
-	projectTrustDenialReason,
-} from "../project-trust.js";
+import { assertInstallAllowed, projectTrustDenialReason } from "../project-trust.js";
 
 const _installerRequire = createRequire(import.meta.url);
 import { createGunzip } from "node:zlib";
@@ -66,15 +63,12 @@ import { commitDurableStoreAsync } from "../durable-store.js";
 import { getGlobalPiLensDir } from "../file-utils.js";
 import { TRANSIENT_MAX_COOLDOWN_MS } from "../dispatch/runners/utils/availability-policy.js";
 import {
-	allAvailableGlobalBinDirs,
-	installArgs,
-	pmBinary,
-	resolveNodePackageManager,
+  allAvailableGlobalBinDirs,
+  installArgs,
+  pmBinary,
+  resolveNodePackageManager,
 } from "../package-manager.js";
-import {
-	resetSafeSpawnWindowsCommandCache,
-	safeSpawnAsync,
-} from "../safe-spawn.js";
+import { resetSafeSpawnWindowsCommandCache, safeSpawnAsync } from "../safe-spawn.js";
 
 // Global installation directory for choco-pi-lsp tools
 const TOOLS_DIR = path.join(getGlobalPiLensDir(), "tools");
@@ -88,177 +82,162 @@ let installLockExitCleanupRegistered = false;
  * registry is this module's business — don't re-derive `<choco-pi-lsp home>/tools`).
  */
 export function getManagedToolsDir(): string {
-	return TOOLS_DIR;
+  return TOOLS_DIR;
 }
 
 interface InstallLockOwner {
-	pid: number;
-	createdAt: number;
+  pid: number;
+  createdAt: number;
 }
 
 function isProcessAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
-	}
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 async function acquireInstallLock(): Promise<{
-	release?: () => Promise<void>;
-	reason?: string;
+  release?: () => Promise<void>;
+  reason?: string;
 }> {
-	await fs.mkdir(TOOLS_DIR, { recursive: true });
-	// #946 review F2: the waiter's bound must exceed the owner's install bound
-	// (CHOCO_PI_LSP_INSTALL_TIMEOUT_MS, default 120s) — a 30s waiter gave up on a
-	// legitimate slow install and reported the tool unavailable for the whole
-	// session even though it arrived seconds later.
-	const timeoutMs =
-		Number(process.env.CHOCO_PI_LSP_INSTALL_LOCK_TIMEOUT_MS) || 150_000;
-	const deadline = Date.now() + timeoutMs;
-	let lastOwner = "unknown owner";
+  await fs.mkdir(TOOLS_DIR, { recursive: true });
+  // #946 review F2: the waiter's bound must exceed the owner's install bound
+  // (CHOCO_PI_LSP_INSTALL_TIMEOUT_MS, default 120s) — a 30s waiter gave up on a
+  // legitimate slow install and reported the tool unavailable for the whole
+  // session even though it arrived seconds later.
+  const timeoutMs = Number(process.env.CHOCO_PI_LSP_INSTALL_LOCK_TIMEOUT_MS) || 150_000;
+  const deadline = Date.now() + timeoutMs;
+  let lastOwner = "unknown owner";
 
-	while (Date.now() < deadline) {
-		try {
-			const handle = await fs.open(INSTALL_LOCK_PATH, "wx");
-			await handle.writeFile(
-				JSON.stringify({ pid: process.pid, createdAt: Date.now() }),
-			);
-			await handle.close();
-			activeInstallLocks.add(INSTALL_LOCK_PATH);
-			if (!installLockExitCleanupRegistered) {
-				installLockExitCleanupRegistered = true;
-				process.once("exit", () => {
-					for (const lockPath of activeInstallLocks) {
-						try {
-							unlinkSync(lockPath);
-						} catch {
-							// Best effort; the next owner verifies this PID is dead.
-						}
-					}
-				});
-			}
-			let released = false;
-			return {
-				release: async () => {
-					if (released) return;
-					released = true;
-					activeInstallLocks.delete(INSTALL_LOCK_PATH);
-					await fs.rm(INSTALL_LOCK_PATH, { force: true });
-				},
-			};
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			try {
-				const owner = JSON.parse(
-					await fs.readFile(INSTALL_LOCK_PATH, "utf8"),
-				) as InstallLockOwner;
-				lastOwner = `pid=${owner.pid} createdAt=${owner.createdAt}`;
-				// #946 review F1: PID liveness alone cannot detect a hard-killed
-				// owner whose PID Windows has recycled — that lock would poison
-				// every future install with a full-timeout wait. A lock older
-				// than any legitimate install (owner install bound + slack) is
-				// stale regardless of what the PID now points at.
-				const maxAgeMs =
-					(Number(process.env.CHOCO_PI_LSP_INSTALL_TIMEOUT_MS) || 120_000) +
-					60_000;
-				const expired =
-					Number.isFinite(owner.createdAt) &&
-					Date.now() - owner.createdAt > maxAgeMs;
-				if (
-					expired ||
-					(Number.isInteger(owner.pid) &&
-						owner.pid > 0 &&
-						!isProcessAlive(owner.pid))
-				) {
-					await fs.rm(INSTALL_LOCK_PATH, { force: true });
-					continue;
-				}
-			} catch (readError) {
-				lastOwner = "unreadable owner";
-				// An unreadable/empty lock has no createdAt to age out — fall
-				// back to the file's own mtime for the max-age check so it is
-				// eventually recoverable (#946 review F1/F6).
-				try {
-					const stat = await fs.stat(INSTALL_LOCK_PATH);
-					const maxAgeMs =
-						(Number(process.env.CHOCO_PI_LSP_INSTALL_TIMEOUT_MS) || 120_000) +
-						60_000;
-					if (Date.now() - stat.mtimeMs > maxAgeMs) {
-						await fs.rm(INSTALL_LOCK_PATH, { force: true });
-						continue;
-					}
-				} catch {
-					// stat raced a release — loop and retry acquisition.
-				}
-				void readError;
-			}
-			await new Promise((resolve) => setTimeout(resolve, 100));
-		}
-	}
-	return {
-		reason: `timed out after ${timeoutMs}ms waiting for shared tools install lock (${lastOwner})`,
-	};
+  while (Date.now() < deadline) {
+    try {
+      const handle = await fs.open(INSTALL_LOCK_PATH, "wx");
+      await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+      await handle.close();
+      activeInstallLocks.add(INSTALL_LOCK_PATH);
+      if (!installLockExitCleanupRegistered) {
+        installLockExitCleanupRegistered = true;
+        process.once("exit", () => {
+          for (const lockPath of activeInstallLocks) {
+            try {
+              unlinkSync(lockPath);
+            } catch {
+              // Best effort; the next owner verifies this PID is dead.
+            }
+          }
+        });
+      }
+      let released = false;
+      return {
+        release: async () => {
+          if (released) return;
+          released = true;
+          activeInstallLocks.delete(INSTALL_LOCK_PATH);
+          await fs.rm(INSTALL_LOCK_PATH, { force: true });
+        },
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        const owner = JSON.parse(await fs.readFile(INSTALL_LOCK_PATH, "utf8")) as InstallLockOwner;
+        lastOwner = `pid=${owner.pid} createdAt=${owner.createdAt}`;
+        // #946 review F1: PID liveness alone cannot detect a hard-killed
+        // owner whose PID Windows has recycled — that lock would poison
+        // every future install with a full-timeout wait. A lock older
+        // than any legitimate install (owner install bound + slack) is
+        // stale regardless of what the PID now points at.
+        const maxAgeMs = (Number(process.env.CHOCO_PI_LSP_INSTALL_TIMEOUT_MS) || 120_000) + 60_000;
+        const expired = Number.isFinite(owner.createdAt) && Date.now() - owner.createdAt > maxAgeMs;
+        if (
+          expired ||
+          (Number.isInteger(owner.pid) && owner.pid > 0 && !isProcessAlive(owner.pid))
+        ) {
+          await fs.rm(INSTALL_LOCK_PATH, { force: true });
+          continue;
+        }
+      } catch (readError) {
+        lastOwner = "unreadable owner";
+        // An unreadable/empty lock has no createdAt to age out — fall
+        // back to the file's own mtime for the max-age check so it is
+        // eventually recoverable (#946 review F1/F6).
+        try {
+          const stat = await fs.stat(INSTALL_LOCK_PATH);
+          const maxAgeMs =
+            (Number(process.env.CHOCO_PI_LSP_INSTALL_TIMEOUT_MS) || 120_000) + 60_000;
+          if (Date.now() - stat.mtimeMs > maxAgeMs) {
+            await fs.rm(INSTALL_LOCK_PATH, { force: true });
+            continue;
+          }
+        } catch {
+          // stat raced a release — loop and retry acquisition.
+        }
+        void readError;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  return {
+    reason: `timed out after ${timeoutMs}ms waiting for shared tools install lock (${lastOwner})`,
+  };
 }
 
 // Directory for GitHub-downloaded binaries
 const GITHUB_BIN_DIR = path.join(getGlobalPiLensDir(), "bin");
 
 // Debug flag - set via CHOCO_PI_LSP_DEBUG=1 or --debug
-const DEBUG =
-	process.env.CHOCO_PI_LSP_DEBUG === "1" || process.argv.includes("--debug");
+const DEBUG = process.env.CHOCO_PI_LSP_DEBUG === "1" || process.argv.includes("--debug");
 
 /** Test-only platform seam for Windows resource-layout coverage on Linux CI. */
 function installerPlatform(): NodeJS.Platform {
-	const override = process.env.CHOCO_PI_LSP_TEST_PLATFORM;
-	if (override === "win32" || override === "linux") {
-		return override;
-	}
-	return process.platform;
+  const override = process.env.CHOCO_PI_LSP_TEST_PLATFORM;
+  if (override === "win32" || override === "linux") {
+    return override;
+  }
+  return process.platform;
 }
 
 /**
  * Log debug messages only when DEBUG is enabled
  */
 function debugLog(...args: unknown[]): void {
-	if (DEBUG) {
-		// #1333: DEBUG gate preserved; sink is extension.log, never the TUI.
-		logExtension({
-			subsystem: "auto-install",
-			level: "debug",
-			message: args
-				.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
-				.join(" "),
-		});
-	}
+  if (DEBUG) {
+    // #1333: DEBUG gate preserved; sink is extension.log, never the TUI.
+    logExtension({
+      subsystem: "auto-install",
+      level: "debug",
+      message: args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "),
+    });
+  }
 }
 
 // --- Tool Definitions ---
 
 interface GitHubAssetSpec {
-	/** owner/repo on GitHub */
-	repo: string;
-	/**
-	 * Return the asset filename substring to match for this platform/arch,
-	 * or undefined if the platform is unsupported.
-	 * platform: "linux" | "darwin" | "win32"
-	 * arch:     "x64" | "arm64" | "ia32" | ...
-	 */
-	assetMatch: (platform: string, arch: string) => string | undefined;
-	/**
-	 * If the asset is an archive, the name of the binary inside it.
-	 * For bare .gz files (e.g. rust-analyzer) leave undefined — the asset IS the binary.
-	 */
-	binaryInArchive?: string;
-	hashiCorpReleaseProduct?: string;
-	/**
-	 * Additional release assets (EXACT names) to download as bare files alongside
-	 * the primary binary. Needed when the primary is a wrapper that references a
-	 * sibling file — e.g. ktlint's Windows `ktlint.bat` runs `java -jar %~dp0ktlint`,
-	 * so the `ktlint` jar must land next to it (#218).
-	 */
-	extraAssets?: (platform: string, arch: string) => string[];
+  /** owner/repo on GitHub */
+  repo: string;
+  /**
+   * Return the asset filename substring to match for this platform/arch,
+   * or undefined if the platform is unsupported.
+   * platform: "linux" | "darwin" | "win32"
+   * arch:     "x64" | "arm64" | "ia32" | ...
+   */
+  assetMatch: (platform: string, arch: string) => string | undefined;
+  /**
+   * If the asset is an archive, the name of the binary inside it.
+   * For bare .gz files (e.g. rust-analyzer) leave undefined — the asset IS the binary.
+   */
+  binaryInArchive?: string;
+  hashiCorpReleaseProduct?: string;
+  /**
+   * Additional release assets (EXACT names) to download as bare files alongside
+   * the primary binary. Needed when the primary is a wrapper that references a
+   * sibling file — e.g. ktlint's Windows `ktlint.bat` runs `java -jar %~dp0ktlint`,
+   * so the `ktlint` jar must land next to it (#218).
+   */
+  extraAssets?: (platform: string, arch: string) => string[];
 }
 
 /**
@@ -268,84 +247,84 @@ interface GitHubAssetSpec {
  * Requires a JRE at run time.
  */
 export interface MavenJarSpec {
-	groupId: string;
-	artifactId: string;
-	version: string;
-	/** Classifier for the runnable fat jar, e.g. "with-dependencies". */
-	classifier?: string;
-	/** Maven repo base URL (default Maven Central). */
-	repoBaseUrl?: string;
+  groupId: string;
+  artifactId: string;
+  version: string;
+  /** Classifier for the runnable fat jar, e.g. "with-dependencies". */
+  classifier?: string;
+  /** Maven repo base URL (default Maven Central). */
+  repoBaseUrl?: string;
 }
 
 export interface ArchiveSpec {
-	/**
-	 * Download URL for the distribution archive (.tgz/.zip). Either a single
-	 * platform-agnostic string (e.g. PowerShell Editor Services, a .NET bundle) or
-	 * a resolver `(platform, arch) => url | undefined` for servers that ship a
-	 * per-platform (and sometimes per-arch) archive — clangd, lua-language-server,
-	 * etc. Returning `undefined` marks the current platform/arch unsupported, and
-	 * the install degrades to "unavailable" (never a hard failure).
-	 *   platform: "linux" | "darwin" | "win32"
-	 *   arch:     "x64" | "arm64" | ...
-	 */
-	url: string | ((platform: string, arch: string) => string | undefined);
-	/** Archive kind — both extracted via `tar` (Windows bsdtar handles zip too). */
-	kind: "tgz" | "zip";
-	/**
-	 * Launcher path relative to the archive's top-level dir (which is stripped on
-	 * extraction), e.g. "bin/spotbugs". On win32 the installer resolves the
-	 * sibling `.bat`. OMIT for a TREE BUNDLE (a multi-folder module distribution
-	 * with no single launcher binary, e.g. PowerShellEditorServices) — the whole
-	 * extracted tree is the artifact and the install resolves to the extract dir
-	 * (`~/.choco-pi-lsp/tools/<id>`) rather than a shim. The consuming server then
-	 * launches a runtime (pwsh/java/node) against a bootstrap inside the tree.
-	 */
-	launcher?: string;
-	/**
-	 * Components to strip on extraction. Default 1: drops a single versioned
-	 * top-level dir so launcher paths are stable (spotbugs-X.Y.Z/bin → bin). Set 0
-	 * for a multi-folder bundle that has NO wrapping dir (PSES extracts several
-	 * sibling module folders at the root — stripping would flatten/merge them).
-	 */
-	stripComponents?: number;
-	/**
-	 * For a tree bundle (no launcher), a path relative to the extract dir that must
-	 * exist after extraction to confirm success, e.g.
-	 * "PowerShellEditorServices/Start-EditorServices.ps1". Used in place of the
-	 * launcher-existence check.
-	 */
-	treeMarker?: string;
+  /**
+   * Download URL for the distribution archive (.tgz/.zip). Either a single
+   * platform-agnostic string (e.g. PowerShell Editor Services, a .NET bundle) or
+   * a resolver `(platform, arch) => url | undefined` for servers that ship a
+   * per-platform (and sometimes per-arch) archive — clangd, lua-language-server,
+   * etc. Returning `undefined` marks the current platform/arch unsupported, and
+   * the install degrades to "unavailable" (never a hard failure).
+   *   platform: "linux" | "darwin" | "win32"
+   *   arch:     "x64" | "arm64" | ...
+   */
+  url: string | ((platform: string, arch: string) => string | undefined);
+  /** Archive kind — both extracted via `tar` (Windows bsdtar handles zip too). */
+  kind: "tgz" | "zip";
+  /**
+   * Launcher path relative to the archive's top-level dir (which is stripped on
+   * extraction), e.g. "bin/spotbugs". On win32 the installer resolves the
+   * sibling `.bat`. OMIT for a TREE BUNDLE (a multi-folder module distribution
+   * with no single launcher binary, e.g. PowerShellEditorServices) — the whole
+   * extracted tree is the artifact and the install resolves to the extract dir
+   * (`~/.choco-pi-lsp/tools/<id>`) rather than a shim. The consuming server then
+   * launches a runtime (pwsh/java/node) against a bootstrap inside the tree.
+   */
+  launcher?: string;
+  /**
+   * Components to strip on extraction. Default 1: drops a single versioned
+   * top-level dir so launcher paths are stable (spotbugs-X.Y.Z/bin → bin). Set 0
+   * for a multi-folder bundle that has NO wrapping dir (PSES extracts several
+   * sibling module folders at the root — stripping would flatten/merge them).
+   */
+  stripComponents?: number;
+  /**
+   * For a tree bundle (no launcher), a path relative to the extract dir that must
+   * exist after extraction to confirm success, e.g.
+   * "PowerShellEditorServices/Start-EditorServices.ps1". Used in place of the
+   * launcher-existence check.
+   */
+  treeMarker?: string;
 }
 
 export interface ToolDefinition {
-	id: string;
-	name: string;
-	checkCommand: string;
-	checkArgs: string[];
-	installStrategy: "npm" | "pip" | "gem" | "github" | "maven" | "archive";
-	packageName?: string;
-	binaryName?: string;
-	github?: GitHubAssetSpec;
-	maven?: MavenJarSpec;
-	archive?: ArchiveSpec;
-	/**
-	 * For npm tools whose runnable binary ships in a per-platform
-	 * optional-dependency package (e.g. `@ast-grep/cli-<platform>`,
-	 * `@biomejs/cli-<platform>`). Under pnpm/bun the main package's JS launcher
-	 * frequently can't locate that binary (symlink store / skipped postinstall),
-	 * but the binary itself IS installed — so resolve it directly. The general
-	 * mechanism for any npm/pnpm/bun-distributed platform-CLI tool.
-	 */
-	platformPackage?: PlatformPackageSpec;
+  id: string;
+  name: string;
+  checkCommand: string;
+  checkArgs: string[];
+  installStrategy: "npm" | "pip" | "gem" | "github" | "maven" | "archive";
+  packageName?: string;
+  binaryName?: string;
+  github?: GitHubAssetSpec;
+  maven?: MavenJarSpec;
+  archive?: ArchiveSpec;
+  /**
+   * For npm tools whose runnable binary ships in a per-platform
+   * optional-dependency package (e.g. `@ast-grep/cli-<platform>`,
+   * `@biomejs/cli-<platform>`). Under pnpm/bun the main package's JS launcher
+   * frequently can't locate that binary (symlink store / skipped postinstall),
+   * but the binary itself IS installed — so resolve it directly. The general
+   * mechanism for any npm/pnpm/bun-distributed platform-CLI tool.
+   */
+  platformPackage?: PlatformPackageSpec;
 }
 
 export interface PlatformPackageSpec {
-	/** Base name; the platform package is `${base}-${suffix}`. Defaults to `packageName`. */
-	base?: string;
-	/** node `${platform}-${arch}` → npm package-name suffix. */
-	suffixes: Record<string, string>;
-	/** Candidate binary filenames at the platform package root (first existing wins). */
-	binaries: string[];
+  /** Base name; the platform package is `${base}-${suffix}`. Defaults to `packageName`. */
+  base?: string;
+  /** node `${platform}-${arch}` → npm package-name suffix. */
+  suffixes: Record<string, string>;
+  /** Candidate binary filenames at the platform package root (first existing wins). */
+  binaries: string[];
 }
 
 /**
@@ -358,1024 +337,974 @@ export interface PlatformPackageSpec {
  * handing back the x64 substring there would install an unrunnable binary.
  */
 function archAssetMatch(table: {
-	linux?: { x64?: string; arm64?: string };
-	darwin?: { x64?: string; arm64?: string };
-	win32?: { x64?: string; arm64?: string };
+  linux?: { x64?: string; arm64?: string };
+  darwin?: { x64?: string; arm64?: string };
+  win32?: { x64?: string; arm64?: string };
 }): (platform: string, arch: string) => string | undefined {
-	return (platform, arch) => {
-		if (arch !== "x64" && arch !== "arm64") return undefined;
-		return table[platform as "linux" | "darwin" | "win32"]?.[arch];
-	};
+  return (platform, arch) => {
+    if (arch !== "x64" && arch !== "arm64") return undefined;
+    return table[platform as "linux" | "darwin" | "win32"]?.[arch];
+  };
 }
 
 // Go-style `<os>_<arch>.zip` release assets, shared verbatim by tflint and
 // terraform-ls — both entries carried byte-identical ladders, down to the asset
 // strings themselves.
 const OS_ARCH_ZIP_ASSETS = {
-	linux: { x64: "linux_amd64.zip", arm64: "linux_arm64.zip" },
-	darwin: { x64: "darwin_amd64.zip", arm64: "darwin_arm64.zip" },
-	win32: { x64: "windows_amd64.zip", arm64: "windows_arm64.zip" },
+  linux: { x64: "linux_amd64.zip", arm64: "linux_arm64.zip" },
+  darwin: { x64: "darwin_amd64.zip", arm64: "darwin_arm64.zip" },
+  win32: { x64: "windows_amd64.zip", arm64: "windows_arm64.zip" },
 };
 
 export const TOOLS: ToolDefinition[] = [
-	// Core LSP servers
-	{
-		id: "typescript-language-server",
-		name: "TypeScript Language Server",
-		checkCommand: "typescript-language-server",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "typescript-language-server",
-		binaryName: "typescript-language-server",
-	},
-	{
-		id: "typescript",
-		name: "TypeScript",
-		checkCommand: "tsc",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		// The managed compiler serves the classic typescript-language-server
-		// fallback. TypeScript 7 removed lib/tsserver.js and is selected only from
-		// project-local installs through the native `tsc --lsp --stdio` path.
-		// Revisit when typescript-language-server supports TS 7 — refs #1436.
-		packageName: "typescript@5.9.3",
-		binaryName: "tsc",
-	},
-	{
-		id: "pyright",
-		name: "Pyright",
-		checkCommand: "pyright",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "pyright",
-		binaryName: "pyright",
-	},
-	// Linting/formatting tools
-	{
-		id: "prettier",
-		name: "Prettier",
-		checkCommand: "prettier",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "prettier",
-		binaryName: "prettier",
-	},
-	{
-		id: "ruff",
-		name: "Ruff",
-		checkCommand: "ruff",
-		checkArgs: ["--version"],
-		installStrategy: "pip",
-		packageName: "ruff",
-		binaryName: "ruff",
-	},
-	{
-		// Alternate Python LSP (fallback when pyright/the `python` server is
-		// unavailable or disabled). Used as a managedToolId by PythonJediServer.
-		id: "jedi-language-server",
-		name: "Jedi Language Server",
-		checkCommand: "jedi-language-server",
-		checkArgs: ["--version"],
-		installStrategy: "pip",
-		packageName: "jedi-language-server",
-		binaryName: "jedi-language-server",
-	},
-	{
-		id: "biome",
-		name: "Biome",
-		checkCommand: "biome",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "@biomejs/biome",
-		binaryName: "biome",
-		platformPackage: {
-			base: "@biomejs/cli",
-			suffixes: {
-				"linux-x64": "linux-x64",
-				"linux-arm64": "linux-arm64",
-				"darwin-x64": "darwin-x64",
-				"darwin-arm64": "darwin-arm64",
-				"win32-x64": "win32-x64",
-				"win32-arm64": "win32-arm64",
-			},
-			binaries: ["biome"],
-		},
-	},
-	// Analysis tools (run at session start / turn end)
-	// Structural search and dead code detection
-	{
-		id: "ast-grep",
-		name: "ast-grep CLI",
-		checkCommand: "ast-grep",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "@ast-grep/cli",
-		binaryName: "ast-grep",
-		platformPackage: {
-			suffixes: {
-				"linux-x64": "linux-x64-gnu",
-				"linux-arm64": "linux-arm64-gnu",
-				"darwin-x64": "darwin-x64",
-				"darwin-arm64": "darwin-arm64",
-				"win32-x64": "win32-x64-msvc",
-				"win32-arm64": "win32-arm64-msvc",
-				"win32-ia32": "win32-ia32-msvc",
-			},
-			binaries: ["ast-grep", "sg"],
-		},
-	},
-	{
-		id: "yamllint",
-		name: "yamllint",
-		checkCommand: "yamllint",
-		checkArgs: ["--version"],
-		installStrategy: "pip",
-		packageName: "yamllint",
-		binaryName: "yamllint",
-	},
-	{
-		id: "sqlfluff",
-		name: "sqlfluff",
-		checkCommand: "sqlfluff",
-		checkArgs: ["--version"],
-		installStrategy: "pip",
-		packageName: "sqlfluff",
-		binaryName: "sqlfluff",
-	},
-	{
-		id: "bash-language-server",
-		name: "Bash Language Server",
-		checkCommand: "bash-language-server",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "bash-language-server",
-		binaryName: "bash-language-server",
-	},
-	{
-		id: "fish-lsp",
-		name: "Fish Language Server",
-		checkCommand: "fish-lsp",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "fish-lsp",
-		binaryName: "fish-lsp",
-	},
-	{
-		id: "cmake-language-server",
-		name: "CMake Language Server",
-		checkCommand: "cmake-language-server",
-		checkArgs: ["--version"],
-		installStrategy: "pip",
-		packageName: "cmake-language-server",
-		binaryName: "cmake-language-server",
-	},
-	{
-		id: "yaml-language-server",
-		name: "YAML Language Server",
-		checkCommand: "yaml-language-server",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "yaml-language-server",
-		binaryName: "yaml-language-server",
-	},
-	{
-		id: "vscode-json-language-server",
-		name: "VSCode JSON Language Server",
-		checkCommand: "vscode-json-language-server",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "vscode-langservers-extracted",
-		binaryName: "vscode-json-language-server",
-	},
-	{
-		id: "vscode-html-languageserver-bin",
-		name: "VSCode HTML Language Server",
-		checkCommand: "vscode-html-language-server",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "vscode-html-languageserver-bin",
-		binaryName: "vscode-html-language-server",
-	},
-	{
-		id: "htmlhint",
-		name: "HTMLHint",
-		checkCommand: "htmlhint",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "htmlhint",
-		binaryName: "htmlhint",
-	},
-	{
-		id: "hadolint",
-		name: "Hadolint",
-		checkCommand: "hadolint",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "hadolint",
-		github: {
-			repo: "hadolint/hadolint",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64" ? "linux.aarch64" : "linux.x86_64";
-				if (platform === "darwin")
-					return arch === "arm64" ? "macos-arm64" : "macos-x86_64";
-				if (platform === "win32") return "windows-x86_64.exe";
-				return undefined;
-			},
-		},
-	},
-	{
-		id: "helm",
-		name: "Helm",
-		checkCommand: "helm",
-		checkArgs: ["version", "--short"],
-		installStrategy: "github",
-		binaryName: "helm",
-		github: {
-			repo: "helm/helm",
-			assetMatch: (platform, arch) => {
-				// helm publishes per-OS archives: tar.gz for POSIX, zip for Windows.
-				const cpu = arch === "arm64" ? "arm64" : "amd64";
-				if (platform === "linux") return `linux-${cpu}.tar.gz`;
-				if (platform === "darwin") return `darwin-${cpu}.tar.gz`;
-				if (platform === "win32") return `windows-${cpu}.zip`;
-				return undefined;
-			},
-			// Release archives nest the executable under an OS/arch directory;
-			// the installer searches recursively and adds the Windows suffix.
-			binaryInArchive: "helm",
-		},
-	},
-	{
-		// Opengrep: a single standalone binary per platform on GitHub releases —
-		// no login, no telemetry (the reason for switching off Semgrep, #111).
-		id: "opengrep",
-		name: "Opengrep",
-		checkCommand: "opengrep",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "opengrep",
-		github: {
-			repo: "opengrep/opengrep",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64"
-						? "opengrep_manylinux_aarch64"
-						: "opengrep_manylinux_x86";
-				if (platform === "darwin")
-					return arch === "arm64" ? "opengrep_osx_arm64" : "opengrep_osx_x86";
-				// One x86 Windows build; runs on arm64 Windows via emulation.
-				if (platform === "win32") return "opengrep_windows_x86.exe";
-				return undefined;
-			},
-		},
-	},
-	{
-		id: "vscode-css-languageserver",
-		name: "VSCode CSS Language Server",
-		checkCommand: "vscode-css-language-server",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "vscode-css-languageserver",
-		binaryName: "vscode-css-language-server",
-	},
-	{
-		id: "dockerfile-language-server-nodejs",
-		name: "Dockerfile Language Server",
-		checkCommand: "docker-langserver",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "dockerfile-language-server-nodejs",
-		binaryName: "docker-langserver",
-	},
-	{
-		id: "intelephense",
-		name: "Intelephense",
-		checkCommand: "intelephense",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "intelephense",
-		binaryName: "intelephense",
-	},
-	{
-		id: "@prisma/language-server",
-		name: "Prisma Language Server",
-		checkCommand: "prisma-language-server",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "@prisma/language-server",
-		binaryName: "prisma-language-server",
-	},
-	{
-		id: "@vue/language-server",
-		name: "Vue Language Server",
-		checkCommand: "vue-language-server",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "@vue/language-server",
-		binaryName: "vue-language-server",
-	},
-	{
-		id: "svelte-language-server",
-		name: "Svelte Language Server",
-		checkCommand: "svelteserver",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "svelte-language-server",
-		binaryName: "svelteserver",
-	},
-	{
-		id: "markdownlint",
-		name: "markdownlint-cli2",
-		checkCommand: "markdownlint-cli2",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "markdownlint-cli2",
-		binaryName: "markdownlint-cli2",
-	},
-	{
-		id: "mypy",
-		name: "mypy",
-		checkCommand: "mypy",
-		checkArgs: ["--version"],
-		installStrategy: "pip",
-		packageName: "mypy",
-		binaryName: "mypy",
-	},
-	{
-		id: "rubocop",
-		name: "RuboCop",
-		checkCommand: "rubocop",
-		checkArgs: ["--version"],
-		installStrategy: "gem",
-		packageName: "rubocop",
-		binaryName: "rubocop",
-	},
-	{
-		id: "stylelint",
-		name: "Stylelint",
-		checkCommand: "stylelint",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "stylelint",
-		binaryName: "stylelint",
-	},
-	{
-		id: "oxlint",
-		name: "Oxlint",
-		checkCommand: "oxlint",
-		checkArgs: ["--version"],
-		installStrategy: "npm",
-		packageName: "oxlint",
-		binaryName: "oxlint",
-	},
-	// GitHub release binaries
-	{
-		id: "shellcheck",
-		name: "ShellCheck",
-		checkCommand: "shellcheck",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "shellcheck",
-		github: {
-			repo: "koalaman/shellcheck",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64"
-						? "linux.aarch64.tar.xz"
-						: "linux.x86_64.tar.xz";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "darwin.aarch64.tar.xz"
-						: "darwin.x86_64.tar.xz";
-				if (platform === "win32") return "zip";
-				return undefined;
-			},
-			binaryInArchive: "shellcheck",
-		},
-	},
-	{
-		id: "shfmt",
-		name: "shfmt",
-		checkCommand: "shfmt",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "shfmt",
-		github: {
-			repo: "mvdan/sh",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64" ? "linux_arm64" : "linux_amd64";
-				if (platform === "darwin")
-					return arch === "arm64" ? "darwin_arm64" : "darwin_amd64";
-				if (platform === "win32")
-					return arch === "arm64" ? "windows_arm64.exe" : "windows_amd64.exe";
-				return undefined;
-			},
-			// bare binary, no archive
-		},
-	},
-	{
-		id: "rust-analyzer",
-		name: "rust-analyzer",
-		checkCommand: "rust-analyzer",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "rust-analyzer",
-		github: {
-			repo: "rust-lang/rust-analyzer",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64"
-						? "aarch64-unknown-linux-gnu.gz"
-						: "x86_64-unknown-linux-gnu.gz";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "aarch64-apple-darwin.gz"
-						: "x86_64-apple-darwin.gz";
-				if (platform === "win32") return "x86_64-pc-windows-msvc.zip";
-				return undefined;
-			},
-			// Linux/macOS: bare .gz; Windows: .zip archive containing rust-analyzer.exe
-		},
-	},
-	{
-		// Alternate JS/TS LSP (fallback when the `typescript` server is unavailable
-		// or disabled — e.g. Deno projects). Used as a managedToolId by DenoServer.
-		// Every platform ships a .zip containing the `deno` binary (the github
-		// strategy extracts it, as it does for rust-analyzer's Windows .zip).
-		id: "deno",
-		name: "Deno",
-		checkCommand: "deno",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "deno",
-		github: {
-			repo: "denoland/deno",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64"
-						? "deno-aarch64-unknown-linux-gnu.zip"
-						: "deno-x86_64-unknown-linux-gnu.zip";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "deno-aarch64-apple-darwin.zip"
-						: "deno-x86_64-apple-darwin.zip";
-				// Windows ships only x86_64 (runs under emulation on arm64).
-				if (platform === "win32") return "deno-x86_64-pc-windows-msvc.zip";
-				return undefined;
-			},
-		},
-	},
-	{
-		id: "golangci-lint",
-		name: "golangci-lint",
-		checkCommand: "golangci-lint",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "golangci-lint",
-		github: {
-			repo: "golangci/golangci-lint",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64" ? "linux-arm64.tar.gz" : "linux-amd64.tar.gz";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "darwin-arm64.tar.gz"
-						: "darwin-amd64.tar.gz";
-				if (platform === "win32")
-					return arch === "arm64" ? "windows-arm64.zip" : "windows-amd64.zip";
-				return undefined;
-			},
-			binaryInArchive: "golangci-lint",
-		},
-	},
-	{
-		id: "ktlint",
-		name: "ktlint",
-		checkCommand: "ktlint",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "ktlint",
-		github: {
-			// ktlint ships a self-executable `ktlint` (a JAR with a shell preamble)
-			// for Linux/macOS, plus a `ktlint.bat` wrapper for Windows that runs
-			// `java -jar %~dp0ktlint`. On Windows BOTH files are needed: the .bat AND
-			// the `ktlint` jar it wraps (#218). No arm64-specific asset.
-			repo: "pinterest/ktlint",
-			assetMatch: (platform, _arch) => {
-				if (platform === "linux") return "ktlint";
-				if (platform === "darwin") return "ktlint";
-				if (platform === "win32") return "ktlint.bat";
-				return undefined;
-			},
-			extraAssets: (platform) => (platform === "win32" ? ["ktlint"] : []),
-		},
-	},
-	{
-		// ktfmt (Meta's opinionated Kotlin formatter) ships only as a Maven-Central
-		// fat JAR — no native binary, no npm package — so it uses the maven strategy
-		// (#129). Run via a `java -jar` launcher; requires a JRE.
-		id: "ktfmt",
-		name: "ktfmt",
-		checkCommand: "ktfmt",
-		checkArgs: ["--version"],
-		installStrategy: "maven",
-		binaryName: "ktfmt",
-		maven: {
-			groupId: "com.facebook",
-			artifactId: "ktfmt",
-			version: "0.63",
-			classifier: "with-dependencies",
-		},
-	},
-	{
-		// SpotBugs (bytecode bug-pattern analyzer for Java/Kotlin/Scala/Groovy)
-		// ships as a distribution archive — a lib/ of many JARs + bin/ launchers,
-		// NOT a runnable fat JAR — so it uses the archive strategy, not maven
-		// (refs #133). Requires a JRE (gated by the runner, not the install).
-		id: "spotbugs",
-		name: "SpotBugs",
-		checkCommand: "spotbugs",
-		checkArgs: ["-version"],
-		installStrategy: "archive",
-		binaryName: "spotbugs",
-		archive: {
-			url: "https://github.com/spotbugs/spotbugs/releases/download/4.10.2/spotbugs-4.10.2.tgz",
-			kind: "tgz",
-			launcher: "bin/spotbugs",
-		},
-	},
-	{
-		// PowerShell Editor Services (#278). NOT a single binary — a multi-folder
-		// PowerShell MODULE BUNDLE launched via `pwsh Start-EditorServices.ps1
-		// -Stdio` (see PowerShellServer.spawn). archive TREE BUNDLE: the release zip
-		// extracts sibling module dirs (PowerShellEditorServices/, PSReadLine/,
-		// PSScriptAnalyzer/) at the root with no wrapping dir, so stripComponents:0
-		// + no launcher — the whole tree is kept and resolved to its extract dir.
-		// checkCommand "pwsh" documents the runtime but is unused for resolution
-		// (tree bundles resolve only via the extract dir + treeMarker).
-		id: "powershell-editor-services",
-		name: "PowerShell Editor Services",
-		checkCommand: "pwsh",
-		checkArgs: ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"],
-		installStrategy: "archive",
-		binaryName: "powershell-editor-services",
-		archive: {
-			url: "https://github.com/PowerShell/PowerShellEditorServices/releases/download/v4.6.0/PowerShellEditorServices.zip",
-			kind: "zip",
-			stripComponents: 0,
-			treeMarker: "PowerShellEditorServices/Start-EditorServices.ps1",
-		},
-	},
-	{
-		// clangd (C/C++/Obj-C LSP, #241) — a self-contained native TREE BUNDLE: the
-		// release zip wraps `clangd_<ver>/{bin,lib}` (bin/clangd[.exe] + the bundled
-		// libclang headers under lib/), so stripComponents:1 drops the version dir and
-		// the whole tree is kept (no launcher). Unlike PSES there is no external
-		// runtime — CppServer launches `<bundle>/bin/clangd` directly. checkCommand
-		// documents the binary but is unused for resolution (tree bundles resolve only
-		// via the extract dir + treeMarker). Platform-matched url: clangd ships x64
-		// prebuilts; arm runs the x64 build under Rosetta/emulation (darwin/win32),
-		// while linux/arm64 has no official build → undefined (graceful unavailable).
-		id: "clangd",
-		name: "clangd",
-		checkCommand: "clangd",
-		checkArgs: ["--version"],
-		installStrategy: "archive",
-		binaryName: "clangd",
-		archive: {
-			url: (platform, arch) => {
-				const version = "22.1.0";
-				const base = `https://github.com/clangd/clangd/releases/download/${version}`;
-				if (platform === "linux")
-					return arch === "x64" ? `${base}/clangd-linux-${version}.zip` : undefined;
-				if (platform === "darwin") return `${base}/clangd-mac-${version}.zip`;
-				if (platform === "win32") return `${base}/clangd-windows-${version}.zip`;
-				return undefined;
-			},
-			kind: "zip",
-			stripComponents: 1,
-			treeMarker: "bin",
-		},
-	},
-	{
-		// lua-language-server (#564, split from #241) — same self-contained native
-		// TREE BUNDLE shape as clangd: bin/lua-language-server[.exe] + bundled
-		// locale/meta files, no external runtime. UNLIKE clangd, the release
-		// archive has NO wrapping version dir (verified by inspecting the actual
-		// 3.18.2 linux-x64 .tar.gz and win32-x64 .zip contents: `bin/`, `LICENSE`,
-		// `locale/`, … sit at archive root) — so stripComponents:0, not 1.
-		// LuaServer launches `<bundle>/bin/lua-language-server` directly.
-		// checkCommand documents the binary but is unused for resolution (tree
-		// bundles resolve only via the extract dir + treeMarker). Platform-matched
-		// url: LuaLS publishes darwin/linux x64+arm64 and win32 x64 (no win32/arm64
-		// build as of 3.18.2 → undefined, graceful unavailable); asset naming
-		// verified against the live GitHub release listing, not guessed.
-		id: "lua-language-server",
-		name: "lua-language-server",
-		checkCommand: "lua-language-server",
-		checkArgs: ["--version"],
-		installStrategy: "archive",
-		binaryName: "lua-language-server",
-		archive: {
-			url: (platform, arch) => {
-				const version = "3.18.2";
-				const base = `https://github.com/LuaLS/lua-language-server/releases/download/${version}`;
-				if (platform === "linux")
-					return arch === "arm64"
-						? `${base}/lua-language-server-${version}-linux-arm64.tar.gz`
-						: `${base}/lua-language-server-${version}-linux-x64.tar.gz`;
-				if (platform === "darwin")
-					return arch === "arm64"
-						? `${base}/lua-language-server-${version}-darwin-arm64.tar.gz`
-						: `${base}/lua-language-server-${version}-darwin-x64.tar.gz`;
-				if (platform === "win32")
-					return arch === "arm64"
-						? undefined
-						: `${base}/lua-language-server-${version}-win32-x64.zip`;
-				return undefined;
-			},
-			kind: "zip",
-			stripComponents: 0,
-			treeMarker: "bin",
-		},
-	},
-	{
-		id: "actionlint",
-		name: "actionlint",
-		checkCommand: "actionlint",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "actionlint",
-		github: {
-			repo: "rhysd/actionlint",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64" ? "linux_arm64.tar.gz" : "linux_amd64.tar.gz";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "darwin_arm64.tar.gz"
-						: "darwin_amd64.tar.gz";
-				if (platform === "win32")
-					return arch === "arm64" ? "windows_arm64.zip" : "windows_amd64.zip";
-				return undefined;
-			},
-			binaryInArchive: "actionlint",
-		},
-	},
-	{
-		// zizmor: GitHub Actions workflow security scanner that speaks LSP (#272).
-		// cargo-dist release archives, one per target triple, each holding a single
-		// `zizmor` binary (extracted via the recursive binary find). Online audits
-		// (known-vulnerable-actions, unpinned-uses, …) need a GitHub token — the LSP
-		// spawn forwards one via resolveZizmorGitHubToken (clients/zizmor-config.ts).
-		id: "zizmor",
-		name: "zizmor",
-		checkCommand: "zizmor",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "zizmor",
-		github: {
-			repo: "zizmorcore/zizmor",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64"
-						? "aarch64-unknown-linux-gnu.tar.gz"
-						: "x86_64-unknown-linux-gnu.tar.gz";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "aarch64-apple-darwin.tar.gz"
-						: "x86_64-apple-darwin.tar.gz";
-				// One x86 Windows build; arm64 Windows runs it under emulation.
-				if (platform === "win32") return "x86_64-pc-windows-msvc.zip";
-				return undefined;
-			},
-			binaryInArchive: "zizmor",
-		},
-	},
-	{
-		// typos-lsp: source-code spell checker that speaks LSP (#283). cargo-dist
-		// release archives, one per target triple, each holding a single `typos-lsp`
-		// binary (extracted via the recursive binary find). NO token / network — the
-		// dictionary is compiled in. The binary takes no `--version` (it ignores args
-		// and serves the LSP on stdin/stdout); the PATH probe ignores checkArgs and
-		// verifyToolBinary runs with stdin:ignore so the server gets EOF and exits.
-		id: "typos-lsp",
-		name: "typos-lsp",
-		checkCommand: "typos-lsp",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "typos-lsp",
-		github: {
-			repo: "tekumara/typos-lsp",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64"
-						? "aarch64-unknown-linux-gnu.tar.gz"
-						: "x86_64-unknown-linux-gnu.tar.gz";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "aarch64-apple-darwin.tar.gz"
-						: "x86_64-apple-darwin.tar.gz";
-				if (platform === "win32")
-					// Native win-arm64 build (one better than zizmor, which emulates).
-					return arch === "arm64"
-						? "aarch64-pc-windows-msvc.zip"
-						: "x86_64-pc-windows-msvc.zip";
-				return undefined;
-			},
-			binaryInArchive: "typos-lsp",
-		},
-	},
-	{
-		id: "tflint",
-		name: "tflint",
-		checkCommand: "tflint",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "tflint",
-		github: {
-			repo: "terraform-linters/tflint",
-			assetMatch: archAssetMatch(OS_ARCH_ZIP_ASSETS),
-			binaryInArchive: "tflint",
-		},
-	},
-	{
-		// Terragrunt ships a bare native binary per platform on GitHub releases.
-		// Windows arm64 uses the x64 binary through Windows' built-in emulation —
-		// there is no terragrunt_windows_arm64.exe upstream.
-		id: "terragrunt",
-		name: "terragrunt",
-		checkCommand: "terragrunt",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "terragrunt",
-		github: {
-			repo: "gruntwork-io/terragrunt",
-			assetMatch: archAssetMatch({
-				linux: {
-					x64: "terragrunt_linux_amd64",
-					arm64: "terragrunt_linux_arm64",
-				},
-				darwin: {
-					x64: "terragrunt_darwin_amd64",
-					arm64: "terragrunt_darwin_arm64",
-				},
-				win32: {
-					x64: "terragrunt_windows_amd64.exe",
-					arm64: "terragrunt_windows_amd64.exe",
-				},
-			}),
-			// bare binary — no binaryInArchive
-		},
-	},
-	{
-		id: "swiftlint",
-		name: "SwiftLint",
-		checkCommand: "swiftlint",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "swiftlint",
-		github: {
-			repo: "realm/SwiftLint",
-			assetMatch: (platform, arch) => {
-				if (platform === "darwin") return "portable_swiftlint.zip";
-				if (platform === "linux")
-					return arch === "arm64"
-						? "swiftlint_linux_arm64.zip"
-						: "swiftlint_linux_amd64.zip";
-				return undefined;
-			},
-			binaryInArchive: "swiftlint",
-		},
-	},
-	{
-		id: "taplo",
-		name: "taplo",
-		checkCommand: "taplo",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "taplo",
-		github: {
-			repo: "tamasfe/taplo",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64"
-						? "taplo-linux-aarch64.gz"
-						: "taplo-linux-x86_64.gz";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "taplo-darwin-aarch64.gz"
-						: "taplo-darwin-x86_64.gz";
-				if (platform === "win32") return "taplo-windows-x86_64.gz";
-				return undefined;
-			},
-		},
-	},
-	{
-		id: "vale",
-		name: "Vale",
-		checkCommand: "vale",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "vale",
-		github: {
-			repo: "vale-cli/vale",
-			assetMatch: (platform, arch) => {
-				const version = "3.14.2";
-				if (platform === "linux")
-					return arch === "arm64"
-						? `vale_${version}_Linux_arm64.tar.gz`
-						: `vale_${version}_Linux_64-bit.tar.gz`;
-				if (platform === "darwin")
-					return arch === "arm64"
-						? `vale_${version}_macOS_arm64.tar.gz`
-						: `vale_${version}_macOS_64-bit.tar.gz`;
-				if (platform === "win32") return `vale_${version}_Windows_64-bit.zip`;
-				return undefined;
-			},
-			binaryInArchive: "vale",
-		},
-	},
-	{
-		id: "terraform-ls",
-		name: "terraform-ls",
-		checkCommand: "terraform-ls",
-		checkArgs: ["version"],
-		installStrategy: "github",
-		binaryName: "terraform-ls",
-		github: {
-			repo: "hashicorp/terraform-ls",
-			hashiCorpReleaseProduct: "terraform-ls",
-			assetMatch: archAssetMatch(OS_ARCH_ZIP_ASSETS),
-			binaryInArchive: "terraform-ls",
-		},
-	},
-	{
-		id: "zls",
-		name: "zls",
-		checkCommand: "zls",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "zls",
-		github: {
-			repo: "zigtools/zls",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64"
-						? "aarch64-linux.tar.xz"
-						: "x86_64-linux.tar.xz";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "aarch64-macos.tar.xz"
-						: "x86_64-macos.tar.xz";
-				if (platform === "win32")
-					return arch === "arm64"
-						? "aarch64-windows.zip"
-						: "x86_64-windows.zip";
-				return undefined;
-			},
-			binaryInArchive: "zls",
-		},
-	},
-	{
-		// clojure-lsp ships a self-contained native (GraalVM) binary per platform
-		// on GitHub releases — no JVM needed. Used as managedToolId by ClojureServer.
-		// The .zip carries the bare binary (located recursively on extract).
-		id: "clojure-lsp",
-		name: "clojure-lsp",
-		checkCommand: "clojure-lsp",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "clojure-lsp",
-		github: {
-			repo: "clojure-lsp/clojure-lsp",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64"
-						? "native-linux-aarch64.zip"
-						: "native-linux-amd64.zip";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "native-macos-aarch64.zip"
-						: "native-macos-amd64.zip";
-				// Only an x86_64 Windows native build; runs on arm64 via emulation.
-				if (platform === "win32") return "native-windows-amd64.zip";
-				return undefined;
-			},
-			binaryInArchive: "clojure-lsp",
-		},
-	},
-	{
-		// CUE ships a single native binary per platform on GitHub releases;
-		// the LSP runs via `cue lsp serve`. Used as managedToolId by CueServer.
-		id: "cue",
-		name: "CUE",
-		checkCommand: "cue",
-		checkArgs: ["version"],
-		installStrategy: "github",
-		binaryName: "cue",
-		github: {
-			repo: "cue-lang/cue",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64" ? "linux_arm64.tar.gz" : "linux_amd64.tar.gz";
-				if (platform === "darwin")
-					return arch === "arm64" ? "darwin_arm64.tar.gz" : "darwin_amd64.tar.gz";
-				if (platform === "win32")
-					return arch === "arm64" ? "windows_arm64.zip" : "windows_amd64.zip";
-				return undefined;
-			},
-			binaryInArchive: "cue",
-		},
-	},
-	{
-		// gleam ships a single static binary per platform on GitHub releases; the
-		// LSP runs via `gleam lsp`. Used as managedToolId by GleamServer. The linux
-		// build is a FLAT musl tarball (a bare `gleam`), handled by the recursive
-		// tar-binary lookup in installGitHubTool.
-		id: "gleam",
-		name: "Gleam",
-		checkCommand: "gleam",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "gleam",
-		github: {
-			repo: "gleam-lang/gleam",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64"
-						? "aarch64-unknown-linux-musl.tar.gz"
-						: "x86_64-unknown-linux-musl.tar.gz";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "aarch64-apple-darwin.tar.gz"
-						: "x86_64-apple-darwin.tar.gz";
-				if (platform === "win32")
-					return arch === "arm64"
-						? "aarch64-pc-windows-msvc.zip"
-						: "x86_64-pc-windows-msvc.zip";
-				return undefined;
-			},
-			binaryInArchive: "gleam",
-		},
-	},
-	{
-		// marksman ships a single BARE (uncompressed) binary per platform on GitHub
-		// releases — no archive, so it lands via the bare-binary branch of
-		// installGitHubTool (the `else` that writes the asset directly, like shfmt).
-		// Used as managedToolId by MarksmanServer; LSP entrypoint is `marksman
-		// server` (stdio). macOS ships a universal binary; Windows has only x64
-		// (runs on arm64 via emulation) — so all six platform/arch combos resolve.
-		id: "marksman",
-		name: "Marksman",
-		checkCommand: "marksman",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "marksman",
-		github: {
-			repo: "artempyanykh/marksman",
-			assetMatch: (platform, arch) => {
-				if (platform === "linux")
-					return arch === "arm64"
-						? "marksman-linux-arm64"
-						: "marksman-linux-x64";
-				if (platform === "darwin") return "marksman-macos";
-				if (platform === "win32") return "marksman.exe";
-				return undefined;
-			},
-			// bare binary — no binaryInArchive
-		},
-	},
-	{
-		// Expert ships a bare native binary per platform on GitHub releases. Its
-		// `--stdio` flag is required to start the LSP transport. Windows arm64 uses
-		// the x64 binary through Windows' built-in x64 emulation.
-		id: "expert",
-		name: "Expert",
-		checkCommand: "expert",
-		checkArgs: ["--version"],
-		installStrategy: "github",
-		binaryName: "expert",
-		github: {
-			repo: "expert-lsp/expert",
-			assetMatch: (platform, arch) => {
-				if (arch !== "x64" && arch !== "arm64") return undefined;
-				if (platform === "linux")
-					return arch === "arm64"
-						? "expert_linux_arm64"
-						: "expert_linux_amd64";
-				if (platform === "darwin")
-					return arch === "arm64"
-						? "expert_darwin_arm64"
-						: "expert_darwin_amd64";
-				if (platform === "win32") return "expert_windows_amd64.exe";
-				return undefined;
-			},
-			// bare binary — no binaryInArchive
-		},
-	},
+  // Core LSP servers
+  {
+    id: "typescript-language-server",
+    name: "TypeScript Language Server",
+    checkCommand: "typescript-language-server",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "typescript-language-server",
+    binaryName: "typescript-language-server",
+  },
+  {
+    id: "typescript",
+    name: "TypeScript",
+    checkCommand: "tsc",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    // The managed compiler serves the classic typescript-language-server
+    // fallback. TypeScript 7 removed lib/tsserver.js and is selected only from
+    // project-local installs through the native `tsc --lsp --stdio` path.
+    // Revisit when typescript-language-server supports TS 7 — refs #1436.
+    packageName: "typescript@5.9.3",
+    binaryName: "tsc",
+  },
+  {
+    id: "pyright",
+    name: "Pyright",
+    checkCommand: "pyright",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "pyright",
+    binaryName: "pyright",
+  },
+  // Linting/formatting tools
+  {
+    id: "prettier",
+    name: "Prettier",
+    checkCommand: "prettier",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "prettier",
+    binaryName: "prettier",
+  },
+  {
+    id: "ruff",
+    name: "Ruff",
+    checkCommand: "ruff",
+    checkArgs: ["--version"],
+    installStrategy: "pip",
+    packageName: "ruff",
+    binaryName: "ruff",
+  },
+  {
+    // Alternate Python LSP (fallback when pyright/the `python` server is
+    // unavailable or disabled). Used as a managedToolId by PythonJediServer.
+    id: "jedi-language-server",
+    name: "Jedi Language Server",
+    checkCommand: "jedi-language-server",
+    checkArgs: ["--version"],
+    installStrategy: "pip",
+    packageName: "jedi-language-server",
+    binaryName: "jedi-language-server",
+  },
+  {
+    id: "biome",
+    name: "Biome",
+    checkCommand: "biome",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "@biomejs/biome",
+    binaryName: "biome",
+    platformPackage: {
+      base: "@biomejs/cli",
+      suffixes: {
+        "linux-x64": "linux-x64",
+        "linux-arm64": "linux-arm64",
+        "darwin-x64": "darwin-x64",
+        "darwin-arm64": "darwin-arm64",
+        "win32-x64": "win32-x64",
+        "win32-arm64": "win32-arm64",
+      },
+      binaries: ["biome"],
+    },
+  },
+  // Analysis tools (run at session start / turn end)
+  // Structural search and dead code detection
+  {
+    id: "ast-grep",
+    name: "ast-grep CLI",
+    checkCommand: "ast-grep",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "@ast-grep/cli",
+    binaryName: "ast-grep",
+    platformPackage: {
+      suffixes: {
+        "linux-x64": "linux-x64-gnu",
+        "linux-arm64": "linux-arm64-gnu",
+        "darwin-x64": "darwin-x64",
+        "darwin-arm64": "darwin-arm64",
+        "win32-x64": "win32-x64-msvc",
+        "win32-arm64": "win32-arm64-msvc",
+        "win32-ia32": "win32-ia32-msvc",
+      },
+      binaries: ["ast-grep", "sg"],
+    },
+  },
+  {
+    id: "yamllint",
+    name: "yamllint",
+    checkCommand: "yamllint",
+    checkArgs: ["--version"],
+    installStrategy: "pip",
+    packageName: "yamllint",
+    binaryName: "yamllint",
+  },
+  {
+    id: "sqlfluff",
+    name: "sqlfluff",
+    checkCommand: "sqlfluff",
+    checkArgs: ["--version"],
+    installStrategy: "pip",
+    packageName: "sqlfluff",
+    binaryName: "sqlfluff",
+  },
+  {
+    id: "bash-language-server",
+    name: "Bash Language Server",
+    checkCommand: "bash-language-server",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "bash-language-server",
+    binaryName: "bash-language-server",
+  },
+  {
+    id: "fish-lsp",
+    name: "Fish Language Server",
+    checkCommand: "fish-lsp",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "fish-lsp",
+    binaryName: "fish-lsp",
+  },
+  {
+    id: "cmake-language-server",
+    name: "CMake Language Server",
+    checkCommand: "cmake-language-server",
+    checkArgs: ["--version"],
+    installStrategy: "pip",
+    packageName: "cmake-language-server",
+    binaryName: "cmake-language-server",
+  },
+  {
+    id: "yaml-language-server",
+    name: "YAML Language Server",
+    checkCommand: "yaml-language-server",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "yaml-language-server",
+    binaryName: "yaml-language-server",
+  },
+  {
+    id: "vscode-json-language-server",
+    name: "VSCode JSON Language Server",
+    checkCommand: "vscode-json-language-server",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "vscode-langservers-extracted",
+    binaryName: "vscode-json-language-server",
+  },
+  {
+    id: "vscode-html-languageserver-bin",
+    name: "VSCode HTML Language Server",
+    checkCommand: "vscode-html-language-server",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "vscode-html-languageserver-bin",
+    binaryName: "vscode-html-language-server",
+  },
+  {
+    id: "htmlhint",
+    name: "HTMLHint",
+    checkCommand: "htmlhint",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "htmlhint",
+    binaryName: "htmlhint",
+  },
+  {
+    id: "hadolint",
+    name: "Hadolint",
+    checkCommand: "hadolint",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "hadolint",
+    github: {
+      repo: "hadolint/hadolint",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux") return arch === "arm64" ? "linux.aarch64" : "linux.x86_64";
+        if (platform === "darwin") return arch === "arm64" ? "macos-arm64" : "macos-x86_64";
+        if (platform === "win32") return "windows-x86_64.exe";
+        return undefined;
+      },
+    },
+  },
+  {
+    id: "helm",
+    name: "Helm",
+    checkCommand: "helm",
+    checkArgs: ["version", "--short"],
+    installStrategy: "github",
+    binaryName: "helm",
+    github: {
+      repo: "helm/helm",
+      assetMatch: (platform, arch) => {
+        // helm publishes per-OS archives: tar.gz for POSIX, zip for Windows.
+        const cpu = arch === "arm64" ? "arm64" : "amd64";
+        if (platform === "linux") return `linux-${cpu}.tar.gz`;
+        if (platform === "darwin") return `darwin-${cpu}.tar.gz`;
+        if (platform === "win32") return `windows-${cpu}.zip`;
+        return undefined;
+      },
+      // Release archives nest the executable under an OS/arch directory;
+      // the installer searches recursively and adds the Windows suffix.
+      binaryInArchive: "helm",
+    },
+  },
+  {
+    // Opengrep: a single standalone binary per platform on GitHub releases —
+    // no login, no telemetry (the reason for switching off Semgrep, #111).
+    id: "opengrep",
+    name: "Opengrep",
+    checkCommand: "opengrep",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "opengrep",
+    github: {
+      repo: "opengrep/opengrep",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64" ? "opengrep_manylinux_aarch64" : "opengrep_manylinux_x86";
+        if (platform === "darwin")
+          return arch === "arm64" ? "opengrep_osx_arm64" : "opengrep_osx_x86";
+        // One x86 Windows build; runs on arm64 Windows via emulation.
+        if (platform === "win32") return "opengrep_windows_x86.exe";
+        return undefined;
+      },
+    },
+  },
+  {
+    id: "vscode-css-languageserver",
+    name: "VSCode CSS Language Server",
+    checkCommand: "vscode-css-language-server",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "vscode-css-languageserver",
+    binaryName: "vscode-css-language-server",
+  },
+  {
+    id: "dockerfile-language-server-nodejs",
+    name: "Dockerfile Language Server",
+    checkCommand: "docker-langserver",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "dockerfile-language-server-nodejs",
+    binaryName: "docker-langserver",
+  },
+  {
+    id: "intelephense",
+    name: "Intelephense",
+    checkCommand: "intelephense",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "intelephense",
+    binaryName: "intelephense",
+  },
+  {
+    id: "@prisma/language-server",
+    name: "Prisma Language Server",
+    checkCommand: "prisma-language-server",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "@prisma/language-server",
+    binaryName: "prisma-language-server",
+  },
+  {
+    id: "@vue/language-server",
+    name: "Vue Language Server",
+    checkCommand: "vue-language-server",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "@vue/language-server",
+    binaryName: "vue-language-server",
+  },
+  {
+    id: "svelte-language-server",
+    name: "Svelte Language Server",
+    checkCommand: "svelteserver",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "svelte-language-server",
+    binaryName: "svelteserver",
+  },
+  {
+    id: "markdownlint",
+    name: "markdownlint-cli2",
+    checkCommand: "markdownlint-cli2",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "markdownlint-cli2",
+    binaryName: "markdownlint-cli2",
+  },
+  {
+    id: "mypy",
+    name: "mypy",
+    checkCommand: "mypy",
+    checkArgs: ["--version"],
+    installStrategy: "pip",
+    packageName: "mypy",
+    binaryName: "mypy",
+  },
+  {
+    id: "rubocop",
+    name: "RuboCop",
+    checkCommand: "rubocop",
+    checkArgs: ["--version"],
+    installStrategy: "gem",
+    packageName: "rubocop",
+    binaryName: "rubocop",
+  },
+  {
+    id: "stylelint",
+    name: "Stylelint",
+    checkCommand: "stylelint",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "stylelint",
+    binaryName: "stylelint",
+  },
+  {
+    id: "oxlint",
+    name: "Oxlint",
+    checkCommand: "oxlint",
+    checkArgs: ["--version"],
+    installStrategy: "npm",
+    packageName: "oxlint",
+    binaryName: "oxlint",
+  },
+  // GitHub release binaries
+  {
+    id: "shellcheck",
+    name: "ShellCheck",
+    checkCommand: "shellcheck",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "shellcheck",
+    github: {
+      repo: "koalaman/shellcheck",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64" ? "linux.aarch64.tar.xz" : "linux.x86_64.tar.xz";
+        if (platform === "darwin")
+          return arch === "arm64" ? "darwin.aarch64.tar.xz" : "darwin.x86_64.tar.xz";
+        if (platform === "win32") return "zip";
+        return undefined;
+      },
+      binaryInArchive: "shellcheck",
+    },
+  },
+  {
+    id: "shfmt",
+    name: "shfmt",
+    checkCommand: "shfmt",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "shfmt",
+    github: {
+      repo: "mvdan/sh",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux") return arch === "arm64" ? "linux_arm64" : "linux_amd64";
+        if (platform === "darwin") return arch === "arm64" ? "darwin_arm64" : "darwin_amd64";
+        if (platform === "win32")
+          return arch === "arm64" ? "windows_arm64.exe" : "windows_amd64.exe";
+        return undefined;
+      },
+      // bare binary, no archive
+    },
+  },
+  {
+    id: "rust-analyzer",
+    name: "rust-analyzer",
+    checkCommand: "rust-analyzer",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "rust-analyzer",
+    github: {
+      repo: "rust-lang/rust-analyzer",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64" ? "aarch64-unknown-linux-gnu.gz" : "x86_64-unknown-linux-gnu.gz";
+        if (platform === "darwin")
+          return arch === "arm64" ? "aarch64-apple-darwin.gz" : "x86_64-apple-darwin.gz";
+        if (platform === "win32") return "x86_64-pc-windows-msvc.zip";
+        return undefined;
+      },
+      // Linux/macOS: bare .gz; Windows: .zip archive containing rust-analyzer.exe
+    },
+  },
+  {
+    // Alternate JS/TS LSP (fallback when the `typescript` server is unavailable
+    // or disabled — e.g. Deno projects). Used as a managedToolId by DenoServer.
+    // Every platform ships a .zip containing the `deno` binary (the github
+    // strategy extracts it, as it does for rust-analyzer's Windows .zip).
+    id: "deno",
+    name: "Deno",
+    checkCommand: "deno",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "deno",
+    github: {
+      repo: "denoland/deno",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64"
+            ? "deno-aarch64-unknown-linux-gnu.zip"
+            : "deno-x86_64-unknown-linux-gnu.zip";
+        if (platform === "darwin")
+          return arch === "arm64"
+            ? "deno-aarch64-apple-darwin.zip"
+            : "deno-x86_64-apple-darwin.zip";
+        // Windows ships only x86_64 (runs under emulation on arm64).
+        if (platform === "win32") return "deno-x86_64-pc-windows-msvc.zip";
+        return undefined;
+      },
+    },
+  },
+  {
+    id: "golangci-lint",
+    name: "golangci-lint",
+    checkCommand: "golangci-lint",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "golangci-lint",
+    github: {
+      repo: "golangci/golangci-lint",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64" ? "linux-arm64.tar.gz" : "linux-amd64.tar.gz";
+        if (platform === "darwin")
+          return arch === "arm64" ? "darwin-arm64.tar.gz" : "darwin-amd64.tar.gz";
+        if (platform === "win32")
+          return arch === "arm64" ? "windows-arm64.zip" : "windows-amd64.zip";
+        return undefined;
+      },
+      binaryInArchive: "golangci-lint",
+    },
+  },
+  {
+    id: "ktlint",
+    name: "ktlint",
+    checkCommand: "ktlint",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "ktlint",
+    github: {
+      // ktlint ships a self-executable `ktlint` (a JAR with a shell preamble)
+      // for Linux/macOS, plus a `ktlint.bat` wrapper for Windows that runs
+      // `java -jar %~dp0ktlint`. On Windows BOTH files are needed: the .bat AND
+      // the `ktlint` jar it wraps (#218). No arm64-specific asset.
+      repo: "pinterest/ktlint",
+      assetMatch: (platform, _arch) => {
+        if (platform === "linux") return "ktlint";
+        if (platform === "darwin") return "ktlint";
+        if (platform === "win32") return "ktlint.bat";
+        return undefined;
+      },
+      extraAssets: (platform) => (platform === "win32" ? ["ktlint"] : []),
+    },
+  },
+  {
+    // ktfmt (Meta's opinionated Kotlin formatter) ships only as a Maven-Central
+    // fat JAR — no native binary, no npm package — so it uses the maven strategy
+    // (#129). Run via a `java -jar` launcher; requires a JRE.
+    id: "ktfmt",
+    name: "ktfmt",
+    checkCommand: "ktfmt",
+    checkArgs: ["--version"],
+    installStrategy: "maven",
+    binaryName: "ktfmt",
+    maven: {
+      groupId: "com.facebook",
+      artifactId: "ktfmt",
+      version: "0.63",
+      classifier: "with-dependencies",
+    },
+  },
+  {
+    // SpotBugs (bytecode bug-pattern analyzer for Java/Kotlin/Scala/Groovy)
+    // ships as a distribution archive — a lib/ of many JARs + bin/ launchers,
+    // NOT a runnable fat JAR — so it uses the archive strategy, not maven
+    // (refs #133). Requires a JRE (gated by the runner, not the install).
+    id: "spotbugs",
+    name: "SpotBugs",
+    checkCommand: "spotbugs",
+    checkArgs: ["-version"],
+    installStrategy: "archive",
+    binaryName: "spotbugs",
+    archive: {
+      url: "https://github.com/spotbugs/spotbugs/releases/download/4.10.2/spotbugs-4.10.2.tgz",
+      kind: "tgz",
+      launcher: "bin/spotbugs",
+    },
+  },
+  {
+    // PowerShell Editor Services (#278). NOT a single binary — a multi-folder
+    // PowerShell MODULE BUNDLE launched via `pwsh Start-EditorServices.ps1
+    // -Stdio` (see PowerShellServer.spawn). archive TREE BUNDLE: the release zip
+    // extracts sibling module dirs (PowerShellEditorServices/, PSReadLine/,
+    // PSScriptAnalyzer/) at the root with no wrapping dir, so stripComponents:0
+    // + no launcher — the whole tree is kept and resolved to its extract dir.
+    // checkCommand "pwsh" documents the runtime but is unused for resolution
+    // (tree bundles resolve only via the extract dir + treeMarker).
+    id: "powershell-editor-services",
+    name: "PowerShell Editor Services",
+    checkCommand: "pwsh",
+    checkArgs: ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"],
+    installStrategy: "archive",
+    binaryName: "powershell-editor-services",
+    archive: {
+      url: "https://github.com/PowerShell/PowerShellEditorServices/releases/download/v4.6.0/PowerShellEditorServices.zip",
+      kind: "zip",
+      stripComponents: 0,
+      treeMarker: "PowerShellEditorServices/Start-EditorServices.ps1",
+    },
+  },
+  {
+    // clangd (C/C++/Obj-C LSP, #241) — a self-contained native TREE BUNDLE: the
+    // release zip wraps `clangd_<ver>/{bin,lib}` (bin/clangd[.exe] + the bundled
+    // libclang headers under lib/), so stripComponents:1 drops the version dir and
+    // the whole tree is kept (no launcher). Unlike PSES there is no external
+    // runtime — CppServer launches `<bundle>/bin/clangd` directly. checkCommand
+    // documents the binary but is unused for resolution (tree bundles resolve only
+    // via the extract dir + treeMarker). Platform-matched url: clangd ships x64
+    // prebuilts; arm runs the x64 build under Rosetta/emulation (darwin/win32),
+    // while linux/arm64 has no official build → undefined (graceful unavailable).
+    id: "clangd",
+    name: "clangd",
+    checkCommand: "clangd",
+    checkArgs: ["--version"],
+    installStrategy: "archive",
+    binaryName: "clangd",
+    archive: {
+      url: (platform, arch) => {
+        const version = "22.1.0";
+        const base = `https://github.com/clangd/clangd/releases/download/${version}`;
+        if (platform === "linux")
+          return arch === "x64" ? `${base}/clangd-linux-${version}.zip` : undefined;
+        if (platform === "darwin") return `${base}/clangd-mac-${version}.zip`;
+        if (platform === "win32") return `${base}/clangd-windows-${version}.zip`;
+        return undefined;
+      },
+      kind: "zip",
+      stripComponents: 1,
+      treeMarker: "bin",
+    },
+  },
+  {
+    // lua-language-server (#564, split from #241) — same self-contained native
+    // TREE BUNDLE shape as clangd: bin/lua-language-server[.exe] + bundled
+    // locale/meta files, no external runtime. UNLIKE clangd, the release
+    // archive has NO wrapping version dir (verified by inspecting the actual
+    // 3.18.2 linux-x64 .tar.gz and win32-x64 .zip contents: `bin/`, `LICENSE`,
+    // `locale/`, … sit at archive root) — so stripComponents:0, not 1.
+    // LuaServer launches `<bundle>/bin/lua-language-server` directly.
+    // checkCommand documents the binary but is unused for resolution (tree
+    // bundles resolve only via the extract dir + treeMarker). Platform-matched
+    // url: LuaLS publishes darwin/linux x64+arm64 and win32 x64 (no win32/arm64
+    // build as of 3.18.2 → undefined, graceful unavailable); asset naming
+    // verified against the live GitHub release listing, not guessed.
+    id: "lua-language-server",
+    name: "lua-language-server",
+    checkCommand: "lua-language-server",
+    checkArgs: ["--version"],
+    installStrategy: "archive",
+    binaryName: "lua-language-server",
+    archive: {
+      url: (platform, arch) => {
+        const version = "3.18.2";
+        const base = `https://github.com/LuaLS/lua-language-server/releases/download/${version}`;
+        if (platform === "linux")
+          return arch === "arm64"
+            ? `${base}/lua-language-server-${version}-linux-arm64.tar.gz`
+            : `${base}/lua-language-server-${version}-linux-x64.tar.gz`;
+        if (platform === "darwin")
+          return arch === "arm64"
+            ? `${base}/lua-language-server-${version}-darwin-arm64.tar.gz`
+            : `${base}/lua-language-server-${version}-darwin-x64.tar.gz`;
+        if (platform === "win32")
+          return arch === "arm64"
+            ? undefined
+            : `${base}/lua-language-server-${version}-win32-x64.zip`;
+        return undefined;
+      },
+      kind: "zip",
+      stripComponents: 0,
+      treeMarker: "bin",
+    },
+  },
+  {
+    id: "actionlint",
+    name: "actionlint",
+    checkCommand: "actionlint",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "actionlint",
+    github: {
+      repo: "rhysd/actionlint",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64" ? "linux_arm64.tar.gz" : "linux_amd64.tar.gz";
+        if (platform === "darwin")
+          return arch === "arm64" ? "darwin_arm64.tar.gz" : "darwin_amd64.tar.gz";
+        if (platform === "win32")
+          return arch === "arm64" ? "windows_arm64.zip" : "windows_amd64.zip";
+        return undefined;
+      },
+      binaryInArchive: "actionlint",
+    },
+  },
+  {
+    // zizmor: GitHub Actions workflow security scanner that speaks LSP (#272).
+    // cargo-dist release archives, one per target triple, each holding a single
+    // `zizmor` binary (extracted via the recursive binary find). Online audits
+    // (known-vulnerable-actions, unpinned-uses, …) need a GitHub token — the LSP
+    // spawn forwards one via resolveZizmorGitHubToken (clients/zizmor-config.ts).
+    id: "zizmor",
+    name: "zizmor",
+    checkCommand: "zizmor",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "zizmor",
+    github: {
+      repo: "zizmorcore/zizmor",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64"
+            ? "aarch64-unknown-linux-gnu.tar.gz"
+            : "x86_64-unknown-linux-gnu.tar.gz";
+        if (platform === "darwin")
+          return arch === "arm64" ? "aarch64-apple-darwin.tar.gz" : "x86_64-apple-darwin.tar.gz";
+        // One x86 Windows build; arm64 Windows runs it under emulation.
+        if (platform === "win32") return "x86_64-pc-windows-msvc.zip";
+        return undefined;
+      },
+      binaryInArchive: "zizmor",
+    },
+  },
+  {
+    // typos-lsp: source-code spell checker that speaks LSP (#283). cargo-dist
+    // release archives, one per target triple, each holding a single `typos-lsp`
+    // binary (extracted via the recursive binary find). NO token / network — the
+    // dictionary is compiled in. The binary takes no `--version` (it ignores args
+    // and serves the LSP on stdin/stdout); the PATH probe ignores checkArgs and
+    // verifyToolBinary runs with stdin:ignore so the server gets EOF and exits.
+    id: "typos-lsp",
+    name: "typos-lsp",
+    checkCommand: "typos-lsp",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "typos-lsp",
+    github: {
+      repo: "tekumara/typos-lsp",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64"
+            ? "aarch64-unknown-linux-gnu.tar.gz"
+            : "x86_64-unknown-linux-gnu.tar.gz";
+        if (platform === "darwin")
+          return arch === "arm64" ? "aarch64-apple-darwin.tar.gz" : "x86_64-apple-darwin.tar.gz";
+        if (platform === "win32")
+          // Native win-arm64 build (one better than zizmor, which emulates).
+          return arch === "arm64" ? "aarch64-pc-windows-msvc.zip" : "x86_64-pc-windows-msvc.zip";
+        return undefined;
+      },
+      binaryInArchive: "typos-lsp",
+    },
+  },
+  {
+    id: "tflint",
+    name: "tflint",
+    checkCommand: "tflint",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "tflint",
+    github: {
+      repo: "terraform-linters/tflint",
+      assetMatch: archAssetMatch(OS_ARCH_ZIP_ASSETS),
+      binaryInArchive: "tflint",
+    },
+  },
+  {
+    // Terragrunt ships a bare native binary per platform on GitHub releases.
+    // Windows arm64 uses the x64 binary through Windows' built-in emulation —
+    // there is no terragrunt_windows_arm64.exe upstream.
+    id: "terragrunt",
+    name: "terragrunt",
+    checkCommand: "terragrunt",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "terragrunt",
+    github: {
+      repo: "gruntwork-io/terragrunt",
+      assetMatch: archAssetMatch({
+        linux: {
+          x64: "terragrunt_linux_amd64",
+          arm64: "terragrunt_linux_arm64",
+        },
+        darwin: {
+          x64: "terragrunt_darwin_amd64",
+          arm64: "terragrunt_darwin_arm64",
+        },
+        win32: {
+          x64: "terragrunt_windows_amd64.exe",
+          arm64: "terragrunt_windows_amd64.exe",
+        },
+      }),
+      // bare binary — no binaryInArchive
+    },
+  },
+  {
+    id: "swiftlint",
+    name: "SwiftLint",
+    checkCommand: "swiftlint",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "swiftlint",
+    github: {
+      repo: "realm/SwiftLint",
+      assetMatch: (platform, arch) => {
+        if (platform === "darwin") return "portable_swiftlint.zip";
+        if (platform === "linux")
+          return arch === "arm64" ? "swiftlint_linux_arm64.zip" : "swiftlint_linux_amd64.zip";
+        return undefined;
+      },
+      binaryInArchive: "swiftlint",
+    },
+  },
+  {
+    id: "taplo",
+    name: "taplo",
+    checkCommand: "taplo",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "taplo",
+    github: {
+      repo: "tamasfe/taplo",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64" ? "taplo-linux-aarch64.gz" : "taplo-linux-x86_64.gz";
+        if (platform === "darwin")
+          return arch === "arm64" ? "taplo-darwin-aarch64.gz" : "taplo-darwin-x86_64.gz";
+        if (platform === "win32") return "taplo-windows-x86_64.gz";
+        return undefined;
+      },
+    },
+  },
+  {
+    id: "vale",
+    name: "Vale",
+    checkCommand: "vale",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "vale",
+    github: {
+      repo: "vale-cli/vale",
+      assetMatch: (platform, arch) => {
+        const version = "3.14.2";
+        if (platform === "linux")
+          return arch === "arm64"
+            ? `vale_${version}_Linux_arm64.tar.gz`
+            : `vale_${version}_Linux_64-bit.tar.gz`;
+        if (platform === "darwin")
+          return arch === "arm64"
+            ? `vale_${version}_macOS_arm64.tar.gz`
+            : `vale_${version}_macOS_64-bit.tar.gz`;
+        if (platform === "win32") return `vale_${version}_Windows_64-bit.zip`;
+        return undefined;
+      },
+      binaryInArchive: "vale",
+    },
+  },
+  {
+    id: "terraform-ls",
+    name: "terraform-ls",
+    checkCommand: "terraform-ls",
+    checkArgs: ["version"],
+    installStrategy: "github",
+    binaryName: "terraform-ls",
+    github: {
+      repo: "hashicorp/terraform-ls",
+      hashiCorpReleaseProduct: "terraform-ls",
+      assetMatch: archAssetMatch(OS_ARCH_ZIP_ASSETS),
+      binaryInArchive: "terraform-ls",
+    },
+  },
+  {
+    id: "zls",
+    name: "zls",
+    checkCommand: "zls",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "zls",
+    github: {
+      repo: "zigtools/zls",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64" ? "aarch64-linux.tar.xz" : "x86_64-linux.tar.xz";
+        if (platform === "darwin")
+          return arch === "arm64" ? "aarch64-macos.tar.xz" : "x86_64-macos.tar.xz";
+        if (platform === "win32")
+          return arch === "arm64" ? "aarch64-windows.zip" : "x86_64-windows.zip";
+        return undefined;
+      },
+      binaryInArchive: "zls",
+    },
+  },
+  {
+    // clojure-lsp ships a self-contained native (GraalVM) binary per platform
+    // on GitHub releases — no JVM needed. Used as managedToolId by ClojureServer.
+    // The .zip carries the bare binary (located recursively on extract).
+    id: "clojure-lsp",
+    name: "clojure-lsp",
+    checkCommand: "clojure-lsp",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "clojure-lsp",
+    github: {
+      repo: "clojure-lsp/clojure-lsp",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64" ? "native-linux-aarch64.zip" : "native-linux-amd64.zip";
+        if (platform === "darwin")
+          return arch === "arm64" ? "native-macos-aarch64.zip" : "native-macos-amd64.zip";
+        // Only an x86_64 Windows native build; runs on arm64 via emulation.
+        if (platform === "win32") return "native-windows-amd64.zip";
+        return undefined;
+      },
+      binaryInArchive: "clojure-lsp",
+    },
+  },
+  {
+    // CUE ships a single native binary per platform on GitHub releases;
+    // the LSP runs via `cue lsp serve`. Used as managedToolId by CueServer.
+    id: "cue",
+    name: "CUE",
+    checkCommand: "cue",
+    checkArgs: ["version"],
+    installStrategy: "github",
+    binaryName: "cue",
+    github: {
+      repo: "cue-lang/cue",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64" ? "linux_arm64.tar.gz" : "linux_amd64.tar.gz";
+        if (platform === "darwin")
+          return arch === "arm64" ? "darwin_arm64.tar.gz" : "darwin_amd64.tar.gz";
+        if (platform === "win32")
+          return arch === "arm64" ? "windows_arm64.zip" : "windows_amd64.zip";
+        return undefined;
+      },
+      binaryInArchive: "cue",
+    },
+  },
+  {
+    // gleam ships a single static binary per platform on GitHub releases; the
+    // LSP runs via `gleam lsp`. Used as managedToolId by GleamServer. The linux
+    // build is a FLAT musl tarball (a bare `gleam`), handled by the recursive
+    // tar-binary lookup in installGitHubTool.
+    id: "gleam",
+    name: "Gleam",
+    checkCommand: "gleam",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "gleam",
+    github: {
+      repo: "gleam-lang/gleam",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64"
+            ? "aarch64-unknown-linux-musl.tar.gz"
+            : "x86_64-unknown-linux-musl.tar.gz";
+        if (platform === "darwin")
+          return arch === "arm64" ? "aarch64-apple-darwin.tar.gz" : "x86_64-apple-darwin.tar.gz";
+        if (platform === "win32")
+          return arch === "arm64" ? "aarch64-pc-windows-msvc.zip" : "x86_64-pc-windows-msvc.zip";
+        return undefined;
+      },
+      binaryInArchive: "gleam",
+    },
+  },
+  {
+    // marksman ships a single BARE (uncompressed) binary per platform on GitHub
+    // releases — no archive, so it lands via the bare-binary branch of
+    // installGitHubTool (the `else` that writes the asset directly, like shfmt).
+    // Used as managedToolId by MarksmanServer; LSP entrypoint is `marksman
+    // server` (stdio). macOS ships a universal binary; Windows has only x64
+    // (runs on arm64 via emulation) — so all six platform/arch combos resolve.
+    id: "marksman",
+    name: "Marksman",
+    checkCommand: "marksman",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "marksman",
+    github: {
+      repo: "artempyanykh/marksman",
+      assetMatch: (platform, arch) => {
+        if (platform === "linux")
+          return arch === "arm64" ? "marksman-linux-arm64" : "marksman-linux-x64";
+        if (platform === "darwin") return "marksman-macos";
+        if (platform === "win32") return "marksman.exe";
+        return undefined;
+      },
+      // bare binary — no binaryInArchive
+    },
+  },
+  {
+    // Expert ships a bare native binary per platform on GitHub releases. Its
+    // `--stdio` flag is required to start the LSP transport. Windows arm64 uses
+    // the x64 binary through Windows' built-in x64 emulation.
+    id: "expert",
+    name: "Expert",
+    checkCommand: "expert",
+    checkArgs: ["--version"],
+    installStrategy: "github",
+    binaryName: "expert",
+    github: {
+      repo: "expert-lsp/expert",
+      assetMatch: (platform, arch) => {
+        if (arch !== "x64" && arch !== "arm64") return undefined;
+        if (platform === "linux")
+          return arch === "arm64" ? "expert_linux_arm64" : "expert_linux_amd64";
+        if (platform === "darwin")
+          return arch === "arm64" ? "expert_darwin_arm64" : "expert_darwin_amd64";
+        if (platform === "win32") return "expert_windows_amd64.exe";
+        return undefined;
+      },
+      // bare binary — no binaryInArchive
+    },
+  },
 ];
 
 const ensureInFlight = new Map<string, Promise<string | undefined>>();
@@ -1383,7 +1312,7 @@ const installFailureReasons = new Map<string, string>();
 
 /** Last honest install refusal/failure reason for callers that need diagnostics. */
 export function getInstallFailureReason(toolId: string): string | undefined {
-	return installFailureReasons.get(toolId);
+  return installFailureReasons.get(toolId);
 }
 
 /**
@@ -1402,38 +1331,30 @@ export function getInstallFailureReason(toolId: string): string | undefined {
  *                    trust, an unknown tool id. Nothing ran.
  *   * `skipped`    — another process holds the install lock. Nothing ran.
  */
-export type InstallAttemptOutcome =
-	| "succeeded"
-	| "failed"
-	| "declined"
-	| "skipped";
+export type InstallAttemptOutcome = "succeeded" | "failed" | "declined" | "skipped";
 
 export interface InstallAttempt {
-	outcome: InstallAttemptOutcome;
-	/** Why, when there is something to say. */
-	reason?: string;
-	/** Epoch ms, so a caller can tell a fresh record from a stale one. */
-	at: number;
+  outcome: InstallAttemptOutcome;
+  /** Why, when there is something to say. */
+  reason?: string;
+  /** Epoch ms, so a caller can tell a fresh record from a stale one. */
+  at: number;
 }
 
 const installAttempts = new Map<string, InstallAttempt>();
 
-function noteInstallAttempt(
-	toolId: string,
-	outcome: InstallAttemptOutcome,
-	reason?: string,
-): void {
-	installAttempts.set(toolId, { outcome, reason, at: Date.now() });
+function noteInstallAttempt(toolId: string, outcome: InstallAttemptOutcome, reason?: string): void {
+  installAttempts.set(toolId, { outcome, reason, at: Date.now() });
 }
 
 /** Record an outcome only if this attempt has not already recorded its own. */
 function noteInstallAttemptIfUnrecorded(
-	toolId: string,
-	outcome: InstallAttemptOutcome,
-	reason?: string,
+  toolId: string,
+  outcome: InstallAttemptOutcome,
+  reason?: string,
 ): void {
-	if (installAttempts.has(toolId)) return;
-	noteInstallAttempt(toolId, outcome, reason);
+  if (installAttempts.has(toolId)) return;
+  noteInstallAttempt(toolId, outcome, reason);
 }
 
 /**
@@ -1442,7 +1363,7 @@ function noteInstallAttemptIfUnrecorded(
  * `availability_decision` record's install evidence (#1500).
  */
 export function getInstallAttempt(toolId: string): InstallAttempt | undefined {
-	return installAttempts.get(toolId);
+  return installAttempts.get(toolId);
 }
 
 /**
@@ -1466,10 +1387,8 @@ export type EnsureResolutionSource = "session-cache" | "probe-cache" | "path";
 
 const lastEnsureResolutionSource = new Map<string, EnsureResolutionSource>();
 
-export function getLastEnsureResolutionSource(
-	toolId: string,
-): EnsureResolutionSource | undefined {
-	return lastEnsureResolutionSource.get(toolId);
+export function getLastEnsureResolutionSource(toolId: string): EnsureResolutionSource | undefined {
+  return lastEnsureResolutionSource.get(toolId);
 }
 
 // Session-lifetime cache: once a tool path is resolved, skip the process-spawn check on subsequent calls.
@@ -1478,21 +1397,21 @@ const resolvedPathCache = new BoundedLruCache<string, string>(256);
 // --- Persistent probe cache ---
 
 interface ProbeCacheEntry {
-	path: string;
-	mtimeMs: number;
-	cachedAt: number;
-	/**
-	 * True when the `getToolPath` resolution that produced `path` saw a
-	 * transient probe failure (a stall, a kill, an unspawnable candidate) on
-	 * some tier before landing here — never a clean "not found" (#1569). Such
-	 * a selection may be a degraded fallback masking a preferred tier that was
-	 * merely unlucky at that moment, so it is not trusted for the full 24h
-	 * TTL: it ages out after `PROBE_CACHE_TRANSIENT_COOLDOWN_MS` instead, the
-	 * same window the live probe policy (`availability-policy.ts`) uses to
-	 * decide a transient verdict is worth re-checking. Absent/`false` means
-	 * every candidate along the way either succeeded or was cleanly missing.
-	 */
-	transient?: boolean;
+  path: string;
+  mtimeMs: number;
+  cachedAt: number;
+  /**
+   * True when the `getToolPath` resolution that produced `path` saw a
+   * transient probe failure (a stall, a kill, an unspawnable candidate) on
+   * some tier before landing here — never a clean "not found" (#1569). Such
+   * a selection may be a degraded fallback masking a preferred tier that was
+   * merely unlucky at that moment, so it is not trusted for the full 24h
+   * TTL: it ages out after `PROBE_CACHE_TRANSIENT_COOLDOWN_MS` instead, the
+   * same window the live probe policy (`availability-policy.ts`) uses to
+   * decide a transient verdict is worth re-checking. Absent/`false` means
+   * every candidate along the way either succeeded or was cleanly missing.
+   */
+  transient?: boolean;
 }
 
 type ProbeCache = Record<string, ProbeCacheEntry>;
@@ -1525,67 +1444,67 @@ const _probeCacheChanges = new Map<string, ProbeCacheEntry | null>();
 const _probeCacheChangeVersions = new Map<string, number>();
 
 async function readProbeCache(): Promise<ProbeCache> {
-	if (_probeCache !== null) return _probeCache;
-	try {
-		const raw = await fs.readFile(PROBE_CACHE_PATH, "utf-8");
-		const parsed: unknown = JSON.parse(raw);
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-			throw new Error("probe-cache root is not an object");
-		}
-		_probeCache = parsed as ProbeCache;
-	} catch (err) {
-		const code = (err as NodeJS.ErrnoException | undefined)?.code;
-		if (code !== "ENOENT") {
-			logSessionStart(
-				`auto-install probe-cache: read failed (${code ?? "invalid"}); treating cache as unavailable`,
-			);
-		}
-		_probeCache = {};
-	}
-	return _probeCache;
+  if (_probeCache !== null) return _probeCache;
+  try {
+    const raw = await fs.readFile(PROBE_CACHE_PATH, "utf-8");
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("probe-cache root is not an object");
+    }
+    _probeCache = parsed as ProbeCache;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ENOENT") {
+      logSessionStart(
+        `auto-install probe-cache: read failed (${code ?? "invalid"}); treating cache as unavailable`,
+      );
+    }
+    _probeCache = {};
+  }
+  return _probeCache;
 }
 
 function markProbeCacheChange(toolId: string, entry: ProbeCacheEntry | null): void {
-	_probeCacheChanges.set(toolId, entry);
-	_probeCacheChangeVersions.set(toolId, ++_probeCacheChangeGeneration);
-	_probeCacheDirty = true;
-	scheduleProbeFlush();
+  _probeCacheChanges.set(toolId, entry);
+  _probeCacheChangeVersions.set(toolId, ++_probeCacheChangeGeneration);
+  _probeCacheDirty = true;
+  scheduleProbeFlush();
 }
 
 function scheduleProbeFlush(delayMs = PROBE_CACHE_FLUSH_RETRY_DELAY_MS): void {
-	if (_probeCacheFlushTimer !== null) return;
-	_probeCacheFlushTimer = setTimeout(() => {
-		void flushProbeCache();
-	}, delayMs);
-	_probeCacheFlushTimer.unref?.();
+  if (_probeCacheFlushTimer !== null) return;
+  _probeCacheFlushTimer = setTimeout(() => {
+    void flushProbeCache();
+  }, delayMs);
+  _probeCacheFlushTimer.unref?.();
 }
 
 function scheduleProbeFlushRetry(): void {
-	const delay = Math.min(
-		PROBE_CACHE_FLUSH_RETRY_MAX_DELAY_MS,
-		PROBE_CACHE_FLUSH_RETRY_DELAY_MS * 2 ** Math.min(_probeCacheRetryAttempt, 6),
-	);
-	_probeCacheRetryAttempt += 1;
-	scheduleProbeFlush(delay);
+  const delay = Math.min(
+    PROBE_CACHE_FLUSH_RETRY_MAX_DELAY_MS,
+    PROBE_CACHE_FLUSH_RETRY_DELAY_MS * 2 ** Math.min(_probeCacheRetryAttempt, 6),
+  );
+  _probeCacheRetryAttempt += 1;
+  scheduleProbeFlush(delay);
 }
 
 export type ProbeCacheFlushResult =
-	| "idle"
-	| "written"
-	| "written-with-pending"
-	| "deferred"
-	| "failed";
+  | "idle"
+  | "written"
+  | "written-with-pending"
+  | "deferred"
+  | "failed";
 
 type ProbeCacheFlushSnapshot = {
-	changes: Map<string, ProbeCacheEntry | null>;
-	versions: Map<string, number>;
+  changes: Map<string, ProbeCacheEntry | null>;
+  versions: Map<string, number>;
 };
 
 function snapshotProbeCacheChanges(): ProbeCacheFlushSnapshot {
-	return {
-		changes: new Map(_probeCacheChanges),
-		versions: new Map(_probeCacheChangeVersions),
-	};
+  return {
+    changes: new Map(_probeCacheChanges),
+    versions: new Map(_probeCacheChangeVersions),
+  };
 }
 
 /**
@@ -1601,29 +1520,29 @@ function snapshotProbeCacheChanges(): ProbeCacheFlushSnapshot {
  * a valid one instead of looping on it indefinitely.
  */
 function deserializeProbeCache(contents: string | undefined): ProbeCache {
-	if (contents === undefined) return {};
-	try {
-		const parsed: unknown = JSON.parse(contents);
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-			throw new Error("probe-cache root is not an object");
-		}
-		return parsed as ProbeCache;
-	} catch (err) {
-		logSessionStart(
-			`auto-install probe-cache: write-side read was corrupt (${(err as Error).message}); recovering as empty`,
-		);
-		return {};
-	}
+  if (contents === undefined) return {};
+  try {
+    const parsed: unknown = JSON.parse(contents);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("probe-cache root is not an object");
+    }
+    return parsed as ProbeCache;
+  } catch (err) {
+    logSessionStart(
+      `auto-install probe-cache: write-side read was corrupt (${(err as Error).message}); recovering as empty`,
+    );
+    return {};
+  }
 }
 
 function applyProbeCacheChanges(
-	disk: ProbeCache,
-	changes: Map<string, ProbeCacheEntry | null>,
+  disk: ProbeCache,
+  changes: Map<string, ProbeCacheEntry | null>,
 ): void {
-	for (const [toolId, entry] of changes) {
-		if (entry === null) delete disk[toolId];
-		else disk[toolId] = entry;
-	}
+  for (const [toolId, entry] of changes) {
+    if (entry === null) delete disk[toolId];
+    else disk[toolId] = entry;
+  }
 }
 
 /**
@@ -1633,236 +1552,224 @@ function applyProbeCacheChanges(
  * supplies the probe cache's former quarantine/stale-owner recovery.
  */
 function ageProbeCache(disk: ProbeCache): void {
-	const now = Date.now();
-	for (const [toolId, entry] of Object.entries(disk)) {
-		const ttl = entry.transient
-			? PROBE_CACHE_TRANSIENT_COOLDOWN_MS
-			: PROBE_CACHE_TTL_MS;
-		if (!Number.isFinite(entry.cachedAt) || entry.cachedAt < now - ttl) {
-			delete disk[toolId];
-		}
-	}
+  const now = Date.now();
+  for (const [toolId, entry] of Object.entries(disk)) {
+    const ttl = entry.transient ? PROBE_CACHE_TRANSIENT_COOLDOWN_MS : PROBE_CACHE_TTL_MS;
+    if (!Number.isFinite(entry.cachedAt) || entry.cachedAt < now - ttl) {
+      delete disk[toolId];
+    }
+  }
 }
 
 function publishProbeCacheWrite(
-	disk: ProbeCache,
-	snapshotVersions: Map<string, number>,
+  disk: ProbeCache,
+  snapshotVersions: Map<string, number>,
 ): ProbeCacheFlushResult {
-	// Publish the sibling-process merge plus any updates that arrived during
-	// the write. Only an unchanged snapshot entry is retired.
-	const pendingAfterWrite = new Map(_probeCacheChanges);
-	_probeCache = disk;
-	for (const [toolId, entry] of pendingAfterWrite) {
-		if (entry === null) delete _probeCache[toolId];
-		else _probeCache[toolId] = entry;
-	}
-	for (const [toolId, version] of snapshotVersions) {
-		if (_probeCacheChangeVersions.get(toolId) === version) {
-			_probeCacheChanges.delete(toolId);
-			_probeCacheChangeVersions.delete(toolId);
-		}
-	}
-	_probeCacheDirty = _probeCacheChanges.size > 0;
-	_probeCacheRetryAttempt = 0;
-	return _probeCacheDirty ? "written-with-pending" : "written";
+  // Publish the sibling-process merge plus any updates that arrived during
+  // the write. Only an unchanged snapshot entry is retired.
+  const pendingAfterWrite = new Map(_probeCacheChanges);
+  _probeCache = disk;
+  for (const [toolId, entry] of pendingAfterWrite) {
+    if (entry === null) delete _probeCache[toolId];
+    else _probeCache[toolId] = entry;
+  }
+  for (const [toolId, version] of snapshotVersions) {
+    if (_probeCacheChangeVersions.get(toolId) === version) {
+      _probeCacheChanges.delete(toolId);
+      _probeCacheChangeVersions.delete(toolId);
+    }
+  }
+  _probeCacheDirty = _probeCacheChanges.size > 0;
+  _probeCacheRetryAttempt = 0;
+  return _probeCacheDirty ? "written-with-pending" : "written";
 }
 
 async function writeProbeCache(): Promise<ProbeCacheFlushResult> {
-	try {
-		// Snapshot versions before the awaited disk read/write. A new update for
-		// the same tool may arrive while the atomic write is in flight; its newer
-		// version must remain pending for the next flush.
-		const { changes, versions } = snapshotProbeCacheChanges();
-		let result: ProbeCacheFlushResult = "written";
-		const committed = await commitDurableStoreAsync({
-			path: PROBE_CACHE_PATH,
-			deserialize: deserializeProbeCache,
-			merge: (disk) => {
-				ageProbeCache(disk);
-				applyProbeCacheChanges(disk, changes);
-				return disk;
-			},
-			serialize: (disk) => JSON.stringify(disk, null, 2),
-			waitMs: PROBE_CACHE_FLUSH_LOCK_WAIT_MS,
-			retryMs: 25,
-			staleMs: PROBE_CACHE_LOCK_STALE_MS,
-			timeoutMessage: "Timed out waiting for probe-cache lock",
-			onContention: "skip-log",
-			logContention: () => {
-				logSessionStart(
-					"auto-install probe-cache: flush deferred because another process owns the lock",
-				);
-			},
-			afterWriteLocked: (disk) => {
-				result = publishProbeCacheWrite(disk, versions);
-			},
-		});
-		if (committed === undefined) {
-			scheduleProbeFlushRetry();
-			return "deferred";
-		}
-		return result;
-	} catch (err) {
-		// Keep dirty state so a later timer/explicit flush can retry. The error
-		// is logged without paths, source, or command text; an unavailable cache
-		// must never look like a clean empty cache to operators.
-		logSessionStart(
-			`auto-install probe-cache: flush failed (${(err as NodeJS.ErrnoException | undefined)?.code ?? "write error"}); pending update retained`,
-		);
-		scheduleProbeFlushRetry();
-		return "failed";
-	}
+  try {
+    // Snapshot versions before the awaited disk read/write. A new update for
+    // the same tool may arrive while the atomic write is in flight; its newer
+    // version must remain pending for the next flush.
+    const { changes, versions } = snapshotProbeCacheChanges();
+    let result: ProbeCacheFlushResult = "written";
+    const committed = await commitDurableStoreAsync({
+      path: PROBE_CACHE_PATH,
+      deserialize: deserializeProbeCache,
+      merge: (disk) => {
+        ageProbeCache(disk);
+        applyProbeCacheChanges(disk, changes);
+        return disk;
+      },
+      serialize: (disk) => JSON.stringify(disk, null, 2),
+      waitMs: PROBE_CACHE_FLUSH_LOCK_WAIT_MS,
+      retryMs: 25,
+      staleMs: PROBE_CACHE_LOCK_STALE_MS,
+      timeoutMessage: "Timed out waiting for probe-cache lock",
+      onContention: "skip-log",
+      logContention: () => {
+        logSessionStart(
+          "auto-install probe-cache: flush deferred because another process owns the lock",
+        );
+      },
+      afterWriteLocked: (disk) => {
+        result = publishProbeCacheWrite(disk, versions);
+      },
+    });
+    if (committed === undefined) {
+      scheduleProbeFlushRetry();
+      return "deferred";
+    }
+    return result;
+  } catch (err) {
+    // Keep dirty state so a later timer/explicit flush can retry. The error
+    // is logged without paths, source, or command text; an unavailable cache
+    // must never look like a clean empty cache to operators.
+    logSessionStart(
+      `auto-install probe-cache: flush failed (${(err as NodeJS.ErrnoException | undefined)?.code ?? "write error"}); pending update retained`,
+    );
+    scheduleProbeFlushRetry();
+    return "failed";
+  }
 }
 
 /** Await pending probe-cache persistence before a one-shot process exits. */
 export async function flushProbeCache(): Promise<ProbeCacheFlushResult> {
-	if (_probeCacheFlushTimer !== null) {
-		clearTimeout(_probeCacheFlushTimer);
-		_probeCacheFlushTimer = null;
-	}
-	// #946 review F4: if the 300ms timer's write already started, the dirty
-	// flag is false but the write may still be in flight — an immediate
-	// process.exit would truncate it. Always await the in-flight write.
-	if (_probeCacheWriteInFlight) {
-		await _probeCacheWriteInFlight;
-		if (!_probeCacheDirty) return "written";
-	}
-	if (!_probeCacheDirty || _probeCache === null) return "idle";
+  if (_probeCacheFlushTimer !== null) {
+    clearTimeout(_probeCacheFlushTimer);
+    _probeCacheFlushTimer = null;
+  }
+  // #946 review F4: if the 300ms timer's write already started, the dirty
+  // flag is false but the write may still be in flight — an immediate
+  // process.exit would truncate it. Always await the in-flight write.
+  if (_probeCacheWriteInFlight) {
+    await _probeCacheWriteInFlight;
+    if (!_probeCacheDirty) return "written";
+  }
+  if (!_probeCacheDirty || _probeCache === null) return "idle";
 
-	const write = writeProbeCache();
-	_probeCacheWriteInFlight = write;
-	try {
-		return await write;
-	} finally {
-		if (_probeCacheWriteInFlight === write) _probeCacheWriteInFlight = null;
-	}
+  const write = writeProbeCache();
+  _probeCacheWriteInFlight = write;
+  try {
+    return await write;
+  } finally {
+    if (_probeCacheWriteInFlight === write) _probeCacheWriteInFlight = null;
+  }
 }
 
 function isAstGrepVersionOutput(output: string): boolean {
-	return /\bast[- ]grep\b/i.test(output);
+  return /\bast[- ]grep\b/i.test(output);
 }
 
 async function verifyAstGrepProbePath(binPath: string): Promise<boolean> {
-	return new Promise((resolve) => {
-		let proc: ReturnType<typeof spawn>;
-		try {
-			proc = spawn(binPath, ["--version"], {
-				stdio: ["ignore", "pipe", "pipe"],
-				shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(binPath),
-				timeout: 5000,
-			});
-		} catch {
-			// SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the pidusage
-			// bug class, #533) — best-effort probe, resolve rather than reject.
-			resolve(false);
-			return;
-		}
-		let output = "";
-		proc.stdout?.on("data", (data) => (output += data));
-		proc.stderr?.on("data", (data) => (output += data));
-		proc.on("exit", (code) => {
-			resolve(code === 0 && isAstGrepVersionOutput(output));
-		});
-		proc.on("error", () => resolve(false));
-	});
+  return new Promise((resolve) => {
+    let proc: ReturnType<typeof spawn>;
+    try {
+      proc = spawn(binPath, ["--version"], {
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(binPath),
+        timeout: 5000,
+      });
+    } catch {
+      // SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the pidusage
+      // bug class, #533) — best-effort probe, resolve rather than reject.
+      resolve(false);
+      return;
+    }
+    let output = "";
+    proc.stdout?.on("data", (data) => (output += data));
+    proc.stderr?.on("data", (data) => (output += data));
+    proc.on("exit", (code) => {
+      resolve(code === 0 && isAstGrepVersionOutput(output));
+    });
+    proc.on("error", () => resolve(false));
+  });
 }
 
 // Exported for testing only.
-export async function checkProbeCache(
-	toolId: string,
-): Promise<string | undefined> {
-	const cache = await readProbeCache();
-	const entry = cache[toolId];
-	if (!entry) return undefined;
+export async function checkProbeCache(toolId: string): Promise<string | undefined> {
+  const cache = await readProbeCache();
+  const entry = cache[toolId];
+  if (!entry) return undefined;
 
-	// A transient-tainted entry (#1569) is not trusted past the shorter
-	// transient cooldown, even inside the 24h TTL — the selection it recorded
-	// may be a degraded fallback that a since-recovered preferred tier should
-	// now beat.
-	const ttl = entry.transient
-		? PROBE_CACHE_TRANSIENT_COOLDOWN_MS
-		: PROBE_CACHE_TTL_MS;
-	if (Date.now() - entry.cachedAt > ttl) {
-		logSessionStart(
-			`auto-install probe-cache ${toolId}: miss (${entry.transient ? "transient cooldown" : "ttl"} expired)`,
-		);
-		delete cache[toolId];
-		markProbeCacheChange(toolId, null);
-		return undefined;
-	}
+  // A transient-tainted entry (#1569) is not trusted past the shorter
+  // transient cooldown, even inside the 24h TTL — the selection it recorded
+  // may be a degraded fallback that a since-recovered preferred tier should
+  // now beat.
+  const ttl = entry.transient ? PROBE_CACHE_TRANSIENT_COOLDOWN_MS : PROBE_CACHE_TTL_MS;
+  if (Date.now() - entry.cachedAt > ttl) {
+    logSessionStart(
+      `auto-install probe-cache ${toolId}: miss (${entry.transient ? "transient cooldown" : "ttl"} expired)`,
+    );
+    delete cache[toolId];
+    markProbeCacheChange(toolId, null);
+    return undefined;
+  }
 
-	try {
-		await fs.access(entry.path);
-		const stat = await fs.stat(entry.path);
-		if (stat.mtimeMs !== entry.mtimeMs) {
-			logSessionStart(
-				`auto-install probe-cache ${toolId}: miss (mtime changed)`,
-			);
-			delete cache[toolId];
-			markProbeCacheChange(toolId, null);
-			return undefined;
-		}
-		if (toolId === "ast-grep" && !(await verifyAstGrepProbePath(entry.path))) {
-			logSessionStart(
-				`auto-install probe-cache ${toolId}: miss (not ast-grep: ${entry.path})`,
-			);
-			delete cache[toolId];
-			markProbeCacheChange(toolId, null);
-			return undefined;
-		}
-		return entry.path;
-	} catch {
-		logSessionStart(
-			`auto-install probe-cache ${toolId}: miss (gone: ${entry.path})`,
-		);
-		delete cache[toolId];
-		markProbeCacheChange(toolId, null);
-		return undefined;
-	}
+  try {
+    await fs.access(entry.path);
+    const stat = await fs.stat(entry.path);
+    if (stat.mtimeMs !== entry.mtimeMs) {
+      logSessionStart(`auto-install probe-cache ${toolId}: miss (mtime changed)`);
+      delete cache[toolId];
+      markProbeCacheChange(toolId, null);
+      return undefined;
+    }
+    if (toolId === "ast-grep" && !(await verifyAstGrepProbePath(entry.path))) {
+      logSessionStart(`auto-install probe-cache ${toolId}: miss (not ast-grep: ${entry.path})`);
+      delete cache[toolId];
+      markProbeCacheChange(toolId, null);
+      return undefined;
+    }
+    return entry.path;
+  } catch {
+    logSessionStart(`auto-install probe-cache ${toolId}: miss (gone: ${entry.path})`);
+    delete cache[toolId];
+    markProbeCacheChange(toolId, null);
+    return undefined;
+  }
 }
 
 // Exported for testing only.
 export async function updateProbeCache(
-	toolId: string,
-	resolvedPath: string,
-	transient = false,
+  toolId: string,
+  resolvedPath: string,
+  transient = false,
 ): Promise<void> {
-	try {
-		const stat = await fs.stat(resolvedPath);
-		const cache = await readProbeCache();
-		const entry: ProbeCacheEntry = {
-			path: resolvedPath,
-			mtimeMs: stat.mtimeMs,
-			cachedAt: Date.now(),
-			...(transient && { transient: true }),
-		};
-		cache[toolId] = entry;
-		markProbeCacheChange(toolId, entry);
-	} catch {
-		// best-effort
-	}
+  try {
+    const stat = await fs.stat(resolvedPath);
+    const cache = await readProbeCache();
+    const entry: ProbeCacheEntry = {
+      path: resolvedPath,
+      mtimeMs: stat.mtimeMs,
+      cachedAt: Date.now(),
+      ...(transient && { transient: true }),
+    };
+    cache[toolId] = entry;
+    markProbeCacheChange(toolId, entry);
+  } catch {
+    // best-effort
+  }
 }
 
 // Exported for testing only.
 export function resetProbeCacheStateForTesting(): void {
-	_probeCache = null;
-	_probeCacheDirty = false;
-	_probeCacheChanges.clear();
-	_probeCacheChangeVersions.clear();
-	_probeCacheChangeGeneration = 0;
-	_probeCacheRetryAttempt = 0;
-	resolvedPathCache.clear();
-	ensureInFlight.clear();
-	installFailureReasons.clear();
-	installAttempts.clear();
-	lastEnsureResolutionSource.clear();
-	lastManagedInstallVersion.clear();
-	lastResolveTransient.clear();
-	resetPathWalkMemo();
-	if (_probeCacheFlushTimer !== null) {
-		clearTimeout(_probeCacheFlushTimer);
-		_probeCacheFlushTimer = null;
-	}
+  _probeCache = null;
+  _probeCacheDirty = false;
+  _probeCacheChanges.clear();
+  _probeCacheChangeVersions.clear();
+  _probeCacheChangeGeneration = 0;
+  _probeCacheRetryAttempt = 0;
+  resolvedPathCache.clear();
+  ensureInFlight.clear();
+  installFailureReasons.clear();
+  installAttempts.clear();
+  lastEnsureResolutionSource.clear();
+  lastManagedInstallVersion.clear();
+  lastResolveTransient.clear();
+  resetPathWalkMemo();
+  if (_probeCacheFlushTimer !== null) {
+    clearTimeout(_probeCacheFlushTimer);
+    _probeCacheFlushTimer = null;
+  }
 }
 
 // --- Check Functions ---
@@ -1870,16 +1777,16 @@ export function resetProbeCacheStateForTesting(): void {
 const pathWalkMemo = new Map<string, boolean>();
 
 function hashSync(value: string): string {
-	let hash = 0x811c9dc5;
-	for (let i = 0; i < value.length; i += 1) {
-		hash ^= value.charCodeAt(i);
-		hash = Math.imul(hash, 0x01000193);
-	}
-	return (hash >>> 0).toString(16);
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16);
 }
 
 export function resetPathWalkMemo(): void {
-	pathWalkMemo.clear();
+  pathWalkMemo.clear();
 }
 
 /**
@@ -1888,38 +1795,34 @@ export function resetPathWalkMemo(): void {
  * Catches broken symlinks (stat throws ENOENT or returns size 0) without
  * spawning a process — ~μs per candidate vs ~50ms for which/where.
  */
-export async function isCommandAvailable(
-	command: string,
-	_args?: string[],
-): Promise<boolean> {
-	const isWindows = installerPlatform() === "win32";
-	const pathEnv =
-		process.env.PATH || process.env.Path || process.env.path || "";
-	const dirs = pathEnv.split(path.delimiter);
+export async function isCommandAvailable(command: string, _args?: string[]): Promise<boolean> {
+  const isWindows = installerPlatform() === "win32";
+  const pathEnv = process.env.PATH || process.env.Path || process.env.path || "";
+  const dirs = pathEnv.split(path.delimiter);
 
-	// On Windows, probe .exe, .cmd, and .bat extensions in addition to bare name.
-	// On Unix, probe bare name and extensionless (scripts, symlinks).
-	const names = isWindows
-		? [command, `${command}.exe`, `${command}.cmd`, `${command}.bat`]
-		: [command];
+  // On Windows, probe .exe, .cmd, and .bat extensions in addition to bare name.
+  // On Unix, probe bare name and extensionless (scripts, symlinks).
+  const names = isWindows
+    ? [command, `${command}.exe`, `${command}.cmd`, `${command}.bat`]
+    : [command];
 
-	for (const dir of dirs) {
-		if (!dir) continue;
-		for (const name of names) {
-			const candidate = path.join(dir, name);
-			try {
-				const stat = statSync(candidate);
-				// isFile() returns false for broken symlinks (target missing)
-				if (stat.isFile() && stat.size > 0) {
-					return true;
-				}
-			} catch {
-				// ENOENT or permission denied — skip this candidate
-			}
-		}
-	}
+  for (const dir of dirs) {
+    if (!dir) continue;
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      try {
+        const stat = statSync(candidate);
+        // isFile() returns false for broken symlinks (target missing)
+        if (stat.isFile() && stat.size > 0) {
+          return true;
+        }
+      } catch {
+        // ENOENT or permission denied — skip this candidate
+      }
+    }
+  }
 
-	return false;
+  return false;
 }
 
 /**
@@ -1928,19 +1831,19 @@ export async function isCommandAvailable(
  * probe that is guaranteed to fail with a full spawn round-trip.
  */
 export async function isSpawnableCommand(command: string): Promise<boolean> {
-	if (/[\\/]/.test(command)) {
-		try {
-			const stat = statSync(command);
-			return stat.isFile() && stat.size > 0;
-		} catch {
-			return false;
-		}
-	}
-	const memoKey = `${command}:${hashSync(process.env.PATH || "")}`;
-	if (pathWalkMemo.has(memoKey)) return pathWalkMemo.get(memoKey) ?? false;
-	const isSpawnable = await isCommandAvailable(command);
-	pathWalkMemo.set(memoKey, isSpawnable);
-	return isSpawnable;
+  if (/[\\/]/.test(command)) {
+    try {
+      const stat = statSync(command);
+      return stat.isFile() && stat.size > 0;
+    } catch {
+      return false;
+    }
+  }
+  const memoKey = `${command}:${hashSync(process.env.PATH || "")}`;
+  if (pathWalkMemo.has(memoKey)) return pathWalkMemo.get(memoKey) ?? false;
+  const isSpawnable = await isCommandAvailable(command);
+  pathWalkMemo.set(memoKey, isSpawnable);
+  return isSpawnable;
 }
 
 // --- Verification Functions
@@ -1957,9 +1860,9 @@ export async function isSpawnableCommand(command: string): Promise<boolean> {
  * match this pattern, so the broken-install guard is preserved.
  */
 export function isLspTransportRequiredError(output: string): boolean {
-	return /Connection (?:input|output) stream is not set|Use arguments of createConnection/i.test(
-		output,
-	);
+  return /Connection (?:input|output) stream is not set|Use arguments of createConnection/i.test(
+    output,
+  );
 }
 
 /**
@@ -1971,14 +1874,14 @@ export function isLspTransportRequiredError(output: string): boolean {
  * Returns undefined when packageName has no explicit `@version` suffix.
  */
 function parsePinnedVersion(packageName: string): string | undefined {
-	const at = packageName.lastIndexOf("@");
-	if (at <= 0) return undefined;
-	return packageName.slice(at + 1) || undefined;
+  const at = packageName.lastIndexOf("@");
+  if (at <= 0) return undefined;
+  return packageName.slice(at + 1) || undefined;
 }
 
 /** Extract the first semver-ish token (e.g. "3.5.10") from `--version` output. */
 function extractVersionToken(output: string): string | undefined {
-	return output.match(/\d+\.\d+\.\d+(?:[-+][\w.]+)?/)?.[0];
+  return output.match(/\d+\.\d+\.\d+(?:[-+][\w.]+)?/)?.[0];
 }
 
 /**
@@ -2006,275 +1909,264 @@ const lastManagedInstallVersion = new Map<string, string>();
  * shadow a working PATH binary (#1657).
  */
 export async function verifyToolBinary(
-	binPath: string,
-	onVersionOutput?: (output: string) => void,
-	/**
-	 * Called when a `false` verdict came from a probe that never got a fair
-	 * run — a spawn timeout/signal or a spawn-boundary EAGAIN/EBUSY/sync throw
-	 * — rather than the binary actually rejecting `--version` (#1569). An
-	 * unspawnable prober is never a durable verdict: a caller that falls
-	 * through to a lower-priority candidate on one of these must not let the
-	 * fallback's selection be trusted as if the preferred candidate were
-	 * genuinely broken.
-	 */
-	onTransient?: () => void,
-	/**
-	 * Spawn budget, ms. Install paths keep the generous default; a latency-
-	 * sensitive caller on the dispatch hot path passes a shorter one and treats
-	 * the expiry as transient rather than as a verdict (#1657).
-	 */
-	timeoutMs = 10000,
+  binPath: string,
+  onVersionOutput?: (output: string) => void,
+  /**
+   * Called when a `false` verdict came from a probe that never got a fair
+   * run — a spawn timeout/signal or a spawn-boundary EAGAIN/EBUSY/sync throw
+   * — rather than the binary actually rejecting `--version` (#1569). An
+   * unspawnable prober is never a durable verdict: a caller that falls
+   * through to a lower-priority candidate on one of these must not let the
+   * fallback's selection be trusted as if the preferred candidate were
+   * genuinely broken.
+   */
+  onTransient?: () => void,
+  /**
+   * Spawn budget, ms. Install paths keep the generous default; a latency-
+   * sensitive caller on the dispatch hot path passes a shorter one and treats
+   * the expiry as transient rather than as a verdict (#1657).
+   */
+  timeoutMs = 10000,
 ): Promise<boolean> {
-	return new Promise((resolve) => {
-		const isWindows = installerPlatform() === "win32";
-		const hasKnownWindowsExt = /\.(cmd|exe|ps1)$/i.test(binPath);
+  return new Promise((resolve) => {
+    const isWindows = installerPlatform() === "win32";
+    const hasKnownWindowsExt = /\.(cmd|exe|ps1)$/i.test(binPath);
 
-		// On Windows, resolve the best executable path:
-		// - extensionless → prefer .cmd (cmd.exe-safe)
-		// - .ps1 → prefer .cmd sibling to avoid PowerShell execution-policy hangs
-		// - .cmd / .exe → use as-is
-		let execPath =
-			isWindows && !hasKnownWindowsExt ? `${binPath}.cmd` : binPath;
-		let useShell = isWindows && /\.(cmd|bat)$/i.test(execPath);
+    // On Windows, resolve the best executable path:
+    // - extensionless → prefer .cmd (cmd.exe-safe)
+    // - .ps1 → prefer .cmd sibling to avoid PowerShell execution-policy hangs
+    // - .cmd / .exe → use as-is
+    let execPath = isWindows && !hasKnownWindowsExt ? `${binPath}.cmd` : binPath;
+    let useShell = isWindows && /\.(cmd|bat)$/i.test(execPath);
 
-		if (isWindows && /\.ps1$/i.test(execPath)) {
-			const cmdSibling = `${execPath.slice(0, -4)}.cmd`;
-			if (require("node:fs").existsSync(cmdSibling)) {
-				execPath = cmdSibling;
-				useShell = true;
-			} else {
-				// Fall back to running without shell — cmd.exe can't run .ps1
-				useShell = false;
-			}
-		}
+    if (isWindows && /\.ps1$/i.test(execPath)) {
+      const cmdSibling = `${execPath.slice(0, -4)}.cmd`;
+      if (require("node:fs").existsSync(cmdSibling)) {
+        execPath = cmdSibling;
+        useShell = true;
+      } else {
+        // Fall back to running without shell — cmd.exe can't run .ps1
+        useShell = false;
+      }
+    }
 
-		// When shell:true (Windows .cmd), bake args into the command string to avoid DEP0190.
-		const spawnCmd = useShell ? `"${execPath}" --version` : execPath;
-		let proc: ReturnType<typeof spawn>;
-		try {
-			proc = spawn(spawnCmd, useShell ? [] : ["--version"], {
-				timeout: timeoutMs,
-				stdio: ["ignore", "pipe", "pipe"],
-				shell: useShell,
-			});
-		} catch (err) {
-			// SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the pidusage
-			// bug class, #533) — best-effort verify, resolve rather than reject.
-			// The prober itself never ran, so this says nothing about the binary.
-			logSessionStart(
-				`auto-install verify: spawn threw for ${binPath} (${err instanceof Error ? err.message : String(err)})`,
-			);
-			onTransient?.();
-			resolve(false);
-			return;
-		}
+    // When shell:true (Windows .cmd), bake args into the command string to avoid DEP0190.
+    const spawnCmd = useShell ? `"${execPath}" --version` : execPath;
+    let proc: ReturnType<typeof spawn>;
+    try {
+      proc = spawn(spawnCmd, useShell ? [] : ["--version"], {
+        timeout: timeoutMs,
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: useShell,
+      });
+    } catch (err) {
+      // SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the pidusage
+      // bug class, #533) — best-effort verify, resolve rather than reject.
+      // The prober itself never ran, so this says nothing about the binary.
+      logSessionStart(
+        `auto-install verify: spawn threw for ${binPath} (${err instanceof Error ? err.message : String(err)})`,
+      );
+      onTransient?.();
+      resolve(false);
+      return;
+    }
 
-		let stdout = "";
-		let stderr = "";
+    let stdout = "";
+    let stderr = "";
 
-		proc.stdout?.on("data", (data) => (stdout += data));
-		proc.stderr?.on("data", (data) => (stderr += data));
+    proc.stdout?.on("data", (data) => (stdout += data));
+    proc.stderr?.on("data", (data) => (stderr += data));
 
-		proc.on("exit", (code, signal) => {
-			if (code === 0) {
-				debugLog(`Verified: ${binPath} (version: ${stdout.trim()})`);
-				onVersionOutput?.(stdout);
-				resolve(true);
-			} else if (isLspTransportRequiredError(`${stdout}\n${stderr}`)) {
-				// Valid stdio LSP server that rejects `--version` (#208) — the
-				// transport-required error proves the binary works.
-				debugLog(`Verified (stdio LSP, transport-required): ${binPath}`);
-				resolve(true);
-			} else {
-				// `code === null` (usually paired with a `signal`) means the
-				// spawn timeout fired and the process was killed before it could
-				// exit on its own — a stall, not a verdict from the binary.
-				if (code === null || signal) onTransient?.();
-				logSessionStart(
-					`auto-install verify: failed for ${binPath} (exit=${code}${signal ? `, signal=${signal}` : ""})`,
-				);
-				resolve(false);
-			}
-		});
+    proc.on("exit", (code, signal) => {
+      if (code === 0) {
+        debugLog(`Verified: ${binPath} (version: ${stdout.trim()})`);
+        onVersionOutput?.(stdout);
+        resolve(true);
+      } else if (isLspTransportRequiredError(`${stdout}\n${stderr}`)) {
+        // Valid stdio LSP server that rejects `--version` (#208) — the
+        // transport-required error proves the binary works.
+        debugLog(`Verified (stdio LSP, transport-required): ${binPath}`);
+        resolve(true);
+      } else {
+        // `code === null` (usually paired with a `signal`) means the
+        // spawn timeout fired and the process was killed before it could
+        // exit on its own — a stall, not a verdict from the binary.
+        if (code === null || signal) onTransient?.();
+        logSessionStart(
+          `auto-install verify: failed for ${binPath} (exit=${code}${signal ? `, signal=${signal}` : ""})`,
+        );
+        resolve(false);
+      }
+    });
 
-		proc.on("error", (err) => {
-			const errno = (err as NodeJS.ErrnoException).code;
-			if (errno === "EAGAIN" || errno === "EBUSY" || errno === "ETIMEDOUT") {
-				onTransient?.();
-			}
-			logSessionStart(
-				`auto-install verify: error for ${binPath}: ${err.message}`,
-			);
-			resolve(false);
-		});
-	});
+    proc.on("error", (err) => {
+      const errno = (err as NodeJS.ErrnoException).code;
+      if (errno === "EAGAIN" || errno === "EBUSY" || errno === "ETIMEDOUT") {
+        onTransient?.();
+      }
+      logSessionStart(`auto-install verify: error for ${binPath}: ${err.message}`);
+      resolve(false);
+    });
+  });
 }
 
 export type ToolSource =
-	| "global-path"
-	| "npm-global"
-	| "pip-user"
-	| "choco-pi-lsp-auto"
-	| "github-release"
-	| "maven-jar"
-	| "archive-dist"
-	| "npx-fallback"
-	| "not-installed";
+  | "global-path"
+  | "npm-global"
+  | "pip-user"
+  | "choco-pi-lsp-auto"
+  | "github-release"
+  | "maven-jar"
+  | "archive-dist"
+  | "npx-fallback"
+  | "not-installed";
 
 export interface ToolStatus {
-	id: string;
-	name: string;
-	installed: boolean;
-	source: ToolSource;
-	path?: string;
-	version?: string;
-	strategy: ToolDefinition["installStrategy"];
+  id: string;
+  name: string;
+  installed: boolean;
+  source: ToolSource;
+  path?: string;
+  version?: string;
+  strategy: ToolDefinition["installStrategy"];
 }
 
 /**
  * Get detailed status for all tools
  */
 export async function getAllToolStatuses(): Promise<ToolStatus[]> {
-	const statuses: ToolStatus[] = [];
+  const statuses: ToolStatus[] = [];
 
-	for (const tool of TOOLS) {
-		const status: ToolStatus = {
-			id: tool.id,
-			name: tool.name,
-			installed: false,
-			source: "not-installed",
-			strategy: tool.installStrategy,
-		};
+  for (const tool of TOOLS) {
+    const status: ToolStatus = {
+      id: tool.id,
+      name: tool.name,
+      installed: false,
+      source: "not-installed",
+      strategy: tool.installStrategy,
+    };
 
-		// 0. Tree-bundle archives resolve ONLY to their extract dir — never via a
-		// PATH/global probe (the runtime may be present while the bundle is absent).
-		if (tool.installStrategy === "archive" && !tool.archive?.launcher) {
-			const bundleDir = await getArchiveTreeBundlePath(tool);
-			if (bundleDir) {
-				status.installed = true;
-				status.source = "archive-dist";
-				status.path = bundleDir;
-			}
-			statuses.push(status);
-			continue;
-		}
+    // 0. Tree-bundle archives resolve ONLY to their extract dir — never via a
+    // PATH/global probe (the runtime may be present while the bundle is absent).
+    if (tool.installStrategy === "archive" && !tool.archive?.launcher) {
+      const bundleDir = await getArchiveTreeBundlePath(tool);
+      if (bundleDir) {
+        status.installed = true;
+        status.source = "archive-dist";
+        status.path = bundleDir;
+      }
+      statuses.push(status);
+      continue;
+    }
 
-		// 1. Check if in PATH (global)
-		if (await isCommandAvailable(tool.checkCommand, tool.checkArgs)) {
-			status.installed = true;
-			status.source = "global-path";
-			status.path = tool.checkCommand;
-			// Try to get version
-			const versionResult = await new Promise<string>((resolve) => {
-				let proc: ReturnType<typeof spawn>;
-				try {
-					proc = spawn(tool.checkCommand, ["--version"], {
-						stdio: ["ignore", "pipe", "pipe"],
-						shell: process.platform === "win32",
-						timeout: 5000,
-					});
-				} catch {
-					// SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the
-					// pidusage bug class, #533) — best-effort, resolve empty version.
-					resolve("");
-					return;
-				}
-				let out = "";
-				proc.stdout?.on("data", (d) => (out += d));
-				proc.stderr?.on("data", (d) => (out += d));
-				proc.on("exit", () =>
-					resolve(out.trim().split("\n")[0]?.slice(0, 30) || ""),
-				);
-				proc.on("error", () => resolve(""));
-			});
-			status.version = versionResult || undefined;
-			statuses.push(status);
-			continue;
-		}
+    // 1. Check if in PATH (global)
+    if (await isCommandAvailable(tool.checkCommand, tool.checkArgs)) {
+      status.installed = true;
+      status.source = "global-path";
+      status.path = tool.checkCommand;
+      // Try to get version
+      const versionResult = await new Promise<string>((resolve) => {
+        let proc: ReturnType<typeof spawn>;
+        try {
+          proc = spawn(tool.checkCommand, ["--version"], {
+            stdio: ["ignore", "pipe", "pipe"],
+            shell: process.platform === "win32",
+            timeout: 5000,
+          });
+        } catch {
+          // SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the
+          // pidusage bug class, #533) — best-effort, resolve empty version.
+          resolve("");
+          return;
+        }
+        let out = "";
+        proc.stdout?.on("data", (d) => (out += d));
+        proc.stderr?.on("data", (d) => (out += d));
+        proc.on("exit", () => resolve(out.trim().split("\n")[0]?.slice(0, 30) || ""));
+        proc.on("error", () => resolve(""));
+      });
+      status.version = versionResult || undefined;
+      statuses.push(status);
+      continue;
+    }
 
-		// 2. Check npm global
-		if (tool.installStrategy === "npm") {
-			const npmPath = await findNpmGlobalToolPath(tool.binaryName || tool.id);
-			if (npmPath) {
-				status.installed = true;
-				status.source = "npm-global";
-				status.path = npmPath;
-				statuses.push(status);
-				continue;
-			}
-		}
+    // 2. Check npm global
+    if (tool.installStrategy === "npm") {
+      const npmPath = await findNpmGlobalToolPath(tool.binaryName || tool.id);
+      if (npmPath) {
+        status.installed = true;
+        status.source = "npm-global";
+        status.path = npmPath;
+        statuses.push(status);
+        continue;
+      }
+    }
 
-		// 3. Check pip user install
-		if (tool.installStrategy === "pip") {
-			const pipPath = await findPipUserToolPath(tool.binaryName || tool.id);
-			if (pipPath) {
-				status.installed = true;
-				status.source = "pip-user";
-				status.path = pipPath;
-				statuses.push(status);
-				continue;
-			}
-		}
+    // 3. Check pip user install
+    if (tool.installStrategy === "pip") {
+      const pipPath = await findPipUserToolPath(tool.binaryName || tool.id);
+      if (pipPath) {
+        status.installed = true;
+        status.source = "pip-user";
+        status.path = pipPath;
+        statuses.push(status);
+        continue;
+      }
+    }
 
-		// 4. Check managed bin (~/.choco-pi-lsp/bin/) — github releases + maven/archive launchers
-		if (
-			tool.installStrategy === "github" ||
-			tool.installStrategy === "maven" ||
-			tool.installStrategy === "archive"
-		) {
-			const githubPath = await findGitHubToolPath(tool.binaryName || tool.id);
-			if (githubPath) {
-				status.installed = true;
-				status.source =
-					tool.installStrategy === "maven"
-						? "maven-jar"
-						: tool.installStrategy === "archive"
-							? "archive-dist"
-							: "github-release";
-				status.path = githubPath;
-				statuses.push(status);
-				continue;
-			}
-		}
+    // 4. Check managed bin (~/.choco-pi-lsp/bin/) — github releases + maven/archive launchers
+    if (
+      tool.installStrategy === "github" ||
+      tool.installStrategy === "maven" ||
+      tool.installStrategy === "archive"
+    ) {
+      const githubPath = await findGitHubToolPath(tool.binaryName || tool.id);
+      if (githubPath) {
+        status.installed = true;
+        status.source =
+          tool.installStrategy === "maven"
+            ? "maven-jar"
+            : tool.installStrategy === "archive"
+              ? "archive-dist"
+              : "github-release";
+        status.path = githubPath;
+        statuses.push(status);
+        continue;
+      }
+    }
 
-		// 5. Check choco-pi-lsp auto-install (~/.choco-pi-lsp/tools/)
-		const localBase = path.join(
-			TOOLS_DIR,
-			"node_modules",
-			".bin",
-			tool.binaryName || tool.id,
-		);
-		const localPath =
-			installerPlatform() === "win32" ? `${localBase}.cmd` : localBase;
-		try {
-			await fs.access(localPath);
-			if (await verifyToolBinary(localPath)) {
-				status.installed = true;
-				status.source = "choco-pi-lsp-auto";
-				status.path = localPath;
-				statuses.push(status);
-				continue;
-			}
-		} catch {
-			// fall through to not-installed
-		}
+    // 5. Check choco-pi-lsp auto-install (~/.choco-pi-lsp/tools/)
+    const localBase = path.join(TOOLS_DIR, "node_modules", ".bin", tool.binaryName || tool.id);
+    const localPath = installerPlatform() === "win32" ? `${localBase}.cmd` : localBase;
+    try {
+      await fs.access(localPath);
+      if (await verifyToolBinary(localPath)) {
+        status.installed = true;
+        status.source = "choco-pi-lsp-auto";
+        status.path = localPath;
+        statuses.push(status);
+        continue;
+      }
+    } catch {
+      // fall through to not-installed
+    }
 
-		// 6. Not installed - will use npx fallback if npm strategy
-		if (tool.installStrategy === "npm") {
-			status.source = "npx-fallback";
-		}
+    // 6. Not installed - will use npx fallback if npm strategy
+    if (tool.installStrategy === "npm") {
+      status.source = "npx-fallback";
+    }
 
-		statuses.push(status);
-	}
+    statuses.push(status);
+  }
 
-	return statuses;
+  return statuses;
 }
 
 /**
  * Check if a tool is installed (globally or locally)
  */
 export async function isToolInstalled(toolId: string): Promise<boolean> {
-	return (await getToolPath(toolId)) !== undefined;
+  return (await getToolPath(toolId)) !== undefined;
 }
 
 /**
@@ -2282,22 +2174,20 @@ export async function isToolInstalled(toolId: string): Promise<boolean> {
  * to its extract dir, confirmed via the tree marker. Returns undefined when the
  * tool isn't a tree bundle or isn't extracted yet.
  */
-async function getArchiveTreeBundlePath(
-	tool: ToolDefinition,
-): Promise<string | undefined> {
-	if (tool.installStrategy !== "archive" || tool.archive?.launcher) {
-		return undefined;
-	}
-	const extractDir = path.join(TOOLS_DIR, tool.id);
-	const marker = tool.archive?.treeMarker
-		? path.join(extractDir, ...tool.archive.treeMarker.split("/"))
-		: extractDir;
-	try {
-		await fs.access(marker);
-		return extractDir;
-	} catch {
-		return undefined;
-	}
+async function getArchiveTreeBundlePath(tool: ToolDefinition): Promise<string | undefined> {
+  if (tool.installStrategy !== "archive" || tool.archive?.launcher) {
+    return undefined;
+  }
+  const extractDir = path.join(TOOLS_DIR, tool.id);
+  const marker = tool.archive?.treeMarker
+    ? path.join(extractDir, ...tool.archive.treeMarker.split("/"))
+    : extractDir;
+  try {
+    await fs.access(marker);
+    return extractDir;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -2312,40 +2202,34 @@ async function getArchiveTreeBundlePath(
  * the binary is installed — find it directly. Returns undefined if the tool
  * has no platformPackage spec, the platform is unsupported, or it isn't found.
  */
-export function resolvePlatformPackageBinary(
-	tool: ToolDefinition,
-): string | undefined {
-	const spec = tool.platformPackage;
-	if (!spec || !tool.packageName) return undefined;
-	const suffix = spec.suffixes[`${installerPlatform()}-${process.arch}`];
-	if (!suffix) return undefined;
-	const platformPkg = `${spec.base ?? tool.packageName}-${suffix}`;
-	try {
-		// Resolve the platform package FROM the main package, which owns it as an
-		// optional dependency (pnpm exposes it there, not to arbitrary roots).
-		const mainPkgJson = _installerRequire.resolve(
-			`${tool.packageName}/package.json`,
-		);
-		const fromMain = createRequire(mainPkgJson);
-		let pkgDir: string;
-		try {
-			pkgDir = path.dirname(fromMain.resolve(`${platformPkg}/package.json`));
-		} catch {
-			pkgDir = path.dirname(
-				_installerRequire.resolve(`${platformPkg}/package.json`),
-			);
-		}
-		const isWin = installerPlatform() === "win32";
-		for (const bin of spec.binaries) {
-			for (const name of isWin ? [`${bin}.exe`, bin] : [bin]) {
-				const candidate = path.join(pkgDir, name);
-				if (existsSync(candidate)) return candidate;
-			}
-		}
-	} catch {
-		// not installed / not resolvable for this layout
-	}
-	return undefined;
+export function resolvePlatformPackageBinary(tool: ToolDefinition): string | undefined {
+  const spec = tool.platformPackage;
+  if (!spec || !tool.packageName) return undefined;
+  const suffix = spec.suffixes[`${installerPlatform()}-${process.arch}`];
+  if (!suffix) return undefined;
+  const platformPkg = `${spec.base ?? tool.packageName}-${suffix}`;
+  try {
+    // Resolve the platform package FROM the main package, which owns it as an
+    // optional dependency (pnpm exposes it there, not to arbitrary roots).
+    const mainPkgJson = _installerRequire.resolve(`${tool.packageName}/package.json`);
+    const fromMain = createRequire(mainPkgJson);
+    let pkgDir: string;
+    try {
+      pkgDir = path.dirname(fromMain.resolve(`${platformPkg}/package.json`));
+    } catch {
+      pkgDir = path.dirname(_installerRequire.resolve(`${platformPkg}/package.json`));
+    }
+    const isWin = installerPlatform() === "win32";
+    for (const bin of spec.binaries) {
+      for (const name of isWin ? [`${bin}.exe`, bin] : [bin]) {
+        const candidate = path.join(pkgDir, name);
+        if (existsSync(candidate)) return candidate;
+      }
+    }
+  } catch {
+    // not installed / not resolvable for this layout
+  }
+  return undefined;
 }
 
 /**
@@ -2367,389 +2251,359 @@ const lastResolveTransient = new Map<string, boolean>();
  * caller persisting it must not trust it for the full 24h TTL (#1569).
  */
 export function wasLastResolveTransient(toolId: string): boolean {
-	return lastResolveTransient.get(toolId) ?? false;
+  return lastResolveTransient.get(toolId) ?? false;
 }
 
 export async function getToolPath(toolId: string): Promise<string | undefined> {
-	let sawTransient = false;
-	const markTransient = (): void => {
-		sawTransient = true;
-	};
-	const result = await getToolPathResolved(toolId, markTransient);
-	lastResolveTransient.set(toolId, sawTransient);
-	return result;
+  let sawTransient = false;
+  const markTransient = (): void => {
+    sawTransient = true;
+  };
+  const result = await getToolPathResolved(toolId, markTransient);
+  lastResolveTransient.set(toolId, sawTransient);
+  return result;
 }
 
 async function getToolPathResolved(
-	toolId: string,
-	onTransient: () => void,
+  toolId: string,
+  onTransient: () => void,
 ): Promise<string | undefined> {
-	const tool = TOOLS.find((t) => t.id === toolId);
-	if (!tool) return undefined;
+  const tool = TOOLS.find((t) => t.id === toolId);
+  if (!tool) return undefined;
 
-	// Tree-bundle archives (no launcher) are "installed" ONLY when extracted — the
-	// extract dir is authoritative. No PATH/global/npm fallback: the runtime that
-	// drives the bundle (e.g. pwsh) may be on PATH while the bundle itself is
-	// absent, which must NOT read as installed (else the bundle never downloads).
-	if (tool.installStrategy === "archive" && !tool.archive?.launcher) {
-		return getArchiveTreeBundlePath(tool);
-	}
+  // Tree-bundle archives (no launcher) are "installed" ONLY when extracted — the
+  // extract dir is authoritative. No PATH/global/npm fallback: the runtime that
+  // drives the bundle (e.g. pwsh) may be on PATH while the bundle itself is
+  // absent, which must NOT read as installed (else the bundle never downloads).
+  if (tool.installStrategy === "archive" && !tool.archive?.launcher) {
+    return getArchiveTreeBundlePath(tool);
+  }
 
-	// Version-pin drift detection (#589) is scoped to npm-strategy tools with an
-	// explicit `@version` pin — everything else (unpinned npm entries, pip/gem,
-	// github/maven/archive) has no drift signal to piggyback on here. Clear any
-	// stale entry up front so a miss on the checks below never leaves a prior
-	// call's version lingering for ensureTool() to misread.
-	const pinnedVersion =
-		tool.installStrategy === "npm" && tool.packageName
-			? parsePinnedVersion(tool.packageName)
-			: undefined;
-	if (pinnedVersion) lastManagedInstallVersion.delete(toolId);
-	const recordVersion = pinnedVersion
-		? (output: string): void => {
-				const seen = extractVersionToken(output);
-				if (seen) lastManagedInstallVersion.set(toolId, seen);
-			}
-		: undefined;
+  // Version-pin drift detection (#589) is scoped to npm-strategy tools with an
+  // explicit `@version` pin — everything else (unpinned npm entries, pip/gem,
+  // github/maven/archive) has no drift signal to piggyback on here. Clear any
+  // stale entry up front so a miss on the checks below never leaves a prior
+  // call's version lingering for ensureTool() to misread.
+  const pinnedVersion =
+    tool.installStrategy === "npm" && tool.packageName
+      ? parsePinnedVersion(tool.packageName)
+      : undefined;
+  if (pinnedVersion) lastManagedInstallVersion.delete(toolId);
+  const recordVersion = pinnedVersion
+    ? (output: string): void => {
+        const seen = extractVersionToken(output);
+        if (seen) lastManagedInstallVersion.set(toolId, seen);
+      }
+    : undefined;
 
-	// Fast path: check local npm install first (where auto-install places tools).
-	// This avoids the ~2-5s overhead of spawning npm global probes and PATH
-	// searches for tools we already manage locally.
-	const localBase = path.join(
-		TOOLS_DIR,
-		"node_modules",
-		".bin",
-		tool.binaryName || tool.id,
-	);
-	if (installerPlatform() === "win32") {
-		// Prefer .cmd over extensionless — Node.js can't execute POSIX shell scripts on Windows
-		const cmdPath = `${localBase}.cmd`;
-		try {
-			await fs.access(cmdPath);
-			if (await verifyToolBinary(cmdPath, recordVersion, onTransient)) {
-				return cmdPath;
-			}
-			logSessionStart(
-				`auto-install verify: ${cmdPath} exists but is broken, will reinstall`,
-			);
-		} catch {
-			// fall through to .exe
-		}
-		// Also check .exe — some postinstall scripts (e.g. @ast-grep/cli) place a
-		// .exe directly without a .cmd wrapper
-		const exePath = `${localBase}.exe`;
-		try {
-			await fs.access(exePath);
-			if (await verifyToolBinary(exePath, recordVersion, onTransient)) {
-				return exePath;
-			}
-			logSessionStart(
-				`auto-install verify: ${exePath} exists but is broken, will reinstall`,
-			);
-		} catch {
-			// fall through to extensionless
-		}
-	}
-	if (installerPlatform() !== "win32") {
-		try {
-			await fs.access(localBase);
-			if (await verifyToolBinary(localBase, recordVersion, onTransient)) {
-				return localBase;
-			}
-			logSessionStart(
-				`auto-install verify: ${localBase} exists but is broken, will reinstall`,
-			);
-		} catch {
-			// fall through to global checks
-		}
-	}
+  // Fast path: check local npm install first (where auto-install places tools).
+  // This avoids the ~2-5s overhead of spawning npm global probes and PATH
+  // searches for tools we already manage locally.
+  const localBase = path.join(TOOLS_DIR, "node_modules", ".bin", tool.binaryName || tool.id);
+  if (installerPlatform() === "win32") {
+    // Prefer .cmd over extensionless — Node.js can't execute POSIX shell scripts on Windows
+    const cmdPath = `${localBase}.cmd`;
+    try {
+      await fs.access(cmdPath);
+      if (await verifyToolBinary(cmdPath, recordVersion, onTransient)) {
+        return cmdPath;
+      }
+      logSessionStart(`auto-install verify: ${cmdPath} exists but is broken, will reinstall`);
+    } catch {
+      // fall through to .exe
+    }
+    // Also check .exe — some postinstall scripts (e.g. @ast-grep/cli) place a
+    // .exe directly without a .cmd wrapper
+    const exePath = `${localBase}.exe`;
+    try {
+      await fs.access(exePath);
+      if (await verifyToolBinary(exePath, recordVersion, onTransient)) {
+        return exePath;
+      }
+      logSessionStart(`auto-install verify: ${exePath} exists but is broken, will reinstall`);
+    } catch {
+      // fall through to extensionless
+    }
+  }
+  if (installerPlatform() !== "win32") {
+    try {
+      await fs.access(localBase);
+      if (await verifyToolBinary(localBase, recordVersion, onTransient)) {
+        return localBase;
+      }
+      logSessionStart(`auto-install verify: ${localBase} exists but is broken, will reinstall`);
+    } catch {
+      // fall through to global checks
+    }
+  }
 
-	// npm/pnpm/bun: prefer the native per-platform binary directly. The main
-	// package's launcher often can't find it under a symlink store / after a
-	// skipped postinstall, but the binary IS installed — resolve + verify it
-	// before falling back to PATH or a (re)install.
-	if (tool.platformPackage) {
-		const platformBin = resolvePlatformPackageBinary(tool);
-		if (platformBin && (await verifyToolBinary(platformBin, undefined, onTransient))) {
-			logSessionStart(
-				`auto-install ${toolId}: resolved platform-package binary at ${platformBin}`,
-			);
-			return platformBin;
-		}
-		logSessionStart(
-			`auto-install ${toolId}: platform-package binary not resolved (${process.platform}-${process.arch}, base=${tool.platformPackage.base ?? tool.packageName}) — falling back to PATH/managed install`,
-		);
-	}
+  // npm/pnpm/bun: prefer the native per-platform binary directly. The main
+  // package's launcher often can't find it under a symlink store / after a
+  // skipped postinstall, but the binary IS installed — resolve + verify it
+  // before falling back to PATH or a (re)install.
+  if (tool.platformPackage) {
+    const platformBin = resolvePlatformPackageBinary(tool);
+    if (platformBin && (await verifyToolBinary(platformBin, undefined, onTransient))) {
+      logSessionStart(`auto-install ${toolId}: resolved platform-package binary at ${platformBin}`);
+      return platformBin;
+    }
+    logSessionStart(
+      `auto-install ${toolId}: platform-package binary not resolved (${process.platform}-${process.arch}, base=${tool.platformPackage.base ?? tool.packageName}) — falling back to PATH/managed install`,
+    );
+  }
 
-	// For github/maven tools, prefer the managed install (~/.choco-pi-lsp/bin/) over
-	// PATH. Managed installs are known-good binaries/launchers choco-pi-lsp downloaded
-	// as a fallback when a PATH-resolved tool was broken or missing. Checking
-	// before PATH ensures force-reinstall flows find the newly downloaded binary.
-	if (
-		tool.installStrategy === "github" ||
-		tool.installStrategy === "maven" ||
-		tool.installStrategy === "archive"
-	) {
-		const githubPath = await findGitHubToolPath(tool.binaryName || tool.id);
-		if (githubPath) return githubPath;
-	}
+  // For github/maven tools, prefer the managed install (~/.choco-pi-lsp/bin/) over
+  // PATH. Managed installs are known-good binaries/launchers choco-pi-lsp downloaded
+  // as a fallback when a PATH-resolved tool was broken or missing. Checking
+  // before PATH ensures force-reinstall flows find the newly downloaded binary.
+  if (
+    tool.installStrategy === "github" ||
+    tool.installStrategy === "maven" ||
+    tool.installStrategy === "archive"
+  ) {
+    const githubPath = await findGitHubToolPath(tool.binaryName || tool.id);
+    if (githubPath) return githubPath;
+  }
 
-	// Check if global
-	if (await isCommandAvailable(tool.checkCommand, tool.checkArgs)) {
-		return tool.checkCommand;
-	}
+  // Check if global
+  if (await isCommandAvailable(tool.checkCommand, tool.checkArgs)) {
+    return tool.checkCommand;
+  }
 
-	if (tool.installStrategy === "npm") {
-		const npmPath = await findNpmGlobalToolPath(
-			tool.binaryName || tool.id,
-			onTransient,
-		);
-		if (npmPath) {
-			return npmPath;
-		}
-	}
+  if (tool.installStrategy === "npm") {
+    const npmPath = await findNpmGlobalToolPath(tool.binaryName || tool.id, onTransient);
+    if (npmPath) {
+      return npmPath;
+    }
+  }
 
-	// For pip tools, also probe user-level script locations
-	if (tool.installStrategy === "pip") {
-		const pipPath = await findPipUserToolPath(
-			tool.binaryName || tool.id,
-			onTransient,
-		);
-		if (pipPath) {
-			return pipPath;
-		}
-	}
+  // For pip tools, also probe user-level script locations
+  if (tool.installStrategy === "pip") {
+    const pipPath = await findPipUserToolPath(tool.binaryName || tool.id, onTransient);
+    if (pipPath) {
+      return pipPath;
+    }
+  }
 
-	return undefined;
+  return undefined;
 }
 
-async function findGitHubToolPath(
-	binaryName: string,
-): Promise<string | undefined> {
-	const isWindows = process.platform === "win32";
-	const candidates = isWindows
-		? [
-				path.join(GITHUB_BIN_DIR, `${binaryName}.exe`),
-				path.join(GITHUB_BIN_DIR, `${binaryName}.bat`),
-				path.join(GITHUB_BIN_DIR, `${binaryName}.cmd`),
-				path.join(GITHUB_BIN_DIR, binaryName),
-			]
-		: [path.join(GITHUB_BIN_DIR, binaryName)];
+async function findGitHubToolPath(binaryName: string): Promise<string | undefined> {
+  const isWindows = process.platform === "win32";
+  const candidates = isWindows
+    ? [
+        path.join(GITHUB_BIN_DIR, `${binaryName}.exe`),
+        path.join(GITHUB_BIN_DIR, `${binaryName}.bat`),
+        path.join(GITHUB_BIN_DIR, `${binaryName}.cmd`),
+        path.join(GITHUB_BIN_DIR, binaryName),
+      ]
+    : [path.join(GITHUB_BIN_DIR, binaryName)];
 
-	for (const candidate of candidates) {
-		try {
-			await fs.access(candidate);
-			return candidate;
-		} catch {
-			// continue
-		}
-	}
-	return undefined;
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      // continue
+    }
+  }
+  return undefined;
 }
 
 function hasExecutableExtension(name: string): boolean {
-	return /\.(exe|bat|cmd|ps1)$/i.test(name);
+  return /\.(exe|bat|cmd|ps1)$/i.test(name);
 }
 
 function getGitHubInstalledBinaryName(
-	binaryName: string,
-	platform: string,
-	assetName: string,
+  binaryName: string,
+  platform: string,
+  assetName: string,
 ): string {
-	if (platform !== "win32") return binaryName;
-	if (hasExecutableExtension(binaryName)) return binaryName;
-	if (assetName.endsWith(".bat")) return `${binaryName}.bat`;
-	if (assetName.endsWith(".cmd")) return `${binaryName}.cmd`;
-	return `${binaryName}.exe`;
+  if (platform !== "win32") return binaryName;
+  if (hasExecutableExtension(binaryName)) return binaryName;
+  if (assetName.endsWith(".bat")) return `${binaryName}.bat`;
+  if (assetName.endsWith(".cmd")) return `${binaryName}.cmd`;
+  return `${binaryName}.exe`;
 }
 
 function getArchiveBinaryCandidates(
-	binaryName: string,
-	platform: string,
-	assetName: string,
+  binaryName: string,
+  platform: string,
+  assetName: string,
 ): string[] {
-	if (platform !== "win32") return [binaryName];
-	if (hasExecutableExtension(binaryName)) return [binaryName];
-	const candidates = new Set<string>();
-	if (assetName.endsWith(".bat")) candidates.add(`${binaryName}.bat`);
-	if (assetName.endsWith(".cmd")) candidates.add(`${binaryName}.cmd`);
-	candidates.add(`${binaryName}.exe`);
-	candidates.add(binaryName);
-	candidates.add(`${binaryName}.bat`);
-	candidates.add(`${binaryName}.cmd`);
-	return [...candidates];
+  if (platform !== "win32") return [binaryName];
+  if (hasExecutableExtension(binaryName)) return [binaryName];
+  const candidates = new Set<string>();
+  if (assetName.endsWith(".bat")) candidates.add(`${binaryName}.bat`);
+  if (assetName.endsWith(".cmd")) candidates.add(`${binaryName}.cmd`);
+  candidates.add(`${binaryName}.exe`);
+  candidates.add(binaryName);
+  candidates.add(`${binaryName}.bat`);
+  candidates.add(`${binaryName}.cmd`);
+  return [...candidates];
 }
 
 async function findNpmGlobalToolPath(
-	binaryName: string,
-	onTransient?: () => void,
+  binaryName: string,
+  onTransient?: () => void,
 ): Promise<string | undefined> {
-	const isWindows = process.platform === "win32";
-	const binDirs = await getNpmGlobalBinCandidates(onTransient);
+  const isWindows = process.platform === "win32";
+  const binDirs = await getNpmGlobalBinCandidates(onTransient);
 
-	for (const dir of binDirs) {
-		const candidates = isWindows
-			? [
-					path.join(dir, `${binaryName}.cmd`),
-					path.join(dir, `${binaryName}.exe`),
-				]
-			: [path.join(dir, binaryName)];
+  for (const dir of binDirs) {
+    const candidates = isWindows
+      ? [path.join(dir, `${binaryName}.cmd`), path.join(dir, `${binaryName}.exe`)]
+      : [path.join(dir, binaryName)];
 
-		for (const candidate of candidates) {
-			try {
-				await fs.access(candidate);
-				if (await verifyToolBinary(candidate, undefined, onTransient)) {
-					return candidate;
-				}
-			} catch {
-				// continue
-			}
-		}
-	}
+    for (const candidate of candidates) {
+      try {
+        await fs.access(candidate);
+        if (await verifyToolBinary(candidate, undefined, onTransient)) {
+          return candidate;
+        }
+      } catch {
+        // continue
+      }
+    }
+  }
 
-	return undefined;
+  return undefined;
 }
 
-async function getNpmGlobalBinCandidates(
-	onTransient?: () => void,
-): Promise<string[]> {
-	const dirs: string[] = [];
-	const seen = new Set<string>();
+async function getNpmGlobalBinCandidates(onTransient?: () => void): Promise<string[]> {
+  const dirs: string[] = [];
+  const seen = new Set<string>();
 
-	const add = (value: string | undefined): void => {
-		if (!value) return;
-		const normalized = path.resolve(value.trim());
-		if (!normalized) return;
-		if (seen.has(normalized)) return;
-		seen.add(normalized);
-		dirs.push(normalized);
-	};
+  const add = (value: string | undefined): void => {
+    if (!value) return;
+    const normalized = path.resolve(value.trim());
+    if (!normalized) return;
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    dirs.push(normalized);
+  };
 
-	if (process.platform === "win32") {
-		add(path.join(process.env.APPDATA || "", "npm"));
-	} else {
-		add(path.join(os.homedir(), ".npm-global", "bin"));
-	}
+  if (process.platform === "win32") {
+    add(path.join(process.env.APPDATA || "", "npm"));
+  } else {
+    add(path.join(os.homedir(), ".npm-global", "bin"));
+  }
 
-	// Global bin dirs for every installed manager (npm/pnpm/yarn/bun) — a tool
-	// may have been installed globally via any of them. `onTransient` surfaces
-	// a manager whose availability probe stalled rather than genuinely failed,
-	// so its bin dir may be missing from `dirs` for a reason other than "not
-	// installed" (#1585).
-	for (const dir of await allAvailableGlobalBinDirs(onTransient)) {
-		add(dir);
-	}
+  // Global bin dirs for every installed manager (npm/pnpm/yarn/bun) — a tool
+  // may have been installed globally via any of them. `onTransient` surfaces
+  // a manager whose availability probe stalled rather than genuinely failed,
+  // so its bin dir may be missing from `dirs` for a reason other than "not
+  // installed" (#1585).
+  for (const dir of await allAvailableGlobalBinDirs(onTransient)) {
+    add(dir);
+  }
 
-	return dirs;
+  return dirs;
 }
 
 async function findPipUserToolPath(
-	binaryName: string,
-	onTransient?: () => void,
+  binaryName: string,
+  onTransient?: () => void,
 ): Promise<string | undefined> {
-	const isWindows = process.platform === "win32";
-	const userBaseCandidates = await getPythonUserBaseCandidates();
+  const isWindows = process.platform === "win32";
+  const userBaseCandidates = await getPythonUserBaseCandidates();
 
-	for (const userBase of userBaseCandidates) {
-		const scriptDirs: string[] = [
-			path.join(userBase, isWindows ? "Scripts" : "bin"),
-		];
+  for (const userBase of userBaseCandidates) {
+    const scriptDirs: string[] = [path.join(userBase, isWindows ? "Scripts" : "bin")];
 
-		if (isWindows) {
-			try {
-				const children = await fs.readdir(userBase, { withFileTypes: true });
-				for (const entry of children) {
-					if (!entry.isDirectory()) continue;
-					if (!/^python\d+$/i.test(entry.name)) continue;
-					scriptDirs.push(path.join(userBase, entry.name, "Scripts"));
-				}
-			} catch {
-				// ignore
-			}
-		}
+    if (isWindows) {
+      try {
+        const children = await fs.readdir(userBase, { withFileTypes: true });
+        for (const entry of children) {
+          if (!entry.isDirectory()) continue;
+          if (!/^python\d+$/i.test(entry.name)) continue;
+          scriptDirs.push(path.join(userBase, entry.name, "Scripts"));
+        }
+      } catch {
+        // ignore
+      }
+    }
 
-		for (const dir of scriptDirs) {
-			const candidates = isWindows
-				? [
-						path.join(dir, `${binaryName}.exe`),
-						path.join(dir, `${binaryName}.cmd`),
-						path.join(dir, binaryName),
-					]
-				: [path.join(dir, binaryName)];
+    for (const dir of scriptDirs) {
+      const candidates = isWindows
+        ? [
+            path.join(dir, `${binaryName}.exe`),
+            path.join(dir, `${binaryName}.cmd`),
+            path.join(dir, binaryName),
+          ]
+        : [path.join(dir, binaryName)];
 
-			for (const candidate of candidates) {
-				try {
-					await fs.access(candidate);
-					if (await verifyToolBinary(candidate, undefined, onTransient)) {
-						return candidate;
-					}
-				} catch {
-					// continue
-				}
-			}
-		}
-	}
+      for (const candidate of candidates) {
+        try {
+          await fs.access(candidate);
+          if (await verifyToolBinary(candidate, undefined, onTransient)) {
+            return candidate;
+          }
+        } catch {
+          // continue
+        }
+      }
+    }
+  }
 
-	return undefined;
+  return undefined;
 }
 
 async function getPythonUserBaseCandidates(): Promise<string[]> {
-	const candidates: string[] = [];
-	const seen = new Set<string>();
+  const candidates: string[] = [];
+  const seen = new Set<string>();
 
-	const add = (value: string | undefined): void => {
-		if (!value) return;
-		const normalized = value.trim();
-		if (!normalized) return;
-		if (seen.has(normalized)) return;
-		seen.add(normalized);
-		candidates.push(normalized);
-	};
+  const add = (value: string | undefined): void => {
+    if (!value) return;
+    const normalized = value.trim();
+    if (!normalized) return;
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
 
-	if (process.platform === "win32") {
-		add(path.join(process.env.APPDATA || "", "Python"));
-	}
+  if (process.platform === "win32") {
+    add(path.join(process.env.APPDATA || "", "Python"));
+  }
 
-	const probes: Array<{ command: string; args: string[] }> =
-		process.platform === "win32"
-			? [
-					{ command: "py", args: ["-m", "site", "--user-base"] },
-					{ command: "python", args: ["-m", "site", "--user-base"] },
-				]
-			: [
-					{ command: "python3", args: ["-m", "site", "--user-base"] },
-					{ command: "python", args: ["-m", "site", "--user-base"] },
-				];
+  const probes: Array<{ command: string; args: string[] }> =
+    process.platform === "win32"
+      ? [
+          { command: "py", args: ["-m", "site", "--user-base"] },
+          { command: "python", args: ["-m", "site", "--user-base"] },
+        ]
+      : [
+          { command: "python3", args: ["-m", "site", "--user-base"] },
+          { command: "python", args: ["-m", "site", "--user-base"] },
+        ];
 
-	for (const probe of probes) {
-		const userBase = await new Promise<string>((resolve) => {
-			const isWin = process.platform === "win32";
-			// Bake args into command string when shell:true on Windows to avoid DEP0190.
-			const spawnCmd = isWin
-				? [probe.command, ...probe.args].join(" ")
-				: probe.command;
-			let proc: ReturnType<typeof spawn>;
-			try {
-				proc = spawn(spawnCmd, isWin ? [] : probe.args, {
-					stdio: ["ignore", "pipe", "pipe"],
-					shell: isWin,
-				});
-			} catch {
-				// SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the
-				// pidusage bug class, #533) — best-effort probe, resolve empty.
-				resolve("");
-				return;
-			}
+  for (const probe of probes) {
+    const userBase = await new Promise<string>((resolve) => {
+      const isWin = process.platform === "win32";
+      // Bake args into command string when shell:true on Windows to avoid DEP0190.
+      const spawnCmd = isWin ? [probe.command, ...probe.args].join(" ") : probe.command;
+      let proc: ReturnType<typeof spawn>;
+      try {
+        proc = spawn(spawnCmd, isWin ? [] : probe.args, {
+          stdio: ["ignore", "pipe", "pipe"],
+          shell: isWin,
+        });
+      } catch {
+        // SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the
+        // pidusage bug class, #533) — best-effort probe, resolve empty.
+        resolve("");
+        return;
+      }
 
-			let stdout = "";
-			proc.stdout?.on("data", (data: Buffer | string) => (stdout += data));
-			proc.on("exit", (code) => resolve(code === 0 ? stdout.trim() : ""));
-			proc.on("error", () => resolve(""));
-		});
-		add(userBase);
-	}
+      let stdout = "";
+      proc.stdout?.on("data", (data: Buffer | string) => (stdout += data));
+      proc.on("exit", (code) => resolve(code === 0 ? stdout.trim() : ""));
+      proc.on("error", () => resolve(""));
+    });
+    add(userBase);
+  }
 
-	return candidates;
+  return candidates;
 }
 
 // --- Installation Functions
@@ -2763,16 +2617,16 @@ async function getPythonUserBaseCandidates(): Promise<string[]> {
  * not receive the token.
  */
 function githubApiAuthHeaders(): Record<string, string> {
-	const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-	return token ? { Authorization: `Bearer ${token}` } : {};
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 function sameHost(a: string, b: string): boolean {
-	try {
-		return new URL(a).host === new URL(b).host;
-	} catch {
-		return false;
-	}
+  try {
+    return new URL(a).host === new URL(b).host;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -2782,335 +2636,288 @@ function sameHost(a: string, b: string): boolean {
  * header can never leak to a redirect target (e.g. a release CDN).
  */
 function httpsGet(
-	url: string,
-	maxRedirects = 5,
-	headers: Record<string, string> = {},
+  url: string,
+  maxRedirects = 5,
+  headers: Record<string, string> = {},
 ): Promise<Buffer> {
-	return new Promise((resolve, reject) => {
-		https
-			.get(
-				url,
-				{ headers: { "User-Agent": "choco-pi-lsp/1.0", ...headers } },
-				(res) => {
-					if (
-						res.statusCode &&
-						res.statusCode >= 300 &&
-						res.statusCode < 400 &&
-						res.headers.location
-					) {
-						if (maxRedirects === 0)
-							return reject(new Error("Too many redirects"));
-						const location = res.headers.location;
-						const nextHeaders = sameHost(url, location)
-							? headers
-							: (() => {
-									const { Authorization: _drop, ...rest } = headers;
-									return rest;
-								})();
-						return resolve(httpsGet(location, maxRedirects - 1, nextHeaders));
-					}
-					if (res.statusCode !== 200) {
-						res.resume();
-						return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
-					}
-					const chunks: Buffer[] = [];
-					res.on("data", (chunk: Buffer) => chunks.push(chunk));
-					res.on("end", () => resolve(Buffer.concat(chunks)));
-					res.on("error", reject);
-				},
-			)
-			.on("error", reject);
-	});
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, { headers: { "User-Agent": "choco-pi-lsp/1.0", ...headers } }, (res) => {
+        if (
+          res.statusCode &&
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          if (maxRedirects === 0) return reject(new Error("Too many redirects"));
+          const location = res.headers.location;
+          const nextHeaders = sameHost(url, location)
+            ? headers
+            : (() => {
+                const { Authorization: _drop, ...rest } = headers;
+                return rest;
+              })();
+          return resolve(httpsGet(location, maxRedirects - 1, nextHeaders));
+        }
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        }
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => resolve(Buffer.concat(chunks)));
+        res.on("error", reject);
+      })
+      .on("error", reject);
+  });
 }
 
 /**
  * Run a shell command and return true on exit code 0.
  */
-function runCommand(
-	command: string,
-	args: string[],
-	cwd: string,
-): Promise<boolean> {
-	return new Promise((resolve) => {
-		let proc: ReturnType<typeof spawn>;
-		try {
-			proc = spawn(command, args, {
-				cwd,
-				stdio: "ignore",
-				shell: process.platform === "win32",
-			});
-		} catch {
-			// SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the pidusage
-			// bug class, #533) — resolve false rather than reject/crash.
-			resolve(false);
-			return;
-		}
-		proc.on("exit", (code) => resolve(code === 0));
-		proc.on("error", () => resolve(false));
-	});
+function runCommand(command: string, args: string[], cwd: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let proc: ReturnType<typeof spawn>;
+    try {
+      proc = spawn(command, args, {
+        cwd,
+        stdio: "ignore",
+        shell: process.platform === "win32",
+      });
+    } catch {
+      // SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the pidusage
+      // bug class, #533) — resolve false rather than reject/crash.
+      resolve(false);
+      return;
+    }
+    proc.on("exit", (code) => resolve(code === 0));
+    proc.on("error", () => resolve(false));
+  });
 }
 
 /**
  * Download and install a tool from a GitHub release.
  * Returns the path to the installed binary, or undefined on failure.
  */
-async function installGitHubTool(
-	tool: ToolDefinition,
-): Promise<string | undefined> {
-	const spec = tool.github;
-	if (!spec) return undefined;
+async function installGitHubTool(tool: ToolDefinition): Promise<string | undefined> {
+  const spec = tool.github;
+  if (!spec) return undefined;
 
-	const platform = process.platform; // "linux" | "darwin" | "win32"
-	const arch = process.arch; // "x64" | "arm64" | ...
-	const assetSubstring = spec.assetMatch(platform, arch);
-	if (!assetSubstring) {
-		logSessionStart(
-			`github-install ${tool.id}: unsupported platform=${platform} arch=${arch}`,
-		);
-		return undefined;
-	}
+  const platform = process.platform; // "linux" | "darwin" | "win32"
+  const arch = process.arch; // "x64" | "arm64" | ...
+  const assetSubstring = spec.assetMatch(platform, arch);
+  if (!assetSubstring) {
+    logSessionStart(`github-install ${tool.id}: unsupported platform=${platform} arch=${arch}`);
+    return undefined;
+  }
 
-	// Fetch latest release metadata from GitHub API
-	logSessionStart(
-		`github-install ${tool.id}: fetching release metadata from ${spec.repo}`,
-	);
-	let releaseJson: {
-		tag_name?: string;
-		assets: Array<{ name: string; browser_download_url: string }>;
-	};
-	try {
-		const body = await httpsGet(
-			`https://api.github.com/repos/${spec.repo}/releases/latest`,
-			5,
-			githubApiAuthHeaders(),
-		);
-		releaseJson = JSON.parse(body.toString("utf8"));
-	} catch (err) {
-		logSessionStart(
-			`github-install ${tool.id}: release fetch failed: ${(err as Error).message}`,
-		);
-		return undefined;
-	}
+  // Fetch latest release metadata from GitHub API
+  logSessionStart(`github-install ${tool.id}: fetching release metadata from ${spec.repo}`);
+  let releaseJson: {
+    tag_name?: string;
+    assets: Array<{ name: string; browser_download_url: string }>;
+  };
+  try {
+    const body = await httpsGet(
+      `https://api.github.com/repos/${spec.repo}/releases/latest`,
+      5,
+      githubApiAuthHeaders(),
+    );
+    releaseJson = JSON.parse(body.toString("utf8"));
+  } catch (err) {
+    logSessionStart(`github-install ${tool.id}: release fetch failed: ${(err as Error).message}`);
+    return undefined;
+  }
 
-	const asset =
-		pickReleaseAsset(releaseJson.assets, assetSubstring) ??
-		deriveHashiCorpReleaseAsset(tool, releaseJson.tag_name, assetSubstring);
-	if (!asset) {
-		logSessionStart(
-			`github-install ${tool.id}: no asset matched "${assetSubstring}"`,
-		);
-		return undefined;
-	}
+  const asset =
+    pickReleaseAsset(releaseJson.assets, assetSubstring) ??
+    deriveHashiCorpReleaseAsset(tool, releaseJson.tag_name, assetSubstring);
+  if (!asset) {
+    logSessionStart(`github-install ${tool.id}: no asset matched "${assetSubstring}"`);
+    return undefined;
+  }
 
-	logSessionStart(`github-install ${tool.id}: downloading ${asset.name}`);
-	debugLog(
-		`[github] downloading ${asset.name} from ${asset.browser_download_url}`,
-	);
+  logSessionStart(`github-install ${tool.id}: downloading ${asset.name}`);
+  debugLog(`[github] downloading ${asset.name} from ${asset.browser_download_url}`);
 
-	// Download the asset
-	const downloadStart = Date.now();
-	let assetBuffer: Buffer;
-	try {
-		assetBuffer = await httpsGet(asset.browser_download_url);
-		logSessionStart(
-			`github-install ${tool.id}: downloaded ${asset.name} (${assetBuffer.length} bytes, ${Date.now() - downloadStart}ms)`,
-		);
-	} catch (err) {
-		logSessionStart(
-			`github-install ${tool.id}: download failed: ${(err as Error).message}`,
-		);
-		return undefined;
-	}
+  // Download the asset
+  const downloadStart = Date.now();
+  let assetBuffer: Buffer;
+  try {
+    assetBuffer = await httpsGet(asset.browser_download_url);
+    logSessionStart(
+      `github-install ${tool.id}: downloaded ${asset.name} (${assetBuffer.length} bytes, ${Date.now() - downloadStart}ms)`,
+    );
+  } catch (err) {
+    logSessionStart(`github-install ${tool.id}: download failed: ${(err as Error).message}`);
+    return undefined;
+  }
 
-	await fs.mkdir(GITHUB_BIN_DIR, { recursive: true });
+  await fs.mkdir(GITHUB_BIN_DIR, { recursive: true });
 
-	const binaryName = tool.binaryName ?? tool.id;
-	const isWindows = platform === "win32";
-	const finalBinaryName = getGitHubInstalledBinaryName(
-		binaryName,
-		platform,
-		asset.name,
-	);
-	const destPath = path.join(GITHUB_BIN_DIR, finalBinaryName);
+  const binaryName = tool.binaryName ?? tool.id;
+  const isWindows = platform === "win32";
+  const finalBinaryName = getGitHubInstalledBinaryName(binaryName, platform, asset.name);
+  const destPath = path.join(GITHUB_BIN_DIR, finalBinaryName);
 
-	const assetName = asset.name;
+  const assetName = asset.name;
 
-	try {
-		if (assetName.endsWith(".gz") && !assetName.endsWith(".tar.gz")) {
-			// Bare gzip (e.g. rust-analyzer-x86_64-unknown-linux-gnu.gz) — decompress directly
-			const decompressed = await new Promise<Buffer>((resolve, reject) => {
-				const gunzip = createGunzip();
-				const chunks: Buffer[] = [];
-				gunzip.on("data", (chunk: Buffer) => chunks.push(chunk));
-				gunzip.on("end", () => resolve(Buffer.concat(chunks)));
-				gunzip.on("error", reject);
-				gunzip.end(assetBuffer);
-			});
-			await writeFileAtomicAsync(destPath, decompressed, {
-				bestEffort: false,
-				mode: 0o750,
-			});
-		} else if (assetName.endsWith(".tar.gz") || assetName.endsWith(".tar.xz")) {
-			// Write archive to temp file, extract with system tar
-			const tmpArchive = path.join(GITHUB_BIN_DIR, `_tmp_${assetName}`);
-			await fs.writeFile(tmpArchive, assetBuffer);
-			const tmpDir = path.join(GITHUB_BIN_DIR, `_tmp_extract_${tool.id}`);
-			await fs.mkdir(tmpDir, { recursive: true });
+  try {
+    if (assetName.endsWith(".gz") && !assetName.endsWith(".tar.gz")) {
+      // Bare gzip (e.g. rust-analyzer-x86_64-unknown-linux-gnu.gz) — decompress directly
+      const decompressed = await new Promise<Buffer>((resolve, reject) => {
+        const gunzip = createGunzip();
+        const chunks: Buffer[] = [];
+        gunzip.on("data", (chunk: Buffer) => chunks.push(chunk));
+        gunzip.on("end", () => resolve(Buffer.concat(chunks)));
+        gunzip.on("error", reject);
+        gunzip.end(assetBuffer);
+      });
+      await writeFileAtomicAsync(destPath, decompressed, {
+        bestEffort: false,
+        mode: 0o750,
+      });
+    } else if (assetName.endsWith(".tar.gz") || assetName.endsWith(".tar.xz")) {
+      // Write archive to temp file, extract with system tar
+      const tmpArchive = path.join(GITHUB_BIN_DIR, `_tmp_${assetName}`);
+      await fs.writeFile(tmpArchive, assetBuffer);
+      const tmpDir = path.join(GITHUB_BIN_DIR, `_tmp_extract_${tool.id}`);
+      await fs.mkdir(tmpDir, { recursive: true });
 
-			const extracted = await runCommand(
-				"tar",
-				["xf", tmpArchive, "-C", tmpDir],
-				GITHUB_BIN_DIR,
-			);
-			await fs.rm(tmpArchive, { force: true });
+      const extracted = await runCommand("tar", ["xf", tmpArchive, "-C", tmpDir], GITHUB_BIN_DIR);
+      await fs.rm(tmpArchive, { force: true });
 
-			if (!extracted) {
-				await fs.rm(tmpDir, { recursive: true, force: true });
-				logSessionStart(
-					`github-install ${tool.id}: tar extraction failed for ${assetName}`,
-				);
-				return undefined;
-			}
+      if (!extracted) {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+        logSessionStart(`github-install ${tool.id}: tar extraction failed for ${assetName}`);
+        return undefined;
+      }
 
-			// Locate the binary at any depth — handles both flat tarballs (e.g.
-			// gleam ships a bare `gleam` at the archive root) and tools nested
-			// under a top-level dir (e.g. shellcheck-vX/shellcheck). Each registered
-			// tar tool has a uniquely-named binary, so a recursive match is
-			// unambiguous; this replaces the old `--strip-components=1` assumption,
-			// which silently extracted nothing from a flat tarball.
-			const tarBinaryName = spec.binaryInArchive ?? binaryName;
-			const tarSrcBinary = await findFirstFileRecursive(
-				tmpDir,
-				getArchiveBinaryCandidates(tarBinaryName, platform, assetName),
-			);
-			if (!tarSrcBinary) {
-				await fs.rm(tmpDir, { recursive: true, force: true });
-				logSessionStart(
-					`github-install ${tool.id}: binary candidates ${JSON.stringify(
-						getArchiveBinaryCandidates(tarBinaryName, platform, assetName),
-					)} not found in tar ${assetName}`,
-				);
-				return undefined;
-			}
-			await fs.rename(tarSrcBinary, destPath);
-			await fs.rm(tmpDir, { recursive: true, force: true });
-			if (!isWindows) await fs.chmod(destPath, 0o750);
-		} else if (assetName.endsWith(".zip")) {
-			// Write zip to temp, extract with unzip (Linux/macOS) or Expand-Archive (Windows)
-			const tmpArchive = path.join(GITHUB_BIN_DIR, `_tmp_${assetName}`);
-			await fs.writeFile(tmpArchive, assetBuffer);
-			const tmpDir = path.join(GITHUB_BIN_DIR, `_tmp_extract_${tool.id}`);
-			await fs.mkdir(tmpDir, { recursive: true });
+      // Locate the binary at any depth — handles both flat tarballs (e.g.
+      // gleam ships a bare `gleam` at the archive root) and tools nested
+      // under a top-level dir (e.g. shellcheck-vX/shellcheck). Each registered
+      // tar tool has a uniquely-named binary, so a recursive match is
+      // unambiguous; this replaces the old `--strip-components=1` assumption,
+      // which silently extracted nothing from a flat tarball.
+      const tarBinaryName = spec.binaryInArchive ?? binaryName;
+      const tarSrcBinary = await findFirstFileRecursive(
+        tmpDir,
+        getArchiveBinaryCandidates(tarBinaryName, platform, assetName),
+      );
+      if (!tarSrcBinary) {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+        logSessionStart(
+          `github-install ${tool.id}: binary candidates ${JSON.stringify(
+            getArchiveBinaryCandidates(tarBinaryName, platform, assetName),
+          )} not found in tar ${assetName}`,
+        );
+        return undefined;
+      }
+      await fs.rename(tarSrcBinary, destPath);
+      await fs.rm(tmpDir, { recursive: true, force: true });
+      if (!isWindows) await fs.chmod(destPath, 0o750);
+    } else if (assetName.endsWith(".zip")) {
+      // Write zip to temp, extract with unzip (Linux/macOS) or Expand-Archive (Windows)
+      const tmpArchive = path.join(GITHUB_BIN_DIR, `_tmp_${assetName}`);
+      await fs.writeFile(tmpArchive, assetBuffer);
+      const tmpDir = path.join(GITHUB_BIN_DIR, `_tmp_extract_${tool.id}`);
+      await fs.mkdir(tmpDir, { recursive: true });
 
-			const extracted = isWindows
-				? await runCommand(
-						"powershell",
-						[
-							"-NoProfile",
-							"-Command",
-							`Expand-Archive -LiteralPath '${tmpArchive}' -DestinationPath '${tmpDir}' -Force`,
-						],
-						GITHUB_BIN_DIR,
-					)
-				: await runCommand(
-						"unzip",
-						["-q", "-o", tmpArchive, "-d", tmpDir],
-						GITHUB_BIN_DIR,
-					);
+      const extracted = isWindows
+        ? await runCommand(
+            "powershell",
+            [
+              "-NoProfile",
+              "-Command",
+              `Expand-Archive -LiteralPath '${tmpArchive}' -DestinationPath '${tmpDir}' -Force`,
+            ],
+            GITHUB_BIN_DIR,
+          )
+        : await runCommand("unzip", ["-q", "-o", tmpArchive, "-d", tmpDir], GITHUB_BIN_DIR);
 
-			await fs.rm(tmpArchive, { force: true });
+      await fs.rm(tmpArchive, { force: true });
 
-			if (!extracted) {
-				await fs.rm(tmpDir, { recursive: true, force: true });
-				logSessionStart(
-					`github-install ${tool.id}: zip extraction failed for ${assetName}`,
-				);
-				return undefined;
-			}
+      if (!extracted) {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+        logSessionStart(`github-install ${tool.id}: zip extraction failed for ${assetName}`);
+        return undefined;
+      }
 
-			// Find binary — may be at root or inside a subdir
-			const archiveBinaryName = spec.binaryInArchive ?? binaryName;
-			const srcBinary = await findFirstFileRecursive(
-				tmpDir,
-				getArchiveBinaryCandidates(archiveBinaryName, platform, assetName),
-			);
-			if (!srcBinary) {
-				await fs.rm(tmpDir, { recursive: true, force: true });
-				logSessionStart(
-					`github-install ${tool.id}: binary candidates ${JSON.stringify(
-						getArchiveBinaryCandidates(archiveBinaryName, platform, assetName),
-					)} not found in zip ${assetName}`,
-				);
-				return undefined;
-			}
-			await fs.rename(srcBinary, destPath);
-			await fs.rm(tmpDir, { recursive: true, force: true });
-			if (!isWindows) await fs.chmod(destPath, 0o750);
-		} else {
-			// Bare binary (e.g. shfmt_*_linux_amd64)
-			await writeFileAtomicAsync(destPath, assetBuffer, {
-				bestEffort: false,
-				mode: 0o750,
-			});
-		}
-	} catch (err) {
-		logSessionStart(
-			`github-install ${tool.id}: install failed: ${(err as Error).message}`,
-		);
-		return undefined;
-	}
+      // Find binary — may be at root or inside a subdir
+      const archiveBinaryName = spec.binaryInArchive ?? binaryName;
+      const srcBinary = await findFirstFileRecursive(
+        tmpDir,
+        getArchiveBinaryCandidates(archiveBinaryName, platform, assetName),
+      );
+      if (!srcBinary) {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+        logSessionStart(
+          `github-install ${tool.id}: binary candidates ${JSON.stringify(
+            getArchiveBinaryCandidates(archiveBinaryName, platform, assetName),
+          )} not found in zip ${assetName}`,
+        );
+        return undefined;
+      }
+      await fs.rename(srcBinary, destPath);
+      await fs.rm(tmpDir, { recursive: true, force: true });
+      if (!isWindows) await fs.chmod(destPath, 0o750);
+    } else {
+      // Bare binary (e.g. shfmt_*_linux_amd64)
+      await writeFileAtomicAsync(destPath, assetBuffer, {
+        bestEffort: false,
+        mode: 0o750,
+      });
+    }
+  } catch (err) {
+    logSessionStart(`github-install ${tool.id}: install failed: ${(err as Error).message}`);
+    return undefined;
+  }
 
-	// Download any sibling assets the primary wrapper depends on (e.g. ktlint's
-	// `ktlint` jar next to `ktlint.bat`, #218). Matched by EXACT name and written
-	// as bare files into the same dir; a missing one fails the install.
-	for (const extraName of spec.extraAssets?.(platform, arch) ?? []) {
-		const extraAsset = releaseJson.assets.find((a) => a.name === extraName);
-		if (!extraAsset) {
-			logSessionStart(
-				`github-install ${tool.id}: required extra asset "${extraName}" not found`,
-			);
-			return undefined;
-		}
-		try {
-			const extraBuffer = await httpsGet(extraAsset.browser_download_url);
-			await writeFileAtomicAsync(
-				path.join(GITHUB_BIN_DIR, extraName),
-				extraBuffer,
-				{ bestEffort: false, mode: 0o750 },
-			);
-			logSessionStart(
-				`github-install ${tool.id}: installed extra asset ${extraName} (${extraBuffer.length} bytes)`,
-			);
-		} catch (err) {
-			logSessionStart(
-				`github-install ${tool.id}: extra asset ${extraName} download failed: ${(err as Error).message}`,
-			);
-			return undefined;
-		}
-	}
+  // Download any sibling assets the primary wrapper depends on (e.g. ktlint's
+  // `ktlint` jar next to `ktlint.bat`, #218). Matched by EXACT name and written
+  // as bare files into the same dir; a missing one fails the install.
+  for (const extraName of spec.extraAssets?.(platform, arch) ?? []) {
+    const extraAsset = releaseJson.assets.find((a) => a.name === extraName);
+    if (!extraAsset) {
+      logSessionStart(`github-install ${tool.id}: required extra asset "${extraName}" not found`);
+      return undefined;
+    }
+    try {
+      const extraBuffer = await httpsGet(extraAsset.browser_download_url);
+      await writeFileAtomicAsync(path.join(GITHUB_BIN_DIR, extraName), extraBuffer, {
+        bestEffort: false,
+        mode: 0o750,
+      });
+      logSessionStart(
+        `github-install ${tool.id}: installed extra asset ${extraName} (${extraBuffer.length} bytes)`,
+      );
+    } catch (err) {
+      logSessionStart(
+        `github-install ${tool.id}: extra asset ${extraName} download failed: ${(err as Error).message}`,
+      );
+      return undefined;
+    }
+  }
 
-	debugLog(`[github] installed ${tool.name} → ${destPath}`);
-	logSessionStart(`github-install ${tool.id}: installed → ${destPath}`);
-	return destPath;
+  debugLog(`[github] installed ${tool.name} → ${destPath}`);
+  logSessionStart(`github-install ${tool.id}: installed → ${destPath}`);
+  return destPath;
 }
 
 /** Recursively find the first matching file under a directory. */
-async function findFirstFileRecursive(
-	dir: string,
-	names: string[],
-): Promise<string | undefined> {
-	const wanted = new Set(names.map((name) => name.toLowerCase()));
-	const entries = await fs.readdir(dir, { withFileTypes: true });
-	for (const entry of entries) {
-		const full = path.join(dir, entry.name);
-		if (entry.isDirectory()) {
-			const found = await findFirstFileRecursive(full, names);
-			if (found) return found;
-		} else if (wanted.has(entry.name.toLowerCase())) {
-			return full;
-		}
-	}
-	return undefined;
+async function findFirstFileRecursive(dir: string, names: string[]): Promise<string | undefined> {
+  const wanted = new Set(names.map((name) => name.toLowerCase()));
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = await findFirstFileRecursive(full, names);
+      if (found) return found;
+    } else if (wanted.has(entry.name.toLowerCase())) {
+      return full;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -3121,11 +2928,11 @@ async function findFirstFileRecursive(
  * All others get --ignore-scripts to prevent arbitrary code execution during install.
  */
 const NEEDS_POSTINSTALL = new Set([
-	"@biomejs/biome",
-	"@ast-grep/cli", // postinstall copies platform binary (ast-grep.exe/sg.exe) into place
-	"@ast-grep/napi",
-	"esbuild",
-	"intelephense", // postinstall fetches platform binary; --ignore-scripts breaks install
+  "@biomejs/biome",
+  "@ast-grep/cli", // postinstall copies platform binary (ast-grep.exe/sg.exe) into place
+  "@ast-grep/napi",
+  "esbuild",
+  "intelephense", // postinstall fetches platform binary; --ignore-scripts breaks install
 ]);
 
 /**
@@ -3137,7 +2944,7 @@ const NEEDS_POSTINSTALL = new Set([
  * updated and its native binary on the old version.
  */
 export function npmToolNeedsPostinstall(packageName: string): boolean {
-	return NEEDS_POSTINSTALL.has(packageName);
+  return NEEDS_POSTINSTALL.has(packageName);
 }
 
 /**
@@ -3154,29 +2961,29 @@ export function npmToolNeedsPostinstall(packageName: string): boolean {
  * that wanders off it.
  */
 export function getRefreshableManagedNpmTools(): Array<{
-	toolId: string;
-	packageName: string;
-	binaryName: string;
+  toolId: string;
+  packageName: string;
+  binaryName: string;
 }> {
-	const refreshable: Array<{
-		toolId: string;
-		packageName: string;
-		binaryName: string;
-	}> = [];
-	for (const tool of TOOLS) {
-		if (tool.installStrategy !== "npm" || !tool.packageName) continue;
-		if (parsePinnedVersion(tool.packageName) !== undefined) continue;
-		// `binaryName` is what `installNpmTool` verifies after an install, and the
-		// refresh has to verify the SAME path after an update. An npm entry
-		// without one cannot be verified, so it is not refreshed either.
-		if (!tool.binaryName) continue;
-		refreshable.push({
-			toolId: tool.id,
-			packageName: tool.packageName,
-			binaryName: tool.binaryName,
-		});
-	}
-	return refreshable;
+  const refreshable: Array<{
+    toolId: string;
+    packageName: string;
+    binaryName: string;
+  }> = [];
+  for (const tool of TOOLS) {
+    if (tool.installStrategy !== "npm" || !tool.packageName) continue;
+    if (parsePinnedVersion(tool.packageName) !== undefined) continue;
+    // `binaryName` is what `installNpmTool` verifies after an install, and the
+    // refresh has to verify the SAME path after an update. An npm entry
+    // without one cannot be verified, so it is not refreshed either.
+    if (!tool.binaryName) continue;
+    refreshable.push({
+      toolId: tool.id,
+      packageName: tool.packageName,
+      binaryName: tool.binaryName,
+    });
+  }
+  return refreshable;
 }
 
 /**
@@ -3188,8 +2995,8 @@ export function getRefreshableManagedNpmTools(): Array<{
  * verified, instead of rebuilding the convention next to it.
  */
 export function resolveManagedNpmBinPath(binaryName: string): string {
-	const binBase = path.join(TOOLS_DIR, "node_modules", ".bin", binaryName);
-	return installerPlatform() === "win32" ? `${binBase}.cmd` : binBase;
+  const binBase = path.join(TOOLS_DIR, "node_modules", ".bin", binaryName);
+  return installerPlatform() === "win32" ? `${binBase}.cmd` : binBase;
 }
 
 /**
@@ -3204,9 +3011,9 @@ export function resolveManagedNpmBinPath(binaryName: string): string {
  * path that can repair a broken install.
  */
 export function invalidateManagedToolResolution(toolId: string): void {
-	resolvedPathCache.delete(toolId);
-	if (_probeCache !== null) delete _probeCache[toolId];
-	markProbeCacheChange(toolId, null);
+  resolvedPathCache.delete(toolId);
+  if (_probeCache !== null) delete _probeCache[toolId];
+  markProbeCacheChange(toolId, null);
 }
 
 const MAVEN_CENTRAL_BASE = "https://repo1.maven.org/maven2";
@@ -3216,75 +3023,69 @@ const MAVEN_CENTRAL_BASE = "https://repo1.maven.org/maven2";
  * and write a `java -jar` launcher next to it (so it resolves like any managed
  * binary via findGitHubToolPath). Requires a JRE — gated on `java` availability.
  */
-async function installMavenTool(
-	tool: ToolDefinition,
-): Promise<string | undefined> {
-	const spec = tool.maven;
-	if (!spec) return undefined;
-	const binaryName = tool.binaryName ?? tool.id;
-	const isWindows = process.platform === "win32";
+async function installMavenTool(tool: ToolDefinition): Promise<string | undefined> {
+  const spec = tool.maven;
+  if (!spec) return undefined;
+  const binaryName = tool.binaryName ?? tool.id;
+  const isWindows = process.platform === "win32";
 
-	if (!(await isCommandAvailable("java", ["-version"]))) {
-		logSessionStart(
-			`maven-install ${tool.id}: java not found — a JAR tool can't run without a JRE`,
-		);
-		return undefined;
-	}
+  if (!(await isCommandAvailable("java", ["-version"]))) {
+    logSessionStart(
+      `maven-install ${tool.id}: java not found — a JAR tool can't run without a JRE`,
+    );
+    return undefined;
+  }
 
-	// Strip trailing slashes without a regex (the `\/+$` form trips ReDoS
-	// scanners — S5852 — even though the input is a trusted constant/registry
-	// value). A plain loop is unambiguously linear.
-	let base = spec.repoBaseUrl ?? MAVEN_CENTRAL_BASE;
-	while (base.endsWith("/")) base = base.slice(0, -1);
-	const groupPath = spec.groupId.replace(/\./g, "/");
-	const jarFile = `${spec.artifactId}-${spec.version}${
-		spec.classifier ? `-${spec.classifier}` : ""
-	}.jar`;
-	const url = `${base}/${groupPath}/${spec.artifactId}/${spec.version}/${jarFile}`;
+  // Strip trailing slashes without a regex (the `\/+$` form trips ReDoS
+  // scanners — S5852 — even though the input is a trusted constant/registry
+  // value). A plain loop is unambiguously linear.
+  let base = spec.repoBaseUrl ?? MAVEN_CENTRAL_BASE;
+  while (base.endsWith("/")) base = base.slice(0, -1);
+  const groupPath = spec.groupId.replace(/\./g, "/");
+  const jarFile = `${spec.artifactId}-${spec.version}${
+    spec.classifier ? `-${spec.classifier}` : ""
+  }.jar`;
+  const url = `${base}/${groupPath}/${spec.artifactId}/${spec.version}/${jarFile}`;
 
-	logSessionStart(`maven-install ${tool.id}: downloading ${url}`);
-	let jarBuffer: Buffer;
-	try {
-		jarBuffer = await httpsGet(url);
-	} catch (err) {
-		logSessionStart(
-			`maven-install ${tool.id}: download failed: ${(err as Error).message}`,
-		);
-		return undefined;
-	}
+  logSessionStart(`maven-install ${tool.id}: downloading ${url}`);
+  let jarBuffer: Buffer;
+  try {
+    jarBuffer = await httpsGet(url);
+  } catch (err) {
+    logSessionStart(`maven-install ${tool.id}: download failed: ${(err as Error).message}`);
+    return undefined;
+  }
 
-	try {
-		await fs.mkdir(GITHUB_BIN_DIR, { recursive: true });
-		const jarPath = path.join(GITHUB_BIN_DIR, `${tool.id}.jar`);
-		await writeFileAtomicAsync(jarPath, jarBuffer, { bestEffort: false });
+  try {
+    await fs.mkdir(GITHUB_BIN_DIR, { recursive: true });
+    const jarPath = path.join(GITHUB_BIN_DIR, `${tool.id}.jar`);
+    await writeFileAtomicAsync(jarPath, jarBuffer, { bestEffort: false });
 
-		// Launcher so the tool resolves as a normal command in the managed bin.
-		const launcherName = isWindows ? `${binaryName}.bat` : binaryName;
-		const launcherPath = path.join(GITHUB_BIN_DIR, launcherName);
-		if (isWindows) {
-			await writeFileAtomicAsync(
-				launcherPath,
-				`@echo off\r\njava -jar "%~dp0${tool.id}.jar" %*\r\n`,
-				{ bestEffort: false },
-			);
-		} else {
-			await writeFileAtomicAsync(
-				launcherPath,
-				`#!/bin/sh\nexec java -jar "$(dirname "$0")/${tool.id}.jar" "$@"\n`,
-				{ bestEffort: false, mode: 0o750 },
-			);
-		}
-		logSessionStart(
-			`maven-install ${tool.id}: installed → ${launcherPath} (${jarBuffer.length} bytes)`,
-		);
-		debugLog(`[maven] installed ${tool.name} → ${launcherPath}`);
-		return launcherPath;
-	} catch (err) {
-		logSessionStart(
-			`maven-install ${tool.id}: install failed: ${(err as Error).message}`,
-		);
-		return undefined;
-	}
+    // Launcher so the tool resolves as a normal command in the managed bin.
+    const launcherName = isWindows ? `${binaryName}.bat` : binaryName;
+    const launcherPath = path.join(GITHUB_BIN_DIR, launcherName);
+    if (isWindows) {
+      await writeFileAtomicAsync(
+        launcherPath,
+        `@echo off\r\njava -jar "%~dp0${tool.id}.jar" %*\r\n`,
+        { bestEffort: false },
+      );
+    } else {
+      await writeFileAtomicAsync(
+        launcherPath,
+        `#!/bin/sh\nexec java -jar "$(dirname "$0")/${tool.id}.jar" "$@"\n`,
+        { bestEffort: false, mode: 0o750 },
+      );
+    }
+    logSessionStart(
+      `maven-install ${tool.id}: installed → ${launcherPath} (${jarBuffer.length} bytes)`,
+    );
+    debugLog(`[maven] installed ${tool.name} → ${launcherPath}`);
+    return launcherPath;
+  } catch (err) {
+    logSessionStart(`maven-install ${tool.id}: install failed: ${(err as Error).message}`);
+    return undefined;
+  }
 }
 
 /**
@@ -3302,616 +3103,560 @@ async function installMavenTool(
  * Exported for the tool-registry contract test.
  */
 export function resolveArchiveUrl(
-	spec: ArchiveSpec,
-	platform: string = process.platform,
-	arch: string = process.arch,
+  spec: ArchiveSpec,
+  platform: string = process.platform,
+  arch: string = process.arch,
 ): string | undefined {
-	return typeof spec.url === "function" ? spec.url(platform, arch) : spec.url;
+  return typeof spec.url === "function" ? spec.url(platform, arch) : spec.url;
 }
 
-async function installArchiveTool(
-	tool: ToolDefinition,
-): Promise<string | undefined> {
-	const spec = tool.archive;
-	if (!spec) return undefined;
-	const binaryName = tool.binaryName ?? tool.id;
-	const isWindows = process.platform === "win32";
+async function installArchiveTool(tool: ToolDefinition): Promise<string | undefined> {
+  const spec = tool.archive;
+  if (!spec) return undefined;
+  const binaryName = tool.binaryName ?? tool.id;
+  const isWindows = process.platform === "win32";
 
-	const url = resolveArchiveUrl(spec);
-	if (!url) {
-		logSessionStart(
-			`archive-install ${tool.id}: no archive for ${process.platform}/${process.arch} — unsupported, skipping`,
-		);
-		return undefined;
-	}
+  const url = resolveArchiveUrl(spec);
+  if (!url) {
+    logSessionStart(
+      `archive-install ${tool.id}: no archive for ${process.platform}/${process.arch} — unsupported, skipping`,
+    );
+    return undefined;
+  }
 
-	logSessionStart(`archive-install ${tool.id}: downloading ${url}`);
-	let archiveBuffer: Buffer;
-	try {
-		archiveBuffer = await httpsGet(url);
-	} catch (err) {
-		logSessionStart(
-			`archive-install ${tool.id}: download failed: ${(err as Error).message}`,
-		);
-		return undefined;
-	}
+  logSessionStart(`archive-install ${tool.id}: downloading ${url}`);
+  let archiveBuffer: Buffer;
+  try {
+    archiveBuffer = await httpsGet(url);
+  } catch (err) {
+    logSessionStart(`archive-install ${tool.id}: download failed: ${(err as Error).message}`);
+    return undefined;
+  }
 
-	// Use basenames + cwd:TOOLS_DIR for the tar spawn so no argument contains a
-	// drive-letter colon — GNU tar (MSYS) otherwise reads `C:\…` as an rsync
-	// `host:path` ("Cannot connect to C:"). Relative paths work for both GNU tar
-	// and Windows bsdtar, so we avoid the GNU-only `--force-local` (which bsdtar
-	// rejects). fs.* calls still use the absolute paths.
-	const extractName = tool.id;
-	const archiveName = `${tool.id}.download.${spec.kind === "zip" ? "zip" : "tgz"}`;
-	const extractDir = path.join(TOOLS_DIR, extractName);
-	const tmpArchive = path.join(TOOLS_DIR, archiveName);
-	try {
-		await fs.mkdir(TOOLS_DIR, { recursive: true });
-		// Clear any prior extraction so a reinstall is clean.
-		await fs.rm(extractDir, { recursive: true, force: true });
-		await fs.mkdir(extractDir, { recursive: true });
-		await fs.writeFile(tmpArchive, archiveBuffer);
+  // Use basenames + cwd:TOOLS_DIR for the tar spawn so no argument contains a
+  // drive-letter colon — GNU tar (MSYS) otherwise reads `C:\…` as an rsync
+  // `host:path` ("Cannot connect to C:"). Relative paths work for both GNU tar
+  // and Windows bsdtar, so we avoid the GNU-only `--force-local` (which bsdtar
+  // rejects). fs.* calls still use the absolute paths.
+  const extractName = tool.id;
+  const archiveName = `${tool.id}.download.${spec.kind === "zip" ? "zip" : "tgz"}`;
+  const extractDir = path.join(TOOLS_DIR, extractName);
+  const tmpArchive = path.join(TOOLS_DIR, archiveName);
+  try {
+    await fs.mkdir(TOOLS_DIR, { recursive: true });
+    // Clear any prior extraction so a reinstall is clean.
+    await fs.rm(extractDir, { recursive: true, force: true });
+    await fs.mkdir(extractDir, { recursive: true });
+    await fs.writeFile(tmpArchive, archiveBuffer);
 
-		// `--strip-components=N` drops N leading path components. Default 1 drops a
-		// versioned top-level dir so a launcher path stays stable (bin/… not
-		// spotbugs-X.Y.Z/bin/…). A TREE BUNDLE (stripComponents:0) has no wrapping
-		// dir — stripping would flatten/merge its sibling module folders — so the
-		// flag is omitted. bsdtar handles both .tgz and .zip with -xf.
-		const stripComponents = spec.stripComponents ?? 1;
-		const tarArgs = [
-			spec.kind === "tgz" ? "-xzf" : "-xf",
-			archiveName,
-			"-C",
-			extractName,
-			...(stripComponents > 0
-				? [`--strip-components=${stripComponents}`]
-				: []),
-		];
-		// Resolve `tar` to an absolute path on Windows (System32\tar.exe is the
-		// bsdtar shipped with Windows 10+) so extraction can't be hijacked via a
-		// writable PATH entry — same hardening as the taskkill spawn. On POSIX `tar`
-		// is a trusted coreutil whose absolute path varies by distro, so it stays
-		// bare (consistent with every other tool spawn).
-		const tarBin = isWindows
-			? `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\tar.exe`
-			: "tar";
-		const extractResult = await safeSpawnAsync(tarBin, tarArgs, {
-			cwd: TOOLS_DIR,
-			timeout: 120_000,
-			ignoreAmbientSignal: true,
-			lifetimeCoupled: true,
-		});
-		const extracted = {
-			ok: extractResult.status === 0,
-			stderr: extractResult.error?.message ?? extractResult.stderr,
-		};
-		await fs.rm(tmpArchive, { force: true });
-		if (!extracted.ok) {
-			logSessionStart(
-				`archive-install ${tool.id}: extraction failed: ${extracted.stderr}`,
-			);
-			return undefined;
-		}
+    // `--strip-components=N` drops N leading path components. Default 1 drops a
+    // versioned top-level dir so a launcher path stays stable (bin/… not
+    // spotbugs-X.Y.Z/bin/…). A TREE BUNDLE (stripComponents:0) has no wrapping
+    // dir — stripping would flatten/merge its sibling module folders — so the
+    // flag is omitted. bsdtar handles both .tgz and .zip with -xf.
+    const stripComponents = spec.stripComponents ?? 1;
+    const tarArgs = [
+      spec.kind === "tgz" ? "-xzf" : "-xf",
+      archiveName,
+      "-C",
+      extractName,
+      ...(stripComponents > 0 ? [`--strip-components=${stripComponents}`] : []),
+    ];
+    // Resolve `tar` to an absolute path on Windows (System32\tar.exe is the
+    // bsdtar shipped with Windows 10+) so extraction can't be hijacked via a
+    // writable PATH entry — same hardening as the taskkill spawn. On POSIX `tar`
+    // is a trusted coreutil whose absolute path varies by distro, so it stays
+    // bare (consistent with every other tool spawn).
+    const tarBin = isWindows
+      ? `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\tar.exe`
+      : "tar";
+    const extractResult = await safeSpawnAsync(tarBin, tarArgs, {
+      cwd: TOOLS_DIR,
+      timeout: 120_000,
+      ignoreAmbientSignal: true,
+      lifetimeCoupled: true,
+    });
+    const extracted = {
+      ok: extractResult.status === 0,
+      stderr: extractResult.error?.message ?? extractResult.stderr,
+    };
+    await fs.rm(tmpArchive, { force: true });
+    if (!extracted.ok) {
+      logSessionStart(`archive-install ${tool.id}: extraction failed: ${extracted.stderr}`);
+      return undefined;
+    }
 
-		// Tree bundle (no launcher): the whole extracted tree IS the artifact. Verify
-		// the marker exists and resolve to the extract dir — the consuming server
-		// launches a runtime against a bootstrap inside it (e.g. PSES via pwsh).
-		if (!spec.launcher) {
-			const marker = spec.treeMarker
-				? path.join(extractDir, ...spec.treeMarker.split("/"))
-				: extractDir;
-			try {
-				await fs.access(marker);
-			} catch {
-				logSessionStart(
-					`archive-install ${tool.id}: tree marker not found at ${marker} after extraction`,
-				);
-				return undefined;
-			}
-			logSessionStart(
-				`archive-install ${tool.id}: installed tree bundle → ${extractDir} (extracted ${archiveBuffer.length} bytes)`,
-			);
-			debugLog(`[archive] installed ${tool.name} bundle → ${extractDir}`);
-			return extractDir;
-		}
+    // Tree bundle (no launcher): the whole extracted tree IS the artifact. Verify
+    // the marker exists and resolve to the extract dir — the consuming server
+    // launches a runtime against a bootstrap inside it (e.g. PSES via pwsh).
+    if (!spec.launcher) {
+      const marker = spec.treeMarker
+        ? path.join(extractDir, ...spec.treeMarker.split("/"))
+        : extractDir;
+      try {
+        await fs.access(marker);
+      } catch {
+        logSessionStart(
+          `archive-install ${tool.id}: tree marker not found at ${marker} after extraction`,
+        );
+        return undefined;
+      }
+      logSessionStart(
+        `archive-install ${tool.id}: installed tree bundle → ${extractDir} (extracted ${archiveBuffer.length} bytes)`,
+      );
+      debugLog(`[archive] installed ${tool.name} bundle → ${extractDir}`);
+      return extractDir;
+    }
 
-		// The launcher inside the extracted tree (e.g. bin/spotbugs[.bat]).
-		const innerLauncher = path.join(
-			extractDir,
-			...spec.launcher.split("/").map((p) => p),
-		);
-		const resolvedInner = isWindows ? `${innerLauncher}.bat` : innerLauncher;
-		try {
-			await fs.access(resolvedInner);
-		} catch {
-			logSessionStart(
-				`archive-install ${tool.id}: launcher not found at ${resolvedInner} after extraction`,
-			);
-			return undefined;
-		}
-		if (!isWindows) await fs.chmod(resolvedInner, 0o750).catch(() => {});
+    // The launcher inside the extracted tree (e.g. bin/spotbugs[.bat]).
+    const innerLauncher = path.join(extractDir, ...spec.launcher.split("/").map((p) => p));
+    const resolvedInner = isWindows ? `${innerLauncher}.bat` : innerLauncher;
+    try {
+      await fs.access(resolvedInner);
+    } catch {
+      logSessionStart(
+        `archive-install ${tool.id}: launcher not found at ${resolvedInner} after extraction`,
+      );
+      return undefined;
+    }
+    if (!isWindows) await fs.chmod(resolvedInner, 0o750).catch(() => {});
 
-		// Thin shim in the managed bin so discovery (findGitHubToolPath) resolves
-		// it like any other managed tool. `call`/`exec` preserves the real
-		// launcher's own %~dp0/$0 so it still finds its sibling lib/.
-		await fs.mkdir(GITHUB_BIN_DIR, { recursive: true });
-		const launcherName = isWindows ? `${binaryName}.bat` : binaryName;
-		const shimPath = path.join(GITHUB_BIN_DIR, launcherName);
-		if (isWindows) {
-			await writeFileAtomicAsync(
-				shimPath,
-				`@echo off\r\ncall "${resolvedInner}" %*\r\n`,
-				{ bestEffort: false },
-			);
-		} else {
-			await writeFileAtomicAsync(
-				shimPath,
-				`#!/bin/sh\nexec "${resolvedInner}" "$@"\n`,
-				{ bestEffort: false, mode: 0o750 },
-			);
-		}
-		logSessionStart(
-			`archive-install ${tool.id}: installed → ${shimPath} (extracted ${archiveBuffer.length} bytes)`,
-		);
-		debugLog(`[archive] installed ${tool.name} → ${shimPath}`);
-		return shimPath;
-	} catch (err) {
-		await fs.rm(tmpArchive, { force: true }).catch(() => {});
-		logSessionStart(
-			`archive-install ${tool.id}: install failed: ${(err as Error).message}`,
-		);
-		return undefined;
-	}
+    // Thin shim in the managed bin so discovery (findGitHubToolPath) resolves
+    // it like any other managed tool. `call`/`exec` preserves the real
+    // launcher's own %~dp0/$0 so it still finds its sibling lib/.
+    await fs.mkdir(GITHUB_BIN_DIR, { recursive: true });
+    const launcherName = isWindows ? `${binaryName}.bat` : binaryName;
+    const shimPath = path.join(GITHUB_BIN_DIR, launcherName);
+    if (isWindows) {
+      await writeFileAtomicAsync(shimPath, `@echo off\r\ncall "${resolvedInner}" %*\r\n`, {
+        bestEffort: false,
+      });
+    } else {
+      await writeFileAtomicAsync(shimPath, `#!/bin/sh\nexec "${resolvedInner}" "$@"\n`, {
+        bestEffort: false,
+        mode: 0o750,
+      });
+    }
+    logSessionStart(
+      `archive-install ${tool.id}: installed → ${shimPath} (extracted ${archiveBuffer.length} bytes)`,
+    );
+    debugLog(`[archive] installed ${tool.name} → ${shimPath}`);
+    return shimPath;
+  } catch (err) {
+    await fs.rm(tmpArchive, { force: true }).catch(() => {});
+    logSessionStart(`archive-install ${tool.id}: install failed: ${(err as Error).message}`);
+    return undefined;
+  }
 }
 
 async function installNpmTool(
-	packageName: string,
-	binaryName: string,
+  packageName: string,
+  binaryName: string,
 ): Promise<string | undefined> {
-	try {
-		// Ensure tools directory exists
-		await fs.mkdir(TOOLS_DIR, { recursive: true });
+  try {
+    // Ensure tools directory exists
+    await fs.mkdir(TOOLS_DIR, { recursive: true });
 
-		// Create a minimal package.json if it doesn't exist
-		const packageJsonPath = path.join(TOOLS_DIR, "package.json");
-		try {
-			await fs.access(packageJsonPath);
-		} catch {
-			await writeFileAtomicAsync(
-				packageJsonPath,
-				JSON.stringify({ name: "choco-pi-lsp-tools", version: "1.0.0" }, null, 2),
-				{ bestEffort: false },
-			);
-		}
+    // Create a minimal package.json if it doesn't exist
+    const packageJsonPath = path.join(TOOLS_DIR, "package.json");
+    try {
+      await fs.access(packageJsonPath);
+    } catch {
+      await writeFileAtomicAsync(
+        packageJsonPath,
+        JSON.stringify({ name: "choco-pi-lsp-tools", version: "1.0.0" }, null, 2),
+        { bestEffort: false },
+      );
+    }
 
-		// Resolve the package manager for the tools dir and build install args.
-		const isWindows = installerPlatform() === "win32";
-		const pm = await resolveNodePackageManager(TOOLS_DIR);
-		const testNpmScript =
-			process.env.CHOCO_PI_LSP_TEST_MODE === "1"
-				? process.env.CHOCO_PI_LSP_TEST_NPM_SCRIPT
-				: undefined;
-		const pmCommand = testNpmScript ? process.execPath : pmBinary(pm);
-		// Use --ignore-scripts unless the package explicitly needs postinstall
-		// (e.g. biome downloads a platform-specific native binary via postinstall).
-		const needsScripts = NEEDS_POSTINSTALL.has(packageName);
-		const baseInstallArgs = installArgs(pm, packageName, {
-			ignoreScripts: !needsScripts,
-		});
+    // Resolve the package manager for the tools dir and build install args.
+    const isWindows = installerPlatform() === "win32";
+    const pm = await resolveNodePackageManager(TOOLS_DIR);
+    const testNpmScript =
+      process.env.CHOCO_PI_LSP_TEST_MODE === "1"
+        ? process.env.CHOCO_PI_LSP_TEST_NPM_SCRIPT
+        : undefined;
+    const pmCommand = testNpmScript ? process.execPath : pmBinary(pm);
+    // Use --ignore-scripts unless the package explicitly needs postinstall
+    // (e.g. biome downloads a platform-specific native binary via postinstall).
+    const needsScripts = NEEDS_POSTINSTALL.has(packageName);
+    const baseInstallArgs = installArgs(pm, packageName, {
+      ignoreScripts: !needsScripts,
+    });
 
-		const INSTALL_TIMEOUT_MS =
-			Number(process.env.CHOCO_PI_LSP_INSTALL_TIMEOUT_MS) || 120_000;
-		const runInstallAttempt = async (
-			args: string[],
-		): Promise<{ ok: boolean; stderr: string }> => {
-			const result = await safeSpawnAsync(pmCommand, args, {
-				cwd: TOOLS_DIR,
-				timeout: INSTALL_TIMEOUT_MS,
-				ignoreAmbientSignal: true,
-				lifetimeCoupled: true,
-			});
-			return {
-				ok: result.status === 0,
-				stderr: result.error?.message ?? result.stderr,
-			};
-		};
+    const INSTALL_TIMEOUT_MS = Number(process.env.CHOCO_PI_LSP_INSTALL_TIMEOUT_MS) || 120_000;
+    const runInstallAttempt = async (args: string[]): Promise<{ ok: boolean; stderr: string }> => {
+      const result = await safeSpawnAsync(pmCommand, args, {
+        cwd: TOOLS_DIR,
+        timeout: INSTALL_TIMEOUT_MS,
+        ignoreAmbientSignal: true,
+        lifetimeCoupled: true,
+      });
+      return {
+        ok: result.status === 0,
+        stderr: result.error?.message ?? result.stderr,
+      };
+    };
 
-		let outcome = await runInstallAttempt([
-			...(testNpmScript ? [testNpmScript] : []),
-			...baseInstallArgs,
-		]);
+    let outcome = await runInstallAttempt([
+      ...(testNpmScript ? [testNpmScript] : []),
+      ...baseInstallArgs,
+    ]);
 
-		// --legacy-peer-deps is npm-only; retry just npm's ERESOLVE failures.
-		const erResolve =
-			outcome.ok === false &&
-			/npm\s+error\s+ERESOLVE|\bERESOLVE\b|could not resolve/i.test(
-				outcome.stderr,
-			);
+    // --legacy-peer-deps is npm-only; retry just npm's ERESOLVE failures.
+    const erResolve =
+      outcome.ok === false &&
+      /npm\s+error\s+ERESOLVE|\bERESOLVE\b|could not resolve/i.test(outcome.stderr);
 
-		if (pm === "npm" && erResolve) {
-			const retryArgs = installArgs(pm, packageName, {
-				ignoreScripts: !needsScripts,
-				legacyPeerDeps: true,
-			});
-			logSessionStart(
-				`auto-install npm ${packageName}: retry with --legacy-peer-deps after ERESOLVE`,
-			);
-			outcome = await runInstallAttempt([
-				...(testNpmScript ? [testNpmScript] : []),
-				...retryArgs,
-			]);
-		}
+    if (pm === "npm" && erResolve) {
+      const retryArgs = installArgs(pm, packageName, {
+        ignoreScripts: !needsScripts,
+        legacyPeerDeps: true,
+      });
+      logSessionStart(
+        `auto-install npm ${packageName}: retry with --legacy-peer-deps after ERESOLVE`,
+      );
+      outcome = await runInstallAttempt([...(testNpmScript ? [testNpmScript] : []), ...retryArgs]);
+    }
 
-		if (!outcome.ok) {
-			throw new Error(`Failed to install ${packageName}: ${outcome.stderr}`);
-		}
+    if (!outcome.ok) {
+      throw new Error(`Failed to install ${packageName}: ${outcome.stderr}`);
+    }
 
-		// npm creates a command shim on Windows; retain that actual executable path
-		// rather than probing/storing the extensionless POSIX sibling.
-		const binBase = path.join(TOOLS_DIR, "node_modules", ".bin", binaryName);
-		const binPath =
-			installerPlatform() === "win32" ? `${binBase}.cmd` : binBase;
+    // npm creates a command shim on Windows; retain that actual executable path
+    // rather than probing/storing the extensionless POSIX sibling.
+    const binBase = path.join(TOOLS_DIR, "node_modules", ".bin", binaryName);
+    const binPath = installerPlatform() === "win32" ? `${binBase}.cmd` : binBase;
 
-		// Make executable on Unix
-		if (installerPlatform() !== "win32") {
-			try {
-				await fs.chmod(binPath, 0o750);
-			} catch {
-				/* ignore */
-			}
-		}
+    // Make executable on Unix
+    if (installerPlatform() !== "win32") {
+      try {
+        await fs.chmod(binPath, 0o750);
+      } catch {
+        /* ignore */
+      }
+    }
 
-		// Brief delay — lets npm postinstall scripts finish writing bin wrappers
-		// before we stat/exec them (eliminates a race on slow Windows I/O).
-		await new Promise((r) => setTimeout(r, 500));
+    // Brief delay — lets npm postinstall scripts finish writing bin wrappers
+    // before we stat/exec them (eliminates a race on slow Windows I/O).
+    await new Promise((r) => setTimeout(r, 500));
 
-		// Verify the binary actually works, retrying with backoff to handle
-		// postinstall scripts that complete asynchronously after npm exits 0.
-		debugLog(`Verifying ${binaryName}...`);
-		let isValid = false;
-		for (let attempt = 1; attempt <= 3; attempt++) {
-			isValid = await verifyToolBinary(binPath);
-			if (isValid) break;
-			if (attempt < 3) {
-				logSessionStart(
-					`auto-install verify ${binaryName}: attempt ${attempt} failed, retrying in ${attempt}s`,
-				);
-				await new Promise((r) => setTimeout(r, 1000 * attempt));
-			}
-		}
-		if (!isValid) {
-			logSessionStart(
-				`auto-install ${packageName}: installed but verification failed, cleaning up`,
-			);
-			// Clean up the broken installation
-			try {
-				const packagePath = path.join(TOOLS_DIR, "node_modules", packageName);
-				await fs.rm(packagePath, { recursive: true, force: true });
-				await fs.rm(binBase, { force: true });
-				if (isWindows) {
-					await fs.rm(`${binBase}.cmd`, { force: true });
-					await fs.rm(`${binBase}.ps1`, { force: true });
-				}
-			} catch {
-				/* ignore cleanup errors */
-			}
-			return undefined;
-		}
+    // Verify the binary actually works, retrying with backoff to handle
+    // postinstall scripts that complete asynchronously after npm exits 0.
+    debugLog(`Verifying ${binaryName}...`);
+    let isValid = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      isValid = await verifyToolBinary(binPath);
+      if (isValid) break;
+      if (attempt < 3) {
+        logSessionStart(
+          `auto-install verify ${binaryName}: attempt ${attempt} failed, retrying in ${attempt}s`,
+        );
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
+      }
+    }
+    if (!isValid) {
+      logSessionStart(
+        `auto-install ${packageName}: installed but verification failed, cleaning up`,
+      );
+      // Clean up the broken installation
+      try {
+        const packagePath = path.join(TOOLS_DIR, "node_modules", packageName);
+        await fs.rm(packagePath, { recursive: true, force: true });
+        await fs.rm(binBase, { force: true });
+        if (isWindows) {
+          await fs.rm(`${binBase}.cmd`, { force: true });
+          await fs.rm(`${binBase}.ps1`, { force: true });
+        }
+      } catch {
+        /* ignore cleanup errors */
+      }
+      return undefined;
+    }
 
-		return binPath;
-	} catch (err) {
-		logSessionStart(
-			`auto-install npm ${packageName}: exception: ${(err as Error).message}`,
-		);
-		return undefined;
-	}
+    return binPath;
+  } catch (err) {
+    logSessionStart(`auto-install npm ${packageName}: exception: ${(err as Error).message}`);
+    return undefined;
+  }
 }
 /**
  * Install a pip package tool
  */
-async function installPipTool(
-	packageName: string,
-): Promise<string | undefined> {
-	try {
-		const isWindows = process.platform === "win32";
-		const pipCandidates = isWindows
-			? [
-					{ command: "pip", args: ["install", "--user", packageName] },
-					{
-						command: "py",
-						args: ["-m", "pip", "install", "--user", packageName],
-					},
-					{
-						command: "python",
-						args: ["-m", "pip", "install", "--user", packageName],
-					},
-				]
-			: [
-					{ command: "pip3", args: ["install", "--user", packageName] },
-					{ command: "pip", args: ["install", "--user", packageName] },
-					{
-						command: "python3",
-						args: ["-m", "pip", "install", "--user", packageName],
-					},
-					{
-						command: "python",
-						args: ["-m", "pip", "install", "--user", packageName],
-					},
-				];
+async function installPipTool(packageName: string): Promise<string | undefined> {
+  try {
+    const isWindows = process.platform === "win32";
+    const pipCandidates = isWindows
+      ? [
+          { command: "pip", args: ["install", "--user", packageName] },
+          {
+            command: "py",
+            args: ["-m", "pip", "install", "--user", packageName],
+          },
+          {
+            command: "python",
+            args: ["-m", "pip", "install", "--user", packageName],
+          },
+        ]
+      : [
+          { command: "pip3", args: ["install", "--user", packageName] },
+          { command: "pip", args: ["install", "--user", packageName] },
+          {
+            command: "python3",
+            args: ["-m", "pip", "install", "--user", packageName],
+          },
+          {
+            command: "python",
+            args: ["-m", "pip", "install", "--user", packageName],
+          },
+        ];
 
-		let lastError = "";
-		for (const candidate of pipCandidates) {
-			const pipResult = await safeSpawnAsync(candidate.command, candidate.args, {
-				timeout: 120_000,
-				ignoreAmbientSignal: true,
-				lifetimeCoupled: true,
-			});
-			const outcome = {
-				ok: pipResult.status === 0,
-				error: (pipResult.error?.message ?? pipResult.stderr).trim(),
-			};
+    let lastError = "";
+    for (const candidate of pipCandidates) {
+      const pipResult = await safeSpawnAsync(candidate.command, candidate.args, {
+        timeout: 120_000,
+        ignoreAmbientSignal: true,
+        lifetimeCoupled: true,
+      });
+      const outcome = {
+        ok: pipResult.status === 0,
+        error: (pipResult.error?.message ?? pipResult.stderr).trim(),
+      };
 
-			if (outcome.ok) {
-				// Ensure user-level scripts directory is available in current process PATH.
-				// This helps tools installed via `pip install --user` become immediately callable.
-				const userBaseResult = await new Promise<string>((resolve) => {
-					let probe: ReturnType<typeof spawn>;
-					try {
-						probe = spawn(
-							candidate.command,
-							["-m", "site", "--user-base"],
-							{
-								stdio: ["ignore", "pipe", "pipe"],
-								shell: isWindows,
-							},
-						);
-					} catch {
-						// SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the
-						// pidusage bug class, #533) — best-effort probe, resolve empty.
-						resolve("");
-						return;
-					}
-					let stdout = "";
-					probe.stdout?.on("data", (data) => (stdout += data));
-					probe.on("exit", (code) => {
-						if (code === 0) resolve(stdout.trim());
-						else resolve("");
-					});
-					probe.on("error", () => resolve(""));
-				});
+      if (outcome.ok) {
+        // Ensure user-level scripts directory is available in current process PATH.
+        // This helps tools installed via `pip install --user` become immediately callable.
+        const userBaseResult = await new Promise<string>((resolve) => {
+          let probe: ReturnType<typeof spawn>;
+          try {
+            probe = spawn(candidate.command, ["-m", "site", "--user-base"], {
+              stdio: ["ignore", "pipe", "pipe"],
+              shell: isWindows,
+            });
+          } catch {
+            // SYNCHRONOUS spawn throw (Windows `spawn UNKNOWN`/EINVAL, the
+            // pidusage bug class, #533) — best-effort probe, resolve empty.
+            resolve("");
+            return;
+          }
+          let stdout = "";
+          probe.stdout?.on("data", (data) => (stdout += data));
+          probe.on("exit", (code) => {
+            if (code === 0) resolve(stdout.trim());
+            else resolve("");
+          });
+          probe.on("error", () => resolve(""));
+        });
 
-				if (userBaseResult) {
-					const candidateScriptDirs: string[] = [
-						path.join(userBaseResult, isWindows ? "Scripts" : "bin"),
-					];
+        if (userBaseResult) {
+          const candidateScriptDirs: string[] = [
+            path.join(userBaseResult, isWindows ? "Scripts" : "bin"),
+          ];
 
-					if (isWindows) {
-						// Some Python setups report USER_BASE as ...\Roaming\Python,
-						// while scripts live in ...\Roaming\Python\PythonXY\Scripts.
-						try {
-							const children = await fs.readdir(userBaseResult, {
-								withFileTypes: true,
-							});
-							for (const entry of children) {
-								if (!entry.isDirectory()) continue;
-								if (!/^python\d+$/i.test(entry.name)) continue;
-								candidateScriptDirs.push(
-									path.join(userBaseResult, entry.name, "Scripts"),
-								);
-							}
-						} catch {
-							// ignore
-						}
-					}
+          if (isWindows) {
+            // Some Python setups report USER_BASE as ...\Roaming\Python,
+            // while scripts live in ...\Roaming\Python\PythonXY\Scripts.
+            try {
+              const children = await fs.readdir(userBaseResult, {
+                withFileTypes: true,
+              });
+              for (const entry of children) {
+                if (!entry.isDirectory()) continue;
+                if (!/^python\d+$/i.test(entry.name)) continue;
+                candidateScriptDirs.push(path.join(userBaseResult, entry.name, "Scripts"));
+              }
+            } catch {
+              // ignore
+            }
+          }
 
-					const currentPath =
-						process.env.PATH || process.env.Path || process.env.path || "";
-					const separator = isWindows ? ";" : ":";
-					const normalizedPath = currentPath
-						.toLowerCase()
-						.split(separator)
-						.map((p) => p.trim());
+          const currentPath = process.env.PATH || process.env.Path || process.env.path || "";
+          const separator = isWindows ? ";" : ":";
+          const normalizedPath = currentPath
+            .toLowerCase()
+            .split(separator)
+            .map((p) => p.trim());
 
-					for (const scriptsDir of candidateScriptDirs) {
-						try {
-							await fs.access(scriptsDir);
-							if (!normalizedPath.includes(scriptsDir.toLowerCase())) {
-								const existingPath =
-									process.env.PATH ||
-									process.env.Path ||
-									process.env.path ||
-									"";
-								const updatedPath = `${scriptsDir}${separator}${existingPath}`;
-								process.env.PATH = updatedPath;
-								if (isWindows) {
-									process.env.Path = updatedPath;
-								}
-								debugLog(`Added pip user scripts dir to PATH: ${scriptsDir}`);
-							}
-						} catch {
-							debugLog(`pip user scripts dir not accessible: ${scriptsDir}`);
-						}
-					}
-				}
+          for (const scriptsDir of candidateScriptDirs) {
+            try {
+              await fs.access(scriptsDir);
+              if (!normalizedPath.includes(scriptsDir.toLowerCase())) {
+                const existingPath = process.env.PATH || process.env.Path || process.env.path || "";
+                const updatedPath = `${scriptsDir}${separator}${existingPath}`;
+                process.env.PATH = updatedPath;
+                if (isWindows) {
+                  process.env.Path = updatedPath;
+                }
+                debugLog(`Added pip user scripts dir to PATH: ${scriptsDir}`);
+              }
+            } catch {
+              debugLog(`pip user scripts dir not accessible: ${scriptsDir}`);
+            }
+          }
+        }
 
-				return packageName;
-			}
+        return packageName;
+      }
 
-			lastError = `${candidate.command} ${candidate.args.join(" ")}: ${outcome.error}`;
-			debugLog(`[pip-fallback] ${lastError}`);
-		}
+      lastError = `${candidate.command} ${candidate.args.join(" ")}: ${outcome.error}`;
+      debugLog(`[pip-fallback] ${lastError}`);
+    }
 
-		throw new Error(
-			`Failed to install ${packageName}: no usable pip command found (${lastError || "unknown error"})`,
-		);
-	} catch (err) {
-		logSessionStart(
-			`auto-install pip ${packageName}: exception: ${(err as Error).message}`,
-		);
-		return undefined;
-	}
+    throw new Error(
+      `Failed to install ${packageName}: no usable pip command found (${lastError || "unknown error"})`,
+    );
+  } catch (err) {
+    logSessionStart(`auto-install pip ${packageName}: exception: ${(err as Error).message}`);
+    return undefined;
+  }
 }
 
-async function installGemTool(
-	packageName: string,
-): Promise<string | undefined> {
-	try {
-		const gemResult = await safeSpawnAsync(
-			"gem",
-			["install", packageName, "--no-document"],
-			{
-				timeout: 120_000,
-				ignoreAmbientSignal: true,
-				lifetimeCoupled: true,
-			},
-		);
-		const outcome = {
-			ok: gemResult.status === 0,
-			error: (gemResult.error?.message ?? gemResult.stderr).trim(),
-		};
+async function installGemTool(packageName: string): Promise<string | undefined> {
+  try {
+    const gemResult = await safeSpawnAsync("gem", ["install", packageName, "--no-document"], {
+      timeout: 120_000,
+      ignoreAmbientSignal: true,
+      lifetimeCoupled: true,
+    });
+    const outcome = {
+      ok: gemResult.status === 0,
+      error: (gemResult.error?.message ?? gemResult.stderr).trim(),
+    };
 
-		if (!outcome.ok) {
-			throw new Error(
-				`Failed to install ${packageName} via gem: ${outcome.error}`,
-			);
-		}
+    if (!outcome.ok) {
+      throw new Error(`Failed to install ${packageName} via gem: ${outcome.error}`);
+    }
 
-		return packageName;
-	} catch (err) {
-		logSessionStart(
-			`auto-install gem ${packageName}: exception: ${(err as Error).message}`,
-		);
-		return undefined;
-	}
+    return packageName;
+  } catch (err) {
+    logSessionStart(`auto-install gem ${packageName}: exception: ${(err as Error).message}`);
+    return undefined;
+  }
 }
 
 async function finishInstallAttempt(
-	toolId: string,
-	ok: boolean,
-	startedAt: number,
+  toolId: string,
+  ok: boolean,
+  startedAt: number,
 ): Promise<boolean> {
-	logSessionStart(
-		`auto-install ${toolId}: ${ok ? "success" : "failed"} (${Date.now() - startedAt}ms)`,
-	);
-	// Every install strategy funnels its outcome through here, so this one write
-	// records attempt-ness for all of them (#1500).
-	noteInstallAttempt(
-		toolId,
-		ok ? "succeeded" : "failed",
-		ok ? undefined : (installFailureReasons.get(toolId) ?? "install failed"),
-	);
-	if (ok) {
-		// A prior availability probe may have cached ENOENT for this exact child
-		// PATH. Make a successful mutation visible immediately rather than waiting
-		// for the bounded negative-cache TTL or the next session reset (#1199).
-		resetSafeSpawnWindowsCommandCache();
-		// choco-pi fork: the madge managed-path memo reset is removed with
-		// the dependency-checker (madge) client — see VENDORED.md.
-	}
-	return ok;
+  logSessionStart(
+    `auto-install ${toolId}: ${ok ? "success" : "failed"} (${Date.now() - startedAt}ms)`,
+  );
+  // Every install strategy funnels its outcome through here, so this one write
+  // records attempt-ness for all of them (#1500).
+  noteInstallAttempt(
+    toolId,
+    ok ? "succeeded" : "failed",
+    ok ? undefined : (installFailureReasons.get(toolId) ?? "install failed"),
+  );
+  if (ok) {
+    // A prior availability probe may have cached ENOENT for this exact child
+    // PATH. Make a successful mutation visible immediately rather than waiting
+    // for the bounded negative-cache TTL or the next session reset (#1199).
+    resetSafeSpawnWindowsCommandCache();
+    // choco-pi fork: the madge managed-path memo reset is removed with
+    // the dependency-checker (madge) client — see VENDORED.md.
+  }
+  return ok;
 }
 
 /**
  * Install a tool by ID
  */
 export async function installTool(toolId: string): Promise<boolean> {
-	if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_INSTALL === "1") {
-		installFailureReasons.set(
-			toolId,
-			"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
-		);
-		noteInstallAttempt(
-			toolId,
-			"declined",
-			"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
-		);
-		logSessionStart(
-			`auto-install ${toolId}: refused — CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1`,
-		);
-		return false;
-	}
-	const tool = TOOLS.find((t) => t.id === toolId);
-	if (!tool) {
-		noteInstallAttempt(toolId, "declined", "unknown tool id");
-		logSessionStart(`auto-install ${toolId}: unknown tool id`);
-		return false;
-	}
+  if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_INSTALL === "1") {
+    installFailureReasons.set(
+      toolId,
+      "installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
+    );
+    noteInstallAttempt(
+      toolId,
+      "declined",
+      "installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
+    );
+    logSessionStart(`auto-install ${toolId}: refused — CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1`);
+    return false;
+  }
+  const tool = TOOLS.find((t) => t.id === toolId);
+  if (!tool) {
+    noteInstallAttempt(toolId, "declined", "unknown tool id");
+    logSessionStart(`auto-install ${toolId}: unknown tool id`);
+    return false;
+  }
 
-	const startedAt = Date.now();
-	logSessionStart(
-		`auto-install ${tool.id}: start strategy=${tool.installStrategy} package=${tool.packageName ?? "n/a"}`,
-	);
+  const startedAt = Date.now();
+  logSessionStart(
+    `auto-install ${tool.id}: start strategy=${tool.installStrategy} package=${tool.packageName ?? "n/a"}`,
+  );
 
-	try {
-		switch (tool.installStrategy) {
-			case "npm": {
-				if (!tool.packageName || !tool.binaryName) return false;
-				const npmPath = await installNpmTool(tool.packageName, tool.binaryName);
-				if (npmPath !== undefined) {
-					// #1746 review F4: an install just resolved this package's range
-					// against the registry, so record it as freshly checked. Otherwise a
-					// new machine that installs 22 tools today has 22 unstamped tools,
-					// and spends the next 22 sessions running `npm update` on packages
-					// it installed minutes ago.
-					//
-					// Dynamic import, not a static one: managed-tool-refresh.ts imports
-					// THIS module for the tool registry, and a static import back would
-					// be a cycle. By the time this line runs the module graph is long
-					// since evaluated, so the lazy import is safe and also keeps the
-					// refresh module off the startup path.
-					await import("./managed-tool-refresh.js")
-						.then((m) =>
-							m.stampManagedToolInstalled(tool.id, tool.packageName as string),
-						)
-						.catch(() => {
-							// Best-effort telemetry: a missing stamp costs one wasted
-							// update later, never a wrong version, and must not fail the
-							// install that just succeeded.
-						});
-				}
-				return finishInstallAttempt(tool.id, npmPath !== undefined, startedAt);
-			}
+  try {
+    switch (tool.installStrategy) {
+      case "npm": {
+        if (!tool.packageName || !tool.binaryName) return false;
+        const npmPath = await installNpmTool(tool.packageName, tool.binaryName);
+        if (npmPath !== undefined) {
+          // #1746 review F4: an install just resolved this package's range
+          // against the registry, so record it as freshly checked. Otherwise a
+          // new machine that installs 22 tools today has 22 unstamped tools,
+          // and spends the next 22 sessions running `npm update` on packages
+          // it installed minutes ago.
+          //
+          // Dynamic import, not a static one: managed-tool-refresh.ts imports
+          // THIS module for the tool registry, and a static import back would
+          // be a cycle. By the time this line runs the module graph is long
+          // since evaluated, so the lazy import is safe and also keeps the
+          // refresh module off the startup path.
+          await import("./managed-tool-refresh.js")
+            .then((m) => m.stampManagedToolInstalled(tool.id, tool.packageName as string))
+            .catch(() => {
+              // Best-effort telemetry: a missing stamp costs one wasted
+              // update later, never a wrong version, and must not fail the
+              // install that just succeeded.
+            });
+        }
+        return finishInstallAttempt(tool.id, npmPath !== undefined, startedAt);
+      }
 
-			case "pip": {
-				if (!tool.packageName) return false;
-				const pipPath = await installPipTool(tool.packageName);
-				return finishInstallAttempt(tool.id, pipPath !== undefined, startedAt);
-			}
+      case "pip": {
+        if (!tool.packageName) return false;
+        const pipPath = await installPipTool(tool.packageName);
+        return finishInstallAttempt(tool.id, pipPath !== undefined, startedAt);
+      }
 
-			case "gem": {
-				if (!tool.packageName) return false;
-				const gemPath = await installGemTool(tool.packageName);
-				return finishInstallAttempt(tool.id, gemPath !== undefined, startedAt);
-			}
+      case "gem": {
+        if (!tool.packageName) return false;
+        const gemPath = await installGemTool(tool.packageName);
+        return finishInstallAttempt(tool.id, gemPath !== undefined, startedAt);
+      }
 
-			case "github": {
-				if (!tool.github) return false;
-				const ghPath = await installGitHubTool(tool);
-				return finishInstallAttempt(tool.id, ghPath !== undefined, startedAt);
-			}
+      case "github": {
+        if (!tool.github) return false;
+        const ghPath = await installGitHubTool(tool);
+        return finishInstallAttempt(tool.id, ghPath !== undefined, startedAt);
+      }
 
-			case "maven": {
-				if (!tool.maven) return false;
-				const mavenPath = await installMavenTool(tool);
-				return finishInstallAttempt(tool.id, mavenPath !== undefined, startedAt);
-			}
+      case "maven": {
+        if (!tool.maven) return false;
+        const mavenPath = await installMavenTool(tool);
+        return finishInstallAttempt(tool.id, mavenPath !== undefined, startedAt);
+      }
 
-			case "archive": {
-				if (!tool.archive) return false;
-				const archivePath = await installArchiveTool(tool);
-				return finishInstallAttempt(tool.id, archivePath !== undefined, startedAt);
-			}
+      case "archive": {
+        if (!tool.archive) return false;
+        const archivePath = await installArchiveTool(tool);
+        return finishInstallAttempt(tool.id, archivePath !== undefined, startedAt);
+      }
 
-			default:
-				logSessionStart(`auto-install ${tool.id}: unsupported strategy`);
-				return false;
-		}
-	} catch (err) {
-		logSessionStart(
-			`auto-install ${tool.id}: exception ${(err as Error).message} (${Date.now() - startedAt}ms)`,
-		);
-		return false;
-	}
+      default:
+        logSessionStart(`auto-install ${tool.id}: unsupported strategy`);
+        return false;
+    }
+  } catch (err) {
+    logSessionStart(
+      `auto-install ${tool.id}: exception ${(err as Error).message} (${Date.now() - startedAt}ms)`,
+    );
+    return false;
+  }
 }
 
 /**
@@ -3925,307 +3670,283 @@ export async function installTool(toolId: string): Promise<boolean> {
  * (`"unknown"`) is unaffected.
  */
 export async function ensureTool(
-	toolId: string,
-	opts?: { forceReinstall?: boolean; allowInstall?: boolean },
+  toolId: string,
+  opts?: { forceReinstall?: boolean; allowInstall?: boolean },
 ): Promise<string | undefined> {
-	if (
-		opts?.allowInstall !== false &&
-		!assertInstallAllowed(`managed tool ensure: ${toolId}`)
-	) {
-		logSessionStart(
-			`auto-install ensure ${toolId}: install gated — ${projectTrustDenialReason()}; discovery only`,
-		);
-		const denialReason = projectTrustDenialReason();
-		const discovered = await ensureToolResolved(toolId, {
-			...opts,
-			allowInstall: false,
-		});
-		// AFTER the discovery pass, which clears the per-attempt record on entry.
-		noteInstallAttempt(toolId, "declined", `project trust: ${denialReason}`);
-		return discovered;
-	}
-	return ensureToolResolved(toolId, opts);
+  if (opts?.allowInstall !== false && !assertInstallAllowed(`managed tool ensure: ${toolId}`)) {
+    logSessionStart(
+      `auto-install ensure ${toolId}: install gated — ${projectTrustDenialReason()}; discovery only`,
+    );
+    const denialReason = projectTrustDenialReason();
+    const discovered = await ensureToolResolved(toolId, {
+      ...opts,
+      allowInstall: false,
+    });
+    // AFTER the discovery pass, which clears the per-attempt record on entry.
+    noteInstallAttempt(toolId, "declined", `project trust: ${denialReason}`);
+    return discovered;
+  }
+  return ensureToolResolved(toolId, opts);
 }
 
 async function ensureToolResolved(
-	toolId: string,
-	opts?: { forceReinstall?: boolean; allowInstall?: boolean },
+  toolId: string,
+  opts?: { forceReinstall?: boolean; allowInstall?: boolean },
 ): Promise<string | undefined> {
-	installFailureReasons.delete(toolId);
-	// A fresh ensure supersedes whatever the last one recorded, and the trust-gate
-	// branch above deliberately keeps its `declined` record by never reaching here.
-	installAttempts.delete(toolId);
-	lastEnsureResolutionSource.delete(toolId);
-	const cacheResolvedPath = (result: string | undefined): string | undefined => {
-		if (result) {
-			resolvedPathCache.set(toolId, result);
-			void updateProbeCache(toolId, result, wasLastResolveTransient(toolId));
-		}
-		return result;
-	};
+  installFailureReasons.delete(toolId);
+  // A fresh ensure supersedes whatever the last one recorded, and the trust-gate
+  // branch above deliberately keeps its `declined` record by never reaching here.
+  installAttempts.delete(toolId);
+  lastEnsureResolutionSource.delete(toolId);
+  const cacheResolvedPath = (result: string | undefined): string | undefined => {
+    if (result) {
+      resolvedPathCache.set(toolId, result);
+      void updateProbeCache(toolId, result, wasLastResolveTransient(toolId));
+    }
+    return result;
+  };
 
-	// forceReinstall: nuke caches, download from managed source, skip PATH entirely.
-	// Used when a PATH-resolved tool proves broken at launch (e.g. broken symlink).
-	// allowInstall:false wins over forceReinstall: caches are still cleared, but
-	// the function falls back to discovery-only and never downloads.
-	if (opts?.forceReinstall) {
-		const ensureStartMs = Date.now();
-		logSessionStart(
-			`auto-install ensure ${toolId}: force reinstall — clearing caches`,
-		);
+  // forceReinstall: nuke caches, download from managed source, skip PATH entirely.
+  // Used when a PATH-resolved tool proves broken at launch (e.g. broken symlink).
+  // allowInstall:false wins over forceReinstall: caches are still cleared, but
+  // the function falls back to discovery-only and never downloads.
+  if (opts?.forceReinstall) {
+    const ensureStartMs = Date.now();
+    logSessionStart(`auto-install ensure ${toolId}: force reinstall — clearing caches`);
 
-		// Clear in-memory session cache
-		resolvedPathCache.delete(toolId);
+    // Clear in-memory session cache
+    resolvedPathCache.delete(toolId);
 
-		// Clear persistent probe cache entry so getToolPath won't return stale PATH result
-		try {
-			const probeCache = await readProbeCache();
-			delete probeCache[toolId];
-			markProbeCacheChange(toolId, null);
-		} catch {
-			// best-effort
-		}
+    // Clear persistent probe cache entry so getToolPath won't return stale PATH result
+    try {
+      const probeCache = await readProbeCache();
+      delete probeCache[toolId];
+      markProbeCacheChange(toolId, null);
+    } catch {
+      // best-effort
+    }
 
-		if (opts.allowInstall === false) {
-			noteInstallAttempt(toolId, "declined", "install disabled by caller");
-			logSessionStart(
-				`auto-install ensure ${toolId}: force reinstall blocked — install disabled, discovery only (${Date.now() - ensureStartMs}ms)`,
-			);
-			return cacheResolvedPath(await getToolPath(toolId));
-		}
-		if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_INSTALL === "1") {
-			installFailureReasons.set(
-				toolId,
-				"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
-			);
-			noteInstallAttempt(
-				toolId,
-				"declined",
-				"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
-			);
-			logSessionStart(
-				`auto-install ensure ${toolId}: refused — CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1`,
-			);
-			return undefined;
-		}
+    if (opts.allowInstall === false) {
+      noteInstallAttempt(toolId, "declined", "install disabled by caller");
+      logSessionStart(
+        `auto-install ensure ${toolId}: force reinstall blocked — install disabled, discovery only (${Date.now() - ensureStartMs}ms)`,
+      );
+      return cacheResolvedPath(await getToolPath(toolId));
+    }
+    if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_INSTALL === "1") {
+      installFailureReasons.set(
+        toolId,
+        "installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
+      );
+      noteInstallAttempt(
+        toolId,
+        "declined",
+        "installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
+      );
+      logSessionStart(
+        `auto-install ensure ${toolId}: refused — CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1`,
+      );
+      return undefined;
+    }
 
-		const lock = await acquireInstallLock();
-		if (!lock.release) {
-			noteInstallAttempt(toolId, "skipped", lock.reason ?? "install lock held");
-			logSessionStart(`auto-install ensure ${toolId}: ${lock.reason}`);
-			return undefined;
-		}
-		let installed: boolean;
-		try {
-			installed = await installTool(toolId);
-		} finally {
-			await lock.release();
-		}
-		if (!installed) {
-			// installTool RAN. Whatever it recorded stands; otherwise this is a
-			// genuine failure, which is what the caller needs to see (#1500).
-			noteInstallAttemptIfUnrecorded(toolId, "failed", "install failed");
-			logSessionStart(
-				`auto-install ensure ${toolId}: force reinstall failed (${Date.now() - ensureStartMs}ms)`,
-			);
-			return undefined;
-		}
+    const lock = await acquireInstallLock();
+    if (!lock.release) {
+      noteInstallAttempt(toolId, "skipped", lock.reason ?? "install lock held");
+      logSessionStart(`auto-install ensure ${toolId}: ${lock.reason}`);
+      return undefined;
+    }
+    let installed: boolean;
+    try {
+      installed = await installTool(toolId);
+    } finally {
+      await lock.release();
+    }
+    if (!installed) {
+      // installTool RAN. Whatever it recorded stands; otherwise this is a
+      // genuine failure, which is what the caller needs to see (#1500).
+      noteInstallAttemptIfUnrecorded(toolId, "failed", "install failed");
+      logSessionStart(
+        `auto-install ensure ${toolId}: force reinstall failed (${Date.now() - ensureStartMs}ms)`,
+      );
+      return undefined;
+    }
 
-		// Find the newly installed binary (github-local check now comes before PATH)
-		const result = cacheResolvedPath(await getToolPath(toolId));
-		if (result) {
-			logSessionStart(
-				`auto-install ensure ${toolId}: force reinstall success at ${result} (${Date.now() - ensureStartMs}ms)`,
-			);
-		}
-		return result;
-	}
+    // Find the newly installed binary (github-local check now comes before PATH)
+    const result = cacheResolvedPath(await getToolPath(toolId));
+    if (result) {
+      logSessionStart(
+        `auto-install ensure ${toolId}: force reinstall success at ${result} (${Date.now() - ensureStartMs}ms)`,
+      );
+    }
+    return result;
+  }
 
-	// Fast path 1: in-memory session cache — no I/O.
-	const cached = resolvedPathCache.get(toolId);
-	if (cached) {
-		if (!isFullyQualified(cached)) {
-			lastEnsureResolutionSource.set(toolId, "session-cache");
-			return cached;
-		}
-		try {
-			await fs.access(cached);
-			lastEnsureResolutionSource.set(toolId, "session-cache");
-			return cached;
-		} catch {
-			// The executor would report ENOENT for this cached positive. Evict it
-			// before discovery so the failure heals on this call, not after restart.
-		}
-		resolvedPathCache.delete(toolId);
-		const probeCache = await readProbeCache();
-		delete probeCache[toolId];
-		markProbeCacheChange(toolId, null);
-		logSessionStart(
-			`auto-install ensure ${toolId}: cached path disappeared; re-probing`,
-		);
-	}
+  // Fast path 1: in-memory session cache — no I/O.
+  const cached = resolvedPathCache.get(toolId);
+  if (cached) {
+    if (!isFullyQualified(cached)) {
+      lastEnsureResolutionSource.set(toolId, "session-cache");
+      return cached;
+    }
+    try {
+      await fs.access(cached);
+      lastEnsureResolutionSource.set(toolId, "session-cache");
+      return cached;
+    } catch {
+      // The executor would report ENOENT for this cached positive. Evict it
+      // before discovery so the failure heals on this call, not after restart.
+    }
+    resolvedPathCache.delete(toolId);
+    const probeCache = await readProbeCache();
+    delete probeCache[toolId];
+    markProbeCacheChange(toolId, null);
+    logSessionStart(`auto-install ensure ${toolId}: cached path disappeared; re-probing`);
+  }
 
-	// Fast path 2: persistent probe cache — fs.access + stat, no process spawn.
-	const diskCached = await checkProbeCache(toolId);
-	if (diskCached) {
-		resolvedPathCache.set(toolId, diskCached);
-		lastEnsureResolutionSource.set(toolId, "probe-cache");
-		logSessionStart(
-			`auto-install ensure ${toolId}: probe cache hit → ${diskCached}`,
-		);
-		return diskCached;
-	}
+  // Fast path 2: persistent probe cache — fs.access + stat, no process spawn.
+  const diskCached = await checkProbeCache(toolId);
+  if (diskCached) {
+    resolvedPathCache.set(toolId, diskCached);
+    lastEnsureResolutionSource.set(toolId, "probe-cache");
+    logSessionStart(`auto-install ensure ${toolId}: probe cache hit → ${diskCached}`);
+    return diskCached;
+  }
 
-	// Coalesce the whole ensure operation, not just installation. Most startup
-	// duplicates race while checking already-installed tools, before installTool()
-	// would ever run. The key includes the install policy so a discovery-only
-	// caller cannot accidentally inherit an install-allowed caller's download (or
-	// vice versa).
-	const inFlightKey =
-		opts?.allowInstall === false ? `${toolId}:discovery-only` : toolId;
-	const inFlight = ensureInFlight.get(inFlightKey);
-	if (inFlight) {
-		logSessionStart(
-			`auto-install ensure ${toolId}: waiting for in-flight ensure (${inFlightKey})`,
-		);
-		return inFlight;
-	}
+  // Coalesce the whole ensure operation, not just installation. Most startup
+  // duplicates race while checking already-installed tools, before installTool()
+  // would ever run. The key includes the install policy so a discovery-only
+  // caller cannot accidentally inherit an install-allowed caller's download (or
+  // vice versa).
+  const inFlightKey = opts?.allowInstall === false ? `${toolId}:discovery-only` : toolId;
+  const inFlight = ensureInFlight.get(inFlightKey);
+  if (inFlight) {
+    logSessionStart(`auto-install ensure ${toolId}: waiting for in-flight ensure (${inFlightKey})`);
+    return inFlight;
+  }
 
-	const ensureStartMs = Date.now();
-	const ensurePromise = (async () => {
-		logSessionStart(`auto-install ensure ${toolId}: start`);
+  const ensureStartMs = Date.now();
+  const ensurePromise = (async () => {
+    logSessionStart(`auto-install ensure ${toolId}: start`);
 
-		// Check if already installed.
-		const existingPath = await getToolPath(toolId);
-		if (existingPath) {
-			// Version-pin drift (#589): getToolPath() above just spawned
-			// verifyToolBinary on the managed local install anyway (this is the
-			// slow path — fast paths 1/2 above already returned before reaching
-			// here), so lastManagedInstallVersion was populated for free if this
-			// is a pinned npm tool. Compare it to the current pin and, on
-			// mismatch, route through the EXISTING forceReinstall codepath rather
-			// than resolving to a known-stale binary. Piggybacks entirely on the
-			// probe-cache's ~once-per-24h/once-per-session cadence — no new spawn.
-			const tool = TOOLS.find((t) => t.id === toolId);
-			const pinnedVersion =
-				tool?.installStrategy === "npm" && tool.packageName
-					? parsePinnedVersion(tool.packageName)
-					: undefined;
-			if (pinnedVersion) {
-				const seenVersion = lastManagedInstallVersion.get(toolId);
-				if (seenVersion && seenVersion !== pinnedVersion) {
-					lastManagedInstallVersion.delete(toolId);
-					logSessionStart(
-						`auto-install ensure ${toolId}: version drift (installed ${seenVersion} != pinned ${pinnedVersion}) — forcing reinstall (${Date.now() - ensureStartMs}ms)`,
-					);
-					return ensureTool(toolId, {
-						forceReinstall: true,
-						allowInstall: opts?.allowInstall,
-					});
-				}
-			}
+    // Check if already installed.
+    const existingPath = await getToolPath(toolId);
+    if (existingPath) {
+      // Version-pin drift (#589): getToolPath() above just spawned
+      // verifyToolBinary on the managed local install anyway (this is the
+      // slow path — fast paths 1/2 above already returned before reaching
+      // here), so lastManagedInstallVersion was populated for free if this
+      // is a pinned npm tool. Compare it to the current pin and, on
+      // mismatch, route through the EXISTING forceReinstall codepath rather
+      // than resolving to a known-stale binary. Piggybacks entirely on the
+      // probe-cache's ~once-per-24h/once-per-session cadence — no new spawn.
+      const tool = TOOLS.find((t) => t.id === toolId);
+      const pinnedVersion =
+        tool?.installStrategy === "npm" && tool.packageName
+          ? parsePinnedVersion(tool.packageName)
+          : undefined;
+      if (pinnedVersion) {
+        const seenVersion = lastManagedInstallVersion.get(toolId);
+        if (seenVersion && seenVersion !== pinnedVersion) {
+          lastManagedInstallVersion.delete(toolId);
+          logSessionStart(
+            `auto-install ensure ${toolId}: version drift (installed ${seenVersion} != pinned ${pinnedVersion}) — forcing reinstall (${Date.now() - ensureStartMs}ms)`,
+          );
+          return ensureTool(toolId, {
+            forceReinstall: true,
+            allowInstall: opts?.allowInstall,
+          });
+        }
+      }
 
-			resolvedPathCache.set(toolId, existingPath);
-			void updateProbeCache(
-				toolId,
-				existingPath,
-				wasLastResolveTransient(toolId),
-			);
-			lastEnsureResolutionSource.set(toolId, "path");
-			logSessionStart(
-				`auto-install ensure ${toolId}: already available at ${existingPath} (${Date.now() - ensureStartMs}ms)`,
-			);
-			return existingPath;
-		}
+      resolvedPathCache.set(toolId, existingPath);
+      void updateProbeCache(toolId, existingPath, wasLastResolveTransient(toolId));
+      lastEnsureResolutionSource.set(toolId, "path");
+      logSessionStart(
+        `auto-install ensure ${toolId}: already available at ${existingPath} (${Date.now() - ensureStartMs}ms)`,
+      );
+      return existingPath;
+    }
 
-		// Discovery and install are SEPARATE concerns. getToolPath() above already
-		// probed PATH / npm-global / managed bin — offline-safe, no download. When the
-		// caller forbids installs (allowInstall:false, e.g. CHOCO_PI_LSP_DISABLE_LSP_INSTALL=1)
-		// we must still return a discovered binary and only skip the actual install.
-		if (opts?.allowInstall === false) {
-			noteInstallAttempt(toolId, "declined", "install disabled by caller");
-			logSessionStart(
-				`auto-install ensure ${toolId}: install disabled — discovery only, not found (${Date.now() - ensureStartMs}ms)`,
-			);
-			return undefined;
-		}
-		if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_INSTALL === "1") {
-			installFailureReasons.set(
-				toolId,
-				"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
-			);
-			noteInstallAttempt(
-				toolId,
-				"declined",
-				"installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
-			);
-			logSessionStart(
-				`auto-install ensure ${toolId}: refused — CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1 (${Date.now() - ensureStartMs}ms)`,
-			);
-			return undefined;
-		}
+    // Discovery and install are SEPARATE concerns. getToolPath() above already
+    // probed PATH / npm-global / managed bin — offline-safe, no download. When the
+    // caller forbids installs (allowInstall:false, e.g. CHOCO_PI_LSP_DISABLE_LSP_INSTALL=1)
+    // we must still return a discovered binary and only skip the actual install.
+    if (opts?.allowInstall === false) {
+      noteInstallAttempt(toolId, "declined", "install disabled by caller");
+      logSessionStart(
+        `auto-install ensure ${toolId}: install disabled — discovery only, not found (${Date.now() - ensureStartMs}ms)`,
+      );
+      return undefined;
+    }
+    if (process.env.CHOCO_PI_LSP_DISABLE_TOOL_INSTALL === "1") {
+      installFailureReasons.set(
+        toolId,
+        "installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
+      );
+      noteInstallAttempt(
+        toolId,
+        "declined",
+        "installation disabled by CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1",
+      );
+      logSessionStart(
+        `auto-install ensure ${toolId}: refused — CHOCO_PI_LSP_DISABLE_TOOL_INSTALL=1 (${Date.now() - ensureStartMs}ms)`,
+      );
+      return undefined;
+    }
 
-		const lock = await acquireInstallLock();
-		if (!lock.release) {
-			installFailureReasons.set(toolId, lock.reason ?? "install lock failed");
-			noteInstallAttempt(toolId, "skipped", lock.reason ?? "install lock held");
-			logSessionStart(`auto-install ensure ${toolId}: ${lock.reason}`);
-			return undefined;
-		}
-		let installed: boolean;
-		try {
-			// Cross-process double-check: the lock waiter may now observe the tool
-			// installed by its predecessor and must not run a second package manager.
-			const installedByPeer = await getToolPath(toolId);
-			if (installedByPeer) {
-				noteInstallAttempt(
-					toolId,
-					"succeeded",
-					"installed by a concurrent process",
-				);
-				resolvedPathCache.set(toolId, installedByPeer);
-				void updateProbeCache(
-					toolId,
-					installedByPeer,
-					wasLastResolveTransient(toolId),
-				);
-				return installedByPeer;
-			}
-			installed = await installTool(toolId);
-		} finally {
-			await lock.release();
-		}
-		if (!installed) {
-			// installTool RAN and did not succeed. A genuine failure unless it
-			// recorded a more specific outcome of its own (#1500).
-			noteInstallAttemptIfUnrecorded(toolId, "failed", "install failed");
-			logSessionStart(
-				`auto-install ensure ${toolId}: unavailable (${Date.now() - ensureStartMs}ms)`,
-			);
-			return undefined;
-		}
+    const lock = await acquireInstallLock();
+    if (!lock.release) {
+      installFailureReasons.set(toolId, lock.reason ?? "install lock failed");
+      noteInstallAttempt(toolId, "skipped", lock.reason ?? "install lock held");
+      logSessionStart(`auto-install ensure ${toolId}: ${lock.reason}`);
+      return undefined;
+    }
+    let installed: boolean;
+    try {
+      // Cross-process double-check: the lock waiter may now observe the tool
+      // installed by its predecessor and must not run a second package manager.
+      const installedByPeer = await getToolPath(toolId);
+      if (installedByPeer) {
+        noteInstallAttempt(toolId, "succeeded", "installed by a concurrent process");
+        resolvedPathCache.set(toolId, installedByPeer);
+        void updateProbeCache(toolId, installedByPeer, wasLastResolveTransient(toolId));
+        return installedByPeer;
+      }
+      installed = await installTool(toolId);
+    } finally {
+      await lock.release();
+    }
+    if (!installed) {
+      // installTool RAN and did not succeed. A genuine failure unless it
+      // recorded a more specific outcome of its own (#1500).
+      noteInstallAttemptIfUnrecorded(toolId, "failed", "install failed");
+      logSessionStart(
+        `auto-install ensure ${toolId}: unavailable (${Date.now() - ensureStartMs}ms)`,
+      );
+      return undefined;
+    }
 
-		const result = await getToolPath(toolId);
-		if (result) {
-			resolvedPathCache.set(toolId, result);
-			void updateProbeCache(toolId, result, wasLastResolveTransient(toolId));
-			logSessionStart(
-				`auto-install ensure ${toolId}: success at ${result} (${Date.now() - ensureStartMs}ms)`,
-			);
-		} else {
-			logSessionStart(
-				`auto-install ensure ${toolId}: unavailable (${Date.now() - ensureStartMs}ms)`,
-			);
-		}
-		return result;
-	})();
+    const result = await getToolPath(toolId);
+    if (result) {
+      resolvedPathCache.set(toolId, result);
+      void updateProbeCache(toolId, result, wasLastResolveTransient(toolId));
+      logSessionStart(
+        `auto-install ensure ${toolId}: success at ${result} (${Date.now() - ensureStartMs}ms)`,
+      );
+    } else {
+      logSessionStart(
+        `auto-install ensure ${toolId}: unavailable (${Date.now() - ensureStartMs}ms)`,
+      );
+    }
+    return result;
+  })();
 
-	ensureInFlight.set(inFlightKey, ensurePromise);
-	try {
-		return await ensurePromise;
-	} finally {
-		ensureInFlight.delete(inFlightKey);
-	}
+  ensureInFlight.set(inFlightKey, ensurePromise);
+  try {
+    return await ensurePromise;
+  } finally {
+    ensureInFlight.delete(inFlightKey);
+  }
 }
 
 // --- Integration Helpers ---
@@ -4234,26 +3955,23 @@ async function ensureToolResolved(
  * Get environment with tool paths added
  */
 export async function getToolEnvironment(): Promise<NodeJS.ProcessEnv> {
-	const localBin = path.join(TOOLS_DIR, "node_modules", ".bin");
-	const currentPath =
-		process.env.PATH || process.env.Path || process.env.path || "";
-	const separator = process.platform === "win32" ? ";" : ":";
-	const nodeDir = path.dirname(process.execPath);
-	const withNode = nodeDir
-		? `${nodeDir}${separator}${currentPath}`
-		: currentPath;
-	const augmentedPath = `${GITHUB_BIN_DIR}${separator}${localBin}${separator}${withNode}`;
+  const localBin = path.join(TOOLS_DIR, "node_modules", ".bin");
+  const currentPath = process.env.PATH || process.env.Path || process.env.path || "";
+  const separator = process.platform === "win32" ? ";" : ":";
+  const nodeDir = path.dirname(process.execPath);
+  const withNode = nodeDir ? `${nodeDir}${separator}${currentPath}` : currentPath;
+  const augmentedPath = `${GITHUB_BIN_DIR}${separator}${localBin}${separator}${withNode}`;
 
-	const env: NodeJS.ProcessEnv = {
-		...process.env,
-		PATH: augmentedPath,
-	};
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: augmentedPath,
+  };
 
-	if (process.platform === "win32") {
-		env.Path = augmentedPath;
-	}
+  if (process.platform === "win32") {
+    env.Path = augmentedPath;
+  }
 
-	return env;
+  return env;
 }
 
 // --- Status Check ---
@@ -4262,23 +3980,23 @@ export async function getToolEnvironment(): Promise<NodeJS.ProcessEnv> {
  * Check status of all managed tools
  */
 export async function checkAllTools(): Promise<
-	Array<{ id: string; name: string; installed: boolean; path?: string }>
+  Array<{ id: string; name: string; installed: boolean; path?: string }>
 > {
-	const results = [];
-	for (const tool of TOOLS) {
-		const path = await getToolPath(tool.id);
-		results.push({
-			id: tool.id,
-			name: tool.name,
-			installed: path !== undefined,
-			path,
-		});
-	}
-	return results;
+  const results = [];
+  for (const tool of TOOLS) {
+    const path = await getToolPath(tool.id);
+    results.push({
+      id: tool.id,
+      name: tool.name,
+      installed: path !== undefined,
+      path,
+    });
+  }
+  return results;
 }
 
 export function isKnownToolId(toolId: string): boolean {
-	return TOOLS.some((tool) => tool.id === toolId);
+  return TOOLS.some((tool) => tool.id === toolId);
 }
 
 /**
@@ -4289,9 +4007,9 @@ export function isKnownToolId(toolId: string): boolean {
  * on, so the label can never drift out of sync with the actual installer.
  */
 export function getToolInstallStrategy(
-	toolId: string,
+  toolId: string,
 ): ToolDefinition["installStrategy"] | undefined {
-	return TOOLS.find((tool) => tool.id === toolId)?.installStrategy;
+  return TOOLS.find((tool) => tool.id === toolId)?.installStrategy;
 }
 
 /**
@@ -4307,29 +4025,29 @@ export function getToolInstallStrategy(
  * "at least one platform" guard instead.
  */
 export const GITHUB_TOOLS = [
-	"shellcheck",
-	"shfmt",
-	"rust-analyzer",
-	"golangci-lint",
-	"ktlint",
-	"actionlint",
-	"zizmor",
-	"typos-lsp",
-	"tflint",
-	"terragrunt",
-	"terraform-ls",
-	"zls",
-	"hadolint",
-	"helm",
-	"taplo",
-	"vale",
-	"opengrep",
-	"deno",
-	"clojure-lsp",
-	"cue",
-	"gleam",
-	"marksman",
-	"expert",
+  "shellcheck",
+  "shfmt",
+  "rust-analyzer",
+  "golangci-lint",
+  "ktlint",
+  "actionlint",
+  "zizmor",
+  "typos-lsp",
+  "tflint",
+  "terragrunt",
+  "terraform-ls",
+  "zls",
+  "hadolint",
+  "helm",
+  "taplo",
+  "vale",
+  "opengrep",
+  "deno",
+  "clojure-lsp",
+  "cue",
+  "gleam",
+  "marksman",
+  "expert",
 ] as const;
 export type GitHubToolId = (typeof GITHUB_TOOLS)[number];
 
@@ -4339,37 +4057,33 @@ export type GitHubToolId = (typeof GITHUB_TOOLS)[number];
  * Exported for testing only.
  */
 export function resolveGitHubAsset(
-	toolId: GitHubToolId,
-	platform: string,
-	arch: string,
+  toolId: GitHubToolId,
+  platform: string,
+  arch: string,
 ): string | undefined {
-	const tool = TOOLS.find((t) => t.id === toolId);
-	return tool?.github?.assetMatch(platform, arch);
+  const tool = TOOLS.find((t) => t.id === toolId);
+  return tool?.github?.assetMatch(platform, arch);
 }
 
 export function resolveGitHubInstalledBinaryName(
-	toolId: GitHubToolId,
-	platform: string,
-	assetName: string,
+  toolId: GitHubToolId,
+  platform: string,
+  assetName: string,
 ): string | undefined {
-	const tool = TOOLS.find((t) => t.id === toolId);
-	if (!tool) return undefined;
-	return getGitHubInstalledBinaryName(
-		tool.binaryName ?? tool.id,
-		platform,
-		assetName,
-	);
+  const tool = TOOLS.find((t) => t.id === toolId);
+  if (!tool) return undefined;
+  return getGitHubInstalledBinaryName(tool.binaryName ?? tool.id, platform, assetName);
 }
 
 export function resolveGitHubArchiveBinaryCandidates(
-	toolId: GitHubToolId,
-	platform: string,
-	assetName: string,
+  toolId: GitHubToolId,
+  platform: string,
+  assetName: string,
 ): string[] | undefined {
-	const tool = TOOLS.find((t) => t.id === toolId);
-	if (!tool) return undefined;
-	const binaryName = tool.github?.binaryInArchive ?? tool.binaryName ?? tool.id;
-	return getArchiveBinaryCandidates(binaryName, platform, assetName);
+  const tool = TOOLS.find((t) => t.id === toolId);
+  if (!tool) return undefined;
+  const binaryName = tool.github?.binaryInArchive ?? tool.binaryName ?? tool.id;
+  return getArchiveBinaryCandidates(binaryName, platform, assetName);
 }
 
 type DownloadAsset = { name: string; browser_download_url: string };
@@ -4378,59 +4092,59 @@ type DownloadAsset = { name: string; browser_download_url: string };
 // bare-binary tool's substring IS the whole asset name, so `includes` alone
 // matches `<asset>.asc` too and would install a signature file as the binary.
 const ASSET_SIDECAR_SUFFIXES = [
-	".asc",
-	".sig",
-	".minisig",
-	".pem",
-	".cert",
-	".sbom",
-	".sha256",
-	".sha256sum",
-	".md5",
+  ".asc",
+  ".sig",
+  ".minisig",
+  ".pem",
+  ".cert",
+  ".sbom",
+  ".sha256",
+  ".sha256sum",
+  ".md5",
 ];
 
 function isAssetSidecar(name: string): boolean {
-	const lower = name.toLowerCase();
-	return ASSET_SIDECAR_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+  const lower = name.toLowerCase();
+  return ASSET_SIDECAR_SUFFIXES.some((suffix) => lower.endsWith(suffix));
 }
 
 export function pickReleaseAsset<T extends { name: string }>(
-	assets: T[],
-	assetSubstring: string,
+  assets: T[],
+  assetSubstring: string,
 ): T | undefined {
-	return (
-		assets.find((a) => a.name === assetSubstring) ??
-		assets.find((a) => a.name.includes(assetSubstring) && !isAssetSidecar(a.name))
-	);
+  return (
+    assets.find((a) => a.name === assetSubstring) ??
+    assets.find((a) => a.name.includes(assetSubstring) && !isAssetSidecar(a.name))
+  );
 }
 
 function deriveHashiCorpReleaseAsset(
-	tool: ToolDefinition,
-	tagName: string | undefined,
-	assetSubstring: string,
+  tool: ToolDefinition,
+  tagName: string | undefined,
+  assetSubstring: string,
 ): DownloadAsset | undefined {
-	const product = tool.github?.hashiCorpReleaseProduct;
-	if (!product || !tagName) return undefined;
+  const product = tool.github?.hashiCorpReleaseProduct;
+  if (!product || !tagName) return undefined;
 
-	const version = tagName.replace(/^v/, "").trim();
-	if (!version) return undefined;
+  const version = tagName.replace(/^v/, "").trim();
+  if (!version) return undefined;
 
-	const assetName = `${product}_${version}_${assetSubstring}`;
-	return {
-		name: assetName,
-		browser_download_url: `https://releases.hashicorp.com/${product}/${version}/${assetName}`,
-	};
+  const assetName = `${product}_${version}_${assetSubstring}`;
+  return {
+    name: assetName,
+    browser_download_url: `https://releases.hashicorp.com/${product}/${version}/${assetName}`,
+  };
 }
 
 export function resolveDerivedHashiCorpReleaseAsset(
-	toolId: string,
-	tagName: string,
-	platform: string,
-	arch: string,
+  toolId: string,
+  tagName: string,
+  platform: string,
+  arch: string,
 ): DownloadAsset | undefined {
-	const tool = TOOLS.find((t) => t.id === toolId);
-	if (!tool) return undefined;
-	const assetSubstring = tool.github?.assetMatch(platform, arch);
-	if (!assetSubstring) return undefined;
-	return deriveHashiCorpReleaseAsset(tool, tagName, assetSubstring);
+  const tool = TOOLS.find((t) => t.id === toolId);
+  if (!tool) return undefined;
+  const assetSubstring = tool.github?.assetMatch(platform, arch);
+  if (!assetSubstring) return undefined;
+  return deriveHashiCorpReleaseAsset(tool, tagName, assetSubstring);
 }

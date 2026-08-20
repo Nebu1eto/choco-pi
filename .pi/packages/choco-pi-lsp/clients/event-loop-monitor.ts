@@ -56,8 +56,8 @@ let windowStartWallMs = 0;
 let windowStartCpuMs = 0;
 
 const cpuTotalMs = (): number => {
-	const c = process.cpuUsage();
-	return (c.user + c.system) / US_PER_MS;
+  const c = process.cpuUsage();
+  return (c.user + c.system) / US_PER_MS;
 };
 
 /**
@@ -71,55 +71,55 @@ const cpuTotalMs = (): number => {
  * absent histogram, so every caller keeps working without telemetry.
  */
 export function startEventLoopMonitor(resolutionMs = 20): void {
-	if (histogram || monitorUnavailable) return;
-	try {
-		const h = monitorEventLoopDelay({ resolution: resolutionMs });
-		h.enable();
-		histogram = h;
-		windowStartWallMs = Date.now();
-		windowStartCpuMs = cpuTotalMs();
-	} catch (err) {
-		monitorUnavailable = true;
-		logExtension({
-			subsystem: "event-loop-monitor",
-			message: `event-loop occupancy telemetry disabled (runtime lacks monitorEventLoopDelay): ${
-				(err as Error)?.message ?? String(err)
-			}`,
-		});
-	}
+  if (histogram || monitorUnavailable) return;
+  try {
+    const h = monitorEventLoopDelay({ resolution: resolutionMs });
+    h.enable();
+    histogram = h;
+    windowStartWallMs = Date.now();
+    windowStartCpuMs = cpuTotalMs();
+  } catch (err) {
+    monitorUnavailable = true;
+    logExtension({
+      subsystem: "event-loop-monitor",
+      message: `event-loop occupancy telemetry disabled (runtime lacks monitorEventLoopDelay): ${
+        (err as Error)?.message ?? String(err)
+      }`,
+    });
+  }
 }
 
 export interface EventLoopStats {
-	/** Longest single loop stall (≈ worst synchronous block) since reset, ms. */
-	maxMs: number;
-	/** 99th-percentile loop delay, ms. */
-	p99Ms: number;
-	/** Mean loop delay, ms. */
-	meanMs: number;
-	/** Wall-clock time elapsed in the current window (since start/reset), ms. */
-	windowWallMs: number;
-	/**
-	 * PROCESS-WIDE CPU consumed in the current window, ms — `process.cpuUsage()`
-	 * sums all threads (main loop AND libuv/worker threads), not just the main
-	 * thread. A main-thread synchronous block of D ms requires ≈ D ms of CPU, so
-	 * `windowCpuMs` still upper-bounds any real block; a `maxMs` far above it is a
-	 * freeze/suspend, not work (#1122). Caveat (false-negative): a suspend that
-	 * overlaps a worker-CPU-heavy turn can be masked — the workers' CPU inflates
-	 * `windowCpuMs` enough to "account for" the frozen gap, so that stall reads as
-	 * genuine. Acceptable here: the big artifacts (sleep, multi-hour) dwarf any
-	 * plausible worker burst, and the `lastPhase`/wall-vs-CPU metadata still lets
-	 * a human catch the rare overlap.
-	 */
-	windowCpuMs: number;
-	/**
-	 * True when `maxMs` looks like a machine stall — sleep/standby or
-	 * commit-charge paging thrash — rather than genuine CPU work (#1122).
-	 */
-	suspectSystemStall: boolean;
+  /** Longest single loop stall (≈ worst synchronous block) since reset, ms. */
+  maxMs: number;
+  /** 99th-percentile loop delay, ms. */
+  p99Ms: number;
+  /** Mean loop delay, ms. */
+  meanMs: number;
+  /** Wall-clock time elapsed in the current window (since start/reset), ms. */
+  windowWallMs: number;
+  /**
+   * PROCESS-WIDE CPU consumed in the current window, ms — `process.cpuUsage()`
+   * sums all threads (main loop AND libuv/worker threads), not just the main
+   * thread. A main-thread synchronous block of D ms requires ≈ D ms of CPU, so
+   * `windowCpuMs` still upper-bounds any real block; a `maxMs` far above it is a
+   * freeze/suspend, not work (#1122). Caveat (false-negative): a suspend that
+   * overlaps a worker-CPU-heavy turn can be masked — the workers' CPU inflates
+   * `windowCpuMs` enough to "account for" the frozen gap, so that stall reads as
+   * genuine. Acceptable here: the big artifacts (sleep, multi-hour) dwarf any
+   * plausible worker burst, and the `lastPhase`/wall-vs-CPU metadata still lets
+   * a human catch the rare overlap.
+   */
+  windowCpuMs: number;
+  /**
+   * True when `maxMs` looks like a machine stall — sleep/standby or
+   * commit-charge paging thrash — rather than genuine CPU work (#1122).
+   */
+  suspectSystemStall: boolean;
 }
 
 const safeMs = (ns: number): number =>
-	Number.isFinite(ns) ? Math.round((ns / NS_PER_MS) * 10) / 10 : 0;
+  Number.isFinite(ns) ? Math.round((ns / NS_PER_MS) * 10) / 10 : 0;
 
 /**
  * Classify a worst-block sample as genuine CPU work or a suspend/freeze
@@ -150,29 +150,29 @@ const safeMs = (ns: number): number =>
  * #1123, not decided here.
  */
 export function isSuspendSuspectedBlock(
-	maxMs: number,
-	windowCpuMs: number,
-	floorMs = 20000,
-	slopMs = 1000,
+  maxMs: number,
+  windowCpuMs: number,
+  floorMs = 20000,
+  slopMs = 1000,
 ): boolean {
-	if (maxMs < floorMs) return false;
-	return windowCpuMs + slopMs < maxMs;
+  if (maxMs < floorMs) return false;
+  return windowCpuMs + slopMs < maxMs;
 }
 
 /** Current occupancy stats, or undefined if the monitor was never started. */
 export function getEventLoopStats(): EventLoopStats | undefined {
-	if (!histogram) return undefined;
-	const maxMs = safeMs(histogram.max);
-	const windowWallMs = Math.max(0, Date.now() - windowStartWallMs);
-	const windowCpuMs = Math.max(0, cpuTotalMs() - windowStartCpuMs);
-	return {
-		maxMs,
-		p99Ms: safeMs(histogram.percentile(99)),
-		meanMs: safeMs(histogram.mean),
-		windowWallMs: Math.round(windowWallMs),
-		windowCpuMs: Math.round(windowCpuMs),
-		suspectSystemStall: isSuspendSuspectedBlock(maxMs, windowCpuMs),
-	};
+  if (!histogram) return undefined;
+  const maxMs = safeMs(histogram.max);
+  const windowWallMs = Math.max(0, Date.now() - windowStartWallMs);
+  const windowCpuMs = Math.max(0, cpuTotalMs() - windowStartCpuMs);
+  return {
+    maxMs,
+    p99Ms: safeMs(histogram.percentile(99)),
+    meanMs: safeMs(histogram.mean),
+    windowWallMs: Math.round(windowWallMs),
+    windowCpuMs: Math.round(windowCpuMs),
+    suspectSystemStall: isSuspendSuspectedBlock(maxMs, windowCpuMs),
+  };
 }
 
 /**
@@ -181,9 +181,9 @@ export function getEventLoopStats(): EventLoopStats | undefined {
  * CPU budget is measured over the same span (#192 intent, wired in #1122).
  */
 export function resetEventLoopMonitor(): void {
-	histogram?.reset();
-	windowStartWallMs = Date.now();
-	windowStartCpuMs = cpuTotalMs();
+  histogram?.reset();
+  windowStartWallMs = Date.now();
+  windowStartCpuMs = cpuTotalMs();
 }
 
 /**
@@ -201,12 +201,12 @@ export function resetEventLoopMonitor(): void {
  * large one, which made loop_block-vs-pull-timeout correlation undecidable.
  */
 export function shouldLogWorstBlock(
-	maxMs: number,
-	lastLoggedMs: number,
-	minMs = 60,
-	deltaMs = 25,
+  maxMs: number,
+  lastLoggedMs: number,
+  minMs = 60,
+  deltaMs = 25,
 ): boolean {
-	return maxMs >= minMs && maxMs > lastLoggedMs + deltaMs;
+  return maxMs >= minMs && maxMs > lastLoggedMs + deltaMs;
 }
 
 /**
@@ -223,14 +223,14 @@ export function shouldLogWorstBlock(
  * to come from within the same turn.
  */
 export function shouldLogLoopBlock(maxMs: number, minMs = 60): boolean {
-	return maxMs >= minMs;
+  return maxMs >= minMs;
 }
 
 /** Test-only: stop and clear the monitor so cases don't leak into each other. */
 export function _stopEventLoopMonitorForTest(): void {
-	histogram?.disable();
-	histogram = undefined;
-	monitorUnavailable = false;
-	windowStartWallMs = 0;
-	windowStartCpuMs = 0;
+  histogram?.disable();
+  histogram = undefined;
+  monitorUnavailable = false;
+  windowStartWallMs = 0;
+  windowStartCpuMs = 0;
 }

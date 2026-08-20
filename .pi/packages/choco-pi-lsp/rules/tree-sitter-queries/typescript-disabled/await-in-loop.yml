@@ -13,9 +13,9 @@ message: "Await in loop — sequential execution is slow, use Promise.all()"
 description: |
   Using await inside a loop forces sequential execution, making it O(n) time.
   With Promise.all(), operations run in parallel, making it O(1) time.
-  
+
   ✅ FIX: Use Promise.all() for parallel execution
-  
+
   ⚠️ EXCEPTION: If order matters or you need to throttle requests, sequential 
   may be intentional. In that case, add a comment explaining why.
 
@@ -47,7 +47,7 @@ examples:
     for (const id of ids) {
       await fetchUser(id);  // Wait, wait, wait...
     }
-  
+
   good: |
     // Fast: parallel execution
     await Promise.all(

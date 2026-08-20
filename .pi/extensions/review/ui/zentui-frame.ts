@@ -35,64 +35,64 @@ import { parseEditorRule } from "./review-input.ts";
 
 /** Model and effort the metadata row names, as the review knows them. */
 export type FrameModel = {
-	/** Model id without its provider, e.g. `claude-opus-5`. */
-	label: string;
-	/** Raw provider id, e.g. `anthropic`; zentui prints its display name. */
-	provider?: string;
-	thinkingLevel?: string;
+  /** Model id without its provider, e.g. `claude-opus-5`. */
+  label: string;
+  /** Raw provider id, e.g. `anthropic`; zentui prints its display name. */
+  provider?: string;
+  thinkingLevel?: string;
 };
 
 export type FrameOptions = {
-	width: number;
-	/** Raw `Editor.render()` output, including the rule row above and below the text. */
-	editorLines: string[];
-	/** Completion rows to draw inside the frame. Empty or absent when no list is open. */
-	autocompleteLines?: string[];
-	/** Working directory the frame labels; the review root of the diff being read. */
-	cwd: string;
-	uiTheme: Theme;
-	/** Omitted while no session backs the input; the row then names no model. */
-	model?: FrameModel;
+  width: number;
+  /** Raw `Editor.render()` output, including the rule row above and below the text. */
+  editorLines: string[];
+  /** Completion rows to draw inside the frame. Empty or absent when no list is open. */
+  autocompleteLines?: string[];
+  /** Working directory the frame labels; the review root of the diff being read. */
+  cwd: string;
+  uiTheme: Theme;
+  /** Omitted while no session backs the input; the row then names no model. */
+  model?: FrameModel;
 };
 
 export type ZentuiFrameAdapter = {
-	/** True when zentui loaded and its config could be read. */
-	available: boolean;
-	/** Width to render the editor at, leaving room for the frame's side borders. */
-	editorWidth(fullWidth: number): number;
-	/** Reframe editor lines. Returns them unchanged whenever framing is not possible. */
-	frame(options: FrameOptions): string[];
+  /** True when zentui loaded and its config could be read. */
+  available: boolean;
+  /** Width to render the editor at, leaving room for the frame's side borders. */
+  editorWidth(fullWidth: number): number;
+  /** Reframe editor lines. Returns them unchanged whenever framing is not possible. */
+  frame(options: FrameOptions): string[];
 };
 
 /** Loader type for dependency injection in tests. */
 export type ZentuiLoader = () => Promise<ZentuiModules | undefined>;
 
 type MinimalistEditorMetadata = {
-	cwd: string;
-	projectRoot?: string;
-	branch?: string;
-	dirty?: boolean;
-	ahead?: number;
-	behind?: number;
-	costLabel?: string;
-	modelLabel?: string;
-	thinkingLevel?: string;
-	contextPercent?: number;
-	contextWindow?: number;
-	sessionName?: string;
-	agentDurationMs?: number;
-	agentActive?: boolean;
+  cwd: string;
+  projectRoot?: string;
+  branch?: string;
+  dirty?: boolean;
+  ahead?: number;
+  behind?: number;
+  costLabel?: string;
+  modelLabel?: string;
+  thinkingLevel?: string;
+  contextPercent?: number;
+  contextWindow?: number;
+  sessionName?: string;
+  agentDurationMs?: number;
+  agentActive?: boolean;
 };
 
 type ZentuiConfig = Record<string, unknown>;
 
 /** zentui's editor metadata fields, as `renderPolishedEditorFrame` reads them. */
 type PolishedEditorMeta = {
-	modelLabel: string;
-	modelId?: string;
-	modelName?: string;
-	providerLabel: string;
-	sessionName?: string;
+  modelLabel: string;
+  modelId?: string;
+  modelName?: string;
+  providerLabel: string;
+  sessionName?: string;
 };
 
 /**
@@ -100,30 +100,30 @@ type PolishedEditorMeta = {
  * runtime: zentui's own sources are never part of this project's type program.
  */
 export type ZentuiModules = {
-	renderMinimalistFrame: (options: {
-		width: number;
-		editorLines: string[];
-		autocompleteLines?: string[];
-		viewport?: { above?: string; below?: string };
-		inputText: string;
-		metadata: MinimalistEditorMetadata;
-		uiTheme: Theme;
-		config: ZentuiConfig;
-	}) => string[];
-	loadConfig: () => ZentuiConfig;
-	/** Absent in a zentui older than the polished frame export. */
-	renderPolishedEditorFrame?: (options: {
-		width: number;
-		editorLines: string[];
-		autocompleteLines?: string[];
-		viewport?: { above?: string; below?: string };
-		uiTheme: Theme;
-		config: ZentuiConfig;
-		modelMeta: PolishedEditorMeta;
-		thinkingLevel?: string;
-	}) => string[];
-	/** Turns a provider id into the display name the prompt shows. */
-	formatProviderLabel?: (provider: string | undefined) => string;
+  renderMinimalistFrame: (options: {
+    width: number;
+    editorLines: string[];
+    autocompleteLines?: string[];
+    viewport?: { above?: string; below?: string };
+    inputText: string;
+    metadata: MinimalistEditorMetadata;
+    uiTheme: Theme;
+    config: ZentuiConfig;
+  }) => string[];
+  loadConfig: () => ZentuiConfig;
+  /** Absent in a zentui older than the polished frame export. */
+  renderPolishedEditorFrame?: (options: {
+    width: number;
+    editorLines: string[];
+    autocompleteLines?: string[];
+    viewport?: { above?: string; below?: string };
+    uiTheme: Theme;
+    config: ZentuiConfig;
+    modelMeta: PolishedEditorMeta;
+    thinkingLevel?: string;
+  }) => string[];
+  /** Turns a provider id into the display name the prompt shows. */
+  formatProviderLabel?: (provider: string | undefined) => string;
 };
 
 /** Frame border consumes 4 columns (│ plus a space on each side). */
@@ -143,18 +143,18 @@ const ZENTUI_UI = "extensions/zentui/ui.ts";
 const ZENTUI_FORMAT = "extensions/zentui/format.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null;
 }
 
 function isStringArray(value: unknown): value is string[] {
-	return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
 /** What the view would have shown with no zentui at all. */
 function unframed(options: FrameOptions): string[] {
-	return options.autocompleteLines?.length
-		? [...options.editorLines, ...options.autocompleteLines]
-		: options.editorLines;
+  return options.autocompleteLines?.length
+    ? [...options.editorLines, ...options.autocompleteLines]
+    : options.editorLines;
 }
 
 /**
@@ -164,15 +164,15 @@ function unframed(options: FrameOptions): string[] {
  * a file in `<pi home>/extensions`, so every ancestor's `npm/` root follows.
  */
 function resolutionBases(): string[] {
-	const self = fileURLToPath(import.meta.url);
-	const bases = [self];
-	let directory = dirname(self);
-	for (;;) {
-		bases.push(join(directory, "npm", "package.json"));
-		const parent = dirname(directory);
-		if (parent === directory) return bases;
-		directory = parent;
-	}
+  const self = fileURLToPath(import.meta.url);
+  const bases = [self];
+  let directory = dirname(self);
+  for (;;) {
+    bases.push(join(directory, "npm", "package.json"));
+    const parent = dirname(directory);
+    if (parent === directory) return bases;
+    directory = parent;
+  }
 }
 
 /**
@@ -183,36 +183,36 @@ function resolutionBases(): string[] {
  * names stay as migration fallbacks.
  */
 function localForkCandidates(subpath: string): string[] {
-	const candidates: string[] = [];
-	let directory = dirname(fileURLToPath(import.meta.url));
-	for (;;) {
-		for (const pkg of ZENTUI_PACKAGES) {
-			candidates.push(join(directory, "packages", pkg, subpath));
-		}
-		const parent = dirname(directory);
-		if (parent === directory) return candidates;
-		directory = parent;
-	}
+  const candidates: string[] = [];
+  let directory = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    for (const pkg of ZENTUI_PACKAGES) {
+      candidates.push(join(directory, "packages", pkg, subpath));
+    }
+    const parent = dirname(directory);
+    if (parent === directory) return candidates;
+    directory = parent;
+  }
 }
 
 /** Locate one zentui source file, whether it is installed or pinned by path. */
 export function resolveZentuiFile(subpath: string): string | undefined {
-	// A path-pinned fork is the copy the session actually loads, so it wins
-	// over any npm-installed namesake left in an ancestor's node_modules.
-	for (const candidate of localForkCandidates(subpath)) {
-		if (existsSync(candidate)) return candidate;
-	}
-	for (const pkg of ZENTUI_PACKAGES) {
-		const specifier = `${pkg}/${subpath}`;
-		for (const base of resolutionBases()) {
-			try {
-				return createRequire(base).resolve(specifier);
-			} catch {
-				// Not installed relative to this base; try the next one.
-			}
-		}
-	}
-	return undefined;
+  // A path-pinned fork is the copy the session actually loads, so it wins
+  // over any npm-installed namesake left in an ancestor's node_modules.
+  for (const candidate of localForkCandidates(subpath)) {
+    if (existsSync(candidate)) return candidate;
+  }
+  for (const pkg of ZENTUI_PACKAGES) {
+    const specifier = `${pkg}/${subpath}`;
+    for (const base of resolutionBases()) {
+      try {
+        return createRequire(base).resolve(specifier);
+      } catch {
+        // Not installed relative to this base; try the next one.
+      }
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -221,68 +221,76 @@ export function resolveZentuiFile(subpath: string): string | undefined {
  * extensionless relative imports fail node16 module resolution.
  */
 async function importAtRuntime(path: string): Promise<unknown> {
-	const specifier = pathToFileURL(path).href;
-	return await import(specifier);
+  const specifier = pathToFileURL(path).href;
+  return await import(specifier);
 }
 
 /** Accept a candidate only when it still has the exports this adapter calls. */
 function validateModules(candidate: unknown): ZentuiModules | undefined {
-	if (!isRecord(candidate)) return undefined;
-	const renderMinimalistFrame = candidate["renderMinimalistFrame"];
-	const loadConfig = candidate["loadConfig"];
-	if (typeof renderMinimalistFrame !== "function" || typeof loadConfig !== "function") {
-		return undefined;
-	}
-	const renderPolishedEditorFrame = candidate["renderPolishedEditorFrame"];
-	const formatProviderLabel = candidate["formatProviderLabel"];
-	return {
-		renderMinimalistFrame: renderMinimalistFrame as ZentuiModules["renderMinimalistFrame"],
-		loadConfig: loadConfig as ZentuiModules["loadConfig"],
-		...(typeof renderPolishedEditorFrame === "function"
-			? { renderPolishedEditorFrame: renderPolishedEditorFrame as NonNullable<ZentuiModules["renderPolishedEditorFrame"]> }
-			: {}),
-		...(typeof formatProviderLabel === "function"
-			? { formatProviderLabel: formatProviderLabel as NonNullable<ZentuiModules["formatProviderLabel"]> }
-			: {}),
-	};
+  if (!isRecord(candidate)) return undefined;
+  const renderMinimalistFrame = candidate["renderMinimalistFrame"];
+  const loadConfig = candidate["loadConfig"];
+  if (typeof renderMinimalistFrame !== "function" || typeof loadConfig !== "function") {
+    return undefined;
+  }
+  const renderPolishedEditorFrame = candidate["renderPolishedEditorFrame"];
+  const formatProviderLabel = candidate["formatProviderLabel"];
+  return {
+    renderMinimalistFrame: renderMinimalistFrame as ZentuiModules["renderMinimalistFrame"],
+    loadConfig: loadConfig as ZentuiModules["loadConfig"],
+    ...(typeof renderPolishedEditorFrame === "function"
+      ? {
+          renderPolishedEditorFrame: renderPolishedEditorFrame as NonNullable<
+            ZentuiModules["renderPolishedEditorFrame"]
+          >,
+        }
+      : {}),
+    ...(typeof formatProviderLabel === "function"
+      ? {
+          formatProviderLabel: formatProviderLabel as NonNullable<
+            ZentuiModules["formatProviderLabel"]
+          >,
+        }
+      : {}),
+  };
 }
 
 /** Import a zentui module, treating an absent or unloadable file as absent. */
 async function importOptional(subpath: string): Promise<Record<string, unknown> | undefined> {
-	const path = resolveZentuiFile(subpath);
-	if (!path) return undefined;
-	try {
-		const loaded = await importAtRuntime(path);
-		return isRecord(loaded) ? loaded : undefined;
-	} catch {
-		return undefined;
-	}
+  const path = resolveZentuiFile(subpath);
+  if (!path) return undefined;
+  try {
+    const loaded = await importAtRuntime(path);
+    return isRecord(loaded) ? loaded : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const defaultLoader: ZentuiLoader = async () => {
-	const editorPath = resolveZentuiFile(ZENTUI_MINIMALIST_EDITOR);
-	const configPath = resolveZentuiFile(ZENTUI_CONFIG);
-	if (!editorPath || !configPath) return undefined;
-	const [editor, config, ui, format] = await Promise.all([
-		importAtRuntime(editorPath),
-		importAtRuntime(configPath),
-		importOptional(ZENTUI_UI),
-		importOptional(ZENTUI_FORMAT),
-	]);
-	if (!isRecord(editor) || !isRecord(config)) return undefined;
-	return validateModules({
-		renderMinimalistFrame: editor["renderMinimalistFrame"],
-		loadConfig: config["loadConfig"],
-		renderPolishedEditorFrame: ui?.["renderPolishedEditorFrame"],
-		formatProviderLabel: format?.["formatProviderLabel"],
-	});
+  const editorPath = resolveZentuiFile(ZENTUI_MINIMALIST_EDITOR);
+  const configPath = resolveZentuiFile(ZENTUI_CONFIG);
+  if (!editorPath || !configPath) return undefined;
+  const [editor, config, ui, format] = await Promise.all([
+    importAtRuntime(editorPath),
+    importAtRuntime(configPath),
+    importOptional(ZENTUI_UI),
+    importOptional(ZENTUI_FORMAT),
+  ]);
+  if (!isRecord(editor) || !isRecord(config)) return undefined;
+  return validateModules({
+    renderMinimalistFrame: editor["renderMinimalistFrame"],
+    loadConfig: config["loadConfig"],
+    renderPolishedEditorFrame: ui?.["renderPolishedEditorFrame"],
+    formatProviderLabel: format?.["formatProviderLabel"],
+  });
 };
 
 /** The editor section of a zentui config, or an empty record when absent. */
 function editorConfig(config: ZentuiConfig): Record<string, unknown> {
-	const components = config["components"];
-	const editor = isRecord(components) ? components["editor"] : undefined;
-	return isRecord(editor) ? editor : {};
+  const components = config["components"];
+  const editor = isRecord(components) ? components["editor"] : undefined;
+  return isRecord(editor) ? editor : {};
 }
 
 /**
@@ -290,8 +298,8 @@ function editorConfig(config: ZentuiConfig): Record<string, unknown> {
  * own default, so an absent setting must decorate the review the same way.
  */
 function editorStyle(config: ZentuiConfig): string {
-	const style = editorConfig(config)["style"];
-	return typeof style === "string" ? style : "opencode";
+  const style = editorConfig(config)["style"];
+  return typeof style === "string" ? style : "opencode";
 }
 
 /**
@@ -300,124 +308,125 @@ function editorStyle(config: ZentuiConfig): string {
  * which moves the rail below the text and prefixes the first row instead.
  */
 function polishedRailWidth(config: ZentuiConfig): number {
-	const icons = config["icons"];
-	const icon = (name: string): string => {
-		const value = isRecord(icons) ? icons[name] : undefined;
-		return typeof value === "string" ? value : "";
-	};
-	if (editorStyle(config) === "opencode-copy-friendly") {
-		const prompt = icon("editorPrompt");
-		return prompt ? visibleWidth(prompt) + 1 : 0;
-	}
-	return visibleWidth(icon("rail")) + 1;
+  const icons = config["icons"];
+  const icon = (name: string): string => {
+    const value = isRecord(icons) ? icons[name] : undefined;
+    return typeof value === "string" ? value : "";
+  };
+  if (editorStyle(config) === "opencode-copy-friendly") {
+    const prompt = icon("editorPrompt");
+    return prompt ? visibleWidth(prompt) + 1 : 0;
+  }
+  return visibleWidth(icon("rail")) + 1;
 }
 
 /** Honour the user's zentui setting for the "↑ n more" labels; default on. */
 function viewportIndicatorsEnabled(config: ZentuiConfig): boolean {
-	const enabled = editorConfig(config)["viewportIndicators"];
-	return typeof enabled === "boolean" ? enabled : true;
+  const enabled = editorConfig(config)["viewportIndicators"];
+  return typeof enabled === "boolean" ? enabled : true;
 }
 
 function createFallbackAdapter(): ZentuiFrameAdapter {
-	return {
-		available: false,
-		editorWidth: (width) => width,
-		frame: unframed,
-	};
+  return {
+    available: false,
+    editorWidth: (width) => width,
+    frame: unframed,
+  };
 }
 
 export async function createZentuiFrameAdapter(
-	loader: ZentuiLoader = defaultLoader,
+  loader: ZentuiLoader = defaultLoader,
 ): Promise<ZentuiFrameAdapter> {
-	let zentui: ZentuiModules | undefined;
-	let config: ZentuiConfig;
-	try {
-		// Injected loaders are validated too: the shape is checked, never trusted.
-		zentui = validateModules(await loader());
-	} catch {
-		return createFallbackAdapter();
-	}
-	if (!zentui) return createFallbackAdapter();
-	try {
-		const loaded = zentui.loadConfig();
-		if (!isRecord(loaded)) return createFallbackAdapter();
-		config = loaded;
-	} catch {
-		return createFallbackAdapter();
-	}
-	const viewportIndicators = viewportIndicatorsEnabled(config);
-	const modules = zentui;
-	// The polished styles are how zentui decorates the session prompt unless the
-	// user chose the box, so they are what the review must reproduce. A zentui
-	// without that export can still draw the box.
-	const polished = editorStyle(config) !== "minimalist" && modules.renderPolishedEditorFrame
-		? { render: modules.renderPolishedEditorFrame, railWidth: polishedRailWidth(config) }
-		: undefined;
+  let zentui: ZentuiModules | undefined;
+  let config: ZentuiConfig;
+  try {
+    // Injected loaders are validated too: the shape is checked, never trusted.
+    zentui = validateModules(await loader());
+  } catch {
+    return createFallbackAdapter();
+  }
+  if (!zentui) return createFallbackAdapter();
+  try {
+    const loaded = zentui.loadConfig();
+    if (!isRecord(loaded)) return createFallbackAdapter();
+    config = loaded;
+  } catch {
+    return createFallbackAdapter();
+  }
+  const viewportIndicators = viewportIndicatorsEnabled(config);
+  const modules = zentui;
+  // The polished styles are how zentui decorates the session prompt unless the
+  // user chose the box, so they are what the review must reproduce. A zentui
+  // without that export can still draw the box.
+  const polished =
+    editorStyle(config) !== "minimalist" && modules.renderPolishedEditorFrame
+      ? { render: modules.renderPolishedEditorFrame, railWidth: polishedRailWidth(config) }
+      : undefined;
 
-	return {
-		available: true,
-		editorWidth: (width) => {
-			const chrome = polished ? polished.railWidth : FRAME_BORDER_WIDTH;
-			return width > chrome ? width - chrome : width;
-		},
-		frame: (options) => {
-			const { width, editorLines, autocompleteLines, cwd, uiTheme, model } = options;
-			if (width <= FRAME_BORDER_WIDTH || editorLines.length < FRAME_BORDER_ROWS) {
-				return unframed(options);
-			}
-			const above = parseEditorRule(editorLines[0], "above");
-			const below = parseEditorRule(editorLines.at(-1), "below");
-			if (!above || !below) return unframed(options);
-			const viewport = viewportIndicators
-				? {
-					...(above.count ? { above: above.count } : {}),
-					...(below.count ? { below: below.count } : {}),
-				}
-				: {};
-			const text = editorLines.slice(1, -1);
-			try {
-				if (polished) {
-					const framed = polished.render({
-						width,
-						editorLines: text,
-						...(autocompleteLines?.length ? { autocompleteLines } : {}),
-						...(above.count || below.count ? { viewport } : {}),
-						uiTheme,
-						config,
-						modelMeta: {
-							modelLabel: model?.label ?? "",
-							...(model?.label ? { modelId: model.label, modelName: model.label } : {}),
-							providerLabel: model?.provider
-								? modules.formatProviderLabel?.(model.provider) ?? model.provider
-								: "",
-						},
-						...(model?.thinkingLevel ? { thinkingLevel: model.thinkingLevel } : {}),
-					});
-					return isStringArray(framed) && framed.length > 0 ? framed : unframed(options);
-				}
-				const framed = modules.renderMinimalistFrame({
-					width,
-					editorLines: text,
-					...(autocompleteLines?.length ? { autocompleteLines } : {}),
-					...(above.count || below.count ? { viewport } : {}),
-					// Empty: zentui reads this only to flag its shell mode, which
-					// a review comment box does not have.
-					inputText: "",
-					// The review root is both the directory shown and the project
-					// the diff belongs to, so every path style resolves to it.
-					metadata: {
-						cwd,
-						projectRoot: cwd,
-						...(model?.label ? { modelLabel: model.label } : {}),
-						...(model?.thinkingLevel ? { thinkingLevel: model.thinkingLevel } : {}),
-					},
-					uiTheme,
-					config,
-				});
-				return isStringArray(framed) && framed.length > 0 ? framed : unframed(options);
-			} catch {
-				return unframed(options);
-			}
-		},
-	};
+  return {
+    available: true,
+    editorWidth: (width) => {
+      const chrome = polished ? polished.railWidth : FRAME_BORDER_WIDTH;
+      return width > chrome ? width - chrome : width;
+    },
+    frame: (options) => {
+      const { width, editorLines, autocompleteLines, cwd, uiTheme, model } = options;
+      if (width <= FRAME_BORDER_WIDTH || editorLines.length < FRAME_BORDER_ROWS) {
+        return unframed(options);
+      }
+      const above = parseEditorRule(editorLines[0], "above");
+      const below = parseEditorRule(editorLines.at(-1), "below");
+      if (!above || !below) return unframed(options);
+      const viewport = viewportIndicators
+        ? {
+            ...(above.count ? { above: above.count } : {}),
+            ...(below.count ? { below: below.count } : {}),
+          }
+        : {};
+      const text = editorLines.slice(1, -1);
+      try {
+        if (polished) {
+          const framed = polished.render({
+            width,
+            editorLines: text,
+            ...(autocompleteLines?.length ? { autocompleteLines } : {}),
+            ...(above.count || below.count ? { viewport } : {}),
+            uiTheme,
+            config,
+            modelMeta: {
+              modelLabel: model?.label ?? "",
+              ...(model?.label ? { modelId: model.label, modelName: model.label } : {}),
+              providerLabel: model?.provider
+                ? (modules.formatProviderLabel?.(model.provider) ?? model.provider)
+                : "",
+            },
+            ...(model?.thinkingLevel ? { thinkingLevel: model.thinkingLevel } : {}),
+          });
+          return isStringArray(framed) && framed.length > 0 ? framed : unframed(options);
+        }
+        const framed = modules.renderMinimalistFrame({
+          width,
+          editorLines: text,
+          ...(autocompleteLines?.length ? { autocompleteLines } : {}),
+          ...(above.count || below.count ? { viewport } : {}),
+          // Empty: zentui reads this only to flag its shell mode, which
+          // a review comment box does not have.
+          inputText: "",
+          // The review root is both the directory shown and the project
+          // the diff belongs to, so every path style resolves to it.
+          metadata: {
+            cwd,
+            projectRoot: cwd,
+            ...(model?.label ? { modelLabel: model.label } : {}),
+            ...(model?.thinkingLevel ? { thinkingLevel: model.thinkingLevel } : {}),
+          },
+          uiTheme,
+          config,
+        });
+        return isStringArray(framed) && framed.length > 0 ? framed : unframed(options);
+      } catch {
+        return unframed(options);
+      }
+    },
+  };
 }

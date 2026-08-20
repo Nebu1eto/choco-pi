@@ -9,8 +9,9 @@ import {
   type WorkflowStepRunner,
 } from "../src/workflow.ts";
 
-const resolveType = (name: string) => new Set(["Explore", "Plan", "implementer"]).has(name) ? name : undefined;
-const flush = () => new Promise<void>(resolve => setImmediate(resolve));
+const resolveType = (name: string) =>
+  new Set(["Explore", "Plan", "implementer"]).has(name) ? name : undefined;
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 function definition(steps: WorkflowStepDefinition[], dynamic = false) {
   return { name: "test workflow", dynamic, steps };
@@ -22,15 +23,22 @@ class DeferredRunner implements WorkflowStepRunner {
   signals = new Map<string, AbortSignal>();
   private pending = new Map<string, (result: WorkflowRunnerResult) => void>();
 
-  run(step: WorkflowStepDefinition, prompt: string, context: { workflowId: string; signal: AbortSignal; onAgentStarted(id: string): void }) {
+  run(
+    step: WorkflowStepDefinition,
+    prompt: string,
+    context: { workflowId: string; signal: AbortSignal; onAgentStarted(id: string): void },
+  ) {
     this.starts.push(step.id);
     this.prompts.set(step.id, prompt);
     this.signals.set(step.id, context.signal);
     context.onAgentStarted(`agent-${step.id}`);
-    return new Promise<WorkflowRunnerResult>(resolve => this.pending.set(step.id, resolve));
+    return new Promise<WorkflowRunnerResult>((resolve) => this.pending.set(step.id, resolve));
   }
 
-  finish(id: string, result: WorkflowRunnerResult = { status: "completed", output: `${id}-output` }) {
+  finish(
+    id: string,
+    result: WorkflowRunnerResult = { status: "completed", output: `${id}-output` },
+  ) {
     const resolve = this.pending.get(id);
     assert.ok(resolve, `step ${id} has started`);
     this.pending.delete(id);
@@ -40,32 +48,44 @@ class DeferredRunner implements WorkflowStepRunner {
 
 test("validation rejects cycles, unknown dependencies, agent types, and bad references", () => {
   assert.throws(
-    () => validateWorkflowDefinition(definition([
-      { id: "a", subagent_type: "Explore", prompt: "a", needs: ["b"] },
-      { id: "b", subagent_type: "Plan", prompt: "b", needs: ["a"] },
-    ]), resolveType),
+    () =>
+      validateWorkflowDefinition(
+        definition([
+          { id: "a", subagent_type: "Explore", prompt: "a", needs: ["b"] },
+          { id: "b", subagent_type: "Plan", prompt: "b", needs: ["a"] },
+        ]),
+        resolveType,
+      ),
     /cycle detected involving a, b/,
   );
 
   assert.throws(
-    () => validateWorkflowDefinition(definition([
-      { id: "a", subagent_type: "Explore", prompt: "a", needs: ["missing"] },
-    ]), resolveType),
+    () =>
+      validateWorkflowDefinition(
+        definition([{ id: "a", subagent_type: "Explore", prompt: "a", needs: ["missing"] }]),
+        resolveType,
+      ),
     /needs unknown step "missing"/,
   );
 
   assert.throws(
-    () => validateWorkflowDefinition(definition([
-      { id: "a", subagent_type: "Unknown", prompt: "a" },
-    ]), resolveType),
+    () =>
+      validateWorkflowDefinition(
+        definition([{ id: "a", subagent_type: "Unknown", prompt: "a" }]),
+        resolveType,
+      ),
     /unknown or disabled agent type "Unknown"/,
   );
 
   assert.throws(
-    () => validateWorkflowDefinition(definition([
-      { id: "a", subagent_type: "Explore", prompt: "a" },
-      { id: "b", subagent_type: "Plan", prompt: "{{steps.a.output}}" },
-    ]), resolveType),
+    () =>
+      validateWorkflowDefinition(
+        definition([
+          { id: "a", subagent_type: "Explore", prompt: "a" },
+          { id: "b", subagent_type: "Plan", prompt: "{{steps.a.output}}" },
+        ]),
+        resolveType,
+      ),
     /not an upstream dependency/,
   );
 });
@@ -73,11 +93,16 @@ test("validation rejects cycles, unknown dependencies, agent types, and bad refe
 test("scheduler starts only ready steps and respects its concurrency bound", async () => {
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();
-  const started = manager.start(definition([
-    { id: "a", subagent_type: "Explore", prompt: "a" },
-    { id: "b", subagent_type: "Explore", prompt: "b" },
-    { id: "c", subagent_type: "Plan", prompt: "combine", needs: ["a", "b"] },
-  ]), resolveType, runner, 2);
+  const started = manager.start(
+    definition([
+      { id: "a", subagent_type: "Explore", prompt: "a" },
+      { id: "b", subagent_type: "Explore", prompt: "b" },
+      { id: "c", subagent_type: "Plan", prompt: "combine", needs: ["a", "b"] },
+    ]),
+    resolveType,
+    runner,
+    2,
+  );
 
   await flush();
   assert.deepEqual(runner.starts, ["a", "b"]);
@@ -93,7 +118,10 @@ test("scheduler starts only ready steps and respects its concurrency bound", asy
   runner.finish("c");
   const result = await manager.wait(started.workflowId)!;
   assert.equal(result.status, "completed");
-  assert.deepEqual(result.steps.map(step => step.status), ["completed", "completed", "completed"]);
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["completed", "completed", "completed"],
+  );
 });
 
 test("template rendering passes upstream output and bounds every reference", () => {
@@ -105,17 +133,22 @@ test("template rendering passes upstream output and bounds every reference", () 
   );
   const replacements = rendered.split("@@");
   assert.equal(replacements.length, 2);
-  assert.ok(replacements.every(value => value.length === 40));
+  assert.ok(replacements.every((value) => value.length === 40));
   assert.match(rendered, /truncated to 40 characters/);
 });
 
 test("failure is fail-fast by default", async () => {
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();
-  const started = manager.start(definition([
-    { id: "build", subagent_type: "implementer", prompt: "build" },
-    { id: "review", subagent_type: "Plan", prompt: "review", needs: ["build"] },
-  ]), resolveType, runner, 1);
+  const started = manager.start(
+    definition([
+      { id: "build", subagent_type: "implementer", prompt: "build" },
+      { id: "review", subagent_type: "Plan", prompt: "review", needs: ["build"] },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
 
   await flush();
   runner.finish("build", { status: "error", error: "compile failed", output: "partial" });
@@ -129,37 +162,66 @@ test("failure is fail-fast by default", async () => {
 test("continue_on_error allows dependents and reports completed_with_errors", async () => {
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();
-  const started = manager.start(definition([
-    { id: "research", subagent_type: "Explore", prompt: "research", continue_on_error: true },
-    { id: "plan", subagent_type: "Plan", prompt: "partial={{steps.research.output}}", needs: ["research"] },
-  ]), resolveType, runner, 1);
+  const started = manager.start(
+    definition([
+      { id: "research", subagent_type: "Explore", prompt: "research", continue_on_error: true },
+      {
+        id: "plan",
+        subagent_type: "Plan",
+        prompt: "partial={{steps.research.output}}",
+        needs: ["research"],
+      },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
 
   await flush();
-  runner.finish("research", { status: "error", error: "source unavailable", output: "partial result" });
+  runner.finish("research", {
+    status: "error",
+    error: "source unavailable",
+    output: "partial result",
+  });
   await flush();
   assert.equal(runner.prompts.get("plan"), "partial=partial result");
   runner.finish("plan");
 
   const result = await manager.wait(started.workflowId)!;
   assert.equal(result.status, "completed_with_errors");
-  assert.deepEqual(result.steps.map(step => step.status), ["error", "completed"]);
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["error", "completed"],
+  );
 });
 
 test("dynamic workflow can add a result-dependent step while idle, then seal", async () => {
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();
-  const started = manager.start(definition([
-    { id: "inspect", subagent_type: "Explore", prompt: "inspect" },
-  ], true), resolveType, runner, 1);
+  const started = manager.start(
+    definition([{ id: "inspect", subagent_type: "Explore", prompt: "inspect" }], true),
+    resolveType,
+    runner,
+    1,
+  );
 
   await flush();
   runner.finish("inspect", { status: "completed", output: "finding" });
   await flush();
   assert.equal(manager.get(started.workflowId)?.status, "waiting");
 
-  manager.update(started.workflowId, [
-    { id: "fix", subagent_type: "implementer", prompt: "fix {{steps.inspect.output}}", needs: ["inspect"] },
-  ], resolveType);
+  manager.update(
+    started.workflowId,
+    [
+      {
+        id: "fix",
+        subagent_type: "implementer",
+        prompt: "fix {{steps.inspect.output}}",
+        needs: ["inspect"],
+      },
+    ],
+    resolveType,
+  );
   manager.finish(started.workflowId);
   await flush();
   assert.equal(runner.prompts.get("fix"), "fix finding");
@@ -173,9 +235,12 @@ test("waiting on an idle unsealed dynamic workflow returns promptly", async () =
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();
   try {
-    const started = manager.start(definition([
-      { id: "inspect", subagent_type: "Explore", prompt: "inspect" },
-    ], true), resolveType, runner, 1);
+    const started = manager.start(
+      definition([{ id: "inspect", subagent_type: "Explore", prompt: "inspect" }], true),
+      resolveType,
+      runner,
+      1,
+    );
 
     await flush();
     runner.finish("inspect");
@@ -187,7 +252,9 @@ test("waiting on an idle unsealed dynamic workflow returns promptly", async () =
     let timer: ReturnType<typeof setTimeout> | undefined;
     const result = await Promise.race([
       manager.wait(started.workflowId)!,
-      new Promise<"timeout">(resolve => { timer = setTimeout(() => resolve("timeout"), 100); }),
+      new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), 100);
+      }),
     ]);
     if (timer) clearTimeout(timer);
 
@@ -205,18 +272,24 @@ test("workflow retention evicts only settled records older than ten minutes", as
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();
   try {
-    const old = manager.start(definition([
-      { id: "old", subagent_type: "Explore", prompt: "old" },
-    ]), resolveType, runner, 1);
+    const old = manager.start(
+      definition([{ id: "old", subagent_type: "Explore", prompt: "old" }]),
+      resolveType,
+      runner,
+      1,
+    );
     await flush();
     runner.finish("old");
     await manager.wait(old.workflowId);
     manager.markConsumed(old.workflowId);
 
     now += 10 * 60_000 + 1;
-    const fresh = manager.start(definition([
-      { id: "fresh", subagent_type: "Explore", prompt: "fresh" },
-    ]), resolveType, runner, 1);
+    const fresh = manager.start(
+      definition([{ id: "fresh", subagent_type: "Explore", prompt: "fresh" }]),
+      resolveType,
+      runner,
+      1,
+    );
     await flush();
     runner.finish("fresh");
     await manager.wait(fresh.workflowId);
@@ -236,10 +309,15 @@ test("workflow retention evicts only settled records older than ten minutes", as
 test("cancelling a workflow aborts running steps and cancels pending steps", async () => {
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();
-  const started = manager.start(definition([
-    { id: "a", subagent_type: "Explore", prompt: "a" },
-    { id: "b", subagent_type: "Plan", prompt: "b", needs: ["a"] },
-  ]), resolveType, runner, 1);
+  const started = manager.start(
+    definition([
+      { id: "a", subagent_type: "Explore", prompt: "a" },
+      { id: "b", subagent_type: "Plan", prompt: "b", needs: ["a"] },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
 
   await flush();
   manager.cancel(started.workflowId);
@@ -248,15 +326,21 @@ test("cancelling a workflow aborts running steps and cancels pending steps", asy
 
   const result = await manager.wait(started.workflowId)!;
   assert.equal(result.status, "cancelled");
-  assert.deepEqual(result.steps.map(step => step.status), ["cancelled", "cancelled"]);
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["cancelled", "cancelled"],
+  );
 });
 
 test("a cancelled step reports cancellation instead of the runner's abort text", async () => {
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();
-  const started = manager.start(definition([
-    { id: "a", subagent_type: "Explore", prompt: "a" },
-  ]), resolveType, runner, 1);
+  const started = manager.start(
+    definition([{ id: "a", subagent_type: "Explore", prompt: "a" }]),
+    resolveType,
+    runner,
+    1,
+  );
 
   await flush();
   manager.cancel(started.workflowId);

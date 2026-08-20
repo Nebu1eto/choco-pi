@@ -21,9 +21,7 @@ interface CachedModels {
   checkedAt: number;
 }
 
-async function readCachedModels(
-  context: RefreshModelsContext,
-): Promise<CachedModels | undefined> {
+async function readCachedModels(context: RefreshModelsContext): Promise<CachedModels | undefined> {
   try {
     const entry = await readStoredModels(context);
     if (!entry || entry.models.length === 0) return undefined;
@@ -50,18 +48,11 @@ export function createSyntheticRefreshModels(
         return cached ? buildFromStore(cached.models) : staticModels;
       }
 
-      if (
-        cached &&
-        !context.force &&
-        Date.now() - cached.checkedAt < MODEL_STORE_TTL_MS
-      ) {
+      if (cached && !context.force && Date.now() - cached.checkedAt < MODEL_STORE_TTL_MS) {
         return buildFromStore(cached.models);
       }
 
-      const apiKey =
-        context.credential?.type === "api_key"
-          ? context.credential.key
-          : undefined;
+      const apiKey = context.credential?.type === "api_key" ? context.credential.key : undefined;
       const apiModels = await fetchApiModels(apiKey, context.signal);
       if (apiModels.length === 0) {
         throw new Error("Synthetic models API returned an empty model list");

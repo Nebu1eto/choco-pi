@@ -12,17 +12,21 @@ import { isInsideRoot } from "./paths.ts";
  * part of the host's normal system-prompt context, so re-injecting it here
  * would be redundant.
  */
-export function findAgentsFiles(filePath: string, rootDir: string, cwdAgentsPath: string): string[] {
-	if (!rootDir) return [];
-	const agentsFiles: string[] = [];
-	let dir = path.dirname(filePath);
-	while (isInsideRoot(rootDir, dir)) {
-		const candidate = path.join(dir, "AGENTS.md");
-		if (candidate !== cwdAgentsPath && fs.existsSync(candidate)) agentsFiles.push(candidate);
-		if (dir === rootDir) break;
-		const parent = path.dirname(dir);
-		if (parent === dir) break;
-		dir = parent;
-	}
-	return agentsFiles.reverse();
+export function findAgentsFiles(
+  filePath: string,
+  rootDir: string,
+  cwdAgentsPath: string,
+): string[] {
+  if (!rootDir) return [];
+  const agentsFiles: string[] = [];
+  let dir = path.dirname(filePath);
+  while (isInsideRoot(rootDir, dir)) {
+    const candidate = path.join(dir, "AGENTS.md");
+    if (candidate !== cwdAgentsPath && fs.existsSync(candidate)) agentsFiles.push(candidate);
+    if (dir === rootDir) break;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return agentsFiles.reverse();
 }

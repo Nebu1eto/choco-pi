@@ -41,7 +41,7 @@ utils:
               has:
                 kind: string_literal
                 not:
-                  regex: "\"\""
+                  regex: '""'
     inside:
       stopBy: end
       follows:
@@ -75,7 +75,7 @@ utils:
               has:
                 kind: string_literal
                 not:
-                  regex: "\"\""
+                  regex: '""'
     inside:
       stopBy: end
       follows:
@@ -117,7 +117,7 @@ utils:
               has:
                 kind: string_literal
                 not:
-                  regex: "\"\""
+                  regex: '""'
     inside:
       stopBy: end
       follows:
@@ -151,7 +151,7 @@ utils:
               has:
                 kind: string_literal
                 not:
-                  regex: "\"\""
+                  regex: '""'
     inside:
       stopBy: end
       follows:
@@ -193,7 +193,7 @@ utils:
               has:
                 kind: string_literal
                 not:
-                  regex: "\"\""
+                  regex: '""'
     inside:
       stopBy: end
       follows:
@@ -227,7 +227,7 @@ utils:
               has:
                 kind: string_literal
                 not:
-                  regex: "\"\""
+                  regex: '""'
     inside:
       stopBy: end
       follows:
@@ -283,7 +283,7 @@ utils:
           - has:
               kind: string_literal
               not:
-                regex: "\"\""
+                regex: '""'
         inside:
           stopBy: end
           follows:
@@ -331,7 +331,7 @@ utils:
           - has:
               kind: string_literal
               not:
-                regex: "\"\""
+                regex: '""'
         inside:
           stopBy: end
           follows:
@@ -387,7 +387,7 @@ utils:
           - has:
               kind: string_literal
               not:
-                regex: "\"\""
+                regex: '""'
         inside:
           stopBy: end
           follows:
@@ -435,7 +435,7 @@ utils:
           - has:
               kind: string_literal
               not:
-                regex: "\"\""
+                regex: '""'
         inside:
           stopBy: end
           follows:
@@ -491,7 +491,7 @@ utils:
           - has:
               kind: string_literal
               not:
-                regex: "\"\""
+                regex: '""'
         inside:
           stopBy: end
           follows:
@@ -539,7 +539,7 @@ utils:
           - has:
               kind: string_literal
               not:
-                regex: "\"\""
+                regex: '""'
         inside:
           stopBy: end
           follows:

@@ -39,33 +39,33 @@ The tracked [`.pi/zentui.json`](.pi/zentui.json) renders the editor model in bol
 
 ## What this profile provides
 
-| Area | Behavior |
-|---|---|
-| Operating rules | Replaces Pi's base prompt with [`.pi/SYSTEM.md`](.pi/SYSTEM.md) and injects the active `provider/model` on every turn |
-| Project awareness | Applies root context at startup and loads path-scoped descendant `AGENTS.md` files when work enters those paths |
-| Writing | Applies the repository writing policy to normal responses and persisted documents without a separate skill command |
-| Workflows | Provides direct implementation, parallel implementation, hotfix, review, environment check, and local commit workflows |
-| Agents | Provides configurable `general`, `planner`, `implementer`, `reviewer`, and `handoff` leaf roles |
-| Conversations | Creates and coordinates independent Pi sessions with create, list, read, wait, queue, and steer operations |
-| Context | Applies model-specific soft caps, deferred tool loading, `/context` usage analysis, and OpenAI Responses server-side compaction |
-| Providers | Configures OpenAI Codex OAuth, Anthropic OAuth, Synthetic, and discovery-based Callstack Apex support |
-| Tools | Adds BM25 `tool_search`, MCP, Synthetic web search, LSP diagnostics, browser automation through the global skill, goals, and side conversations |
-| Interface | Uses `nord-dark`, `choco-pi-ui`, provider usage views, model effort controls, and familiar session aliases |
+| Area              | Behavior                                                                                                                                        |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operating rules   | Replaces Pi's base prompt with [`.pi/SYSTEM.md`](.pi/SYSTEM.md) and injects the active `provider/model` on every turn                           |
+| Project awareness | Applies root context at startup and loads path-scoped descendant `AGENTS.md` files when work enters those paths                                 |
+| Writing           | Applies the repository writing policy to normal responses and persisted documents without a separate skill command                              |
+| Workflows         | Provides direct implementation, parallel implementation, hotfix, review, environment check, and local commit workflows                          |
+| Agents            | Provides configurable `general`, `planner`, `implementer`, `reviewer`, and `handoff` leaf roles                                                 |
+| Conversations     | Creates and coordinates independent Pi sessions with create, list, read, wait, queue, and steer operations                                      |
+| Context           | Applies model-specific soft caps, deferred tool loading, `/context` usage analysis, and OpenAI Responses server-side compaction                 |
+| Providers         | Configures OpenAI Codex OAuth, Anthropic OAuth, Synthetic, and discovery-based Callstack Apex support                                           |
+| Tools             | Adds BM25 `tool_search`, MCP, Synthetic web search, LSP diagnostics, browser automation through the global skill, goals, and side conversations |
+| Interface         | Uses `nord-dark`, `choco-pi-ui`, provider usage views, model effort controls, and familiar session aliases                                      |
 
 ## Installed packages
 
 The package paths are listed in [`.pi/settings.json`](.pi/settings.json); each local manifest records its version.
 
-| Package | Version | Purpose |
-|---|---:|---|
-| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) | 0.1.0 | Synthetic provider, authentication, usage, and web search |
-| [`choco-pi-ui`](.pi/packages/choco-pi-ui) | 0.1.0 | Editor, message framing, status line, and Nord themes |
-| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents) | 0.1.0 | Local fork of `@tintinweb/pi-subagents@0.17.1` with sub-agents, workflows, side conversations, and fleet UI |
-| [`choco-pi-goal`](.pi/packages/choco-pi-goal) | 0.1.0 | Persistent Codex-style goals |
-| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp) | 0.1.0 | Lazy MCP server loading |
-| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp) | 0.1.0 | LSP, lint, AST, and semantic diagnostics |
-| [`choco-pi-codex`](.pi/packages/choco-pi-codex) | 0.1.0 | Codex-compatible tools and OpenAI Responses compaction |
-| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md) | 0.1.0 | Descendant `AGENTS.md` loading |
+| Package                                                                   | Version | Purpose                                                                                                     |
+| ------------------------------------------------------------------------- | ------: | ----------------------------------------------------------------------------------------------------------- |
+| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) |   0.1.0 | Synthetic provider, authentication, usage, and web search                                                   |
+| [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 |   0.1.0 | Editor, message framing, status line, and Nord themes                                                       |
+| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   |   0.1.0 | Local fork of `@tintinweb/pi-subagents@0.17.1` with sub-agents, workflows, side conversations, and fleet UI |
+| [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |   0.1.0 | Persistent Codex-style goals                                                                                |
+| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |   0.1.0 | Lazy MCP server loading                                                                                     |
+| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |   0.1.0 | LSP, lint, AST, and semantic diagnostics                                                                    |
+| [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |   0.1.0 | Codex-compatible tools and OpenAI Responses compaction                                                      |
+| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   |   0.1.0 | Descendant `AGENTS.md` loading                                                                              |
 
 Voice, notebook, and background-shell features are intentionally not included.
 
@@ -73,20 +73,20 @@ Voice, notebook, and background-shell features are intentionally not included.
 
 ### Session and model controls
 
-| Command | Description |
-|---|---|
-| `/exit` | Gracefully exit Pi; alias for `/quit` |
-| `/delete` | Permanently delete the current Pi session record and exit after confirmation |
-| `/clear` | Start a fresh session while preserving the current session history; alias for `/new` |
-| `/status` | Show Pi version, session identity, model and provider, context window, context files, skills, MCP servers, agent roles, and theme; opens the Status/Usage tab view. Interactive settings stay on Pi's built-in `/settings` |
-| `/effort [level]` | Select or directly set a reasoning effort supported by the active model; values complete after a space |
-| `/fast [on\|off\|status]` | Control OpenAI Codex Fast mode; no argument toggles the current state |
-| `/context-cap` | Show the soft context cap applied to the active model |
-| `/context [all]` | Show prompt, active/deferred tools, MCP, agents, context files, skills, messages, and autocompact buffer usage |
-| `/rewind` | Rewind the active conversation branch, files, and Git index to a selected turn |
-| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | Open the local human review view; no argument opens the target picker |
-| `/usage`, `/quota` | Show Claude Code, OpenAI Codex, and Synthetic usage in one view; opens the same tab view |
-| `/apex-refresh` | Rediscover Callstack Apex models immediately |
+| Command                                                                           | Description                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/exit`                                                                           | Gracefully exit Pi; alias for `/quit`                                                                                                                                                                                      |
+| `/delete`                                                                         | Permanently delete the current Pi session record and exit after confirmation                                                                                                                                               |
+| `/clear`                                                                          | Start a fresh session while preserving the current session history; alias for `/new`                                                                                                                                       |
+| `/status`                                                                         | Show Pi version, session identity, model and provider, context window, context files, skills, MCP servers, agent roles, and theme; opens the Status/Usage tab view. Interactive settings stay on Pi's built-in `/settings` |
+| `/effort [level]`                                                                 | Select or directly set a reasoning effort supported by the active model; values complete after a space                                                                                                                     |
+| `/fast [on\|off\|status]`                                                         | Control OpenAI Codex Fast mode; no argument toggles the current state                                                                                                                                                      |
+| `/context-cap`                                                                    | Show the soft context cap applied to the active model                                                                                                                                                                      |
+| `/context [all]`                                                                  | Show prompt, active/deferred tools, MCP, agents, context files, skills, messages, and autocompact buffer usage                                                                                                             |
+| `/rewind`                                                                         | Rewind the active conversation branch, files, and Git index to a selected turn                                                                                                                                             |
+| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | Open the local human review view; no argument opens the target picker                                                                                                                                                      |
+| `/usage`, `/quota`                                                                | Show Claude Code, OpenAI Codex, and Synthetic usage in one view; opens the same tab view                                                                                                                                   |
+| `/apex-refresh`                                                                   | Rediscover Callstack Apex models immediately                                                                                                                                                                               |
 
 Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can consume usage or API credit faster than the standard tier. The hidden llama.cpp provider remains available, but choco-pi removes `/llama` from the visible command list and command path.
 
@@ -96,14 +96,14 @@ MCP starts with only the `choco-pi-mcp` gateway in model context; cached MCP too
 
 ### Workflow commands
 
-| Command | Workflow |
-|---|---|
-| `/check [scope]` | Verify the base choco-pi environment and task-specific optional capabilities |
-| `/task-inline <task>` | Implement directly in the main agent; this is the default modifying workflow |
-| `/task <task>` | Plan and execute independent implementation units with sub-agents |
-| `/task-hotfix <task>` | Apply a narrow urgent fix directly in the main agent |
-| `/review-agent [target]` | Run a report-only agentic adversarial review with a fresh reviewer |
-| `/commit [guidance]` | Create one verified local commit without pushing |
+| Command                  | Workflow                                                                     |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| `/check [scope]`         | Verify the base choco-pi environment and task-specific optional capabilities |
+| `/task-inline <task>`    | Implement directly in the main agent; this is the default modifying workflow |
+| `/task <task>`           | Plan and execute independent implementation units with sub-agents            |
+| `/task-hotfix <task>`    | Apply a narrow urgent fix directly in the main agent                         |
+| `/review-agent [target]` | Run a report-only agentic adversarial review with a fresh reviewer           |
+| `/commit [guidance]`     | Create one verified local commit without pushing                             |
 
 `/task` is reserved for work with at least two independent units that benefit from parallel execution. File count alone does not justify it. Direct and hotfix workflows do not delegate implementation.
 
@@ -111,13 +111,13 @@ Every commit uses the harness `/commit` skill. It stages only the intended chang
 
 ### Independent conversation commands
 
-| Command | Description |
-|---|---|
-| `/session-new` | Choose a model, reasoning effort, optional name, and initial user prompt for a new conversation |
-| `/sessions [limit]` | List conversations for the current project |
-| `/session-send <id> <queue\|steer> <message>` | Send a queued or steering message to another conversation |
-| `/session-read <id> [limit] [include-tools]` | Read recent transcript items and the current cursor |
-| `/session-wait <id> [seconds] [after-cursor]` | Wait for progress after a cursor and for the target to become idle |
+| Command                                       | Description                                                                                     |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `/session-new`                                | Choose a model, reasoning effort, optional name, and initial user prompt for a new conversation |
+| `/sessions [limit]`                           | List conversations for the current project                                                      |
+| `/session-send <id> <queue\|steer> <message>` | Send a queued or steering message to another conversation                                       |
+| `/session-read <id> [limit] [include-tools]`  | Read recent transcript items and the current cursor                                             |
+| `/session-wait <id> [seconds] [after-cursor]` | Wait for progress after a cursor and for the target to become idle                              |
 
 The agent can call the same operations through `session_create`, `session_send`, `session_list`, `session_read`, and `session_wait`.
 
@@ -151,13 +151,13 @@ Loaded instructions persist in the session and refresh on change.
 
 Built-in package roles are disabled through [`.pi/subagents.json`](.pi/subagents.json), with unknown role names rejected instead of falling back. choco-pi provides five model-neutral, project-aware leaf roles under [`.pi/agents`](.pi/agents):
 
-| Role | Use | Write access |
-|---|---|---:|
-| `general` | General scoped work | Yes |
-| `planner` | Dependency, conflict, and verification planning | No |
-| `implementer` | One assigned implementation unit | Yes |
-| `reviewer` | Fresh-context evidence-based review | No |
-| `handoff` | Concise report of verified state | No |
+| Role          | Use                                             | Write access |
+| ------------- | ----------------------------------------------- | -----------: |
+| `general`     | General scoped work                             |          Yes |
+| `planner`     | Dependency, conflict, and verification planning |           No |
+| `implementer` | One assigned implementation unit                |          Yes |
+| `reviewer`    | Fresh-context evidence-based review             |           No |
+| `handoff`     | Concise report of verified state                |           No |
 
 Use `/agents` to inspect roles, running agents, transcripts, schedules, and operational defaults. An `Agent` call can select `model` and `thinking` when the role does not pin them. Resolution follows explicit invocation, role configuration, then parent/runtime defaults.
 
@@ -185,26 +185,26 @@ The view orders files by local risk heuristics, folds generated or low-signal ch
 
 A committed comment renders in the diff itself, beneath its anchored line with its line or range label, so written remarks stay visible while reviewing instead of surviving only as a count in the footer. A folded hunk's placeholder reports how many comments it hides.
 
-| Key | Action |
-|---|---|
-| `j` / `k`, `↑` / `↓` | Move the line cursor |
-| `]` / `[` | Move between hunks |
-| `n` / `p`, `→` / `←` | Move between files |
-| `PageUp` / `PageDown` | Move the line cursor by a page |
-| `Shift+↑` / `Shift+↓` | Extend the selection to a line range; any plain move collapses it |
-| `Space` | Fold or expand the current file or hunk |
-| `+` / `-` | Reveal or hide context above and below the current hunk |
-| `/`, then `N` / `P` | Search changed lines and move between matches |
-| `c` | Comment on the selected line or range; `Enter` submits, `Shift+Enter` inserts a newline, `Esc` discards |
-| `a` | Ask an agent about the current line; `Enter` asks, `Shift+Enter` inserts a newline, `Esc` closes |
-| `Tab` | Complete a path in an input; from the review, open the chat |
-| `Shift+Tab` | Move focus between the review and the chat |
-| `Ctrl+O` | Toggle tool output in the chat, as in the main session |
-| `e` / `E` | Open the line under the cursor or the project in the configured editor |
-| `v` | Toggle unified and split diff modes |
-| `m` | Mark the current hunk reviewed |
-| `S` | Finish and save; submit a pull request review or place a session instruction in the input editor |
-| `q` | Save and close without submitting |
+| Key                   | Action                                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------- |
+| `j` / `k`, `↑` / `↓`  | Move the line cursor                                                                                    |
+| `]` / `[`             | Move between hunks                                                                                      |
+| `n` / `p`, `→` / `←`  | Move between files                                                                                      |
+| `PageUp` / `PageDown` | Move the line cursor by a page                                                                          |
+| `Shift+↑` / `Shift+↓` | Extend the selection to a line range; any plain move collapses it                                       |
+| `Space`               | Fold or expand the current file or hunk                                                                 |
+| `+` / `-`             | Reveal or hide context above and below the current hunk                                                 |
+| `/`, then `N` / `P`   | Search changed lines and move between matches                                                           |
+| `c`                   | Comment on the selected line or range; `Enter` submits, `Shift+Enter` inserts a newline, `Esc` discards |
+| `a`                   | Ask an agent about the current line; `Enter` asks, `Shift+Enter` inserts a newline, `Esc` closes        |
+| `Tab`                 | Complete a path in an input; from the review, open the chat                                             |
+| `Shift+Tab`           | Move focus between the review and the chat                                                              |
+| `Ctrl+O`              | Toggle tool output in the chat, as in the main session                                                  |
+| `e` / `E`             | Open the line under the cursor or the project in the configured editor                                  |
+| `v`                   | Toggle unified and split diff modes                                                                     |
+| `m`                   | Mark the current hunk reviewed                                                                          |
+| `S`                   | Finish and save; submit a pull request review or place a session instruction in the input editor        |
+| `q`                   | Save and close without submitting                                                                       |
 
 A range stays inside one hunk and one side, because a GitHub comment range cannot span either. Extension stops at a side boundary rather than skipping the intervening rows, so the highlighted rows and the submitted range are always the same lines. A comment inherits the side of the line it sits on: added lines comment on `RIGHT`, removed and context lines on `LEFT`, so remarking on deleted code works as expected. The cursor never enters a folded hunk; expanding one moves it to that hunk's first line.
 

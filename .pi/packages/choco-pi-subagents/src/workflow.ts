@@ -4,48 +4,82 @@ import { Value } from "@sinclair/typebox/value";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const STEP_ID_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,63}$";
-const TEMPLATE_REFERENCE = /\{\{\s*steps\.([A-Za-z][A-Za-z0-9_-]{0,63})\.([A-Za-z][A-Za-z0-9_-]*)\s*\}\}/g;
+const TEMPLATE_REFERENCE =
+  /\{\{\s*steps\.([A-Za-z][A-Za-z0-9_-]{0,63})\.([A-Za-z][A-Za-z0-9_-]*)\s*\}\}/g;
 
 /** Maximum rendered characters contributed by one upstream-output reference. */
 export const WORKFLOW_REFERENCE_MAX_CHARS = 32_000;
 
-export const WorkflowStepSchema = Type.Object({
-  id: Type.String({
-    pattern: STEP_ID_PATTERN,
-    description: "Unique step id (letters, digits, underscore, hyphen; starts with a letter).",
-  }),
-  subagent_type: Type.String({ description: "Enabled agent type that executes this step." }),
-  prompt: Type.String({
-    description: "Step prompt. Upstream output references use {{steps.<id>.output}}.",
-  }),
-  needs: Type.Optional(Type.Array(Type.String({ pattern: STEP_ID_PATTERN }), {
-    uniqueItems: true,
-    description: "Step ids that must settle before this step starts.",
-  })),
-  model: Type.Optional(Type.String({ description: "Optional model override." })),
-  thinking: Type.Optional(Type.Union(THINKING_LEVELS.map(level => Type.Literal(level)))),
-  max_turns: Type.Optional(Type.Integer({ minimum: 1, description: "Per-step turn limit override." })),
-  timeout_ms: Type.Optional(Type.Integer({ minimum: 1, description: "Per-step wall-clock timeout. Omit for no timeout." })),
-  isolation: Type.Optional(Type.Union([Type.Literal("worktree"), Type.Literal("off")])),
-  continue_on_error: Type.Optional(Type.Boolean({
-    description: "Continue scheduling dependent steps if this step fails. Default: false (fail fast).",
-  })),
-}, { additionalProperties: false });
+export const WorkflowStepSchema = Type.Object(
+  {
+    id: Type.String({
+      pattern: STEP_ID_PATTERN,
+      description: "Unique step id (letters, digits, underscore, hyphen; starts with a letter).",
+    }),
+    subagent_type: Type.String({ description: "Enabled agent type that executes this step." }),
+    prompt: Type.String({
+      description: "Step prompt. Upstream output references use {{steps.<id>.output}}.",
+    }),
+    needs: Type.Optional(
+      Type.Array(Type.String({ pattern: STEP_ID_PATTERN }), {
+        uniqueItems: true,
+        description: "Step ids that must settle before this step starts.",
+      }),
+    ),
+    model: Type.Optional(Type.String({ description: "Optional model override." })),
+    thinking: Type.Optional(Type.Union(THINKING_LEVELS.map((level) => Type.Literal(level)))),
+    max_turns: Type.Optional(
+      Type.Integer({ minimum: 1, description: "Per-step turn limit override." }),
+    ),
+    timeout_ms: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        description: "Per-step wall-clock timeout. Omit for no timeout.",
+      }),
+    ),
+    isolation: Type.Optional(Type.Union([Type.Literal("worktree"), Type.Literal("off")])),
+    continue_on_error: Type.Optional(
+      Type.Boolean({
+        description:
+          "Continue scheduling dependent steps if this step fails. Default: false (fail fast).",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
 /** The single JSON definition accepted by workflow_run and the graph validator. */
-export const WorkflowDefinitionSchema = Type.Object({
-  name: Type.String({ minLength: 1, maxLength: 120 }),
-  dynamic: Type.Optional(Type.Boolean({
-    description: "Keep the workflow open while idle so workflow_update can add steps based on results.",
-  })),
-  steps: Type.Array(WorkflowStepSchema, { minItems: 1 }),
-}, { additionalProperties: false });
+export const WorkflowDefinitionSchema = Type.Object(
+  {
+    name: Type.String({ minLength: 1, maxLength: 120 }),
+    dynamic: Type.Optional(
+      Type.Boolean({
+        description:
+          "Keep the workflow open while idle so workflow_update can add steps based on results.",
+      }),
+    ),
+    steps: Type.Array(WorkflowStepSchema, { minItems: 1 }),
+  },
+  { additionalProperties: false },
+);
 
 export type WorkflowStepDefinition = Static<typeof WorkflowStepSchema>;
 export type WorkflowDefinition = Static<typeof WorkflowDefinitionSchema>;
 
-export type WorkflowStepStatus = "pending" | "running" | "completed" | "error" | "skipped" | "cancelled";
-export type WorkflowStatus = "running" | "waiting" | "completed" | "completed_with_errors" | "error" | "cancelled";
+export type WorkflowStepStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "error"
+  | "skipped"
+  | "cancelled";
+export type WorkflowStatus =
+  | "running"
+  | "waiting"
+  | "completed"
+  | "completed_with_errors"
+  | "error"
+  | "cancelled";
 
 export type WorkflowStepResult = {
   id: string;
@@ -82,7 +116,11 @@ export type WorkflowRunnerContext = {
 };
 
 export type WorkflowStepRunner = {
-  run(step: WorkflowStepDefinition, prompt: string, context: WorkflowRunnerContext): Promise<WorkflowRunnerResult>;
+  run(
+    step: WorkflowStepDefinition,
+    prompt: string,
+    context: WorkflowRunnerContext,
+  ): Promise<WorkflowRunnerResult>;
 };
 
 export type WorkflowTypeResolver = (requested: string) => string | undefined;
@@ -118,17 +156,23 @@ function ancestorsOf(id: string, byId: Map<string, WorkflowStepDefinition>): Set
 }
 
 /** Validate structure, agent types, dependencies, cycles, and template references. */
-export function validateWorkflowDefinition(input: unknown, resolveType: WorkflowTypeResolver): WorkflowDefinition {
+export function validateWorkflowDefinition(
+  input: unknown,
+  resolveType: WorkflowTypeResolver,
+): WorkflowDefinition {
   const structural = schemaError(input);
   if (structural) throw new Error(`Invalid workflow definition: ${structural}`);
 
   const definition = structuredClone(input as WorkflowDefinition);
   const byId = new Map<string, WorkflowStepDefinition>();
   for (const step of definition.steps) {
-    if (byId.has(step.id)) throw new Error(`Invalid workflow definition: duplicate step id "${step.id}".`);
+    if (byId.has(step.id))
+      throw new Error(`Invalid workflow definition: duplicate step id "${step.id}".`);
     const resolvedType = resolveType(step.subagent_type);
     if (!resolvedType) {
-      throw new Error(`Invalid workflow definition: step "${step.id}" uses unknown or disabled agent type "${step.subagent_type}".`);
+      throw new Error(
+        `Invalid workflow definition: step "${step.id}" uses unknown or disabled agent type "${step.subagent_type}".`,
+      );
     }
     step.subagent_type = resolvedType;
     step.needs ??= [];
@@ -138,7 +182,9 @@ export function validateWorkflowDefinition(input: unknown, resolveType: Workflow
   for (const step of definition.steps) {
     for (const dependency of step.needs ?? []) {
       if (!byId.has(dependency)) {
-        throw new Error(`Invalid workflow definition: step "${step.id}" needs unknown step "${dependency}".`);
+        throw new Error(
+          `Invalid workflow definition: step "${step.id}" needs unknown step "${dependency}".`,
+        );
       }
       if (dependency === step.id) {
         throw new Error(`Invalid workflow definition: cycle detected at step "${step.id}".`);
@@ -156,7 +202,9 @@ export function validateWorkflowDefinition(input: unknown, resolveType: Workflow
       dependents.set(dependency, list);
     }
   }
-  const ready = definition.steps.filter(step => indegree.get(step.id) === 0).map(step => step.id);
+  const ready = definition.steps
+    .filter((step) => indegree.get(step.id) === 0)
+    .map((step) => step.id);
   let visited = 0;
   for (let index = 0; index < ready.length; index++) {
     const id = ready[index];
@@ -168,7 +216,9 @@ export function validateWorkflowDefinition(input: unknown, resolveType: Workflow
     }
   }
   if (visited !== definition.steps.length) {
-    const cyclic = definition.steps.filter(step => (indegree.get(step.id) ?? 0) > 0).map(step => step.id);
+    const cyclic = definition.steps
+      .filter((step) => (indegree.get(step.id) ?? 0) > 0)
+      .map((step) => step.id);
     throw new Error(`Invalid workflow definition: cycle detected involving ${cyclic.join(", ")}.`);
   }
 
@@ -176,13 +226,19 @@ export function validateWorkflowDefinition(input: unknown, resolveType: Workflow
     const ancestors = ancestorsOf(step.id, byId);
     for (const reference of templateReferences(step.prompt)) {
       if (reference.field !== "output") {
-        throw new Error(`Invalid workflow definition: step "${step.id}" has unsupported reference "steps.${reference.id}.${reference.field}"; only .output is available.`);
+        throw new Error(
+          `Invalid workflow definition: step "${step.id}" has unsupported reference "steps.${reference.id}.${reference.field}"; only .output is available.`,
+        );
       }
       if (!byId.has(reference.id)) {
-        throw new Error(`Invalid workflow definition: step "${step.id}" references unknown step "${reference.id}".`);
+        throw new Error(
+          `Invalid workflow definition: step "${step.id}" references unknown step "${reference.id}".`,
+        );
       }
       if (!ancestors.has(reference.id)) {
-        throw new Error(`Invalid workflow definition: step "${step.id}" references "${reference.id}" but it is not an upstream dependency.`);
+        throw new Error(
+          `Invalid workflow definition: step "${step.id}" references "${reference.id}" but it is not an upstream dependency.`,
+        );
       }
     }
   }
@@ -202,7 +258,8 @@ export function renderWorkflowPrompt(
   results: ReadonlyMap<string, Pick<WorkflowStepResult, "output">>,
   maxChars = WORKFLOW_REFERENCE_MAX_CHARS,
 ): string {
-  if (!Number.isInteger(maxChars) || maxChars < 1) throw new Error("maxChars must be a positive integer.");
+  if (!Number.isInteger(maxChars) || maxChars < 1)
+    throw new Error("maxChars must be a positive integer.");
   return prompt.replace(TEMPLATE_REFERENCE, (_raw, id: string, field: string) => {
     if (field !== "output") throw new Error(`Unsupported workflow template field: ${field}`);
     const result = results.get(id);
@@ -247,8 +304,11 @@ class WorkflowController {
     this.maxConcurrent = Math.max(1, Math.floor(maxConcurrent));
     this.onComplete = onComplete;
     this.sealed = definition.dynamic !== true;
-    for (const step of definition.steps) this.states.set(step.id, { id: step.id, status: "pending" });
-    this.completion = new Promise(resolve => { this.resolveCompletion = resolve; });
+    for (const step of definition.steps)
+      this.states.set(step.id, { id: step.id, status: "pending" });
+    this.completion = new Promise((resolve) => {
+      this.resolveCompletion = resolve;
+    });
   }
 
   start(): void {
@@ -264,7 +324,7 @@ class WorkflowController {
       status: this.status,
       startedAt: this.startedAt,
       completedAt: this.completedAt,
-      steps: this.definition.steps.map(step => ({ ...this.states.get(step.id)! })),
+      steps: this.definition.steps.map((step) => ({ ...this.states.get(step.id)! })),
     };
   }
 
@@ -272,7 +332,7 @@ class WorkflowController {
     if (this.settled || this.sealed || this.definition.dynamic !== true) return this.completion;
     const result = this.snapshot();
     if (result.status === "waiting") return Promise.resolve(result);
-    return new Promise(resolve => this.progressWaiters.add(resolve));
+    return new Promise((resolve) => this.progressWaiters.add(resolve));
   }
 
   isSettledBefore(cutoff: number): boolean {
@@ -284,10 +344,11 @@ class WorkflowController {
   }
 
   updateSteps(steps: WorkflowStepDefinition[], resolveType: WorkflowTypeResolver): WorkflowResult {
-    if (this.settled || this.cancelled || this.failFastError) throw new Error(`Workflow "${this.id}" is already terminal.`);
+    if (this.settled || this.cancelled || this.failFastError)
+      throw new Error(`Workflow "${this.id}" is already terminal.`);
     if (steps.length === 0) throw new Error("workflow_update requires at least one step.");
 
-    const replacements = new Map(steps.map(step => [step.id, step]));
+    const replacements = new Map(steps.map((step) => [step.id, step]));
     for (const [id] of replacements) {
       const current = this.states.get(id);
       if (current && current.status !== "pending") {
@@ -296,13 +357,16 @@ class WorkflowController {
     }
 
     const combined = this.definition.steps
-      .filter(step => !replacements.has(step.id))
+      .filter((step) => !replacements.has(step.id))
       .concat(steps);
-    const validated = validateWorkflowDefinition({
-      name: this.definition.name,
-      dynamic: this.definition.dynamic,
-      steps: combined,
-    }, resolveType);
+    const validated = validateWorkflowDefinition(
+      {
+        name: this.definition.name,
+        dynamic: this.definition.dynamic,
+        steps: combined,
+      },
+      resolveType,
+    );
 
     this.definition = validated;
     for (const step of validated.steps) {
@@ -338,20 +402,24 @@ class WorkflowController {
 
   private pump(): void {
     if (this.settled || this.cancelled || this.failFastError) {
-      if (this.runningCount === 0 && !this.settled) this.settle(this.cancelled ? "cancelled" : "error");
+      if (this.runningCount === 0 && !this.settled)
+        this.settle(this.cancelled ? "cancelled" : "error");
       return;
     }
 
     while (this.runningCount < this.maxConcurrent) {
-      const step = this.definition.steps.find(candidate => {
+      const step = this.definition.steps.find((candidate) => {
         const state = this.states.get(candidate.id)!;
-        return state.status === "pending" && (candidate.needs ?? []).every(id => terminal(this.states.get(id)!.status));
+        return (
+          state.status === "pending" &&
+          (candidate.needs ?? []).every((id) => terminal(this.states.get(id)!.status))
+        );
       });
       if (!step) break;
       this.launch(step);
     }
 
-    const hasPending = [...this.states.values()].some(state => state.status === "pending");
+    const hasPending = [...this.states.values()].some((state) => state.status === "pending");
     if (this.runningCount === 0 && !hasPending) {
       if (!this.sealed) {
         this.status = "waiting";
@@ -360,7 +428,7 @@ class WorkflowController {
         this.progressWaiters.clear();
         return;
       }
-      const hasErrors = [...this.states.values()].some(state => state.status === "error");
+      const hasErrors = [...this.states.values()].some((state) => state.status === "error");
       this.settle(hasErrors ? "completed_with_errors" : "completed");
     }
   }
@@ -375,10 +443,13 @@ class WorkflowController {
     const controller = new AbortController();
     this.stepControllers.set(step.id, controller);
     let timedOut = false;
-    const timer = step.timeout_ms === undefined ? undefined : setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, step.timeout_ms);
+    const timer =
+      step.timeout_ms === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+          }, step.timeout_ms);
     const outputs = new Map<string, Pick<WorkflowStepResult, "output">>();
     for (const [id, result] of this.states) outputs.set(id, result);
 
@@ -386,24 +457,39 @@ class WorkflowController {
     try {
       prompt = renderWorkflowPrompt(step.prompt, outputs);
     } catch (error) {
-      this.finishStep(step, {
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
-      }, timedOut, timer);
+      this.finishStep(
+        step,
+        {
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        },
+        timedOut,
+        timer,
+      );
       return;
     }
 
-    void this.runner.run(step, prompt, {
-      workflowId: this.id,
-      signal: controller.signal,
-      onAgentStarted: agentId => { state.agentId = agentId; },
-    }).then(
-      result => this.finishStep(step, result, timedOut, timer),
-      error => this.finishStep(step, {
-        status: controller.signal.aborted ? "cancelled" : "error",
-        error: error instanceof Error ? error.message : String(error),
-      }, timedOut, timer),
-    );
+    void this.runner
+      .run(step, prompt, {
+        workflowId: this.id,
+        signal: controller.signal,
+        onAgentStarted: (agentId) => {
+          state.agentId = agentId;
+        },
+      })
+      .then(
+        (result) => this.finishStep(step, result, timedOut, timer),
+        (error) =>
+          this.finishStep(
+            step,
+            {
+              status: controller.signal.aborted ? "cancelled" : "error",
+              error: error instanceof Error ? error.message : String(error),
+            },
+            timedOut,
+            timer,
+          ),
+      );
   }
 
   private finishStep(
@@ -454,7 +540,11 @@ class WorkflowController {
     this.resolveCompletion(result);
     for (const resolve of this.progressWaiters) resolve(result);
     this.progressWaiters.clear();
-    try { this.onComplete?.(result); } catch { /* completion notifications are best effort */ }
+    try {
+      this.onComplete?.(result);
+    } catch {
+      /* completion notifications are best effort */
+    }
   }
 }
 
@@ -492,7 +582,11 @@ export class WorkflowManager {
     return this.workflows.get(id)?.wait();
   }
 
-  update(id: string, steps: WorkflowStepDefinition[], resolveType: WorkflowTypeResolver): WorkflowResult {
+  update(
+    id: string,
+    steps: WorkflowStepDefinition[],
+    resolveType: WorkflowTypeResolver,
+  ): WorkflowResult {
     const workflow = this.workflows.get(id);
     if (!workflow) throw new Error(`Workflow not found: "${id}".`);
     return workflow.updateSteps(steps, resolveType);

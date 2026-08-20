@@ -12,27 +12,24 @@ import * as path from "node:path";
 import { BoundedLruCache } from "./bounded-cache.js";
 import { normalizeMapKey } from "./path-utils.js";
 import { lazyEnvNumber } from "./env-utils.js";
-import {
-	getProjectIgnoreMatcher,
-	type ProjectIgnoreMatcher,
-} from "./file-utils.js";
+import { getProjectIgnoreMatcher, type ProjectIgnoreMatcher } from "./file-utils.js";
 import { isAtOrAboveHomeDir } from "./path-utils.js";
 import { getStartupScanMaxSourceFilesDerived } from "./project-scale.js";
 import {
-	shouldRecurseIntoDir,
-	walkTreeStackAsync,
-	walkTreeStackSync,
-	type WalkVisitor,
+  shouldRecurseIntoDir,
+  walkTreeStackAsync,
+  walkTreeStackSync,
+  type WalkVisitor,
 } from "./source-walker.js";
 import { getDirectoryMarkers } from "./workspace-topology.js";
 
 export const PROJECT_ROOT_MARKERS = [
-	".git",
-	"package.json",
-	"pyproject.toml",
-	"Cargo.toml",
-	"go.mod",
-	"composer.json",
+  ".git",
+  "package.json",
+  "pyproject.toml",
+  "Cargo.toml",
+  "go.mod",
+  "composer.json",
 ];
 
 // Deprecated (#776): no longer read directly below — `computeStartupScanContext`
@@ -57,36 +54,32 @@ export const MAX_STARTUP_SCAN_ENTRIES = 50_000;
 const SOURCE_FILE_PATTERN = /\.(ts|tsx|js|jsx|py|go|rs|rb)$/;
 
 export interface StartupScanContext {
-	cwd: string;
-	scanRoot: string;
-	projectRoot: string | null;
-	canWarmCaches: boolean;
-	reason?:
-		| "home-dir"
-		| "no-project-root"
-		| "too-many-source-files"
-		| "too-many-entries";
-	sourceFileCount?: number;
-	/**
-	 * Wall-clock time (`Date.now()`) this verdict was computed. Stamped by
-	 * `resolveStartupScanContext`/`Async` right before it's cached, and carried
-	 * through when the verdict is persisted to `project-snapshot.json`'s
-	 * `startupScan` field (#699) so a later process can decide whether a
-	 * persisted `too-many-source-files` verdict is still fresh enough to skip
-	 * the walk — see `isStartupScanVerdictFresh`.
-	 */
-	computedAt?: number;
+  cwd: string;
+  scanRoot: string;
+  projectRoot: string | null;
+  canWarmCaches: boolean;
+  reason?: "home-dir" | "no-project-root" | "too-many-source-files" | "too-many-entries";
+  sourceFileCount?: number;
+  /**
+   * Wall-clock time (`Date.now()`) this verdict was computed. Stamped by
+   * `resolveStartupScanContext`/`Async` right before it's cached, and carried
+   * through when the verdict is persisted to `project-snapshot.json`'s
+   * `startupScan` field (#699) so a later process can decide whether a
+   * persisted `too-many-source-files` verdict is still fresh enough to skip
+   * the walk — see `isStartupScanVerdictFresh`.
+   */
+  computedAt?: number;
 }
 
 export interface StartupScanOptions {
-	homeDir?: string;
-	maxSourceFiles?: number;
-	/**
-	 * Entry-budget ceiling for the source-count walk (#758). Defaults to
-	 * `getStartupScanMaxEntries()`. Exposed mainly so tests can drive the
-	 * `too-many-entries` verdict deterministically with a tiny fixture.
-	 */
-	maxScanEntries?: number;
+  homeDir?: string;
+  maxSourceFiles?: number;
+  /**
+   * Entry-budget ceiling for the source-count walk (#758). Defaults to
+   * `getStartupScanMaxEntries()`. Exposed mainly so tests can drive the
+   * `too-many-entries` verdict deterministically with a tiny fixture.
+   */
+  maxScanEntries?: number;
 }
 
 // Default TTL for a persisted `too-many-source-files` verdict (#699): 24h.
@@ -102,8 +95,8 @@ const DEFAULT_STARTUP_SCAN_VERDICT_TTL_MS = 24 * 60 * 60 * 1000;
  * `runtime-config.ts` / `slow-fs.ts` / `subagent-mode.ts`).
  */
 const _ttl = lazyEnvNumber(
-	"CHOCO_PI_LSP_STARTUP_SCAN_VERDICT_TTL_MS",
-	DEFAULT_STARTUP_SCAN_VERDICT_TTL_MS,
+  "CHOCO_PI_LSP_STARTUP_SCAN_VERDICT_TTL_MS",
+  DEFAULT_STARTUP_SCAN_VERDICT_TTL_MS,
 );
 export const getStartupScanVerdictTtlMs = _ttl.get;
 
@@ -120,8 +113,8 @@ export const _resetStartupScanVerdictTtlForTests = _ttl._resetForTests;
  * (same house style as `getStartupScanVerdictTtlMs`).
  */
 const _maxEntries = lazyEnvNumber(
-	"CHOCO_PI_LSP_STARTUP_SCAN_MAX_ENTRIES",
-	MAX_STARTUP_SCAN_ENTRIES,
+  "CHOCO_PI_LSP_STARTUP_SCAN_MAX_ENTRIES",
+  MAX_STARTUP_SCAN_ENTRIES,
 );
 export const getStartupScanMaxEntries = _maxEntries.get;
 
@@ -157,16 +150,13 @@ export const _resetStartupScanMaxEntriesForTests = _maxEntries._resetForTests;
  * rather than trusted indefinitely.
  */
 export function isStartupScanVerdictFresh(
-	verdict: StartupScanContext,
-	now: number = Date.now(),
+  verdict: StartupScanContext,
+  now: number = Date.now(),
 ): boolean {
-	if (
-		verdict.reason !== "too-many-source-files" &&
-		verdict.reason !== "too-many-entries"
-	)
-		return true;
-	if (typeof verdict.computedAt !== "number") return false;
-	return now - verdict.computedAt < getStartupScanVerdictTtlMs();
+  if (verdict.reason !== "too-many-source-files" && verdict.reason !== "too-many-entries")
+    return true;
+  if (typeof verdict.computedAt !== "number") return false;
+  return now - verdict.computedAt < getStartupScanVerdictTtlMs();
 }
 
 /**
@@ -193,35 +183,35 @@ export function isStartupScanVerdictFresh(
  * pre-#807 behavior exactly.
  */
 export function findNearestProjectRoot(startDir: string): string | null {
-	let current = path.resolve(startDir);
-	while (true) {
-		const entryNames = getDirectoryMarkers(current).entryNames;
-		if (PROJECT_ROOT_MARKERS.some((marker) => entryNames.has(marker))) {
-			return current;
-		}
-		const parent = path.dirname(current);
-		if (parent === current) return null;
-		current = parent;
-	}
+  let current = path.resolve(startDir);
+  while (true) {
+    const entryNames = getDirectoryMarkers(current).entryNames;
+    if (PROJECT_ROOT_MARKERS.some((marker) => entryNames.has(marker))) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
 }
 
 export interface SourceCountResult {
-	/** Source files found (capped at `limit + 1` once the early-exit fires). */
-	count: number;
-	/**
-	 * True when the walk stopped because it hit `maxEntries` before either
-	 * finishing the tree or crossing the source-file limit — i.e. the tree is
-	 * large and dominated by non-source files (#758). Callers treat this as
-	 * "too big to warm" rather than trusting the partial `count`.
-	 */
-	entryBudgetExceeded: boolean;
+  /** Source files found (capped at `limit + 1` once the early-exit fires). */
+  count: number;
+  /**
+   * True when the walk stopped because it hit `maxEntries` before either
+   * finishing the tree or crossing the source-file limit — i.e. the tree is
+   * large and dominated by non-source files (#758). Callers treat this as
+   * "too big to warm" rather than trusting the partial `count`.
+   */
+  entryBudgetExceeded: boolean;
 }
 
 /** Mutable per-walk tallies threaded through the shared count visitor below. */
 interface SourceCountState {
-	count: number;
-	visited: number;
-	entryBudgetExceeded: boolean;
+  count: number;
+  visited: number;
+  entryBudgetExceeded: boolean;
 }
 
 /**
@@ -247,38 +237,38 @@ interface SourceCountState {
  * hang this walk. Pinned by tests/clients/startup-scan-symlink-cycle.test.ts.
  */
 function makeSourceCountVisitor(
-	state: SourceCountState,
-	ignoreMatcher: ProjectIgnoreMatcher,
-	limit: number,
-	maxEntries: number,
+  state: SourceCountState,
+  ignoreMatcher: ProjectIgnoreMatcher,
+  limit: number,
+  maxEntries: number,
 ): WalkVisitor {
-	return (entry, fullPath) => {
-		state.visited += 1;
-		if (entry.isDirectory()) {
-			const recurse = shouldRecurseIntoDir(entry, fullPath, {
-				ignoreMatcher,
-				followSymlinks: true,
-			});
-			if (state.visited >= maxEntries) {
-				state.entryBudgetExceeded = true;
-				return "stop";
-			}
-			return recurse ? "recurse" : "skip";
-		}
-		if (
-			entry.isFile() &&
-			!ignoreMatcher.isIgnored(fullPath, false) &&
-			SOURCE_FILE_PATTERN.test(entry.name)
-		) {
-			state.count += 1;
-			if (state.count > limit) return "stop";
-		}
-		if (state.visited >= maxEntries) {
-			state.entryBudgetExceeded = true;
-			return "stop";
-		}
-		return "skip";
-	};
+  return (entry, fullPath) => {
+    state.visited += 1;
+    if (entry.isDirectory()) {
+      const recurse = shouldRecurseIntoDir(entry, fullPath, {
+        ignoreMatcher,
+        followSymlinks: true,
+      });
+      if (state.visited >= maxEntries) {
+        state.entryBudgetExceeded = true;
+        return "stop";
+      }
+      return recurse ? "recurse" : "skip";
+    }
+    if (
+      entry.isFile() &&
+      !ignoreMatcher.isIgnored(fullPath, false) &&
+      SOURCE_FILE_PATTERN.test(entry.name)
+    ) {
+      state.count += 1;
+      if (state.count > limit) return "stop";
+    }
+    if (state.visited >= maxEntries) {
+      state.entryBudgetExceeded = true;
+      return "stop";
+    }
+    return "skip";
+  };
 }
 
 /**
@@ -286,33 +276,23 @@ function makeSourceCountVisitor(
  * `countSourceFilesWithinLimit` wrapper and `computeStartupScanContext`.
  * Bounds are documented on `makeSourceCountVisitor`.
  */
-function walkSourceCount(
-	dir: string,
-	limit: number,
-	maxEntries: number,
-): SourceCountResult {
-	const state: SourceCountState = {
-		count: 0,
-		visited: 0,
-		entryBudgetExceeded: false,
-	};
-	const rootDir = path.resolve(dir);
-	const ignoreMatcher = getProjectIgnoreMatcher(rootDir);
-	walkTreeStackSync(
-		rootDir,
-		makeSourceCountVisitor(state, ignoreMatcher, limit, maxEntries),
-	);
-	return { count: state.count, entryBudgetExceeded: state.entryBudgetExceeded };
+function walkSourceCount(dir: string, limit: number, maxEntries: number): SourceCountResult {
+  const state: SourceCountState = {
+    count: 0,
+    visited: 0,
+    entryBudgetExceeded: false,
+  };
+  const rootDir = path.resolve(dir);
+  const ignoreMatcher = getProjectIgnoreMatcher(rootDir);
+  walkTreeStackSync(rootDir, makeSourceCountVisitor(state, ignoreMatcher, limit, maxEntries));
+  return { count: state.count, entryBudgetExceeded: state.entryBudgetExceeded };
 }
 
-export function countSourceFilesWithinLimit(
-	dir: string,
-	limit: number,
-): number {
-	// Public wrapper keeps its pre-#758 contract: only the source-file limit
-	// bounds it (no entry ceiling). The #758 entry budget applies solely to the
-	// startup-scan verdict path via `walkSourceCount`.
-	return walkSourceCount(dir, limit, Number.POSITIVE_INFINITY).count;
+export function countSourceFilesWithinLimit(dir: string, limit: number): number {
+  // Public wrapper keeps its pre-#758 contract: only the source-file limit
+  // bounds it (no entry ceiling). The #758 entry budget applies solely to the
+  // startup-scan verdict path via `walkSourceCount`.
+  return walkSourceCount(dir, limit, Number.POSITIVE_INFINITY).count;
 }
 
 // Process-lifetime memo for the (cwd, homeDir, maxSourceFiles) tuple. The
@@ -326,90 +306,85 @@ export function countSourceFilesWithinLimit(
 const startupScanContextCache = new BoundedLruCache<string, StartupScanContext>(32);
 
 function startupScanCacheKey(cwd: string, options: StartupScanOptions): string {
-	return [
-		normalizeMapKey(path.resolve(cwd)),
-		options.homeDir ? normalizeMapKey(path.resolve(options.homeDir)) : "",
-		options.maxSourceFiles ?? "",
-		options.maxScanEntries ?? "",
-	].join("|");
+  return [
+    normalizeMapKey(path.resolve(cwd)),
+    options.homeDir ? normalizeMapKey(path.resolve(options.homeDir)) : "",
+    options.maxSourceFiles ?? "",
+    options.maxScanEntries ?? "",
+  ].join("|");
 }
 
 export const __testing = { startupScanCacheKey };
 
 export function resolveStartupScanContext(
-	cwd: string,
-	options: StartupScanOptions = {},
+  cwd: string,
+  options: StartupScanOptions = {},
 ): StartupScanContext {
-	const cacheKey = startupScanCacheKey(cwd, options);
-	const cached = startupScanContextCache.get(cacheKey);
-	if (cached) return cached;
-	const result = { ...computeStartupScanContext(cwd, options), computedAt: Date.now() };
-	startupScanContextCache.set(cacheKey, result);
-	return result;
+  const cacheKey = startupScanCacheKey(cwd, options);
+  const cached = startupScanContextCache.get(cacheKey);
+  if (cached) return cached;
+  const result = { ...computeStartupScanContext(cwd, options), computedAt: Date.now() };
+  startupScanContextCache.set(cacheKey, result);
+  return result;
 }
 
 function computeStartupScanContext(
-	cwd: string,
-	options: StartupScanOptions = {},
+  cwd: string,
+  options: StartupScanOptions = {},
 ): StartupScanContext {
-	const resolvedCwd = path.resolve(cwd);
-	const homeDir = path.resolve(options.homeDir ?? os.homedir());
-	const maxSourceFiles =
-		options.maxSourceFiles ?? getStartupScanMaxSourceFilesDerived(resolvedCwd);
-	const maxScanEntries = options.maxScanEntries ?? getStartupScanMaxEntries();
-	const projectRoot = findNearestProjectRoot(resolvedCwd);
+  const resolvedCwd = path.resolve(cwd);
+  const homeDir = path.resolve(options.homeDir ?? os.homedir());
+  const maxSourceFiles = options.maxSourceFiles ?? getStartupScanMaxSourceFilesDerived(resolvedCwd);
+  const maxScanEntries = options.maxScanEntries ?? getStartupScanMaxEntries();
+  const projectRoot = findNearestProjectRoot(resolvedCwd);
 
-	if (!projectRoot) {
-		return {
-			cwd: resolvedCwd,
-			scanRoot: resolvedCwd,
-			projectRoot: null,
-			canWarmCaches: false,
-			reason: isAtOrAboveHomeDir(resolvedCwd, homeDir)
-				? "home-dir"
-				: "no-project-root",
-		};
-	}
+  if (!projectRoot) {
+    return {
+      cwd: resolvedCwd,
+      scanRoot: resolvedCwd,
+      projectRoot: null,
+      canWarmCaches: false,
+      reason: isAtOrAboveHomeDir(resolvedCwd, homeDir) ? "home-dir" : "no-project-root",
+    };
+  }
 
-	// A marker resolved at $HOME — OR at an ancestor of it (e.g. /home,
-	// C:\Users) — means the upward search escaped the workspace; warming caches
-	// would walk an unrelated tree (#250/#253). The old exact `=== homeDir`
-	// check missed the above-home case.
-	if (isAtOrAboveHomeDir(projectRoot, homeDir)) {
-		return {
-			cwd: resolvedCwd,
-			scanRoot: projectRoot,
-			projectRoot,
-			canWarmCaches: false,
-			reason: "home-dir",
-		};
-	}
+  // A marker resolved at $HOME — OR at an ancestor of it (e.g. /home,
+  // C:\Users) — means the upward search escaped the workspace; warming caches
+  // would walk an unrelated tree (#250/#253). The old exact `=== homeDir`
+  // check missed the above-home case.
+  if (isAtOrAboveHomeDir(projectRoot, homeDir)) {
+    return {
+      cwd: resolvedCwd,
+      scanRoot: projectRoot,
+      projectRoot,
+      canWarmCaches: false,
+      reason: "home-dir",
+    };
+  }
 
-	const { count: sourceFileCount, entryBudgetExceeded } = walkSourceCount(
-		projectRoot,
-		maxSourceFiles,
-		maxScanEntries,
-	);
-	if (sourceFileCount > maxSourceFiles || entryBudgetExceeded) {
-		return {
-			cwd: resolvedCwd,
-			scanRoot: projectRoot,
-			projectRoot,
-			canWarmCaches: false,
-			reason: entryBudgetExceeded
-				? "too-many-entries"
-				: "too-many-source-files",
-			sourceFileCount,
-		};
-	}
+  const { count: sourceFileCount, entryBudgetExceeded } = walkSourceCount(
+    projectRoot,
+    maxSourceFiles,
+    maxScanEntries,
+  );
+  if (sourceFileCount > maxSourceFiles || entryBudgetExceeded) {
+    return {
+      cwd: resolvedCwd,
+      scanRoot: projectRoot,
+      projectRoot,
+      canWarmCaches: false,
+      reason: entryBudgetExceeded ? "too-many-entries" : "too-many-source-files",
+      sourceFileCount,
+    };
+  }
 
-	return {
-		cwd: resolvedCwd,
-		scanRoot: projectRoot,
-		projectRoot,
-		canWarmCaches: true,
-		sourceFileCount,
-	};
+  return {
+    cwd: resolvedCwd,
+    scanRoot: projectRoot,
+    projectRoot,
+    canWarmCaches: true,
+    sourceFileCount,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -436,109 +411,105 @@ function computeStartupScanContext(
  * every `yieldEvery` entries to keep `session_start` keystrokes responsive.
  */
 async function walkSourceCountAsync(
-	dir: string,
-	limit: number,
-	maxEntries: number,
-	opts: { budgetMs?: number } = {},
+  dir: string,
+  limit: number,
+  maxEntries: number,
+  opts: { budgetMs?: number } = {},
 ): Promise<SourceCountResult> {
-	const state: SourceCountState = {
-		count: 0,
-		visited: 0,
-		entryBudgetExceeded: false,
-	};
-	const rootDir = path.resolve(dir);
-	const ignoreMatcher = getProjectIgnoreMatcher(rootDir);
-	await walkTreeStackAsync(
-		rootDir,
-		makeSourceCountVisitor(state, ignoreMatcher, limit, maxEntries),
-		{
-			// Yield every 100 entries by default. Empirically each yield costs
-			// ~0.1ms of overhead and a 2k-file project produces ~20 yields, so the
-			// total async overhead is well under 5ms while keeping per-burst sync
-			// work under 50ms (the perceptual threshold for "instant" keystrokes).
-			budgetMs: opts.budgetMs ?? 8,
-			// #703: prime the tracked-files set ONCE before the walk (not per file)
-			// so a tracked file matching a `.gitignore`/global pattern isn't dropped
-			// from the startup source-file count. Fail-open: resolves even when git
-			// is absent, and `isIgnored` degrades to pattern-only if this never
-			// resolves before a caller inspects results.
-			beforeWalk: () => ignoreMatcher.ensureTrackedIndex(),
-		},
-	);
-	return { count: state.count, entryBudgetExceeded: state.entryBudgetExceeded };
+  const state: SourceCountState = {
+    count: 0,
+    visited: 0,
+    entryBudgetExceeded: false,
+  };
+  const rootDir = path.resolve(dir);
+  const ignoreMatcher = getProjectIgnoreMatcher(rootDir);
+  await walkTreeStackAsync(
+    rootDir,
+    makeSourceCountVisitor(state, ignoreMatcher, limit, maxEntries),
+    {
+      // Yield every 100 entries by default. Empirically each yield costs
+      // ~0.1ms of overhead and a 2k-file project produces ~20 yields, so the
+      // total async overhead is well under 5ms while keeping per-burst sync
+      // work under 50ms (the perceptual threshold for "instant" keystrokes).
+      budgetMs: opts.budgetMs ?? 8,
+      // #703: prime the tracked-files set ONCE before the walk (not per file)
+      // so a tracked file matching a `.gitignore`/global pattern isn't dropped
+      // from the startup source-file count. Fail-open: resolves even when git
+      // is absent, and `isIgnored` degrades to pattern-only if this never
+      // resolves before a caller inspects results.
+      beforeWalk: () => ignoreMatcher.ensureTrackedIndex(),
+    },
+  );
+  return { count: state.count, entryBudgetExceeded: state.entryBudgetExceeded };
 }
 
 export async function countSourceFilesWithinLimitAsync(
-	dir: string,
-	limit: number,
-	opts: { budgetMs?: number } = {},
+  dir: string,
+  limit: number,
+  opts: { budgetMs?: number } = {},
 ): Promise<number> {
-	// Public wrapper keeps its pre-#758 contract: only the source-file limit
-	// bounds it (no entry ceiling).
-	return (
-		await walkSourceCountAsync(dir, limit, Number.POSITIVE_INFINITY, opts)
-	).count;
+  // Public wrapper keeps its pre-#758 contract: only the source-file limit
+  // bounds it (no entry ceiling).
+  return (await walkSourceCountAsync(dir, limit, Number.POSITIVE_INFINITY, opts)).count;
 }
 
 export async function resolveStartupScanContextAsync(
-	cwd: string,
-	options: StartupScanOptions = {},
+  cwd: string,
+  options: StartupScanOptions = {},
 ): Promise<StartupScanContext> {
-	const cacheKey = startupScanCacheKey(cwd, options);
-	const cached = startupScanContextCache.get(cacheKey);
-	if (cached) return cached;
+  const cacheKey = startupScanCacheKey(cwd, options);
+  const cached = startupScanContextCache.get(cacheKey);
+  if (cached) return cached;
 
-	const resolvedCwd = path.resolve(cwd);
-	const homeDir = path.resolve(options.homeDir ?? os.homedir());
-	const maxSourceFiles =
-		options.maxSourceFiles ?? getStartupScanMaxSourceFilesDerived(resolvedCwd);
-	const maxScanEntries = options.maxScanEntries ?? getStartupScanMaxEntries();
-	const projectRoot = findNearestProjectRoot(resolvedCwd);
+  const resolvedCwd = path.resolve(cwd);
+  const homeDir = path.resolve(options.homeDir ?? os.homedir());
+  const maxSourceFiles = options.maxSourceFiles ?? getStartupScanMaxSourceFilesDerived(resolvedCwd);
+  const maxScanEntries = options.maxScanEntries ?? getStartupScanMaxEntries();
+  const projectRoot = findNearestProjectRoot(resolvedCwd);
 
-	let result: StartupScanContext;
-	if (!projectRoot) {
-		result = {
-			cwd: resolvedCwd,
-			scanRoot: resolvedCwd,
-			projectRoot: null,
-			canWarmCaches: false,
-			reason: isAtOrAboveHomeDir(resolvedCwd, homeDir)
-				? "home-dir"
-				: "no-project-root",
-		};
-	} else if (isAtOrAboveHomeDir(projectRoot, homeDir)) {
-		result = {
-			cwd: resolvedCwd,
-			scanRoot: projectRoot,
-			projectRoot,
-			canWarmCaches: false,
-			reason: "home-dir",
-		};
-	} else {
-		const { count: sourceFileCount, entryBudgetExceeded } =
-			await walkSourceCountAsync(projectRoot, maxSourceFiles, maxScanEntries);
-		if (sourceFileCount > maxSourceFiles || entryBudgetExceeded) {
-			result = {
-				cwd: resolvedCwd,
-				scanRoot: projectRoot,
-				projectRoot,
-				canWarmCaches: false,
-				reason: entryBudgetExceeded
-					? "too-many-entries"
-					: "too-many-source-files",
-				sourceFileCount,
-			};
-		} else {
-			result = {
-				cwd: resolvedCwd,
-				scanRoot: projectRoot,
-				projectRoot,
-				canWarmCaches: true,
-				sourceFileCount,
-			};
-		}
-	}
-	result = { ...result, computedAt: Date.now() };
-	startupScanContextCache.set(cacheKey, result);
-	return result;
+  let result: StartupScanContext;
+  if (!projectRoot) {
+    result = {
+      cwd: resolvedCwd,
+      scanRoot: resolvedCwd,
+      projectRoot: null,
+      canWarmCaches: false,
+      reason: isAtOrAboveHomeDir(resolvedCwd, homeDir) ? "home-dir" : "no-project-root",
+    };
+  } else if (isAtOrAboveHomeDir(projectRoot, homeDir)) {
+    result = {
+      cwd: resolvedCwd,
+      scanRoot: projectRoot,
+      projectRoot,
+      canWarmCaches: false,
+      reason: "home-dir",
+    };
+  } else {
+    const { count: sourceFileCount, entryBudgetExceeded } = await walkSourceCountAsync(
+      projectRoot,
+      maxSourceFiles,
+      maxScanEntries,
+    );
+    if (sourceFileCount > maxSourceFiles || entryBudgetExceeded) {
+      result = {
+        cwd: resolvedCwd,
+        scanRoot: projectRoot,
+        projectRoot,
+        canWarmCaches: false,
+        reason: entryBudgetExceeded ? "too-many-entries" : "too-many-source-files",
+        sourceFileCount,
+      };
+    } else {
+      result = {
+        cwd: resolvedCwd,
+        scanRoot: projectRoot,
+        projectRoot,
+        canWarmCaches: true,
+        sourceFileCount,
+      };
+    }
+  }
+  result = { ...result, computedAt: Date.now() };
+  startupScanContextCache.set(cacheKey, result);
+  return result;
 }

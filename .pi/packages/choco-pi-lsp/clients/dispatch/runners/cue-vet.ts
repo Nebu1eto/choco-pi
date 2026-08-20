@@ -105,31 +105,23 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { safeSpawnAsync } from "../../safe-spawn.js";
-import {
-	createAvailabilityChecker,
-	resolveAvailableOrInstall,
-} from "./utils/runner-helpers.js";
+import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.js";
 import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.js";
-import type {
-	Diagnostic,
-	DispatchContext,
-	RunnerDefinition,
-	RunnerResult,
-} from "../types.js";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
 import { PRIORITY } from "../priorities.js";
 
 const cue = createAvailabilityChecker("cue", ".exe", ["version"]);
 
 interface CueVetLocation {
-	/** Raw path text as `cue vet` printed it, e.g. `.\bad.cue` or `./bad.cue`. */
-	file: string;
-	line: number;
-	column: number;
+  /** Raw path text as `cue vet` printed it, e.g. `.\bad.cue` or `./bad.cue`. */
+  file: string;
+  line: number;
+  column: number;
 }
 
 interface CueVetError {
-	message: string;
-	locations: CueVetLocation[];
+  message: string;
+  locations: CueVetLocation[];
 }
 
 /**
@@ -160,28 +152,28 @@ interface CueVetError {
  * 10) when nothing in the output could be file-attributed at all.
  */
 export function parseCueVetOutput(raw: string): CueVetError[] {
-	const errors: CueVetError[] = [];
-	let current: CueVetError | null = null;
-	for (const rawLine of raw.split(/\r?\n/)) {
-		if (!rawLine.trim()) continue;
-		if (/^\s/.test(rawLine)) {
-			if (current) {
-				const loc = rawLine.trim().match(/^(.+):(\d+):(\d+)$/);
-				if (loc) {
-					current.locations.push({
-						file: loc[1],
-						line: Number.parseInt(loc[2], 10),
-						column: Number.parseInt(loc[3], 10),
-					});
-				}
-			}
-			continue;
-		}
-		if (current) errors.push(current);
-		current = { message: rawLine.replace(/:\s*$/, "").trim(), locations: [] };
-	}
-	if (current) errors.push(current);
-	return errors;
+  const errors: CueVetError[] = [];
+  let current: CueVetError | null = null;
+  for (const rawLine of raw.split(/\r?\n/)) {
+    if (!rawLine.trim()) continue;
+    if (/^\s/.test(rawLine)) {
+      if (current) {
+        const loc = rawLine.trim().match(/^(.+):(\d+):(\d+)$/);
+        if (loc) {
+          current.locations.push({
+            file: loc[1],
+            line: Number.parseInt(loc[2], 10),
+            column: Number.parseInt(loc[3], 10),
+          });
+        }
+      }
+      continue;
+    }
+    if (current) errors.push(current);
+    current = { message: rawLine.replace(/:\s*$/, "").trim(), locations: [] };
+  }
+  if (current) errors.push(current);
+  return errors;
 }
 
 /**
@@ -192,14 +184,14 @@ export function parseCueVetOutput(raw: string): CueVetError[] {
  * read as an unattributable whole-vet failure and block every edit.
  */
 export function directoryScopeUnavailable(raw: string): boolean {
-	return (
-		/build constraints exclude all CUE files/.test(raw) ||
-		// The trailing location cue reports (`in "."` vs `in "two-packages"`)
-		// depends on how it resolves the vet cwd, not on the shape of the
-		// failure — verified both forms against the real binary — so only the
-		// structural "found packages X and Y" part is matched.
-		/found packages ".+"\s*\(.+\)\s+and\s+".+"\s*\(.+\)\s+in\s+".*"/.test(raw)
-	);
+  return (
+    /build constraints exclude all CUE files/.test(raw) ||
+    // The trailing location cue reports (`in "."` vs `in "two-packages"`)
+    // depends on how it resolves the vet cwd, not on the shape of the
+    // failure — verified both forms against the real binary — so only the
+    // structural "found packages X and Y" part is matched.
+    /found packages ".+"\s*\(.+\)\s+and\s+".+"\s*\(.+\)\s+in\s+".*"/.test(raw)
+  );
 }
 
 /**
@@ -221,39 +213,39 @@ export function directoryScopeUnavailable(raw: string): boolean {
  * a field and so always start with the field's name, never `@`.
  */
 export function hasPackageClause(content: string): boolean {
-	for (const line of content.split(/\r?\n/)) {
-		const trimmed = line.trim();
-		if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("@")) continue;
-		return /^package\s+[A-Za-z_]\w*\b/.test(trimmed);
-	}
-	return false;
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("@")) continue;
+    return /^package\s+[A-Za-z_]\w*\b/.test(trimmed);
+  }
+  return false;
 }
 
 /** `.\bad.cue`, `./bad.cue`, and `bad.cue` all name the same file. */
 function locationMatchesFile(location: CueVetLocation, fileName: string): boolean {
-	const normalized = location.file.replace(/\\/g, "/").replace(/^\.\//, "");
-	return path.posix.basename(normalized) === fileName;
+  const normalized = location.file.replace(/\\/g, "/").replace(/^\.\//, "");
+  return path.posix.basename(normalized) === fileName;
 }
 
 function toDiagnostic(
-	id: string,
-	message: string,
-	fileName: string,
-	line: number,
-	column: number,
+  id: string,
+  message: string,
+  fileName: string,
+  line: number,
+  column: number,
 ): Diagnostic {
-	return {
-		id,
-		message: message || "cue vet reported an error",
-		filePath: fileName,
-		line,
-		column,
-		severity: "error",
-		semantic: "blocking",
-		tool: "cue-vet",
-		rule: "vet",
-		fixable: false,
-	};
+  return {
+    id,
+    message: message || "cue vet reported an error",
+    filePath: fileName,
+    line,
+    column,
+    severity: "error",
+    semantic: "blocking",
+    tool: "cue-vet",
+    rule: "vet",
+    fixable: false,
+  };
 }
 
 /**
@@ -285,179 +277,170 @@ function toDiagnostic(
  * header.
  */
 export function filterToTouchedFile(
-	errors: CueVetError[],
-	fileName: string,
+  errors: CueVetError[],
+  fileName: string,
 ): Diagnostic[] | undefined {
-	if (errors.length === 0) return undefined;
-	const withLocation = errors.filter((error) => error.locations.length > 0);
-	const unattributable = errors.filter((error) => error.locations.length === 0);
-	if (withLocation.length === 0) return undefined;
+  if (errors.length === 0) return undefined;
+  const withLocation = errors.filter((error) => error.locations.length > 0);
+  const unattributable = errors.filter((error) => error.locations.length === 0);
+  if (withLocation.length === 0) return undefined;
 
-	const diagnostics: Diagnostic[] = [];
-	for (const error of withLocation) {
-		const match = error.locations.find((location) =>
-			locationMatchesFile(location, fileName),
-		);
-		if (!match) continue; // sibling-only finding — surfaces when that file is touched
-		diagnostics.push(
-			toDiagnostic(
-				`cue-vet-${diagnostics.length + 1}-${match.line}`,
-				error.message,
-				fileName,
-				match.line,
-				match.column,
-			),
-		);
-	}
-	// F7: an error this parser could not pin to any file must never be
-	// silently dropped just because a SIBLING error happened to carry a
-	// location — surface it too, at line 1 since there is nowhere else to
-	// point.
-	for (const error of unattributable) {
-		diagnostics.push(
-			toDiagnostic(
-				`cue-vet-unattributed-${diagnostics.length + 1}`,
-				error.message,
-				fileName,
-				1,
-				1,
-			),
-		);
-	}
-	return diagnostics;
+  const diagnostics: Diagnostic[] = [];
+  for (const error of withLocation) {
+    const match = error.locations.find((location) => locationMatchesFile(location, fileName));
+    if (!match) continue; // sibling-only finding — surfaces when that file is touched
+    diagnostics.push(
+      toDiagnostic(
+        `cue-vet-${diagnostics.length + 1}-${match.line}`,
+        error.message,
+        fileName,
+        match.line,
+        match.column,
+      ),
+    );
+  }
+  // F7: an error this parser could not pin to any file must never be
+  // silently dropped just because a SIBLING error happened to carry a
+  // location — surface it too, at line 1 since there is nowhere else to
+  // point.
+  for (const error of unattributable) {
+    diagnostics.push(
+      toDiagnostic(`cue-vet-unattributed-${diagnostics.length + 1}`, error.message, fileName, 1, 1),
+    );
+  }
+  return diagnostics;
 }
 
 const cueVetRunner: RunnerDefinition = {
-	id: "cue-vet",
-	appliesTo: ["cue"],
-	priority: PRIORITY.GENERAL_ANALYSIS,
-	enabledByDefault: true,
-	skipTestFiles: false,
-	timeoutMs: 30_000,
+  id: "cue-vet",
+  appliesTo: ["cue"],
+  priority: PRIORITY.GENERAL_ANALYSIS,
+  enabledByDefault: true,
+  skipTestFiles: false,
+  timeoutMs: 30_000,
 
-	async run(ctx: DispatchContext): Promise<RunnerResult> {
-		const cwd = ctx.cwd || process.cwd();
+  async run(ctx: DispatchContext): Promise<RunnerResult> {
+    const cwd = ctx.cwd || process.cwd();
 
-		let cmd: string | null = null;
-		if (await cue.isAvailableAsync(cwd)) {
-			cmd = cue.getCommand(cwd);
-		} else {
-			cmd = await resolveAvailableOrInstall(cue, "cue", cwd);
-		}
-		// An unspawnable `cue` is never a durable "clean" verdict — skip, so the
-		// dispatcher's own absence handling reports the gap rather than this
-		// runner manufacturing a false "0 findings" (recurring defect shape 10).
-		// `createAvailabilityChecker`/`resolveAvailableOrInstall` already route
-		// through the shared classify/latch policy, so a probe timeout or host
-		// stall re-arms on its own cooldown instead of latching here.
-		if (!cmd) return { status: "skipped", diagnostics: [], semantic: "none" };
+    let cmd: string | null = null;
+    if (await cue.isAvailableAsync(cwd)) {
+      cmd = cue.getCommand(cwd);
+    } else {
+      cmd = await resolveAvailableOrInstall(cue, "cue", cwd);
+    }
+    // An unspawnable `cue` is never a durable "clean" verdict — skip, so the
+    // dispatcher's own absence handling reports the gap rather than this
+    // runner manufacturing a false "0 findings" (recurring defect shape 10).
+    // `createAvailabilityChecker`/`resolveAvailableOrInstall` already route
+    // through the shared classify/latch policy, so a probe timeout or host
+    // stall re-arms on its own cooldown instead of latching here.
+    if (!cmd) return { status: "skipped", diagnostics: [], semantic: "none" };
 
-		const absPath = path.resolve(cwd, ctx.filePath);
-		const fileDir = path.dirname(absPath);
-		const fileName = path.basename(absPath);
-		const singleFileArgs = ["vet", "-c=false", `./${fileName}`] as const;
+    const absPath = path.resolve(cwd, ctx.filePath);
+    const fileDir = path.dirname(absPath);
+    const fileName = path.basename(absPath);
+    const singleFileArgs = ["vet", "-c=false", `./${fileName}`] as const;
 
-		// F8: read the touched file's OWN content before deciding scope. A
-		// package-less file is excluded from directory-scoped evaluation
-		// entirely (silently, exit 0) rather than causing a failure, so
-		// waiting for the directory vet to fail (the F5/F6 gate below) can
-		// never catch this shape — go straight to single-file scope instead.
-		// An unreadable file falls through to the directory-scoped path below;
-		// package-less-ness that can't be verified is never assumed.
-		let touchedContent: string | null = null;
-		try {
-			touchedContent = fs.readFileSync(absPath, "utf8");
-		} catch {
-			touchedContent = null;
-		}
-		const touchedIsPackageLess =
-			touchedContent !== null && !hasPackageClause(touchedContent);
+    // F8: read the touched file's OWN content before deciding scope. A
+    // package-less file is excluded from directory-scoped evaluation
+    // entirely (silently, exit 0) rather than causing a failure, so
+    // waiting for the directory vet to fail (the F5/F6 gate below) can
+    // never catch this shape — go straight to single-file scope instead.
+    // An unreadable file falls through to the directory-scoped path below;
+    // package-less-ness that can't be verified is never assumed.
+    let touchedContent: string | null = null;
+    try {
+      touchedContent = fs.readFileSync(absPath, "utf8");
+    } catch {
+      touchedContent = null;
+    }
+    const touchedIsPackageLess = touchedContent !== null && !hasPackageClause(touchedContent);
 
-		let result: Awaited<ReturnType<typeof safeSpawnAsync>>;
-		if (touchedIsPackageLess) {
-			result = await safeSpawnAsync(cmd, [...singleFileArgs], {
-				cwd: fileDir,
-				timeout: 30_000,
-			});
-		} else {
-			// Package-scoped (F1): vet the whole directory the touched file lives
-			// in, not the file alone — CUE packages unify every file that shares
-			// a package clause, so a single-file invocation cannot see a
-			// definition or value declared in a sibling.
-			result = await safeSpawnAsync(cmd, ["vet", "-c=false", "."], {
-				cwd: fileDir,
-				timeout: 30_000,
-			});
+    let result: Awaited<ReturnType<typeof safeSpawnAsync>>;
+    if (touchedIsPackageLess) {
+      result = await safeSpawnAsync(cmd, [...singleFileArgs], {
+        cwd: fileDir,
+        timeout: 30_000,
+      });
+    } else {
+      // Package-scoped (F1): vet the whole directory the touched file lives
+      // in, not the file alone — CUE packages unify every file that shares
+      // a package clause, so a single-file invocation cannot see a
+      // definition or value declared in a sibling.
+      result = await safeSpawnAsync(cmd, ["vet", "-c=false", "."], {
+        cwd: fileDir,
+        timeout: 30_000,
+      });
 
-			if (
-				!spawnFailedWithNoOutput(result, `${result.stdout}${result.stderr}`) &&
-				result.status !== 0 &&
-				directoryScopeUnavailable(`${result.stdout || ""}${result.stderr || ""}`)
-			) {
-				// F6: the directory holds two+ DIFFERENTLY-packaged files (the
-				// touched file has its own valid package, but the directory as a
-				// whole still isn't one unit) — fall back to the touched file
-				// alone, which IS a valid unit on its own.
-				result = await safeSpawnAsync(cmd, [...singleFileArgs], {
-					cwd: fileDir,
-					timeout: 30_000,
-				});
-			}
-		}
+      if (
+        !spawnFailedWithNoOutput(result, `${result.stdout}${result.stderr}`) &&
+        result.status !== 0 &&
+        directoryScopeUnavailable(`${result.stdout || ""}${result.stderr || ""}`)
+      ) {
+        // F6: the directory holds two+ DIFFERENTLY-packaged files (the
+        // touched file has its own valid package, but the directory as a
+        // whole still isn't one unit) — fall back to the touched file
+        // alone, which IS a valid unit on its own.
+        result = await safeSpawnAsync(cmd, [...singleFileArgs], {
+          cwd: fileDir,
+          timeout: 30_000,
+        });
+      }
+    }
 
-		if (spawnFailedWithNoOutput(result, `${result.stdout}${result.stderr}`)) {
-			return { status: "skipped", diagnostics: [], semantic: "none" };
-		}
+    if (spawnFailedWithNoOutput(result, `${result.stdout}${result.stderr}`)) {
+      return { status: "skipped", diagnostics: [], semantic: "none" };
+    }
 
-		// `cue vet` is silent on success (empty stdout, exit 0) — that IS the
-		// clean signal, not an unavailable/errored one, so status 0 with no
-		// output reports succeeded/no-findings rather than falling through to
-		// the skip above.
-		if (result.status === 0) {
-			return { status: "succeeded", diagnostics: [], semantic: "none" };
-		}
+    // `cue vet` is silent on success (empty stdout, exit 0) — that IS the
+    // clean signal, not an unavailable/errored one, so status 0 with no
+    // output reports succeeded/no-findings rather than falling through to
+    // the skip above.
+    if (result.status === 0) {
+      return { status: "succeeded", diagnostics: [], semantic: "none" };
+    }
 
-		const raw = `${result.stdout || ""}\n${result.stderr || ""}`.trim();
-		const errors = parseCueVetOutput(raw);
-		// The single-file path (F5/F6/F8) needs no special-casing: every
-		// location it reports already belongs to the one file it vetted, so it
-		// trivially matches `fileName` and flows through the same filter as
-		// the directory-scoped path — one code path, and a single-file run
-		// that somehow fails with no location at all still gets the same
-		// never-silently-clean `undefined` fallback as the directory path.
-		const filtered = filterToTouchedFile(errors, fileName);
+    const raw = `${result.stdout || ""}\n${result.stderr || ""}`.trim();
+    const errors = parseCueVetOutput(raw);
+    // The single-file path (F5/F6/F8) needs no special-casing: every
+    // location it reports already belongs to the one file it vetted, so it
+    // trivially matches `fileName` and flows through the same filter as
+    // the directory-scoped path — one code path, and a single-file run
+    // that somehow fails with no location at all still gets the same
+    // never-silently-clean `undefined` fallback as the directory path.
+    const filtered = filterToTouchedFile(errors, fileName);
 
-		if (filtered === undefined) {
-			// Nonzero exit, some output, but nothing in it could be attributed to
-			// ANY file — a real failure must not present as zero findings.
-			return {
-				status: "failed",
-				diagnostics: [
-					{
-						id: "cue-vet-unparsed",
-						message: raw.slice(0, 300) || "cue vet exited non-zero",
-						filePath: ctx.filePath,
-						line: 1,
-						column: 1,
-						severity: "error",
-						semantic: "blocking",
-						tool: "cue-vet",
-						rule: "vet",
-						fixable: false,
-					},
-				],
-				semantic: "blocking",
-			};
-		}
+    if (filtered === undefined) {
+      // Nonzero exit, some output, but nothing in it could be attributed to
+      // ANY file — a real failure must not present as zero findings.
+      return {
+        status: "failed",
+        diagnostics: [
+          {
+            id: "cue-vet-unparsed",
+            message: raw.slice(0, 300) || "cue vet exited non-zero",
+            filePath: ctx.filePath,
+            line: 1,
+            column: 1,
+            severity: "error",
+            semantic: "blocking",
+            tool: "cue-vet",
+            rule: "vet",
+            fixable: false,
+          },
+        ],
+        semantic: "blocking",
+      };
+    }
 
-		if (filtered.length === 0) {
-			// The package has real errors, but none of them implicate the touched
-			// file — a sibling's problem, not this file's (the F1 tradeoff).
-			return { status: "succeeded", diagnostics: [], semantic: "none" };
-		}
+    if (filtered.length === 0) {
+      // The package has real errors, but none of them implicate the touched
+      // file — a sibling's problem, not this file's (the F1 tradeoff).
+      return { status: "succeeded", diagnostics: [], semantic: "none" };
+    }
 
-		return { status: "failed", diagnostics: filtered, semantic: "blocking" };
-	},
+    return { status: "failed", diagnostics: filtered, semantic: "blocking" };
+  },
 };
 
 export default cueVetRunner;

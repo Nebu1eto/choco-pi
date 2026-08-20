@@ -2,119 +2,172 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionEntry, Theme } from "@earendil-works/pi-coding-agent";
 import {
-	renderRewindTimeline,
-	restoreTurn,
-	turnCheckpointsFromEntries,
-	type TurnCheckpoint,
+  renderRewindTimeline,
+  restoreTurn,
+  turnCheckpointsFromEntries,
+  type TurnCheckpoint,
 } from "../.pi/extensions/file-checkpoints.ts";
 
 const plainTheme = {
-	fg: (_color: string, text: string) => text,
-	bold: (text: string) => text,
-	italic: (text: string) => text,
+  fg: (_color: string, text: string) => text,
+  bold: (text: string) => text,
+  italic: (text: string) => text,
 } as Theme;
 
 const checkpoint = {
-	version: 1 as const,
-	ref: "refs/choco-pi/checkpoints/session/turn-1",
-	indexTree: "index-tree",
-	worktreeTree: "worktree-tree",
-	timestamp: "2026-08-13T00:00:00.000Z",
-	turnIndex: 0,
-	label: "First prompt",
+  version: 1 as const,
+  ref: "refs/choco-pi/checkpoints/session/turn-1",
+  indexTree: "index-tree",
+  worktreeTree: "worktree-tree",
+  timestamp: "2026-08-13T00:00:00.000Z",
+  turnIndex: 0,
+  label: "First prompt",
 };
 
 test("turn checkpoints pair the latest pre-prompt snapshot with each user turn", () => {
-	const entries = [
-		{ type: "custom", id: "checkpoint-1", parentId: null, customType: "choco-pi:file-checkpoint", data: checkpoint },
-		{ type: "message", id: "user-1", parentId: "checkpoint-1", message: { role: "user", content: "First prompt" } },
-		{ type: "message", id: "assistant-1", parentId: "checkpoint-1", message: { role: "assistant", content: [] } },
-		{ type: "custom", id: "mid-turn", parentId: "assistant-1", customType: "choco-pi:file-checkpoint", data: { ...checkpoint, ref: "mid-turn" } },
-		{ type: "custom", id: "checkpoint-2", parentId: "mid-turn", customType: "choco-pi:file-checkpoint", data: { ...checkpoint, ref: "turn-2", label: "Second prompt" } },
-		{ type: "message", id: "user-2", parentId: "checkpoint-2", message: { role: "user", content: "Second prompt" } },
-		{ type: "custom", id: "trailing", parentId: "user-2", customType: "choco-pi:file-checkpoint", data: { ...checkpoint, ref: "trailing" } },
-	] as SessionEntry[];
+  const entries = [
+    {
+      type: "custom",
+      id: "checkpoint-1",
+      parentId: null,
+      customType: "choco-pi:file-checkpoint",
+      data: checkpoint,
+    },
+    {
+      type: "message",
+      id: "user-1",
+      parentId: "checkpoint-1",
+      message: { role: "user", content: "First prompt" },
+    },
+    {
+      type: "message",
+      id: "assistant-1",
+      parentId: "checkpoint-1",
+      message: { role: "assistant", content: [] },
+    },
+    {
+      type: "custom",
+      id: "mid-turn",
+      parentId: "assistant-1",
+      customType: "choco-pi:file-checkpoint",
+      data: { ...checkpoint, ref: "mid-turn" },
+    },
+    {
+      type: "custom",
+      id: "checkpoint-2",
+      parentId: "mid-turn",
+      customType: "choco-pi:file-checkpoint",
+      data: { ...checkpoint, ref: "turn-2", label: "Second prompt" },
+    },
+    {
+      type: "message",
+      id: "user-2",
+      parentId: "checkpoint-2",
+      message: { role: "user", content: "Second prompt" },
+    },
+    {
+      type: "custom",
+      id: "trailing",
+      parentId: "user-2",
+      customType: "choco-pi:file-checkpoint",
+      data: { ...checkpoint, ref: "trailing" },
+    },
+  ] as SessionEntry[];
 
-	assert.deepEqual(turnCheckpointsFromEntries(entries), [
-		{
-			checkpoint,
-			checkpointEntryId: "checkpoint-1",
-			conversationTargetId: "user-1",
-			userTurnIndex: 1,
-			label: "First prompt",
-		},
-		{
-			checkpoint: { ...checkpoint, ref: "turn-2", label: "Second prompt" },
-			checkpointEntryId: "checkpoint-2",
-			conversationTargetId: "user-2",
-			userTurnIndex: 2,
-			label: "Second prompt",
-		},
-	]);
+  assert.deepEqual(turnCheckpointsFromEntries(entries), [
+    {
+      checkpoint,
+      checkpointEntryId: "checkpoint-1",
+      conversationTargetId: "user-1",
+      userTurnIndex: 1,
+      label: "First prompt",
+    },
+    {
+      checkpoint: { ...checkpoint, ref: "turn-2", label: "Second prompt" },
+      checkpointEntryId: "checkpoint-2",
+      conversationTargetId: "user-2",
+      userTurnIndex: 2,
+      label: "Second prompt",
+    },
+  ]);
 });
 
 test("rewind timeline starts at current and shows prompts with code-change summaries", () => {
-	const turn: TurnCheckpoint = {
-		checkpoint,
-		checkpointEntryId: "checkpoint-1",
-		conversationTargetId: "user-1",
-		userTurnIndex: 1,
-		label: "First prompt",
-	};
-	const lines = renderRewindTimeline([
-		{ turn, changes: { added: 10, deleted: 1, files: 2 } },
-	], 1, 100, plainTheme);
-	const screen = lines.join("\n");
+  const turn: TurnCheckpoint = {
+    checkpoint,
+    checkpointEntryId: "checkpoint-1",
+    conversationTargetId: "user-1",
+    userTurnIndex: 1,
+    label: "First prompt",
+  };
+  const lines = renderRewindTimeline(
+    [{ turn, changes: { added: 10, deleted: 1, files: 2 } }],
+    1,
+    100,
+    plainTheme,
+  );
+  const screen = lines.join("\n");
 
-	assert.match(screen, /Rewind/);
-	assert.match(screen, /First prompt/);
-	assert.match(screen, /2 files \+10 -1/);
-	assert.match(screen, /❯ \(current\)/);
-	assert.match(screen, /↑↓ to navigate · Enter to continue · Esc to cancel/);
+  assert.match(screen, /Rewind/);
+  assert.match(screen, /First prompt/);
+  assert.match(screen, /2 files \+10 -1/);
+  assert.match(screen, /❯ \(current\)/);
+  assert.match(screen, /↑↓ to navigate · Enter to continue · Esc to cancel/);
 });
 
 test("restoreTurn rolls files back when conversation navigation is cancelled", async () => {
-	const target: TurnCheckpoint = {
-		checkpoint,
-		checkpointEntryId: "checkpoint-1",
-		conversationTargetId: "user-1",
-		userTurnIndex: 1,
-		label: "First prompt",
-	};
-	const safety = { ref: "safety", indexTree: "safety-index", worktreeTree: "safety-worktree" };
-	const restores: string[] = [];
+  const target: TurnCheckpoint = {
+    checkpoint,
+    checkpointEntryId: "checkpoint-1",
+    conversationTargetId: "user-1",
+    userTurnIndex: 1,
+    label: "First prompt",
+  };
+  const safety = { ref: "safety", indexTree: "safety-index", worktreeTree: "safety-worktree" };
+  const restores: string[] = [];
 
-	await assert.rejects(
-		restoreTurn({
-			cwd: "/repo",
-			navigateTree: async () => ({ cancelled: true }),
-		}, target, safety, async (_cwd, snapshot) => { restores.push(snapshot.ref); }),
-		/Conversation rewind was cancelled/,
-	);
-	assert.deepEqual(restores, [checkpoint.ref, safety.ref]);
+  await assert.rejects(
+    restoreTurn(
+      {
+        cwd: "/repo",
+        navigateTree: async () => ({ cancelled: true }),
+      },
+      target,
+      safety,
+      async (_cwd, snapshot) => {
+        restores.push(snapshot.ref);
+      },
+    ),
+    /Conversation rewind was cancelled/,
+  );
+  assert.deepEqual(restores, [checkpoint.ref, safety.ref]);
 });
 
 test("restoreTurn restores files before rewinding the conversation without a summary", async () => {
-	const target: TurnCheckpoint = {
-		checkpoint,
-		checkpointEntryId: "checkpoint-1",
-		conversationTargetId: "user-1",
-		userTurnIndex: 1,
-		label: "First prompt",
-	};
-	const safety = { ref: "safety", indexTree: "safety-index", worktreeTree: "safety-worktree" };
-	const events: string[] = [];
+  const target: TurnCheckpoint = {
+    checkpoint,
+    checkpointEntryId: "checkpoint-1",
+    conversationTargetId: "user-1",
+    userTurnIndex: 1,
+    label: "First prompt",
+  };
+  const safety = { ref: "safety", indexTree: "safety-index", worktreeTree: "safety-worktree" };
+  const events: string[] = [];
 
-	await restoreTurn({
-		cwd: "/repo",
-		navigateTree: async (targetId, options) => {
-			events.push(`navigate:${targetId}:${String(options?.summarize)}`);
-			return { cancelled: false };
-		},
-	}, target, safety, async (_cwd, snapshot) => { events.push(`restore:${snapshot.ref}`); });
+  await restoreTurn(
+    {
+      cwd: "/repo",
+      navigateTree: async (targetId, options) => {
+        events.push(`navigate:${targetId}:${String(options?.summarize)}`);
+        return { cancelled: false };
+      },
+    },
+    target,
+    safety,
+    async (_cwd, snapshot) => {
+      events.push(`restore:${snapshot.ref}`);
+    },
+  );
 
-	assert.deepEqual(events, [
-		`restore:${checkpoint.ref}`,
-		"navigate:user-1:false",
-	]);
+  assert.deepEqual(events, [`restore:${checkpoint.ref}`, "navigate:user-1:false"]);
 });

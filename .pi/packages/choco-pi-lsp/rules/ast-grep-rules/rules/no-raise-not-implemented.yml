@@ -9,8 +9,8 @@ rule:
   has:
     any:
       - kind: identifier
-        regex: '^NotImplementedError$'
+        regex: "^NotImplementedError$"
       - kind: call
         has:
           field: function
-          regex: '^NotImplementedError$'
+          regex: "^NotImplementedError$"

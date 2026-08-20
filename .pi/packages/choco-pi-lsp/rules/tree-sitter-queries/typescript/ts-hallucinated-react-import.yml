@@ -36,7 +36,7 @@ metavars:
 
 post_filter: match_captures
 post_filter_params:
-  SRC: "^['\"]react['\"]$"
+  SRC: '^[''"]react[''"]$'
   NAME: "^(useRouter|usePathname|useSearchParams|useParams|Link|Image|Script|Head|getServerSideProps|getStaticProps|getStaticPaths|NextPage|NextApiRequest|NextApiResponse|GetServerSideProps|GetStaticProps|GetStaticPaths|notFound|redirect|permanentRedirect)$"
 
 has_fix: false

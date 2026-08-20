@@ -25,28 +25,28 @@ import { logBusEvent } from "./bus-events-logger.js";
 import { isBusPublishEnabled } from "./bus-publish.js";
 import { normalizeFilePath } from "./path-utils.js";
 import {
-	createLiveBusEmitter,
-	recordStaleBusFailure,
-	resolveLiveBusEmitter,
-	type BusEmitFn,
-	type BusEmitGetter,
+  createLiveBusEmitter,
+  recordStaleBusFailure,
+  resolveLiveBusEmitter,
+  type BusEmitFn,
+  type BusEmitGetter,
 } from "./live-bus-emitter.js";
 
 export const BUS_DISPOSITION_EVENT = "pilens:diagnostic:disposition";
 export const BUS_DISPOSITION_VERSION = 1;
 
 export interface PilensDispositionPayload {
-	v: typeof BUS_DISPOSITION_VERSION;
-	source: "choco-pi-lsp";
-	cwd: string;
-	/** Absolute, normalized path (forward slashes — same normalization as #482 `paths`). */
-	filePath: string;
-	disposition: string;
-	tool?: string;
-	rule?: string;
-	line?: number;
-	anchor: string;
-	reason?: string;
+  v: typeof BUS_DISPOSITION_VERSION;
+  source: "choco-pi-lsp";
+  cwd: string;
+  /** Absolute, normalized path (forward slashes — same normalization as #482 `paths`). */
+  filePath: string;
+  disposition: string;
+  tool?: string;
+  rule?: string;
+  line?: number;
+  anchor: string;
+  reason?: string;
 }
 
 const liveEmitter = createLiveBusEmitter();
@@ -62,32 +62,32 @@ let hasLoggedDisabled = false;
  * the MCP server path run in (no pi host, no `pi.events`).
  */
 export function wireDispositionBusEmitter(emitFn: BusEmitFn | undefined): void {
-	liveEmitter.wire(emitFn);
+  liveEmitter.wire(emitFn);
 }
 
 export function wireDispositionBusEmitterGetter(getter: BusEmitGetter | undefined): void {
-	liveEmitter.wireGetter(getter);
+  liveEmitter.wireGetter(getter);
 }
 
 /** Test-only: reset module state between test files. */
 export function _resetDispositionPublishForTests(): void {
-	liveEmitter.reset();
-	hasLoggedFailure = false;
-	hasLoggedUnwired = false;
-	hasLoggedDisabled = false;
+  liveEmitter.reset();
+  hasLoggedFailure = false;
+  hasLoggedUnwired = false;
+  hasLoggedDisabled = false;
 }
 
 export interface PublishDispositionArgs {
-	cwd: string;
-	/** Absolute path (pre-normalization — this function normalizes). */
-	filePath: string;
-	disposition: string;
-	tool?: string;
-	rule?: string;
-	line?: number;
-	anchor: string;
-	reason?: string;
-	dbg?: (msg: string) => void;
+  cwd: string;
+  /** Absolute path (pre-normalization — this function normalizes). */
+  filePath: string;
+  disposition: string;
+  tool?: string;
+  rule?: string;
+  line?: number;
+  anchor: string;
+  reason?: string;
+  dbg?: (msg: string) => void;
 }
 
 /**
@@ -95,69 +95,69 @@ export interface PublishDispositionArgs {
  * markDisposition call). Fire-and-forget: never throws, never awaited.
  */
 export function publishDisposition(args: PublishDispositionArgs): void {
-	if (!isBusPublishEnabled()) {
-		if (!hasLoggedDisabled) {
-			hasLoggedDisabled = true;
-			logBusEvent({
-				event: BUS_DISPOSITION_EVENT,
-				outcome: "skipped_disabled",
-				cwd: normalizeFilePath(args.cwd),
-			});
-		}
-		return;
-	}
-	const resolution = resolveLiveBusEmitter(liveEmitter, () => ({
-		event: BUS_DISPOSITION_EVENT,
-		cwd: normalizeFilePath(args.cwd),
-	}));
-	if (resolution.outcome === "stale-session") return;
-	if (resolution.outcome === "unwired") {
-		if (!hasLoggedUnwired) {
-			hasLoggedUnwired = true;
-			logBusEvent({
-				event: BUS_DISPOSITION_EVENT,
-				outcome: "skipped_unwired",
-				cwd: normalizeFilePath(args.cwd),
-			});
-		}
-		return;
-	}
-	const busEmit = resolution.emit;
+  if (!isBusPublishEnabled()) {
+    if (!hasLoggedDisabled) {
+      hasLoggedDisabled = true;
+      logBusEvent({
+        event: BUS_DISPOSITION_EVENT,
+        outcome: "skipped_disabled",
+        cwd: normalizeFilePath(args.cwd),
+      });
+    }
+    return;
+  }
+  const resolution = resolveLiveBusEmitter(liveEmitter, () => ({
+    event: BUS_DISPOSITION_EVENT,
+    cwd: normalizeFilePath(args.cwd),
+  }));
+  if (resolution.outcome === "stale-session") return;
+  if (resolution.outcome === "unwired") {
+    if (!hasLoggedUnwired) {
+      hasLoggedUnwired = true;
+      logBusEvent({
+        event: BUS_DISPOSITION_EVENT,
+        outcome: "skipped_unwired",
+        cwd: normalizeFilePath(args.cwd),
+      });
+    }
+    return;
+  }
+  const busEmit = resolution.emit;
 
-	try {
-		const payload: PilensDispositionPayload = {
-			v: BUS_DISPOSITION_VERSION,
-			source: "choco-pi-lsp",
-			cwd: normalizeFilePath(args.cwd),
-			filePath: normalizeFilePath(args.filePath),
-			disposition: args.disposition,
-			tool: args.tool,
-			rule: args.rule,
-			line: args.line,
-			anchor: args.anchor,
-			reason: args.reason,
-		};
-		busEmit(BUS_DISPOSITION_EVENT, payload);
-		hasLoggedFailure = false;
-		logBusEvent({
-			event: BUS_DISPOSITION_EVENT,
-			outcome: "emitted",
-			cwd: payload.cwd,
-		});
-	} catch (err) {
-		logBusEvent({
-			event: BUS_DISPOSITION_EVENT,
-			outcome: "emit_failed",
-			cwd: normalizeFilePath(args.cwd),
-			error: String(err),
-			ctxSource: resolution.ctxSource,
-		});
-		if (!hasLoggedFailure) {
-			hasLoggedFailure = true;
-			recordStaleBusFailure(BUS_DISPOSITION_EVENT, err);
-			args.dbg?.(
-				`disposition-publish: pilens:diagnostic:disposition emit failed (further failures suppressed): ${err}`,
-			);
-		}
-	}
+  try {
+    const payload: PilensDispositionPayload = {
+      v: BUS_DISPOSITION_VERSION,
+      source: "choco-pi-lsp",
+      cwd: normalizeFilePath(args.cwd),
+      filePath: normalizeFilePath(args.filePath),
+      disposition: args.disposition,
+      tool: args.tool,
+      rule: args.rule,
+      line: args.line,
+      anchor: args.anchor,
+      reason: args.reason,
+    };
+    busEmit(BUS_DISPOSITION_EVENT, payload);
+    hasLoggedFailure = false;
+    logBusEvent({
+      event: BUS_DISPOSITION_EVENT,
+      outcome: "emitted",
+      cwd: payload.cwd,
+    });
+  } catch (err) {
+    logBusEvent({
+      event: BUS_DISPOSITION_EVENT,
+      outcome: "emit_failed",
+      cwd: normalizeFilePath(args.cwd),
+      error: String(err),
+      ctxSource: resolution.ctxSource,
+    });
+    if (!hasLoggedFailure) {
+      hasLoggedFailure = true;
+      recordStaleBusFailure(BUS_DISPOSITION_EVENT, err);
+      args.dbg?.(
+        `disposition-publish: pilens:diagnostic:disposition emit failed (further failures suppressed): ${err}`,
+      );
+    }
+  }
 }

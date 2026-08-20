@@ -20,18 +20,18 @@ import type { PersistedWidgetState } from "./widget-state.js";
 export const STATE_VERSION = 1;
 
 export interface PersistedSessionState {
-	version: number;
-	sessionId: string;
-	savedAt: number;
-	widget: PersistedWidgetState;
-	/**
-	 * Read-before-edit guard read-set (#1041). Optional and additive: sessions
-	 * persisted before this field existed simply omit it, and load cleanly as
-	 * "no prior reads" — so STATE_VERSION is deliberately NOT bumped (a bump
-	 * would reject those older files entirely and lose their widget rehydration
-	 * too). Rehydrated with disk-staleness reconciliation by ReadGuard.importState.
-	 */
-	readGuard?: PersistedReadGuardState;
+  version: number;
+  sessionId: string;
+  savedAt: number;
+  widget: PersistedWidgetState;
+  /**
+   * Read-before-edit guard read-set (#1041). Optional and additive: sessions
+   * persisted before this field existed simply omit it, and load cleanly as
+   * "no prior reads" — so STATE_VERSION is deliberately NOT bumped (a bump
+   * would reject those older files entirely and lose their widget rehydration
+   * too). Rehydrated with disk-staleness reconciliation by ReadGuard.importState.
+   */
+  readGuard?: PersistedReadGuardState;
 }
 
 /**
@@ -51,23 +51,23 @@ export interface PersistedSessionState {
 export type SessionStartMode = "fork" | "keep" | "clean" | "maybe-rehydrate";
 
 export function sessionStartMode(
-	reason: string | undefined,
-	hasPendingForkSnapshot: boolean,
+  reason: string | undefined,
+  hasPendingForkSnapshot: boolean,
 ): SessionStartMode {
-	if (reason === "fork" && hasPendingForkSnapshot) return "fork";
-	if (reason === "reload") return "keep";
-	if (reason === "new") return "clean";
-	return "maybe-rehydrate";
+  if (reason === "fork" && hasPendingForkSnapshot) return "fork";
+  if (reason === "reload") return "keep";
+  if (reason === "new") return "clean";
+  return "maybe-rehydrate";
 }
 
 function sessionsDir(cwd: string): string {
-	return path.join(getProjectDataDir(cwd), "sessions");
+  return path.join(getProjectDataDir(cwd), "sessions");
 }
 
 /** Session ids are pi uuids, but sanitize defensively before using as a filename. */
 function sessionFilePath(cwd: string, sessionId: string): string {
-	const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 200);
-	return path.join(sessionsDir(cwd), `${safe}.json`);
+  const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 200);
+  return path.join(sessionsDir(cwd), `${safe}.json`);
 }
 
 /**
@@ -75,34 +75,34 @@ function sessionFilePath(cwd: string, sessionId: string): string {
  * No-op on a missing id or any I/O error — persistence must never break a turn.
  */
 export async function saveSessionState(
-	cwd: string,
-	sessionId: string | undefined,
-	widget: PersistedWidgetState,
-	readGuard?: PersistedReadGuardState,
+  cwd: string,
+  sessionId: string | undefined,
+  widget: PersistedWidgetState,
+  readGuard?: PersistedReadGuardState,
 ): Promise<void> {
-	if (!sessionId || !sessionId.trim()) return;
-	try {
-		const dir = sessionsDir(cwd);
-		await fs.mkdir(dir, { recursive: true });
-		const payload: PersistedSessionState = {
-			version: STATE_VERSION,
-			sessionId,
-			savedAt: Date.now(),
-			widget,
-			...(readGuard ? { readGuard } : {}),
-		};
-		const file = sessionFilePath(cwd, sessionId);
-		// bestEffort (default): a failed write/rename just means this snapshot is
-		// lost, matching this store's documented "start clean" fallback — never
-		// throw for the caller. (Tmp naming is now the shared
-		// `${target}.tmp-${pid}-${seq}` shape (unique per call, not just per process,
-		// since #1205) rather than this site's former
-		// `${file}.${pid}.tmp` — no behavioral difference: nothing reads the
-		// intermediate tmp filename.)
-		await writeFileAtomicAsync(file, JSON.stringify(payload));
-	} catch {
-		/* best-effort */
-	}
+  if (!sessionId || !sessionId.trim()) return;
+  try {
+    const dir = sessionsDir(cwd);
+    await fs.mkdir(dir, { recursive: true });
+    const payload: PersistedSessionState = {
+      version: STATE_VERSION,
+      sessionId,
+      savedAt: Date.now(),
+      widget,
+      ...(readGuard ? { readGuard } : {}),
+    };
+    const file = sessionFilePath(cwd, sessionId);
+    // bestEffort (default): a failed write/rename just means this snapshot is
+    // lost, matching this store's documented "start clean" fallback — never
+    // throw for the caller. (Tmp naming is now the shared
+    // `${target}.tmp-${pid}-${seq}` shape (unique per call, not just per process,
+    // since #1205) rather than this site's former
+    // `${file}.${pid}.tmp` — no behavioral difference: nothing reads the
+    // intermediate tmp filename.)
+    await writeFileAtomicAsync(file, JSON.stringify(payload));
+  } catch {
+    /* best-effort */
+  }
 }
 
 /**
@@ -113,26 +113,24 @@ export async function saveSessionState(
  * edit. Existence/mtime are probed concurrently (off the event loop).
  */
 export async function dropStaleFiles(
-	widget: PersistedWidgetState,
-	savedAt: number,
+  widget: PersistedWidgetState,
+  savedAt: number,
 ): Promise<PersistedWidgetState> {
-	const checked = await Promise.all(
-		widget.files.map(async (file) => {
-			try {
-				const st = await fs.stat(file.filePath);
-				// mtime within a small skew of savedAt counts as unchanged.
-				return st.mtimeMs <= savedAt + 1 ? file : undefined;
-			} catch {
-				return undefined; // gone → drop
-			}
-		}),
-	);
-	return {
-		...widget,
-		files: checked.filter(
-			(f): f is PersistedWidgetState["files"][number] => f !== undefined,
-		),
-	};
+  const checked = await Promise.all(
+    widget.files.map(async (file) => {
+      try {
+        const st = await fs.stat(file.filePath);
+        // mtime within a small skew of savedAt counts as unchanged.
+        return st.mtimeMs <= savedAt + 1 ? file : undefined;
+      } catch {
+        return undefined; // gone → drop
+      }
+    }),
+  );
+  return {
+    ...widget,
+    files: checked.filter((f): f is PersistedWidgetState["files"][number] => f !== undefined),
+  };
 }
 
 /**
@@ -140,16 +138,13 @@ export async function dropStaleFiles(
  * unreadable / version mismatch.
  */
 export async function loadSessionState(
-	cwd: string,
-	sessionId: string | undefined,
+  cwd: string,
+  sessionId: string | undefined,
 ): Promise<PersistedSessionState | undefined> {
-	if (!sessionId || !sessionId.trim()) return undefined;
-	return readJsonCacheAsync<PersistedSessionState>(
-		sessionFilePath(cwd, sessionId),
-		(parsed) => {
-			const state = parsed as PersistedSessionState;
-			if (state?.version !== STATE_VERSION || !state.widget) return undefined;
-			return state;
-		},
-	);
+  if (!sessionId || !sessionId.trim()) return undefined;
+  return readJsonCacheAsync<PersistedSessionState>(sessionFilePath(cwd, sessionId), (parsed) => {
+    const state = parsed as PersistedSessionState;
+    if (state?.version !== STATE_VERSION || !state.widget) return undefined;
+    return state;
+  });
 }

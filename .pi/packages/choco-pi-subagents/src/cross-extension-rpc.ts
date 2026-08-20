@@ -18,9 +18,7 @@ export interface EventBus {
 }
 
 /** RPC reply envelope — matches pi-mono's RpcResponse shape. */
-export type RpcReply<T = void> =
-  | { success: true; data?: T }
-  | { success: false; error: string };
+export type RpcReply<T = void> = { success: true; data?: T } | { success: false; error: string };
 
 /** RPC protocol version — bumped when the envelope or method contracts change. */
 export const PROTOCOL_VERSION = 2;
@@ -33,8 +31,8 @@ export interface SpawnCapable {
 
 export interface RpcDeps {
   events: EventBus;
-  pi: unknown;                    // passed through to manager.spawn
-  getCtx: () => unknown | undefined;  // returns current ExtensionContext
+  pi: unknown; // passed through to manager.spawn
+  getCtx: () => unknown | undefined; // returns current ExtensionContext
   manager: SpawnCapable;
 }
 
@@ -62,7 +60,8 @@ function handleRpc<P extends { requestId: string }>(
       events.emit(`${channel}:reply:${params.requestId}`, reply);
     } catch (err: any) {
       events.emit(`${channel}:reply:${params.requestId}`, {
-        success: false, error: err?.message ?? String(err),
+        success: false,
+        error: err?.message ?? String(err),
       });
     }
   });
@@ -80,7 +79,9 @@ export function registerRpcHandlers(deps: RpcDeps): RpcHandle {
   });
 
   const unsubSpawn = handleRpc<{ requestId: string; type: string; prompt: string; options?: any }>(
-    events, "subagents:rpc:spawn", ({ type, prompt, options }) => {
+    events,
+    "subagents:rpc:spawn",
+    ({ type, prompt, options }) => {
       const ctx = getCtx();
       if (!ctx) throw new Error("No active session");
 
@@ -113,7 +114,9 @@ export function registerRpcHandlers(deps: RpcDeps): RpcHandle {
   );
 
   const unsubStop = handleRpc<{ requestId: string; agentId: string }>(
-    events, "subagents:rpc:stop", ({ agentId }) => {
+    events,
+    "subagents:rpc:stop",
+    ({ agentId }) => {
       if (!manager.abort(agentId)) throw new Error("Agent not found");
     },
   );

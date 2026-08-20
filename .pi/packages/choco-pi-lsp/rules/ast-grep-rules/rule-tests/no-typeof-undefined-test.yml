@@ -1,7 +1,7 @@
 id: no-typeof-undefined
 valid:
-  - 'x === undefined'
-  - 'x !== undefined'
+  - "x === undefined"
+  - "x !== undefined"
   - 'typeof __dirname !== "undefined"'
   - 'typeof __filename === "undefined"'
   - 'if (typeof window === "undefined") return;'

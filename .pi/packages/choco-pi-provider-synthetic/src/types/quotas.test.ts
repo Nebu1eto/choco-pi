@@ -15,9 +15,7 @@ describe("parseQuotaHeader", () => {
   });
 
   it("rejects payloads that do not match the quota schema", () => {
-    expect(
-      parseQuotaHeader({ "x-synthetic-quotas": JSON.stringify([]) }),
-    ).toBeUndefined();
+    expect(parseQuotaHeader({ "x-synthetic-quotas": JSON.stringify([]) })).toBeUndefined();
     expect(
       parseQuotaHeader({
         "x-synthetic-quotas": JSON.stringify({ subscription: {} }),

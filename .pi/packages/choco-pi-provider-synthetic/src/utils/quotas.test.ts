@@ -33,9 +33,7 @@ describe("detectBillingMode", () => {
   });
 
   it("rejects malformed subscription quota windows", () => {
-    expect(detectBillingMode({ subscription: {} } as QuotasResponse)).toBe(
-      "pay-as-you-go",
-    );
+    expect(detectBillingMode({ subscription: {} } as QuotasResponse)).toBe("pay-as-you-go");
     expect(
       detectBillingMode({
         weeklyTokenLimit: true,

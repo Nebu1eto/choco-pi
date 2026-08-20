@@ -28,21 +28,21 @@ export type SecretSource = "gitleaks" | "trivy" | "ast-grep";
 
 /** Minimal normalized secret from trivy's `Results[].Secrets[]` report rows. */
 export interface TrivySecretFinding {
-	ruleId: string;
-	file: string;
-	line: number;
-	title?: string;
+  ruleId: string;
+  file: string;
+  line: number;
+  title?: string;
 }
 
 export interface SecretFinding {
-	/** Raw path as reported by the source (display happens downstream). */
-	file: string;
-	line: number;
-	/** Scanners that flagged this location — sorted + deduped. */
-	sources: SecretSource[];
-	/** Representative rule id (from the highest-priority source present). */
-	rule: string;
-	description?: string;
+  /** Raw path as reported by the source (display happens downstream). */
+  file: string;
+  line: number;
+  /** Scanners that flagged this location — sorted + deduped. */
+  sources: SecretSource[];
+  /** Representative rule id (from the highest-priority source present). */
+  rule: string;
+  description?: string;
 }
 
 /**
@@ -57,47 +57,43 @@ const SECRET_RULE_PATTERN = /hardcoded|secret|password|credential/i;
 
 /** Does this dispatch warning look like a hardcoded-secret finding? */
 export function isSecretWarning(warning: ActionableWarningRecord): boolean {
-	const id = `${warning.rule ?? ""} ${warning.code ?? ""}`;
-	return SECRET_RULE_PATTERN.test(id);
+  const id = `${warning.rule ?? ""} ${warning.code ?? ""}`;
+  return SECRET_RULE_PATTERN.test(id);
 }
 
 /** Location key used to collapse the same secret across sources. */
 export function secretLocationKey(file: string, line: number): string {
-	return `${normalizeFilePath(file)}:${line}`;
+  return `${normalizeFilePath(file)}:${line}`;
 }
 
 // choco-pi fork: the gitleaks and trivy-secret converters are removed with
 // their clients (see VENDORED.md); ast-grep remains the only secret producer.
 
-export function fromAstGrepWarnings(
-	warnings: ActionableWarningRecord[],
-): SecretFinding[] {
-	const out: SecretFinding[] = [];
-	for (const w of warnings) {
-		if (!isSecretWarning(w) || typeof w.line !== "number") continue;
-		out.push({
-			file: w.filePath,
-			line: w.line,
-			sources: ["ast-grep"],
-			rule: w.rule ?? w.code ?? "hardcoded-secret",
-			description: w.message,
-		});
-	}
-	return out;
+export function fromAstGrepWarnings(warnings: ActionableWarningRecord[]): SecretFinding[] {
+  const out: SecretFinding[] = [];
+  for (const w of warnings) {
+    if (!isSecretWarning(w) || typeof w.line !== "number") continue;
+    out.push({
+      file: w.filePath,
+      line: w.line,
+      sources: ["ast-grep"],
+      rule: w.rule ?? w.code ?? "hardcoded-secret",
+      description: w.message,
+    });
+  }
+  return out;
 }
 
 // gitleaks > trivy > ast-grep: when the same location is flagged by several
 // scanners we keep the most-specific committed-secret rule id for display.
 const SOURCE_PRIORITY: Record<SecretSource, number> = {
-	gitleaks: 0,
-	trivy: 1,
-	"ast-grep": 2,
+  gitleaks: 0,
+  trivy: 1,
+  "ast-grep": 2,
 };
 
 function sortSources(sources: SecretSource[]): SecretSource[] {
-	return [...new Set(sources)].sort(
-		(a, b) => SOURCE_PRIORITY[a] - SOURCE_PRIORITY[b],
-	);
+  return [...new Set(sources)].sort((a, b) => SOURCE_PRIORITY[a] - SOURCE_PRIORITY[b]);
 }
 
 /**
@@ -109,27 +105,25 @@ function sortSources(sources: SecretSource[]): SecretSource[] {
  * the same secret fed in from gitleaks + trivy + ast-grep yields a single
  * finding, not three.
  */
-export function dedupeSecretFindings(
-	findings: SecretFinding[],
-): SecretFinding[] {
-	const byKey = new Map<string, SecretFinding>();
-	for (const f of findings) {
-		const key = secretLocationKey(f.file, f.line);
-		const incoming = sortSources(f.sources);
-		const existed = byKey.get(key);
-		if (!existed) {
-			byKey.set(key, { ...f, sources: incoming });
-			continue;
-		}
-		// `existed.sources` is kept sorted, so [0] is its current rule's source.
-		const existingTop = SOURCE_PRIORITY[existed.sources[0]];
-		existed.sources = sortSources([...existed.sources, ...incoming]);
-		// Keep the rule from the highest-priority source now present.
-		if (SOURCE_PRIORITY[incoming[0]] < existingTop) {
-			existed.rule = f.rule;
-		}
-		// Fill a missing description from any source.
-		existed.description ??= f.description;
-	}
-	return [...byKey.values()];
+export function dedupeSecretFindings(findings: SecretFinding[]): SecretFinding[] {
+  const byKey = new Map<string, SecretFinding>();
+  for (const f of findings) {
+    const key = secretLocationKey(f.file, f.line);
+    const incoming = sortSources(f.sources);
+    const existed = byKey.get(key);
+    if (!existed) {
+      byKey.set(key, { ...f, sources: incoming });
+      continue;
+    }
+    // `existed.sources` is kept sorted, so [0] is its current rule's source.
+    const existingTop = SOURCE_PRIORITY[existed.sources[0]];
+    existed.sources = sortSources([...existed.sources, ...incoming]);
+    // Keep the rule from the highest-priority source now present.
+    if (SOURCE_PRIORITY[incoming[0]] < existingTop) {
+      existed.rule = f.rule;
+    }
+    // Fill a missing description from any source.
+    existed.description ??= f.description;
+  }
+  return [...byKey.values()];
 }

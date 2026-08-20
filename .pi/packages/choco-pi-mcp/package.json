@@ -2,59 +2,25 @@
   "name": "choco-pi-mcp",
   "version": "0.1.0",
   "description": "Vendored MCP (Model Context Protocol) adapter extension for choco-pi",
-  "type": "module",
-  "types": "./index.ts",
-  "exports": {
-    ".": {
-      "types": "./index.ts",
-      "import": "./index.ts",
-      "default": "./index.ts"
-    },
-    "./types": {
-      "types": "./types.ts",
-      "import": "./types.ts",
-      "default": "./types.ts"
-    },
-    "./oauth": {
-      "types": "./oauth.ts",
-      "import": "./oauth.ts",
-      "default": "./oauth.ts"
-    }
-  },
+  "keywords": [
+    "ai",
+    "claude",
+    "coding-agent",
+    "extension",
+    "llm",
+    "mcp",
+    "model-context-protocol",
+    "pi",
+    "pi-package"
+  ],
   "license": "MIT",
   "author": "Nico Bailon",
-  "engines": {
-    "node": ">=20"
-  },
-  "bin": {
-    "choco-pi-mcp": "cli.js"
-  },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nicobailon/pi-mcp-adapter.git"
   },
-  "keywords": [
-    "pi-package",
-    "pi",
-    "mcp",
-    "model-context-protocol",
-    "ai",
-    "coding-agent",
-    "extension",
-    "claude",
-    "llm"
-  ],
-  "pi": {
-    "extensions": [
-      "./index.ts"
-    ],
-    "skills": [
-      "./skills"
-    ],
-    "video": "https://github.com/nicobailon/pi-mcp-adapter/raw/refs/heads/main/pi-mcp.mp4"
+  "bin": {
+    "choco-pi-mcp": "cli.js"
   },
   "files": [
     "cli.js",
@@ -125,6 +91,28 @@
     "CHANGELOG.md",
     "LICENSE"
   ],
+  "type": "module",
+  "types": "./index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "import": "./index.ts",
+      "default": "./index.ts"
+    },
+    "./types": {
+      "types": "./types.ts",
+      "import": "./types.ts",
+      "default": "./types.ts"
+    },
+    "./oauth": {
+      "types": "./oauth.ts",
+      "import": "./oauth.ts",
+      "default": "./oauth.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/core": "2.0.0",
@@ -138,6 +126,12 @@
     "smol-toml": "^1.6.1",
     "strip-json-comments": "^5.0.3",
     "zod": "^3.25.0 || ^4.0.0"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "6.0.6",
+    "@types/node": "20.19.43",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "^0.84.2",
@@ -160,10 +154,16 @@
       "optional": true
     }
   },
-  "devDependencies": {
-    "@types/cross-spawn": "6.0.6",
-    "@types/node": "20.19.43",
-    "tsx": "4.21.0",
-    "typescript": "5.9.3"
+  "engines": {
+    "node": ">=20"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "video": "https://github.com/nicobailon/pi-mcp-adapter/raw/refs/heads/main/pi-mcp.mp4"
   }
 }

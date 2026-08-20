@@ -8,74 +8,69 @@ import { getProjectDataDir } from "./file-utils.js";
 import { normalizeMapKey } from "./path-utils.js";
 
 export interface CodeQualityWarningRecord {
-	id: string;
-	filePath: string;
-	displayPath: string;
-	line?: number;
-	column?: number;
-	severity: "warning" | "info" | "hint";
-	tool: string;
-	rule?: string;
-	code?: string;
-	message: string;
-	category:
-		| "maintainability"
-		| "type-safety"
-		| "duplication"
-		| "style"
-		| "other";
-	origin: "dispatch";
+  id: string;
+  filePath: string;
+  displayPath: string;
+  line?: number;
+  column?: number;
+  severity: "warning" | "info" | "hint";
+  tool: string;
+  rule?: string;
+  code?: string;
+  message: string;
+  category: "maintainability" | "type-safety" | "duplication" | "style" | "other";
+  origin: "dispatch";
 }
 
 export interface CodeQualityWarningsHistoryEntry {
-	timestamp: string;
-	sessionId: string;
-	turnIndex: number;
-	projectSeq?: number;
-	filePath: string;
-	displayPath: string;
-	fileSeq?: number;
-	line?: number;
-	column?: number;
-	severity: "warning" | "info" | "hint";
-	tool: string;
-	rule?: string;
-	code?: string;
-	message: string;
-	category: CodeQualityWarningRecord["category"];
-	warningId: string;
+  timestamp: string;
+  sessionId: string;
+  turnIndex: number;
+  projectSeq?: number;
+  filePath: string;
+  displayPath: string;
+  fileSeq?: number;
+  line?: number;
+  column?: number;
+  severity: "warning" | "info" | "hint";
+  tool: string;
+  rule?: string;
+  code?: string;
+  message: string;
+  category: CodeQualityWarningRecord["category"];
+  warningId: string;
 }
 
 export interface CodeQualityWarningsReport {
-	generatedAt: string;
-	scope: "turn_delta";
-	sessionId: string;
-	turnIndex: number;
-	projectSeqStart?: number;
-	projectSeqEnd?: number;
-	deltaOnly: true;
-	files: Array<{
-		filePath: string;
-		displayPath: string;
-		fileSeq?: number;
-		warnings: CodeQualityWarningRecord[];
-	}>;
-	summary: {
-		warnings: number;
-		files: number;
-		/**
-		 * Per-tier split of `warnings` (#1777). The dispatch path preserves a
-		 * rule's declared severity, so the quiet tiers are countable instead of
-		 * being folded into `warning`.
-		 *
-		 * OPTIONAL on purpose: this report is persisted to
-		 * `.choco-pi-lsp/cache/code-quality-warnings.json` and read back by
-		 * `tools/diagnostics-report.ts`, which can find a file written by a
-		 * choco-pi-lsp build that predates the field. Readers must tolerate absence.
-		 */
-		byTier?: { warning: number; info: number; hint: number };
-		topRules: Array<{ rule: string; count: number }>;
-	};
+  generatedAt: string;
+  scope: "turn_delta";
+  sessionId: string;
+  turnIndex: number;
+  projectSeqStart?: number;
+  projectSeqEnd?: number;
+  deltaOnly: true;
+  files: Array<{
+    filePath: string;
+    displayPath: string;
+    fileSeq?: number;
+    warnings: CodeQualityWarningRecord[];
+  }>;
+  summary: {
+    warnings: number;
+    files: number;
+    /**
+     * Per-tier split of `warnings` (#1777). The dispatch path preserves a
+     * rule's declared severity, so the quiet tiers are countable instead of
+     * being folded into `warning`.
+     *
+     * OPTIONAL on purpose: this report is persisted to
+     * `.choco-pi-lsp/cache/code-quality-warnings.json` and read back by
+     * `tools/diagnostics-report.ts`, which can find a file written by a
+     * choco-pi-lsp build that predates the field. Readers must tolerate absence.
+     */
+    byTier?: { warning: number; info: number; hint: number };
+    topRules: Array<{ rule: string; count: number }>;
+  };
 }
 
 /**
@@ -85,201 +80,171 @@ export interface CodeQualityWarningsReport {
  * agent's view — the exact "hints dominate the stream" failure the hint tier
  * exists to prevent.
  */
-const TIER_BUDGET_ORDER: Array<CodeQualityWarningRecord["severity"]> = [
-	"warning",
-	"info",
-	"hint",
-];
+const TIER_BUDGET_ORDER: Array<CodeQualityWarningRecord["severity"]> = ["warning", "info", "hint"];
 
 function normalizeMessage(message: string): string {
-	return message.replace(/\s+/g, " ").trim().toLowerCase();
+  return message.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function hashText(value: string, length = 10): string {
-	return createHash("sha256").update(value).digest("hex").slice(0, length);
+  return createHash("sha256").update(value).digest("hex").slice(0, length);
 }
 
 function relativeFile(filePath: string, cwd: string): string {
-	const rel = path.relative(cwd, filePath).replace(/\\/g, "/");
-	return rel && !rel.startsWith("..") ? rel : normalizeMapKey(filePath);
+  const rel = path.relative(cwd, filePath).replace(/\\/g, "/");
+  return rel && !rel.startsWith("..") ? rel : normalizeMapKey(filePath);
 }
 
 function createCodeQualityWarningId(args: {
-	cwd: string;
-	filePath: string;
-	tool?: string;
-	rule?: string;
-	code?: string | number;
-	message: string;
-	line?: number;
+  cwd: string;
+  filePath: string;
+  tool?: string;
+  rule?: string;
+  code?: string | number;
+  message: string;
+  line?: number;
 }): string {
-	const parts = [
-		relativeFile(args.filePath, args.cwd),
-		args.tool ?? "",
-		args.rule ?? "",
-		String(args.code ?? ""),
-		normalizeMessage(args.message),
-		String(args.line ?? ""),
-	];
-	return `cq:${hashText(parts.join("|"))}`;
+  const parts = [
+    relativeFile(args.filePath, args.cwd),
+    args.tool ?? "",
+    args.rule ?? "",
+    String(args.code ?? ""),
+    normalizeMessage(args.message),
+    String(args.line ?? ""),
+  ];
+  return `cq:${hashText(parts.join("|"))}`;
 }
 
-function categorize(
-	diagnostic: Diagnostic,
-): CodeQualityWarningRecord["category"] {
-	const haystack =
-		`${diagnostic.tool} ${diagnostic.rule ?? ""} ${diagnostic.code ?? ""} ${diagnostic.message}`.toLowerCase();
-	if (haystack.includes("type") || haystack.includes("any"))
-		return "type-safety";
-	if (
-		haystack.includes("complex") ||
-		haystack.includes("fan-out") ||
-		haystack.includes("fanout")
-	)
-		return "maintainability";
-	if (haystack.includes("duplicate") || haystack.includes("similar"))
-		return "duplication";
-	if (haystack.includes("style") || haystack.includes("format")) return "style";
-	return "other";
+function categorize(diagnostic: Diagnostic): CodeQualityWarningRecord["category"] {
+  const haystack =
+    `${diagnostic.tool} ${diagnostic.rule ?? ""} ${diagnostic.code ?? ""} ${diagnostic.message}`.toLowerCase();
+  if (haystack.includes("type") || haystack.includes("any")) return "type-safety";
+  if (haystack.includes("complex") || haystack.includes("fan-out") || haystack.includes("fanout"))
+    return "maintainability";
+  if (haystack.includes("duplicate") || haystack.includes("similar")) return "duplication";
+  if (haystack.includes("style") || haystack.includes("format")) return "style";
+  return "other";
 }
 
-function lineInModifiedRanges(
-	line: number | undefined,
-	ranges: ModifiedRange[],
-): boolean {
-	if (line === undefined) return true;
-	if (ranges.length === 0) return true;
-	return ranges.some(
-		(range) => line >= range.start - 2 && line <= range.end + 2,
-	);
+function lineInModifiedRanges(line: number | undefined, ranges: ModifiedRange[]): boolean {
+  if (line === undefined) return true;
+  if (ranges.length === 0) return true;
+  return ranges.some((range) => line >= range.start - 2 && line <= range.end + 2);
 }
 
 export function recordFromCodeQualityDiagnostic(
-	diagnostic: Diagnostic,
-	cwd: string,
+  diagnostic: Diagnostic,
+  cwd: string,
 ): CodeQualityWarningRecord | undefined {
-	if (diagnostic.semantic !== "warning" && diagnostic.semantic !== "none")
-		return undefined;
-	if (diagnostic.severity === "error") return undefined;
-	if (
-		diagnostic.fixable ||
-		diagnostic.fixSuggestion ||
-		diagnostic.autoFixAvailable
-	)
-		return undefined;
+  if (diagnostic.semantic !== "warning" && diagnostic.semantic !== "none") return undefined;
+  if (diagnostic.severity === "error") return undefined;
+  if (diagnostic.fixable || diagnostic.fixSuggestion || diagnostic.autoFixAvailable)
+    return undefined;
 
-	const filePath = path.resolve(cwd, diagnostic.filePath);
-	return {
-		id: createCodeQualityWarningId({
-			cwd,
-			filePath,
-			tool: diagnostic.tool,
-			rule: diagnostic.rule,
-			code: diagnostic.code,
-			message: diagnostic.message,
-			line: diagnostic.line,
-		}),
-		filePath,
-		displayPath: toRunnerDisplayPath(cwd, filePath),
-		line: diagnostic.line,
-		column: diagnostic.column,
-		severity:
-			diagnostic.severity === "hint"
-				? "hint"
-				: diagnostic.severity === "info"
-					? "info"
-					: "warning",
-		tool: diagnostic.tool,
-		rule: diagnostic.rule,
-		code: diagnostic.code,
-		message: diagnostic.message,
-		category: categorize(diagnostic),
-		origin: "dispatch",
-	};
+  const filePath = path.resolve(cwd, diagnostic.filePath);
+  return {
+    id: createCodeQualityWarningId({
+      cwd,
+      filePath,
+      tool: diagnostic.tool,
+      rule: diagnostic.rule,
+      code: diagnostic.code,
+      message: diagnostic.message,
+      line: diagnostic.line,
+    }),
+    filePath,
+    displayPath: toRunnerDisplayPath(cwd, filePath),
+    line: diagnostic.line,
+    column: diagnostic.column,
+    severity:
+      diagnostic.severity === "hint" ? "hint" : diagnostic.severity === "info" ? "info" : "warning",
+    tool: diagnostic.tool,
+    rule: diagnostic.rule,
+    code: diagnostic.code,
+    message: diagnostic.message,
+    category: categorize(diagnostic),
+    origin: "dispatch",
+  };
 }
 
 export function buildCodeQualityWarningsReport(args: {
-	cwd: string;
-	sessionId: string;
-	turnIndex: number;
-	warnings: CodeQualityWarningRecord[];
-	modifiedRangesByFile: Map<string, ModifiedRange[]>;
-	projectSeqStart?: number;
-	projectSeqEnd?: number;
-	fileSeqByPath?: Map<string, number>;
-	maxWarnings?: number;
+  cwd: string;
+  sessionId: string;
+  turnIndex: number;
+  warnings: CodeQualityWarningRecord[];
+  modifiedRangesByFile: Map<string, ModifiedRange[]>;
+  projectSeqStart?: number;
+  projectSeqEnd?: number;
+  fileSeqByPath?: Map<string, number>;
+  maxWarnings?: number;
 }): CodeQualityWarningsReport {
-	const cwd = path.resolve(args.cwd);
-	const maxWarnings = Math.max(1, args.maxWarnings ?? 50);
-	const byId = new Map<string, CodeQualityWarningRecord>();
-	for (const warning of args.warnings) {
-		const ranges =
-			args.modifiedRangesByFile.get(normalizeMapKey(warning.filePath)) ?? [];
-		if (!lineInModifiedRanges(warning.line, ranges)) continue;
-		byId.set(warning.id, warning);
-	}
-	const byDisplayOrder = (
-		a: CodeQualityWarningRecord,
-		b: CodeQualityWarningRecord,
-	): number =>
-		a.displayPath.localeCompare(b.displayPath) ||
-		(a.line ?? 0) - (b.line ?? 0) ||
-		a.message.localeCompare(b.message);
+  const cwd = path.resolve(args.cwd);
+  const maxWarnings = Math.max(1, args.maxWarnings ?? 50);
+  const byId = new Map<string, CodeQualityWarningRecord>();
+  for (const warning of args.warnings) {
+    const ranges = args.modifiedRangesByFile.get(normalizeMapKey(warning.filePath)) ?? [];
+    if (!lineInModifiedRanges(warning.line, ranges)) continue;
+    byId.set(warning.id, warning);
+  }
+  const byDisplayOrder = (a: CodeQualityWarningRecord, b: CodeQualityWarningRecord): number =>
+    a.displayPath.localeCompare(b.displayPath) ||
+    (a.line ?? 0) - (b.line ?? 0) ||
+    a.message.localeCompare(b.message);
 
-	// Spend the budget tier by tier (see TIER_BUDGET_ORDER), then restore
-	// display order so the report still reads file by file, line by line.
-	const candidates = [...byId.values()].sort(byDisplayOrder);
-	const merged: CodeQualityWarningRecord[] = [];
-	for (const tier of TIER_BUDGET_ORDER) {
-		for (const warning of candidates) {
-			if (merged.length >= maxWarnings) break;
-			if (warning.severity === tier) merged.push(warning);
-		}
-	}
-	merged.sort(byDisplayOrder);
+  // Spend the budget tier by tier (see TIER_BUDGET_ORDER), then restore
+  // display order so the report still reads file by file, line by line.
+  const candidates = [...byId.values()].sort(byDisplayOrder);
+  const merged: CodeQualityWarningRecord[] = [];
+  for (const tier of TIER_BUDGET_ORDER) {
+    for (const warning of candidates) {
+      if (merged.length >= maxWarnings) break;
+      if (warning.severity === tier) merged.push(warning);
+    }
+  }
+  merged.sort(byDisplayOrder);
 
-	const byFile = new Map<string, CodeQualityWarningRecord[]>();
-	for (const warning of merged) {
-		const arr = byFile.get(warning.filePath) ?? [];
-		arr.push(warning);
-		byFile.set(warning.filePath, arr);
-	}
-	const files = [...byFile.entries()].map(([filePath, warnings]) => ({
-		filePath,
-		displayPath: toRunnerDisplayPath(cwd, filePath),
-		fileSeq: args.fileSeqByPath?.get(normalizeMapKey(filePath)),
-		warnings,
-	}));
-	const ruleCounts = new Map<string, number>();
-	for (const warning of merged) {
-		const rule = warning.rule ?? warning.tool;
-		ruleCounts.set(rule, (ruleCounts.get(rule) ?? 0) + 1);
-	}
-	const topRules = [...ruleCounts.entries()]
-		.map(([rule, count]) => ({ rule, count }))
-		.sort((a, b) => b.count - a.count || a.rule.localeCompare(b.rule))
-		.slice(0, 8);
+  const byFile = new Map<string, CodeQualityWarningRecord[]>();
+  for (const warning of merged) {
+    const arr = byFile.get(warning.filePath) ?? [];
+    arr.push(warning);
+    byFile.set(warning.filePath, arr);
+  }
+  const files = [...byFile.entries()].map(([filePath, warnings]) => ({
+    filePath,
+    displayPath: toRunnerDisplayPath(cwd, filePath),
+    fileSeq: args.fileSeqByPath?.get(normalizeMapKey(filePath)),
+    warnings,
+  }));
+  const ruleCounts = new Map<string, number>();
+  for (const warning of merged) {
+    const rule = warning.rule ?? warning.tool;
+    ruleCounts.set(rule, (ruleCounts.get(rule) ?? 0) + 1);
+  }
+  const topRules = [...ruleCounts.entries()]
+    .map(([rule, count]) => ({ rule, count }))
+    .sort((a, b) => b.count - a.count || a.rule.localeCompare(b.rule))
+    .slice(0, 8);
 
-	return {
-		generatedAt: new Date().toISOString(),
-		scope: "turn_delta",
-		sessionId: args.sessionId,
-		turnIndex: args.turnIndex,
-		projectSeqStart: args.projectSeqStart,
-		projectSeqEnd: args.projectSeqEnd,
-		deltaOnly: true,
-		files,
-		summary: {
-			warnings: merged.length,
-			files: files.length,
-			byTier: {
-				warning: merged.filter((w) => w.severity === "warning").length,
-				info: merged.filter((w) => w.severity === "info").length,
-				hint: merged.filter((w) => w.severity === "hint").length,
-			},
-			topRules,
-		},
-	};
+  return {
+    generatedAt: new Date().toISOString(),
+    scope: "turn_delta",
+    sessionId: args.sessionId,
+    turnIndex: args.turnIndex,
+    projectSeqStart: args.projectSeqStart,
+    projectSeqEnd: args.projectSeqEnd,
+    deltaOnly: true,
+    files,
+    summary: {
+      warnings: merged.length,
+      files: files.length,
+      byTier: {
+        warning: merged.filter((w) => w.severity === "warning").length,
+        info: merged.filter((w) => w.severity === "info").length,
+        hint: merged.filter((w) => w.severity === "hint").length,
+      },
+      topRules,
+    },
+  };
 }
 
 /**
@@ -310,90 +275,86 @@ export function buildCodeQualityWarningsReport(args: {
  * change that adds a second call site has a better chance of being caught.
  */
 export function writeCodeQualityWarningsReport(
-	cacheManager: CacheManager,
-	cwd: string,
-	report: CodeQualityWarningsReport,
+  cacheManager: CacheManager,
+  cwd: string,
+  report: CodeQualityWarningsReport,
 ): void {
-	cacheManager.writeCache("code-quality-warnings", report, cwd);
+  cacheManager.writeCache("code-quality-warnings", report, cwd);
 }
 
 export function getCodeQualityWarningsHistoryPath(cwd: string): string {
-	return path.join(getProjectDataDir(cwd), "code-quality-warnings.jsonl");
+  return path.join(getProjectDataDir(cwd), "code-quality-warnings.jsonl");
 }
 
 export function appendCodeQualityWarningsHistory(
-	cwd: string,
-	report: CodeQualityWarningsReport,
+  cwd: string,
+  report: CodeQualityWarningsReport,
 ): void {
-	const warnings = report.files.flatMap((file) =>
-		file.warnings.map(
-			(warning): CodeQualityWarningsHistoryEntry => ({
-				timestamp: report.generatedAt,
-				sessionId: report.sessionId,
-				turnIndex: report.turnIndex,
-				projectSeq: report.projectSeqEnd,
-				filePath: warning.filePath,
-				displayPath: warning.displayPath,
-				fileSeq: file.fileSeq,
-				line: warning.line,
-				column: warning.column,
-				severity: warning.severity,
-				tool: warning.tool,
-				rule: warning.rule,
-				code: warning.code,
-				message: warning.message,
-				category: warning.category,
-				warningId: warning.id,
-			}),
-		),
-	);
-	if (warnings.length === 0) return;
-	const historyPath = getCodeQualityWarningsHistoryPath(cwd);
-	try {
-		fs.mkdirSync(path.dirname(historyPath), { recursive: true });
-		fs.appendFileSync(
-			historyPath,
-			`${warnings.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-			"utf8",
-		);
-	} catch {
-		// Non-fatal — history write failure should never surface to the agent.
-	}
+  const warnings = report.files.flatMap((file) =>
+    file.warnings.map((warning): CodeQualityWarningsHistoryEntry => ({
+      timestamp: report.generatedAt,
+      sessionId: report.sessionId,
+      turnIndex: report.turnIndex,
+      projectSeq: report.projectSeqEnd,
+      filePath: warning.filePath,
+      displayPath: warning.displayPath,
+      fileSeq: file.fileSeq,
+      line: warning.line,
+      column: warning.column,
+      severity: warning.severity,
+      tool: warning.tool,
+      rule: warning.rule,
+      code: warning.code,
+      message: warning.message,
+      category: warning.category,
+      warningId: warning.id,
+    })),
+  );
+  if (warnings.length === 0) return;
+  const historyPath = getCodeQualityWarningsHistoryPath(cwd);
+  try {
+    fs.mkdirSync(path.dirname(historyPath), { recursive: true });
+    fs.appendFileSync(
+      historyPath,
+      `${warnings.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+      "utf8",
+    );
+  } catch {
+    // Non-fatal — history write failure should never surface to the agent.
+  }
 }
 
 export function formatCodeQualityWarningsAdvisory(
-	report: CodeQualityWarningsReport,
+  report: CodeQualityWarningsReport,
 ): string | undefined {
-	if (report.summary.warnings === 0) return undefined;
-	const topRules = report.summary.topRules
-		.slice(0, 3)
-		.map((entry) => `${entry.rule}×${entry.count}`)
-		.join(", ");
-	// #1777: name the tiers, in the same descending-loudness order the on-demand
-	// ast-grep surface uses (`formatDiagnostics`, clients/ast-grep-client.ts).
-	// A tier with no findings is omitted rather than printed as zero.
-	const byTier = report.summary.byTier ?? { warning: 0, info: 0, hint: 0 };
-	// The line is worth its space only when a quiet tier is present; an
-	// all-warning turn already says everything in the count above.
-	const tiers =
-		byTier.hint || byTier.info
-			? [
-					byTier.warning ? `${byTier.warning} warning` : undefined,
-					byTier.info ? `${byTier.info} info` : undefined,
-					byTier.hint ? `${byTier.hint} hint` : undefined,
-				]
-					.filter(Boolean)
-					.join(", ")
-			: "";
-	return [
-		`Code-quality warnings introduced/touched this turn: ${report.summary.warnings} across ${report.summary.files} file(s).`,
-		tiers
-			? `By tier: ${tiers}. Hint and info are style opinions, not defects.`
-			: undefined,
-		topRules ? `Top rules: ${topRules}` : undefined,
-		"Details written to .choco-pi-lsp/cache/code-quality-warnings.json",
-		"No action required unless you are already refactoring these areas.",
-	]
-		.filter(Boolean)
-		.join("\n");
+  if (report.summary.warnings === 0) return undefined;
+  const topRules = report.summary.topRules
+    .slice(0, 3)
+    .map((entry) => `${entry.rule}×${entry.count}`)
+    .join(", ");
+  // #1777: name the tiers, in the same descending-loudness order the on-demand
+  // ast-grep surface uses (`formatDiagnostics`, clients/ast-grep-client.ts).
+  // A tier with no findings is omitted rather than printed as zero.
+  const byTier = report.summary.byTier ?? { warning: 0, info: 0, hint: 0 };
+  // The line is worth its space only when a quiet tier is present; an
+  // all-warning turn already says everything in the count above.
+  const tiers =
+    byTier.hint || byTier.info
+      ? [
+          byTier.warning ? `${byTier.warning} warning` : undefined,
+          byTier.info ? `${byTier.info} info` : undefined,
+          byTier.hint ? `${byTier.hint} hint` : undefined,
+        ]
+          .filter(Boolean)
+          .join(", ")
+      : "";
+  return [
+    `Code-quality warnings introduced/touched this turn: ${report.summary.warnings} across ${report.summary.files} file(s).`,
+    tiers ? `By tier: ${tiers}. Hint and info are style opinions, not defects.` : undefined,
+    topRules ? `Top rules: ${topRules}` : undefined,
+    "Details written to .choco-pi-lsp/cache/code-quality-warnings.json",
+    "No action required unless you are already refactoring these areas.",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

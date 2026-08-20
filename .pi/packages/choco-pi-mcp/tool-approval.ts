@@ -26,10 +26,13 @@ function stableStringify(value: unknown): string {
     return serialized === undefined ? "undefined" : serialized;
   }
   if (Array.isArray(value)) {
-    return `[${value.map(item => stableStringify(item)).join(",")}]`;
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
   }
   const object = value as Record<string, unknown>;
-  return `{${Object.keys(object).sort().map(key => `${JSON.stringify(key)}:${stableStringify(object[key])}`).join(",")}}`;
+  return `{${Object.keys(object)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(object[key])}`)
+    .join(",")}}`;
 }
 
 export function isToolCallApprovalRequired(
@@ -49,9 +52,15 @@ export function isToolCallApprovalRequired(
   const currentCandidates = getToolNameCandidates(toolMeta.originalName, serverName, prefix, false);
   if (serverApproval !== undefined) {
     if (matchesToolPattern(currentCandidates, approval)) return true;
-    if (!toolMetadata) return matchesToolPattern(getToolNameCandidates(toolMeta.originalName, serverName, prefix), approval);
+    if (!toolMetadata)
+      return matchesToolPattern(
+        getToolNameCandidates(toolMeta.originalName, serverName, prefix),
+        approval,
+      );
     const legacyCandidates = getToolNameCandidates(toolMeta.originalName, serverName, prefix);
-    const legacyEmittedName = [...currentCandidates].find(candidate => candidate !== toolMeta.originalName)?.replace(/-/g, "_");
+    const legacyEmittedName = [...currentCandidates]
+      .find((candidate) => candidate !== toolMeta.originalName)
+      ?.replace(/-/g, "_");
     if (legacyEmittedName) legacyCandidates.add(legacyEmittedName);
     for (const candidate of currentCandidates) legacyCandidates.delete(candidate);
     const otherCurrentCandidates = new Set<string>();
@@ -61,18 +70,20 @@ export function isToolCallApprovalRequired(
       }
     }
     for (const candidate of currentCandidates) otherCurrentCandidates.delete(candidate);
-    return approval.some(pattern =>
-      matchesToolPattern(legacyCandidates, [pattern])
-      && !matchesToolPattern(otherCurrentCandidates, [pattern]),
+    return approval.some(
+      (pattern) =>
+        matchesToolPattern(legacyCandidates, [pattern]) &&
+        !matchesToolPattern(otherCurrentCandidates, [pattern]),
     );
   }
-
 
   if (matchesToolPattern(currentCandidates, approval)) return true;
   if (!toolMetadata) return false;
 
   const legacyCandidates = getToolNameCandidates(toolMeta.originalName, serverName, prefix);
-  const legacyEmittedName = [...currentCandidates].find(candidate => candidate !== toolMeta.originalName)?.replace(/-/g, "_");
+  const legacyEmittedName = [...currentCandidates]
+    .find((candidate) => candidate !== toolMeta.originalName)
+    ?.replace(/-/g, "_");
   if (legacyEmittedName) legacyCandidates.add(legacyEmittedName);
   for (const candidate of currentCandidates) legacyCandidates.delete(candidate);
   const otherCurrentCandidates = new Set<string>();
@@ -86,17 +97,20 @@ export function isToolCallApprovalRequired(
   }
   for (const candidate of currentCandidates) otherCurrentCandidates.delete(candidate);
 
-  return approval.some(pattern =>
-    matchesToolPattern(legacyCandidates, [pattern])
-    && !matchesToolPattern(otherCurrentCandidates, [pattern]),
+  return approval.some(
+    (pattern) =>
+      matchesToolPattern(legacyCandidates, [pattern]) &&
+      !matchesToolPattern(otherCurrentCandidates, [pattern]),
   );
 }
 
 function isMcpToolApprovalDecision(value: unknown): value is McpToolApprovalDecision {
-  return value === "allow_once"
-    || value === "allow_for_session"
-    || value === "deny"
-    || value === "abstain";
+  return (
+    value === "allow_once" ||
+    value === "allow_for_session" ||
+    value === "deny" ||
+    value === "abstain"
+  );
 }
 
 async function requestBrokerApproval(
@@ -148,14 +162,23 @@ export async function ensureToolCallApproved(
   origin: McpToolApprovalOrigin = toolMeta.resourceUri ? "resource" : "proxy",
   approvalMetadata?: ReadonlyMap<string, readonly ToolMetadata[]>,
 ): Promise<ToolCallApprovalResult> {
-  const argsHash = createHash("sha256").update(stableStringify(args ?? {})).digest("hex");
+  const argsHash = createHash("sha256")
+    .update(stableStringify(args ?? {}))
+    .digest("hex");
   const cacheKey = `${serverName}\u0000${toolMeta.originalName}\u0000${argsHash}`;
-  const approvedToolCalls = state.approvedToolCalls ??= new Map<string, true>();
+  const approvedToolCalls = (state.approvedToolCalls ??= new Map<string, true>());
   if (approvedToolCalls.has(cacheKey)) {
     return { ok: true };
   }
 
-  const brokerDecision = await requestBrokerApproval(state, serverName, toolMeta, args, origin, signal);
+  const brokerDecision = await requestBrokerApproval(
+    state,
+    serverName,
+    toolMeta,
+    args,
+    origin,
+    signal,
+  );
   if (brokerDecision === "allow_once") return { ok: true };
   if (brokerDecision === "allow_for_session") {
     approvedToolCalls.set(cacheKey, true);
@@ -163,7 +186,14 @@ export async function ensureToolCallApproved(
   }
   if (brokerDecision === "deny") return { ok: false, reason: "denied" };
 
-  if (!isToolCallApprovalRequired(state.config, serverName, toolMeta, approvalMetadata ?? state.toolMetadata)) {
+  if (
+    !isToolCallApprovalRequired(
+      state.config,
+      serverName,
+      toolMeta,
+      approvalMetadata ?? state.toolMetadata,
+    )
+  ) {
     return { ok: true };
   }
 
@@ -177,10 +207,11 @@ export async function ensureToolCallApproved(
   const title = `MCP: ${sanitizeTerminalText(serverName)} wants to run ${sanitizeTerminalText(toolMeta.originalName)}`;
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   const decision = await abortable(
-    state.ui.select(
-      `${title}\n\nArguments:\n${preview}`,
-      ["Allow once", "Allow for session", "Deny"],
-    ),
+    state.ui.select(`${title}\n\nArguments:\n${preview}`, [
+      "Allow once",
+      "Allow for session",
+      "Deny",
+    ]),
     ownedSignal,
   );
 

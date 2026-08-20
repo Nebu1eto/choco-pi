@@ -27,9 +27,7 @@ export function buildParentContext(ctx: ExtensionContext): string {
     if (entry.type === "message") {
       const msg = entry.message;
       if (msg.role === "user") {
-        const text = typeof msg.content === "string"
-          ? msg.content
-          : extractText(msg.content);
+        const text = typeof msg.content === "string" ? msg.content : extractText(msg.content);
         if (text.trim()) parts.push(`[User]: ${text.trim()}`);
       } else if (msg.role === "assistant") {
         const text = extractText(msg.content);

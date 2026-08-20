@@ -42,7 +42,11 @@
  * unaddressable.
  */
 
-import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions } from "@earendil-works/pi-tui";
+import type {
+  AutocompleteItem,
+  AutocompleteProvider,
+  AutocompleteSuggestions,
+} from "@earendil-works/pi-tui";
 import type { AgentManager } from "../agent-manager.ts";
 import { handleBase, MENTION_TRIGGER } from "../mention.ts";
 import type { AgentRecord, AgentTombstone } from "../types.ts";
@@ -73,12 +77,13 @@ export function mentionRoster(
   types: readonly TypeInfo[],
   // Identity by default: a caller with no registry to consult gets the raw
   // type, which is also what `getConfig` falls back to when no label is set.
-  displayNameOf: (type: string) => string = type => type,
+  displayNameOf: (type: string) => string = (type) => type,
 ): MentionTarget[] {
   const live = (r: AgentRecord) => r.status === "running" || r.status === "queued";
-  const records = manager.listAgents()
-    .filter(r => r.handle !== undefined && r.parentAgentId === undefined)
-    .sort((a, b) => (Number(live(b)) - Number(live(a))) || (a.startedAt - b.startedAt));
+  const records = manager
+    .listAgents()
+    .filter((r) => r.handle !== undefined && r.parentAgentId === undefined)
+    .sort((a, b) => Number(live(b)) - Number(live(a)) || a.startedAt - b.startedAt);
 
   const taken = new Set<string>();
   const targets: MentionTarget[] = [];
@@ -130,7 +135,12 @@ export function createMentionProvider(
     // provider's characters here would both misreport us and duplicate that.
     triggerCharacters: ["@"],
 
-    async getSuggestions(lines, cursorLine, cursorCol, options): Promise<AutocompleteSuggestions | null> {
+    async getSuggestions(
+      lines,
+      cursorLine,
+      cursorCol,
+      options,
+    ): Promise<AutocompleteSuggestions | null> {
       const mine = isEnabled() ? mentionItems(roster(), lines[cursorLine] ?? "", cursorCol) : null;
       // Asked unconditionally: pi owns `@` and must keep answering for it even
       // when a handle matches too. That is the same work vanilla pi does on any
@@ -155,7 +165,10 @@ export function createMentionProvider(
         // extension's other non-fatal failures.
         if (!warnedInnerFailure) {
           warnedInnerFailure = true;
-          console.warn("[choco-pi-subagents] the autocomplete provider below us failed; showing agent rows only:", err);
+          console.warn(
+            "[choco-pi-subagents] the autocomplete provider below us failed; showing agent rows only:",
+            err,
+          );
         }
         theirs = null;
       }
@@ -179,7 +192,11 @@ export function createMentionProvider(
 }
 
 /** Suggestions for the `@…` token under the cursor, or null when it names no agent. */
-function mentionItems(roster: MentionTarget[], line: string, cursorCol: number): AutocompleteSuggestions | null {
+function mentionItems(
+  roster: MentionTarget[],
+  line: string,
+  cursorCol: number,
+): AutocompleteSuggestions | null {
   const match = MENTION_TRIGGER.exec(line.slice(0, cursorCol));
   if (!match) return null;
 
@@ -187,7 +204,11 @@ function mentionItems(roster: MentionTarget[], line: string, cursorCol: number):
   const items: AutocompleteItem[] = [];
   for (const target of roster) {
     if (!target.handle.toLowerCase().startsWith(typed)) continue;
-    items.push({ value: `@${target.handle}`, label: `@${target.handle}`, description: describeTarget(target) });
+    items.push({
+      value: `@${target.handle}`,
+      label: `@${target.handle}`,
+      description: describeTarget(target),
+    });
   }
   return items.length > 0 ? { items, prefix: `@${match[2]}` } : null;
 }
@@ -211,6 +232,8 @@ function describeTarget(target: MentionTarget): string {
 
 /** First sentence of an agent description, clipped — these run to paragraphs. */
 function summarize(description: string): string {
-  const first = (description.match(/^.*?[.!?](?=\s|$)/s)?.[0] ?? description).replace(/\s+/g, " ").trim();
+  const first = (description.match(/^.*?[.!?](?=\s|$)/s)?.[0] ?? description)
+    .replace(/\s+/g, " ")
+    .trim();
   return first.length > 60 ? `${first.slice(0, 59).trimEnd()}…` : first;
 }

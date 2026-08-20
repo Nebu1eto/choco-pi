@@ -46,7 +46,9 @@ export function getSessionTokens(session: SessionLike | undefined): number {
   try {
     const t = session.getSessionStats().tokens;
     return t.input + t.output + t.cacheWrite;
-  } catch { return 0; }
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -55,6 +57,9 @@ export function getSessionTokens(session: SessionLike | undefined): number {
  */
 export function getSessionContextPercent(session: SessionLike | undefined): number | null {
   if (!session) return null;
-  try { return session.getSessionStats().contextUsage?.percent ?? null; }
-  catch { return null; }
+  try {
+    return session.getSessionStats().contextUsage?.percent ?? null;
+  } catch {
+    return null;
+  }
 }

@@ -10,7 +10,7 @@ from-scratch reimplementation written for choco-pi.
   and `dist/src/core/subdir.js` (the `registerSubdirContextAutoload`
   registration function), plus `dist/src/hooks/before-agent-start.js` for
   contrast (that hook is unrelated workflow-prompt logic, not subdir
-  context — it was read to confirm it is *not* the injection mechanism).
+  context — it was read to confirm it is _not_ the injection mechanism).
 - Reference source: https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-markdown-workflows
 - Written on: 2026-08-20.
 

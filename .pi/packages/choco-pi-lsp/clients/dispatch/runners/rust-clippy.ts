@@ -9,20 +9,9 @@ import { findNearestContaining } from "../../path-utils.js";
 import { RustClient } from "../../rust-client.js";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { stripAnsi } from "../../sanitize.js";
-import {
-	getLazyInstallAttempt,
-	tryLazyInstall,
-} from "./utils/lazy-installer.js";
-import {
-	describeInstallAttempt,
-	logAvailabilityDecision,
-} from "./utils/availability-policy.js";
-import type {
-	Diagnostic,
-	DispatchContext,
-	RunnerDefinition,
-	RunnerResult,
-} from "../types.js";
+import { getLazyInstallAttempt, tryLazyInstall } from "./utils/lazy-installer.js";
+import { describeInstallAttempt, logAvailabilityDecision } from "./utils/availability-policy.js";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
 import { PRIORITY } from "../priorities.js";
 import { createCwdCachedProbe } from "./utils/runner-helpers.js";
 
@@ -43,163 +32,148 @@ const rustClient = new RustClient();
 const CLIPPY_PROBE_BUDGET_MS = 8000;
 
 const makeClippyProbe = (cargoExe: string) =>
-	createCwdCachedProbe(
-		(cwd) =>
-			safeSpawnAsync(cargoExe, ["clippy", "--version"], {
-				timeout: CLIPPY_PROBE_BUDGET_MS,
-				cwd,
-			}),
-		{ tool: "clippy", budgetMs: CLIPPY_PROBE_BUDGET_MS },
-	);
+  createCwdCachedProbe(
+    (cwd) =>
+      safeSpawnAsync(cargoExe, ["clippy", "--version"], {
+        timeout: CLIPPY_PROBE_BUDGET_MS,
+        cwd,
+      }),
+    { tool: "clippy", budgetMs: CLIPPY_PROBE_BUDGET_MS },
+  );
 
-const clippyAvailabilityByCargo = new Map<
-	string,
-	ReturnType<typeof makeClippyProbe>
->();
+const clippyAvailabilityByCargo = new Map<string, ReturnType<typeof makeClippyProbe>>();
 function getClippyProbe(cargoExe: string) {
-	return clippyAvailabilityByCargo.get(cargoExe) ?? refreshClippyProbe(cargoExe);
+  return clippyAvailabilityByCargo.get(cargoExe) ?? refreshClippyProbe(cargoExe);
 }
 
 /** Replace the cached probe so a post-install state is observed. */
 function refreshClippyProbe(cargoExe: string) {
-	const created = makeClippyProbe(cargoExe);
-	clippyAvailabilityByCargo.set(cargoExe, created);
-	return created;
+  const created = makeClippyProbe(cargoExe);
+  clippyAvailabilityByCargo.set(cargoExe, created);
+  return created;
 }
 
 const rustClippyRunner: RunnerDefinition = {
-	id: "rust-clippy",
-	appliesTo: ["rust"],
-	priority: PRIORITY.SPECIALIZED_ANALYSIS,
-	enabledByDefault: true,
-	timeoutMs: 90_000,
+  id: "rust-clippy",
+  appliesTo: ["rust"],
+  priority: PRIORITY.SPECIALIZED_ANALYSIS,
+  enabledByDefault: true,
+  timeoutMs: 90_000,
 
-	async run(ctx: DispatchContext): Promise<RunnerResult> {
-		// Resolve cargo path using platform-aware lookup (handles ~/.cargo/bin on Windows)
-		const cargoExe = await rustClient.findCargoPathAsync();
-		if (!cargoExe) {
-			return { status: "skipped", diagnostics: [], semantic: "none" };
-		}
+  async run(ctx: DispatchContext): Promise<RunnerResult> {
+    // Resolve cargo path using platform-aware lookup (handles ~/.cargo/bin on Windows)
+    const cargoExe = await rustClient.findCargoPathAsync();
+    if (!cargoExe) {
+      return { status: "skipped", diagnostics: [], semantic: "none" };
+    }
 
-		const clippyProbe = getClippyProbe(cargoExe);
-		if (!(await clippyProbe(ctx.cwd))) {
-			// A timed-out probe is not evidence that clippy is missing, so it must
-			// not drive an install. Skip this turn and let the policy re-probe once
-			// its cooldown expires (#1494).
-			if (clippyProbe.getVerdict(ctx.cwd).outcome === "transient") {
-				return { status: "skipped", diagnostics: [], semantic: "none" };
-			}
-			await tryLazyInstall("rust-clippy", ctx.cwd);
-			// Bust the cwd-keyed cache so the post-install state is observed. Held in
-			// a local: `refreshClippyProbe` REPLACES the cached probe, so calling it
-			// again to read the verdict would spend a second probe.
-			const refreshedProbe = refreshClippyProbe(cargoExe);
-			if (!(await refreshedProbe(ctx.cwd))) {
-				// #1537: clippy is still absent, and the interesting question is WHY —
-				// "we tried `rustup component add` and the network failed" is a
-				// different fact from "this machine has no rustup", and until now the
-				// lazy installers recorded neither. Put the attempt beside the verdict
-				// it produced (#1500), so a reader does not have to infer the install
-				// from a runner that silently skipped.
-				const verdict = refreshedProbe.getVerdict(ctx.cwd);
-				logAvailabilityDecision({
-					tool: "rust-clippy",
-					verdict: "unavailable",
-					outcome: verdict.outcome ?? "missing",
-					cause: verdict.cause ?? "not-found",
-					classifiedBy: "caller",
-					evidence: describeInstallAttempt(
-						getLazyInstallAttempt("rust-clippy", ctx.cwd),
-					),
-					elapsedMs: 0,
-					latched: false,
-				});
-				return { status: "skipped", diagnostics: [], semantic: "none" };
-			}
-		}
+    const clippyProbe = getClippyProbe(cargoExe);
+    if (!(await clippyProbe(ctx.cwd))) {
+      // A timed-out probe is not evidence that clippy is missing, so it must
+      // not drive an install. Skip this turn and let the policy re-probe once
+      // its cooldown expires (#1494).
+      if (clippyProbe.getVerdict(ctx.cwd).outcome === "transient") {
+        return { status: "skipped", diagnostics: [], semantic: "none" };
+      }
+      await tryLazyInstall("rust-clippy", ctx.cwd);
+      // Bust the cwd-keyed cache so the post-install state is observed. Held in
+      // a local: `refreshClippyProbe` REPLACES the cached probe, so calling it
+      // again to read the verdict would spend a second probe.
+      const refreshedProbe = refreshClippyProbe(cargoExe);
+      if (!(await refreshedProbe(ctx.cwd))) {
+        // #1537: clippy is still absent, and the interesting question is WHY —
+        // "we tried `rustup component add` and the network failed" is a
+        // different fact from "this machine has no rustup", and until now the
+        // lazy installers recorded neither. Put the attempt beside the verdict
+        // it produced (#1500), so a reader does not have to infer the install
+        // from a runner that silently skipped.
+        const verdict = refreshedProbe.getVerdict(ctx.cwd);
+        logAvailabilityDecision({
+          tool: "rust-clippy",
+          verdict: "unavailable",
+          outcome: verdict.outcome ?? "missing",
+          cause: verdict.cause ?? "not-found",
+          classifiedBy: "caller",
+          evidence: describeInstallAttempt(getLazyInstallAttempt("rust-clippy", ctx.cwd)),
+          elapsedMs: 0,
+          latched: false,
+        });
+        return { status: "skipped", diagnostics: [], semantic: "none" };
+      }
+    }
 
-		// Find the package root (where Cargo.toml is)
-		const cargoToml = findCargoToml(ctx.filePath);
-		if (!cargoToml) {
-			return { status: "skipped", diagnostics: [], semantic: "none" };
-		}
+    // Find the package root (where Cargo.toml is)
+    const cargoToml = findCargoToml(ctx.filePath);
+    if (!cargoToml) {
+      return { status: "skipped", diagnostics: [], semantic: "none" };
+    }
 
-		// Run cargo clippy on the package
-		const result = await safeSpawnAsync(
-			cargoExe,
-			["clippy", "--message-format=json", "-q"],
-			{
-				timeout: 60000,
-				cwd: cargoToml.replace("Cargo.toml", ""),
-			},
-		);
+    // Run cargo clippy on the package
+    const result = await safeSpawnAsync(cargoExe, ["clippy", "--message-format=json", "-q"], {
+      timeout: 60000,
+      cwd: cargoToml.replace("Cargo.toml", ""),
+    });
 
-		const raw = stripAnsi(result.stdout + result.stderr);
+    const raw = stripAnsi(result.stdout + result.stderr);
 
-		if (result.status === 0 && !raw.trim()) {
-			return { status: "succeeded", diagnostics: [], semantic: "none" };
-		}
+    if (result.status === 0 && !raw.trim()) {
+      return { status: "succeeded", diagnostics: [], semantic: "none" };
+    }
 
-		// Parse JSON output. span.file is relative to the package root, so pass
-		// the cargo dir to resolve diagnostics to absolute paths for filtering.
-		const cargoDir = cargoToml.replace("Cargo.toml", "");
-		const allDiagnostics = parseClippyOutput(raw, ctx.filePath, cargoDir);
+    // Parse JSON output. span.file is relative to the package root, so pass
+    // the cargo dir to resolve diagnostics to absolute paths for filtering.
+    const cargoDir = cargoToml.replace("Cargo.toml", "");
+    const allDiagnostics = parseClippyOutput(raw, ctx.filePath, cargoDir);
 
-		if (allDiagnostics.length === 0) {
-			// Non-parseable output
-			return {
-				status: "failed",
-				diagnostics: [],
-				semantic: "warning",
-				rawOutput: raw.substring(0, 500),
-			};
-		}
+    if (allDiagnostics.length === 0) {
+      // Non-parseable output
+      return {
+        status: "failed",
+        diagnostics: [],
+        semantic: "warning",
+        rawOutput: raw.substring(0, 500),
+      };
+    }
 
-		// Lint-style policy (#265 B1): `cargo clippy` compiles the whole crate, so
-		// a crate-mate's pre-existing diagnostic must NOT fail the edited file's
-		// turn. Filter to the edited file like golangci-lint — if the edited file
-		// is clean, this turn succeeds even when siblings carry warnings/errors.
-		const absEdited = resolve(ctx.filePath);
-		const diagnostics = allDiagnostics.filter(
-			(d) => resolve(d.filePath) === absEdited,
-		);
+    // Lint-style policy (#265 B1): `cargo clippy` compiles the whole crate, so
+    // a crate-mate's pre-existing diagnostic must NOT fail the edited file's
+    // turn. Filter to the edited file like golangci-lint — if the edited file
+    // is clean, this turn succeeds even when siblings carry warnings/errors.
+    const absEdited = resolve(ctx.filePath);
+    const diagnostics = allDiagnostics.filter((d) => resolve(d.filePath) === absEdited);
 
-		const hasErrors = diagnostics.some((d) => d.semantic === "blocking");
-		return {
-			status: hasErrors ? "failed" : "succeeded",
-			diagnostics,
-			semantic: hasErrors
-				? "blocking"
-				: diagnostics.length > 0
-					? "warning"
-					: "none",
-		};
-	},
+    const hasErrors = diagnostics.some((d) => d.semantic === "blocking");
+    return {
+      status: hasErrors ? "failed" : "succeeded",
+      diagnostics,
+      semantic: hasErrors ? "blocking" : diagnostics.length > 0 ? "warning" : "none",
+    };
+  },
 };
 
 function findCargoToml(filePath: string): string | undefined {
-	const dir = findNearestContaining(dirname(filePath), ["Cargo.toml"]);
-	return dir ? join(dir, "Cargo.toml") : undefined;
+  const dir = findNearestContaining(dirname(filePath), ["Cargo.toml"]);
+  return dir ? join(dir, "Cargo.toml") : undefined;
 }
 
 interface ClippySpan {
-	file?: string;
-	file_name?: string;
-	line_start?: number;
-	column_start?: number;
-	suggested_replacement?: string;
-	suggestion_applicability?:
-		| "MachineApplicable"
-		| "MaybeIncorrect"
-		| "HasPlaceholders"
-		| "Unspecified";
+  file?: string;
+  file_name?: string;
+  line_start?: number;
+  column_start?: number;
+  suggested_replacement?: string;
+  suggestion_applicability?:
+    | "MachineApplicable"
+    | "MaybeIncorrect"
+    | "HasPlaceholders"
+    | "Unspecified";
 }
 
 interface ClippyMessage {
-	code?: { code?: string };
-	message?: string;
-	level?: string;
-	spans?: ClippySpan[];
+  code?: { code?: string };
+  message?: string;
+  level?: string;
+  spans?: ClippySpan[];
 }
 
 /**
@@ -211,68 +185,66 @@ interface ClippyMessage {
  * level clippy promises is safe for `cargo clippy --fix` to apply without
  * human review.
  */
-function findMachineApplicableSpan(
-	spans: ClippySpan[],
-): ClippySpan | undefined {
-	return spans.find(
-		(s) =>
-			typeof s.suggested_replacement === "string" &&
-			s.suggestion_applicability === "MachineApplicable",
-	);
+function findMachineApplicableSpan(spans: ClippySpan[]): ClippySpan | undefined {
+  return spans.find(
+    (s) =>
+      typeof s.suggested_replacement === "string" &&
+      s.suggestion_applicability === "MachineApplicable",
+  );
 }
 
 export function parseClippyOutput(
-	raw: string,
-	fallbackPath: string,
-	cargoDir?: string,
+  raw: string,
+  fallbackPath: string,
+  cargoDir?: string,
 ): Diagnostic[] {
-	const diagnostics: Diagnostic[] = [];
-	const lines = raw.split("\n").filter((l) => l.trim());
+  const diagnostics: Diagnostic[] = [];
+  const lines = raw.split("\n").filter((l) => l.trim());
 
-	for (const line of lines) {
-		try {
-			const msg = JSON.parse(line);
-			if (msg.reason !== "compiler-message") continue;
+  for (const line of lines) {
+    try {
+      const msg = JSON.parse(line);
+      if (msg.reason !== "compiler-message") continue;
 
-			const message: ClippyMessage | undefined = msg.message;
-			if (!message) continue;
+      const message: ClippyMessage | undefined = msg.message;
+      if (!message) continue;
 
-			// Only include messages for this file or project-wide
-			const spans = message.spans ?? [];
-			const span = spans[0];
-			if (!span) continue;
+      // Only include messages for this file or project-wide
+      const spans = message.spans ?? [];
+      const span = spans[0];
+      if (!span) continue;
 
-			const fixableSpan = findMachineApplicableSpan(spans);
+      const fixableSpan = findMachineApplicableSpan(spans);
 
-			// span.file is relative to the package root; resolve to absolute when
-			// the cargo dir is known so callers can filter by edited file (#265 B1).
-			const rawFile = span.file || span.file_name;
-			const filePath = rawFile
-				? cargoDir && !isAbsolute(rawFile)
-					? resolve(cargoDir, rawFile)
-					: rawFile
-				: fallbackPath;
+      // span.file is relative to the package root; resolve to absolute when
+      // the cargo dir is known so callers can filter by edited file (#265 B1).
+      const rawFile = span.file || span.file_name;
+      const filePath = rawFile
+        ? cargoDir && !isAbsolute(rawFile)
+          ? resolve(cargoDir, rawFile)
+          : rawFile
+        : fallbackPath;
 
-			diagnostics.push({
-				id: `clippy-${message.code?.code || "unknown"}`,
-				message: message.message || "Clippy warning",
-				filePath,
-				line: span.line_start || 0,
-				column: span.column_start || 0,
-				severity: message.level === "error" ? "error" : "warning",
-				semantic: message.level === "error" ? "blocking" : "warning",
-				tool: "rust-clippy",
-				rule: message.code?.code,
-				defectClass: "correctness",
-				fixable: fixableSpan !== undefined,
-				fixSuggestion: fixableSpan?.suggested_replacement,
-			});
-		} catch {
-			// Not a JSON line, skip
-		}
-	}
+      diagnostics.push({
+        id: `clippy-${message.code?.code || "unknown"}`,
+        message: message.message || "Clippy warning",
+        filePath,
+        line: span.line_start || 0,
+        column: span.column_start || 0,
+        severity: message.level === "error" ? "error" : "warning",
+        semantic: message.level === "error" ? "blocking" : "warning",
+        tool: "rust-clippy",
+        rule: message.code?.code,
+        defectClass: "correctness",
+        fixable: fixableSpan !== undefined,
+        fixSuggestion: fixableSpan?.suggested_replacement,
+      });
+    } catch {
+      // Not a JSON line, skip
+    }
+  }
 
-	return diagnostics;
+  return diagnostics;
 }
 
 export default rustClippyRunner;

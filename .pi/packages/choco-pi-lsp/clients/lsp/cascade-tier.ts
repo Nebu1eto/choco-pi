@@ -70,10 +70,10 @@ import type { LSPDiagnostic } from "./client.js";
 import type { LSPService } from "./index.js";
 
 import {
-	classifyCascadeWaitTier as classifySharedCascadeWaitTier,
-	classifyServerWaitTier,
-	resolvePrimaryServerForWaitPolicy,
-	type CascadeWaitTier as SharedCascadeWaitTier,
+  classifyCascadeWaitTier as classifySharedCascadeWaitTier,
+  classifyServerWaitTier,
+  resolvePrimaryServerForWaitPolicy,
+  type CascadeWaitTier as SharedCascadeWaitTier,
 } from "./wait-policy/classification.js";
 
 export { classifyServerWaitTier };
@@ -99,19 +99,19 @@ export type CascadeWaitTier = SharedCascadeWaitTier | "collect-later";
  * already did for classic tier-3 files).
  */
 export function classifyCascadeWaitTier(
-	lspService: Pick<LSPService, "getCapabilitySnapshots">,
-	filePath: string,
-	snapshots: Awaited<ReturnType<LSPService["getCapabilitySnapshots"]>>,
+  lspService: Pick<LSPService, "getCapabilitySnapshots">,
+  filePath: string,
+  snapshots: Awaited<ReturnType<LSPService["getCapabilitySnapshots"]>>,
 ): CascadeWaitTier {
-	const primary = resolvePrimaryServerForWaitPolicy(filePath, snapshots);
-	if (
-		primary?.serverId === "typescript" &&
-		primary.snapshot?.launchVariant === "native-ts7" &&
-		primary.snapshot.workspaceDiagnosticsSupport?.mode === "push-only"
-	) {
-		return "collect-later";
-	}
-	return classifySharedCascadeWaitTier(lspService, filePath, snapshots);
+  const primary = resolvePrimaryServerForWaitPolicy(filePath, snapshots);
+  if (
+    primary?.serverId === "typescript" &&
+    primary.snapshot?.launchVariant === "native-ts7" &&
+    primary.snapshot.workspaceDiagnosticsSupport?.mode === "push-only"
+  ) {
+    return "collect-later";
+  }
+  return classifySharedCascadeWaitTier(lspService, filePath, snapshots);
 }
 
 // --- Kill switch (lazy, memoized — house style per clients/runtime-config.ts /
@@ -123,31 +123,31 @@ let _enabledCache: boolean | undefined;
  * touch waits in-lane exactly as it did before #458, no outstanding-touch
  * bookkeeping, no reconcile task registered. */
 export function isTierAwareCascadeEnabled(): boolean {
-	if (_enabledCache !== undefined) return _enabledCache;
-	_enabledCache = process.env.CHOCO_PI_LSP_TIER_AWARE_CASCADE !== "0";
-	return _enabledCache;
+  if (_enabledCache !== undefined) return _enabledCache;
+  _enabledCache = process.env.CHOCO_PI_LSP_TIER_AWARE_CASCADE !== "0";
+  return _enabledCache;
 }
 
 /** Test-only: clear the memoized kill-switch read. */
 export function _resetTierAwareCascadeEnabledForTests(): void {
-	_enabledCache = undefined;
+  _enabledCache = undefined;
 }
 
 // --- Outstanding-touch registry -------------------------------------------
 
 interface OutstandingTouch {
-	filePath: string;
-	serverId: string;
-	/**
-	 * Sampled BEFORE the touch's didOpen/didChange notify is sent, so any
-	 * publish that lands after the notify — including one landing in the
-	 * notify→record gap — reads as post-touch at reconcile time. Compared
-	 * against the client's PER-FILE publish timestamp (`getAllDiagnostics()`'s
-	 * `ts`), never against a client-wide signal: a cascade touches multiple
-	 * neighbors on the SAME client, so a client-wide counter advanced by
-	 * neighbor A's publish must not "prove" neighbor B clean (#240).
-	 */
-	touchedAt: number;
+  filePath: string;
+  serverId: string;
+  /**
+   * Sampled BEFORE the touch's didOpen/didChange notify is sent, so any
+   * publish that lands after the notify — including one landing in the
+   * notify→record gap — reads as post-touch at reconcile time. Compared
+   * against the client's PER-FILE publish timestamp (`getAllDiagnostics()`'s
+   * `ts`), never against a client-wide signal: a cascade touches multiple
+   * neighbors on the SAME client, so a client-wide counter advanced by
+   * neighbor A's publish must not "prove" neighbor B clean (#240).
+   */
+  touchedAt: number;
 }
 
 // Keyed by normalized file path. A later touch for the same file simply
@@ -164,39 +164,39 @@ const _outstandingTouches = new Map<string, OutstandingTouch>();
  * raced the record as pre-touch.
  */
 export function recordOutstandingCascadeTouch(entry: OutstandingTouch): void {
-	_outstandingTouches.set(normalizeMapKey(entry.filePath), entry);
+  _outstandingTouches.set(normalizeMapKey(entry.filePath), entry);
 }
 
 /** Test-only: clear the outstanding-touch registry between test cases. */
 export function _resetOutstandingCascadeTouchesForTests(): void {
-	_outstandingTouches.clear();
+  _outstandingTouches.clear();
 }
 
 /** Test-only: peek at the registry without mutating it. */
 export function _getOutstandingCascadeTouchesForTests(): OutstandingTouch[] {
-	return [...(_outstandingTouches.values() as Iterable<OutstandingTouch>)];
+  return [...(_outstandingTouches.values() as Iterable<OutstandingTouch>)];
 }
 
 export interface ReconcileOutcome {
-	filePath: string;
-	serverId: string;
-	outcome: "resolved-found" | "resolved-clean" | "unresolved";
-	ageMs: number;
-	diagnosticCount?: number;
-	/**
-	 * #1023: the actual published diagnostics for a `resolved-found` outcome, so
-	 * the reconcile task can RE-INJECT them into the agent-facing cascade output
-	 * (a cold-snapshot neighbor error that resolved after the turn ended must not
-	 * stay logs-only). Populated only for `resolved-found`.
-	 */
-	diagnostics?: LSPDiagnostic[];
-	/**
-	 * #1444: the client's PER-FILE publish timestamp that resolved this touch
-	 * (`getAllDiagnostics()`'s `ts`). Populated for both resolved outcomes; the
-	 * footer reconcile stamps it as the observation time so a late clean is not
-	 * recorded as observed "now". Never set for `unresolved`.
-	 */
-	publishedAt?: number;
+  filePath: string;
+  serverId: string;
+  outcome: "resolved-found" | "resolved-clean" | "unresolved";
+  ageMs: number;
+  diagnosticCount?: number;
+  /**
+   * #1023: the actual published diagnostics for a `resolved-found` outcome, so
+   * the reconcile task can RE-INJECT them into the agent-facing cascade output
+   * (a cold-snapshot neighbor error that resolved after the turn ended must not
+   * stay logs-only). Populated only for `resolved-found`.
+   */
+  diagnostics?: LSPDiagnostic[];
+  /**
+   * #1444: the client's PER-FILE publish timestamp that resolved this touch
+   * (`getAllDiagnostics()`'s `ts`). Populated for both resolved outcomes; the
+   * footer reconcile stamps it as the observation time so a late clean is not
+   * recorded as observed "now". Never set for `unresolved`.
+   */
+  publishedAt?: number;
 }
 
 /**
@@ -223,101 +223,95 @@ export interface ReconcileOutcome {
  * throws — callers (the quiet-window task) must be fail-safe.
  */
 export async function reconcileOutstandingCascadeTouches(
-	lspService: Pick<LSPService, "getWarmClientForFile">,
+  lspService: Pick<LSPService, "getWarmClientForFile">,
 ): Promise<ReconcileOutcome[]> {
-	const outcomes: ReconcileOutcome[] = [];
-	const entries = [..._outstandingTouches.entries()];
-	_outstandingTouches.clear();
+  const outcomes: ReconcileOutcome[] = [];
+  const entries = [..._outstandingTouches.entries()];
+  _outstandingTouches.clear();
 
-	for (const [key, touch] of entries) {
-		const ageMs = Date.now() - touch.touchedAt;
-		try {
-			const spawned = await lspService.getWarmClientForFile(touch.filePath);
-			if (!spawned || spawned.client.serverId !== touch.serverId) {
-				outcomes.push({
-					filePath: touch.filePath,
-					serverId: touch.serverId,
-					outcome: "unresolved",
-					ageMs,
-				});
-				continue;
-			}
-			const entry = spawned.client
-				.getAllDiagnostics()
-				.get(normalizeMapKey(touch.filePath));
-			if (!entry || entry.ts <= touch.touchedAt) {
-				// No per-file publish since the touch (or ever) — a missing answer
-				// is not a clean answer.
-				outcomes.push({
-					filePath: touch.filePath,
-					serverId: touch.serverId,
-					outcome: "unresolved",
-					ageMs,
-				});
-				continue;
-			}
-			const found = entry.diags.length > 0;
-			outcomes.push({
-				filePath: touch.filePath,
-				serverId: touch.serverId,
-				outcome: found ? "resolved-found" : "resolved-clean",
-				ageMs,
-				diagnosticCount: entry.diags.length,
-				publishedAt: entry.ts,
-				// #1023: carry the diagnostics so the task can re-surface them.
-				...(found && { diagnostics: entry.diags }),
-			});
-		} catch (err) {
-			outcomes.push({
-				filePath: touch.filePath,
-				serverId: touch.serverId,
-				outcome: "unresolved",
-				ageMs,
-			});
-			logLatency({
-				type: "phase",
-				phase: "cascade_tier3_reconcile_error",
-				filePath: key,
-				durationMs: 0,
-				metadata: { error: String(err) },
-			});
-		}
-	}
-	return outcomes;
+  for (const [key, touch] of entries) {
+    const ageMs = Date.now() - touch.touchedAt;
+    try {
+      const spawned = await lspService.getWarmClientForFile(touch.filePath);
+      if (!spawned || spawned.client.serverId !== touch.serverId) {
+        outcomes.push({
+          filePath: touch.filePath,
+          serverId: touch.serverId,
+          outcome: "unresolved",
+          ageMs,
+        });
+        continue;
+      }
+      const entry = spawned.client.getAllDiagnostics().get(normalizeMapKey(touch.filePath));
+      if (!entry || entry.ts <= touch.touchedAt) {
+        // No per-file publish since the touch (or ever) — a missing answer
+        // is not a clean answer.
+        outcomes.push({
+          filePath: touch.filePath,
+          serverId: touch.serverId,
+          outcome: "unresolved",
+          ageMs,
+        });
+        continue;
+      }
+      const found = entry.diags.length > 0;
+      outcomes.push({
+        filePath: touch.filePath,
+        serverId: touch.serverId,
+        outcome: found ? "resolved-found" : "resolved-clean",
+        ageMs,
+        diagnosticCount: entry.diags.length,
+        publishedAt: entry.ts,
+        // #1023: carry the diagnostics so the task can re-surface them.
+        ...(found && { diagnostics: entry.diags }),
+      });
+    } catch (err) {
+      outcomes.push({
+        filePath: touch.filePath,
+        serverId: touch.serverId,
+        outcome: "unresolved",
+        ageMs,
+      });
+      logLatency({
+        type: "phase",
+        phase: "cascade_tier3_reconcile_error",
+        filePath: key,
+        durationMs: 0,
+        metadata: { error: String(err) },
+      });
+    }
+  }
+  return outcomes;
 }
 
 let _reconcileTaskRegistered = false;
 
 /** #1023: a `resolved-found` neighbor error to re-inject into agent-facing output. */
 export interface ResolvedFoundNeighbor {
-	filePath: string;
-	serverId: string;
-	diagnostics: LSPDiagnostic[];
+  filePath: string;
+  serverId: string;
+  diagnostics: LSPDiagnostic[];
 }
 
 export interface CascadeTierReconcileOptions {
-	/**
-	 * #1023: called (best-effort) for each `resolved-found` outcome so the caller
-	 * can RE-INJECT the neighbor error through the same turn-end cascade seam
-	 * instead of leaving it logs-only. Wired in index.ts to build a CascadeRun via
-	 * the existing neighbor→turn-end formatting and append it to the runtime.
-	 * Never called for `resolved-clean`/`unresolved`.
-	 */
-	onResolvedFound?: (neighbor: ResolvedFoundNeighbor) => void;
-	/**
-	 * #1444: called (best-effort) for each `resolved-clean` outcome — a per-file
-	 * publish that landed AFTER the touch and carried no errors, i.e. a
-	 * CONFIRMED clean observation by the same standard the in-lane path uses
-	 * (`isConfirmedTouch`, `clients/dispatch/integration.ts`). Wired in index.ts
-	 * to clear the neighbour's now-stale LSP-error entries from the footer, which
-	 * the skipped in-lane wait could not do. Never called for
-	 * `resolved-found`/`unresolved` (a missing answer is not a clean answer).
-	 */
-	onResolvedClean?: (neighbor: {
-		filePath: string;
-		serverId: string;
-		publishedAt: number;
-	}) => void;
+  /**
+   * #1023: called (best-effort) for each `resolved-found` outcome so the caller
+   * can RE-INJECT the neighbor error through the same turn-end cascade seam
+   * instead of leaving it logs-only. Wired in index.ts to build a CascadeRun via
+   * the existing neighbor→turn-end formatting and append it to the runtime.
+   * Never called for `resolved-clean`/`unresolved`.
+   */
+  onResolvedFound?: (neighbor: ResolvedFoundNeighbor) => void;
+  /**
+   * #1444: called (best-effort) for each `resolved-clean` outcome — a per-file
+   * publish that landed AFTER the touch and carried no errors, i.e. a
+   * CONFIRMED clean observation by the same standard the in-lane path uses
+   * (`isConfirmedTouch`, `clients/dispatch/integration.ts`). Wired in index.ts
+   * to clear the neighbour's now-stale LSP-error entries from the footer, which
+   * the skipped in-lane wait could not do. Never called for
+   * `resolved-found`/`unresolved` (a missing answer is not a clean answer).
+   */
+  onResolvedClean?: (neighbor: { filePath: string; serverId: string; publishedAt: number }) => void;
 }
 
 /**
@@ -326,73 +320,73 @@ export interface CascadeTierReconcileOptions {
  * (e.g. multiple extension activations in tests).
  */
 export function registerCascadeTierReconcileTask(
-	getLspService: () => Pick<LSPService, "getWarmClientForFile">,
-	options: CascadeTierReconcileOptions = {},
+  getLspService: () => Pick<LSPService, "getWarmClientForFile">,
+  options: CascadeTierReconcileOptions = {},
 ): void {
-	if (_reconcileTaskRegistered) return;
-	_reconcileTaskRegistered = true;
+  if (_reconcileTaskRegistered) return;
+  _reconcileTaskRegistered = true;
 
-	registerQuietWindowTask("cascade_tier3_reconcile", async () => {
-		if (!isTierAwareCascadeEnabled()) return;
-		if (_outstandingTouches.size === 0) return;
-		const outcomes = await reconcileOutstandingCascadeTouches(getLspService());
-		if (outcomes.length === 0) return;
+  registerQuietWindowTask("cascade_tier3_reconcile", async () => {
+    if (!isTierAwareCascadeEnabled()) return;
+    if (_outstandingTouches.size === 0) return;
+    const outcomes = await reconcileOutstandingCascadeTouches(getLspService());
+    if (outcomes.length === 0) return;
 
-		// #1023: re-inject each resolved-found neighbor error so it reaches the
-		// agent (previously logs-only). #1444: hand each resolved-CLEAN outcome to
-		// the footer reconcile for the mirror-image case. Isolated per-outcome — a
-		// throwing callback must not drop the log line or the sibling deliveries.
-		for (const o of outcomes) {
-			try {
-				if (o.outcome === "resolved-found" && o.diagnostics?.length) {
-					options.onResolvedFound?.({
-						filePath: o.filePath,
-						serverId: o.serverId,
-						diagnostics: o.diagnostics,
-					});
-				} else if (o.outcome === "resolved-clean" && o.publishedAt != null) {
-					// #1444: the stale-footer half of the same honesty problem — the
-					// neighbour proved clean, but only after the in-lane wait was
-					// skipped, so nothing has cleared its earlier error entries.
-					options.onResolvedClean?.({
-						filePath: o.filePath,
-						serverId: o.serverId,
-						publishedAt: o.publishedAt,
-					});
-				}
-			} catch {
-				// best-effort surfacing; the log below is the durable record.
-			}
-		}
+    // #1023: re-inject each resolved-found neighbor error so it reaches the
+    // agent (previously logs-only). #1444: hand each resolved-CLEAN outcome to
+    // the footer reconcile for the mirror-image case. Isolated per-outcome — a
+    // throwing callback must not drop the log line or the sibling deliveries.
+    for (const o of outcomes) {
+      try {
+        if (o.outcome === "resolved-found" && o.diagnostics?.length) {
+          options.onResolvedFound?.({
+            filePath: o.filePath,
+            serverId: o.serverId,
+            diagnostics: o.diagnostics,
+          });
+        } else if (o.outcome === "resolved-clean" && o.publishedAt != null) {
+          // #1444: the stale-footer half of the same honesty problem — the
+          // neighbour proved clean, but only after the in-lane wait was
+          // skipped, so nothing has cleared its earlier error entries.
+          options.onResolvedClean?.({
+            filePath: o.filePath,
+            serverId: o.serverId,
+            publishedAt: o.publishedAt,
+          });
+        }
+      } catch {
+        // best-effort surfacing; the log below is the durable record.
+      }
+    }
 
-		let resolvedFound = 0;
-		let resolvedClean = 0;
-		let unresolved = 0;
-		let ageSumMs = 0;
-		for (const o of outcomes) {
-			if (o.outcome === "resolved-found") resolvedFound++;
-			else if (o.outcome === "resolved-clean") resolvedClean++;
-			else unresolved++;
-			ageSumMs += o.ageMs;
-		}
-		const avgAgeMs = Math.round(ageSumMs / outcomes.length);
+    let resolvedFound = 0;
+    let resolvedClean = 0;
+    let unresolved = 0;
+    let ageSumMs = 0;
+    for (const o of outcomes) {
+      if (o.outcome === "resolved-found") resolvedFound++;
+      else if (o.outcome === "resolved-clean") resolvedClean++;
+      else unresolved++;
+      ageSumMs += o.ageMs;
+    }
+    const avgAgeMs = Math.round(ageSumMs / outcomes.length);
 
-		logCascade({
-			phase: "cascade_tier3_reconcile",
-			filePath: "<quiet-window>",
-			metadata: {
-				count: outcomes.length,
-				resolvedFound,
-				resolvedClean,
-				unresolved,
-				avgAgeMs,
-				outcomes,
-			},
-		});
-	});
+    logCascade({
+      phase: "cascade_tier3_reconcile",
+      filePath: "<quiet-window>",
+      metadata: {
+        count: outcomes.length,
+        resolvedFound,
+        resolvedClean,
+        unresolved,
+        avgAgeMs,
+        outcomes,
+      },
+    });
+  });
 }
 
 /** Test-only: undo registerCascadeTierReconcileTask's idempotency guard. */
 export function _resetCascadeTierReconcileRegistrationForTests(): void {
-	_reconcileTaskRegistered = false;
+  _reconcileTaskRegistered = false;
 }

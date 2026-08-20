@@ -13,7 +13,7 @@
 
 import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, } from "node:path";
+import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { MemoryScope } from "./types.ts";
 
@@ -162,7 +162,11 @@ This memory persists across sessions. Use it to build up knowledge over time.`;
  * Build a read-only memory block for agents that lack write/edit tools.
  * Does NOT create the memory directory — agents can only consume existing memory.
  */
-export function buildReadOnlyMemoryBlock(agentName: string, scope: MemoryScope, cwd: string): string {
+export function buildReadOnlyMemoryBlock(
+  agentName: string,
+  scope: MemoryScope,
+  cwd: string,
+): string {
   const memoryDir = resolveMemoryDir(agentName, scope, cwd);
   const existingMemory = readMemoryIndex(memoryDir);
 

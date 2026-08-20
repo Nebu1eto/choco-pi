@@ -19,7 +19,10 @@ import type { EditorConfig, ResolvedReviewConfig, ReviewConfig } from "./types.t
 export const REVIEW_CONFIG_FILE = "review.json";
 
 /** Used when neither the config nor `VISUAL`/`EDITOR` names an editor. */
-export const DEFAULT_EDITOR: EditorConfig = { command: ["zed", "--wait", "{path}:{line}"], mode: "gui" };
+export const DEFAULT_EDITOR: EditorConfig = {
+  command: ["zed", "--wait", "{path}:{line}"],
+  mode: "gui",
+};
 
 export const DEFAULT_HIGHLIGHT = { enabled: true, maxFileBytes: 512_000, maxDiffLines: 20_000 };
 
@@ -29,101 +32,110 @@ export type ReviewConfigEnv = Record<string, string | undefined>;
 export type EditorAvailabilityProbe = (command: string) => Promise<boolean>;
 
 async function executableOnPath(command: string): Promise<boolean> {
-	const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
-	for (const dir of dirs) {
-		try {
-			await access(join(dir, command), constants.X_OK);
-			return true;
-		} catch {
-			// Not in this directory; keep searching the rest of PATH.
-		}
-	}
-	return false;
+  const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    try {
+      await access(join(dir, command), constants.X_OK);
+      return true;
+    } catch {
+      // Not in this directory; keep searching the rest of PATH.
+    }
+  }
+  return false;
 }
 
 /** Real PATH lookup used when no probe is injected. */
-export const defaultEditorAvailabilityProbe: EditorAvailabilityProbe = (command) => executableOnPath(command);
+export const defaultEditorAvailabilityProbe: EditorAvailabilityProbe = (command) =>
+  executableOnPath(command);
 
 export type LoadReviewConfigOptions = {
-	/** Project root searched for `.pi/extensions/review.json`. */
-	cwd: string;
-	/** Defaults to Pi's agent directory; injected by tests. */
-	agentDir?: string;
-	/** Defaults to `process.env`; injected by tests. */
-	env?: ReviewConfigEnv;
-	/** Defaults to a real PATH lookup; injected by tests. */
-	isEditorAvailable?: EditorAvailabilityProbe;
+  /** Project root searched for `.pi/extensions/review.json`. */
+  cwd: string;
+  /** Defaults to Pi's agent directory; injected by tests. */
+  agentDir?: string;
+  /** Defaults to `process.env`; injected by tests. */
+  env?: ReviewConfigEnv;
+  /** Defaults to a real PATH lookup; injected by tests. */
+  isEditorAvailable?: EditorAvailabilityProbe;
 };
 
-function plainObject(value: unknown, field: string, source: string): Record<string, unknown> | undefined {
-	if (value === undefined) return undefined;
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		throw new Error(`${source}: ${field} must be a JSON object`);
-	}
-	return value as Record<string, unknown>;
+function plainObject(
+  value: unknown,
+  field: string,
+  source: string,
+): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${source}: ${field} must be a JSON object`);
+  }
+  return value as Record<string, unknown>;
 }
 
 function booleanField(value: unknown, field: string, source: string): boolean | undefined {
-	if (value === undefined) return undefined;
-	if (typeof value !== "boolean") throw new Error(`${source}: ${field} must be a boolean`);
-	return value;
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") throw new Error(`${source}: ${field} must be a boolean`);
+  return value;
 }
 
 function positiveInteger(value: unknown, field: string, source: string): number | undefined {
-	if (value === undefined) return undefined;
-	if (!Number.isInteger(value) || (value as number) <= 0) {
-		throw new Error(`${source}: ${field} must be a positive integer`);
-	}
-	return value as number;
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || (value as number) <= 0) {
+    throw new Error(`${source}: ${field} must be a positive integer`);
+  }
+  return value as number;
 }
 
 function stringArray(value: unknown, field: string, source: string): string[] | undefined {
-	if (value === undefined) return undefined;
-	if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
-		throw new Error(`${source}: ${field} must be an array of strings`);
-	}
-	return [...(value as string[])];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`${source}: ${field} must be an array of strings`);
+  }
+  return [...(value as string[])];
 }
 
 function editorField(value: unknown, source: string): EditorConfig | undefined {
-	const editor = plainObject(value, "editor", source);
-	if (!editor) return undefined;
-	const command = stringArray(editor.command, "editor.command", source);
-	if (!command || command.length === 0) {
-		throw new Error(`${source}: editor.command must be a non-empty array of strings`);
-	}
-	if (editor.mode !== "gui" && editor.mode !== "terminal") {
-		throw new Error(`${source}: editor.mode must be "gui" or "terminal"`);
-	}
-	return { command, mode: editor.mode };
+  const editor = plainObject(value, "editor", source);
+  if (!editor) return undefined;
+  const command = stringArray(editor.command, "editor.command", source);
+  if (!command || command.length === 0) {
+    throw new Error(`${source}: editor.command must be a non-empty array of strings`);
+  }
+  if (editor.mode !== "gui" && editor.mode !== "terminal") {
+    throw new Error(`${source}: editor.mode must be "gui" or "terminal"`);
+  }
+  return { command, mode: editor.mode };
 }
 
 /** Parse and validate one `review.json`. `source` appears in every error. */
 export function parseReviewConfig(content: string, source: string): ReviewConfig {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(content);
-	} catch (error) {
-		throw new Error(`${source} must contain valid JSON`, { cause: error });
-	}
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-		throw new Error(`${source} must contain a JSON object`);
-	}
-	const root = parsed as Record<string, unknown>;
-	const highlight = plainObject(root.highlight, "highlight", source);
-	const heuristics = plainObject(root.heuristics, "heuristics", source);
-	return {
-		editor: editorField(root.editor, source),
-		highlight: highlight && {
-			enabled: booleanField(highlight.enabled, "highlight.enabled", source),
-			maxFileBytes: positiveInteger(highlight.maxFileBytes, "highlight.maxFileBytes", source),
-			maxDiffLines: positiveInteger(highlight.maxDiffLines, "highlight.maxDiffLines", source),
-		},
-		heuristics: heuristics && {
-			riskPatterns: stringArray(heuristics.riskPatterns, "heuristics.riskPatterns", source),
-			collapsePatterns: stringArray(heuristics.collapsePatterns, "heuristics.collapsePatterns", source),
-		},
-	};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`${source} must contain valid JSON`, { cause: error });
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${source} must contain a JSON object`);
+  }
+  const root = parsed as Record<string, unknown>;
+  const highlight = plainObject(root.highlight, "highlight", source);
+  const heuristics = plainObject(root.heuristics, "heuristics", source);
+  return {
+    editor: editorField(root.editor, source),
+    highlight: highlight && {
+      enabled: booleanField(highlight.enabled, "highlight.enabled", source),
+      maxFileBytes: positiveInteger(highlight.maxFileBytes, "highlight.maxFileBytes", source),
+      maxDiffLines: positiveInteger(highlight.maxDiffLines, "highlight.maxDiffLines", source),
+    },
+    heuristics: heuristics && {
+      riskPatterns: stringArray(heuristics.riskPatterns, "heuristics.riskPatterns", source),
+      collapsePatterns: stringArray(
+        heuristics.collapsePatterns,
+        "heuristics.collapsePatterns",
+        source,
+      ),
+    },
+  };
 }
 
 /**
@@ -147,55 +159,57 @@ export function parseReviewConfig(content: string, source: string): ReviewConfig
  * the probe actually runs.
  */
 export async function resolveEditor(
-	configured: EditorConfig | undefined,
-	env: ReviewConfigEnv,
-	isEditorAvailable: EditorAvailabilityProbe = defaultEditorAvailabilityProbe,
+  configured: EditorConfig | undefined,
+  env: ReviewConfigEnv,
+  isEditorAvailable: EditorAvailabilityProbe = defaultEditorAvailabilityProbe,
 ): Promise<EditorConfig> {
-	if (configured) return { command: [...configured.command], mode: configured.mode };
-	if (await isEditorAvailable(DEFAULT_EDITOR.command[0]!)) {
-		return { command: [...DEFAULT_EDITOR.command], mode: DEFAULT_EDITOR.mode };
-	}
-	const fromEnv = (env.VISUAL ?? "").trim() || (env.EDITOR ?? "").trim();
-	if (fromEnv) return { command: [...fromEnv.split(/\s+/), "{path}"], mode: "terminal" };
-	return { command: [...DEFAULT_EDITOR.command], mode: DEFAULT_EDITOR.mode };
+  if (configured) return { command: [...configured.command], mode: configured.mode };
+  if (await isEditorAvailable(DEFAULT_EDITOR.command[0]!)) {
+    return { command: [...DEFAULT_EDITOR.command], mode: DEFAULT_EDITOR.mode };
+  }
+  const fromEnv = (env.VISUAL ?? "").trim() || (env.EDITOR ?? "").trim();
+  if (fromEnv) return { command: [...fromEnv.split(/\s+/), "{path}"], mode: "terminal" };
+  return { command: [...DEFAULT_EDITOR.command], mode: DEFAULT_EDITOR.mode };
 }
 
 /** Apply defaults to a validated config. Pure: the environment and editor probe are injected. */
 export async function resolveReviewConfig(
-	config: ReviewConfig,
-	env: ReviewConfigEnv,
-	isEditorAvailable: EditorAvailabilityProbe = defaultEditorAvailabilityProbe,
+  config: ReviewConfig,
+  env: ReviewConfigEnv,
+  isEditorAvailable: EditorAvailabilityProbe = defaultEditorAvailabilityProbe,
 ): Promise<ResolvedReviewConfig> {
-	return {
-		editor: await resolveEditor(config.editor, env, isEditorAvailable),
-		highlight: {
-			enabled: config.highlight?.enabled ?? DEFAULT_HIGHLIGHT.enabled,
-			maxFileBytes: config.highlight?.maxFileBytes ?? DEFAULT_HIGHLIGHT.maxFileBytes,
-			maxDiffLines: config.highlight?.maxDiffLines ?? DEFAULT_HIGHLIGHT.maxDiffLines,
-		},
-		heuristics: {
-			riskPatterns: config.heuristics?.riskPatterns ?? [],
-			collapsePatterns: config.heuristics?.collapsePatterns ?? [],
-		},
-	};
+  return {
+    editor: await resolveEditor(config.editor, env, isEditorAvailable),
+    highlight: {
+      enabled: config.highlight?.enabled ?? DEFAULT_HIGHLIGHT.enabled,
+      maxFileBytes: config.highlight?.maxFileBytes ?? DEFAULT_HIGHLIGHT.maxFileBytes,
+      maxDiffLines: config.highlight?.maxDiffLines ?? DEFAULT_HIGHLIGHT.maxDiffLines,
+    },
+    heuristics: {
+      riskPatterns: config.heuristics?.riskPatterns ?? [],
+      collapsePatterns: config.heuristics?.collapsePatterns ?? [],
+    },
+  };
 }
 
-export async function loadReviewConfig(options: LoadReviewConfigOptions): Promise<ResolvedReviewConfig> {
-	const env = options.env ?? process.env;
-	const isEditorAvailable = options.isEditorAvailable ?? defaultEditorAvailabilityProbe;
-	const configPaths = [
-		join(options.cwd, ".pi", "extensions", REVIEW_CONFIG_FILE),
-		join(options.agentDir ?? getAgentDir(), "extensions", REVIEW_CONFIG_FILE),
-	];
-	for (const configPath of configPaths) {
-		let content: string;
-		try {
-			content = await readFile(configPath, "utf8");
-		} catch (error) {
-			if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
-			continue;
-		}
-		return resolveReviewConfig(parseReviewConfig(content, configPath), env, isEditorAvailable);
-	}
-	return resolveReviewConfig({}, env, isEditorAvailable);
+export async function loadReviewConfig(
+  options: LoadReviewConfigOptions,
+): Promise<ResolvedReviewConfig> {
+  const env = options.env ?? process.env;
+  const isEditorAvailable = options.isEditorAvailable ?? defaultEditorAvailabilityProbe;
+  const configPaths = [
+    join(options.cwd, ".pi", "extensions", REVIEW_CONFIG_FILE),
+    join(options.agentDir ?? getAgentDir(), "extensions", REVIEW_CONFIG_FILE),
+  ];
+  for (const configPath of configPaths) {
+    let content: string;
+    try {
+      content = await readFile(configPath, "utf8");
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+      continue;
+    }
+    return resolveReviewConfig(parseReviewConfig(content, configPath), env, isEditorAvailable);
+  }
+  return resolveReviewConfig({}, env, isEditorAvailable);
 }

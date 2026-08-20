@@ -121,10 +121,7 @@ export interface GoalRuntimeInputContextHandlerContext extends StaleQueuedWorkEf
 export interface GoalRuntimeTurnHandlerContext extends StaleQueuedWorkEffectContext {
   runtimeState: Pick<
     GoalRuntimeState,
-    | "agentRunFromContinuation"
-    | "agentRunToolNames"
-    | "currentTurnIndex"
-    | "staleQueuedWorkGuard"
+    "agentRunFromContinuation" | "agentRunToolNames" | "currentTurnIndex" | "staleQueuedWorkGuard"
   >;
   stateController: Pick<
     GoalStateController,
@@ -141,10 +138,7 @@ export interface GoalRuntimeTurnHandlerContext extends StaleQueuedWorkEffectCont
 export interface GoalRuntimeAgentHandlerContext extends StaleQueuedWorkEffectContext {
   runtimeState: Pick<
     GoalRuntimeState,
-    | "agentRunFromContinuation"
-    | "agentRunSequence"
-    | "agentRunToolNames"
-    | "staleQueuedWorkGuard"
+    "agentRunFromContinuation" | "agentRunSequence" | "agentRunToolNames" | "staleQueuedWorkGuard"
   >;
   stateController: Pick<
     GoalStateController,
@@ -165,10 +159,7 @@ export interface GoalRuntimeAgentHandlerContext extends StaleQueuedWorkEffectCon
 export interface GoalRuntimeSessionHandlerContext extends StaleQueuedWorkEffectContext {
   runtimeState: Pick<
     GoalRuntimeState,
-    | "agentRunSequence"
-    | "currentTurnIndex"
-    | "recoveryState"
-    | "staleQueuedWorkGuard"
+    "agentRunSequence" | "currentTurnIndex" | "recoveryState" | "staleQueuedWorkGuard"
   >;
   stateController: Pick<
     GoalStateController,
@@ -186,7 +177,11 @@ export interface GoalRuntimeSessionHandlerContext extends StaleQueuedWorkEffectC
   goalAccounting: GoalAccountingPort;
   recoveryRuntime: Pick<RecoveryRuntimePort, "onSessionCompact">;
   resetErrorRecovery: () => void;
-  resumeGoalWithContinuation: (goalId: string, source: GoalEntrySource, ctx: StatusContext) => GoalResult;
+  resumeGoalWithContinuation: (
+    goalId: string,
+    source: GoalEntrySource,
+    ctx: StatusContext,
+  ) => GoalResult;
 }
 
 export interface GoalRuntimeOverflowRecoveryContext {
@@ -208,7 +203,11 @@ export interface GoalRuntimeEventContext {
   providerLimitAutoResume: ProviderLimitAutoResumePort;
   clearActiveAccounting: () => void;
   resetErrorRecovery: () => void;
-  resumeGoalWithContinuation: (goalId: string, source: GoalEntrySource, ctx: StatusContext) => GoalResult;
+  resumeGoalWithContinuation: (
+    goalId: string,
+    source: GoalEntrySource,
+    ctx: StatusContext,
+  ) => GoalResult;
 }
 
 export type QueuedGoalWorkMessage = {

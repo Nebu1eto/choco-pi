@@ -10,7 +10,7 @@ message: "Debugger call '{{METHOD}}' — remove before committing"
 
 description: |
   Debugger calls pause execution and must never reach production.
-  
+
   ✅ FIX: Remove the debugger call.
 
 query: |
@@ -39,7 +39,7 @@ examples:
       binding.irb     # remove!
       transform(data)
     end
-  
+
   good: |
     def process(data)
       transform(data)

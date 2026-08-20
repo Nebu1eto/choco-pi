@@ -68,14 +68,22 @@ export function validateTokenBudget(tokenBudget: number | null | undefined): str
   return null;
 }
 
-export function statusAfterBudgetLimit(status: GoalStatus, tokensUsed: number, tokenBudget: number | null): GoalStatus {
+export function statusAfterBudgetLimit(
+  status: GoalStatus,
+  tokensUsed: number,
+  tokenBudget: number | null,
+): GoalStatus {
   if (status === "active" && tokenBudget !== null && tokensUsed >= tokenBudget) {
     return "budgetLimited";
   }
   return status;
 }
 
-export function createThreadGoal(objective: string, tokenBudget?: number | null, now = unixSeconds()): ThreadGoal {
+export function createThreadGoal(
+  objective: string,
+  tokenBudget?: number | null,
+  now = unixSeconds(),
+): ThreadGoal {
   return {
     goalId: randomUUID(),
     objective: objective.trim(),
@@ -90,7 +98,11 @@ export function createThreadGoal(objective: string, tokenBudget?: number | null,
   };
 }
 
-export function setEntry(goal: ThreadGoal, source: GoalEntrySource, at = unixSeconds()): GoalCustomEntry {
+export function setEntry(
+  goal: ThreadGoal,
+  source: GoalEntrySource,
+  at = unixSeconds(),
+): GoalCustomEntry {
   return {
     version: 1,
     kind: "set",
@@ -194,10 +206,18 @@ export function isThreadGoal(goal: unknown): goal is ThreadGoal {
 }
 
 export function isGoalStatus(status: unknown): status is GoalStatus {
-  return status === "active" || status === "paused" || status === "budgetLimited" || status === "complete";
+  return (
+    status === "active" ||
+    status === "paused" ||
+    status === "budgetLimited" ||
+    status === "complete"
+  );
 }
 
-function canApplyRuntimeUsageEntry(goal: ThreadGoal | null, entry: Extract<GoalCustomEntry, { kind: "usage" }>): goal is ThreadGoal {
+function canApplyRuntimeUsageEntry(
+  goal: ThreadGoal | null,
+  entry: Extract<GoalCustomEntry, { kind: "usage" }>,
+): goal is ThreadGoal {
   if (!goal || goal.goalId !== entry.goalId) {
     return false;
   }
@@ -245,7 +265,9 @@ export function reconstructGoal(entries: Iterable<SessionEntryLike>): GoalSnapsh
   };
 }
 
-export function reconstructHostOverflowCapNeedsUserReset(entries: Iterable<SessionEntryLike>): boolean {
+export function reconstructHostOverflowCapNeedsUserReset(
+  entries: Iterable<SessionEntryLike>,
+): boolean {
   let needsReset = false;
 
   for (const entry of entries) {
@@ -263,7 +285,11 @@ export function reconstructHostOverflowCapNeedsUserReset(entries: Iterable<Sessi
   return needsReset;
 }
 
-export function createGoal(current: ThreadGoal | null, objective: string, tokenBudget?: number | null): GoalResult {
+export function createGoal(
+  current: ThreadGoal | null,
+  objective: string,
+  tokenBudget?: number | null,
+): GoalResult {
   if (current && current.status !== "complete") {
     return {
       ok: false,
@@ -329,7 +355,8 @@ export function updateGoalStatus(current: ThreadGoal | null, status: GoalStatus)
     }
     return {
       ok: false,
-      message: "Completed goals are terminal; use /goal <objective> to replace or /goal clear before changing status.",
+      message:
+        "Completed goals are terminal; use /goal <objective> to replace or /goal clear before changing status.",
       goal: current,
     };
   }
@@ -395,7 +422,8 @@ export function applyUsage(
   }
 
   const canAccount =
-    current.status === "active" || (options.accountBudgetLimited === true && current.status === "budgetLimited");
+    current.status === "active" ||
+    (options.accountBudgetLimited === true && current.status === "budgetLimited");
   if (!canAccount) {
     return { goal: current, changed: false, crossedBudget: false };
   }
@@ -428,7 +456,12 @@ export function goalWithLiveUsage(
   lastAccountedAt: number | null,
   now = Date.now(),
 ): ThreadGoal | null {
-  if (!current || current.status !== "active" || activeGoalId !== current.goalId || lastAccountedAt === null) {
+  if (
+    !current ||
+    current.status !== "active" ||
+    activeGoalId !== current.goalId ||
+    lastAccountedAt === null
+  ) {
     return current;
   }
 

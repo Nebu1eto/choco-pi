@@ -14,9 +14,9 @@ description: |
   'is' checks identity (same object in memory), not equality.
   For strings and small ints, Python may intern them, making
   'is' appear to work, but it's unreliable and wrong.
-  
+
   ✅ FIX: Use '==' for value comparison
-  
+
   ```python
   if name == "admin":  # GOOD - value comparison
   if count == 0:  # GOOD - value comparison
@@ -52,7 +52,7 @@ examples:
   bad: |
     if name is "admin":  # BAD - identity check
     if count is 0:  # BAD - may work by accident
-  
+
   good: |
     if name == "admin":  # GOOD
     if count == 0:  # GOOD

@@ -4,12 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ToolCallHeader, ToolFooter } from "@aliou/pi-utils-ui";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import {
-  defineTool,
-  formatSize,
-  keyHint,
-  truncateHead,
-} from "@earendil-works/pi-coding-agent";
+import { defineTool, formatSize, keyHint, truncateHead } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 import {
@@ -49,11 +44,7 @@ const SearchParams = Type.Object({
 
 type SearchParamsType = Static<typeof SearchParams>;
 
-type WriteSearchResultFile = (
-  path: string,
-  content: string,
-  encoding: "utf8",
-) => Promise<void>;
+type WriteSearchResultFile = (path: string, content: string, encoding: "utf8") => Promise<void>;
 
 interface FormatWebSearchResultsOptions {
   maxInlineBytes?: number;
@@ -92,10 +83,7 @@ export async function formatWebSearchResults(
   const maxBytesPerResult =
     results.length === 0
       ? 0
-      : Math.min(
-          maxInlineBytesPerResult,
-          Math.floor(maxInlineBytes / results.length),
-        );
+      : Math.min(maxInlineBytesPerResult, Math.floor(maxInlineBytes / results.length));
   let content = `Found ${results.length} result(s):\n\n`;
   const resultDetails: WebSearchResultDetails[] = [];
 
@@ -197,9 +185,7 @@ export const syntheticWebSearchTool = defineTool({
       throw new Error(`Synthetic web search: ${message}`);
     }
 
-    const { content, resultDetails } = await formatWebSearchResults(
-      data.results,
-    );
+    const { content, resultDetails } = await formatWebSearchResults(data.results);
 
     return {
       content: [{ type: "text", text: content }],
@@ -225,11 +211,7 @@ export const syntheticWebSearchTool = defineTool({
     const { expanded, isPartial } = options;
 
     if (isPartial) {
-      return new Text(
-        theme.fg("muted", "Synthetic: WebSearch: fetching..."),
-        0,
-        0,
-      );
+      return new Text(theme.fg("muted", "Synthetic: WebSearch: fetching..."), 0, 0);
     }
 
     const details = result.details as WebSearchDetails | undefined;
@@ -241,8 +223,7 @@ export const syntheticWebSearchTool = defineTool({
     // Detect this both via context.isError and missing expected details.
     if (context.isError || !details?.results) {
       const textBlock = result.content.find((c) => c.type === "text");
-      const errorMsg =
-        (textBlock?.type === "text" && textBlock.text) || "Search failed";
+      const errorMsg = (textBlock?.type === "text" && textBlock.text) || "Search failed";
       container.addChild(new Text(theme.fg("error", errorMsg), 0, 0));
       return container;
     }
@@ -250,9 +231,7 @@ export const syntheticWebSearchTool = defineTool({
     const hasTruncation = results.some((r) => r.truncated);
 
     if (results.length === 0) {
-      container.addChild(
-        new Text(theme.fg("muted", "Synthetic: WebSearch: no results"), 0, 0),
-      );
+      container.addChild(new Text(theme.fg("muted", "Synthetic: WebSearch: no results"), 0, 0));
     } else if (!expanded) {
       // Collapsed: show result count + first result title
       let text = theme.fg("success", `Found ${results.length} result(s)`);
@@ -270,32 +249,16 @@ export const syntheticWebSearchTool = defineTool({
       container.addChild(new Text(text, 0, 0));
     } else {
       // Expanded: show each result with title, URL, date, and snippet
-      container.addChild(
-        new Text(
-          theme.fg("success", `Found ${results.length} result(s)`),
-          0,
-          0,
-        ),
-      );
+      container.addChild(new Text(theme.fg("success", `Found ${results.length} result(s)`), 0, 0));
 
       for (const r of results) {
         container.addChild(new Text("", 0, 0));
         container.addChild(
-          new Text(
-            `${theme.fg("dim", ">")} ${theme.fg("accent", theme.bold(r.title))}`,
-            0,
-            0,
-          ),
+          new Text(`${theme.fg("dim", ">")} ${theme.fg("accent", theme.bold(r.title))}`, 0, 0),
         );
         container.addChild(new Text(`  ${theme.fg("dim", r.url)}`, 0, 0));
         if (r.published) {
-          container.addChild(
-            new Text(
-              `  ${theme.fg("muted", `Published: ${r.published}`)}`,
-              0,
-              0,
-            ),
-          );
+          container.addChild(new Text(`  ${theme.fg("muted", `Published: ${r.published}`)}`, 0, 0));
         }
 
         if (r.truncated) {

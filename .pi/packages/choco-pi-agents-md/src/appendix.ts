@@ -1,9 +1,9 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 
 export interface AgentsFileEntry {
-	/** Path shown to the model, relative to the session cwd when possible. */
-	path: string;
-	content: string;
+  /** Path shown to the model, relative to the session cwd when possible. */
+  path: string;
+  content: string;
 }
 
 /**
@@ -20,13 +20,17 @@ export const MAX_TOTAL_APPENDIX_CHARS = 40_000;
 const TRUNCATION_MARKER = "\n...[truncated by choco-pi-agents-md size cap]";
 
 function escapeXml(value: string): string {
-	return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 /** Truncate an individual AGENTS.md file's content to the per-file cap. */
 export function capFileContent(content: string): string {
-	if (content.length <= MAX_FILE_CHARS) return content;
-	return `${content.slice(0, MAX_FILE_CHARS)}${TRUNCATION_MARKER}`;
+  if (content.length <= MAX_FILE_CHARS) return content;
+  return `${content.slice(0, MAX_FILE_CHARS)}${TRUNCATION_MARKER}`;
 }
 
 /**
@@ -36,14 +40,14 @@ export function capFileContent(content: string): string {
  * directly relevant guidance for the current tool call.
  */
 export function capTotalAppendixSize(files: AgentsFileEntry[]): AgentsFileEntry[] {
-	const kept = [...files];
-	let total = kept.reduce((sum, file) => sum + file.content.length, 0);
-	while (total > MAX_TOTAL_APPENDIX_CHARS && kept.length > 1) {
-		const dropped = kept.shift();
-		if (!dropped) break;
-		total -= dropped.content.length;
-	}
-	return kept;
+  const kept = [...files];
+  let total = kept.reduce((sum, file) => sum + file.content.length, 0);
+  while (total > MAX_TOTAL_APPENDIX_CHARS && kept.length > 1) {
+    const dropped = kept.shift();
+    if (!dropped) break;
+    total -= dropped.content.length;
+  }
+  return kept;
 }
 
 /**
@@ -52,15 +56,18 @@ export function capTotalAppendixSize(files: AgentsFileEntry[]): AgentsFileEntry[
  * unchanged when there is nothing to inject.
  */
 export function appendAgentsContext(
-	content: (TextContent | ImageContent)[],
-	files: AgentsFileEntry[],
+  content: (TextContent | ImageContent)[],
+  files: AgentsFileEntry[],
 ): (TextContent | ImageContent)[] {
-	if (!files.length) return content;
-	const appendix = [
-		"<subdirectory_agents_context>",
-		"AGENTS.md context relevant to this tool result.",
-		...files.map((file) => `<agents_file path="${escapeXml(file.path)}">\n${escapeXml(file.content)}\n</agents_file>`),
-		"</subdirectory_agents_context>",
-	].join("\n");
-	return [...content, { type: "text", text: appendix }];
+  if (!files.length) return content;
+  const appendix = [
+    "<subdirectory_agents_context>",
+    "AGENTS.md context relevant to this tool result.",
+    ...files.map(
+      (file) =>
+        `<agents_file path="${escapeXml(file.path)}">\n${escapeXml(file.content)}\n</agents_file>`,
+    ),
+    "</subdirectory_agents_context>",
+  ].join("\n");
+  return [...content, { type: "text", text: appendix }];
 }

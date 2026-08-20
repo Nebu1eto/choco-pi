@@ -64,7 +64,7 @@ examples:
         def __init__(self):
             self.x = 1       # OK - in slots
             self.y = 2       # BAD - raises AttributeError
-  
+
   good: |
     class Foo:
         __slots__ = ("x", "y")

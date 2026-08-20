@@ -13,54 +13,50 @@ import { isWindowsPath } from "./path-utils.js";
 // --- Types ---
 
 export type FileRole =
-	| "source" // Regular application source
-	| "test" // Test / spec file
-	| "init" // Module entry point (index.ts, __init__.py, mod.rs)
-	| "re-export" // Pure re-export barrel (only export * / export { } from)
-	| "generated" // Auto-generated code — do not lint
-	| "config" // Build / tool configuration
-	| "stub" // Type-only declaration file (.d.ts or interface-heavy)
-	| "migration"; // Database migration
+  | "source" // Regular application source
+  | "test" // Test / spec file
+  | "init" // Module entry point (index.ts, __init__.py, mod.rs)
+  | "re-export" // Pure re-export barrel (only export * / export { } from)
+  | "generated" // Auto-generated code — do not lint
+  | "config" // Build / tool configuration
+  | "stub" // Type-only declaration file (.d.ts or interface-heavy)
+  | "migration"; // Database migration
 
 // --- Detection ---
 
-const RE_EXPORT_LINE =
-	/^export\s+(type\s+)?\*\s+from\s+|^export\s*\{[^}]*\}\s+from\s+/;
+const RE_EXPORT_LINE = /^export\s+(type\s+)?\*\s+from\s+|^export\s*\{[^}]*\}\s+from\s+/;
 
 function isReExportBarrel(content: string): boolean {
-	const lines = content
-		.split(/\r?\n/)
-		.map((l) => l.trim())
-		.filter(
-			(l) =>
-				l && !l.startsWith("//") && !l.startsWith("*") && !l.startsWith("/*"),
-		);
-	return lines.length > 0 && lines.every((l) => RE_EXPORT_LINE.test(l));
+  const lines = content
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("//") && !l.startsWith("*") && !l.startsWith("/*"));
+  return lines.length > 0 && lines.every((l) => RE_EXPORT_LINE.test(l));
 }
 
 function isTypeStub(content: string): boolean {
-	const lines = content
-		.split(/\r?\n/)
-		.map((l) => l.trim())
-		.filter(
-			(l) =>
-				l &&
-				!l.startsWith("//") &&
-				!l.startsWith("*") &&
-				!l.startsWith("/*") &&
-				l !== "{" &&
-				l !== "}",
-		);
-	if (lines.length < 4) return false;
-	const typeOnlyLines = lines.filter(
-		(l) =>
-			/^(export\s+)?(interface|type|abstract\s+class|declare\s+(class|function|const|var|let|module|namespace|enum))\s+/.test(
-				l,
-			) ||
-			/^(import\s+type\s+|import\s+\{)/.test(l) ||
-			/^export\s+type\s+\{/.test(l),
-	);
-	return typeOnlyLines.length / lines.length >= 0.75;
+  const lines = content
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l &&
+        !l.startsWith("//") &&
+        !l.startsWith("*") &&
+        !l.startsWith("/*") &&
+        l !== "{" &&
+        l !== "}",
+    );
+  if (lines.length < 4) return false;
+  const typeOnlyLines = lines.filter(
+    (l) =>
+      /^(export\s+)?(interface|type|abstract\s+class|declare\s+(class|function|const|var|let|module|namespace|enum))\s+/.test(
+        l,
+      ) ||
+      /^(import\s+type\s+|import\s+\{)/.test(l) ||
+      /^export\s+type\s+\{/.test(l),
+  );
+  return typeOnlyLines.length / lines.length >= 0.75;
 }
 
 /**
@@ -79,82 +75,80 @@ function isTypeStub(content: string): boolean {
  * — so native Windows classification is unchanged.
  */
 export function detectFileRole(filePath: string, content?: string): FileRole {
-	const windowsShaped = isWindowsPath(filePath);
-	const base = (windowsShaped ? win32.basename(filePath) : basename(filePath)).toLowerCase();
-	const dir = (windowsShaped ? win32.dirname(filePath) : dirname(filePath))
-		.replace(/\\/g, "/")
-		.toLowerCase();
+  const windowsShaped = isWindowsPath(filePath);
+  const base = (windowsShaped ? win32.basename(filePath) : basename(filePath)).toLowerCase();
+  const dir = (windowsShaped ? win32.dirname(filePath) : dirname(filePath))
+    .replace(/\\/g, "/")
+    .toLowerCase();
 
-	// --- Test ---
-	if (
-		base.includes(".test.") ||
-		base.includes(".spec.") ||
-		base.startsWith("test_") ||
-		base.startsWith("spec_") ||
-		dir.includes("/__tests__/") ||
-		dir.includes("/test/") ||
-		dir.includes("/tests/") ||
-		dir.includes("/spec/") ||
-		dir.includes("/specs/") ||
-		/[/_-]tests?\/?$/.test(dir) ||
-		/[/_-]specs?\/?$/.test(dir)
-	)
-		return "test";
+  // --- Test ---
+  if (
+    base.includes(".test.") ||
+    base.includes(".spec.") ||
+    base.startsWith("test_") ||
+    base.startsWith("spec_") ||
+    dir.includes("/__tests__/") ||
+    dir.includes("/test/") ||
+    dir.includes("/tests/") ||
+    dir.includes("/spec/") ||
+    dir.includes("/specs/") ||
+    /[/_-]tests?\/?$/.test(dir) ||
+    /[/_-]specs?\/?$/.test(dir)
+  )
+    return "test";
 
-	// --- Generated/artifact markers (path/name/header-based) ---
-	if (
-		isGeneratedOrArtifact(filePath, { content, includeDeclarations: false })
-	) {
-		return "generated";
-	}
+  // --- Generated/artifact markers (path/name/header-based) ---
+  if (isGeneratedOrArtifact(filePath, { content, includeDeclarations: false })) {
+    return "generated";
+  }
 
-	// --- Migrations ---
-	// Normalize separators before regex so the pattern works on Windows too
-	const forwardDir = dir.replace(/\\/g, "/");
-	if (
-		forwardDir.includes("/migrations/") ||
-		forwardDir.includes("/migration/") ||
-		/\/\d{4,}_[a-z]/.test(forwardDir + "/" + base)
-	)
-		return "migration";
+  // --- Migrations ---
+  // Normalize separators before regex so the pattern works on Windows too
+  const forwardDir = dir.replace(/\\/g, "/");
+  if (
+    forwardDir.includes("/migrations/") ||
+    forwardDir.includes("/migration/") ||
+    /\/\d{4,}_[a-z]/.test(forwardDir + "/" + base)
+  )
+    return "migration";
 
-	// --- Config ---
-	if (
-		base.endsWith(".config.ts") ||
-		base.endsWith(".config.js") ||
-		base.endsWith(".config.mjs") ||
-		base.endsWith(".config.cjs") ||
-		base === "vite.config.ts" ||
-		base === "jest.config.ts" ||
-		base === "jest.config.js" ||
-		base === "webpack.config.js" ||
-		base === "rollup.config.js" ||
-		base === "tailwind.config.js" ||
-		base === "tailwind.config.ts" ||
-		base === "next.config.js" ||
-		base === "next.config.mjs"
-	)
-		return "config";
+  // --- Config ---
+  if (
+    base.endsWith(".config.ts") ||
+    base.endsWith(".config.js") ||
+    base.endsWith(".config.mjs") ||
+    base.endsWith(".config.cjs") ||
+    base === "vite.config.ts" ||
+    base === "jest.config.ts" ||
+    base === "jest.config.js" ||
+    base === "webpack.config.js" ||
+    base === "rollup.config.js" ||
+    base === "tailwind.config.js" ||
+    base === "tailwind.config.ts" ||
+    base === "next.config.js" ||
+    base === "next.config.mjs"
+  )
+    return "config";
 
-	// --- Type stubs ---
-	if (base.endsWith(".d.ts")) return "stub";
-	if (content && isTypeStub(content)) return "stub";
+  // --- Type stubs ---
+  if (base.endsWith(".d.ts")) return "stub";
+  if (content && isTypeStub(content)) return "stub";
 
-	// --- Init / barrel ---
-	const isIndexFile =
-		base === "index.ts" ||
-		base === "index.tsx" ||
-		base === "index.js" ||
-		base === "index.mjs" ||
-		base === "index.cjs" ||
-		base === "index.jsx" ||
-		base === "__init__.py" ||
-		base === "mod.rs";
+  // --- Init / barrel ---
+  const isIndexFile =
+    base === "index.ts" ||
+    base === "index.tsx" ||
+    base === "index.js" ||
+    base === "index.mjs" ||
+    base === "index.cjs" ||
+    base === "index.jsx" ||
+    base === "__init__.py" ||
+    base === "mod.rs";
 
-	if (isIndexFile) {
-		if (content && isReExportBarrel(content)) return "re-export";
-		return "init";
-	}
+  if (isIndexFile) {
+    if (content && isReExportBarrel(content)) return "re-export";
+    return "init";
+  }
 
-	return "source";
+  return "source";
 }

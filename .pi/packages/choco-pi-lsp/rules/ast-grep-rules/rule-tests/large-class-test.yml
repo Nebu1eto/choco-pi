@@ -1,10 +1,10 @@
 id: large-class
 valid:
-  - 'class A {}'
-  - 'class A { x = 1 }'
+  - "class A {}"
+  - "class A { x = 1 }"
 invalid:
-  - 'class A { foo() {} }'
-  - 'class A { foo() {} bar() {} }'
+  - "class A { foo() {} }"
+  - "class A { foo() {} bar() {} }"
   - |
     class A {
       foo() {} bar() {} baz() {} qux() {} quux() {} one() {} two() {}

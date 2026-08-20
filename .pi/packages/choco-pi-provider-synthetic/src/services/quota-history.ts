@@ -1,11 +1,4 @@
-import {
-  appendFile,
-  mkdir,
-  readdir,
-  readFile,
-  rm,
-  stat,
-} from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { QuotasResponse } from "../types/quotas";
@@ -76,10 +69,8 @@ export class QuotaHistory {
         : (options.directory ?? defaultQuotaHistoryDirectory());
     this.now = options.now ?? Date.now;
     this.retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
-    this.minWriteIntervalMs =
-      options.minWriteIntervalMs ?? DEFAULT_MIN_WRITE_INTERVAL_MS;
-    this.heartbeatIntervalMs =
-      options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+    this.minWriteIntervalMs = options.minWriteIntervalMs ?? DEFAULT_MIN_WRITE_INTERVAL_MS;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
     this.maxTotalBytes = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES;
     this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
   }
@@ -159,8 +150,7 @@ export class QuotaHistory {
         if (file.size > this.maxFileBytes) continue;
         const text = await readFile(file.path, "utf8");
         for (const line of text.split("\n")) {
-          if (!line.trim() || Buffer.byteLength(line) > MAX_LINE_BYTES)
-            continue;
+          if (!line.trim() || Buffer.byteLength(line) > MAX_LINE_BYTES) continue;
           const snapshot = parseHistoryLine(line);
           if (!snapshot || snapshot.updatedAt < cutoff) continue;
           loaded.push(snapshot);
@@ -209,10 +199,7 @@ export class QuotaHistory {
     });
   }
 
-  private async pruneForAppend(
-    incomingBytes: number,
-    now: number,
-  ): Promise<boolean> {
+  private async pruneForAppend(incomingBytes: number, now: number): Promise<boolean> {
     const files = await this.listHistoryFiles();
     if (files.length === 0) return incomingBytes <= this.maxTotalBytes;
 
@@ -245,9 +232,7 @@ export class QuotaHistory {
     }
 
     const files: HistoryFile[] = [];
-    for (const name of names.filter((name) =>
-      HISTORY_FILE_PATTERN.test(name),
-    )) {
+    for (const name of names.filter((name) => HISTORY_FILE_PATTERN.test(name))) {
       const path = join(this.directory, name);
       try {
         const metadata = await stat(path);
@@ -294,11 +279,7 @@ function parseHistoryLine(line: string): ProjectionSnapshot | undefined {
     if (entry.version !== 1 || typeof entry.recordedAt !== "string") {
       return undefined;
     }
-    if (
-      typeof entry.quotas !== "object" ||
-      entry.quotas === null ||
-      Array.isArray(entry.quotas)
-    ) {
+    if (typeof entry.quotas !== "object" || entry.quotas === null || Array.isArray(entry.quotas)) {
       return undefined;
     }
     const updatedAt = Date.parse(entry.recordedAt);

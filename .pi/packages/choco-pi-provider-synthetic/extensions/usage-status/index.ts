@@ -1,7 +1,4 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   configLoader,
   SYNTHETIC_CONFIG_UPDATED_EVENT,
@@ -9,10 +6,7 @@ import {
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
   type SyntheticConfigUpdatedPayload,
 } from "../../src/config";
-import type {
-  QuotasResponse,
-  SyntheticQuotasSnapshotPayload,
-} from "../../src/types/quotas";
+import type { QuotasResponse, SyntheticQuotasSnapshotPayload } from "../../src/types/quotas";
 import { formatResetTime } from "../../src/utils/quotas";
 import {
   assessWindow,
@@ -59,15 +53,10 @@ function formatStatus(ctx: ExtensionContext, windows: WindowStatus[]): string {
 
   for (const w of windows) {
     const short = SHORT_LABELS[w.label] ?? w.label;
-    const remaining = Math.max(
-      0,
-      Math.min(100, Math.round(100 - w.usedPercent)),
-    );
+    const remaining = Math.max(0, Math.min(100, Math.round(100 - w.usedPercent)));
     const color = getSeverityColor(w.severity);
     const pctText = theme.fg(color, `${remaining}%`);
-    const reset = w.resetsAt
-      ? theme.fg("dim", ` (\u21ba${formatResetTime(w.resetsAt)})`)
-      : "";
+    const reset = w.resetsAt ? theme.fg("dim", ` (\u21ba${formatResetTime(w.resetsAt)})`) : "";
     const limitTag = w.limited ? theme.fg("error", " [limited]") : "";
     parts.push(`${theme.fg("dim", `${short}:`)}${pctText}${reset}${limitTag}`);
   }
@@ -86,10 +75,7 @@ export default async function (pi: ExtensionAPI) {
   ): void {
     if (!ctx.hasUI) return;
     if (!snapshot) {
-      ctx.ui.setStatus(
-        EXTENSION_ID,
-        ctx.ui.theme.fg("dim", "loading usage..."),
-      );
+      ctx.ui.setStatus(EXTENSION_ID, ctx.ui.theme.fg("dim", "loading usage..."));
       return;
     }
 

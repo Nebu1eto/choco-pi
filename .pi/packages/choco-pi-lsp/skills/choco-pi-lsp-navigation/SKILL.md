@@ -11,35 +11,35 @@ Use `lsp_navigation` as **PRIMARY** for code intelligence. Use `lsp_diagnostics`
 
 Use `lsp_diagnostics` before builds/tests or after touching several files:
 
-| Need | Tool call |
-|---|---|
-| Check one file | `lsp_diagnostics({ path: "src/file.ts" })` |
-| Check a folder | `lsp_diagnostics({ path: "src/", severity: "error" })` |
+| Need                      | Tool call                                                              |
+| ------------------------- | ---------------------------------------------------------------------- |
+| Check one file            | `lsp_diagnostics({ path: "src/file.ts" })`                             |
+| Check a folder            | `lsp_diagnostics({ path: "src/", severity: "error" })`                 |
 | Check exact touched files | `lsp_diagnostics({ paths: ["src/a.ts", "src/b.ts"], concurrency: 8 })` |
-| Slow server (Rust, Java) | `lsp_diagnostics({ paths: files, waitMs: 2000 })` |
-| Include warnings | `lsp_diagnostics({ paths: files, severity: "all" })` |
+| Slow server (Rust, Java)  | `lsp_diagnostics({ paths: files, waitMs: 2000 })`                      |
+| Include warnings          | `lsp_diagnostics({ paths: files, severity: "all" })`                   |
 
 Prefer explicit `paths` batches after multi-file edits — bounded concurrency, no unrelated directory noise.
 
 ## Navigation (Code Intelligence)
 
-| Question | Operation | Parameters |
-|---|---|---|
-| Where is this defined? | `definition` | path, line, character |
-| Where is this symbol's *type* defined? | `typeDefinition` | path, line, character |
-| Where is this declared (vs defined)? | `declaration` | path, line, character |
-| Find all usages | `references` | path, line, character |
-| What type is this? | `hover` | path, line, character |
-| Call signature | `signatureHelp` | path, line, character (at arg position) |
-| Symbols in this file | `documentSymbol` | path |
-| Find symbol across project | `workspaceSymbol` | query + path (strongly recommended) |
-| Quick fixes available | `codeAction` | path, line, character, endLine, endCharacter |
-| Rename symbol safely | `rename` | path, line, character, newName |
-| Who implements this? | `implementation` | path, line, character |
-| Who calls this function? | `prepareCallHierarchy` → `incomingCalls` | path, line, character |
-| What does this call? | `prepareCallHierarchy` → `outgoingCalls` | path, line, character |
-| What commands does the server offer? | `capabilities` | (optional path) — lists advertised commands |
-| Run a server command (e.g. organize imports) | `executeCommand` | command (+ commandArguments); dry-run unless `apply:true` |
+| Question                                     | Operation                                | Parameters                                                |
+| -------------------------------------------- | ---------------------------------------- | --------------------------------------------------------- |
+| Where is this defined?                       | `definition`                             | path, line, character                                     |
+| Where is this symbol's _type_ defined?       | `typeDefinition`                         | path, line, character                                     |
+| Where is this declared (vs defined)?         | `declaration`                            | path, line, character                                     |
+| Find all usages                              | `references`                             | path, line, character                                     |
+| What type is this?                           | `hover`                                  | path, line, character                                     |
+| Call signature                               | `signatureHelp`                          | path, line, character (at arg position)                   |
+| Symbols in this file                         | `documentSymbol`                         | path                                                      |
+| Find symbol across project                   | `workspaceSymbol`                        | query + path (strongly recommended)                       |
+| Quick fixes available                        | `codeAction`                             | path, line, character, endLine, endCharacter              |
+| Rename symbol safely                         | `rename`                                 | path, line, character, newName                            |
+| Who implements this?                         | `implementation`                         | path, line, character                                     |
+| Who calls this function?                     | `prepareCallHierarchy` → `incomingCalls` | path, line, character                                     |
+| What does this call?                         | `prepareCallHierarchy` → `outgoingCalls` | path, line, character                                     |
+| What commands does the server offer?         | `capabilities`                           | (optional path) — lists advertised commands               |
+| Run a server command (e.g. organize imports) | `executeCommand`                         | command (+ commandArguments); dry-run unless `apply:true` |
 
 ## Call Hierarchy Pattern
 
@@ -57,7 +57,7 @@ lsp_navigation(operation="outgoingCalls", callHierarchyItem=<item from step 1>)
 
 - **`definition` returns nothing?** The file may not be open/indexed yet. Read it first, then retry.
 - **`workspaceSymbol` empty?** Always pass `path`. Unscoped queries are best-effort and frequently return nothing. If TypeScript returns "No Project", open the scoped file first.
-- **`references`** — query from the *definition site* for full cross-file coverage; usage-site queries can be partial.
+- **`references`** — query from the _definition site_ for full cross-file coverage; usage-site queries can be partial.
 - **`signatureHelp`** — only valid at call-site argument positions; declaration positions return empty.
 - **`workspaceDiagnostics`** — tracked push snapshot only, not an active check. Use `lsp_diagnostics` when you need fresh results.
 - **`codeAction`** — distinguish `quickfix` from generic refactors ("Move to new file"). Generic refactors are not error fixes.
@@ -65,12 +65,12 @@ lsp_navigation(operation="outgoingCalls", callHierarchyItem=<item from step 1>)
 
 ## When NOT to Use LSP Navigation
 
-| Task | Use Instead |
-|---|---|
+| Task                          | Use Instead       |
+| ----------------------------- | ----------------- |
 | Find patterns (`console.log`) | `ast_grep_search` |
-| Find text / TODOs | `grep` |
-| Find files by name | `glob` |
-| Read file content | `read` |
+| Find text / TODOs             | `grep`            |
+| Find files by name            | `glob`            |
+| Read file content             | `read`            |
 
 ## Golden Rule
 

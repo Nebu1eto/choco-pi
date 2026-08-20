@@ -28,87 +28,87 @@ import { createNdjsonLogger } from "./ndjson-logger.js";
 const WORD_INDEX_LOG_FILE = path.join(getGlobalPiLensDir(), "word-index.log");
 
 const writer = createNdjsonLogger({
-	filePath: WORD_INDEX_LOG_FILE,
-	maxBytes: getMaxLogSizeMB() * 1024 * 1024,
+  filePath: WORD_INDEX_LOG_FILE,
+  maxBytes: getMaxLogSizeMB() * 1024 * 1024,
 });
 
 export type WordIndexLogPhase =
-	/** Full rebuild from a fresh file-walk-and-read (absent/stale/churned index). */
-	| "full_rebuild"
-	/** Only stale/new docs re-tokenized against a reused snapshot (#958). */
-	| "incremental_refresh"
-	/** Incremental refresh threw (churn, missing metadata, …) → full rebuild. */
-	| "incremental_fallback"
-	/** Stateless cold-query background build (MCP `symbol_search`, no session). */
-	| "cold_build"
-	/** Cold-query build refused for safety (root at/above $HOME). */
-	| "cold_build_refused"
-	/** Cold-query background build (build or persist) failed. */
-	| "cold_build_failed"
-	/** A warm MCP index was normally released by idle/LRU lifecycle policy. */
-	| "warm_cache_evicted"
-	/** A debounced snapshot persist landed — confirms the index is kept fresh
-	 *  across edits (the durable record the MCP host's no-op `dbg` couldn't give). */
-	| "persist_succeeded"
-	/** A snapshot persist swallowed its error — every later query reads stale. */
-	| "persist_failed";
+  /** Full rebuild from a fresh file-walk-and-read (absent/stale/churned index). */
+  | "full_rebuild"
+  /** Only stale/new docs re-tokenized against a reused snapshot (#958). */
+  | "incremental_refresh"
+  /** Incremental refresh threw (churn, missing metadata, …) → full rebuild. */
+  | "incremental_fallback"
+  /** Stateless cold-query background build (MCP `symbol_search`, no session). */
+  | "cold_build"
+  /** Cold-query build refused for safety (root at/above $HOME). */
+  | "cold_build_refused"
+  /** Cold-query background build (build or persist) failed. */
+  | "cold_build_failed"
+  /** A warm MCP index was normally released by idle/LRU lifecycle policy. */
+  | "warm_cache_evicted"
+  /** A debounced snapshot persist landed — confirms the index is kept fresh
+   *  across edits (the durable record the MCP host's no-op `dbg` couldn't give). */
+  | "persist_succeeded"
+  /** A snapshot persist swallowed its error — every later query reads stale. */
+  | "persist_failed";
 
 export interface WordIndexLogEntry {
-	ts?: string;
-	phase: WordIndexLogPhase;
-	cwd: string;
-	/** Which lifecycle produced this: "session_start" | "cold_query" | "per_edit". */
-	trigger?: string;
-	durationMs?: number;
-	phaseDurationsMs?: {
-		snapshotLoadMs?: number;
-		deserializeMs?: number;
-		sourceWalkMs?: number;
-		statWalkMs?: number;
-		refreshReadsMs?: number;
-		snapshotSaveSyncMs?: number;
-	};
-	/** Docs actually represented in the index (mirrors indexedFileCount, #928). */
-	indexedFileCount?: number;
-	/** True when the source walk reached its file cap — searches may be partial. */
-	truncated?: boolean;
-	/** Distinct token count (postings.size) — index breadth at a glance. */
-	tokens?: number;
-	/** Incremental: docs re-tokenized because their mtime changed. */
-	refreshed?: number;
-	/** Incremental: docs removed because they left the current file set. */
-	dropped?: number;
-	/**
-	 * Files the walk enumerated but did NOT (re)index this pass — meaning is
-	 * per-phase (surfaced on both paths so coverage stays honest, #533):
-	 *  - full_rebuild: unreadable OR over the byte cap → genuinely ABSENT from
-	 *    the index (never counted as indexed).
-	 *  - incremental_refresh: stale files that failed to re-read this pass → their
-	 *    PRIOR postings are retained (and old mtime kept, so retried next pass);
-	 *    over-cap files are excluded from the index as on the full path.
-	 * Either way a skipped file is never counted as freshly indexed or reused.
-	 */
-	skipped?: number;
-	/** Incremental: docs reused unchanged (the whole point — reused ≫ refreshed). */
-	reused?: number;
-	/** Refusal / fallback cause (cold_build_refused / incremental_fallback). */
-	reason?: string;
-	/** Failure detail (cold_build_failed / persist_failed). */
-	error?: string;
+  ts?: string;
+  phase: WordIndexLogPhase;
+  cwd: string;
+  /** Which lifecycle produced this: "session_start" | "cold_query" | "per_edit". */
+  trigger?: string;
+  durationMs?: number;
+  phaseDurationsMs?: {
+    snapshotLoadMs?: number;
+    deserializeMs?: number;
+    sourceWalkMs?: number;
+    statWalkMs?: number;
+    refreshReadsMs?: number;
+    snapshotSaveSyncMs?: number;
+  };
+  /** Docs actually represented in the index (mirrors indexedFileCount, #928). */
+  indexedFileCount?: number;
+  /** True when the source walk reached its file cap — searches may be partial. */
+  truncated?: boolean;
+  /** Distinct token count (postings.size) — index breadth at a glance. */
+  tokens?: number;
+  /** Incremental: docs re-tokenized because their mtime changed. */
+  refreshed?: number;
+  /** Incremental: docs removed because they left the current file set. */
+  dropped?: number;
+  /**
+   * Files the walk enumerated but did NOT (re)index this pass — meaning is
+   * per-phase (surfaced on both paths so coverage stays honest, #533):
+   *  - full_rebuild: unreadable OR over the byte cap → genuinely ABSENT from
+   *    the index (never counted as indexed).
+   *  - incremental_refresh: stale files that failed to re-read this pass → their
+   *    PRIOR postings are retained (and old mtime kept, so retried next pass);
+   *    over-cap files are excluded from the index as on the full path.
+   * Either way a skipped file is never counted as freshly indexed or reused.
+   */
+  skipped?: number;
+  /** Incremental: docs reused unchanged (the whole point — reused ≫ refreshed). */
+  reused?: number;
+  /** Refusal / fallback cause (cold_build_refused / incremental_fallback). */
+  reason?: string;
+  /** Failure detail (cold_build_failed / persist_failed). */
+  error?: string;
 }
 
 export function logWordIndex(entry: WordIndexLogEntry): void {
-	if (isTestMode()) {
-		return;
-	}
-	writer.log({ ts: new Date().toISOString(), ...entry });
+  if (isTestMode()) {
+    return;
+  }
+  writer.log({ ts: new Date().toISOString(), ...entry });
 }
 
 export function getWordIndexLogPath(): string {
-	return WORD_INDEX_LOG_FILE;
+  return WORD_INDEX_LOG_FILE;
 }
 
 /** Resolve once all enqueued word-index writes are on disk (tests/shutdown). */
 export function flushWordIndexLog(): Promise<void> {
-	return writer.flush();
+  return writer.flush();
 }

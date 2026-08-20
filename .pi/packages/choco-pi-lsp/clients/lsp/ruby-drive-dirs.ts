@@ -34,11 +34,11 @@ const RUBY_VERSION_DIR = /^ruby\d/i;
 const rubyDirNamesCache = new BoundedLruCache<string, string[]>(16);
 
 function rubyDriveKey(driveRoot: string): string {
-	return normalizeMapKey(driveRoot);
+  return normalizeMapKey(driveRoot);
 }
 
 function filterRubyDirNames(entries: string[]): string[] {
-	return entries.filter((name) => RUBY_VERSION_DIR.test(name));
+  return entries.filter((name) => RUBY_VERSION_DIR.test(name));
 }
 
 /**
@@ -48,17 +48,17 @@ function filterRubyDirNames(entries: string[]): string[] {
  * cache first, this returns that result with no drive-root read at all.
  */
 export function getRubyVersionDirNamesSync(driveRoot: string): string[] {
-	const key = rubyDriveKey(driveRoot);
-	const cached = rubyDirNamesCache.get(key);
-	if (cached !== undefined) return cached;
-	let names: string[];
-	try {
-		names = filterRubyDirNames(fs.readdirSync(driveRoot));
-	} catch {
-		names = [];
-	}
-	rubyDirNamesCache.set(key, names);
-	return names;
+  const key = rubyDriveKey(driveRoot);
+  const cached = rubyDirNamesCache.get(key);
+  if (cached !== undefined) return cached;
+  let names: string[];
+  try {
+    names = filterRubyDirNames(fs.readdirSync(driveRoot));
+  } catch {
+    names = [];
+  }
+  rubyDirNamesCache.set(key, names);
+  return names;
 }
 
 /**
@@ -67,23 +67,21 @@ export function getRubyVersionDirNamesSync(driveRoot: string): string[] {
  * root never blocks the event loop. Shares the same process cache as the sync
  * reader (identical content, so a benign sync/async populate race is fine).
  */
-export async function getRubyVersionDirNamesAsync(
-	driveRoot: string,
-): Promise<string[]> {
-	const key = rubyDriveKey(driveRoot);
-	const cached = rubyDirNamesCache.get(key);
-	if (cached !== undefined) return cached;
-	let names: string[];
-	try {
-		names = filterRubyDirNames(await fs.promises.readdir(driveRoot));
-	} catch {
-		names = [];
-	}
-	rubyDirNamesCache.set(key, names);
-	return names;
+export async function getRubyVersionDirNamesAsync(driveRoot: string): Promise<string[]> {
+  const key = rubyDriveKey(driveRoot);
+  const cached = rubyDirNamesCache.get(key);
+  if (cached !== undefined) return cached;
+  let names: string[];
+  try {
+    names = filterRubyDirNames(await fs.promises.readdir(driveRoot));
+  } catch {
+    names = [];
+  }
+  rubyDirNamesCache.set(key, names);
+  return names;
 }
 
 /** Test-only: clear the process memo so each case starts cold. */
 export function __resetRubyDriveDirsCacheForTest(): void {
-	rubyDirNamesCache.clear();
+  rubyDirNamesCache.clear();
 }

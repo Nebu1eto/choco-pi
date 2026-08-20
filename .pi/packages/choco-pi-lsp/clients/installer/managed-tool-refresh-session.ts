@@ -19,7 +19,7 @@ let refreshesThisSession = 0;
 
 /** Refresh slots taken in the current session, successful or not. */
 export function managedToolRefreshesThisSession(): number {
-	return refreshesThisSession;
+  return refreshesThisSession;
 }
 
 /**
@@ -34,9 +34,9 @@ export function managedToolRefreshesThisSession(): number {
  * hand control to the other run.
  */
 export function reserveManagedToolRefreshSlot(maxPerSession: number): boolean {
-	if (refreshesThisSession >= maxPerSession) return false;
-	refreshesThisSession += 1;
-	return true;
+  if (refreshesThisSession >= maxPerSession) return false;
+  refreshesThisSession += 1;
+  return true;
 }
 
 /**
@@ -46,7 +46,7 @@ export function reserveManagedToolRefreshSlot(maxPerSession: number): boolean {
  * does not retry a second tool in its place.
  */
 export function releaseManagedToolRefreshSlot(): void {
-	if (refreshesThisSession > 0) refreshesThisSession -= 1;
+  if (refreshesThisSession > 0) refreshesThisSession -= 1;
 }
 
 /**
@@ -57,5 +57,5 @@ export function releaseManagedToolRefreshSlot(): void {
  * shape). Also used directly by tests.
  */
 export function resetManagedToolRefreshSession(): void {
-	refreshesThisSession = 0;
+  refreshesThisSession = 0;
 }

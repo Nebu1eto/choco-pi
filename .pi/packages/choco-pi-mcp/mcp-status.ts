@@ -12,7 +12,10 @@ export interface McpStatusEventBus {
   emit(channel: string, data: unknown): void;
 }
 
-function getActiveFailureAgeSeconds(state: McpExtensionState, serverName: string): number | undefined {
+function getActiveFailureAgeSeconds(
+  state: McpExtensionState,
+  serverName: string,
+): number | undefined {
   const failedAt = state.failureTracker.get(serverName);
   if (!failedAt) return undefined;
   const ageMs = Date.now() - failedAt;
@@ -33,10 +36,12 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
     const disabled = definition?.disabled === true;
     const connection = disabled ? undefined : state.manager.getConnection(name);
     const metadata = disabled ? undefined : state.toolMetadata.get(name);
-    const toolCount = metadata?.length ?? (connection?.status === "connected" ? connection.tools.length : 0);
+    const toolCount =
+      metadata?.length ?? (connection?.status === "connected" ? connection.tools.length : 0);
     const resourceCount = disabled
       ? undefined
-      : state.resourceCounts?.get(name) ?? (connection?.status === "connected" ? connection.resources.length : undefined);
+      : (state.resourceCounts?.get(name) ??
+        (connection?.status === "connected" ? connection.resources.length : undefined));
     const failedAgoSeconds = disabled ? undefined : getActiveFailureAgeSeconds(state, name);
 
     let status: McpServerStatusSnapshot["status"] = "not-connected";

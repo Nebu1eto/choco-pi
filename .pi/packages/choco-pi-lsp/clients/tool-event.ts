@@ -55,15 +55,10 @@
  */
 import { sanitizeCorrelationId } from "./read-guard-logger.js";
 
-export function isToolCallEventType<T extends string>(
-	toolName: T,
-	event: unknown,
-): boolean {
-	return (
-		!!event &&
-		typeof event === "object" &&
-		(event as { toolName?: unknown }).toolName === toolName
-	);
+export function isToolCallEventType<T extends string>(toolName: T, event: unknown): boolean {
+  return (
+    !!event && typeof event === "object" && (event as { toolName?: unknown }).toolName === toolName
+  );
 }
 
 /**
@@ -86,26 +81,26 @@ export function isToolCallEventType<T extends string>(
  * default for that case rather than treat a generated id as a match.
  */
 export function resolveToolCallCorrelationId(event: unknown): string | undefined {
-	const value = (event ?? {}) as Record<string, unknown>;
-	for (const candidate of [
-		value.toolCallId,
-		value.callId,
-		value.requestId,
-		// Widest rung, only reached when toolCallId/callId/requestId are all
-		// absent (#1678 item 2): this assumes a host's `id` field identifies
-		// one TOOL CALL. A host that instead populates `id` per MESSAGE (one
-		// id shared by every tool call in that message) would cross two
-		// parallel calls in the same turn under the same id. Stated plainly:
-		// real pi builds `tool_call`/`tool_result` events with exactly
-		// `toolCallId` and no bare `id` field at all (see the file header
-		// above, #1655 item 2, `src/core/agent-session.ts:502-516`), so this
-		// rung is dead code against today's host — kept only in case a
-		// different host shape needs it; drop it once #1655's audit confirms
-		// none does.
-		value.id,
-	]) {
-		const sanitized = sanitizeCorrelationId(candidate);
-		if (sanitized) return sanitized;
-	}
-	return undefined;
+  const value = (event ?? {}) as Record<string, unknown>;
+  for (const candidate of [
+    value.toolCallId,
+    value.callId,
+    value.requestId,
+    // Widest rung, only reached when toolCallId/callId/requestId are all
+    // absent (#1678 item 2): this assumes a host's `id` field identifies
+    // one TOOL CALL. A host that instead populates `id` per MESSAGE (one
+    // id shared by every tool call in that message) would cross two
+    // parallel calls in the same turn under the same id. Stated plainly:
+    // real pi builds `tool_call`/`tool_result` events with exactly
+    // `toolCallId` and no bare `id` field at all (see the file header
+    // above, #1655 item 2, `src/core/agent-session.ts:502-516`), so this
+    // rung is dead code against today's host — kept only in case a
+    // different host shape needs it; drop it once #1655's audit confirms
+    // none does.
+    value.id,
+  ]) {
+    const sanitized = sanitizeCorrelationId(candidate);
+    if (sanitized) return sanitized;
+  }
+  return undefined;
 }

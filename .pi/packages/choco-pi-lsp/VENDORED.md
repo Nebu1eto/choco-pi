@@ -56,15 +56,15 @@ Checked into-package `node_modules/` is populated (tracked; the package
 is gitignored repo-wide) with the exact versions the previous
 `npm:pi-lens@4.0.0` install used:
 
-| package | version | why |
-|---|---|---|
-| @ast-grep/napi (+ napi-darwin-arm64) | 0.45.1 | ast-grep structural search/scan |
-| web-tree-sitter | 0.25.10 | tree-sitter grammars/queries |
-| minimatch (+ brace-expansion, balanced-match) | 10.2.6 | ignore/rule matching |
-| js-yaml (+ argparse) | 5.2.3 | rule/config YAML |
-| pidusage (+ safe-buffer) | 4.0.1 | resource sampler |
-| vscode-jsonrpc | 9.0.1 | LSP transport |
-| @types/pidusage | 2.0.5 | typecheck only |
+| package                                       | version | why                             |
+| --------------------------------------------- | ------- | ------------------------------- |
+| @ast-grep/napi (+ napi-darwin-arm64)          | 0.45.1  | ast-grep structural search/scan |
+| web-tree-sitter                               | 0.25.10 | tree-sitter grammars/queries    |
+| minimatch (+ brace-expansion, balanced-match) | 10.2.6  | ignore/rule matching            |
+| js-yaml (+ argparse)                          | 5.2.3   | rule/config YAML                |
+| pidusage (+ safe-buffer)                      | 4.0.1   | resource sampler                |
+| vscode-jsonrpc                                | 9.0.1   | LSP transport                   |
+| @types/pidusage                               | 2.0.5   | typecheck only                  |
 
 `typebox`, `@earendil-works/pi-coding-agent`, and `@earendil-works/pi-tui`
 resolve from the repository root `node_modules` (0.84.2). Note: the platform
@@ -127,7 +127,6 @@ never saw a mutation: the turn-end advisory stayed silent while every on-demand
 tool kept working. Completed nested `edit`, `write`, and successful
 `apply_patch` mutations are now expanded into dispatchable events with absolute
 paths, and their diagnostics are returned through the outer tool result.
-
 
 `/lsp on|off|status` — a human-facing runtime toggle for LSP usage, wired into
 the same machinery as upstream's `--no-lsp` flag (`lsp.enabled` config key):

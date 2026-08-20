@@ -44,22 +44,22 @@ export const RECENT_TOUCHES_FRESHNESS_MS = 15 * 60 * 1000;
 export type RecentTouchReason = "autofix" | "format";
 
 export interface RecentTouchEntry {
-	/** Normalized (forward-slash) path — see `normalizeFilePath`. */
-	path: string;
-	reason: RecentTouchReason;
-	/** Epoch ms. */
-	ts: number;
-	/** Writer's pid — enables self-exclusion for the reading process. */
-	pid: number;
-	sessionId?: string;
+  /** Normalized (forward-slash) path — see `normalizeFilePath`. */
+  path: string;
+  reason: RecentTouchReason;
+  /** Epoch ms. */
+  ts: number;
+  /** Writer's pid — enables self-exclusion for the reading process. */
+  pid: number;
+  sessionId?: string;
 }
 
 interface RecentTouchesFile {
-	entries: RecentTouchEntry[];
+  entries: RecentTouchEntry[];
 }
 
 function recentTouchesPath(cwd: string): string {
-	return path.join(getProjectDataDir(cwd), "recent-touches.json");
+  return path.join(getProjectDataDir(cwd), "recent-touches.json");
 }
 
 // --- Kill switch: reuse the #485 flag (house style per clients/agent-nudge.ts) ---
@@ -69,59 +69,56 @@ function recentTouchesPath(cwd: string): string {
 let _enabledCache: boolean | undefined;
 
 export function isRecentTouchesEnabled(): boolean {
-	if (_enabledCache === undefined) {
-		_enabledCache = process.env.CHOCO_PI_LSP_AGENT_NUDGE !== "0";
-	}
-	return _enabledCache;
+  if (_enabledCache === undefined) {
+    _enabledCache = process.env.CHOCO_PI_LSP_AGENT_NUDGE !== "0";
+  }
+  return _enabledCache;
 }
 
 /** Test-only: reset all module state between test files/cases. */
 export function _resetRecentTouchesForTests(): void {
-	_enabledCache = undefined;
-	_lastSeenMtimeMs = undefined;
-	_lastConsumedCursor.clear();
+  _enabledCache = undefined;
+  _lastSeenMtimeMs = undefined;
+  _lastConsumedCursor.clear();
 }
 
 // --- Read (never throws — missing file, corrupt JSON, or wrong shape ⇒ empty) ---
 
 async function readRecentTouchesAsync(cwd: string): Promise<RecentTouchesFile> {
-	try {
-		const raw = await fs.promises.readFile(recentTouchesPath(cwd), "utf-8");
-		const parsed = JSON.parse(raw);
-		if (parsed && Array.isArray(parsed.entries)) {
-			return parsed as RecentTouchesFile;
-		}
-		return { entries: [] };
-	} catch {
-		return { entries: [] };
-	}
+  try {
+    const raw = await fs.promises.readFile(recentTouchesPath(cwd), "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.entries)) {
+      return parsed as RecentTouchesFile;
+    }
+    return { entries: [] };
+  } catch {
+    return { entries: [] };
+  }
 }
 
 // --- Write (atomic tmp + rename via clients/atomic-write.ts, #762) ---
 
-async function writeRecentTouchesAsync(
-	cwd: string,
-	file: RecentTouchesFile,
-): Promise<void> {
-	const dir = getProjectDataDir(cwd);
-	const target = recentTouchesPath(cwd);
-	try {
-		await fs.promises.mkdir(dir, { recursive: true });
-	} catch {
-		// Best-effort record — a failed mkdir just means this batch of touches
-		// never reaches other instances; never throw for the caller (the
-		// producer seam is the fire-and-forget bus-publish path).
-		return;
-	}
-	// bestEffort (default): same reasoning as the mkdir failure above.
-	await writeFileAtomicAsync(target, JSON.stringify(file));
+async function writeRecentTouchesAsync(cwd: string, file: RecentTouchesFile): Promise<void> {
+  const dir = getProjectDataDir(cwd);
+  const target = recentTouchesPath(cwd);
+  try {
+    await fs.promises.mkdir(dir, { recursive: true });
+  } catch {
+    // Best-effort record — a failed mkdir just means this batch of touches
+    // never reaches other instances; never throw for the caller (the
+    // producer seam is the fire-and-forget bus-publish path).
+    return;
+  }
+  // bestEffort (default): same reasoning as the mkdir failure above.
+  await writeFileAtomicAsync(target, JSON.stringify(file));
 }
 
 export interface AppendRecentTouchesArgs {
-	cwd: string;
-	reason: RecentTouchReason;
-	paths: string[];
-	sessionId?: string;
+  cwd: string;
+  reason: RecentTouchReason;
+  paths: string[];
+  sessionId?: string;
 }
 
 /**
@@ -132,28 +129,26 @@ export interface AppendRecentTouchesArgs {
  * identical code. Never throws — callers must swallow/log failures
  * themselves (this function already does internally via the write helper).
  */
-export async function appendRecentTouches(
-	args: AppendRecentTouchesArgs,
-): Promise<void> {
-	if (!isRecentTouchesEnabled()) return;
-	if (args.paths.length === 0) return;
-	const now = Date.now();
-	const pid = process.pid;
-	const newEntries: RecentTouchEntry[] = args.paths.map((p) => ({
-		path: normalizeFilePath(p),
-		reason: args.reason,
-		ts: now,
-		pid,
-		sessionId: args.sessionId,
-	}));
-	const file = await readRecentTouchesAsync(args.cwd);
-	const merged = [...file.entries, ...newEntries];
-	// Ring buffer: keep the newest N (oldest-first array, so slice from the tail).
-	const capped =
-		merged.length > RECENT_TOUCHES_MAX_ENTRIES
-			? merged.slice(merged.length - RECENT_TOUCHES_MAX_ENTRIES)
-			: merged;
-	await writeRecentTouchesAsync(args.cwd, { entries: capped });
+export async function appendRecentTouches(args: AppendRecentTouchesArgs): Promise<void> {
+  if (!isRecentTouchesEnabled()) return;
+  if (args.paths.length === 0) return;
+  const now = Date.now();
+  const pid = process.pid;
+  const newEntries: RecentTouchEntry[] = args.paths.map((p) => ({
+    path: normalizeFilePath(p),
+    reason: args.reason,
+    ts: now,
+    pid,
+    sessionId: args.sessionId,
+  }));
+  const file = await readRecentTouchesAsync(args.cwd);
+  const merged = [...file.entries, ...newEntries];
+  // Ring buffer: keep the newest N (oldest-first array, so slice from the tail).
+  const capped =
+    merged.length > RECENT_TOUCHES_MAX_ENTRIES
+      ? merged.slice(merged.length - RECENT_TOUCHES_MAX_ENTRIES)
+      : merged;
+  await writeRecentTouchesAsync(args.cwd, { entries: capped });
 }
 
 // --- Shared foreign-entry filter (both consumers) ---
@@ -169,30 +164,30 @@ export async function appendRecentTouches(
  * expires entries in place).
  */
 function passesForeignEntryFilter(
-	entry: RecentTouchEntry,
-	selfPid: number,
-	now: number,
-	freshnessMs: number,
+  entry: RecentTouchEntry,
+  selfPid: number,
+  now: number,
+  freshnessMs: number,
 ): boolean {
-	if (entry.pid === selfPid) return false;
-	if (now - entry.ts > freshnessMs) return false;
-	try {
-		return fs.existsSync(entry.path);
-	} catch {
-		return false;
-	}
+  if (entry.pid === selfPid) return false;
+  if (now - entry.ts > freshnessMs) return false;
+  try {
+    return fs.existsSync(entry.path);
+  } catch {
+    return false;
+  }
 }
 
 // --- Consumer: child at session_start ---
 
 export interface ReadCrossProcessTouchesForSessionStartArgs {
-	cwd: string;
-	/** Defaults to `process.pid` — overridable for tests. */
-	selfPid?: number;
-	/** Defaults to `Date.now()` — overridable for tests. */
-	now?: number;
-	/** Defaults to `RECENT_TOUCHES_FRESHNESS_MS` — overridable for tests. */
-	freshnessMs?: number;
+  cwd: string;
+  /** Defaults to `process.pid` — overridable for tests. */
+  selfPid?: number;
+  /** Defaults to `Date.now()` — overridable for tests. */
+  now?: number;
+  /** Defaults to `RECENT_TOUCHES_FRESHNESS_MS` — overridable for tests. */
+  freshnessMs?: number;
 }
 
 /**
@@ -210,20 +205,18 @@ export interface ReadCrossProcessTouchesForSessionStartArgs {
  * `fs.existsSync` per candidate is wrapped defensively too.
  */
 export async function readCrossProcessTouchesForSessionStart(
-	args: ReadCrossProcessTouchesForSessionStartArgs,
+  args: ReadCrossProcessTouchesForSessionStartArgs,
 ): Promise<RecentTouchEntry[]> {
-	if (!isRecentTouchesEnabled()) return [];
-	try {
-		const selfPid = args.selfPid ?? process.pid;
-		const now = args.now ?? Date.now();
-		const freshnessMs = args.freshnessMs ?? RECENT_TOUCHES_FRESHNESS_MS;
-		const file = await readRecentTouchesAsync(args.cwd);
-		return file.entries.filter((e) =>
-			passesForeignEntryFilter(e, selfPid, now, freshnessMs),
-		);
-	} catch {
-		return [];
-	}
+  if (!isRecentTouchesEnabled()) return [];
+  try {
+    const selfPid = args.selfPid ?? process.pid;
+    const now = args.now ?? Date.now();
+    const freshnessMs = args.freshnessMs ?? RECENT_TOUCHES_FRESHNESS_MS;
+    const file = await readRecentTouchesAsync(args.cwd);
+    return file.entries.filter((e) => passesForeignEntryFilter(e, selfPid, now, freshnessMs));
+  } catch {
+    return [];
+  }
 }
 
 // --- Consumer: parent at turn_start (mtime-gated hot path) ---
@@ -235,12 +228,12 @@ let _lastSeenMtimeMs: number | undefined;
 const _lastConsumedCursor = new Map<string, number>();
 
 export interface ReadCrossProcessTouchesForTurnStartArgs {
-	cwd: string;
-	selfPid?: number;
-	/** Defaults to `Date.now()` — overridable for tests. */
-	now?: number;
-	/** Defaults to `RECENT_TOUCHES_FRESHNESS_MS` — overridable for tests. */
-	freshnessMs?: number;
+  cwd: string;
+  selfPid?: number;
+  /** Defaults to `Date.now()` — overridable for tests. */
+  now?: number;
+  /** Defaults to `RECENT_TOUCHES_FRESHNESS_MS` — overridable for tests. */
+  freshnessMs?: number;
 }
 
 /**
@@ -261,38 +254,37 @@ export interface ReadCrossProcessTouchesForTurnStartArgs {
  * and must be silent, not logged as an error.
  */
 export async function readCrossProcessTouchesForTurnStart(
-	args: ReadCrossProcessTouchesForTurnStartArgs,
+  args: ReadCrossProcessTouchesForTurnStartArgs,
 ): Promise<RecentTouchEntry[]> {
-	if (!isRecentTouchesEnabled()) return [];
-	try {
-		const target = recentTouchesPath(args.cwd);
-		let mtimeMs: number;
-		try {
-			mtimeMs = (await fs.promises.stat(target)).mtimeMs;
-		} catch {
-			// No record file yet (ENOENT) or inaccessible (EACCES) — nothing to
-			// report; do not disturb the mtime watermark.
-			return [];
-		}
-		if (_lastSeenMtimeMs === mtimeMs) return [];
-		_lastSeenMtimeMs = mtimeMs;
+  if (!isRecentTouchesEnabled()) return [];
+  try {
+    const target = recentTouchesPath(args.cwd);
+    let mtimeMs: number;
+    try {
+      mtimeMs = (await fs.promises.stat(target)).mtimeMs;
+    } catch {
+      // No record file yet (ENOENT) or inaccessible (EACCES) — nothing to
+      // report; do not disturb the mtime watermark.
+      return [];
+    }
+    if (_lastSeenMtimeMs === mtimeMs) return [];
+    _lastSeenMtimeMs = mtimeMs;
 
-		const selfPid = args.selfPid ?? process.pid;
-		const now = args.now ?? Date.now();
-		const freshnessMs = args.freshnessMs ?? RECENT_TOUCHES_FRESHNESS_MS;
-		const file = await readRecentTouchesAsync(args.cwd);
-		const cursorKey = normalizeFilePath(args.cwd);
-		const cursor = _lastConsumedCursor.get(cursorKey) ?? 0;
-		const fresh = file.entries.filter(
-			(e) =>
-				e.ts > cursor && passesForeignEntryFilter(e, selfPid, now, freshnessMs),
-		);
-		if (file.entries.length > 0) {
-			const maxTs = Math.max(...file.entries.map((e) => e.ts));
-			_lastConsumedCursor.set(cursorKey, Math.max(cursor, maxTs));
-		}
-		return fresh;
-	} catch {
-		return [];
-	}
+    const selfPid = args.selfPid ?? process.pid;
+    const now = args.now ?? Date.now();
+    const freshnessMs = args.freshnessMs ?? RECENT_TOUCHES_FRESHNESS_MS;
+    const file = await readRecentTouchesAsync(args.cwd);
+    const cursorKey = normalizeFilePath(args.cwd);
+    const cursor = _lastConsumedCursor.get(cursorKey) ?? 0;
+    const fresh = file.entries.filter(
+      (e) => e.ts > cursor && passesForeignEntryFilter(e, selfPid, now, freshnessMs),
+    );
+    if (file.entries.length > 0) {
+      const maxTs = Math.max(...file.entries.map((e) => e.ts));
+      _lastConsumedCursor.set(cursorKey, Math.max(cursor, maxTs));
+    }
+    return fresh;
+  } catch {
+    return [];
+  }
 }

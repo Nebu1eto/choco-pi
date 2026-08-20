@@ -21,8 +21,12 @@ import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-
  */
 let outputTranscriptDefault = true;
 
-export function getOutputTranscriptDefault(): boolean { return outputTranscriptDefault; }
-export function setOutputTranscriptDefault(b: boolean): void { outputTranscriptDefault = b; }
+export function getOutputTranscriptDefault(): boolean {
+  return outputTranscriptDefault;
+}
+export function setOutputTranscriptDefault(b: boolean): void {
+  outputTranscriptDefault = b;
+}
 
 /**
  * Encode a cwd path as a filesystem-safe directory name. Handles:
@@ -32,9 +36,9 @@ export function setOutputTranscriptDefault(b: boolean): void { outputTranscriptD
  */
 export function encodeCwd(cwd: string): string {
   return cwd
-    .replace(/[/\\]/g, "-")        // both separators → dash
-    .replace(/^[A-Za-z]:-/, "")    // strip Windows drive prefix ("C:-")
-    .replace(/^-+/, "");           // strip leading dashes (POSIX root, UNC)
+    .replace(/[/\\]/g, "-") // both separators → dash
+    .replace(/^[A-Za-z]:-/, "") // strip Windows drive prefix ("C:-")
+    .replace(/^-+/, ""); // strip leading dashes (POSIX root, UNC)
 }
 
 /** Create the output file path, ensuring the directory exists.
@@ -67,11 +71,18 @@ export function createOutputFilePath(cwd: string, agentId: string, sessionId: st
 export function ensureOutputFile(path: string): void {
   try {
     appendFileSync(path, "", "utf-8");
-  } catch { /* ignore — streaming writes are best-effort too */ }
+  } catch {
+    /* ignore — streaming writes are best-effort too */
+  }
 }
 
 /** Write the initial user prompt entry. */
-export function writeInitialEntry(path: string, agentId: string, prompt: string, cwd: string): void {
+export function writeInitialEntry(
+  path: string,
+  agentId: string,
+  prompt: string,
+  cwd: string,
+): void {
   const entry = {
     isSidechain: true,
     agentId,
@@ -115,7 +126,9 @@ export function streamToOutputFile(
       };
       try {
         appendFileSync(path, JSON.stringify(entry) + "\n", "utf-8");
-      } catch { /* ignore write errors */ }
+      } catch {
+        /* ignore write errors */
+      }
       writtenCount++;
     }
   };
@@ -134,7 +147,9 @@ export function streamToOutputFile(
     // session.messages untouched, so only successful ones re-anchor.
     if (event.type === "compaction_start") flush();
     if (event.type === "compaction_end" && !event.aborted && event.result) {
-      queueMicrotask(() => { writtenCount = session.messages.length; });
+      queueMicrotask(() => {
+        writtenCount = session.messages.length;
+      });
     }
   });
 

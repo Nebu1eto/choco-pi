@@ -33,16 +33,16 @@ import { safeSpawnAsync } from "../../../safe-spawn.js";
 import { assertInstallAllowed } from "../../../project-trust.js";
 import { logExtension } from "../../../extension-log.js";
 import {
-	classifyProbeFailure,
-	installRetryDelayMs,
-	type InstallAttemptFact,
+  classifyProbeFailure,
+  installRetryDelayMs,
+  type InstallAttemptFact,
 } from "./availability-policy.js";
 
 export type LazyInstallTool = "rubocop" | "rust-clippy" | "rustfmt";
 
 interface LazyInstallSpec {
-	command: string;
-	args: string[];
+  command: string;
+  args: string[];
 }
 
 /**
@@ -60,9 +60,9 @@ interface LazyInstallSpec {
 // caller reaching it through EITHER `tryLazyInstall` or
 // `tryLazyInstallForFormatter` — dead since introduction (#1572 sweep).
 const LAZY_INSTALL_SPECS: Record<LazyInstallTool, LazyInstallSpec> = {
-	rubocop: { command: "gem", args: ["install", "rubocop", "--no-document"] },
-	"rust-clippy": { command: "rustup", args: ["component", "add", "clippy"] },
-	rustfmt: { command: "rustup", args: ["component", "add", "rustfmt"] },
+  rubocop: { command: "gem", args: ["install", "rubocop", "--no-document"] },
+  "rust-clippy": { command: "rustup", args: ["component", "add", "clippy"] },
+  rustfmt: { command: "rustup", args: ["component", "add", "rustfmt"] },
 };
 
 /**
@@ -105,16 +105,16 @@ const LAZY_INSTALL_TIMEOUT_MS = 180_000;
  * second set of numbers to drift.
  */
 interface LazyInstallState {
-	fact: InstallAttemptFact;
-	/** Epoch ms a retry becomes allowed. 0 means held for the session. */
-	retryAtMs: number;
-	transientAttempts: number;
+  fact: InstallAttemptFact;
+  /** Epoch ms a retry becomes allowed. 0 means held for the session. */
+  retryAtMs: number;
+  transientAttempts: number;
 }
 
 const attempts = new Map<string, LazyInstallState>();
 
 function key(cwd: string, tool: LazyInstallTool): string {
-	return `${cwd}:${tool}`;
+  return `${cwd}:${tool}`;
 }
 
 /**
@@ -126,10 +126,10 @@ function key(cwd: string, tool: LazyInstallTool): string {
  * inventing a failure.
  */
 export function getLazyInstallAttempt(
-	tool: LazyInstallTool,
-	cwd: string,
+  tool: LazyInstallTool,
+  cwd: string,
 ): InstallAttemptFact | undefined {
-	return attempts.get(key(cwd, tool))?.fact;
+  return attempts.get(key(cwd, tool))?.fact;
 }
 
 /**
@@ -150,21 +150,21 @@ export function getLazyInstallAttempt(
  * can prove this is wired to it (the #1266 lesson).
  */
 export function resetLazyInstallAttempts(): void {
-	// Verdicts only. `inFlight` is concurrency bookkeeping, not session state:
-	// clearing it mid-install would let the next caller start a SECOND concurrent
-	// install of the same tool, which is the very thing it prevents. Its entries
-	// are removed by their own `finally`.
-	attempts.clear();
+  // Verdicts only. `inFlight` is concurrency bookkeeping, not session state:
+  // clearing it mid-install would let the next caller start a SECOND concurrent
+  // install of the same tool, which is the very thing it prevents. Its entries
+  // are removed by their own `finally`.
+  attempts.clear();
 }
 
 /** Why a call declined to spawn, when it declined. */
 type Suppression = "succeeded" | "cooling" | "held";
 
 function suppressionFor(state: LazyInstallState | undefined): Suppression | null {
-	if (!state) return null;
-	if (state.fact.outcome === "succeeded") return "succeeded";
-	if (state.retryAtMs === 0) return "held";
-	return Date.now() < state.retryAtMs ? "cooling" : null;
+  if (!state) return null;
+  if (state.fact.outcome === "succeeded") return "succeeded";
+  if (state.retryAtMs === 0) return "held";
+  return Date.now() < state.retryAtMs ? "cooling" : null;
 }
 
 /**
@@ -182,139 +182,133 @@ function suppressionFor(state: LazyInstallState | undefined): Suppression | null
 const inFlight = new Map<string, Promise<boolean>>();
 
 async function runLazyInstall(
-	tool: LazyInstallTool,
-	cwd: string,
-	spec: LazyInstallSpec,
+  tool: LazyInstallTool,
+  cwd: string,
+  spec: LazyInstallSpec,
 ): Promise<boolean> {
-	const k = key(cwd, tool);
-	const running = inFlight.get(k);
-	// Joining, not re-answering: both callers get the outcome of the install they
-	// actually waited for.
-	if (running) return running;
+  const k = key(cwd, tool);
+  const running = inFlight.get(k);
+  // Joining, not re-answering: both callers get the outcome of the install they
+  // actually waited for.
+  if (running) return running;
 
-	const previous = attempts.get(k);
-	const suppressed = suppressionFor(previous);
-	if (suppressed !== null) {
-		logExtension({
-			subsystem: "install",
-			message: `lazy-install ${tool} suppressed (${suppressed})`,
-			metadata: {
-				tool,
-				cwd,
-				suppressed,
-				outcome: previous?.fact.outcome,
-				...(previous?.fact.reason && { reason: previous.fact.reason }),
-				...(suppressed === "cooling" && {
-					retryAfterMs: Math.max(0, (previous?.retryAtMs ?? 0) - Date.now()),
-				}),
-			},
-		});
-		return false;
-	}
+  const previous = attempts.get(k);
+  const suppressed = suppressionFor(previous);
+  if (suppressed !== null) {
+    logExtension({
+      subsystem: "install",
+      message: `lazy-install ${tool} suppressed (${suppressed})`,
+      metadata: {
+        tool,
+        cwd,
+        suppressed,
+        outcome: previous?.fact.outcome,
+        ...(previous?.fact.reason && { reason: previous.fact.reason }),
+        ...(suppressed === "cooling" && {
+          retryAfterMs: Math.max(0, (previous?.retryAtMs ?? 0) - Date.now()),
+        }),
+      },
+    });
+    return false;
+  }
 
-	const started = performInstall(k, tool, cwd, spec);
-	inFlight.set(k, started);
-	try {
-		return await started;
-	} finally {
-		inFlight.delete(k);
-	}
+  const started = performInstall(k, tool, cwd, spec);
+  inFlight.set(k, started);
+  try {
+    return await started;
+  } finally {
+    inFlight.delete(k);
+  }
 }
 
 async function performInstall(
-	k: string,
-	tool: LazyInstallTool,
-	cwd: string,
-	spec: LazyInstallSpec,
+  k: string,
+  tool: LazyInstallTool,
+  cwd: string,
+  spec: LazyInstallSpec,
 ): Promise<boolean> {
-	let result: Awaited<ReturnType<typeof safeSpawnAsync>>;
-	try {
-		result = await safeSpawnAsync(spec.command, spec.args, {
-			timeout: LAZY_INSTALL_TIMEOUT_MS,
-			cwd,
-			...(LAZY_INSTALL_IGNORES_AMBIENT_SIGNAL && { ignoreAmbientSignal: true }),
-		});
-	} catch (err) {
-		// A throw from the spawn boundary is not evidence that the tool cannot be
-		// installed, so it is transient like any other failure to get a fair run.
-		result = {
-			stdout: "",
-			stderr: (err as Error)?.message ?? String(err),
-			status: null,
-			error: err as Error,
-			failure: "spawn",
-		} as Awaited<ReturnType<typeof safeSpawnAsync>>;
-	}
+  let result: Awaited<ReturnType<typeof safeSpawnAsync>>;
+  try {
+    result = await safeSpawnAsync(spec.command, spec.args, {
+      timeout: LAZY_INSTALL_TIMEOUT_MS,
+      cwd,
+      ...(LAZY_INSTALL_IGNORES_AMBIENT_SIGNAL && { ignoreAmbientSignal: true }),
+    });
+  } catch (err) {
+    // A throw from the spawn boundary is not evidence that the tool cannot be
+    // installed, so it is transient like any other failure to get a fair run.
+    result = {
+      stdout: "",
+      stderr: (err as Error)?.message ?? String(err),
+      status: null,
+      error: err as Error,
+      failure: "spawn",
+    } as Awaited<ReturnType<typeof safeSpawnAsync>>;
+  }
 
-	if (!result.error && result.status === 0) {
-		attempts.set(k, {
-			fact: { outcome: "succeeded" },
-			retryAtMs: 0,
-			transientAttempts: 0,
-		});
-		return true;
-	}
+  if (!result.error && result.status === 0) {
+    attempts.set(k, {
+      fact: { outcome: "succeeded" },
+      retryAtMs: 0,
+      transientAttempts: 0,
+    });
+    return true;
+  }
 
-	// `classifyProbeFailure` owns the transient taxonomy (timeout, kill, EAGAIN)
-	// and the one durable case that matters here: `tool-not-found` on the package
-	// MANAGER. Everything else RAN and exited nonzero, which for an install is
-	// the retry candidate — a network failure and a nonexistent package are
-	// indistinguishable from the exit code, so the attempt CEILING is what stops
-	// the second one from retrying forever, not a guess at the cause.
-	const classified = classifyProbeFailure(result, {
-		command: spec.command,
-		unclassifiedFailureOutcome: "transient",
-	});
-	const durable = classified.outcome === "missing";
-	const reason = (
-		result.error?.message ??
-		result.stderr ??
-		`exit ${result.status}`
-	)
-		.trim()
-		.slice(0, 200);
+  // `classifyProbeFailure` owns the transient taxonomy (timeout, kill, EAGAIN)
+  // and the one durable case that matters here: `tool-not-found` on the package
+  // MANAGER. Everything else RAN and exited nonzero, which for an install is
+  // the retry candidate — a network failure and a nonexistent package are
+  // indistinguishable from the exit code, so the attempt CEILING is what stops
+  // the second one from retrying forever, not a guess at the cause.
+  const classified = classifyProbeFailure(result, {
+    command: spec.command,
+    unclassifiedFailureOutcome: "transient",
+  });
+  const durable = classified.outcome === "missing";
+  const reason = (result.error?.message ?? result.stderr ?? `exit ${result.status}`)
+    .trim()
+    .slice(0, 200);
 
-	// Re-read the record rather than trusting one captured before the spawn
-	// (#1537 review P3). `resetLazyInstallAttempts` clears `attempts` but leaves
-	// `inFlight`, so an install can outlive the session that started it — and a
-	// captured counter let that survivor stamp the OLD session's attempt count
-	// onto the NEW session's empty map, opening a fresh session already HELD with
-	// no attempts of its own. Re-reading makes the settle count as attempt 1 of
-	// whatever session is current. Nothing else can write this key while the
-	// install is in flight (the in-flight map is what guarantees that), so in the
-	// ordinary case this reads exactly what was captured.
-	const settledPrevious = attempts.get(k);
-	const transientAttempts = durable
-		? 0
-		: (settledPrevious?.transientAttempts ?? 0) + 1;
-	// The ceiling is READ OFF the ladder: `installRetryDelayMs` returns 0 once its
-	// list is spent, which is the same "no retry, the verdict is latched" signal
-	// `noteUnavailable` returns. No separate max-attempts comparison to disagree
-	// with the ladder's real length (#1537 review F2).
-	const cooldownMs = durable ? 0 : installRetryDelayMs(transientAttempts);
-	const retryAtMs = cooldownMs === 0 ? 0 : Date.now() + cooldownMs;
+  // Re-read the record rather than trusting one captured before the spawn
+  // (#1537 review P3). `resetLazyInstallAttempts` clears `attempts` but leaves
+  // `inFlight`, so an install can outlive the session that started it — and a
+  // captured counter let that survivor stamp the OLD session's attempt count
+  // onto the NEW session's empty map, opening a fresh session already HELD with
+  // no attempts of its own. Re-reading makes the settle count as attempt 1 of
+  // whatever session is current. Nothing else can write this key while the
+  // install is in flight (the in-flight map is what guarantees that), so in the
+  // ordinary case this reads exactly what was captured.
+  const settledPrevious = attempts.get(k);
+  const transientAttempts = durable ? 0 : (settledPrevious?.transientAttempts ?? 0) + 1;
+  // The ceiling is READ OFF the ladder: `installRetryDelayMs` returns 0 once its
+  // list is spent, which is the same "no retry, the verdict is latched" signal
+  // `noteUnavailable` returns. No separate max-attempts comparison to disagree
+  // with the ladder's real length (#1537 review F2).
+  const cooldownMs = durable ? 0 : installRetryDelayMs(transientAttempts);
+  const retryAtMs = cooldownMs === 0 ? 0 : Date.now() + cooldownMs;
 
-	attempts.set(k, {
-		fact: { outcome: "failed", reason },
-		retryAtMs,
-		transientAttempts,
-	});
-	logExtension({
-		subsystem: "install",
-		message: `lazy-install ${tool} failed: ${reason}`,
-		metadata: {
-			tool,
-			cwd,
-			command: spec.command,
-			cause: classified.cause,
-			durable,
-			transientAttempts,
-			held: retryAtMs === 0,
-			...(retryAtMs > 0 && { retryAfterMs: retryAtMs - Date.now() }),
-			evidence: classified.evidence,
-		},
-	});
-	return false;
+  attempts.set(k, {
+    fact: { outcome: "failed", reason },
+    retryAtMs,
+    transientAttempts,
+  });
+  logExtension({
+    subsystem: "install",
+    message: `lazy-install ${tool} failed: ${reason}`,
+    metadata: {
+      tool,
+      cwd,
+      command: spec.command,
+      cause: classified.cause,
+      durable,
+      transientAttempts,
+      held: retryAtMs === 0,
+      ...(retryAtMs > 0 && { retryAfterMs: retryAtMs - Date.now() }),
+      evidence: classified.evidence,
+    },
+  });
+  return false;
 }
 
 /**
@@ -324,12 +318,9 @@ async function performInstall(
  * returns false rather than repeating the previous answer, so a caller cannot
  * mistake "already handled" for "just installed".
  */
-export async function tryLazyInstall(
-	tool: LazyInstallTool,
-	cwd: string,
-): Promise<boolean> {
-	if (!assertInstallAllowed(`runner lazy install: ${tool}`)) return false;
-	return runLazyInstall(tool, cwd, LAZY_INSTALL_SPECS[tool]);
+export async function tryLazyInstall(tool: LazyInstallTool, cwd: string): Promise<boolean> {
+  if (!assertInstallAllowed(`runner lazy install: ${tool}`)) return false;
+  return runLazyInstall(tool, cwd, LAZY_INSTALL_SPECS[tool]);
 }
 
 /**
@@ -339,9 +330,9 @@ export async function tryLazyInstall(
  * shape and a fix in one copy is not a fix (#1537).
  */
 export async function tryLazyInstallForFormatter(
-	tool: "rubocop" | "rustfmt",
-	cwd: string,
+  tool: "rubocop" | "rustfmt",
+  cwd: string,
 ): Promise<boolean> {
-	if (!assertInstallAllowed(`formatter lazy install: ${tool}`)) return false;
-	return runLazyInstall(tool, cwd, LAZY_INSTALL_SPECS[tool]);
+  if (!assertInstallAllowed(`formatter lazy install: ${tool}`)) return false;
+  return runLazyInstall(tool, cwd, LAZY_INSTALL_SPECS[tool]);
 }

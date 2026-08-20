@@ -11,7 +11,7 @@ message: "raise with string literal — Python 3 requires exception instances"
 description: |
   In Python 3, 'raise "message"' is a TypeError at runtime.
   You must raise exception instances or classes, not strings.
-  
+
   ✅ FIX:
     raise ValueError("message")
     raise RuntimeError(f"failed: {reason}")
@@ -34,7 +34,7 @@ examples:
   bad: |
     if not valid:
         raise "Validation failed"   # TypeError in Python 3!
-  
+
   good: |
     if not valid:
         raise ValueError("Validation failed")

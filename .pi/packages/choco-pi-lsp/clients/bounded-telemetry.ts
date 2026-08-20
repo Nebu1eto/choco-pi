@@ -54,68 +54,66 @@ import { type LatencyEntry, logLatency } from "./latency-logger.js";
  * must not also be written by a raw `logLatency` call somewhere else.
  */
 export const BOUNDED_TELEMETRY_PHASES = [
-	/** #1705: a deferred-format record whose origin worktree never claimed it. */
-	"agent_end_deferred_format_orphan_origin_mismatch",
-	/** #1713: a `textDocument`/`workspace` diagnostic pull abandoned at budget. */
-	"lsp_pull_diagnostic_timeout",
-	/** #1713: that abandoned pull answered anyway, too late to serve anyone. */
-	"lsp_pull_late_answer_discarded",
-	/** #1773: a pull skipped outright because the caller's budget was already
-	 *  exhausted — never dispatched, so it must not be confused with a genuine
-	 *  timeout. */
-	"lsp_pull_skipped_budget_exhausted",
-	/** #1774: an abandoned pull's request eventually REJECTED (e.g. a server
-	 *  `ContentModified`) rather than answering or staying silent forever —
-	 *  the third outcome late-answer telemetry previously could not see. */
-	"lsp_pull_late_rejection",
-	/** #1716: a hover/definition/references/etc. request abandoned at budget. */
-	"lsp_nav_request_timeout",
-	/** #1716: that abandoned nav request answered anyway, after the caller left. */
-	"lsp_nav_late_answer_discarded",
-	/**
-	 * #1743 review: a per-file touch skipped a server in breaker cooldown or
-	 * latched permanently broken. Fires once per file per touch during an
-	 * outage, so it is rising-edge per (server, file).
-	 */
-	"lsp_client_skipped_broken",
-	/** #1743 review: the same skip, for a temporarily unavailable command. */
-	"lsp_client_skipped_unavailable_command",
-	/**
-	 * #1723: an event-loop block at or above the floor. Not a degradation, so
-	 * no ledger kind; bounded by call cadence (one `turn_end` runs it once per
-	 * turn) rather than by an option here.
-	 */
-	"loop_block",
+  /** #1705: a deferred-format record whose origin worktree never claimed it. */
+  "agent_end_deferred_format_orphan_origin_mismatch",
+  /** #1713: a `textDocument`/`workspace` diagnostic pull abandoned at budget. */
+  "lsp_pull_diagnostic_timeout",
+  /** #1713: that abandoned pull answered anyway, too late to serve anyone. */
+  "lsp_pull_late_answer_discarded",
+  /** #1773: a pull skipped outright because the caller's budget was already
+   *  exhausted — never dispatched, so it must not be confused with a genuine
+   *  timeout. */
+  "lsp_pull_skipped_budget_exhausted",
+  /** #1774: an abandoned pull's request eventually REJECTED (e.g. a server
+   *  `ContentModified`) rather than answering or staying silent forever —
+   *  the third outcome late-answer telemetry previously could not see. */
+  "lsp_pull_late_rejection",
+  /** #1716: a hover/definition/references/etc. request abandoned at budget. */
+  "lsp_nav_request_timeout",
+  /** #1716: that abandoned nav request answered anyway, after the caller left. */
+  "lsp_nav_late_answer_discarded",
+  /**
+   * #1743 review: a per-file touch skipped a server in breaker cooldown or
+   * latched permanently broken. Fires once per file per touch during an
+   * outage, so it is rising-edge per (server, file).
+   */
+  "lsp_client_skipped_broken",
+  /** #1743 review: the same skip, for a temporarily unavailable command. */
+  "lsp_client_skipped_unavailable_command",
+  /**
+   * #1723: an event-loop block at or above the floor. Not a degradation, so
+   * no ledger kind; bounded by call cadence (one `turn_end` runs it once per
+   * turn) rather than by an option here.
+   */
+  "loop_block",
 ] as const;
 
 export type BoundedPhase = (typeof BOUNDED_TELEMETRY_PHASES)[number];
 
-const REGISTERED_PHASES: ReadonlySet<string> = new Set(
-	BOUNDED_TELEMETRY_PHASES,
-);
+const REGISTERED_PHASES: ReadonlySet<string> = new Set(BOUNDED_TELEMETRY_PHASES);
 
 /** Report whether a phase name is in the registry (used by the sweep). */
 export function isBoundedTelemetryPhase(phase: string): phase is BoundedPhase {
-	return REGISTERED_PHASES.has(phase);
+  return REGISTERED_PHASES.has(phase);
 }
 
 /** Hard ceiling on detailed records for one phase within one turn. */
 export interface TurnCap {
-	limit: number;
-	/**
-	 * The caller's current turn. It travels with the limit on purpose: it
-	 * makes a cap that nobody resets unrepresentable. The counters clear the
-	 * first time a call observes a different turn.
-	 */
-	turnIndex: number;
+  limit: number;
+  /**
+   * The caller's current turn. It travels with the limit on purpose: it
+   * makes a cap that nobody resets unrepresentable. The counters clear the
+   * first time a call observes a different turn.
+   */
+  turnIndex: number;
 }
 
 interface BoundedTelemetryCommon {
-	/**
-	 * Reason text stored with the ledger entry. Ignored without `ledgerKind`.
-	 */
-	reason?: string;
-	capPerTurn?: TurnCap;
+  /**
+   * Reason text stored with the ledger entry. Ignored without `ledgerKind`.
+   */
+  reason?: string;
+  capPerTurn?: TurnCap;
 }
 
 /**
@@ -135,20 +133,20 @@ interface BoundedTelemetryCommon {
  * this helper exists to enforce).
  */
 export type BoundedTelemetryOptions = BoundedTelemetryCommon &
-	(
-		| {
-				/**
-				 * Ledger kind that counts EVERY occurrence exactly, including the
-				 * ones this helper declines to log in detail. Omit only when the
-				 * phase is not a degradation; a failure path without a ledger kind
-				 * counts nothing, and the count is what makes an unlogged repeat
-				 * visible at all.
-				 */
-				ledgerKind?: DegradationKind;
-				risingEdgePer?: never;
-		  }
-		| { ledgerKind: DegradationKind; risingEdgePer: "identity" }
-	);
+  (
+    | {
+        /**
+         * Ledger kind that counts EVERY occurrence exactly, including the
+         * ones this helper declines to log in detail. Omit only when the
+         * phase is not a degradation; a failure path without a ledger kind
+         * counts nothing, and the count is what makes an unlogged repeat
+         * visible at all.
+         */
+        ledgerKind?: DegradationKind;
+        risingEdgePer?: never;
+      }
+    | { ledgerKind: DegradationKind; risingEdgePer: "identity" }
+  );
 
 /**
  * What the payload may set. `phase`, `ts`, and `pid` belong to the helper and
@@ -160,12 +158,12 @@ export type BoundedTelemetryOptions = BoundedTelemetryCommon &
  * `type` defaults to `"phase"`.
  */
 export type BoundedTelemetryPayload = Omit<
-	LatencyEntry,
-	"phase" | "filePath" | "ts" | "pid" | "type"
+  LatencyEntry,
+  "phase" | "filePath" | "ts" | "pid" | "type"
 > & {
-	filePath?: string;
-	/** Defaults to `"phase"`, which every migrated site uses. */
-	type?: LatencyEntry["type"];
+  filePath?: string;
+  /** Defaults to `"phase"`, which every migrated site uses. */
+  type?: LatencyEntry["type"];
 };
 
 /**
@@ -188,29 +186,29 @@ let countedTurnIndex: number | undefined;
  * per-call would have turned one record into N.
  */
 export function admitBounded(
-	phase: BoundedPhase,
-	identity: string,
-	options: BoundedTelemetryOptions = {},
+  phase: BoundedPhase,
+  identity: string,
+  options: BoundedTelemetryOptions = {},
 ): boolean {
-	try {
-		let isRisingEdge = true;
-		if (options.ledgerKind !== undefined) {
-			// `subject` is the identity, unmodified: the ledger's per-subject
-			// entry is what tells a reader WHICH file or method is stuck after
-			// the detailed records stop.
-			isRisingEdge = incrementDegradationCount({
-				kind: options.ledgerKind,
-				subject: identity,
-				reason: options.reason ?? phase,
-			});
-		}
-		if (options.risingEdgePer !== undefined && !isRisingEdge) return false;
-		return admitAgainstTurnCap(phase, options.capPerTurn);
-	} catch {
-		// Telemetry must never break the observed path. Emitting is the safer
-		// failure: an extra record is noise, a swallowed one is a blind spot.
-		return true;
-	}
+  try {
+    let isRisingEdge = true;
+    if (options.ledgerKind !== undefined) {
+      // `subject` is the identity, unmodified: the ledger's per-subject
+      // entry is what tells a reader WHICH file or method is stuck after
+      // the detailed records stop.
+      isRisingEdge = incrementDegradationCount({
+        kind: options.ledgerKind,
+        subject: identity,
+        reason: options.reason ?? phase,
+      });
+    }
+    if (options.risingEdgePer !== undefined && !isRisingEdge) return false;
+    return admitAgainstTurnCap(phase, options.capPerTurn);
+  } catch {
+    // Telemetry must never break the observed path. Emitting is the safer
+    // failure: an extra record is noise, a swallowed one is a blind spot.
+    return true;
+  }
 }
 
 /**
@@ -220,29 +218,29 @@ export function admitBounded(
  * ignore it or, in #1705's case, use `admitBounded` directly).
  */
 export function emitBounded(
-	phase: BoundedPhase,
-	identity: string,
-	payload: BoundedTelemetryPayload,
-	options: BoundedTelemetryOptions = {},
+  phase: BoundedPhase,
+  identity: string,
+  payload: BoundedTelemetryPayload,
+  options: BoundedTelemetryOptions = {},
 ): boolean {
-	try {
-		if (!admitBounded(phase, identity, options)) return false;
-		logLatency({
-			...payload,
-			type: payload.type ?? "phase",
-			phase,
-			// `filePath` is what existing latency.log queries filter on, so a site
-			// may keep a coarser one; `metadata.identity` below always carries the
-			// full discriminating identity. Aggregation that loses WHICH subject
-			// is stuck is the failure AGENTS.md names.
-			filePath: payload.filePath ?? identity,
-			metadata: { ...payload.metadata, identity },
-		});
-		return true;
-	} catch {
-		// Telemetry must never break the observed path.
-		return false;
-	}
+  try {
+    if (!admitBounded(phase, identity, options)) return false;
+    logLatency({
+      ...payload,
+      type: payload.type ?? "phase",
+      phase,
+      // `filePath` is what existing latency.log queries filter on, so a site
+      // may keep a coarser one; `metadata.identity` below always carries the
+      // full discriminating identity. Aggregation that loses WHICH subject
+      // is stuck is the failure AGENTS.md names.
+      filePath: payload.filePath ?? identity,
+      metadata: { ...payload.metadata, identity },
+    });
+    return true;
+  } catch {
+    // Telemetry must never break the observed path.
+    return false;
+  }
 }
 
 /**
@@ -250,19 +248,16 @@ export function emitBounded(
  * exactly one place: a cap and its reset drifting apart is how #1733's
  * compensating-pair guards got past review.
  */
-function admitAgainstTurnCap(
-	phase: string,
-	cap: BoundedTelemetryOptions["capPerTurn"],
-): boolean {
-	if (cap === undefined) return true;
-	if (countedTurnIndex !== cap.turnIndex) {
-		turnCounts = new Map();
-		countedTurnIndex = cap.turnIndex;
-	}
-	const used = turnCounts.get(phase) ?? 0;
-	if (used >= cap.limit) return false;
-	turnCounts.set(phase, used + 1);
-	return true;
+function admitAgainstTurnCap(phase: string, cap: BoundedTelemetryOptions["capPerTurn"]): boolean {
+  if (cap === undefined) return true;
+  if (countedTurnIndex !== cap.turnIndex) {
+    turnCounts = new Map();
+    countedTurnIndex = cap.turnIndex;
+  }
+  const used = turnCounts.get(phase) ?? 0;
+  if (used >= cap.limit) return false;
+  turnCounts.set(phase, used + 1);
+  return true;
 }
 
 /**
@@ -272,11 +267,11 @@ function admitAgainstTurnCap(
  * and they need this because turn numbering restarts at 0 each session.
  */
 export function resetBoundedTelemetry(): void {
-	turnCounts = new Map();
-	countedTurnIndex = undefined;
+  turnCounts = new Map();
+  countedTurnIndex = undefined;
 }
 
 /** Test-only: the live per-turn admission count for a phase. */
 export function _boundedTurnCountForTest(phase: string): number {
-	return turnCounts.get(phase) ?? 0;
+  return turnCounts.get(phase) ?? 0;
 }

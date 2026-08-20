@@ -1,9 +1,9 @@
 id: no-throw-string
 valid:
   - 'throw new Error("x")'
-  - 'throw err'
+  - "throw err"
   - 'throw "msg with " + varName'
-  - 'throw `template`'
+  - "throw `template`"
 invalid:
   - 'throw "oops"'
   - 'throw "literal"'

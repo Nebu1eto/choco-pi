@@ -34,11 +34,7 @@ function snap(remaining: number, atMs: number): ProjectionSnapshot {
   return { quotas: quotas(remaining), updatedAt: atMs };
 }
 
-function weeklySnap(
-  remaining: number,
-  atMs: number,
-  capacity = 15.12,
-): ProjectionSnapshot {
+function weeklySnap(remaining: number, atMs: number, capacity = 15.12): ProjectionSnapshot {
   return {
     quotas: {
       weeklyTokenLimit: {
@@ -185,20 +181,14 @@ describe("buildProjectionHints", () => {
     });
 
     it("reports stable when daily regen covers daily usage", () => {
-      const hints = buildProjectionHints([
-        weeklySnap(2.8728, 0),
-        weeklySnap(2.8728, DAY),
-      ]);
+      const hints = buildProjectionHints([weeklySnap(2.8728, 0), weeklySnap(2.8728, DAY)]);
       expect(hints.get(WEEKLY_TOKEN_LIMIT_ID)).toEqual({ kind: "stable" });
     });
 
     it("projects one day ahead from the net daily drain", () => {
       // Remaining falls from 30% to 19% across a full regen cycle. Continuing
       // that net drain for another day leaves 8% remaining (92% used).
-      const hints = buildProjectionHints([
-        weeklySnap(4.536, 0),
-        weeklySnap(2.8728, DAY),
-      ]);
+      const hints = buildProjectionHints([weeklySnap(4.536, 0), weeklySnap(2.8728, DAY)]);
       const hint = hints.get(WEEKLY_TOKEN_LIMIT_ID);
       expect(hint).toMatchObject({
         kind: "projected",
@@ -211,10 +201,7 @@ describe("buildProjectionHints", () => {
     });
 
     it("skips a sparse interval whose refill may have hit capacity", () => {
-      const hints = buildProjectionHints([
-        weeklySnap(6, 0),
-        weeklySnap(3, 7 * DAY),
-      ]);
+      const hints = buildProjectionHints([weeklySnap(6, 0), weeklySnap(3, 7 * DAY)]);
       expect(hints.has(WEEKLY_TOKEN_LIMIT_ID)).toBe(false);
     });
 
@@ -265,10 +252,7 @@ describe("buildProjectionHints", () => {
 
     it("does not treat a capacity transition as credit burn", () => {
       const currentAt = 2 * DAY;
-      const hints = buildProjectionHints([
-        weeklySnap(6, 0, 10),
-        weeklySnap(3, currentAt),
-      ]);
+      const hints = buildProjectionHints([weeklySnap(6, 0, 10), weeklySnap(3, currentAt)]);
       expect(hints.has(WEEKLY_TOKEN_LIMIT_ID)).toBe(false);
     });
 
@@ -282,10 +266,7 @@ describe("buildProjectionHints", () => {
     });
 
     it("rejects weekly samples older than the retained 14-day window", () => {
-      const hints = buildProjectionHints([
-        weeklySnap(6, 0),
-        weeklySnap(3, 14 * DAY + 1),
-      ]);
+      const hints = buildProjectionHints([weeklySnap(6, 0), weeklySnap(3, 14 * DAY + 1)]);
       expect(hints.has(WEEKLY_TOKEN_LIMIT_ID)).toBe(false);
     });
   });
