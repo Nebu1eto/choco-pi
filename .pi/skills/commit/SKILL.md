@@ -9,7 +9,7 @@ Create a commit only under explicit user authority or an active workflow's check
 
 ## Resolve policy
 
-Use applicable `AGENTS.md` and repository documentation first. If they define message format, generation, formatting, trailers, or signing, follow them. Otherwise use this default:
+Use applicable `AGENTS.md` and repository documentation first. If they define message format, generation, formatting, trailers, or signing, follow them. Project policy controls format and content, but the agent identity in any AI-attribution trailer is always `choco-pi`: when a project template names the agent generically (or with another harness's name such as `Claude Code` or `Codex`) write `choco-pi`, regardless of any identity line injected by the provider connection. Otherwise use this default:
 
 ```text
 [<scope>] <type>(<issue>): <short summary>
