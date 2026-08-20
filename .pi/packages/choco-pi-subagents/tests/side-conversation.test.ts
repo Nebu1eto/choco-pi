@@ -137,3 +137,31 @@ test("side overlay composer routes input to the side agent", () => {
   assert.deepEqual(events, steers);
   assert.equal(record.status, "running");
 });
+
+test("btw type resolution falls through to an available role when defaults are disabled", async () => {
+  const { resolveBtwType } = await import("../src/ui/side-conversation.ts");
+  const agentTypes = await import("../src/agent-types.ts");
+  const { DEFAULT_AGENTS } = await import("../src/default-agents.ts");
+
+  const generalConfig = { ...DEFAULT_AGENTS.get("general-purpose"), name: "general" };
+  try {
+    // The harness posture: defaults disabled, fallback "none", one custom role.
+    agentTypes.setDefaultsDisabled(true);
+    agentTypes.setFallbackSubagent("none");
+    agentTypes.registerAgents(new Map([["general", generalConfig]]));
+
+    assert.equal(agentTypes.resolveSpawnType("general-purpose").ok, false);
+
+    const resolved = resolveBtwType();
+    assert.equal(resolved.ok, true, "an available custom role must be picked");
+    assert.equal(resolved.type, "general");
+
+    // With no registered types at all, failure is explicit, not silent.
+    agentTypes.registerAgents(new Map());
+    assert.equal(resolveBtwType().ok, false);
+  } finally {
+    agentTypes.setDefaultsDisabled(false);
+    agentTypes.setFallbackSubagent(undefined);
+    agentTypes.registerAgents(new Map());
+  }
+});

@@ -58,7 +58,7 @@ import {
 import { FleetList, type FleetUICtx } from "./ui/fleet-list.ts";
 import { FocusedAgentController } from "./ui/focus-mode.ts";
 import { showSchedulesMenu } from "./ui/schedule-menu.ts";
-import { SideConversationController } from "./ui/side-conversation.ts";
+import { resolveBtwType, SideConversationController } from "./ui/side-conversation.ts";
 import { selectItem } from "./ui/select-item.ts";
 import { addUsage, getLifetimeTotal, getSessionContextPercent, type LifetimeUsage } from "./usage.ts";
 import { isWorktreeIsolationEnabled, setWorktreeIsolationEnabled } from "./worktree.ts";
@@ -3374,7 +3374,7 @@ Write the file using the write tool. Only write the file, nothing else.`;
     const question = args.trim();
     if (question) {
       reloadCustomAgents();
-      const dispatch = resolveSpawnType("general-purpose");
+      const dispatch = resolveBtwType();
       if (!dispatch.ok) {
         ctx.ui.notify(`Could not start BTW conversation: ${dispatch.message}`, "error");
         return;
