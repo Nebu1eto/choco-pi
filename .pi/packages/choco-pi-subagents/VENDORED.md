@@ -1,4 +1,4 @@
-# Vendored: pi-choco-subagents
+# Vendored: choco-pi-subagents
 
 This directory is a **vendored, renamed fork** of the upstream open-source
 package **@tintinweb/pi-subagents**. This is not the original source repository.
@@ -54,11 +54,11 @@ source package cannot use:
 
 ### Identity
 
-- `package.json` `name`: `@tintinweb/pi-subagents` → `pi-choco-subagents`;
+- `package.json` `name`: `@tintinweb/pi-subagents` → `choco-pi-subagents`;
   `version` → `0.17.1-choco.0`; added `"private": true` and `"type": "module"`.
-- Console warning prefix `[pi-subagents]` → `[pi-choco-subagents]` (7 sites).
+- Console warning prefix `[pi-subagents]` → `[choco-pi-subagents]` (7 sites).
 - Transcript temp root `<tmpdir>/pi-subagents-<uid>/` →
-  `<tmpdir>/pi-choco-subagents-<uid>/` in `src/output-file.ts`, so this fork's
+  `<tmpdir>/choco-pi-subagents-<uid>/` in `src/output-file.ts`, so this fork's
   `.output` transcripts cannot collide with a concurrently installed upstream
   copy. Owner-only `0700` and the per-agent layout below it are unchanged.
 
@@ -76,7 +76,7 @@ without producing a compile error:
 One consequence of the package rename **is** user-visible: an extension answers
 to its package's unscoped short name (upstream #143), which is derived at
 runtime from the owning `package.json`. Agent frontmatter that allowlisted
-`extensions: [pi-subagents]` must now say `pi-choco-subagents`. No agent file in
+`extensions: [pi-subagents]` must now say `choco-pi-subagents`. No agent file in
 this repository names it, so nothing here needed updating.
 
 ### Import specifiers: `./x.js` → `./x.ts`
@@ -183,7 +183,7 @@ substitutes its own bundled modules for those imports at extension load time.
 ## How this copy is used
 
 `.pi/settings.json` must reference it as a local pi package
-(`"./packages/pi-choco-subagents"`, resolved against the `.pi` directory),
+(`"./packages/choco-pi-subagents"`, resolved against the `.pi` directory),
 replacing the `npm:@tintinweb/pi-subagents@0.16.1` entry. That edit is owned by
 the integration step, not by this package.
 

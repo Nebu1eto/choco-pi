@@ -187,7 +187,7 @@ let warnedThisLoad = new Set<string>();
 function warnIfNew(message: string): void {
   warnedThisLoad.add(message);
   if (warnedLastLoad.has(message)) return;
-  console.warn(`[pi-choco-subagents] ${message}`);
+  console.warn(`[choco-pi-subagents] ${message}`);
 }
 
 // ---- Field parsers ----

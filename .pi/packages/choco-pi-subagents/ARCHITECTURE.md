@@ -1,4 +1,4 @@
-# pi-choco-subagents — module map and extension seams
+# choco-pi-subagents — module map and extension seams
 
 This document exists for the choco-pi phases that build **on top of** the
 vendored core: focused-agent fullscreen takeover, dismissible side
@@ -60,7 +60,7 @@ this extension out must stay completely silent.
 | `worktree.ts` | `isolation: "worktree"` — create, work-path resolution for a subdirectory cwd, base-SHA capture, `--no-verify` preservation commit, prune. |
 | `schedule.ts`, `schedule-store.ts` | Cron and interval jobs (`croner`), persisted across sessions. |
 | `group-join.ts` | Holds a group of background agents and delivers one consolidated notification. |
-| `output-file.ts` | Per-agent `.output` JSON-lines transcript under `<tmpdir>/pi-choco-subagents-<uid>/`, compaction-safe streaming. |
+| `output-file.ts` | Per-agent `.output` JSON-lines transcript under `<tmpdir>/choco-pi-subagents-<uid>/`, compaction-safe streaming. |
 | `abortable.ts`, `child-context.ts`, `context.ts`, `env.ts`, `usage.ts`, `status-note.ts`, `prompts.ts` | Cancellation, child-session detection, message extraction, environment block, token accounting, result status notes, prompt assembly. |
 
 ### Prompt mentions (`@handle`)
@@ -145,7 +145,7 @@ always addressed to its top-level record id rather than a child tool call.
    orchestrator draft.
 
 `ui/method-patch-registry.ts` stores adapters under
-`Symbol.for("pi-choco-subagents.method-patch-registry")`. Each wrapper records
+`Symbol.for("choco-pi-subagents.method-patch-registry")`. Each wrapper records
 its exact predecessor descriptor. Cleanup restores that descriptor only when
 its own wrapper is still outermost; if another extension wrapped it later, the
 focus behavior is deactivated and the newer wrapper is left untouched. The

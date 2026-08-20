@@ -1,5 +1,5 @@
 {
-  "name": "pi-choco-subagents",
+  "name": "choco-pi-subagents",
   "version": "0.17.1-choco.0",
   "private": true,
   "type": "module",

@@ -41,7 +41,7 @@ export function encodeCwd(cwd: string): string {
  *  Mirrors Claude Code's layout: /tmp/{prefix}-{uid}/{encoded-cwd}/{sessionId}/tasks/{agentId}.output */
 export function createOutputFilePath(cwd: string, agentId: string, sessionId: string): string {
   const encoded = encodeCwd(cwd);
-  const root = join(tmpdir(), `pi-choco-subagents-${process.getuid?.() ?? 0}`);
+  const root = join(tmpdir(), `choco-pi-subagents-${process.getuid?.() ?? 0}`);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   // chmod is a no-op on Windows and throws on some Windows filesystems.
   // On Unix we still want to enforce 0o700 past umask, so only swallow on Windows.
