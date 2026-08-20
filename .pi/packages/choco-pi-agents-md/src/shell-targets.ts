@@ -13,6 +13,9 @@ const DISCOVERY_COMMANDS = new Set(["ls", "find", "rg", "grep", "fd", "tree", "c
 /** Commands whose first non-flag argument is a search pattern, not a path. */
 const PATTERN_FIRST_COMMANDS = new Set(["rg", "grep"]);
 
+/** Commands that only discover files when given an explicit file operand. */
+const FILE_OPERAND_COMMANDS = new Set(["cat", "head", "tail"]);
+
 function tokenize(value: string): string[] {
 	const parts: string[] = [];
 	let current = "";
@@ -60,7 +63,18 @@ function tokenize(value: string): string[] {
 
 export function isDiscoveryShellCommand(value: string): boolean {
 	const parts = tokenize(value);
-	return parts.some((part) => DISCOVERY_COMMANDS.has(part.toLowerCase()));
+	let segmentStart = 0;
+	for (let index = 0; index <= parts.length; index += 1) {
+		if (index < parts.length && parts[index] !== ";") continue;
+		const segment = parts.slice(segmentStart, index);
+		const command = segment[0]?.toLowerCase();
+		if (command && DISCOVERY_COMMANDS.has(command)) {
+			if (!FILE_OPERAND_COMMANDS.has(command)) return true;
+			if (segment.slice(1).some((argument) => !argument.startsWith("-") && !argument.includes("="))) return true;
+		}
+		segmentStart = index + 1;
+	}
+	return false;
 }
 
 /**

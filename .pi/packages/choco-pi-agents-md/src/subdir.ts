@@ -126,19 +126,26 @@ export function registerAgentsMdAutoload(pi: ExtensionAPI): void {
 	async function readAppendixFiles(
 		agentFiles: string[],
 	): Promise<{ appendixFiles: AgentsFileEntry[]; failedFiles: FailedRead[] }> {
-		const appendixFiles: AgentsFileEntry[] = [];
+		const pendingFiles: { agentsPath: string; entry: AgentsFileEntry }[] = [];
 		const failedFiles: FailedRead[] = [];
 		for (const agentsPath of agentFiles) {
 			if (loadedAgents.has(agentsPath)) continue;
 			try {
 				const content = await fs.promises.readFile(agentsPath, "utf-8");
-				loadedAgents.add(agentsPath);
-				appendixFiles.push({ path: relativePath(agentsPath), content: capFileContent(content) });
+				pendingFiles.push({
+					agentsPath,
+					entry: { path: relativePath(agentsPath), content: capFileContent(content) },
+				});
 			} catch (error) {
 				if (error instanceof Error) failedFiles.push({ agentsPath, error });
 			}
 		}
-		return { appendixFiles: capTotalAppendixSize(appendixFiles), failedFiles };
+		const appendixFiles = capTotalAppendixSize(pendingFiles.map(({ entry }) => entry));
+		const keptEntries = new Set(appendixFiles);
+		for (const { agentsPath, entry } of pendingFiles) {
+			if (keptEntries.has(entry)) loadedAgents.add(agentsPath);
+		}
+		return { appendixFiles, failedFiles };
 	}
 
 	const handleSessionChange = (_event: unknown, ctx: { cwd: string }): void => {
