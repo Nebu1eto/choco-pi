@@ -9,12 +9,12 @@ test("global settings preserve user preferences and dedupe every tracked local p
 	const root = process.cwd();
 	const settings = buildGlobalSettings(
 		{
-			packages: ["./packages/pi-synthetic", "./packages/choco-pi-lsp"],
+			packages: ["./packages/choco-pi-provider-synthetic", "./packages/choco-pi-lsp"],
 			theme: "nord-dark",
 		},
 		{
 			packages: [
-				path.join("/old", ".pi", "packages", "pi-synthetic"),
+				path.join("/old", ".pi", "packages", "choco-pi-provider-synthetic"),
 				path.join("/old", ".pi", "packages", "choco-pi-lsp"),
 				"npm:user-package",
 			],
@@ -24,7 +24,7 @@ test("global settings preserve user preferences and dedupe every tracked local p
 	);
 
 	assert.deepEqual(settings.packages, [
-		path.resolve(".pi/packages/pi-synthetic"),
+		path.resolve(".pi/packages/choco-pi-provider-synthetic"),
 		path.resolve(".pi/packages/choco-pi-lsp"),
 		"npm:user-package",
 	]);
@@ -53,13 +53,13 @@ test("tracked npm package pins dedupe stale older versions of the same package",
 
 test("user-added duplicate pins keep the newer version", () => {
 	const settings = buildGlobalSettings(
-		{ packages: ["./packages/pi-synthetic"] },
+		{ packages: ["./packages/choco-pi-provider-synthetic"] },
 		{ packages: ["npm:user-package@1.0.0", "npm:user-package@1.2.0"] },
 		process.cwd(),
 	);
 
 	assert.deepEqual(settings.packages, [
-		path.resolve(".pi/packages/pi-synthetic"),
+		path.resolve(".pi/packages/choco-pi-provider-synthetic"),
 		"npm:user-package@1.2.0",
 	]);
 });
@@ -83,7 +83,7 @@ test("profile installer links tracked config and is idempotent", async (context)
 	assert.equal(codexConfig.openai.fast, false);
 	const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
 	assert.deepEqual(settings.packages, [
-		"pi-synthetic",
+		"choco-pi-provider-synthetic",
 		"choco-pi-ui",
 		"choco-pi-subagents",
 		"choco-pi-goal",

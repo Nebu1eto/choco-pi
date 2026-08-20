@@ -58,13 +58,13 @@ Git으로 추적하는 [`.pi/zentui.json`](.pi/zentui.json)은 입력창의 모�
 
 | 패키지 | 버전 | 용도 |
 |---|---:|---|
-| [`@aliou/pi-synthetic`](https://github.com/aliou/pi-synthetic) | 0.24.3 | Synthetic 공급자, 인증, usage와 웹 검색 |
-| [`choco-pi-ui`](.pi/packages/choco-pi-ui) | 0.20.1 | 편집기, 메시지 프레임, 상태줄과 Nord 테마 |
-| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents) | 0.17.1-choco.0 | `@tintinweb/pi-subagents@0.17.1`의 로컬 fork. 서브 에이전트, workflow, 사이드 대화와 fleet UI 제공 |
-| [`choco-pi-goal`](.pi/packages/choco-pi-goal) | 0.2.0 | Codex 형태의 지속형 goal |
-| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp) | 2.26.1 | MCP 서버 지연 로딩 |
-| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp) | 4.0.1-choco.0 | LSP, lint, AST와 semantic 진단 |
-| [`choco-pi-codex`](.pi/packages/choco-pi-codex) | 3.0.18-choco.0 | Codex 호환 도구와 OpenAI Responses 컴팩션 |
+| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) | 0.1.0 | Synthetic 공급자, 인증, usage와 웹 검색 |
+| [`choco-pi-ui`](.pi/packages/choco-pi-ui) | 0.1.0 | 편집기, 메시지 프레임, 상태줄과 Nord 테마 |
+| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents) | 0.1.0 | `@tintinweb/pi-subagents@0.17.1`의 로컬 fork. 서브 에이전트, workflow, 사이드 대화와 fleet UI 제공 |
+| [`choco-pi-goal`](.pi/packages/choco-pi-goal) | 0.1.0 | Codex 형태의 지속형 goal |
+| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp) | 0.1.0 | MCP 서버 지연 로딩 |
+| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp) | 0.1.0 | LSP, lint, AST와 semantic 진단 |
+| [`choco-pi-codex`](.pi/packages/choco-pi-codex) | 0.1.0 | Codex 호환 도구와 OpenAI Responses 컴팩션 |
 | [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md) | 0.1.0 | 하위 `AGENTS.md` 로딩 |
 
 Voice, notebook, background-shell 기능은 의도적으로 포함하지 않습니다.

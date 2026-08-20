@@ -1,6 +1,6 @@
 {
   "name": "choco-pi-mcp",
-  "version": "2.26.1",
+  "version": "0.1.0",
   "description": "Vendored MCP (Model Context Protocol) adapter extension for choco-pi",
   "type": "module",
   "types": "./index.ts",

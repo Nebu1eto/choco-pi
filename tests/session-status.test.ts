@@ -27,7 +27,7 @@ test("formatStatus renders multi-line values with continuation lines", () => {
 test("normalizePackageKey strips protocol and version while keeping scopes", () => {
 	assert.equal(normalizePackageKey("npm:@tintinweb/pi-subagents@0.16.1"), "@tintinweb/pi-subagents");
 	assert.equal(normalizePackageKey("npm:pi-zentui@0.18.1"), "pi-zentui");
-	assert.equal(normalizePackageKey("./packages/pi-synthetic"), "./packages/pi-synthetic");
+	assert.equal(normalizePackageKey("./packages/choco-pi-provider-synthetic"), "./packages/choco-pi-provider-synthetic");
 });
 
 test("describePath reports missing files without throwing", () => {

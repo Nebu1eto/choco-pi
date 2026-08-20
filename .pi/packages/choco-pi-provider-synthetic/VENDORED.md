@@ -9,6 +9,10 @@ package **@aliou/pi-synthetic**. This is not the original source repository.
 - License: MIT (see `package.json` in upstream)
 - Runtime deps vendored under `node_modules/@aliou/`: `pi-utils-settings@0.15.1`,
   `pi-utils-ui@0.4.1` (same author, same upstream organization)
+- Local identity: the directory and manifest name are
+  `choco-pi-provider-synthetic` at version `0.1.0`, matching this harness's
+  package naming. Upstream provenance above is unchanged, and the outbound
+  `X-Title` attribution header still reports `npm:@aliou/pi-synthetic`.
 
 ## choco-pi patch: reasoning effort from the Synthetic API
 
