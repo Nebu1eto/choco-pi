@@ -134,6 +134,7 @@ import {
 	RuntimeCoordinator,
 } from "./clients/runtime-coordinator.js";
 import { handleSessionStart } from "./clients/runtime-session.js";
+import { codeModeMutationToolResults } from "./clients/code-mode-tool-results.js";
 import { handleToolCall } from "./clients/runtime-tool-call.js";
 import {
 	classifyCurrentSessionEmission,
@@ -2147,50 +2148,74 @@ function activateExtension(hostPi: ExtensionAPI) {
 		// Publish this turn's abort signal so the dispatch's linter/type-check
 		// child processes are killed if the agent is interrupted (#197 ctx.signal).
 		setAmbientAbortSignal(ctx?.signal);
-		// Earliest possible marker for the edit pipeline: the first instrumented
-		// phase is `read_file` deep inside runPipeline, so a stall before that (or
-		// upstream, before choco-pi-lsp even received the event) leaves NO trace — that
-		// is exactly why a wedged-LSP edit hang was invisible in latency.log. This
-		// row means "choco-pi-lsp received this edit"; if it is present but nothing
-		// follows, the stall is in the pipeline; if it is absent, it is upstream.
-		const rtToolName = (event as { toolName?: string })?.toolName;
-		if (rtToolName === "edit" || rtToolName === "write") {
-			logLatency({
-				type: "phase",
-				phase: "tool_result_received",
-				filePath:
-					(event as { input?: { path?: string } })?.input?.path ?? "<unknown>",
-				durationMs: 0,
-				metadata: { toolName: rtToolName },
-			});
-		}
+		const nestedMutations = codeModeMutationToolResults(
+			event,
+			ctx?.cwd ?? runtime.projectRoot ?? process.cwd(),
+		);
+		const dispatchEvents = [event, ...nestedMutations];
 		try {
 			const { biomeClient, ruffClient, metricsClient, agentBehaviorClient } =
 				await loadBootstrapClients();
-			return await handleToolResult({
-				event: event as any,
-				getFlag: (name: string, filePath?: string) =>
-					getLensFlag(name, filePath),
-				getFlagSource: (name: string, filePath?: string) =>
-					getLensFlagSource(name, filePath),
-				dbg,
-				runtime,
-				cacheManager,
-				biomeClient,
-				ruffClient,
-				metricsClient,
-				resetLSPService,
-				readGuard: runtime.readGuard,
-				agentBehaviorRecord: (toolName, filePath) =>
-					agentBehaviorClient.recordToolCall(toolName, filePath),
-				formatBehaviorWarnings: (warnings) =>
-					agentBehaviorClient.formatWarnings(warnings as any),
-				// #791: tags any deferred-format record queued from this tool_result
-				// with the STABLE session id of the ctx that produced it, so a
-				// later agent_end can tell its own queued work apart from a
-				// concurrent in-process secondary session's.
-				sessionId: getStableSessionId(ctx),
-			});
+			let outerResult: Awaited<ReturnType<typeof handleToolResult>> = undefined;
+			const nestedContent: Array<{ type: string; text?: string }> = [];
+			let nestedIsError = false;
+			for (const [index, dispatchEvent] of dispatchEvents.entries()) {
+				// Earliest possible marker for the edit pipeline: code mode emits the
+				// actual edit as a nested trace inside an outer `exec` result, so log
+				// each expanded mutation rather than inspecting only the outer event.
+				if (
+					dispatchEvent.toolName === "edit" ||
+					dispatchEvent.toolName === "write"
+				) {
+					logLatency({
+						type: "phase",
+						phase: "tool_result_received",
+						filePath: dispatchEvent.input?.path ?? "<unknown>",
+						durationMs: 0,
+						metadata: {
+							toolName: dispatchEvent.toolName,
+							nestedCodeMode: index > 0,
+						},
+					});
+				}
+				const result = await handleToolResult({
+					event: dispatchEvent as any,
+					getFlag: (name: string, filePath?: string) =>
+						getLensFlag(name, filePath),
+					getFlagSource: (name: string, filePath?: string) =>
+						getLensFlagSource(name, filePath),
+					dbg,
+					runtime,
+					cacheManager,
+					biomeClient,
+					ruffClient,
+					metricsClient,
+					resetLSPService,
+					readGuard: runtime.readGuard,
+					agentBehaviorRecord: (toolName, filePath) =>
+						agentBehaviorClient.recordToolCall(toolName, filePath),
+					formatBehaviorWarnings: (warnings) =>
+						agentBehaviorClient.formatWarnings(warnings as any),
+					// #791: tags any deferred-format record queued from this tool_result
+					// with the STABLE session id of the ctx that produced it, so a
+					// later agent_end can tell its own queued work apart from a
+					// concurrent in-process secondary session's.
+					sessionId: getStableSessionId(ctx),
+				});
+				if (index === 0) {
+					outerResult = result;
+				} else if (result) {
+					nestedContent.push(
+						...result.content.slice(dispatchEvent.content.length),
+					);
+					nestedIsError ||= result.isError === true;
+				}
+			}
+			if (nestedContent.length === 0) return outerResult;
+			return {
+				content: [...(outerResult?.content ?? event.content), ...nestedContent],
+				isError: outerResult?.isError === true || nestedIsError || undefined,
+			};
 		} finally {
 			setAmbientAbortSignal(undefined);
 		}

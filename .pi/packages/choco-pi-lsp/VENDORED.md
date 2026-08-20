@@ -120,6 +120,15 @@ the runtime provenance check reads it.
 
 ## Added (choco-pi feature)
 
+Code-mode edit tracking (`clients/code-mode-tool-results.ts`) — pi 0.84.2
+reports the agent's edits as nested `details.traces` entries on an outer `exec`
+tool result. Upstream inspects only the outer `toolName`, so under code mode it
+never saw a mutation: the turn-end advisory stayed silent while every on-demand
+tool kept working. Completed nested `edit`, `write`, and successful
+`apply_patch` mutations are now expanded into dispatchable events with absolute
+paths, and their diagnostics are returned through the outer tool result.
+
+
 `/lsp on|off|status` — a human-facing runtime toggle for LSP usage, wired into
 the same machinery as upstream's `--no-lsp` flag (`lsp.enabled` config key):
 
