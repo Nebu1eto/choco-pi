@@ -89,6 +89,7 @@ async function readRecentTouchesAsync(cwd: string): Promise<RecentTouchesFile> {
     const raw = await fs.promises.readFile(recentTouchesPath(cwd), "utf-8");
     const parsed = JSON.parse(raw);
     if (parsed && Array.isArray(parsed.entries)) {
+      // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
       return parsed as RecentTouchesFile;
     }
     return { entries: [] };

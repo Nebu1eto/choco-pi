@@ -7,6 +7,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { Diagnostic } from "./dispatch/types.js";
 import { getProjectDataDir } from "./file-utils.js";
 import { redactSecrets } from "./redact/secrets.js";
@@ -34,6 +36,21 @@ export interface WorklogEntry {
 }
 
 /** Identity to attribute a worklog append to, when known. */
+const WorklogEntrySchema = Type.Object({
+  timestamp: Type.String(),
+  filePath: Type.String(),
+  rule: Type.String(),
+  tool: Type.String(),
+  message: Type.String(),
+  line: Type.Number(),
+  column: Type.Optional(Type.Number()),
+  fixable: Type.Boolean(),
+  fixSuggestion: Type.Optional(Type.String()),
+  autoFixed: Type.Boolean(),
+  model: Type.Optional(Type.String()),
+  provider: Type.Optional(Type.String()),
+});
+
 export interface WorklogIdentity {
   model?: string;
   provider?: string;
@@ -107,7 +124,8 @@ export function readWorklog(cwd: string): WorklogEntry[] {
       .filter(Boolean)
       .flatMap((line) => {
         try {
-          return [JSON.parse(line) as WorklogEntry];
+          const parsed = JSON.parse(line);
+          return Value.Check(WorklogEntrySchema, parsed) ? [parsed] : [];
         } catch {
           return [];
         }

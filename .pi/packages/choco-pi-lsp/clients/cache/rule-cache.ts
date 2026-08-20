@@ -1,3 +1,4 @@
+import type { ProtocolDictionary } from "../../tools/runtime-values.js";
 /**
  * Rule Cache for choco-pi-lsp
  *
@@ -72,7 +73,7 @@ export interface QueryCacheEntry {
     query: string;
     metavars: string[];
     post_filter?: string;
-    post_filter_params?: Record<string, unknown>;
+    post_filter_params?: ProtocolDictionary;
     defect_class?: string;
     inline_tier?: "blocking" | "warning" | "review";
     skip_test_files?: boolean;
@@ -126,6 +127,7 @@ export class RuleCache {
 
       const currentHash = this.computeRuleHash(ruleFiles);
       const cached = readJsonCache<QueryCacheEntry>(this.cacheFile, (parsed) => {
+        // SAFETY: The cache parser establishes this persisted diagnostic shape, and the adjacent validity checks reject malformed entries.
         const entry = parsed as QueryCacheEntry;
         if (entry.version !== CACHE_VERSION || entry.ruleHash !== currentHash) {
           return undefined; // Cache invalid

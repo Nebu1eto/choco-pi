@@ -17,6 +17,19 @@ import { readJsonCacheAsync } from "./json-cache-read.js";
 import type { PersistedReadGuardState } from "./read-guard.js";
 import type { PersistedWidgetState } from "./widget-state.js";
 
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
 export const STATE_VERSION = 1;
 
 export interface PersistedSessionState {
@@ -84,13 +97,11 @@ export async function saveSessionState(
   try {
     const dir = sessionsDir(cwd);
     await fs.mkdir(dir, { recursive: true });
-    const payload: PersistedSessionState = {
-      version: STATE_VERSION,
-      sessionId,
-      savedAt: Date.now(),
-      widget,
-      ...(readGuard ? { readGuard } : {}),
-    };
+    const payload: PersistedSessionState = assignOptionalProperties(
+      { version: STATE_VERSION, sessionId, savedAt: Date.now(), widget },
+      readGuard,
+      () => ({ readGuard }),
+    );
     const file = sessionFilePath(cwd, sessionId);
     // bestEffort (default): a failed write/rename just means this snapshot is
     // lost, matching this store's documented "start clean" fallback — never
@@ -143,6 +154,7 @@ export async function loadSessionState(
 ): Promise<PersistedSessionState | undefined> {
   if (!sessionId || !sessionId.trim()) return undefined;
   return readJsonCacheAsync<PersistedSessionState>(sessionFilePath(cwd, sessionId), (parsed) => {
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const state = parsed as PersistedSessionState;
     if (state?.version !== STATE_VERSION || !state.widget) return undefined;
     return state;

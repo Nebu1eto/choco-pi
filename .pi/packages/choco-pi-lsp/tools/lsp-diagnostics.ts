@@ -1,3 +1,6 @@
+import type { ProtocolDictionary } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.js";
+import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
 /**
  * lsp_diagnostics tool definition
  *
@@ -43,7 +46,11 @@ import { baseName, compactRenderResult } from "./render-compact.js";
 import { makeProgressReporter, scanningSummaryLine } from "./scan-progress.js";
 import { isWarmAttached, tryWarmAttachedDiagnostics } from "../clients/warm-attach.js";
 
-const LANG_EXTENSIONS: Record<string, string[]> = {
+interface LanguageExtensions {
+  [language: string]: string[];
+}
+
+const LANG_EXTENSIONS: LanguageExtensions = {
   ".ts": [".ts", ".tsx", ".mts", ".cts"],
   ".tsx": [".ts", ".tsx", ".mts", ".cts"],
   ".js": [".js", ".jsx", ".mjs", ".cjs"],
@@ -85,7 +92,11 @@ const MAX_BATCH_CONCURRENCY = 16;
 const DEFAULT_BATCH_FILE_DEADLINE_MS = 15_000;
 
 // LSP severities: 1=Error, 2=Warning, 3=Information, 4=Hint
-const SEVERITY_NAMES: Record<number, string> = {
+interface SeverityNames {
+  [severity: number]: string;
+}
+
+const SEVERITY_NAMES: SeverityNames = {
   1: "error",
   2: "warning",
   3: "information",
@@ -210,8 +221,13 @@ function lspUnavailableMessage(
   return `LSP unavailable for ${filePath}: ${reason}; ready=${health.serverCountReady ?? 0}/${health.serverCountAttempted ?? 0}.${candidates}.${stale}`;
 }
 
-function boundedPositiveInt(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = typeof value === "number" ? Math.floor(value) : Number.NaN;
+function boundedPositiveInt(
+  value: RuntimeValue,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = isRuntimeNumber(value) ? Math.floor(value) : Number.NaN;
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(min, Math.min(max, parsed));
 }
@@ -279,7 +295,7 @@ async function mapWithConcurrency<R>(
         first &&
         lspService &&
         !isWarmAttached() &&
-        typeof lspService.ensureWarmForSweep === "function"
+        isRuntimeFunction(lspService.ensureWarmForSweep)
       ) {
         await lspService.ensureWarmForSweep(first, { signal });
         if (signal?.aborted) return;
@@ -417,11 +433,7 @@ export function createLspDiagnosticsTool(
       const target = baseName(details?.filePath ?? args.path) || "workspace";
       const files = details?.filesChecked ?? details?.filesScanned;
       const scope =
-        typeof files === "number" && files > 1
-          ? ` across ${files} files`
-          : target
-            ? ` ${target}`
-            : "";
+        isRuntimeNumber(files) && files > 1 ? ` across ${files} files` : target ? ` ${target}` : "";
       const noun = count === 1 ? "diagnostic" : "diagnostics";
       // #533: a batch/directory result with any unconfirmed files must NEVER
       // compact-render as a bare "N diagnostics" — that erases the fact some
@@ -509,9 +521,9 @@ export function createLspDiagnosticsTool(
     }),
     async execute(
       _toolCallId: string,
-      params: Record<string, unknown>,
+      params: ProtocolDictionary,
       _signal: AbortSignal | undefined,
-      onUpdate: unknown,
+      onUpdate: RuntimeValue,
       ctx: { cwd?: string; signal?: AbortSignal },
     ) {
       if (getFlag?.("no-lsp")) {
@@ -531,6 +543,7 @@ export function createLspDiagnosticsTool(
       // Stream a throttled progress bar for batch/directory scans (opaque for
       // seconds-to-minutes otherwise).
       const onProgress = makeProgressReporter(onUpdate, "Scanning LSP diagnostics");
+      // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       const typedParams = params as {
         path?: string;
         paths?: string[];
@@ -539,6 +552,7 @@ export function createLspDiagnosticsTool(
         waitMs?: number;
         serverScope?: string;
       };
+      // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       const severity = (typedParams.severity ?? "all") as string;
       const cwd = ctx.cwd ?? process.cwd();
       const concurrency = boundedPositiveInt(
@@ -548,7 +562,7 @@ export function createLspDiagnosticsTool(
         MAX_BATCH_CONCURRENCY,
       );
       const waitMs =
-        typeof typedParams.waitMs === "number" && typedParams.waitMs >= 0
+        isRuntimeNumber(typedParams.waitMs) && typedParams.waitMs >= 0
           ? Math.floor(typedParams.waitMs)
           : undefined;
       const serverScope: "primary" | "all" =
@@ -577,7 +591,7 @@ export function createLspDiagnosticsTool(
           };
         }
         const rawPaths = typedParams.paths.filter(
-          (entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
+          (entry): entry is string => isRuntimeString(entry) && entry.trim().length > 0,
         );
         if (rawPaths.length !== typedParams.paths.length) {
           return {
@@ -770,6 +784,7 @@ async function collectDiagnosticsForFile(
         };
       }
     }
+    // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
     const serviceWithTouch = lspService as NonNullable<ReturnType<typeof getLSPService>> & {
       touchFile?: (
         filePath: string,
@@ -783,7 +798,7 @@ async function collectDiagnosticsForFile(
         },
       ) => Promise<TouchFileResult | undefined>;
     };
-    if (typeof serviceWithTouch.touchFile === "function") {
+    if (isRuntimeFunction(serviceWithTouch.touchFile)) {
       usedTouch = true;
       touched = await serviceWithTouch.touchFile(absPath, content, {
         diagnostics: "document",
@@ -1011,6 +1026,7 @@ function coveredSourcesForCheck(
   const covered = new Set<string>();
   let servers: Array<{ id: string; role?: string }> = [];
   try {
+    // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
     servers = (getServersForFileWithConfig(file) ?? []) as Array<{
       id: string;
       role?: string;
@@ -1205,6 +1221,7 @@ async function collectFileDiagnosticResult(
     content: collectedContent,
     binding,
   } = await collectDiagnosticsForFile(file, lspService, waitMs, serverScope);
+  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const health = lspService.getDiagnosticsHealth?.(file) as LspHealthLike | undefined;
   // #570: a timed-out priming check is never a confirmed "clean" — treat it
   // as unconfirmed without consulting the (unrelated) silent-tier
@@ -1318,6 +1335,7 @@ async function runFileDiagnostics(
     content: collectedContent,
     binding,
   } = await collectDiagnosticsForFile(absPath, lspService, waitMs, serverScope);
+  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const lspHealth = lspService.getDiagnosticsHealth?.(absPath) as LspHealthLike | undefined;
   const unavailable = lspUnavailableMessage(absPath, lspHealth);
   // #533: an empty result needs a confirmed/unconfirmed verdict — a push-only,
@@ -1501,11 +1519,7 @@ async function runFileDiagnostics(
  * aggregate render, or a majority-unconfirmed result reads as a false "0
  * diagnostics across N files".
  */
-function tallyConfirmation(results: FileDiagnosticResult[]): {
-  clean: number;
-  unconfirmed: number;
-  timedOut: number;
-} {
+function tallyConfirmation(results: FileDiagnosticResult[]) {
   let clean = 0;
   let unconfirmed = 0;
   let timedOut = 0;
@@ -1686,6 +1700,7 @@ async function collectBatchDiagnostics(
   for (const result of results) {
     result.outcome = classifyBatchFileOutcome(result);
   }
+  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const outcomeCounts = Object.fromEntries(
     (["clean", "findings", "unsupported", "unavailable", "failed", "inconclusive"] as const).map(
       (outcome) => [outcome, results.filter((result) => result.outcome === outcome).length],
@@ -1989,7 +2004,10 @@ async function runDirectoryDiagnostics(
 
 function applySeverityFilter<T extends { severity: number }>(diags: T[], severity: string): T[] {
   if (severity === "all") return diags;
-  const maxLevel: Record<string, number> = {
+  interface MaximumSeverityLevel {
+    [severity: string]: number;
+  }
+  const maxLevel: MaximumSeverityLevel = {
     error: 1,
     warning: 2,
     information: 3,

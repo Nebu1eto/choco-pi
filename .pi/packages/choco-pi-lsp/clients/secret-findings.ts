@@ -20,6 +20,8 @@
  * Refs: #131 (Mode 3), #130
  */
 
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import type { ActionableWarningRecord } from "./actionable-warnings.js";
 import { normalizeFilePath } from "./path-utils.js";
 
@@ -72,7 +74,7 @@ export function secretLocationKey(file: string, line: number): string {
 export function fromAstGrepWarnings(warnings: ActionableWarningRecord[]): SecretFinding[] {
   const out: SecretFinding[] = [];
   for (const w of warnings) {
-    if (!isSecretWarning(w) || typeof w.line !== "number") continue;
+    if (!isSecretWarning(w) || !Check(Type.Number(), w.line)) continue;
     out.push({
       file: w.filePath,
       line: w.line,
@@ -86,7 +88,9 @@ export function fromAstGrepWarnings(warnings: ActionableWarningRecord[]): Secret
 
 // gitleaks > trivy > ast-grep: when the same location is flagged by several
 // scanners we keep the most-specific committed-secret rule id for display.
-const SOURCE_PRIORITY: Record<SecretSource, number> = {
+
+interface SOURCEPRIORITYValues extends Record<SecretSource, number> {}
+const SOURCE_PRIORITY: SOURCEPRIORITYValues = {
   gitleaks: 0,
   trivy: 1,
   "ast-grep": 2,

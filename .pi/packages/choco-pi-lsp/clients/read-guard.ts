@@ -10,11 +10,58 @@
  * Falls back safely when LSP is unavailable.
  */
 
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import { createFileTime, type FileTime } from "./file-time.js";
 import { hashDiagnosticContent } from "./lsp/diagnostic-binding.js";
 import { normalizeEphemeralMapKey, normalizeFilePath } from "./path-utils.js";
 import { logReadGuardEvent } from "./read-guard-logger.js";
+
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
+type CurrentLinesMatchReadSnapshotResultContract = {
+  checked: boolean;
+  matches: boolean;
+  missingLines: number[];
+  mismatchedLines: number[];
+};
+type GetSummaryResultContract = {
+  totalEdits: number;
+  totalBlocks: number;
+  byReason: Record<string, number>;
+  byFile: Record<string, { edits: number; blocks: number }>;
+  lspExpansionsHelped: number;
+};
+type ImportStateResultContract = {
+  imported: number;
+  dropped: number;
+};
+type ValidateRangeSnapshotResultContract = {
+  status: "match" | "mismatch" | "unavailable";
+  matchingReadIndex: number;
+  missingLines: number[];
+  mismatchedLines: number[];
+  candidateReadCount: number;
+  checkedCandidateCount: number;
+  unavailableCandidateCount: number;
+  shouldBlock: boolean;
+};
+type CheckCoverageResultContract = { covered: boolean; viaSymbol: boolean };
 
 // --- Types ---
 
@@ -304,12 +351,7 @@ export function currentLinesMatchReadSnapshot(
   filePath: string,
   read: ReadRecord,
   [startLine, endLine]: [number, number],
-): {
-  checked: boolean;
-  matches: boolean;
-  missingLines: number[];
-  mismatchedLines: number[];
-} {
+): CurrentLinesMatchReadSnapshotResultContract {
   const hashes = read.lineHashes ?? {};
   const missingLines: number[] = [];
   const mismatchedLines: number[] = [];
@@ -758,26 +800,29 @@ export class ReadGuard {
         const verdict = this.blockOrWarn(
           "range-stale",
           `🔄 RETRYABLE — Edit range changed since read\n\nYou are editing \`${filePath}\` lines ${editStart}-${editEnd}, but those lines no longer match the content you read earlier.${relocationNote}\n\nRe-read the relevant section, then retry the edit using the current line range/content:\n  \`read path="${filePath}" offset=${Math.max(1, editStart - 5)} limit=${Math.min(30, editEnd - editStart + 10)}\``,
-          {
-            editRange: range,
-            readRanges: fileReads.map((r) => ({
-              start: r.effectiveOffset,
-              end: r.effectiveOffset + r.effectiveLimit - 1,
-            })),
-            symbolRanges: fileReads
-              .filter((r) => r.enclosingSymbol)
-              .map((r) => ({
-                name: r.enclosingSymbol!.name,
-                start: r.enclosingSymbol!.startLine,
-                end: r.enclosingSymbol!.endLine,
+          assignOptionalProperties(
+            {
+              editRange: range,
+              readRanges: fileReads.map((r) => ({
+                start: r.effectiveOffset,
+                end: r.effectiveOffset + r.effectiveLimit - 1,
               })),
-            snapshot: {
-              status: snapshotValidation.status,
-              mismatchedLines: snapshotValidation.mismatchedLines,
-              missingLines: snapshotValidation.missingLines,
+              symbolRanges: fileReads
+                .filter((r) => r.enclosingSymbol)
+                .map((r) => ({
+                  name: r.enclosingSymbol!.name,
+                  start: r.enclosingSymbol!.startLine,
+                  end: r.enclosingSymbol!.endLine,
+                })),
+              snapshot: {
+                status: snapshotValidation.status,
+                mismatchedLines: snapshotValidation.mismatchedLines,
+                missingLines: snapshotValidation.missingLines,
+              },
             },
-            ...(relocation ? { relocation } : {}),
-          },
+            relocation,
+            () => ({ relocation }),
+          ),
           graceActive ? "warn" : effectiveMode,
         );
         // Offer auto-apply only for a single-range edit: we relocated exactly
@@ -913,13 +958,7 @@ export class ReadGuard {
   /**
    * Get summary statistics for /lens-health.
    */
-  getSummary(): {
-    totalEdits: number;
-    totalBlocks: number;
-    byReason: Record<string, number>;
-    byFile: Record<string, { edits: number; blocks: number }>;
-    lspExpansionsHelped: number;
-  } {
+  getSummary(): GetSummaryResultContract {
     let totalEdits = 0;
     let totalBlocks = 0;
     let lspExpansionsHelped = 0;
@@ -998,23 +1037,23 @@ export class ReadGuard {
    * `undefined` / a mismatched version / a missing field loads as "no prior
    * reads". Returns a count of imported vs dropped reads for logging.
    */
-  importState(state: PersistedReadGuardState | undefined): {
-    imported: number;
-    dropped: number;
-  } {
+  importState(state: PersistedReadGuardState | undefined): ImportStateResultContract {
     const result = { imported: 0, dropped: 0 };
+
     if (!state || state.version !== READ_GUARD_STATE_VERSION) return result;
     // A corrupt/hand-edited sidecar must degrade to "no prior reads", never
     // throw: loadSessionState validates only version/widget, so a malformed
     // `reads` reaches here. If importState threw, the session_start try/catch
     // would abort the ENTIRE rehydration (incl. widget + mountLensWidget)
     // rather than just skipping the read-set.
+
     if (!Array.isArray(state.reads)) return result;
     for (const entry of state.reads) {
       // Skip anything that isn't a well-formed [key, records] tuple.
       if (!Array.isArray(entry) || entry.length !== 2) continue;
       const [rawPath, records] = entry;
-      if (typeof rawPath !== "string") continue;
+
+      if (!Check(Type.String(), rawPath)) continue;
       if (!Array.isArray(records) || records.length === 0) continue;
       const filePath = this.key(rawPath);
       let lines: string[];
@@ -1038,6 +1077,7 @@ export class ReadGuard {
         }
       }
     }
+
     return result;
   }
 
@@ -1137,16 +1177,7 @@ export class ReadGuard {
   private validateRangeSnapshot(
     filePath: string,
     range: [number, number],
-  ): {
-    status: "match" | "mismatch" | "unavailable";
-    matchingReadIndex: number;
-    missingLines: number[];
-    mismatchedLines: number[];
-    candidateReadCount: number;
-    checkedCandidateCount: number;
-    unavailableCandidateCount: number;
-    shouldBlock: boolean;
-  } {
+  ): ValidateRangeSnapshotResultContract {
     const reads = this.reads.get(filePath) ?? [];
     const candidates = reads.filter((read) => this.readCoversRange(read, range));
     let status: "match" | "mismatch" | "unavailable" = "unavailable";
@@ -1352,7 +1383,7 @@ export class ReadGuard {
   private checkCoverage(
     filePath: string,
     touchedLines: [number, number],
-  ): { covered: boolean; viaSymbol: boolean } {
+  ): CheckCoverageResultContract {
     const [editStart, editEnd] = touchedLines;
 
     const reads = this.reads.get(filePath) ?? [];
@@ -1379,6 +1410,7 @@ export class ReadGuard {
     // [editStart, editEnd]. Handles multi-chunk reads (e.g. 1-100 + 101-200).
     const intervals = reads.map(
       (read) =>
+        // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
         [
           Math.max(1, read.effectiveOffset - this.config.contextLines),
           read.effectiveOffset + read.effectiveLimit - 1 + this.config.contextLines,
@@ -1473,7 +1505,8 @@ export class ReadGuard {
     tool: "write" | "edit",
     touchedLines: [number, number] | undefined,
     verdict: ReadGuardVerdict,
-    metadata: Record<string, unknown> = {},
+
+    metadata: Record<string, LspDictionaryValue> = {},
   ): void {
     const normalizedTouchedLines = touchedLines ?? [1, 1];
     this.recordEdit(filePath, tool, normalizedTouchedLines, verdict);

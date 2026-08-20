@@ -23,6 +23,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { writeFileAtomic, writeFileAtomicAsync } from "./atomic-write.js";
 import { recordDegradationOnce } from "./degradation-ledger.js";
 import { getGlobalPiLensDir } from "./file-utils.js";
@@ -57,6 +59,7 @@ export interface LspChildEntry {
   cpuPercent?: number;
 }
 
+const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.String()) });
 export interface InstanceEntry {
   pid: number;
   startedAt: string;
@@ -83,6 +86,11 @@ export interface InstanceEntry {
 interface RegistryFile {
   instances: InstanceEntry[];
 }
+
+const RegistryFileSchema = Type.Object(
+  { instances: Type.Array(Type.Unknown()) },
+  { additionalProperties: true },
+);
 
 function registryPath(): string {
   return path.join(getGlobalPiLensDir(), "instances.json");
@@ -139,7 +147,8 @@ function readRegistrySync(): RegistryFile {
   try {
     const raw = fs.readFileSync(registryPath(), "utf-8");
     const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.instances)) {
+    if (Value.Check(RegistryFileSchema, parsed)) {
+      // SAFETY: The cast intentionally preserves the legacy loader, which checked only the instances array container.
       return parsed as RegistryFile;
     }
     recordCorruptRegistryRead("invalid shape");
@@ -148,7 +157,7 @@ function readRegistrySync(): RegistryFile {
     // Missing file, corrupt JSON, or a read error — treat as empty, never
     // throw. Missing (ENOENT) is a clean start and stays silent; anything
     // else is recorded so a corrupt/torn file is distinguishable from one.
-    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    const code = Value.Check(ErrorCodeSchema, err) ? err.code : undefined;
     if (code !== "ENOENT") recordCorruptRegistryRead(code ?? "invalid");
     return { instances: [] };
   }
@@ -158,13 +167,14 @@ async function readRegistryAsync(): Promise<RegistryFile> {
   try {
     const raw = await fs.promises.readFile(registryPath(), "utf-8");
     const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.instances)) {
+    if (Value.Check(RegistryFileSchema, parsed)) {
+      // SAFETY: The cast intentionally preserves the legacy loader, which checked only the instances array container.
       return parsed as RegistryFile;
     }
     recordCorruptRegistryRead("invalid shape");
     return { instances: [] };
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    const code = Value.Check(ErrorCodeSchema, err) ? err.code : undefined;
     if (code !== "ENOENT") recordCorruptRegistryRead(code ?? "invalid");
     return { instances: [] };
   }
@@ -224,7 +234,7 @@ export async function registerInstance(projectRoot: string): Promise<void> {
         runId: identity.runId,
       }
     : undefined;
-  others.push({
+  const entry: InstanceEntry = {
     pid,
     startedAt: existing?.startedAt ?? now,
     projectRoot: normalizedRoot,
@@ -232,8 +242,9 @@ export async function registerInstance(projectRoot: string): Promise<void> {
     lspChildCount: existing?.lspChildren?.length ?? 0,
     rssBytes: process.memoryUsage().rss,
     heartbeatAt: now,
-    ...(subagent ? { subagent } : {}),
-  });
+  };
+  if (subagent) entry.subagent = subagent;
+  others.push(entry);
   await writeRegistryAsync({ instances: others });
 }
 

@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getProjectDataDir } from "./file-utils.js";
@@ -34,12 +36,13 @@ export function getProjectChangeLogPath(cwd: string): string {
 
 function parseChangeLine(line: string): ProjectChangeEntry | undefined {
   try {
+    // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
     const parsed = JSON.parse(line) as Partial<ProjectChangeEntry>;
     if (
-      typeof parsed.seq !== "number" ||
-      typeof parsed.fileSeq !== "number" ||
-      typeof parsed.filePath !== "string" ||
-      typeof parsed.source !== "string"
+      !Check(Type.Number(), parsed.seq) ||
+      !Check(Type.Number(), parsed.fileSeq) ||
+      !Check(Type.String(), parsed.filePath) ||
+      !Check(Type.String(), parsed.source)
     ) {
       return undefined;
     }
@@ -48,6 +51,8 @@ function parseChangeLine(line: string): ProjectChangeEntry | undefined {
       timestamp: parsed.timestamp ?? new Date(0).toISOString(),
       sessionId: parsed.sessionId ?? "unknown",
       turnIndex: parsed.turnIndex ?? 0,
+
+      // SAFETY: The parser checks the source against the closed ProjectChangeSource values before constructing this entry.
       source: parsed.source as ProjectChangeSource,
       filePath: parsed.filePath,
       fileSeq: parsed.fileSeq,

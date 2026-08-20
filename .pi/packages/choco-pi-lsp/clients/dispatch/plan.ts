@@ -4,6 +4,9 @@ import type { RunnerGroup, ToolPlan } from "./types.js";
 
 type CapabilityDimension = "types" | "security" | "smells" | "format" | "lint" | "docs";
 
+type LanguageCapabilityMatrix = Record<FileKind, CapabilityMatrixEntry>;
+type ToolPlanMap = Record<string, ToolPlan>;
+
 interface CapabilityMatrixEntry {
   name: string;
   capabilities: CapabilityDimension[];
@@ -18,7 +21,7 @@ function primary(kind: FileKind): RunnerGroup {
   return group;
 }
 
-export const LANGUAGE_CAPABILITY_MATRIX: Record<FileKind, CapabilityMatrixEntry> = {
+export const LANGUAGE_CAPABILITY_MATRIX = {
   jsts: {
     name: "JavaScript/TypeScript Linting",
     capabilities: ["types", "security", "smells", "format", "lint"],
@@ -258,7 +261,7 @@ export const LANGUAGE_CAPABILITY_MATRIX: Record<FileKind, CapabilityMatrixEntry>
     capabilities: ["lint", "format"],
     writeGroups: [primary("toml")],
   },
-};
+} satisfies LanguageCapabilityMatrix;
 
 function toWritePlan(entry: CapabilityMatrixEntry): ToolPlan {
   return {
@@ -267,9 +270,9 @@ function toWritePlan(entry: CapabilityMatrixEntry): ToolPlan {
   };
 }
 
-export const TOOL_PLANS: Record<string, ToolPlan> = Object.fromEntries(
+export const TOOL_PLANS: ToolPlanMap = Object.fromEntries(
   Object.entries(LANGUAGE_CAPABILITY_MATRIX).map(([kind, entry]) => [kind, toWritePlan(entry)]),
-) as Record<string, ToolPlan>;
+);
 
 export function getToolPlan(kind: FileKind): ToolPlan | undefined {
   return TOOL_PLANS[kind];

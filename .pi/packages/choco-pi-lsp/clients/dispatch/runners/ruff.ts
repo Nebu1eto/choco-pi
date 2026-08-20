@@ -7,6 +7,8 @@
  * Supports venv-local installations.
  */
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { stripAnsi } from "../../sanitize.js";
 import { getAutofixCapability, getLinterPolicyForCwd, ruffConfigArgs } from "../../tool-policy.js";
@@ -19,15 +21,26 @@ const ruff = createAvailabilityChecker("ruff", ".exe");
 
 function parseRuffJson(raw: string, filePath: string): Diagnostic[] {
   try {
-    const parsed = JSON.parse(raw) as Array<{
-      code?: string;
-      message?: string;
-      filename?: string;
-      location?: { row?: number; column?: number };
-      severity?: string;
-      fix?: unknown;
-    }>;
-    if (!Array.isArray(parsed)) return [];
+    const parsed = JSON.parse(raw);
+    const schema = Type.Array(
+      Type.Object(
+        {
+          code: Type.Optional(Type.String()),
+          message: Type.Optional(Type.String()),
+          filename: Type.Optional(Type.String()),
+          location: Type.Optional(
+            Type.Object({
+              row: Type.Optional(Type.Number()),
+              column: Type.Optional(Type.Number()),
+            }),
+          ),
+          severity: Type.Optional(Type.String()),
+          fix: Type.Optional(Type.Unknown()),
+        },
+        { additionalProperties: true },
+      ),
+    );
+    if (!Value.Check(schema, parsed)) return [];
 
     const autofix = getAutofixCapability("ruff");
     return parsed.map((item, index) => {

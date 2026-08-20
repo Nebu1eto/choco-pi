@@ -208,7 +208,7 @@ export async function demoteInferredProjectSweepResults<
   service: TsserverSyncCapableService,
   signal?: AbortSignal,
 ): Promise<T[]> {
-  if (typeof service?.executeReadOnlyCommandOnLiveClient !== "function") {
+  if (!service?.executeReadOnlyCommandOnLiveClient) {
     return results;
   }
   const startedAt = Date.now();

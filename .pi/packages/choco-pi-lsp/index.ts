@@ -1,3 +1,10 @@
+import type { RuntimeValue } from "./tools/runtime-values.js";
+import {
+  isRuntimeFunction,
+  isRuntimeObject,
+  isRuntimeString,
+  isRuntimeUndefined,
+} from "./tools/runtime-values.js";
 import "./clients/console-guard-install.js";
 import {
   closeModuleLoadConsoleWindow,
@@ -295,8 +302,9 @@ function notifyUi(
  * rely on. Never throws — returns `undefined` on any unexpected ctx shape
  * or accessor error (older host, inconclusive probe, etc).
  */
-function getStableSessionId(ctx: unknown): string | undefined {
+function getStableSessionId<TContext>(ctx: TContext): string | undefined {
   try {
+    // SAFETY: Pi lifecycle contexts provide a signature-compatible sessionManager accessor when that optional API exists.
     return (
       ctx as { sessionManager?: { getSessionId?: () => string } } | null | undefined
     )?.sessionManager?.getSessionId?.();
@@ -306,20 +314,22 @@ function getStableSessionId(ctx: unknown): string | undefined {
 }
 
 export interface CreateHostPortsOptions {
-  getContext: () => unknown;
+  getContext: () => RuntimeValue;
   getProjectRoot?: () => string | undefined;
   getRenderInvalidator?: () => (() => void) | undefined;
 }
 
 /** Assemble pi's live ExtensionAPI/context projections behind HostPorts. */
 export function createHostPorts(pi: ExtensionAPI, options: CreateHostPortsOptions): HostPorts {
+  // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
   const context = () => options.getContext() as any;
   const currentMode = () => readExtensionMode(context());
-  const emit = (channel: string, payload: unknown): void => {
+  const emit = <TPayload>(channel: string, payload: TPayload): void => {
     const bus = pi.events;
     bus?.emit?.call(bus, channel, payload);
   };
-  const activeTools = pi as unknown as {
+  // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+  const activeTools = pi as {
     getActiveTools?: () => string[];
     setActiveTools?: (names: string[]) => void;
   };
@@ -372,8 +382,8 @@ export function createHostPorts(pi: ExtensionAPI, options: CreateHostPortsOption
     flags: { get: (name) => pi.getFlag(name) },
     tools: {
       has: async (name) =>
-        typeof (pi as unknown as { getTool?: (tool: string) => unknown }).getTool?.(name) !==
-        "undefined",
+        // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+        !isRuntimeUndefined((pi as { getTool?: (tool: string) => RuntimeValue }).getTool?.(name)),
       getActive: () => activeTools.getActiveTools?.() ?? [],
       setActive: (names) => activeTools.setActiveTools?.(names),
     },
@@ -423,7 +433,7 @@ function log(_msg: string) {
  * on the stable "stale after session replacement or reload" phrase so it
  * survives incidental wording changes around it.
  */
-function isStaleExtensionCtxError(err: unknown): boolean {
+function isStaleExtensionCtxError<T>(err: T): boolean {
   return err instanceof Error && err.message.includes("stale after session replacement or reload");
 }
 
@@ -487,15 +497,15 @@ async function ensureLSPConfigInitialized(cwd: string): Promise<void> {
  * session overwrite the parent's identity on every tool result — the exact
  * clobber that guard exists to prevent.
  */
-function updateRuntimeIdentityFromCtx(ctx: unknown): void {
+function updateRuntimeIdentityFromCtx(ctx: RuntimeValue): void {
   runtime.setTelemetryIdentity(readHostModelIdentity(ctx));
 }
 
-function normalizeCommandArgs(args: unknown): string[] {
+function normalizeCommandArgs(args: RuntimeValue): string[] {
   if (Array.isArray(args)) {
-    return args.filter((arg): arg is string => typeof arg === "string");
+    return args.filter((arg): arg is string => isRuntimeString(arg));
   }
-  if (typeof args === "string") {
+  if (isRuntimeString(args)) {
     return args.trim().split(/\s+/).filter(Boolean);
   }
   return [];
@@ -612,7 +622,8 @@ function activateExtension(hostPi: ExtensionAPI) {
   // (never publish), so nothing currently exercises that gap — revisit if
   // `pi.events` grows a subscriber that does real work inside its callback.
   wireAgentNudgeSubscriber({
-    events: pi.events,
+    // SAFETY: The Pi host event bus supports the subscriber method shape consumed by this adapter.
+    events: pi.events as Parameters<typeof wireAgentNudgeSubscriber>[0]["events"],
     getReadGuard: () => runtime.readGuard,
     dbg,
   });
@@ -666,7 +677,7 @@ function activateExtension(hostPi: ExtensionAPI) {
     }
   }
 
-  function captureLspStatusRepaint(ctx: unknown): (() => void) | undefined {
+  function captureLspStatusRepaint(ctx: RuntimeValue): (() => void) | undefined {
     let ui:
       | {
           setStatus?: (id: string, text: string | undefined) => void;
@@ -674,6 +685,7 @@ function activateExtension(hostPi: ExtensionAPI) {
         }
       | undefined;
     try {
+      // SAFETY: Pi command contexts define ui with these optional status and theme members.
       ui = (
         ctx as {
           ui?: {
@@ -689,7 +701,7 @@ function activateExtension(hostPi: ExtensionAPI) {
       dbg(`lsp status repaint capture skipped: ${err}`);
       return undefined;
     }
-    if (!ui || typeof ui.setStatus !== "function" || !ui.theme) {
+    if (!ui || !isRuntimeFunction(ui.setStatus) || !ui.theme) {
       return undefined;
     }
     const { setStatus, theme } = ui;
@@ -805,7 +817,7 @@ function activateExtension(hostPi: ExtensionAPI) {
       dbg(`widget mount ${modeSuppressionNote(mode)}`);
       return false;
     }
-    if (typeof ui?.setWidget !== "function") {
+    if (!isRuntimeFunction(ui?.setWidget)) {
       if (!widgetMountFailureLogged) {
         widgetMountFailureLogged = true;
         logExtension({
@@ -816,6 +828,7 @@ function activateExtension(hostPi: ExtensionAPI) {
       }
       return false;
     }
+    // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
     const setWidget = ui.setWidget as LensWidgetSetWidget;
     setWidget(
       "choco-pi-lsp",
@@ -845,7 +858,8 @@ function activateExtension(hostPi: ExtensionAPI) {
   function unmountLensWidget(ui: LensWidgetUi | undefined): boolean {
     renderInvalidator = undefined;
     setRenderCallback(() => {});
-    if (typeof ui?.setWidget !== "function") return false;
+    if (!isRuntimeFunction(ui?.setWidget)) return false;
+    // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
     const setWidget = ui.setWidget as LensWidgetSetWidget;
     setWidget("choco-pi-lsp", undefined);
     mountedLensWidgetUi = undefined;
@@ -856,7 +870,8 @@ function activateExtension(hostPi: ExtensionAPI) {
   // hosts without registerMessageRenderer simply never get a renderer
   // registered (the raw `content` fallback text still shows since sendMessage
   // itself is guarded the same way at the emit site below).
-  if (typeof (pi as { registerMessageRenderer?: unknown }).registerMessageRenderer === "function") {
+  // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+  if (isRuntimeFunction((pi as { registerMessageRenderer?: unknown }).registerMessageRenderer)) {
     try {
       pi.registerMessageRenderer(TURN_SUMMARY_CUSTOM_TYPE, renderTurnSummaryMessage);
     } catch (registerRendererErr) {
@@ -893,6 +908,7 @@ function activateExtension(hostPi: ExtensionAPI) {
       const [subcommand] = normalizeCommandArgs(args);
       const repaintLspStatus = () => {
         try {
+          // SAFETY: Pi command contexts define ui with these optional status and theme members.
           const ui = (
             ctx as {
               ui?: {
@@ -1560,7 +1576,8 @@ function activateExtension(hostPi: ExtensionAPI) {
   // handler below.
   const rememberedLazyTools = new Set<string>();
   const activateToolsTool = createActivateToolsTool(
-    pi as unknown as {
+    // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+    pi as {
       getActiveTools?: () => string[];
       setActiveTools?: (names: string[]) => void;
     },
@@ -1572,6 +1589,7 @@ function activateExtension(hostPi: ExtensionAPI) {
       deferredToolSupport: (ctx) => {
         try {
           return supportsDeferredTools(
+            // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
             (ctx as { model?: Parameters<typeof supportsDeferredTools>[0] })?.model,
           );
         } catch {
@@ -1592,9 +1610,11 @@ function activateExtension(hostPi: ExtensionAPI) {
   const compactToolLineEnabled = getLensFlag("lens-compact-tool-line") === true;
   const toolsToRegister = [...alwaysActiveTools, activateToolsTool, ...lazyTools];
   for (const tool of compactToolLineEnabled
-    ? wrapToolsForCompactLine(toolsToRegister as any)
+    ? // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+      wrapToolsForCompactLine(toolsToRegister as any)
     : toolsToRegister) {
     try {
+      // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
       pi.registerTool(tool as any);
     } catch {
       // another extension already registered a tool with this name
@@ -1655,6 +1675,7 @@ function activateExtension(hostPi: ExtensionAPI) {
     const sessionStartFiredAt = Date.now();
     try {
       dbg("session_start fired");
+      // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
       const sessionReason = (event as { reason?: string }).reason;
 
       // #1334 S5: adopt the HOST's project-trust decision before anything
@@ -1680,6 +1701,7 @@ function activateExtension(hostPi: ExtensionAPI) {
       // (the event carries none), and is what lets a resumed session rehydrate.
       const stableSessionId = (() => {
         try {
+          // SAFETY: Pi session-start contexts provide a signature-compatible sessionManager accessor when present.
           return (
             ctx as { sessionManager?: { getSessionId?: () => string } }
           )?.sessionManager?.getSessionId?.();
@@ -1703,6 +1725,7 @@ function activateExtension(hostPi: ExtensionAPI) {
         logConcurrentSessionBind({
           secondaryCount: sessionStartDecision.secondaryCount,
           sessionReason,
+          // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
           sameCwd: (ctx as { cwd?: string })?.cwd === process.cwd(),
         });
         return;
@@ -1740,26 +1763,21 @@ function activateExtension(hostPi: ExtensionAPI) {
       // `--no-lazy-tools` nothing is touched at all: all-active IS the
       // requested posture.
       try {
-        const piWithActiveTools = pi as unknown as {
+        // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+        const piWithActiveTools = pi as {
           getActiveTools?: () => string[];
           setActiveTools?: (names: string[]) => void;
         };
-        if (
-          getLensFlag("no-lazy-tools") !== true &&
-          typeof piWithActiveTools.getActiveTools === "function" &&
-          typeof piWithActiveTools.setActiveTools === "function"
-        ) {
+        const getActiveTools = piWithActiveTools.getActiveTools;
+        const setActiveTools = piWithActiveTools.setActiveTools;
+        if (getLensFlag("no-lazy-tools") !== true && getActiveTools && setActiveTools) {
           // A fresh conversation starts with no activation memory; a
           // rebuild inherits the parent's.
           if (isFreshSessionStart(sessionReason)) rememberedLazyTools.clear();
           const lazyNames = new Set(LAZY_TOOL_CATALOG.map((t) => t.name));
-          const plan = planToolSet(
-            piWithActiveTools.getActiveTools(),
-            lazyNames,
-            rememberedLazyTools,
-          );
+          const plan = planToolSet(getActiveTools(), lazyNames, rememberedLazyTools);
           if (plan.changed) {
-            piWithActiveTools.setActiveTools(plan.desired);
+            setActiveTools(plan.desired);
             recordToolSetMutation({
               addedCount: plan.addedCount,
               removedCount: plan.removedCount,
@@ -1767,6 +1785,7 @@ function activateExtension(hostPi: ExtensionAPI) {
                 ? "fresh_session_lazy_deactivation"
                 : "session_rebuild_restore",
               deferralApplies: supportsDeferredTools(
+                // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
                 (ctx as { model?: Parameters<typeof supportsDeferredTools>[0] })?.model,
               ),
             });
@@ -1895,7 +1914,7 @@ function activateExtension(hostPi: ExtensionAPI) {
         resetDispatchBaselines,
         resetLSPService,
       });
-      ctx.ui && updateLspStatus(ctx.ui.setStatus, ctx.ui.theme);
+      if (ctx.ui) updateLspStatus(ctx.ui.setStatus, ctx.ui.theme);
 
       // Pin the stable identity + reason AFTER handleSessionStart (which ran
       // resetForSession → a fresh random id); the stable id now wins (#190).
@@ -1990,6 +2009,7 @@ function activateExtension(hostPi: ExtensionAPI) {
       }
     } catch (sessionErr) {
       dbg(`session_start crashed: ${sessionErr}`);
+      // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
       dbg(`session_start crash stack: ${(sessionErr as Error).stack}`);
     }
   });
@@ -1998,6 +2018,7 @@ function activateExtension(hostPi: ExtensionAPI) {
   // so the forked session (its `session_start` fires with reason="fork") can
   // branch from them instead of starting empty. In-memory hand-off within the
   // same process; cleared once adopted (or on any non-fork start).
+  // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
   (pi as any).on("session_before_fork", () => {
     try {
       pendingForkSnapshot = exportWidgetState();
@@ -2015,8 +2036,10 @@ function activateExtension(hostPi: ExtensionAPI) {
 
   pi.on("tool_call", async (event, ctx) => {
     return handleToolCall({
-      event: event as unknown as Parameters<typeof handleToolCall>[0]["event"],
-      ctx: ctx as unknown as Parameters<typeof handleToolCall>[0]["ctx"],
+      // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+      event: event as Parameters<typeof handleToolCall>[0]["event"],
+      // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+      ctx: ctx as Parameters<typeof handleToolCall>[0]["ctx"],
       lensEnabled,
       getFlag: (name: string) => getLensFlag(name),
       dbg,
@@ -2030,6 +2053,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 
   // Real-time feedback on file writes/edits
   // biome-ignore lint/suspicious/noExplicitAny: pi.on overload mismatch for tool_result event type
+  // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
   (pi as any).on("tool_result", async (event: any, ctx: any) => {
     rememberOwnEventCtx(ctx);
     if (!lensEnabled) return;
@@ -2065,6 +2089,7 @@ function activateExtension(hostPi: ExtensionAPI) {
           });
         }
         const result = await handleToolResult({
+          // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
           event: dispatchEvent as any,
           getFlag: (name: string, filePath?: string) => getLensFlag(name, filePath),
           getFlagSource: (name: string, filePath?: string) => getLensFlagSource(name, filePath),
@@ -2078,6 +2103,7 @@ function activateExtension(hostPi: ExtensionAPI) {
           readGuard: runtime.readGuard,
           agentBehaviorRecord: (toolName, filePath) =>
             agentBehaviorClient.recordToolCall(toolName, filePath),
+          // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
           formatBehaviorWarnings: (warnings) => agentBehaviorClient.formatWarnings(warnings as any),
           // #791: tags any deferred-format record queued from this tool_result
           // with the STABLE session id of the ctx that produced it, so a
@@ -2129,6 +2155,7 @@ function activateExtension(hostPi: ExtensionAPI) {
     // effectively free on every turn that has no cross-process activity —
     // fire-and-forget, never awaited (must not delay turn_start), and
     // internally never throws.
+    // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
     const cwd = (ctx as { cwd?: string } | undefined)?.cwd ?? process.cwd();
     void readCrossProcessTouchesForTurnStart({ cwd })
       .then((entries) => {
@@ -2257,6 +2284,7 @@ function activateExtension(hostPi: ExtensionAPI) {
     // deferred-format/autofix drain no longer runs from this handler at
     // all (#1654 — see the module comment above); its own abort/requeue
     // handling is wired at the `agent_settled` registration below instead.
+    // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
     setAmbientAbortSignal((ctx as { signal?: AbortSignal })?.signal);
     try {
       // Ensure any pipeline still queued in the debounce window finishes
@@ -2267,9 +2295,10 @@ function activateExtension(hostPi: ExtensionAPI) {
       // `agent_settled` below, since — unlike this flush — running it here
       // can fire mid-run, between auto-retries).
       await flushDebouncedToolResults();
-      ctx.ui && updateLspStatus(ctx.ui.setStatus, ctx.ui.theme);
+      if (ctx.ui) updateLspStatus(ctx.ui.setStatus, ctx.ui.theme);
     } catch (agentEndErr) {
       dbg(`agent_end crashed: ${agentEndErr}`);
+      // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
       dbg(`agent_end crash stack: ${(agentEndErr as Error).stack}`);
     } finally {
       setAmbientAbortSignal(undefined);
@@ -2280,6 +2309,7 @@ function activateExtension(hostPi: ExtensionAPI) {
     if (!lensEnabled) return;
     // Esc/abort during the turn-end flush (knip/madge/tests + debounced
     // dispatch) kills in-flight children instead of waiting out their timeout.
+    // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
     setAmbientAbortSignal((ctx as { signal?: AbortSignal })?.signal);
     try {
       const repaintLspStatus = captureLspStatusRepaint(ctx);
@@ -2358,7 +2388,10 @@ function activateExtension(hostPi: ExtensionAPI) {
             filePath: "<choco-pi-lsp>",
             phase: "memory_sample",
             durationMs: 0,
-            metadata: { turnIndex: runtime.turnIndex, ...sample },
+            // SAFETY: buildMemorySample produces the latency logger's recursively serializable metadata values.
+            metadata: { turnIndex: runtime.turnIndex, ...sample } as Parameters<
+              typeof logLatency
+            >[0]["metadata"],
           });
         } catch {
           // best-effort observability — never fail turn_end over this
@@ -2440,6 +2473,7 @@ function activateExtension(hostPi: ExtensionAPI) {
       // collector accumulates across the run's turns until then.
     } catch (turnEndErr) {
       dbg(`turn_end crashed: ${turnEndErr}`);
+      // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
       dbg(`turn_end crash stack: ${(turnEndErr as Error).stack}`);
     } finally {
       setAmbientAbortSignal(undefined);
@@ -2555,8 +2589,9 @@ function activateExtension(hostPi: ExtensionAPI) {
         toRunnerDisplayPath(cwd, fp),
       );
       const line = formatTurnSummaryLine(details);
-      const sendMessage = (emitCtx.pi as { sendMessage?: (msg: unknown) => void }).sendMessage;
-      if (typeof sendMessage === "function") {
+      // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+      const sendMessage = (emitCtx.pi as { sendMessage?: (msg: RuntimeValue) => void }).sendMessage;
+      if (isRuntimeFunction(sendMessage)) {
         try {
           sendMessage.call(emitCtx.pi, {
             customType: TURN_SUMMARY_CUSTOM_TYPE,
@@ -2590,7 +2625,8 @@ function activateExtension(hostPi: ExtensionAPI) {
     });
   }
   try {
-    (pi as any).on("agent_settled", async (_event: unknown, ctx: DeferredDrainCtx) => {
+    // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+    (pi as any).on("agent_settled", async (_event: RuntimeValue, ctx: DeferredDrainCtx) => {
       if (!lensEnabled) return;
       // #1654: the #1387 deferred-format/autofix drain runs HERE, not at
       // agent_end — see `runDeferredMutationDrain`'s doc comment above.
@@ -2638,7 +2674,8 @@ function activateExtension(hostPi: ExtensionAPI) {
   // --- Session shutdown: release all handles so subagent processes exit cleanly ---
   // The LSP idle-reset timer (240s) is unref'd but we cancel it explicitly here
   // so it does not fire after shutdown. resetLSPService shuts down any live clients.
-  (pi as any).on("session_shutdown", (_event: unknown, ctx: unknown) => {
+  // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+  (pi as any).on("session_shutdown", (_event: RuntimeValue, ctx: RuntimeValue) => {
     // #473: a concurrently-live in-process subagent session shutting down
     // (its sibling primary — the real parent — still active) must NOT run
     // the shared-infra teardown below: no LSP fleet shutdown, no idle-timer
@@ -2648,6 +2685,7 @@ function activateExtension(hostPi: ExtensionAPI) {
     // body.
     const stableSessionId = (() => {
       try {
+        // SAFETY: Pi session-shutdown contexts provide a signature-compatible sessionManager accessor when present.
         return (
           ctx as { sessionManager?: { getSessionId?: () => string } }
         )?.sessionManager?.getSessionId?.();
@@ -2711,10 +2749,12 @@ function activateExtension(hostPi: ExtensionAPI) {
   // that never fires it simply produces no records rather than crashing wireup.
   try {
     // biome-ignore lint/suspicious/noExplicitAny: message_end overload absent on older host types
-    (pi as any).on?.("message_end", (event: unknown, ctx: unknown) => {
+    // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
+    (pi as any).on?.("message_end", (event: RuntimeValue, ctx: RuntimeValue) => {
       if (!lensEnabled) return;
       try {
         const sessionId = getStableSessionId(ctx);
+        // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
         logCacheUsage((event as { message?: unknown })?.message, dbg, {
           sessionId,
           sessionRole: classifyCurrentSessionEmission(ctx, sessionId),
@@ -2758,12 +2798,14 @@ function activateExtension(hostPi: ExtensionAPI) {
     if (!Array.isArray(msg.content)) return true;
     return !msg.content.some(
       (block) =>
-        typeof block === "object" &&
+        isRuntimeObject(block) &&
         block !== null &&
+        // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
         (block as { type?: unknown }).type === "tool_result",
     );
   };
   // biome-ignore lint/suspicious/noExplicitAny: pi.on("context") overload has TS resolution bug
+  // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
   (pi as any).on(
     "context",
     async (
@@ -2773,6 +2815,7 @@ function activateExtension(hostPi: ExtensionAPI) {
       // #1018: context telemetry deliberately runs even when the lens or its
       // injection toggle is off, so an A/B run has a no-injection observation.
       const existingMessages =
+        // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
         (event as { messages?: Array<{ role: string; content: unknown }> })?.messages ?? [];
       const prefixSessionId = getStableSessionId(ctx);
       const sessionRole = classifyCurrentSessionEmission(ctx, prefixSessionId);

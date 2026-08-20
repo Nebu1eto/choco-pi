@@ -11,6 +11,8 @@
  * specific file being edited, not the entire suite.
  */
 
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import { createSubsystemLogger } from "./extension-log.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -131,7 +133,8 @@ const MAX_PYTEST_RECURSE_DEPTH = 3;
 
 // --- Runner Detection ---
 
-export const RUNNERS: Record<string, RunnerConfig> = {
+interface RUNNERSValues extends Record<string, RunnerConfig> {}
+export const RUNNERS: RUNNERSValues = {
   vitest: {
     configFiles: ["vitest.config.ts", "vitest.config.js", "vitest.config.mjs"],
     command: "npx",
@@ -384,7 +387,8 @@ export class TestRunnerClient {
     }
 
     // Priority 5: Check if pytest is available globally (Python files only)
-    const isPythonSource = typeof sourceFilePath === "string" && sourceFilePath.endsWith(".py");
+
+    const isPythonSource = Check(Type.String(), sourceFilePath) && sourceFilePath.endsWith(".py");
     if (!isPythonSource) return null;
 
     try {
@@ -1128,9 +1132,9 @@ export class TestRunnerClient {
     let assertionTotal = 0;
     for (const suite of suites || []) {
       if (
-        typeof suite.startTime === "number" &&
+        Check(Type.Number(), suite.startTime) &&
         Number.isFinite(suite.startTime) &&
-        typeof suite.endTime === "number" &&
+        Check(Type.Number(), suite.endTime) &&
         Number.isFinite(suite.endTime)
       ) {
         minStart = Math.min(minStart, suite.startTime);
@@ -1138,7 +1142,7 @@ export class TestRunnerClient {
       }
       for (const assertion of suite.assertionResults || []) {
         if (
-          typeof assertion.duration === "number" &&
+          Check(Type.Number(), assertion.duration) &&
           Number.isFinite(assertion.duration) &&
           assertion.duration > 0
         ) {
@@ -1580,7 +1584,9 @@ export class TestRunnerClient {
     let total = 0;
     let tokens = 0;
     // "ms" before "m", or "250 ms" scores as 250 minutes.
-    const units: Record<string, number> = {
+
+    interface UnitsValues extends Record<string, number> {}
+    const units: UnitsValues = {
       ms: 1,
       s: 1000,
       m: 60_000,

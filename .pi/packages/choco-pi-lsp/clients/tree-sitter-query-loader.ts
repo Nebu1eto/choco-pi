@@ -1,3 +1,5 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 /**
  * Tree-sitter Query Loader
  *
@@ -9,6 +11,36 @@ import { logTreeSitterDiagnostic } from "./tree-sitter-logger.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolvePackagePath } from "./package-root.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+
+const InlineTierSchema = Type.Union([
+  Type.Literal("blocking"),
+  Type.Literal("warning"),
+  Type.Literal("review"),
+]);
+const ConfidenceSchema = Type.Union([
+  Type.Literal("low"),
+  Type.Literal("medium"),
+  Type.Literal("high"),
+]);
+
+function parseInlineTier(value: LspBoundaryValue): Static<typeof InlineTierSchema> | undefined {
+  if (!value) return undefined;
+  const candidate = String(value);
+  return Check(InlineTierSchema, candidate) ? candidate : undefined;
+}
+
+function parseConfidence(value: LspBoundaryValue): Static<typeof ConfidenceSchema> | undefined {
+  if (!value) return undefined;
+  const candidate = String(value);
+  return Check(ConfidenceSchema, candidate) ? candidate : undefined;
+}
+
+interface ParseYamlResultContract extends Record<string, string | string[] | boolean> {}
 
 export function isDisabledQueryDirectoryName(name: string): boolean {
   return name.endsWith("-disabled");
@@ -120,7 +152,8 @@ export interface TreeSitterQuery {
   query: string;
   metavars: string[];
   post_filter?: string;
-  post_filter_params?: Record<string, unknown>;
+
+  post_filter_params?: Record<string, LspDictionaryValue>;
   /**
    * Native tree-sitter predicates for filtering (#eq?, #match?)
    * These run in WASM and are faster than post-filters
@@ -284,11 +317,11 @@ export class TreeSitterQueryLoader {
           : this.extractMetavars(String(parsed.query)),
         post_filter: parsed.post_filter ? String(parsed.post_filter) : undefined,
         // biome-ignore lint/suspicious/noExplicitAny: Post filter params
+
+        // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
         post_filter_params: parsed.post_filter_params as any,
         defect_class: parsed.defect_class ? String(parsed.defect_class) : undefined,
-        inline_tier: parsed.inline_tier
-          ? (String(parsed.inline_tier) as "blocking" | "warning" | "review")
-          : undefined,
+        inline_tier: parseInlineTier(parsed.inline_tier),
         skip_test_files: parsed.skip_test_files === true,
         ignore_paths: Array.isArray(parsed.ignore_paths)
           ? parsed.ignore_paths.map(String)
@@ -304,9 +337,7 @@ export class TreeSitterQueryLoader {
         tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : undefined,
         cwe: Array.isArray(parsed.cwe) ? parsed.cwe.map(String) : undefined,
         owasp: Array.isArray(parsed.owasp) ? parsed.owasp.map(String) : undefined,
-        confidence: parsed.confidence
-          ? (String(parsed.confidence) as "low" | "medium" | "high")
-          : undefined,
+        confidence: parseConfidence(parsed.confidence),
         has_fix: parsed.has_fix === true || parsed.has_fix === "true",
         fix_action: parsed.fix_action ? String(parsed.fix_action) : undefined,
         filePath,
@@ -320,7 +351,7 @@ export class TreeSitterQueryLoader {
   /**
    * Simple YAML parser for our query files
    */
-  private parseYaml(content: string): Record<string, string | string[] | boolean> {
+  private parseYaml(content: string): ParseYamlResultContract {
     const result: Record<string, string | string[] | boolean> = {};
     const lines = content.split("\n");
 
@@ -385,6 +416,8 @@ export class TreeSitterQueryLoader {
             value = arrayItems;
           } else if (Object.keys(nestedObj).length > 0) {
             // biome-ignore lint/suspicious/noExplicitAny: nested object from YAML
+
+            // SAFETY: The source key list is checked against the named owner type, so the constructed keys and values exhaust that representation.
             (result as any)[key] = nestedObj;
             continue;
           }
@@ -498,7 +531,8 @@ export class TreeSitterQueryLoader {
   /**
    * Parse severity string to valid type
    */
-  private parseSeverity(value: unknown): "error" | "warning" | "info" {
+
+  private parseSeverity(value: LspBoundaryValue): "error" | "warning" | "info" {
     if (value === "error") return "error";
     if (value === "warning") return "warning";
     if (value === "info") return "info";

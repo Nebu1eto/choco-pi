@@ -64,6 +64,11 @@ function spawnPs(cmd: string, args: string[], timeoutMs = PS_TIMEOUT_MS): Promis
  * file was skipped before any unit was analysed. The residual gate blindness is
  * tracked with #1489's gate work; the migration here does not depend on it.
  */
+interface AvailabilityClassification {
+  outcome: AvailabilityOutcome;
+  cause: AvailabilityCause;
+}
+
 const psCmdLatch = createAvailabilityLatch();
 const psAnalyzerLatchByCmd = new Map<string, ReturnType<typeof createAvailabilityLatch>>();
 /**
@@ -150,8 +155,8 @@ async function resolvePowerShellCmd(): Promise<string | null> {
   // is durable but is NOT a missing install, and reporting it as one both sends
   // the user to install PowerShell they already have and fabricates the cause in
   // `availability_decision`. Only an all-candidates ENOENT sweep is `missing`.
-  let transient: { outcome: AvailabilityOutcome; cause: AvailabilityCause } | null = null;
-  let rejected: { outcome: AvailabilityOutcome; cause: AvailabilityCause } | null = null;
+  let transient: AvailabilityClassification | null = null;
+  let rejected: AvailabilityClassification | null = null;
   let elapsedTotalMs = 0;
   let stallTotalMs = 0;
   for (const candidate of ["pwsh", "powershell"]) {
@@ -182,11 +187,11 @@ async function resolvePowerShellCmd(): Promise<string | null> {
   }
 
   psCmd = null;
-  const verdict = transient ??
-    rejected ?? {
-      outcome: "missing" as AvailabilityOutcome,
-      cause: "not-found" as AvailabilityCause,
-    };
+  const unavailable: AvailabilityClassification = {
+    outcome: "missing",
+    cause: "not-found",
+  };
+  const verdict = transient ?? rejected ?? unavailable;
   notePsDecision(psCmdLatch, "powershell", {
     available: false,
     outcome: verdict.outcome,

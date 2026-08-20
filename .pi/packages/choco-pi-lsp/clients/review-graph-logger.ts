@@ -4,6 +4,19 @@ import { getGlobalPiLensDir } from "./file-utils.js";
 import { createNdjsonLogger } from "./ndjson-logger.js";
 import type { ReviewGraph, ReviewGraphPersistCoverage } from "./review-graph/types.js";
 
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
 const REVIEW_GRAPH_LOG_DIR = getGlobalPiLensDir();
 const REVIEW_GRAPH_LOG_FILE = path.join(REVIEW_GRAPH_LOG_DIR, "review-graph.log");
 
@@ -68,21 +81,42 @@ export function makeReviewGraphBuildMetadata(
   >,
   options: ReviewGraphBuildMetadataOptions = {},
 ): ReviewGraphBuildMetadata {
-  return {
-    ...(options.buildId === undefined ? {} : { buildId: options.buildId }),
-    ...(graph.buildGeneration === undefined ? {} : { graphGeneration: graph.buildGeneration }),
-    builtAt: graph.builtAt,
-    ...(options.projectSeq === undefined ? {} : { projectSeq: options.projectSeq }),
-    ...(options.seqHint === undefined ? {} : { seqHint: options.seqHint }),
-    ...(options.mode === undefined ? {} : { mode: options.mode }),
-    sourceFiles: options.sourceFileCount ?? graph.fileNodes.size,
-    ...(options.sourceFileCountTruncated || graph.persistCoverage?.sourceFilesTruncated
-      ? { sourceFilesTruncated: true }
-      : {}),
-    nodes: graph.nodes.size,
-    edges: graph.edges.length,
-    ...(graph.persistCoverage ? { persistCoverage: graph.persistCoverage } : {}),
-  };
+  return assignOptionalProperties(
+    Object.assign(
+      assignOptionalProperties(
+        Object.assign(
+          assignOptionalProperties(
+            assignOptionalProperties(
+              assignOptionalProperties(
+                Object.assign(
+                  assignOptionalProperties(
+                    assignOptionalProperties({}, !(options.buildId === undefined), () => ({
+                      buildId: options.buildId,
+                    })),
+                    !(graph.buildGeneration === undefined),
+                    () => ({ graphGeneration: graph.buildGeneration }),
+                  ),
+                  { builtAt: graph.builtAt },
+                ),
+                !(options.projectSeq === undefined),
+                () => ({ projectSeq: options.projectSeq }),
+              ),
+              !(options.seqHint === undefined),
+              () => ({ seqHint: options.seqHint }),
+            ),
+            !(options.mode === undefined),
+            () => ({ mode: options.mode }),
+          ),
+          { sourceFiles: options.sourceFileCount ?? graph.fileNodes.size },
+        ),
+        options.sourceFileCountTruncated || graph.persistCoverage?.sourceFilesTruncated,
+        () => ({ sourceFilesTruncated: true }),
+      ),
+      { nodes: graph.nodes.size, edges: graph.edges.length },
+    ),
+    graph.persistCoverage,
+    () => ({ persistCoverage: graph.persistCoverage }),
+  );
 }
 
 export interface ReviewGraphLogEntry {

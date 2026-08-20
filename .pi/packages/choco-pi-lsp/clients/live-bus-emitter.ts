@@ -1,10 +1,16 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import { recordDegradation } from "./degradation-ledger.js";
 import { probeCtxActive } from "./session-lifecycle.js";
 import { logBusEvent, type BusEventLogEntry } from "./bus-events-logger.js";
 
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+
 /** Resolve a pi event-bus emitter and its ctx at delivery time, not
  * subscription time. */
-export type BusEmitFn = (channel: string, data: unknown) => void;
+
+export type BusEmitFn = (channel: string, data: LspBoundaryValue) => void;
 export interface BusEmitTarget {
   emit: BusEmitFn;
   /**
@@ -18,6 +24,11 @@ export interface BusEmitTarget {
    */
   ctx: unknown;
 }
+
+function isBusEmitFn(target: BusEmitFn | BusEmitTarget): target is BusEmitFn {
+  return Check(Type.Function([], Type.Unknown()), target);
+}
+
 export type BusEmitGetter = () => BusEmitFn | BusEmitTarget | undefined;
 export type BusEmitResolution =
   | { outcome: "ready"; emit: BusEmitFn; ctxSource: "own" | "global-fallback" }
@@ -34,7 +45,8 @@ export interface LiveBusEmitter {
 const STALE_CTX_MESSAGE = "This extension ctx is stale after session replacement";
 
 /** Ledger a dead activation once, at the publisher's occurrence-window guard. */
-export function recordStaleBusFailure(subject: string, error: unknown): void {
+
+export function recordStaleBusFailure(subject: string, error: LspBoundaryValue): void {
   const reason = String(error);
   if (!reason.includes(STALE_CTX_MESSAGE)) return;
   recordDegradation({ kind: "bus-stale", subject, reason });
@@ -58,7 +70,8 @@ export function createLiveBusEmitter(): LiveBusEmitter {
       // the current target is nevertheless confirmed stale, never invoke it.
       const target = getter?.() ?? emit;
       if (!target) return { outcome: "unwired", ctxSource: "unwired" };
-      if (typeof target === "function") {
+
+      if (isBusEmitFn(target)) {
         return { outcome: "ready", emit: target, ctxSource: "global-fallback" };
       }
       // Object targets are always "own"-sourced (only `wire(fn)`'s bare

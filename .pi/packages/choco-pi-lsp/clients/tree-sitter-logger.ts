@@ -1,9 +1,26 @@
+import { type Static, Type } from "typebox";
 import * as path from "node:path";
 import { isTestMode } from "./env-utils.js";
 import { getGlobalPiLensDir } from "./file-utils.js";
 import { createNdjsonLogger } from "./ndjson-logger.js";
 import type { TreeSitterParseCacheStats } from "./tree-sitter-client.js";
 import { getMaxLogSizeMB } from "./log-cleanup.js";
+
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
 
 const TREE_SITTER_LOG_DIR = getGlobalPiLensDir();
 const TREE_SITTER_LOG_FILE = path.join(TREE_SITTER_LOG_DIR, "tree-sitter.log");
@@ -41,7 +58,8 @@ export interface TreeSitterLogEntry {
   cacheHit?: boolean;
   reason?: string;
   error?: string;
-  metadata?: Record<string, unknown>;
+
+  metadata?: Record<string, LspDictionaryValue>;
 }
 
 const CACHE_COUNTER_KEYS = [
@@ -77,6 +95,7 @@ export function logTreeSitterCacheStats(options: {
   durationMs: number;
   stats: TreeSitterParseCacheStats;
 }): void {
+  // SAFETY: The source key list is checked against the named owner type, so the constructed keys and values exhaust that representation.
   const delta = Object.fromEntries(
     CACHE_COUNTER_KEYS.map((key) => [key, options.stats[key]]),
   ) as Record<(typeof CACHE_COUNTER_KEYS)[number], number>;
@@ -118,16 +137,24 @@ export function logTreeSitterDiagnostic(entry: {
   level?: "error" | "warn" | "debug";
   filePath?: string;
   languageId?: string;
-  metadata?: Record<string, unknown>;
+
+  metadata?: Record<string, LspDictionaryValue>;
 }): void {
-  logTreeSitter({
-    phase: "diagnostic",
-    filePath: entry.filePath ?? "<tree-sitter>",
-    ...(entry.languageId ? { languageId: entry.languageId } : {}),
-    status: entry.level ?? "error",
-    reason: entry.message,
-    metadata: { subsystem: entry.subsystem, ...(entry.metadata ?? {}) },
-  });
+  const status: "error" | "warn" | "debug" = entry.level ?? "error";
+  logTreeSitter(
+    Object.assign(
+      assignOptionalProperties(
+        { phase: "diagnostic" as const, filePath: entry.filePath ?? "<tree-sitter>" },
+        entry.languageId,
+        (languageId) => ({ languageId }),
+      ),
+      {
+        status,
+        reason: entry.message,
+        metadata: { subsystem: entry.subsystem, ...entry.metadata },
+      },
+    ),
+  );
 }
 
 export function getTreeSitterLogPath(): string {

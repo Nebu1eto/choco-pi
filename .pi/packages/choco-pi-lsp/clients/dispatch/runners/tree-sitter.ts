@@ -6,6 +6,8 @@
  */
 
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { RuleCache } from "../../cache/rule-cache.js";
 import { minimatch } from "../../deps/minimatch.js";
 import { isTestFile } from "../../file-utils.js";
@@ -30,9 +32,16 @@ import {
   ruleSourceLanguages,
   type TreeSitterQuery,
 } from "../../tree-sitter-query-loader.js";
+import type { ProtocolDictionary, ProtocolValue } from "../../../tools/runtime-values.js";
 import { classifyDefect } from "../diagnostic-taxonomy.js";
 import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
+import type {
+  DefectClass,
+  Diagnostic,
+  DispatchContext,
+  RunnerDefinition,
+  RunnerResult,
+} from "../types.js";
 
 const blastCooldownByFile = new Map<string, number>();
 const BLAST_COOLDOWN_MS = 5_000;
@@ -112,7 +121,35 @@ const TS_STRUCTURAL_ENTITY_QUERIES: EntityQueryDef[] = [
   },
 ];
 
-const ENTITY_QUERIES: Partial<Record<string, EntityQueryDef[]>> = {
+const ProtocolObjectSchema = Type.Object({}, { additionalProperties: true });
+
+function isProtocolValue<T>(value: T): value is T & ProtocolValue {
+  if (
+    value === null ||
+    Value.Check(Type.String(), value) ||
+    Value.Check(Type.Number(), value) ||
+    Value.Check(Type.Boolean(), value)
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isProtocolValue);
+  if (!Value.Check(ProtocolObjectSchema, value)) return false;
+  return Object.values(value).every(isProtocolValue);
+}
+
+function isProtocolDictionary<T>(value: T): value is T & ProtocolDictionary {
+  return Value.Check(ProtocolObjectSchema, value) && Object.values(value).every(isProtocolValue);
+}
+
+function normalizeCachedSeverity(severity: string): TreeSitterQuery["severity"] {
+  return severity === "error" || severity === "info" ? severity : "warning";
+}
+
+interface EntityQueryMap {
+  [language: string]: EntityQueryDef[] | undefined;
+}
+
+const ENTITY_QUERIES: EntityQueryMap = {
   typescript: [
     // class name node differs between TS (type_identifier) and JS (identifier)
     {
@@ -436,14 +473,13 @@ const treeSitterRunner: RunnerDefinition = {
       // Use cached queries
       cacheHit = true;
       languageQueries = cached.queries
-        .map(
-          (q) =>
-            ({
-              ...q,
-              has_fix: q.has_fix ?? false,
-              filePath: q.filePath ?? "",
-            }) as TreeSitterQuery,
-        )
+        .map((q) => ({
+          ...q,
+          severity: normalizeCachedSeverity(q.severity),
+          category: "cached",
+          has_fix: q.has_fix ?? false,
+          filePath: q.filePath ?? "",
+        }))
         .filter((q) => !isDisabledQueryFilePath(q.filePath));
     } else {
       // A miss means the rule-file fingerprint moved (or no cache yet), so the
@@ -477,7 +513,9 @@ const treeSitterRunner: RunnerDefinition = {
           query: q.query,
           metavars: q.metavars,
           post_filter: q.post_filter,
-          post_filter_params: q.post_filter_params,
+          post_filter_params: isProtocolDictionary(q.post_filter_params)
+            ? q.post_filter_params
+            : undefined,
           defect_class: q.defect_class,
           inline_tier: q.inline_tier,
           skip_test_files: q.skip_test_files,
@@ -581,8 +619,24 @@ const treeSitterRunner: RunnerDefinition = {
             : query.severity === "warning"
               ? "warning"
               : "none";
+        const configuredDefectClass: DefectClass | undefined = (() => {
+          switch (query.defect_class) {
+            case "silent-error":
+            case "injection":
+            case "secrets":
+            case "async-misuse":
+            case "correctness":
+            case "safety":
+            case "style":
+            case "unknown":
+            case "unused-value":
+              return query.defect_class;
+            default:
+              return undefined;
+          }
+        })();
         const defectClass =
-          (query.defect_class as any) ?? classifyDefect(query.id, "tree-sitter", query.message);
+          configuredDefectClass ?? classifyDefect(query.id, "tree-sitter", query.message);
         const suggestion =
           query.has_fix && query.fix_action
             ? `${query.fix_action} this statement`

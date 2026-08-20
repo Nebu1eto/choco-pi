@@ -165,9 +165,8 @@ export function flushDebugHandlesLog(): Promise<void> {
 
 function safeGetActiveResourcesInfo(): string[] {
   try {
-    const fn = (process as unknown as { getActiveResourcesInfo?: () => string[] })
-      .getActiveResourcesInfo;
-    return typeof fn === "function" ? fn.call(process) : [];
+    const fn = process.getActiveResourcesInfo;
+    return fn instanceof Function ? fn.call(process) : [];
   } catch {
     return [];
   }

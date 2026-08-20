@@ -83,7 +83,7 @@ export function startEventLoopMonitor(resolutionMs = 20): void {
     logExtension({
       subsystem: "event-loop-monitor",
       message: `event-loop occupancy telemetry disabled (runtime lacks monitorEventLoopDelay): ${
-        (err as Error)?.message ?? String(err)
+        err instanceof Error ? err.message : String(err)
       }`,
     });
   }

@@ -87,7 +87,14 @@ function severityFor(
  * doesn't correspond to anything real (#533).
  */
 /** Higher rank = surfaced preferentially when the same caller is deduped. */
-const SEVERITY_RANK: Record<ProjectDiagnostic["severity"], number> = {
+interface SeverityRank {
+  error: number;
+  warning: number;
+  info: number;
+  hint: number;
+}
+
+const SEVERITY_RANK: SeverityRank = {
   error: 3,
   warning: 2,
   info: 1,

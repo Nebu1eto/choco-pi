@@ -1,4 +1,6 @@
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { PRIORITY } from "../priorities.js";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
@@ -26,15 +28,20 @@ const swiftlint = createAvailabilityChecker("swiftlint", ".exe");
  *
  * An empty array means clean. Exit code is non-zero when violations exist.
  */
-interface SwiftLintViolation {
-  rule_id?: string;
-  reason?: string;
-  character?: number;
-  file?: string;
-  severity?: string;
-  type?: string;
-  line?: number;
-}
+const SwiftLintOutputSchema = Type.Array(
+  Type.Object(
+    {
+      rule_id: Type.Optional(Type.String()),
+      reason: Type.Optional(Type.String()),
+      character: Type.Optional(Type.Number()),
+      file: Type.Optional(Type.String()),
+      severity: Type.Optional(Type.String()),
+      type: Type.Optional(Type.String()),
+      line: Type.Optional(Type.Number()),
+    },
+    { additionalProperties: true },
+  ),
+);
 
 // SwiftLint rules whose rule class declares a `corrector` — i.e. rules that
 // `swiftlint --fix` rewrites deterministically. The JSON reporter does not
@@ -100,18 +107,22 @@ const SWIFTLINT_FIXABLE_RULES = new Set<string>([
   "yoda_condition",
 ]);
 
+interface SeverityMap {
+  [severity: string]: "error" | "warning" | "info";
+}
+
 function parseSwiftLintOutput(raw: string, filePath: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   if (!raw.trim()) return diagnostics;
 
   try {
-    const parsed = JSON.parse(raw) as SwiftLintViolation[];
-    if (!Array.isArray(parsed)) return diagnostics;
+    const parsed = JSON.parse(raw);
+    if (!Value.Check(SwiftLintOutputSchema, parsed)) return diagnostics;
 
     for (const item of parsed) {
       if (!item.reason) continue;
 
-      const severityMap: Record<string, "error" | "warning" | "info"> = {
+      const severityMap: SeverityMap = {
         error: "error",
         warning: "warning",
         info: "info",

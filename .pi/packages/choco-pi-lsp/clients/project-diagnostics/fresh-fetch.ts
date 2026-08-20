@@ -1,3 +1,4 @@
+import { type RuntimeValue, isRuntimeString } from "../../tools/runtime-values.js";
 /**
  * THE heavyweight-analyzer reader for `diagnostics_report mode=full` (#585).
  *
@@ -271,11 +272,15 @@ export async function fetchFreshProjectDiagnostics(
     }
   }
 
-  function recordFailed(id: string, result: { summary?: string } | object): void {
+  interface AnalyzerFailureResult {
+    summary?: RuntimeValue;
+  }
+
+  function recordFailed(id: string, result: AnalyzerFailureResult): void {
     failed.push({
       id,
       summary:
-        "summary" in result && typeof result.summary === "string"
+        "summary" in result && isRuntimeString(result.summary)
           ? result.summary
           : "analyzer reported an unsuccessful run",
     });

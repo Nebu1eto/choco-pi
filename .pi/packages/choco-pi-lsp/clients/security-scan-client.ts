@@ -28,6 +28,12 @@ import {
   startHostStallSampler,
 } from "./dispatch/runners/utils/availability-policy.js";
 
+type GetAvailabilityVerdictResultContract = {
+  outcome: AvailabilityOutcome | null;
+  cause: AvailabilityCause | null;
+  retryAtMs: number;
+};
+
 export abstract class SecurityScanClient<TResult> {
   /**
    * Availability memo, backed by the shared transient-aware latch (#1467).
@@ -255,11 +261,7 @@ export abstract class SecurityScanClient<TResult> {
    * dispatch-internal callers; this is the one public seam for everyone
    * else.
    */
-  getAvailabilityVerdict(): {
-    outcome: AvailabilityOutcome | null;
-    cause: AvailabilityCause | null;
-    retryAtMs: number;
-  } {
+  getAvailabilityVerdict(): GetAvailabilityVerdictResultContract {
     return {
       outcome: this.availabilityLatch.getOutcome(),
       cause: this.availabilityLatch.getCause(),

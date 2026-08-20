@@ -1,3 +1,5 @@
+import type { RuntimeValue } from "../../tools/runtime-values.js";
+import { isRuntimeNumber, isRuntimeObject } from "../../tools/runtime-values.js";
 /**
  * Warm side-channel for the push path. The MCP server is a long-lived process
  * with a warm LSP, but its stdio is owned by the MCP client — so the
@@ -164,7 +166,7 @@ type WarmIpcOutcome<TResponse> =
 function requestOverWarmIpc<TResponse>(
   endpoint: string,
   timeoutMs: number,
-  buildRequest: (deadlineAt: number) => unknown,
+  buildRequest: (deadlineAt: number) => RuntimeValue,
   validate: (result: TResponse, deadlineAt: number) => WarmDiagnosticsFailureReason | undefined,
 ): Promise<WarmIpcOutcome<TResponse>> {
   return new Promise((resolve) => {
@@ -190,6 +192,7 @@ function requestOverWarmIpc<TResponse>(
       const newline = buffer.indexOf("\n");
       if (newline === -1) return;
       try {
+        // SAFETY: The parsed value is consumed only through the optional fields declared here and each field is validated before use.
         const message = JSON.parse(buffer.slice(0, newline)) as {
           result?: TResponse;
           error?: string;
@@ -407,11 +410,12 @@ export function turnEndStatusPathForCwd(cwd: string): string {
 export function readTurnEndStatus(cwd: string): TurnEndStatus | undefined {
   try {
     const raw = fs.readFileSync(turnEndStatusPathForCwd(cwd), "utf8");
+    // SAFETY: The parsed value is consumed only through the optional fields declared here and each field is validated before use.
     const parsed = JSON.parse(raw) as Partial<TurnEndStatus> | null;
-    if (!parsed || typeof parsed !== "object") return undefined;
+    if (!parsed || !isRuntimeObject(parsed)) return undefined;
     return {
-      ran: typeof parsed.ran === "number" ? parsed.ran : 0,
-      skipped: typeof parsed.skipped === "number" ? parsed.skipped : 0,
+      ran: isRuntimeNumber(parsed.ran) ? parsed.ran : 0,
+      skipped: isRuntimeNumber(parsed.skipped) ? parsed.skipped : 0,
       lastSkipReason: parsed.lastSkipReason,
       lastRunAt: parsed.lastRunAt,
       lastSkipAt: parsed.lastSkipAt,
@@ -495,6 +499,7 @@ export function requestWarmAnalyze(
       const newline = buffer.indexOf("\n");
       if (newline === -1) return;
       try {
+        // SAFETY: The parsed value is consumed only through the optional fields declared here and each field is validated before use.
         const message = JSON.parse(buffer.slice(0, newline)) as {
           result?: McpAnalyzeResult;
           error?: string;
@@ -532,9 +537,7 @@ export function createWarmIpcLineReader(onLine: (line: string) => void): (chunk:
   };
 }
 
-export function createWarmIpcRequestQueue(): {
-  enqueue<T>(work: () => Promise<T>): Promise<T>;
-} {
+export function createWarmIpcRequestQueue() {
   let chain: Promise<unknown> = Promise.resolve();
   return {
     enqueue<T>(work: () => Promise<T>): Promise<T> {

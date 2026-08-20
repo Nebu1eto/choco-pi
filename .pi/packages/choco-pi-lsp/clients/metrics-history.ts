@@ -13,6 +13,13 @@ import * as path from "node:path";
 import { getProjectDataDir } from "./file-utils.js";
 import { writeFileAtomic } from "./atomic-write.js";
 
+type GetTrendSummaryResultContract = {
+  improving: number;
+  regressing: number;
+  stable: number;
+  worstRegressions: Array<{ file: string; miDelta: number }>;
+};
+
 // --- Types ---
 
 export interface MetricSnapshot {
@@ -318,12 +325,7 @@ export function getTrendEmoji(trend: TrendDirection): string {
 /**
  * Get trend summary across all files
  */
-export function getTrendSummary(history: MetricsHistory): {
-  improving: number;
-  regressing: number;
-  stable: number;
-  worstRegressions: Array<{ file: string; miDelta: number }>;
-} {
+export function getTrendSummary(history: MetricsHistory): GetTrendSummaryResultContract {
   let improving = 0;
   let regressing = 0;
   let stable = 0;

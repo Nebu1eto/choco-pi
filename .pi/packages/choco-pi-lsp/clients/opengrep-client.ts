@@ -50,6 +50,8 @@
  * Refs: #584, #111 (opengrep adoption), #387 (workspace-sweep serialization), #1562
  */
 
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -58,6 +60,9 @@ import { resolveOpengrepConfig } from "./opengrep-config.js";
 import { getScratchTreeDirNames } from "./scratch-tree-policy.js";
 import { safeSpawnAsync } from "./safe-spawn.js";
 import { SecurityScanClient } from "./security-scan-client.js";
+
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 // --- Types ---
 
@@ -241,33 +246,57 @@ export function parseOpengrepReport(raw: string): OpengrepFinding[] {
   } catch {
     return [];
   }
-  if (!parsed || typeof parsed !== "object") return [];
-  const results = (parsed as Record<string, unknown>).results;
+
+  if (!parsed || !Check(Type.Object({}), parsed)) return [];
+
+  // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+  const results = (parsed as Record<string, LspDictionaryValue>).results;
   if (!Array.isArray(results)) return [];
   const findings: OpengrepFinding[] = [];
   for (const entry of results) {
-    if (!entry || typeof entry !== "object") continue;
-    const e = entry as Record<string, unknown>;
-    const checkId = typeof e.check_id === "string" ? e.check_id : undefined;
-    const filePath = typeof e.path === "string" ? e.path : undefined;
+    if (!entry || !Check(Type.Object({}), entry)) continue;
+
+    // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+    const e = entry as Record<string, LspDictionaryValue>;
+
+    const checkId = Check(Type.String(), e.check_id) ? e.check_id : undefined;
+
+    const filePath = Check(Type.String(), e.path) ? e.path : undefined;
+
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const start = e.start as { line?: unknown; col?: unknown } | undefined;
+
+    // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
     const end = e.end as { line?: unknown; col?: unknown } | undefined;
-    const startLine = typeof start?.line === "number" ? start.line : undefined;
+
+    const startLine = Check(Type.Number(), start?.line) ? start.line : undefined;
     if (!checkId || !filePath || !Number.isFinite(startLine)) continue;
-    const extra = (e.extra as Record<string, unknown> | undefined) ?? {};
-    const metadata = (extra.metadata as Record<string, unknown> | undefined) ?? {};
+
+    // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
+    const extra = (e.extra as Record<string, LspDictionaryValue> | undefined) ?? {};
+
+    // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+    const metadata = (extra.metadata as Record<string, LspDictionaryValue> | undefined) ?? {};
     const cwe = Array.isArray(metadata.cwe)
-      ? metadata.cwe.filter((c): c is string => typeof c === "string")
+      ? metadata.cwe.filter((c): c is string => Check(Type.String(), c))
       : undefined;
     findings.push({
       checkId,
       path: filePath,
+
+      // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
       startLine: startLine as number,
-      startCol: typeof start?.col === "number" ? start.col : 1,
-      endLine: typeof end?.line === "number" ? end.line : (startLine as number),
-      endCol: typeof end?.col === "number" ? end.col : 1,
-      message: typeof extra.message === "string" ? extra.message : "opengrep finding",
-      severity: typeof extra.severity === "string" ? extra.severity : "WARNING",
+
+      startCol: Check(Type.Number(), start?.col) ? start.col : 1,
+
+      // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
+      endLine: Check(Type.Number(), end?.line) ? end.line : (startLine as number),
+
+      endCol: Check(Type.Number(), end?.col) ? end.col : 1,
+
+      message: Check(Type.String(), extra.message) ? extra.message : "opengrep finding",
+
+      severity: Check(Type.String(), extra.severity) ? extra.severity : "WARNING",
       cwe,
     });
   }

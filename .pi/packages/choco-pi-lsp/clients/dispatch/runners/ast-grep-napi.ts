@@ -9,7 +9,14 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { type AstGrepNapi, loadAstGrepNapi, type SgRoot } from "../../deps/ast-grep-napi.js";
+import { type Static, Type } from "typebox";
+import { Value } from "typebox/value";
+import {
+  type AstGrepNapi,
+  loadAstGrepNapi,
+  type NapiConfig,
+  type SgRoot,
+} from "../../deps/ast-grep-napi.js";
 import { minimatch } from "../../deps/minimatch.js";
 import { type AstGrepRuleSource, getAstGrepRuleSources } from "../../sgconfig.js";
 import { logLatency } from "../../latency-logger.js";
@@ -29,7 +36,14 @@ import {
   loadYamlRulesFresh,
   MAX_BLOCKING_RULE_COMPLEXITY,
   type YamlRule,
+  type YamlRuleCondition,
 } from "./yaml-rule-parser.js";
+
+interface RawNativeConfig {
+  rule: YamlRuleCondition;
+  constraints?: YamlRule["constraints"];
+  utils?: YamlRule["utils"];
+}
 
 const defaultUnsupportedLanguageLog = new Set<string>();
 const UNSUPPORTED_RULE_ID_SAMPLE_SIZE = 5;
@@ -117,10 +131,20 @@ const KNOWN_GENUINE_NATIVE_LOAD_MESSAGES = [
  * every `code` and `message` seen along the way, so classification isn't
  * blind to a nested cause (#1567 review round 2, F1).
  */
-function collectErrorChain(err: unknown): {
+interface ErrorChain {
   codes: string[];
   messages: string[];
-} {
+}
+
+const ErrorCauseSchema = Type.Object(
+  {
+    code: Type.Optional(Type.String()),
+    cause: Type.Optional(Type.Unknown()),
+  },
+  { additionalProperties: true },
+);
+
+function collectErrorChain<T>(err: T): ErrorChain {
   const codes: string[] = [];
   const messages: string[] = [];
   let current: unknown = err;
@@ -129,9 +153,14 @@ function collectErrorChain(err: unknown): {
     seen.add(current);
     if (current instanceof Error) {
       messages.push(current.message);
-      const code = (current as Error & { code?: unknown }).code;
-      if (typeof code === "string") codes.push(code);
-      current = (current as Error & { cause?: unknown }).cause;
+      if (Value.Check(ErrorCauseSchema, current)) {
+        // SAFETY: ErrorCauseSchema verified the optional code and cause fields.
+        const details = current as Error & Static<typeof ErrorCauseSchema>;
+        if (details.code !== undefined) codes.push(details.code);
+        current = details.cause;
+      } else {
+        break;
+      }
     } else {
       messages.push(String(current));
       break;
@@ -148,7 +177,7 @@ function collectErrorChain(err: unknown): {
  * describes how the OS reported it, not what actually failed). Everything
  * else — including an error with no `code` at all — is genuine.
  */
-function classifyAstGrepLoadFailure(err: unknown): "transient" | "genuine" {
+function classifyAstGrepLoadFailure<T>(err: T): "transient" | "genuine" {
   const { codes, messages } = collectErrorChain(err);
   const hasKnownGenuineMessage = messages.some((message) =>
     KNOWN_GENUINE_NATIVE_LOAD_MESSAGES.some((pattern) => pattern.test(message)),
@@ -457,19 +486,9 @@ function appendDuplicateRuleDiagnostics(
 }
 
 /**
- * The four tiers `Diagnostic.severity` accepts (clients/dispatch/types.ts).
+ * Map a rule's declared YAML severity onto a `Diagnostic.severity` tier (#1777).
  * `YamlRule.severity` is a free-form string straight off disk, so an unknown
  * or missing value must land somewhere deliberate rather than being cast.
- */
-const DIAGNOSTIC_SEVERITY_TIERS = new Set<Diagnostic["severity"]>([
-  "error",
-  "warning",
-  "info",
-  "hint",
-]);
-
-/**
- * Map a rule's declared YAML severity onto a `Diagnostic.severity` tier (#1777).
  *
  * A rule that declares nothing, or declares a value choco-pi-lsp does not model
  * (ast-grep also accepts `off`), falls back to `warning` — the tier every such
@@ -477,8 +496,15 @@ const DIAGNOSTIC_SEVERITY_TIERS = new Set<Diagnostic["severity"]>([
  * demotes an existing rule.
  */
 export function normalizeRuleSeverity(raw: string | undefined): Diagnostic["severity"] {
-  const tier = raw as Diagnostic["severity"] | undefined;
-  return tier && DIAGNOSTIC_SEVERITY_TIERS.has(tier) ? tier : "warning";
+  switch (raw) {
+    case "error":
+    case "warning":
+    case "info":
+    case "hint":
+      return raw;
+    default:
+      return "warning";
+  }
 }
 
 /**
@@ -492,7 +518,7 @@ export function normalizeRuleSeverity(raw: string | undefined): Diagnostic["seve
  */
 export function evaluateAstGrepRules(
   filePath: string,
-  rootNode: { findAll(config: never): unknown[] },
+  rootNode: ReturnType<SgRoot["root"]>,
   cwd: string,
   kind: string | undefined,
   options: AstGrepEvaluateOptions = {},
@@ -645,7 +671,7 @@ export function evaluateAstGrepRules(
       if (!rule.rule) continue;
 
       try {
-        let matches: unknown[] = [];
+        let matches: ReturnType<typeof rootNode.findAll> = [];
 
         // Delegate matching to napi's native engine, which handles the
         // full ast-grep rule grammar (pattern, kind, has/inside/follows/
@@ -659,11 +685,13 @@ export function evaluateAstGrepRules(
         // or invalid-kind rule, or an unresolved `matches:` reference),
         // skip it — never silently match nothing through a partial
         // interpreter.
-        const nativeConfig: Record<string, unknown> = { rule: rule.rule };
-        if (rule.constraints) nativeConfig.constraints = rule.constraints;
-        if (rule.utils) nativeConfig.utils = rule.utils;
+        const rawNativeConfig: RawNativeConfig = { rule: rule.rule };
+        if (rule.constraints) rawNativeConfig.constraints = rule.constraints;
+        if (rule.utils) rawNativeConfig.utils = rule.utils;
+        // SAFETY: findAll validates the complete native grammar and rejection is handled below.
+        const nativeConfig = rawNativeConfig as NapiConfig;
         try {
-          matches = rootNode.findAll(nativeConfig as never);
+          matches = rootNode.findAll(nativeConfig);
         } catch (err) {
           matches = [];
           log?.(
@@ -678,10 +706,7 @@ export function evaluateAstGrepRules(
         for (const match of limitedMatches) {
           if (diagnostics.length >= maxTotalDiagnostics) break;
 
-          const node = match as {
-            range(): { start: { line: number; column: number } };
-          };
-          const range = node.range();
+          const range = match.range();
           // #1777: carry the rule's own tier through. The old collapse
           // (`=== "error" ? "error" : "warning"`) erased hint and info,
           // so the quiet tier the #1727 anti-slop rules ship at did not
@@ -808,7 +833,7 @@ const astGrepNapiRunner: RunnerDefinition = {
       return { status: "skipped", diagnostics: [], semantic: "none" };
     }
 
-    let rootNode: any;
+    let rootNode: ReturnType<SgRoot["root"]>;
     try {
       rootNode = root.root();
     } catch {

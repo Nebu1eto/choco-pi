@@ -168,7 +168,7 @@ export function writeFileAtomic(
   const tmpPath = stagePathFor(targetPath);
   try {
     fs.writeFileSync(tmpPath, data, {
-      encoding: typeof data === "string" ? "utf-8" : undefined,
+      encoding: data instanceof Uint8Array ? undefined : "utf-8",
       mode: options?.mode,
     });
     fs.renameSync(tmpPath, targetPath);
@@ -197,7 +197,7 @@ export async function writeFileAtomicAsync(
   const tmpPath = stagePathFor(targetPath);
   try {
     await fs.promises.writeFile(tmpPath, data, {
-      encoding: typeof data === "string" ? "utf-8" : undefined,
+      encoding: data instanceof Uint8Array ? undefined : "utf-8",
       mode: options?.mode,
     });
     await fs.promises.rename(tmpPath, targetPath);

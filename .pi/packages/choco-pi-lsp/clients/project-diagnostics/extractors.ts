@@ -37,7 +37,11 @@ export interface FailedProjectAnalyzer {
  * shape. Keyed by the ids `fetchFreshProjectDiagnostics` (./fresh-fetch.ts)
  * reports in its `cold` list — keep in sync with that module's `ANALYZER_IDS`.
  */
-const WARM_TRIGGER: Record<string, string> = {
+interface AnalyzerWarmTriggers {
+  [analyzerId: string]: string;
+}
+
+const WARM_TRIGGER: AnalyzerWarmTriggers = {
   // choco-pi fork: only the opengrep and test-runner lanes remain — the
   // other heavyweight analyzers are removed (see VENDORED.md).
   opengrep: "runs at session-start",

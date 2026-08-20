@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "../../tools/runtime-values.js";
 /**
  * Workspace / monorepo module scanner
  *
@@ -61,7 +62,7 @@ const SOURCE_EXTS = new Set([
   ".hpp",
 ]);
 
-function readJsonSafe(filePath: string): unknown {
+function readJsonSafe(filePath: string): RuntimeValue {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf-8"));
   } catch {
@@ -89,6 +90,7 @@ function detectWorkspaceType(cwd: string): WorkspaceType | null {
     } catch {}
   }
   if (markers.hasPackageJson) {
+    // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
     const pkgJson = readJsonSafe(path.join(cwd, "package.json")) as PackageJson | undefined;
     const workspaces = normalizeWorkspacePatterns(pkgJson?.workspaces);
     if (workspaces.length > 0) return "npm";
@@ -244,6 +246,7 @@ function extractTomlString(content: string, key: string): string | undefined {
 }
 
 function moduleFromPackageJson(cwd: string, pkgRoot: string): WorkspaceModule | null {
+  // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
   const pkgJson = readJsonSafe(path.join(pkgRoot, "package.json")) as PackageJson | undefined;
   if (!pkgJson?.name) return null;
   return {
@@ -272,6 +275,7 @@ function scanPnpmModules(cwd: string): WorkspaceModule[] {
 }
 
 function scanNpmModules(cwd: string): WorkspaceModule[] {
+  // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
   const pkgJson = readJsonSafe(path.join(cwd, "package.json")) as PackageJson | undefined;
   const patterns = normalizeWorkspacePatterns(pkgJson?.workspaces);
   return patterns

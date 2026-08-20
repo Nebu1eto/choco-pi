@@ -28,6 +28,8 @@ import type { ModuleSymbolUsedBy } from "./module-report.js";
 import { uriToPath } from "./path-utils.js";
 import type { Symbol as ExtractedSymbol } from "./symbol-types.js";
 
+type LspPositionResultContract = { line: number; character: number };
+
 let _lspBudgetMs: number | undefined;
 let lspEnrichmentTail: Promise<void> = Promise.resolve();
 
@@ -89,13 +91,14 @@ const NO_LSP: ModuleReportLspEnrichment = {
  * extractor records `column` at the declaration start (e.g. `export`/`function`),
  * so search the start line for the name from there to find the identifier column.
  */
-function lspPosition(sym: ExtractedSymbol, lines: string[]): { line: number; character: number } {
+function lspPosition(sym: ExtractedSymbol, lines: string[]): LspPositionResultContract {
   const lineIdx = Math.max(0, sym.line - 1);
   const text = lines[lineIdx] ?? "";
   const fromCol = Math.max(0, (sym.column ?? 1) - 1);
   let character = text.indexOf(sym.name, fromCol);
   if (character < 0) character = text.indexOf(sym.name);
   if (character < 0) character = fromCol;
+
   return { line: lineIdx, character };
 }
 

@@ -1,3 +1,6 @@
+import type { ProtocolDictionary } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.js";
+import { isRuntimeString } from "./runtime-values.js";
 /**
  * lsp_activate_tools — the loader tool that bootstraps pi's dynamic
  * tooling (registered-but-inactive tools activated via `pi.setActiveTools`).
@@ -33,7 +36,7 @@ export type ActiveToolsHost = {
 };
 
 export interface ActivateToolsOptions {
-  deferredToolSupport?: (ctx: unknown) => boolean;
+  deferredToolSupport?: (ctx: RuntimeValue) => boolean;
   /**
    * Called with every lazy tool name the model asked for, so the extension
    * can remember this logical session's activations and restore them after
@@ -76,14 +79,15 @@ export function createActivateToolsTool(
     }),
     async execute(
       _toolCallId: string,
-      params: Record<string, unknown>,
+      params: ProtocolDictionary,
       _signal: AbortSignal | undefined,
-      _onUpdate: unknown,
-      ctx?: unknown,
+      _onUpdate: RuntimeValue,
+      ctx?: RuntimeValue,
     ) {
       const requested = Array.isArray(params.tools)
-        ? (params.tools as unknown[]).filter(
-            (t): t is string => typeof t === "string" && lazyNameSet.has(t),
+        ? // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
+          (params.tools as unknown[]).filter(
+            (t): t is string => isRuntimeString(t) && lazyNameSet.has(t),
           )
         : [];
 
@@ -107,11 +111,11 @@ export function createActivateToolsTool(
       // fork/reload/resume restore.
       options.onActivated?.(requested);
 
-      const active = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [];
+      const active = pi.getActiveTools?.() ?? [];
       const activeSet = new Set(active);
       const added = requested.filter((name) => !activeSet.has(name));
       const merged = [...new Set([...active, ...added])];
-      if (added.length > 0 && typeof pi.setActiveTools === "function") {
+      if (added.length > 0 && pi.setActiveTools) {
         pi.setActiveTools(merged);
         options.onMutation?.({
           addedCount: added.length,

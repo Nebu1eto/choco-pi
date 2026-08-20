@@ -23,6 +23,8 @@
  * can import the policy without pulling in the dispatch/installer graph.
  */
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { logLatency } from "../../../latency-logger.js";
 
 export type AvailabilityOutcome = "success" | "missing" | "transient" | "non-installable";
@@ -175,8 +177,8 @@ export interface ProbeEvidence {
  * `command` is worth passing whenever the spawn is NOT the tool the decision is
  * about — a preflight, a fallback candidate, an interpreter.
  */
-export function describeProbeEvidence(result: ProbeFailureShape, command?: string): ProbeEvidence {
-  const errno = (result.error as NodeJS.ErrnoException | undefined)?.code;
+export function describeProbeEvidence(result: ProbeFailureResult, command?: string): ProbeEvidence {
+  const errno = Value.Check(ErrnoSchema, result.error) ? result.error.code : undefined;
   return {
     ...(command !== undefined && { command }),
     ...(result.status !== undefined && { status: result.status }),
@@ -410,13 +412,25 @@ export function resetInstallRetryLatches(): void {
   installRetryGeneration += 1;
 }
 
+const ErrnoSchema = Type.Object(
+  { code: Type.Optional(Type.String()) },
+  { additionalProperties: true },
+);
+
 /** The subset of a spawn result the classification actually reads. */
-export interface ProbeFailureShape {
+export interface ProbeFailureResult {
   /** The spawn's Error, whose `code` carries the errno when there is one. */
   error?: Error | null;
   status?: number | null;
   failure?: string;
   spawnFailure?: { kind?: string };
+}
+
+export interface ProbeFailureClassification {
+  outcome: AvailabilityOutcome;
+  cause: AvailabilityCause;
+  /** The facts this verdict was derived from, for the decision record (#1500). */
+  evidence: ProbeEvidence;
 }
 
 export interface ClassifyOptions {
@@ -439,16 +453,11 @@ export interface ClassifyOptions {
  * telemetry, instead of silently blaming the tool.
  */
 export function classifyProbeFailure(
-  result: ProbeFailureShape,
+  result: ProbeFailureResult,
   options: ClassifyOptions = {},
-): {
-  outcome: AvailabilityOutcome;
-  cause: AvailabilityCause;
-  /** The facts this verdict was derived from, for the decision record (#1500). */
-  evidence: ProbeEvidence;
-} {
+): ProbeFailureClassification {
   const evidence = describeProbeEvidence(result, options.command);
-  const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
+  const errorCode = Value.Check(ErrnoSchema, result.error) ? result.error.code : undefined;
   if (result.spawnFailure?.kind === "tool-not-found") {
     return { outcome: "missing", cause: "not-found", evidence };
   }
@@ -487,7 +496,11 @@ export function classifyProbeFailure(
  * `unref`'d and cleared on the single settle path, so it can never hold a
  * print-mode process open (recurring defect shape 4).
  */
-export function startHostStallSampler(intervalMs = 100): { stop: () => number } {
+export interface HostStallSampler {
+  stop: () => number;
+}
+
+export function startHostStallSampler(intervalMs = 100): HostStallSampler {
   let stallMs = 0;
   let last = Date.now();
   let stopped = false;

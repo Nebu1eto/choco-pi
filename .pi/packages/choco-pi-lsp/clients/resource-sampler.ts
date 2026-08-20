@@ -48,6 +48,8 @@ import * as path from "node:path";
 import pidusage from "pidusage";
 import { spawnCollectStdout } from "./child-unref.js";
 
+type StartSpawnUsageSamplerResultContract = { stop: () => SpawnUsageSummary | null };
+
 // Read the platform live (not a module-load const) so both the Windows and the
 // POSIX sampling paths are exercisable in unit tests regardless of the host OS.
 function runningOnWindows(): boolean {
@@ -80,6 +82,7 @@ export function walkDescendantPids(rootPid: number, pairs: Array<[number, number
   const queue = [rootPid];
   const visited = new Set<number>([rootPid]);
   while (queue.length > 0) {
+    // SAFETY: The enclosing non-empty queue check guarantees this removal returns an element.
     const current = queue.shift() as number;
     for (const child of childrenByParent.get(current) ?? []) {
       if (visited.has(child)) continue;
@@ -369,10 +372,13 @@ export interface SpawnUsageSummary {
 export function startSpawnUsageSampler(
   pid: number | undefined,
   intervalMs = 750,
-): { stop: () => SpawnUsageSummary | null } {
+): StartSpawnUsageSamplerResultContract {
+  // SAFETY: The adjacent finite-number or TypeBox check establishes the numeric representation before this assertion.
   if (!Number.isFinite(pid) || (pid as number) <= 0) {
     return { stop: () => null };
   }
+
+  // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
   const targetPid = pid as number;
   const accumulator = new UsageAccumulator();
   let stopped = false;

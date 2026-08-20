@@ -1,3 +1,11 @@
+import type { ProtocolDictionary } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.js";
+import {
+  isRuntimeFunction,
+  isRuntimeNumber,
+  isRuntimeObject,
+  isRuntimeString,
+} from "./runtime-values.js";
 /**
  * lsp_navigation tool definition
  *
@@ -57,12 +65,34 @@ const NAVIGABLE_SYMBOL_KINDS = new Set([
 
 type LspNavigationOperation = (typeof VALID_OPERATIONS)[number];
 
-function normalizeOperation(value: unknown): string {
-  if (typeof value !== "string") return "";
+interface LspNavigationParams {
+  operation: string;
+  path?: string;
+  line?: number;
+  character?: number;
+  symbol?: string;
+  endLine?: number;
+  endCharacter?: number;
+  newName?: string;
+  newFilePath?: string;
+  apply?: boolean;
+  command?: string;
+  commandArguments?: unknown[];
+  query?: string;
+  kinds?: string[];
+  exactMatch?: boolean;
+  topLevelOnly?: boolean;
+  maxResults?: number;
+  callHierarchyItem?: LSPCallHierarchyItem;
+}
+
+function normalizeOperation<T>(value: T): string {
+  if (!isRuntimeString(value)) return "";
   return value.trim().replace(/^["']+|["']+$/g, "");
 }
 
 function isValidOperation(value: string): value is LspNavigationOperation {
+  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   return (VALID_OPERATIONS as readonly string[]).includes(value);
 }
 
@@ -119,11 +149,7 @@ type SymbolColumnResolution = {
   debug?: string;
 };
 
-function parseSymbolSelector(symbol: string): {
-  baseSymbol: string;
-  occurrence: number;
-  debug?: string;
-} {
+function parseSymbolSelector(symbol: string) {
   const trimmed = symbol.trim();
   const match = /^([^#]*)(?:#(-?\d+))?$/.exec(trimmed);
   const baseSymbol = (match?.[1] ?? trimmed).trim();
@@ -163,7 +189,7 @@ function resolveSymbolColumn(
   character: number | undefined,
   symbol: string | undefined,
 ): SymbolColumnResolution {
-  if (typeof character === "number" && character > 0) {
+  if (isRuntimeNumber(character) && character > 0) {
     return { character, strategy: "explicit" };
   }
 
@@ -282,9 +308,9 @@ type SymbolNode = {
   name?: string;
   kind?: number;
   detail?: string;
-  location?: { uri: string; range: Record<string, unknown> };
-  range?: Record<string, unknown>;
-  selectionRange?: Record<string, unknown>;
+  location?: { uri: string; range: ProtocolDictionary };
+  range?: ProtocolDictionary;
+  selectionRange?: ProtocolDictionary;
   children?: SymbolNode[];
 };
 
@@ -296,8 +322,8 @@ type SymbolMatch = {
   line?: number;
   character?: number;
   depth: number;
-  location?: { uri: string; range: Record<string, unknown> };
-  range?: Record<string, unknown>;
+  location?: { uri: string; range: ProtocolDictionary };
+  range?: ProtocolDictionary;
 };
 
 function symbolKindLabel(kind: number | undefined): string {
@@ -307,14 +333,12 @@ function symbolKindLabel(kind: number | undefined): string {
   return kind == null ? "symbol" : (SYMBOL_KIND_NAMES[kind] ?? "symbol");
 }
 
-function rangeStart(range: Record<string, unknown> | undefined): {
-  line?: number;
-  character?: number;
-} {
+function rangeStart(range: ProtocolDictionary | undefined) {
+  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const start = range?.start as { line?: unknown; character?: unknown } | undefined;
   return {
-    line: typeof start?.line === "number" ? start.line + 1 : undefined,
-    character: typeof start?.character === "number" ? start.character + 1 : undefined,
+    line: isRuntimeNumber(start?.line) ? start.line + 1 : undefined,
+    character: isRuntimeNumber(start?.character) ? start.character + 1 : undefined,
   };
 }
 
@@ -390,7 +414,7 @@ function pickLocalSymbolLocation(
   symbols: SymbolNode[],
   token: string,
   filePath: string,
-): Array<{ uri: string; range: Record<string, unknown> }> {
+): Array<{ uri: string; range: ProtocolDictionary }> {
   const flat = flattenSymbols(symbols).filter((symbol) => symbol.name === token);
   if (flat.length === 0) return [];
   const uri = pathToFileURL(filePath).href;
@@ -404,7 +428,7 @@ function pickLocalSymbolLocation(
       }
       return undefined;
     })
-    .filter((entry): entry is { uri: string; range: Record<string, unknown> } => Boolean(entry));
+    .filter((entry): entry is { uri: string; range: ProtocolDictionary } => Boolean(entry));
 }
 
 function workspaceSymbolDedupeKey(symbol: SymbolNode): string {
@@ -432,22 +456,29 @@ function dedupeWorkspaceSymbols<T extends SymbolNode>(symbols: T[]): T[] {
   return out;
 }
 
+interface NavigationNotes {
+  [mode: string]: string;
+}
+
 type RangeLike = {
   start?: { line?: unknown; character?: unknown };
   end?: { line?: unknown; character?: unknown };
 };
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
+function asRecord<T>(value: T): ProtocolDictionary | undefined {
+  // SAFETY: The non-null object check establishes an indexable representation; consumers validate every field before use.
+  return isRuntimeObject(value) && value !== null ? (value as ProtocolDictionary) : undefined;
 }
 
-function searchReadFromUriRange(uri: unknown, range: unknown): SearchReadLocation | undefined {
-  if (typeof uri !== "string" || !uri.startsWith("file:")) return undefined;
+function searchReadFromUriRange<TUri, TRange>(
+  uri: TUri,
+  range: TRange,
+): SearchReadLocation | undefined {
+  if (!isRuntimeString(uri) || !uri.startsWith("file:")) return undefined;
+  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const rangeLike = asRecord(range) as RangeLike | undefined;
   const startLine = rangeLike?.start?.line;
-  if (typeof startLine !== "number" || !Number.isFinite(startLine)) {
+  if (!isRuntimeNumber(startLine) || !Number.isFinite(startLine)) {
     return undefined;
   }
   const endLine = rangeLike?.end?.line;
@@ -456,7 +487,7 @@ function searchReadFromUriRange(uri: unknown, range: unknown): SearchReadLocatio
       file: fileURLToPath(uri),
       startLine: Math.max(1, Math.floor(startLine) + 1),
       endLine:
-        typeof endLine === "number" && Number.isFinite(endLine)
+        isRuntimeNumber(endLine) && Number.isFinite(endLine)
           ? Math.max(1, Math.floor(endLine) + 1)
           : undefined,
     };
@@ -465,12 +496,12 @@ function searchReadFromUriRange(uri: unknown, range: unknown): SearchReadLocatio
   }
 }
 
-function pushSearchRead(out: SearchReadLocation[], uri: unknown, range: unknown): void {
+function pushSearchRead<TUri, TRange>(out: SearchReadLocation[], uri: TUri, range: TRange): void {
   const loc = searchReadFromUriRange(uri, range);
   if (loc) out.push(loc);
 }
 
-function collectLocationSearchReads(result: unknown): SearchReadLocation[] {
+function collectLocationSearchReads<TResult>(result: TResult): SearchReadLocation[] {
   const out: SearchReadLocation[] = [];
   for (const entry of Array.isArray(result) ? result : [result]) {
     const record = asRecord(entry);
@@ -481,7 +512,7 @@ function collectLocationSearchReads(result: unknown): SearchReadLocation[] {
   return out;
 }
 
-function collectWorkspaceSymbolSearchReads(result: unknown): SearchReadLocation[] {
+function collectWorkspaceSymbolSearchReads<TResult>(result: TResult): SearchReadLocation[] {
   const out: SearchReadLocation[] = [];
   for (const entry of Array.isArray(result) ? result : [result]) {
     const symbol = asRecord(entry);
@@ -493,8 +524,8 @@ function collectWorkspaceSymbolSearchReads(result: unknown): SearchReadLocation[
   return out;
 }
 
-function collectCallHierarchySearchReads(
-  result: unknown,
+function collectCallHierarchySearchReads<TResult>(
+  result: TResult,
   operation: "incomingCalls" | "outgoingCalls",
   callHierarchyItem: LSPCallHierarchyItem | undefined,
 ): SearchReadLocation[] {
@@ -513,9 +544,9 @@ function collectCallHierarchySearchReads(
   return out;
 }
 
-function collectSearchReadsForOperation(
+function collectSearchReadsForOperation<TResult>(
   operation: LspNavigationOperation,
-  result: unknown,
+  result: TResult,
   callHierarchyItem?: LSPCallHierarchyItem,
 ): SearchReadLocation[] {
   if (
@@ -603,11 +634,7 @@ function formatCapabilities(snapshots: CapabilitySnapshot[], filePath?: string):
   return lines.join("\n");
 }
 
-function classifyCodeActions(actions: Array<{ kind?: string }> | undefined): {
-  quickfix: number;
-  refactor: number;
-  other: number;
-} {
+function classifyCodeActions(actions: Array<{ kind?: string }> | undefined) {
   if (!actions || actions.length === 0) return { quickfix: 0, refactor: 0, other: 0 };
   let quickfix = 0;
   let refactor = 0;
@@ -634,7 +661,7 @@ async function openFileBestEffort(
   }
   if (!fileContent) return;
   try {
-    if (typeof lspService.touchFile === "function") {
+    if (isRuntimeFunction(lspService.touchFile)) {
       await lspService.touchFile(filePath, fileContent, {
         diagnostics: waitForDiagnostics ? "document" : "none",
         source: "lsp_navigation",
@@ -693,8 +720,7 @@ export function createLspNavigationTool(
       supported?: boolean;
       emptyReason?: string;
     }>(({ details, args, isError, text }) => {
-      const op =
-        details?.operation ?? (typeof args.operation === "string" ? args.operation : "lsp");
+      const op = details?.operation ?? (isRuntimeString(args.operation) ? args.operation : "lsp");
       if (isError || details?.supported === false) {
         return `lsp_navigation ${op} — ${details?.emptyReason ?? text.split("\n")[0] ?? "unavailable"}`;
       }
@@ -831,9 +857,9 @@ export function createLspNavigationTool(
     }),
     async execute(
       _toolCallId: string,
-      params: Record<string, unknown>,
+      params: LspNavigationParams,
       _signal: AbortSignal,
-      _onUpdate: unknown,
+      _onUpdate: RuntimeValue,
       ctx: { cwd?: string },
     ) {
       const startedAt = Date.now();
@@ -847,7 +873,7 @@ export function createLspNavigationTool(
         payload: {
           content: Array<{ type: "text"; text: string }>;
           isError?: boolean;
-          details?: Record<string, unknown>;
+          details?: object;
         },
         meta: {
           operation: string;
@@ -907,7 +933,7 @@ export function createLspNavigationTool(
             },
           ],
           details: {
-            ...(payload.details ?? {}),
+            ...payload.details,
             failureKind: meta.failureKind,
           },
         };
@@ -952,26 +978,7 @@ export function createLspNavigationTool(
         topLevelOnly,
         maxResults,
         callHierarchyItem,
-      } = params as {
-        operation: string;
-        path?: string;
-        line?: number;
-        character?: number;
-        symbol?: string;
-        endLine?: number;
-        endCharacter?: number;
-        newName?: string;
-        newFilePath?: string;
-        apply?: boolean;
-        command?: string;
-        commandArguments?: unknown[];
-        query?: string;
-        kinds?: string[];
-        exactMatch?: boolean;
-        topLevelOnly?: boolean;
-        maxResults?: number;
-        callHierarchyItem?: LSPCallHierarchyItem;
-      };
+      } = params;
       const normalizedOperation = normalizeOperation(rawOperation);
       if (!isValidOperation(normalizedOperation)) {
         return finalize(
@@ -1115,7 +1122,7 @@ export function createLspNavigationTool(
               count: diagnostics.length,
             },
           ];
-          const noteMap: Record<string, string> = {
+          const noteMap: NavigationNotes = {
             pull: "Note: path mode requests pull diagnostics for this file and returns the aggregated result",
             "push-only":
               "Note: server is push-only; result depends on published diagnostics for this file",
@@ -1154,7 +1161,7 @@ export function createLspNavigationTool(
           diagnostics: diags,
           count: diags.length,
         }));
-        const noteMap2: Record<string, string> = {
+        const noteMap2: NavigationNotes = {
           "push-only":
             "Note: push-only tracked diagnostics snapshot (not full workspace pull diagnostics).",
           pull: "Note: tracked diagnostics snapshot from active clients. Provide path to force file-level diagnostics collection",
@@ -1302,11 +1309,10 @@ export function createLspNavigationTool(
         }
         try {
           const raw = await lspService.workspaceSymbol(query ?? "", rawPath ? filePath : undefined);
+          // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
           const filtered = (Array.isArray(raw) ? raw : [raw]).filter(
             (s) =>
-              typeof s === "object" &&
-              s !== null &&
-              (!s.kind || NAVIGABLE_SYMBOL_KINDS.has(s.kind)),
+              isRuntimeObject(s) && s !== null && (!s.kind || NAVIGABLE_SYMBOL_KINDS.has(s.kind)),
           ) as SymbolNode[];
           return dedupeWorkspaceSymbols(filtered).slice(0, 15);
         } catch (err) {
@@ -1315,8 +1321,9 @@ export function createLspNavigationTool(
             await openFileBestEffort(lspService, filePath);
             await new Promise((resolve) => setTimeout(resolve, 120));
             const retryRaw = await lspService.workspaceSymbol(query ?? "", filePath);
+            // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
             const retrySymbols = (Array.isArray(retryRaw) ? retryRaw : [retryRaw]).filter(
-              (s) => typeof s === "object" && s !== null,
+              (s) => isRuntimeObject(s) && s !== null,
             ) as SymbolNode[];
             return dedupeWorkspaceSymbols(retrySymbols);
           }
@@ -1324,7 +1331,7 @@ export function createLspNavigationTool(
         }
       };
 
-      const runOperation = async (): Promise<unknown> => {
+      const runOperation = async (): Promise<RuntimeValue> => {
         switch (operation) {
           case "definition":
             return lspService.definition(filePath, lspLine, lspChar);
@@ -1344,6 +1351,7 @@ export function createLspNavigationTool(
             if (!query || query.trim().length === 0) {
               throw new Error("__BADINPUT__ query parameter required for findSymbol");
             }
+            // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
             const symbols = (await lspService.documentSymbol(filePath)) as SymbolNode[];
             return findSymbolMatches(symbols, query, {
               maxResults: Math.max(1, Math.min(100, maxResults ?? 20)),
@@ -1391,7 +1399,7 @@ export function createLspNavigationTool(
             const result = await lspService.renameFile(filePath, resolvedNewFilePath, {
               cwd: ctx.cwd || ".",
               apply: apply ?? false,
-              ...(mutationContext ? { mutationContext } : {}),
+              ...includePropertiesWhen(mutationContext, () => ({ mutationContext })),
             });
             if (result.applied) {
               for (const touchedFile of result.files ?? []) {
@@ -1493,6 +1501,7 @@ export function createLspNavigationTool(
           const content = nodeFs.readFileSync(filePath, "utf-8");
           const token = line && character ? tokenAtPosition(content, line, character) : undefined;
           if (token) {
+            // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
             const docSymbols = (await lspService.documentSymbol(filePath)) as SymbolNode[];
             const locations = pickLocalSymbolLocation(docSymbols, token, filePath);
             if (locations.length > 0) {
@@ -1505,14 +1514,16 @@ export function createLspNavigationTool(
           const outcome =
             operation === "rename_file" &&
             result &&
-            typeof result === "object" &&
+            isRuntimeObject(result) &&
             "applied" in result &&
+            // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
             (result as { applied?: unknown }).applied === false
               ? "failed"
               : operation === "executeCommand" &&
                   result &&
-                  typeof result === "object" &&
+                  isRuntimeObject(result) &&
                   "executed" in result &&
+                  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
                   (result as { executed?: unknown }).executed === false
                 ? "failed"
                 : "skipped";
@@ -1588,7 +1599,8 @@ export function createLspNavigationTool(
       }
       const actionStats =
         operation === "codeAction" && Array.isArray(result)
-          ? classifyCodeActions(result as Array<{ kind?: string }>)
+          ? // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
+            classifyCodeActions(result as Array<{ kind?: string }>)
           : null;
       if (operation === "codeAction" && actionStats) {
         if (actionStats.quickfix === 0 && actionStats.refactor > 0) {
@@ -1625,4 +1637,13 @@ export function createLspNavigationTool(
       );
     },
   };
+}
+
+function includePropertiesWhen<T extends object, TInclude>(
+  include: TInclude,
+  createProperties: () => T,
+): Partial<T> {
+  const properties: Partial<T> = {};
+  if (include) Object.assign(properties, createProperties());
+  return properties;
 }

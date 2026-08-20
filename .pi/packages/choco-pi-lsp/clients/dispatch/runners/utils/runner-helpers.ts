@@ -34,7 +34,7 @@ import {
   type AvailabilityLatch,
   type AvailabilityOutcome,
   type ProbeEvidence,
-  type ProbeFailureShape,
+  type ProbeFailureResult,
   classifyProbeFailure,
   createAvailabilityLatch,
   describeInstallAttempt,
@@ -101,8 +101,10 @@ function findNodeBinRoots(startDir: string): string[] {
 }
 
 let _thisDir = path.dirname(fileURLToPath(import.meta.url));
-if (typeof __dirname !== "undefined") {
+try {
   _thisDir = __dirname;
+} catch {
+  // ESM has no module-scoped __dirname; import.meta.url above is authoritative.
 }
 
 // Managed tools directory (~/.choco-pi-lsp/tools) — where ensureTool() installs binaries
@@ -416,11 +418,12 @@ export async function getManagedToolEnvironment(
   const currentPath = env.PATH || env.Path || process.env.PATH || "";
   const localBin = path.join(cwd, "node_modules", ".bin");
   const augmentedPath = `${localBin}${separator}${currentPath}`;
-  return {
+  const augmentedEnv: NodeJS.ProcessEnv = {
     ...env,
     PATH: augmentedPath,
-    ...(process.platform === "win32" ? { Path: augmentedPath } : {}),
   };
+  if (process.platform === "win32") augmentedEnv.Path = augmentedPath;
+  return augmentedEnv;
 }
 
 /** Read-only managed/PATH discovery for spawn-time resolution memos. */
@@ -762,18 +765,20 @@ export interface AvailabilityVerdict {
  * cached only for a bounded cooldown, after which the next caller re-probes.
  * An installed tool therefore recovers on its own, without a host restart.
  */
-export function createAvailabilityChecker(
-  command: string,
-  windowsExt = "",
-  versionArgs: string[] = ["--version"],
-  options: AvailabilityCheckerOptions = {},
-): {
+export interface AvailabilityChecker {
   isAvailableAsync: (cwd?: string) => Promise<boolean>;
   getCommand: (cwd?: string) => string | null;
   getOutcome: (cwd?: string) => AvailabilityOutcome | null;
   getVerdict: (cwd?: string) => AvailabilityVerdict;
   reset: () => void;
-} {
+}
+
+export function createAvailabilityChecker(
+  command: string,
+  windowsExt = "",
+  versionArgs: string[] = ["--version"],
+  options: AvailabilityCheckerOptions = {},
+): AvailabilityChecker {
   const cacheByCwd = new PathKeyedMap<AvailabilityCache>(normalizeEphemeralMapKey);
   const inFlightByCwd = new PathKeyedMap<Promise<boolean>>(normalizeEphemeralMapKey);
   let checkerGeneration = availabilityGeneration.current();
@@ -1041,7 +1046,7 @@ export function createAvailabilityChecker(
 }
 
 /** What a `createCwdCachedProbe` probe hands back for classification (#1494). */
-export interface CwdProbeResult extends ProbeFailureShape {
+export interface CwdProbeResult extends ProbeFailureResult {
   status?: number | null;
 }
 
@@ -1185,7 +1190,7 @@ export function createCwdCachedProbe(
       // A probe that threw carries its errno in the Error, which is exactly
       // what the taxonomy reads — so a thrown EAGAIN stays transient instead
       // of collapsing into an untyped `false`.
-      const shape: CwdProbeResult = result ?? {
+      const probeResult: CwdProbeResult = result ?? {
         error: thrown instanceof Error ? thrown : new Error(String(thrown)),
       };
 
@@ -1201,7 +1206,7 @@ export function createCwdCachedProbe(
         return true;
       }
 
-      const { outcome, cause, evidence } = classifyProbeFailure(shape, {
+      const { outcome, cause, evidence } = classifyProbeFailure(probeResult, {
         hostStallMs,
         command: options.tool,
         unclassifiedFailureOutcome: options.unclassifiedFailureOutcome,
@@ -1227,8 +1232,7 @@ export function createCwdCachedProbe(
     return promise;
   };
 
-  const cached = run as CwdCachedProbe;
-  cached.getVerdict = (cwd: string): AvailabilityVerdict => {
+  const getVerdict = (cwd: string): AvailabilityVerdict => {
     ensureCurrentGeneration();
     const latch = latchFor(path.resolve(cwd || process.cwd()));
     const outcome = latch.getOutcome();
@@ -1244,11 +1248,11 @@ export function createCwdCachedProbe(
       retryAtMs: latch.getRetryAtMs(),
     };
   };
-  cached.reset = (): void => {
+  const reset = (): void => {
     clear();
     probeGeneration = availabilityGeneration.current();
   };
-  return cached;
+  return Object.assign(run, { getVerdict, reset });
 }
 
 export function resolveNodeToolCommand(cwd: string, toolName: string, windowsExt = ".cmd"): string {
@@ -1749,7 +1753,12 @@ function noteSgUnavailable(
   });
 }
 
-export function getSgCommand(): { cmd: string; args: string[] } {
+export interface ResolvedCommand {
+  cmd: string;
+  args: string[];
+}
+
+export function getSgCommand(): ResolvedCommand {
   ensureCurrentSgGeneration();
   return {
     cmd: sgCmd ?? "npx",

@@ -1,4 +1,6 @@
 import path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { PRIORITY } from "../priorities.js";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
@@ -19,6 +21,24 @@ type ActionlintIssue = {
   end_line?: number;
   end_column?: number;
 };
+
+const ActionlintIssueSchema = Type.Object(
+  {
+    message: Type.Optional(Type.String()),
+    filepath: Type.Optional(Type.String()),
+    line: Type.Optional(Type.Number()),
+    column: Type.Optional(Type.Number()),
+    kind: Type.Optional(Type.String()),
+    snippet: Type.Optional(Type.String()),
+    end_line: Type.Optional(Type.Number()),
+    end_column: Type.Optional(Type.Number()),
+  },
+  { additionalProperties: true },
+);
+const ActionlintOutputSchema = Type.Union([
+  ActionlintIssueSchema,
+  Type.Array(ActionlintIssueSchema),
+]);
 
 export function isGitHubWorkflowFile(filePath: string): boolean {
   const normalized = filePath.replace(/\\/g, "/");
@@ -55,7 +75,8 @@ export function parseActionlintJson(raw: string, filePath: string): Diagnostic[]
   if (!trimmed) return [];
 
   try {
-    const parsed = JSON.parse(trimmed) as ActionlintIssue[] | ActionlintIssue;
+    const parsed = JSON.parse(trimmed);
+    if (!Value.Check(ActionlintOutputSchema, parsed)) return [];
     const issues = Array.isArray(parsed) ? parsed : [parsed];
     return issues.map((issue) => toDiagnostic(issue, filePath));
   } catch {
@@ -64,8 +85,10 @@ export function parseActionlintJson(raw: string, filePath: string): Diagnostic[]
     for (const line of trimmed.split(/\r?\n/)) {
       if (!line.trim()) continue;
       try {
-        const parsed = JSON.parse(line) as ActionlintIssue;
-        diagnostics.push(toDiagnostic(parsed, filePath));
+        const parsed = JSON.parse(line);
+        if (Value.Check(ActionlintIssueSchema, parsed)) {
+          diagnostics.push(toDiagnostic(parsed, filePath));
+        }
       } catch {
         // Ignore non-JSON chatter; the caller will synthesize a generic diagnostic
         // if actionlint failed and no structured diagnostics were parsed.

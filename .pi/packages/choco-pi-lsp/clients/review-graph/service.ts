@@ -50,7 +50,7 @@ export function recordEntitySnapshotDiff(
   facts: FactStore,
   filePath: string,
   nextSnapshot: Map<string, string>,
-): { added: string[]; removed: string[]; modified: string[] } {
+) {
   const prev =
     facts.getSessionFact<Map<string, string>>(`${ENTITY_SNAPSHOT_PREFIX}${filePath}`) ??
     new Map<string, string>();

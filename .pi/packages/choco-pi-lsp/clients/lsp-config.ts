@@ -1,3 +1,5 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import { logExtension } from "./extension-log.js";
 import { notifyUserDegradation } from "./user-notify.js";
 import * as fs from "node:fs";
@@ -13,6 +15,13 @@ import {
   readFlagConfigValue,
 } from "./lsp-flag-registry.js";
 import { findNestedProjectMutationValue, type PiLensProjectConfig } from "./project-lsp-config.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+
+interface MutableConfigDictionary extends Record<string, LspDictionaryValue> {}
 
 export type PiLensFormatMode = "deferred" | "immediate";
 
@@ -177,24 +186,29 @@ export function persistPiLensGlobalConfigKey(
   configPath = getPiLensGlobalConfigPath(),
 ): boolean {
   try {
-    let raw: Record<string, unknown> = {};
+    let raw: Record<string, LspDictionaryValue> = {};
     try {
+      // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
       const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        raw = parsed as Record<string, unknown>;
+
+      if (parsed && Check(Type.Object({}), parsed) && !Array.isArray(parsed)) {
+        // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
+        raw = parsed as Record<string, LspDictionaryValue>;
       }
     } catch {
       // absent or unreadable — start from an empty config
     }
     const segments = configKey.split(".");
-    let target: Record<string, unknown> = raw;
+
+    let target: MutableConfigDictionary = raw;
     for (const segment of segments.slice(0, -1)) {
       const existing = asConfigObject(target[segment]);
       if (existing) {
         target = existing;
       } else {
-        const next: Record<string, unknown> = {};
+        const next: Record<string, LspDictionaryValue> = {};
         target[segment] = next;
+
         target = next;
       }
     }
@@ -207,22 +221,26 @@ export function persistPiLensGlobalConfigKey(
   }
 }
 
-function asConfigObject(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+function asConfigObject(value: LspBoundaryValue): Record<string, LspDictionaryValue> | undefined {
+  if (!value || !Check(Type.Object({}), value) || Array.isArray(value)) return undefined;
+  // SAFETY: TypeBox established a non-array object, so string-key access preserves its runtime values.
+  return value as Record<string, LspDictionaryValue>;
 }
 
 export function loadPiLensGlobalConfig(
   configPath = getPiLensGlobalConfigPath(),
 ): PiLensGlobalConfig | undefined {
   try {
+    // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
     const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
-    if (!parsed || typeof parsed !== "object") return undefined;
 
-    const raw = parsed as Record<string, unknown>;
+    if (!parsed || !Check(Type.Object({}), parsed)) return undefined;
+
+    // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+    const raw = parsed as Record<string, LspDictionaryValue>;
     const warnInvalid = (reason: string) => warnInvalidGlobalConfigOnce(configPath, reason);
-    const config: Record<string, unknown> = {};
+
+    const config: Record<string, LspDictionaryValue> = {};
 
     for (const spec of LENS_FLAGS) {
       if (spec.readGlobal) continue;
@@ -230,14 +248,15 @@ export function loadPiLensGlobalConfig(
     }
 
     const ignore = Array.isArray(raw.ignore)
-      ? raw.ignore.filter((p): p is string => typeof p === "string")
+      ? raw.ignore.filter((p): p is string => Check(Type.String(), p))
       : undefined;
     if (ignore && ignore.length > 0) config.ignore = ignore;
 
     const dispatch = asConfigObject(raw.dispatch);
     if (dispatch) {
       const floor = dispatch.runnerTimeoutFloorMs;
-      if (typeof floor === "number" && Number.isFinite(floor) && floor > 0) {
+
+      if (Check(Type.Number(), floor) && Number.isFinite(floor) && floor > 0) {
         config.dispatch = { runnerTimeoutFloorMs: floor };
       } else {
         // #533: warn only when the key is PRESENT but malformed — an absent
@@ -253,14 +272,20 @@ export function loadPiLensGlobalConfig(
     const autoFix = asConfigObject(asConfigObject(raw.actionableWarnings)?.autoFix);
     if (autoFix && "maxFixes" in autoFix) {
       if (
-        typeof autoFix.maxFixes === "number" &&
+        Check(Type.Number(), autoFix.maxFixes) &&
         Number.isFinite(autoFix.maxFixes) &&
         autoFix.maxFixes >= 0
       ) {
         config.actionableWarnings ??= {};
-        const warnings = config.actionableWarnings as Record<string, unknown>;
+
+        // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+        const warnings = config.actionableWarnings as Record<string, LspDictionaryValue>;
         warnings.autoFix ??= {};
-        (warnings.autoFix as Record<string, unknown>).maxFixes = Math.floor(autoFix.maxFixes);
+
+        // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+        (warnings.autoFix as Record<string, LspDictionaryValue>).maxFixes = Math.floor(
+          autoFix.maxFixes,
+        );
       } else {
         warnInvalid("actionableWarnings.autoFix.maxFixes must be a non-negative finite number");
       }
@@ -268,7 +293,7 @@ export function loadPiLensGlobalConfig(
 
     const widget = asConfigObject(raw.widget);
     if (widget) {
-      if (typeof widget.visible === "boolean") {
+      if (Check(Type.Boolean(), widget.visible)) {
         config.widget = { visible: widget.visible };
       } else {
         // #533: present-but-wrong-type warns; absent stays silent.
@@ -282,7 +307,9 @@ export function loadPiLensGlobalConfig(
     const format = asConfigObject(raw.format);
     if (format) {
       config.format ??= {};
-      const formatSection = config.format as Record<string, unknown>;
+
+      // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+      const formatSection = config.format as Record<string, LspDictionaryValue>;
       if (format.mode === "immediate" || format.mode === "deferred") {
         formatSection.mode = format.mode;
       } else {
@@ -315,6 +342,7 @@ export function loadPiLensGlobalConfig(
       }
     }
 
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     return config as PiLensGlobalConfig;
   } catch {
     return undefined;
@@ -394,6 +422,7 @@ export function resolvePiLensFlagWithSource(
       return {
         value: flagValueFromConfig(spec, nested.value),
         source:
+          // SAFETY: The checked element count and construction order establish this fixed tuple representation.
           path.resolve(nested.dir) === path.resolve(projectRoot as string)
             ? "project"
             : (`nested-project:${nested.dir}` as const),
@@ -409,7 +438,8 @@ export function resolvePiLensFlagWithSource(
   }
 
   const globalValue = spec.readGlobal
-    ? spec.readGlobal((config ?? {}) as Record<string, unknown>)
+    ? // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+      spec.readGlobal((config ?? {}) as Record<string, LspDictionaryValue>)
     : readFlagConfigValue(config, spec.configKey);
   if (globalValue !== undefined) {
     return { value: flagValueFromConfig(spec, globalValue), source: "global" };

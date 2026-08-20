@@ -98,7 +98,7 @@ async function readLockedAsync(path: string): Promise<string | undefined> {
   try {
     return await fsp.readFile(path, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
     throw error;
   }
 }

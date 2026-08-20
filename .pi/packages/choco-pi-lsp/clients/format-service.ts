@@ -192,7 +192,10 @@ export class FormatService {
         // Convert hyphenated name to camelCase then append Formatter
         // e.g. "php-cs-fixer" → "phpCsFixerFormatter", "clang-format" → "clangFormatFormatter"
         const camel = name.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+        // SAFETY: listAllFormatters supplied this name, and formatter exports follow the
+        // hyphenated-name to camelCaseFormatter mapping used by that same registry.
         const key = `${camel}Formatter` as keyof typeof formatters;
+        // SAFETY: The validated registry entry is a FormatterInfo export.
         return formatters[key] as FormatterInfo;
       })
       .filter(Boolean);

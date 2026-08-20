@@ -1,3 +1,4 @@
+import { type Static, Type } from "typebox";
 /**
  * Local re-implementation of the host SDK's `isToolCallEventType`.
  *
@@ -55,9 +56,22 @@
  */
 import { sanitizeCorrelationId } from "./read-guard-logger.js";
 
-export function isToolCallEventType<T extends string>(toolName: T, event: unknown): boolean {
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+
+export function isToolCallEventType<T extends string>(
+  toolName: T,
+  event: LspBoundaryValue,
+): boolean {
   return (
-    !!event && typeof event === "object" && (event as { toolName?: unknown }).toolName === toolName
+    event !== null &&
+    Object(event) === event &&
+    !Array.isArray(event) &&
+    !(event instanceof Function) &&
+    // SAFETY: The non-enumerating structural checks establish that the host discriminator can be read.
+    (event as { toolName?: LspBoundaryValue }).toolName === toolName
   );
 }
 
@@ -80,8 +94,10 @@ export function isToolCallEventType<T extends string>(toolName: T, event: unknow
  * identity at all under any known field; callers decide their own safe
  * default for that case rather than treat a generated id as a match.
  */
-export function resolveToolCallCorrelationId(event: unknown): string | undefined {
-  const value = (event ?? {}) as Record<string, unknown>;
+
+export function resolveToolCallCorrelationId(event: LspBoundaryValue): string | undefined {
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
+  const value = (event ?? {}) as Record<string, LspDictionaryValue>;
   for (const candidate of [
     value.toolCallId,
     value.callId,

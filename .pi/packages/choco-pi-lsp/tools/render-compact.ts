@@ -1,3 +1,5 @@
+import type { ProtocolDictionary } from "./runtime-values.js";
+import { isRuntimeString } from "./runtime-values.js";
 // Compact tool-result rendering (refs #345).
 //
 // The navigable/structural tools (module_report, read_symbol, read_enclosing,
@@ -32,7 +34,7 @@ export interface CompactResultLike<D = unknown> {
 
 export interface CompactSummaryInput<D = unknown> {
   details: D | undefined;
-  args: Record<string, unknown>;
+  args: ProtocolDictionary;
   isError: boolean;
   /** Full model-facing text (all text content blocks joined). */
   text: string;
@@ -46,6 +48,11 @@ export type CompactSummarizer<D = unknown> = (input: CompactSummaryInput<D>) => 
  * `error` and `output` defer to the active theme so red/normal stay legible. */
 export type CompactStyle = "brand" | "error" | "output";
 
+interface CompactTextSelection {
+  text: string;
+  style: CompactStyle;
+}
+
 // choco-pi-lsp brand colour: blue characters on whatever background the pi tool shell
 // paints (default success/error background is left untouched). Truecolor bold
 // foreground, theme-independent so the summary reads as ours regardless of the
@@ -58,7 +65,7 @@ const RESET_FG = "\x1b[39m\x1b[22m";
 export function fullTextOf(result: CompactResultLike): string {
   return (result.content ?? [])
     .filter(
-      (c): c is { type: string; text: string } => c.type === "text" && typeof c.text === "string",
+      (c): c is { type: string; text: string } => c.type === "text" && isRuntimeString(c.text),
     )
     .map((c) => c.text)
     .join("\n");
@@ -70,10 +77,10 @@ export function fullTextOf(result: CompactResultLike): string {
  */
 export function selectCompactText<D = unknown>(
   result: CompactResultLike<D>,
-  args: Record<string, unknown>,
+  args: ProtocolDictionary,
   expanded: boolean,
   summarize: CompactSummarizer<D>,
-): { text: string; style: CompactStyle } {
+): CompactTextSelection {
   const text = fullTextOf(result);
   if (expanded) {
     return {
@@ -124,7 +131,8 @@ export function compactRenderResult<D = unknown>(summarize: CompactSummarizer<D>
       context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
     const { text, style } = selectCompactText(
       result,
-      (context.args ?? {}) as Record<string, unknown>,
+      // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
+      (context.args ?? {}) as ProtocolDictionary,
       options.expanded === true,
       summarize,
     );
@@ -134,8 +142,8 @@ export function compactRenderResult<D = unknown>(summarize: CompactSummarizer<D>
 }
 
 /** Shorten an absolute/relative path to its basename for the summary line. */
-export function baseName(p: unknown): string {
-  if (typeof p !== "string" || p.length === 0) return "";
+export function baseName<T>(p: T): string {
+  if (!isRuntimeString(p) || p.length === 0) return "";
   const parts = p.split(/[\\/]/);
   return parts[parts.length - 1] || p;
 }

@@ -1,4 +1,6 @@
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { findLocalBinUpwards } from "../../package-manager.js";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { getLinterPolicyForCwd } from "../../tool-policy.js";
@@ -13,19 +15,30 @@ import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.js";
 
 const taplo = createAvailabilityChecker("taplo", ".exe");
 
-interface TaploError {
-  range?: { start: { line: number; col: number } };
-  message: string;
-  kind: string;
-}
-
-interface TaploResult {
-  errors?: TaploError[];
-}
+const TaploResultSchema = Type.Object(
+  {
+    errors: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            range: Type.Optional(
+              Type.Object({ start: Type.Object({ line: Type.Number(), col: Type.Number() }) }),
+            ),
+            message: Type.String(),
+            kind: Type.String(),
+          },
+          { additionalProperties: true },
+        ),
+      ),
+    ),
+  },
+  { additionalProperties: true },
+);
 
 function parseTaploOutput(raw: string, filePath: string): Diagnostic[] {
   try {
-    const parsed = JSON.parse(raw) as TaploResult;
+    const parsed = JSON.parse(raw);
+    if (!Value.Check(TaploResultSchema, parsed)) return [];
     const errors = parsed.errors ?? [];
 
     return errors.map((err, idx) => ({

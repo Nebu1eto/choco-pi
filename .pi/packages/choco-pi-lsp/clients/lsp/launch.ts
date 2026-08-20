@@ -124,7 +124,6 @@ function resolvePathValue(env: NodeJS.ProcessEnv): string {
 /** Read live system+user PATH from Windows registry (bypasses stale process.env.PATH). */
 function readWindowsRegistryPath(): string {
   try {
-    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
     const out = execFileSync(
       "powershell.exe",
       [
@@ -357,7 +356,10 @@ function unrefLspProcessHandles(proc: ChildProcess): void {
   }
   for (const stream of [proc.stdin, proc.stdout, proc.stderr]) {
     try {
-      (stream as { unref?: () => void } | null | undefined)?.unref?.();
+      if (stream && "unref" in stream) {
+        // SAFETY: The property check verifies this concrete child-process pipe exposes unref.
+        (stream as { unref: () => void }).unref();
+      }
     } catch {
       // best-effort
     }
@@ -481,8 +483,8 @@ export async function launchLSP(
   const env: NodeJS.ProcessEnv = {
     ...mergedEnv,
     PATH: augmentedPath,
-    ...(isWindows ? { Path: augmentedPath } : {}),
   };
+  if (isWindows) env.Path = augmentedPath;
 
   // Resolve command path
   // - If already absolute, use as-is

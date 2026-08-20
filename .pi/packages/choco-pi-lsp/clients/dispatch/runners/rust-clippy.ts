@@ -188,8 +188,7 @@ interface ClippyMessage {
 function findMachineApplicableSpan(spans: ClippySpan[]): ClippySpan | undefined {
   return spans.find(
     (s) =>
-      typeof s.suggested_replacement === "string" &&
-      s.suggestion_applicability === "MachineApplicable",
+      s.suggested_replacement !== undefined && s.suggestion_applicability === "MachineApplicable",
   );
 }
 

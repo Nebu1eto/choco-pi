@@ -23,6 +23,8 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { isTestMode } from "./env-utils.js";
 import { getGlobalPiLensDir } from "./file-utils.js";
 import { getMaxLogSizeMB } from "./log-cleanup.js";
@@ -42,25 +44,45 @@ const writer = createNdjsonLogger({
  */
 export type ExtensionLogLevel = "error" | "warn" | "debug";
 
+export type ExtensionLogMetadataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | ExtensionLogMetadataValue[]
+  | { [key: string]: ExtensionLogMetadataValue };
+export type ExtensionLogMetadata = Record<string, ExtensionLogMetadataValue>;
+
 export interface ExtensionLogEntry {
   /** Owning area, e.g. `dispatch`, `format`, `lens-config`. */
   subsystem: string;
   message: string;
   /** Defaults to `error` (the level every migrated ungated site wrote at). */
   level?: ExtensionLogLevel;
-  metadata?: Record<string, unknown>;
+  metadata?: ExtensionLogMetadata;
+}
+
+interface ExtensionLogPayload {
+  ts: string;
+  pid: number;
+  level: ExtensionLogLevel;
+  subsystem: string;
+  message: string;
+  metadata?: ExtensionLogMetadata;
 }
 
 export function logExtension(entry: ExtensionLogEntry): void {
   if (isTestMode()) return;
-  writer.log({
+  let payload: ExtensionLogPayload = {
     ts: new Date().toISOString(),
     pid: process.pid,
     level: entry.level ?? "error",
     subsystem: entry.subsystem,
     message: entry.message,
-    ...(entry.metadata ? { metadata: entry.metadata } : {}),
-  });
+  };
+  if (entry.metadata) payload = { ...payload, metadata: entry.metadata };
+  writer.log(payload);
 }
 
 /**
@@ -74,10 +96,10 @@ export function logExtension(entry: ExtensionLogEntry): void {
  * the SINK, not the gate, so turning verbose on can never corrupt the frame.
  */
 export interface SubsystemLogger {
-  (message: string, metadata?: Record<string, unknown>): void;
-  error(message: string, metadata?: Record<string, unknown>): void;
-  warn(message: string, metadata?: Record<string, unknown>): void;
-  debug(message: string, metadata?: Record<string, unknown>): void;
+  (message: string, metadata?: ExtensionLogMetadata): void;
+  error(message: string, metadata?: ExtensionLogMetadata): void;
+  warn(message: string, metadata?: ExtensionLogMetadata): void;
+  debug(message: string, metadata?: ExtensionLogMetadata): void;
 }
 
 export function createSubsystemLogger(
@@ -86,23 +108,20 @@ export function createSubsystemLogger(
 ): SubsystemLogger {
   const at =
     (level: ExtensionLogLevel) =>
-    (message: string, metadata?: Record<string, unknown>): void => {
+    (message: string, metadata?: ExtensionLogMetadata): void => {
       logExtension({ subsystem, message, level, metadata });
     };
-  const logger = at(defaultLevel) as SubsystemLogger;
-  logger.error = at("error");
-  logger.warn = at("warn");
-  logger.debug = at("debug");
-  return logger;
+  return Object.assign(at(defaultLevel), {
+    error: at("error"),
+    warn: at("warn"),
+    debug: at("debug"),
+  });
 }
 
 /** No-op with the `SubsystemLogger` shape, for the verbose-off branch. */
 export function noopSubsystemLogger(): SubsystemLogger {
-  const noop = (() => {}) as unknown as SubsystemLogger;
-  noop.error = () => {};
-  noop.warn = () => {};
-  noop.debug = () => {};
-  return noop;
+  const noop = () => {};
+  return Object.assign(noop, { error: noop, warn: noop, debug: noop });
 }
 
 export function getExtensionLogPath(): string {
@@ -125,7 +144,15 @@ const CONSOLE_METHODS = ["log", "info", "warn", "error", "debug", "trace", "dir"
 
 type ConsoleMethod = (typeof CONSOLE_METHODS)[number];
 
-type ConsoleFn = (...args: unknown[]) => void;
+type RuntimeValue = object | string | number | boolean | bigint | symbol | null | undefined;
+type RuntimeFunction = (...args: RuntimeValue[]) => RuntimeValue;
+type ConsoleFn = (...args: RuntimeValue[]) => void;
+
+function readRuntimeProperty<T extends object>(target: T, prop: PropertyKey): RuntimeValue {
+  // SAFETY: Proxy supplies a property key for this exact target; direct indexed access preserves
+  // the same receiver (`target`) used by the former Reflect.get call.
+  return target[prop as keyof T] as RuntimeValue;
+}
 
 let consoleGuardInstalled = false;
 /** The console methods captured before the patch, for an exact restore. */
@@ -224,10 +251,12 @@ export function runInConsoleCaptureWindow<T>(fn: () => T): T {
   return storage.run(true, fn);
 }
 
-function inCaptureWindow<T extends ConsoleFn | ((...args: never[]) => unknown)>(fn: T): T {
-  return function (this: unknown, ...args: unknown[]): unknown {
-    return runInConsoleCaptureWindow(() => (fn as (...a: unknown[]) => unknown).apply(this, args));
-  } as unknown as T;
+function inCaptureWindow<TArgs extends RuntimeValue[], TResult>(
+  fn: (...args: TArgs) => TResult,
+): (...args: TArgs) => TResult {
+  return function <TThis>(this: TThis, ...args: TArgs): TResult {
+    return runInConsoleCaptureWindow(() => fn.apply(this, args));
+  };
 }
 
 /**
@@ -246,7 +275,7 @@ function inCaptureWindow<T extends ConsoleFn | ((...args: never[]) => unknown)>(
  * the terminal.
  */
 function isCaptureSeam(prop: PropertyKey): boolean {
-  return prop === "on" || (typeof prop === "string" && prop.startsWith("register"));
+  return prop === "on" || (Value.Check(Type.String(), prop) && prop.startsWith("register"));
 }
 
 /**
@@ -277,18 +306,17 @@ function isCaptureSeam(prop: PropertyKey): boolean {
  * shape 5), and these definitions are choco-pi-lsp's own, built just above the
  * register call.
  */
-function wrapFunctionsInPlace(value: unknown): unknown {
-  if (typeof value === "function") {
-    return inCaptureWindow(value as ConsoleFn);
+function wrapFunctionsInPlace<T extends RuntimeValue>(value: T): RuntimeValue {
+  if (value instanceof Function) {
+    // SAFETY: Function has been checked at runtime; the adapter forwards every argument and result.
+    return inCaptureWindow(value as RuntimeFunction);
   }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return value;
-  }
-  const obj = value as Record<string, unknown>;
-  for (const key of Object.keys(obj)) {
-    const propValue = obj[key];
-    if (typeof propValue === "function") {
-      assignWrapped(obj, key, propValue as ConsoleFn);
+  if (value === null || !Value.Check(Type.Object({}), value) || Array.isArray(value)) return value;
+  for (const key of Object.keys(value)) {
+    const propValue = readRuntimeProperty(value, key);
+    if (propValue instanceof Function) {
+      // SAFETY: Function has been checked at runtime; ConsoleFn only fixes the forwarding signature.
+      assignWrapped(value, key, propValue as ConsoleFn);
     }
   }
   return value;
@@ -305,10 +333,12 @@ function wrapFunctionsInPlace(value: unknown): unknown {
  * net for that one callback, which is strictly better than the tool/command
  * never registering at all.
  */
-function assignWrapped(obj: Record<string, unknown>, key: string, fn: ConsoleFn): void {
+function assignWrapped<T extends object>(obj: T, key: string, fn: ConsoleFn): void {
   const wrapped = inCaptureWindow(fn);
   try {
-    obj[key] = wrapped;
+    // SAFETY: key comes from Object.keys(obj), and wrapped preserves the checked function member's
+    // call behavior while adding only the capture window.
+    obj[key as keyof T] = wrapped as T[keyof T];
     return;
   } catch {
     // Non-writable data property — fall through to defineProperty.
@@ -343,9 +373,9 @@ function assignWrapped(obj: Record<string, unknown>, key: string, fn: ConsoleFn)
  * reads of the same property, sees a stable value.
  */
 export function withConsoleCaptureWindows<T extends object>(api: T): T {
-  const wrapperCache = new Map<PropertyKey, unknown>();
+  const wrapperCache = new Map<PropertyKey, RuntimeValue>();
   const proxy: T = new Proxy(api, {
-    get(target, prop): unknown {
+    get(target, prop) {
       // A non-configurable, non-writable OWN data property is a proxy
       // invariant: the get trap MUST return the exact value the target
       // holds, or the engine throws a TypeError on read. Degrade to the raw
@@ -357,13 +387,15 @@ export function withConsoleCaptureWindows<T extends object>(api: T): T {
       }
       const cached = wrapperCache.get(prop);
       if (cached !== undefined) return cached;
-      const value = Reflect.get(target, prop, target);
-      if (typeof value !== "function") return value;
-      const method = value as (...args: unknown[]) => unknown;
+      const value = readRuntimeProperty(target, prop);
+      if (!(value instanceof Function)) return value;
+      // SAFETY: Function has been checked at runtime; this signature models transparent forwarding.
+      const method = value as RuntimeFunction;
       // A host that returns `this` for chaining would hand back the raw API,
       // so a chained `on(...).on(...)` would register an unwrapped handler.
       // Keep the proxy on the chain.
-      const keepProxy = (result: unknown): unknown => (result === target ? proxy : result);
+      const keepProxy = <TResult>(result: TResult): TResult | T =>
+        Object.is(result, target) ? proxy : result;
       // Pass-through members are cached too (S3a/S3b: `proxy.getFlag ===
       // proxy.getFlag`), but the cached wrapper re-reads `target[prop]` on
       // EVERY call rather than closing over `method` -- a plain
@@ -373,13 +405,15 @@ export function withConsoleCaptureWindows<T extends object>(api: T): T {
       // Re-reading keeps the cached wrapper's identity stable while staying
       // live to whatever `target[prop]` currently is.
       const wrapper = isCaptureSeam(prop)
-        ? (...args: unknown[]): unknown => {
+        ? (...args: RuntimeValue[]): RuntimeValue => {
             const wrapped = args.map((arg) => wrapFunctionsInPlace(arg));
             return keepProxy(method.apply(target, wrapped));
           }
-        : (...args: unknown[]): unknown => {
-            const current = Reflect.get(target, prop, target) as (...a: unknown[]) => unknown;
-            return current.apply(target, args);
+        : (...args: RuntimeValue[]): RuntimeValue => {
+            const current = readRuntimeProperty(target, prop);
+            if (!(current instanceof Function)) return current;
+            // SAFETY: Function has been checked on every invocation so reassigned methods stay live.
+            return (current as RuntimeFunction).apply(target, args);
           };
       wrapperCache.set(prop, wrapper);
       return wrapper;
@@ -388,10 +422,10 @@ export function withConsoleCaptureWindows<T extends object>(api: T): T {
   return proxy;
 }
 
-function formatConsoleArgs(args: unknown[]): string {
+function formatConsoleArgs(args: RuntimeValue[]): string {
   return args
     .map((arg) => {
-      if (typeof arg === "string") return arg;
+      if (Value.Check(Type.String(), arg)) return arg;
       if (arg instanceof Error) return arg.stack ?? arg.message;
       try {
         return JSON.stringify(arg) ?? String(arg);
@@ -425,13 +459,13 @@ export function installConsoleGuard(): boolean {
   if (isTestMode()) return false;
   if (process.env.CHOCO_PI_LSP_CONSOLE_GUARD === "0") return false;
   consoleGuardInstalled = true;
-  const target = console as unknown as Record<ConsoleMethod, unknown>;
   for (const method of CONSOLE_METHODS) {
-    const original = target[method];
-    if (typeof original !== "function") continue;
+    const original = console[method];
+    if (!(original instanceof Function)) continue;
+    // SAFETY: Every selected console member was checked as callable; the guard forwards all arguments.
     const originalFn = original as ConsoleFn;
     originalConsoleMethods.set(method, originalFn);
-    const replacement: ConsoleFn = (...args: unknown[]): void => {
+    const replacement: ConsoleFn = (...args: RuntimeValue[]): void => {
       if (!isConsoleCaptureActive()) {
         originalFn.apply(console, args);
         return;
@@ -444,7 +478,8 @@ export function installConsoleGuard(): boolean {
       });
     };
     installedConsoleMethods.set(method, replacement);
-    target[method] = replacement;
+    // SAFETY: CONSOLE_METHODS contains only mutable function members of the Console interface.
+    console[method] = replacement as Console[ConsoleMethod];
   }
   return true;
 }
@@ -458,10 +493,10 @@ export function installConsoleGuard(): boolean {
 export function uninstallConsoleGuard(): boolean {
   if (!consoleGuardInstalled) return false;
   consoleGuardInstalled = false;
-  const target = console as unknown as Record<ConsoleMethod, unknown>;
   for (const [method, original] of originalConsoleMethods) {
-    if (target[method] === installedConsoleMethods.get(method)) {
-      target[method] = original;
+    if (console[method] === installedConsoleMethods.get(method)) {
+      // SAFETY: The map stores the exact original callable captured from this console member.
+      console[method] = original as Console[ConsoleMethod];
     }
   }
   originalConsoleMethods.clear();

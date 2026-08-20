@@ -1,3 +1,9 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+
 /**
  * Concurrent-session guard (#473).
  *
@@ -118,13 +124,22 @@ function guardEnabled(): boolean {
  *
  * Never throws out of this function; every branch is wrapped.
  */
-export function probeCtxActive(ctx: unknown): boolean | undefined {
+
+export function probeCtxActive(ctx: LspBoundaryValue): boolean | undefined {
   try {
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const candidate = ctx as { isIdle?: unknown } | null | undefined;
-    if (candidate === null || candidate === undefined || typeof candidate.isIdle !== "function") {
+
+    if (
+      candidate === null ||
+      candidate === undefined ||
+      !Check(Type.Function([], Type.Unknown()), candidate.isIdle)
+    ) {
       return undefined;
     }
-    (candidate.isIdle as () => unknown)();
+
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
+    (candidate.isIdle as () => LspBoundaryValue)();
     return true;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -140,7 +155,8 @@ export function probeCtxActive(ctx: unknown): boolean | undefined {
  * `primary` and `sequential-replacement` classifications — a sequential
  * replacement re-registers itself as the (new) primary, matching today's
  * one-active-session-at-a-time behavior. */
-export function registerPrimarySession(ctx: unknown, sessionId: string | undefined): void {
+
+export function registerPrimarySession(ctx: LspBoundaryValue, sessionId: string | undefined): void {
   activeCtx = ctx;
   activeSessionId = sessionId;
   secondarySessionCount = 0;
@@ -183,7 +199,8 @@ export function noteSessionShutdown(
   // (Note: pi's ExtensionRunner.emit() builds a FRESH ctx object per emit,
   // so identity match is not expected with today's SDK — this check is
   // defense-in-depth for SDK versions/paths that reuse a ctx.)
-  ctx: unknown,
+
+  ctx: LspBoundaryValue,
   sessionId: string | undefined,
 ): SessionShutdownClassification {
   if (ctx !== undefined && ctx === activeCtx) {
@@ -227,7 +244,7 @@ export function noteSessionShutdown(
  * `decideSessionStart` already skips `handleSessionStart`.
  */
 export function classifyCurrentSessionEmission(
-  ctx: unknown,
+  ctx: LspBoundaryValue,
   sessionId: string | undefined,
 ): "primary" | "concurrent-secondary" {
   if (!guardEnabled()) return "primary";
@@ -292,7 +309,7 @@ export interface SessionStartGuardDecision {
  * (`ctx.sessionManager.getSessionId()`), which may be `undefined`.
  */
 export function decideSessionStart(
-  ctx: unknown,
+  ctx: LspBoundaryValue,
   sessionId: string | undefined,
 ): SessionStartGuardDecision {
   const hasPrior = activeCtx !== undefined || activeSessionId !== undefined;

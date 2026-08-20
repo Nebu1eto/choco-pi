@@ -174,7 +174,7 @@ export function _resetOutstandingCascadeTouchesForTests(): void {
 
 /** Test-only: peek at the registry without mutating it. */
 export function _getOutstandingCascadeTouchesForTests(): OutstandingTouch[] {
-  return [...(_outstandingTouches.values() as Iterable<OutstandingTouch>)];
+  return [..._outstandingTouches.values()];
 }
 
 export interface ReconcileOutcome {
@@ -380,7 +380,16 @@ export function registerCascadeTierReconcileTask(
         resolvedClean,
         unresolved,
         avgAgeMs,
-        outcomes,
+        outcomes: outcomes.map((outcome) => ({
+          ...outcome,
+          diagnostics: outcome.diagnostics?.map((diagnostic) => ({
+            ...diagnostic,
+            range: {
+              start: { ...diagnostic.range.start },
+              end: { ...diagnostic.range.end },
+            },
+          })),
+        })),
       },
     });
   });

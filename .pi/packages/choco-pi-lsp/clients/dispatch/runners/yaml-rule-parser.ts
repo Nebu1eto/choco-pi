@@ -15,6 +15,8 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import yaml from "../../deps/js-yaml.js";
 import { BoundedLruCache } from "../../bounded-cache.js";
 
@@ -212,11 +214,59 @@ export function getCachedRules(ruleDir: string, severityFilter?: "error"): YamlR
   return rules;
 }
 
+const YamlRichPatternSchema = Type.Object(
+  {
+    context: Type.String(),
+    selector: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
+const YamlRuleConditionSchema = Type.Object(
+  {
+    kind: Type.Optional(Type.String()),
+    pattern: Type.Optional(Type.Union([Type.String(), YamlRichPatternSchema])),
+    regex: Type.Optional(Type.String()),
+    has: Type.Optional(Type.Object({}, { additionalProperties: true })),
+    any: Type.Optional(Type.Array(Type.Object({}, { additionalProperties: true }))),
+    all: Type.Optional(Type.Array(Type.Object({}, { additionalProperties: true }))),
+    not: Type.Optional(Type.Object({}, { additionalProperties: true })),
+    inside: Type.Optional(Type.Object({}, { additionalProperties: true })),
+    follows: Type.Optional(Type.Object({}, { additionalProperties: true })),
+    precedes: Type.Optional(Type.Object({}, { additionalProperties: true })),
+    stopBy: Type.Optional(Type.Unknown()),
+    field: Type.Optional(Type.String()),
+    nthChild: Type.Optional(Type.Unknown()),
+  },
+  { additionalProperties: true },
+);
+const YamlRuleSchema = Type.Object(
+  {
+    id: Type.String(),
+    language: Type.Optional(Type.String()),
+    severity: Type.Optional(Type.String()),
+    message: Type.Optional(Type.String()),
+    note: Type.Optional(Type.String()),
+    fix: Type.Optional(Type.String()),
+    metadata: Type.Optional(
+      Type.Object({
+        weight: Type.Optional(Type.Number()),
+        category: Type.Optional(Type.String()),
+      }),
+    ),
+    rule: Type.Optional(YamlRuleConditionSchema),
+    constraints: Type.Optional(Type.Object({}, { additionalProperties: true })),
+    utils: Type.Optional(Type.Object({}, { additionalProperties: true })),
+    skip_test_files: Type.Optional(Type.Boolean()),
+    ignore_paths: Type.Optional(Type.Array(Type.String())),
+  },
+  { additionalProperties: true },
+);
+
 export function isOverlyBroadPattern(pattern: string | YamlRichPattern | undefined): boolean {
   // The rich pattern form ({context, selector, ...}) is structured and never a
   // single-metavar trap; only string patterns can be overly-broad literals.
   if (!pattern) return false;
-  if (typeof pattern !== "string") return false;
+  if (!Value.Check(Type.String(), pattern)) return false;
   if (OVERLY_BROAD_PATTERNS.includes(pattern.trim())) return true;
   return /^\$[A-Z_]+$/i.test(pattern.trim());
 }
@@ -236,7 +286,7 @@ export function isStructuredRule(rule: YamlRule): boolean {
   // Without recognizing it as structure, an otherwise-rich rule with only
   // `pattern: {context, selector}` and no other combinators would be wrongly
   // classified as "unstructured single-metavar" and dropped by the runner.
-  const hasRichPattern = typeof rule.rule.pattern === "object" && rule.rule.pattern !== null;
+  const hasRichPattern = Value.Check(YamlRichPatternSchema, rule.rule.pattern);
   return !!(
     hasRichPattern ||
     rule.rule.has ||
@@ -282,13 +332,13 @@ export function calculateRuleComplexity(condition: YamlRuleCondition | undefined
  * throwing, so callers skip just that rule.
  */
 export function parseSimpleYaml(content: string): YamlRule | null {
-  let parsed: unknown;
+  let parsed;
   try {
     parsed = yaml.load(content);
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== "object") return null;
-  const rule = parsed as YamlRule;
-  return rule.id ? rule : null;
+  if (!Value.Check(YamlRuleSchema, parsed)) return null;
+  // SAFETY: YamlRuleSchema verifies all modeled fields while preserving native ast-grep keys.
+  return parsed as YamlRule;
 }

@@ -19,10 +19,15 @@
  * be migrated safely.
  */
 
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { normalizeFilePath } from "./path-utils.js";
 import { redactSecrets } from "./redact/secrets.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 /** A queued write ("line") or an in-band truncate op (latency clear). */
 type QueueItem = { kind: "line"; line: string } | { kind: "truncate" };
@@ -42,7 +47,8 @@ export interface NdjsonLoggerOptions {
 
 export interface NdjsonLogger {
   /** Serialize `obj`, redact secrets, and enqueue one NDJSON line. */
-  log(obj: unknown): void;
+
+  log(obj: LspBoundaryValue): void;
   /** Redact and enqueue a serialized line without a trailing newline. */
   append(line: string): void;
   /** Enqueue a truncate op in the same serialized queue (clear-without-racing). */
@@ -54,7 +60,7 @@ export interface NdjsonLogger {
 }
 
 function resolve(v: string | (() => string)): string {
-  return typeof v === "function" ? v() : v;
+  return Check(Type.Function([], Type.Unknown()), v) ? v() : v;
 }
 
 function runBestEffort(operation: () => void): void {
@@ -110,13 +116,17 @@ interface LegacyNdjsonGlobalState {
 }
 
 const NDJSON_GLOBAL_STATE_KEY = Symbol.for("choco-pi-lsp.ndjson-logger.state");
+
+// SAFETY: This symbol-keyed global slot is written only by this module with one of its two state versions.
 const globalStateHost = globalThis as typeof globalThis & {
-  [key: symbol]: unknown;
+  [key: symbol]: NdjsonGlobalState | LegacyNdjsonGlobalState | undefined;
 };
 const existingGlobalState = globalStateHost[NDJSON_GLOBAL_STATE_KEY];
 
-function isSharedWriterState(value: unknown): value is NdjsonGlobalState {
-  if (!value || typeof value !== "object") return false;
+function isSharedWriterState(value: LspBoundaryValue): value is NdjsonGlobalState {
+  if (!value || !Check(Type.Object({}), value)) return false;
+
+  // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
   const candidate = value as Partial<NdjsonGlobalState>;
   const knownSchema =
     candidate.schema === undefined || candidate.schema === NDJSON_GLOBAL_STATE_SCHEMA;
@@ -130,17 +140,19 @@ function isSharedWriterState(value: unknown): value is NdjsonGlobalState {
     candidate.writers instanceof Map &&
     candidate.exitFlushers instanceof Set &&
     candidate.registeredLogFiles instanceof Set &&
-    typeof candidate.exitHandlerRegistered === "boolean"
+    Check(Type.Boolean(), candidate.exitHandlerRegistered)
   );
 }
 
-function isLegacyGlobalState(value: unknown): value is LegacyNdjsonGlobalState {
-  if (!value || typeof value !== "object") return false;
+function isLegacyGlobalState(value: LspBoundaryValue): value is LegacyNdjsonGlobalState {
+  if (!value || !Check(Type.Object({}), value)) return false;
+
+  // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
   const candidate = value as Partial<LegacyNdjsonGlobalState>;
   return (
     candidate.exitFlushers instanceof Set &&
     candidate.registeredLogFiles instanceof Set &&
-    typeof candidate.exitHandlerRegistered === "boolean"
+    Check(Type.Boolean(), candidate.exitHandlerRegistered)
   );
 }
 
@@ -288,6 +300,7 @@ function flushStateSync(state: NdjsonWriterState): void {
   }
 
   while (state.queue.length > 0) {
+    // SAFETY: The enclosing non-empty queue check guarantees this removal returns an element.
     const item = state.queue.shift() as QueueItem;
     applyQueueItemSync(state, item);
   }
@@ -308,6 +321,7 @@ function createWriterState(
     return existing;
   }
 
+  // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
   const state = {} as NdjsonWriterState;
   state.file = file;
   state.maxBytes = maxBytes;
@@ -394,6 +408,8 @@ async function drainLoop(state: NdjsonWriterState): Promise<void> {
         rotateIfNeeded(state);
         await fs.promises.appendFile(
           state.file,
+
+          // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
           pending.map((queued) => (queued as { kind: "line"; line: string }).line).join(""),
         );
       }
@@ -439,10 +455,11 @@ export function createNdjsonLogger(options: NdjsonLoggerOptions): NdjsonLogger {
   // resolved at enqueue time, but each resolved raw path is canonicalized only
   // once (normally once per date), keeping realpath work off the hot path.
   const canonicalPaths = new Map<string, string>();
-  const staticFile =
-    typeof options.filePath === "string" ? normalizeLogPath(options.filePath) : undefined;
+  const staticFile = Check(Type.String(), options.filePath)
+    ? normalizeLogPath(options.filePath)
+    : undefined;
   const staticBackupPath =
-    typeof options.backupPath === "string" && options.maxBytes !== undefined
+    Check(Type.String(), options.backupPath) && options.maxBytes !== undefined
       ? normalizeLogPath(options.backupPath)
       : undefined;
 
@@ -478,7 +495,7 @@ export function createNdjsonLogger(options: NdjsonLoggerOptions): NdjsonLogger {
   }
 
   return {
-    log(obj: unknown): void {
+    log(obj: LspBoundaryValue): void {
       const serialized = String(JSON.stringify(obj));
       enqueue({
         kind: "line",

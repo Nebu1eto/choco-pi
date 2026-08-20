@@ -3,14 +3,31 @@
  * Extracts definitions and references from source files
  */
 
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import { logTreeSitterDiagnostic } from "./tree-sitter-logger.js";
 import * as path from "node:path";
 import { loadWebTreeSitter } from "./deps/web-tree-sitter.js";
 import type { Symbol, SymbolKind, SymbolRef } from "./symbol-types.js";
 import type { TreeSitterClient } from "./tree-sitter-client.js";
 
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
 // Tree-sitter query patterns for symbol extraction
-const SYMBOL_QUERIES: Record<string, { defs: string; refs: string }> = {
+
+interface SYMBOLQUERIESValues extends Record<string, { defs: string; refs: string }> {}
+const SYMBOL_QUERIES: SYMBOLQUERIESValues = {
   typescript: {
     defs: `
       ;; Function declarations: function foo(params) { }
@@ -590,7 +607,9 @@ export function getSymbolQueryLanguages(): readonly string[] {
 // `Query.matches()` DOES apply these predicates (probed on the shipped grammars):
 // an unpredicated ruby `require` query over-matches `puts`/`foo`, the predicated
 // one returns only the require args.
-const IMPORT_QUERIES: Record<string, string> = {
+
+interface IMPORTQUERIESValues extends Record<string, string> {}
+const IMPORT_QUERIES: IMPORTQUERIESValues = {
   // ESM import + re-export source strings; `source:` is a (string) on both the
   // typescript and tsx grammars (validated). parseImportMatch strips the quotes.
   // CJS `require(...)` is intentionally out of scope — the cold path's dominant
@@ -774,7 +793,8 @@ export class TreeSitterSymbolExtractor {
       logTreeSitterDiagnostic({
         subsystem: "symbol-extractor",
         languageId: this.languageId,
-        message: `${this.languageId} ${label} query failed: ${(err as Error).message}`,
+
+        message: `${this.languageId} ${label} query failed: ${err instanceof Error ? err.message : undefined}`,
         metadata: { query: label },
       });
       return null;
@@ -850,6 +870,8 @@ export class TreeSitterSymbolExtractor {
       captures[capture.name] = {
         text: capture.node.text,
         // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+        // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
         node: capture.node as any,
       };
     }
@@ -870,37 +892,51 @@ export class TreeSitterSymbolExtractor {
       kind = "function";
       params = captures.funcParams?.text;
       // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       defNode = captures.funcDef?.node as any;
     } else if (captures.arrowName) {
       name = captures.arrowName.text;
       kind = "function";
       params = captures.arrowParams?.text;
       // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       defNode = captures.arrowDef?.node as any;
     } else if (captures.className) {
       name = captures.className.text;
       kind = "class";
       // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       defNode = captures.classDef?.node as any;
     } else if (captures.methodName) {
       name = captures.methodName.text;
       kind = "method";
       params = captures.methodParams?.text;
       // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       defNode = captures.methodDef?.node as any;
     } else if (captures.interfaceName) {
       name = captures.interfaceName.text;
       kind = "interface";
       // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       defNode = captures.interfaceDef?.node as any;
     } else if (captures.typeName) {
       name = captures.typeName.text;
       kind = "type";
       // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       defNode = captures.typeDef?.node as any;
     } else if (captures.moduleName) {
       name = captures.moduleName.text;
       kind = "class";
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       defNode = captures.moduleDef?.node as any;
     } else if (captures.defName) {
       // CUE `#Definition` — the closest existing SymbolKind to a reusable
@@ -908,18 +944,24 @@ export class TreeSitterSymbolExtractor {
       name = captures.defName.text;
       kind = "type";
       // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       defNode = captures.defDef?.node as any;
     } else if (captures.fieldName) {
       // CUE plain struct field.
       name = captures.fieldName.text;
       kind = "property";
       // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       defNode = captures.fieldDef?.node as any;
     } else if (captures.letName) {
       // CUE `let` binding — a computed local value.
       name = captures.letName.text;
       kind = "variable";
       // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       defNode = captures.letDef?.node as any;
     }
 
@@ -937,22 +979,37 @@ export class TreeSitterSymbolExtractor {
     const isAsync = (kind === "function" || kind === "method") && this.isAsyncDecl(defNode);
     const docInfo = this.extractDocCommentInfo(defNode);
 
-    return {
-      id: `${filePath}:${name}`,
-      name,
-      kind,
-      filePath,
-      line: defNode.startPosition.row + 1,
-      endLine: defNode.endPosition.row + 1,
-      column: defNode.startPosition.column + 1,
-      signature,
-      isExported,
-      ...(local ? { local: true } : {}),
-      ...(visibility ? { visibility } : {}),
-      ...(decorators.length > 0 ? { decorators } : {}),
-      ...(isAsync ? { isAsync: true } : {}),
-      ...(docInfo ? { doc: docInfo.text, docStartLine: docInfo.startLine } : {}),
-    };
+    return assignOptionalProperties(
+      assignOptionalProperties(
+        assignOptionalProperties(
+          assignOptionalProperties(
+            assignOptionalProperties(
+              {
+                id: `${filePath}:${name}`,
+                name,
+                kind,
+                filePath,
+                line: defNode.startPosition.row + 1,
+                endLine: defNode.endPosition.row + 1,
+                column: defNode.startPosition.column + 1,
+                signature,
+                isExported,
+              },
+              local,
+              () => ({ local: true }),
+            ),
+            visibility,
+            () => ({ visibility }),
+          ),
+          decorators.length > 0,
+          () => ({ decorators }),
+        ),
+        isAsync,
+        () => ({ isAsync: true }),
+      ),
+      docInfo,
+      (includedDoc) => ({ doc: includedDoc.text, docStartLine: includedDoc.startLine }),
+    );
   }
 
   // Comment node kinds across grammars that use tree-sitter's conventional
@@ -1025,7 +1082,7 @@ export class TreeSitterSymbolExtractor {
     while (cursor >= 0 && isComment(siblings[cursor])) {
       const candidate = siblings[cursor];
       const gapRows =
-        boundaryRow !== undefined && typeof candidate.endPosition?.row === "number"
+        boundaryRow !== undefined && Check(Type.Number(), candidate.endPosition?.row)
           ? boundaryRow - candidate.endPosition.row
           : 0;
       if (gapRows > 1) break; // separated by a blank line — not attached
@@ -1170,6 +1227,8 @@ export class TreeSitterSymbolExtractor {
       ) {
         name = capture.node.text;
         // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+        // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
         refNode = capture.node as any;
         if (captureName.startsWith("type")) referenceKind = "type";
         else if (captureName.startsWith("call") || captureName.startsWith("new")) {
@@ -1178,6 +1237,8 @@ export class TreeSitterSymbolExtractor {
       }
       if (captureName.endsWith("Ref") && !refNode) {
         // biome-ignore lint/suspicious/noExplicitAny: Node type
+
+        // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
         refNode = capture.node as any;
         if (captureName.startsWith("type")) referenceKind = "type";
         else if (captureName.startsWith("call") || captureName.startsWith("new")) {

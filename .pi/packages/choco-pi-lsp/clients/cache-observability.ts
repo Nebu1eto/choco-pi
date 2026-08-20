@@ -28,32 +28,52 @@
  * event handlers.
  */
 import { createHash } from "node:crypto";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { logLatency } from "./latency-logger.js";
 
-/** Shape we defensively read off an assistant `AgentMessage` (see pi-ai types). */
-interface AssistantUsageLike {
-  input?: number;
-  output?: number;
-  cacheRead?: number;
-  cacheWrite?: number;
-  cacheWrite1h?: number;
-  reasoning?: number;
-  totalTokens?: number;
-  cost?: {
-    input?: number;
-    output?: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-    total?: number;
-  };
+const HostStringSchema = Type.String();
+const HostNumberSchema = Type.Number();
+const HostBooleanSchema = Type.Boolean();
+const HostBigIntSchema = Type.BigInt();
+const HostSymbolSchema = Type.Symbol();
+
+type HostValue = {} | null | undefined;
+interface HostObject {
+  role?: HostValue;
+  provider?: HostValue;
+  model?: HostValue;
+  usage?: HostValue;
+  input?: HostValue;
+  output?: HostValue;
+  cacheRead?: HostValue;
+  cacheWrite?: HostValue;
+  cost?: HostValue;
+  total?: HostValue;
 }
 
-interface AssistantMessageLike {
-  role?: unknown;
-  provider?: unknown;
-  model?: unknown;
-  responseModel?: unknown;
-  usage?: unknown;
+function isRuntimeObjectValue<T>(value: T): value is T & object {
+  return value !== null && Object(value) === value && !(value instanceof Function);
+}
+
+function isHostObject(value: HostValue): value is HostObject {
+  return isRuntimeObjectValue(value) && !Array.isArray(value);
+}
+
+function hostString(value: HostValue): string | undefined {
+  return Value.Check(HostStringSchema, value) ? value : undefined;
+}
+
+function hostNumber(value: HostValue): number | undefined {
+  if (Value.Check(HostNumberSchema, value)) return value;
+  if (
+    Object.is(value, Number.NaN) ||
+    Object.is(value, Number.POSITIVE_INFINITY) ||
+    Object.is(value, Number.NEGATIVE_INFINITY)
+  ) {
+    return Number(value);
+  }
+  return undefined;
 }
 
 export type CacheContextInjectionSource =
@@ -65,6 +85,20 @@ export type CacheContextPlacement = "prepend" | "insert-before-final" | "append"
 export type CachePrefixObservation = "baseline" | "unchanged" | "changed" | "empty";
 
 type ContextMessageLike = { role?: unknown; content?: unknown };
+
+interface CacheUsageMetadata {
+  provider?: string;
+  model?: string;
+  cacheRead?: number;
+  cacheWrite?: number;
+  input?: number;
+  output?: number;
+  cost?: number;
+  sessionId?: string;
+  turnIndex?: number;
+  turnScope?: typeof PROCESS_TURN_SCOPE | typeof SECONDARY_TURN_SCOPE;
+  contextCorrelation?: "session-only-no-request-id" | "no-stable-session-id";
+}
 
 interface CacheUsageContext {
   sessionId?: string;
@@ -92,19 +126,20 @@ interface BoundedHashState {
   contentTruncated: boolean;
 }
 
-function boundedHashScalar(value: unknown, state: BoundedHashState): string {
+function boundedHashScalar<T>(value: T, state: BoundedHashState): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
-  if (typeof value === "string") {
+  if (Value.Check(HostStringSchema, value)) {
     const truncated = value.length > MAX_HASHED_CONTENT_CHARS;
     if (truncated) state.contentTruncated = true;
     const suffix = truncated ? ":content-truncated" : "";
     return `string:${value.length}:${value.slice(0, MAX_HASHED_CONTENT_CHARS)}${suffix}`;
   }
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    return `${typeof value}:${String(value)}`;
-  }
-  return typeof value;
+  if (hostNumber(value) !== undefined) return `number:${String(value)}`;
+  if (Value.Check(HostBooleanSchema, value)) return `boolean:${String(value)}`;
+  if (Value.Check(HostBigIntSchema, value)) return `bigint:${String(value)}`;
+  if (Value.Check(HostSymbolSchema, value)) return "symbol";
+  return value instanceof Function ? "function" : "object";
 }
 
 function boundedHashArray(
@@ -118,28 +153,29 @@ function boundedHashArray(
   return `array:${value.length}:[${items.join(",")}]`;
 }
 
-function boundedHashObject(
-  value: Record<string, unknown>,
+function boundedHashObject<T extends object>(
+  value: T,
   depth: number,
   seen: Set<object>,
   state: BoundedHashState,
 ): string {
-  const keys = Object.keys(value).sort((left, right) => left.localeCompare(right));
-  if (keys.length > 24) state.contentTruncated = true;
-  const fields = keys
+  const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
+  if (entries.length > 24) state.contentTruncated = true;
+  const fields = entries
     .slice(0, 24)
-    .map((key) => `${key}:${boundedHashValue(value[key], depth + 1, seen, state)}`);
-  return `object:${keys.length}:{${fields.join(",")}}`;
+    .map(([key, field]) => `${key}:${boundedHashValue(field, depth + 1, seen, state)}`);
+  return `object:${entries.length}:{${fields.join(",")}}`;
 }
 
-function boundedHashValue(
-  value: unknown,
+function boundedHashValue<T>(
+  value: T,
   depth = 0,
   seen = new Set<object>(),
   state?: BoundedHashState,
 ): string {
   const hashState = state ?? { contentTruncated: false };
-  if (value === null || typeof value !== "object") {
+  const isArray = Array.isArray(value);
+  if (!isArray && !isRuntimeObjectValue(value)) {
     return boundedHashScalar(value, hashState);
   }
   if (depth >= 3) {
@@ -149,10 +185,8 @@ function boundedHashValue(
   if (seen.has(value)) return "[cycle]";
   seen.add(value);
   try {
-    if (Array.isArray(value)) {
-      return boundedHashArray(value, depth, seen, hashState);
-    }
-    return boundedHashObject(value as Record<string, unknown>, depth, seen, hashState);
+    if (isArray) return boundedHashArray(value, depth, seen, hashState);
+    return boundedHashObject(value, depth, seen, hashState);
   } catch {
     return "[unreadable]";
   } finally {
@@ -160,11 +194,7 @@ function boundedHashValue(
   }
 }
 
-function hashMessageSequence(messages: ReadonlyArray<ContextMessageLike>): {
-  hash: string;
-  truncated: boolean;
-  contentTruncated: boolean;
-} {
+function hashMessageSequence(messages: ReadonlyArray<ContextMessageLike>) {
   const hash = createHash("sha256");
   const state: BoundedHashState = { contentTruncated: false };
   hash.update(`message-count:${messages.length};`);
@@ -185,8 +215,8 @@ function hashMessageSequence(messages: ReadonlyArray<ContextMessageLike>): {
   };
 }
 
-function messageTextSize(content: unknown): { chars: number; bytes: number } {
-  if (typeof content === "string") {
+function messageTextSize<T>(content: T) {
+  if (Value.Check(Type.String(), content)) {
     const chars = Math.min(content.length, MAX_INJECTED_CHARS);
     return {
       chars,
@@ -203,11 +233,7 @@ function messageTextSize(content: unknown): { chars: number; bytes: number } {
   };
 }
 
-function measureInjectedMessages(messages: ReadonlyArray<ContextMessageLike>): {
-  chars: number;
-  bytes: number;
-  capped: boolean;
-} {
+function measureInjectedMessages(messages: ReadonlyArray<ContextMessageLike>) {
   let chars = 0;
   let bytes = 0;
   const measuredCount = Math.min(messages.length, MAX_REPORTED_MESSAGES);
@@ -388,52 +414,46 @@ export function observeCacheContext(args: {
  * a message that simply lacks usage.
  */
 export function logCacheUsage(
-  message: unknown,
+  message: HostValue,
   dbg?: (msg: string) => void,
   context?: CacheUsageContext,
 ): void {
   try {
-    if (!message || typeof message !== "object") return;
-    const msg = message as AssistantMessageLike;
-    // Only assistant messages carry LLM usage; tool-result / user messages
-    // (and unknown custom AgentMessage variants) are skipped.
-    if (msg.role !== "assistant") return;
-    const usage = msg.usage;
-    if (!usage || typeof usage !== "object") return;
-    const u = usage as AssistantUsageLike;
+    if (!isHostObject(message) || message.role !== "assistant") return;
+    const usage = message.usage;
+    if (!isHostObject(usage)) return;
+    const cost = isHostObject(usage.cost) ? usage.cost : undefined;
+    let metadata: CacheUsageMetadata = {
+      provider: hostString(message.provider),
+      model: hostString(message.model),
+      cacheRead: hostNumber(usage.cacheRead),
+      cacheWrite: hostNumber(usage.cacheWrite),
+      input: hostNumber(usage.input),
+      output: hostNumber(usage.output),
+      // `Usage.cost` is a breakdown object; the total is the headline number.
+      cost: hostNumber(cost?.total),
+    };
+    if (context) {
+      metadata = {
+        ...metadata,
+        sessionId: sessionKey(context.sessionId),
+        ...(context.sessionRole === "concurrent-secondary"
+          ? { turnScope: SECONDARY_TURN_SCOPE }
+          : {
+              turnIndex: context.turnIndex,
+              turnScope: PROCESS_TURN_SCOPE,
+            }),
+        contextCorrelation: context.sessionId
+          ? "session-only-no-request-id"
+          : "no-stable-session-id",
+      };
+    }
     logLatency({
       type: "phase",
       filePath: "<choco-pi-lsp>",
       phase: "cache_usage",
       durationMs: 0,
-      metadata: {
-        provider: typeof msg.provider === "string" ? msg.provider : undefined,
-        model: typeof msg.model === "string" ? msg.model : undefined,
-        cacheRead: u.cacheRead,
-        cacheWrite: u.cacheWrite,
-        input: u.input,
-        output: u.output,
-        // `Usage.cost` is a breakdown object; the total is the headline number.
-        cost: u.cost?.total,
-        ...(context
-          ? {
-              // MessageEndEvent has no request/context id in the host API. These
-              // fields permit session correlation without inventing an exact
-              // provider-request linkage. The process-global turn is omitted
-              // for a concurrent secondary session.
-              sessionId: sessionKey(context.sessionId),
-              ...(context.sessionRole === "concurrent-secondary"
-                ? { turnScope: SECONDARY_TURN_SCOPE }
-                : {
-                    turnIndex: context.turnIndex,
-                    turnScope: PROCESS_TURN_SCOPE,
-                  }),
-              contextCorrelation: context.sessionId
-                ? "session-only-no-request-id"
-                : "no-stable-session-id",
-            }
-          : {}),
-      },
+      metadata: { ...metadata },
     });
   } catch (err) {
     dbg?.(`cache-usage: failed to log message_end usage: ${err}`);
@@ -535,7 +555,7 @@ export function observeCachePrefix(
   try {
     if (!messages || messages.length === 0) return "empty";
     const first = messages[0];
-    if (!first || typeof first !== "object") return "empty";
+    if (!first) return "empty";
     const key = sessionKey(sessionId);
     const currentHash = hashFirstMessage(first);
     const previousHash = prefixHashBySession.get(key);

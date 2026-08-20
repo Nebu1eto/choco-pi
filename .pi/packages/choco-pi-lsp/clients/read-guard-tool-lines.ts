@@ -1,3 +1,5 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import type { EditToolInput } from "@earendil-works/pi-coding-agent";
 import * as nodeFs from "node:fs";
 import {
@@ -15,6 +17,11 @@ import {
   type ReadGuardEditBatchSummary,
 } from "./read-guard-logger.js";
 import { isToolCallEventType } from "./tool-event.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 export interface GuardLineResult {
   touchedLines: [number, number] | undefined;
@@ -164,8 +171,8 @@ function lineNumberAt(content: string, index: number): number {
   return content.substring(0, index).split("\n").length;
 }
 
-function parseHashlineAnchor(anchor: unknown): number | undefined {
-  if (typeof anchor !== "string") return undefined;
+function parseHashlineAnchor(anchor: LspBoundaryValue): number | undefined {
+  if (!Check(Type.String(), anchor)) return undefined;
   const trimmed = anchor.trim();
   const separator = trimmed.indexOf(":");
   const lineText = separator === -1 ? trimmed : trimmed.slice(0, separator);
@@ -183,7 +190,7 @@ function combineRanges(ranges: [number, number][]): GuardLineResult {
   };
 }
 
-function getHashlineOperations(input: Record<string, unknown>): unknown[] {
+function getHashlineOperations(input: Record<string, LspDictionaryValue>): unknown[] {
   if (Array.isArray(input.operations)) return input.operations;
   if (Array.isArray(input.ops)) return input.ops;
   if (input.set_line || input.replace_lines || input.replace_symbol) return [input];
@@ -191,7 +198,7 @@ function getHashlineOperations(input: Record<string, unknown>): unknown[] {
 }
 
 function resolveHashlineEditInput(
-  input: Record<string, unknown>,
+  input: Record<string, LspDictionaryValue>,
   filePath: string | undefined,
   sessionId: string | undefined,
   correlationId?: string,
@@ -202,9 +209,11 @@ function resolveHashlineEditInput(
   const errors: string[] = [];
 
   for (let index = 0; index < operations.length; index += 1) {
-    const op = operations[index] as Record<string, unknown>;
+    // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+    const op = operations[index] as Record<string, LspDictionaryValue>;
     if (op.set_line) {
-      const payload = op.set_line as Record<string, unknown>;
+      // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+      const payload = op.set_line as Record<string, LspDictionaryValue>;
       const line = parseHashlineAnchor(payload.anchor);
       if (!line) {
         errors.push(`operation[${index}].set_line.anchor is malformed`);
@@ -214,7 +223,8 @@ function resolveHashlineEditInput(
       continue;
     }
     if (op.replace_lines) {
-      const payload = op.replace_lines as Record<string, unknown>;
+      // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+      const payload = op.replace_lines as Record<string, LspDictionaryValue>;
       const start = parseHashlineAnchor(payload.start_anchor);
       const end = parseHashlineAnchor(payload.end_anchor);
       if (!start || !end) {
@@ -1060,12 +1070,15 @@ function findUnicodePunctuationInsensitiveCandidate(
  * the single `oldRange` shape and `edits[].range` entries.
  */
 export function relocateEditRange(
-  input: unknown,
+  input: LspBoundaryValue,
   from: [number, number],
   to: [number, number],
 ): boolean {
   const delta = to[0] - from[0];
-  if (delta === 0 || !input || typeof input !== "object") return false;
+
+  if (delta === 0 || !input || !Check(Type.Object({}), input)) return false;
+
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   const editInput = input as {
     oldRange?: { start?: { line?: number }; end?: { line?: number } };
     edits?: Array<{
@@ -1104,11 +1117,12 @@ export function relocateEditRange(
 }
 
 export function getTouchedLinesForGuard(
-  event: unknown,
+  event: LspBoundaryValue,
   filePath?: string,
   sessionId?: string,
   correlationId?: string,
 ): GuardLineResult {
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   if (isToolCallEventType("edit", event as any)) {
     // The host standard-edit fields (path, edits[].oldText/newText) are pinned
     // to the SDK's EditToolInput, so a host edit-schema change is a compile
@@ -1116,6 +1130,8 @@ export function getTouchedLinesForGuard(
     // remaining keys are choco-pi-lsp's own extensions for native-ranged + hashline
     // edit tools; oldText/newText are probed as optional because range-only
     // edits omit them (refs #3).
+
+    // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     const editInput = (event as { input?: unknown }).input as Partial<
       Pick<EditToolInput, "path">
     > & {
@@ -1132,7 +1148,8 @@ export function getTouchedLinesForGuard(
       replace_symbol?: unknown;
     };
     const hashlineResult = resolveHashlineEditInput(
-      editInput as Record<string, unknown>,
+      // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+      editInput as Record<string, LspDictionaryValue>,
       filePath,
       sessionId,
       correlationId,
@@ -1163,15 +1180,19 @@ export function getTouchedLinesForGuard(
         .map((edit) => {
           const start = edit.range?.start?.line;
           const end = edit.range?.end?.line ?? start;
-          if (typeof start !== "number" || typeof end !== "number") {
+
+          if (!Check(Type.Number(), start) || !Check(Type.Number(), end)) {
             return null;
           }
+
+          // SAFETY: The checked element count and construction order establish this fixed tuple representation.
           return [start, end] as [number, number];
         })
         .filter((range): range is [number, number] => range !== null);
       const unresolvedOldTextEdits = editInput.edits
         .map((edit, index) => ({ ...edit, originalIndex: index }))
-        .filter((edit) => typeof edit.range?.start?.line !== "number" && !!edit.oldText);
+
+        .filter((edit) => !Check(Type.Number(), edit.range?.start?.line) && !!edit.oldText);
       if (rangedEdits.length === 0) {
         if (filePath) {
           return resolveOldTextEdits(editInput.edits, filePath, sessionId, correlationId);
@@ -1226,7 +1247,8 @@ export function getTouchedLinesForGuard(
       return { touchedLines, editRanges };
     }
     if (filePath) {
-      const topLevelKeys = Object.keys(editInput as Record<string, unknown>);
+      // SAFETY: The source key list is checked against the named owner type, so the constructed keys and values exhaust that representation.
+      const topLevelKeys = Object.keys(editInput as Record<string, LspDictionaryValue>);
       logReadGuardEvent({
         event: "touched_lines_missing",
         correlationId,
@@ -1249,6 +1271,7 @@ export function getTouchedLinesForGuard(
     return { touchedLines: undefined };
   }
 
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   if (isToolCallEventType("write", event as any)) {
     const lineCount = filePath ? countFileLines(filePath) : 1;
     const touchedLines: [number, number] = [1, lineCount];

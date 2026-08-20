@@ -1,7 +1,12 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as readline from "node:readline";
 import { flushLatencyLog, getLatencyLogPath, type LatencyEntry } from "./latency-logger.js";
 import { getMaxLogSizeMB } from "./log-cleanup.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
 
 export const DEFAULT_PERF_TOP_N = 5;
 export const MAX_PERF_TOP_N = 50;
@@ -98,27 +103,27 @@ function roundedMs(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-function isEntryObject(value: unknown): value is Partial<LatencyEntry> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+function isEntryObject(value: LspBoundaryValue): value is Partial<LatencyEntry> {
+  return !!value && Check(Type.Object({}), value) && !Array.isArray(value);
 }
 
-function isPhaseRecord(value: unknown): value is LatencyEntry {
+function isPhaseRecord(value: LspBoundaryValue): value is LatencyEntry {
   if (!isEntryObject(value)) return false;
   return (
     value.type === "phase" &&
-    typeof value.phase === "string" &&
+    Check(Type.String(), value.phase) &&
     value.phase.trim().length > 0 &&
-    typeof value.durationMs === "number" &&
+    Check(Type.Number(), value.durationMs) &&
     Number.isFinite(value.durationMs) &&
     value.durationMs >= 0 &&
-    (value.toolName === undefined || typeof value.toolName === "string") &&
-    (value.ts === undefined || typeof value.ts === "string") &&
-    (value.startedAt === undefined || typeof value.startedAt === "string") &&
-    (value.pid === undefined || (typeof value.pid === "number" && Number.isFinite(value.pid)))
+    (value.toolName === undefined || Check(Type.String(), value.toolName)) &&
+    (value.ts === undefined || Check(Type.String(), value.ts)) &&
+    (value.startedAt === undefined || Check(Type.String(), value.startedAt)) &&
+    (value.pid === undefined || (Check(Type.Number(), value.pid) && Number.isFinite(value.pid)))
   );
 }
 
-function isPhaseSample(value: unknown): value is LatencyEntry {
+function isPhaseSample(value: LspBoundaryValue): value is LatencyEntry {
   return isPhaseRecord(value) && value.durationMs > 0;
 }
 
@@ -133,7 +138,7 @@ function isCurrentSessionSample(
   processId: number,
   sessionStartedAt: number,
 ): boolean {
-  if (entry.pid !== processId || typeof entry.ts !== "string") return false;
+  if (entry.pid !== processId || !Check(Type.String(), entry.ts)) return false;
   const finishedAt = Date.parse(entry.ts);
   if (!Number.isFinite(finishedAt) || finishedAt < sessionStartedAt) return false;
   if (entry.startedAt === undefined) return true;
@@ -178,7 +183,7 @@ export function summarizePhaseLatency(
     durationsByPhase.set(phase, durations);
     sampleCount += 1;
 
-    if (typeof entry.ts === "string") {
+    if (Check(Type.String(), entry.ts)) {
       const ms = Date.parse(entry.ts);
       if (Number.isFinite(ms)) {
         if (!oldestTimestamp || ms < oldestTimestamp.ms) {
@@ -264,6 +269,8 @@ async function readPhaseLogTail(
       // successfully with size 0 — which would fall into the empty() branch
       // and conflate "unreadable path" with "no data yet". Throw the same
       // error POSIX would so both platforms surface the bad path.
+
+      // SAFETY: The adjacent Error and property-presence checks establish the optional Node error code representation.
       const notAFile = new Error(
         `EISDIR: illegal operation on a directory, read '${filePath}'`,
       ) as NodeJS.ErrnoException;
@@ -335,6 +342,7 @@ async function readPhaseLogTail(
       invalidRecords,
     };
   } catch (error) {
+    // SAFETY: The adjacent Error and property-presence checks establish the optional Node error code representation.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return empty();
     throw error;
   } finally {

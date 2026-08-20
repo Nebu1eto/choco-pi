@@ -14,9 +14,9 @@ export interface DiagnosticEntry {
   timestamp: string;
 
   // What was caught
-  tool: "biome" | "eslint" | "lsp" | "ruff" | "ast-grep" | "tree-sitter";
+  tool: string;
   ruleId: string;
-  severity: "error" | "warning" | "info";
+  severity: string;
   language: string;
 
   // Where
@@ -100,9 +100,9 @@ export function createDiagnosticLogger(): DiagnosticLogger {
     logCaught(d: Diagnostic, context: LogContext, shownInline = false) {
       this.log({
         timestamp: new Date().toISOString(),
-        tool: (d.tool as DiagnosticEntry["tool"]) || "unknown",
+        tool: d.tool || "unknown",
         ruleId: d.rule || d.id || "unknown",
-        severity: (d.severity as DiagnosticEntry["severity"]) || "warning",
+        severity: d.severity || "warning",
         language: d.language || "unknown",
         filePath: d.filePath,
         line: d.line || 1,

@@ -51,7 +51,7 @@ export type FileKind =
 
 // --- Extension Maps ---
 
-export const KIND_EXTENSIONS: Record<FileKind, readonly string[]> = {
+export const KIND_EXTENSIONS = {
   clojure: [".clj", ".cljc", ".cljs", ".edn"],
   cmake: [".cmake"],
   csharp: [".cs"],
@@ -124,7 +124,7 @@ export const KIND_EXTENSIONS: Record<FileKind, readonly string[]> = {
   toml: [".toml"],
   yaml: [".yaml", ".yml"],
   zig: [".zig", ".zon"],
-};
+} satisfies Record<FileKind, readonly string[]>;
 
 /** Return whether a path has an extension registered for the given file kind. */
 export function hasKindExtension(filePath: string, kind: FileKind): boolean {
@@ -153,8 +153,10 @@ const NON_KIND_READABLE_EXTENSIONS = new Set([".txt", ".env", ".cfg", ".conf", "
 /** Whether bash file-access parsing should treat a path as source-like. */
 export function isReadableSourceFile(filePath: string): boolean {
   const extension = extname(filePath).toLowerCase();
+  const kinds = Object.keys(KIND_EXTENSIONS);
+  // SAFETY: KIND_EXTENSIONS satisfies Record<FileKind, ...>, so each own key is a FileKind.
   return (
-    Object.keys(KIND_EXTENSIONS).some((kind) => hasKindExtension(filePath, kind as FileKind)) ||
+    kinds.some((kind) => hasKindExtension(filePath, kind as FileKind)) ||
     NON_KIND_READABLE_EXTENSIONS.has(extension)
   );
 }
@@ -187,14 +189,12 @@ export const TERRAGRUNT_FILENAMES: readonly string[] = ["terragrunt.hcl", "root.
 // Reverse map: extension → file kind (for fast lookup)
 const EXT_TO_KIND = new Map<string, FileKind>();
 for (const [kind, exts] of Object.entries(KIND_EXTENSIONS)) {
-  for (const ext of exts) {
-    EXT_TO_KIND.set(ext.toLowerCase(), kind as FileKind);
-  }
+  // SAFETY: KIND_EXTENSIONS satisfies Record<FileKind, ...>, so Object.entries yields FileKind keys.
+  const fileKind = kind as FileKind;
+  for (const ext of exts) EXT_TO_KIND.set(ext.toLowerCase(), fileKind);
   // Also register without leading dot
   for (const ext of exts) {
-    if (ext.startsWith(".")) {
-      EXT_TO_KIND.set(ext.slice(1).toLowerCase(), kind as FileKind);
-    }
+    if (ext.startsWith(".")) EXT_TO_KIND.set(ext.slice(1).toLowerCase(), fileKind);
   }
 }
 
@@ -207,7 +207,7 @@ export const SPECIAL_FILENAMES: Array<{ pattern: RegExp; kind: FileKind }> = [
   { pattern: /^Dockerfile(\.\w+)?$/i, kind: "docker" },
   ...TERRAGRUNT_FILENAMES.map((name) => ({
     pattern: new RegExp(`^${name.replaceAll(".", "\\.")}$`, "i"),
-    kind: "terragrunt" as FileKind,
+    kind: "terragrunt" as const,
   })),
 ];
 
@@ -218,7 +218,7 @@ export const SPECIAL_FILENAMES: Array<{ pattern: RegExp; kind: FileKind }> = [
  * Returns the semantic file kind or undefined if unknown.
  */
 export function detectFileKind(filePath: string): FileKind | undefined {
-  if (!filePath || typeof filePath !== "string") {
+  if (!filePath) {
     return undefined;
   }
 
@@ -355,7 +355,7 @@ export function isCodeKindFile(filePath: string): boolean {
  * Get human-readable description of a file kind.
  */
 export function getFileKindLabel(kind: FileKind): string {
-  const labels: Record<FileKind, string> = {
+  const labels = {
     jsts: "JavaScript/TypeScript",
     python: "Python",
     go: "Go",
@@ -394,7 +394,7 @@ export function getFileKindLabel(kind: FileKind): string {
     terragrunt: "Terragrunt",
     nix: "Nix",
     toml: "TOML",
-  };
+  } satisfies Record<FileKind, string>;
   return labels[kind] ?? kind;
 }
 
@@ -432,7 +432,7 @@ export function isScannableFile(filePath: string): boolean {
  * Get the language identifier for LSP/tools that use language IDs.
  */
 export function getLanguageId(kind: FileKind): string {
-  const languageIds: Record<FileKind, string> = {
+  const languageIds = {
     jsts: "typescript",
     python: "python",
     go: "go",
@@ -471,6 +471,6 @@ export function getLanguageId(kind: FileKind): string {
     terragrunt: "terragrunt",
     nix: "nix",
     toml: "toml",
-  };
+  } satisfies Record<FileKind, string>;
   return languageIds[kind] ?? "plaintext";
 }

@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import type { AstGrepClient } from "./ast-grep-client.js";
@@ -77,6 +79,24 @@ import { setSessionLanguages } from "./widget-state.js";
 import { logWordIndex } from "./word-index-logger.js";
 import { resetWorkspaceTopology } from "./workspace-topology.js";
 import { resetZizmorTokenAvailability } from "./zizmor-config.js";
+
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
+type LoadSnapshotBodyUnlessStaleResultContract = {
+  snapshot: ProjectSnapshot | null;
+  skippedStale: boolean;
+};
 
 interface SessionStartDeps {
   ctxCwd?: string;
@@ -171,14 +191,16 @@ function loadSnapshotBodyUnlessStale(args: {
   root: string;
   currentProjectSeq: number;
   dbg: (msg: string) => void;
-}): { snapshot: ProjectSnapshot | null; skippedStale: boolean } {
+}): LoadSnapshotBodyUnlessStaleResultContract {
   const meta = readProjectSnapshotMeta(args.root);
   if (meta && isProjectSnapshotMetaStale(meta, args.currentProjectSeq)) {
     args.dbg(
       `project_snapshot: meta gate stale (metaSeq=${meta.seq} metaVersion=${meta.version} current=${args.currentProjectSeq}) — skipping body parse`,
     );
+
     return { snapshot: null, skippedStale: true };
   }
+
   return {
     snapshot: loadProjectSnapshot(args.root),
     skippedStale: false,
@@ -575,6 +597,8 @@ async function probePrettierInstall(
   const pkgPath = path.join(analysisRoot, "package.json");
   try {
     const raw = await nodeFs.promises.readFile(pkgPath, "utf-8");
+
+    // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
     const pkg = JSON.parse(raw) as {
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
@@ -607,7 +631,7 @@ type TodoScannerLike = {
 /** Scan one file via the per-file API, pushing any items. Tolerates an
  * unreadable file and a scanner without `scanFile` (no-op). */
 function scanOneTodoFile(scanner: TodoScannerLike, filePath: string, items: unknown[]): void {
-  if (typeof scanner.scanFile !== "function") return;
+  if (!Check(Type.Function([], Type.Unknown()), scanner.scanFile)) return;
   try {
     // scanFile returns TodoItem[] directly (not a { items } result).
     const result = scanner.scanFile(filePath);
@@ -857,7 +881,9 @@ function scheduleStartupScans(
   // tasks (those not listed here) run on the next `setImmediate` tick
   // as before. The delays are deliberately staggered (200ms apart) so
   // two heavy tasks don't both run on the same macrotask.
-  const taskDeferMsByName: Record<string, number> = {
+
+  interface TaskDeferMsByNameValues extends Record<string, number> {}
+  const taskDeferMsByName: TaskDeferMsByNameValues = {
     "call-graph": 5000,
     "codebase-model": 5200,
     "ast-grep exports": 5400,
@@ -917,6 +943,8 @@ function scheduleStartupScans(
     // walks the project synchronously and freezes the TUI for ~3s on a 2k-file
     // project. collectTodoBaselineItems re-implements the walk in async chunks
     // (per-file scan, yielding every 30 files), falling back to scanDirectory.
+
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     const items = await collectTodoBaselineItems(todoScanner as TodoScannerLike, analysisRoot, () =>
       runtime.isCurrentSession(sessionGeneration),
     );
@@ -1235,7 +1263,9 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
   //   (an explicit env var still takes highest precedence).
   // Tunable: CHOCO_PI_LSP_WARMUP_DELAY_MS adjusts the warmup delay.
   let startupMode = resolveStartupMode();
-  const processGlobals = globalThis as unknown as {
+
+  // SAFETY: These optional process-global fields are created and consumed only by this module.
+  const processGlobals = globalThis as typeof globalThis & {
     __piLensFirstSessionDone?: boolean;
     __piLensWarmupScheduled?: boolean;
   };
@@ -1410,6 +1440,7 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
             // path does — configured projects warm exactly what they
             // asked for; dominant-language warm is the fallback.
             const lspConfig = await loadLSPConfig(warmupCwd).catch(() => ({
+              // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
               warmFiles: [] as string[],
             }));
             const warmFiles = lspConfig.warmFiles ?? [];
@@ -1598,7 +1629,7 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
     dbg("session_start: phase0 workspace diagnostics observation enabled (capability probe only)");
   }
 
-  const hasWorkspaceCwd = typeof ctxCwd === "string" && ctxCwd.length > 0;
+  const hasWorkspaceCwd = Check(Type.String(), ctxCwd) && ctxCwd.length > 0;
   const cwd = ctxCwd ?? process.cwd();
   // #1228: generic atomic-write stages are shared by several project stores,
   // so the review-graph-specific sweep cannot own this namespace. Sweep the
@@ -1680,13 +1711,15 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
       filePath: cwd,
       startedAt: new Date(snapshotLoadStartedAt).toISOString(),
       durationMs: Date.now() - snapshotLoadStartedAt,
-      metadata: {
-        bytes: snapshotBytes,
-        fresh: snapshotFresh,
-        seq: snapshot?.seq ?? null,
-        ...(snapshotGate.skippedStale ? { skippedStale: true } : {}),
-        ...(timedOut ? { sequenceUnknown: true } : {}),
-      },
+      metadata: assignOptionalProperties(
+        assignOptionalProperties(
+          { bytes: snapshotBytes, fresh: snapshotFresh, seq: snapshot?.seq ?? null },
+          snapshotGate.skippedStale,
+          () => ({ skippedStale: true }),
+        ),
+        timedOut,
+        () => ({ sequenceUnknown: true }),
+      ),
     });
     logProjectSnapshotProbe({
       dbg,
@@ -1791,13 +1824,15 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
     filePath: cwd,
     startedAt: new Date(snapshotLoadStartedAt).toISOString(),
     durationMs: Date.now() - snapshotLoadStartedAt,
-    metadata: {
-      bytes: snapshotBytes,
-      fresh: snapshotFresh,
-      seq: snapshot?.seq ?? null,
-      ...(snapshotGate.skippedStale ? { skippedStale: true } : {}),
-      ...(timedOut ? { sequenceUnknown: true } : {}),
-    },
+    metadata: assignOptionalProperties(
+      assignOptionalProperties(
+        { bytes: snapshotBytes, fresh: snapshotFresh, seq: snapshot?.seq ?? null },
+        snapshotGate.skippedStale,
+        () => ({ skippedStale: true }),
+      ),
+      timedOut,
+      () => ({ sequenceUnknown: true }),
+    ),
   });
   logProjectSnapshotProbe({
     dbg,

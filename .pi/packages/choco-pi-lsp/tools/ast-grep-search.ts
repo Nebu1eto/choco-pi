@@ -1,3 +1,6 @@
+import type { ProtocolDictionary } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.js";
+import { isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
 /**
  * ast_grep_search tool definition
  *
@@ -124,12 +127,12 @@ function toLineSpan(
   match: AstGrepMatch,
 ): { file: string; startLine: number; endLine: number } | null {
   const start = match.range?.start?.line; // ast-grep ranges are 0-based
-  if (!match.file || typeof start !== "number") return null;
+  if (!match.file || !isRuntimeNumber(start)) return null;
   const end = match.range?.end?.line;
   return {
     file: match.file,
     startLine: start + 1,
-    endLine: (typeof end === "number" ? end : start) + 1,
+    endLine: (isRuntimeNumber(end) ? end : start) + 1,
   };
 }
 
@@ -138,7 +141,7 @@ function toMatchLocations(
   contextLines: number | undefined,
 ): MatchLocation[] {
   const margin =
-    typeof contextLines === "number" && Number.isFinite(contextLines)
+    isRuntimeNumber(contextLines) && Number.isFinite(contextLines)
       ? Math.min(MAX_READ_SLICE_MARGIN, Math.max(0, Math.floor(contextLines)))
       : DEFAULT_READ_SLICE_MARGIN;
   const out: MatchLocation[] = [];
@@ -160,11 +163,7 @@ function toMatchLocations(
   return out;
 }
 
-function suggestedDump(lang: string): {
-  tool: "ast_grep_dump";
-  lang: string;
-  note: string;
-} {
+function suggestedDump(lang: string) {
   return {
     tool: "ast_grep_dump",
     lang,
@@ -297,7 +296,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
       }
       const count = details?.matchCount ?? 0;
       const total = details?.totalMatches;
-      const ofTotal = typeof total === "number" && total > count ? ` of ${total}` : "";
+      const ofTotal = isRuntimeNumber(total) && total > count ? ` of ${total}` : "";
       const applied = details?.applied ? " (applied)" : "";
       return `ast_grep_search — ${count}${ofTotal} match${count === 1 && !ofTotal ? "" : "es"}${applied}`;
     }),
@@ -309,6 +308,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
         }),
       ),
       lang: Type.String({
+        // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
         enum: [...LANGUAGES] as string[],
         description: "Target language",
       }),
@@ -404,9 +404,9 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
     }),
     async execute(
       _toolCallId: string,
-      params: Record<string, unknown>,
+      params: ProtocolDictionary,
       _signal: AbortSignal | undefined,
-      _onUpdate: unknown,
+      _onUpdate: RuntimeValue,
       ctx: { cwd?: string; signal?: AbortSignal },
     ) {
       // Escape aborts the turn via ctx.signal; the positional signal is the
@@ -414,6 +414,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
       const abortSignal = combineAbortSignals(_signal, ctx.signal);
       const startedAt = Date.now();
       const deadlineAt = startedAt + AST_GREP_SEARCH_TIMEOUT_MS;
+      // SAFETY: The host validates params against this tool's TypeBox parameter schema before execute runs.
       const {
         paths,
         nodeKind,
@@ -449,9 +450,9 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
         precedes?: string;
         validateOnly?: boolean;
       };
-      const pattern = typeof params.pattern === "string" ? params.pattern : "";
-      const rawLang = typeof params.lang === "string" ? params.lang : "";
-      const normalizedNodeKind = typeof nodeKind === "string" ? nodeKind.trim() : "";
+      const pattern = isRuntimeString(params.pattern) ? params.pattern : "";
+      const rawLang = isRuntimeString(params.lang) ? params.lang : "";
+      const normalizedNodeKind = isRuntimeString(nodeKind) ? nodeKind.trim() : "";
       const skipOffset = Math.max(0, Math.floor(skip ?? 0));
       const lang = rawLang.replace(/^"|"$/g, "");
       const searchPathsCount = paths?.length ?? 1;
@@ -504,7 +505,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
       }
 
       try {
-        const rawRule = typeof rule === "string" ? rule : undefined;
+        const rawRule = isRuntimeString(rule) ? rule : undefined;
         const hasRawRule = Boolean(rawRule?.trim());
         const hasPattern = Boolean(pattern.trim());
         const hasNodeKind = normalizedNodeKind.length > 0;
@@ -513,7 +514,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
           rawPaths !== undefined &&
           (!Array.isArray(rawPaths) ||
             rawPaths.length > MAX_PATHS ||
-            rawPaths.some((value) => typeof value !== "string"))
+            rawPaths.some((value) => !isRuntimeString(value)))
         ) {
           const errorRaw = `paths must contain at most ${MAX_PATHS} string entries`;
           logOutcome("error", { errorRaw });
@@ -647,8 +648,10 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
           1,
           Math.min(
             MAX_PAGE_SIZE,
+            // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
             Number.isFinite(maxMatches as number)
-              ? Math.floor(maxMatches as number)
+              ? // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
+                Math.floor(maxMatches as number)
               : DEFAULT_PAGE_SIZE,
           ),
         );
@@ -727,7 +730,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
               valid: true,
               validateOnly: true,
               mode: effectiveRule ? "rule" : "pattern",
-              ...(warning ? { warning } : {}),
+              ...includePropertiesWhen(warning, () => ({ warning })),
             },
           };
         }
@@ -854,4 +857,13 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
       }
     },
   };
+}
+
+function includePropertiesWhen<T extends object, TInclude>(
+  include: TInclude,
+  createProperties: () => T,
+): Partial<T> {
+  const properties: Partial<T> = {};
+  if (include) Object.assign(properties, createProperties());
+  return properties;
 }

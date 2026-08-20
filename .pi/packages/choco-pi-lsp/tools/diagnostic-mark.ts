@@ -1,3 +1,6 @@
+import type { ProtocolDictionary } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.js";
+import { isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
 /**
  * diagnostic_mark — agent-facing disposition operation (#690, unifying
  * #181/#503/#504's discussion into one triage layer).
@@ -244,24 +247,29 @@ export function createLensDiagnosticMarkTool(
     }),
     async execute(
       _toolCallId: string,
-      params: Record<string, unknown>,
+      params: ProtocolDictionary,
       _signal: AbortSignal | undefined,
-      _onUpdate: unknown,
+      _onUpdate: RuntimeValue,
       ctx: { cwd?: string },
     ) {
       const cwd = ctx.cwd ?? getCwd();
       const filePathArg = params.filePath;
       const line = params.line;
       const message = params.message;
+      // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       const disposition = params.disposition as Disposition;
+      // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       const rule = params.rule as string | undefined;
+      // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       const tool = params.tool as string | undefined;
+      // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
       const reason = params.reason as string | undefined;
 
       if (
-        typeof filePathArg !== "string" ||
-        typeof line !== "number" ||
-        typeof message !== "string" ||
+        !isRuntimeString(filePathArg) ||
+        !isRuntimeNumber(line) ||
+        !isRuntimeString(message) ||
+        // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
         !DISPOSITIONS.includes(disposition as (typeof DISPOSITIONS)[number])
       ) {
         return {

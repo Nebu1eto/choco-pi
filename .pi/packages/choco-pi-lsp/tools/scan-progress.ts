@@ -1,3 +1,5 @@
+import type { RuntimeValue } from "./runtime-values.js";
+import { isRuntimeFunction } from "./runtime-values.js";
 /**
  * Shared progress-streaming helper for the long-running full/batch/directory
  * diagnostic scans (`diagnostics_report mode=full`, `lsp_diagnostics`). Those runs
@@ -20,7 +22,8 @@ export type ToolUpdate = (update: {
  * usual summary. Without this, the details-driven summarizer renders "0
  * diagnostics" mid-scan and the bar never shows.
  */
-export function scanningSummaryLine(details: unknown, text: string): string | null {
+export function scanningSummaryLine(details: RuntimeValue, text: string): string | null {
+  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const d = details as { phase?: string; completed?: number; total?: number } | undefined;
   if (d?.phase !== "scanning") return null;
   return text || `Scanning… ${d.completed ?? 0}/${d.total ?? 0}`;
@@ -46,12 +49,13 @@ export function renderScanProgress(
  * gave no callback, so callers can pass it straight through as an optional.
  */
 export function makeProgressReporter(
-  onUpdate: unknown,
+  onUpdate: RuntimeValue,
   label?: string,
   throttleMs = 250,
 ): ((completed: number, total: number) => void) | undefined {
+  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const emit = onUpdate as ToolUpdate | undefined;
-  if (typeof emit !== "function") return undefined;
+  if (!isRuntimeFunction(emit)) return undefined;
   let lastEmit = 0;
   return (completed: number, total: number) => {
     const now = Date.now();

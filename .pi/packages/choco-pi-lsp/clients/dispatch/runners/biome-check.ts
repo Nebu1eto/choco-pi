@@ -30,10 +30,12 @@ interface BiomeDiagnostic {
   tags?: string[];
 }
 
-function parseBiomeJson(
-  raw: string,
-  filePath: string,
-): { diagnostics: Diagnostic[]; parseError?: string } {
+interface BiomeParseResult {
+  diagnostics: Diagnostic[];
+  parseError?: string;
+}
+
+function parseBiomeJson(raw: string, filePath: string): BiomeParseResult {
   try {
     const result = JSON.parse(raw);
     const diagnostics: BiomeDiagnostic[] = result.diagnostics || [];
@@ -106,7 +108,7 @@ const biomeCheckJsonRunner: RunnerDefinition = {
     const parsed =
       checkResult.status === 0 || checkResult.status === 1
         ? parseBiomeJson(checkResult.stdout || "", ctx.filePath)
-        : { diagnostics: [] as Diagnostic[] };
+        : { diagnostics: [] };
 
     if (parsed.parseError) {
       const raw = checkResult.stdout || checkResult.stderr || "";

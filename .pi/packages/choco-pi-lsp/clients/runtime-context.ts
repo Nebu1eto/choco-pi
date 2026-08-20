@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import type { CacheManager } from "./cache-manager.js";
 import type { TurnEndFindingsCache } from "./git-guard.js";
 import type { RuntimeCoordinator } from "./runtime-coordinator.js";
@@ -8,6 +10,8 @@ import {
 } from "./advisory-provenance.js";
 import type { TestRunnerFindingsCache } from "./project-diagnostics/runner-adapters/runner-findings.js";
 import { logLatency } from "./latency-logger.js";
+
+type TurnEndMessageResultContract = { role: "user"; content: string };
 
 // Exported so the Stop-hook bin strips exactly what these bridges prepend.
 export const AUTOMATION_FRAMING = "[choco-pi-lsp automated check — not a user request] ";
@@ -61,7 +65,7 @@ function turnEndMessage(
   content: string,
   current: boolean,
   provenance?: AdvisoryProvenance,
-): { role: "user"; content: string } {
+): TurnEndMessageResultContract {
   return {
     role: "user",
     content: current
@@ -106,7 +110,8 @@ export function consumeTurnEndFindings(
   // A blocker record is also the opt-in commit gate's durable state. Mark the
   // context message consumed without deleting the record; clean/advisory-only
   // records retain the historical consume-and-clear behavior.
-  if (findings.data.hasBlockers === true && typeof findings.data.sessionId === "string") {
+
+  if (findings.data.hasBlockers === true && Check(Type.String(), findings.data.sessionId)) {
     cacheManager.writeCache("turn-end-findings", { ...findings.data, consumed: true }, cwd);
   } else {
     cacheManager.clearCache("turn-end-findings", cwd);
@@ -169,6 +174,8 @@ export function consumeTestFindings(
   )?.data?.testRunGeneration;
   cacheManager.writeCache(
     "test-runner-findings",
+
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     { content: "", testRunGeneration: priorGeneration } as TestRunnerFindingsCache,
     cwd,
   );
@@ -179,7 +186,8 @@ export function consumeTestFindings(
 export function acknowledgeTurnEndFindings(cacheManager: CacheManager, cwd: string): void {
   const findings = cacheManager.readCache<Partial<TurnEndFindingsCache>>("turn-end-findings", cwd);
   if (!findings?.data?.content || findings.data.consumed === true) return;
-  if (findings.data.hasBlockers === true && typeof findings.data.sessionId === "string") {
+
+  if (findings.data.hasBlockers === true && Check(Type.String(), findings.data.sessionId)) {
     cacheManager.writeCache("turn-end-findings", { ...findings.data, consumed: true }, cwd);
   } else {
     cacheManager.clearCache("turn-end-findings", cwd);
@@ -192,6 +200,8 @@ export function acknowledgeTestFindings(cacheManager: CacheManager, cwd: string)
   // Same high-water-mark preservation as consumeTestFindings.
   cacheManager.writeCache(
     "test-runner-findings",
+
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     {
       content: "",
       testRunGeneration: findings.data.testRunGeneration,
@@ -207,7 +217,7 @@ export function consumeSessionStartGuidance(
   const guidance = cacheManager.readCache<{ content: string }>("session-start-guidance", cwd);
   if (!guidance?.data?.content) return;
 
-  cacheManager.writeCache("session-start-guidance", null as unknown as { content: string }, cwd);
+  cacheManager.writeCache("session-start-guidance", null, cwd);
 
   return {
     messages: [

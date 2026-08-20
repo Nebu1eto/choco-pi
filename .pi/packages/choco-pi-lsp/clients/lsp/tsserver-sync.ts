@@ -33,6 +33,8 @@
  * fall back to existing unconfirmed/timed-out behavior".
  */
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { LSPDiagnostic } from "./client.js";
 import { logLatency } from "../latency-logger.js";
 import { normalizeMapKey } from "../path-utils.js";
@@ -75,6 +77,36 @@ export interface TsserverSyncCapableService {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+const ProjectInfoSchema = Type.Object(
+  {
+    configFileName: Type.Optional(Type.String()),
+    languageServiceDisabled: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: true },
+);
+const TsserverResponseSchema = Type.Object(
+  {
+    success: Type.Optional(Type.Boolean()),
+    body: Type.Optional(Type.Unknown()),
+  },
+  { additionalProperties: true },
+);
+const LocationSchema = Type.Object({ line: Type.Number(), offset: Type.Number() });
+const TsserverRawDiagnosticSchema = Type.Object(
+  {
+    message: Type.String(),
+    category: Type.String(),
+    code: Type.Optional(Type.Number()),
+    startLocation: Type.Optional(LocationSchema),
+    endLocation: Type.Optional(LocationSchema),
+  },
+  { additionalProperties: true },
+);
+
+interface IdentityLatencyMetadata {
+  [key: string]: string | number | boolean | undefined;
+}
 
 export const TSSERVER_REQUEST_COMMAND = "typescript.tsserverRequest";
 
@@ -141,15 +173,11 @@ const INFERRED_PROJECT_SENTINEL = /^(?:[A-Za-z]:)?[/\\]dev[/\\]null[/\\]inferred
  * #1412 telemetry probe share ONE classifier — a second hand-rolled
  * configFileName test would be a parallel source of truth for the same verdict.
  */
-export function classifyProjectInfo(body: unknown): TsserverProjectIdentity {
-  if (!body || typeof body !== "object") {
+export function classifyProjectInfo<T>(body: T): TsserverProjectIdentity {
+  if (!Value.Check(ProjectInfoSchema, body)) {
     return { projectKind: "unassociated", association: "unassociated" };
   }
-  const info = body as Record<string, unknown>;
-  const configFile =
-    typeof info.configFileName === "string" && info.configFileName.length > 0
-      ? info.configFileName
-      : undefined;
+  const configFile = body.configFileName || undefined;
   const inferred = configFile ? INFERRED_PROJECT_SENTINEL.test(configFile) : false;
   const projectKind = configFile
     ? inferred
@@ -158,16 +186,17 @@ export function classifyProjectInfo(body: unknown): TsserverProjectIdentity {
         ? "configured"
         : "unassociated"
     : "unassociated";
-  return {
+  const identity: TsserverProjectIdentity = {
     projectKind,
-    ...(configFile ? { configFile } : {}),
     association:
-      info.languageServiceDisabled === true
+      body.languageServiceDisabled === true
         ? "language-service-disabled"
         : projectKind === "unassociated"
           ? "unassociated"
           : "associated",
   };
+  if (configFile) identity.configFile = configFile;
+  return identity;
 }
 
 /**
@@ -188,7 +217,7 @@ export async function probeTsserverProjectIdentity(
   // server (python, go, opengrep, ...).
   const logOutcome = (
     outcome: "ok" | "not-executed" | "no-response" | "unsuccessful" | "threw",
-    metadata: Record<string, unknown> = {},
+    metadata: IdentityLatencyMetadata = {},
   ) =>
     logLatency({
       type: "phase",
@@ -206,7 +235,7 @@ export async function probeTsserverProjectIdentity(
   if (
     options.serverId !== "typescript" ||
     options.launchVariant !== "classic" ||
-    typeof options.commandChannel.executeCommand !== "function"
+    !options.commandChannel.executeCommand
   ) {
     return;
   }
@@ -222,8 +251,8 @@ export async function probeTsserverProjectIdentity(
       logOutcome("not-executed");
       return;
     }
-    const response = outcome.result as { success?: boolean; body?: unknown } | undefined;
-    if (!response) {
+    const response = outcome.result;
+    if (!Value.Check(TsserverResponseSchema, response)) {
       logOutcome("no-response");
       return;
     }
@@ -281,7 +310,7 @@ export async function fetchTsserverProjectIdentity(
   file: string,
 ): Promise<TsserverProjectIdentity | undefined> {
   try {
-    if (typeof svc.executeReadOnlyCommandOnLiveClient !== "function") {
+    if (!svc.executeReadOnlyCommandOnLiveClient) {
       return undefined;
     }
     // No `getAdvertisedCommands` pre-flight: that helper routes through
@@ -293,8 +322,10 @@ export async function fetchTsserverProjectIdentity(
       { file, needFileNameList: false },
     ]);
     if (!outcome.executed) return undefined;
-    const response = outcome.result as { success?: boolean; body?: unknown } | undefined;
-    if (!response || response.success !== true) return undefined;
+    const response = outcome.result;
+    if (!Value.Check(TsserverResponseSchema, response) || response.success !== true) {
+      return undefined;
+    }
     return classifyProjectInfo(response.body);
   } catch {
     return undefined;
@@ -305,10 +336,8 @@ export async function fetchTsserverProjectIdentity(
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function isTsserverSyncRawDiagnostic(value: unknown): value is TsserverSyncRawDiagnostic {
-  if (!value || typeof value !== "object") return false;
-  const v = value as Record<string, unknown>;
-  return typeof v.message === "string" && typeof v.category === "string";
+export function isTsserverSyncRawDiagnostic<T>(value: T): value is T & TsserverSyncRawDiagnostic {
+  return Value.Check(TsserverRawDiagnosticSchema, value);
 }
 
 export function tsserverSeverityFromCategory(category: string): 1 | 2 | 3 | 4 {
@@ -358,14 +387,18 @@ export async function runTsserverSyncCommand(
   file: string,
   command: "semanticDiagnosticsSync" | "syntacticDiagnosticsSync",
 ): Promise<TsserverSyncRawDiagnostic[] | undefined> {
-  if (typeof svc.executeCommand !== "function") return undefined;
+  if (!svc.executeCommand) return undefined;
   const outcome = await svc.executeCommand(file, TSSERVER_REQUEST_COMMAND, [
     command,
     { file, includeLinePosition: true },
   ]);
   if (!outcome.executed) return undefined;
-  const result = outcome.result as { success?: boolean; body?: unknown } | undefined;
-  if (!result || result.success !== true || !Array.isArray(result.body)) {
+  const result = outcome.result;
+  if (
+    !Value.Check(TsserverResponseSchema, result) ||
+    result.success !== true ||
+    !Array.isArray(result.body)
+  ) {
     return undefined;
   }
   return result.body.filter(isTsserverSyncRawDiagnostic);
@@ -400,7 +433,7 @@ export async function attemptTsserverSyncDiagnostics(
   svc: TsserverSyncCapableService,
 ): Promise<LSPDiagnostic[] | undefined> {
   try {
-    if (typeof svc.getAdvertisedCommands !== "function") return undefined;
+    if (!svc.getAdvertisedCommands) return undefined;
     const advertised = await svc.getAdvertisedCommands(file);
     if (!advertised.includes(TSSERVER_REQUEST_COMMAND)) return undefined;
 

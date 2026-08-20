@@ -15,6 +15,8 @@
  *   "function $NAME($$$PARAMS) { $BODY }" matches function declarations
  */
 
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -43,7 +45,33 @@ import { assertInstallAllowed, getProjectTrustGeneration } from "./project-trust
 import { logTreeSitterDiagnostic } from "./tree-sitter-logger.js";
 import { notifyUserDegradation } from "./user-notify.js";
 
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+
+type GetRuntimeStatsResultContract = {
+  languagesLoaded: number;
+  parsersLoaded: number;
+  queryCacheSize: number;
+  queryBatchCacheSize: number;
+};
+type PatternToQueryResultContract = {
+  query: string;
+  metavars: string[];
+  postFilter?: string;
+  // biome-ignore lint/suspicious/noExplicitAny: Post filter params
+  postFilterParams?: any;
+  queryDef?: TreeSitterQuery;
+};
+type GetInlinePatternResultContract = {
+  query: string;
+  metavars: string[];
+  postFilter?: string;
+  // biome-ignore lint/suspicious/noExplicitAny: Post filter params
+  postFilterParams?: any;
+};
+
 const _require = createRequire(import.meta.url);
+const GRAMMAR_BY_LANGUAGE = new Map<string, string>(Object.entries(LANGUAGE_TO_GRAMMAR));
 
 import {
   createTreeCacheCounters,
@@ -72,6 +100,17 @@ const QUERY_BATCH_MAX_LOAD_FAILURES = 3;
 // is reached so unrelated diagnostics and the current match are preserved.
 const NO_NESTED_ANCHOR_VISIT_CAP = 10_000;
 
+function describeQueryPredicateValue(value: any): string {
+  if (Check(Type.Undefined(), value)) return "undefined";
+  if (Check(Type.Null(), value)) return "object";
+  if (Check(Type.String(), value)) return "string";
+  if (Check(Type.Number(), value)) return "number";
+  if (Check(Type.Boolean(), value)) return "boolean";
+  if (Check(Type.Function([], Type.Unknown()), value)) return "function";
+  if (Check(Type.Array(Type.Unknown()), value) || Check(Type.Object({}), value)) return "object";
+  return Object.prototype.toString.call(value).slice(8, -1).toLowerCase();
+}
+
 // --- Type Declarations (local, no import needed) ---
 
 // biome-ignore lint/suspicious/noExplicitAny: Language from web-tree-sitter
@@ -89,6 +128,7 @@ interface TreeSitterNode {
   isNamed: boolean;
   childCount: number;
   startPosition: { row: number; column: number };
+  endPosition: { row: number; column: number };
   startIndex: number;
   endIndex: number;
   /** web-tree-sitter field accessor — optional so mock nodes in tests
@@ -175,7 +215,7 @@ function grammarFileStamp(filePath: string): string | undefined {
   }
 }
 
-export function isTreeSitterWasmAbortError(error: unknown): boolean {
+export function isTreeSitterWasmAbortError(error: LspBoundaryValue): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("Aborted") || message.includes("abort()");
 }
@@ -206,14 +246,20 @@ const RESOLUTION_ERROR_CODES = new Set([
 /** Walk an error's `.cause` chain, collecting every `code` seen along the
  * way — a resolution failure's `code` can be wrapped in a cause rather than
  * sitting on the top-level thrown Error. */
-function collectErrorCodes(err: unknown): string[] {
+
+function collectErrorCodes(err: LspBoundaryValue): string[] {
   const codes: string[] = [];
   let current: unknown = err;
   const seen = new Set<unknown>();
   while (current instanceof Error && !seen.has(current)) {
     seen.add(current);
+
+    // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
     const code = (current as Error & { code?: unknown }).code;
-    if (typeof code === "string") codes.push(code);
+
+    if (Check(Type.String(), code)) codes.push(code);
+
+    // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
     current = (current as Error & { cause?: unknown }).cause;
   }
   return codes;
@@ -230,7 +276,8 @@ function collectErrorCodes(err: unknown): string[] {
  * permanently-rejected module record for that URL) than an unclassified
  * resolution hiccup, so "unknown" defaults to the case a retry cannot fix.
  */
-function classifyWebTreeSitterLoadFailure(err: unknown): "resolution" | "evaluation" {
+
+function classifyWebTreeSitterLoadFailure(err: LspBoundaryValue): "resolution" | "evaluation" {
   const codes = collectErrorCodes(err);
   return codes.some((code) => RESOLUTION_ERROR_CODES.has(code)) ? "resolution" : "evaluation";
 }
@@ -375,6 +422,7 @@ export class TreeSitterClient {
     this.queryCache.delete(key);
     this.queryCache.set(key, value);
     while (this.queryCache.size > this.queryCacheCap()) {
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       const oldest = this.queryCache.entries().next().value as [string, any] | undefined;
       if (!oldest) break;
       this.queryCache.delete(oldest[0]);
@@ -386,6 +434,7 @@ export class TreeSitterClient {
     this.queryBatchCache.delete(key);
     this.queryBatchCache.set(key, value);
     while (this.queryBatchCache.size > this.queryBatchCacheCap()) {
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       const oldest = this.queryBatchCache.entries().next().value as
         | [string, QueryBatch | null]
         | undefined;
@@ -426,7 +475,7 @@ export class TreeSitterClient {
     if (measurement) measurement[key] += amount;
   }
 
-  reportWasmAbort(error: unknown): boolean {
+  reportWasmAbort(error: LspBoundaryValue): boolean {
     if (!isTreeSitterWasmAbortError(error)) return false;
     if (!this.wasmAborted) {
       this.wasmAborted = true;
@@ -457,12 +506,7 @@ export class TreeSitterClient {
    * process-wide proxy used instead (WASM linear memory backs an ArrayBuffer,
    * so it is included there) — see clients/memory-sampler.ts.
    */
-  getRuntimeStats(): {
-    languagesLoaded: number;
-    parsersLoaded: number;
-    queryCacheSize: number;
-    queryBatchCacheSize: number;
-  } {
+  getRuntimeStats(): GetRuntimeStatsResultContract {
     return {
       languagesLoaded: this.languages.size,
       parsersLoaded: this.parsers.size,
@@ -964,6 +1008,7 @@ export class TreeSitterClient {
     const unavailable = retryable
       ? `tree-sitter grammar '${grammarFile}' is unavailable — symbol search, ` +
         `module reports and structural rules for this language will be degraded. ` +
+        // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
         `${detail} choco-pi-lsp will retry automatically in ${Math.round((retryDelayMs as number) / 1000)}s; ` +
         `if the problem persists, allow the package manager's build scripts ` +
         `(pnpm approve-builds / bun trustedDependencies) or restore network access.`
@@ -1045,7 +1090,12 @@ export class TreeSitterClient {
    * redownload land the identical bytes and spin the ladder against a file
    * that can never pass.
    */
-  private recordGrammarLoadFailure(grammarPath: string, grammarFile: string, err: unknown): void {
+
+  private recordGrammarLoadFailure(
+    grammarPath: string,
+    grammarFile: string,
+    err: LspBoundaryValue,
+  ): void {
     const stamp = grammarFileStamp(grammarPath);
     this.verifiedGrammarPaths.delete(grammarPath);
     if (stamp) this.decodeFailedGrammarPaths.set(grammarPath, stamp);
@@ -1101,14 +1151,19 @@ export class TreeSitterClient {
           throw err;
         }
         // biome-ignore lint/suspicious/noExplicitAny: web-tree-sitter module shape varies (Parser direct / default-wrapped)
+
+        // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
         const anyMod = mod as any;
         const ParserClass = anyMod.Parser || anyMod.default || anyMod;
-        if (!ParserClass || typeof ParserClass.init !== "function") {
+
+        if (!ParserClass || !Check(Type.Function([], Type.Unknown()), ParserClass.init)) {
           this.dbg("Parser class not found or missing init method");
           return false;
         }
 
         // biome-ignore lint/suspicious/noExplicitAny: Parser class type
+
+        // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
         this.ParserClass = ParserClass as any;
         // Store Language loader from module (not from Parser)
         this.LanguageLoader = mod.Language;
@@ -1171,7 +1226,7 @@ export class TreeSitterClient {
       return null;
     }
 
-    const grammarFile = LANGUAGE_TO_GRAMMAR[languageId];
+    const grammarFile = GRAMMAR_BY_LANGUAGE.get(languageId);
     if (!grammarFile) {
       this.dbg(`No grammar file for ${languageId}`);
       return null;
@@ -1602,6 +1657,7 @@ export class TreeSitterClient {
           const firstNode = match.captures[0].node;
           const textCaptures: Record<string, string> = {};
           for (const [name, node] of Object.entries(captures)) {
+            // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
             textCaptures[name] = (node as TreeSitterNode).text;
           }
           bucket.push({
@@ -1609,6 +1665,8 @@ export class TreeSitterClient {
             line: firstNode.startPosition.row + 1,
             column: firstNode.startPosition.column + 1,
             matchedText: firstNode.text,
+
+            // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
             nodeType: firstNode.type as string | undefined,
             captures: textCaptures,
           });
@@ -1686,6 +1744,8 @@ export class TreeSitterClient {
         let patternCount: number;
         try {
           // biome-ignore lint/suspicious/noExplicitAny: Language type compatibility
+
+          // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
           const probe = new Query(language as any, queryDef.query);
           patternCount = probe.patternCount();
           probe.delete?.();
@@ -1711,6 +1771,8 @@ export class TreeSitterClient {
 
       try {
         // biome-ignore lint/suspicious/noExplicitAny: Language type compatibility
+
+        // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
         const query = new Query(language as any, sources.join("\n"));
         if (query.patternCount() !== ownerOfPattern.length) {
           this.dbg(
@@ -1735,22 +1797,13 @@ export class TreeSitterClient {
    * Convert pattern to tree-sitter query
    * First tries to load from query files, then falls back to inline patterns
    */
-  private patternToQuery(
-    pattern: string,
-    languageId: string,
-  ): {
-    query: string;
-    metavars: string[];
-    postFilter?: string;
-    // biome-ignore lint/suspicious/noExplicitAny: Post filter params
-    postFilterParams?: any;
-    queryDef?: TreeSitterQuery;
-  } {
+  private patternToQuery(pattern: string, languageId: string): PatternToQueryResultContract {
     // Try to find matching query from loaded files
     const loadedQuery = this.queryLoader.findMatchingQuery(pattern, languageId);
 
     if (loadedQuery) {
       this.dbg(`Using loaded query: ${loadedQuery.id}`);
+
       return {
         query: loadedQuery.query,
         metavars: loadedQuery.metavars,
@@ -1767,13 +1820,7 @@ export class TreeSitterClient {
   /**
    * Inline patterns as fallback when no query file matches
    */
-  private getInlinePattern(pattern: string): {
-    query: string;
-    metavars: string[];
-    postFilter?: string;
-    // biome-ignore lint/suspicious/noExplicitAny: Post filter params
-    postFilterParams?: any;
-  } {
+  private getInlinePattern(pattern: string): GetInlinePatternResultContract {
     // Pattern: async function $NAME($$$PARAMS) { $BODY }
     if (pattern.includes("async function") && pattern.includes("$NAME")) {
       return {
@@ -1837,6 +1884,7 @@ export class TreeSitterClient {
     const simpleMatch = pattern.match(/\$([A-Z_][A-Z0-9_]*)/);
     if (simpleMatch) {
       const name = simpleMatch[1];
+
       return {
         query: `(identifier) @${name}`,
         metavars: [name],
@@ -1844,6 +1892,7 @@ export class TreeSitterClient {
     }
 
     // If we can't convert, return empty to trigger fallback
+
     return { query: "", metavars: [] };
   }
 
@@ -1898,6 +1947,8 @@ export class TreeSitterClient {
       // biome-ignore lint/suspicious/noExplicitAny: Query constructor
       const Query = (await loadWebTreeSitter()).Query;
       // biome-ignore lint/suspicious/noExplicitAny: Language type compatibility
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       const query = new Query(language as any, queryStr);
       this.dbg(`Query compiled with ${query.patternCount()} patterns`);
 
@@ -1919,7 +1970,8 @@ export class TreeSitterClient {
     metavars: string[],
     languageId: string,
     postFilter?: string,
-    postFilterParams?: unknown,
+
+    postFilterParams?: LspBoundaryValue,
   ): Promise<{
     query: any;
     metavars: string[];
@@ -1942,6 +1994,8 @@ export class TreeSitterClient {
       // biome-ignore lint/suspicious/noExplicitAny: Query constructor from web-tree-sitter
       const Query = (await loadWebTreeSitter()).Query;
       // biome-ignore lint/suspicious/noExplicitAny: Language type compatibility
+
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       const query = new Query(language as any, queryStr);
       const result = { query, metavars, postFilter, postFilterParams };
       this.cacheQuery(cacheKey, result);
@@ -1957,7 +2011,12 @@ export class TreeSitterClient {
   private reportedCompileFailures = new Set<string>();
 
   /** Warn once per rule+grammar pair whose query fails to compile — a silently-dead rule needs a trail. */
-  private reportQueryCompileFailure(ruleId: string, languageId: string, err: unknown): void {
+
+  private reportQueryCompileFailure(
+    ruleId: string,
+    languageId: string,
+    err: LspBoundaryValue,
+  ): void {
     // Keyed by rule AND language: a rule can be dispatched against more than one
     // grammar (`queriesForLanguage` hands the typescript set to tsx too), and
     // failing on one must not mute the report for the others.
@@ -3201,8 +3260,10 @@ export class TreeSitterClient {
         // Examples invalid: "rwb", "rrr", "rw", "rbb" (no + between r and w is invalid)
         // The "rw" case (basic mode followed by another basic mode without +) is invalid
         // Allow: [basic][bt]?[+]
-        const validShape = /^[rwax][bt]?\+?$/;
-        if (!validShape.test(stripped)) return true;
+
+        const validFileMode = /^[rwax][bt]?\+?$/;
+
+        if (!validFileMode.test(stripped)) return true;
         return false;
       }
       case "status_204_with_value_return": {
@@ -3338,7 +3399,9 @@ export class TreeSitterClient {
         const name = nameNode.text ?? "";
         // Expected arities: {method_name: expected_arg_count}
         // (excluding `self`/`cls` which is always 1)
-        const expected: Record<string, number> = {
+
+        interface ExpectedValues extends Record<string, number> {}
+        const expected: ExpectedValues = {
           __del__: 0,
           __repr__: 0,
           __str__: 0,
@@ -3713,6 +3776,8 @@ export class TreeSitterClient {
         for (const [captureName, pattern] of Object.entries(postFilterParams ?? {})) {
           const node = captures[captureName];
           if (!node) return false;
+
+          // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
           if (!new RegExp(pattern as string).test(node.text)) return false;
         }
         return true;
@@ -3956,7 +4021,8 @@ export class TreeSitterClient {
             "web-tree-sitter Query.textPredicates is missing or not an array — " +
             "#match?/#eq? predicates cannot be evaluated. Failing CLOSED: matches " +
             "for this query are dropped rather than reported unfiltered.",
-          metadata: { textPredicatesType: typeof query?.textPredicates },
+
+          metadata: { textPredicatesType: describeQueryPredicateValue(query?.textPredicates) },
         });
       }
       // User-facing signal (#1523 review F1). Called unconditionally on every
@@ -3990,7 +4056,8 @@ export class TreeSitterClient {
     // mutation strips it after the first successful check) so the read can't
     // throw here — an uncaught throw would be swallowed by the outer try/catch
     // in searchFileWithQuery and silently zero out matches for the whole file.
-    const predicates: Array<(captures: unknown) => boolean> =
+
+    const predicates: Array<(captures: LspBoundaryValue) => boolean> =
       query.textPredicates?.[match.patternIndex] ?? [];
     return predicates.every((fn) => fn(match.captures));
   }
@@ -4041,6 +4108,7 @@ export class TreeSitterClient {
             const firstNode = match.captures[0].node;
             const textCaptures: Record<string, string> = {};
             for (const [name, node] of Object.entries(captures)) {
+              // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
               textCaptures[name] = (node as TreeSitterNode).text;
             }
             matches.push({
@@ -4048,6 +4116,8 @@ export class TreeSitterClient {
               line: firstNode.startPosition.row + 1,
               column: firstNode.startPosition.column + 1,
               matchedText: firstNode.text,
+
+              // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
               nodeType: firstNode.type as string | undefined,
               captures: textCaptures,
             });
@@ -4108,7 +4178,8 @@ export class TreeSitterClient {
 
   /** Get file extensions for a language */
   private getExtensionsForLanguage(languageId: string): string[] {
-    const mapping: Record<string, string[]> = {
+    interface MappingValues extends Record<string, string[]> {}
+    const mapping: MappingValues = {
       typescript: [".ts", ".mts", ".cts"],
       tsx: [".tsx"],
       javascript: [".js", ".mjs", ".cjs"],

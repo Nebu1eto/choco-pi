@@ -314,7 +314,7 @@ function filterDelta<T extends { id: string }>(
   after: T[],
   before: T[] | undefined,
   keyFn: (d: T) => string,
-): { new: T[]; fixed: T[] } {
+) {
   const beforeSet = new Set((before ?? []).map(keyFn));
   const afterSet = new Set(after.map(keyFn));
 
@@ -1041,7 +1041,7 @@ function looksLikeDiagnosticCodePath(value: string): boolean {
 }
 
 function normalizeDiagnosticFilePath(ctx: DispatchContext, rawPath?: string): string {
-  if (typeof rawPath === "string" && looksLikeDiagnosticCodePath(rawPath)) {
+  if (rawPath !== undefined && looksLikeDiagnosticCodePath(rawPath)) {
     ctx.log(
       `runner path normalization: ignored diagnostic code-like path '${rawPath}', using current file`,
     );

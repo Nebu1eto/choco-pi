@@ -381,7 +381,7 @@ export function composeBoundToCurrentDisk(
   values: readonly BoundToCurrentDisk[],
 ): BoundToCurrentDisk {
   if (values.some((v) => v === false)) return false;
-  if (values.length === 0 || values.every((v) => v === "unknown")) {
+  if (values.every((value) => value === "unknown")) {
     return "unknown";
   }
   return true;

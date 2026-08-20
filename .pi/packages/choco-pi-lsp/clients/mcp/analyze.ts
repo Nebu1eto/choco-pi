@@ -187,11 +187,7 @@ export function _resetWarmWordIndexCacheForTests(): void {
   warmWordIndexes.clear();
 }
 
-export function _getWarmWordIndexCacheStateForTests(): {
-  size: number;
-  keys: string[];
-  timers: Array<ReturnType<typeof setTimeout>>;
-} {
+export function _getWarmWordIndexCacheStateForTests() {
   return {
     size: warmWordIndexes.size,
     keys: [...warmWordIndexes.keys()],
@@ -386,7 +382,7 @@ export async function analyzeFile(
   const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
   // no-delta by default → a full snapshot every call (not delta-filtered);
   // caller flags win over the default.
-  const host = createMcpHost({ "no-delta": true, ...(options.flags ?? {}) }, cwd);
+  const host = createMcpHost({ "no-delta": true, ...options.flags }, cwd);
 
   if (options.warmLsp !== false) {
     await warmLspForFile(absPath, host);

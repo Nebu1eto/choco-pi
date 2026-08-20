@@ -1,6 +1,10 @@
 import type { LSPDiagnostic } from "../../lsp/client.js";
 import type { Diagnostic } from "../types.js";
 
+interface LspSeverityMap {
+  [severity: number]: "error" | "warning" | "hint";
+}
+
 export interface ConvertLspDiagnosticsOptions {
   tool?: string;
   /**
@@ -31,7 +35,7 @@ export function convertLspDiagnostics(
   return diags
     .filter((d) => d.range?.start?.line !== undefined)
     .map((d, idx) => {
-      const severityMap: Record<number, "error" | "warning" | "hint"> = {
+      const severityMap: LspSeverityMap = {
         1: "error",
         2: "warning",
         4: "hint",

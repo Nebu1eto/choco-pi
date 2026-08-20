@@ -76,6 +76,7 @@ export function publishReviewGraphFileIr(cwd: string, entry: ReviewGraphFileIr):
     files = new Map();
     roots.set(key, files);
     while (roots.size > MAX_ROOTS) {
+      // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
       const oldest = roots.keys().next().value as string | undefined;
       if (oldest === undefined) break;
       roots.delete(oldest);
@@ -84,6 +85,7 @@ export function publishReviewGraphFileIr(cwd: string, entry: ReviewGraphFileIr):
   const fileKey = normalizeMapKey(entry.filePath);
   files.delete(fileKey);
   while (files.size >= MAX_FILES_PER_ROOT) {
+    // SAFETY: The fact-store, parser, or cache producer establishes this review-graph shape; adjacent checks reject unavailable values.
     const oldest = files.keys().next().value as string | undefined;
     if (oldest === undefined) break;
     files.delete(oldest);
@@ -123,10 +125,7 @@ export function clearReviewGraphFileIr(cwd?: string): void {
   else roots.delete(rootKey(cwd));
 }
 
-export function getReviewGraphIrStats(): {
-  accepted: number;
-  rejected: number;
-} {
+export function getReviewGraphIrStats() {
   return { accepted, rejected };
 }
 

@@ -1,3 +1,5 @@
+import type { ProtocolDictionary } from "./runtime-values.js";
+import { isRuntimeNumber, isRuntimeObject, isRuntimeString } from "./runtime-values.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export type LspToolName = "lsp_navigation" | "lsp_diagnostics";
@@ -35,7 +37,7 @@ export type LspToolEnvelope = {
   notes?: string[];
   hints?: string[];
   errors?: string[];
-  metadata?: Record<string, unknown>;
+  metadata?: object;
 };
 
 type RangeLike = {
@@ -57,17 +59,16 @@ export type BuildLspNavigationEnvelopeOptions = {
   resultCount: number;
   text?: string;
   isError?: boolean;
-  details?: Record<string, unknown>;
+  details?: object;
 };
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
+function asRecord<T>(value: T): ProtocolDictionary | undefined {
+  // SAFETY: The non-null object check establishes an indexable representation; consumers validate every field before use.
+  return isRuntimeObject(value) && value !== null ? (value as ProtocolDictionary) : undefined;
 }
 
-function finiteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function finiteNumber<T>(value: T): number | undefined {
+  return isRuntimeNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
 export function lspStatusFromFailureKind(failureKind: string): LspToolStatus {
@@ -90,8 +91,12 @@ export function lspStatusFromFailureKind(failureKind: string): LspToolStatus {
   return "error";
 }
 
-function lspToolLocationFromUriRange(uri: unknown, range: unknown): LspToolLocation | undefined {
-  if (typeof uri !== "string" || !uri.startsWith("file:")) return undefined;
+function lspToolLocationFromUriRange<TUri, TRange>(
+  uri: TUri,
+  range: TRange,
+): LspToolLocation | undefined {
+  if (!isRuntimeString(uri) || !uri.startsWith("file:")) return undefined;
+  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const rangeLike = asRecord(range) as RangeLike | undefined;
   const startLine = finiteNumber(rangeLike?.start?.line);
   const startCharacter = finiteNumber(rangeLike?.start?.character);
@@ -126,11 +131,12 @@ function lspToolLocationFromUriRange(uri: unknown, range: unknown): LspToolLocat
   }
 }
 
-function lspToolLocationFromFileRange(
+function lspToolLocationFromFileRange<TRange>(
   filePath: string,
-  range: unknown,
+  range: TRange,
 ): LspToolLocation | undefined {
   if (!filePath || filePath === "(workspace)") return undefined;
+  // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
   const rangeLike = asRecord(range) as RangeLike | undefined;
   const startLine = finiteNumber(rangeLike?.start?.line);
   const startCharacter = finiteNumber(rangeLike?.start?.character);
@@ -160,12 +166,12 @@ function lspToolLocationFromFileRange(
   };
 }
 
-function pushToolLocation(out: LspToolLocation[], uri: unknown, range: unknown): void {
+function pushToolLocation<TUri, TRange>(out: LspToolLocation[], uri: TUri, range: TRange): void {
   const loc = lspToolLocationFromUriRange(uri, range);
   if (loc) out.push(loc);
 }
 
-function collectLocationSummaries(result: unknown, filePath: string): LspToolLocation[] {
+function collectLocationSummaries<TResult>(result: TResult, filePath: string): LspToolLocation[] {
   const out: LspToolLocation[] = [];
   for (const entry of Array.isArray(result) ? result : [result]) {
     const record = asRecord(entry);
@@ -187,7 +193,7 @@ function collectLocationSummaries(result: unknown, filePath: string): LspToolLoc
   return out;
 }
 
-function collectWorkspaceSymbolLocationSummaries(result: unknown): LspToolLocation[] {
+function collectWorkspaceSymbolLocationSummaries<TResult>(result: TResult): LspToolLocation[] {
   const out: LspToolLocation[] = [];
   for (const entry of Array.isArray(result) ? result : [result]) {
     const symbol = asRecord(entry);
@@ -203,8 +209,8 @@ function collectWorkspaceSymbolLocationSummaries(result: unknown): LspToolLocati
   return out;
 }
 
-function collectCallHierarchyLocationSummaries(
-  result: unknown,
+function collectCallHierarchyLocationSummaries<TResult>(
+  result: TResult,
   operation: "incomingCalls" | "outgoingCalls",
 ): LspToolLocation[] {
   const out: LspToolLocation[] = [];
@@ -216,9 +222,9 @@ function collectCallHierarchyLocationSummaries(
   return out;
 }
 
-export function collectLspToolLocationsForOperation(
+export function collectLspToolLocationsForOperation<TResult>(
   operation: string,
-  result: unknown,
+  result: TResult,
   filePath: string,
 ): LspToolLocation[] {
   if (
@@ -322,13 +328,6 @@ export function parseLspNavigationTextPayload(text: string): ParsedTextPayload {
   return { notes, hints, errors };
 }
 
-function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
-  for (const key of Object.keys(value)) {
-    if (value[key] === undefined) delete value[key];
-  }
-  return value;
-}
-
 export function buildLspNavigationEnvelope(
   options: BuildLspNavigationEnvelopeOptions,
 ): LspToolEnvelope {
@@ -346,18 +345,19 @@ export function buildLspNavigationEnvelope(
     result,
     options.filePath ?? "",
   );
-  return withoutUndefined({
-    tool: "lsp_navigation" as const,
+  const envelope: LspToolEnvelope = {
+    tool: "lsp_navigation",
     operation: options.operation,
     ok: !options.isError,
     status,
-    filePath: options.filePath,
     resultCount: options.resultCount,
     result,
-    locations: locations.length > 0 ? locations : undefined,
-    notes: notes.length > 0 ? notes : undefined,
-    hints: hints.length > 0 ? hints : undefined,
-    errors: errors.length > 0 ? errors : undefined,
-    metadata: options.details,
-  });
+  };
+  if (options.filePath !== undefined) envelope.filePath = options.filePath;
+  if (locations.length > 0) envelope.locations = locations;
+  if (notes.length > 0) envelope.notes = notes;
+  if (hints.length > 0) envelope.hints = hints;
+  if (errors.length > 0) envelope.errors = errors;
+  if (options.details !== undefined) envelope.metadata = options.details;
+  return envelope;
 }

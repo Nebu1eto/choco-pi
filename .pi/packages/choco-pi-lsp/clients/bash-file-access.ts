@@ -39,8 +39,10 @@ function stripQuotes(token: string): string {
   return token;
 }
 
+const ANSI_ESCAPE_SEQUENCE = new RegExp(`${String.fromCodePoint(0x1b)}\\[[0-9;?]*[ -/]*[@-~]`, "g");
+
 function stripAnsi(value: string): string {
-  return value.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+  return value.replace(ANSI_ESCAPE_SEQUENCE, "");
 }
 
 /** Small conservative shell lexer shared by command-analysis consumers. */
@@ -100,7 +102,7 @@ export function tokenizeShellCommand(command: string): ShellCommandSegment[] {
       // Windows routinely contain native paths (C:\\src\\file.ts). Preserve
       // backslashes before ordinary path characters while still honoring
       // shell escapes and line continuations.
-      if (next === "\n" || /[\s\\'\";$|&<>]/.test(next ?? "")) {
+      if (next === "\n" || /[\s\\'";$|&<>]/.test(next ?? "")) {
         escaped = true;
       } else {
         word += ch;
@@ -386,10 +388,7 @@ function parseGrepLineWithoutFile(line: string, file: string): SearchReadLocatio
   return { file, startLine: lineNumber, endLine: lineNumber };
 }
 
-function collectGrepCommandFiles(
-  command: string,
-  cwd: string,
-): { hasLineNumberGrep: boolean; files: Set<string> } {
+function collectGrepCommandFiles(command: string, cwd: string) {
   const files = new Set<string>();
   let hasLineNumberGrep = false;
   for (const tokens of commandSegments(command)) {

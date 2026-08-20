@@ -67,6 +67,21 @@ export function synthesizeReplaceRule(intent: StructuralIntent & { rewrite: stri
  *
  * @throws if neither pattern nor nodeKind is supplied, or both are supplied
  */
+interface SynthesizedRelation {
+  kind?: string;
+  pattern?: string;
+  stopBy?: "end";
+}
+
+interface SynthesizedRule {
+  kind?: string;
+  pattern?: string;
+  inside?: SynthesizedRelation;
+  has?: SynthesizedRelation;
+  follows?: SynthesizedRelation;
+  precedes?: SynthesizedRelation;
+}
+
 export function synthesizeRule(intent: StructuralIntent): string {
   const hasPattern = !!intent.pattern?.trim();
   const hasNodeKind = !!intent.nodeKind?.trim();
@@ -82,7 +97,7 @@ export function synthesizeRule(intent: StructuralIntent): string {
   // Canonical language name for the YAML header (ast-grep is case-sensitive here).
   const language = canonicalLanguage(intent.lang);
 
-  const rule: Record<string, unknown> = hasNodeKind
+  const rule: SynthesizedRule = hasNodeKind
     ? { kind: assertSafeNodeKind(intent.nodeKind ?? "", "nodeKind") }
     : { pattern };
 
@@ -147,7 +162,7 @@ function assertSafeNodeKind(value: string, field: string): string {
  * capitalisation ast-grep expects in the YAML `language:` field.
  */
 function canonicalLanguage(lang: string): string {
-  const map: Record<string, string> = {
+  const map = {
     typescript: "TypeScript",
     tsx: "Tsx",
     javascript: "JavaScript",
@@ -175,6 +190,6 @@ function canonicalLanguage(lang: string): string {
     yaml: "Yaml",
     toml: "Toml",
     vue: "Vue",
-  };
-  return map[lang.toLowerCase()] ?? lang;
+  } satisfies Record<string, string>;
+  return Object.entries(map).find(([key]) => key === lang.toLowerCase())?.[1] ?? lang;
 }

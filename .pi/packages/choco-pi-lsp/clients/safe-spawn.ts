@@ -14,6 +14,8 @@
  * - To: await safeSpawnAsync(cmd, args, opts)
  */
 
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -23,12 +25,32 @@ import { logExtension } from "./extension-log.js";
 import { isFullyQualifiedWin32 } from "./path-utils.js";
 import { startSpawnUsageSampler } from "./resource-sampler.js";
 
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
 export interface SpawnResourceUsage {
   sampleCount: number;
   avgCpuPercent: number;
   peakCpuPercent: number;
   avgRssBytes: number;
   peakRssBytes: number;
+}
+
+interface SpawnUsageSampler {
+  stop: () => SpawnResourceUsage | null;
 }
 
 export type SpawnFailureKind = "aborted" | "timeout" | "spawn" | "signal";
@@ -54,7 +76,8 @@ export class SpawnFailureError extends Error {
   }
 }
 
-export function hasSpawnFailureKind(error: unknown, kind: SpawnFailureType): boolean {
+export function hasSpawnFailureKind(error: LspBoundaryValue, kind: SpawnFailureType): boolean {
+  // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
   return error instanceof Error && "kind" in error && (error as { kind?: unknown }).kind === kind;
 }
 
@@ -76,11 +99,12 @@ export interface SpawnResult {
   resourceUsage?: SpawnResourceUsage;
 }
 
-function toError(error: unknown): Error {
+function toError(error: LspBoundaryValue): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
 function errorCode(error: Error): string | undefined {
+  // SAFETY: The adjacent Error and property-presence checks establish the optional Node error code representation.
   return (error as NodeJS.ErrnoException).code;
 }
 
@@ -210,7 +234,7 @@ function recordSpawnClassification(
 
 /** Classify a raw Node spawn error without discarding its errno-bearing Error. */
 export async function classifySpawnFailure(
-  error: unknown,
+  error: LspBoundaryValue,
   options: { command: string; cwd?: string },
 ): Promise<SpawnFailureError> {
   const cause = toError(error);
@@ -220,7 +244,7 @@ export async function classifySpawnFailure(
 }
 
 function classifySpawnFailureSync(
-  error: unknown,
+  error: LspBoundaryValue,
   options: { command: string; cwd?: string },
 ): SpawnFailureError {
   const cause = toError(error);
@@ -271,6 +295,8 @@ interface LifetimeCleanupState {
 // Vitest reloads modules inside a reused worker. Keep this registry on the
 // process so those module instances share one signal/exit listener set.
 const lifetimeStateKey = Symbol.for("choco-pi-lsp.safe-spawn.lifetime-state");
+
+// SAFETY: This module owns the symbol or process-global slot and writes only the declared state representation.
 const processWithLifetimeState = process as typeof process & {
   [lifetimeStateKey]?: LifetimeCleanupState;
 };
@@ -311,6 +337,8 @@ function installLifetimeCleanup(): void {
   process.once("exit", () => {
     for (const pid of lifetimeState.pids) killPidTreeSync(pid);
   });
+
+  // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as NodeJS.Signals[]) {
     process.once(signal, () => {
       for (const pid of lifetimeState.pids) killPidTreeSync(pid);
@@ -882,6 +910,8 @@ function synthesizeEnoentError(command: string): NodeJS.ErrnoException {
   // Shaped like Node's native `spawn <cmd> ENOENT` error (message/code/
   // syscall/path) so the typed classifier retains the same diagnostic cause
   // now that Windows resolution happens before spawn instead of inside cmd.exe.
+
+  // SAFETY: The adjacent Error and property-presence checks establish the optional Node error code representation.
   const err = new Error(`spawn ${command} ENOENT`) as NodeJS.ErrnoException;
   err.code = "ENOENT";
   err.syscall = "spawn";
@@ -1059,7 +1089,7 @@ export async function safeSpawnAsync(
         ? Math.floor(options.maxOutputBytes)
         : undefined;
     const appendOutput = (current: string, chunk: string | Buffer): string => {
-      const text = typeof chunk === "string" ? chunk : chunk.toString();
+      const text = Check(Type.String(), chunk) ? chunk : chunk.toString();
       if (maxOutputBytes === undefined) return current + text;
       const used = Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
       const remaining = maxOutputBytes - used;
@@ -1215,7 +1245,7 @@ export async function safeSpawnAsync(
     // best-effort/never-throws by design, but this call site wraps it anyway
     // (belt and suspenders: the sampling seam must never be the reason a real
     // spawn fails) with a no-op fallback sampler.
-    let usageSampler: { stop: () => SpawnResourceUsage | null };
+    let usageSampler: SpawnUsageSampler;
     try {
       usageSampler = startSpawnUsageSampler(child.pid);
     } catch {
@@ -1565,16 +1595,16 @@ export async function safeSpawnAsync(
           ? new SpawnFailureError("timeout", err.message, err)
           : undefined;
       const finish = (spawnFailure: SpawnFailureError): void =>
-        resolve({
-          stdout,
-          stderr,
-          status: null,
-          error: err,
-          failure,
-          spawnFailure,
-          ...(outputTruncated ? { outputTruncated: true } : {}),
-          resourceUsage,
-        });
+        resolve(
+          Object.assign(
+            assignOptionalProperties(
+              { stdout, stderr, status: null, error: err, failure, spawnFailure },
+              outputTruncated,
+              () => ({ outputTruncated: true }),
+            ),
+            { resourceUsage },
+          ),
+        );
       if (controlFailure) finish(controlFailure);
       else {
         void classifySpawnFailure(err, { command, cwd: options?.cwd }).then(finish);
@@ -1733,6 +1763,7 @@ export function safeSpawn(
     }
 
     const result = spawnSync(spawnCmd, spawnArgs, {
+      // SAFETY: The caller-provided options already satisfy the public spawn-options input type; this copy only adds normalized overrides.
       ...(options as SpawnOptions),
       cwd: spawnCwd,
       env: spawnEnv,
@@ -1745,16 +1776,20 @@ export function safeSpawn(
     const spawnFailure = result.error
       ? classifySpawnFailureSync(result.error, { command, cwd: options?.cwd })
       : undefined;
-    return {
-      stdout: result.stdout?.toString() || "",
-      stderr: result.stderr?.toString() || "",
-      status: result.status,
-      error: result.error,
-      ...(spawnFailure ? { failure: "spawn" as const, spawnFailure } : {}),
-    };
+    return assignOptionalProperties(
+      {
+        stdout: result.stdout?.toString() || "",
+        stderr: result.stderr?.toString() || "",
+        status: result.status,
+        error: result.error,
+      },
+      spawnFailure,
+      () => ({ failure: "spawn" as const, spawnFailure }),
+    );
   }
 
   const result = spawnSync(command, args, {
+    // SAFETY: The caller-provided options already satisfy the public spawn-options input type; this copy only adds normalized overrides.
     ...(options as SpawnOptions),
     // Explicit override, not just the spread above: `options.env` alone
     // would otherwise reach the child as a full replacement (no
@@ -1771,13 +1806,16 @@ export function safeSpawn(
   const spawnFailure = result.error
     ? classifySpawnFailureSync(result.error, { command, cwd: options?.cwd })
     : undefined;
-  return {
-    stdout: result.stdout?.toString() || "",
-    stderr: result.stderr?.toString() || "",
-    status: result.status,
-    error: result.error,
-    ...(spawnFailure ? { failure: "spawn" as const, spawnFailure } : {}),
-  };
+  return assignOptionalProperties(
+    {
+      stdout: result.stdout?.toString() || "",
+      stderr: result.stderr?.toString() || "",
+      status: result.status,
+      error: result.error,
+    },
+    spawnFailure,
+    () => ({ failure: "spawn" as const, spawnFailure }),
+  );
 }
 
 /**

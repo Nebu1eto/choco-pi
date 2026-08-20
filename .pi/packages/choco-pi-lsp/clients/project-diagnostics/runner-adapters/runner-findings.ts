@@ -55,13 +55,13 @@ function failureMessage(failure: TestFailure): string {
  */
 const LOCATION_LINE_COL_RE = /:(\d+)(?::(\d+))?$/;
 
-function parseLocation(location: string | undefined): { line?: number; column?: number } {
+function parseLocation(location: string | undefined) {
   if (!location) return {};
   const match = LOCATION_LINE_COL_RE.exec(location);
   if (!match) return {};
   return {
     line: Number.parseInt(match[1], 10),
-    ...(match[2] ? { column: Number.parseInt(match[2], 10) } : {}),
+    ...includePropertiesWhen(match[2], () => ({ column: Number.parseInt(match[2], 10) })),
   };
 }
 
@@ -148,4 +148,13 @@ export function testRunnerFindingsToProjectDiagnostics(
           }
         : diagnostic,
     );
+}
+
+function includePropertiesWhen<T extends object, TInclude>(
+  include: TInclude,
+  createProperties: () => T,
+): Partial<T> {
+  const properties: Partial<T> = {};
+  if (include) Object.assign(properties, createProperties());
+  return properties;
 }

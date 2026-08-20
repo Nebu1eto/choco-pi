@@ -23,6 +23,19 @@ import {
 } from "./mcp/ipc.js";
 import { normalizeFilePath } from "./path-utils.js";
 
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+): T & Partial<U>;
+function assignOptionalProperties<T extends object, U extends object, C>(
+  target: T,
+  include: C,
+  createProperties: (included: NonNullable<C>) => U,
+) {
+  return include ? Object.assign(target, createProperties(include)) : target;
+}
+
 interface AttachState {
   cwd?: string;
   incumbentPid?: number;
@@ -136,36 +149,26 @@ async function serveRequest(
     state.servedDiagnosticHashes.set(normalizeFilePath(req.file), req.contentHash);
   }
   return {
-    result: {
-      route: "diagnostics",
-      version: WARM_DIAGNOSTICS_SCHEMA_VERSION,
-      // #1179: `touchFile` now returns the `{ diags, inconclusive, binding }`
-      // wrapper — take the array off `.diags`. This is the canonical shape-5
-      // serialization boundary: the diagnostics array crosses the IPC socket
-      // and `inconclusive` is re-surfaced below as an EXPLICIT enumerable DTO
-      // field (no side-channel survives `JSON.stringify`).
-      diagnostics: touched?.diags ?? [],
-      contentHash: req.contentHash,
-      servedAt,
-      fresh: servedAt <= req.deadlineAt && touched !== undefined,
-      inconclusive: touched?.inconclusive === true,
-      // #1253: carry the touch's own confirmation verdict across the socket
-      // as an explicit enumerable field (same doctrine as `inconclusive`) —
-      // without it, an incumbent-served empty result from a silent-on-clean
-      // server is indistinguishable from "never answered" on the far side.
-      ...(touched?.confirmation === "confirmed" ? { confirmation: "confirmed" as const } : {}),
-      // #1470: a PARTIAL touch crosses the socket as itself rather than as a
-      // missing key. Omitting it would still fail closed on the far side, but it
-      // would be indistinguishable from an old incumbent that never sent the
-      // field — and the whole point of narrowing is that the reader can tell
-      // which coverage is real.
-      ...(coverageGap.length > 0
-        ? {
-            confirmation: "partial" as const,
-            unconfirmedServerIds: [...coverageGap],
-          }
-        : {}),
-    },
+    result: assignOptionalProperties(
+      assignOptionalProperties(
+        {
+          route: "diagnostics",
+          version: WARM_DIAGNOSTICS_SCHEMA_VERSION,
+          diagnostics: touched?.diags ?? [],
+          contentHash: req.contentHash,
+          servedAt,
+          fresh: servedAt <= req.deadlineAt && touched !== undefined,
+          inconclusive: touched?.inconclusive === true,
+        },
+        touched?.confirmation === "confirmed",
+        () => ({ confirmation: "confirmed" as const }),
+      ),
+      coverageGap.length > 0,
+      () => ({
+        confirmation: "partial" as const,
+        unconfirmedServerIds: [...coverageGap],
+      }),
+    ),
   };
 }
 
@@ -191,6 +194,7 @@ function startServer(cwd: string): void {
       createWarmIpcLineReader((line) => {
         void (async () => {
           try {
+            // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
             const req = JSON.parse(line) as WarmDiagnosticsRequest | WarmCodeActionsRequest;
             socket.end(`${JSON.stringify(await serveRequest(req))}\n`);
           } catch (error) {

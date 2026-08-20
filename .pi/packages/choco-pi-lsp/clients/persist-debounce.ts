@@ -1,3 +1,6 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+
 /**
  * Generalized debounced-persist coalescing scheduler (#348 phase 2), factored
  * out of the review graph's #260 circuit-breaker so a second warm cache
@@ -54,7 +57,7 @@ export function createDebounceScheduler<T>(args: {
   }
 
   function flushAll(): void {
-    for (const key of [...pending.keys()]) flush(key);
+    for (const key of Array.from(pending.keys())) flush(key);
   }
 
   function schedule(key: string, payload: T): void {
@@ -68,7 +71,8 @@ export function createDebounceScheduler<T>(args: {
     }
     const timer = setTimeout(() => flush(key), debounce);
     // Don't keep the event loop alive solely for a debounced write.
-    if (typeof timer.unref === "function") timer.unref();
+
+    if (Check(Type.Function([], Type.Unknown()), timer.unref)) timer.unref();
     timers.set(key, timer);
   }
 

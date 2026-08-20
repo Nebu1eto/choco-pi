@@ -23,11 +23,12 @@ export function combineAbortSignals(
 ): AbortSignal | undefined {
   const live = signals.filter((s): s is AbortSignal => s !== undefined);
   if (live.length <= 1) return live[0];
-  if (typeof AbortSignal.any === "function") return AbortSignal.any(live);
+  const combine = AbortSignal.any;
+  if (combine instanceof Function) return combine(live);
   const controller = new AbortController();
   for (const s of live) {
     if (s.aborted) {
-      controller.abort((s as AbortSignal & { reason?: unknown }).reason);
+      controller.abort(s.reason);
       break;
     }
     s.addEventListener("abort", () => controller.abort(s.reason), { once: true });

@@ -1,4 +1,6 @@
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { getLinterPolicyForCwd } from "../../tool-policy.js";
 import { findNearestDirWithAnyBasename } from "../../workspace-topology.js";
@@ -25,24 +27,28 @@ function findTflintConfig(fileDir: string): string | null {
   return dir ? path.join(dir, TFLINT_CONFIG) : null;
 }
 
-interface TflintIssue {
-  rule: { name: string; severity: string };
-  message: string;
-  range: {
-    filename: string;
-    start: { line: number; column: number };
-  };
-}
-
-interface TflintOutput {
-  issues: TflintIssue[];
-  errors: Array<{ message: string }>;
-}
+const TflintOutputSchema = Type.Object(
+  {
+    issues: Type.Array(
+      Type.Object({
+        rule: Type.Object({ name: Type.String(), severity: Type.String() }),
+        message: Type.String(),
+        range: Type.Object({
+          filename: Type.String(),
+          start: Type.Object({ line: Type.Number(), column: Type.Number() }),
+        }),
+      }),
+    ),
+    errors: Type.Array(Type.Object({ message: Type.String() })),
+  },
+  { additionalProperties: true },
+);
 
 function parseTflintOutput(raw: string, filePath: string): Diagnostic[] {
   try {
-    const parsed = JSON.parse(raw) as TflintOutput;
-    const issues = parsed.issues ?? [];
+    const parsed = JSON.parse(raw);
+    if (!Value.Check(TflintOutputSchema, parsed)) return [];
+    const issues = parsed.issues;
 
     return issues.map((issue) => {
       const severity = issue.rule.severity === "error" ? "error" : "warning";

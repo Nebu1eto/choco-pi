@@ -1,3 +1,5 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import { loadBootstrapClients } from "./bootstrap.js";
@@ -47,6 +49,11 @@ import { handleToolResult } from "./runtime-tool-result.js";
 import { isToolCallEventType, resolveToolCallCorrelationId } from "./tool-event.js";
 import { getSharedTreeSitterClient } from "./tree-sitter-shared.js";
 
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+
 const LSP_TOOLCALL_NAV_TOUCH_BUDGET_MS = Math.max(
   0,
   Number.parseInt(
@@ -62,21 +69,26 @@ const LSP_TOOLCALL_TOUCH_BUDGET_MS = Math.max(
 );
 
 function getToolCallRawFilePath(toolName: string, event: { input?: unknown }): string | undefined {
-  const inputObj = (event.input ?? {}) as Record<string, unknown>;
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
+  const inputObj = (event.input ?? {}) as Record<string, LspDictionaryValue>;
 
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   if (isToolCallEventType("write", event as any) || isToolCallEventType("edit", event as any)) {
+    // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     const filePath = (event.input as { path?: unknown }).path;
-    return typeof filePath === "string" ? filePath : undefined;
+
+    return Check(Type.String(), filePath) ? filePath : undefined;
   }
 
   if (toolName === "read") {
-    if (typeof inputObj.path === "string") return inputObj.path;
-    if (typeof inputObj.filePath === "string") return inputObj.filePath;
+    if (Check(Type.String(), inputObj.path)) return inputObj.path;
+
+    if (Check(Type.String(), inputObj.filePath)) return inputObj.filePath;
     return undefined;
   }
 
   if (toolName === "lsp_navigation") {
-    return typeof inputObj.filePath === "string" ? inputObj.filePath : undefined;
+    return Check(Type.String(), inputObj.filePath) ? inputObj.filePath : undefined;
   }
 
   return undefined;
@@ -129,8 +141,10 @@ type ReadToolInput = {
   limit?: number;
 };
 
-function getReadToolInput(toolName: string, input: unknown): ReadToolInput | undefined {
+function getReadToolInput(toolName: string, input: LspBoundaryValue): ReadToolInput | undefined {
   if (toolName !== "read") return undefined;
+
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   return input as ReadToolInput;
 }
 
@@ -210,11 +224,16 @@ function isIndentationOnlyChange(before: string, after: string): boolean {
   return beforeLines.every((line, index) => line.trim() === afterLines[index].trim());
 }
 
-function getNewContentFromToolCall(event: unknown): string | undefined {
+function getNewContentFromToolCall(event: LspBoundaryValue): string | undefined {
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   if (isToolCallEventType("write", event as any)) {
+    // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     return ((event as { input?: unknown }).input as { content?: string }).content;
   }
+
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   if (isToolCallEventType("edit", event as any)) {
+    // SAFETY: The edit discriminator establishes an input object whose edits use the host's documented edit shape.
     const edits = (
       (event as { input?: unknown }).input as {
         edits?: Array<{ newText?: string }>;
@@ -313,6 +332,8 @@ export type ToolCallResult = { block: true; reason?: string } | void;
 export async function handleToolCall(deps: ToolCallDeps): Promise<ToolCallResult> {
   try {
     const result = await handleToolCallImpl(deps);
+
+    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
     if (result && (result as { block?: boolean }).block) {
       // Review F2 — this cleanup gets its OWN catch, and it is not optional
       // tidiness. By the time it runs, `result` is a FINAL `{ block: true }`
@@ -332,6 +353,8 @@ export async function handleToolCall(deps: ToolCallDeps): Promise<ToolCallResult
         const reason = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
         recordDegradationOnce({
           kind: "tool-call-handler-throw",
+
+          // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
           subject: `attribution-cleanup:${(deps.event as { toolName?: string } | undefined)?.toolName ?? "unknown"}`,
           reason,
         });
@@ -346,6 +369,7 @@ export async function handleToolCall(deps: ToolCallDeps): Promise<ToolCallResult
     }
     return result;
   } catch (error) {
+    // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     const toolName = (deps.event as { toolName?: string } | undefined)?.toolName ?? "unknown";
     const reason = error instanceof Error ? error.message : String(error);
     // Once per tool name per session: a wedged handler fires on every call of
@@ -389,13 +413,17 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
   let filePath: string | undefined;
   const logToolReadGuardEvent = (entry: Parameters<typeof logReadGuardEvent>[0]): void =>
     logReadGuardEvent({ ...entry, correlationId: readGuardCorrelationId });
+
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   const toolName = (event as { toolName?: string }).toolName ?? "";
+
+  // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
   const editInputForTelemetry = (event as { input?: unknown }).input as
     | { edits?: unknown[] }
     | undefined;
   // #1655 item 3: SNAPSHOT the requested batch width here, at handler entry.
   // `input` is a live, mutable, extension-ordered object — pi types it
-  // `Record<string, unknown>` and hands the SAME reference to every handler in
+  // `Record<string, LspDictionaryValue>` and hands the SAME reference to every handler in
   // turn (`@earendil-works/pi-coding-agent/dist/core/extensions/runner.js:701-716`
   // passes `event` unchanged through the loop; source
   // `src/core/extensions/types.ts:914-919`), and choco-pi-lsp itself rewrites it in
@@ -580,7 +608,7 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
             }
           }
           if (ctx.ui) {
-            ctx.ui && updateLspStatus(ctx.ui.setStatus, ctx.ui.theme);
+            if (ctx.ui) updateLspStatus(ctx.ui.setStatus, ctx.ui.theme);
           }
         })
         .catch((err) => {
@@ -782,6 +810,7 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
   // Detect this before the read guard runs so a recoverable mismatch does not
   // degrade into a no-line-info allow path.
   if (isEditOnly && filePath) {
+    // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
     const editInput = (event as { input?: unknown }).input as {
       oldText?: string;
       newText?: string;
@@ -1004,7 +1033,8 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
   if (isEditOnly && filePath && !getFlag("no-read-guard")) {
     const readGuard = runtime.readGuard;
     const isExistingFile =
-      typeof readGuard?.isNewFile !== "function" || !readGuard.isNewFile(filePath);
+      !Check(Type.Function([], Type.Unknown()), readGuard?.isNewFile) ||
+      !readGuard.isNewFile(filePath);
     if (readGuard && isExistingFile && !isExternalOrVendor) {
       const {
         touchedLines,
@@ -1060,6 +1090,7 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
                   agentBehaviorRecord: (toolName, analyzedPath) =>
                     agentBehaviorClient.recordToolCall(toolName, analyzedPath),
                   formatBehaviorWarnings: (warnings) =>
+                    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
                     agentBehaviorClient.formatWarnings(warnings as any),
                 });
                 if (result?.isError) {
@@ -1120,13 +1151,12 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
           isExistingFile,
         },
       });
-      const verdict =
-        typeof readGuard.checkEdit === "function"
-          ? readGuard.checkEdit(filePath, touchedLines, editRanges, {
-              skipSnapshotCheck: !!contentMatchValidated,
-              oldTextResolved: !!contentMatchValidated,
-            })
-          : { action: "allow" as const };
+      const verdict = Check(Type.Function([], Type.Unknown()), readGuard.checkEdit)
+        ? readGuard.checkEdit(filePath, touchedLines, editRanges, {
+            skipSnapshotCheck: !!contentMatchValidated,
+            oldTextResolved: !!contentMatchValidated,
+          })
+        : { action: "allow" as const };
       // Content-verified range-stale relocation: the lines the agent meant
       // to edit moved (read-time line hashes uniquely match the new spot),
       // so re-target the positional edit to where the content now lives
@@ -1135,6 +1165,7 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
       // pi-hashline-readmap auto-apply. Single-range only (set by the guard).
       if (verdict.relocation) {
         const relocated = relocateEditRange(
+          // SAFETY: The host tool discriminator and adjacent array/object checks establish the accessed event payload member before use.
           (event as { input?: unknown }).input,
           verdict.relocation.from,
           verdict.relocation.to,

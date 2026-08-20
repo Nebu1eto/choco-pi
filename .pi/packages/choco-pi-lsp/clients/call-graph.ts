@@ -10,6 +10,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { getProjectDataDir } from "./file-utils.js";
 import { writeFileAtomic } from "./atomic-write.js";
 import { parseSymbolKey as parseCanonicalSymbolKey } from "./review-graph/symbol-id.js";
@@ -369,10 +371,7 @@ const STDLIB_NAMES = new Set([
  * Exported symbols and all symbols are indexed; the ambiguity weight
  * discounts edges when many files define the same name.
  */
-function buildDefIndex(allSymbols: Map<string, Symbol[]>): {
-  byName: Map<string, SymbolKey[]>;
-  byId: Map<SymbolKey, Symbol>;
-} {
+function buildDefIndex(allSymbols: Map<string, Symbol[]>) {
   const byName = new Map<string, SymbolKey[]>();
   const byId = new Map<SymbolKey, Symbol>();
   for (const [, symbols] of allSymbols) {
@@ -693,9 +692,12 @@ function inferLegacyCoverage(edges: ResolvedCallEdge[]): CallGraphEvidenceCovera
   let weightedReferencesEvidence = 0;
   let weightedDuplicateEvidence = 0;
   for (const edge of edges) {
+    const evidenceCount = edge.evidenceCount;
     const count =
-      Number.isFinite(edge.evidenceCount) && (edge.evidenceCount ?? 0) > 0
-        ? Math.floor(edge.evidenceCount as number)
+      Value.Check(Type.Number(), evidenceCount) &&
+      Number.isFinite(evidenceCount) &&
+      evidenceCount > 0
+        ? Math.floor(evidenceCount)
         : 1;
     const weight = Number.isFinite(edge.weight) && edge.weight >= 0 ? edge.weight : 1;
     weightedTotalEvidence += count * weight;
@@ -735,8 +737,8 @@ function loadCoverage(
     : inferred;
 }
 
-function finiteCount(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+function finiteCount<T>(value: T): value is T & number {
+  return Value.Check(Type.Number(), value) && Number.isInteger(value) && value >= 0;
 }
 
 function countsMatch(left: number, right: number): boolean {
@@ -747,10 +749,10 @@ function validatePersistedCallGraph(
   raw: PersistedCallGraph,
   coverage: CallGraphEvidenceCoverage,
 ): boolean {
-  const nonEmptyString = (value: unknown): value is string =>
-    typeof value === "string" && value.trim().length > 0;
-  const enumValue = <T extends string>(value: unknown, values: readonly T[]): value is T =>
-    typeof value === "string" && values.includes(value as T);
+  const nonEmptyString = <T>(value: T): value is T & string =>
+    Value.Check(Type.String(), value) && value.trim().length > 0;
+  const enumValue = <T, U extends string>(value: T, values: readonly U[]): value is T & U =>
+    Value.Check(Type.String(), value) && values.some((candidate) => String(candidate) === value);
   const edgeKinds = ["calls", "references", "mixed"] as const;
   const resolutions = ["exact", "import", "receiver-type", "name-only", "unresolved"] as const;
   if (!raw || raw.version !== CALL_GRAPH_CACHE_VERSION || !nonEmptyString(raw.builtAt))
@@ -759,7 +761,7 @@ function validatePersistedCallGraph(
     return false;
   if (
     raw.coverage !== undefined &&
-    (!raw.coverage || typeof raw.coverage !== "object" || Array.isArray(raw.coverage))
+    (!raw.coverage || !Value.Check(Type.Object({}), raw.coverage) || Array.isArray(raw.coverage))
   )
     return false;
   if (
@@ -781,12 +783,15 @@ function validatePersistedCallGraph(
     coverage.sameFileEvidence,
     coverage.duplicateEvidence,
   ];
-  if (typeof coverage.complete !== "boolean" || coverageValues.some((value) => !finiteCount(value)))
+  if (
+    !Value.Check(Type.Boolean(), coverage.complete) ||
+    coverageValues.some((value) => !finiteCount(value))
+  )
     return false;
   if (
     coverage.languages !== undefined &&
     (!coverage.languages ||
-      typeof coverage.languages !== "object" ||
+      !Value.Check(Type.Object({}), coverage.languages) ||
       Array.isArray(coverage.languages) ||
       Object.entries(coverage.languages).some(
         ([language, status]) =>
@@ -823,13 +828,13 @@ function validatePersistedCallGraph(
   for (const edge of raw.edges) {
     if (
       !edge ||
-      typeof edge !== "object" ||
+      !Value.Check(Type.Object({}), edge) ||
       !nonEmptyString(edge.callerKey) ||
       !nonEmptyString(edge.calleeKey) ||
       !nonEmptyString(edge.callerFile) ||
       !nonEmptyString(edge.calleeFile) ||
       !nonEmptyString(edge.calleeSymbol) ||
-      typeof edge.weight !== "number" ||
+      !Value.Check(Type.Number(), edge.weight) ||
       !Number.isFinite(edge.weight) ||
       edge.weight <= 0 ||
       edge.weight > 1
@@ -893,18 +898,18 @@ function validatePersistedCallGraph(
   if (raw.unresolvedRefs !== undefined && raw.unresolvedRefs !== coverage.unresolvedEvidence)
     return false;
 
-  const readAdjacency = (entries: unknown): Map<string, Set<string>> | undefined => {
+  const readAdjacency = <T>(entries: T): Map<string, Set<string>> | undefined => {
     const result = new Map<string, Set<string>>();
     if (!Array.isArray(entries)) return undefined;
     for (const entry of entries) {
       if (
         !Array.isArray(entry) ||
         !nonEmptyString(entry[0]) ||
-        !Array.isArray(entry[1]) ||
+        !Value.Check(Type.Array(Type.String()), entry[1]) ||
         entry[1].some((key) => !nonEmptyString(key))
       )
         return undefined;
-      const keys = entry[1] as string[];
+      const keys = entry[1];
       if (new Set(keys).size !== keys.length || result.has(entry[0])) return undefined;
       result.set(entry[0], new Set(keys));
     }
@@ -937,7 +942,7 @@ function validatePersistedCallGraph(
     if (
       !Array.isArray(entry) ||
       !nonEmptyString(entry[0]) ||
-      typeof entry[1] !== "number" ||
+      !Value.Check(Type.Number(), entry[1]) ||
       !Number.isFinite(entry[1]) ||
       entry[1] < 0 ||
       actualInDegree.has(entry[0])
@@ -967,9 +972,12 @@ export function loadCallGraph(
   | undefined {
   const cacheFile = cacheFilePath(cwd);
   try {
-    const raw = JSON.parse(fs.readFileSync(cacheFile, "utf-8")) as PersistedCallGraph;
+    const raw = JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
     if (raw.version !== CALL_GRAPH_CACHE_VERSION) return undefined;
-    if (typeof raw.reviewGraphVersion !== "string" || typeof raw.reviewGraphSignature !== "string")
+    if (
+      !Value.Check(Type.String(), raw.reviewGraphVersion) ||
+      !Value.Check(Type.String(), raw.reviewGraphSignature)
+    )
       return undefined;
     const identity: CallGraphCacheIdentity = {
       reviewGraphVersion: raw.reviewGraphVersion,
@@ -986,8 +994,8 @@ export function loadCallGraph(
     if (!validatePersistedCallGraph(raw, coverage)) return undefined;
     return {
       graph: {
-        callees: new Map(raw.callees.map(([k, v]) => [k, new Set(v)])),
-        callers: new Map(raw.callers.map(([k, v]) => [k, new Set(v)])),
+        callees: new Map(raw.callees.map(([k, v]: [string, string[]]) => [k, new Set(v)])),
+        callers: new Map(raw.callers.map(([k, v]: [string, string[]]) => [k, new Set(v)])),
         inDegree: new Map(raw.inDegree),
         edges: raw.edges,
         unresolvedRefs: raw.unresolvedRefs ?? coverage.unresolvedEvidence,

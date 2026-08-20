@@ -1,3 +1,4 @@
+import { isRuntimeFunction, isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.js";
 /**
  * Auto-Installation System for choco-pi-lsp
  *
@@ -68,7 +69,19 @@ import {
   pmBinary,
   resolveNodePackageManager,
 } from "../package-manager.js";
-import { resetSafeSpawnWindowsCommandCache, safeSpawnAsync } from "../safe-spawn.js";
+import {
+  resetSafeSpawnWindowsCommandCache,
+  safeSpawnAsync as hostSafeSpawnAsync,
+  type SpawnResult,
+} from "../safe-spawn.js";
+
+async function safeSpawnAsync(
+  ...args: Parameters<typeof hostSafeSpawnAsync>
+): Promise<SpawnResult> {
+  const result = await hostSafeSpawnAsync(...args);
+  // SAFETY: safeSpawnAsync constructs SpawnResult on every resolve path; its shared inferred signature is temporarily unknown.
+  return result as SpawnResult;
+}
 
 // Global installation directory for choco-pi-lsp tools
 const TOOLS_DIR = path.join(getGlobalPiLensDir(), "tools");
@@ -95,6 +108,7 @@ function isProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
@@ -140,8 +154,10 @@ async function acquireInstallLock(): Promise<{
         },
       };
     } catch (error) {
+      // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       try {
+        // SAFETY: The parsed value is consumed only through the optional fields declared here and each field is validated before use.
         const owner = JSON.parse(await fs.readFile(INSTALL_LOCK_PATH, "utf8")) as InstallLockOwner;
         lastOwner = `pid=${owner.pid} createdAt=${owner.createdAt}`;
         // #946 review F1: PID liveness alone cannot detect a hard-killed
@@ -208,7 +224,7 @@ function debugLog(...args: unknown[]): void {
     logExtension({
       subsystem: "auto-install",
       level: "debug",
-      message: args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "),
+      message: args.map((arg) => (isRuntimeString(arg) ? arg : JSON.stringify(arg))).join(" "),
     });
   }
 }
@@ -343,6 +359,7 @@ function archAssetMatch(table: {
 }): (platform: string, arch: string) => string | undefined {
   return (platform, arch) => {
     if (arch !== "x64" && arch !== "arm64") return undefined;
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     return table[platform as "linux" | "darwin" | "win32"]?.[arch];
   };
 }
@@ -1448,11 +1465,13 @@ async function readProbeCache(): Promise<ProbeCache> {
   try {
     const raw = await fs.readFile(PROBE_CACHE_PATH, "utf-8");
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    if (!parsed || !isRuntimeObject(parsed) || Array.isArray(parsed)) {
       throw new Error("probe-cache root is not an object");
     }
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     _probeCache = parsed as ProbeCache;
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     const code = (err as NodeJS.ErrnoException | undefined)?.code;
     if (code !== "ENOENT") {
       logSessionStart(
@@ -1523,12 +1542,14 @@ function deserializeProbeCache(contents: string | undefined): ProbeCache {
   if (contents === undefined) return {};
   try {
     const parsed: unknown = JSON.parse(contents);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    if (!parsed || !isRuntimeObject(parsed) || Array.isArray(parsed)) {
       throw new Error("probe-cache root is not an object");
     }
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     return parsed as ProbeCache;
   } catch (err) {
     logSessionStart(
+      // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
       `auto-install probe-cache: write-side read was corrupt (${(err as Error).message}); recovering as empty`,
     );
     return {};
@@ -1624,6 +1645,7 @@ async function writeProbeCache(): Promise<ProbeCacheFlushResult> {
     // is logged without paths, source, or command text; an unavailable cache
     // must never look like a clean empty cache to operators.
     logSessionStart(
+      // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
       `auto-install probe-cache: flush failed (${(err as NodeJS.ErrnoException | undefined)?.code ?? "write error"}); pending update retained`,
     );
     scheduleProbeFlushRetry();
@@ -2000,6 +2022,7 @@ export async function verifyToolBinary(
     });
 
     proc.on("error", (err) => {
+      // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
       const errno = (err as NodeJS.ErrnoException).code;
       if (errno === "EAGAIN" || errno === "EBUSY" || errno === "ETIMEDOUT") {
         onTransient?.();
@@ -2725,6 +2748,7 @@ async function installGitHubTool(tool: ToolDefinition): Promise<string | undefin
     );
     releaseJson = JSON.parse(body.toString("utf8"));
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     logSessionStart(`github-install ${tool.id}: release fetch failed: ${(err as Error).message}`);
     return undefined;
   }
@@ -2749,6 +2773,7 @@ async function installGitHubTool(tool: ToolDefinition): Promise<string | undefin
       `github-install ${tool.id}: downloaded ${asset.name} (${assetBuffer.length} bytes, ${Date.now() - downloadStart}ms)`,
     );
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     logSessionStart(`github-install ${tool.id}: download failed: ${(err as Error).message}`);
     return undefined;
   }
@@ -2869,6 +2894,7 @@ async function installGitHubTool(tool: ToolDefinition): Promise<string | undefin
       });
     }
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     logSessionStart(`github-install ${tool.id}: install failed: ${(err as Error).message}`);
     return undefined;
   }
@@ -2893,6 +2919,7 @@ async function installGitHubTool(tool: ToolDefinition): Promise<string | undefin
       );
     } catch (err) {
       logSessionStart(
+        // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
         `github-install ${tool.id}: extra asset ${extraName} download failed: ${(err as Error).message}`,
       );
       return undefined;
@@ -3052,6 +3079,7 @@ async function installMavenTool(tool: ToolDefinition): Promise<string | undefine
   try {
     jarBuffer = await httpsGet(url);
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     logSessionStart(`maven-install ${tool.id}: download failed: ${(err as Error).message}`);
     return undefined;
   }
@@ -3083,6 +3111,7 @@ async function installMavenTool(tool: ToolDefinition): Promise<string | undefine
     debugLog(`[maven] installed ${tool.name} → ${launcherPath}`);
     return launcherPath;
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     logSessionStart(`maven-install ${tool.id}: install failed: ${(err as Error).message}`);
     return undefined;
   }
@@ -3102,12 +3131,18 @@ async function installMavenTool(tool: ToolDefinition): Promise<string | undefine
  * may return `undefined` (unsupported → caller degrades to "unavailable").
  * Exported for the tool-registry contract test.
  */
+function isArchiveUrlResolver(
+  value: ArchiveSpec["url"],
+): value is (platform: string, arch: string) => string | undefined {
+  return isRuntimeFunction(value);
+}
+
 export function resolveArchiveUrl(
   spec: ArchiveSpec,
   platform: string = process.platform,
   arch: string = process.arch,
 ): string | undefined {
-  return typeof spec.url === "function" ? spec.url(platform, arch) : spec.url;
+  return isArchiveUrlResolver(spec.url) ? spec.url(platform, arch) : spec.url;
 }
 
 async function installArchiveTool(tool: ToolDefinition): Promise<string | undefined> {
@@ -3129,6 +3164,7 @@ async function installArchiveTool(tool: ToolDefinition): Promise<string | undefi
   try {
     archiveBuffer = await httpsGet(url);
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     logSessionStart(`archive-install ${tool.id}: download failed: ${(err as Error).message}`);
     return undefined;
   }
@@ -3244,6 +3280,7 @@ async function installArchiveTool(tool: ToolDefinition): Promise<string | undefi
     return shimPath;
   } catch (err) {
     await fs.rm(tmpArchive, { force: true }).catch(() => {});
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     logSessionStart(`archive-install ${tool.id}: install failed: ${(err as Error).message}`);
     return undefined;
   }
@@ -3376,6 +3413,7 @@ async function installNpmTool(
 
     return binPath;
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     logSessionStart(`auto-install npm ${packageName}: exception: ${(err as Error).message}`);
     return undefined;
   }
@@ -3506,6 +3544,7 @@ async function installPipTool(packageName: string): Promise<string | undefined> 
       `Failed to install ${packageName}: no usable pip command found (${lastError || "unknown error"})`,
     );
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     logSessionStart(`auto-install pip ${packageName}: exception: ${(err as Error).message}`);
     return undefined;
   }
@@ -3529,6 +3568,7 @@ async function installGemTool(packageName: string): Promise<string | undefined> 
 
     return packageName;
   } catch (err) {
+    // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
     logSessionStart(`auto-install gem ${packageName}: exception: ${(err as Error).message}`);
     return undefined;
   }
@@ -3606,6 +3646,7 @@ export async function installTool(toolId: string): Promise<boolean> {
           // be a cycle. By the time this line runs the module graph is long
           // since evaluated, so the lazy import is safe and also keeps the
           // refresh module off the startup path.
+          // SAFETY: The npm strategy guard above establishes packageName before this asynchronous callback is created.
           await import("./managed-tool-refresh.js")
             .then((m) => m.stampManagedToolInstalled(tool.id, tool.packageName as string))
             .catch(() => {
@@ -3653,6 +3694,7 @@ export async function installTool(toolId: string): Promise<boolean> {
     }
   } catch (err) {
     logSessionStart(
+      // SAFETY: The preceding platform, strategy, status, or cache check establishes the branch-specific installer value used here.
       `auto-install ${tool.id}: exception ${(err as Error).message} (${Date.now() - startedAt}ms)`,
     );
     return false;

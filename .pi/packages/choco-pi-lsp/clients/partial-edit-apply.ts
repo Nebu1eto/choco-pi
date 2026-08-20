@@ -9,6 +9,11 @@ import {
   type ReadGuardEditBatchSummary,
 } from "./read-guard-logger.js";
 
+type ReplaceOnceResultContract = {
+  content: string;
+  changed: boolean;
+};
+
 // A single edit element of the host edit tool ({ oldText, newText }). Pinned to
 // the SDK's EditToolInput so a host schema rename (e.g. oldText -> old_text) is a
 // compile error here rather than a silent runtime mismatch (#257 / refs #2).
@@ -35,16 +40,11 @@ export interface PartialEditApplyResult {
   summary?: ReadGuardEditBatchSummary;
 }
 
-function replaceOnce(
-  content: string,
-  oldText: string,
-  newText: string,
-): {
-  content: string;
-  changed: boolean;
-} {
+function replaceOnce(content: string, oldText: string, newText: string): ReplaceOnceResultContract {
   const idx = content.indexOf(oldText);
+
   if (idx === -1) return { content, changed: false };
+
   return {
     content: content.slice(0, idx) + newText + content.slice(idx + oldText.length),
     changed: true,

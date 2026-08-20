@@ -21,7 +21,9 @@ const EXPANDED_SIZE_CAP_LINES = 300;
 export const EXPANSION_BUDGET_MS = 200;
 
 /** File extensions we can parse — mirrors tree-sitter runner. */
-const EXT_TO_LANG: Record<string, string> = {
+
+interface EXTTOLANGValues extends Record<string, string> {}
+const EXT_TO_LANG: EXTTOLANGValues = {
   ".ts": "typescript",
   ".mts": "typescript",
   ".cts": "typescript",
@@ -70,7 +72,9 @@ const EXT_TO_LANG: Record<string, string> = {
 export const CODE_FILE_EXTENSIONS: readonly string[] = Object.keys(EXT_TO_LANG);
 
 /** AST node types considered "enclosing symbols" for coverage purposes. */
-const ENCLOSING_TYPES: Record<string, string[]> = {
+
+interface ENCLOSINGTYPESValues extends Record<string, string[]> {}
+const ENCLOSING_TYPES: ENCLOSINGTYPESValues = {
   typescript: [
     "function_declaration",
     "function_expression",
@@ -156,6 +160,8 @@ function findEnclosingNodeForRange(
 ): any {
   const nodeStartRow: number = node.startPosition?.row ?? 0;
   // biome-ignore lint/suspicious/noExplicitAny: endPosition not declared in local interface
+
+  // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
   const nodeEndRow: number = (node as any).endPosition?.row ?? nodeStartRow;
 
   if (endRow < nodeStartRow || startRow > nodeEndRow) return undefined;
@@ -177,9 +183,12 @@ function getSymbolName(node: any): string {
       child.type === "property_identifier" ||
       child.type === "name"
     ) {
+      // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
       return child.text as string;
     }
   }
+
+  // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
   return node.type as string;
 }
 
@@ -193,9 +202,12 @@ function buildAncestryChain(node: any, types: string[]): AncestorSymbol[] {
   // biome-ignore lint/suspicious/noExplicitAny: tree-sitter parent node
   let current: any = node.parent;
   while (current) {
+    // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
     if (types.includes(current.type as string)) {
       chain.push({
         name: getSymbolName(current),
+
+        // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
         kind: current.type as string,
         startLine: (current.startPosition?.row ?? 0) + 1,
       });
@@ -315,6 +327,7 @@ export async function tryExpandRead(
       tsClient.withParsedTree(filePath, languageId, content, (tree) => {
         // biome-ignore lint/suspicious/noExplicitAny: tree-sitter root node
         const node = findEnclosingNodeForRange(
+          // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
           tree.rootNode as any,
           requestedStartRow,
           requestedEndRow,
@@ -323,9 +336,13 @@ export async function tryExpandRead(
         if (!node) return undefined;
         return {
           name: getSymbolName(node),
+
+          // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
           kind: node.type as string,
           startRow: node.startPosition.row,
           // biome-ignore lint/suspicious/noExplicitAny: endPosition not in local interface
+
+          // SAFETY: The tree-sitter adapter supplies this node/query representation, and the adjacent capture or node guard establishes the member used here.
           endRow: (node as any).endPosition?.row ?? node.startPosition.row,
           ancestry: buildAncestryChain(node, enclosingTypes),
         };

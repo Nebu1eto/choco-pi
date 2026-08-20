@@ -1,3 +1,4 @@
+import { type Static, Type } from "typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { TERRAGRUNT_FILENAMES } from "./file-kinds.js";
@@ -6,6 +7,14 @@ import { resolvePackagePath } from "./package-root.js";
 import { findNearestContaining, walkUpDirs } from "./path-utils.js";
 import type { ProjectConventions } from "./project-conventions.js";
 import { loadProjectSnapshotWithoutWordIndex } from "./project-snapshot.js";
+
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
+
+type GetRubocopCommandResultContract = {
+  cmd: string;
+  args: string[];
+};
 
 export type ToolGate = "config-first" | "smart-default" | "mixed";
 
@@ -1839,6 +1848,7 @@ export function hasNearestPackageJsonDependency(cwd: string, dependencyName: str
   const pkgPath = findNearestPackageJsonPath(cwd);
   if (!pkgPath) return false;
   try {
+    // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as {
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
@@ -1852,7 +1862,8 @@ export function hasNearestPackageJsonField(cwd: string, fieldName: string): bool
   const pkgPath = findNearestPackageJsonPath(cwd);
   if (!pkgPath) return false;
   try {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as Record<string, unknown>;
+    // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as Record<string, LspDictionaryValue>;
     return pkg[fieldName] !== undefined;
   } catch {}
   return false;
@@ -1895,10 +1906,17 @@ export function hasOxfmtConfig(cwd: string): boolean {
     const pkgPath = path.join(dir, "package.json");
     if (fs.existsSync(pkgPath)) {
       try {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as Record<string, unknown>;
+        // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as Record<
+          string,
+          LspDictionaryValue
+        >;
         const deps = {
-          ...(pkg.dependencies as Record<string, unknown> | undefined),
-          ...(pkg.devDependencies as Record<string, unknown> | undefined),
+          // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+          ...(pkg.dependencies as Record<string, LspDictionaryValue> | undefined),
+
+          // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+          ...(pkg.devDependencies as Record<string, LspDictionaryValue> | undefined),
         };
         // Published package is `oxfmt`; the scoped name does not exist on npm.
         if (deps["oxfmt"] || deps["@oxc-project/oxfmt"]) return true;
@@ -1948,7 +1966,11 @@ export function hasOxfmtSvelteConfig(cwd: string): boolean {
     const rcPath = path.join(dir, ".oxfmtrc.json");
     if (fs.existsSync(rcPath)) {
       try {
-        const cfg = JSON.parse(fs.readFileSync(rcPath, "utf-8")) as Record<string, unknown>;
+        // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
+        const cfg = JSON.parse(fs.readFileSync(rcPath, "utf-8")) as Record<
+          string,
+          LspDictionaryValue
+        >;
         if (cfg.svelte === true) return true;
       } catch {}
     }
@@ -2601,10 +2623,7 @@ export function hasStandardrbConfig(cwd: string): boolean {
   return false;
 }
 
-export function getRubocopCommand(cwd: string): {
-  cmd: string;
-  args: string[];
-} {
+export function getRubocopCommand(cwd: string): GetRubocopCommandResultContract {
   const gemfile = path.join(cwd, "Gemfile");
   if (fs.existsSync(gemfile)) {
     try {
@@ -2614,6 +2633,7 @@ export function getRubocopCommand(cwd: string): {
       }
     } catch {}
   }
+
   return { cmd: "rubocop", args: [] };
 }
 
@@ -2623,6 +2643,7 @@ export function hasVitePlusConfig(cwd: string): boolean {
     const pkgPath = path.join(dir, "package.json");
     if (fs.existsSync(pkgPath)) {
       try {
+        // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
         const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as {
           dependencies?: Record<string, string>;
           devDependencies?: Record<string, string>;

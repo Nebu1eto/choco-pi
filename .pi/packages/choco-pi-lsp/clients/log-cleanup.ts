@@ -27,6 +27,18 @@ import { getGlobalPiLensDir } from "./file-utils.js";
 import { getRegisteredLogFiles } from "./ndjson-logger.js";
 import { pathsEqual } from "./path-utils.js";
 
+type CleanupOldLogsResultContract = { deleted: string[]; errors: string[] };
+type RotateLogIfNeededResultContract = { rotated: boolean; newFile?: string };
+type RunLogCleanupResultContract = {
+  cleaned: number;
+  rotated: number;
+  report: string;
+};
+type GetLogStorageSummaryResultContract = {
+  totalMB: number;
+  files: { name: string; sizeMB: number; ageDays: number }[];
+};
+
 const LOG_DIR = getGlobalPiLensDir();
 const LOGS_SUBDIR = path.join(LOG_DIR, "logs");
 
@@ -132,7 +144,7 @@ export function cleanupOldLogs(
   directory: string,
   pattern: RegExp,
   retentionDays?: number,
-): { deleted: string[]; errors: string[] } {
+): CleanupOldLogsResultContract {
   const config = getConfig();
   const maxAge = retentionDays ?? config.retentionDays;
   const deleted: string[] = [];
@@ -172,7 +184,7 @@ export function cleanupOldLogs(
 export function rotateLogIfNeeded(
   logFile: string,
   maxSizeMB?: number,
-): { rotated: boolean; newFile?: string } {
+): RotateLogIfNeededResultContract {
   const config = getConfig();
   const maxSize = maxSizeMB ?? config.maxSizeMB;
   const sizeMB = getFileSizeMB(logFile);
@@ -202,11 +214,7 @@ export function rotateLogIfNeeded(
  * Main cleanup function - call on session start
  * Cleans up all choco-pi-lsp log files based on retention policy
  */
-export function runLogCleanup(dbg?: (msg: string) => void): {
-  cleaned: number;
-  rotated: number;
-  report: string;
-} {
+export function runLogCleanup(dbg?: (msg: string) => void): RunLogCleanupResultContract {
   const config = getConfig();
   const results = {
     cleaned: 0,
@@ -269,10 +277,7 @@ export function runLogCleanup(dbg?: (msg: string) => void): {
 /**
  * Get current log storage summary
  */
-export function getLogStorageSummary(): {
-  totalMB: number;
-  files: { name: string; sizeMB: number; ageDays: number }[];
-} {
+export function getLogStorageSummary(): GetLogStorageSummaryResultContract {
   const files: { name: string; sizeMB: number; ageDays: number }[] = [];
   let totalMB = 0;
 

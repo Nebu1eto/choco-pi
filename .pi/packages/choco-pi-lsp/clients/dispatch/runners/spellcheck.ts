@@ -19,12 +19,25 @@
  * Or: npm install -g typos-cli (if wrapped)
  */
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { PRIORITY } from "../priorities.js";
 import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
 import { createAvailabilityChecker } from "./utils/runner-helpers.js";
 
 const typos = createAvailabilityChecker("typos", ".exe");
+
+const TypoSchema = Type.Object(
+  {
+    path: Type.Optional(Type.String()),
+    line_num: Type.Optional(Type.Number()),
+    byte_offset: Type.Optional(Type.Number()),
+    typo: Type.Optional(Type.String()),
+    corrections: Type.Optional(Type.Array(Type.String())),
+  },
+  { additionalProperties: true },
+);
 
 /**
  * Parse typos-cli JSON output (JSON Lines format)
@@ -52,15 +65,8 @@ function parseTyposOutput(raw: string, filePath: string): Diagnostic[] {
 
   for (const line of lines) {
     try {
-      const parsed = JSON.parse(line) as {
-        path?: string;
-        line_num?: number;
-        byte_offset?: number;
-        typo?: string;
-        corrections?: string[];
-      };
-
-      if (!parsed.typo || !parsed.line_num) continue;
+      const parsed = JSON.parse(line);
+      if (!Value.Check(TypoSchema, parsed) || !parsed.typo || !parsed.line_num) continue;
 
       const corrections = parsed.corrections?.join(", ") || "no suggestions";
       const message = `Typo: "${parsed.typo}" → ${corrections}`;

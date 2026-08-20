@@ -4,7 +4,11 @@
 
 import type { Diagnostic, OutputSemantic } from "../types.js";
 
-export const EMOJI: Record<string, string> = {
+interface EmojiMap {
+  [semantic: string]: string;
+}
+
+export const EMOJI: EmojiMap = {
   blocking: "🔴",
   warning: "🟡",
   fixed: "✅",

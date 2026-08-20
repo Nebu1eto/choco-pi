@@ -8,6 +8,8 @@
 import { getAutofixCapability } from "../../../tool-policy.js";
 import type { DefectClass, Diagnostic } from "../../types.js";
 
+const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+
 export interface LineParserConfig {
   /** Tool name for diagnostic identification */
   tool: string;
@@ -47,7 +49,7 @@ export function createLineParser(config: LineParserConfig) {
     const diagnostics: Diagnostic[] = [];
 
     // Optionally strip ANSI codes (for tools that output colored text)
-    const clean = config.stripAnsi !== false ? raw.replace(/\x1b\[[0-9;]*m/g, "") : raw;
+    const clean = config.stripAnsi !== false ? raw.replace(ANSI_ESCAPE_PATTERN, "") : raw;
 
     const lines = clean.split("\n").filter((l) => l.trim());
 
@@ -61,12 +63,12 @@ export function createLineParser(config: LineParserConfig) {
       const severity = config.getSeverity ? config.getSeverity(line, match) : "warning";
 
       const fixable =
-        typeof config.fixable === "function" ? config.fixable(match) : (config.fixable ?? false);
+        config.fixable instanceof Function ? config.fixable(match) : (config.fixable ?? false);
       const autoFixAvailable =
-        typeof config.autoFixAvailable === "function"
+        config.autoFixAvailable instanceof Function
           ? config.autoFixAvailable(match)
           : (config.autoFixAvailable ?? false);
-      const fixKind = typeof config.fixKind === "function" ? config.fixKind(match) : config.fixKind;
+      const fixKind = config.fixKind instanceof Function ? config.fixKind(match) : config.fixKind;
 
       diagnostics.push({
         id: config.generateId(match),

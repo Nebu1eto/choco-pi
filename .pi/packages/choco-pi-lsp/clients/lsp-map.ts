@@ -27,6 +27,12 @@ import { buildOrUpdateGraph } from "./review-graph/service.js";
 import type { ReviewGraph } from "./review-graph/types.js";
 import { detectFileRole } from "./file-role.js";
 
+type DegreesForResultContract = {
+  inNeighbors: Map<string, Set<string>>;
+  outNeighbors: Map<string, Set<string>>;
+};
+type SeededPositionResultContract = { x: number; y: number };
+
 // ── Aggregation: symbol-level review graph -> file-level map ────────────────
 
 export interface FileMapNode {
@@ -353,10 +359,7 @@ export function aggregateGraphToFiles(
     return out;
   }
 
-  function degreesFor(edges: FileMapEdge[]): {
-    inNeighbors: Map<string, Set<string>>;
-    outNeighbors: Map<string, Set<string>>;
-  } {
+  function degreesFor(edges: FileMapEdge[]): DegreesForResultContract {
     const inNeighbors = new Map<string, Set<string>>();
     const outNeighbors = new Map<string, Set<string>>();
     for (const edge of edges) {
@@ -365,6 +368,7 @@ export function aggregateGraphToFiles(
       if (!inNeighbors.has(edge.to)) inNeighbors.set(edge.to, new Set());
       inNeighbors.get(edge.to)?.add(edge.from);
     }
+
     return { inNeighbors, outNeighbors };
   }
 
@@ -469,9 +473,10 @@ function fnv1a(input: string): number {
   return hash >>> 0;
 }
 
-function seededPosition(id: string, width: number, height: number): { x: number; y: number } {
+function seededPosition(id: string, width: number, height: number): SeededPositionResultContract {
   const hx = fnv1a(id);
   const hy = fnv1a(`${id}\u0000y`);
+
   return {
     x: ((hx % 10000) / 10000) * width,
     y: ((hy % 10000) / 10000) * height,

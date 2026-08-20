@@ -48,9 +48,7 @@ export async function forEachCooperatively<T>(
     // work is reported aborted rather than completed.
     assertContinuing();
     const result = fn(item, index++);
-    if (result !== undefined && typeof (result as PromiseLike<void>).then === "function") {
-      await result;
-    }
+    if (result !== undefined) await result;
     if (deadline.expired() && (await yieldIfOverBudget(deadline))) {
       assertContinuing();
     }

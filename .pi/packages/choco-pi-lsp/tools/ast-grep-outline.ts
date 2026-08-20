@@ -1,3 +1,5 @@
+import type { RuntimeValue } from "./runtime-values.js";
+import { isRuntimeString } from "./runtime-values.js";
 import * as path from "node:path";
 import type {
   AstGrepClient,
@@ -22,11 +24,14 @@ function withReadHandles(filePath: string, item: AstGrepOutlineItem): OutlineEnt
   const { members, ...rest } = item;
   const offset = item.range.start.line + 1;
   const limit = Math.max(1, item.range.end.line - item.range.start.line + 1);
-  return {
+  const entry: OutlineEntry = {
     ...rest,
     read: { path: filePath, offset, limit },
-    ...(members ? { members: members.map((m) => withReadHandles(filePath, m)) } : {}),
   };
+  if (members) {
+    entry.members = members.map((member) => withReadHandles(filePath, member));
+  }
+  return entry;
 }
 
 function errorResult(text: string) {
@@ -77,6 +82,7 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
       }),
       lang: Type.Optional(
         Type.String({
+          // SAFETY: The tool schema or typed LSP producer establishes this shape; consumers validate optional response fields before use.
           enum: [...LANGUAGES] as string[],
           description:
             "Restrict to one language. Required for stdin; for paths, ast-grep infers per file when omitted.",
@@ -131,12 +137,12 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
         globs?: string[];
       },
       _signal: AbortSignal | undefined,
-      _onUpdate: unknown,
+      _onUpdate: RuntimeValue,
       ctx: { cwd?: string },
     ) {
       const cwd = ctx.cwd || ".";
       const rawPaths = (params.paths ?? []).filter(
-        (p): p is string => typeof p === "string" && p.trim().length > 0,
+        (p): p is string => isRuntimeString(p) && p.trim().length > 0,
       );
       if (rawPaths.length === 0) return errorResult("paths is required");
       // Resolve relative paths against the workspace; pass absolute paths to the
@@ -171,9 +177,9 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
         items: file.items
           .slice(0, MAX_ITEMS_PER_FILE)
           .map((item) => withReadHandles(file.path, item)),
-        ...(file.items.length > MAX_ITEMS_PER_FILE
-          ? { truncatedItems: file.items.length - MAX_ITEMS_PER_FILE }
-          : {}),
+        ...includePropertiesWhen(file.items.length > MAX_ITEMS_PER_FILE, () => ({
+          truncatedItems: file.items.length - MAX_ITEMS_PER_FILE,
+        })),
       }));
 
       const totalItems = files.reduce((n, f) => n + f.items.length, 0);
@@ -194,9 +200,18 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
           files: outline.length,
           items: totalItems,
           syntaxOnly: true,
-          ...(truncatedFiles ? { truncatedFiles: true } : {}),
+          ...includePropertiesWhen(truncatedFiles, () => ({ truncatedFiles: true })),
         },
       };
     },
   };
+}
+
+function includePropertiesWhen<T extends object, TInclude>(
+  include: TInclude,
+  createProperties: () => T,
+): Partial<T> {
+  const properties: Partial<T> = {};
+  if (include) Object.assign(properties, createProperties());
+  return properties;
 }

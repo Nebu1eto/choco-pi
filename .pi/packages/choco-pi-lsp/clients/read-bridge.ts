@@ -1,3 +1,5 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 /**
  * Generic read-recording bridge for choco-pi-lsp.
  *
@@ -59,6 +61,11 @@
 
 /** Stable Symbol key — identical across module reloads in the same process. */
 import { captureReadContentBinding, type ReadContentBinding } from "./read-guard.js";
+
+const LspBoundaryValueSchema = Type.Unknown();
+type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
+const LspDictionaryValueSchema = Type.Unknown();
+type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
 
 export const READ_BRIDGE_KEY: unique symbol = Symbol.for("choco-pi-lsp:read-bridge");
 
@@ -126,18 +133,22 @@ interface BridgeDeps {
  * The goal is to catch integration bugs (typo'd fields, bad numbers) early
  * rather than to enforce a security boundary.
  */
-function isValidEntry(entry: unknown): entry is ReadBridgeEntry {
-  if (typeof entry !== "object" || entry === null) return false;
-  const e = entry as Record<string, unknown>;
+
+function isValidEntry(entry: LspBoundaryValue): entry is ReadBridgeEntry {
+  if (!Check(Type.Object({}), entry) || entry === null) return false;
+
+  // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+  const e = entry as Record<string, LspDictionaryValue>;
 
   // filePath must be a non-empty string (absolute paths are expected but
   // we don't re-resolve here — `isRecordable` handles scope checks).
-  if (typeof e["filePath"] !== "string" || e["filePath"] === "") return false;
+
+  if (!Check(Type.String(), e["filePath"]) || e["filePath"] === "") return false;
 
   // requestedOffset must be a finite integer ≥ 1.
   const offset = e["requestedOffset"];
   if (
-    typeof offset !== "number" ||
+    !Check(Type.Number(), offset) ||
     !Number.isFinite(offset) ||
     offset < 1 ||
     !Number.isInteger(offset)
@@ -148,7 +159,7 @@ function isValidEntry(entry: unknown): entry is ReadBridgeEntry {
   const limit = e["requestedLimit"];
   if (limit !== undefined) {
     if (
-      typeof limit !== "number" ||
+      !Check(Type.Number(), limit) ||
       !Number.isFinite(limit) ||
       limit < 1 ||
       !Number.isInteger(limit)
@@ -167,6 +178,8 @@ function isValidEntry(entry: unknown): entry is ReadBridgeEntry {
 export function registerReadBridge(deps: BridgeDeps): void {
   // Use `in` check so the frozen non-configurable property doesn't throw
   // on a redundant defineProperty attempt.
+
+  // SAFETY: This module owns the symbol or process-global slot and writes only the declared state representation.
   if (READ_BRIDGE_KEY in (globalThis as object)) return;
 
   const bridge: ReadBridge = Object.freeze({

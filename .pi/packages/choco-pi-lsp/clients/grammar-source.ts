@@ -13,6 +13,8 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { writeFileAtomic } from "./atomic-write.js";
 import { recordDegradationOnce } from "./degradation-ledger.js";
 import { getPackageRoot } from "./package-root.js";
@@ -44,7 +46,7 @@ export interface GrammarSourceOverride {
   url: string;
 }
 
-export const GRAMMAR_SOURCE_OVERRIDES: Record<string, GrammarSourceOverride> = {
+export const GRAMMAR_SOURCE_OVERRIDES = {
   "tree-sitter-lua.wasm": {
     package: "@tree-sitter-grammars/tree-sitter-lua",
     version: "0.4.1",
@@ -55,11 +57,12 @@ export const GRAMMAR_SOURCE_OVERRIDES: Record<string, GrammarSourceOverride> = {
     version: "0.7.1",
     url: "https://unpkg.com/@tree-sitter-grammars/tree-sitter-yaml@0.7.1/tree-sitter-yaml.wasm",
   },
-};
+} satisfies Record<string, GrammarSourceOverride>;
 
 /** The URL a grammar wasm is fetched from (override if any, else the aggregator). */
 export function grammarSourceUrl(filename: string): string {
-  return GRAMMAR_SOURCE_OVERRIDES[filename]?.url ?? `${GRAMMAR_CDN_BASE}/${filename}`;
+  const override = Object.entries(GRAMMAR_SOURCE_OVERRIDES).find(([key]) => key === filename)?.[1];
+  return override?.url ?? `${GRAMMAR_CDN_BASE}/${filename}`;
 }
 
 /**
@@ -97,14 +100,14 @@ export interface VendoredGrammarSource {
  * rather than fetched. Mirrored by `VENDORED_GRAMMARS` in
  * scripts/download-grammars.
  */
-export const VENDORED_GRAMMARS: Record<string, VendoredGrammarSource> = {
+export const VENDORED_GRAMMARS = {
   "tree-sitter-cue.wasm": {
     repo: "https://github.com/eonpatapon/tree-sitter-cue",
     commit: "dd7b90e0770ff18070c515937ba3c3d6d93db00e",
     license: "MIT",
     buildCommand: "npx tree-sitter-cli build --wasm",
   },
-};
+} satisfies Record<string, VendoredGrammarSource>;
 
 /** Is `filename` built in-house rather than fetched from a CDN? */
 export function isVendoredGrammar(filename: string): boolean {
@@ -145,7 +148,7 @@ export function vendoredGrammarsDir(): string {
 }
 
 /** Language id → grammar wasm filename. */
-export const LANGUAGE_TO_GRAMMAR: Record<string, string> = {
+export const LANGUAGE_TO_GRAMMAR = {
   typescript: "tree-sitter-typescript.wasm",
   tsx: "tree-sitter-tsx.wasm",
   javascript: "tree-sitter-javascript.wasm",
@@ -173,7 +176,7 @@ export const LANGUAGE_TO_GRAMMAR: Record<string, string> = {
   yaml: "tree-sitter-yaml.wasm",
   zig: "tree-sitter-zig.wasm",
   cue: "tree-sitter-cue.wasm",
-};
+} satisfies Record<string, string>;
 
 /** The full set of grammar wasm filenames (deduped). */
 export const GRAMMAR_FILES: string[] = [...new Set(Object.values(LANGUAGE_TO_GRAMMAR))];
@@ -210,13 +213,13 @@ interface GrammarBlock {
  * reliably dodge it. bun (JavaScriptCore) and Node 20/22 are unaffected, so the
  * block is gated on V8 + Node major.
  */
-export const BLOCKED_GRAMMARS: Record<string, GrammarBlock> = {
+export const BLOCKED_GRAMMARS = {
   "tree-sitter-swift.wasm": {
     blocked: ({ isV8, nodeMajor }) => isV8 && nodeMajor >= 24,
     reason:
       "tree-sitter-swift crashes the runtime on Node >= 24 (V8 Turboshaft WASM OOM, #423/#432); skipped so the process degrades gracefully instead of aborting.",
   },
-};
+} satisfies Record<string, GrammarBlock>;
 
 /** Runtime signals for the currently-running process. */
 export function currentGrammarRuntime(): GrammarRuntime {
@@ -241,7 +244,7 @@ export function grammarBlockReason(
   // that a block can be LIFTED. Never set in normal operation: it disables the
   // crash protection and can abort the process.
   if (process.env.PILENS_UNSAFE_FORCE_GRAMMAR_LOAD === "1") return null;
-  const block = BLOCKED_GRAMMARS[filename];
+  const block = Object.entries(BLOCKED_GRAMMARS).find(([key]) => key === filename)?.[1];
   return block?.blocked(rt) ? block.reason : null;
 }
 
@@ -321,7 +324,7 @@ export function describeNonWasmBody(bytes: Uint8Array): string {
   }
   const head = Buffer.from(bytes.subarray(0, Math.min(16, bytes.length))).toString("latin1");
   const lead = head.trimStart().toLowerCase();
-  const shape = HTML_PREFIXES.some((prefix) => lead.startsWith(prefix))
+  const payloadKind = HTML_PREFIXES.some((prefix) => lead.startsWith(prefix))
     ? "an HTML page (a captive portal or proxy intercepted the request)"
     : "non-wasm data";
   const magic = Buffer.from(bytes.subarray(0, WASM_MAGIC.length))
@@ -331,12 +334,32 @@ export function describeNonWasmBody(bytes: Uint8Array): string {
   // Kept short on purpose: this is spliced into a user notification and into
   // the degradation ledger, whose fields truncate at 200 characters.
   return (
-    `The download returned ${shape} — ` +
+    `The download returned ${payloadKind} — ` +
     `${bytes.length} bytes starting ${magic}, not a wasm module.`
   );
 }
 
 /** Provenance for a single grammar in `scripts/grammars.lock.json`. */
+const GrammarSourceOverrideSchema = Type.Object({
+  package: Type.String(),
+  version: Type.String(),
+  url: Type.String(),
+});
+const VendoredGrammarSourceSchema = Type.Object({
+  repo: Type.String(),
+  commit: Type.String(),
+  license: Type.String(),
+  buildCommand: Type.String(),
+  sha256: Type.String(),
+});
+const GrammarManifestSchema = Type.Object({
+  package: Type.String(),
+  version: Type.String(),
+  grammars: Type.Record(Type.String(), Type.String()),
+  overrides: Type.Optional(Type.Record(Type.String(), GrammarSourceOverrideSchema)),
+  vendored: Type.Optional(Type.Record(Type.String(), VendoredGrammarSourceSchema)),
+});
+
 export interface GrammarManifest {
   package: string;
   version: string;
@@ -382,7 +405,8 @@ function resolveGrammarManifest(): GrammarManifest | null {
   if (cachedManifest !== undefined) return cachedManifest;
   try {
     const raw = fs.readFileSync(grammarManifestPath(), "utf-8");
-    cachedManifest = JSON.parse(raw) as GrammarManifest;
+    const parsed = JSON.parse(raw);
+    cachedManifest = Value.Check(GrammarManifestSchema, parsed) ? parsed : null;
   } catch {
     cachedManifest = null;
   }

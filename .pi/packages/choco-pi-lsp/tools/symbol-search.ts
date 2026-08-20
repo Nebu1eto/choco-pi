@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "./runtime-values.js";
 /**
  * symbol_search pi tool (#348) — the entry point of the discovery funnel:
  * symbol_search finds ranked candidate files by identifier, module_report
@@ -18,7 +19,7 @@ import { baseName, compactRenderResult } from "./render-compact.js";
  * the discovery funnel's next step (module_report explains the file; from
  * there read_symbol reads a body).
  */
-function suggestedNext(relPath: string): { tool: "module_report"; path: string } {
+function suggestedNext(relPath: string) {
   return { tool: "module_report", path: relPath };
 }
 
@@ -68,7 +69,7 @@ export function createSymbolSearchTool(getProjectRoot: () => string) {
       _toolCallId: string,
       params: { query: string; limit?: number; paths?: string[]; lang?: string },
       _signal: AbortSignal | undefined,
-      _onUpdate: unknown,
+      _onUpdate: RuntimeValue,
       ctx: { cwd?: string },
     ) {
       const cwd = getProjectRoot() || ctx.cwd || ".";
@@ -155,7 +156,7 @@ export function createSymbolSearchTool(getProjectRoot: () => string) {
             hits: hit.hits,
             startLine: hit.startLine,
             endLine: hit.endLine,
-            ...(hit.annotations ? { annotations: hit.annotations } : {}),
+            ...includePropertiesWhen(hit.annotations, () => ({ annotations: hit.annotations })),
             suggestedNext: suggestedNext(relFile),
           };
         }),
@@ -178,3 +179,12 @@ export function createSymbolSearchTool(getProjectRoot: () => string) {
 // Re-exported so tests importing from this module can reach baseName without
 // a second import path.
 export { baseName };
+
+function includePropertiesWhen<T extends object, TInclude>(
+  include: TInclude,
+  createProperties: () => T,
+): Partial<T> {
+  const properties: Partial<T> = {};
+  if (include) Object.assign(properties, createProperties());
+  return properties;
+}

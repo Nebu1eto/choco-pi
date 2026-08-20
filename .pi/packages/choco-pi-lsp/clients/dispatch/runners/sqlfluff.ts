@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { safeSpawnAsync } from "../../safe-spawn.js";
 import { getLinterPolicyForCwd, hasSqlfluffConfig } from "../../tool-policy.js";
 import { PRIORITY } from "../priorities.js";
@@ -11,15 +13,24 @@ const sqlfluff = createAvailabilityChecker("sqlfluff", ".exe");
 
 export { hasSqlfluffConfig };
 
-type SqlfluffJson = Array<{
-  filepath?: string;
-  violations?: Array<{
-    code?: string;
-    description?: string;
-    line_no?: number;
-    line_pos?: number;
-  }>;
-}>;
+const SqlfluffJsonSchema = Type.Array(
+  Type.Object(
+    {
+      filepath: Type.Optional(Type.String()),
+      violations: Type.Optional(
+        Type.Array(
+          Type.Object({
+            code: Type.Optional(Type.String()),
+            description: Type.Optional(Type.String()),
+            line_no: Type.Optional(Type.Number()),
+            line_pos: Type.Optional(Type.Number()),
+          }),
+        ),
+      ),
+    },
+    { additionalProperties: true },
+  ),
+);
 
 // sqlfluff's JSON lint output does not carry a per-violation fixable flag —
 // `sqlfluff fix` is a separate command and the lint surface doesn't tell us
@@ -82,8 +93,8 @@ const SQLFLUFF_FIXABLE_RULES = new Set<string>([
 function parseSqlfluffOutput(raw: string, filePath: string): Diagnostic[] {
   if (!raw.trim()) return [];
   try {
-    const parsed = JSON.parse(raw) as SqlfluffJson;
-    if (!Array.isArray(parsed)) return [];
+    const parsed = JSON.parse(raw);
+    if (!Value.Check(SqlfluffJsonSchema, parsed)) return [];
 
     const diagnostics: Diagnostic[] = [];
     for (const item of parsed) {

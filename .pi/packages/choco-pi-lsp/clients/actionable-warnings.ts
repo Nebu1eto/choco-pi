@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { CacheManager, ModifiedRange } from "./cache-manager.js";
@@ -94,6 +96,13 @@ interface WarningStateFile {
   warnings?: Record<string, WarningSuppressionEntry>;
 }
 
+const WarningStateFileSchema = Type.Object(
+  {
+    warnings: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Null()])),
+  },
+  { additionalProperties: true },
+);
+
 let beforeWarningStateLockForTests: (() => void) | null = null;
 
 /** Test seam for a sibling process commit immediately before lock acquisition. */
@@ -136,10 +145,7 @@ export function createActionableWarningId(args: {
   return `aw:${hashText(parts.join("|"))}`;
 }
 
-function actionSafety(action: LSPCodeAction): {
-  eligible: boolean;
-  reason?: string;
-} {
+function actionSafety(action: LSPCodeAction) {
   const kind = action.kind ?? "";
   if (!kind.startsWith("quickfix")) return { eligible: false, reason: "not_quickfix" };
   if (!action.isPreferred) return { eligible: false, reason: "not_preferred" };
@@ -163,8 +169,9 @@ function serializeAction(action: LSPCodeAction): ActionableWarningAction {
 
 function deserializeSuppressionState(contents: string | undefined): WarningStateFile {
   try {
-    const parsed = JSON.parse(contents ?? "") as unknown;
-    return parsed && typeof parsed === "object" ? (parsed as WarningStateFile) : {};
+    const parsed = JSON.parse(contents ?? "");
+    // SAFETY: The shallow schema matches the legacy loader; individual fields remain guarded at use sites.
+    return Value.Check(WarningStateFileSchema, parsed) ? (parsed as WarningStateFile) : {};
   } catch {
     return {};
   }
@@ -216,7 +223,7 @@ function updateWarningState(cwd: string, warnings: ActionableWarningRecord[]): v
   });
 }
 
-function suppressionFor(cwd: string, id: string): { suppressed: boolean; reason?: string } {
+function suppressionFor(cwd: string, id: string) {
   const entry = readSuppressionState(cwd).warnings?.[id];
   return {
     suppressed: entry?.status === "suppressed",
@@ -644,7 +651,7 @@ export function checkActionableWarningsReportFresh(args: {
   getFileSeq?: (filePath: string) => number;
 }): ActionableWarningsFreshnessResult {
   const reportProjectSeqEnd = args.report.projectSeqEnd;
-  if (typeof reportProjectSeqEnd !== "number") {
+  if (!Value.Check(Type.Number(), reportProjectSeqEnd)) {
     return {
       fresh: false,
       reason: "missing_project_seq",
@@ -661,7 +668,7 @@ export function checkActionableWarningsReportFresh(args: {
   }
   if (args.getFileSeq) {
     for (const file of args.report.files) {
-      if (typeof file.fileSeq !== "number") continue;
+      if (!Value.Check(Type.Number(), file.fileSeq)) continue;
       const currentFileSeq = args.getFileSeq(file.filePath);
       if (currentFileSeq !== file.fileSeq) {
         return {
@@ -752,6 +759,8 @@ export async function applyConservativeActionableWarningFixes(args: {
           });
           continue;
         }
+        // SAFETY: actionSafety returned eligible only after verifying selected.edit is present;
+        // LSPCodeAction.edit is the same WorkspaceEdit input consumed by applyWorkspaceEdit.
         const edit = selected.edit as Parameters<typeof applyWorkspaceEdit>[0];
         const applied = await applyWorkspaceEdit(
           edit,
@@ -765,9 +774,16 @@ export async function applyConservativeActionableWarningFixes(args: {
         summary.applied++;
       } catch (err) {
         failedCount++;
-        const partial = (
-          err as { appliedWorkspaceEdit?: Awaited<ReturnType<typeof applyWorkspaceEdit>> }
-        ).appliedWorkspaceEdit;
+        // SAFETY: applyWorkspaceEdit's failure path attaches the exact partial result under this
+        // property; the own-property check excludes unrelated thrown values.
+        const partial =
+          err instanceof Error && "appliedWorkspaceEdit" in err
+            ? (
+                err as {
+                  appliedWorkspaceEdit?: Awaited<ReturnType<typeof applyWorkspaceEdit>>;
+                }
+              ).appliedWorkspaceEdit
+            : undefined;
         if (partial) {
           appliedResults.push(partial);
           for (const changedFile of partial.files) changedFiles.add(changedFile);

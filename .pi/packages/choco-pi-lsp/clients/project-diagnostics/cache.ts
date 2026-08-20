@@ -1,3 +1,4 @@
+import { isRuntimeObject } from "../../tools/runtime-values.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getProjectDataDir } from "../file-utils.js";
@@ -22,7 +23,8 @@ export function loadProjectDiagnosticsSnapshot(
   return readJsonCache<ProjectDiagnosticsSnapshot>(
     cachePath(cwd, SNAPSHOT_CACHE_FILE),
     (parsed) => {
-      if (!parsed || typeof parsed !== "object") return undefined;
+      if (!parsed || !isRuntimeObject(parsed)) return undefined;
+      // SAFETY: The cache parser establishes this persisted diagnostic shape, and the adjacent validity checks reject malformed entries.
       const snapshot = parsed as ProjectDiagnosticsSnapshot;
       if (snapshot.version !== PROJECT_DIAGNOSTICS_CACHE_VERSION) return undefined;
       if (!Array.isArray(snapshot.diagnostics)) return undefined;
@@ -46,7 +48,8 @@ export function loadProjectDiagnosticsDeltaReport(
   return readJsonCache<ProjectDiagnosticsDeltaReport>(
     cachePath(cwd, DELTA_CACHE_FILE),
     (parsed) => {
-      if (!parsed || typeof parsed !== "object") return undefined;
+      if (!parsed || !isRuntimeObject(parsed)) return undefined;
+      // SAFETY: The cache parser establishes this persisted diagnostic shape, and the adjacent validity checks reject malformed entries.
       const report = parsed as ProjectDiagnosticsDeltaReport;
       if (report.version !== PROJECT_DIAGNOSTICS_CACHE_VERSION) return undefined;
       if (!Array.isArray(report.diagnostics)) return undefined;
@@ -88,10 +91,7 @@ export function writeProjectDiagnosticsDeltaReport(
  * Fail-safe on an unparseable `scannedAt`: return the snapshot untouched rather
  * than risk dropping live findings on a clock/format anomaly.
  */
-export function reconcileProjectDiagnosticsSnapshot(snapshot: ProjectDiagnosticsSnapshot): {
-  snapshot: ProjectDiagnosticsSnapshot;
-  staleDropped: number;
-} {
+export function reconcileProjectDiagnosticsSnapshot(snapshot: ProjectDiagnosticsSnapshot) {
   const scannedAtMs = Date.parse(snapshot.scannedAt);
   if (!Number.isFinite(scannedAtMs)) return { snapshot, staleDropped: 0 };
 

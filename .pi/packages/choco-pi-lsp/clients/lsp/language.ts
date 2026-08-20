@@ -16,7 +16,11 @@ import { getLspCapableKinds } from "../language-policy.js";
 // can span several language ids (jsts covers typescript/typescriptreact/vue,
 // cxx covers c and cpp), and some servers want a spelling the registry doesn't
 // use ("shellscript", not "shell"). These win over the derived fill-in below.
-const CURATED_LANGUAGE_EXTENSIONS: Record<string, string> = {
+interface LanguageExtensionMap {
+  [extension: string]: string;
+}
+
+const CURATED_LANGUAGE_EXTENSIONS: LanguageExtensionMap = {
   // JavaScript/TypeScript
   ".ts": "typescript",
   ".tsx": "typescriptreact",
@@ -222,8 +226,8 @@ const CURATED_LANGUAGE_EXTENSIONS: Record<string, string> = {
  * rather than relied on being ignored. A newly registered language now reaches
  * this seam by being lspCapable.
  */
-export const LANGUAGE_EXTENSIONS: Record<string, string> = (() => {
-  const map: Record<string, string> = { ...CURATED_LANGUAGE_EXTENSIONS };
+export const LANGUAGE_EXTENSIONS: LanguageExtensionMap = (() => {
+  const map: LanguageExtensionMap = { ...CURATED_LANGUAGE_EXTENSIONS };
   for (const kind of getLspCapableKinds()) {
     for (const extension of KIND_EXTENSIONS[kind]) {
       map[extension] ??= getKindLanguageId(kind);

@@ -38,7 +38,11 @@ interface RubocopOutput {
   files: RubocopFile[];
 }
 
-const SEVERITY_MAP: Record<string, "error" | "warning" | "info"> = {
+interface SeverityMap {
+  [severity: string]: "error" | "warning" | "info";
+}
+
+const SEVERITY_MAP: SeverityMap = {
   fatal: "error",
   error: "error",
   warning: "warning",

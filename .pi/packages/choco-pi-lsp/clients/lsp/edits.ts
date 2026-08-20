@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import type { BigIntStats, Stats } from "node:fs";
 import path from "node:path";
 import { URL } from "node:url";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import {
   isUnderDir,
   normalizeEphemeralMapKey,
@@ -31,7 +33,12 @@ export interface LSPTextEdit {
 
 interface TextDocumentEdit {
   textDocument: { uri: string; version?: number | null };
-  edits: unknown[];
+  edits: LSPTextEdit[];
+}
+
+interface NormalizedWorkspaceEdit {
+  changes?: Record<string, unknown[]>;
+  documentChanges?: unknown[];
 }
 
 interface ResourceOptions {
@@ -95,61 +102,90 @@ export interface ApplyWorkspaceEditOptions {
   observe?: boolean;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isPosition(value: unknown): value is LSPPosition {
-  return (
-    isRecord(value) &&
-    Number.isFinite(value.line) &&
-    Number.isInteger(value.line) &&
-    (value.line as number) >= 0 &&
-    Number.isFinite(value.character) &&
-    Number.isInteger(value.character) &&
-    (value.character as number) >= 0
-  );
-}
+const JsonObjectSchema = Type.Object({}, { additionalProperties: true });
+const PositionSchema = Type.Object({
+  line: Type.Integer({ minimum: 0 }),
+  character: Type.Integer({ minimum: 0 }),
+});
+const TextDocumentEditSchema = Type.Object(
+  {
+    textDocument: Type.Object({
+      uri: Type.String(),
+      version: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
+    }),
+    edits: Type.Array(Type.Unknown()),
+  },
+  { additionalProperties: true },
+);
+const ResourceOptionsSchema = Type.Object(
+  {
+    overwrite: Type.Optional(Type.Boolean()),
+    ignoreIfExists: Type.Optional(Type.Boolean()),
+    ignoreIfNotExists: Type.Optional(Type.Boolean()),
+    recursive: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: true },
+);
+const FsErrorSchema = Type.Object(
+  { code: Type.Optional(Type.String()) },
+  { additionalProperties: true },
+);
+const ResourceOperationSchema = Type.Object(
+  {
+    kind: Type.String(),
+    uri: Type.Optional(Type.String()),
+    oldUri: Type.Optional(Type.String()),
+    newUri: Type.Optional(Type.String()),
+    options: Type.Optional(JsonObjectSchema),
+  },
+  { additionalProperties: true },
+);
 
 function comparePosition(a: LSPPosition, b: LSPPosition): number {
   return a.line === b.line ? a.character - b.character : a.line - b.line;
 }
 
-function isRange(value: unknown): value is LSPRange {
-  if (!isRecord(value) || !isPosition(value.start) || !isPosition(value.end)) {
+function isRange<T>(value: T): value is T & LSPRange {
+  if (!Value.Check(Type.Object({ start: PositionSchema, end: PositionSchema }), value))
     return false;
-  }
   return comparePosition(value.start, value.end) <= 0;
 }
 
-function isTextEdit(value: unknown): value is LSPTextEdit {
-  return isRecord(value) && isRange(value.range) && typeof value.newText === "string";
+function isTextEdit<T>(value: T): value is T & LSPTextEdit {
+  return (
+    Value.Check(Type.Object({ range: Type.Unknown(), newText: Type.String() }), value) &&
+    isRange(value.range)
+  );
 }
 
-function parseTextEdits(value: unknown, context: string): LSPTextEdit[] {
+function parseTextEdits<T>(value: T, context: string): LSPTextEdit[] {
   if (!Array.isArray(value)) throw new Error(`${context}.edits must be an array`);
   if (!value.every(isTextEdit)) throw new Error(`malformed text edit in ${context}`);
   return value;
 }
 
-function parseVersion(value: unknown, context: string): number | null | undefined {
-  if (value === undefined || value === null) return value;
-  if (!Number.isFinite(value) || !Number.isInteger(value) || (value as number) < 0) {
+function parseVersion<T>(value: T, context: string): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (!Value.Check(Type.Integer({ minimum: 0 }), value)) {
     throw new Error(`${context}.version must be a nonnegative integer or null`);
   }
-  return value as number;
+  return Number(value);
 }
 
-function parseResourceOptions(value: unknown, kind: string): ResourceOptions | undefined {
+function parseResourceOptions<T>(value: T, kind: string): ResourceOptions | undefined {
   if (value === undefined) return undefined;
-  if (!isRecord(value)) throw new Error(`${kind}.options must be an object`);
+  if (!Value.Check(JsonObjectSchema, value)) throw new Error(`${kind}.options must be an object`);
   const allowed = new Set(
     kind === "delete" ? ["ignoreIfNotExists", "recursive"] : ["overwrite", "ignoreIfExists"],
   );
-  for (const key of Object.keys(value)) {
-    if (!allowed.has(key) || typeof value[key] !== "boolean") {
+  for (const [key, option] of Object.entries(value)) {
+    if (!allowed.has(key) || !Value.Check(Type.Boolean(), option)) {
       throw new Error(`invalid ${kind}.options.${key}`);
     }
+  }
+  if (!Value.Check(ResourceOptionsSchema, value)) {
+    throw new Error(`${kind}.options must contain boolean values`);
   }
   if (value.overwrite === true && value.ignoreIfExists === true) {
     throw new Error(`${kind} cannot set both overwrite and ignoreIfExists`);
@@ -160,14 +196,11 @@ function parseResourceOptions(value: unknown, kind: string): ResourceOptions | u
   if (kind === "delete" && value.overwrite !== undefined) {
     throw new Error(`delete does not support overwrite`);
   }
-  return value as ResourceOptions;
+  return value;
 }
 
-function parseTextDocumentEdit(value: unknown, context: string): TextDocumentEdit | null {
-  if (!isRecord(value) || !isRecord(value.textDocument)) return null;
-  if (typeof value.textDocument.uri !== "string") {
-    throw new Error(`${context}.textDocument.uri must be a string`);
-  }
+function parseTextDocumentEdit<T>(value: T, context: string): TextDocumentEdit | null {
+  if (!Value.Check(TextDocumentEditSchema, value)) return null;
   const version = parseVersion(value.textDocument.version, `${context}.textDocument`);
   return {
     textDocument: { uri: value.textDocument.uri, version },
@@ -179,36 +212,30 @@ function parseWorkspaceEdit(edit: {
   changes?: Record<string, unknown[]>;
   documentChanges?: unknown[];
 }): void {
-  if (!isRecord(edit)) throw new Error("workspace edit must be an object");
   if (edit.changes !== undefined) {
-    if (!isRecord(edit.changes)) throw new Error("workspace edit changes must be an object");
     for (const [uri, edits] of Object.entries(edit.changes)) {
-      if (typeof uri !== "string") throw new Error("workspace edit URI must be a string");
       parseTextEdits(edits, `changes[${uri}]`);
     }
-  }
-  if (edit.documentChanges !== undefined && !Array.isArray(edit.documentChanges)) {
-    throw new Error("workspace edit documentChanges must be an array");
   }
   for (const [index, change] of (edit.documentChanges ?? []).entries()) {
     const text = parseTextDocumentEdit(change, `documentChanges[${index}]`);
     if (text) continue;
-    if (!isRecord(change) || typeof change.kind !== "string") {
+    if (!Value.Check(ResourceOperationSchema, change)) {
       throw new Error(`malformed documentChanges[${index}]`);
     }
     switch (change.kind) {
       case "create":
-        if (typeof change.uri !== "string") throw new Error("create.uri must be a string");
+        if (change.uri === undefined) throw new Error("create.uri must be a string");
         parseResourceOptions(change.options, "create");
         break;
       case "rename":
-        if (typeof change.oldUri !== "string" || typeof change.newUri !== "string") {
+        if (change.oldUri === undefined || change.newUri === undefined) {
           throw new Error("rename requires oldUri and newUri strings");
         }
         parseResourceOptions(change.options, "rename");
         break;
       case "delete":
-        if (typeof change.uri !== "string") throw new Error("delete.uri must be a string");
+        if (change.uri === undefined) throw new Error("delete.uri must be a string");
         parseResourceOptions(change.options, "delete");
         break;
       default:
@@ -448,17 +475,19 @@ export async function normalizeWorkspaceEditToUtf16(
       documentChanges.push(change);
       continue;
     }
+    // SAFETY: TextDocumentEditSchema verified that this JSON-RPC change is an object.
+    const original = change as object;
     documentChanges.push({
-      ...(change as Record<string, unknown>),
+      ...original,
       edits:
         normalizedByOrigin.get(textEditOriginKey({ kind: "documentChanges", index, edits: [] })) ??
         [],
     });
   }
-  return {
-    ...(edit.changes !== undefined ? { changes } : {}),
-    ...(edit.documentChanges !== undefined ? { documentChanges } : {}),
-  };
+  const normalized: NormalizedWorkspaceEdit = {};
+  if (edit.changes !== undefined) normalized.changes = changes;
+  if (edit.documentChanges !== undefined) normalized.documentChanges = documentChanges;
+  return normalized;
 }
 
 export function flattenWorkspaceTextEdits(edit: {
@@ -579,19 +608,25 @@ function textEditOriginKey(origin: TextEditOrigin): string {
   return origin.kind === "changes" ? `changes:${origin.uri}` : `documentChanges:${origin.index}`;
 }
 
-function parseResource(change: Record<string, unknown>): WorkspaceEditOp {
+function parseResource<T>(change: T): WorkspaceEditOp {
+  if (!Value.Check(ResourceOperationSchema, change)) {
+    throw new Error("malformed workspace resource operation");
+  }
   const kind = change.kind;
-  if (kind === "create")
-    return { kind, uri: change.uri as string, options: parseResourceOptions(change.options, kind) };
-  if (kind === "rename")
+  if (kind === "create" && change.uri !== undefined) {
+    return { kind, uri: change.uri, options: parseResourceOptions(change.options, kind) };
+  }
+  if (kind === "rename" && change.oldUri !== undefined && change.newUri !== undefined) {
     return {
       kind,
-      oldUri: change.oldUri as string,
-      newUri: change.newUri as string,
+      oldUri: change.oldUri,
+      newUri: change.newUri,
       options: parseResourceOptions(change.options, kind),
     };
-  if (kind === "delete")
-    return { kind, uri: change.uri as string, options: parseResourceOptions(change.options, kind) };
+  }
+  if (kind === "delete" && change.uri !== undefined) {
+    return { kind, uri: change.uri, options: parseResourceOptions(change.options, kind) };
+  }
   throw new Error(`unsupported workspace resource operation: ${String(kind)}`);
 }
 
@@ -657,8 +692,8 @@ function planWorkspaceEdit(
       // adopted over a `null`/`undefined` counterpart from another edit container
       // for the same document, so the later preflight version check (which only
       // fires for numeric `op.version`) still validates it.
-      const existingNumeric = typeof existing.version === "number" ? existing.version : undefined;
-      const incomingNumeric = typeof version === "number" ? version : undefined;
+      const existingNumeric = existing.version === null ? undefined : existing.version;
+      const incomingNumeric = version === null ? undefined : version;
       if (
         existingNumeric !== undefined &&
         incomingNumeric !== undefined &&
@@ -699,7 +734,7 @@ function planWorkspaceEdit(
   };
   const flushSubtree = (uri: string): void => {
     const key = indexKey(uri);
-    for (const candidate of [...(descendants.get(key) ?? [])]) {
+    for (const candidate of descendants.get(key) ?? []) {
       const item = pending.get(candidate);
       if (item) flushUri(item.uri);
     }
@@ -718,19 +753,19 @@ function planWorkspaceEdit(
     if (text) {
       queue(
         text.textDocument.uri,
-        text.edits as LSPTextEdit[],
+        text.edits,
         text.textDocument.version,
         trackOrigins
           ? {
               kind: "documentChanges",
               index,
-              edits: text.edits as LSPTextEdit[],
+              edits: text.edits,
             }
           : undefined,
       );
       continue;
     }
-    const resource = parseResource(change as Record<string, unknown>);
+    const resource = parseResource(change);
     const resourceKey =
       resource.kind === "rename"
         ? `rename:${indexKey(resource.oldUri)}:${indexKey(resource.newUri)}`
@@ -745,7 +780,7 @@ function planWorkspaceEdit(
     } else flushSubtree(resource.uri);
     ops.push(resource);
   }
-  for (const item of [...pending.values()]) flushUri(item.uri);
+  for (const item of pending.values()) flushUri(item.uri);
   return ops;
 }
 
@@ -809,19 +844,20 @@ export function summarizeWorkspaceEdit(
   for (const [uri, edits] of flattenWorkspaceTextEdits(edit))
     lines.push(`Apply ${edits.length} edit(s) to ${relativeToCwd(uriToPath(uri), cwd)}`);
   for (const change of edit.documentChanges ?? []) {
-    if (!isRecord(change) || typeof change.kind !== "string") continue;
-    if (change.kind === "create" && typeof change.uri === "string")
+    if (!Value.Check(ResourceOperationSchema, change)) continue;
+    if (change.kind === "create" && change.uri !== undefined) {
       lines.push(`Create ${relativeToCwd(uriToPath(change.uri), cwd)}`);
-    else if (
+    } else if (
       change.kind === "rename" &&
-      typeof change.oldUri === "string" &&
-      typeof change.newUri === "string"
-    )
+      change.oldUri !== undefined &&
+      change.newUri !== undefined
+    ) {
       lines.push(
         `Rename ${relativeToCwd(uriToPath(change.oldUri), cwd)} → ${relativeToCwd(uriToPath(change.newUri), cwd)}`,
       );
-    else if (change.kind === "delete" && typeof change.uri === "string")
+    } else if (change.kind === "delete" && change.uri !== undefined) {
       lines.push(`Delete ${relativeToCwd(uriToPath(change.uri), cwd)}`);
+    }
   }
   return lines;
 }
@@ -832,7 +868,7 @@ async function lstatOrMissing(filePath: string): Promise<Stats | undefined> {
   try {
     return await fs.lstat(filePath);
   } catch (err) {
-    if ((err as { code?: string }).code === "ENOENT") return undefined;
+    if (Value.Check(FsErrorSchema, err) && err.code === "ENOENT") return undefined;
     throw err;
   }
 }
@@ -862,7 +898,7 @@ async function bigintLstatOrMissing(filePath: string): Promise<BigIntStats | und
   try {
     return await fs.lstat(filePath, { bigint: true });
   } catch (err) {
-    if ((err as { code?: string }).code === "ENOENT") return undefined;
+    if (Value.Check(FsErrorSchema, err) && err.code === "ENOENT") return undefined;
     throw err;
   }
 }
@@ -905,7 +941,7 @@ async function resolveExistingAncestor(filePath: string): Promise<string> {
       const resolved = await fs.realpath(current);
       return path.join(resolved, ...tail.reverse());
     } catch (err) {
-      const code = (err as { code?: string }).code;
+      const code = Value.Check(FsErrorSchema, err) ? err.code : undefined;
       if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
       const parent = path.dirname(current);
       if (parent === current) throw err;
@@ -1319,10 +1355,12 @@ export async function applyWorkspaceEdit(
     const already = [...touchedFiles];
     if (already.length > 0) {
       const alreadyList = already.map((f) => `  • ${relativeToCwd(f, cwd)}`).join("\n");
-      const failure = new Error(
-        `Workspace edit failed mid-application — ${already.length} file(s) already written, no rollback performed:\n${alreadyList}\nCause: ${err instanceof Error ? err.message : String(err)}`,
-      ) as Error & { appliedWorkspaceEdit?: AppliedWorkspaceEdit };
-      failure.appliedWorkspaceEdit = partial;
+      const failure: Error & { appliedWorkspaceEdit: AppliedWorkspaceEdit } = Object.assign(
+        new Error(
+          `Workspace edit failed mid-application — ${already.length} file(s) already written, no rollback performed:\n${alreadyList}\nCause: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+        { appliedWorkspaceEdit: partial },
+      );
       throw failure;
     }
     throw err;
