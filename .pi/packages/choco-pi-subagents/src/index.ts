@@ -1042,7 +1042,9 @@ export default function (pi: ExtensionAPI) {
       const counts = new Map<string, number>();
       for (const step of result.steps) counts.set(step.status, (counts.get(step.status) ?? 0) + 1);
       const summary = [...counts].map(([status, count]) => `${count} ${status}`).join(", ");
-      const failed = result.status === "error" || result.status === "cancelled" || result.status === "completed_with_errors";
+      // A deliberate workflow_cancel is not a failure: report it as stopped.
+      const cancelled = result.status === "cancelled";
+      const failed = result.status === "error" || result.status === "completed_with_errors";
       pi.sendMessage<NotificationDetails>({
         customType: "subagent-notification",
         content:
@@ -1055,7 +1057,7 @@ export default function (pi: ExtensionAPI) {
         details: {
           id: result.workflowId,
           description: `Workflow: ${result.name}`,
-          status: failed ? "error" : "completed",
+          status: cancelled ? "stopped" : failed ? "error" : "completed",
           toolUses: 0,
           turnCount: 0,
           totalTokens: 0,

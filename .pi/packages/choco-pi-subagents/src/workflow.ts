@@ -417,14 +417,17 @@ class WorkflowController {
     const state = this.states.get(step.id)!;
     state.agentId ??= result.agentId;
     state.output = result.output;
-    state.error = timedOut
-      ? `Step timed out after ${step.timeout_ms}ms.`
-      : result.error;
     state.status = timedOut
       ? "error"
       : this.cancelled || result.status === "cancelled"
         ? "cancelled"
         : result.status;
+    // A cancelled step reports the cancellation, not the runner's abort text.
+    state.error = timedOut
+      ? `Step timed out after ${step.timeout_ms}ms.`
+      : state.status === "cancelled"
+        ? "Step cancelled."
+        : result.error;
     state.completedAt = Date.now();
     this.runningCount--;
 
