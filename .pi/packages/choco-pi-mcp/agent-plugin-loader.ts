@@ -2,6 +2,12 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
 import type { McpConfig, ServerEntry } from "./types.ts";
+import {
+  isObjectValue,
+  isStringValue,
+  mergeObjectParts,
+  type McpObject,
+} from "./protocol-values.js";
 
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
@@ -32,7 +38,10 @@ export interface AgentPluginSummary {
   serverCount: number;
 }
 
-export function loadAgentPluginConfigs(paths: unknown, cwd = process.cwd()): McpConfig {
+export function loadAgentPluginConfigs<BoundaryValue>(
+  paths: BoundaryValue,
+  cwd = process.cwd(),
+): McpConfig {
   const mcpServers: Record<string, ServerEntry> = {};
   for (const pluginPath of getPluginPaths(paths)) {
     const loaded = loadAgentPluginMcpConfig(pluginPath, cwd);
@@ -50,23 +59,24 @@ export function loadAgentPluginConfigs(paths: unknown, cwd = process.cwd()): Mcp
   return { mcpServers };
 }
 
-export function getAgentPluginSummaries(paths: unknown, cwd = process.cwd()): AgentPluginSummary[] {
+export function getAgentPluginSummaries<BoundaryValue>(
+  paths: BoundaryValue,
+  cwd = process.cwd(),
+): AgentPluginSummary[] {
   return getPluginPaths(paths).map((path) => {
     const pluginRoot = resolvePluginPath(path, cwd);
     const loaded = loadAgentPluginMcpConfig(path, cwd);
     const manifest = loaded ? readPluginManifest(pluginRoot, false) : null;
-    return {
-      path: pluginRoot,
-      ...(manifest?.name ? { name: manifest.name } : {}),
-      serverCount: loaded ? Object.keys(loaded.mcpServers).length : 0,
-    };
+    return mergeObjectParts(
+      { path: pluginRoot },
+      manifest?.name ? { name: manifest.name } : undefined,
+      { serverCount: loaded ? Object.keys(loaded.mcpServers).length : 0 },
+    );
   });
 }
 
-function getPluginPaths(paths: unknown): string[] {
-  return Array.isArray(paths)
-    ? paths.filter((path): path is string => typeof path === "string")
-    : [];
+function getPluginPaths<BoundaryValue>(paths: BoundaryValue): string[] {
+  return Array.isArray(paths) ? paths.filter((path): path is string => isStringValue(path)) : [];
 }
 
 function loadAgentPluginMcpConfig(path: string, cwd: string): McpConfig | null {
@@ -117,13 +127,15 @@ function readPluginManifest(pluginRoot: string, report: boolean): AgentPluginMan
       console.warn(`Agent Plugin at ${pluginRoot} is invalid: failed to parse plugin.json`, error);
     return null;
   }
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+
+  if (!raw || !isObjectValue(raw) || Array.isArray(raw)) {
     if (report)
       console.warn(`Agent Plugin at ${pluginRoot} is invalid: plugin.json must be an object`);
     return null;
   }
 
-  const manifest = raw as Record<string, unknown>;
+  const manifest =
+    /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ raw as McpObject;
   for (const key of Object.keys(manifest)) {
     if (!PLUGIN_MANIFEST_FIELDS.has(key) && report) {
       console.warn(`Agent Plugin at ${pluginRoot} ignores unknown plugin.json field: ${key}`);
@@ -135,7 +147,7 @@ function readPluginManifest(pluginRoot: string, report: boolean): AgentPluginMan
     return null;
   }
   if (
-    typeof manifest.name !== "string" ||
+    !isStringValue(manifest.name) ||
     manifest.name.length < 1 ||
     manifest.name.length > 64 ||
     !PLUGIN_NAME_PATTERN.test(manifest.name)
@@ -147,7 +159,7 @@ function readPluginManifest(pluginRoot: string, report: boolean): AgentPluginMan
   if (
     manifest.extensions !== undefined &&
     (!manifest.extensions ||
-      typeof manifest.extensions !== "object" ||
+      !isObjectValue(manifest.extensions) ||
       Array.isArray(manifest.extensions))
   ) {
     if (report)
@@ -157,19 +169,20 @@ function readPluginManifest(pluginRoot: string, report: boolean): AgentPluginMan
   return { name: manifest.name };
 }
 
-function translateAgentPluginMcpConfig(
-  raw: unknown,
+function translateAgentPluginMcpConfig<BoundaryValue>(
+  raw: BoundaryValue,
   manifest: AgentPluginManifest,
   pluginRoot: string,
 ): McpConfig {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+  if (!raw || !isObjectValue(raw) || Array.isArray(raw)) {
     console.warn(
       `Agent Plugin ${manifest.name} has invalid MCP config: mcp.json must be an object`,
     );
     return { mcpServers: {} };
   }
 
-  const mcpConfig = raw as Record<string, unknown>;
+  const mcpConfig =
+    /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ raw as McpObject;
   for (const key of Object.keys(mcpConfig)) {
     if (!MCP_CONFIG_FIELDS.has(key)) {
       console.warn(
@@ -186,7 +199,7 @@ function translateAgentPluginMcpConfig(
   }
   if (
     !mcpConfig.mcpServers ||
-    typeof mcpConfig.mcpServers !== "object" ||
+    !isObjectValue(mcpConfig.mcpServers) ||
     Array.isArray(mcpConfig.mcpServers)
   ) {
     console.warn(
@@ -212,20 +225,22 @@ function translateAgentPluginMcpConfig(
   return { mcpServers };
 }
 
-function translateAgentPluginServer(
+function translateAgentPluginServer<BoundaryValue>(
   manifest: AgentPluginManifest,
   pluginRoot: string,
   serverName: string,
-  entry: unknown,
+
+  entry: BoundaryValue,
 ): ServerEntry | null {
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+  if (!entry || !isObjectValue(entry) || Array.isArray(entry)) {
     console.warn(
       `Agent Plugin ${manifest.name} skips invalid MCP server ${serverName}: entry must be an object`,
     );
     return null;
   }
 
-  const raw = entry as Record<string, unknown>;
+  const raw =
+    /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ entry as McpObject;
   if (raw.type === "stdio") return translateStdioServer(manifest, pluginRoot, serverName, raw);
   if (raw.type === "streamable-http" || raw.type === "sse")
     return translateHttpServer(manifest, serverName, raw, raw.type);
@@ -240,12 +255,14 @@ function translateStdioServer(
   manifest: AgentPluginManifest,
   pluginRoot: string,
   serverName: string,
-  raw: Record<string, unknown>,
+
+  raw: McpObject,
 ): ServerEntry | null {
   for (const key of Object.keys(raw)) {
     if (!STDIO_FIELDS.has(key)) return skipServer(manifest, serverName, `unknown field ${key}`);
   }
-  if (typeof raw.command !== "string" || raw.command.length === 0)
+
+  if (!isStringValue(raw.command) || raw.command.length === 0)
     return skipServer(manifest, serverName, "command must be a non-empty string");
   if (!isBareCommand(raw.command) && !raw.command.startsWith("./"))
     return skipServer(manifest, serverName, "command must be bare or plugin-relative");
@@ -292,24 +309,22 @@ function translateStdioServer(
 function translateHttpServer(
   manifest: AgentPluginManifest,
   serverName: string,
-  raw: Record<string, unknown>,
+
+  raw: McpObject,
   type: "streamable-http" | "sse",
 ): ServerEntry | null {
   for (const key of Object.keys(raw)) {
     if (!HTTP_FIELDS.has(key)) return skipServer(manifest, serverName, `unknown field ${key}`);
   }
-  if (typeof raw.url !== "string" || raw.url.length === 0)
+
+  if (!isStringValue(raw.url) || raw.url.length === 0)
     return skipServer(manifest, serverName, "url must be a non-empty string");
   if (!isValidAgentPluginUrl(raw.url))
     return skipServer(manifest, serverName, "url must be an allowed absolute HTTP(S) URL");
   const headers = translateHeaders(raw.headers, manifest, serverName);
   if (headers === null) return null;
 
-  return {
-    url: raw.url,
-    httpTransport: type,
-    ...(headers ? { headers } : {}),
-  };
+  return mergeObjectParts({ url: raw.url, httpTransport: type }, headers ? { headers } : undefined);
 }
 
 function formatAgentPluginServerName(pluginName: string, serverName: string): string {
@@ -325,14 +340,15 @@ function skipServer(manifest: AgentPluginManifest, serverName: string, reason: s
   return null;
 }
 
-function translateStringArray(
-  value: unknown,
+function translateStringArray<BoundaryValue>(
+  value: BoundaryValue,
   manifest: AgentPluginManifest,
   serverName: string,
   field: string,
 ): string[] | null {
   if (value === undefined) return [];
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+
+  if (!Array.isArray(value) || value.some((item) => !isStringValue(item))) {
     console.warn(
       `Agent Plugin ${manifest.name} skips invalid MCP server ${serverName}: ${field} must be an array of strings`,
     );
@@ -341,13 +357,14 @@ function translateStringArray(
   return value;
 }
 
-function translateEnv(
-  value: unknown,
+function translateEnv<BoundaryValue>(
+  value: BoundaryValue,
   manifest: AgentPluginManifest,
   serverName: string,
 ): Record<string, string> | null {
   if (value === undefined) return {};
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+
+  if (!value || !isObjectValue(value) || Array.isArray(value)) {
     console.warn(
       `Agent Plugin ${manifest.name} skips invalid MCP server ${serverName}: env must be an object of strings`,
     );
@@ -361,7 +378,8 @@ function translateEnv(
       );
       return null;
     }
-    if (typeof entry !== "string") {
+
+    if (!isStringValue(entry)) {
       console.warn(
         `Agent Plugin ${manifest.name} skips invalid MCP server ${serverName}: env values must be strings`,
       );
@@ -372,13 +390,14 @@ function translateEnv(
   return env;
 }
 
-function translateHeaders(
-  value: unknown,
+function translateHeaders<BoundaryValue>(
+  value: BoundaryValue,
   manifest: AgentPluginManifest,
   serverName: string,
 ): Record<string, string> | undefined | null {
   if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+
+  if (!value || !isObjectValue(value) || Array.isArray(value)) {
     console.warn(
       `Agent Plugin ${manifest.name} skips invalid MCP server ${serverName}: headers must be an object of strings`,
     );
@@ -387,7 +406,7 @@ function translateHeaders(
   const headers: Record<string, string> = {};
   const seen = new Set<string>();
   for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry !== "string") {
+    if (!isStringValue(entry)) {
       console.warn(
         `Agent Plugin ${manifest.name} skips invalid MCP server ${serverName}: header values must be strings`,
       );
@@ -429,13 +448,14 @@ function isBareCommand(command: string): boolean {
   );
 }
 
-function resolvePluginCwd(
-  value: unknown,
+function resolvePluginCwd<BoundaryValue>(
+  value: BoundaryValue,
   pluginRoot: string,
   pluginDataDir: string,
 ): string | null {
   if (value === undefined) return pluginRoot;
-  if (typeof value !== "string") return null;
+
+  if (!isStringValue(value)) return null;
   if (value.startsWith("./")) return resolveContainedPath(pluginRoot, value, pluginRoot);
   if (value === "${PLUGIN_ROOT}" || value.startsWith("${PLUGIN_ROOT}/")) {
     return resolveContainedPath(pluginRoot, value.replace("${PLUGIN_ROOT}", "."), pluginRoot);

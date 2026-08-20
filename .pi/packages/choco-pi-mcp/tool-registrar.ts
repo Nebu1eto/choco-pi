@@ -6,6 +6,24 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpContent, ContentBlock } from "./types.ts";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+import { isStringValue, type McpObject } from "./protocol-values.js";
+
+const McpContentSchema = Type.Object(
+  { type: Type.Optional(Type.Union([Type.String(), Type.Null()])) },
+  { additionalProperties: true },
+);
+
+type ParsedMcpContent = Omit<McpContent, "type"> & {
+  type?: string | null;
+};
+
+function parseMcpContent<Value>(value: Value): (Value & ParsedMcpContent) | undefined {
+  if (!Check(McpContentSchema, value)) return undefined;
+  // SAFETY: McpContentSchema established an open content object with a tolerant discriminator.
+  return value as Value & ParsedMcpContent;
+}
 
 const MAX_BINARY_RESOURCE_BYTES = 10 * 1024 * 1024;
 const MAX_SESSION_RESOURCE_BYTES = 100 * 1024 * 1024;
@@ -29,16 +47,19 @@ function createMaterializedResourceSession(): MaterializedResourceSession {
 }
 
 const defaultMaterializedResourceSession = createMaterializedResourceSession();
-const scopedMaterializedResourceSessions = new WeakMap<object, MaterializedResourceSession>();
+const scopedMaterializedResourceSessions = new WeakMap<AbortSignal, MaterializedResourceSession>();
 const pendingCleanupDirectories = new Set<string>();
 const cleanupRetryAttempts = new Map<string, number>();
 let pendingCleanupRetry: ReturnType<typeof setTimeout> | undefined;
 
-function isAbortedScope(scope: object | undefined): boolean {
+function isAbortedScope(scope: AbortSignal | undefined): boolean {
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   return !!scope && "aborted" in scope && (scope as { aborted?: unknown }).aborted === true;
 }
 
-function getMaterializedResourceSession(scope?: object): MaterializedResourceSession | undefined {
+function getMaterializedResourceSession(
+  scope?: AbortSignal,
+): MaterializedResourceSession | undefined {
   if (isAbortedScope(scope)) return undefined;
   if (!scope) return defaultMaterializedResourceSession;
   let session = scopedMaterializedResourceSessions.get(scope);
@@ -55,12 +76,12 @@ type BinaryResource = {
   mimeType?: string | undefined;
   blob: string;
 };
+
 type McpResourceContent = {
   uri: string;
   text?: string | undefined;
   blob?: string | undefined;
   mimeType?: string | undefined;
-  [key: string]: unknown;
 };
 
 function hasRetryableCleanupDirectory(): boolean {
@@ -107,7 +128,7 @@ function drainPendingCleanupDirectories(): void {
   }
 }
 
-export function cleanupMaterializedBinaryResources(scope?: object): void {
+export function cleanupMaterializedBinaryResources(scope?: AbortSignal): void {
   const session = scope
     ? scopedMaterializedResourceSessions.get(scope)
     : defaultMaterializedResourceSession;
@@ -124,6 +145,7 @@ export function cleanupMaterializedBinaryResources(scope?: object): void {
 }
 
 function replaceBlob(resource: BinaryResource, text: string): string {
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   delete (resource as Partial<BinaryResource>).blob;
   resource.text = text;
   return text;
@@ -140,7 +162,7 @@ function omitBinaryResource(resource: BinaryResource, reason: string): string {
   );
 }
 
-function materializeBinaryResource(resource: BinaryResource, scope?: object): string {
+function materializeBinaryResource(resource: BinaryResource, scope?: AbortSignal): string {
   const session = getMaterializedResourceSession(scope);
   if (!session) return omitBinaryResource(resource, "runtime stopped");
   const decodedBytes = Buffer.byteLength(resource.blob, "base64");
@@ -191,21 +213,30 @@ function materializeBinaryResource(resource: BinaryResource, scope?: object): st
  */
 export function transformMcpResourceContents(
   contents: McpResourceContent[],
-  scope?: object,
+
+  scope?: AbortSignal,
 ): ContentBlock[] {
   return contents.map((resource) => {
-    if (typeof resource.text === "string") return { type: "text" as const, text: resource.text };
-    if (typeof resource.blob === "string")
+    if (isStringValue(resource.text)) return { type: "text" as const, text: resource.text };
+
+    if (isStringValue(resource.blob))
       return {
         type: "text" as const,
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         text: materializeBinaryResource(resource as BinaryResource, scope),
       };
     return { type: "text" as const, text: JSON.stringify(resource) };
   });
 }
 
-export function transformMcpContent(content: McpContent[], scope?: object): ContentBlock[] {
-  return content.map((c) => {
+export function transformMcpContent<BoundaryValue>(
+  content: BoundaryValue[],
+  scope?: AbortSignal,
+): ContentBlock[] {
+  return content.map((value) => {
+    const c = parseMcpContent(value);
+    if (!c) return { type: "text" as const, text: stringifyStructuredContent(value) };
+
     if (c.type === "text") {
       return { type: "text" as const, text: c.text ?? "" };
     }
@@ -218,7 +249,9 @@ export function transformMcpContent(content: McpContent[], scope?: object): Cont
     }
     if (c.type === "resource") {
       const resourceUri = c.resource?.uri ?? "(no URI)";
-      if (c.resource && "blob" in c.resource && typeof c.resource.blob === "string") {
+
+      if (c.resource && "blob" in c.resource && isStringValue(c.resource.blob)) {
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         const binaryResource = c.resource as typeof c.resource & {
           mimeType?: string;
           blob: string;
@@ -249,7 +282,7 @@ export function transformMcpContent(content: McpContent[], scope?: object): Cont
         text: `[Audio content: ${c.mimeType ?? "audio/*"}]`,
       };
     }
-    return { type: "text" as const, text: JSON.stringify(c) };
+    return { type: "text" as const, text: stringifyStructuredContent(c) };
   });
 }
 
@@ -258,13 +291,11 @@ export function transformMcpContent(content: McpContent[], scope?: object): Cont
  * when content is empty.
  */
 export function resolveMcpResultContent(
-  result: Record<string, unknown>,
-  scope?: object,
+  result: McpObject,
+
+  scope?: AbortSignal,
 ): ContentBlock[] {
-  const blocks = transformMcpContent(
-    (Array.isArray(result.content) ? result.content : []) as McpContent[],
-    scope,
-  );
+  const blocks = transformMcpContent(Array.isArray(result.content) ? result.content : [], scope);
   if (blocks.length > 0) return blocks;
 
   if (result.structuredContent !== undefined && result.structuredContent !== null) {
@@ -274,7 +305,7 @@ export function resolveMcpResultContent(
   return [];
 }
 
-function stringifyStructuredContent(value: unknown): string {
+function stringifyStructuredContent<BoundaryValue>(value: BoundaryValue): string {
   try {
     return JSON.stringify(value, null, 2) ?? String(value);
   } catch {

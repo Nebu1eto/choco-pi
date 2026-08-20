@@ -1,7 +1,8 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { isObjectValue, isStringValue, type McpObject } from "./protocol-values.js";
 
-type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
+type McpToolResultDetails = McpObject & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
 
 interface RenderTheme {
@@ -13,7 +14,8 @@ const plainTheme: RenderTheme = { fg: (_name, text) => text };
 
 export interface McpProxyToolCallInput {
   tool?: string;
-  args?: string | Record<string, unknown>;
+
+  args?: string | McpObject;
   connect?: string;
   describe?: string;
   search?: string;
@@ -192,8 +194,8 @@ function truncateText(value: string, maxChars: number): string {
   return `${value.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
-function formatJsonish(value: unknown, maxChars: number): string {
-  if (typeof value === "string") {
+function formatJsonish<BoundaryValue>(value: BoundaryValue, maxChars: number): string {
+  if (isStringValue(value)) {
     try {
       return truncateText(JSON.stringify(JSON.parse(value), null, 2), maxChars);
     } catch {
@@ -208,12 +210,9 @@ function formatJsonish(value: unknown, maxChars: number): string {
   }
 }
 
-function hasUsefulObjectContent(value: unknown): boolean {
+function hasUsefulObjectContent<BoundaryValue>(value: BoundaryValue): boolean {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.keys(value).length > 0
+    isObjectValue(value) && value !== null && !Array.isArray(value) && Object.keys(value).length > 0
   );
 }
 
@@ -249,7 +248,8 @@ export function formatMcpProxyToolCallLines(
 
 export function formatMcpDirectToolCallLines(
   displayName: string,
-  args: Record<string, unknown>,
+
+  args: McpObject,
   maxInputChars = DEFAULT_MAX_CALL_INPUT_CHARS,
 ): string[] {
   if (!hasUsefulObjectContent(args)) return [displayName];
@@ -340,7 +340,7 @@ export function createMcpDirectToolCallRenderer(
   displayName: string,
   options = resolveMcpToolRenderOptions(),
 ) {
-  return (args: Record<string, unknown>, theme?: RenderTheme, context?: McpToolRenderContext) => {
+  return (args: McpObject, theme?: RenderTheme, context?: McpToolRenderContext) => {
     return renderToolCall(formatMcpDirectToolCallLines(displayName, args), theme, context, options);
   };
 }
@@ -421,17 +421,18 @@ export function formatMcpToolResultIdentity(
   details: McpToolResultDetails | undefined,
 ): string | null {
   if (details?.mode !== "call") return null;
-  const server =
-    typeof details.server === "string"
-      ? details.server
-      : typeof details.hintServer === "string"
-        ? details.hintServer
-        : null;
+  const server = isStringValue(details.server)
+    ? details.server
+    : isStringValue(details.hintServer)
+      ? details.hintServer
+      : null;
   if (!server) return null;
-  if (typeof details.tool === "string") return `MCP ${server}/${details.tool}`;
-  if (typeof details.resourceUri === "string")
-    return `MCP ${server} resource ${details.resourceUri}`;
-  if (typeof details.requestedTool === "string") return `MCP ${server}/${details.requestedTool}`;
+
+  if (isStringValue(details.tool)) return `MCP ${server}/${details.tool}`;
+
+  if (isStringValue(details.resourceUri)) return `MCP ${server} resource ${details.resourceUri}`;
+
+  if (isStringValue(details.requestedTool)) return `MCP ${server}/${details.requestedTool}`;
   return null;
 }
 

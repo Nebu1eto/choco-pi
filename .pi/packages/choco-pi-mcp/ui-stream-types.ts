@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isObjectValue, type McpObject } from "./protocol-values.js";
 
 export const UI_STREAM_HOST_CONTEXT_KEY = "pi-mcp-adapter/stream";
 export const UI_STREAM_REQUEST_META_KEY = "pi-mcp-adapter/stream-token";
@@ -84,26 +85,24 @@ export interface UiStreamSummary {
 }
 
 export function getUiStreamHostContext(
-  hostContext: Record<string, unknown> | undefined,
+  hostContext: McpObject | undefined,
 ): UiStreamHostContext | undefined {
   const candidate = hostContext?.[UI_STREAM_HOST_CONTEXT_KEY];
   const parsed = uiStreamHostContextSchema.safeParse(candidate);
   return parsed.success ? parsed.data : undefined;
 }
 
-export function getVisualizationStreamEnvelope(
-  structuredContent: unknown,
+export function getVisualizationStreamEnvelope<BoundaryValue>(
+  structuredContent: BoundaryValue,
 ): VisualizationStreamEnvelope | undefined {
-  if (
-    !structuredContent ||
-    typeof structuredContent !== "object" ||
-    Array.isArray(structuredContent)
-  ) {
+  if (!structuredContent || !isObjectValue(structuredContent) || Array.isArray(structuredContent)) {
     return undefined;
   }
-  const candidate = (structuredContent as Record<string, unknown>)[
-    UI_STREAM_STRUCTURED_CONTENT_KEY
-  ];
+
+  const candidate =
+    /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ (
+      structuredContent as McpObject
+    )[UI_STREAM_STRUCTURED_CONTENT_KEY];
   const parsed = visualizationStreamEnvelopeSchema.safeParse(candidate);
   return parsed.success ? parsed.data : undefined;
 }

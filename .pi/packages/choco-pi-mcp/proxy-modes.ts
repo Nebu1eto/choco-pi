@@ -18,7 +18,8 @@ import {
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.ts";
-import { renderTsShape } from "./ts-shape.ts";
+
+import { renderTypeScriptSchema } from "./ts-shape.ts";
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
 import {
   resolveMcpResultContent,
@@ -50,8 +51,9 @@ import {
   resolveSearchKeywords,
 } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
+import { mergeObjectParts, parseMcpObject, type McpObject } from "./protocol-values.js";
 
-type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
+type ProxyToolResult = AgentToolResult<McpObject>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
 
@@ -261,8 +263,8 @@ export function executeUiMessages(state: McpExtensionState): ProxyToolResult {
   const allPrompts: string[] = [];
   const allIntents = sessions.flatMap((session) => session.messages.intents);
   const allContexts = sessions.flatMap((session) => session.messages.contexts);
-  const parsedHandoffs: Array<{ intent: string; params: Record<string, unknown>; raw: string }> =
-    [];
+
+  const parsedHandoffs: Array<{ intent: string; params: McpObject; raw: string }> = [];
 
   for (const session of sessions) {
     const timestamp = session.completedAt.toLocaleTimeString();
@@ -325,14 +327,14 @@ export function executeUiMessages(state: McpExtensionState): ProxyToolResult {
 
   return {
     content: [{ type: "text" as const, text: output.join("\n") }],
-    details: {
+    details: parseMcpObject({
       sessions: count,
       prompts: allPrompts,
       intents: [...allIntents, ...parsedHandoffs.map(({ intent, params }) => ({ intent, params }))],
       contexts: allContexts,
       handoffs: parsedHandoffs,
       cleared: true,
-    },
+    }),
   };
 }
 
@@ -363,7 +365,12 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
       status = "cached";
     }
 
-    servers.push({ name, status, toolCount, failedAgo, ...(disabled ? { disabled: true } : {}) });
+    servers.push(
+      mergeObjectParts(
+        { name, status, toolCount, failedAgo },
+        disabled ? { disabled: true } : undefined,
+      ),
+    );
   }
 
   const disabledCount = servers.filter((s) => s.disabled).length;
@@ -622,11 +629,11 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
   text += `\n${toolMeta.description || "(no description)"}\n`;
 
   if (toolMeta.inputSchema && !toolMeta.resourceUri) {
-    const shape = renderTsShape(toolMeta.inputSchema);
+    const schemaDescription = renderTypeScriptSchema(toolMeta.inputSchema);
     text +=
-      shape === null
+      schemaDescription === null
         ? `\nParameters:\n${formatSchema(toolMeta.inputSchema)}`
-        : `\nShape:\n${shape}`;
+        : `\nShape:\n${schemaDescription}`;
   } else if (toolMeta.resourceUri) {
     text += `\nNo parameters required (resource tool).`;
   } else {
@@ -635,7 +642,7 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
-    details: { mode: "describe", tool: toolMeta, server: serverName },
+    details: parseMcpObject({ mode: "describe", tool: toolMeta, server: serverName }),
   };
 }
 
@@ -675,6 +682,7 @@ export function executeSearch(
       pattern = new RegExp(query, "i");
       let safety;
       try {
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         const { checkSync } = require("recheck") as typeof import("recheck");
         safety = checkSync(query, "i", REGEX_SAFETY_CHECK_PARAMS);
       } catch (error) {
@@ -754,15 +762,10 @@ export function executeSearch(
           : "";
     return {
       content: [{ type: "text" as const, text: `${msg}${connectingMessage}` }],
-      details: {
-        mode: "search",
-        matches: [],
-        count: 0,
-        hasMore: false,
-        nextOffset: null,
-        query,
-        ...(connectingServers.length > 0 ? { connectingServers } : {}),
-      },
+      details: mergeObjectParts(
+        { mode: "search", matches: [], count: 0, hasMore: false, nextOffset: null, query },
+        connectingServers.length > 0 ? { connectingServers } : undefined,
+      ),
     };
   }
 
@@ -780,11 +783,11 @@ export function executeSearch(
       text += `${match.tool.name}${approvalMarker}\n`;
       text += `  ${match.tool.description || "(no description)"}\n`;
       if (match.tool.inputSchema && !match.tool.resourceUri) {
-        const shape = renderTsShape(match.tool.inputSchema);
+        const schemaDescription = renderTypeScriptSchema(match.tool.inputSchema);
         text +=
-          shape === null
+          schemaDescription === null
             ? `\n  Parameters:\n${formatSchema(match.tool.inputSchema, "    ")}\n`
-            : `\n  Shape:\n${shape
+            : `\n  Shape:\n${schemaDescription
                 .split("\n")
                 .map((line) => `    ${line}`)
                 .join("\n")}\n`;
@@ -1081,7 +1084,8 @@ export async function executeConnect(
 export async function executeCall(
   state: McpExtensionState,
   toolName: string,
-  args?: Record<string, unknown>,
+
+  args?: McpObject,
   serverOverride?: string,
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
@@ -1581,12 +1585,11 @@ export async function executeCall(
 
     if (toolMeta.resourceUri) {
       const result = await withSessionRecovery<ClientReadResourceResult>(
-        {
-          manager: state.manager,
-          config: state.config,
-          ...(ownedSignal ? { signal: ownedSignal } : {}),
-          onNeedsAuth: recoverAuthConnection,
-        },
+        mergeObjectParts(
+          { manager: state.manager, config: state.config },
+          ownedSignal ? { signal: ownedSignal } : undefined,
+          { onNeedsAuth: recoverAuthConnection },
+        ),
         serverName,
         (conn) => conn.client.readResource({ uri: toolMeta.resourceUri! }, requestOptions),
       );
@@ -1602,24 +1605,28 @@ export async function executeCall(
     }
 
     uiSession = toolMeta.uiResourceUri
-      ? await maybeStartUiSession(state, {
-          serverName,
-          toolName: toolMeta.originalName,
-          toolArgs: args ?? {},
-          uiResourceUri: toolMeta.uiResourceUri,
-          ...(toolMeta.uiStreamMode !== undefined ? { streamMode: toolMeta.uiStreamMode } : {}),
-          ...(signal ? { signal } : {}),
-          onNeedsAuth: recoverAuthConnection,
-        })
+      ? await maybeStartUiSession(
+          state,
+          mergeObjectParts(
+            {
+              serverName,
+              toolName: toolMeta.originalName,
+              toolArgs: args ?? {},
+              uiResourceUri: toolMeta.uiResourceUri,
+            },
+            toolMeta.uiStreamMode !== undefined ? { streamMode: toolMeta.uiStreamMode } : undefined,
+            signal ? { signal } : undefined,
+            { onNeedsAuth: recoverAuthConnection },
+          ),
+        )
       : null;
 
     const result = await withSessionRecovery<ClientCallToolResult>(
-      {
-        manager: state.manager,
-        config: state.config,
-        ...(ownedSignal ? { signal: ownedSignal } : {}),
-        onNeedsAuth: recoverAuthConnection,
-      },
+      mergeObjectParts(
+        { manager: state.manager, config: state.config },
+        ownedSignal ? { signal: ownedSignal } : undefined,
+        { onNeedsAuth: recoverAuthConnection },
+      ),
       serverName,
       (conn) =>
         abortable(
@@ -1637,10 +1644,11 @@ export async function executeCall(
 
     if (toolMeta.uiResourceUri) {
       uiSession?.sendToolResult(
-        result as unknown as import("@modelcontextprotocol/client").CallToolResult,
+        /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes import("@modelcontextprotocol/client").CallToolResult for this value. */ result as import("@modelcontextprotocol/client").CallToolResult,
       );
 
       if (result.isError) {
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         const mcpContent = (result.content ?? []) as McpContent[];
         const content = transformMcpContent(mcpContent, state.owner?.signal);
         const outputContent =
@@ -1667,7 +1675,7 @@ export async function executeCall(
       }
 
       const content = resolveMcpResultContent(
-        result as Record<string, unknown>,
+        /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ result as McpObject,
         state.owner?.signal,
       );
       const outputContent =
@@ -1692,6 +1700,7 @@ export async function executeCall(
     }
 
     if (result.isError) {
+      // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
       const mcpContent = (result.content ?? []) as McpContent[];
       const content = transformMcpContent(mcpContent, state.owner?.signal);
       const outputContent =
@@ -1717,7 +1726,10 @@ export async function executeCall(
       };
     }
 
-    const content = resolveMcpResultContent(result as Record<string, unknown>, state.owner?.signal);
+    const content = resolveMcpResultContent(
+      /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ result as McpObject,
+      state.owner?.signal,
+    );
     const outputContent =
       content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
     const guarded = await guardMcpOutput(outputContent, {

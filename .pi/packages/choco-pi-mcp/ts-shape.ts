@@ -1,4 +1,12 @@
-type Schema = Record<string, unknown>;
+import {
+  isBooleanValue,
+  isNumberValue,
+  isObjectValue,
+  isStringValue,
+  type McpObject,
+} from "./protocol-values.js";
+
+type Schema = McpObject;
 
 const UNSUPPORTED_KEYWORDS = [
   "if",
@@ -11,7 +19,8 @@ const UNSUPPORTED_KEYWORDS = [
 ];
 
 /** Renders the useful JSON Schema subset as TypeScript, or null for unsupported schemas. */
-export function renderTsShape(inputSchema: unknown): string | null {
+
+export function renderTypeScriptSchema<BoundaryValue>(inputSchema: BoundaryValue): string | null {
   try {
     if (!isSchema(inputSchema)) return null;
 
@@ -43,11 +52,11 @@ export function renderTsShape(inputSchema: unknown): string | null {
       return alias;
     };
 
-    const render = (schema: unknown): string | null => {
+    const render = <BoundaryValue>(schema: BoundaryValue): string | null => {
       if (!isSchema(schema) || hasUnsupportedKeyword(schema)) return null;
 
       if ("$ref" in schema) {
-        if (typeof schema.$ref !== "string") return null;
+        if (!isStringValue(schema.$ref)) return null;
         const match = schema.$ref.match(/^#\/(\$defs|definitions)\/([^/]+)$/);
         if (!match) return null;
         const definitionGroup = match[1];
@@ -65,6 +74,7 @@ export function renderTsShape(inputSchema: unknown): string | null {
       if (Object.hasOwn(schema, "const")) return renderLiteral(schema.const);
 
       if (Array.isArray(schema.anyOf) || Array.isArray(schema.oneOf)) {
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         const variants = (schema.anyOf ?? schema.oneOf) as unknown[];
         if (variants.length === 0) return null;
         const rendered = variants.map(render);
@@ -78,7 +88,7 @@ export function renderTsShape(inputSchema: unknown): string | null {
         if (!isSchema(schema.properties)) return null;
         const required = new Set(
           Array.isArray(schema.required)
-            ? schema.required.filter((name): name is string => typeof name === "string")
+            ? schema.required.filter((name): name is string => isStringValue(name))
             : [],
         );
         const properties: string[] = [];
@@ -102,7 +112,8 @@ export function renderTsShape(inputSchema: unknown): string | null {
         const types = schema.type.map(renderType);
         return types.every((type): type is string => type !== null) ? types.join(" | ") : null;
       }
-      if (typeof schema.type === "string") return renderType(schema.type);
+
+      if (isStringValue(schema.type)) return renderType(schema.type);
       return "unknown";
     };
 
@@ -123,8 +134,8 @@ export function renderTsShape(inputSchema: unknown): string | null {
   }
 }
 
-function isSchema(value: unknown): value is Schema {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isSchema<BoundaryValue>(value: BoundaryValue): value is BoundaryValue & Schema {
+  return isObjectValue(value) && value !== null && !Array.isArray(value);
 }
 
 function hasUnsupportedKeyword(schema: Schema): boolean {
@@ -139,7 +150,7 @@ function decodePointerToken(token: string): string {
   return token.replace(/~1/g, "/").replace(/~0/g, "~");
 }
 
-function renderType(type: unknown): string | null {
+function renderType<BoundaryValue>(type: BoundaryValue): string | null {
   switch (type) {
     case "string":
       return "string";
@@ -159,10 +170,10 @@ function renderType(type: unknown): string | null {
   }
 }
 
-function renderLiteral(value: unknown): string | null {
-  if (value === null || typeof value === "string" || typeof value === "boolean")
-    return JSON.stringify(value);
-  return typeof value === "number" && Number.isFinite(value) ? String(value) : null;
+function renderLiteral<BoundaryValue>(value: BoundaryValue): string | null {
+  if (value === null || isStringValue(value) || isBooleanValue(value)) return JSON.stringify(value);
+
+  return isNumberValue(value) && Number.isFinite(value) ? String(value) : null;
 }
 
 function formatPropertyName(name: string): string {

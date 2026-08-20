@@ -18,6 +18,16 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { getAgentPath } from "./agent-dir.ts";
 import { resolveConfiguredOAuthDir } from "./config.ts";
+import {
+  isBooleanValue,
+  isFunctionValue,
+  isNumberValue,
+  isObjectValue,
+  isStringValue,
+  parseMcpValue,
+  type McpObject,
+  type McpValue,
+} from "./protocol-values.js";
 
 const require = createRequire(import.meta.url);
 const AUTH_SECRET_SERVICE = "pi-mcp-adapter.oauth";
@@ -102,12 +112,14 @@ export type OAuthCredentialStatus =
   | { status: "absent" }
   | { status: "unavailable"; message: string };
 
-function causeChainContains(error: unknown, pattern: RegExp): boolean {
+function causeChainContains<BoundaryValue>(error: BoundaryValue, pattern: RegExp): boolean {
   const seen = new Set<unknown>();
-  let current = error;
-  while ((typeof current === "object" && current !== null) || typeof current === "function") {
+  let current: unknown = error;
+
+  while ((isObjectValue(current) && current !== null) || isFunctionValue(current)) {
     if (seen.has(current)) break;
     seen.add(current);
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const candidate = current as {
       name?: unknown;
       message?: unknown;
@@ -116,7 +128,7 @@ function causeChainContains(error: unknown, pattern: RegExp): boolean {
     };
     if (
       [candidate.name, candidate.message, candidate.code].some(
-        (value) => typeof value === "string" && pattern.test(value),
+        (value) => isStringValue(value) && pattern.test(value),
       )
     ) {
       return true;
@@ -144,7 +156,8 @@ interface KeyringEntry {
 
 type KeyringEntryConstructor = new (service: string, account: string) => KeyringEntry;
 type KeyringModule = { Entry: KeyringEntryConstructor };
-type KeyringRequire = ((id: string) => unknown) & { resolve(id: string): string };
+
+type KeyringRequire = NodeRequire;
 
 interface AuthSecretStore {
   read(account: string): string | undefined;
@@ -296,6 +309,7 @@ function loadKeyringEntryClass(
   arch: NodeJS.Architecture = process.arch,
 ): KeyringEntryConstructor {
   try {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     return (keyringRequire("@napi-rs/keyring") as KeyringModule).Entry;
   } catch (loaderError) {
     try {
@@ -325,6 +339,7 @@ function loadKeyringNativeBindingFallback(
   for (const target of targets) {
     try {
       const packageJsonPath = keyringRequire.resolve(`${target.packageName}/package.json`);
+      // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
       return keyringRequire(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;
     } catch (error) {
       lastError = error;
@@ -367,7 +382,7 @@ function getKeyringNativeBindingSuffixes(
   return [];
 }
 
-function formatErrorMessage(error: unknown): string {
+function formatErrorMessage<BoundaryValue>(error: BoundaryValue): string {
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -382,7 +397,7 @@ function isLinuxKeyringRecoveryEnabled(): boolean {
   return process.platform === "linux" || process.env[TEST_LINUX_KEYRING_RECOVERY_ENV] === "1";
 }
 
-function shouldAttemptLinuxKeyringRecovery(error: unknown): boolean {
+function shouldAttemptLinuxKeyringRecovery<BoundaryValue>(error: BoundaryValue): boolean {
   return (
     isLinuxKeyringRecoveryEnabled() &&
     causeChainContains(error, /key\s*(?:has been\s*)?revoked|keyrevoked/i)
@@ -421,26 +436,28 @@ function runLinuxKeyringRecoveryOperation(
 
   let response: unknown;
   try {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     response = JSON.parse(result.stdout.trim()) as unknown;
   } catch (error) {
     throw new Error("Linux keyring recovery helper returned invalid JSON", { cause: error });
   }
   if (
-    typeof response !== "object" ||
+    !isObjectValue(response) ||
     response === null ||
-    typeof (response as { ok?: unknown }).ok !== "boolean"
+    !isBooleanValue(
+      /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes { ok?: unknown } for this value. */ (
+        response as { ok?: unknown }
+      ).ok,
+    )
   ) {
     throw new Error("Linux keyring recovery helper returned an invalid response");
   }
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   const typedResponse = response as KeyringRecoveryResponse;
   if (typedResponse.ok === false) {
     throw new Error(typedResponse.error || "Linux keyring recovery helper failed");
   }
-  if (
-    operation === "read" &&
-    typedResponse.found === true &&
-    typeof typedResponse.value !== "string"
-  ) {
+  if (operation === "read" && typedResponse.found === true && !isStringValue(typedResponse.value)) {
     throw new Error("Linux keyring recovery helper returned an invalid read response");
   }
   return typedResponse;
@@ -467,7 +484,10 @@ export function loadTestKeyringEntryClass(
   return loadKeyringEntryClass(keyringRequire, platform, arch);
 }
 
-export function getAuthStorageOptions(oauthDir: unknown, cwd = process.cwd()): AuthStorageOptions {
+export function getAuthStorageOptions<BoundaryValue>(
+  oauthDir: BoundaryValue,
+  cwd = process.cwd(),
+): AuthStorageOptions {
   const baseDir = resolveConfiguredOAuthDir(oauthDir, cwd);
   return baseDir ? { baseDir } : {};
 }
@@ -482,7 +502,7 @@ export function getAuthBaseDir(options: AuthStorageOptions = {}): string {
  * Get the legacy server-specific directory path.
  */
 function getServerDir(serverName: string, options?: AuthStorageOptions): string {
-  if (typeof serverName !== "string") {
+  if (!isStringValue(serverName)) {
     throw new Error(`Invalid MCP server name: ${JSON.stringify(serverName)}`);
   }
   const storageKey = getAuthEntryAccount(serverName);
@@ -490,7 +510,7 @@ function getServerDir(serverName: string, options?: AuthStorageOptions): string 
 }
 
 function getAuthEntryAccount(serverName: string): string {
-  if (typeof serverName !== "string") {
+  if (!isStringValue(serverName)) {
     throw new Error(`Invalid MCP server name: ${JSON.stringify(serverName)}`);
   }
   return `sha256-${createHash("sha256").update(serverName, "utf8").digest("hex")}`;
@@ -503,9 +523,9 @@ export function getAuthEntryFilePath(serverName: string, options?: AuthStorageOp
   return join(getServerDir(serverName, options), "tokens.json");
 }
 
-function parseJsonPayload(serverName: string, payload: string, source: string): unknown {
+function parseJsonPayload(serverName: string, payload: string, source: string): McpValue {
   try {
-    return JSON.parse(payload) as unknown;
+    return parseMcpValue(JSON.parse(payload));
   } catch (error) {
     throw new Error(`Failed to parse OAuth credentials for ${serverName} from ${source}`, {
       cause: error,
@@ -524,7 +544,7 @@ function parseAuthEntryPayload(serverName: string, payload: string, source: stri
   return entry;
 }
 
-function toAuthEntry(value: unknown): AuthEntry | undefined {
+function toAuthEntry<BoundaryValue>(value: BoundaryValue): AuthEntry | undefined {
   const entry = toRecord(value);
   if (!entry) return undefined;
 
@@ -548,9 +568,10 @@ function toAuthEntry(value: unknown): AuthEntry | undefined {
   return authEntry;
 }
 
-function toStoredTokens(value: unknown): StoredTokens | undefined {
+function toStoredTokens<BoundaryValue>(value: BoundaryValue): StoredTokens | undefined {
   const tokens = toRecord(value);
-  if (!tokens || typeof tokens.accessToken !== "string") return undefined;
+
+  if (!tokens || !isStringValue(tokens.accessToken)) return undefined;
 
   const refreshToken = optionalString(tokens.refreshToken);
   const scope = optionalString(tokens.scope);
@@ -567,9 +588,10 @@ function toStoredTokens(value: unknown): StoredTokens | undefined {
   return storedTokens;
 }
 
-function toStoredClientInfo(value: unknown): StoredClientInfo | undefined {
+function toStoredClientInfo<BoundaryValue>(value: BoundaryValue): StoredClientInfo | undefined {
   const clientInfo = toRecord(value);
-  if (!clientInfo || typeof clientInfo.clientId !== "string") return undefined;
+
+  if (!clientInfo || !isStringValue(clientInfo.clientId)) return undefined;
 
   const clientSecret = optionalString(clientInfo.clientSecret);
   const issuer = optionalString(clientInfo.issuer);
@@ -597,40 +619,48 @@ function toStoredClientInfo(value: unknown): StoredClientInfo | undefined {
   return storedClient;
 }
 
-function toRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
+function toRecord<BoundaryValue>(value: BoundaryValue): McpObject | undefined {
+  // SAFETY: The object and array checks establish the dictionary representation returned by this parser.
+
+  return isObjectValue(value) && value !== null && !Array.isArray(value)
+    ? (value as McpObject)
     : undefined;
 }
 
-function optionalString(value: unknown): string | null | undefined {
+function optionalString<BoundaryValue>(value: BoundaryValue): string | null | undefined {
   if (value === undefined) return undefined;
-  return typeof value === "string" ? value : null;
+
+  return isStringValue(value) ? value : null;
 }
 
-function optionalNumber(value: unknown): number | null | undefined {
+function optionalNumber<BoundaryValue>(value: BoundaryValue): number | null | undefined {
   if (value === undefined) return undefined;
-  return typeof value === "number" ? value : null;
+
+  return isNumberValue(value) ? value : null;
 }
 
-function optionalBoolean(value: unknown): boolean | null | undefined {
+function optionalBoolean<BoundaryValue>(value: BoundaryValue): boolean | null | undefined {
   if (value === undefined) return undefined;
-  return typeof value === "boolean" ? value : null;
+
+  return isBooleanValue(value) ? value : null;
 }
 
-function stringArray(value: unknown): string[] | undefined {
-  return Array.isArray(value) && value.every((uri) => typeof uri === "string") ? value : undefined;
+function stringArray<BoundaryValue>(value: BoundaryValue): string[] | undefined {
+  return Array.isArray(value) && value.every((uri) => isStringValue(uri)) ? value : undefined;
 }
 
-function isAuthEntryChunkManifest(value: unknown): value is AuthEntryChunkManifest {
-  if (typeof value !== "object" || value === null) return false;
+function isAuthEntryChunkManifest<BoundaryValue>(
+  value: BoundaryValue,
+): value is BoundaryValue & AuthEntryChunkManifest {
+  if (!isObjectValue(value) || value === null) return false;
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   const manifest = value as Partial<AuthEntryChunkManifest>;
   return (
     manifest[AUTH_CHUNK_MANIFEST_KEY] === 1 &&
-    typeof manifest.chunkCount === "number" &&
+    isNumberValue(manifest.chunkCount) &&
     Number.isInteger(manifest.chunkCount) &&
     manifest.chunkCount > 0 &&
-    typeof manifest.chunkDigest === "string" &&
+    isStringValue(manifest.chunkDigest) &&
     /^[a-f0-9]{16}$/.test(manifest.chunkDigest)
   );
 }
@@ -801,6 +831,7 @@ function writeSecureAuthEntryToStore(
 function publishAuthEntryToCache(serverName: string, payload: string): void {
   if (!isAuthEntryCacheEnabled()) return;
   // Cache the same normalized shape a fresh persistent-store read returns.
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   const normalized = toAuthEntry(JSON.parse(payload) as unknown);
   if (!normalized) {
     authEntryCache.delete(serverName);

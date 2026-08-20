@@ -614,13 +614,14 @@ export class McpSetupPanel {
     return `Shared MCP files are preferred. Pi-owned files are only for compatibility imports and adapter-specific overrides.${hostNote}${conflictNote}`;
   }
 
-  private visibleActionRange(total: number): { start: number; end: number } {
+  private visibleActionRange(total: number) {
     if (total <= COMPACT_ACTION_ROWS) return { start: 0, end: total };
     const half = Math.floor(COMPACT_ACTION_ROWS / 2);
     const start = Math.min(
       Math.max(0, this.actionCursor - half),
       Math.max(0, total - COMPACT_ACTION_ROWS),
     );
+
     return { start, end: Math.min(total, start + COMPACT_ACTION_ROWS) };
   }
 

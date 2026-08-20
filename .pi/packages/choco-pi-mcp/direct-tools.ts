@@ -42,6 +42,7 @@ import { formatAuthRequiredMessage, resolveServerUrl, truncateAtWord } from "./u
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
+import { mergeObjectParts, type McpObject } from "./protocol-values.js";
 
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
@@ -125,10 +126,12 @@ async function attemptDirectAutoAuth(
           : { authStorageOptions: state.authStorageOptions, runtime: state.oauthRuntime },
       );
     } else {
-      await authenticate(serverName, serverUrl, definition, {
-        ...(signal ? { signal } : {}),
-        runtime: state.oauthRuntime,
-      });
+      await authenticate(
+        serverName,
+        serverUrl,
+        definition,
+        mergeObjectParts(signal ? { signal } : undefined, { runtime: state.oauthRuntime }),
+      );
     }
     return { status: "success" };
   } catch (error) {
@@ -245,15 +248,19 @@ export function resolveDirectTools(
         continue;
       }
       seenNames.add(prefixedName);
-      specs.push({
-        serverName,
-        originalName: tool.name,
-        prefixedName,
-        description: tool.description ?? "",
-        ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
-        ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
-        ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
-      });
+      specs.push(
+        mergeObjectParts(
+          {
+            serverName,
+            originalName: tool.name,
+            prefixedName,
+            description: tool.description ?? "",
+          },
+          tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : undefined,
+          tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : undefined,
+          tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : undefined,
+        ),
+      );
     }
 
     if (definition.exposeResources !== false) {
@@ -457,11 +464,13 @@ export function buildProxyDescription(
 
 type DirectToolExecute = (
   toolCallId: string,
-  params: Record<string, unknown>,
+
+  params: McpObject,
   signal: AbortSignal | undefined,
-  onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined,
+
+  onUpdate: AgentToolUpdateCallback<McpObject> | undefined,
   ctx: ExtensionContext,
-) => Promise<AgentToolResult<Record<string, unknown>>>;
+) => Promise<AgentToolResult<McpObject>>;
 
 export function createDirectToolExecutor(
   getState: () => McpExtensionState | null,
@@ -553,15 +562,13 @@ export function createDirectToolExecutor(
     const approval = await ensureToolCallApproved(
       state,
       spec.serverName,
-      {
-        name: spec.prefixedName,
-        originalName: spec.originalName,
-        description: spec.description,
-        ...(spec.inputSchema !== undefined ? { inputSchema: spec.inputSchema } : {}),
-        ...(spec.resourceUri !== undefined ? { resourceUri: spec.resourceUri } : {}),
-        ...(spec.uiResourceUri !== undefined ? { uiResourceUri: spec.uiResourceUri } : {}),
-        ...(spec.uiStreamMode !== undefined ? { uiStreamMode: spec.uiStreamMode } : {}),
-      },
+      mergeObjectParts(
+        { name: spec.prefixedName, originalName: spec.originalName, description: spec.description },
+        spec.inputSchema !== undefined ? { inputSchema: spec.inputSchema } : undefined,
+        spec.resourceUri !== undefined ? { resourceUri: spec.resourceUri } : undefined,
+        spec.uiResourceUri !== undefined ? { uiResourceUri: spec.uiResourceUri } : undefined,
+        spec.uiStreamMode !== undefined ? { uiStreamMode: spec.uiStreamMode } : undefined,
+      ),
       params,
       ownedSignal,
       spec.resourceUri ? "resource" : "direct",
@@ -617,12 +624,11 @@ export function createDirectToolExecutor(
 
       if (spec.resourceUri) {
         const result = await withSessionRecovery<ClientReadResourceResult>(
-          {
-            manager: state.manager,
-            config: state.config,
-            ...(ownedSignal ? { signal: ownedSignal } : {}),
-            onNeedsAuth: recoverAuthConnection,
-          },
+          mergeObjectParts(
+            { manager: state.manager, config: state.config },
+            ownedSignal ? { signal: ownedSignal } : undefined,
+            { onNeedsAuth: recoverAuthConnection },
+          ),
           spec.serverName,
           (conn) => conn.client.readResource({ uri: spec.resourceUri! }, requestOptions),
         );
@@ -643,24 +649,28 @@ export function createDirectToolExecutor(
 
       const hasUi = !!spec.uiResourceUri;
       uiSession = hasUi
-        ? await maybeStartUiSession(state, {
-            serverName: spec.serverName,
-            toolName: spec.originalName,
-            toolArgs: params ?? {},
-            uiResourceUri: spec.uiResourceUri!,
-            ...(spec.uiStreamMode !== undefined ? { streamMode: spec.uiStreamMode } : {}),
-            ...(signal ? { signal } : {}),
-            onNeedsAuth: recoverAuthConnection,
-          })
+        ? await maybeStartUiSession(
+            state,
+            mergeObjectParts(
+              {
+                serverName: spec.serverName,
+                toolName: spec.originalName,
+                toolArgs: params ?? {},
+                uiResourceUri: spec.uiResourceUri!,
+              },
+              spec.uiStreamMode !== undefined ? { streamMode: spec.uiStreamMode } : undefined,
+              signal ? { signal } : undefined,
+              { onNeedsAuth: recoverAuthConnection },
+            ),
+          )
         : null;
 
       const result = await withSessionRecovery<ClientCallToolResult>(
-        {
-          manager: state.manager,
-          config: state.config,
-          ...(ownedSignal ? { signal: ownedSignal } : {}),
-          onNeedsAuth: recoverAuthConnection,
-        },
+        mergeObjectParts(
+          { manager: state.manager, config: state.config },
+          ownedSignal ? { signal: ownedSignal } : undefined,
+          { onNeedsAuth: recoverAuthConnection },
+        ),
         spec.serverName,
         (conn) =>
           abortable(
@@ -676,10 +686,11 @@ export function createDirectToolExecutor(
           ),
       );
       uiSession?.sendToolResult(
-        result as unknown as import("@modelcontextprotocol/client").CallToolResult,
+        /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes import("@modelcontextprotocol/client").CallToolResult for this value. */ result as import("@modelcontextprotocol/client").CallToolResult,
       );
 
       if (result.isError) {
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         const mcpContent = (result.content ?? []) as McpContent[];
         const content = transformMcpContent(mcpContent, state.owner?.signal);
         const outputContent =
@@ -700,7 +711,7 @@ export function createDirectToolExecutor(
       }
 
       const content = resolveMcpResultContent(
-        result as Record<string, unknown>,
+        /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ result as McpObject,
         state.owner?.signal,
       );
       const outputContent =

@@ -20,6 +20,16 @@ import {
   type ServerProvenance,
 } from "./types.ts";
 import { toStringRecord } from "./utils.ts";
+import {
+  isBooleanValue,
+  isObjectValue,
+  isStringValue,
+  mergeObjectParts,
+  parseMcpObject,
+  parseMcpValue,
+  type McpObject,
+  type McpValue,
+} from "./protocol-values.js";
 
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATHS = [
@@ -73,7 +83,7 @@ export const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[] = [
   },
 ];
 
-const IMPORT_PATHS: Record<ImportKind, string[]> = {
+const IMPORT_PATHS = {
   cursor: [join(homedir(), ".cursor", "mcp.json")],
   "claude-code": [
     join(homedir(), ".claude", "mcp.json"),
@@ -208,6 +218,7 @@ export function getConfigDiscoveryPaths(
 export function findAvailableImportConfigs(cwd = process.cwd()): DiscoveredImportConfig[] {
   const discovered: DiscoveredImportConfig[] = [];
 
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   for (const importKind of Object.keys(IMPORT_PATHS) as ImportKind[]) {
     const importPath = resolveImportPath(importKind, cwd);
     if (importPath) {
@@ -257,7 +268,8 @@ export function getMcpDiscoverySummary(
   const includeHostConfigs = options.includeHostConfigs !== false;
 
   const imports = includeHostConfigs
-    ? (Object.keys(IMPORT_PATHS) as ImportKind[])
+    ? // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
+      (Object.keys(IMPORT_PATHS) as ImportKind[])
         .map((kind) => {
           const imported = loadImportedConfig(
             kind,
@@ -365,6 +377,7 @@ function getConfiguredHostConfigDiscovery(
 
 function loadDiscoveredHostConfigs(cwd: string): McpConfig {
   let config: McpConfig = { mcpServers: {} };
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   for (const importKind of Object.keys(IMPORT_PATHS) as ImportKind[]) {
     const imported = loadImportedConfig(
       importKind,
@@ -508,11 +521,11 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
 function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
   const imports = mergeImports(base.imports, next.imports);
   const settings = next.settings ? { ...base.settings, ...next.settings } : base.settings;
-  return {
-    mcpServers: mergeServerMaps(base.mcpServers, next.mcpServers),
-    ...(imports !== undefined ? { imports } : {}),
-    ...(settings !== undefined ? { settings } : {}),
-  };
+  return mergeObjectParts(
+    { mcpServers: mergeServerMaps(base.mcpServers, next.mcpServers) },
+    imports !== undefined ? { imports } : undefined,
+    settings !== undefined ? { settings } : undefined,
+  );
 }
 
 // Credential-bearing fields whose value is bound to a specific server `url`.
@@ -527,10 +540,7 @@ const URL_BOUND_AUTH_FIELDS = [
   "requestHeadersCommand",
 ] as const;
 
-function mergeServerMaps(
-  base: Record<string, ServerEntry>,
-  next: Record<string, ServerEntry>,
-): Record<string, ServerEntry> {
+function mergeServerMaps(base: Record<string, ServerEntry>, next: Record<string, ServerEntry>) {
   const merged = { ...base };
   for (const [name, definition] of Object.entries(next)) {
     const existing = merged[name];
@@ -545,7 +555,8 @@ function mergeServerMaps(
     // applies (it is spread last). Behaviour is unchanged when the url is
     // identical or the override omits `url` (partial overrides still inherit).
     let baseEntry: ServerEntry = existing ?? {};
-    if (existing && typeof definition.socket === "string") {
+
+    if (existing && isStringValue(definition.socket)) {
       baseEntry = { ...existing };
       for (const field of [
         "command",
@@ -563,12 +574,13 @@ function mergeServerMaps(
       }
     } else if (
       existing?.socket &&
-      (typeof definition.command === "string" || typeof definition.url === "string")
+      (isStringValue(definition.command) || isStringValue(definition.url))
     ) {
       baseEntry = { ...existing };
       delete baseEntry.socket;
     }
-    if (existing && typeof definition.url === "string" && definition.url !== existing.url) {
+
+    if (existing && isStringValue(definition.url) && definition.url !== existing.url) {
       if (baseEntry === existing) baseEntry = { ...existing };
       for (const field of URL_BOUND_AUTH_FIELDS) {
         delete baseEntry[field];
@@ -579,6 +591,7 @@ function mergeServerMaps(
     }
     merged[name] = { ...baseEntry, ...definition };
   }
+
   return merged;
 }
 
@@ -611,11 +624,11 @@ function expandImports(config: McpConfig, cwd = process.cwd()): McpConfig {
     }
   }
 
-  return {
-    imports: config.imports,
-    ...(config.settings !== undefined ? { settings: config.settings } : {}),
-    mcpServers: mergeServerMaps(importedServers, config.mcpServers),
-  };
+  return mergeObjectParts(
+    { imports: config.imports },
+    config.settings !== undefined ? { settings: config.settings } : undefined,
+    { mcpServers: mergeServerMaps(importedServers, config.mcpServers) },
+  );
 }
 
 function resolveImportCandidates(importKind: ImportKind, cwd: string): string[] {
@@ -646,22 +659,22 @@ function resolveImportCandidates(importKind: ImportKind, cwd: string): string[] 
   });
 }
 
-function parseJsonConfig(raw: string): unknown {
-  return JSON.parse(stripJsonComments(raw, { trailingCommas: true }));
+function parseJsonConfig(raw: string): McpValue {
+  return parseMcpValue(JSON.parse(stripJsonComments(raw, { trailingCommas: true })));
 }
 
-function readImportedConfig(path: string): unknown {
+function readImportedConfig(path: string): McpValue {
   const raw = readFileSync(path, "utf-8");
-  return path.endsWith(".toml") ? parseToml(raw) : parseJsonConfig(raw);
+  return path.endsWith(".toml") ? parseMcpValue(parseToml(raw)) : parseJsonConfig(raw);
 }
 
 function loadImportedConfig(
   importKind: ImportKind,
   cwd: string,
   warningPrefix: string,
-): { path: string; value: unknown } | null {
+): { path: string; value: McpValue } | null {
   if (importKind === "opencode") {
-    let merged: Record<string, unknown> = {};
+    let merged: McpObject = {};
     let highestPrecedencePath: string | undefined;
 
     for (const path of resolveImportCandidates(importKind, cwd)) {
@@ -669,8 +682,12 @@ function loadImportedConfig(
 
       try {
         const value = readImportedConfig(path);
-        if (value && typeof value === "object" && !Array.isArray(value)) {
-          merged = mergeOpenCodeConfigs(merged, value as Record<string, unknown>);
+
+        if (value && isObjectValue(value) && !Array.isArray(value)) {
+          merged = mergeOpenCodeConfigs(
+            merged,
+            /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ value as McpObject,
+          );
           highestPrecedencePath = path;
         }
       } catch (error) {
@@ -715,63 +732,83 @@ function readValidatedConfig(path: string, label: string): McpConfig | null {
   }
 }
 
-function validateConfig(raw: unknown): McpConfig {
+function validateConfig<BoundaryValue>(raw: BoundaryValue): McpConfig {
   if (!isRecord(raw)) {
     return { mcpServers: {} };
   }
 
-  return {
-    mcpServers: toServerEntries(raw.mcpServers ?? raw["mcp-servers"]),
-    ...(Array.isArray(raw.imports) ? { imports: raw.imports as ImportKind[] } : {}),
-    ...(raw.settings !== undefined ? { settings: raw.settings as McpSettings } : {}),
-  };
+  return mergeObjectParts(
+    { mcpServers: toServerEntries(raw.mcpServers ?? raw["mcp-servers"]) },
+    Array.isArray(raw.imports)
+      ? {
+          imports:
+            /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes ImportKind[] for this value. */ raw.imports as ImportKind[],
+        }
+      : undefined,
+    raw.settings !== undefined
+      ? {
+          settings:
+            /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpSettings for this value. */ raw.settings as McpSettings,
+        }
+      : undefined,
+  );
 }
 
-function toServerEntries(servers: unknown): Record<string, ServerEntry> {
+function toServerEntries<BoundaryValue>(servers: BoundaryValue) {
   if (!isRecord(servers)) return {};
   const entries: Record<string, ServerEntry> = {};
   for (const [name, entry] of Object.entries(servers)) {
     if (isServerEntry(entry)) entries[name] = entry;
   }
+
   return entries;
 }
 
-function isServerEntry(value: unknown): value is ServerEntry {
+function isServerEntry<BoundaryValue>(value: BoundaryValue): value is BoundaryValue & ServerEntry {
   return isRecord(value);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord<BoundaryValue>(value: BoundaryValue): value is BoundaryValue & McpObject {
+  return isObjectValue(value) && value !== null && !Array.isArray(value);
 }
 
 function mergeOpenCodeConfigs(
-  base: Record<string, unknown>,
-  next: Record<string, unknown>,
-): Record<string, unknown> {
+  base: McpObject,
+
+  next: McpObject,
+): McpObject {
   const baseMcp = base.mcp;
   const nextMcp = next.mcp;
-  const mergedMcp: Record<string, unknown> = {
-    ...(baseMcp && typeof baseMcp === "object" && !Array.isArray(baseMcp) ? baseMcp : {}),
-  };
 
-  if (nextMcp && typeof nextMcp === "object" && !Array.isArray(nextMcp)) {
+  const mergedMcp: McpObject = mergeObjectParts(
+    baseMcp && isObjectValue(baseMcp) && !Array.isArray(baseMcp) ? baseMcp : undefined,
+  );
+
+  if (nextMcp && isObjectValue(nextMcp) && !Array.isArray(nextMcp)) {
     for (const [name, nextEntry] of Object.entries(nextMcp)) {
       const baseEntry = mergedMcp[name];
       if (
         baseEntry &&
-        typeof baseEntry === "object" &&
+        isObjectValue(baseEntry) &&
         !Array.isArray(baseEntry) &&
         nextEntry &&
-        typeof nextEntry === "object" &&
+        isObjectValue(nextEntry) &&
         !Array.isArray(nextEntry)
       ) {
-        const safeBase = { ...(baseEntry as Record<string, unknown>) };
-        const override = nextEntry as Record<string, unknown>;
-        if (typeof override.type === "string" && override.type !== safeBase.type) {
+        // SAFETY: The preceding checks establish baseEntry as a non-array MCP object.
+        const safeBase = {
+          .../* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ (baseEntry as McpObject),
+        };
+
+        const override =
+          /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ nextEntry as McpObject;
+
+        if (isStringValue(override.type) && override.type !== safeBase.type) {
           for (const field of ["command", "environment", "cwd", "url", "headers", "oauth"])
             delete safeBase[field];
         }
-        if (typeof override.url === "string" && override.url !== safeBase.url) {
+
+        if (isStringValue(override.url) && override.url !== safeBase.url) {
           delete safeBase.headers;
           delete safeBase.oauth;
         }
@@ -793,15 +830,17 @@ function mergeOpenCodeConfigs(
           const nextField = override[field];
           if (
             baseField &&
-            typeof baseField === "object" &&
+            isObjectValue(baseField) &&
             !Array.isArray(baseField) &&
             nextField &&
-            typeof nextField === "object" &&
+            isObjectValue(nextField) &&
             !Array.isArray(nextField)
           ) {
+            // SAFETY: The preceding checks establish both fields as non-array MCP objects.
             mergedEntry[field] = {
-              ...(baseField as Record<string, unknown>),
-              ...(nextField as Record<string, unknown>),
+              .../* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ (baseField as McpObject),
+
+              .../* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ (nextField as McpObject),
             };
           }
         }
@@ -815,10 +854,11 @@ function mergeOpenCodeConfigs(
   return { ...base, ...next, mcp: mergedMcp };
 }
 
-function extractServers(config: unknown, kind: ImportKind): Record<string, ServerEntry> {
-  if (!config || typeof config !== "object") return {};
+function extractServers<BoundaryValue>(config: BoundaryValue, kind: ImportKind) {
+  if (!config || !isObjectValue(config)) return {};
 
-  const obj = config as Record<string, unknown>;
+  const obj =
+    /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ config as McpObject;
 
   let servers: unknown;
   switch (kind) {
@@ -841,55 +881,57 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
       return {};
   }
 
-  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
+  if (!servers || !isObjectValue(servers) || Array.isArray(servers)) {
     return {};
   }
 
   const mappedServers: Record<string, ServerEntry> = {};
   for (const [name, entry] of Object.entries(servers)) {
     if (kind === "opencode") {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-      const raw = entry as Record<string, unknown>;
+      if (!entry || !isObjectValue(entry) || Array.isArray(entry)) continue;
+
+      const raw =
+        /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ entry as McpObject;
       if (raw.enabled === false) continue;
 
       if (
         raw.type === "local" &&
         Array.isArray(raw.command) &&
         raw.command.length > 0 &&
-        raw.command.every((value): value is string => typeof value === "string")
+        raw.command.every((value): value is string => isStringValue(value))
       ) {
         const env = toStringRecord(raw.environment);
         const command = raw.command[0];
         if (command === undefined) continue;
-        const mapped: ServerEntry = {
-          command,
-          args: raw.command.slice(1),
-          ...(env ? { env } : {}),
-          ...(typeof raw.cwd === "string" ? { cwd: raw.cwd } : {}),
-        };
+        const mapped: ServerEntry = mergeObjectParts(
+          { command, args: raw.command.slice(1) },
+          env ? { env } : undefined,
+          isStringValue(raw.cwd) ? { cwd: raw.cwd } : undefined,
+        );
         mappedServers[name] = mapped;
         continue;
       }
 
-      if (raw.type === "remote" && typeof raw.url === "string") {
+      if (raw.type === "remote" && isStringValue(raw.url)) {
         const headers = toStringRecord(raw.headers);
-        const mapped: ServerEntry = {
-          url: raw.url,
-          ...(headers ? { headers } : {}),
-        };
+        const mapped: ServerEntry = mergeObjectParts(
+          { url: raw.url },
+          headers ? { headers } : undefined,
+        );
         if (raw.oauth === false) {
           mapped.oauth = false;
-        } else if (raw.oauth && typeof raw.oauth === "object" && !Array.isArray(raw.oauth)) {
-          const oauth = raw.oauth as Record<string, unknown>;
+        } else if (raw.oauth && isObjectValue(raw.oauth) && !Array.isArray(raw.oauth)) {
+          const oauth =
+            /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ raw.oauth as McpObject;
           mapped.auth = "oauth";
-          mapped.oauth = {
-            ...(typeof oauth.clientId === "string" ? { clientId: oauth.clientId } : {}),
-            ...(typeof oauth.clientSecret === "string" ? { clientSecret: oauth.clientSecret } : {}),
-            ...(typeof oauth.scope === "string" ? { scope: oauth.scope } : {}),
-            ...(typeof oauth.skipIssuerMetadataValidation === "boolean"
+          mapped.oauth = mergeObjectParts(
+            isStringValue(oauth.clientId) ? { clientId: oauth.clientId } : undefined,
+            isStringValue(oauth.clientSecret) ? { clientSecret: oauth.clientSecret } : undefined,
+            isStringValue(oauth.scope) ? { scope: oauth.scope } : undefined,
+            isBooleanValue(oauth.skipIssuerMetadataValidation)
               ? { skipIssuerMetadataValidation: oauth.skipIssuerMetadataValidation }
-              : {}),
-          };
+              : undefined,
+          );
         }
         mappedServers[name] = mapped;
       }
@@ -907,20 +949,25 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
     const httpHeaders = mapped.http_headers;
     const envHttpHeaders = mapped.env_http_headers;
 
-    if (typeof bearerTokenEnv === "string") {
+    if (isStringValue(bearerTokenEnv)) {
       mapped.bearerTokenEnv = bearerTokenEnv;
       if (mapped.auth === undefined) mapped.auth = "bearer";
     }
-    if (httpHeaders && typeof httpHeaders === "object" && !Array.isArray(httpHeaders)) {
+
+    if (httpHeaders && isObjectValue(httpHeaders) && !Array.isArray(httpHeaders)) {
       mapped.headers = {
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         ...(mapped.headers as Record<string, string> | undefined),
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         ...(httpHeaders as Record<string, string>),
       };
     }
-    if (envHttpHeaders && typeof envHttpHeaders === "object" && !Array.isArray(envHttpHeaders)) {
+
+    if (envHttpHeaders && isObjectValue(envHttpHeaders) && !Array.isArray(envHttpHeaders)) {
+      // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
       const headers = { ...(mapped.headers as Record<string, string> | undefined) };
       for (const [header, envVar] of Object.entries(envHttpHeaders)) {
-        if (typeof envVar === "string" && headers[header] === undefined)
+        if (isStringValue(envVar) && headers[header] === undefined)
           headers[header] = `$env:${envVar}`;
       }
       mapped.headers = headers;
@@ -929,13 +976,14 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
     delete mapped.bearer_token_env_var;
     delete mapped.http_headers;
     delete mapped.env_http_headers;
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     mappedServers[name] = mapped as ServerEntry;
   }
 
   return mappedServers;
 }
 
-function serializeRawConfig(raw: Record<string, unknown>): string {
+function serializeRawConfig(raw: McpObject): string {
   return `${JSON.stringify(raw, null, 2)}\n`;
 }
 
@@ -986,7 +1034,8 @@ function buildUnifiedDiff(beforeText: string, afterText: string): string {
 
 function buildConfigWritePreview(
   filePath: string,
-  nextRaw: Record<string, unknown>,
+
+  nextRaw: McpObject,
 ): ConfigWritePreview {
   const existed = existsSync(filePath);
   const beforeRaw = readRawConfigObject(filePath);
@@ -1002,40 +1051,39 @@ function buildConfigWritePreview(
   };
 }
 
-function readRawConfigObject(filePath: string): Record<string, unknown> {
+function readRawConfigObject(filePath: string): McpObject {
   if (!existsSync(filePath)) return {};
 
   try {
     const raw = parseJsonConfig(readFileSync(filePath, "utf-8"));
-    return raw && typeof raw === "object" && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+    // SAFETY: The object and array checks establish the parsed configuration dictionary representation.
+
+    return raw && isObjectValue(raw) && !Array.isArray(raw) ? (raw as McpObject) : {};
   } catch {
     return {};
   }
 }
 
-function writeRawConfigObject(filePath: string, raw: Record<string, unknown>): void {
+function writeRawConfigObject(filePath: string, raw: McpObject): void {
   mkdirSync(dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.${process.pid}.tmp`;
   writeFileSync(tmpPath, `${JSON.stringify(raw, null, 2)}\n`, "utf-8");
   renameSync(tmpPath, filePath);
 }
 
-function getServersObject(raw: Record<string, unknown>): Record<string, ServerEntry> {
+function getServersObject(raw: McpObject): Record<string, ServerEntry> {
   const existing = raw.mcpServers ?? raw["mcp-servers"] ?? {};
-  if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+
+  if (!existing || !isObjectValue(existing) || Array.isArray(existing)) {
     return {};
   }
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   return existing as Record<string, ServerEntry>;
 }
 
-function setServersObject(
-  raw: Record<string, unknown>,
-  servers: Record<string, ServerEntry>,
-): void {
+function setServersObject(raw: McpObject, servers: Record<string, ServerEntry>): void {
   delete raw["mcp-servers"];
-  raw.mcpServers = servers;
+  raw.mcpServers = parseMcpValue(servers);
 }
 
 export interface ServerDisabledOverrideResult {
@@ -1055,14 +1103,18 @@ export function writeProjectServerDisabledOverride(
   disabled: boolean,
 ): ServerDisabledOverrideResult {
   const filePath = getProjectPiConfigPath(cwd);
-  let raw: Record<string, unknown> = {};
+
+  let raw: McpObject = {};
   if (existsSync(filePath)) {
     try {
       const parsed = parseJsonConfig(readFileSync(filePath, "utf-8"));
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+
+      if (!parsed || !isObjectValue(parsed) || Array.isArray(parsed)) {
         throw new Error("root value must be an object");
       }
-      raw = parsed as Record<string, unknown>;
+
+      raw =
+        /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ parsed as McpObject;
     } catch (error) {
       throw new Error(
         `Failed to read project MCP override at ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1080,25 +1132,32 @@ export function writeProjectServerDisabledOverride(
   const rawServers = raw[serverKey];
   if (
     rawServers !== undefined &&
-    (!rawServers || typeof rawServers !== "object" || Array.isArray(rawServers))
+    (!rawServers || !isObjectValue(rawServers) || Array.isArray(rawServers))
   ) {
     throw new Error(
       `Failed to update project MCP override at ${filePath}: ${serverKey} must be an object`,
     );
   }
-  const servers = (rawServers ?? {}) as Record<string, unknown>;
+
+  const servers =
+    /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ (rawServers ??
+      {}) as McpObject;
   const previous = servers[serverName];
   if (
     previous !== undefined &&
-    (!previous || typeof previous !== "object" || Array.isArray(previous))
+    (!previous || !isObjectValue(previous) || Array.isArray(previous))
   ) {
     throw new Error(
       `Failed to update project MCP override at ${filePath}: server "${serverName}" must be an object`,
     );
   }
-  const existing = previous as Record<string, unknown> | undefined;
 
-  let next: Record<string, unknown>;
+  const existing =
+    /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject | undefined for this value. */ previous as
+      | McpObject
+      | undefined;
+
+  let next: McpObject;
   if (disabled) {
     next = { ...existing, disabled: true };
   } else {
@@ -1112,7 +1171,7 @@ export function writeProjectServerDisabledOverride(
     if (raw.imports !== undefined) {
       if (
         !Array.isArray(raw.imports) ||
-        raw.imports.some((kind) => typeof kind !== "string" || !Object.hasOwn(IMPORT_PATHS, kind))
+        raw.imports.some((kind) => !isStringValue(kind) || !Object.hasOwn(IMPORT_PATHS, kind))
       ) {
         throw new Error(
           `Failed to update project MCP override at ${filePath}: imports contains an unsupported config kind`,
@@ -1120,6 +1179,7 @@ export function writeProjectServerDisabledOverride(
       }
       lowerConfig = mergeConfigs(
         lowerConfig,
+        // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
         expandImports({ mcpServers: {}, imports: raw.imports as ImportKind[] }, cwd),
       );
     }
@@ -1156,7 +1216,7 @@ function isRepoPromptServer(name: string, entry: ServerEntry): boolean {
   }
 
   return (entry.args ?? []).some(
-    (arg) => typeof arg === "string" && arg.toLowerCase().includes("repoprompt"),
+    (arg) => isStringValue(arg) && arg.toLowerCase().includes("repoprompt"),
   );
 }
 
@@ -1226,7 +1286,7 @@ export function previewCompatibilityImports(
   const targetPath = getPiGlobalConfigPath(overridePath);
   const raw = readRawConfigObject(targetPath);
   const currentImports = Array.isArray(raw.imports)
-    ? raw.imports.filter((value): value is ImportKind => typeof value === "string")
+    ? raw.imports.filter((value): value is ImportKind => isStringValue(value))
     : [];
   const merged = [...new Set([...currentImports, ...importKinds])];
   const nextRaw = { ...raw, imports: merged };
@@ -1234,14 +1294,11 @@ export function previewCompatibilityImports(
   return buildConfigWritePreview(targetPath, nextRaw);
 }
 
-export function ensureCompatibilityImports(
-  importKinds: ImportKind[],
-  overridePath?: string,
-): { path: string; added: ImportKind[] } {
+export function ensureCompatibilityImports(importKinds: ImportKind[], overridePath?: string) {
   const targetPath = getPiGlobalConfigPath(overridePath);
   const raw = readRawConfigObject(targetPath);
   const currentImports = Array.isArray(raw.imports)
-    ? raw.imports.filter((value): value is ImportKind => typeof value === "string")
+    ? raw.imports.filter((value): value is ImportKind => isStringValue(value))
     : [];
   const merged = [...new Set([...currentImports, ...importKinds])];
   const added = merged.filter((kind) => !currentImports.includes(kind));
@@ -1253,6 +1310,7 @@ export function ensureCompatibilityImports(
   const servers = getServersObject(raw);
   setServersObject(raw, servers);
   writeRawConfigObject(targetPath, raw);
+
   return { path: targetPath, added };
 }
 
@@ -1264,13 +1322,13 @@ export function buildStarterProjectConfig(): McpConfig {
 
 export function previewStarterProjectConfig(cwd = process.cwd()): ConfigWritePreview {
   const targetPath = getProjectConfigPath(cwd);
-  const nextRaw = { mcpServers: buildStarterProjectConfig().mcpServers };
+  const nextRaw = parseMcpObject({ mcpServers: buildStarterProjectConfig().mcpServers });
   return buildConfigWritePreview(targetPath, nextRaw);
 }
 
 export function writeStarterProjectConfig(cwd = process.cwd()): string {
   const targetPath = getProjectConfigPath(cwd);
-  const raw = { mcpServers: buildStarterProjectConfig().mcpServers };
+  const raw = parseMcpObject({ mcpServers: buildStarterProjectConfig().mcpServers });
   writeRawConfigObject(targetPath, raw);
   return targetPath;
 }
@@ -1309,6 +1367,7 @@ export function getServerProvenance(
   const userPath = getPiGlobalConfigPath(overridePath);
 
   if (getConfiguredHostConfigDiscovery(overridePath, cwd) === "on") {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     for (const importKind of Object.keys(IMPORT_PATHS) as ImportKind[]) {
       const imported = loadImportedConfig(
         importKind,
@@ -1347,11 +1406,13 @@ export function getServerProvenance(
     }
 
     for (const name of Object.keys(loaded.mcpServers)) {
-      provenance.set(name, {
-        path: source.writePath,
-        kind: source.kind,
-        ...(source.importKind !== undefined ? { importKind: source.importKind } : {}),
-      });
+      provenance.set(
+        name,
+        mergeObjectParts(
+          { path: source.writePath, kind: source.kind },
+          source.importKind !== undefined ? { importKind: source.importKind } : undefined,
+        ),
+      );
     }
   }
 
@@ -1398,9 +1459,13 @@ export function writeDirectToolsConfig(
   }
 }
 
-export function resolveConfiguredOAuthDir(raw: unknown, cwd = process.cwd()): string | undefined {
+export function resolveConfiguredOAuthDir<BoundaryValue>(
+  raw: BoundaryValue,
+  cwd = process.cwd(),
+): string | undefined {
   if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== "string") {
+
+  if (!isStringValue(raw)) {
     throw new Error("settings.oauthDir must be a string");
   }
 

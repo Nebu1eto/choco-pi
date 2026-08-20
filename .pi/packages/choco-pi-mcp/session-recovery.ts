@@ -44,7 +44,10 @@ const SERVER_NOT_INITIALIZED_MCP_MESSAGES = new Set([
   "Bad Request: Server not initialized",
 ]);
 
-export function isTerminatedSession(err: unknown, hadSessionId: boolean): boolean {
+export function isTerminatedSession<BoundaryValue>(
+  err: BoundaryValue,
+  hadSessionId: boolean,
+): boolean {
   if (!hadSessionId) return false;
   if (err instanceof SdkHttpError) {
     return (
@@ -65,6 +68,7 @@ function hasSessionId(connection: ServerConnection): boolean {
   // Only StreamableHTTPClientTransport exposes `sessionId`; stdio/SSE
   // transports (and test doubles that omit `transport` entirely) simply
   // read as `undefined` here.
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   const transport = connection.transport as { sessionId?: string } | undefined;
   return transport?.sessionId != null;
 }

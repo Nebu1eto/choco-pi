@@ -1,6 +1,34 @@
 #!/usr/bin/env node
 "use strict";
 
+const { Type } = require("typebox");
+const { Check } = require("typebox/value");
+
+const RuntimeUndefinedSchema = Type.Undefined();
+const RuntimeStringSchema = Type.String();
+const RuntimeNumberSchema = Type.Number();
+const RuntimeBigIntSchema = Type.BigInt();
+const RuntimeBooleanSchema = Type.Boolean();
+const RuntimeSymbolSchema = Type.Symbol();
+const RuntimeFunctionSchema = Type.Function([], Type.Unknown());
+
+function runtimeTypeOf(value) {
+  if (Check(RuntimeUndefinedSchema, value)) return "undefined";
+  if (Check(RuntimeStringSchema, value)) return "string";
+  if (
+    Check(RuntimeNumberSchema, value) ||
+    Object.is(value, Number.NaN) ||
+    Object.is(value, Number.POSITIVE_INFINITY) ||
+    Object.is(value, Number.NEGATIVE_INFINITY)
+  )
+    return "number";
+  if (Check(RuntimeBigIntSchema, value)) return "bigint";
+  if (Check(RuntimeBooleanSchema, value)) return "boolean";
+  if (Check(RuntimeSymbolSchema, value)) return "symbol";
+  if (Check(RuntimeFunctionSchema, value)) return "function";
+  return "object";
+}
+
 const { createRequire } = require("node:module");
 const { dirname, join } = require("node:path");
 
@@ -61,11 +89,14 @@ function writeResponse(response) {
 (async () => {
   try {
     const request = JSON.parse(await readStdin());
-    if (!request || typeof request !== "object") throw new Error("invalid request");
+
+    if (!request || runtimeTypeOf(request) !== "object") throw new Error("invalid request");
     const { operation, service, account, payload } = request;
     if (!["read", "write", "remove"].includes(operation)) throw new Error("invalid operation");
-    if (typeof service !== "string" || !service) throw new Error("invalid service");
-    if (typeof account !== "string" || !account) throw new Error("invalid account");
+
+    if (runtimeTypeOf(service) !== "string" || !service) throw new Error("invalid service");
+
+    if (runtimeTypeOf(account) !== "string" || !account) throw new Error("invalid account");
 
     const Entry = loadKeyringEntryClass();
     const entry = new Entry(service, account);
@@ -76,7 +107,7 @@ function writeResponse(response) {
       return;
     }
     if (operation === "write") {
-      if (typeof payload !== "string") throw new Error("invalid payload");
+      if (runtimeTypeOf(payload) !== "string") throw new Error("invalid payload");
       entry.setPassword(payload);
       writeResponse({ ok: true });
       return;

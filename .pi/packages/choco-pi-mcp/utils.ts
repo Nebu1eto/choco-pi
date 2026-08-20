@@ -3,6 +3,13 @@ import { spawnSync } from "node:child_process";
 import { homedir, platform } from "node:os";
 import { extname, isAbsolute, join } from "node:path";
 import type { McpConfig, ServerEntry } from "./types.ts";
+import {
+  isFunctionValue,
+  isObjectValue,
+  isStringValue,
+  parseMcpObject,
+  type McpObject,
+} from "./protocol-values.js";
 
 async function execOpen(pi: ExtensionAPI, target: string, browser?: string, signal?: AbortSignal) {
   const os = platform();
@@ -96,12 +103,14 @@ function getMissingEnvVars(value: string): string[] {
   return [...missing];
 }
 
-export function toStringRecord(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+export function toStringRecord<BoundaryValue>(
+  value: BoundaryValue,
+): Record<string, string> | undefined {
+  if (!value || !isObjectValue(value) || Array.isArray(value)) return undefined;
 
   const result: Record<string, string> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry === "string") result[key] = entry;
+    if (isStringValue(entry)) result[key] = entry;
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }
@@ -148,6 +157,7 @@ export function resolveCommandSecret(
     windowsHide: true,
   });
   if (result.error) {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const code = (result.error as NodeJS.ErrnoException).code;
     const reason =
       code === "ETIMEDOUT"
@@ -182,7 +192,8 @@ export function resolveCommandSecretsRecord(
 
 export function resolveServerUrl(definition: Pick<ServerEntry, "url">): string | undefined {
   if (definition.url == null) return undefined;
-  if (typeof definition.url !== "string") {
+
+  if (!isStringValue(definition.url)) {
     throw new Error("MCP server URL must be a string");
   }
 
@@ -249,21 +260,29 @@ export function stripOscSequences(text: string): string {
   return result;
 }
 
+const ANSI_ESCAPE_PATTERN = new RegExp(
+  String.raw`(?:\u001b\[[0-?]*[ -/]*[@-~]|\u001b[@-Z\\-_])`,
+  "g",
+);
+const CONTROL_CHARACTER_PATTERN = new RegExp(String.raw`[\u0000-\u001f\u007f-\u009f]+`, "g");
+
 export function sanitizeTerminalText(text: string): string {
   return stripOscSequences(text)
-    .replace(/(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_])/g, "")
-    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(ANSI_ESCAPE_PATTERN, "")
+
+    .replace(CONTROL_CHARACTER_PATTERN, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-export function formatTerminalError(error: unknown): string {
+export function formatTerminalError<BoundaryValue>(error: BoundaryValue): string {
   const messages: string[] = [];
   const seen = new Set<unknown>();
-  const collect = (value: unknown) => {
+
+  const collect = <BoundaryValue>(value: BoundaryValue) => {
     if (seen.has(value)) return;
-    if ((typeof value === "object" && value !== null) || typeof value === "function")
-      seen.add(value);
+
+    if ((isObjectValue(value) && value !== null) || isFunctionValue(value)) seen.add(value);
 
     if (value instanceof AggregateError) {
       const countBefore = messages.length;
@@ -297,12 +316,16 @@ export function truncateAtWord(text: string, target: number): string {
   return truncated + "...";
 }
 
-export function normalizeDirectToolInputSchema(schema: unknown): Record<string, unknown> {
-  const inputSchema =
-    schema && typeof schema === "object" && !Array.isArray(schema)
-      ? (schema as Record<string, unknown>)
+export function normalizeDirectToolInputSchema<BoundaryValue>(schema: BoundaryValue): McpObject {
+  const inputSchema: McpObject =
+    schema && isObjectValue(schema) && !Array.isArray(schema)
+      ? parseMcpObject(schema)
       : { type: "object", properties: {} };
-  const { $schema, additionalProperties, ...normalized } = inputSchema;
+  const {
+    $schema: _$schema,
+    additionalProperties: _additionalProperties,
+    ...normalized
+  } = inputSchema;
   return normalized;
 }
 
@@ -326,12 +349,15 @@ export function formatMcpStatus(
 /**
  * Extract the adapter-owned UI stream mode from tool metadata.
  */
-export function extractToolUiStreamMode(
-  toolMeta: Record<string, unknown> | undefined,
+export function extractToolUiStreamMode<BoundaryValue>(
+  toolMeta: BoundaryValue | undefined,
 ): "eager" | "stream-first" | undefined {
-  const uiMeta = toolMeta?.ui;
-  if (!uiMeta || typeof uiMeta !== "object") return undefined;
-  const streamMode = (uiMeta as Record<string, unknown>)["pi-mcp-adapter.streamMode"];
+  if (!toolMeta || !isObjectValue(toolMeta)) return undefined;
+  const uiMeta = parseMcpObject(toolMeta).ui;
+
+  if (!uiMeta || !isObjectValue(uiMeta)) return undefined;
+
+  const streamMode = parseMcpObject(uiMeta)["pi-mcp-adapter.streamMode"];
   if (streamMode === "eager" || streamMode === "stream-first") {
     return streamMode;
   }

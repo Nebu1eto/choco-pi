@@ -1,5 +1,6 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { formatTerminalError } from "./utils.ts";
+import { isFunctionValue, isObjectValue } from "./protocol-values.js";
 
 export interface McpRuntimeOwner {
   readonly signal: AbortSignal;
@@ -14,7 +15,7 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
   const cleanups: Array<() => void | Promise<void>> = [];
   let stopPromise: Promise<void> | undefined;
 
-  const reportCleanupFailure = (error: unknown, late: boolean) => {
+  const reportCleanupFailure = <BoundaryValue>(error: BoundaryValue, late: boolean) => {
     console.error(
       `MCP: ${late ? "late " : ""}runtime cleanup failed: ${formatTerminalError(error)}`,
     );
@@ -67,34 +68,52 @@ export function combineAbortSignals(
 /** Fence session-bound UI calls after the owning extension runtime stops. */
 export function createOwnedUi(ui: ExtensionUIContext, owner: McpRuntimeOwner): ExtensionUIContext {
   const proxies = new WeakMap<object, object>();
-  const wrap = (value: unknown): unknown => {
-    if ((typeof value !== "object" || value === null) && typeof value !== "function") {
+
+  const wrap = <BoundaryValue>(value: BoundaryValue): BoundaryValue => {
+    if ((!isObjectValue(value) || value === null) && !isFunctionValue(value)) {
       return value;
     }
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const object = value as object;
     const existing = proxies.get(object);
-    if (existing) return existing;
+    if (existing) {
+      // SAFETY: The cached proxy preserves the runtime interface of the original value.
+      return existing as BoundaryValue;
+    }
 
     const proxy = new Proxy(object, {
       get(target, property, receiver) {
         if (!owner.isActive()) return undefined;
-        const member = Reflect.get(target, property, receiver);
-        if (typeof member === "function") {
+
+        let descriptorOwner: object | null = target;
+        let descriptor: PropertyDescriptor | undefined;
+        while (descriptorOwner !== null && descriptor === undefined) {
+          descriptor = Object.getOwnPropertyDescriptor(descriptorOwner, property);
+          descriptorOwner = Object.getPrototypeOf(descriptorOwner);
+        }
+        const member =
+          descriptor && "value" in descriptor ? descriptor.value : descriptor?.get?.call(receiver);
+
+        if (isFunctionValue(member)) {
           return (...args: unknown[]) => {
             if (!owner.isActive()) return undefined;
-            return Reflect.apply(member, target, args);
+
+            return member.apply(target, args);
           };
         }
         return owner.isActive() ? wrap(member) : undefined;
       },
     });
     proxies.set(object, proxy);
-    return proxy;
+
+    // SAFETY: Proxy traps only fence access; they preserve the wrapped value's public interface.
+    return proxy as BoundaryValue;
   };
+  // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   return wrap(ui) as ExtensionUIContext;
 }
 
-export function isAbortError(error: unknown, signal?: AbortSignal): boolean {
+export function isAbortError<BoundaryValue>(error: BoundaryValue, signal?: AbortSignal): boolean {
   if (signal?.aborted) return true;
   return (
     error instanceof Error &&

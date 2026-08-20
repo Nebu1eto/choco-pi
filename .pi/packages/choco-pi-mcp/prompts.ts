@@ -11,6 +11,7 @@ import {
 } from "./metadata-cache.ts";
 import { logger } from "./logger.ts";
 import { truncateAtWord } from "./utils.ts";
+import { isObjectValue, isStringValue } from "./protocol-values.js";
 
 /**
  * Resolve prompt metadata for slash-command registration at extension load
@@ -42,10 +43,7 @@ export function resolveCachedPrompts(config: McpConfig): PromptMetadata[] {
  *   /mcp__demo__brief today "important tasks"
  *   /mcp__demo__brief day=today topic="important tasks"
  */
-export function parsePromptArgs(input: string): {
-  positional: string[];
-  named: Record<string, string>;
-} {
+export function parsePromptArgs(input: string) {
   const positional: string[] = [];
   const named: Record<string, string> = {};
 
@@ -208,14 +206,16 @@ export function formatPromptResult(result: GetPromptResult): string {
 
 function extractMessageText(message: PromptMessage): string {
   const content = message.content;
-  if (!content || typeof content !== "object") return "";
+
+  if (!content || !isObjectValue(content)) return "";
   switch (content.type) {
     case "text":
       return content.text ?? "";
     case "resource": {
       const resource = content.resource;
       if (!resource) return "";
-      if ("text" in resource && typeof resource.text === "string") {
+
+      if ("text" in resource && isStringValue(resource.text)) {
         return `[resource ${resource.uri}]\n${resource.text}`;
       }
       return `[resource ${resource.uri}]`;

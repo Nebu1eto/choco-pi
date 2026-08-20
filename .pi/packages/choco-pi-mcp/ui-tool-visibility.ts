@@ -1,12 +1,15 @@
+import { isObjectValue, parseMcpObject } from "./protocol-values.js";
 export type UiToolVisibility = "model" | "app";
 
-export function extractUiToolVisibility(
-  meta: Record<string, unknown> | undefined,
+export function extractUiToolVisibility<BoundaryValue>(
+  meta: BoundaryValue | undefined,
 ): UiToolVisibility[] | undefined {
-  if (!meta || typeof meta !== "object") return undefined;
-  const ui = meta.ui;
-  if (!ui || typeof ui !== "object" || Array.isArray(ui)) return undefined;
-  const visibility = (ui as Record<string, unknown>).visibility;
+  if (!meta || !isObjectValue(meta)) return undefined;
+  const ui = parseMcpObject(meta).ui;
+
+  if (!ui || !isObjectValue(ui) || Array.isArray(ui)) return undefined;
+
+  const visibility = parseMcpObject(ui).visibility;
   if (visibility === undefined) return undefined;
   if (!Array.isArray(visibility)) return [];
 

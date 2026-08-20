@@ -1,4 +1,5 @@
 import type { UiHostContext, UiResourceContent, UiResourceCsp } from "./types.ts";
+import { isStringValue, type McpObject } from "./protocol-values.js";
 
 // Use locally bundled AppBridge to avoid CDN Zod bundling issues
 const DEFAULT_APP_BRIDGE_MODULE_URL = "/app-bridge.bundle.js";
@@ -9,7 +10,8 @@ export interface HostHtmlTemplateInput {
   uiResourceToken: string;
   serverName: string;
   toolName: string;
-  toolArgs: Record<string, unknown>;
+
+  toolArgs: McpObject;
   resource: UiResourceContent;
   allowAttribute: string;
   requireToolConsent: boolean;
@@ -422,14 +424,14 @@ function toDirective(name: string, trustedSources: string[], domains: string[]):
   return `${name} ${[...new Set([...trustedSources, ...domains])].join(" ")}`;
 }
 
-function sanitizeCspDomains(domains: unknown): string[] {
+function sanitizeCspDomains<BoundaryValue>(domains: BoundaryValue): string[] {
   if (!Array.isArray(domains)) return [];
 
   return [
     ...new Set(
       domains.filter(
         (domain): domain is string =>
-          typeof domain === "string" &&
+          isStringValue(domain) &&
           domain.length > 0 &&
           // HTTP headers must be printable ASCII; rejecting all other code points also
           // excludes every C0/C1 control character before Node serializes the policy.
@@ -440,7 +442,7 @@ function sanitizeCspDomains(domains: unknown): string[] {
   ];
 }
 
-function safeInlineJSON(value: unknown): string {
+function safeInlineJSON<BoundaryValue>(value: BoundaryValue): string {
   return JSON.stringify(value)
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e")

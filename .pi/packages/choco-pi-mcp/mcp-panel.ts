@@ -23,6 +23,7 @@ import {
   type CachedTool,
 } from "./metadata-cache.ts";
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
+import { mergeObjectParts } from "./protocol-values.js";
 
 interface PanelTheme {
   border: string;
@@ -98,13 +99,18 @@ function sanitizeDisplayText(text: string | null | undefined): string {
   return sanitizeTerminalText(text ?? "");
 }
 
+const ANSI_ESCAPE_PREFIX_PATTERN = new RegExp(
+  String.raw`^(?:\u001b\[[0-?]*[ -/]*[@-~]|\u001b[@-Z\\-_])`,
+);
+
 function sanitizeRowContent(content: string): string {
   const withoutOsc = stripOscSequences(content);
   let result = "";
   let pendingSpace = false;
   for (let i = 0; i < withoutOsc.length; i++) {
     const rest = withoutOsc.slice(i);
-    const ansi = rest.match(/^(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_])/);
+
+    const ansi = rest.match(ANSI_ESCAPE_PREFIX_PATTERN);
     if (ansi) {
       result += ansi[0];
       i += ansi[0].length - 1;
@@ -261,10 +267,12 @@ class McpPanel {
 
             const isDirect =
               toolFilter === true || (Array.isArray(toolFilter) && toolFilter.includes(baseName));
-            const ct: CachedTool = {
-              name: baseName,
-              ...(resource.description !== undefined ? { description: resource.description } : {}),
-            };
+            const ct: CachedTool = mergeObjectParts(
+              { name: baseName },
+              resource.description !== undefined
+                ? { description: resource.description }
+                : undefined,
+            );
             tools.push({
               name: baseName,
               description: resource.description ?? `Read resource: ${resource.uri}`,
@@ -279,19 +287,25 @@ class McpPanel {
       const status = callbacks.getConnectionStatus(serverName);
       const failureMessage = callbacks.getFailureMessage?.(serverName) ?? null;
 
-      this.servers.push({
-        name: serverName,
-        expanded: false,
-        source: prov?.kind ?? "user",
-        ...(prov?.importKind !== undefined ? { importKind: prov.importKind } : {}),
-        ...(definition.includeTools !== undefined ? { includeTools: definition.includeTools } : {}),
-        ...(definition.excludeTools !== undefined ? { excludeTools: definition.excludeTools } : {}),
-        exposeResources: definition.exposeResources !== false,
-        connectionStatus: status,
-        failureMessage,
-        tools,
-        hasCachedData: !!serverCache,
-      });
+      this.servers.push(
+        mergeObjectParts(
+          { name: serverName, expanded: false, source: prov?.kind ?? "user" },
+          prov?.importKind !== undefined ? { importKind: prov.importKind } : undefined,
+          definition.includeTools !== undefined
+            ? { includeTools: definition.includeTools }
+            : undefined,
+          definition.excludeTools !== undefined
+            ? { excludeTools: definition.excludeTools }
+            : undefined,
+          {
+            exposeResources: definition.exposeResources !== false,
+            connectionStatus: status,
+            failureMessage,
+            tools,
+            hasCachedData: !!serverCache,
+          },
+        ),
+      );
     }
 
     this.rebuildVisibleItems();
@@ -808,10 +822,10 @@ class McpPanel {
 
         const prev = existingState.get(baseName);
         const isDirect = prev !== undefined ? prev : false;
-        const ct: CachedTool = {
-          name: baseName,
-          ...(resource.description !== undefined ? { description: resource.description } : {}),
-        };
+        const ct: CachedTool = mergeObjectParts(
+          { name: baseName },
+          resource.description !== undefined ? { description: resource.description } : undefined,
+        );
         newTools.push({
           name: baseName,
           description: resource.description ?? `Read resource: ${resource.uri}`,

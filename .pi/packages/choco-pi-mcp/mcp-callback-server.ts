@@ -15,6 +15,7 @@ import {
   setOAuthCallbackPath,
   setOAuthCallbackPort,
 } from "./mcp-oauth-provider.ts";
+import { isNumberValue, isStringValue, mergeObjectParts } from "./protocol-values.js";
 
 // HTML templates for callback responses.
 //
@@ -276,7 +277,8 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   // Clear timeout and resolve the pending promise
   clearTimeout(pending.timeout);
   pendingAuths.delete(state);
-  pending.resolve({ code, ...(iss !== null ? { iss } : {}) });
+
+  pending.resolve(mergeObjectParts({ code }, iss !== null ? { iss } : undefined));
 
   res.writeHead(200, { "Content-Type": "text/html" });
   res.end(htmlSuccess());
@@ -379,7 +381,8 @@ async function ensureCallbackServerLocked(
       setOAuthCallbackPort(requiredPort);
     } else {
       const address = candidateServer.address();
-      if (!address || typeof address === "string" || typeof address.port !== "number") {
+
+      if (!address || isStringValue(address) || !isNumberValue(address.port)) {
         throw new Error("OAuth callback server did not report an assigned port");
       }
       setOAuthCallbackPort(address.port);
@@ -403,6 +406,7 @@ async function ensureCallbackServerLocked(
     if (reservedState) {
       reservedAuthStates.delete(reservedState);
     }
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const nodeError = error as NodeJS.ErrnoException;
     await new Promise<void>((resolve) => {
       candidateServer.close(() => resolve());

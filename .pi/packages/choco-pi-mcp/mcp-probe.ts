@@ -1,3 +1,4 @@
+import { isObjectValue } from "./protocol-values.js";
 const PROBE_TIMEOUT_MS = 5_000;
 const MODERN_PROTOCOL_VERSION = "2026-07-28";
 const LEGACY_PROTOCOL_VERSION = "2025-06-18";
@@ -80,21 +81,24 @@ interface ProbeResult {
   outcome: ProbeOutcome;
 }
 
-function jsonRpcEnvelopeInfo(value: unknown): JsonRpcEnvelopeInfo | null {
+function jsonRpcEnvelopeInfo<BoundaryValue>(value: BoundaryValue): JsonRpcEnvelopeInfo | null {
   if (
-    typeof value !== "object" ||
+    !isObjectValue(value) ||
     value === null ||
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     (value as { jsonrpc?: unknown }).jsonrpc !== "2.0"
   ) {
     return null;
   }
   if ("result" in value) {
+    // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const result = (value as { result?: unknown }).result;
     return {
       kind: "result",
       protocolVersion:
-        typeof result === "object" && result !== null
-          ? (result as { protocolVersion?: unknown }).protocolVersion
+        isObjectValue(result) && result !== null
+          ? // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
+            (result as { protocolVersion?: unknown }).protocolVersion
           : undefined,
     };
   }

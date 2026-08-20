@@ -3,22 +3,18 @@ import { randomUUID } from "node:crypto";
 import type { FetchLike } from "@modelcontextprotocol/client";
 import type { HttpRequestHeadersCommand } from "./types.ts";
 import { interpolateEnvVars } from "./utils.ts";
+import { isObjectValue, isStringValue, mergeObjectParts } from "./protocol-values.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const USE_PROCESS_GROUP = process.platform !== "win32";
 const CLEANUP_TOKEN_ENV = "PI_MCP_REQUEST_HEADERS_CLEANUP_TOKEN";
 
-function isNoSuchProcessError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ESRCH"
-  );
+function isNoSuchProcessError<BoundaryValue>(error: BoundaryValue): boolean {
+  return isObjectValue(error) && error !== null && "code" in error && error.code === "ESRCH";
 }
 
-function runPosixPs(args: string[]): { status: number | null; stdout: string } {
+function runPosixPs(args: string[]) {
   if (process.env.PI_MCP_ADAPTER_TEST_FAIL_PS === "1") return { status: 1, stdout: "" };
   return spawnSync("ps", args, { encoding: "utf8" });
 }
@@ -165,29 +161,25 @@ export interface HttpRequestCommandEnvelope {
 
 type CommandResult = { status: "error"; error: Error } | { status: "success"; headers: Headers };
 
-function resolvedCommand(config: HttpRequestHeadersCommand): {
-  command: string;
-  args: string[];
-  env: NodeJS.ProcessEnv;
-  timeoutMs: number;
-} {
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
+function resolvedCommand(config: HttpRequestHeadersCommand) {
+  if (!config || !isObjectValue(config) || Array.isArray(config)) {
     throw new Error("HTTP request headers command must be an object");
   }
-  if (typeof config.command !== "string" || config.command.trim() === "") {
+
+  if (!isStringValue(config.command) || config.command.trim() === "") {
     throw new Error("HTTP request headers command requires a non-empty command");
   }
   if (
     config.args !== undefined &&
-    (!Array.isArray(config.args) || config.args.some((arg) => typeof arg !== "string"))
+    (!Array.isArray(config.args) || config.args.some((arg) => !isStringValue(arg)))
   ) {
     throw new Error("HTTP request headers command args must be strings");
   }
   if (
     config.env !== undefined &&
-    (typeof config.env !== "object" ||
+    (!isObjectValue(config.env) ||
       Array.isArray(config.env) ||
-      Object.values(config.env).some((value) => typeof value !== "string"))
+      Object.values(config.env).some((value) => !isStringValue(value)))
   ) {
     throw new Error("HTTP request headers command env values must be strings");
   }
@@ -197,6 +189,7 @@ function resolvedCommand(config: HttpRequestHeadersCommand): {
       "HTTP request headers command timeoutMs must be an integer between 1 and 60000",
     );
   }
+
   return {
     command: interpolateEnvVars(config.command),
     args: (config.args ?? []).map(interpolateEnvVars),
@@ -312,7 +305,8 @@ async function invokeRequestHeadersCommand(
         });
         return;
       }
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+
+      if (!parsed || !isObjectValue(parsed) || Array.isArray(parsed)) {
         finishAfterKill({
           status: "error",
           error: new Error("HTTP request headers command must return a JSON object"),
@@ -320,7 +314,8 @@ async function invokeRequestHeadersCommand(
         return;
       }
       const entries = Object.entries(parsed);
-      if (entries.some(([, value]) => typeof value !== "string")) {
+
+      if (entries.some(([, value]) => !isStringValue(value))) {
         finishAfterKill({
           status: "error",
           error: new Error("HTTP request headers command values must be strings"),
@@ -330,6 +325,7 @@ async function invokeRequestHeadersCommand(
       try {
         finishAfterKill({
           status: "success",
+          // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
           headers: new Headers(entries as Array<[string, string]>),
         });
       } catch {
@@ -367,19 +363,23 @@ export function createRequestHeadersCommandFetch(
     );
     const headers = new Headers(request.headers);
     derived.forEach((value, name) => headers.set(name, value));
-    return delegate(new URL(request.url), {
-      method: request.method,
-      headers,
-      ...(request.method === "GET" || request.method === "HEAD" ? {} : { body }),
-      signal: request.signal,
-      cache: request.cache,
-      credentials: request.credentials,
-      integrity: request.integrity,
-      keepalive: request.keepalive,
-      mode: request.mode,
-      redirect: request.redirect,
-      referrer: request.referrer,
-      referrerPolicy: request.referrerPolicy,
-    });
+    return delegate(
+      new URL(request.url),
+      mergeObjectParts(
+        { method: request.method, headers },
+        request.method === "GET" || request.method === "HEAD" ? undefined : { body },
+        {
+          signal: request.signal,
+          cache: request.cache,
+          credentials: request.credentials,
+          integrity: request.integrity,
+          keepalive: request.keepalive,
+          mode: request.mode,
+          redirect: request.redirect,
+          referrer: request.referrer,
+          referrerPolicy: request.referrerPolicy,
+        },
+      ),
+    );
   };
 }

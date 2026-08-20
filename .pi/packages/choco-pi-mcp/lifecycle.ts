@@ -5,9 +5,14 @@ import { hasPendingAuth } from "./mcp-auth-flow.ts";
 import { logger } from "./logger.ts";
 import { formatTerminalError, parallelLimit, sanitizeTerminalText } from "./utils.ts";
 import { isTerminatedSession } from "./session-recovery.ts";
+import { isFunctionValue, isNumberValue } from "./protocol-values.js";
 
 export type ReconnectCallback = (serverName: string) => void | Promise<void>;
-export type ReconnectFailureCallback = (serverName: string, error: unknown) => void;
+
+export type ReconnectFailureCallback = <BoundaryValue>(
+  serverName: string,
+  error: BoundaryValue,
+) => void;
 export type HealthRestoredCallback = (serverName: string) => void | Promise<void>;
 export type AuthRequiredCallback = (serverName: string) => void | Promise<void>;
 
@@ -86,8 +91,9 @@ export class McpLifecycleManager {
   }
 
   startHealthChecks(signalOrInterval?: AbortSignal | number, maybeIntervalMs = 30000): void {
-    const signal = typeof signalOrInterval === "number" ? undefined : signalOrInterval;
-    const intervalMs = typeof signalOrInterval === "number" ? signalOrInterval : maybeIntervalMs;
+    const signal = isNumberValue(signalOrInterval) ? undefined : signalOrInterval;
+
+    const intervalMs = isNumberValue(signalOrInterval) ? signalOrInterval : maybeIntervalMs;
     this.stopped = false;
     if (signal?.aborted) {
       this.stopped = true;
@@ -203,6 +209,7 @@ export class McpLifecycleManager {
     }
     if (!definition.url) return;
     const hadSessionId =
+      // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
       (connection.transport as { sessionId?: string } | undefined)?.sessionId != null;
     let refreshResult: Awaited<ReturnType<McpServerManager["refreshTools"]>>;
     try {
@@ -332,9 +339,10 @@ export class McpLifecycleManager {
     return Date.now() >= retry.nextAttemptAt;
   }
 
-  private reportConnectionFailure(
+  private reportConnectionFailure<BoundaryValue>(
     name: string,
-    error: unknown,
+
+    error: BoundaryValue,
     action: "refresh" | "reconnect" | "publish",
     connection: ServerConnection | undefined,
   ): void {
@@ -389,13 +397,17 @@ export class McpLifecycleManager {
     this.onIdleShutdown = undefined;
     this.retryStates.clear();
     this.pendingMetadataPublications.clear();
-    if (typeof this.manager.closeAll === "function") {
+
+    if (isFunctionValue(this.manager.closeAll)) {
       await this.manager.closeAll();
     }
   }
 }
 
-function shouldReconnectAfterRefresh(error: unknown, hadSessionId: boolean): boolean {
+function shouldReconnectAfterRefresh<BoundaryValue>(
+  error: BoundaryValue,
+  hadSessionId: boolean,
+): boolean {
   if (isTerminatedSession(error, hadSessionId)) return true;
   return (
     error instanceof SdkError &&

@@ -1,3 +1,4 @@
+import { isStringValue, mergeObjectParts, type McpValue } from "./protocol-values.js";
 /**
  * Centralized logging for MCP UI operations.
  * Provides structured, contextual logs with levels.
@@ -10,7 +11,8 @@ export interface LogContext {
   session?: string;
   tool?: string;
   uri?: string;
-  [key: string]: unknown;
+
+  [key: string]: McpValue;
 }
 
 export interface LogEntry {
@@ -23,14 +25,14 @@ export interface LogEntry {
 
 type LogHandler = (entry: LogEntry) => void;
 
-const LEVEL_PRIORITY: Record<LogLevel, number> = {
+const LEVEL_PRIORITY = {
   debug: 0,
   info: 1,
   warn: 2,
   error: 3,
 };
 
-const LEVEL_PREFIX: Record<LogLevel, string> = {
+const LEVEL_PREFIX = {
   debug: "[MCP-UI:DEBUG]",
   info: "[MCP-UI]",
   warn: "[MCP-UI:WARN]",
@@ -65,13 +67,11 @@ class Logger {
   private emit(level: LogLevel, message: string, context?: LogContext, error?: Error): void {
     if (!this.shouldLog(level)) return;
 
-    const entry: LogEntry = {
-      level,
-      message,
-      context: { ...this.defaultContext, ...context },
-      ...(error !== undefined ? { error } : {}),
-      timestamp: new Date(),
-    };
+    const entry: LogEntry = mergeObjectParts(
+      { level, message, context: { ...this.defaultContext, ...context } },
+      error !== undefined ? { error } : undefined,
+      { timestamp: new Date() },
+    );
 
     // Default console output
     const prefix = LEVEL_PREFIX[level];
@@ -154,7 +154,7 @@ function formatContext(context?: LogContext): string {
   const parts: string[] = [];
   for (const [key, value] of Object.entries(context)) {
     if (value !== undefined && value !== null) {
-      parts.push(`${key}=${typeof value === "string" ? value : JSON.stringify(value)}`);
+      parts.push(`${key}=${isStringValue(value) ? value : JSON.stringify(value)}`);
     }
   }
   return parts.length > 0 ? `(${parts.join(", ")})` : "";
