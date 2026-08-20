@@ -6,7 +6,9 @@ conversations, and dynamic workflow fan-out. It maps the modules that matter and
 names the exact attachment point for each of those three, so a later phase does
 not have to re-derive them from a 3,000-line entry file.
 
-Nothing here is a design. It is a map.
+Most sections are a module map. Seam A also records the implemented focus-mode
+design because later phases must compose with its host patches and restoration
+order.
 
 ## Load path
 
@@ -94,47 +96,64 @@ resolution.
 
 ## Seam A — focused agent fullscreen takeover
 
-**What exists.** An agent conversation is already a modal overlay with a single
-owner. Two call sites open it, both with the same shape:
+The modal remains the default conversation viewer. FleetView uses **Enter** to
+open it and **f** on a selected agent to enter fullscreen focus directly; the
+modal also exposes **f focus**. Focus mode uses the existing
+`ConversationViewer` with `profile: "focus"`, so message extraction, tool-call
+rows, nested `Agent` calls, activity text and `session.subscribe()` streaming
+stay on the same data flow. Pi's main transcript scroll view owns clipping and
+follow-end behavior in this profile instead of the modal's 70% viewport.
 
-- `ui/fleet-list.ts` → `FleetList.openViewer()` (Enter on a fleet row)
-- `index.ts` → `viewAgentConversation()` (`/agents → Running agents`)
+### State machine
 
-Both call `ctx.ui.custom<undefined>(factory, { overlay: true, overlayOptions: {
-anchor: "center", width: "90%", maxHeight: `${VIEWPORT_HEIGHT_PCT}%` } })` and
-construct a `ConversationViewer`.
+```text
+orchestrator (default)
+  -- FleetView f / modal f --> focused(agentId, session)
+focused(agentId, session)
+  -- Esc / session switch / shutdown --> orchestrator
+focused(A) -- focus(B) --> orchestrator -- focus(B)
+```
 
-**Where a takeover attaches.**
+A finished agent may remain focused as a read-only transcript. Submitting text
+there is consumed and retained in the editor; it never falls through to the
+orchestrator. A running or queued target sends through `AgentManager.steer`, the
+same dispatch boundary used by `steer_subagent`, and emits
+`subagents:steered`. The focused agent owns any nested children, so steering is
+always addressed to its top-level record id rather than a child tool call.
 
-1. *Geometry*: `VIEWPORT_HEIGHT_PCT` (exported from
-   `ui/conversation-viewer.ts`) is the single constant both the overlay's
-   `maxHeight` and the viewer's own `viewportHeight()` read, precisely so the
-   two cannot disagree. A fullscreen profile is a second pair of values threaded
-   through the same two places — not a new cap in one of them.
-2. *Renderer*: `ConversationViewer` is a plain `Component` with `render(width)`,
-   `handleInput(data)` and `chromeLines()`. A takeover mode is a constructor
-   option that changes `viewportHeight()` and the chrome it draws; the steering
-   composer, the two-press stop guard and the `session.subscribe` live update
-   need no change.
-3. *Input ownership*: while an overlay is open, `FleetList.handleKey` returns
-   early and lets the overlay own every key (`if (this.viewerClose) …`). That is
-   the existing modality guarantee a takeover would inherit.
-4. *Focus*: `FleetList.setUICtx` registers a global `ui.onTerminalInput` handler
-   that fires **before** the focused component, and deliberately drops keys
-   unless pi's prompt `Editor` is focused. A fullscreen mode that must capture
-   keys while nothing else is focused changes that predicate, and only it.
-5. *Selection continuity*: `viewingAgentId` + `clearViewer()` already restore
-   the cursor to the viewed agent by id after the list reorders. Reuse it rather
-   than adding parallel state.
+### Host patches held while focused
 
-**What a takeover must not break.** The widget (`aboveEditor`) and FleetView
-(`belowEditor`) are separate registrations from the overlay, and they clean up
-differently. `FleetList.setEnabled(false)` is the supported way to drop the
-fleet row. The widget has no equivalent: it is registered and cleared inside
-`AgentWidget.update()` (`setWidget("agents", …)` / `setStatus("subagents", …)`)
-and torn down in `dispose()`. A fullscreen mode that must hide the widget should
-add the toggle there rather than calling `setWidget("agents", undefined)`
-directly, or the next `update()` re-registers it.
+`ui/focus-mode.ts::FocusedAgentController` holds two instance-scoped adapters:
+
+1. `focused-conversation-render` wraps Pi's first TUI root, the stable main
+   document container, and returns the focused `ConversationViewer` output.
+   The orchestrator container and its streaming components remain mounted and
+   continue receiving events behind the adapter; no conversation state is
+   copied or cleared.
+2. `focused-editor-input` wraps the current editor instance's `handleInput`.
+   It snapshots the orchestrator draft, presents an empty focused buffer, and
+   temporarily substitutes `onSubmit` only for one predecessor invocation, so
+   zentui's `Symbol.for("pi-zentui.*")` factory and the prompt-stash instance
+   wrapper remain in the chain. Esc exits focus. Submit calls the manager steer
+   path and clears the focused buffer only when accepted; exit restores the
+   orchestrator draft.
+
+`ui/method-patch-registry.ts` stores adapters under
+`Symbol.for("pi-choco-subagents.method-patch-registry")`. Each wrapper records
+its exact predecessor descriptor. Cleanup restores that descriptor only when
+its own wrapper is still outermost; if another extension wrapped it later, the
+focus behavior is deactivated and the newer wrapper is left untouched. The
+conversation wrapper rechecks the editor root every render and moves only the
+input adapter if another extension legitimately replaces the editor while focus
+is active.
+
+Restoration is ordered: set state to `orchestrator`; deactivate/restore editor
+input; deactivate/restore document render; unsubscribe and dispose the focused
+viewer; clear the `subagent-focus` indicator; request a forced render. This
+prevents a visible orchestrator transcript from briefly retaining subagent
+input ownership. The subtle above-editor indicator names the focused handle and
+keeps `Esc returns to main` visible. FleetView renders no rows and claims no
+global input while focus is active.
 
 ## Seam B — dismissible side-conversation overlay
 

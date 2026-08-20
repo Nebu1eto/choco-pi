@@ -19,7 +19,7 @@ import { abortable } from "./abortable.ts";
 import { hasAgentBadge, renderAgentName } from "./agent-color.ts";
 import { buildNewAgentFile, disableInContent, enableInContent, isEmptyStub, locateAgentFile, personalAgentsDir, projectAgentsDir, serializeAgentFile } from "./agent-file-toggle.ts";
 import { AgentManager } from "./agent-manager.ts";
-import { getAgentConversation, getDefaultMaxTurns, getGraceTurns, getRememberAgents, normalizeMaxTurns, SUBAGENT_TOOL_NAMES, setDefaultMaxTurns, setGraceTurns, setRememberAgents, steerAgent } from "./agent-runner.ts";
+import { getAgentConversation, getDefaultMaxTurns, getGraceTurns, getRememberAgents, normalizeMaxTurns, SUBAGENT_TOOL_NAMES, setDefaultMaxTurns, setGraceTurns, setRememberAgents } from "./agent-runner.ts";
 import { BUILTIN_TOOL_NAMES, getAgentConfig, getAllTypes, getAvailableTypes, getConfig, getFallbackSubagent, isDefaultsDisabled, NO_FALLBACK, registerAgents, resolveSpawnType, resolveType, setDefaultsDisabled, setFallbackSubagent } from "./agent-types.ts";
 import { inChildSessionContext } from "./child-context.ts";
 import { type RpcHandle, registerRpcHandlers } from "./cross-extension-rpc.ts";
@@ -56,6 +56,7 @@ import {
   type UICtx,
 } from "./ui/agent-widget.ts";
 import { FleetList, type FleetUICtx } from "./ui/fleet-list.ts";
+import { FocusedAgentController } from "./ui/focus-mode.ts";
 import { showSchedulesMenu } from "./ui/schedule-menu.ts";
 import { selectItem } from "./ui/select-item.ts";
 import { addUsage, getLifetimeTotal, getSessionContextPercent, type LifetimeUsage } from "./usage.ts";
@@ -641,6 +642,7 @@ export default function (pi: ExtensionAPI) {
     currentCtx = ctx;
     if (ctx.hasUI) {
       widget.setUICtx(ctx.ui);
+      focus.setUICtx(ctx.ui);
       fleet.setUICtx(ctx.ui as any);
     }
     manager.clearCompleted(true);
@@ -911,6 +913,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_before_switch", () => {
+    focus.unfocus();
     manager.clearCompleted(true);
     scheduler.stop();
   });
@@ -932,6 +935,7 @@ export default function (pi: ExtensionAPI) {
     manager.abortAll();
     for (const timer of pendingNudges.values()) clearTimeout(timer);
     pendingNudges.clear();
+    focus.dispose();
     fleet.dispose();
     manager.dispose();
   });
@@ -946,8 +950,18 @@ export default function (pi: ExtensionAPI) {
   const widget = new AgentWidget(manager, agentActivity, getWidgetMode);
   function setWidgetMode(m: WidgetMode): void { widgetMode = m; widget.update(); }
 
+  // Fullscreen focus replaces the main transcript renderer and binds the existing
+  // prompt editor to manager.steer(), preserving every editor adapter already on it.
+  const focus = new FocusedAgentController(manager, {
+    getActivity: id => agentActivity.get(id),
+    onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
+  });
+
   // Claude Code-style FleetView: navigable list of main + subagents below the editor.
-  const fleet = new FleetList(manager, agentActivity);
+  const fleet = new FleetList(manager, agentActivity, {
+    focusAgent: (record, tui, theme) => focus.focus(record, tui, theme),
+    isAgentFocused: () => focus.isFocused(),
+  });
   let fleetViewEnabled = true;
   function isFleetViewEnabled(): boolean { return fleetViewEnabled; }
   function setFleetViewEnabled(b: boolean): void { fleetViewEnabled = b; fleet.setEnabled(b); }
@@ -2074,23 +2088,23 @@ Terse command-style prompts produce shallow, generic work.
         return textResult(`Steering message queued for agent ${record.id}. It will be delivered once the session initializes.`);
       }
 
-      try {
-        await steerAgent(record.session, params.message);
-        pi.events.emit("subagents:steered", { id: record.id, message: params.message });
-        const tokens = formatLifetimeTokens(record);
-        const contextPercent = getSessionContextPercent(record.session);
-        const stateParts: string[] = [];
-        if (tokens) stateParts.push(tokens);
-        stateParts.push(`${record.toolUses} tool ${record.toolUses === 1 ? "use" : "uses"}`);
-        if (contextPercent !== null) stateParts.push(`context ${Math.round(contextPercent)}% full`);
-        if (record.compactionCount) stateParts.push(`${record.compactionCount} compaction${record.compactionCount === 1 ? "" : "s"}`);
-        return textResult(
-          `Steering message sent to agent ${record.id}. The agent will process it after its current tool execution.\n` +
-          `Current state: ${stateParts.join(" · ")}`,
-        );
-      } catch (err) {
-        return textResult(`Failed to steer agent: ${err instanceof Error ? err.message : String(err)}`);
+      // UI steering (overlay composer, prompt mentions and fullscreen focus)
+      // converges on this same manager path, including pre-session queueing.
+      if (!manager.steer(record.id, params.message)) {
+        return textResult(`Failed to steer agent ${record.id}. It is no longer running.`);
       }
+      pi.events.emit("subagents:steered", { id: record.id, message: params.message });
+      const tokens = formatLifetimeTokens(record);
+      const contextPercent = getSessionContextPercent(record.session);
+      const stateParts: string[] = [];
+      if (tokens) stateParts.push(tokens);
+      stateParts.push(`${record.toolUses} tool ${record.toolUses === 1 ? "use" : "uses"}`);
+      if (contextPercent !== null) stateParts.push(`context ${Math.round(contextPercent)}% full`);
+      if (record.compactionCount) stateParts.push(`${record.compactionCount} compaction${record.compactionCount === 1 ? "" : "s"}`);
+      return textResult(
+        `Steering message sent to agent ${record.id}. The agent will process it after its current tool execution.\n` +
+        `Current state: ${stateParts.join(" · ")}`,
+      );
     },
   }));
 
@@ -2263,34 +2277,41 @@ Terse command-style prompts produce shallow, generic work.
     });
     if (!record) return;
 
-    await viewAgentConversation(ctx, record);
-    // Back-navigation: re-show the list
-    await showRunningAgents(ctx);
+    const focused = await viewAgentConversation(ctx, record);
+    // Back-navigation: re-show the list unless the modal became fullscreen focus.
+    if (!focused) await showRunningAgents(ctx);
   }
 
-  async function viewAgentConversation(ctx: ExtensionCommandContext, record: AgentRecord) {
+  async function viewAgentConversation(ctx: ExtensionCommandContext, record: AgentRecord): Promise<boolean> {
     if (!record.session) {
       ctx.ui.notify(`Agent is ${record.status === "queued" ? "queued" : "expired"} — no session available.`, "info");
-      return;
+      return false;
     }
 
     const { ConversationViewer, VIEWPORT_HEIGHT_PCT } = await import("./ui/conversation-viewer.ts");
     const session = record.session;
     const activity = agentActivity.get(record.id);
 
+    let focusRequested = false;
     await ctx.ui.custom<undefined>(
       (tui, theme, keybindings, done) => {
         return new ConversationViewer(tui, session, record, activity, theme, done, () => {
           if (manager.abort(record.id)) {
             ctx.ui.notify(`Stopped "${record.description}".`, "info");
           }
-        }, keybindings, (message: string) => manager.steer(record.id, message));
+        }, keybindings, (message: string) => manager.steer(record.id, message), {
+          onFocus: () => {
+            focusRequested = true;
+            queueMicrotask(() => focus.focus(record, tui, theme));
+          },
+        });
       },
       {
         overlay: true,
         overlayOptions: { anchor: "center", width: "90%", maxHeight: `${VIEWPORT_HEIGHT_PCT}%` },
       },
     );
+    return focusRequested;
   }
 
   async function showAgentDetail(ctx: ExtensionCommandContext, name: string) {
