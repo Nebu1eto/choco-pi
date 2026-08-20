@@ -1,0 +1,27 @@
+{
+  "name": "pi-choco-agents-md",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Recursive subdirectory AGENTS.md context injection for choco-pi, implemented from scratch as a local pi package.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "agents-md",
+    "subdir-context"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.84.0",
+    "@earendil-works/pi-coding-agent": ">=0.84.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
