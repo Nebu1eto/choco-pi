@@ -2630,6 +2630,9 @@ Terse command-style prompts produce shallow, generic work.
         }, keybindings, (message: string) => manager.steer(record.id, message), {
           onFocus: () => {
             focusRequested = true;
+            // Close this modal first: leaving it mounted makes Esc dismiss the
+            // overlay instead of exiting focus (the double-Esc defect).
+            done(undefined);
             queueMicrotask(() => focus.focus(record, tui, theme));
           },
         });
