@@ -1,0 +1,17 @@
+id: require-safety-comment-for-as-unknown-as
+valid:
+  - |
+    // SAFETY: checked above
+    const a = x as unknown as Foo;
+  - |
+    const b = /* SAFETY: inline */ x as unknown as Foo;
+  - |
+    // SAFETY: arg is validated upstream
+    foo(x as unknown as Foo);
+invalid:
+  - "const a = x as unknown as Foo;"
+  - |
+    const b = x as unknown as Foo; // no safety note
+  - |
+    // some other comment
+    const c = x as unknown as Foo;

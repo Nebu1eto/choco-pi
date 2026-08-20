@@ -1,0 +1,9 @@
+id: no-reflect-apply
+language: TypeScript
+severity: warning
+message: "Reflect.apply() — use a typed call (fn.apply(...) or fn(...args)) instead"
+note: |
+  Reflect.apply reaches for reflection where a typed call already works.
+  Prefer Function#apply or a direct call with spread arguments.
+rule:
+  pattern: Reflect.apply($$$ARGS)

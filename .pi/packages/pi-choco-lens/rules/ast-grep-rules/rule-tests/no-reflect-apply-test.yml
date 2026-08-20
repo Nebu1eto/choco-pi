@@ -1,0 +1,7 @@
+id: no-reflect-apply
+valid:
+  - 'fn.apply(obj, args)'
+  - 'fn(...args)'
+invalid:
+  - 'Reflect.apply(fn, obj, args)'
+  - 'const r = Reflect.apply(target[method], target, argumentsList);'

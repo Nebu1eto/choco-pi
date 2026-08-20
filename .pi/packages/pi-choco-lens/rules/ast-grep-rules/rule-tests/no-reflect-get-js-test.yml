@@ -1,0 +1,8 @@
+id: no-reflect-get-js
+valid:
+  - 'obj.prop'
+  - 'obj[key]'
+  - 'Reflect.get(target, prop, receiver)'
+invalid:
+  - 'Reflect.get(obj, "key")'
+  - 'const v = Reflect.get(target, prop);'

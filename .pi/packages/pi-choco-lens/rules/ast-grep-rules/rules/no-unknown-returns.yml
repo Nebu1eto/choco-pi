@@ -1,0 +1,54 @@
+id: no-unknown-returns
+language: TypeScript
+severity: hint
+message: "Function returns 'unknown' — parse the value at its boundary and return a named domain type"
+note: |
+  Adapted from dmmulroy/anti-slop's `no-unknown-returns`
+  (src/rules/no-unknown-returns.ts, MIT). Upstream also resolves
+  `Promise<unknown>` and same-file type aliases that resolve to
+  `unknown`; both are dropped here — same-file alias/generic resolution
+  is out of ast-grep's reach (the `no-bare-object-param.yml` precedent).
+
+  Shipped at `hint`, not `error`: AGENTS.md smell 3 records that this
+  arm was dropped from `no-unknown-laundering.yml` after an FP-scan
+  found 192 legitimate `unknown` return types in pi-lens's own tree
+  (parsers, and a `ProxyHandler.get` trap whose signature TypeScript
+  itself requires). That's a finding about this repo's own code, not a
+  reason to withhold the pattern from the catalog, so it ships as a
+  discoverable hint. Self-scan note: do NOT try to make pi-lens's own
+  tree clean against this rule (#1718's baseline problem); the adopting
+  PR records the 2026-08-19 hit count instead.
+
+  Scope: a direct `unknown` return-type annotation, matched
+  structurally. Most function-like nodes wrap their return type in a
+  `type_annotation` node that is a DIRECT child of the function node
+  (function declaration/expression, arrow function, method signature/
+  definition, call/construct signature) — that is exactly the
+  return-type position; a parameter's `type_annotation` is nested one
+  level deeper, inside `required_parameter`/`optional_parameter`, so
+  the two never collide. `function_type` (`(x: T) => R`, used in
+  function-type aliases) is the one exception in
+  tree-sitter-typescript's grammar: its return type sits directly after
+  `=>` with no `type_annotation` wrapper at all, so it needs its own
+  branch.
+rule:
+  any:
+    - kind: predefined_type
+      regex: "^unknown$"
+      inside:
+        kind: type_annotation
+        inside:
+          any:
+            - kind: function_declaration
+            - kind: function_expression
+            - kind: generator_function_declaration
+            - kind: arrow_function
+            - kind: method_signature
+            - kind: method_definition
+            - kind: construct_signature
+            - kind: constructor_type
+            - kind: call_signature
+    - kind: predefined_type
+      regex: "^unknown$"
+      inside:
+        kind: function_type
