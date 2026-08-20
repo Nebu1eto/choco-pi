@@ -46,7 +46,7 @@ export function registerSyntheticProvider(pi: ExtensionAPI): void {
     api: "openai-completions",
     headers: {
       Referer: "https://pi.dev",
-      "X-Title": "npm:@aliou/pi-synthetic",
+      "X-Title": "@choco-pi/provider-synthetic",
     },
     models: staticModels,
     refreshModels: createSyntheticRefreshModels(
