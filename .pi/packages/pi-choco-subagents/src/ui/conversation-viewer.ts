@@ -21,6 +21,13 @@ const MIN_VIEWPORT = 3;
 /** Height ceiling shared by the overlay's `maxHeight` and the viewer's internal viewport cap. */
 export const VIEWPORT_HEIGHT_PCT = 70;
 
+export type ConversationViewerOptions = {
+  /** Overlay keeps the modal viewport; focus yields its full transcript to Pi's main scroll view. */
+  profile?: "overlay" | "focus";
+  /** Enter fullscreen focus while preserving the overlay as the default viewer. */
+  onFocus?: () => void;
+};
+
 export class ConversationViewer implements Component {
   private scrollOffset = 0;
   private autoScroll = true;
@@ -47,6 +54,8 @@ export class ConversationViewer implements Component {
   private onStop?: () => void;
   /** Send a steering message to the agent. Omitted → no compose affordance. */
   private onSteer?: (message: string) => void;
+  private profile: "overlay" | "focus";
+  private onFocus?: () => void;
 
   constructor(
     tui: TUI,
@@ -59,6 +68,7 @@ export class ConversationViewer implements Component {
     /** User keybindings from `ctx.ui.custom()`. Omitted → hardcoded defaults. */
     keybindings?: ViewerKeybindings,
     onSteer?: (message: string) => void,
+    options: ConversationViewerOptions = {},
   ) {
     this.tui = tui;
     this.session = session;
@@ -68,6 +78,8 @@ export class ConversationViewer implements Component {
     this.done = done;
     this.onStop = onStop;
     this.onSteer = onSteer;
+    this.profile = options.profile ?? "overlay";
+    this.onFocus = options.onFocus;
 
     this.keys = createViewerKeys(keybindings);
     this.unsubscribe = session.subscribe(() => {
@@ -88,6 +100,13 @@ export class ConversationViewer implements Component {
     if (matchesKey(data, "escape") || matchesKey(data, "q")) {
       this.closed = true;
       this.done(undefined);
+      return;
+    }
+
+    if (matchesKey(data, "f") && this.onFocus) {
+      this.closed = true;
+      this.done(undefined);
+      this.onFocus();
       return;
     }
 
@@ -189,7 +208,12 @@ export class ConversationViewer implements Component {
 
     // Content area — rebuild every render (live data, no cache needed)
     const contentLines = this.buildContentLines(innerW);
-    const viewportHeight = this.viewportHeight();
+    // Pi's main transcript already owns clipping, native scrolling and follow-
+    // end behavior. In focus mode give it the whole subagent transcript instead
+    // of imposing the modal's 70% viewport inside that scroll view.
+    const viewportHeight = this.profile === "focus"
+      ? Math.max(MIN_VIEWPORT, contentLines.length)
+      : this.viewportHeight();
     const maxScroll = Math.max(0, contentLines.length - viewportHeight);
 
     if (this.autoScroll) {
@@ -218,11 +242,18 @@ export class ConversationViewer implements Component {
       // the right group so "Esc close" is the only part that truncates first.
       const sep = th.fg("dim", " · ");
       const actions: string[] = [];
-      if (this.canSteer()) actions.push(th.fg("dim", "Enter steer"));
-      if (this.isStoppable()) {
-        actions.push(this.stopArmed ? th.fg("error", "x again to STOP") : th.fg("dim", "x stop"));
+      if (this.profile === "focus") {
+        actions.push(th.fg("dim", this.isAgentActive() ? "prompt steers this agent" : "conversation is read-only"));
+      } else {
+        if (this.canSteer()) actions.push(th.fg("dim", "Enter steer"));
+        if (this.onFocus) actions.push(th.fg("dim", "f focus"));
+        if (this.isStoppable()) {
+          actions.push(this.stopArmed ? th.fg("error", "x again to STOP") : th.fg("dim", "x stop"));
+        }
       }
-      const footerRight = th.fg("dim", "↑↓ scroll · PgUp/PgDn or Shift+↑↓ · Esc close");
+      const footerRight = this.profile === "focus"
+        ? th.fg("dim", "Esc return to main")
+        : th.fg("dim", "↑↓ scroll · PgUp/PgDn or Shift+↑↓ · Esc close");
 
       // Prepend the line-count/scroll-% readout only when there's spare width —
       // it's the first thing dropped so it never crowds out the hints.
@@ -243,14 +274,18 @@ export class ConversationViewer implements Component {
     return lines;
   }
 
+  private isAgentActive(): boolean {
+    return this.record.status === "running" || this.record.status === "queued";
+  }
+
   /** Stoppable only when a stop handler exists and the agent is still active. */
   private isStoppable(): boolean {
-    return !!this.onStop && (this.record.status === "running" || this.record.status === "queued");
+    return !!this.onStop && this.isAgentActive();
   }
 
   /** Steerable only when a steer handler exists and the agent is still active. */
   private canSteer(): boolean {
-    return !!this.onSteer && (this.record.status === "running" || this.record.status === "queued");
+    return !!this.onSteer && this.isAgentActive();
   }
 
   /** Open the inline steering composer and route subsequent input to it. */

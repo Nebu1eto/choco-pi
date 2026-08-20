@@ -104,6 +104,17 @@ defaults that TypeScript would have emitted. `ConversationViewer` keeps
 Every source file is now erasable-syntax-only, which is what lets the repository
 test suite import the fork directly.
 
+### Focused-subagent fullscreen mode
+
+The fork adds `src/ui/focus-mode.ts` and `src/ui/method-patch-registry.ts` and
+extends FleetView and `ConversationViewer` with fullscreen focus. `f` on a
+selected FleetView row (or in its modal viewer) replaces Pi's main transcript
+rendering with that agent's live conversation and binds the existing main editor
+to `AgentManager.steer`; Esc restores the exact orchestrator renderer and editor
+input predecessor. The method registry uses an additive, instance-scoped wrapper
+so pi-zentui and prompt-editor adapters remain composed. `tests/focus-mode.test.ts`
+pins transcript swapping, streaming refresh, steering ownership and restoration.
+
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 
 The repository previously ran `npm:@tintinweb/pi-subagents@0.16.1`. Two entries

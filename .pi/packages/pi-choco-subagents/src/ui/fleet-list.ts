@@ -19,6 +19,11 @@ import { getLifetimeTotal } from "../usage.ts";
 import { type AgentActivity, type Theme } from "./agent-widget.ts";
 import { ConversationViewer, VIEWPORT_HEIGHT_PCT } from "./conversation-viewer.ts";
 
+export type FleetFocusOptions = {
+  focusAgent?: (record: AgentRecord, tui: any, theme: Theme) => boolean;
+  isAgentFocused?: () => boolean;
+};
+
 /** Widget key for the below-editor fleet list. */
 const FLEET_KEY = "fleet";
 /** Max agent rows shown at once; extras collapse into a "↓ N more" indicator. */
@@ -81,6 +86,7 @@ export class FleetList {
   private inputUnsub: (() => void) | undefined;
   private widgetRegistered = false;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private theme: Theme | undefined;
 
   private enabled = true;
   /** Whether arrow keys currently navigate the list (vs. flow to the editor). */
@@ -95,10 +101,12 @@ export class FleetList {
   // note in `group-join.ts`) so this file stays erasable-syntax-only.
   private manager: AgentManager;
   private agentActivity: Map<string, AgentActivity>;
+  private focusOptions: FleetFocusOptions;
 
-  constructor(manager: AgentManager, agentActivity: Map<string, AgentActivity>) {
+  constructor(manager: AgentManager, agentActivity: Map<string, AgentActivity>, focusOptions: FleetFocusOptions = {}) {
     this.manager = manager;
     this.agentActivity = agentActivity;
+    this.focusOptions = focusOptions;
   }
 
   // ---- Lifecycle ----
@@ -142,6 +150,7 @@ export class FleetList {
     if (this.ui && this.widgetRegistered) this.ui.setWidget(FLEET_KEY, undefined);
     this.widgetRegistered = false;
     this.tui = undefined;
+    this.theme = undefined;
     this.active = false;
     // Null last so a `viewerClose()` microtask above can't re-register the widget.
     this.ui = undefined;
@@ -170,6 +179,7 @@ export class FleetList {
     if (!this.widgetRegistered) {
       this.ui.setWidget(FLEET_KEY, (tui, theme) => {
         this.tui = tui;
+        this.theme = theme;
         return {
           render: (w: number) => this.renderBar(w, theme),
           invalidate: () => { this.widgetRegistered = false; this.tui = undefined; },
@@ -216,7 +226,7 @@ export class FleetList {
 
   /** Returns `{consume:true}` to swallow a key, or undefined to let it through. */
   handleKey(data: string): { consume?: boolean; data?: string } | undefined {
-    if (!this.enabled || !this.ui) return undefined;
+    if (!this.enabled || !this.ui || this.focusOptions.isAgentFocused?.()) return undefined;
     // Input listeners receive BOTH key-press and key-release (the kitty protocol
     // emits both, and matchesKey matches either) — act on press only, or every
     // tap would move/fire twice. Repeats still pass through for held-key nav.
@@ -259,6 +269,7 @@ export class FleetList {
     }
     if (matchesKey(data, "escape")) { this.deactivate(); return { consume: true }; }
     if (matchesKey(data, Key.enter)) { this.openSelected(); return { consume: true }; }
+    if (matchesKey(data, "f")) { this.focusSelected(); return { consume: true }; }
 
     // Any other key cancels navigation and flows to the editor.
     this.deactivate();
@@ -281,6 +292,21 @@ export class FleetList {
   private deactivate(): void {
     this.active = false;
     this.selectedIndex = 0;
+    this.update();
+  }
+
+  private focusSelected(): void {
+    const entry = this.roster()[this.selectedIndex];
+    if (!entry || entry.kind === "main") {
+      this.deactivate();
+      return;
+    }
+    if (!entry.record.session || !this.tui || !this.theme || !this.focusOptions.focusAgent) {
+      this.ui?.notify(`Agent is ${entry.record.status} — fullscreen focus is unavailable.`, "info");
+      return;
+    }
+    this.active = false;
+    this.focusOptions.focusAgent(entry.record, this.tui, this.theme);
     this.update();
   }
 
@@ -316,6 +342,11 @@ export class FleetList {
           },
           keybindings,
           (message: string) => this.manager.steer(record.id, message),
+          {
+            onFocus: this.focusOptions.focusAgent
+              ? () => queueMicrotask(() => this.focusOptions.focusAgent?.(record, tui, theme))
+              : undefined,
+          },
         );
       },
       {
@@ -343,6 +374,7 @@ export class FleetList {
   // ---- Rendering ----
 
   private renderBar(width: number, theme: Theme): string[] {
+    if (this.focusOptions.isAgentFocused?.()) return [];
     const agents = this.roster().slice(1) as AgentEntry[];
     if (agents.length === 0) return [];
     // Clamp locally so a render between a roster shrink and the next update()
@@ -350,7 +382,7 @@ export class FleetList {
     const sel = Math.min(this.selectedIndex, agents.length);
 
     const hint = this.active
-      ? "↑↓ select · enter view · esc back"
+      ? "↑↓ select · enter view · f focus · esc back"
       : "esc to interrupt · ← for agents · ↓ to manage";
     const lines: string[] = [];
     lines.push(truncateToWidth("  " + theme.fg("dim", hint), width));

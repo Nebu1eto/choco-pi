@@ -18,8 +18,13 @@ of [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents)
 The `Agent` tool (foreground and `run_in_background`), `get_subagent_result`,
 `steer_subagent`, `resume`, `@handle` prompt mentions, the `/agents` command
 tree, the above-editor widget, FleetView, the live conversation overlay,
-`isolation: "worktree"`, cron/interval scheduling, opt-in nested delegation, and
-cross-extension RPC.
+fullscreen subagent focus, `isolation: "worktree"`, cron/interval scheduling,
+opt-in nested delegation, and cross-extension RPC.
+
+In FleetView, Enter keeps the modal conversation viewer and `f` focuses the
+selected subagent in Pi's main conversation area. The main prompt then steers
+that agent; Esc restores the orchestrator conversation and prompt unchanged.
+The modal also offers `f focus`.
 
 ## Wiring
 
@@ -41,7 +46,7 @@ Project configuration is unchanged and still lives in `.pi/subagents.json` and
 ## Layout
 
 ```
-src/                  39 TypeScript modules; src/index.ts is the extension entry
+src/                  TypeScript source; src/index.ts is the extension entry
 node_modules/         vendored runtime deps (@sinclair/typebox, croner, nanoid)
 examples/             starting point for toolDescriptionMode: "custom"
 tsconfig.json         package-local typecheck config
@@ -55,6 +60,9 @@ There is no build step and no `dist/`. Pi loads `src/index.ts` through jiti.
 ```bash
 # typecheck against the @earendil-works 0.84.2 types in the repo root
 cd .pi/packages/pi-choco-subagents && npx tsc --noEmit
+
+# focused transcript/editor takeover regression
+node --experimental-strip-types --test tests/focus-mode.test.ts
 
 # the repository's regression test for the fixed role system
 node --test tests/subagent-config.test.ts
