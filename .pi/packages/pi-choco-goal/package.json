@@ -1,0 +1,46 @@
+{
+  "name": "pi-choco-goal",
+  "version": "0.2.0",
+  "description": "Codex-style persistent goal tracking and continuation for choco-pi.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "main": "src/index.ts",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "extension",
+    "goal"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
