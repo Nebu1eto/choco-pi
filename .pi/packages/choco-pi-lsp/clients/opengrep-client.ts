@@ -4,7 +4,7 @@
  *
  * opengrep already runs as an always-on LSP auxiliary (`clients/lsp/server.ts`
  * `OpengrepServer`) for real-time per-edit feedback, and this client does NOT
- * touch that path. It exists solely so `lens_diagnostics mode=full` /
+ * touch that path. It exists solely so `diagnostics_report mode=full` /
  * `lsp_diagnostics` full-workspace scans can read opengrep's findings from a
  * single project-wide CLI scan instead of one LSP touch per file.
  *
@@ -21,7 +21,7 @@
  * Lifecycle mirrors gitleaks/trivy/knip:
  *   - session_start scan (via `runTask`/`runHeavyweightTask` in
  *     runtime-session.ts), cached via `cacheManager`
- *   - `lens_diagnostics mode=full` reads the cache through the extractor
+ *   - `diagnostics_report mode=full` reads the cache through the extractor
  *     registry (`project-diagnostics/extractors.ts`) — never launches a scan
  *   - per-edit LSP path (real-time feedback) is untouched
  *

@@ -149,7 +149,7 @@ export interface WarmWordIndexLease {
 /**
  * Look up (loading from the persisted snapshot on first use per cwd) the warm
  * in-memory word index this analyze facade keeps mutated in place. Exported so
- * `symbolSearch()` (clients/lens-engine.ts) can prefer this live copy over a
+ * `symbolSearch()` (clients/lsp-engine.ts) can prefer this live copy over a
  * fresh disk read when one exists for the cwd — otherwise a query immediately
  * following a warm `pilens_analyze` call in the SAME process would read a
  * stale on-disk snapshot until the debounced persist (default 1500ms) flushes.
@@ -296,7 +296,7 @@ export interface AnalyzeFileOptions {
 	warmLsp?: boolean;
 	/**
 	 * Record results into the session widget-state + diagnostic tracker so the
-	 * query tools (`pilens_diagnostics`, `pilens_health`) reflect this analysis.
+	 * query tools (`diagnostics_report`, `lsp_health`) reflect this analysis.
 	 * Default true; harmless (and discarded) in the short-lived `fresh` worker.
 	 */
 	record?: boolean;
@@ -429,8 +429,8 @@ export async function analyzeFile(
 	const durationMs = Date.now() - start;
 
 	if (options.record !== false) {
-		// Mirror pipeline.ts's recording so pilens_diagnostics (mode=all) and
-		// pilens_health see what this analysis found.
+		// Mirror pipeline.ts's recording so diagnostics_report (mode=all) and
+		// lsp_health see what this analysis found.
 		recordDiagnostics(absPath, result.diagnostics);
 		if (result.diagnostics.length > 0) {
 			getDiagnosticTracker().trackShown(result.diagnostics);

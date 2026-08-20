@@ -4,7 +4,7 @@
  */
 
 import { toPositiveFinite } from "./env-utils.js";
-import { loadPiLensGlobalConfig } from "./lens-config.js";
+import { loadPiLensGlobalConfig } from "./lsp-config.js";
 
 let _runnerTimeoutFloorCache: number | undefined;
 

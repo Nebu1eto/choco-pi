@@ -76,7 +76,7 @@ export interface ActionableWarningsReport {
 		 *
 		 * OPTIONAL on purpose: this report is persisted to
 		 * `.pi-lens/cache/actionable-warnings.json` and read back by
-		 * `clients/runtime-agent-end.ts` and `tools/lens-diagnostics.ts`, which
+		 * `clients/runtime-agent-end.ts` and `tools/diagnostics-report.ts`, which
 		 * can find a file written by a pi-lens build that predates the field.
 		 * Every reader must tolerate its absence.
 		 */

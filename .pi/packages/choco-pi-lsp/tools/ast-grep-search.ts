@@ -297,7 +297,7 @@ export function createAstGrepSearchTool(astGrepClient: AstGrepClient) {
 			"Use 'paths' to scope to specific files/folders. " +
 			"Use 'nodeKind' to find every node of a known AST kind, or 'ast_grep_dump' first when the kind is unknown. " +
 			"Avoid 'selector' unless you know the exact AST node kind; it narrows matching and does not extract fields. " +
-			'If this tool is inactive, call pi_lens_activate_tools with tools=["ast_grep_search"]; activation takes effect next turn. If zero matches, retry once with a simpler AST pattern, then use ast_grep_dump on a small representative snippet before falling back to grep.',
+			'If this tool is inactive, call lsp_activate_tools with tools=["ast_grep_search"]; activation takes effect next turn. If zero matches, retry once with a simpler AST pattern, then use ast_grep_dump on a small representative snippet before falling back to grep.',
 		promptSnippet: "AST-aware structural code search",
 		renderResult: compactRenderResult<{
 			matchCount?: number;

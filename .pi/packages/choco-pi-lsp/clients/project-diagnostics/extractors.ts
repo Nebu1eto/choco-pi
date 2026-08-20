@@ -5,7 +5,7 @@ import type {
 
 /**
  * Provenance metadata for the heavyweight project analyzers surfaced in
- * `lens_diagnostics mode=full`.
+ * `diagnostics_report mode=full`.
  *
  * NOTE (#585 regression cleanup): this module USED to also own
  * `extractCachedProjectDiagnostics` — a CACHE-ONLY reader that adapted each
@@ -52,7 +52,7 @@ export function warmTriggerFor(analyzerId: string): string {
 /**
  * #1623: single formatter for a "not run" lane entry — reused by every
  * caller that renders `fetchFreshProjectDiagnostics`'s `cold` list (today,
- * `tools/lens-diagnostics.ts`'s mode=full) so the wording can't drift
+ * `tools/diagnostics-report.ts`'s mode=full) so the wording can't drift
  * per-caller. Prefers the SPECIFIC reason captured at the decision point
  * (`coldReasons`, ./fresh-fetch.ts) over the generic `warmTriggerFor` guess —
  * the latter only remains a fallback for a `cold` id this map doesn't cover.

@@ -13,7 +13,7 @@
  * configured under.
  *
  * Match normalization is consolidated with the rest of the rule-id surfaces:
- * `inline-suppressions.ts` and `lens-diagnostics.ts`'s `normalizeRuleId`
+ * `inline-suppressions.ts` and `diagnostics-report.ts`'s `normalizeRuleId`
  * both strip the `ast-grep:` prefix and the `-js` suffix, so a user listing
  * `no-eval` once under `disable` covers both the LSP tag (`ast-grep:no-eval`)
  * and the napi tag (`no-eval` / `no-eval-js`). Sharing the normalization keeps

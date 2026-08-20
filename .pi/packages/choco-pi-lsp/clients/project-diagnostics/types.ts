@@ -117,7 +117,7 @@ export interface ProjectDiagnosticsScanOptions {
 	signal?: AbortSignal;
 	/**
 	 * Explicit file list (#461): scan exactly these files instead of walking the
-	 * project. Used by lens_diagnostics' `paths` scope restrictor. Caller has
+	 * project. Used by diagnostics_report' `paths` scope restrictor. Caller has
 	 * already resolved/deduped/filtered these against the ignore matcher.
 	 */
 	files?: string[];
@@ -126,7 +126,7 @@ export interface ProjectDiagnosticsScanOptions {
 	/**
 	 * #1107 phase 2 review (P2): scan WITHOUT the generated/artifact NAME
 	 * heuristic filter — the actionable opt-out `generatedSkipNotice`
-	 * (`lens-engine.ts`) points a user at when a scan's excluded-by-heuristic
+	 * (`lsp-engine.ts`) points a user at when a scan's excluded-by-heuristic
 	 * count looks suspicious. Threaded straight through to
 	 * `collectSourceFilesWithBudgetAsync`'s `includeGenerated` (source-filter.ts);
 	 * default `false` (existing filtering behavior unchanged). Only meaningful

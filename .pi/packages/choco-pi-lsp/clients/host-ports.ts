@@ -27,7 +27,7 @@ export interface HostPorts {
 	readonly emit: {
 		/**
 		 * Every `pi.events` publish, including the `pi-lens/*` producer family
-		 * (clients/lens-events.ts). A separate `.lens` port existed briefly but
+		 * (clients/lsp-events.ts). A separate `.lens` port existed briefly but
 		 * was never wired to anything but this same `emit` function — removed
 		 * as vestigial (#1415 review) rather than kept as a distinction with no
 		 * behavioral difference.

@@ -2,7 +2,7 @@
  * Single documentation home for the finding-delivery gate stack (#1634).
  *
  * Every store that renders findings to the AGENT — the turn-end blocker/
- * advisory tiers, `lens_diagnostics` mode=full/all/delta, the widget/footer
+ * advisory tiers, `diagnostics_report` mode=full/all/delta, the widget/footer
  * tally, agent nudges, and the persisted project-diagnostics snapshot —
  * invented its own freshness and retirement rules across
  * #1461/#1561/#1622/#1631, so the stores drifted from each other and each new
@@ -63,7 +63,7 @@
  * — a judgment about one exact piece of code that must NOT survive a rewrite
  * of that line — and WEAK (no line hash) for defer/flagged/suppress, which
  * are intent-level judgments that must survive incidental nearby edits.
- * `formatFullMode` (tools/lens-diagnostics.ts) applies this on every
+ * `formatFullMode` (tools/diagnostics-report.ts) applies this on every
  * mode=full pass; the per-edit dispatch path applies the identical filter
  * before writing into widget-state, so mode=all and the footer inherit
  * disposition state for any file that has gone through a live edit this
@@ -203,7 +203,7 @@ export type DeliverySurfaceEntry = GatedDeliverySurface | LabeledDeliverySurface
  *     commented-out or string-embedded false match can't hide a REAL untagged
  *     seam) and fails if one has no tag, or a tag names an id not in this
  *     registry — a brand-new ungated `advisoryParts.push` cannot pass silently.
- *   - `tools/lens-diagnostics.ts`: each `mode=` report is its own function
+ *   - `tools/diagnostics-report.ts`: each `mode=` report is its own function
  *     (`formatFullMode`/`formatAllMode`/`formatDeltaMode`), tagged the same way
  *     immediately above its `function` line.
  *   - `clients/widget-state.ts` (the footer) and `clients/agent-nudge.ts` are
@@ -246,7 +246,7 @@ function labeled(
 }
 
 const RUNTIME_TURN_FILE = "clients/runtime-turn.ts";
-const LENS_DIAGNOSTICS_FILE = "tools/lens-diagnostics.ts";
+const LENS_DIAGNOSTICS_FILE = "tools/diagnostics-report.ts";
 
 export const DELIVERY_SURFACES: Record<string, DeliverySurfaceEntry> = {
 	// Two tagged seams (the stale and live render branches below the same
@@ -322,20 +322,20 @@ export const DELIVERY_SURFACES: Record<string, DeliverySurfaceEntry> = {
 	),
 	"lens-diagnostics:mode-full": gated(
 		LENS_DIAGNOSTICS_FILE,
-		"`lens_diagnostics mode=full` report.",
+		"`diagnostics_report mode=full` report.",
 		["applyDispositions", "applyRulePolicy", "reconcileProjectDiagnosticsSnapshot"],
 		["applyDispositions(", "applyRulePolicy(", "reconcileProjectDiagnosticsSnapshot("],
 	),
 	"lens-diagnostics:mode-all": gated(
 		LENS_DIAGNOSTICS_FILE,
-		"`lens_diagnostics mode=all` report (widget-state read).",
+		"`diagnostics_report mode=all` report (widget-state read).",
 		["reconcileStaleWidgetFiles", "reconcileStaleWidgetDependencyBlockers"],
 		["reconcileStaleWidgetFiles(", "reconcileStaleWidgetDependencyBlockers("],
 	),
 	// #1634 review round F3: this was the most important gap — the tool's
 	// DEFAULT mode rendered cached `file:line` findings with zero freshness
 	// check. `applyDeltaFreshnessGate` (this file's sibling in
-	// tools/lens-diagnostics.ts) now routes the actionable/quality-warnings
+	// tools/diagnostics-report.ts) now routes the actionable/quality-warnings
 	// caches through the shared gate using each report's own `generatedAt`.
 	// Round R3: mode=delta has a THIRD arm — the persisted project-diagnostics
 	// delta report, rendered by `appendProjectDiagnosticsDeltaLines` — which
@@ -343,7 +343,7 @@ export const DELIVERY_SURFACES: Record<string, DeliverySurfaceEntry> = {
 	// its own `generatedAt`.
 	"lens-diagnostics:mode-delta": gated(
 		LENS_DIAGNOSTICS_FILE,
-		"`lens_diagnostics mode=delta` report (the tool's DEFAULT mode) — " +
+		"`diagnostics_report mode=delta` report (the tool's DEFAULT mode) — " +
 			"re-serves the actionable-warnings/code-quality-warnings caches AND " +
 			"the persisted project-diagnostics delta report.",
 		["gateFindingsByPathFreshness"],

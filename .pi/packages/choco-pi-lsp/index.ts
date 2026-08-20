@@ -71,11 +71,11 @@ import {
 	resolvePiLensFlag,
 	resolvePiLensFlagWithSource,
 	setRuntimeLensFlagOverride,
-} from "./clients/lens-config.js";
-import { LENS_FLAGS } from "./clients/lens-flag-registry.js";
+} from "./clients/lsp-config.js";
+import { LENS_FLAGS } from "./clients/lsp-flag-registry.js";
 import { wrapToolsForCompactLine } from "./clients/tool-render.js";
-import { loadPiLensProjectConfig } from "./clients/project-lens-config.js";
-import { initLensEventsGetter } from "./clients/lens-events.js";
+import { loadPiLensProjectConfig } from "./clients/project-lsp-config.js";
+import { initLensEventsGetter } from "./clients/lsp-events.js";
 import { wireBusEmitterGetter } from "./clients/bus-publish.js";
 import { wireDiagnosticsBusEmitterGetter } from "./clients/diagnostics-publish.js";
 import { wireDispositionBusEmitterGetter } from "./clients/disposition-publish.js";
@@ -159,8 +159,8 @@ import {
 	createActivateToolsTool,
 	type ActivatableToolInfo,
 } from "./tools/activate-tools.js";
-import { createLensDiagnosticsTool } from "./tools/lens-diagnostics.js";
-import { createLensDiagnosticMarkTool } from "./tools/lens-diagnostic-mark.js";
+import { createLensDiagnosticsTool } from "./tools/diagnostics-report.js";
+import { createLensDiagnosticMarkTool } from "./tools/diagnostic-mark.js";
 import { createAstGrepReplaceTool } from "./tools/ast-grep-replace.js";
 import { createAstGrepSearchTool } from "./tools/ast-grep-search.js";
 import { createAstGrepOutlineTool } from "./tools/ast-grep-outline.js";
@@ -353,7 +353,7 @@ export function createHostPorts(
 				const mode = currentMode();
 				if (mode === "print" || mode === "json") {
 					// #1366: suppressed notices are still LEDGERED so headless
-					// operators can see them in pilens_health.
+					// operators can see them in lsp_health.
 					recordDegradation({
 						kind: "mode-suppression",
 						subject: "user degradation notice",
@@ -723,7 +723,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 
 	// --- Flags ---
 
-	// #166: registration is driven by clients/lens-flag-registry.ts, the same
+	// #166: registration is driven by clients/lsp-flag-registry.ts, the same
 	// declarative array that drives config parsing and precedence resolution, so
 	// a flag cannot exist on the CLI without a config key (or vice versa).
 	for (const spec of LENS_FLAGS) {
@@ -1020,7 +1020,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 				ctx,
 				contextInjectionEnabled
 					? "pi-lens context injection enabled — findings will be added to the next turn."
-					: "pi-lens context injection disabled — findings are still cached (lens_diagnostics, /lens-health) but not added to model context.",
+					: "pi-lens context injection disabled — findings are still cached (diagnostics_report, /lens-health) but not added to model context.",
 				contextInjectionEnabled ? "info" : "warning",
 			);
 		},
@@ -1076,7 +1076,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 			const history = loadHistory();
 			const tdi = computeTDI(history);
 
-			let summary = "🔴 High debt - run lens_diagnostics mode=full for details";
+			let summary = "🔴 High debt - run diagnostics_report mode=full for details";
 			if (tdi.score <= 30) {
 				summary = "✅ Codebase is healthy!";
 			} else if (tdi.score <= 60) {
@@ -1110,7 +1110,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 		handler: async (_args, ctx) => {
 			const cwd = ctx.cwd ?? process.cwd();
 			try {
-				const { generateLensMap } = await import("./clients/lens-map.js");
+				const { generateLensMap } = await import("./clients/lsp-map.js");
 				const result = await generateLensMap(cwd);
 				// testFileCount is normally 0 (the review graph excludes tests by
 				// role since #260) — only mention it when the map-level guard
@@ -1286,7 +1286,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 			// clients/debug-heap.ts.
 			if (isDebugHeapEnabled()) {
 				try {
-					const snap = writeHeapSnapshotNow("lens_health");
+					const snap = writeHeapSnapshotNow("lsp_health");
 					if (snap) {
 						lines.push(
 							`Heap snapshot written: ${snap.path} (RSS ${Math.round(snap.rssBytes / (1024 * 1024))}MB, ${snap.durationMs}ms) — open in Chrome DevTools › Memory`,
@@ -1539,7 +1539,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 			() => runtime,
 		),
 		createLspDiagnosticsTool(
-			// #571: same reconciliation wiring as lens_diagnostics mode=full, for
+			// #571: same reconciliation wiring as diagnostics_report mode=full, for
 			// the standalone on-demand check.
 			() => runtime.nextWriteIndex(),
 			// #1561: and the same confirmed result must retire this file's stale
@@ -1598,7 +1598,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 	// Situational tools (6): registered but, on hosts that support pi's dynamic
 	// tooling (`pi.getActiveTools`/`pi.setActiveTools`), left inactive at load —
 	// deactivated in the block below right after registration. The model
-	// activates the ones it needs via `pi_lens_activate_tools`. On hosts without
+	// activates the ones it needs via `lsp_activate_tools`. On hosts without
 	// that API this whole tier is simply left statically active, matching
 	// pi-lens's behavior before this feature existed.
 	const lazyTools = [
@@ -1644,7 +1644,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 				"IDE-style LSP navigation: definition, references, implementation, rename, call hierarchy.",
 		},
 		{
-			name: "lens_diagnostic_mark",
+			name: "diagnostic_mark",
 			summary:
 				"Record a disposition for a diagnostic: false-positive / suppress (inline ignore comment) / defer (this session) / flagged (to fix).",
 		},
@@ -1703,7 +1703,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 	}
 
 	// Dynamic tooling (#pi 0.80.x+): deactivate the 6 situational tools so they
-	// start inactive and the model must call `pi_lens_activate_tools` to bring
+	// start inactive and the model must call `lsp_activate_tools` to bring
 	// them in (next-turn visibility, per the docs' loader pattern). This used
 	// to run synchronously right here, immediately after registration — but
 	// that point is still inside the extension's own load/activation function,
@@ -1808,7 +1808,7 @@ function activateExtension(hostPi: ExtensionAPI) {
 			// Dynamic tooling (#pi 0.80.x+): put the active tool set back to the
 			// posture this logical conversation had — the always-active baseline
 			// plus exactly the lazy tools (LAZY_TOOL_CATALOG) the model activated
-			// via pi_lens_activate_tools. session_start is the correct lifecycle
+			// via lsp_activate_tools. session_start is the correct lifecycle
 			// point for this call (#643; see the comment left at the old call site
 			// above, right after tool registration, for why it can never succeed
 			// there).

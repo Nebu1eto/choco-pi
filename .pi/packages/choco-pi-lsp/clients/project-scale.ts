@@ -45,7 +45,7 @@
  * BEFORE falling back to this module's derived value, so it always wins:
  *
  *   1. `maxProjectFiles` in the project's `.pi-lens.json` (per-project — see
- *      `clients/project-lens-config.ts`). Requires a `cwd`; a call site with
+ *      `clients/project-lsp-config.ts`). Requires a `cwd`; a call site with
  *      no cwd in hand skips straight to (2).
  *   2. `PI_LENS_MAX_PROJECT_FILES` environment variable.
  *   3. Default: {@link DEFAULT_PROJECT_SCALE_BASE} (2,000).
@@ -65,7 +65,7 @@
  */
 
 import { lazyEnvNumber, toPositiveFinite } from "./env-utils.js";
-import { loadPiLensProjectConfig } from "./project-lens-config.js";
+import { loadPiLensProjectConfig } from "./project-lsp-config.js";
 
 /**
  * Default base value: chosen so every ratio in the table above reproduces
@@ -225,7 +225,7 @@ export function taperedReviewGraphMaxFiles(base: number): number {
  * Derived review-graph budget (files), honoring — in priority order — the
  * project's `.pi-lens.json#reviewGraph.maxFiles` knob (#775 R2, an explicit
  * opt-in for repos that want a bigger graph than the taper would derive;
- * see `project-lens-config.ts`), then {@link taperedReviewGraphMaxFiles} of
+ * see `project-lsp-config.ts`), then {@link taperedReviewGraphMaxFiles} of
  * the resolved `maxProjectFiles` base. Callers still check their own
  * PRE-EXISTING `PI_LENS_REVIEW_GRAPH_MAX_FILES` env override BEFORE calling
  * this (see `review-graph/builder.ts#getReviewGraphMaxFiles`) — that always

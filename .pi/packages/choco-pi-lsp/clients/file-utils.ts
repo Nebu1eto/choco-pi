@@ -10,14 +10,14 @@ import { collectTrackedFiles, getTrackedFilesSnapshot } from "./git-tracked-igno
 import {
 	getGlobalIgnorePatterns,
 	getPiLensGlobalConfigPath,
-} from "./lens-config.js";
+} from "./lsp-config.js";
 import { normalizeEphemeralMapKey, normalizeFilePath } from "./path-utils.js";
 import {
 	findPiLensConfigInDir,
 	findPiLensProjectConfig,
 	loadPiLensConfigInDir,
 	loadPiLensProjectConfig,
-} from "./project-lens-config.js";
+} from "./project-lsp-config.js";
 import { safeSpawnAsync } from "./safe-spawn.js";
 
 /**
@@ -337,7 +337,7 @@ function buildProjectIgnoreMatcher(
 	// directly in `dir`), and its `ignore` patterns are anchored to `dir` (same
 	// anchoring semantics as a `.gitignore` living in that directory) and
 	// tagged `"pilens"` so #703's tracked-file-rescue rule still skips them.
-	// `loadPiLensConfigInDir` reuses `project-lens-config.ts`'s own
+	// `loadPiLensConfigInDir` reuses `project-lsp-config.ts`'s own
 	// path+mtime cache, so this never re-reads/re-parses JSON that some other
 	// caller (or the root-config lookup above) already loaded.
 	const patternsForDir = (dir: string): GitignorePattern[] => {

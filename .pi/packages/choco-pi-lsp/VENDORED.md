@@ -26,9 +26,21 @@ the entry FILE `dist/index.js`, where `path.resolve` consumes the filename as
 the first `..`. In pi-coding-agent 0.84.2 the manifest entries are resolved
 against the PACKAGE ROOT (`collectFilesFromManifestEntries` →
 `resolve(packageRoot, entry)`), so with the entry at the package root this
-fork uses `"skills": ["./skills"]`. All four upstream skills ship unchanged:
-`pi-lens-ast-grep`, `pi-lens-lsp-navigation`, `pi-lens-write-ast-grep-rule`,
-`pi-lens-write-tree-sitter-rule`.
+fork uses `"skills": ["./skills"]`.
+
+### Local LSP naming
+
+The fork renames the four upstream skill directories and their frontmatter to
+`choco-pi-lsp-*`. It also replaces the stale `lens-*` client filenames with
+`lsp-*`, names the aggregate diagnostics source `tools/diagnostics-report.ts`,
+and names the disposition source `tools/diagnostic-mark.ts`.
+The retained model-facing tool names are `diagnostics_report`,
+`diagnostic_mark`, and `lsp_activate_tools`; legacy health references use
+`lsp_health`. This package has no underscore-form health tool registration;
+its health interface is the intentionally preserved `/lens-health` command.
+Internal compatibility ids remain unchanged, including `pi-lens-lsp`,
+`pi-lens`, `PI_LENS_*`, `~/.pi-lens`, `/lens-*` command ids,
+`lens_diagnostics_full`, registry symbols, and TypeScript `Lens` identifiers.
 
 ### Vendored runtime dependencies
 
@@ -71,8 +83,8 @@ the runtime provenance check reads it.
   `.pi/extensions/pi-lens-visibility.ts` patches those keys.
 - Tree-sitter structural rules and ast-grep scanners (`rules/`), semantic
   index tools (`symbol_search`, `module_report`, `read_symbol`,
-  `read_enclosing`), `lens_diagnostics`, `ast_grep_search` family,
-  `pi_lens_activate_tools` lazy-tool mechanism, read-guard, dispatch pipeline,
+  `read_enclosing`), `diagnostics_report`, `ast_grep_search` family,
+  `lsp_activate_tools` lazy-tool mechanism, read-guard, dispatch pipeline,
   format/autofix machinery, project-trust consumption, opengrep and the other
   per-edit dispatch runners, `clients/mcp/` (word-index/IPC engine used by the
   in-process tools and warm-attach).
@@ -105,7 +117,7 @@ the runtime provenance check reads it.
 the same machinery as upstream's `--no-lsp` flag (`lsp.enabled` config key):
 
 - a session-scoped runtime override tier (`setRuntimeLensFlagOverride`,
-  `clients/lens-config.ts`) resolves ABOVE env/CLI/config, so every
+  `clients/lsp-config.ts`) resolves ABOVE env/CLI/config, so every
   `getFlag("no-lsp")` consumer reacts immediately;
 - `/lsp off` also stops the running language servers
   (`resetLSPService({ fast: true })`) and persists `lsp.enabled=false` to

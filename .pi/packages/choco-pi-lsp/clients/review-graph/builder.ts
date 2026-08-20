@@ -4612,7 +4612,7 @@ async function _doBuildGraph(
 		recordReviewGraphSizeSkip(cwd, sourceFileCount, maxGraphFiles);
 		// #775 R3: `_lastGraphBuildInfo`/the size-skip verdict above are only
 		// SURFACED by callers that happen to read them (dispatch/integration.ts's
-		// cascade path logs a `graph_build` phase; lens-map.ts, project-report.ts,
+		// cascade path logs a `graph_build` phase; lsp-map.ts, project-report.ts,
 		// mcp/analyze.ts, runtime-session.ts, and tree-sitter.ts's runner do not).
 		// Log unconditionally here, at the one place every caller funnels through,
 		// so a monorepo crossing the cap is never a SILENT truncation — no caller

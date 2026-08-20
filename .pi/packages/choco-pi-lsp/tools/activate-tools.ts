@@ -1,5 +1,5 @@
 /**
- * pi_lens_activate_tools — the loader tool that bootstraps pi's dynamic
+ * lsp_activate_tools — the loader tool that bootstraps pi's dynamic
  * tooling (registered-but-inactive tools activated via `pi.setActiveTools`).
  *
  * A handful of pi-lens tools are situational (structural ast-grep
@@ -60,7 +60,7 @@ export function createActivateToolsTool(
 	const catalog = lazyTools.map((t) => `${t.name} — ${t.summary}`).join("\n");
 
 	return {
-		name: "pi_lens_activate_tools" as const,
+		name: "lsp_activate_tools" as const,
 		label: "Activate pi-lens Tools",
 		description:
 			"Activate one or more situational pi-lens tools that stay registered but inactive by default, so the default tool list stays lean. " +

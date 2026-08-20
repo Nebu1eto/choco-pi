@@ -1,9 +1,9 @@
 ---
-name: pi-lens-write-tree-sitter-rule
-description: Use when writing a new pi-lens tree-sitter query rule YAML file — covers schema, S-expression syntax, capture names, predicates, and gotchas
+name: choco-pi-lsp-write-tree-sitter-rule
+description: Use when writing a new choco-pi-lsp tree-sitter query rule YAML file — covers schema, S-expression syntax, capture names, predicates, and gotchas
 ---
 
-# Writing a pi-lens tree-sitter Rule
+# Writing a choco-pi-lsp tree-sitter Rule
 
 Drop path: `rules/tree-sitter-queries/<language>/<id>.yml`  
 Language dir is **lowercase**: `typescript` `javascript` `tsx` `python` `go` `rust` `java` `csharp` `kotlin` `php` `ruby` `cpp` `c` `css`
@@ -115,7 +115,7 @@ predicates:
    treeSitterRunner.run() via makeRealRunnerCtx (tests/support/real-runner-ctx.ts) —
    runQueryOnFile bypasses dispatch (skip_test_files, tiers, delta, rule cache).
    Template: tests/clients/dispatch/runners/tree-sitter-skip-test-files.test.ts.
-   (These test paths exist only in a pi-lens source checkout — the installed
+   (These test paths exist only in a choco-pi-lsp source checkout — the installed
    npm package ships no tests/ directory.)
 
 ✅ JS files also run typescript/ rules (shared grammar) — one rule in

@@ -133,7 +133,7 @@ export interface DiagnosticStrategy {
 	 * True for a push-only server whose value depends on a ONE-TIME whole-
 	 * workspace index build rather than a per-file cost — e.g. marksman's
 	 * cross-file link/anchor graph (#645). A full-tree sweep
-	 * (`runWorkspaceDiagnostics`, the engine behind `lens_diagnostics
+	 * (`runWorkspaceDiagnostics`, the engine behind `diagnostics_report
 	 * mode=full`) fires a `didOpen` for every matching file in the project;
 	 * without this flag every one of those touches independently pays the
 	 * server's full `aggregateWaitMs` racing the SAME cold index build, so on

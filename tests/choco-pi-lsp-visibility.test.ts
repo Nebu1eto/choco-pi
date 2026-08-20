@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { installPiLensVisibility } from "../.pi/extensions/pi-lens-visibility.ts";
+import { installChocoPiLspVisibility } from "../.pi/extensions/choco-pi-lsp-visibility.ts";
 
 type Ui = ExtensionContext["ui"];
 
@@ -21,10 +21,10 @@ function testUi() {
 	return { ui, statuses, widgets };
 }
 
-test("pi-lens UI stays hidden while LSP is inactive and appears when active", () => {
+test("choco-pi-lsp UI stays hidden while LSP is inactive and appears when active", () => {
 	const { ui, statuses, widgets } = testUi();
-	installPiLensVisibility(ui);
-	const widget = () => ({ render: () => ["pi-lens"], invalidate: () => {} });
+	installChocoPiLspVisibility(ui);
+	const widget = () => ({ render: () => ["choco-pi-lsp"], invalidate: () => {} });
 
 	ui.setStatus("pi-lens-lsp", "LSP Inactive");
 	ui.setWidget("pi-lens", widget as never, { placement: "belowEditor" });
@@ -40,9 +40,9 @@ test("pi-lens UI stays hidden while LSP is inactive and appears when active", ()
 	assert.equal(widgets.has("pi-lens"), false);
 });
 
-test("pi-lens failures remain visible and unrelated UI is unchanged", () => {
+test("choco-pi-lsp failures remain visible and unrelated UI is unchanged", () => {
 	const { ui, statuses, widgets } = testUi();
-	installPiLensVisibility(ui);
+	installChocoPiLspVisibility(ui);
 
 	ui.setStatus("pi-lens-lsp", "LSP Failed: typescript");
 	ui.setStatus("other", "ready");

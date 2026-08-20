@@ -603,7 +603,7 @@ export interface LSPTouchFileOptions {
  * `LSPWorkspaceDiagnosticResult` — replaces the old single `timedOutFiles`
  * bucket, which conflated a real budget timeout with a thrown error (the
  * `unconfirmedErrored = length - unconfirmedTimedOut` dead-subtraction bug
- * downstream in `tools/lens-diagnostics.ts` was structurally always 0
+ * downstream in `tools/diagnostics-report.ts` was structurally always 0
  * because the sweep's own catch block set BOTH `error` and `timedOut`) and
  * with a service torn down mid-sweep by the idle-reset race (81 files that
  * left zero trace and rendered as "check didn't complete within budget").
@@ -621,7 +621,7 @@ export interface LSPTouchFileOptions {
  *   while this sweep was still in flight; the remainder of the sweep never
  *   even attempted a language-server round trip for this file.
  * - `error` — the per-file check threw.
- * - `binding_mismatch` — never set by this module. `tools/lens-diagnostics.ts`
+ * - `binding_mismatch` — never set by this module. `tools/diagnostics-report.ts`
  *   classifies a result into this reason AFTER the sweep returns, when its
  *   content-binding fingerprint no longer matches disk (`boundToCurrentDisk:
  *   false`, or a hash check that failed post-hoc) — the LSP layer itself
@@ -780,7 +780,7 @@ export function createSweepIndexGate(): SweepIndexGate {
  * responsible for iterating its files serially, this scheduler never starts
  * a second concurrent call into the same group — parallelized ACROSS
  * distinct groups up to `concurrency` workers. This is the exact scheduling
- * shape `runWorkspaceDiagnostics` (the engine behind `lens_diagnostics
+ * shape `runWorkspaceDiagnostics` (the engine behind `diagnostics_report
  * mode=full`) has used since #387 to avoid flooding a single-threaded LSP
  * server with concurrent touches that only queue server-side instead of
  * parallelizing (observed: 51/123 files "timed out" purely from queue
@@ -890,7 +890,7 @@ function notifyWedgedMs(): number {
 // before the next notify has to prove the server drained its input.
 //
 // #1459's gate bounds CONCURRENT writes to one per auxiliary. That stops a
-// simultaneous fan-out, but a `lens_diagnostics mode=full` sweep is mostly
+// simultaneous fan-out, but a `diagnostics_report mode=full` sweep is mostly
 // SEQUENTIAL — one file after another inside a server group (#387) — so every
 // write is alone in flight and the gate never engages. Each write still resolves
 // as soon as the pipe accepts the bytes, not when the scanner has read them, so
@@ -959,7 +959,7 @@ async function collectWorkspaceDiagnosticFiles(
 	// above $HOME the walk still traverses (and pulls diagnostics for) 5000 files
 	// spread across every unrelated repo under home. Refuse outright — walking
 	// nothing is the honest result; the caller (runWorkspaceDiagnostics →
-	// tools/lens-diagnostics.ts) renders "unsafe root" so an empty sweep never
+	// tools/diagnostics-report.ts) renders "unsafe root" so an empty sweep never
 	// reads as a clean project. Same ceiling as fresh-fetch.ts / the cheap-tier
 	// scanner.
 	if (isAtOrAboveHomeDir(root, homeDir)) return files;
@@ -4247,7 +4247,7 @@ export class LSPService {
 			// #814: capability-aware AGGREGATE wait — generalize #799's
 			// single-server (`clientScope === "primary" && spawned.length === 1`)
 			// silent-clean confirm to multi-server `clientScope: "all"` touches
-			// (`lens_diagnostics` mode=full per-file sweep, `lsp_diagnostics`
+			// (`diagnostics_report` mode=full per-file sweep, `lsp_diagnostics`
 			// `serverScope: "all"`). #799's gate never fires here (it's scoped to
 			// the primary hot path), so a scope-"all" touch where every OTHER
 			// spawned server already answered but one push-only `silentOnClean`
@@ -5981,7 +5981,7 @@ export class LSPService {
 	/**
 	 * #667: shared warm-check/ensure-warm step for BOTH `lsp_diagnostics`
 	 * (`tools/lsp-diagnostics.ts`'s batch/directory sweep) and
-	 * `lens_diagnostics mode=full` (`runWorkspaceDiagnostics` below) — one
+	 * `diagnostics_report mode=full` (`runWorkspaceDiagnostics` below) — one
 	 * implementation instead of two hand-copied ones, since both already
 	 * share `groupFilesByPrimaryServer`/`runPerServerGroups` (#631).
 	 *
@@ -6277,11 +6277,11 @@ export class LSPService {
 			nextWriteIndex?: () => number;
 			/**
 			 * Explicit file list (#461): skip the project walk entirely and route
-			 * exactly these files through the sweep. Used by lens_diagnostics'
+			 * exactly these files through the sweep. Used by diagnostics_report'
 			 * `paths` scope restrictor so a wrapper (e.g. "git-staged files only")
 			 * gets the full mode=full treatment without paying for a whole-project
 			 * walk. Caller is responsible for resolving/deduping/filtering these
-			 * (lens-diagnostics.ts already applies the ignore matcher the same way
+			 * (diagnostics-report.ts already applies the ignore matcher the same way
 			 * the walk does before calling in).
 			 */
 			files?: string[];
@@ -6318,7 +6318,7 @@ export class LSPService {
 		// Cap the per-file LSP sweep: a Next.js-scale project can route thousands
 		// of files through the language server at concurrency 8, and without a
 		// caller cap that grinds for tens of minutes (#341). `maxFiles` lets
-		// lens_diagnostics' `maxLspFiles` bound it; falls back to the env/default.
+		// diagnostics_report' `maxLspFiles` bound it; falls back to the env/default.
 		const maxFiles =
 			typeof options.maxFiles === "number" &&
 			Number.isFinite(options.maxFiles) &&
@@ -6702,7 +6702,7 @@ export class LSPService {
 				// #586: honor each auxiliary profile's native inline-suppression
 				// comment (e.g. opengrep's `// nosemgrep`, #441) — computed from the
 				// raw `diagnostics` (before this drops its non-enumerable
-				// `.inconclusive` flag, already read above) so a `lens_diagnostics
+				// `.inconclusive` flag, already read above) so a `diagnostics_report
 				// mode=full` sweep suppresses the same findings the per-edit dispatch
 				// runner does, instead of only the latter honoring it.
 				// #692: also honor a profile's `skipTestFiles` gate (e.g. ast-grep,
@@ -6738,7 +6738,7 @@ export class LSPService {
 					// skip it the same way. #1618: distinct from every OTHER
 					// `timedOut: true` reason — an `error` must never render as "didn't
 					// complete within budget" (the old dead-subtraction bug in
-					// tools/lens-diagnostics.ts's `unconfirmedErrored` computation).
+					// tools/diagnostics-report.ts's `unconfirmedErrored` computation).
 					timedOut: true,
 					unconfirmedReason: "error",
 					writeIndex: writeIndexByPath.get(normalizeMapKey(filePath)),

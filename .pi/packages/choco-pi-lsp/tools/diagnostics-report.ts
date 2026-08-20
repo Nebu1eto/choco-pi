@@ -1,5 +1,5 @@
 /**
- * lens_diagnostics tool — cached project diagnostic state (issue #159).
+ * diagnostics_report tool — cached project diagnostic state (issue #159).
  *
  * Three modes:
  *   delta (default) — fixable warnings from the current agent turn, read from
@@ -24,7 +24,7 @@ import { applyInlineSuppressions } from "../clients/dispatch/inline-suppressions
 import { gateFindingsByPathFreshness } from "../clients/advisory-provenance.js";
 import { normalizeRuleId } from "../clients/dispatch/rule-id-normalize.js";
 import { applyRulePolicy, rulePolicyMapFromConfig } from "../clients/dispatch/rule-policy.js";
-import { loadPiLensProjectConfig } from "../clients/project-lens-config.js";
+import { loadPiLensProjectConfig } from "../clients/project-lsp-config.js";
 import { compactRenderResult } from "./render-compact.js";
 import { combineAbortSignals } from "../clients/deadline-utils.js";
 import { getProjectIgnoreMatcher } from "../clients/file-utils.js";
@@ -62,7 +62,7 @@ import { loadBootstrapClients } from "../clients/bootstrap.js";
 import {
 	generatedSkipNotice,
 	scanTruncationNotice,
-} from "../clients/lens-engine.js";
+} from "../clients/lsp-engine.js";
 import { scanProjectDiagnostics } from "../clients/project-diagnostics/scanner.js";
 import type {
 	ProjectDiagnostic,
@@ -110,7 +110,7 @@ const MAX_PATHS_ENTRIES = 200;
 // `formatFullMode`'s `analyzersPromise`). One shared string so it renders
 // identically everywhere it's used.
 const NOT_REQUESTED_REASON =
-	"refreshRunners not requested this call (quick mode) — pass refreshRunners=cheap/all/cached to lens_diagnostics mode=full to run it";
+	"refreshRunners not requested this call (quick mode) — pass refreshRunners=cheap/all/cached to diagnostics_report mode=full to run it";
 
 type LSPServiceLike = ReturnType<typeof getLSPService> & {
 	runWorkspaceDiagnostics?: (
@@ -235,7 +235,7 @@ export function createLensDiagnosticsTool(
 		| undefined,
 ) {
 	return {
-		name: "lens_diagnostics" as const,
+		name: "diagnostics_report" as const,
 		label: "Project Diagnostics",
 		description:
 			"Query pi-lens's diagnostic state. mode=delta/all are cache-only and instant; " +
@@ -260,7 +260,7 @@ export function createLensDiagnosticsTool(
 			"possibly-stale session_start cache; each analyzer de-dupes against a " +
 			"concurrent background run of itself, so this can't double-spawn.",
 		promptSnippet:
-			"Use lens_diagnostics mode=all to verify no blocking errors remain; use mode=full for expensive project-wide checks",
+			"Use diagnostics_report mode=all to verify no blocking errors remain; use mode=full for expensive project-wide checks",
 		renderResult: compactRenderResult<{
 			mode?: string;
 			phase?: string;
@@ -285,7 +285,7 @@ export function createLensDiagnosticsTool(
 			const mode =
 				details?.mode ?? (typeof args.mode === "string" ? args.mode : "delta");
 			if (isError) {
-				return `lens_diagnostics ${mode} — ${text.split("\n")[0] ?? "error"}`;
+				return `diagnostics_report ${mode} — ${text.split("\n")[0] ?? "error"}`;
 			}
 			// #533: a "clean"/zero render must say so when heavyweight analyzers never
 			// ran this session — a bare "clean" would otherwise misrepresent a cold
@@ -303,17 +303,17 @@ export function createLensDiagnosticsTool(
 				const cq = details?.qualityIssues ?? 0;
 				const pd = details?.projectDiagnostics ?? 0;
 				if (aw + cq + pd === 0)
-					return `lens_diagnostics delta — clean${coldSuffix}${failedSuffix}`;
-				return `lens_diagnostics delta — ${aw} actionable · ${cq} quality · ${pd} project${coldSuffix}${failedSuffix}`;
+					return `diagnostics_report delta — clean${coldSuffix}${failedSuffix}`;
+				return `diagnostics_report delta — ${aw} actionable · ${cq} quality · ${pd} project${coldSuffix}${failedSuffix}`;
 			}
 			const b = details?.totalBlocking ?? 0;
 			const e = details?.totalErrors ?? 0;
 			const w = details?.totalWarnings ?? 0;
 			const files = details?.filesWithIssues ?? details?.filesChecked ?? 0;
 			if (b + e + w === 0) {
-				return `lens_diagnostics ${mode} — clean (${files} files)${coldSuffix}${failedSuffix}`;
+				return `diagnostics_report ${mode} — clean (${files} files)${coldSuffix}${failedSuffix}`;
 			}
-			return `lens_diagnostics ${mode} — ${b} blocking · ${e} errors · ${w} warnings (${files} files)${coldSuffix}${failedSuffix}`;
+			return `diagnostics_report ${mode} — ${b} blocking · ${e} errors · ${w} warnings (${files} files)${coldSuffix}${failedSuffix}`;
 		}),
 		parameters: Type.Object({
 			mode: Type.Optional(
@@ -447,7 +447,7 @@ export function createLensDiagnosticsTool(
 					);
 				logLatency({
 					type: "phase",
-					toolName: "lens_diagnostics",
+					toolName: "diagnostics_report",
 					filePath: cwd,
 					phase: "blocker_freshness_widget_gate",
 					durationMs: Date.now() - dependencyGateStart,
@@ -688,7 +688,7 @@ function formatDeltaMode(
 	const includeFile = (filePath: string) =>
 		ignoreFile(filePath) && (!pathsScope || pathsScope.includeFile(filePath));
 	// #755: delta re-serves the actionable/quality caches verbatim, but those
-	// were filtered at DISPATCH time — before any lens_diagnostic_mark. Re-apply
+	// were filtered at DISPATCH time — before any diagnostic_mark. Re-apply
 	// the weak disposition filter (suppress/defer) here so a mark converges
 	// immediately, not only on the next edit. Weak-anchored → zero file I/O, so
 	// this stays "instant" (see applyWeakDispositions).
@@ -2177,7 +2177,7 @@ function formatAllMode(
 	// #755: mode=full already ran the full disposition + inline-suppression
 	// filter (applyInlineSuppressionsToSummaries, file content in hand); mode=all
 	// re-serves the widget summaries verbatim from dispatch time, so a
-	// post-dispatch lens_diagnostic_mark (suppress/defer) would otherwise still
+	// post-dispatch diagnostic_mark (suppress/defer) would otherwise still
 	// show here. Re-apply the weak filter (zero I/O) for the cache-only path and
 	// re-summarize so blocking/error/warning counts reflect the drop.
 	// Same project rule policy (`.pi-lens.json` `rules.<id>.disable`/`select`)
@@ -2207,7 +2207,7 @@ function formatAllMode(
 	// or a `diagnostic_past_eof` telemetry record on this call.
 	const eofGated = dispositioned.map((s) => {
 		const { diagnostics, demotedCount } = demotePastEofDiagnostics({
-			store: "lens_diagnostics",
+			store: "diagnostics_report",
 			cwd,
 			filePath: s.filePath,
 			diagnostics: s.diagnostics ?? [],

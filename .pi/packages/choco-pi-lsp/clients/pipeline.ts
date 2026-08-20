@@ -14,7 +14,7 @@
 
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
-import type { PiLensFlagSource } from "./lens-config.js";
+import type { PiLensFlagSource } from "./lsp-config.js";
 import { findNearestContaining, normalizeEphemeralMapKey } from "./path-utils.js";
 import {
 	recordFromDispatchDiagnostic,
@@ -53,7 +53,7 @@ import {
 } from "./file-utils.js";
 import type { FormatService } from "./format-service.js";
 import { logLatency } from "./latency-logger.js";
-import { emitLensAnalysisComplete } from "./lens-events.js";
+import { emitLensAnalysisComplete } from "./lsp-events.js";
 import { publishFilesTouched } from "./bus-publish.js";
 import {
 	publishDiagnostics,

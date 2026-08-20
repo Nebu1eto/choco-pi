@@ -2,7 +2,7 @@
  * Shared, memoized workspace-topology snapshot service (#806).
  *
  * Several subsystems each performed their own independent per-directory
- * marker walk (`.pi-lens.json` discovery in `project-lens-config.ts`,
+ * marker walk (`.pi-lens.json` discovery in `project-lsp-config.ts`,
  * governing-tsconfig discovery in `review-graph/tsconfig-paths.ts`,
  * workspace-manifest presence checks in `review-graph/workspace-modules.ts`)
  * — each with its own probe pattern and its own (or no) invalidation. In a
@@ -12,7 +12,7 @@
  * This module is the single seam: `getDirectoryMarkers(dir)` collects ALL
  * markers a directory can carry in ONE `readdir` pass (not N `existsSync`
  * probes), cached per directory and invalidated by the directory's own
- * mtime (the pattern `project-lens-config.ts`'s `inDirDiscoveryCache`
+ * mtime (the pattern `project-lsp-config.ts`'s `inDirDiscoveryCache`
  * established for #804). `findNearestDirWithMarker` layers the shared
  * upward-walk discipline (`walkUpDirs` + `isAtOrAboveHomeDir` ceiling, an
  * explicit depth cap with cap-trip latency logging — no silent truncation)
@@ -319,7 +319,7 @@ function walkToNearestMatch(
  *
  * Cached per `(startDir, markerKey)`, invalidated when any visited
  * directory's mtime changes (the same "revalidate every dir on the path"
- * pattern `project-lens-config.ts`'s `discoveryCache` established).
+ * pattern `project-lsp-config.ts`'s `discoveryCache` established).
  */
 export function findNearestDirWithMarker(
 	startDir: string,
@@ -410,7 +410,7 @@ export interface PiLensConfigMarker {
 
 /**
  * `.pi-lens.json`/`pi-lens.json` directly IN `dir` — no upward walk. The
- * shared-index equivalent of `project-lens-config.ts`'s old private
+ * shared-index equivalent of `project-lsp-config.ts`'s old private
  * `findPiLensConfigInDir` probe loop.
  */
 export function findPiLensConfigMarkerInDir(dir: string): PiLensConfigMarker | undefined {

@@ -239,7 +239,7 @@ export function validateAdvisoryProvenance(
 //     collapse to one stat and one log entry (defect shapes 1 and 2). This
 //     helper has no zero-I/O contract of its own to protect — it stats.
 //     Slice 3 (delta mode) must find and name its OWN seam before reusing
-//     this shape; `formatDeltaMode` (tools/lens-diagnostics.ts) reads only
+//     this shape; `formatDeltaMode` (tools/diagnostics-report.ts) reads only
 //     actionable-warnings, code-quality-warnings, and the delta report, none
 //     of which any #1461 slice writes yet, so nothing here currently touches
 //     it.

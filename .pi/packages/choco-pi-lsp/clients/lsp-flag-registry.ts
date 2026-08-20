@@ -6,9 +6,9 @@
  *
  *   - `index.ts` — `pi.registerFlag` for the CLI surface (name, description,
  *     default), as a loop over this array.
- *   - `clients/lens-config.ts` — parsing the key out of `~/.pi-lens/config.json`
+ *   - `clients/lsp-config.ts` — parsing the key out of `~/.pi-lens/config.json`
  *     AND resolving the precedence chain, both keyed by `configKey`.
- *   - `clients/project-lens-config.ts` — the closest-wins nested walk for the
+ *   - `clients/project-lsp-config.ts` — the closest-wins nested walk for the
  *     `scope: "project"` entries.
  *   - `tests/index-wiring.test.ts` — the registration contract, derived rather
  *     than restated.
@@ -359,7 +359,7 @@ export function flagValueFromConfig(
  * into `out`, materializing intermediate objects only when they actually
  * exist in `raw` — an absent section stays absent, a present-but-empty one is
  * materialized with an undefined leaf. Shared by the global
- * (`lens-config.ts`) and project (`project-lens-config.ts`) loaders so both
+ * (`lsp-config.ts`) and project (`project-lsp-config.ts`) loaders so both
  * parse and warn identically; it lives here rather than in either loader
  * because this module imports nothing and cannot form a cycle.
  */

@@ -1,6 +1,6 @@
 /**
  * Inline `pi-lens-ignore` suppression — shared between the per-edit dispatch
- * pipeline (`lens_diagnostics mode=all`) and the project-wide `mode=full` sweep so
+ * pipeline (`diagnostics_report mode=all`) and the project-wide `mode=full` sweep so
  * BOTH honor the same comments (#442). Previously this lived privately in the
  * dispatcher, so a site suppressed on the write path reappeared as blocking in the
  * full scan, making `mode=full` unusable as a clean gate.

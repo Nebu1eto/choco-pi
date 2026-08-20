@@ -3,7 +3,7 @@
  * remainder).
  *
  * #1664 wired `demotePastEofDiagnostics` into every surface that renders a
- * `WidgetDiagnostic` — widget-state, `lens_diagnostics` (`mode=all`/`full`),
+ * `WidgetDiagnostic` — widget-state, `diagnostics_report` (`mode=all`/`full`),
  * and the TUI blocking-render loop. It deliberately deferred one surface:
  * `RuntimeCoordinator`'s `_pendingInlineBlockers` map (the "Unresolved from
  * this turn" blocker re-served at `turn_end`, `clients/runtime-turn.ts`).

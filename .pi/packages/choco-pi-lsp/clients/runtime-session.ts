@@ -1033,7 +1033,7 @@ function scheduleStartupScans(
 	// enablement — see `OpengrepClient.resolveConfig`): the local rule file or
 	// `auto` registry ruleset always runs, `resolveOpengrepConfig` only picks
 	// which. Replaces the per-file LSP sweep as the source of opengrep
-	// findings for `lens_diagnostics mode=full` (`runWorkspaceDiagnostics` now
+	// findings for `diagnostics_report mode=full` (`runWorkspaceDiagnostics` now
 	// excludes the opengrep server from its per-file "all"-scope touch —
 	// clients/lsp/index.ts `WORKSPACE_SWEEP_EXCLUDED_SERVER_IDS`); the per-edit
 	// real-time LSP path is untouched.
@@ -1250,10 +1250,10 @@ function scheduleDeferredToolProbes(
 export const SESSION_START_GUIDANCE: string[] = [
 	"📌 pi-lens active — automated checks run on every edit/write; blocking errors (including pre-existing) show inline and must be fixed.\n" +
 		"Key tools (see each tool's own description for args):\n" +
-		"• lens_diagnostics — session-wide diagnostic state; mode=all resurfaces stale blocking errors that dropped from turn context.\n" +
+		"• diagnostics_report — session-wide diagnostic state; mode=all resurfaces stale blocking errors that dropped from turn context.\n" +
 		"• symbol_search → module_report → read_symbol/read_enclosing — ranked identifier search, then navigable outline/callback handles + exact body reads; cheaper than reading a whole file before editing.\n" +
 		"• lsp_diagnostics — probe LSP for errors in a file/folder/workspace.\n" +
-		"• Situational (activate via pi_lens_activate_tools): lsp_navigation, ast_grep_search, ast_grep_replace, ast_grep_dump.",
+		"• Situational (activate via lsp_activate_tools): lsp_navigation, ast_grep_search, ast_grep_replace, ast_grep_dump.",
 ];
 
 export async function handleSessionStart(

@@ -2,7 +2,7 @@
  * project_report pi tool (#773) — the top of the discovery funnel:
  * project_report orients the agent in the project, module_report explains one
  * file, read_symbol reads the exact body. Thin wrapper over the existing
- * projectReport() engine seam (clients/lens-engine.ts), mirroring the MCP
+ * projectReport() engine seam (clients/lsp-engine.ts), mirroring the MCP
  * pilens_project_report tool. Follows symbol_search's cold-cache contract
  * (#348 decision 3): a cold graph kicks off a background build and returns
  * `available: false` with a retry hint, never blocking the call.
@@ -13,7 +13,7 @@ import {
 	projectReport,
 	renderCompactProjectReport,
 	type ProjectReport,
-} from "../clients/lens-engine.js";
+} from "../clients/lsp-engine.js";
 import { compactRenderResult } from "./render-compact.js";
 
 function errorMessage(err: unknown): string {

@@ -37,19 +37,19 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
 	"session_list",
 	"session_read",
 	"session_wait",
-	// pi-lens's own mandated funnel and completion gate (see .pi/SYSTEM.md and
-	// the package's own runtime status line, which calls exactly this set its
-	// "Key tools"): symbol_search finds candidates, module_report inspects
+	// choco-pi-lsp's own mandated funnel and completion gate (see .pi/SYSTEM.md
+	// and the package's own runtime status line, which calls exactly this set
+	// its "Key tools"): symbol_search finds candidates, module_report inspects
 	// one, read_symbol/read_enclosing read a body before editing, and
-	// lsp_diagnostics/lens_diagnostics are required before declaring work
-	// done. A session that reads or edits code with pi-lens active reaches
+	// lsp_diagnostics/diagnostics_report are required before declaring work
+	// done. A session that reads or edits code with choco-pi-lsp active reaches
 	// all six every time, so deferring any of them buys a mid-session
-	// prompt-cache rewrite in the middle of that mandatory path. The
-	// package's remaining tools (project_report, ast_grep_*, lsp_navigation,
-	// lens_diagnostic_mark) are pi-lens's own "situational" tools, gated
-	// behind its own pi_lens_activate_tools call even when this extension's
-	// tool_search is bypassed; they stay deferred here. Provided by pi-lens;
-	// if that package is absent or renames a tool, these names simply never
+	// prompt-cache rewrite in the middle of that mandatory path. The package's
+	// remaining tools (project_report, ast_grep_*, lsp_navigation,
+	// diagnostic_mark) are choco-pi-lsp's own "situational" tools, gated behind
+	// its own lsp_activate_tools call even when this extension's tool_search is
+	// bypassed; they stay deferred here. Provided by choco-pi-lsp; if that
+	// package is absent or renames a tool, these names simply never
 	// appear in getActiveTools() and are dropped silently (see
 	// applyLeanSurface).
 	"symbol_search",
@@ -57,7 +57,7 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
 	"read_symbol",
 	"read_enclosing",
 	"lsp_diagnostics",
-	"lens_diagnostics",
+	"diagnostics_report",
 	"mcp",
 	"tool_search",
 ] as const;

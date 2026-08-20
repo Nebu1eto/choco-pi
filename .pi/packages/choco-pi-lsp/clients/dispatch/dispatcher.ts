@@ -27,7 +27,7 @@ import { resolveLanguageRootForFile } from "../language-profile.js";
 import { logLatency } from "../latency-logger.js";
 import { isSpawnableCommand } from "../installer/index.js";
 import { normalizeMapKey } from "../path-utils.js";
-import { loadPiLensProjectConfig } from "../project-lens-config.js";
+import { loadPiLensProjectConfig } from "../project-lsp-config.js";
 import { RUNTIME_CONFIG, getRunnerTimeoutFloorMs } from "../runtime-config.js";
 import { safeSpawnAsync } from "../safe-spawn.js";
 import { classifyDiagnostic } from "./diagnostic-taxonomy.js";
@@ -890,7 +890,7 @@ export async function dispatchForFile(
 	// LANGUAGE root (`resolveLanguageRootForFile`), so in a monorepo where a
 	// package directory has its own `.pi-lens.json`, `discoverPiLensProjectConfig`'s
 	// upward walk stops there and never sees a repo-root policy.
-	// `lens_diagnostics` loads its policy map from `runtime.projectRoot`; using
+	// `diagnostics_report` loads its policy map from `runtime.projectRoot`; using
 	// the same root here keeps the two surfaces in agreement. `ctx.projectConfig`
 	// itself is untouched — thresholds and mutation flags keep their existing
 	// language-root resolution.
@@ -901,7 +901,7 @@ export async function dispatchForFile(
 	// `pi-lens-ignore` + agent/user dispositions + project rule policy. Applied
 	// AFTER dedupe so the pi renderer, widget, and delta all see one filtered
 	// set. #690: dispositions drop false-positive/suppress marks and anything
-	// deferred this session (flagged marks stay; lens_diagnostics tags them at
+	// deferred this session (flagged marks stay; diagnostics_report tags them at
 	// render time). #1030: the disposition anchor + store MUST key off the
 	// PROJECT ROOT, not ctx.cwd — the mark tool writes dispositions under
 	// runtime.projectRoot, so reading from ctx.cwd (the nested language root in
@@ -987,7 +987,7 @@ export async function dispatchForFile(
 	const coverageNotice = buildCoverageNotice(ctx, runnerLatencies);
 
 	// Format output — only blocking issues shown inline
-	// Warnings tracked but not shown (noise) — surfaced via lens_diagnostics
+	// Warnings tracked but not shown (noise) — surfaced via diagnostics_report
 	const blockerOutput = formatDiagnostics(inlineBlockers, "blocking");
 	let output = blockerOutput;
 	output += formatDiagnostics(inlineFixed, "fixed");

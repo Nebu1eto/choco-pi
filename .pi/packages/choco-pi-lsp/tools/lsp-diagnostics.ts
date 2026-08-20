@@ -127,7 +127,7 @@ type BatchOptions = {
 	// #671: project root the workspace-diagnostics cache is rooted under
 	// (`getProjectDataDir(cwd)`) — threaded down to `collectBatchDiagnostics`
 	// so its per-file cache context lands in the same on-disk store
-	// `runWorkspaceDiagnostics` (`lens_diagnostics mode=full`) reads/writes,
+	// `runWorkspaceDiagnostics` (`diagnostics_report mode=full`) reads/writes,
 	// letting a file swept by either tool benefit the other's next sweep.
 	cwd?: string;
 	// #1561: per-file blocker-retire hook, threaded so a batch/directory sweep
@@ -197,7 +197,7 @@ function batchFileDeadlineMs(): number {
 }
 
 // #646: `primaryServerId` moved to clients/lsp/config.ts so this tool and
-// tools/lens-diagnostics.ts's mode=full sweep share the exact same
+// tools/diagnostics-report.ts's mode=full sweep share the exact same
 // primary-vs-auxiliary classification instead of each keeping its own copy.
 
 function lspUnavailableMessage(
@@ -241,7 +241,7 @@ function boundedPositiveInt(
  * the SAME shared, single-threaded LSP server — exactly the pattern #387
  * found doesn't parallelize (it queues server-side and cascades per-file
  * timeouts by queue position) and that `runWorkspaceDiagnostics` (the engine
- * behind `lens_diagnostics mode=full`) has been protected against since #387.
+ * behind `diagnostics_report mode=full`) has been protected against since #387.
  *
  * Groups `items` by primary server via `groupFilesByPrimaryServer` (the same
  * grouping key `runWorkspaceDiagnostics` uses) and schedules them with
@@ -258,7 +258,7 @@ function boundedPositiveInt(
  *
  * #667: before a group's own per-file loop starts, calls the shared
  * `LSPService.ensureWarmForSweep` warm-check/ensure-warm step (the same one
- * `runWorkspaceDiagnostics` uses for `lens_diagnostics mode=full`) against
+ * `runWorkspaceDiagnostics` uses for `diagnostics_report mode=full`) against
  * the group's first file — a no-op when that group's primary server already
  * demonstrated readiness earlier this session, one bounded warm-up round
  * trip otherwise. Fixes the first-few-files-eat-cold-start-timeouts pattern
@@ -382,7 +382,7 @@ async function collectFiles(
 }
 
 export function createLspDiagnosticsTool(
-	// #571/#1198: same shared write-ordering token source `lens_diagnostics`
+	// #571/#1198: same shared write-ordering token source `diagnostics_report`
 	// mode=full uses (index.ts injects `() => runtime.nextWriteIndex()`). A
 	// confirmed result reconciled into the footer reserves its token when the
 	// per-file check starts, so settlement order cannot make an older result look
@@ -991,7 +991,7 @@ function canTrustTouchConfirmation(
 /**
  * #571: reconcile this tool's fresh LSP result into the footer cache
  * (`widget-state.ts`'s `allDiagnostics`) — same shared choke point
- * `lens_diagnostics` mode=full uses (`clients/widget-state.ts`'s
+ * `diagnostics_report` mode=full uses (`clients/widget-state.ts`'s
  * `reconcileScanDiagnostics`). A manual `lsp_diagnostics` check that proves a
  * stale footer error is actually gone (the real-world case that surfaced
  * #571) is exactly the kind of confirmed result that should correct it.
@@ -1079,7 +1079,7 @@ function coveredSourcesForCheck(
 
 /**
  * #1645 review F3: `lsp_diagnostics` writes into the SAME widget store as
- * `lens_diagnostics mode=full`. Two tools writing one store must apply ONE rule
+ * `diagnostics_report mode=full`. Two tools writing one store must apply ONE rule
  * for "is this file's diagnostics demoted" — otherwise an orphan file blocks or
  * does not depending purely on which tool ran last, which is the #1633-V1
  * lesson. Every path in this file that reaches `reconcileWidgetFromLspResult`
@@ -1667,8 +1667,8 @@ function unconfirmedReasonClause(unconfirmed: number, timedOut: number): string 
  * `nextWriteIndex` threading to both call sites). Purely mechanical
  * extraction: no behavior change, and does NOT touch the confirmed/
  * unconfirmed semantics `collectFileDiagnosticResult`/`tallyConfirmation`
- * already encode — those, and `lens_diagnostics` mode=full's separate,
- * deliberately different confirmation gate in `tools/lens-diagnostics.ts`,
+ * already encode — those, and `diagnostics_report` mode=full's separate,
+ * deliberately different confirmation gate in `tools/diagnostics-report.ts`,
  * are unrelated to this file's internal duplication and are left exactly
  * as they were.
  */

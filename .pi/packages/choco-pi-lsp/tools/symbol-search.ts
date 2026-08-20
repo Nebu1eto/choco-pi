@@ -2,13 +2,13 @@
  * symbol_search pi tool (#348) — the entry point of the discovery funnel:
  * symbol_search finds ranked candidate files by identifier, module_report
  * explains one, read_symbol reads the exact body. Thin wrapper over the
- * existing symbolSearch() engine seam (clients/lens-engine.ts), mirroring the
+ * existing symbolSearch() engine seam (clients/lsp-engine.ts), mirroring the
  * MCP pilens_symbol_search tool with the same #517-slimmed payload.
  */
 
 import * as path from "node:path";
 import { Type } from "../clients/deps/typebox.js";
-import { symbolSearch, type SymbolSearchResult } from "../clients/lens-engine.js";
+import { symbolSearch, type SymbolSearchResult } from "../clients/lsp-engine.js";
 import { baseName, compactRenderResult } from "./render-compact.js";
 
 /**

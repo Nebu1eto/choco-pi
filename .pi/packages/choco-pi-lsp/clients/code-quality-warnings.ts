@@ -70,7 +70,7 @@ export interface CodeQualityWarningsReport {
 		 *
 		 * OPTIONAL on purpose: this report is persisted to
 		 * `.pi-lens/cache/code-quality-warnings.json` and read back by
-		 * `tools/lens-diagnostics.ts`, which can find a file written by a
+		 * `tools/diagnostics-report.ts`, which can find a file written by a
 		 * pi-lens build that predates the field. Readers must tolerate absence.
 		 */
 		byTier?: { warning: number; info: number; hint: number };

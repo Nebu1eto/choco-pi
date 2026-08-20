@@ -269,7 +269,7 @@ export interface PastEofGateResult<T> {
  * Never throws, never mutates the input array.
  */
 export function demotePastEofDiagnostics<T extends PastEofDiagnosticLike>(args: {
-	/** Serving surface name as it appears in telemetry, e.g. `"lens_diagnostics"`. */
+	/** Serving surface name as it appears in telemetry, e.g. `"diagnostics_report"`. */
 	store: string;
 	cwd: string;
 	filePath: string;
@@ -337,7 +337,7 @@ export function demotePastEofDiagnostics<T extends PastEofDiagnosticLike>(args: 
  * pair for servers that only re-scan on a fresh open — see
  * `handleNotifyOpen`'s `reopenOnResync` branch). Dynamic import (mirrors
  * `clients/module-report-lsp.ts`) so this module — used from widget-state.ts
- * and tools/lens-diagnostics.ts — never statically depends on `clients/lsp`,
+ * and tools/diagnostics-report.ts — never statically depends on `clients/lsp`,
  * which itself imports widget-state.ts.
  *
  * Fire-and-forget by design: the caller is a synchronous render path and must

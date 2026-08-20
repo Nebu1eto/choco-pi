@@ -9,7 +9,7 @@
  * no-build contract: this tool's product IS the graph, so a cold cache kicks
  * off a single bounded background build (deduped per cwd, fire-and-forget)
  * and returns `available: false` with an actionable retry hint — the same
- * shape symbol_search's cold word-index path uses (clients/lens-engine.ts).
+ * shape symbol_search's cold word-index path uses (clients/lsp-engine.ts).
  * The call never blocks on a build.
  *
  * Six sections, each capped and ranked worst/most-important first:
