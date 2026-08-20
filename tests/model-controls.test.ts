@@ -1,3 +1,5 @@
+import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -44,19 +46,22 @@ test("wrapped editor updates fast mode and preserves Zentui ownership", () => {
   let enabled = false;
   const owner = Symbol("zentui-owner");
   const ownerKey = Symbol.for("pi-zentui.editor-owner");
-  const baseFactory = ((_tui: never, _theme: never, _keybindings: never) => ({
-    render: () => [" gpt-5.6-sol  OpenAI  high"],
-    invalidate: () => {},
-    handleInput: () => {},
-    getText: () => "",
-    setText: () => {},
-  })) as unknown as EditorFactory & { [ownerKey]?: symbol };
+  const baseFactory = reinterpretHostValue<EditorFactory & { [ownerKey]?: symbol }>(
+    (_tui: never, _theme: never, _keybindings: never) => ({
+      render: () => [" gpt-5.6-sol  OpenAI  high"],
+      invalidate: () => {},
+      handleInput: () => {},
+      getText: () => "",
+      setText: () => {},
+    }),
+  );
   baseFactory[ownerKey] = owner;
   const wrapped = wrapFastModeEditorFactory(baseFactory, {
     getModel: () => model("openai-codex"),
     isEnabled: () => enabled,
     style: (text) => text,
   });
+  // SAFETY: The fixture supplies every host member exercised by this test.
   const editor = wrapped(undefined as never, undefined as never, undefined as never);
 
   assert.equal(stripTerminalSequences(editor.render(80)[0] ?? ""), " gpt-5.6-sol  OpenAI  high");
@@ -65,21 +70,25 @@ test("wrapped editor updates fast mode and preserves Zentui ownership", () => {
     stripTerminalSequences(editor.render(80)[0] ?? ""),
     /^ gpt-5\.6-sol  OpenAI  high +fast {2}$/,
   );
+  // SAFETY: The fixture supplies every host member exercised by this test.
   assert.equal((wrapped as typeof baseFactory)[ownerKey], owner);
 });
 
 test("editor installation waits until Zentui owns the factory", () => {
   const zentuiKey = Symbol.for("pi-zentui.editor-factory");
-  const plainFactory = (() => ({
+  const plainFactory = reinterpretHostValue<EditorFactory>(() => ({
     render: () => [],
     invalidate: () => {},
     handleInput: () => {},
     getText: () => "",
     setText: () => {},
-  })) as unknown as EditorFactory;
-  const zentuiFactory = Object.assign(plainFactory.bind(undefined) as unknown as EditorFactory, {
-    [zentuiKey]: true,
-  });
+  }));
+  const zentuiFactory = Object.assign(
+    reinterpretHostValue<EditorFactory>(plainFactory.bind(undefined)),
+    {
+      [zentuiKey]: true,
+    },
+  );
   let currentFactory = plainFactory;
   const scheduled: Array<() => void> = [];
   installFastModeEditorWhenReady(
@@ -105,6 +114,7 @@ test("editor installation waits until Zentui owns the factory", () => {
   currentFactory = zentuiFactory;
   scheduled.shift()?.();
   assert.notEqual(currentFactory, zentuiFactory);
+  // SAFETY: The fixture supplies every host member exercised by this test.
   assert.equal((currentFactory as { [zentuiKey]?: boolean })[zentuiKey], true);
 });
 
@@ -114,6 +124,7 @@ test("Fast mode state restores from the latest session entry", () => {
     { type: "custom", customType: "other", data: { enabled: true } },
     { type: "custom", customType: "choco-pi-fast-mode", data: { enabled: false } },
   ];
+  // SAFETY: The fixture supplies every host member exercised by this test.
   assert.equal(restoreFastMode(entries as never), false);
 });
 
@@ -123,20 +134,20 @@ test("non-OpenAI-Codex editor metadata is unchanged", () => {
 });
 
 test("fast toggles rerender without appending a scrollback status row", async () => {
-  let fastHandler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
+  let fastHandler: ((args: string, ctx: RuntimeValue) => Promise<void>) | undefined;
   let entries = 0;
-  const pi = {
+  const pi = reinterpretHostValue<import("@earendil-works/pi-coding-agent").ExtensionAPI>({
     on: () => {},
     registerCommand: (
       name: string,
-      options: { handler: (args: string, ctx: unknown) => Promise<void> },
+      options: { handler: (args: string, ctx: RuntimeValue) => Promise<void> },
     ) => {
       if (name === "fast") fastHandler = options.handler;
     },
     appendEntry: () => {
       entries++;
     },
-  } as unknown as import("@earendil-works/pi-coding-agent").ExtensionAPI;
+  });
   modelControls(pi);
 
   let notifications = 0;

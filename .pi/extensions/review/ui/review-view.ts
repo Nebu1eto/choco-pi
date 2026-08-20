@@ -1,3 +1,5 @@
+import { propertiesWhen } from "../../lib/runtime-values.ts";
+import type { RuntimeValue } from "../../lib/runtime-values.ts";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
@@ -193,11 +195,13 @@ export const REVIEW_CHAT_SPLIT_MIN_WIDTH = 120;
  */
 export const COLLAPSED_TOOL_RENDER_WIDTH = 512;
 
-export function reviewViewHeights(terminalRows: number): {
+export type ReviewViewHeights = {
   bodyHeight: number;
   overlayMaxHeight: "100%";
   reservedRows: number;
-} {
+};
+
+export function reviewViewHeights(terminalRows: number): ReviewViewHeights {
   const rows = Math.max(0, terminalRows);
   const reservedRows = Math.min(REVIEW_CHROME_ROWS, rows);
   return {
@@ -558,6 +562,8 @@ function wrapPlainText(text: string, width: number): string[] {
   return wrapped;
 }
 
+type ChatBody = { lines: string[]; offset: number };
+
 function chatBodyLines(
   chat: ReviewChat,
   width: number,
@@ -567,7 +573,7 @@ function chatBodyLines(
   markdownTheme: MarkdownTheme,
   renderTool: (entry: ReviewChatToolCall, width: number) => string[],
   scrollOffset: number,
-): { lines: string[]; offset: number } {
+): ChatBody {
   let heading = focused
     ? theme.fg("accent", theme.bold("Agent chat [FOCUSED]"))
     : theme.bold("Agent chat");
@@ -700,7 +706,7 @@ export async function openReviewView(
             known.add(info.name);
             chatCommands.push({
               name: info.name,
-              ...(info.description ? { description: info.description } : {}),
+              ...propertiesWhen(info.description, () => ({ description: info.description })),
             });
           }
           tui.requestRender();
@@ -724,6 +730,7 @@ export async function openReviewView(
             // renderers — exactly what the main transcript passes — so
             // extension and MCP tools render their concise titles instead
             // of the raw argument/output fallback.
+            // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
             const definition = chat?.toolDefinition(entry.toolName) as
               | ConstructorParameters<typeof ToolExecutionComponent>[4]
               | undefined;
@@ -742,6 +749,7 @@ export async function openReviewView(
             view = { component };
             toolViews.set(entry.toolCallId, view);
           }
+          // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
           const result = entry.result as { content?: unknown; details?: unknown } | undefined;
           if (
             result &&
@@ -819,8 +827,10 @@ export async function openReviewView(
             if (!chat) {
               chat = createChat({
                 cwd: options.reviewRoot,
-                ...(options.chatModel ? { model: options.chatModel } : {}),
-                ...(options.chatThinkingLevel ? { thinkingLevel: options.chatThinkingLevel } : {}),
+                ...propertiesWhen(options.chatModel, () => ({ model: options.chatModel })),
+                ...propertiesWhen(options.chatThinkingLevel, () => ({
+                  thinkingLevel: options.chatThinkingLevel,
+                })),
               });
               unsubscribeChat = chat.onUpdate(() => tui.requestRender());
               // Start the session now so the command menu, model status, and
@@ -922,7 +932,7 @@ export async function openReviewView(
             }
             chatInput.setText("");
             tui.requestRender();
-            void chat.runCommand(prompt, options.reviewRoot).catch((error: unknown) => {
+            void chat.runCommand(prompt, options.reviewRoot).catch((error: RuntimeValue) => {
               options.host.notify(error instanceof Error ? error.message : String(error), "error");
               tui.requestRender();
             });
@@ -938,7 +948,7 @@ export async function openReviewView(
           chatInput.setText("");
           tui.requestRender();
           try {
-            void chat.ask(prompt, context).catch((error: unknown) => {
+            void chat.ask(prompt, context).catch((error: RuntimeValue) => {
               options.host.notify(error instanceof Error ? error.message : String(error), "error");
               tui.requestRender();
             });
@@ -1055,7 +1065,7 @@ export async function openReviewView(
             action,
             record: state.record,
             markdown,
-            ...(agentInstruction ? { agentInstruction } : {}),
+            ...propertiesWhen(agentInstruction, () => ({ agentInstruction })),
           });
         }
 
@@ -1091,8 +1101,8 @@ export async function openReviewView(
               ...state,
               record: {
                 ...record,
-                ...(verdict === undefined ? {} : { verdict }),
-                ...(body.trim() ? { body: body.trim() } : {}),
+                ...propertiesWhen(!(verdict === undefined), () => ({ verdict })),
+                ...propertiesWhen(body.trim(), () => ({ body: body.trim() })),
                 updatedAt: now(),
               },
             };
@@ -1166,8 +1176,8 @@ export async function openReviewView(
               const identifier = rest.join("/");
               return {
                 label: identifier || model || "",
-                ...(identifier && provider ? { provider } : {}),
-                ...(thinkingLevel ? { thinkingLevel } : {}),
+                ...propertiesWhen(identifier && provider, () => ({ provider })),
+                ...propertiesWhen(thinkingLevel, () => ({ thinkingLevel })),
               };
             })();
             const framedInput = (input: ReviewInput): string[] =>
@@ -1176,7 +1186,7 @@ export async function openReviewView(
                 ...input.render(frameAdapter.editorWidth(contentWidth)),
                 cwd: options.reviewRoot,
                 uiTheme: theme,
-                ...(frameModel ? { model: frameModel } : {}),
+                ...propertiesWhen(frameModel, () => ({ model: frameModel })),
               });
             if (state.commentDraft) {
               const draftPosition = state.commentDraft.position;
@@ -1274,7 +1284,7 @@ export async function openReviewView(
               width: contentWidth,
               theme,
               focus: `${reviewFocus}${chatFocus}`,
-              ...(scroll ? { scroll } : {}),
+              ...propertiesWhen(scroll, () => ({ scroll })),
               now: now(),
             });
             const footerRows = footer.slice(0, Math.max(0, reservedRows - 1));

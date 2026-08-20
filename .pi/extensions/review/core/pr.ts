@@ -1,3 +1,9 @@
+import {
+  isBoolean,
+  isObject as hasObjectType,
+  isString,
+  type RuntimeValue,
+} from "../../lib/runtime-values.ts";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
@@ -74,38 +80,36 @@ type WorktreeOwner = {
   pullRequest: number;
 };
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isObject(value: RuntimeValue): value is Record<string, RuntimeValue> {
+  return hasObjectType(value) && value !== null && !Array.isArray(value);
 }
 
-function parseAuthor(value: unknown, context: string): PullRequestAuthor | null {
+function parseAuthor(value: RuntimeValue, context: string): PullRequestAuthor | null {
   // GitHub returns null when the author's account is no longer available.
   if (value === null) return null;
   if (
     !isObject(value) ||
-    typeof value.login !== "string" ||
-    (value.name !== undefined && value.name !== null && typeof value.name !== "string") ||
-    typeof value.is_bot !== "boolean"
+    !isString(value.login) ||
+    (value.name !== undefined && value.name !== null && !isString(value.name)) ||
+    !isBoolean(value.is_bot)
   ) {
     throw new Error(`Invalid ${context}: expected author login, name, and is_bot fields.`);
   }
   return { login: value.login, name: value.name ?? null, isBot: value.is_bot };
 }
 
-function parsePullRequest(value: unknown, context: string): PullRequestMetadata {
+function parsePullRequest(value: RuntimeValue, context: string): PullRequestMetadata {
   if (
     !isObject(value) ||
     !Number.isSafeInteger(value.number) ||
     Number(value.number) <= 0 ||
-    typeof value.title !== "string" ||
-    typeof value.baseRefName !== "string" ||
+    !isString(value.title) ||
+    !isString(value.baseRefName) ||
     value.baseRefName.length === 0 ||
-    typeof value.headRefOid !== "string" ||
+    !isString(value.headRefOid) ||
     !/^[0-9a-f]{40,64}$/i.test(value.headRefOid) ||
-    typeof value.url !== "string" ||
-    (value.updatedAt !== undefined &&
-      value.updatedAt !== null &&
-      typeof value.updatedAt !== "string")
+    !isString(value.url) ||
+    (value.updatedAt !== undefined && value.updatedAt !== null && !isString(value.updatedAt))
   ) {
     throw new Error(`Invalid ${context}: required pull request fields are missing or malformed.`);
   }
@@ -128,15 +132,15 @@ function ghFailure(args: readonly string[], code: number, stderr: string): Error
   return new Error(`gh ${args.join(" ")} failed: ${detail || `exited with status ${code}`}`);
 }
 
-async function runGhJson(cwd: string, args: string[], runner: ExecRunner): Promise<unknown> {
+async function runGhJson(cwd: string, args: string[], runner: ExecRunner): Promise<RuntimeValue> {
   let result: Awaited<ReturnType<ExecRunner>>;
   try {
     result = await runner("gh", args, { cwd });
   } catch (error) {
     if (
       isObject(error) &&
-      typeof error.code === "string" &&
-      typeof error.syscall === "string" &&
+      isString(error.code) &&
+      isString(error.syscall) &&
       error.syscall.startsWith("spawn")
     ) {
       throw new Error(GH_HELP);
@@ -145,6 +149,7 @@ async function runGhJson(cwd: string, args: string[], runner: ExecRunner): Promi
   }
   if (result.code !== 0) throw ghFailure(args, result.code, result.stderr);
   try {
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     return JSON.parse(result.stdout) as unknown;
   } catch {
     throw new Error(`gh ${args.join(" ")} returned invalid JSON.`);
@@ -181,12 +186,12 @@ export async function listPullRequests(
   return value.map((item, index) => parsePullRequest(item, `gh pr list item ${index + 1}`));
 }
 
-function parseRepository(value: unknown): RepositoryMetadata {
+function parseRepository(value: RuntimeValue): RepositoryMetadata {
   if (
     !isObject(value) ||
-    typeof value.nameWithOwner !== "string" ||
-    typeof value.url !== "string" ||
-    typeof value.sshUrl !== "string"
+    !isString(value.nameWithOwner) ||
+    !isString(value.url) ||
+    !isString(value.sshUrl)
   ) {
     throw new Error("Invalid gh repo view output: required repository fields are missing.");
   }
@@ -252,11 +257,12 @@ async function readOwner(path: string): Promise<WorktreeOwner | undefined> {
     if (
       !isObject(value) ||
       value.version !== 1 ||
-      typeof value.token !== "string" ||
-      typeof value.repositoryRoot !== "string" ||
+      !isString(value.token) ||
+      !isString(value.repositoryRoot) ||
       !Number.isSafeInteger(value.pullRequest)
     )
       return undefined;
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     return value as WorktreeOwner;
   } catch (error) {
     if (isObject(error) && error.code === "ENOENT") return undefined;

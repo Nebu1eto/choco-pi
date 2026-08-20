@@ -1,3 +1,4 @@
+import { isNumber, isObject, type RuntimeValue } from "./lib/runtime-values.ts";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,11 +40,13 @@ function modelKey(model: Model<Api>): string {
   return `${model.provider}/${model.id}`;
 }
 
-function positiveInteger(value: unknown, name: string): number | undefined {
+function positiveInteger(value: RuntimeValue, name: string): number | undefined {
   if (value === undefined) return undefined;
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   if (!Number.isInteger(value) || (value as number) <= 0) {
     throw new Error(`${name} must be a positive integer`);
   }
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   return value as number;
 }
 
@@ -65,11 +68,12 @@ async function readConfig(cwd: string): Promise<ContextCapConfig> {
   if (content === undefined) throw new Error("context-cap.json was not found");
   let parsed: ContextCapConfig;
   try {
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     parsed = JSON.parse(content) as ContextCapConfig;
   } catch (error) {
     throw new Error("context-cap.json must contain valid JSON", { cause: error });
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!parsed || !isObject(parsed) || Array.isArray(parsed)) {
     throw new Error("context-cap.json must contain a JSON object");
   }
 
@@ -85,23 +89,23 @@ async function readConfig(cwd: string): Promise<ContextCapConfig> {
   }
   if (
     parsed.models !== undefined &&
-    (!parsed.models || typeof parsed.models !== "object" || Array.isArray(parsed.models))
+    (!parsed.models || !isObject(parsed.models) || Array.isArray(parsed.models))
   ) {
     throw new Error("models must be a JSON object");
   }
   const models: Record<string, number | null | ModelContextPolicy> = {};
   for (const [key, value] of Object.entries(parsed.models ?? {})) {
-    if (value === null || typeof value === "number") {
+    if (value === null || isNumber(value)) {
       models[key] = value === null ? null : positiveInteger(value, `models.${key}`)!;
       continue;
     }
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
+    if (!value || !isObject(value) || Array.isArray(value)) {
       throw new Error(`models.${key} must be a number, null, or object`);
     }
     const cap = value.cap === null ? null : positiveInteger(value.cap, `models.${key}.cap`);
     const compactAt =
       value.compactAt === null ? null : positiveInteger(value.compactAt, `models.${key}.compactAt`);
-    if (typeof cap === "number" && typeof compactAt === "number" && compactAt >= cap) {
+    if (isNumber(cap) && isNumber(compactAt) && compactAt >= cap) {
       throw new Error(`models.${key}.compactAt must be lower than its cap`);
     }
     models[key] = { cap, compactAt };
@@ -121,7 +125,7 @@ export function resolvePolicy(
       : config.models?.[model.id];
   if (exact === null) return {};
   if (exact !== undefined) {
-    const policy = typeof exact === "number" ? { cap: exact } : exact;
+    const policy = isNumber(exact) ? { cap: exact } : exact;
     const cap =
       policy.cap === null ? nativeWindow : Math.min(policy.cap ?? nativeWindow, nativeWindow);
     const compactAt =

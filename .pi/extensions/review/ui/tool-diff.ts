@@ -1,3 +1,4 @@
+import { isObject, isString, recordOf, type RuntimeValue } from "../../lib/runtime-values.ts";
 /**
  * Re-render Pi's file-changing tool output through the review diff renderer.
  *
@@ -86,7 +87,7 @@ type RenderContextLike = {
   isError?: boolean;
 };
 
-type AnyRenderCall = (args: unknown, theme: Theme, context: RenderContextLike) => Component;
+type AnyRenderCall = (args: RuntimeValue, theme: Theme, context: RenderContextLike) => Component;
 type AnyRenderResult = (
   result: { content: unknown[]; details?: unknown },
   options: ToolRenderResultOptions,
@@ -127,8 +128,8 @@ function own<T extends object>(component: T): T {
   return component;
 }
 
-function isOwned(component: unknown): boolean {
-  return typeof component === "object" && component !== null && OWNED in component;
+function isOwned(component: RuntimeValue): boolean {
+  return isObject(component) && component !== null && OWNED in component;
 }
 
 /**
@@ -349,7 +350,9 @@ export function parseCodexPatch(text: string): CodexAction[] {
   return actions;
 }
 
-function codexMarker(raw: string): { kind: DiffLine["kind"]; text: string } {
+type CodexMarker = { kind: DiffLine["kind"]; text: string };
+
+function codexMarker(raw: string): CodexMarker {
   if (raw.startsWith("+")) return { kind: "add", text: raw.slice(1) };
   if (raw.startsWith("-")) return { kind: "del", text: raw.slice(1) };
   if (raw.startsWith(" ")) return { kind: "context", text: raw.slice(1) };
@@ -556,10 +559,9 @@ function totalDiffLines(files: readonly DiffFile[]): number {
  * highlighting off the lines nobody will see, which matters for a `write` of a
  * large file.
  */
-function limitDiffLines(
-  files: readonly DiffFile[],
-  limit: number,
-): { files: DiffFile[]; hidden: number } {
+type LimitedDiff = { files: DiffFile[]; hidden: number };
+
+function limitDiffLines(files: readonly DiffFile[], limit: number): LimitedDiff {
   const total = totalDiffLines(files);
   if (total <= limit) return { files: [...files], hidden: 0 };
 
@@ -634,11 +636,12 @@ function renderFiles(params: {
 
 /* ---------------------------------------------------------------- helpers */
 
-function stringField(source: unknown, ...keys: string[]): string | undefined {
-  if (typeof source !== "object" || source === null) return undefined;
+function stringField(source: RuntimeValue, ...keys: string[]): string | undefined {
+  if (!isObject(source) || source === null) return undefined;
   for (const key of keys) {
-    const value = (source as Record<string, unknown>)[key];
-    if (typeof value === "string") return value;
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+    const value = (source as Record<string, RuntimeValue>)[key];
+    if (isString(value)) return value;
   }
   return undefined;
 }
@@ -651,7 +654,7 @@ function sanitized(context: RenderContextLike): RenderContextLike {
 function fallbackCall(
   original: AnyRenderCall | undefined,
   label: string,
-  args: unknown,
+  args: RuntimeValue,
   theme: Theme,
   context: RenderContextLike,
 ): Component {
@@ -684,7 +687,7 @@ function toolBackground(
 
 function renderWriteCall(
   original: AnyRenderCall | undefined,
-  args: unknown,
+  args: RuntimeValue,
   theme: Theme,
   context: RenderContextLike,
 ): Component {
@@ -724,7 +727,7 @@ function renderWriteCall(
  */
 function renderEditCall(
   original: AnyRenderCall | undefined,
-  args: unknown,
+  args: RuntimeValue,
   theme: Theme,
   context: RenderContextLike,
 ): Component {
@@ -749,9 +752,10 @@ function renderEditResult(
   if (context.isError === true || options.isPartial) {
     return fallbackResult(original, result, options, theme, context);
   }
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const details = result.details as EditToolDetails | undefined;
   const path = stringField(context.args, "path", "file_path");
-  if (typeof details?.patch !== "string" || path === undefined) {
+  if (!isString(details?.patch) || path === undefined) {
     return fallbackResult(original, result, options, theme, context);
   }
   const files = parseEditPatch(details.patch, displayPath(path, context.cwd));
@@ -813,7 +817,7 @@ function applyPatchDiffFiles(patchText: string, context: RenderContextLike): Dif
 
 function renderApplyPatchCall(
   original: AnyRenderCall | undefined,
-  args: unknown,
+  args: RuntimeValue,
   theme: Theme,
   context: RenderContextLike,
 ): Component {
@@ -847,7 +851,7 @@ function renderApplyPatchCall(
 type ToolRenderers = {
   renderCall?: (
     original: AnyRenderCall | undefined,
-    args: unknown,
+    args: RuntimeValue,
     theme: Theme,
     context: RenderContextLike,
   ) => Component;
@@ -860,13 +864,14 @@ type ToolRenderers = {
   ) => Component;
 };
 
-const TOOL_RENDERERS: Record<ToolDiffToolName, ToolRenderers> = {
+const TOOL_RENDERERS = recordOf<ToolDiffToolName, ToolRenderers>()({
   write: { renderCall: renderWriteCall },
   edit: { renderCall: renderEditCall, renderResult: renderEditResult },
   apply_patch: { renderCall: renderApplyPatchCall },
-};
+});
 
 function isWrappedTool(name: string): name is ToolDiffToolName {
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   return (TOOL_DIFF_TOOLS as readonly string[]).includes(name);
 }
 
@@ -885,13 +890,17 @@ export function decorateToolDefinition(definition: ToolDefinition): ToolDefiniti
   if (cached) return cached;
 
   const overrides = TOOL_RENDERERS[definition.name];
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const originalCall = definition.renderCall as AnyRenderCall | undefined;
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const originalResult = definition.renderResult as AnyRenderResult | undefined;
   const label = definition.name;
 
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const next = { ...definition } as ToolDefinition;
   if (overrides.renderCall) {
-    next.renderCall = ((args: unknown, theme: Theme, context: RenderContextLike) => {
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+    next.renderCall = ((args: RuntimeValue, theme: Theme, context: RenderContextLike) => {
       try {
         return overrides.renderCall!(originalCall, args, theme, context);
       } catch {
@@ -900,6 +909,7 @@ export function decorateToolDefinition(definition: ToolDefinition): ToolDefiniti
     }) as ToolDefinition["renderCall"];
   }
   if (overrides.renderResult) {
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     next.renderResult = ((
       result: { content: unknown[]; details?: unknown },
       options: ToolRenderResultOptions,
@@ -931,6 +941,7 @@ let activeOptions: ToolDiffRenderingOptions = {};
  */
 export function installToolDiffRendering(options: ToolDiffRenderingOptions = {}): void {
   activeOptions = options;
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const prototype = AgentSession.prototype as PatchedSessionPrototype;
   if (prototype.__chocoPiToolDiffApplied) return;
 

@@ -1,3 +1,8 @@
+import {
+  isObject as hasObjectType,
+  isString,
+  type RuntimeValue,
+} from "../../lib/runtime-values.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -50,30 +55,27 @@ export function targetKey(target: ReviewTarget): string {
   return `${target.kind}-${hash(identity)}`;
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isObject(value: RuntimeValue): value is Record<string, RuntimeValue> {
+  return hasObjectType(value) && value !== null && !Array.isArray(value);
 }
 
-function isIsoDate(value: unknown): value is string {
-  return typeof value === "string" && Number.isFinite(Date.parse(value));
+function isIsoDate(value: RuntimeValue): value is string {
+  return isString(value) && Number.isFinite(Date.parse(value));
 }
 
-function isTarget(value: unknown): value is ReviewTarget {
+function isTarget(value: RuntimeValue): value is ReviewTarget {
   if (!isObject(value)) return false;
   switch (value.kind) {
     case "session":
-      return typeof value.sessionId === "string";
+      return isString(value.sessionId);
     case "session-turn":
       return (
-        typeof value.sessionId === "string" &&
+        isString(value.sessionId) &&
         Number.isSafeInteger(value.turnIndex) &&
         Number(value.turnIndex) >= 0
       );
     case "branch":
-      return (
-        typeof value.base === "string" &&
-        (value.target === undefined || typeof value.target === "string")
-      );
+      return isString(value.base) && (value.target === undefined || isString(value.target));
     case "pr":
       return Number.isSafeInteger(value.number) && Number(value.number) > 0;
     default:
@@ -81,24 +83,24 @@ function isTarget(value: unknown): value is ReviewTarget {
   }
 }
 
-function isComment(value: unknown): value is ReviewComment {
+function isComment(value: RuntimeValue): value is ReviewComment {
   if (!isObject(value) || !isObject(value.anchor)) return false;
   return (
-    typeof value.id === "string" &&
-    typeof value.path === "string" &&
+    isString(value.id) &&
+    isString(value.path) &&
     (value.side === "LEFT" || value.side === "RIGHT") &&
     Number.isSafeInteger(value.line) &&
     (value.startLine === undefined || Number.isSafeInteger(value.startLine)) &&
-    typeof value.body === "string" &&
-    typeof value.anchor.hunkHash === "string" &&
-    typeof value.anchor.snippetHash === "string" &&
-    typeof value.anchor.snippet === "string" &&
+    isString(value.body) &&
+    isString(value.anchor.hunkHash) &&
+    isString(value.anchor.snippetHash) &&
+    isString(value.anchor.snippet) &&
     isIsoDate(value.createdAt) &&
     isIsoDate(value.updatedAt)
   );
 }
 
-function parseRecord(value: unknown, path: string): ReviewRecord | undefined {
+function parseRecord(value: RuntimeValue, path: string): ReviewRecord | undefined {
   if (!isObject(value)) return undefined;
   if (value.version !== 1) {
     if ("version" in value)
@@ -107,24 +109,25 @@ function parseRecord(value: unknown, path: string): ReviewRecord | undefined {
   }
   if (!isObject(value.cursor)) return undefined;
   if (
-    typeof value.repoKey !== "string" ||
+    !isString(value.repoKey) ||
     !isTarget(value.target) ||
-    typeof value.baseSha !== "string" ||
-    typeof value.headSha !== "string" ||
+    !isString(value.baseSha) ||
+    !isString(value.headSha) ||
     !Array.isArray(value.cursor.reviewedHunkIds) ||
-    !value.cursor.reviewedHunkIds.every((id) => typeof id === "string") ||
-    typeof value.cursor.lastHeadSha !== "string" ||
+    !value.cursor.reviewedHunkIds.every((id) => isString(id)) ||
+    !isString(value.cursor.lastHeadSha) ||
     !Array.isArray(value.comments) ||
     !value.comments.every(isComment) ||
     (value.verdict !== undefined &&
       value.verdict !== "comment" &&
       value.verdict !== "approve" &&
       value.verdict !== "request-changes") ||
-    (value.body !== undefined && typeof value.body !== "string") ||
+    (value.body !== undefined && !isString(value.body)) ||
     !isIsoDate(value.createdAt) ||
     !isIsoDate(value.updatedAt)
   )
     return undefined;
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   return value as ReviewRecord;
 }
 

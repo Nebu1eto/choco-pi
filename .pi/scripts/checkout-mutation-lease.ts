@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+import {
+  isNumber,
+  isObject,
+  isString,
+  type RuntimeValue,
+} from "../extensions/lib/runtime-values.ts";
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -46,7 +52,7 @@ function option(name: string, fallback: string): string {
   return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : fallback;
 }
 
-function fail(message: string, details: Record<string, unknown> = {}): never {
+function fail(message: string, details: Record<string, RuntimeValue> = {}): never {
   console.error(JSON.stringify({ status: "error", message, ...details }, null, 2));
   process.exit(2);
 }
@@ -55,14 +61,15 @@ function isAction(value: string | undefined): value is Action {
   return value === "acquire" || value === "status" || value === "release";
 }
 
-function isLeaseMetadata(value: unknown): value is LeaseMetadata {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const metadata = value as Record<string, unknown>;
+function isLeaseMetadata(value: RuntimeValue): value is LeaseMetadata {
+  if (!value || !isObject(value) || Array.isArray(value)) return false;
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+  const metadata = value as Record<string, RuntimeValue>;
   return (
-    typeof metadata.owner === "string" &&
-    typeof metadata.checkout === "string" &&
-    typeof metadata.pid === "number" &&
-    typeof metadata.acquiredAt === "string"
+    isString(metadata.owner) &&
+    isString(metadata.checkout) &&
+    isNumber(metadata.pid) &&
+    isString(metadata.acquiredAt)
   );
 }
 
@@ -88,13 +95,14 @@ async function readLiveSessions(): Promise<LiveSession[]> {
       .map(async (entry): Promise<LiveSession | null> => {
         try {
           const value: unknown = JSON.parse(await readFile(path.join(directory, entry), "utf8"));
-          if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-          const record = value as Record<string, unknown>;
-          if (typeof record.sessionId !== "string" || typeof record.pid !== "number") return null;
+          if (!value || !isObject(value) || Array.isArray(value)) return null;
+          // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+          const record = value as Record<string, RuntimeValue>;
+          if (!isString(record.sessionId) || !isNumber(record.pid)) return null;
           return {
             sessionId: record.sessionId,
             pid: record.pid,
-            updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : "",
+            updatedAt: isString(record.updatedAt) ? record.updatedAt : "",
           };
         } catch {
           return null;
@@ -110,7 +118,7 @@ function isProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error: unknown) {
-    return Boolean(error && typeof error === "object" && "code" in error && error.code === "EPERM");
+    return Boolean(error && isObject(error) && "code" in error && error.code === "EPERM");
   }
 }
 
@@ -278,7 +286,7 @@ if (action === "acquire") {
   try {
     await mkdir(leaseDir);
   } catch (error: unknown) {
-    if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") {
+    if (error && isObject(error) && "code" in error && error.code === "EEXIST") {
       const metadata = await readMetadata();
       fail("checkout mutation lease was acquired concurrently", {
         checkout,

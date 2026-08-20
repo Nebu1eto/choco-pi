@@ -1,3 +1,5 @@
+import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -47,12 +49,12 @@ test("policy compaction starts only after 550K tokens", () => {
 });
 
 test("compaction is requested only after the agent run settles", async () => {
-  const handlers = new Map<string, (event: unknown, context: unknown) => unknown>();
-  const pi = {
-    on: (event: string, handler: (event: unknown, context: unknown) => unknown) =>
+  const handlers = new Map<string, (event: RuntimeValue, context: RuntimeValue) => RuntimeValue>();
+  const pi = reinterpretHostValue<ExtensionAPI>({
+    on: (event: string, handler: (event: RuntimeValue, context: RuntimeValue) => RuntimeValue) =>
       handlers.set(event, handler),
     registerCommand: () => {},
-  } as unknown as ExtensionAPI;
+  });
   modelContextCap(pi);
 
   assert.equal(handlers.has("turn_end"), false);
@@ -77,12 +79,12 @@ test("compaction is requested only after the agent run settles", async () => {
 });
 
 test("caps are re-applied to models replaced by a catalog refresh", async () => {
-  const handlers = new Map<string, (event: unknown, context: unknown) => unknown>();
-  const pi = {
-    on: (event: string, handler: (event: unknown, context: unknown) => unknown) =>
+  const handlers = new Map<string, (event: RuntimeValue, context: RuntimeValue) => RuntimeValue>();
+  const pi = reinterpretHostValue<ExtensionAPI>({
+    on: (event: string, handler: (event: RuntimeValue, context: RuntimeValue) => RuntimeValue) =>
       handlers.set(event, handler),
     registerCommand: () => {},
-  } as unknown as ExtensionAPI;
+  });
   modelContextCap(pi);
 
   const startupModel = model(1_000_000);
@@ -115,12 +117,12 @@ test("caps are re-applied to models replaced by a catalog refresh", async () => 
 
 test("a replaced session cancels pending re-applications instead of crashing Pi", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const handlers = new Map<string, (event: unknown, context: unknown) => unknown>();
-  const pi = {
-    on: (event: string, handler: (event: unknown, context: unknown) => unknown) =>
+  const handlers = new Map<string, (event: RuntimeValue, context: RuntimeValue) => RuntimeValue>();
+  const pi = reinterpretHostValue<ExtensionAPI>({
+    on: (event: string, handler: (event: RuntimeValue, context: RuntimeValue) => RuntimeValue) =>
       handlers.set(event, handler),
     registerCommand: () => {},
-  } as unknown as ExtensionAPI;
+  });
   modelContextCap(pi);
 
   const startupModel = model(1_000_000);
@@ -155,12 +157,12 @@ test("a replaced session cancels pending re-applications instead of crashing Pi"
 
 test("session shutdown stops scheduled re-applications", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const handlers = new Map<string, (event: unknown, context: unknown) => unknown>();
-  const pi = {
-    on: (event: string, handler: (event: unknown, context: unknown) => unknown) =>
+  const handlers = new Map<string, (event: RuntimeValue, context: RuntimeValue) => RuntimeValue>();
+  const pi = reinterpretHostValue<ExtensionAPI>({
+    on: (event: string, handler: (event: RuntimeValue, context: RuntimeValue) => RuntimeValue) =>
       handlers.set(event, handler),
     registerCommand: () => {},
-  } as unknown as ExtensionAPI;
+  });
   modelContextCap(pi);
 
   const startupModel = model(1_000_000);

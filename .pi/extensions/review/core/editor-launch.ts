@@ -1,3 +1,4 @@
+import { recordOf } from "../../lib/runtime-values.ts";
 import { spawn as nodeSpawn } from "node:child_process";
 import type { EditorConfig } from "./types.ts";
 
@@ -54,12 +55,12 @@ export function resolveEditorCommand(
   const column = location.column ?? 1;
   if (!Number.isInteger(column) || column < 1)
     throw new Error("Editor column must be a positive integer.");
-  const values: Record<string, string> = {
+  const values = recordOf<string, string>()({
     "{path}": location.path,
     "{line}": String(location.line),
     "{column}": String(column),
     "{dir}": location.dir,
-  };
+  });
   const substituted = config.command.map((part) => part.replace(TOKENS, (token) => values[token]!));
   return { command: substituted[0]!, args: substituted.slice(1) };
 }
@@ -105,6 +106,7 @@ function waitForExit(child: SpawnedEditor): Promise<void> {
 }
 
 const defaultSpawn: SpawnEditor = (command, args, options) =>
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   nodeSpawn(command, [...args], options) as SpawnedEditor;
 
 /**

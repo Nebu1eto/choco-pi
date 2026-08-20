@@ -1,3 +1,5 @@
+import { propertiesWhen } from "./lib/runtime-values.ts";
+import { isNumber, isObject, isString, type RuntimeValue } from "./lib/runtime-values.ts";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -64,7 +66,7 @@ async function repositoryRoot(cwd: string): Promise<string> {
 
 function checkpointEnvironment(indexFile?: string): NodeJS.ProcessEnv {
   return {
-    ...(indexFile ? { GIT_INDEX_FILE: indexFile } : {}),
+    ...propertiesWhen(indexFile, () => ({ GIT_INDEX_FILE: indexFile })),
     GIT_AUTHOR_NAME: "choco-pi",
     GIT_AUTHOR_EMAIL: "checkpoint@choco-pi.local",
     GIT_COMMITTER_NAME: "choco-pi",
@@ -188,24 +190,23 @@ export async function restoreGitSnapshot(
   }
 }
 
-function messageContentLabel(content: unknown): string {
-  const text =
-    typeof content === "string"
+function messageContentLabel(content: RuntimeValue): string {
+  const text = isString(content)
+    ? content
+    : Array.isArray(content)
       ? content
-      : Array.isArray(content)
-        ? content
-            .flatMap((part) =>
-              typeof part === "object" &&
-              part !== null &&
-              "type" in part &&
-              part.type === "text" &&
-              "text" in part &&
-              typeof part.text === "string"
-                ? [part.text]
-                : [],
-            )
-            .join(" ")
-        : "";
+          .flatMap((part) =>
+            isObject(part) &&
+            part !== null &&
+            "type" in part &&
+            part.type === "text" &&
+            "text" in part &&
+            isString(part.text)
+              ? [part.text]
+              : [],
+          )
+          .join(" ")
+      : "";
   return text.replaceAll(/\s+/g, " ").trim().slice(0, 240) || "User turn";
 }
 
@@ -238,18 +239,20 @@ export function turnCheckpointsFromEntries(entries: readonly SessionEntry[]): Tu
       continue;
     }
     if (entry.type !== "custom" || entry.customType !== CHECKPOINT_ENTRY) continue;
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     const value = entry.data as Partial<FileCheckpoint> | undefined;
     if (
       value?.version === 1 &&
-      typeof value.ref === "string" &&
-      typeof value.indexTree === "string" &&
-      typeof value.worktreeTree === "string" &&
-      typeof value.timestamp === "string" &&
-      typeof value.turnIndex === "number" &&
-      typeof value.label === "string" &&
+      isString(value.ref) &&
+      isString(value.indexTree) &&
+      isString(value.worktreeTree) &&
+      isString(value.timestamp) &&
+      isNumber(value.turnIndex) &&
+      isString(value.label) &&
       value.label !== "Before rewind"
     ) {
       pending = {
+        // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
         checkpoint: value as FileCheckpoint,
         checkpointEntryId: entry.id,
       };

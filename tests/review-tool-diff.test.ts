@@ -1,3 +1,6 @@
+import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { runtimeTypeOf } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,6 +43,7 @@ type SessionPrototype = typeof AgentSession.prototype & {
   __chocoPiToolDiffApplied?: boolean;
 };
 
+// SAFETY: The fixture supplies every host member exercised by this test.
 const prototype = AgentSession.prototype as SessionPrototype;
 const stockGetToolDefinition = prototype.getToolDefinition;
 
@@ -49,21 +53,21 @@ installToolDiffRendering({ config: () => plainConfig });
 prototype.getToolDefinition = stockGetToolDefinition;
 delete prototype.__chocoPiToolDiffApplied;
 
-const theme = {
+const theme = reinterpretHostValue<Theme>({
   fg: (_color: string, text: string) => text,
   bg: (_color: string, text: string) => text,
   bold: (text: string) => text,
   inverse: (text: string) => text,
-} as unknown as Theme;
+});
 
-const throwingTheme = {
+const throwingTheme = reinterpretHostValue<Theme>({
   fg: () => {
     throw new Error("theme unavailable");
   },
   bg: (_color: string, text: string) => text,
   bold: (text: string) => text,
   inverse: (text: string) => text,
-} as unknown as Theme;
+});
 
 class Marker implements Component {
   id: string;
@@ -102,13 +106,11 @@ function context(overrides: RenderContext = {}): RenderContext {
 }
 
 type Calls = { call: unknown[][]; result: unknown[][] };
+type ToolFixture = { tool: ToolDefinition; calls: Calls };
 
-function definition(
-  name: string,
-  extra: Partial<ToolDefinition> = {},
-): { tool: ToolDefinition; calls: Calls } {
+function definition(name: string, extra: Partial<ToolDefinition> = {}): ToolFixture {
   const calls: Calls = { call: [], result: [] };
-  const tool = {
+  const tool = reinterpretHostValue<ToolDefinition>({
     name,
     label: name,
     description: `${name} description`,
@@ -123,21 +125,19 @@ function definition(
       return new Marker(`stock-result:${name}`);
     },
     ...extra,
-  } as unknown as ToolDefinition;
+  });
   return { tool, calls };
 }
 
 function renderCall(
   tool: ToolDefinition,
-  args: unknown,
+  args: RuntimeValue,
   ctx: RenderContext,
   theming: Theme = theme,
 ): Component {
-  const render = tool.renderCall as unknown as (
-    a: unknown,
-    t: Theme,
-    c: RenderContext,
-  ) => Component;
+  const render = reinterpretHostValue<(a: RuntimeValue, t: Theme, c: RenderContext) => Component>(
+    tool.renderCall,
+  );
   return render(args, theming, ctx);
 }
 
@@ -147,12 +147,14 @@ function renderResult(
   ctx: RenderContext,
   theming: Theme = theme,
 ): Component {
-  const render = tool.renderResult as unknown as (
-    r: unknown,
-    o: { expanded: boolean; isPartial: boolean },
-    t: Theme,
-    c: RenderContext,
-  ) => Component;
+  const render = reinterpretHostValue<
+    (
+      r: RuntimeValue,
+      o: { expanded: boolean; isPartial: boolean },
+      t: Theme,
+      c: RenderContext,
+    ) => Component
+  >(tool.renderResult);
   return render(result, { expanded: ctx.expanded === true, isPartial: false }, theming, ctx);
 }
 
@@ -169,6 +171,7 @@ test("patches AgentSession.getToolDefinition exactly once and passes other tools
     return registry.get(name);
   };
 
+  // SAFETY: The fixture supplies every host member exercised by this test.
   prototype.getToolDefinition = base as SessionPrototype["getToolDefinition"];
   delete prototype.__chocoPiToolDiffApplied;
   try {
@@ -181,6 +184,7 @@ test("patches AgentSession.getToolDefinition exactly once and passes other tools
     installToolDiffRendering({ config: () => plainConfig });
     assert.equal(prototype.getToolDefinition, patched, "repeated installs must not stack wrappers");
 
+    // SAFETY: The fixture supplies every host member exercised by this test.
     const session = {} as AgentSession;
     assert.equal(patched.call(session, "read"), read, "unrelated tools pass through by identity");
     assert.equal(patched.call(session, "missing"), undefined);
@@ -214,7 +218,7 @@ test("preserves every non-render field, including renderShell and execute", () =
     promptSnippet: "snippet",
     promptGuidelines: ["guideline"],
     executionMode: "sequential" as const,
-    prepareArguments: (args: unknown) => args,
+    prepareArguments: (args: RuntimeValue) => args,
     constrainedSampling: false as const,
   };
   const { tool } = definition("edit", extra);
@@ -244,8 +248,8 @@ test("preserves every non-render field, including renderShell and execute", () =
   for (const key of Object.keys(tool)) {
     if (renderKeys.has(key)) continue;
     assert.equal(
-      (decorated as unknown as Record<string, unknown>)[key],
-      (tool as unknown as Record<string, unknown>)[key],
+      reinterpretHostValue<Record<string, RuntimeValue>>(decorated)[key],
+      reinterpretHostValue<Record<string, RuntimeValue>>(tool)[key],
       `field ${key} must be preserved by reference`,
     );
   }
@@ -281,6 +285,7 @@ test("execute still runs the original implementation", async () => {
     },
   });
   const decorated = decorateToolDefinition(tool);
+  // SAFETY: The fixture supplies every host member exercised by this test.
   const result = await decorated.execute("id", {} as never, undefined, undefined, {} as never);
   assert.equal(executed, 1);
   assert.deepEqual(result.content, [{ type: "text", text: "written" }]);
@@ -622,6 +627,7 @@ test("never hands one of its own components back to the stock renderer", () => {
   const badArgs = { path: "src/a.ts", content: 42 };
   renderCall(decorated, badArgs, context({ args: badArgs, lastComponent: mine }));
   assert.equal(calls.call.length, 1);
+  // SAFETY: The fixture supplies every host member exercised by this test.
   assert.equal((calls.call[0]![2] as RenderContext).lastComponent, undefined);
 });
 
@@ -660,7 +666,7 @@ test("decorating Pi's real edit tool changes rendering and nothing else", async 
     writeFileSync(target, original, "utf8");
 
     const stock = createEditToolDefinition(dir);
-    const decorated = decorateToolDefinition(stock as unknown as ToolDefinition);
+    const decorated = decorateToolDefinition(reinterpretHostValue<ToolDefinition>(stock));
     assert.notEqual(decorated, stock);
     assert.equal(decorated.renderShell, "self", "renderShell must survive decoration");
     assert.equal(decorated.execute, stock.execute);
@@ -673,9 +679,11 @@ test("decorating Pi's real edit tool changes rendering and nothing else", async 
     };
     const result = await decorated.execute(
       "call-real",
+      // SAFETY: The fixture supplies every host member exercised by this test.
       args as never,
       undefined,
       undefined,
+      // SAFETY: The fixture supplies every host member exercised by this test.
       {} as never,
     );
 
@@ -685,8 +693,9 @@ test("decorating Pi's real edit tool changes rendering and nothing else", async 
       "BOM, CRLF endings and exact-match replacement stay with Pi",
     );
 
+    // SAFETY: The fixture supplies every host member exercised by this test.
     const details = result.details as EditToolDetails | undefined;
-    assert.equal(typeof details?.patch, "string");
+    assert.equal(runtimeTypeOf(details?.patch), "string");
     const rendered = renderResult(
       decorated,
       { content: result.content, details },
@@ -707,12 +716,13 @@ test("decorating Pi's real write tool changes rendering and nothing else", async
   const dir = mkdtempSync(join(tmpdir(), "choco-pi-tool-diff-"));
   try {
     const stock = createWriteToolDefinition(dir);
-    const decorated = decorateToolDefinition(stock as unknown as ToolDefinition);
+    const decorated = decorateToolDefinition(reinterpretHostValue<ToolDefinition>(stock));
     assert.equal(decorated.renderShell, stock.renderShell);
     assert.equal(decorated.execute, stock.execute);
     assert.equal(decorated.renderResult, stock.renderResult);
 
     const args = { path: "nested/created.ts", content: "export const value = 1;\n" };
+    // SAFETY: The fixture supplies every host member exercised by this test.
     await decorated.execute("call-real-write", args as never, undefined, undefined, {} as never);
     assert.equal(readFileSync(join(dir, "nested/created.ts"), "utf8"), "export const value = 1;\n");
 

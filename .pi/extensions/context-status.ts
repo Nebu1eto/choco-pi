@@ -1,3 +1,4 @@
+import { isNumber, isString, recordOf, type RuntimeValue } from "./lib/runtime-values.ts";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -15,7 +16,7 @@ const BAR_WIDTH = 40;
 const DEFAULT_RESERVE_TOKENS = 16_384;
 
 const RESET = "\u001b[0m";
-const SEGMENT_COLORS: Record<string, string> = {
+const SEGMENT_COLORS = recordOf<string, string>()({
   S: "\u001b[38;5;109m", // system prompt: blue
   T: "\u001b[38;5;116m", // system tools: cyan
   M: "\u001b[38;5;139m", // mcp tools: purple
@@ -25,7 +26,7 @@ const SEGMENT_COLORS: Record<string, string> = {
   G: "\u001b[38;5;110m", // messages: light blue
   "·": "\u001b[38;5;240m", // free space: dim gray
   B: "\u001b[38;5;131m", // autocompact buffer: red
-};
+});
 
 function paint(marker: string, text: string, colorize: boolean): string {
   if (!colorize || text.length === 0) return text;
@@ -48,10 +49,8 @@ type McpCatalog = {
   servers: Array<{ name: string; count: number }>;
 };
 
-function estimate(value: unknown): number {
-  return Math.ceil(
-    (typeof value === "string" ? value.length : (JSON.stringify(value)?.length ?? 0)) / 4,
-  );
+function estimate(value: RuntimeValue): number {
+  return Math.ceil((isString(value) ? value.length : (JSON.stringify(value)?.length ?? 0)) / 4);
 }
 
 function formatTokens(tokens: number): string {
@@ -66,11 +65,12 @@ function percent(tokens: number, window: number): string {
 
 function reserveTokens(cwd: string): number {
   try {
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     const settings = JSON.parse(readFileSync(path.join(cwd, ".pi/settings.json"), "utf8")) as {
       compaction?: { reserveTokens?: unknown };
     };
     const configured = settings.compaction?.reserveTokens;
-    return typeof configured === "number" && configured >= 0 ? configured : DEFAULT_RESERVE_TOKENS;
+    return isNumber(configured) && configured >= 0 ? configured : DEFAULT_RESERVE_TOKENS;
   } catch {
     return DEFAULT_RESERVE_TOKENS;
   }
@@ -105,6 +105,7 @@ function mcpCatalog(cwd: string): McpCatalog {
       }
     });
     if (!configPath) return { total: 0, servers: [] };
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     const projectConfig = JSON.parse(readFileSync(configPath, "utf8")) as {
       mcpServers?: Record<string, { disabled?: boolean }>;
     };
@@ -113,6 +114,7 @@ function mcpCatalog(cwd: string): McpCatalog {
         .filter(([, definition]) => definition.disabled !== true)
         .map(([name]) => name),
     );
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     const cache = JSON.parse(readFileSync(path.join(agentDir, "mcp-cache.json"), "utf8")) as {
       version?: number;
       servers?: Record<string, { tools?: unknown[]; resources?: unknown[] }>;

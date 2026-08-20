@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -9,7 +10,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const script = path.resolve(".pi/scripts/checkout-mutation-lease.ts");
 
-type LeaseResult = { code: number; payload: Record<string, unknown> };
+type LeaseResult = { code: number; payload: Record<string, RuntimeValue> };
 
 async function createCheckout(context: TestContext): Promise<string> {
   const checkout = await mkdtemp(path.join(tmpdir(), "choco-pi-lease-"));
@@ -56,6 +57,7 @@ async function runLease(
     const { stdout } = await execFileAsync(process.execPath, args, { env, encoding: "utf8" });
     return { code: 0, payload: JSON.parse(stdout) };
   } catch (error: unknown) {
+    // SAFETY: The fixture supplies every host member exercised by this test.
     const failure = error as { code?: number; stderr?: string };
     return { code: failure.code ?? 1, payload: JSON.parse(failure.stderr ?? "{}") };
   }

@@ -1,3 +1,4 @@
+import { propertiesWhen } from "../../lib/runtime-values.ts";
 import { buildCommentAnchor } from "../core/anchor.ts";
 import { hunkWithExpandedContext, type HunkExpansion } from "../core/expand.ts";
 import type { DiffAssessment } from "../core/heuristics.ts";
@@ -137,7 +138,7 @@ function cursorForLocation(
   return {
     fileIndex: Math.max(0, fileIndex),
     hunkIndex,
-    ...(lineIndex === undefined ? {} : { lineIndex }),
+    ...propertiesWhen(!(lineIndex === undefined), () => ({ lineIndex })),
   };
 }
 
@@ -454,7 +455,7 @@ export function toggleFileFold(
   const next = {
     ...withoutSelection(state),
     fileFolds,
-    ...(folding && currentFile(state)?.path === path ? { hunkIndex: 0 } : {}),
+    ...propertiesWhen(folding && currentFile(state)?.path === path, () => ({ hunkIndex: 0 })),
   };
   if (currentFile(state)?.path !== path) return next;
   if (folding || state.hunkFolds.has(currentHunk(next)?.id ?? "")) {
@@ -604,7 +605,7 @@ export function currentCommentPosition(state: ReviewViewState): CommentPosition 
     hunkId: context.hunk.id,
     side: anchor.side,
     line,
-    ...(startLine === line ? {} : { startLine }),
+    ...propertiesWhen(!(startLine === line), () => ({ startLine })),
   };
 }
 
@@ -647,7 +648,9 @@ export function commitCommentDraft(
     path: file.path,
     side: draft.position.side,
     line: draft.position.line,
-    ...(draft.position.startLine === undefined ? {} : { startLine: draft.position.startLine }),
+    ...propertiesWhen(!(draft.position.startLine === undefined), () => ({
+      startLine: draft.position.startLine,
+    })),
     body: draft.body,
     anchor: buildCommentAnchor(
       hunk,

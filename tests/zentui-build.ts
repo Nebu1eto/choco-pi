@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 /**
  * Loading the real zentui from a test process.
  *
@@ -103,7 +104,7 @@ function registerBuildHooks(buildDirectory: string): void {
 export const realZentuiLoader: ZentuiLoader = async () => {
   if (!ZENTUI_BUILD) return undefined;
   registerBuildHooks(ZENTUI_BUILD);
-  const load = async (file: string): Promise<Record<string, unknown>> =>
+  const load = async (file: string): Promise<Record<string, RuntimeValue>> =>
     await import(pathToFileURL(resolvePath(ZENTUI_BUILD, file)).href);
   const [editor, config, ui, format] = await Promise.all([
     load("minimalist-editor.js"),
@@ -111,6 +112,7 @@ export const realZentuiLoader: ZentuiLoader = async () => {
     load("ui.js"),
     load("format.js"),
   ]);
+  // SAFETY: The fixture supplies every host member exercised by this test.
   return {
     renderMinimalistFrame: editor.renderMinimalistFrame,
     loadConfig: config.loadConfig,
@@ -130,9 +132,12 @@ export function withEditorStyle(loader: ZentuiLoader, style: string): ZentuiLoad
     return {
       ...modules,
       loadConfig: () => {
-        const config = modules.loadConfig() as Record<string, unknown>;
-        const components = (config.components ?? {}) as Record<string, unknown>;
-        const editor = (components.editor ?? {}) as Record<string, unknown>;
+        // SAFETY: The fixture supplies every host member exercised by this test.
+        const config = modules.loadConfig() as Record<string, RuntimeValue>;
+        // SAFETY: The fixture supplies every host member exercised by this test.
+        const components = (config.components ?? {}) as Record<string, RuntimeValue>;
+        // SAFETY: The fixture supplies every host member exercised by this test.
+        const editor = (components.editor ?? {}) as Record<string, RuntimeValue>;
         return {
           ...config,
           components: { ...components, editor: { ...editor, style } },

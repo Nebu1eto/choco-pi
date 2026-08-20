@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -36,9 +37,9 @@ function createStubUi(): StubUi {
 
 /** Minimal ExtensionAPI stub: records `on()` handlers by event name. */
 function createStubPi() {
-  const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+  const handlers = new Map<string, (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue>();
   return {
-    on(event: string, handler: (event: unknown, ctx: unknown) => unknown) {
+    on(event: string, handler: (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue) {
       handlers.set(event, handler);
     },
     handlers,
@@ -98,6 +99,7 @@ test("injects the AGENTS.md chain root-first, leaf-last, skipping missing levels
     fs.writeFileSync(leaf, "leaf content");
 
     const { pi, baseCtx } = await setup(root);
+    // SAFETY: The fixture supplies every host member exercised by this test.
     const result = (await pi.handlers.get("tool_result")?.(readToolResultEvent(leaf), baseCtx)) as
       | { content: { type: string; text?: string }[] }
       | undefined;
@@ -131,6 +133,7 @@ test("dedups: an already-injected AGENTS.md is not injected again for a later to
 
     const { pi, baseCtx } = await setup(root);
 
+    // SAFETY: The fixture supplies every host member exercised by this test.
     const first = (await pi.handlers.get("tool_result")?.(readToolResultEvent(leaf1), baseCtx)) as
       | { content: { type: string; text?: string }[] }
       | undefined;
@@ -142,6 +145,7 @@ test("dedups: an already-injected AGENTS.md is not injected again for a later to
     assert.equal(repeat, undefined, "expected no injection on an exact repeat touch");
 
     // A different leaf whose chain overlaps (a/) but extends further (a/d/): only D guidance is new.
+    // SAFETY: The fixture supplies every host member exercised by this test.
     const second = (await pi.handlers.get("tool_result")?.(readToolResultEvent(leaf2), baseCtx)) as
       | { content: { type: string; text?: string }[] }
       | undefined;
@@ -178,6 +182,7 @@ test("caps total injected appendix size, dropping the root-most files first", as
     fs.writeFileSync(leaf, "leaf");
 
     const { pi, baseCtx } = await setup(root);
+    // SAFETY: The fixture supplies every host member exercised by this test.
     const result = (await pi.handlers.get("tool_result")?.(readToolResultEvent(leaf), baseCtx)) as
       | { content: { type: string; text?: string }[] }
       | undefined;

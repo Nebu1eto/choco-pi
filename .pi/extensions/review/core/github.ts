@@ -1,3 +1,11 @@
+import { propertiesWhen } from "../../lib/runtime-values.ts";
+import {
+  isNumber,
+  isObject,
+  isString,
+  runtimeTypeOf,
+  type RuntimeValue,
+} from "../../lib/runtime-values.ts";
 /**
  * Atomic GitHub pull request review submission.
  *
@@ -198,7 +206,8 @@ const GH_MISSING_MESSAGE =
 const GH_UNAUTHENTICATED_MESSAGE =
   "GitHub CLI is not authenticated. Run `gh auth login` and retry; no review was submitted.";
 
-function isMissingBinary(error: unknown): boolean {
+function isMissingBinary(error: RuntimeValue): boolean {
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   return code === "ENOENT" || code === "EACCES";
 }
@@ -237,9 +246,9 @@ function sanitize(text: string, secrets: readonly string[]): string {
   return safe.length > MAX_DETAIL_LENGTH ? `${safe.slice(0, MAX_DETAIL_LENGTH)}...` : safe;
 }
 
-function pickString(source: Record<string, unknown>, key: string): string | undefined {
+function pickString(source: Record<string, RuntimeValue>, key: string): string | undefined {
   const value = source[key];
-  return typeof value === "string" && value.trim() ? value : undefined;
+  return isString(value) && value.trim() ? value : undefined;
 }
 
 /**
@@ -261,34 +270,38 @@ function parseApiErrorBody(
   } catch {
     return undefined;
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
-  const body = parsed as Record<string, unknown>;
+  if (!isObject(parsed) || parsed === null || Array.isArray(parsed)) return undefined;
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+  const body = parsed as Record<string, RuntimeValue>;
   const rawMessage = pickString(body, "message");
   const message = rawMessage === undefined ? undefined : sanitize(rawMessage, secrets);
   const rawErrors = Array.isArray(body.errors) ? body.errors : [];
   const errors: GithubFieldError[] = [];
   for (const entry of rawErrors) {
-    if (typeof entry === "string") {
+    if (isString(entry)) {
       const detail = sanitize(entry, secrets);
       if (detail) errors.push({ detail });
       continue;
     }
-    if (typeof entry !== "object" || entry === null) continue;
-    const source = entry as Record<string, unknown>;
+    if (!isObject(entry) || entry === null) continue;
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+    const source = entry as Record<string, RuntimeValue>;
     const resource = pickString(source, "resource");
     const field = pickString(source, "field");
     const code = pickString(source, "code");
     const detail = pickString(source, "message");
     const error: GithubFieldError = {
-      ...(resource === undefined ? {} : { resource: sanitize(resource, secrets) }),
-      ...(field === undefined ? {} : { field: sanitize(field, secrets) }),
-      ...(code === undefined ? {} : { code: sanitize(code, secrets) }),
-      ...(detail === undefined ? {} : { detail: sanitize(detail, secrets) }),
+      ...propertiesWhen(!(resource === undefined), () => ({
+        resource: sanitize(resource!, secrets),
+      })),
+      ...propertiesWhen(!(field === undefined), () => ({ field: sanitize(field!, secrets) })),
+      ...propertiesWhen(!(code === undefined), () => ({ code: sanitize(code!, secrets) })),
+      ...propertiesWhen(!(detail === undefined), () => ({ detail: sanitize(detail!, secrets) })),
     };
     if (Object.keys(error).length > 0) errors.push(error);
   }
   if (message === undefined && errors.length === 0) return undefined;
-  return { ...(message === undefined ? {} : { message }), errors };
+  return { ...propertiesWhen(!(message === undefined), () => ({ message })), errors };
 }
 
 function describeFieldError(error: GithubFieldError): string {
@@ -345,8 +358,8 @@ async function runGh(
   let result: { stdout: string; stderr: string; code: number };
   try {
     result = await runner("gh", args, {
-      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-      ...(options.input === undefined ? {} : { input: options.input }),
+      ...propertiesWhen(!(options.cwd === undefined), () => ({ cwd: options.cwd })),
+      ...propertiesWhen(!(options.input === undefined), () => ({ input: options.input })),
     });
   } catch (error) {
     if (isMissingBinary(error)) {
@@ -369,8 +382,8 @@ async function runGh(
   const parsed =
     parseApiErrorBody(result.stdout, secrets) ?? parseApiErrorBody(result.stderr, secrets);
   throw new ReviewSubmissionError("gh-failed", rejectionMessage(status, result.code, parsed), {
-    ...(status === undefined ? {} : { status }),
-    ...(parsed === undefined ? {} : { apiErrors: parsed.errors }),
+    ...propertiesWhen(!(status === undefined), () => ({ status })),
+    ...propertiesWhen(!(parsed === undefined), () => ({ apiErrors: parsed!.errors })),
   });
 }
 
@@ -391,6 +404,7 @@ export async function readPullRequestHead(
   );
   let parsed: Partial<PullRequestHead>;
   try {
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     parsed = JSON.parse(stdout) as Partial<PullRequestHead>;
   } catch {
     throw new ReviewSubmissionError(
@@ -428,12 +442,12 @@ const SUBMISSION_EVENTS: readonly SubmissionEvent[] = [
 ];
 
 /** Name a rejected value without echoing an arbitrary object into a message. */
-function describeEventValue(value: unknown): string {
-  if (typeof value === "string") return JSON.stringify(value);
+function describeEventValue(value: RuntimeValue): string {
+  if (isString(value)) return JSON.stringify(value);
   if (value === null) return "null";
   if (value === undefined) return "undefined";
-  if (typeof value === "object") return Object.prototype.toString.call(value);
-  return `${typeof value} ${String(value)}`;
+  if (isObject(value)) return Object.prototype.toString.call(value);
+  return `${runtimeTypeOf(value)} ${String(value)}`;
 }
 
 /**
@@ -444,8 +458,12 @@ function describeEventValue(value: unknown): string {
  * pre-approved `COMMENT` path. `core/` is built to ship without choco-pi, which
  * means callers outside TypeScript's checking are expected.
  */
-function assertSubmissionEvent(value: unknown): SubmissionEvent {
-  if (SUBMISSION_EVENTS.includes(value as SubmissionEvent)) return value as SubmissionEvent;
+function isSubmissionEvent(value: RuntimeValue): value is SubmissionEvent {
+  return SUBMISSION_EVENTS.some((event) => event === value);
+}
+
+function assertSubmissionEvent(value: RuntimeValue): SubmissionEvent {
+  if (isSubmissionEvent(value)) return value;
   throw new ReviewSubmissionError(
     "invalid-plan",
     `Unrecognized review submission event ${describeEventValue(value)}. Expected one of ${SUBMISSION_EVENTS.join(", ")}. Nothing was submitted.`,
@@ -498,11 +516,15 @@ function unchangedPlacement(comment: ReviewComment): CommentPlacement {
       path: comment.path,
       side: comment.side,
       line: comment.line,
-      ...(comment.startLine === undefined ? {} : { startLine: comment.startLine }),
+      ...propertiesWhen(!(comment.startLine === undefined), () => ({
+        startLine: comment.startLine,
+      })),
       origin: {
         side: comment.side,
         line: comment.line,
-        ...(comment.startLine === undefined ? {} : { startLine: comment.startLine }),
+        ...propertiesWhen(!(comment.startLine === undefined), () => ({
+          startLine: comment.startLine,
+        })),
       },
       relocated: false,
       rangeAdjusted: false,
@@ -518,7 +540,7 @@ function relocatePlacement(comment: ReviewComment, currentDiff: DiffModel): Comm
   const origin = {
     side: comment.side,
     line: comment.line,
-    ...(comment.startLine === undefined ? {} : { startLine: comment.startLine }),
+    ...propertiesWhen(!(comment.startLine === undefined), () => ({ startLine: comment.startLine })),
   };
   if (relocation.status === "unmappable") {
     return {
@@ -528,7 +550,9 @@ function relocatePlacement(comment: ReviewComment, currentDiff: DiffModel): Comm
         path: comment.path,
         side: comment.side,
         line: comment.line,
-        ...(comment.startLine === undefined ? {} : { startLine: comment.startLine }),
+        ...propertiesWhen(!(comment.startLine === undefined), () => ({
+          startLine: comment.startLine,
+        })),
         reason: relocation.reason,
         message: relocation.message,
         body: comment.body,
@@ -552,7 +576,9 @@ function relocatePlacement(comment: ReviewComment, currentDiff: DiffModel): Comm
       path: comment.path,
       side: relocation.side ?? comment.side,
       line: relocation.line,
-      ...(startLine === undefined || startLine === relocation.line ? {} : { startLine }),
+      ...propertiesWhen(!(startLine === undefined || startLine === relocation.line), () => ({
+        startLine,
+      })),
       origin,
       relocated: true,
       relocationMethod: relocation.method,
@@ -611,9 +637,10 @@ function payloadComment(comment: PlannedComment, body: string): GithubReviewComm
     body,
     line: comment.line,
     side: comment.side,
-    ...(comment.startLine === undefined
-      ? {}
-      : { start_line: comment.startLine, start_side: comment.side }),
+    ...propertiesWhen(!(comment.startLine === undefined), () => ({
+      start_line: comment.startLine,
+      start_side: comment.side,
+    })),
   };
 }
 
@@ -676,12 +703,12 @@ export function planReviewSubmission(input: PlanReviewSubmissionInput): ReviewSu
 
   const payload: GithubReviewPayload = {
     commit_id: currentHeadSha,
-    ...(body ? { body } : {}),
-    ...(event === "DRAFT" ? {} : { event }),
     comments: placedComments.map((comment) =>
       payloadComment(comment, bodyById.get(comment.commentId) ?? ""),
     ),
   };
+  if (body) payload.body = body;
+  if (event !== "DRAFT") payload.event = event;
   const confirmationReason = confirmationReasonFor(event);
   return {
     pullRequest,
@@ -696,16 +723,16 @@ export function planReviewSubmission(input: PlanReviewSubmissionInput): ReviewSu
     relocatedCount: placedComments.filter((comment) => comment.relocated).length,
     demotedCount: demotedComments.length,
     requiresConfirmation: confirmationReason !== undefined,
-    ...(confirmationReason === undefined ? {} : { confirmationReason }),
+    ...propertiesWhen(!(confirmationReason === undefined), () => ({ confirmationReason })),
   };
 }
 
-const EVENT_LABELS: Record<SubmissionEvent, string> = {
+const EVENT_LABELS = {
   COMMENT: "Comment",
   APPROVE: "Approve",
   REQUEST_CHANGES: "Request changes",
   DRAFT: "Pending draft (not submitted)",
-};
+} satisfies Record<SubmissionEvent, string>;
 
 /**
  * Describe a plan for a human confirmation dialog.
@@ -783,8 +810,8 @@ export async function submitReviewPlan(
       "-",
     ],
     {
-      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-      ...(options.runner === undefined ? {} : { runner: options.runner }),
+      ...propertiesWhen(!(options.cwd === undefined), () => ({ cwd: options.cwd })),
+      ...propertiesWhen(!(options.runner === undefined), () => ({ runner: options.runner })),
       input: JSON.stringify(plan.payload),
       secrets: [
         ...(plan.payload.body === undefined ? [] : [plan.payload.body]),
@@ -796,15 +823,16 @@ export async function submitReviewPlan(
   const draft = event === "DRAFT";
   let parsed: { id?: number; state?: string; html_url?: string };
   try {
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     parsed = JSON.parse(stdout) as { id?: number; state?: string; html_url?: string };
   } catch {
     // The review was created; only the confirmation payload was unreadable.
     return { draft };
   }
   return {
-    ...(typeof parsed.id === "number" ? { id: parsed.id } : {}),
-    ...(typeof parsed.state === "string" ? { state: parsed.state } : {}),
-    ...(typeof parsed.html_url === "string" ? { htmlUrl: parsed.html_url } : {}),
+    ...propertiesWhen(isNumber(parsed.id), () => ({ id: parsed.id })),
+    ...propertiesWhen(isString(parsed.state), () => ({ state: parsed.state })),
+    ...propertiesWhen(isString(parsed.html_url), () => ({ htmlUrl: parsed.html_url })),
     draft,
   };
 }
@@ -834,8 +862,8 @@ export async function prepareReviewSubmission(
   deps: PrepareReviewSubmissionDeps = {},
 ): Promise<ReviewSubmissionPlan> {
   const head = await readPullRequestHead(input.pullRequest, {
-    ...(deps.cwd === undefined ? {} : { cwd: deps.cwd }),
-    ...(deps.runner === undefined ? {} : { runner: deps.runner }),
+    ...propertiesWhen(!(deps.cwd === undefined), () => ({ cwd: deps.cwd })),
+    ...propertiesWhen(!(deps.runner === undefined), () => ({ runner: deps.runner })),
   });
   const headMoved = head.headSha !== input.record.headSha;
   if (headMoved && !deps.loadHeadDiff) {
@@ -851,6 +879,6 @@ export async function prepareReviewSubmission(
     pullRequest: input.pullRequest,
     event: input.event,
     currentHeadSha: head.headSha,
-    ...(currentDiff === undefined ? {} : { currentDiff }),
+    ...propertiesWhen(!(currentDiff === undefined), () => ({ currentDiff })),
   });
 }

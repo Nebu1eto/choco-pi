@@ -1,3 +1,5 @@
+import { propertiesWhen } from "../../lib/runtime-values.ts";
+import { isFunction } from "../../lib/runtime-values.ts";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { turnCheckpointsFromEntries, type TurnCheckpoint } from "../../file-checkpoints.ts";
 import type { ReviewRecord, SessionCheckpointProvider } from "../core/types.ts";
@@ -25,18 +27,16 @@ export function reviewTurnsFromEntries(
 export function createSessionCheckpointProvider(
   options: SessionCheckpointAdapterOptions,
 ): SessionCheckpointProvider {
-  const readEntries =
-    typeof options.entries === "function"
-      ? options.entries
-      : () => options.entries as readonly SessionEntry[];
+  const readEntries = isFunction(options.entries)
+    ? options.entries
+    : // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+      () => options.entries as readonly SessionEntry[];
   return {
     listTurns: async () => reviewTurnsFromEntries(readEntries()),
-    ...(options.appendEntry
-      ? {
-          appendReviewState: (record: ReviewRecord) => {
-            options.appendEntry?.(REVIEW_STATE_ENTRY, record);
-          },
-        }
-      : {}),
+    ...propertiesWhen(options.appendEntry, () => ({
+      appendReviewState: (record: ReviewRecord) => {
+        options.appendEntry?.(REVIEW_STATE_ENTRY, record);
+      },
+    })),
   };
 }

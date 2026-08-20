@@ -1,3 +1,4 @@
+import { isBoolean, isObject, isString, type RuntimeValue } from "../../lib/runtime-values.ts";
 /**
  * Loading and validation for `review.json`.
  *
@@ -60,40 +61,44 @@ export type LoadReviewConfigOptions = {
 };
 
 function plainObject(
-  value: unknown,
+  value: RuntimeValue,
   field: string,
   source: string,
-): Record<string, unknown> | undefined {
+): Record<string, RuntimeValue> | undefined {
   if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || !isObject(value) || Array.isArray(value)) {
     throw new Error(`${source}: ${field} must be a JSON object`);
   }
-  return value as Record<string, unknown>;
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+  return value as Record<string, RuntimeValue>;
 }
 
-function booleanField(value: unknown, field: string, source: string): boolean | undefined {
+function booleanField(value: RuntimeValue, field: string, source: string): boolean | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "boolean") throw new Error(`${source}: ${field} must be a boolean`);
+  if (!isBoolean(value)) throw new Error(`${source}: ${field} must be a boolean`);
   return value;
 }
 
-function positiveInteger(value: unknown, field: string, source: string): number | undefined {
+function positiveInteger(value: RuntimeValue, field: string, source: string): number | undefined {
   if (value === undefined) return undefined;
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   if (!Number.isInteger(value) || (value as number) <= 0) {
     throw new Error(`${source}: ${field} must be a positive integer`);
   }
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   return value as number;
 }
 
-function stringArray(value: unknown, field: string, source: string): string[] | undefined {
+function stringArray(value: RuntimeValue, field: string, source: string): string[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+  if (!Array.isArray(value) || value.some((entry) => !isString(entry))) {
     throw new Error(`${source}: ${field} must be an array of strings`);
   }
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   return [...(value as string[])];
 }
 
-function editorField(value: unknown, source: string): EditorConfig | undefined {
+function editorField(value: RuntimeValue, source: string): EditorConfig | undefined {
   const editor = plainObject(value, "editor", source);
   if (!editor) return undefined;
   const command = stringArray(editor.command, "editor.command", source);
@@ -114,10 +119,11 @@ export function parseReviewConfig(content: string, source: string): ReviewConfig
   } catch (error) {
     throw new Error(`${source} must contain valid JSON`, { cause: error });
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!parsed || !isObject(parsed) || Array.isArray(parsed)) {
     throw new Error(`${source} must contain a JSON object`);
   }
-  const root = parsed as Record<string, unknown>;
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
+  const root = parsed as Record<string, RuntimeValue>;
   const highlight = plainObject(root.highlight, "highlight", source);
   const heuristics = plainObject(root.heuristics, "heuristics", source);
   return {

@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -39,7 +40,7 @@ function context(overrides: Partial<ReviewChatContext> = {}): ReviewChatContext 
   };
 }
 
-function assistantMessage(text: string, extra: Record<string, unknown> = {}): unknown {
+function assistantMessage(text: string, extra: Record<string, RuntimeValue> = {}): RuntimeValue {
   return { role: "assistant", content: [{ type: "text", text }], ...extra };
 }
 
@@ -65,7 +66,7 @@ function fakeSession(
   let abortCalls = 0;
 
   const emit = (event: ReviewChatSessionEvent): void => {
-    for (const listener of [...listeners]) listener(event);
+    for (const listener of Array.from(listeners)) listener(event);
   };
 
   return {

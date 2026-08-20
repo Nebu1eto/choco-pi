@@ -1,3 +1,4 @@
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import statusCommands, {
@@ -26,6 +27,7 @@ test("status tabs expose Status and Usage in order", () => {
 
 test("usage tab keeps the white body text for readability", async () => {
   const body = await tabBody(
+    // SAFETY: The fixture supplies every host member exercised by this test.
     {
       modelRegistry: { getProviderAuthStatus: () => ({ configured: false }) },
       ui: { theme: { fg: (color: string, text: string) => `<${color}>${text}</${color}>` } },
@@ -39,6 +41,7 @@ test("usage tab keeps the white body text for readability", async () => {
 
 test("registers /quota as a white-text alias for /usage", async () => {
   const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>();
+  // SAFETY: The fixture supplies every host member exercised by this test.
   statusCommands({
     registerCommand: (
       name: string,
@@ -70,8 +73,8 @@ test("registers /quota as a white-text alias for /usage", async () => {
 
 test("labels Claude plans from the live profile, with Team seats before the rate-limit tier", () => {
   const profile = (
-    organization: Record<string, unknown>,
-    account: Record<string, unknown> = {},
+    organization: Record<string, RuntimeValue>,
+    account: Record<string, RuntimeValue> = {},
   ) => ({
     account,
     organization,

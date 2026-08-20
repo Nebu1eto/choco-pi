@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+import {
+  isNumber,
+  isObject,
+  isString,
+  type RuntimeValue,
+} from "../../../extensions/lib/runtime-values.ts";
 
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
@@ -40,8 +46,8 @@ function add(id: string, status: CheckStatus, detail: string): void {
   checks.push({ id, status, detail });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
+  return isObject(value) && value !== null && !Array.isArray(value);
 }
 
 async function exists(target: string): Promise<boolean> {
@@ -60,9 +66,9 @@ async function run(command: string, args: string[]): Promise<RunResult> {
   } catch (error: unknown) {
     const value = isRecord(error) ? error : {};
     return {
-      status: typeof value.code === "number" ? value.code : 1,
-      stdout: typeof value.stdout === "string" ? value.stdout : "",
-      stderr: typeof value.stderr === "string" ? value.stderr : "",
+      status: isNumber(value.code) ? value.code : 1,
+      stdout: isString(value.stdout) ? value.stdout : "",
+      stderr: isString(value.stderr) ? value.stderr : "",
     };
   }
 }
@@ -85,11 +91,10 @@ function atLeast(actual: string, expected: string): boolean {
   return true;
 }
 
-function hasPiEntryPoint(manifest: Record<string, unknown>): boolean {
+function hasPiEntryPoint(manifest: Record<string, RuntimeValue>): boolean {
   if (!isRecord(manifest.pi)) return false;
   return Object.values(manifest.pi).some(
-    (value) =>
-      Array.isArray(value) && value.some((entry) => typeof entry === "string" && entry.length > 0),
+    (value) => Array.isArray(value) && value.some((entry) => isString(entry) && entry.length > 0),
   );
 }
 
@@ -129,7 +134,7 @@ if (settings) {
   } else {
     const packageResults = await Promise.all(
       settings.packages.map(async (spec) => {
-        if (typeof spec !== "string" || !/^\.\/packages\/[^/]+$/.test(spec)) {
+        if (!isString(spec) || !/^\.\/packages\/[^/]+$/.test(spec)) {
           return { error: `${String(spec)}: expected ./packages/<name>` };
         }
         const manifestPath = path.resolve(configRoot, spec, "package.json");
@@ -157,16 +162,16 @@ const subagentsSettingsPath = path.join(configRoot, "subagents.json");
 try {
   const parsed: unknown = JSON.parse(await readFile(subagentsSettingsPath, "utf8"));
   if (!isRecord(parsed)) throw new Error("subagents.json must contain an object");
+  // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const subagents = parsed as SubagentsSettings;
   const valid = subagents.disableDefaultAgents === true && subagents.fallbackSubagent === "none";
   const roleFiles = ["general", "planner", "implementer", "reviewer", "handoff"];
   const roleResults = await Promise.all(
     roleFiles.map(async (role) => {
       const content = await readFile(path.join(configRoot, "agents", `${role}.md`), "utf8");
-      const { frontmatter } = parseFrontmatter<Record<string, unknown>>(content);
+      const { frontmatter } = parseFrontmatter<Record<string, RuntimeValue>>(content);
       const defaultsPresent =
-        typeof frontmatter.default_model === "string" &&
-        typeof frontmatter.default_thinking === "string";
+        isString(frontmatter.default_model) && isString(frontmatter.default_thinking);
       const runtimePinsAbsent =
         frontmatter.model === undefined && frontmatter.thinking === undefined;
       return { role, valid: defaultsPresent && runtimePinsAbsent };
@@ -260,8 +265,7 @@ add(
 const lspRoot = path.join(configRoot, "packages", "choco-pi-lsp");
 try {
   const manifest: unknown = JSON.parse(await readFile(path.join(lspRoot, "package.json"), "utf8"));
-  const version =
-    isRecord(manifest) && typeof manifest.version === "string" ? manifest.version : undefined;
+  const version = isRecord(manifest) && isString(manifest.version) ? manifest.version : undefined;
   const grammarPresent = await exists(
     path.join(lspRoot, "grammars", "tree-sitter-typescript.wasm"),
   );

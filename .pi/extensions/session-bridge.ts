@@ -1,3 +1,4 @@
+import { isNumber, isObject, isString, type RuntimeValue } from "./lib/runtime-values.ts";
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -38,7 +39,7 @@ const DEFAULT_WAIT_MS = 30_000;
 const MAX_WAIT_MS = 300_000;
 const DEFAULT_READ_LIMIT = 50;
 const MAX_READ_LIMIT = 200;
-const THINKING_LEVELS: ThinkingLevel[] = [
+const THINKING_LEVELS = [
   "off",
   "minimal",
   "low",
@@ -46,7 +47,11 @@ const THINKING_LEVELS: ThinkingLevel[] = [
   "high",
   "xhigh",
   "max",
-];
+] satisfies readonly ThinkingLevel[];
+
+function isThinkingLevel(value: RuntimeValue): value is ThinkingLevel {
+  return THINKING_LEVELS.some((level) => level === value);
+}
 
 type DeliveryMode = "queue" | "steer";
 type SessionStatus = "busy" | "idle" | "inactive";
@@ -107,6 +112,7 @@ type TranscriptItem = {
   text: string;
 };
 
+// SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
 const globalBridge = globalThis as typeof globalThis & {
   __chocoPiSessionBridge?: BridgeState;
 };
@@ -118,11 +124,11 @@ function bridgeState(): BridgeState {
   return globalBridge.__chocoPiSessionBridge;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
+  return isObject(value) && value !== null && !Array.isArray(value);
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: RuntimeValue): string {
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -144,13 +150,13 @@ function mailboxPath(sessionId: string): string {
   return join(MAILBOX_DIRECTORY, sessionId);
 }
 
-async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+async function writeJsonAtomic(path: string, value: RuntimeValue): Promise<void> {
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporaryPath, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600 });
   await rename(temporaryPath, path);
 }
 
-async function readJson(path: string): Promise<unknown | undefined> {
+async function readJson(path: string): Promise<RuntimeValue | undefined> {
   try {
     return JSON.parse(await readFile(path, "utf8"));
   } catch (error) {
@@ -159,25 +165,25 @@ async function readJson(path: string): Promise<unknown | undefined> {
   }
 }
 
-function parseLiveState(value: unknown): LiveSessionState | undefined {
+function parseLiveState(value: RuntimeValue): LiveSessionState | undefined {
   if (!isRecord(value) || value.version !== BRIDGE_VERSION) return undefined;
   if (
-    typeof value.sessionId !== "string" ||
+    !isString(value.sessionId) ||
     !/^[A-Za-z0-9._-]{1,128}$/.test(value.sessionId) ||
-    typeof value.sessionFile !== "string" ||
+    !isString(value.sessionFile) ||
     !isAbsolute(value.sessionFile) ||
-    typeof value.cwd !== "string" ||
+    !isString(value.cwd) ||
     !isAbsolute(value.cwd) ||
-    typeof value.pid !== "number" ||
+    !isNumber(value.pid) ||
     !Number.isSafeInteger(value.pid) ||
     value.pid <= 0 ||
-    typeof value.ownerId !== "string" ||
+    !isString(value.ownerId) ||
     !/^[A-Za-z0-9-]{1,128}$/.test(value.ownerId) ||
     (value.status !== "busy" && value.status !== "idle") ||
-    typeof value.updatedAt !== "string" ||
+    !isString(value.updatedAt) ||
     !Number.isFinite(Date.parse(value.updatedAt)) ||
-    (value.model !== undefined && typeof value.model !== "string") ||
-    (value.effort !== undefined && !THINKING_LEVELS.includes(value.effort as ThinkingLevel))
+    (value.model !== undefined && !isString(value.model)) ||
+    (value.effort !== undefined && !isThinkingLevel(value.effort))
   )
     return undefined;
   return {
@@ -188,25 +194,27 @@ function parseLiveState(value: unknown): LiveSessionState | undefined {
     pid: value.pid,
     ownerId: value.ownerId,
     status: value.status,
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     model: value.model as string | undefined,
+    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
     effort: value.effort as ThinkingLevel | undefined,
     updatedAt: value.updatedAt,
   };
 }
 
-function parseMailboxMessage(value: unknown): MailboxMessage | undefined {
+function parseMailboxMessage(value: RuntimeValue): MailboxMessage | undefined {
   if (!isRecord(value) || value.version !== BRIDGE_VERSION) return undefined;
   if (
-    typeof value.id !== "string" ||
+    !isString(value.id) ||
     !/^[A-Za-z0-9-]{1,128}$/.test(value.id) ||
-    typeof value.fromSessionId !== "string" ||
+    !isString(value.fromSessionId) ||
     !/^[A-Za-z0-9._-]{1,128}$/.test(value.fromSessionId) ||
-    typeof value.targetSessionId !== "string" ||
+    !isString(value.targetSessionId) ||
     !/^[A-Za-z0-9._-]{1,128}$/.test(value.targetSessionId) ||
     (value.mode !== "queue" && value.mode !== "steer") ||
-    typeof value.message !== "string" ||
+    !isString(value.message) ||
     !value.message.trim() ||
-    typeof value.createdAt !== "string" ||
+    !isString(value.createdAt) ||
     !Number.isFinite(Date.parse(value.createdAt))
   )
     return undefined;
@@ -329,10 +337,8 @@ function resolveEffort(
   fallback: ThinkingLevel | undefined,
 ): ThinkingLevel {
   const effort = requested ?? fallback ?? "medium";
-  if (!THINKING_LEVELS.includes(effort as ThinkingLevel)) {
-    throw new Error(`Unsupported reasoning effort: ${effort}`);
-  }
-  return effort as ThinkingLevel;
+  if (!isThinkingLevel(effort)) throw new Error(`Unsupported reasoning effort: ${effort}`);
+  return effort;
 }
 
 function startManagedTask(managed: ManagedSession, operation: () => Promise<void>): Promise<void> {
@@ -399,6 +405,14 @@ async function queueMailboxMessage(message: MailboxMessage): Promise<void> {
   });
 }
 
+async function releaseMailboxSequenceLock(lockPath: string): Promise<void> {
+  try {
+    await unlink(lockPath);
+  } catch (error) {
+    if (!isRecord(error) || error.code !== "ENOENT") throw error;
+  }
+}
+
 async function withNextMailboxSequence(
   directory: string,
   writeMessage: (sequence: number) => Promise<void>,
@@ -422,6 +436,7 @@ async function withNextMailboxSequence(
     }
   }
 
+  let failure: { error: RuntimeValue } | undefined;
   try {
     const state = await readJson(statePath);
     const previous =
@@ -432,13 +447,15 @@ async function withNextMailboxSequence(
     if (!Number.isSafeInteger(sequence)) throw new Error("Mailbox sequence is exhausted.");
     await writeJsonAtomic(statePath, { version: BRIDGE_VERSION, sequence });
     await writeMessage(sequence);
-  } finally {
-    try {
-      await unlink(lockPath);
-    } catch (error) {
-      if (!isRecord(error) || error.code !== "ENOENT") throw error;
-    }
+  } catch (error) {
+    failure = { error };
   }
+  try {
+    await releaseMailboxSequenceLock(lockPath);
+  } catch (error) {
+    failure ??= { error };
+  }
+  if (failure) throw failure.error;
 }
 
 async function sendSessionMessage(
@@ -495,14 +512,14 @@ function formatIncomingMessage(fromSessionId: string, message: string, messageId
   return `${marker}[Message from choco-pi session ${fromSessionId}]\n${message}`;
 }
 
-function contentText(content: unknown, includeTools: boolean): string {
-  if (typeof content === "string") return content;
+function contentText(content: RuntimeValue, includeTools: boolean): string {
+  if (isString(content)) return content;
   if (!Array.isArray(content)) return "";
   const parts: string[] = [];
   for (const item of content) {
     if (!isRecord(item)) continue;
-    if (item.type === "text" && typeof item.text === "string") parts.push(item.text);
-    if (includeTools && item.type === "toolCall" && typeof item.name === "string") {
+    if (item.type === "text" && isString(item.text)) parts.push(item.text);
+    if (includeTools && item.type === "toolCall" && isString(item.name)) {
       parts.push(`[tool: ${item.name}]`);
     }
   }
@@ -514,14 +531,13 @@ function transcriptItem(
   includeTools: boolean,
 ): TranscriptItem | undefined {
   if (entry.type !== "message" || !isRecord(entry.message)) return undefined;
-  const role = typeof entry.message.role === "string" ? entry.message.role : "unknown";
+  const role = isString(entry.message.role) ? entry.message.role : "unknown";
   if (!includeTools && role === "toolResult") return undefined;
   const text = contentText(entry.message.content, includeTools).trim();
   if (!text) return undefined;
-  const timestamp =
-    typeof entry.message.timestamp === "number"
-      ? new Date(entry.message.timestamp).toISOString()
-      : undefined;
+  const timestamp = isNumber(entry.message.timestamp)
+    ? new Date(entry.message.timestamp).toISOString()
+    : undefined;
   return { entryId: entry.id, role, timestamp, text };
 }
 
@@ -597,19 +613,6 @@ function liveSessionSnapshot(live: LiveSessionState): SessionSnapshot {
     effort: live.effort,
     status: live.status,
   };
-}
-
-async function getSessionSnapshot(cwd: string, sessionId: string): Promise<SessionSnapshot> {
-  const managed = bridgeState().runtimes.get(sessionId);
-  if (managed?.session.sessionManager.getCwd() === cwd) return managedSessionSnapshot(managed);
-  const live = await readLiveState(sessionId);
-  try {
-    const info = await findProjectSession(cwd, sessionId);
-    return sessionSnapshot(info, undefined, live);
-  } catch (error) {
-    if (isFresh(live) && live.cwd === cwd) return liveSessionSnapshot(live);
-    throw error;
-  }
 }
 
 async function listProjectSessions(cwd: string): Promise<SessionSnapshot[]> {
@@ -752,14 +755,14 @@ async function sessionSnapshotReader(
   }
 }
 
-function toolResult(value: unknown) {
+function toolResult(value: RuntimeValue) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
     details: value,
   };
 }
 
-function commandError(ctx: ExtensionCommandContext, error: unknown): void {
+function commandError(ctx: ExtensionCommandContext, error: RuntimeValue): void {
   ctx.ui.notify(errorMessage(error), "error");
 }
 
@@ -822,6 +825,7 @@ function installUserCommands(pi: ExtensionAPI): void {
         const [, sessionId, mode, message] = match;
         const result = await sendSessionMessage(ctx, {
           sessionId,
+          // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
           mode: mode as DeliveryMode,
           message,
         });

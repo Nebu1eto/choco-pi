@@ -1,3 +1,6 @@
+import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { propertiesWhen } from "../.pi/extensions/lib/runtime-values.ts";
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildCommentAnchor } from "../.pi/extensions/review/core/anchor.ts";
@@ -98,7 +101,7 @@ function comment(
     path: model.files[options.fileIndex]!.path,
     side: options.side,
     line: options.line,
-    ...(options.startLine === undefined ? {} : { startLine: options.startLine }),
+    ...propertiesWhen(!(options.startLine === undefined), () => ({ startLine: options.startLine })),
     body: options.body,
     anchor: buildCommentAnchor(hunk, options.side, options.line, options.startLine ?? options.line),
     createdAt: NOW,
@@ -135,13 +138,14 @@ function record(overrides: Partial<ReviewRecord> = {}): ReviewRecord {
 }
 
 type Call = { cmd: string; args: string[]; opts?: { cwd?: string; input?: string } };
+type StubRunner = { runner: GhRunner; calls: Call[] };
 
 function stubRunner(
   respond: (call: Call) => { stdout?: string; stderr?: string; code?: number } | Promise<never>,
-): { runner: GhRunner; calls: Call[] } {
+): StubRunner {
   const calls: Call[] = [];
   const runner: GhRunner = async (cmd, args, opts) => {
-    const call: Call = { cmd, args, ...(opts === undefined ? {} : { opts }) };
+    const call: Call = { cmd, args, ...propertiesWhen(!(opts === undefined), () => ({ opts })) };
     calls.push(call);
     const result = await respond(call);
     return { stdout: result.stdout ?? "{}", stderr: result.stderr ?? "", code: result.code ?? 0 };
@@ -160,6 +164,7 @@ function plan(event: SubmissionEvent, overrides: Partial<ReviewRecord> = {}): Re
 
 function sentPayload(call: Call): GithubReviewPayload {
   assert.ok(call.opts?.input, "the gh call must carry a stdin payload");
+  // SAFETY: The fixture supplies every host member exercised by this test.
   return JSON.parse(call.opts.input) as GithubReviewPayload;
 }
 
@@ -259,7 +264,7 @@ test("an unconfirmed approval cannot be submitted and issues no request", async 
 
   await assert.rejects(
     submitReviewPlan(plan("APPROVE"), { confirmed: false, runner }),
-    (error: unknown) => {
+    (error: RuntimeValue) => {
       assert.ok(error instanceof ReviewSubmissionError);
       assert.equal(error.kind, "unconfirmed");
       assert.match(error.message, /confirmation/i);
@@ -370,7 +375,7 @@ test("planning refuses to reuse stale positions when the new diff is unavailable
         event: "COMMENT",
         currentHeadSha: "head-2",
       }),
-    (error: unknown) => {
+    (error: RuntimeValue) => {
       assert.ok(error instanceof ReviewSubmissionError);
       assert.equal(error.kind, "stale-head");
       assert.match(error.message, /head moved from head-1 to head-2/);
@@ -419,7 +424,7 @@ test("a missing gh binary reports how to install and authenticate it", async () 
 
   await assert.rejects(
     submitReviewPlan(plan("COMMENT"), { confirmed: true, runner }),
-    (error: unknown) => {
+    (error: RuntimeValue) => {
       assert.ok(error instanceof ReviewSubmissionError);
       assert.equal(error.kind, "gh-missing");
       assert.match(error.message, /cli\.github\.com/);
@@ -438,7 +443,7 @@ test("an unauthenticated gh reports gh auth login without echoing provider outpu
 
   await assert.rejects(
     submitReviewPlan(plan("COMMENT"), { confirmed: true, runner }),
-    (error: unknown) => {
+    (error: RuntimeValue) => {
       assert.ok(error instanceof ReviewSubmissionError);
       assert.equal(error.kind, "gh-unauthenticated");
       assert.match(error.message, /gh auth login/);
@@ -477,7 +482,7 @@ test("a validation failure names the refused field, code, and reason", async () 
 
   await assert.rejects(
     submitReviewPlan(plan("COMMENT"), { confirmed: true, runner }),
-    (error: unknown) => {
+    (error: RuntimeValue) => {
       assert.ok(error instanceof ReviewSubmissionError);
       assert.equal(error.kind, "gh-failed");
       assert.equal(error.status, 422);
@@ -536,7 +541,7 @@ test("provider text that echoes a comment body is redacted before it is reported
 
   await assert.rejects(
     submitReviewPlan(plan("COMMENT"), { confirmed: true, runner }),
-    (error: unknown) => {
+    (error: RuntimeValue) => {
       assert.ok(error instanceof ReviewSubmissionError);
       assert.ok(!error.message.includes(BODY_ADDED), "comment text must not be reported back");
       assert.match(error.message, /\[review text\]/);
@@ -555,7 +560,7 @@ test("a malformed error response degrades to the status alone", async () => {
 
   await assert.rejects(
     submitReviewPlan(plan("COMMENT"), { confirmed: true, runner }),
-    (error: unknown) => {
+    (error: RuntimeValue) => {
       assert.ok(error instanceof ReviewSubmissionError);
       assert.equal(error.kind, "gh-failed");
       assert.equal(error.status, 502);
@@ -574,7 +579,7 @@ test("a failure with no status at all still reports the exit code", async () => 
 
   await assert.rejects(
     submitReviewPlan(plan("COMMENT"), { confirmed: true, runner }),
-    (error: unknown) => {
+    (error: RuntimeValue) => {
       assert.ok(error instanceof ReviewSubmissionError);
       assert.equal(error.status, undefined);
       assert.match(error.message, /exit status 7/);
@@ -600,8 +605,9 @@ test("an unrecognized event is refused at planning time and names the rejected v
   for (const [event, named] of rejected) {
     assert.throws(
       // The whole point is the call TypeScript cannot see.
+      // SAFETY: The fixture supplies every host member exercised by this test.
       () => plan(event as SubmissionEvent),
-      (error: unknown) => {
+      (error: RuntimeValue) => {
         assert.ok(error instanceof ReviewSubmissionError, `${String(event)} must be refused`);
         assert.equal(error.kind, "invalid-plan");
         assert.match(error.message, named);
@@ -625,10 +631,14 @@ test("preparing a submission rejects an unrecognized event and submits nothing",
 
   await assert.rejects(
     prepareReviewSubmission(
-      { record: record(), pullRequest: PR, event: undefined as unknown as SubmissionEvent },
+      {
+        record: record(),
+        pullRequest: PR,
+        event: reinterpretHostValue<SubmissionEvent>(undefined),
+      },
       { runner },
     ),
-    (error: unknown) => {
+    (error: RuntimeValue) => {
       assert.ok(error instanceof ReviewSubmissionError);
       assert.equal(error.kind, "invalid-plan");
       assert.match(error.message, /undefined/);
@@ -643,14 +653,17 @@ test("preparing a submission rejects an unrecognized event and submits nothing",
 
 test("submitting refuses an unrecognized event and issues no request", async () => {
   const { runner, calls } = stubRunner(() => ({ stdout: "{}" }));
-  const forged = { ...plan("COMMENT"), event: undefined as unknown as SubmissionEvent };
+  const forged = { ...plan("COMMENT"), event: reinterpretHostValue<SubmissionEvent>(undefined) };
 
-  await assert.rejects(submitReviewPlan(forged, { confirmed: true, runner }), (error: unknown) => {
-    assert.ok(error instanceof ReviewSubmissionError);
-    assert.equal(error.kind, "invalid-plan");
-    assert.match(error.message, /undefined/);
-    return true;
-  });
+  await assert.rejects(
+    submitReviewPlan(forged, { confirmed: true, runner }),
+    (error: RuntimeValue) => {
+      assert.ok(error instanceof ReviewSubmissionError);
+      assert.equal(error.kind, "invalid-plan");
+      assert.match(error.message, /undefined/);
+      return true;
+    },
+  );
   assert.equal(calls.length, 0, "an unrecognized event must not reach GitHub");
 });
 
@@ -661,14 +674,17 @@ test("submitting re-derives confirmation instead of trusting the plan's flag", a
     ...plan("APPROVE"),
     requiresConfirmation: false,
   };
-  delete (forged as { confirmationReason?: string }).confirmationReason;
+  delete forged.confirmationReason;
 
-  await assert.rejects(submitReviewPlan(forged, { confirmed: false, runner }), (error: unknown) => {
-    assert.ok(error instanceof ReviewSubmissionError);
-    assert.equal(error.kind, "unconfirmed");
-    assert.match(error.message, /Approving the pull request/);
-    return true;
-  });
+  await assert.rejects(
+    submitReviewPlan(forged, { confirmed: false, runner }),
+    (error: RuntimeValue) => {
+      assert.ok(error instanceof ReviewSubmissionError);
+      assert.equal(error.kind, "unconfirmed");
+      assert.match(error.message, /Approving the pull request/);
+      return true;
+    },
+  );
   assert.equal(calls.length, 0);
 
   // The pre-approved path still works without a confirmation.
@@ -679,8 +695,8 @@ test("submitting re-derives confirmation instead of trusting the plan's flag", a
 test("confirmationReasonFor rejects an unrecognized event rather than clearing it", () => {
   assert.equal(confirmationReasonFor("COMMENT"), undefined);
   assert.throws(
-    () => confirmationReasonFor(undefined as unknown as SubmissionEvent),
-    (error: unknown) => {
+    () => confirmationReasonFor(reinterpretHostValue<SubmissionEvent>(undefined)),
+    (error: RuntimeValue) => {
       assert.ok(error instanceof ReviewSubmissionError);
       assert.equal(error.kind, "invalid-plan");
       assert.match(error.message, /undefined/);
@@ -692,7 +708,7 @@ test("confirmationReasonFor rejects an unrecognized event rather than clearing i
 test("a COMMENT review without any body is rejected before a request is made", () => {
   assert.throws(
     () => plan("COMMENT", { body: undefined }),
-    (error: unknown) => {
+    (error: RuntimeValue) => {
       assert.ok(error instanceof ReviewSubmissionError);
       assert.equal(error.kind, "invalid-plan");
       assert.match(error.message, /requires a body/);
