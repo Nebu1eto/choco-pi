@@ -622,6 +622,7 @@ export default function (pi: ExtensionAPI) {
     // callers cannot forge it to suppress ordinary result delivery.
     delete safeOptions.sideConversation;
     delete safeOptions.readOnly;
+    delete safeOptions.mainSessionFork;
     delete safeOptions.workflowId;
     delete safeOptions.workflowStepId;
     return spawnResolved(piRef, ctxRef, type, prompt, safeOptions);
@@ -1015,9 +1016,9 @@ export default function (pi: ExtensionAPI) {
     onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
   });
 
-  // BTW side conversations are root subagents with a read-only launch profile.
-  // The controller owns only their dismissible overlay and notice delivery;
-  // focus, concurrency, handles and persistence remain manager-owned.
+  // BTW side conversations are root records backed by non-persisted forks of
+  // the main agent. The controller owns only their dismissible overlay and
+  // notice delivery; focus, concurrency and handles remain manager-owned.
   const sideConversations = new SideConversationController(manager, {
     getActivity: id => agentActivity.get(id),
     onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),

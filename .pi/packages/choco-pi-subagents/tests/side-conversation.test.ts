@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { type AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../src/agent-manager.ts";
+import { buildEffectivePrompt, captureMainSessionFork, type MainSessionFork } from "../src/agent-runner.ts";
 import type { AgentRecord } from "../src/types.ts";
 import { SideConversationController } from "../src/ui/side-conversation.ts";
 
@@ -9,6 +10,50 @@ const theme = {
   fg: (_color: string, text: string) => text,
   bold: (text: string) => text,
 };
+
+function makeMainContext() {
+  const sessionManager = SessionManager.inMemory("/project");
+  sessionManager.appendThinkingLevelChange("high");
+  sessionManager.appendModelChange("openai", "main-model");
+  sessionManager.appendMessage({ role: "user", content: "Remember ZEBRA-41." } as never);
+  sessionManager.appendMessage({
+    role: "assistant",
+    content: [
+      { type: "text", text: "I will inspect the cancel path." },
+      { type: "toolCall", id: "read-1", name: "read", arguments: { path: "workflow.ts" } },
+    ],
+    provider: "openai",
+    model: "main-model",
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: {} },
+    stopReason: "toolUse",
+    timestamp: Date.now(),
+  } as never);
+  sessionManager.appendMessage({
+    role: "toolResult",
+    toolCallId: "read-1",
+    toolName: "read",
+    content: [{ type: "text", text: "cancelWorkflow implementation" }],
+    isError: false,
+    timestamp: Date.now(),
+  } as never);
+  sessionManager.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "The workflow cancel path is under review." }],
+    provider: "openai",
+    model: "main-model",
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: {} },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  } as never);
+
+  return {
+    cwd: "/project",
+    sessionManager,
+    model: { provider: "openai", id: "main-model" },
+    thinkingLevel: "high",
+    getSystemPrompt: () => "You are the main choco-pi agent.",
+  } as never;
+}
 
 function makeSession(answer = "side answer") {
   const listeners = new Set<() => void>();
@@ -60,29 +105,56 @@ function overlayHarness(record: AgentRecord) {
   return { ui, notifications, get component() { return component; }, record };
 }
 
-test("side launch creates a top-level read-only background subagent record", () => {
+test("side launch forks the main session state without a context preamble", () => {
   const manager = new AgentManager();
-  let capturedOptions: Record<string, unknown> | undefined;
+  let capturedOptions: (Record<string, unknown> & { mainSessionFork?: MainSessionFork }) | undefined;
   (manager as unknown as { startAgent: (...args: any[]) => void }).startAgent = (_id, _record, args) => {
     capturedOptions = args.options;
   };
   const controller = new SideConversationController(manager);
 
-  const id = controller.launch(
-    {} as never,
-    { sessionManager: { getSessionId: () => "main-session" } } as never,
-    "general-purpose",
-    "How does focus mode compose?",
-  );
+  const ctx = makeMainContext();
+  const question = "How does focus mode compose?";
+  const id = controller.launch({} as never, ctx, "general-purpose", question);
   const record = manager.getRecord(id);
 
   assert.equal(record?.sideConversation, true);
   assert.equal(record?.parentAgentId, undefined);
   assert.equal(record?.isBackground, true);
-  assert.equal(capturedOptions?.inheritContext, true);
+  assert.equal(capturedOptions?.inheritContext, false);
   assert.equal(capturedOptions?.readOnly, true);
-  assert.equal(capturedOptions?.rootSessionId, "main-session");
+  assert.equal(capturedOptions?.rootSessionId, ctx.sessionManager.getSessionId());
+
+  const fork = capturedOptions?.mainSessionFork;
+  assert.ok(fork);
+  assert.notEqual(fork.sessionManager, ctx.sessionManager);
+  assert.equal(fork.sessionManager.isPersisted(), false);
+  assert.deepEqual(
+    fork.sessionManager.buildSessionContext().messages,
+    ctx.sessionManager.buildSessionContext().messages,
+    "the fork must retain ordered user, assistant, tool-call, and tool-result messages",
+  );
+  assert.equal(fork.systemPrompt, "You are the main choco-pi agent.");
+  assert.equal(fork.model, ctx.model);
+  assert.equal(fork.thinkingLevel, "high");
+
+  const effectivePrompt = buildEffectivePrompt(ctx, question, capturedOptions as never);
+  assert.equal(effectivePrompt, question);
+  assert.doesNotMatch(effectivePrompt, /# Parent Conversation Context/);
   manager.dispose();
+});
+
+test("capturing a main-session fork does not move or append to the main branch", () => {
+  const ctx = makeMainContext();
+  const parentBranch = ctx.sessionManager.getBranch();
+  const parentLeaf = ctx.sessionManager.getLeafId();
+
+  const fork = captureMainSessionFork(ctx);
+  fork.sessionManager.appendMessage({ role: "user", content: "side-only turn" } as never);
+
+  assert.equal(ctx.sessionManager.getLeafId(), parentLeaf);
+  assert.deepEqual(ctx.sessionManager.getBranch(), parentBranch);
+  assert.notDeepEqual(fork.sessionManager.getBranch(), parentBranch);
 });
 
 test("side overlay presents the answer and Esc dismisses without stopping the agent", async () => {

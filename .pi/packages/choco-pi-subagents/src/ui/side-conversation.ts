@@ -9,6 +9,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentManager } from "../agent-manager.ts";
+import { captureMainSessionFork } from "../agent-runner.ts";
 import { getAvailableTypes, getFallbackSubagent, NO_FALLBACK, resolveSpawnType, type SpawnTypeResolution } from "../agent-types.ts";
 import type { AgentRecord } from "../types.ts";
 import type { AgentActivity, Theme } from "./agent-widget.ts";
@@ -80,10 +81,11 @@ export class SideConversationController {
   }
 
   /**
-   * Fork the main context into a bounded, read-only background subagent. The
-   * main transcript receives no user or assistant turn from this path.
+   * Fork the main agent's active branch and runtime identity into a bounded,
+   * read-only background session. The main transcript receives no turn.
    */
   launch(pi: ExtensionAPI, ctx: ExtensionContext, type: string, question: string): string {
+    const mainSessionFork = captureMainSessionFork(ctx);
     let id: string | undefined;
     const reveal = () => {
       if (!id || !this.autoOpen.delete(id)) return;
@@ -94,7 +96,8 @@ export class SideConversationController {
     id = this.manager.spawn(pi, ctx, type, question, {
       description: describeQuestion(question),
       isBackground: true,
-      inheritContext: true,
+      inheritContext: false,
+      mainSessionFork,
       sideConversation: true,
       readOnly: true,
       rootSessionId: ctx.sessionManager?.getSessionId?.(),

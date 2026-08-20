@@ -167,18 +167,29 @@ global input while focus is active.
 ## Seam B — dismissible side-conversation overlay
 
 `/btw <question>` launches an ordinary top-level `AgentRecord` with
-`sideConversation: true`. It uses the resolved `general-purpose` type, carries
-no `parentAgentId` (the package's representation of orchestrator ownership), and
-sets `isBackground: true`, so `AgentManager` applies the same `maxConcurrent`
-queue as every other root background agent. The child session is persisted and
-nested under the main pi session by the existing session-manager path.
+`sideConversation: true`. It uses the resolved `general-purpose` type for record naming and the existing
+`twin` UI label, carries no `parentAgentId` (the package's representation of
+orchestrator ownership), and sets `isBackground: true`, so `AgentManager` applies
+the same `maxConcurrent` queue as every other root background agent. Its runtime
+identity comes from the main agent rather than that record type.
 
 ### Context and capability profile
 
-The launch sets `inheritContext: true`; `agent-runner.ts` therefore prepends
-`buildParentContext(ctx)` through the existing subagent context-fork path before
-the BTW question. No main-model turn is created and no side answer is injected
-as a main-session message.
+At launch, `captureMainSessionFork` clones the main session manager's active
+branch into `SessionManager.inMemory()`. Pi 0.84.2 has native persisted fork APIs
+but exposes the extension's current manager as read-only and has no non-mutating
+in-memory fork operation, so the clone replays typed branch entries through
+public `SessionManager` append APIs. Messages, tool calls/results, compactions,
+branch summaries, custom messages, model changes and ordering remain model
+context rather than becoming a text digest. The BTW question is sent unchanged;
+ordinary `Agent(... inherit_context: true)` callers keep the existing
+`buildParentContext(ctx)` preamble behavior.
+
+The fork also captures the main model, thinking level and effective system
+prompt. The runner uses those values instead of the selected subagent type's
+runtime identity, then adds only the read-only BTW instruction block. No
+main-model turn is created and no side answer is injected as a main-session
+message.
 
 Side conversations set the internal `readOnly` spawn option. The runner:
 
@@ -210,12 +221,11 @@ uses `ctx.ui.notify` and does not call `pi.sendMessage`, so no follow-up turn or
 main transcript message is produced. `/btw` with no question lists current side
 records and reopens the selected one.
 
-BTW history is session-scoped. `rememberAgents` persists each child transcript,
-but manager records and tombstones live in memory and are cleared on session
-start or switch, and the persisted `subagents:record` entry carries the BTW
-marker without the session file, handle, or alias. Restoring side conversations
-across restarts therefore needs a durable record-to-session index, so after a
-restart `/btw` starts from an empty list.
+BTW history is session-scoped and deliberately non-persistent. The fork uses an
+in-memory session manager regardless of `rememberAgents`; manager records are
+cleared on session start or switch. After a restart `/btw` therefore starts from
+an empty list, with no durable record index or side-session transcript to
+restore.
 
 FleetView includes side conversations as normal root agents, prefixes their row
 with `[btw]`, and delegates Enter to the side controller's replyable overlay.

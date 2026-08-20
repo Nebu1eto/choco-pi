@@ -24,7 +24,7 @@ import { DEFAULT_AGENTS } from "./default-agents.ts";
 import { detectEnv } from "./env.ts";
 import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.ts";
 import { createNestedSubagentTools, getMaxSubagentDepth, type NestedAgentManager } from "./nested-tools.ts";
-import { buildAgentPrompt, type PromptExtras } from "./prompts.ts";
+import { buildAgentPrompt, buildReadOnlySideConversationPrompt, type PromptExtras } from "./prompts.ts";
 import { preloadSkills } from "./skill-loader.ts";
 import type { SubagentType, ThinkingLevel } from "./types.ts";
 
@@ -374,6 +374,109 @@ export interface ToolActivity {
   toolName: string;
 }
 
+export interface MainSessionFork {
+  /** In-memory clone of the main session's active branch. */
+  sessionManager: SessionManager;
+  /** Effective main-agent system prompt captured at /btw submission time. */
+  systemPrompt: string;
+  /** Main-agent runtime identity captured with the branch. */
+  model: Model<any> | undefined;
+  thinkingLevel: ThinkingLevel | undefined;
+}
+
+/**
+ * Clone the main session's active branch into a non-persisted SessionManager.
+ *
+ * Pi 0.84.2 exposes native persisted forks (`createBranchedSession`,
+ * `forkFrom`) but no non-mutating in-memory fork from a read-only manager.
+ * Replaying the typed branch entries through SessionManager's append APIs keeps
+ * message blocks, tool results, compactions, summaries, and ordering intact
+ * without creating a side-session file or moving the main session's leaf.
+ */
+export function captureMainSessionFork(ctx: ExtensionContext): MainSessionFork {
+  const parent = ctx.sessionManager;
+  const fork = SessionManager.inMemory(ctx.cwd, { parentSession: parent.getSessionFile?.() });
+  const clonedIds = new Map<string, string>();
+
+  for (const entry of parent.getBranch()) {
+    let clonedId: string | undefined;
+    switch (entry.type) {
+      case "message":
+        clonedId = fork.appendMessage(entry.message as Parameters<SessionManager["appendMessage"]>[0]);
+        break;
+      case "thinking_level_change":
+        clonedId = fork.appendThinkingLevelChange(entry.thinkingLevel);
+        break;
+      case "model_change":
+        clonedId = fork.appendModelChange(entry.provider, entry.modelId);
+        break;
+      case "compaction": {
+        const firstKeptEntryId = clonedIds.get(entry.firstKeptEntryId);
+        if (!firstKeptEntryId) {
+          throw new Error(`Cannot fork main session: compaction entry ${entry.id} references a missing branch entry.`);
+        }
+        clonedId = fork.appendCompaction(
+          entry.summary,
+          firstKeptEntryId,
+          entry.tokensBefore,
+          entry.details,
+          entry.fromHook,
+          entry.usage,
+        );
+        break;
+      }
+      case "branch_summary":
+        clonedId = fork.branchWithSummary(
+          fork.getLeafId(),
+          entry.summary,
+          entry.details,
+          entry.fromHook,
+          entry.usage,
+        );
+        break;
+      case "custom":
+        clonedId = fork.appendCustomEntry(entry.customType, entry.data);
+        break;
+      case "custom_message":
+        clonedId = fork.appendCustomMessageEntry(
+          entry.customType,
+          entry.content,
+          entry.display,
+          entry.details,
+        );
+        break;
+      case "session_info":
+        if (entry.name !== undefined) clonedId = fork.appendSessionInfo(entry.name);
+        break;
+      case "label":
+        // Labels do not enter model context. Map them to the current leaf so a
+        // defensive compaction reference can still resolve without adding text.
+        clonedId = fork.getLeafId() ?? undefined;
+        break;
+    }
+    if (clonedId) clonedIds.set(entry.id, clonedId);
+  }
+
+  return {
+    sessionManager: fork,
+    systemPrompt: ctx.getSystemPrompt(),
+    model: ctx.model,
+    thinkingLevel: ctx.thinkingLevel === "off" ? undefined : ctx.thinkingLevel as ThinkingLevel | undefined,
+  };
+}
+
+/** Resolve the first user prompt without flattening a real fork into text. */
+export function buildEffectivePrompt(
+  ctx: ExtensionContext,
+  prompt: string,
+  options: Pick<RunOptions, "inheritContext" | "mainSessionFork">,
+): string {
+  if (options.mainSessionFork) return prompt;
+  if (!options.inheritContext) return prompt;
+  const parentContext = buildParentContext(ctx);
+  return parentContext ? parentContext + prompt : prompt;
+}
+
 export interface RunOptions {
   /** ExtensionAPI instance — used for pi.exec() instead of execSync. */
   pi: ExtensionAPI;
@@ -385,6 +488,8 @@ export interface RunOptions {
   isolated?: boolean;
   inheritContext?: boolean;
   thinkingLevel?: ThinkingLevel;
+  /** Genuine, non-persisted main-session fork used only by /btw. */
+  mainSessionFork?: MainSessionFork;
   /** Use only read/grep/find/ls, load no extensions, and disable delegation. */
   readOnly?: boolean;
   /**
@@ -624,9 +729,13 @@ export async function runAgent(
     }
   }
 
-  // Build system prompt from agent config
+  // Build system prompt from agent config. A BTW fork keeps the main agent's
+  // effective identity verbatim, adding only the read-only capability notice.
   let systemPrompt: string;
-  if (agentConfig) {
+  if (options.mainSessionFork) {
+    if (!options.readOnly) throw new Error("Main-session forks are restricted to read-only side conversations.");
+    systemPrompt = buildReadOnlySideConversationPrompt(options.mainSessionFork.systemPrompt);
+  } else if (agentConfig) {
     systemPrompt = buildAgentPrompt(agentConfig, effectiveCwd, env, parentSystemPrompt, extras);
   } else {
     // Unknown type fallback: spread the canonical general-purpose config (defensive —
@@ -638,7 +747,7 @@ export async function runAgent(
 
   // When skills is string[], we've already preloaded them into the prompt.
   // Still pass noSkills: true since we don't need the skill loader to load them again.
-  const noSkills = skills === false || Array.isArray(skills);
+  const noSkills = options.mainSessionFork !== undefined || skills === false || Array.isArray(skills);
 
   const agentDir = getAgentDir();
 
@@ -783,12 +892,14 @@ export async function runAgent(
   }
 
   // Resolve model: explicit option > config.model > parent model
-  const model = options.model ?? resolveDefaultModel(
-    ctx.model, ctx.modelRegistry, agentConfig?.model,
-  );
+  const model = options.mainSessionFork
+    ? options.mainSessionFork.model
+    : options.model ?? resolveDefaultModel(ctx.model, ctx.modelRegistry, agentConfig?.model);
 
-  // Resolve thinking level: explicit option > agent config > undefined (inherit)
-  const thinkingLevel = options.thinkingLevel ?? agentConfig?.thinking;
+  // A BTW fork inherits the main runtime identity, not the selected record type.
+  const thinkingLevel = options.mainSessionFork
+    ? options.mainSessionFork.thinkingLevel
+    : options.thinkingLevel ?? agentConfig?.thinking;
 
   const disallowedSet = agentConfig?.disallowedTools
     ? new Set(agentConfig.disallowedTools)
@@ -883,7 +994,9 @@ export async function runAgent(
   // which `rememberAgents` supplies for top-level agents only. Same precedence
   // as `outputTranscript`.
   const persistSession = agentConfig?.persistSession ?? (options.nested ? false : rememberAgents);
-  const sessionManager = options.resumeSessionFile
+  const sessionManager = options.mainSessionFork
+    ? options.mainSessionFork.sessionManager
+    : options.resumeSessionFile
     // Reopening an existing conversation: the file already carries its own
     // header (cwd, parent) and history, so none of the create-time options
     // apply. `sessionDir` still matters for a later /new or /branch off it.
@@ -1018,14 +1131,9 @@ export async function runAgent(
   const collector = collectResponseText(session);
   const cleanupAbort = forwardAbortSignal(session, options.signal);
 
-  // Build the effective prompt: optionally prepend parent context
-  let effectivePrompt = prompt;
-  if (options.inheritContext) {
-    const parentContext = buildParentContext(ctx);
-    if (parentContext) {
-      effectivePrompt = parentContext + prompt;
-    }
-  }
+  // Ordinary inherit_context callers retain the legacy text preamble. BTW uses
+  // the cloned SessionManager state and therefore sends the question unchanged.
+  const effectivePrompt = buildEffectivePrompt(ctx, prompt, options);
 
   // Boundary for the history fallback: only assistant text produced from here
   // on counts as this run's output (a fresh session, so usually 0).

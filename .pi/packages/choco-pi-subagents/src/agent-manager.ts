@@ -12,7 +12,7 @@ import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { resumeAgent, runAgent, type ToolActivity } from "./agent-runner.ts";
+import { resumeAgent, runAgent, type MainSessionFork, type ToolActivity } from "./agent-runner.ts";
 import { assignHandle, handleBase } from "./mention.ts";
 import type { AgentInvocation, AgentRecord, AgentTombstone, IsolationMode, MentionResolution, SubagentType, ThinkingLevel } from "./types.ts";
 import { addUsage } from "./usage.ts";
@@ -108,6 +108,8 @@ interface SpawnOptions {
   isolated?: boolean;
   inheritContext?: boolean;
   thinkingLevel?: ThinkingLevel;
+  /** Internal /btw capability: cloned main-agent state and identity. */
+  mainSessionFork?: MainSessionFork;
   isBackground?: boolean;
   /** Orchestrator-owned BTW side conversation marker. */
   sideConversation?: boolean;
@@ -378,6 +380,7 @@ export class AgentManager {
       isolated: options.isolated,
       inheritContext: options.inheritContext,
       thinkingLevel: options.thinkingLevel,
+      mainSessionFork: options.mainSessionFork,
       readOnly: options.readOnly,
       resumeSessionFile: options.resumeSessionFile,
       nested: options.parentAgentId !== undefined,

@@ -122,14 +122,18 @@ single-Esc exit and restoration.
 
 The fork adds `src/ui/side-conversation.ts`, the `/btw` command, an
 orchestrator-owned `AgentRecord.sideConversation` marker, and a read-only runner
-profile. BTW launches fork the main context into a normal background subagent,
-share `maxConcurrent`, handles, FleetView and fullscreen focus, but restrict
-runtime tools to `read`, `grep`, `find` and `ls` with extensions and delegation
-disabled. `ConversationViewer` gains an opt-in reply-after-completion mode so the
-dismissible overlay can steer a live run or resume the same settled session.
-Completion outside the overlay uses a UI notice rather than a main-transcript
-follow-up. `tests/side-conversation.test.ts` pins the marker, dismissal and
-steering behavior.
+profile. BTW launches clone the main session's typed active branch into an
+in-memory `SessionManager`, inherit the main model, thinking level and effective
+system prompt, and send the side question without the ordinary text context
+preamble. They share `maxConcurrent`, handles, FleetView and fullscreen focus,
+but restrict runtime tools to `read`, `grep`, `find` and `ls` with extensions and
+delegation disabled. `ConversationViewer` gains an opt-in reply-after-completion
+mode so the dismissible overlay can steer a live run or resume the same settled
+session. Completion outside the overlay uses a UI notice rather than a
+main-transcript follow-up. `tests/side-conversation.test.ts` pins branch/tool
+history cloning, non-persistence, unchanged prompting, the marker, dismissal and
+steering behavior. Ordinary `inherit_context` callers retain the upstream text
+preamble path.
 
 ### Dynamic subagent workflows
 
