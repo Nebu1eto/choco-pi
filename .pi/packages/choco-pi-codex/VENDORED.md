@@ -79,10 +79,10 @@ those keys with defaults; that is harmless.
 
 ## Native binaries
 
-The fork ships no Rust tool binaries. `apply_patch`, `web_run`, `imagegen`,
-and `view_image` need them at runtime and will return the standard recovery
-error until `tools.customRustBinariesDir` points at a directory containing
-them. Fork addition in `src/tools/native/binary.ts`: besides the upstream flat
+The fork vendors darwin-arm64 Rust tool binaries (see "Bundled native
+binaries" below). `apply_patch`, `web_run`, `imagegen`, and `view_image` need
+them at runtime; on other platforms they return the standard recovery error
+until `tools.customRustBinariesDir` points at a directory containing them. Fork addition in `src/tools/native/binary.ts`: besides the upstream flat
 layout (`<dir>/<exe>`), the custom dir may also use the upstream package tree
 layout (`<dir>/<tool>/bin/<platform>-<arch>/<exe>`), so it can point straight
 at an installed upstream package's `src/tools` directory. The Code Mode host

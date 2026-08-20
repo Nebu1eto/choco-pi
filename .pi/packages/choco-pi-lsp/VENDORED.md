@@ -32,7 +32,8 @@ fork uses `"skills": ["./skills"]`. All four upstream skills ship unchanged:
 
 ### Vendored runtime dependencies
 
-Checked into-package `node_modules/` is populated (untracked; `node_modules/`
+Checked into-package `node_modules/` is populated (tracked; the package
+`.gitignore` re-includes `node_modules/` because `node_modules/`
 is gitignored repo-wide) with the exact versions the previous
 `npm:pi-lens@4.0.0` install used:
 
