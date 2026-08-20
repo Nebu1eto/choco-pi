@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentRecord } from "../src/types.ts";
 import { continueRunningAgentNavigation, FocusedAgentController } from "../src/ui/focus-mode.ts";
 import { installMethodPatch } from "../src/ui/method-patch-registry.ts";
@@ -9,10 +10,15 @@ const theme = {
   bold: (text: string) => text,
 };
 
+function partialFixture<T extends object>(fixture: Partial<T>): T {
+  // SAFETY: Each test supplies the named slice exercised by its subject.
+  return fixture as T;
+}
+
 test("focus exits on one Esc and restores exact predecessors", async () => {
   const renderRequests: boolean[] = [];
   const listeners = new Set<() => void>();
-  const session = {
+  const session = partialFixture<AgentSession>({
     messages: [
       { role: "user", content: "inspect the focused task" },
       { role: "assistant", content: [{ type: "text", text: "focused agent answer" }] },
@@ -21,8 +27,8 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-  };
-  const record = {
+  });
+  const record = partialFixture<AgentRecord>({
     id: "agent-7",
     type: "implementer",
     handle: "implementer",
@@ -33,7 +39,7 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
     lifetimeUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     compactionCount: 0,
     session,
-  } as unknown as AgentRecord;
+  });
 
   const orchestratorRender = (_width: number) => ["ORCHESTRATOR CONVERSATION"];
   const document = { render: orchestratorRender };
@@ -55,7 +61,7 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
     },
   };
   const orchestratorInput = editor.handleInput;
-  const editorContainer = { children: [editor], render: () => [] as string[] };
+  const editorContainer = { children: [editor], render: (): string[] => [] };
   const tui = {
     children: [document, editorContainer],
     terminal: { columns: 100, rows: 40 },
@@ -93,6 +99,7 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
     },
   });
 
+  // SAFETY: The focus controller uses only the TUI and theme methods implemented by these fixtures.
   assert.equal(controller.focus(record, tui as never, theme as never), true);
   assert.deepEqual(controller.getState(), { kind: "agent", agentId: "agent-7" });
   const focusedRender = document.render(100).join("\n");

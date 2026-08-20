@@ -29,12 +29,20 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import type { ModelEntry } from "./model-resolver.ts";
 
 /** Minimal registry shape — only the methods resolveEnabledModels actually calls. */
 export interface ModelRegistryRef {
-  getAll(): unknown[];
-  getAvailable?(): unknown[];
+  getAll(): ModelEntry[];
+  getAvailable?(): ModelEntry[];
+}
+
+const EnabledModelSchema = Type.String();
+
+function isString(value: string | number | boolean | null): value is string {
+  return Value.Check(EnabledModelSchema, value);
 }
 
 /** Paths to pi's settings.json files: [project, global] (project takes precedence). */
@@ -47,7 +55,9 @@ function readField(path: string): string[] | undefined {
   if (!existsSync(path)) return undefined;
   try {
     const raw = JSON.parse(readFileSync(path, "utf-8"));
-    if (Array.isArray(raw?.enabledModels)) return raw.enabledModels as string[];
+    if (Array.isArray(raw?.enabledModels)) {
+      return raw.enabledModels.filter(isString);
+    }
   } catch {
     /* corrupt file — silent */
   }
@@ -117,7 +127,7 @@ export function resolveEnabledModels(
     return undefined;
   }
 
-  const available = (registry.getAvailable?.() ?? registry.getAll()) as ModelEntry[];
+  const available = registry.getAvailable?.() ?? registry.getAll();
   const allowed = new Set<string>();
 
   for (const pattern of patterns) {

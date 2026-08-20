@@ -153,6 +153,16 @@ sessions receive no workflow tools. `tests/workflow.test.ts` uses a stub runner
 to pin validation, topological scheduling, result bounds, failure policies,
 dynamic updates, idle waits, retention and cancellation.
 
+### Anti-slop type hardening
+
+The fork names settings, frontmatter, RPC, workflow, host-message and UI adapter
+interfaces that upstream leaves anonymous or `unknown`. JSON/frontmatter and
+cross-extension payloads are parsed at their boundaries; Pi compatibility
+assertions carry local safety invariants. Live TUI adapter guards inspect only
+the known members they consume instead of running enumerating object schemas
+over host-owned instances. This is type-only hardening: tool schemas, event
+names, persistence formats and valid runtime paths are unchanged.
+
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 
 The repository previously ran `npm:@tintinweb/pi-subagents@0.16.1`. Two entries

@@ -66,7 +66,7 @@ export type FleetUICtx = {
       keybindings: any,
       done: (result: T) => void,
     ) => { render(width: number): string[]; invalidate(): void; dispose?(): void },
-    options?: { overlay?: boolean; overlayOptions?: unknown; onHandle?: (handle: unknown) => void },
+    options?: { overlay?: boolean; overlayOptions?: unknown },
   ): Promise<T>;
 };
 
@@ -346,6 +346,7 @@ export class FleetList {
    * counts as the editor so activation keeps working.
    */
   private editorHasFocus(): boolean {
+    // SAFETY: Pi's TUI instance owns this optional private field for focus routing.
     const focused = (this.tui as { focusedComponent?: unknown } | undefined)?.focusedComponent;
     return focused == null || focused instanceof Editor;
   }
@@ -449,7 +450,7 @@ export class FleetList {
 
   private renderBar(width: number, theme: Theme): string[] {
     if (this.focusOptions.isAgentFocused?.()) return [];
-    const agents = this.roster().slice(1) as AgentEntry[];
+    const agents = this.roster().filter((entry): entry is AgentEntry => entry.kind === "agent");
     if (agents.length === 0) return [];
     // Clamp locally so a render between a roster shrink and the next update()
     // (e.g. on terminal resize) never loses the selection marker.

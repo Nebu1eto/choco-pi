@@ -32,7 +32,7 @@ export function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise
         cleanup();
         resolve(value);
       },
-      (error: unknown) => {
+      (error) => {
         if (settled) return;
         settled = true;
         cleanup();

@@ -29,15 +29,17 @@ export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 export const ERROR_STATUSES = new Set(["error", "aborted", "steered", "stopped"]);
 
 /** Tool name → human-readable action for activity descriptions. */
-const TOOL_DISPLAY: Record<string, string> = {
-  read: "reading",
-  bash: "running command",
-  edit: "editing",
-  write: "writing",
-  grep: "searching",
-  find: "finding files",
-  ls: "listing",
-};
+const TOOL_DISPLAY = new Map(
+  Object.entries({
+    read: "reading",
+    bash: "running command",
+    edit: "editing",
+    write: "writing",
+    grep: "searching",
+    find: "finding files",
+    ls: "listing",
+  }),
+);
 
 // ---- Types ----
 
@@ -70,6 +72,11 @@ export interface AgentActivity {
 }
 
 /** Metadata attached to Agent tool results for custom rendering. */
+export interface InvocationTags {
+  modelName?: string;
+  tags: string[];
+}
+
 export interface AgentDetails {
   displayName: string;
   description: string;
@@ -104,14 +111,23 @@ export interface AgentDetails {
 
 // ---- Formatting helpers ----
 
+const ANSI_FULL_RESET = "\u001b[0m";
+const ANSI_FOREGROUND_RESET = "\u001b[39m";
+
+function removeForegroundResets(text: string): string {
+  return text.replaceAll(ANSI_FULL_RESET, "").replaceAll(ANSI_FOREGROUND_RESET, "");
+}
+
+function restoreForegroundAfterResets(text: string, styleStart: string): string {
+  return text
+    .replaceAll(ANSI_FULL_RESET, `${ANSI_FULL_RESET}${styleStart}`)
+    .replaceAll(ANSI_FOREGROUND_RESET, `${ANSI_FOREGROUND_RESET}${styleStart}`);
+}
+
 /** Apply foreground styling while restoring it after nested foreground/full ANSI resets. */
 export function fgPreservingNestedStyles(theme: Theme, color: string, text: string): string {
-  const styledEmpty = theme.fg(color, "");
-  const styleStart = styledEmpty.replace(/\u001b\[(?:0|39)m/g, "");
-  return theme.fg(
-    color,
-    text.replace(/\u001b\[(?:0|39)m/g, (reset) => `${reset}${styleStart}`),
-  );
+  const styleStart = removeForegroundResets(theme.fg(color, ""));
+  return theme.fg(color, restoreForegroundAfterResets(text, styleStart));
 }
 
 /** Format a token count compactly: "33.8k token", "1.2M token". */
@@ -178,10 +194,7 @@ export function getPromptModeLabel(type: SubagentType): string | undefined {
 }
 
 /** Mode label is not included — callers add it where they want it. */
-export function buildInvocationTags(invocation: AgentInvocation | undefined): {
-  modelName?: string;
-  tags: string[];
-} {
+export function buildInvocationTags(invocation: AgentInvocation | undefined): InvocationTags {
   const tags: string[] = [];
   if (!invocation) return { tags };
   if (invocation.thinking) tags.push(`thinking: ${invocation.thinking}`);
@@ -209,7 +222,7 @@ export function describeActivity(activeTools: Map<string, string>, responseText?
   if (activeTools.size > 0) {
     const groups = new Map<string, number>();
     for (const toolName of activeTools.values()) {
-      const action = TOOL_DISPLAY[toolName] ?? toolName;
+      const action = TOOL_DISPLAY.get(toolName) ?? toolName;
       groups.set(action, (groups.get(action) ?? 0) + 1);
     }
 

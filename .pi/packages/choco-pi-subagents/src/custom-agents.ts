@@ -5,6 +5,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import { BUILTIN_TOOL_NAMES } from "./agent-types.ts";
 import type { AgentConfig, IsolationMode, MemoryScope, ThinkingLevel } from "./types.ts";
 
@@ -22,6 +24,51 @@ import type { AgentConfig, IsolationMode, MemoryScope, ThinkingLevel } from "./t
  * and a file must be able to override one.
  */
 const RESERVED_IN_TYPE = ":";
+
+type FrontmatterScalar = string | number | boolean | null;
+type FrontmatterValue =
+  | FrontmatterScalar
+  | FrontmatterValue[]
+  | { [key: string]: FrontmatterValue };
+
+interface AgentFrontmatter {
+  [key: string]: FrontmatterValue | undefined;
+  name?: FrontmatterValue;
+  display_name?: FrontmatterValue;
+  color?: FrontmatterValue;
+  description?: FrontmatterValue;
+  tools?: FrontmatterValue;
+  disallowed_tools?: FrontmatterValue;
+  extensions?: FrontmatterValue;
+  inherit_extensions?: FrontmatterValue;
+  exclude_extensions?: FrontmatterValue;
+  skills?: FrontmatterValue;
+  inherit_skills?: FrontmatterValue;
+  model?: FrontmatterValue;
+  thinking?: FrontmatterValue;
+  max_turns?: FrontmatterValue;
+  persist_session?: FrontmatterValue;
+  output_transcript?: FrontmatterValue;
+  session_dir?: FrontmatterValue;
+  allowed_subagents?: FrontmatterValue;
+  prompt_mode?: FrontmatterValue;
+  inherit_context?: FrontmatterValue;
+  run_in_background?: FrontmatterValue;
+  isolated?: FrontmatterValue;
+  memory?: FrontmatterValue;
+  isolation?: FrontmatterValue;
+  enabled?: FrontmatterValue;
+}
+
+interface ParsedAgentFile {
+  frontmatter: AgentFrontmatter;
+  body: string;
+}
+
+interface ParsedToolsField {
+  builtinToolNames: string[];
+  extSelectors: string[] | undefined;
+}
 
 /**
  * Scan for custom agent .md files from multiple locations.
@@ -124,7 +171,7 @@ function loadFromDir(
       excludeExtensions: csvListOptional(fm.exclude_extensions),
       skills: inheritField(fm.skills ?? fm.inherit_skills),
       model: str(fm.model),
-      thinking: str(fm.thinking) as ThinkingLevel | undefined,
+      thinking: parseThinkingLevel(fm.thinking),
       maxTurns: nonNegativeInt(fm.max_turns),
       persistSession: fm.persist_session != null ? fm.persist_session === true : undefined,
       outputTranscript: fm.output_transcript != null ? fm.output_transcript !== false : undefined,
@@ -156,12 +203,9 @@ function loadFromDir(
  * Under `strict` the same failure rethrows, still naming the path, so callers
  * that opted into failing closed stop rather than run a substituted agent.
  */
-function readAgentFile(
-  path: string,
-  strict: boolean,
-): { frontmatter: Record<string, unknown>; body: string } | undefined {
+function readAgentFile(path: string, strict: boolean): ParsedAgentFile | undefined {
   try {
-    return parseFrontmatter<Record<string, unknown>>(readFileSync(path, "utf-8"));
+    return parseFrontmatter<AgentFrontmatter>(readFileSync(path, "utf-8"));
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     if (strict) throw new Error(`${path}: ${reason}`);
@@ -201,20 +245,39 @@ function warnIfNew(message: string): void {
 // ---- Field parsers ----
 // All follow the same convention: omitted → default, "none"/empty → nothing, value → exact.
 
+const FrontmatterStringSchema = Type.String();
+const FrontmatterNonNegativeNumberSchema = Type.Number({ minimum: 0 });
+
 /** Extract a string or undefined. */
-function str(val: unknown): string | undefined {
-  return typeof val === "string" ? val : undefined;
+function str(val: FrontmatterValue | undefined): string | undefined {
+  return Value.Check(FrontmatterStringSchema, val) ? val : undefined;
 }
 
 /** Extract a non-negative integer or undefined. 0 means unlimited for max_turns. */
-function nonNegativeInt(val: unknown): number | undefined {
-  return typeof val === "number" && val >= 0 ? val : undefined;
+function nonNegativeInt(val: FrontmatterValue | undefined): number | undefined {
+  return Value.Check(FrontmatterNonNegativeNumberSchema, val) ? val : undefined;
+}
+
+function parseThinkingLevel(val: FrontmatterValue | undefined): ThinkingLevel | undefined {
+  if (
+    val === "off" ||
+    val === "minimal" ||
+    val === "low" ||
+    val === "medium" ||
+    val === "high" ||
+    val === "xhigh" ||
+    val === "max"
+  ) {
+    // SAFETY: Pi accepts the advertised "off" level at runtime although ThinkingLevel omits it.
+    return val as ThinkingLevel;
+  }
+  return undefined;
 }
 
 /**
  * Parse a raw CSV field value into items, or undefined if absent/empty/"none".
  */
-function parseCsvField(val: unknown): string[] | undefined {
+function parseCsvField(val: FrontmatterValue | undefined): string[] | undefined {
   if (val === undefined || val === null) return undefined;
   const s = String(val).trim();
   if (!s || s === "none") return undefined;
@@ -234,8 +297,8 @@ function parseCsvField(val: unknown): string[] | undefined {
  * generalize: without this, YAML's `true` stringifies into an agent type
  * literally named "true", so the tools appear and every spawn is refused.
  */
-function parseAllowedSubagents(val: unknown): "all" | string[] | undefined {
-  if (typeof val === "boolean") return val ? "all" : undefined;
+function parseAllowedSubagents(val: FrontmatterValue | undefined): "all" | string[] | undefined {
+  if (val === true || val === false) return val ? "all" : undefined;
   const items = parseCsvField(val);
   if (!items) return undefined;
   return items.some((i) => i === "*" || i.toLowerCase() === "all") ? "all" : items;
@@ -245,7 +308,7 @@ function parseAllowedSubagents(val: unknown): "all" | string[] | undefined {
  * Parse a comma-separated list field with defaults.
  * omitted → defaults; "none"/empty → []; csv → listed items.
  */
-function csvList(val: unknown, defaults: string[]): string[] {
+function csvList(val: FrontmatterValue | undefined, defaults: string[]): string[] {
   if (val === undefined || val === null) return defaults;
   return parseCsvField(val) ?? [];
 }
@@ -257,10 +320,7 @@ function csvList(val: unknown, defaults: string[]): string[] {
  * selectors parsed later by the runner. omitted → all built-ins, no selectors.
  * `tools:` present with only `ext:` entries → zero built-ins (use `*`).
  */
-function parseToolsField(val: unknown): {
-  builtinToolNames: string[];
-  extSelectors: string[] | undefined;
-} {
+function parseToolsField(val: FrontmatterValue | undefined): ParsedToolsField {
   const entries = csvList(val, BUILTIN_TOOL_NAMES);
   const isWildcard = (e: string) => e === "*" || e.toLowerCase() === "all";
   const hasWildcard = entries.some(isWildcard);
@@ -276,7 +336,7 @@ function parseToolsField(val: unknown): {
  * Parse an optional comma-separated list field.
  * omitted → undefined; "none"/empty → undefined; csv → listed items.
  */
-function csvListOptional(val: unknown): string[] | undefined {
+function csvListOptional(val: FrontmatterValue | undefined): string[] | undefined {
   return parseCsvField(val);
 }
 
@@ -284,7 +344,7 @@ function csvListOptional(val: unknown): string[] | undefined {
  * Parse a memory scope field.
  * omitted → undefined; "user"/"project"/"local" → MemoryScope.
  */
-function parseMemory(val: unknown): MemoryScope | undefined {
+function parseMemory(val: FrontmatterValue | undefined): MemoryScope | undefined {
   if (val === "user" || val === "project" || val === "local") return val;
   return undefined;
 }
@@ -301,7 +361,7 @@ function parseMemory(val: unknown): MemoryScope | undefined {
  * accepted rather than leaving an author's intent silently dropped. Anything
  * else stays `undefined`, as before.
  */
-function parseIsolation(val: unknown): IsolationMode | undefined {
+function parseIsolation(val: FrontmatterValue | undefined): IsolationMode | undefined {
   if (val === "worktree") return "worktree";
   if (val === "off" || val === "none" || val === "no" || val === false) return "off";
   return undefined;
@@ -311,7 +371,7 @@ function parseIsolation(val: unknown): IsolationMode | undefined {
  * Parse an inherit field (extensions, skills).
  * omitted/true → true (inherit all); false/"none"/empty → false; csv → listed names.
  */
-function inheritField(val: unknown): true | string[] | false {
+function inheritField(val: FrontmatterValue | undefined): true | string[] | false {
   if (val === undefined || val === null || val === true) return true;
   if (val === false || val === "none") return false;
   const items = csvList(val, []);

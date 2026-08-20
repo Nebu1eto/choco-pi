@@ -25,7 +25,7 @@ import type { AgentConfig, IsolationMode, JoinMode, ThinkingLevel } from "./type
  * restriction: Claude Code's `Agent` tool states the capability and stops, and
  * a second legal value is what lets a model decline one, not being told to.
  */
-const isolationParamShape = {
+const isolationSchemaFields = {
   isolation: Type.Optional(
     Type.Union([Type.Literal("off"), Type.Literal("worktree")], {
       description:
@@ -50,8 +50,8 @@ const isolationParamShape = {
  * Like `scheduleParam`, this is read once at tool registration — flipping the
  * setting needs a new pi session for the schema to change.
  */
-export function isolationParam(enabled: boolean): Partial<typeof isolationParamShape> {
-  return enabled ? isolationParamShape : {};
+export function isolationParam(enabled: boolean): Partial<typeof isolationSchemaFields> {
+  return enabled ? isolationSchemaFields : {};
 }
 
 interface AgentInvocationParams {
@@ -71,6 +71,17 @@ interface AgentInvocationParams {
   isolation?: unknown;
 }
 
+interface ResolvedAgentInvocationConfig {
+  modelInput?: string;
+  modelFromParams: boolean;
+  thinking?: ThinkingLevel;
+  maxTurns?: number;
+  inheritContext: boolean;
+  runInBackground: boolean;
+  isolated: boolean;
+  isolation?: IsolationMode;
+}
+
 interface ResolveOptions {
   /**
    * Whether worktree isolation is permitted at all. False when the project set
@@ -86,16 +97,7 @@ export function resolveAgentInvocationConfig(
   agentConfig: AgentConfig | undefined,
   params: AgentInvocationParams,
   opts?: ResolveOptions,
-): {
-  modelInput?: string;
-  modelFromParams: boolean;
-  thinking?: ThinkingLevel;
-  maxTurns?: number;
-  inheritContext: boolean;
-  runInBackground: boolean;
-  isolated: boolean;
-  isolation?: IsolationMode;
-} {
+): ResolvedAgentInvocationConfig {
   // Precedence first, collapse second — reversing these loses the veto, since
   // an agent file's "off" only outranks a caller's "worktree" while it is still
   // a value. Everything downstream then sees "worktree" or nothing at all.
@@ -103,10 +105,24 @@ export function resolveAgentInvocationConfig(
   const isolation =
     requested === "worktree" && opts?.worktreeAllowed !== false ? "worktree" : undefined;
 
+  const requestedThinking = agentConfig?.thinking ?? params.thinking;
+  // SAFETY: Pi accepts the advertised "off" level at runtime although ThinkingLevel omits it.
+  const thinking = (
+    requestedThinking === "off" ||
+    requestedThinking === "minimal" ||
+    requestedThinking === "low" ||
+    requestedThinking === "medium" ||
+    requestedThinking === "high" ||
+    requestedThinking === "xhigh" ||
+    requestedThinking === "max"
+      ? requestedThinking
+      : undefined
+  ) as ThinkingLevel | undefined;
+
   return {
     modelInput: agentConfig?.model ?? params.model,
     modelFromParams: agentConfig?.model == null && params.model != null,
-    thinking: (agentConfig?.thinking ?? params.thinking) as ThinkingLevel | undefined,
+    thinking,
     maxTurns: agentConfig?.maxTurns ?? params.max_turns,
     inheritContext: agentConfig?.inheritContext ?? params.inherit_context ?? false,
     runInBackground: agentConfig?.runInBackground ?? params.run_in_background ?? false,

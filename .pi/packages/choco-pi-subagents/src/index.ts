@@ -152,15 +152,18 @@ import {
   WorkflowDefinitionSchema,
   WorkflowManager,
   WorkflowStepSchema,
-  type WorkflowStepDefinition,
   type WorkflowStepRunner,
 } from "./workflow.ts";
 
 // ---- Shared helpers ----
 
+interface FleetUIContext {
+  ui: FleetUICtx;
+}
+
 /** Tool execute return value for a text response. */
 function textResult(msg: string, details?: AgentDetails) {
-  return { content: [{ type: "text" as const, text: msg }], details: details as any };
+  return { content: [{ type: "text" as const, text: msg }], details };
 }
 
 export function renderRunningAgentStatus(
@@ -306,7 +309,7 @@ function buildDetails(
     toolUses: number;
     startedAt: number;
     completedAt?: number;
-    status: string;
+    status: AgentDetails["status"];
     error?: string;
     id?: string;
     session?: any;
@@ -322,7 +325,7 @@ function buildDetails(
     turnCount: activity?.turnCount,
     maxTurns: activity?.maxTurns,
     durationMs: (record.completedAt ?? Date.now()) - record.startedAt,
-    status: record.status as AgentDetails["status"],
+    status: record.status,
     agentId: record.id,
     error: record.error,
     ...overrides,
@@ -759,7 +762,7 @@ export default function (pi: ExtensionAPI) {
   };
 
   const spawnTopLevel = (piRef: any, ctxRef: any, type: string, prompt: string, options: any) => {
-    const safeOptions = { ...(options ?? {}) };
+    const safeOptions = { ...options };
     delete safeOptions.parentAgentId;
     delete safeOptions.depth;
     delete safeOptions.maxSubagentDepth;
@@ -808,9 +811,14 @@ export default function (pi: ExtensionAPI) {
       return record?.parentAgentId ? undefined : record;
     },
   };
-  const ownsManagerRegistry = (globalThis as any)[MANAGER_KEY] === undefined;
+  interface GlobalManagerRegistry {
+    [key: symbol]: typeof registryEntry | undefined;
+  }
+  // SAFETY: This process-global symbol slot is owned by the registry protocol documented above.
+  const globalManagerRegistry = globalThis as typeof globalThis & GlobalManagerRegistry;
+  const ownsManagerRegistry = globalManagerRegistry[MANAGER_KEY] === undefined;
   if (ownsManagerRegistry) {
-    (globalThis as any)[MANAGER_KEY] = registryEntry;
+    globalManagerRegistry[MANAGER_KEY] = registryEntry;
   }
 
   // --- Cross-extension RPC via pi.events ---
@@ -856,7 +864,7 @@ export default function (pi: ExtensionAPI) {
       widget.setUICtx(ctx.ui);
       focus.setUICtx(ctx.ui);
       sideConversations.setUICtx(ctx.ui);
-      fleet.setUICtx(ctx.ui as any);
+      fleet.setUICtx(ctx.ui);
     }
     manager.clearCompleted(true);
     // Guard mirrors the `!scheduler.isActive()` pattern below: session_start
@@ -1157,8 +1165,8 @@ export default function (pi: ExtensionAPI) {
     currentCtx = undefined;
     // Only release the global slot if this activation claimed it — a child
     // session's shutdown must not delete the root session's registry entry.
-    if (ownsManagerRegistry && (globalThis as any)[MANAGER_KEY] === registryEntry) {
-      delete (globalThis as any)[MANAGER_KEY];
+    if (ownsManagerRegistry && globalManagerRegistry[MANAGER_KEY] === registryEntry) {
+      delete globalManagerRegistry[MANAGER_KEY];
     }
     scheduler.stop();
     workflowManager.dispose();
@@ -1470,8 +1478,11 @@ export default function (pi: ExtensionAPI) {
 
   // Grab UI context from first tool execution + clear lingering widget on new turn
   pi.on("tool_execution_start", async (_event, ctx) => {
+    // SAFETY: Pi's UI context implements the widget and fleet subsets declared by this package.
     widget.setUICtx(ctx.ui as UICtx);
-    fleet.setUICtx(ctx.ui as unknown as FleetUICtx);
+    // SAFETY: Pi's UI context implements the FleetUICtx methods consumed by FleetList.
+    const fleetContext = ctx as FleetUIContext;
+    fleet.setUICtx(fleetContext.ui);
     widget.onTurnStart();
   });
 
@@ -1547,7 +1558,7 @@ export default function (pi: ExtensionAPI) {
   // the schema to update). Defining the shape once and spreading it via Partial
   // preserves Type.Object's inference when present and produces a
   // `schedule`-free schema when absent — zero LLM-context cost in disabled mode.
-  const scheduleParamShape = {
+  const scheduleSchemaFields = {
     schedule: Type.Optional(
       Type.String({
         description:
@@ -1557,8 +1568,8 @@ export default function (pi: ExtensionAPI) {
       }),
     ),
   };
-  const scheduleParam: Partial<typeof scheduleParamShape> = isSchedulingEnabled()
-    ? scheduleParamShape
+  const scheduleParam: Partial<typeof scheduleSchemaFields> = isSchedulingEnabled()
+    ? scheduleSchemaFields
     : {};
 
   const scheduleGuideline = isSchedulingEnabled()
@@ -1641,16 +1652,19 @@ Terse command-style prompts produce shallow, generic work.
   // "full" (a stale fallback beats a blank tool description). Only the prose
   // is customizable — the parameter schema stays code-owned.
   const renderToolDescriptionTemplate = (template: string): string => {
-    const vars: Record<string, () => string> = {
-      typeList: buildTypeListText,
-      compactTypeList: buildCompactTypeListText,
-      agentDir: getAgentDir,
-      isolationGuideline: () => isolationGuideline,
-      scheduleGuideline: () => scheduleGuideline,
-    };
+    const vars = new Map(
+      Object.entries({
+        typeList: buildTypeListText,
+        compactTypeList: buildCompactTypeListText,
+        agentDir: getAgentDir,
+        isolationGuideline: () => isolationGuideline,
+        scheduleGuideline: () => scheduleGuideline,
+      }),
+    );
     // Replacement callback (not a string) — agent descriptions may contain `$&` etc.
     return template.replace(/\{\{(\w+)\}\}/g, (raw, name: string) => {
-      if (vars[name]) return vars[name]();
+      const replacement = vars.get(name);
+      if (replacement) return replacement();
       console.warn(
         `[choco-pi-subagents] agent-tool-description.md: unknown placeholder ${raw} left as-is`,
       );
@@ -1795,6 +1809,7 @@ Terse command-style prompts produce shallow, generic work.
     },
 
     renderResult(result, { expanded, isPartial }, theme, renderContext) {
+      // SAFETY: This renderer is registered with the Agent tool whose execute paths create AgentDetails.
       const details = result.details as AgentDetails | undefined;
       const text = result.content[0]?.type === "text" ? result.content[0].text : "";
       // Pi reports pre-execution failures (extension block, abort, argument
@@ -1895,12 +1910,13 @@ Terse command-style prompts produce shallow, generic work.
 
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
       // Ensure we have UI context for widget rendering
+      // SAFETY: Pi's UI context implements the widget subset declared by UICtx.
       widget.setUICtx(ctx.ui as UICtx);
 
       // Reload custom agents so new project/global .md files are picked up without restart
       reloadCustomAgents();
 
-      const rawType = params.subagent_type as SubagentType;
+      const rawType: SubagentType = params.subagent_type;
       // Single decision point for dispatch (#183): unknown, disabled and
       // case-ambiguous types are refused here, BEFORE anything spawns, so a
       // background or scheduled call can't start running the wrong agent while
@@ -1939,12 +1955,15 @@ Terse command-style prompts produce shallow, generic work.
       // Resolve model from agent config first; tool-call params only fill gaps.
       let model = ctx.model;
       if (resolvedConfig.modelInput) {
-        const resolved = resolveModel(resolvedConfig.modelInput, ctx.modelRegistry);
-        if (typeof resolved === "string") {
-          if (resolvedConfig.modelFromParams) return textResult(resolved);
-          // config-specified: silent fallback to parent
-        } else {
-          model = resolved;
+        const resolution = resolveModel(resolvedConfig.modelInput, ctx.modelRegistry);
+        switch (resolution.tag) {
+          case "error":
+            if (resolvedConfig.modelFromParams) return textResult(resolution.message);
+            // config-specified: silent fallback to parent
+            break;
+          case "resolved":
+            model = resolution.model;
+            break;
         }
       }
 
@@ -2037,14 +2056,15 @@ Terse command-style prompts produce shallow, generic work.
           );
         }
         try {
+          // SAFETY: The Agent tool schema validates model as an optional string before execute runs.
           const job = scheduler.addJob({
-            name: params.description as string,
-            description: params.description as string,
+            name: params.description,
+            description: params.description,
             schedule: params.schedule as string,
             // The caller's own name, not the substitute — the scheduler re-resolves
             // at fire time, and the original is what a user edits.
             subagent_type: requestedType,
-            prompt: params.prompt as string,
+            prompt: params.prompt,
             model: params.model as string | undefined,
             thinking: thinking,
             max_turns: effectiveMaxTurns,
@@ -2160,7 +2180,7 @@ Terse command-style prompts produce shallow, generic work.
         // reads to the model as a subagent that ran and reported this (#179).
         id = manager.spawn(pi, ctx, subagentType, params.prompt, {
           description: params.description,
-          name: params.name as string | undefined,
+          name: params.name,
           model,
           maxTurns: effectiveMaxTurns,
           isolated,
@@ -2249,7 +2269,7 @@ Terse command-style prompts produce shallow, generic work.
         };
         onUpdate?.({
           content: [{ type: "text", text: `${fgState.toolUses} tool uses...` }],
-          details: details as any,
+          details,
         });
       };
 
@@ -2300,7 +2320,7 @@ Terse command-style prompts produce shallow, generic work.
           params.prompt,
           {
             description: params.description,
-            name: params.name as string | undefined,
+            name: params.name,
             model,
             maxTurns: effectiveMaxTurns,
             isolated,
@@ -2375,11 +2395,14 @@ Terse command-style prompts produce shallow, generic work.
 
       let model = ctx.model;
       if (resolvedConfig.modelInput) {
-        const resolved = resolveModel(resolvedConfig.modelInput, ctx.modelRegistry);
-        if (typeof resolved === "string") {
-          if (resolvedConfig.modelFromParams) throw new Error(resolved);
-        } else {
-          model = resolved;
+        const resolution = resolveModel(resolvedConfig.modelInput, ctx.modelRegistry);
+        switch (resolution.tag) {
+          case "error":
+            if (resolvedConfig.modelFromParams) throw new Error(resolution.message);
+            break;
+          case "resolved":
+            model = resolution.model;
+            break;
         }
       }
       const scopeVerdict = checkModelScope({
@@ -2542,11 +2565,7 @@ Terse command-style prompts produce shallow, generic work.
         }
         try {
           let result = params.steps
-            ? workflowManager.update(
-                params.workflow_id,
-                params.steps as WorkflowStepDefinition[],
-                resolveWorkflowType,
-              )
+            ? workflowManager.update(params.workflow_id, params.steps, resolveWorkflowType)
             : workflowManager.get(params.workflow_id);
           if (!result) return textResult(`Workflow not found: "${params.workflow_id}".`);
           if (params.finish === true) result = workflowManager.finish(params.workflow_id);
@@ -2778,21 +2797,26 @@ Terse command-style prompts produce shallow, generic work.
     if (!cfg?.model) return "inherit"; // no model configured → really inherits parent
     const label = getModelLabelFromConfig(cfg.model);
     if (!registry) return label;
-    const resolved = resolveModel(cfg.model, registry);
-    // Configured but unresolvable: the runtime silently falls back to the parent
-    // model, so flag it (and the fallback) rather than hiding the config.
-    if (typeof resolved === "string") return `${label} (unavailable, fallback: inherit)`;
-    // Surface what it actually resolved to when that differs from the config —
-    // e.g. a provider fallback or a looser version pin. Cosmetic separator/date
-    // differences are normalized away so an effectively-identical match stays quiet.
-    const resolvedFull = `${resolved.provider}/${resolved.id}`;
-    const norm = (s: string) =>
-      s
-        .toLowerCase()
-        .replace(/\./g, "-")
-        .replace(/-\d{8}$/, "");
-    if (norm(cfg.model) === norm(resolvedFull)) return label;
-    return `${label} (→ ${resolvedFull.replace(/-\d{8}$/, "")})`;
+    const resolution = resolveModel(cfg.model, registry);
+    switch (resolution.tag) {
+      // Configured but unresolvable: the runtime silently falls back to the parent
+      // model, so flag it (and the fallback) rather than hiding the config.
+      case "error":
+        return `${label} (unavailable, fallback: inherit)`;
+      case "resolved": {
+        // Surface what it actually resolved to when that differs from the config —
+        // e.g. a provider fallback or a looser version pin. Cosmetic separator/date
+        // differences are normalized away so an effectively-identical match stays quiet.
+        const resolvedFull = `${resolution.model.provider}/${resolution.model.id}`;
+        const norm = (s: string) =>
+          s
+            .toLowerCase()
+            .replace(/\./g, "-")
+            .replace(/-\d{8}$/, "");
+        if (norm(cfg.model) === norm(resolvedFull)) return label;
+        return `${label} (→ ${resolvedFull.replace(/-\d{8}$/, "")})`;
+      }
+    }
   }
 
   async function showAgentsMenu(ctx: ExtensionCommandContext) {
@@ -3605,7 +3629,9 @@ Write the file using the write tool. Only write the file, nothing else.`;
           );
         }
       } else if (id === "joinMode") {
-        setDefaultJoinMode(value as JoinMode);
+        if (value === "async" || value === "group" || value === "smart") {
+          setDefaultJoinMode(value);
+        }
         notifyApplied(ctx, `Default join mode set to ${value}`);
       } else if (id === "schedulingEnabled") {
         const enabled = value === "on";
@@ -3659,14 +3685,16 @@ Write the file using the write tool. Only write the file, nothing else.`;
           `Worktree isolation ${enabled ? "enabled" : "disabled"}. Tool parameter updates on next pi session.`,
         );
       } else if (id === "toolDescriptionMode") {
-        setToolDescriptionMode(value as ToolDescriptionMode);
+        if (value === "full" || value === "compact" || value === "custom") {
+          setToolDescriptionMode(value);
+        }
         notifyApplied(ctx, `Tool description set to ${value}. Takes effect on next pi session.`);
       } else if (id === "fleetView") {
         const enabled = value === "on";
         setFleetViewEnabled(enabled);
         notifyApplied(ctx, `Fleet view ${enabled ? "enabled" : "disabled"}`);
       } else if (id === "agentMentions") {
-        const mode = value as AgentMentionMode;
+        const mode: AgentMentionMode = value === "direct" || value === "off" ? value : "model";
         setAgentMentionMode(mode);
         notifyApplied(
           ctx,
@@ -3681,7 +3709,9 @@ Write the file using the write tool. Only write the file, nothing else.`;
         setRememberAgents(enabled);
         notifyApplied(ctx, `Remember agents ${enabled ? "enabled" : "disabled"}`);
       } else if (id === "widgetMode") {
-        setWidgetMode(value as WidgetMode);
+        if (value === "all" || value === "background" || value === "off") {
+          setWidgetMode(value);
+        }
         notifyApplied(ctx, `Widget set to ${value}`);
       }
     }
@@ -3701,7 +3731,7 @@ Write the file using the write tool. Only write the file, nothing else.`;
         (id, newValue) => {
           applyValue(id, newValue);
         },
-        () => done(undefined as undefined),
+        () => done(undefined),
       );
 
       const container = new Container();

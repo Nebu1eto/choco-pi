@@ -15,6 +15,8 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import { renderAgentName } from "../agent-color.ts";
 import { extractText } from "../context.ts";
 import type { AgentRecord } from "../types.ts";
@@ -36,6 +38,37 @@ const CHROME_LINES_BASE = 6;
 const MIN_VIEWPORT = 3;
 /** Height ceiling shared by the overlay's `maxHeight` and the viewer's internal viewport cap. */
 export const VIEWPORT_HEIGHT_PCT = 70;
+
+interface HostToolCallTrace {
+  type?: string;
+  name?: any;
+  toolName?: any;
+}
+
+interface HostBashExecutionTrace {
+  role?: any;
+  command?: any;
+  output?: any;
+}
+
+const HostStringSchema = Type.String();
+
+function parseHostString(value: any): string | undefined {
+  return Value.Check(HostStringSchema, value) ? value : undefined;
+}
+
+function hostToolCallName(trace: HostToolCallTrace): string {
+  return parseHostString(trace.name) ?? parseHostString(trace.toolName) ?? "unknown";
+}
+
+function parseBashExecution(
+  message: HostBashExecutionTrace,
+): { command: string; output?: string } | undefined {
+  if (message.role !== "bashExecution") return undefined;
+  const command = parseHostString(message.command);
+  if (command === undefined) return undefined;
+  return { command, output: parseHostString(message.output) };
+}
 
 export type ConversationViewerOptions = {
   /** Overlay keeps the modal viewport; focus yields its full transcript to Pi's main scroll view. */
@@ -401,7 +434,7 @@ export class ConversationViewer implements Component {
     let needsSeparator = false;
     for (const msg of messages) {
       if (msg.role === "user") {
-        const text = typeof msg.content === "string" ? msg.content : extractText(msg.content);
+        const text = Array.isArray(msg.content) ? extractText(msg.content) : msg.content;
         if (!text.trim()) continue;
         if (needsSeparator) lines.push(th.fg("dim", "───"));
         lines.push(th.fg("accent", "[User]"));
@@ -414,7 +447,7 @@ export class ConversationViewer implements Component {
         for (const c of msg.content) {
           if (c.type === "text" && c.text) textParts.push(c.text);
           else if (c.type === "toolCall") {
-            toolCalls.push((c as any).name ?? (c as any).toolName ?? "unknown");
+            toolCalls.push(hostToolCallName(c));
           }
         }
         if (needsSeparator) lines.push(th.fg("dim", "───"));
@@ -436,8 +469,9 @@ export class ConversationViewer implements Component {
         for (const line of wrapTextWithAnsi(truncated.trim(), width)) {
           lines.push(th.fg("dim", line));
         }
-      } else if ((msg as any).role === "bashExecution") {
-        const bash = msg as any;
+      } else {
+        const bash = parseBashExecution(msg);
+        if (!bash) continue;
         if (needsSeparator) lines.push(th.fg("dim", "───"));
         lines.push(truncateToWidth(th.fg("muted", `  $ ${bash.command}`), width));
         if (bash.output?.trim()) {
@@ -447,8 +481,6 @@ export class ConversationViewer implements Component {
             lines.push(th.fg("dim", line));
           }
         }
-      } else {
-        continue;
       }
       needsSeparator = true;
     }

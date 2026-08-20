@@ -12,6 +12,8 @@ import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import { resumeAgent, runAgent, type MainSessionFork, type ToolActivity } from "./agent-runner.ts";
 import { assignHandle, handleBase } from "./mention.ts";
 import type {
@@ -52,9 +54,20 @@ const MAX_TOMBSTONES = 100;
  * directory — curated errors instead of TypeErrors from path/fs internals
  * (RPC callers send arbitrary JSON: null, numbers, file paths).
  */
-function assertValidSpawnCwd(cwd: unknown): asserts cwd is string | undefined | null {
+type SpawnCwdInput =
+  | string
+  | number
+  | boolean
+  | null
+  | SpawnCwdInput[]
+  | { [key: string]: SpawnCwdInput }
+  | undefined;
+
+const SpawnCwdSchema = Type.String();
+
+function assertValidSpawnCwd(cwd: SpawnCwdInput): asserts cwd is string | undefined | null {
   if (cwd == null) return;
-  if (typeof cwd !== "string" || !isAbsolute(cwd)) {
+  if (!Value.Check(SpawnCwdSchema, cwd) || !isAbsolute(cwd)) {
     throw new Error(`SpawnOptions.cwd must be an absolute path: "${String(cwd)}"`);
   }
   let isDirectory = false;
