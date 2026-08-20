@@ -21,12 +21,6 @@ type RunResult = {
 	stderr: string;
 };
 
-type NpmSpec = {
-	name?: string;
-	version?: string | null;
-	invalid?: string;
-};
-
 type Settings = {
 	packages?: unknown;
 	tuiMode?: unknown;
@@ -88,15 +82,10 @@ function atLeast(actual: string, expected: string): boolean {
 	return true;
 }
 
-function parseNpmSpec(spec: unknown): NpmSpec | null {
-	if (typeof spec !== "string") return { invalid: String(spec) };
-	if (!spec.startsWith("npm:")) return null;
-	const value = spec.slice(4);
-	const separator = value.lastIndexOf("@");
-	const name = separator <= 0 ? value : value.slice(0, separator);
-	const version = separator <= 0 ? null : value.slice(separator + 1);
-	const validName = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(name);
-	return validName ? { name, version } : { invalid: value };
+function hasPiEntryPoint(manifest: Record<string, unknown>): boolean {
+	if (!isRecord(manifest.pi)) return false;
+	return Object.values(manifest.pi).some((value) =>
+		Array.isArray(value) && value.some((entry) => typeof entry === "string" && entry.length > 0));
 }
 
 const nodeVersion = process.version;
@@ -133,31 +122,26 @@ if (settings) {
 	if (!Array.isArray(settings.packages)) {
 		add("packages", "fail", "settings.packages must be an array");
 	} else {
-		const parsedSpecs = settings.packages.map(parseNpmSpec).filter((spec): spec is NpmSpec => spec !== null);
-		const invalidSpecs = parsedSpecs.flatMap((spec) => spec.invalid ? [spec.invalid] : []);
-		const specs = parsedSpecs.filter((spec): spec is NpmSpec & { name: string } => typeof spec.name === "string");
-		const packageResults = await Promise.all(specs.map(async (spec) => {
-			const manifestPath = path.join(configRoot, "npm", "node_modules", spec.name, "package.json");
+		const packageResults = await Promise.all(settings.packages.map(async (spec) => {
+			if (typeof spec !== "string" || !/^\.\/packages\/[^/]+$/.test(spec)) {
+				return { error: `${String(spec)}: expected ./packages/<name>` };
+			}
+			const manifestPath = path.resolve(configRoot, spec, "package.json");
 			try {
 				const manifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"));
-				const installedVersion = isRecord(manifest) && typeof manifest.version === "string"
-					? manifest.version
-					: undefined;
-				return spec.version && installedVersion !== spec.version
-					? { mismatch: `${spec.name}: expected ${spec.version}, found ${installedVersion ?? "unknown"}` }
-					: {};
-			} catch {
-				return { missing: spec.name };
+				if (!isRecord(manifest)) return { error: `${spec}: package.json must contain an object` };
+				if (!hasPiEntryPoint(manifest)) return { error: `${spec}: package.json has no pi entry point` };
+				return {};
+			} catch (error: unknown) {
+				return { error: `${spec}: ${error instanceof Error ? error.message : String(error)}` };
 			}
 		}));
-		const missing = packageResults.flatMap((result) => result.missing ? [result.missing] : []);
-		const mismatched = packageResults.flatMap((result) => result.mismatch ? [result.mismatch] : []);
-		const detail = [
-			missing.length ? `missing: ${missing.join(", ")}` : "all configured packages installed",
-			mismatched.length ? `version mismatch: ${mismatched.join("; ")}` : null,
-			invalidSpecs.length ? `invalid package specs: ${invalidSpecs.join(", ")}` : null,
-		].filter((value): value is string => value !== null).join("; ");
-		add("packages", missing.length || mismatched.length || invalidSpecs.length ? "fail" : "pass", detail);
+		const errors = packageResults.flatMap((result) => result.error ? [result.error] : []);
+		add(
+			"packages",
+			errors.length ? "fail" : "pass",
+			errors.length ? errors.join("; ") : "all configured local packages have valid Pi manifests",
+		);
 	}
 }
 
@@ -200,6 +184,7 @@ const requiredResources = [
 	"../scripts/install-profile.mjs",
 	"../scripts/install-profile.d.mts",
 	"SYSTEM.md",
+	"choco-pi-codex.json",
 	"zentui.json",
 	"extensions/apex-provider.ts",
 	"extensions/apex-provider.json",
@@ -252,21 +237,27 @@ add(
 	missingResources.length ? `missing: ${missingResources.join(", ")}` : "system prompt, agents, workflows, and command aliases present",
 );
 
-const lensManifestPath = path.join(configRoot, "npm", "node_modules", "pi-lens", "package.json");
+const lspRoot = path.join(configRoot, "packages", "choco-pi-lsp");
 try {
-	const manifest: unknown = JSON.parse(await readFile(lensManifestPath, "utf8"));
+	const manifest: unknown = JSON.parse(await readFile(path.join(lspRoot, "package.json"), "utf8"));
 	const version = isRecord(manifest) && typeof manifest.version === "string" ? manifest.version : undefined;
-	add("pi-lens", version ? "pass" : "fail", version ? `pi-lens ${version}; semantic tools available` : "pi-lens version is missing");
-} catch {
-	add("pi-lens", "fail", "configured pi-lens package is unavailable");
+	const grammarPresent = await exists(path.join(lspRoot, "grammars", "tree-sitter-typescript.wasm"));
+	const astGrepPresent = await exists(path.join(lspRoot, "node_modules", "@ast-grep", "napi"));
+	const valid = version === "4.0.1-choco.0" && grammarPresent && astGrepPresent;
+	add(
+		"choco-pi-lsp",
+		valid ? "pass" : "fail",
+		valid
+			? `choco-pi-lsp ${version}; semantic tools available`
+			: [
+				version === "4.0.1-choco.0" ? null : `expected version 4.0.1-choco.0, found ${version ?? "unknown"}`,
+				grammarPresent ? null : "tree-sitter-typescript.wasm is missing",
+				astGrepPresent ? null : "@ast-grep/napi is missing",
+			].filter((value): value is string => value !== null).join("; "),
+	);
+} catch (error: unknown) {
+	add("choco-pi-lsp", "fail", error instanceof Error ? error.message : String(error));
 }
-
-const browserResult = await run("agent-browser", ["--version"]);
-add(
-	"agent-browser",
-	browserResult.status === 0 ? "pass" : "warn",
-	browserResult.status === 0 ? browserResult.stdout.trim() : "optional native browser runtime is unavailable",
-);
 
 const overall: CheckStatus = checks.some((check) => check.status === "fail")
 	? "fail"

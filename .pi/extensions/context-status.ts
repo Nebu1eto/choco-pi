@@ -79,11 +79,11 @@ function toolTokens(tool: ToolInfo): number {
 }
 
 function isMcpTool(tool: ToolInfo): boolean {
-	return tool.sourceInfo.source.includes("pi-mcp-adapter");
+	return tool.sourceInfo.source.includes("choco-pi-mcp");
 }
 
 function isAgentTool(tool: ToolInfo): boolean {
-	return tool.sourceInfo.source.includes("pi-subagents");
+	return tool.sourceInfo.source.includes("subagents");
 }
 
 function mcpCatalog(cwd: string): McpCatalog {
