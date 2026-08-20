@@ -210,6 +210,13 @@ uses `ctx.ui.notify` and does not call `pi.sendMessage`, so no follow-up turn or
 main transcript message is produced. `/btw` with no question lists current side
 records and reopens the selected one.
 
+BTW history is session-scoped. `rememberAgents` persists each child transcript,
+but manager records and tombstones live in memory and are cleared on session
+start or switch, and the persisted `subagents:record` entry carries the BTW
+marker without the session file, handle, or alias. Restoring side conversations
+across restarts therefore needs a durable record-to-session index, so after a
+restart `/btw` starts from an empty list.
+
 FleetView includes side conversations as normal root agents, prefixes their row
 with `[btw]`, and delegates Enter to the side controller's replyable overlay.
 Its existing `f` path and the overlay's `f focus` callback both feed the same
