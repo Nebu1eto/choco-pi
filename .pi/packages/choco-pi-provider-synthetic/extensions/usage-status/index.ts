@@ -1,10 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import {
   configLoader,
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
-  type SyntheticConfigUpdatedPayload,
+  SyntheticConfigUpdatedPayloadSchema,
 } from "../../src/config";
 import type { QuotasResponse, SyntheticQuotasSnapshotPayload } from "../../src/types/quotas";
 import { formatResetTime } from "../../src/utils/quotas";
@@ -40,19 +41,19 @@ function parseSnapshot(quotas: QuotasResponse): WindowStatus[] {
   });
 }
 
-const SHORT_LABELS: Record<string, string> = {
-  "Credits / week": "week",
-  "Requests / 5h": "5h",
-  "Search / hour": "search",
-  "Free Tool Calls / day": "tools",
-};
+const SHORT_LABELS = new Map<string, string>([
+  ["Credits / week", "week"],
+  ["Requests / 5h", "5h"],
+  ["Search / hour", "search"],
+  ["Free Tool Calls / day", "tools"],
+]);
 
 function formatStatus(ctx: ExtensionContext, windows: WindowStatus[]): string {
   const theme = ctx.ui.theme;
   const parts: string[] = [];
 
   for (const w of windows) {
-    const short = SHORT_LABELS[w.label] ?? w.label;
+    const short = SHORT_LABELS.get(w.label) ?? w.label;
     const remaining = Math.max(0, Math.min(100, Math.round(100 - w.usedPercent)));
     const color = getSeverityColor(w.severity);
     const pctText = theme.fg(color, `${remaining}%`);
@@ -108,8 +109,9 @@ export default async function (pi: ExtensionAPI) {
     });
   }
 
-  pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data: unknown) => {
-    enabled = (data as SyntheticConfigUpdatedPayload).config.usageStatus;
+  pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
+    if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
+    enabled = data.config.usageStatus;
   });
 
   pi.on("session_start", (_event, ctx) => {

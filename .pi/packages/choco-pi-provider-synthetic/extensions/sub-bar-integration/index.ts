@@ -1,15 +1,16 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import {
   configLoader,
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
-  type SyntheticConfigUpdatedPayload,
+  SyntheticConfigUpdatedPayloadSchema,
 } from "../../src/config";
 import {
   type QuotasResponse,
   SYNTHETIC_QUOTAS_UPDATED_EVENT,
-  type SyntheticQuotasUpdatedPayload,
+  SyntheticQuotasUpdatedPayloadSchema,
 } from "../../src/types/quotas";
 import { formatResetTime } from "../../src/utils/quotas";
 import { type QuotaWindow, safePercent, toWindows } from "../../src/utils/quotas-severity";
@@ -29,12 +30,12 @@ interface UsageSnapshot {
   lastSuccessAt?: number;
 }
 
-const SUB_BAR_LABELS: Record<string, string> = {
-  weeklyTokenLimit: "Credits",
-  rollingFiveHourLimit: "5h",
-  "search.hourly": "Search",
-  freeToolCalls: "Tools",
-};
+const SUB_BAR_LABELS = new Map<string, string>([
+  ["weeklyTokenLimit", "Credits"],
+  ["rollingFiveHourLimit", "5h"],
+  ["search.hourly", "Search"],
+  ["freeToolCalls", "Tools"],
+]);
 
 function toUsageSnapshot(quotas: QuotasResponse): UsageSnapshot {
   const windows = toWindows(quotas);
@@ -63,7 +64,7 @@ function toUsageSnapshot(quotas: QuotasResponse): UsageSnapshot {
     provider: "synthetic",
     displayName: "Synthetic",
     windows: windows.map((w) => ({
-      label: SUB_BAR_LABELS[w.id] ?? w.label,
+      label: SUB_BAR_LABELS.get(w.id) ?? w.label,
       usedPercent: Math.round(Math.max(0, Math.min(100, w.usedPercent))),
       resetDescription: formatResetTime(w.resetsAt.toISOString()),
       resetAt: w.resetsAt.toISOString(),
@@ -91,14 +92,16 @@ export function registerSubBarIntegration(pi: ExtensionAPI): void {
   }
 
   // Receive quota updates from the provider extension
-  pi.events.on(SYNTHETIC_QUOTAS_UPDATED_EVENT, (data: unknown) => {
+  pi.events.on(SYNTHETIC_QUOTAS_UPDATED_EVENT, (data) => {
+    if (!Value.Check(SyntheticQuotasUpdatedPayloadSchema, data)) return;
     if (!isSynthetic() || !subCoreReady) return;
-    const { quotas } = data as SyntheticQuotasUpdatedPayload;
+    const { quotas } = data;
     emitUsage(quotas);
   });
 
-  pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data: unknown) => {
-    enabled = (data as SyntheticConfigUpdatedPayload).config.subBarIntegration;
+  pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
+    if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
+    enabled = data.config.subBarIntegration;
 
     if (!enabled) return;
 

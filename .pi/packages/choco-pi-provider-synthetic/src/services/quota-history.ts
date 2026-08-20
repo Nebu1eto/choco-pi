@@ -1,6 +1,8 @@
 import { appendFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { QuotasResponse } from "../types/quotas";
 import type { ProjectionSnapshot } from "../utils/quotas-projection";
 
@@ -20,8 +22,30 @@ interface PersistedQuotaHistoryEntry {
   quotas: QuotasResponse;
 }
 
-type WeeklyQuota = NonNullable<QuotasResponse["weeklyTokenLimit"]>;
-type RollingQuota = NonNullable<QuotasResponse["rollingFiveHourLimit"]>;
+const WeeklyQuotaSchema = Type.Object({
+  nextRegenAt: Type.String(),
+  percentRemaining: Type.Number(),
+  maxCredits: Type.String(),
+  remainingCredits: Type.String(),
+  nextRegenCredits: Type.String(),
+});
+
+const RollingQuotaSchema = Type.Object({
+  nextTickAt: Type.String(),
+  tickPercent: Type.Number(),
+  remaining: Type.Number(),
+  max: Type.Number(),
+  limited: Type.Boolean(),
+});
+
+const HistoryLineSchema = Type.Object({
+  version: Type.Literal(1),
+  recordedAt: Type.String(),
+  quotas: Type.Object({
+    weeklyTokenLimit: Type.Optional(Type.Unknown()),
+    rollingFiveHourLimit: Type.Optional(Type.Unknown()),
+  }),
+});
 
 export interface QuotaHistoryOptions {
   /** Override the state directory. `null` disables disk persistence. */
@@ -271,80 +295,24 @@ function hasProjectionQuotas(quotas: QuotasResponse): boolean {
 
 function parseHistoryLine(line: string): ProjectionSnapshot | undefined {
   try {
-    const value = JSON.parse(line) as unknown;
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      return undefined;
-    }
-    const entry = value as Partial<PersistedQuotaHistoryEntry>;
-    if (entry.version !== 1 || typeof entry.recordedAt !== "string") {
-      return undefined;
-    }
-    if (typeof entry.quotas !== "object" || entry.quotas === null || Array.isArray(entry.quotas)) {
-      return undefined;
-    }
-    const updatedAt = Date.parse(entry.recordedAt);
+    const value = JSON.parse(line);
+    if (!Value.Check(HistoryLineSchema, value)) return undefined;
+
+    const updatedAt = Date.parse(value.recordedAt);
     if (!Number.isFinite(updatedAt)) return undefined;
-    const quotas = parseProjectionQuotas(entry.quotas);
+
+    const quotas: QuotasResponse = {};
+    if (Value.Check(WeeklyQuotaSchema, value.quotas.weeklyTokenLimit)) {
+      quotas.weeklyTokenLimit = value.quotas.weeklyTokenLimit;
+    }
+    if (Value.Check(RollingQuotaSchema, value.quotas.rollingFiveHourLimit)) {
+      quotas.rollingFiveHourLimit = value.quotas.rollingFiveHourLimit;
+    }
     if (!hasProjectionQuotas(quotas)) return undefined;
     return { quotas, updatedAt };
   } catch {
     return undefined;
   }
-}
-
-function parseProjectionQuotas(value: QuotasResponse): QuotasResponse {
-  const quotas: QuotasResponse = {};
-  const weekly = parseWeeklyQuota(value.weeklyTokenLimit);
-  if (weekly) quotas.weeklyTokenLimit = weekly;
-  const rolling = parseRollingQuota(value.rollingFiveHourLimit);
-  if (rolling) quotas.rollingFiveHourLimit = rolling;
-  return quotas;
-}
-
-function parseWeeklyQuota(value: unknown): WeeklyQuota | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-  const quota = value as Record<string, unknown>;
-  if (
-    typeof quota.nextRegenAt !== "string" ||
-    typeof quota.percentRemaining !== "number" ||
-    typeof quota.maxCredits !== "string" ||
-    typeof quota.remainingCredits !== "string" ||
-    typeof quota.nextRegenCredits !== "string"
-  ) {
-    return undefined;
-  }
-  return {
-    nextRegenAt: quota.nextRegenAt,
-    percentRemaining: quota.percentRemaining,
-    maxCredits: quota.maxCredits,
-    remainingCredits: quota.remainingCredits,
-    nextRegenCredits: quota.nextRegenCredits,
-  };
-}
-
-function parseRollingQuota(value: unknown): RollingQuota | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-  const quota = value as Record<string, unknown>;
-  if (
-    typeof quota.nextTickAt !== "string" ||
-    typeof quota.tickPercent !== "number" ||
-    typeof quota.remaining !== "number" ||
-    typeof quota.max !== "number" ||
-    typeof quota.limited !== "boolean"
-  ) {
-    return undefined;
-  }
-  return {
-    nextTickAt: quota.nextTickAt,
-    tickPercent: quota.tickPercent,
-    remaining: quota.remaining,
-    max: quota.max,
-    limited: quota.limited,
-  };
 }
 
 function historyFileName(recordedAt: string): string {

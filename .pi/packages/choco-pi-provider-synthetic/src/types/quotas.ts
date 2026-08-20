@@ -1,7 +1,9 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
-export type QuotaSource = "header" | "api";
+export const QuotaSourceSchema = Type.Union([Type.Literal("header"), Type.Literal("api")]);
+
+export type QuotaSource = Static<typeof QuotaSourceSchema>;
 
 const RequestQuotaSchema = Type.Object({
   limit: Type.Number(),
@@ -10,30 +12,39 @@ const RequestQuotaSchema = Type.Object({
 });
 
 export const QuotasResponseSchema = Type.Object({
-  subscription: Type.Optional(RequestQuotaSchema),
+  subscription: Type.Optional(Type.Union([RequestQuotaSchema, Type.Null()])),
   search: Type.Optional(
-    Type.Object({
-      hourly: Type.Optional(RequestQuotaSchema),
-    }),
+    Type.Union([
+      Type.Object({
+        hourly: Type.Optional(Type.Union([RequestQuotaSchema, Type.Null()])),
+      }),
+      Type.Null(),
+    ]),
   ),
-  freeToolCalls: Type.Optional(RequestQuotaSchema),
+  freeToolCalls: Type.Optional(Type.Union([RequestQuotaSchema, Type.Null()])),
   weeklyTokenLimit: Type.Optional(
-    Type.Object({
-      nextRegenAt: Type.String(),
-      percentRemaining: Type.Number(),
-      maxCredits: Type.String(),
-      remainingCredits: Type.String(),
-      nextRegenCredits: Type.String(),
-    }),
+    Type.Union([
+      Type.Object({
+        nextRegenAt: Type.String(),
+        percentRemaining: Type.Number(),
+        maxCredits: Type.String(),
+        remainingCredits: Type.String(),
+        nextRegenCredits: Type.String(),
+      }),
+      Type.Null(),
+    ]),
   ),
   rollingFiveHourLimit: Type.Optional(
-    Type.Object({
-      nextTickAt: Type.String(),
-      tickPercent: Type.Number(),
-      remaining: Type.Number(),
-      max: Type.Number(),
-      limited: Type.Boolean(),
-    }),
+    Type.Union([
+      Type.Object({
+        nextTickAt: Type.String(),
+        tickPercent: Type.Number(),
+        remaining: Type.Number(),
+        max: Type.Number(),
+        limited: Type.Boolean(),
+      }),
+      Type.Null(),
+    ]),
   ),
 });
 
@@ -62,21 +73,48 @@ export const SYNTHETIC_QUOTAS_REQUEST_EVENT = "synthetic:quotas:request" as cons
 
 export const SYNTHETIC_QUOTAS_READ_EVENT = "synthetic:quotas:read" as const;
 
-export interface SyntheticQuotasSnapshotPayload {
-  quotas: QuotasResponse;
-  source: QuotaSource;
-  updatedAt: number; // epoch ms
-}
+export const SyntheticQuotasSnapshotPayloadSchema = Type.Object({
+  quotas: QuotasResponseSchema,
+  source: QuotaSourceSchema,
+  updatedAt: Type.Number(), // epoch ms
+});
 
-export interface SyntheticQuotasUpdatedPayload extends SyntheticQuotasSnapshotPayload {}
+export type SyntheticQuotasSnapshotPayload = Static<typeof SyntheticQuotasSnapshotPayloadSchema>;
 
-export interface SyntheticQuotasReadPayload {
-  respond: (snapshot: SyntheticQuotasSnapshotPayload | undefined) => void;
-}
+export const SyntheticQuotasUpdatedPayloadSchema = SyntheticQuotasSnapshotPayloadSchema;
 
-export interface SyntheticQuotasRequestPayload {
-  respond?: (snapshot: SyntheticQuotasSnapshotPayload | undefined) => void;
-}
+export type SyntheticQuotasUpdatedPayload = Static<typeof SyntheticQuotasUpdatedPayloadSchema>;
+
+const OptionalSyntheticQuotasSnapshotPayloadSchema = Type.Union([
+  SyntheticQuotasSnapshotPayloadSchema,
+  Type.Undefined(),
+]);
+
+export const SyntheticQuotasReadPayloadSchema = Type.Object({
+  respond: Type.Function([OptionalSyntheticQuotasSnapshotPayloadSchema], Type.Void()),
+});
+
+export type SyntheticQuotasReadPayload = Static<typeof SyntheticQuotasReadPayloadSchema>;
+
+export const SyntheticQuotasRequestPayloadSchema = Type.Object({
+  respond: Type.Optional(
+    Type.Union([
+      Type.Function([OptionalSyntheticQuotasSnapshotPayloadSchema], Type.Void()),
+      Type.Null(),
+    ]),
+  ),
+});
+
+export type SyntheticQuotasRequestPayload = Static<typeof SyntheticQuotasRequestPayloadSchema>;
+
+export const SyntheticQuotasRequestEventPayloadSchema = Type.Union([
+  SyntheticQuotasRequestPayloadSchema,
+  Type.Undefined(),
+]);
+
+export type SyntheticQuotasRequestEventPayload = Static<
+  typeof SyntheticQuotasRequestEventPayloadSchema
+>;
 
 export type QuotasErrorKind = "cancelled" | "timeout" | "config" | "http" | "network";
 

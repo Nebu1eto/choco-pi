@@ -9,10 +9,16 @@
 // cacheRead stores the price reported by the API's input_cache_reads field
 // directly.
 
+import type { OpenAICompletionsCompat } from "@earendil-works/pi-ai";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
-import type { SyntheticApiModel } from "../../src/client/types";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { SyntheticApiModelSchema, type SyntheticApiModel } from "../../src/client/types";
 
-export type SyntheticModel = ProviderModelConfig;
+export type SyntheticModel = Omit<ProviderModelConfig, "api" | "compat"> & {
+  api?: "openai-completions";
+  compat?: OpenAICompletionsCompat;
+};
 
 export const SYNTHETIC_MODELS: SyntheticModel[] = [
   // API: syn:large:text → ctx=524288, out=65536
@@ -305,29 +311,24 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
   },
 ];
 
-export function isValidApiModel(model: unknown): model is SyntheticApiModel {
-  if (!model || typeof model !== "object") return false;
-  const m = model as Partial<SyntheticApiModel>;
-  return (
-    typeof m.id === "string" &&
-    m.id.length > 0 &&
-    typeof m.name === "string" &&
-    Array.isArray(m.input_modalities) &&
-    m.input_modalities.every((x) => typeof x === "string") &&
-    Array.isArray(m.output_modalities) &&
-    m.output_modalities.every((x) => typeof x === "string") &&
-    typeof m.context_length === "number" &&
-    Number.isFinite(m.context_length) &&
-    typeof m.max_output_length === "number" &&
-    Number.isFinite(m.max_output_length) &&
-    m.pricing !== null &&
-    typeof m.pricing === "object" &&
-    typeof m.pricing.prompt === "string" &&
-    typeof m.pricing.completion === "string" &&
-    typeof m.pricing.input_cache_reads === "string" &&
-    typeof m.pricing.input_cache_writes === "string"
-  );
-}
+const StoredSyntheticModelSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  name: Type.String(),
+  reasoning: Type.Boolean(),
+  input: Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]), {
+    minItems: 1,
+  }),
+  cost: Type.Object({
+    input: Type.Number(),
+    output: Type.Number(),
+    cacheRead: Type.Number(),
+    cacheWrite: Type.Number(),
+  }),
+  contextWindow: Type.Number(),
+  maxTokens: Type.Number(),
+});
+
+const ModelIdentifierSchema = Type.Object({ id: Type.Unknown() });
 
 export function parseApiPrice(priceStr: string): number {
   const match = priceStr.match(/\$?(\d+\.?\d*)/);
@@ -350,40 +351,34 @@ function apiModelSupportsReasoning(model: SyntheticApiModel): boolean {
   return model.supported_features?.includes("reasoning") ?? false;
 }
 
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-
-type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-
-function isValidApiEffort(effort: unknown): effort is string {
-  return typeof effort === "string" && effort.length > 0;
-}
-
 // Translate the API's reasoning_parameters.efforts into a thinkingLevelMap.
 // "none" maps to pi's "off" level. Levels the API does not list are marked null
 // (hidden) — model backends accept exactly the values they declare, so an
 // unlisted level must be hidden rather than sent upstream. Every level key is
 // written explicitly because pi gates "xhigh"/"max" on key presence, not value.
+const ApiEffortSchema = Type.String({ minLength: 1 });
+
 function buildThinkingLevelMapFromApiEfforts(
   efforts: readonly unknown[],
-): Partial<Record<ThinkingLevel, string | null>> {
-  const available = new Set(efforts.filter(isValidApiEffort));
-  const map: Partial<Record<ThinkingLevel, string | null>> = {};
-
-  for (const level of THINKING_LEVELS) {
-    if (level === "off") {
-      // No "none" entry means the upstream rejects it (e.g. Kimi-K3 always
-      // reasons), so hide "off" rather than trying to disable reasoning.
-      map.off = available.has("none") ? "none" : null;
-      continue;
-    }
-    map[level] = available.has(level) ? level : null;
-  }
-
-  return map;
+): NonNullable<SyntheticModel["thinkingLevelMap"]> {
+  const available = new Set(
+    efforts.filter((effort): effort is string => Value.Check(ApiEffortSchema, effort)),
+  );
+  return {
+    // No "none" entry means the upstream rejects it (e.g. Kimi-K3 always
+    // reasons), so hide "off" rather than trying to disable reasoning.
+    off: available.has("none") ? "none" : null,
+    minimal: available.has("minimal") ? "minimal" : null,
+    low: available.has("low") ? "low" : null,
+    medium: available.has("medium") ? "medium" : null,
+    high: available.has("high") ? "high" : null,
+    xhigh: available.has("xhigh") ? "xhigh" : null,
+    max: available.has("max") ? "max" : null,
+  };
 }
 
 function apiModelToSyntheticModel(model: SyntheticApiModel): SyntheticModel {
-  return {
+  const syntheticModel: SyntheticModel = {
     id: model.id,
     name: model.name,
     reasoning: apiModelSupportsReasoning(model),
@@ -396,48 +391,25 @@ function apiModelToSyntheticModel(model: SyntheticApiModel): SyntheticModel {
     },
     contextWindow: model.context_length,
     maxTokens: model.max_output_length,
-    ...(model.reasoning_parameters?.efforts
-      ? {
-          thinkingLevelMap: buildThinkingLevelMapFromApiEfforts(model.reasoning_parameters.efforts),
-        }
-      : {}),
   };
-}
-
-function isValidSyntheticModel(model: unknown): model is SyntheticModel {
-  if (!model || typeof model !== "object") return false;
-  const m = model as Partial<SyntheticModel>;
-  return (
-    typeof m.id === "string" &&
-    m.id.length > 0 &&
-    typeof m.name === "string" &&
-    typeof m.reasoning === "boolean" &&
-    Array.isArray(m.input) &&
-    m.input.every((x) => x === "text" || x === "image") &&
-    m.input.length > 0 &&
-    m.cost !== null &&
-    typeof m.cost === "object" &&
-    typeof m.cost.input === "number" &&
-    Number.isFinite(m.cost.input) &&
-    typeof m.cost.output === "number" &&
-    Number.isFinite(m.cost.output) &&
-    typeof m.contextWindow === "number" &&
-    Number.isFinite(m.contextWindow) &&
-    typeof m.maxTokens === "number" &&
-    Number.isFinite(m.maxTokens)
-  );
+  if (model.reasoning_parameters?.efforts) {
+    syntheticModel.thinkingLevelMap = buildThinkingLevelMapFromApiEfforts(
+      model.reasoning_parameters.efforts,
+    );
+  }
+  return syntheticModel;
 }
 
 function applyDefaultCompat(model: SyntheticModel): SyntheticModel {
-  return {
-    ...model,
-    compat: {
-      supportsDeveloperRole: false,
-      maxTokensField: "max_tokens" as const,
-      ...(model.reasoning ? { supportsReasoningEffort: true } : {}),
-      ...model.compat,
-    },
+  const compat: NonNullable<SyntheticModel["compat"]> = {
+    supportsDeveloperRole: false,
+    maxTokensField: "max_tokens",
+    ...model.compat,
   };
+  if (model.reasoning && model.compat?.supportsReasoningEffort === undefined) {
+    compat.supportsReasoningEffort = true;
+  }
+  return { ...model, compat };
 }
 
 function finalizeModel(model: SyntheticModel): SyntheticModel {
@@ -473,11 +445,8 @@ export function buildSyntheticProviderModelsFromApi(
 
   return apiModels
     .map((model, index) => {
-      if (!isValidApiModel(model)) {
-        const id =
-          model && typeof model === "object" && "id" in model
-            ? String((model as { id: unknown }).id)
-            : String(index);
+      if (!Value.Check(SyntheticApiModelSchema, model) || model.id.length === 0) {
+        const id = Value.Check(ModelIdentifierSchema, model) ? String(model.id) : String(index);
         throw new Error(`Synthetic API returned invalid model entry "${id}"`);
       }
       return mergeWithStaticOverride(apiModelToSyntheticModel(model), overrides.get(model.id));
@@ -492,11 +461,8 @@ export function buildSyntheticProviderModelsFromStore(
 
   return storedModels
     .map((model, index) => {
-      if (!isValidSyntheticModel(model)) {
-        const id =
-          model && typeof model === "object" && "id" in model
-            ? String((model as { id: unknown }).id)
-            : String(index);
+      if (!Value.Check(StoredSyntheticModelSchema, model)) {
+        const id = Value.Check(ModelIdentifierSchema, model) ? String(model.id) : String(index);
         throw new Error(`Synthetic model store contains invalid entry "${id}"`);
       }
       return mergeWithStaticOverride(model, overrides.get(model.id));

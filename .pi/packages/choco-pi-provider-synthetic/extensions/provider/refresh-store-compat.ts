@@ -14,14 +14,45 @@
 //     `await context.publish({ persist: entry })` (skip when aborted)
 // ---------------------------------------------------------------------------
 
-import type { ModelsStoreEntry, RefreshModelsContext } from "@earendil-works/pi-ai";
+import type { RefreshModelsContext } from "@earendil-works/pi-ai";
+import { type Static, Type } from "typebox";
+import { Value } from "typebox/value";
+
+export const SyntheticModelsStoreEntrySchema = Type.Object({
+  models: Type.Array(Type.Unknown()),
+  lastModified: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+  checkedAt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+  etag: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+});
+
+export type SyntheticModelsStoreEntry = Static<typeof SyntheticModelsStoreEntrySchema>;
+
+const BooleanSchema = Type.Boolean();
+
+type StoreBoundaryValue = {} | null | undefined;
+
+interface LegacyStore {
+  read: () => Promise<StoreBoundaryValue>;
+  write: (entry: SyntheticModelsStoreEntry) => Promise<StoreBoundaryValue>;
+}
 
 type LegacyRefreshModelsContext = RefreshModelsContext & {
-  store?: {
-    read(): Promise<ModelsStoreEntry | undefined>;
-    write(entry: ModelsStoreEntry): Promise<unknown>;
-  };
+  store?: StoreBoundaryValue;
 };
+
+function isLegacyStore(value: StoreBoundaryValue): value is LegacyStore {
+  if (
+    value === null ||
+    Object(value) !== value ||
+    Array.isArray(value) ||
+    value instanceof Function
+  ) {
+    return false;
+  }
+  // SAFETY: The non-enumerating checks above establish an object whose two consumed members are guarded below.
+  const store = value as { read?: StoreBoundaryValue; write?: StoreBoundaryValue };
+  return store.read instanceof Function && store.write instanceof Function;
+}
 
 /**
  * Returns the persisted catalog entry for the current provider, reading from
@@ -30,14 +61,22 @@ type LegacyRefreshModelsContext = RefreshModelsContext & {
  */
 export async function readStoredModels(
   context: RefreshModelsContext,
-): Promise<ModelsStoreEntry | undefined> {
-  if (context.stored !== undefined) return context.stored;
+): Promise<SyntheticModelsStoreEntry | undefined> {
+  if (context.stored !== undefined) {
+    return Value.Check(SyntheticModelsStoreEntrySchema, context.stored)
+      ? context.stored
+      : undefined;
+  }
   return readLegacyStore(context);
 }
 
-function readLegacyStore(context: RefreshModelsContext): Promise<ModelsStoreEntry | undefined> {
-  const legacy = context as LegacyRefreshModelsContext;
-  return legacy.store ? legacy.store.read() : Promise.resolve(undefined);
+async function readLegacyStore(
+  context: RefreshModelsContext,
+): Promise<SyntheticModelsStoreEntry | undefined> {
+  const legacy: LegacyRefreshModelsContext = context;
+  if (!isLegacyStore(legacy.store)) return undefined;
+  const entry = await legacy.store.read();
+  return Value.Check(SyntheticModelsStoreEntrySchema, entry) ? entry : undefined;
 }
 
 /**
@@ -50,15 +89,18 @@ function readLegacyStore(context: RefreshModelsContext): Promise<ModelsStoreEntr
  */
 export async function persistModels(
   context: RefreshModelsContext,
-  entry: ModelsStoreEntry,
+  entry: SyntheticModelsStoreEntry,
 ): Promise<boolean> {
-  if (typeof context.publish === "function") {
-    return context.publish({ persist: entry });
+  if (!Value.Check(SyntheticModelsStoreEntrySchema, entry)) return false;
+
+  const publish: unknown = context.publish;
+  if (publish instanceof Function) {
+    const result = await publish({ persist: entry });
+    return Value.Check(BooleanSchema, result) && result;
   }
-  const legacy = context as LegacyRefreshModelsContext;
-  if (legacy.store) {
-    await legacy.store.write(entry);
-    return true;
-  }
-  return false;
+
+  const legacy: LegacyRefreshModelsContext = context;
+  if (!isLegacyStore(legacy.store)) return false;
+  await legacy.store.write(entry);
+  return true;
 }

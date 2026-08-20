@@ -167,11 +167,10 @@ describe("Synthetic models", () => {
     const models = buildSyntheticProviderModels();
     expect(models.length).toBe(SYNTHETIC_MODELS.length);
     for (const model of models) {
-      const compat = model.compat as Record<string, unknown> | undefined;
-      expect(compat?.supportsDeveloperRole).toBe(false);
-      expect(compat?.maxTokensField).toBe("max_tokens");
+      expect(model.compat?.supportsDeveloperRole).toBe(false);
+      expect(model.compat?.maxTokensField).toBe("max_tokens");
       if (model.reasoning) {
-        expect(compat?.supportsReasoningEffort).toBe(true);
+        expect(model.compat?.supportsReasoningEffort).toBe(true);
       }
     }
   });
@@ -212,8 +211,7 @@ describe("Synthetic models", () => {
     expect(model.thinkingLevelMap?.minimal).toBeNull();
     expect(model.thinkingLevelMap?.medium).toBeNull();
     expect(model.thinkingLevelMap?.xhigh).toBeNull();
-    const compat = model.compat as Record<string, unknown> | undefined;
-    expect(compat?.supportsReasoningEffort).toBe(true);
+    expect(model.compat?.supportsReasoningEffort).toBe(true);
   });
 
   it("buildSyntheticProviderModelsFromApi maps 'none' to off and hides unlisted levels", () => {
@@ -277,23 +275,25 @@ describe("Synthetic models", () => {
 
   it("static catalog thinkingLevelMaps match the API's declared efforts", async () => {
     const apiModels = await fetchApiModels();
-    const levelKeys = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
     for (const apiModel of apiModels) {
       const hardcoded = SYNTHETIC_MODELS.find((m) => m.id === apiModel.id);
       if (!hardcoded?.reasoning || !apiModel.reasoning_parameters) continue;
       const efforts = apiModel.reasoning_parameters.efforts;
       // Kimi-K3 rejects "none" upstream and cannot disable reasoning, so its
       // static map hides off; everything else maps "none" to off verbatim.
-      const expected: Record<string, string | null> = {
+      const expected = {
         off: efforts.includes("none")
           ? "none"
-          : (apiModel.hugging_face_id ?? apiModel.id).includes("Kimi")
+          : String(apiModel.hugging_face_id ?? apiModel.id).includes("Kimi")
             ? null
             : "none",
+        minimal: efforts.includes("minimal") ? "minimal" : null,
+        low: efforts.includes("low") ? "low" : null,
+        medium: efforts.includes("medium") ? "medium" : null,
+        high: efforts.includes("high") ? "high" : null,
+        xhigh: efforts.includes("xhigh") ? "xhigh" : null,
+        max: efforts.includes("max") ? "max" : null,
       };
-      for (const level of levelKeys) {
-        expected[level] = efforts.includes(level) ? level : null;
-      }
       expect(hardcoded.thinkingLevelMap, apiModel.id).toEqual(expected);
     }
   });
@@ -321,7 +321,6 @@ describe("Synthetic models", () => {
     const models = buildSyntheticProviderModelsFromApi(apiModels);
     expect(models).toHaveLength(1);
     expect(models[0]?.id).toBe("hf:new/model");
-    const compat = models[0]?.compat as Record<string, unknown> | undefined;
-    expect(compat?.supportsReasoningEffort).toBe(true);
+    expect(models[0]?.compat?.supportsReasoningEffort).toBe(true);
   });
 });

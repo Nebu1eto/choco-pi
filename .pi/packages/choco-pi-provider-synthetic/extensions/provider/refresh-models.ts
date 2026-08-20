@@ -1,4 +1,4 @@
-import type { Api, Model, RefreshModelsContext } from "@earendil-works/pi-ai";
+import type { RefreshModelsContext } from "@earendil-works/pi-ai";
 import type {
   buildSyntheticProviderModels,
   buildSyntheticProviderModelsFromApi,
@@ -17,7 +17,7 @@ export type FetchSyntheticApiModels = (
 const MODEL_STORE_TTL_MS = 4 * 60 * 60 * 1000;
 
 interface CachedModels {
-  models: unknown[];
+  models: readonly unknown[];
   checkedAt: number;
 }
 
@@ -26,7 +26,7 @@ async function readCachedModels(context: RefreshModelsContext): Promise<CachedMo
     const entry = await readStoredModels(context);
     if (!entry || entry.models.length === 0) return undefined;
     return {
-      models: entry.models as unknown[],
+      models: entry.models,
       checkedAt: entry.checkedAt ?? 0,
     };
   } catch {
@@ -64,7 +64,7 @@ export function createSyntheticRefreshModels(
 
       try {
         await persistModels(context, {
-          models: models as unknown as Model<Api>[],
+          models,
           checkedAt: Date.now(),
         });
       } catch {

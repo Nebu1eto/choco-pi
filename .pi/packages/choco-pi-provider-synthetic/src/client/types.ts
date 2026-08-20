@@ -1,3 +1,4 @@
+import { type Static, Type } from "typebox";
 import type { QuotasResponse } from "../types/quotas";
 
 export interface SyntheticUtilityApiConfig {
@@ -15,46 +16,53 @@ export interface SyntheticClientRequestOptions {
   signal?: AbortSignal;
 }
 
-export interface SyntheticSearchResult {
-  url: string;
-  title: string;
-  text: string;
-  published: string;
-}
+export const SyntheticSearchResponseSchema = Type.Object({
+  results: Type.Array(
+    Type.Object({
+      url: Type.String(),
+      title: Type.String(),
+      text: Type.String(),
+      published: Type.String(),
+    }),
+  ),
+});
 
-export interface SyntheticSearchResponse {
-  results: SyntheticSearchResult[];
-}
+export type SyntheticSearchResponse = Static<typeof SyntheticSearchResponseSchema>;
+export type SyntheticSearchResult = SyntheticSearchResponse["results"][number];
 
-export interface SyntheticApiModelPricing {
-  prompt: string;
-  completion: string;
-  input_cache_reads: string;
-  input_cache_writes: string;
-}
+export const SyntheticApiModelSchema = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  provider: Type.Optional(Type.Unknown()),
+  hugging_face_id: Type.Optional(Type.Unknown()),
+  input_modalities: Type.Array(Type.String()),
+  output_modalities: Type.Array(Type.String()),
+  context_length: Type.Number(),
+  max_output_length: Type.Number(),
+  pricing: Type.Object({
+    prompt: Type.String(),
+    completion: Type.String(),
+    input_cache_reads: Type.String(),
+    input_cache_writes: Type.String(),
+  }),
+  supported_features: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
+  reasoning_parameters: Type.Optional(
+    Type.Union([
+      Type.Null(),
+      Type.Object({
+        efforts: Type.Array(Type.Unknown()),
+      }),
+    ]),
+  ),
+});
 
-export interface SyntheticApiModelReasoningParameters {
-  efforts: string[];
-}
+export type SyntheticApiModel = Static<typeof SyntheticApiModelSchema>;
 
-export interface SyntheticApiModel {
-  id: string;
-  name: string;
-  provider: string | null;
-  hugging_face_id?: string;
-  input_modalities: string[];
-  output_modalities: string[];
-  context_length: number;
-  max_output_length: number;
-  pricing: SyntheticApiModelPricing;
-  supported_features?: string[];
-  reasoning_parameters?: SyntheticApiModelReasoningParameters;
-}
+export const SyntheticModelsResponseSchema = Type.Object({
+  data: Type.Optional(Type.Union([Type.Array(SyntheticApiModelSchema), Type.Null()])),
+});
 
-export interface SyntheticModelsResponse {
-  data?: SyntheticApiModel[];
-  [key: string]: unknown;
-}
+export type SyntheticModelsResponse = Static<typeof SyntheticModelsResponseSchema>;
 
 export interface SyntheticQuotasResponse {
   quotas: QuotasResponse;
