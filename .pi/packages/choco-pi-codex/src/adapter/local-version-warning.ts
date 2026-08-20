@@ -2,19 +2,24 @@ import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { BoundaryValueSchema, type BoundaryValue } from "./runtime-values.ts";
+import { type Static, Type } from "typebox";
+import { Value } from "typebox/value";
 
 const PACKAGE_NAME = "@howaboua/pi-codex-conversion";
 const NPM_REGISTRY_URL = "https://registry.npmjs.org/@howaboua%2Fpi-codex-conversion";
 const PACKAGE_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-interface PackageJsonLike {
-  name?: string | undefined;
-  version?: string | undefined;
-}
+const PackageJsonSchema = Type.Object({
+  name: Type.Optional(Type.String()),
+  version: Type.Optional(Type.String()),
+});
 
-interface NpmRegistryPackageLike {
-  "dist-tags"?: { latest?: string | undefined } | undefined;
-}
+type PackageJsonLike = Static<typeof PackageJsonSchema>;
+
+const NpmRegistryPackageSchema = Type.Object({
+  "dist-tags": Type.Optional(Type.Object({ latest: Type.Optional(Type.String()) })),
+});
 
 export function isLocalCheckoutPath(path: string): boolean {
   return !path.split(/[\\/]/).includes("node_modules");
@@ -46,7 +51,8 @@ function parseSemverLike(value: string): number[] {
 
 function readPackageJson(packageRoot: string): PackageJsonLike | undefined {
   try {
-    return JSON.parse(readFileSync(`${packageRoot}/package.json`, "utf8")) as PackageJsonLike;
+    const parsed: BoundaryValue = JSON.parse(readFileSync(`${packageRoot}/package.json`, "utf8"));
+    return Value.Check(PackageJsonSchema, parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
@@ -55,8 +61,9 @@ function readPackageJson(packageRoot: string): PackageJsonLike | undefined {
 async function fetchLatestNpmVersion(fetchImpl: typeof fetch = fetch): Promise<string | undefined> {
   const response = await fetchImpl(NPM_REGISTRY_URL, { signal: AbortSignal.timeout(2_000) });
   if (!response.ok) return undefined;
-  const json = (await response.json()) as NpmRegistryPackageLike;
-  return json["dist-tags"]?.latest;
+  const rawJson = await response.json();
+  if (!Value.Check(BoundaryValueSchema, rawJson)) return undefined;
+  return Value.Check(NpmRegistryPackageSchema, rawJson) ? rawJson["dist-tags"]?.latest : undefined;
 }
 
 export async function maybeWarnLocalCheckoutVersion(

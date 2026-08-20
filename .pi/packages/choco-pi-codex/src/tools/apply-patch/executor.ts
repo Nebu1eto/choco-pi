@@ -1,8 +1,25 @@
 import { relative } from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { parsePatchActions } from "../../patch/parser.ts";
 import { ExecutePatchError, type ExecutePatchResult } from "../../patch/types.ts";
 import { getBundledApplyPatchBinaryPath } from "./binary.ts";
 import { parseSingleJsonLine, runBundledTool } from "../native/runner.ts";
+
+const ExecutePatchResultSchema = Type.Object({
+  changedFiles: Type.Array(Type.String()),
+  createdFiles: Type.Array(Type.String()),
+  deletedFiles: Type.Array(Type.String()),
+  movedFiles: Type.Array(Type.String()),
+  fuzz: Type.Number(),
+});
+
+const RustApplyPatchJsonSchema = Type.Object({
+  status: Type.Union([Type.Literal("success"), Type.Literal("failure")]),
+  error: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  exact: Type.Optional(Type.Boolean()),
+  result: ExecutePatchResultSchema,
+});
 
 interface RustApplyPatchJson {
   status: "success" | "failure";
@@ -12,8 +29,8 @@ interface RustApplyPatchJson {
 }
 
 function parseRustApplyPatchJson(stdout: string): RustApplyPatchJson {
-  const parsed = parseSingleJsonLine<RustApplyPatchJson>(stdout, "apply_patch");
-  if (!parsed || typeof parsed !== "object" || !parsed.result) {
+  const parsed = parseSingleJsonLine(stdout, "apply_patch");
+  if (!Value.Check(RustApplyPatchJsonSchema, parsed)) {
     throw new Error("apply_patch returned invalid structured JSON output");
   }
   return parsed;
@@ -86,7 +103,7 @@ export async function executePatchWithRust({
   const errorMessage = collapseDuplicatedError(
     parsed.error ?? child.stderr ?? "apply_patch failed",
   );
-  let parsedActions = [] as ReturnType<typeof parsePatchActions>;
+  let parsedActions: ReturnType<typeof parsePatchActions> = [];
   try {
     parsedActions = parsePatchActions({ text: patchText }).map((action) => ({
       ...action,

@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isObjectValue, isStringValue } from "../boundary.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ApplyPatchDisplayData } from "../../apply-patch-display.js";
 import {
@@ -25,6 +27,10 @@ interface NestedTrace {
   status?: unknown;
   result?: unknown;
   error?: unknown;
+}
+
+interface TextContentResult {
+  content?: string | undefined;
 }
 
 interface CapturedApplyPatchCall {
@@ -156,11 +162,11 @@ export function registerApplyPatchDisplayBroker(pi: ExtensionAPI): void {
         entry.type !== "custom" ||
         !registrations.has(entry.customType) ||
         !entry.data ||
-        typeof entry.data !== "object" ||
-        typeof (entry.data as { toolCallId?: unknown }).toolCallId !== "string"
+        !isObjectValue(entry.data) ||
+        !isStringValue(entry.data.toolCallId)
       )
         continue;
-      displayedCalls.add((entry.data as { toolCallId: string }).toolCallId);
+      displayedCalls.add(entry.data.toolCallId);
     }
   });
   pi.on("session_before_switch", () => {
@@ -192,84 +198,75 @@ function collectApplyPatchDisplayData(
     if (input === undefined) return [];
     const text = textContent(event.content);
     const isError = event.isError || isPartialFailure(event.details);
-    return [
-      {
-        toolCallId: event.toolCallId,
-        input,
-        ...(isApplyPatchToolDetails(event.details) ? { details: event.details } : {}),
-        ...text,
-        ...(isError && text.content ? { error: text.content } : {}),
-        isError,
-        source: "direct",
-      },
-    ];
+    const data: ApplyPatchDisplayData = {
+      toolCallId: event.toolCallId,
+      input,
+      isError,
+      source: "direct",
+    };
+    if (isApplyPatchToolDetails(event.details)) data.details = event.details;
+    if (text.content !== undefined) data.content = text.content;
+    if (isError && text.content) data.error = text.content;
+    return [data];
   }
 
   if (event.toolName !== "exec" && event.toolName !== "wait") return [];
   return nestedTraces(event.details).flatMap((trace) => {
-    if (trace.name !== "apply_patch" || trace.status === "running" || typeof trace.id !== "string")
+    if (trace.name !== "apply_patch" || trace.status === "running" || !isStringValue(trace.id))
       return [];
     const call = captured.get(trace.id);
     const input = call?.input ?? patchInput(trace.input);
     if (input === undefined) return [];
     const result = trace.result;
     const traceDetails =
-      result && typeof result === "object" && "details" in result
-        ? (result as { details?: unknown }).details
-        : undefined;
+      result && isObjectValue(result) && "details" in result ? result.details : undefined;
     const traceContent =
-      result && typeof result === "object" && "content" in result
-        ? textContent((result as { content?: unknown }).content).content
+      result && isObjectValue(result) && "content" in result
+        ? textContent(result.content).content
         : undefined;
     const details = isApplyPatchToolDetails(traceDetails) ? traceDetails : call?.details;
     const content = traceContent ?? call?.content;
-    const error = call?.error ?? (typeof trace.error === "string" ? trace.error : undefined);
-    return [
-      {
-        toolCallId: trace.id,
-        input,
-        ...(details ? { details } : {}),
-        ...(content ? { content } : {}),
-        ...(error ? { error } : {}),
-        isError: trace.status === "error" || call?.isError === true || isPartialFailure(details),
-        source: "nested",
-      },
-    ];
+    const error = call?.error ?? (isStringValue(trace.error) ? trace.error : undefined);
+    const data: ApplyPatchDisplayData = {
+      toolCallId: trace.id,
+      input,
+      isError: trace.status === "error" || call?.isError === true || isPartialFailure(details),
+      source: "nested",
+    };
+    if (details) data.details = details;
+    if (content) data.content = content;
+    if (error) data.error = error;
+    return [data];
   });
 }
 
-function isPartialFailure(value: unknown): boolean {
+function isPartialFailure(value: BoundaryValue): boolean {
   return isApplyPatchToolDetails(value) && value.status === "partial_failure";
 }
 
-function nestedTraces(details: unknown): NestedTrace[] {
-  if (!details || typeof details !== "object" || !("traces" in details)) return [];
-  const traces = (details as { traces?: unknown }).traces;
+function nestedTraces(details: BoundaryValue): NestedTrace[] {
+  if (!details || !isObjectValue(details) || !("traces" in details)) return [];
+  const traces = details.traces;
   return Array.isArray(traces)
-    ? traces.filter((trace): trace is NestedTrace => Boolean(trace && typeof trace === "object"))
+    ? traces.filter((trace): trace is NestedTrace => Boolean(trace && isObjectValue(trace)))
     : [];
 }
 
-function patchInput(input: unknown): string | undefined {
-  if (typeof input === "string") return input;
-  if (!input || typeof input !== "object") return undefined;
+function patchInput(input: BoundaryValue): string | undefined {
+  if (isStringValue(input)) return input;
+  if (!input || !isObjectValue(input)) return undefined;
   for (const key of ["input", "patchText", "patch"]) {
-    const value = (input as Record<string, unknown>)[key];
-    if (typeof value === "string") return value;
+    const value = input[key];
+    if (isStringValue(value)) return value;
   }
   return undefined;
 }
 
-function textContent(content: unknown): { content?: string | undefined } {
+function textContent(content: BoundaryValue): TextContentResult {
   if (!Array.isArray(content)) return {};
   const text = content
     .filter((item): item is { type: "text"; text: string } =>
-      Boolean(
-        item &&
-        typeof item === "object" &&
-        (item as { type?: unknown }).type === "text" &&
-        typeof (item as { text?: unknown }).text === "string",
-      ),
+      Boolean(item && isObjectValue(item) && item.type === "text" && isStringValue(item.text)),
     )
     .map((item) => item.text)
     .join("\n");
@@ -279,11 +276,11 @@ function textContent(content: unknown): { content?: string | undefined } {
 function boundMap(map: Map<string, unknown>): void {
   if (map.size <= MAX_DISPLAY_IDS) return;
   const oldest = map.keys().next().value;
-  if (typeof oldest === "string") map.delete(oldest);
+  if (isStringValue(oldest)) map.delete(oldest);
 }
 
 function boundSet(set: Set<string>): void {
   if (set.size <= MAX_DISPLAY_IDS) return;
   const oldest = set.values().next().value;
-  if (typeof oldest === "string") set.delete(oldest);
+  if (isStringValue(oldest)) set.delete(oldest);
 }

@@ -1,4 +1,6 @@
 import { processResponsesStream } from "../openai-responses/shared.ts";
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import type {
   Api,
   AssistantMessage,
@@ -15,7 +17,7 @@ import {
 } from "./constants.ts";
 import { isRetryableStreamStatus, isTerminalRateLimitError } from "./errors.ts";
 import { applyServiceTierPricing, resolveCodexServiceTier } from "./usage.ts";
-import type { OpenAICodexStreamOptions, ServiceTier, StreamEventShape } from "./types.ts";
+import type { CodexStreamEvent, OpenAICodexStreamOptions } from "./types.ts";
 
 const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
 const PREVIOUS_RESPONSE_NOT_FOUND_CODE = "previous_response_not_found";
@@ -39,23 +41,29 @@ const FATAL_CODEX_ERROR_CODES = new Set([
   "usage_limit_reached",
 ]);
 
+const EventRecordType = Type.Record(Type.String(), Type.Unknown());
+type EventRecord = Static<typeof EventRecordType>;
+const EventRecordSchema = Type.Unsafe<EventRecord>({ type: "object" });
+const StringSchema = Type.String();
+const NumberSchema = Type.Number();
+const BooleanSchema = Type.Boolean();
+
+interface CodexApiErrorOptions {
+  code?: string | undefined;
+  payload?: CodexStreamEvent | undefined;
+  retryable?: boolean | undefined;
+  retryDelayMs?: number | undefined;
+  status?: number | undefined;
+}
+
 class CodexApiError extends Error {
   readonly code?: string | undefined;
-  readonly payload?: StreamEventShape | undefined;
+  readonly payload?: CodexStreamEvent | undefined;
   readonly retryable: boolean;
   readonly retryDelayMs?: number | undefined;
   readonly status?: number | undefined;
 
-  constructor(
-    message: string,
-    options?: {
-      code?: string | undefined;
-      payload?: StreamEventShape | undefined;
-      retryable?: boolean | undefined;
-      retryDelayMs?: number | undefined;
-      status?: number | undefined;
-    },
-  ) {
+  constructor(message: string, options?: CodexApiErrorOptions) {
     super(message);
     this.name = "CodexApiError";
     this.code = options?.code;
@@ -80,16 +88,16 @@ export class CodexProtocolError extends Error {
   }
 }
 
-export function isRetryableCodexStreamError(error: unknown): boolean {
+export function isRetryableCodexStreamError<T>(error: T): boolean {
   if (error instanceof CodexApiError) return error.retryable;
   return !(error instanceof CodexProtocolError);
 }
 
-export function isCodexApiError(error: unknown): boolean {
+export function isCodexApiError<T>(error: T): boolean {
   return error instanceof CodexApiError;
 }
 
-export function codexStreamRetryDelay(error: unknown): number | undefined {
+export function codexStreamRetryDelay<T>(error: T): number | undefined {
   return error instanceof CodexApiError ? error.retryDelayMs : undefined;
 }
 
@@ -98,25 +106,26 @@ export function createCodexHttpError(
   code: string | undefined,
   status: number,
 ): Error {
-  return new CodexApiError(message, {
-    ...(code ? { code } : {}),
+  const options: CodexApiErrorOptions = {
     status,
     retryable: !(code && FATAL_CODEX_ERROR_CODES.has(code)) && isRetryableStreamStatus(status),
-  });
+  };
+  if (code) options.code = code;
+  return new CodexApiError(message, options);
 }
 
-export function isCodexOverloadError(error: unknown): boolean {
+export function isCodexOverloadError<T>(error: T): boolean {
   return (
     error instanceof CodexApiError && !!error.code && OVERLOAD_CODEX_ERROR_CODES.has(error.code)
   );
 }
 
-export function isCodexRateLimitError(error: unknown): boolean {
+export function isCodexRateLimitError<T>(error: T): boolean {
   return error instanceof CodexApiError && error.code === "rate_limit_exceeded";
 }
 
-export function codexOverloadRetryDelay(
-  error: unknown,
+export function codexOverloadRetryDelay<T>(
+  error: T,
   retryCount: number,
   waitedMs: number,
 ): number | undefined {
@@ -129,8 +138,8 @@ export function codexOverloadRetryDelay(
   return Math.min(DEFAULT_MAX_RETRY_DELAY_MS, remainingMs, requestedDelayMs);
 }
 
-export function codexRateLimitRetryDelay(
-  error: unknown,
+export function codexRateLimitRetryDelay<T>(
+  error: T,
   fallbackDelayMs: number,
   waitedMs: number,
 ): number | undefined {
@@ -166,17 +175,17 @@ export function assertSuccessfulCodexStatus(
   throw new CodexProtocolError(`Unhandled Codex response status: ${status}`);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+function isRecord<T>(value: T): value is Extract<T, object> & EventRecord {
+  return Check(EventRecordSchema, value);
 }
 
-function recordStatus(record: Record<string, unknown> | undefined): number | undefined {
+function recordStatus(record: EventRecord | undefined): number | undefined {
   const status = record?.["status"] ?? record?.["status_code"] ?? record?.["statusCode"];
-  const parsed = typeof status === "string" && /^\d+$/.test(status) ? Number(status) : status;
-  return typeof parsed === "number" && Number.isInteger(parsed) ? parsed : undefined;
+  const parsed = Check(StringSchema, status) && /^\d+$/.test(status) ? Number(status) : status;
+  return Check(NumberSchema, parsed) && Number.isInteger(parsed) ? parsed : undefined;
 }
 
-function eventStatus(event: StreamEventShape): number | undefined {
+function eventStatus(event: CodexStreamEvent): number | undefined {
   const eventError = isRecord(event["error"]) ? event["error"] : undefined;
   const response = isRecord(event.response) ? event.response : undefined;
   const responseError = isRecord(response?.["error"]) ? response["error"] : undefined;
@@ -220,69 +229,66 @@ function codexApiRetryDelayMs(
   return Number.isFinite(delayMs) ? delayMs : undefined;
 }
 
-function extractCodexEventError(event: StreamEventShape): {
+interface CodexEventError {
   code?: string | undefined;
   message?: string | undefined;
-} {
+}
+
+function extractCodexEventError(event: CodexStreamEvent): CodexEventError {
   const nested = isRecord(event["error"]) ? event["error"] : undefined;
-  return {
-    code:
-      typeof event.code === "string"
-        ? event.code
-        : typeof nested?.["code"] === "string"
-          ? nested["code"]
-          : typeof nested?.["type"] === "string"
-            ? nested["type"]
-            : undefined,
-    message:
-      typeof event.message === "string"
-        ? event.message
-        : typeof nested?.["message"] === "string"
-          ? nested["message"]
-          : undefined,
-  };
+  const code =
+    event.code ??
+    (Check(StringSchema, nested?.["code"])
+      ? nested["code"]
+      : Check(StringSchema, nested?.["type"])
+        ? nested["type"]
+        : undefined);
+  const message =
+    event.message ?? (Check(StringSchema, nested?.["message"]) ? nested["message"] : undefined);
+  return { code, message };
 }
 
 export async function* mapCodexEvents(
-  events: AsyncIterable<StreamEventShape>,
+  events: AsyncIterable<CodexStreamEvent>,
   output?: AssistantMessage,
-): AsyncIterable<StreamEventShape> {
+): AsyncIterable<CodexStreamEvent> {
   let sawTerminalResponse = false;
   for await (const event of events) {
-    const type = typeof event.type === "string" ? event.type : undefined;
+    const type = event.type;
     if (!type) continue;
 
     if (type === "error") {
       const { code, message } = extractCodexEventError(event);
       const status = eventStatus(event);
       const retryDelayMs = codexApiRetryDelayMs(code, message);
-      throw new CodexApiError(`Codex error: ${message || code || JSON.stringify(event)}`, {
+      const options: CodexApiErrorOptions = {
         code,
         payload: event,
         retryable: isRetryableCodexApiFailure(code, message, status, true),
-        ...(retryDelayMs !== undefined ? { retryDelayMs } : {}),
-        ...(status !== undefined ? { status } : {}),
-      });
+      };
+      if (retryDelayMs !== undefined) options.retryDelayMs = retryDelayMs;
+      if (status !== undefined) options.status = status;
+      throw new CodexApiError(`Codex error: ${message || code || JSON.stringify(event)}`, options);
     }
 
     if (type === "response.failed") {
       const error = isRecord(event.response?.error) ? event.response.error : undefined;
-      const code =
-        typeof error?.["code"] === "string"
-          ? error["code"]
-          : typeof error?.["type"] === "string"
-            ? error["type"]
-            : undefined;
-      const message = typeof error?.["message"] === "string" ? error["message"] : undefined;
+      const code = Check(StringSchema, error?.["code"])
+        ? error["code"]
+        : Check(StringSchema, error?.["type"])
+          ? error["type"]
+          : undefined;
+      const message = Check(StringSchema, error?.["message"]) ? error["message"] : undefined;
       const status = eventStatus(event);
       const retryDelayMs = codexApiRetryDelayMs(code, message);
-      throw new CodexApiError(message || "Codex response failed", {
+      const options: CodexApiErrorOptions = {
         code,
         payload: event,
         retryable: isRetryableCodexApiFailure(code, message, status, true),
-        ...(retryDelayMs !== undefined ? { retryDelayMs } : {}),
-        ...(status !== undefined ? { status } : {}),
-      });
+      };
+      if (retryDelayMs !== undefined) options.retryDelayMs = retryDelayMs;
+      if (status !== undefined) options.status = status;
+      throw new CodexApiError(message || "Codex response failed", options);
     }
 
     if (
@@ -292,8 +298,9 @@ export async function* mapCodexEvents(
     ) {
       sawTerminalResponse = true;
       const response = event.response;
-      if (output && typeof response?.["end_turn"] === "boolean")
+      if (output && Check(BooleanSchema, response?.["end_turn"])) {
         output.endTurn = response["end_turn"];
+      }
       yield {
         ...event,
         type: "response.completed",
@@ -313,34 +320,37 @@ export async function* mapCodexEvents(
 }
 
 function normalizeCodexStatus(status: string | undefined): string | undefined {
-  if (typeof status !== "string") return undefined;
+  if (status === undefined) return undefined;
   return CODEX_RESPONSE_STATUSES.has(status) ? status : undefined;
 }
 
 function responseStreamOptions<TApi extends Api>(
   options: OpenAICodexStreamOptions | undefined,
   model: Model<TApi>,
-) {
-  return {
-    serviceTier: (options as { serviceTier?: ServiceTier | undefined } | undefined)?.serviceTier,
-    ...(options?.grammarToolInputProperties
-      ? { grammarToolInputProperties: options.grammarToolInputProperties }
-      : {}),
-    ...(options?.onOutputItemDone ? { onOutputItemDone: options.onOutputItemDone } : {}),
+): Parameters<typeof processResponsesStream>[4] {
+  const streamOptions: Parameters<typeof processResponsesStream>[4] = {
+    serviceTier: options?.serviceTier,
     resolveServiceTier: resolveCodexServiceTier,
     applyServiceTierPricing: (usage, serviceTier) =>
-      applyServiceTierPricing(usage, serviceTier, model as Model<Api>),
-  } satisfies Parameters<typeof processResponsesStream>[4];
+      applyServiceTierPricing(usage, serviceTier, model),
+  };
+  if (options?.grammarToolInputProperties) {
+    streamOptions.grammarToolInputProperties = options.grammarToolInputProperties;
+  }
+  if (options?.onOutputItemDone) streamOptions.onOutputItemDone = options.onOutputItemDone;
+  return streamOptions;
 }
 
 export async function processMappedCodexResponsesStream<TApi extends Api>(
-  events: AsyncIterable<StreamEventShape>,
+  events: AsyncIterable<CodexStreamEvent>,
   output: AssistantMessage,
   stream: AssistantMessageEventStream,
   model: Model<TApi>,
   options: OpenAICodexStreamOptions | undefined,
 ): Promise<void> {
   await processResponsesStream(
+    // SAFETY: mapCodexEvents validates the discriminator and normalizes Codex terminal events to
+    // the Responses event names consumed by processResponsesStream before this adapter runs.
     events as AsyncIterable<never>,
     output,
     stream,
@@ -350,7 +360,7 @@ export async function processMappedCodexResponsesStream<TApi extends Api>(
 }
 
 export async function processCodexResponsesStream<TApi extends Api>(
-  events: AsyncIterable<StreamEventShape>,
+  events: AsyncIterable<CodexStreamEvent>,
   output: AssistantMessage,
   stream: AssistantMessageEventStream,
   model: Model<TApi>,

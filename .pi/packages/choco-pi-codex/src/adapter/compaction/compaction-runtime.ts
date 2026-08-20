@@ -1,3 +1,7 @@
+import { JsonObjectSchema } from "../runtime-values.ts";
+import type { BoundaryValue } from "../runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isCanonicalCodexSubscriptionModel, isOpenAICodexModel } from "../prompt/codex-model.ts";
@@ -27,9 +31,9 @@ export type NativeCompactionSupportOptions = {
 
 export type ResponsesCompatibleRequestPayload = {
   model: string;
-  input: unknown[];
-  instructions?: unknown | undefined;
-  [key: string]: unknown;
+  input: BoundaryValue[];
+  instructions?: BoundaryValue | undefined;
+  [key: string]: BoundaryValue;
 };
 
 export type NativeCompactionRuntime = {
@@ -92,6 +96,7 @@ async function resolveRequestAuth(
   headers?: ProviderHeaders | undefined;
   baseUrl?: string | undefined;
 }> {
+  // SAFETY: Pi's ModelRegistry owns this optional auth method, and TypeBox checks it before invocation.
   const modelRegistry = ctx.modelRegistry as {
     getApiKeyAndHeaders?: (currentModel: RuntimeModel) =>
       | Promise<
@@ -106,7 +111,7 @@ async function resolveRequestAuth(
       | undefined;
   };
 
-  if (typeof modelRegistry.getApiKeyAndHeaders !== "function") {
+  if (!Value.Check(Type.Function([], Type.Unknown()), modelRegistry.getApiKeyAndHeaders)) {
     return {};
   }
 
@@ -117,42 +122,46 @@ async function resolveRequestAuth(
 }
 
 export function isSupportedApi(api: string): api is DefaultSupportedApi {
-  return (DEFAULT_SUPPORTED_APIS as readonly string[]).includes(api);
+  return DEFAULT_SUPPORTED_APIS.some((supportedApi) => supportedApi === api);
 }
 
 export function isResponsesCompatiblePayload(
-  payload: unknown,
+  payload: BoundaryValue,
 ): payload is ResponsesCompatibleRequestPayload {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+  if (!Value.Check(JsonObjectSchema, payload)) {
     return false;
   }
 
-  const candidate = payload as Record<string, unknown>;
-  return typeof candidate["model"]! === "string" && Array.isArray(candidate["input"]!);
+  const candidate = payload;
+  return Value.Check(Type.String(), candidate["model"]!) && Array.isArray(candidate["input"]!);
 }
 
-export function getRuntimeModelDescriptor(model: RuntimeModel | undefined): {
+interface RuntimeModelDescriptor {
   provider?: string | undefined;
   api?: string | undefined;
   model?: string | undefined;
   baseUrl?: string | undefined;
-} {
+}
+
+export function getRuntimeModelDescriptor(model: RuntimeModel | undefined): RuntimeModelDescriptor {
   if (!model) {
-    return {};
+    const descriptor = {} satisfies RuntimeModelDescriptor;
+    return descriptor;
   }
 
-  return {
+  const descriptor = {
     provider: model.provider,
     api: model.api,
     model: model.id,
     baseUrl: normalizeBaseUrl(model.baseUrl),
-  };
+  } satisfies RuntimeModelDescriptor;
+  return descriptor;
 }
 
 export async function resolveNativeCompactionEnvironment(
   ctx: ExtensionContext,
   options: NativeCompactionSupportOptions = {},
-  payload?: unknown,
+  payload?: BoundaryValue,
 ): Promise<NativeCompactionEnvironmentResolution> {
   if (options.enabled === false) {
     return {
@@ -268,7 +277,7 @@ export async function resolveNativeCompactionEnvironment(
 
 function bearerToken(headers: ProviderHeaders | undefined): string | undefined {
   for (const [key, value] of Object.entries(headers ?? {})) {
-    if (key.toLowerCase() !== "authorization" || typeof value !== "string") continue;
+    if (key.toLowerCase() !== "authorization" || !Value.Check(Type.String(), value)) continue;
     const match = value.trim().match(/^Bearer\s+(.+)$/i);
     if (match?.[1]?.trim()) return match[1].trim();
   }

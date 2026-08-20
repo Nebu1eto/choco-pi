@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isStringValue } from "../boundary.js";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import type { CustomToolDefinition } from "./types.js";
@@ -6,12 +8,12 @@ const MAX_OUTPUT_BYTES = 50 * 1024;
 
 export async function runCustomTool(
   tool: CustomToolDefinition,
-  input: unknown,
+  input: BoundaryValue,
   cwd: string,
   signal?: AbortSignal,
 ): Promise<string> {
   if (tool.disabledReason) throw new Error(`${tool.name} is disabled: ${tool.disabledReason}`);
-  if (typeof input !== "string") throw new Error(`${tool.name} expects a string input`);
+  if (!isStringValue(input)) throw new Error(`${tool.name} expects a string input`);
   if (signal?.aborted) throw new Error(`${tool.name} aborted`);
   const args = tool.input === "arg" ? [...tool.args, input] : [...tool.args];
   return new Promise<string>((resolve, reject) => {

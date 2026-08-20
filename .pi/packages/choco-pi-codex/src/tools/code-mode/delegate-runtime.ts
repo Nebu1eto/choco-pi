@@ -1,3 +1,4 @@
+import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
 import { runCustomTool } from "./custom-tool-runner.js";
 import { isCustomToolDefinition, type DelegateRequestMessage } from "./host-protocol.js";
 import { runCodeModeToolPreflight } from "./nested-tool-preflight.js";
@@ -15,7 +16,7 @@ interface DelegateController {
   controller: AbortController;
 }
 
-type SendMessage = (message: unknown) => void;
+type SendMessage = (message: BoundaryValue) => void;
 
 export class CodeModeDelegateRuntime {
   private readonly traceRuntimeGeneration = crypto.randomUUID();
@@ -102,8 +103,8 @@ export class CodeModeDelegateRuntime {
     cellId: string,
     requestId: number,
     toolName: string,
-    input: unknown,
-  ): Promise<unknown> {
+    input: BoundaryValue,
+  ): Promise<BoundaryValue> {
     const key = directControllerKey(cellId, requestId);
     if (this.controllers.has(key))
       throw new Error(`Duplicate code-mode delegate request: ${requestId}`);
@@ -187,10 +188,10 @@ export class CodeModeDelegateRuntime {
   private async invokeTool(
     cellId: string,
     toolName: string,
-    input: unknown,
+    input: BoundaryValue,
     traceId: string,
     controller: AbortController,
-  ): Promise<unknown> {
+  ): Promise<BoundaryValue> {
     const tool = this.cellTools.get(cellId)?.get(toolName);
     const context = this.cellContexts.get(cellId);
     if (!tool) throw new Error(`Unknown custom tool: ${toolName}`);
@@ -260,7 +261,7 @@ export class CodeModeDelegateRuntime {
     this.controllers.delete(key);
   }
 
-  private respond(id: number, result: Record<string, unknown>): void {
+  private respond(id: number, result: BoundaryRecord): void {
     try {
       this.send({ type: "delegate/response", id, result });
     } catch (error) {

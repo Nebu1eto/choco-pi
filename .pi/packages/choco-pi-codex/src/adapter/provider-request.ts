@@ -1,3 +1,12 @@
+import { JsonObjectSchema } from "./runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "./runtime-values.ts";
+import { Type } from "typebox";
+
+const ResponsesLiteCompatibleBodySchema = Type.Object({
+  model: Type.String(),
+  input: Type.Array(Type.Unknown()),
+});
+import { Value } from "typebox/value";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ProviderHeaders } from "@earendil-works/pi-ai";
 import {
@@ -23,7 +32,11 @@ import {
   type ResponsesLiteCompatibleBody,
 } from "../providers/openai-codex/responses-lite.ts";
 
-function prepareCodexProviderRequest(payload: unknown, ctx: ExtensionContext, state: AdapterState) {
+function prepareCodexProviderRequest(
+  payload: BoundaryValue,
+  ctx: ExtensionContext,
+  state: AdapterState,
+) {
   if (state.config.voiceFeaturesOnly) return undefined;
   const plan = resolveCodexRuntimePlanForState(ctx, state);
   if (!isAdapterRuntime(plan) || (!plan.effectiveOpenAICodex && !isResponsesContext(ctx))) {
@@ -42,12 +55,15 @@ function prepareCodexProviderRequest(payload: unknown, ctx: ExtensionContext, st
   };
 }
 
-function applyVoiceSystemPrompt(payload: unknown, systemPrompt: string | undefined): unknown {
+function applyVoiceSystemPrompt(
+  payload: BoundaryValue,
+  systemPrompt: string | undefined,
+): BoundaryValue {
   if (!systemPrompt || !isRecord(payload)) return payload;
   return { ...payload, instructions: systemPrompt };
 }
 
-function applyCodexRuntimePayload(payload: unknown, codeMode: boolean): unknown {
+function applyCodexRuntimePayload(payload: BoundaryValue, codeMode: boolean): BoundaryValue {
   return codeMode && isCodeModeCompatibleBody(payload)
     ? applyResponsesLiteRequest(payload)
     : payload;
@@ -90,17 +106,20 @@ export function rewriteCodexProviderHeaders(
   }
 }
 
-export function captureActiveProviderSystemPrompt(payload: unknown, state: AdapterState): void {
+export function captureActiveProviderSystemPrompt(
+  payload: BoundaryValue,
+  state: AdapterState,
+): void {
   if (!isRecord(payload)) return;
   const instructions = providerSystemPrompt(payload);
   if (instructions !== undefined) state.activeProviderSystemPrompt = instructions;
 }
 
 export async function rewriteCodexProviderRequest(
-  payload: unknown,
+  payload: BoundaryValue,
   ctx: ExtensionContext,
   state: AdapterState,
-): Promise<unknown | undefined> {
+): Promise<BoundaryValue | undefined> {
   const prepared = prepareCodexProviderRequest(payload, ctx, state);
   if (!prepared) return undefined;
   if (!hasCanonicalAliasEndpoint(ctx, state)) return undefined;
@@ -128,41 +147,34 @@ export async function rewriteCodexProviderRequest(
 }
 
 export function rewriteCodexPrewarmProviderRequest(
-  payload: unknown,
+  payload: BoundaryValue,
   ctx: ExtensionContext,
   state: AdapterState,
-): unknown | undefined {
+): BoundaryValue | undefined {
   const prepared = prepareCodexProviderRequest(payload, ctx, state);
   return prepared
     ? applyCodexRuntimePayload(prepared.configuredPayload, isCodeModeRuntime(prepared.plan))
     : undefined;
 }
 
-function isCodeModeCompatibleBody(value: unknown): value is ResponsesLiteCompatibleBody {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { model?: unknown }).model === "string" &&
-    Array.isArray((value as { input?: unknown }).input)
-  );
+function isCodeModeCompatibleBody(value: BoundaryValue): value is ResponsesLiteCompatibleBody {
+  return Value.Check(ResponsesLiteCompatibleBodySchema, value);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is JsonObject {
+  return Value.Check(JsonObjectSchema, value);
 }
 
-function providerSystemPrompt(payload: Record<string, unknown>): string | undefined {
-  if (typeof payload["instructions"] === "string") return payload["instructions"];
+function providerSystemPrompt(payload: JsonObject): string | undefined {
+  if (Value.Check(Type.String(), payload["instructions"])) return payload["instructions"];
   if (!Array.isArray(payload["input"])) return undefined;
   for (const item of payload["input"]) {
     if (!isRecord(item) || item["role"] !== "developer" || !Array.isArray(item["content"]))
       continue;
     const text = item["content"]
-      .filter(
-        (part): part is Record<string, unknown> =>
-          isRecord(part) && part["type"] === "input_text" && typeof part["text"] === "string",
-      )
-      .map((part) => part["text"] as string)
+      .filter((part) => isRecord(part) && part["type"] === "input_text")
+      .map((part) => (isRecord(part) ? part["text"] : undefined))
+      .filter((part): part is string => Value.Check(Type.String(), part))
       .join("\n");
     if (text !== "") return text;
   }

@@ -1,3 +1,8 @@
+import { conditionalProperties } from "../runtime-values.ts";
+import { jsonValueType, JsonObjectSchema } from "../runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -84,7 +89,7 @@ export type ResponsesFunctionCallOutputItem = {
   output: ResponsesInputContentItem[] | string;
 };
 
-export type ResponsesReasoningItem = Record<string, unknown>;
+export type ResponsesReasoningItem = JsonObject;
 
 export type ResponsesInputItem =
   | ResponsesInputMessageItem
@@ -101,8 +106,8 @@ export type NativeCompactionRequestBody = {
   prompt_cache_key?: string | undefined;
   service_tier?: string | undefined;
   text?: { verbosity: string } | undefined;
-  tools?: unknown[] | undefined;
-  reasoning?: unknown | undefined;
+  tools?: BoundaryValue[] | undefined;
+  reasoning?: BoundaryValue | undefined;
 };
 
 export type NativeCompactionRequestOptions = Pick<
@@ -124,8 +129,8 @@ export type ResponsesParityReport = {
   mismatches: string[];
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is JsonObject {
+  return Value.Check(JsonObjectSchema, value);
 }
 
 let cachedBlockImagesSetting: boolean | undefined;
@@ -133,9 +138,9 @@ let cachedBlockImagesSetting: boolean | undefined;
 function readBlockImagesSetting(): boolean {
   if (cachedBlockImagesSetting !== undefined) return cachedBlockImagesSetting;
   try {
-    const parsed = JSON.parse(
+    const parsed: BoundaryValue = JSON.parse(
       readFileSync(join(getAgentDir(), "settings.json"), "utf-8"),
-    ) as unknown;
+    );
     cachedBlockImagesSetting =
       isRecord(parsed) && isRecord(parsed["images"]!) && parsed["images"]["blockImages"] === true;
   } catch {
@@ -199,31 +204,33 @@ export function serializeMessagesToResponsesInput<TApi extends Api>(
     isCodexTransportModel(model) && !CODEX_TOOL_CALL_PROVIDERS.has(model.provider)
       ? new Set([...CODEX_TOOL_CALL_PROVIDERS, model.provider])
       : CODEX_TOOL_CALL_PROVIDERS;
+  // SAFETY: convertResponsesMessages is the provider serializer and returns Responses API input items for this model.
   return convertResponsesMessages(
     model,
     {
       messages: llmMessages,
-      ...(options.includeInstructionsInInput && options.instructions
-        ? { systemPrompt: options.instructions }
-        : {}),
+      ...conditionalProperties(
+        Boolean(options.includeInstructionsInInput && options.instructions),
+        { systemPrompt: options.instructions },
+      ),
     },
     allowedToolCallProviders,
     {
       includeSystemPrompt: options.includeInstructionsInInput ?? false,
-      ...(options.grammarToolInputProperties
-        ? { grammarToolInputProperties: options.grammarToolInputProperties }
-        : {}),
+      ...conditionalProperties(Boolean(options.grammarToolInputProperties), {
+        grammarToolInputProperties: options.grammarToolInputProperties,
+      }),
     },
   ) as ResponsesInputItem[];
 }
 
-export function createResponsesInputParitySignature(input: readonly unknown[]): string[] {
+export function createResponsesInputParitySignature(input: readonly BoundaryValue[]): string[] {
   return input.map(describeResponsesInputItem);
 }
 
 export function compareResponsesInputParity(
-  actual: readonly unknown[],
-  expected: readonly unknown[],
+  actual: readonly BoundaryValue[],
+  expected: readonly BoundaryValue[],
 ): ResponsesParityReport {
   const actualSignature = createResponsesInputParitySignature(actual);
   const expectedSignature = createResponsesInputParitySignature(expected);
@@ -248,23 +255,23 @@ export function compareResponsesInputParity(
   };
 }
 
-function describeResponsesInputItem(item: unknown): string {
-  if (!item || typeof item !== "object" || Array.isArray(item)) {
-    return typeof item;
+function describeResponsesInputItem(item: BoundaryValue): string {
+  if (!Value.Check(JsonObjectSchema, item)) {
+    return jsonValueType(item);
   }
 
-  const record = item as Record<string, unknown>;
-  const type = typeof record["type"]! === "string" ? record["type"]! : undefined;
+  const record = item;
+  const type = Value.Check(Type.String(), record["type"]!) ? record["type"]! : undefined;
   if (type === "message") {
     const phase =
       record["phase"] === "commentary" || record["phase"] === "final_answer"
         ? `:${record["phase"]!}`
         : "";
-    return `message:${typeof record["role"]! === "string" ? record["role"]! : "unknown"}${phase}`;
+    return `message:${Value.Check(Type.String(), record["role"]!) ? record["role"]! : "unknown"}${phase}`;
   }
 
   if (type === "function_call") {
-    return `function_call:${typeof record["name"]! === "string" ? record["name"]! : "unknown"}`;
+    return `function_call:${Value.Check(Type.String(), record["name"]!) ? record["name"]! : "unknown"}`;
   }
 
   if (type === "function_call_output") {
@@ -275,7 +282,7 @@ function describeResponsesInputItem(item: unknown): string {
     return "reasoning";
   }
 
-  if (typeof record["role"]! === "string") {
+  if (Value.Check(Type.String(), record["role"]!)) {
     const content = Array.isArray(record["content"]!) ? `[${record["content"]!.length}]` : "";
     return `input:${record["role"]!}${content}`;
   }

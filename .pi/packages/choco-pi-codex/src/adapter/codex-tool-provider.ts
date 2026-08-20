@@ -1,3 +1,6 @@
+import { conditionalProperties } from "./runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import { DEFAULT_CODEX_BASE_URL } from "../providers/openai-codex/constants.ts";
@@ -63,7 +66,8 @@ function headerValue(headers: ProviderHeaders | undefined, name: string): string
   if (!headers) return undefined;
   const lowerName = name.toLowerCase();
   for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === lowerName) return typeof value === "string" ? value : undefined;
+    if (key.toLowerCase() === lowerName)
+      return Value.Check(Type.String(), value) ? value : undefined;
   }
   return undefined;
 }
@@ -81,6 +85,7 @@ function firstOpenAICodexModel(models: Model<any>[]): Model<any> | undefined {
 }
 
 function resolveOpenAICodexAuthModel(ctx: ExtensionContext): Model<any> | undefined {
+  // SAFETY: Pi's ExtensionContext always supplies ModelRegistry; this adapter names its stable lookup methods without changing the receiver.
   const registry = ctx.modelRegistry as {
     find?: (provider: string, modelId: string) => Model<any> | undefined;
     getAvailable?: () => Model<any>[];
@@ -110,10 +115,14 @@ function resolveCodexToolAuthModel(
   ctx: ExtensionContext,
   allowConfiguredProvider?: AllowConfiguredCodexToolProvider,
 ): Model<any> {
-  if (isCodexTransportModel(ctx.model) && isResponsesModel(ctx.model))
+  if (isCodexTransportModel(ctx.model) && isResponsesModel(ctx.model)) {
+    // SAFETY: Both transport and Responses predicates require a present Pi model with the Model runtime fields.
     return ctx.model as Model<any>;
-  if (isResponsesModel(ctx.model) && allowConfiguredProvider?.(ctx.model))
+  }
+  if (isResponsesModel(ctx.model) && allowConfiguredProvider?.(ctx.model)) {
+    // SAFETY: The Responses predicate and configured-provider callback both accepted this present Pi model.
     return ctx.model as Model<any>;
+  }
   const openAICodexModel = resolveOpenAICodexAuthModel(ctx);
   if (openAICodexModel) return openAICodexModel;
   throw new Error(
@@ -204,7 +213,7 @@ export function codexToolProviderEnv(provider: CodexToolProvider): NodeJS.Proces
     PI_CODEX_BASE_URL: provider.baseUrl,
     PI_CODEX_RESPONSES_URL: provider.responsesUrl,
     PI_CODEX_SEARCH_URL: provider.searchUrl,
-    ...(provider.model ? { PI_CODEX_MODEL: provider.model } : {}),
+    ...conditionalProperties(Boolean(provider.model), { PI_CODEX_MODEL: provider.model }),
   };
   if (provider.route === "configured-responses") delete env["PI_CODEX_AGENT_IDENTITY_JWT"];
   return env;

@@ -50,7 +50,7 @@ export function findLatestCompactionEntryIndex(
   entries: readonly SessionEntry[],
 ): number | undefined {
   for (let index = entries.length - 1; index >= 0; index--) {
-    if (entries[index]!?.type === "compaction") {
+    if (entries[index]?.type === "compaction") {
       return index;
     }
   }
@@ -62,6 +62,7 @@ export function findLatestCompactionEntry(
   entries: readonly SessionEntry[],
 ): CompactionEntry | undefined {
   const index = findLatestCompactionEntryIndex(entries);
+  // SAFETY: findLatestCompactionEntryIndex returns only an in-bounds index whose entry has type "compaction".
   return index === undefined ? undefined : (entries[index]! as CompactionEntry);
 }
 
@@ -90,6 +91,7 @@ export function findLatestNativeCompactionEntry(
   match: NativeCompactionEntryMatch = {},
 ): NativeCompactionEntry | undefined {
   const index = findLatestNativeCompactionEntryIndex(entries, match);
+  // SAFETY: findLatestNativeCompactionEntryIndex returns only an in-bounds entry accepted by isNativeCompactionEntry.
   return index === undefined ? undefined : (entries[index]! as NativeCompactionEntry);
 }
 
@@ -111,14 +113,13 @@ export function resolveLatestNativeCompactionEntry(
     latestCompaction.type !== "compaction" ||
     !isPersistedNativeCompactionEntry(latestCompaction)
   ) {
+    const latestCompactionEntry =
+      latestCompaction?.type === "compaction" ? latestCompaction : undefined;
     return {
       ok: false,
       reason: "latest-compaction-not-native",
       latestCompactionIndex,
-      latestCompaction:
-        latestCompaction && latestCompaction.type === "compaction"
-          ? (latestCompaction as CompactionEntry)
-          : undefined,
+      latestCompaction: latestCompactionEntry,
     };
   }
 

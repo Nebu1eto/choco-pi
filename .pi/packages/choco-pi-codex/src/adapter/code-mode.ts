@@ -1,6 +1,14 @@
+import { conditionalProperties } from "./runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "./runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+
+const ExecInputSchema = Type.Object({ cmd: Type.String() });
+const PartialFailureDetailsSchema = Type.Object({ status: Type.Literal("partial_failure") });
+const RunningExecDetailsSchema = Type.Object({ session_id: Type.Number() });
+const CompletedExecDetailsSchema = Type.Object({ output: Type.String() });
 import {
   getAgentDir,
-  type AgentToolResult,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
@@ -32,24 +40,27 @@ export async function registerCodexCodeMode(
   pi: ExtensionAPI,
   runtime: CodexExtensionRuntime,
 ): Promise<CodeModeRegistration> {
-  const isActive = (ctx: unknown) =>
+  const isActive = (ctx: BoundaryValue) =>
+    // SAFETY: registerCodeModeTools invokes isActive with Pi's current ExtensionContext.
     isCodeModeRuntime(resolveCodexRuntimePlanForState(ctx as ExtensionContext, runtime.state));
   const customToolsRuntime = await registerCustomTools(pi, undefined, {
     isActive,
   });
   const programmaticRuntime = await registerCodeModeTools(pi, {
+    // SAFETY: registerCodeModeTools supplies either Pi's current ExtensionContext or no context.
     getTools: (ctx) => createNestedTools(runtime, ctx as ExtensionContext | undefined),
     isActive,
     executionKind: (ctx) =>
+      // SAFETY: registerCodeModeTools invokes executionKind with Pi's current ExtensionContext.
       resolveCodexRuntimePlanForState(ctx as ExtensionContext, runtime.state).kind === "notebook"
         ? "notebook"
         : "code",
     notebookOptions: () => ({
       maxHeapMiB: runtime.state.config.notebook.maxHeapMiB,
       agentDir: getAgentDir(),
-      ...(runtime.state.config.notebook.profile
-        ? { profile: runtime.state.config.notebook.profile }
-        : {}),
+      ...conditionalProperties(Boolean(runtime.state.config.notebook.profile), {
+        profile: runtime.state.config.notebook.profile,
+      }),
     }),
     providesRenderers: true,
     richRendering: () =>
@@ -95,16 +106,12 @@ function createNestedTools(
       {
         kind: "freeform",
         prepareInput(input) {
-          if (typeof input !== "string") throw new Error("apply_patch expects a patch string");
+          if (!Value.Check(Type.String(), input))
+            throw new Error("apply_patch expects a patch string");
           return { input };
         },
         resultError(result) {
-          if (
-            result.details &&
-            typeof result.details === "object" &&
-            "status" in result.details &&
-            result.details.status === "partial_failure"
-          )
+          if (Value.Check(PartialFailureDetailsSchema, result.details))
             return (
               result.content
                 .filter((item) => item.type === "text")
@@ -120,10 +127,7 @@ function createNestedTools(
       "await tools.exec_command({ cmd: string, workdir?: string, shell?: string, tty?: boolean, yield_time_ms?: number, max_output_tokens?: number, login?: boolean }) // returns { output: string, session_id?: number, exit_code?: number }",
       {
         start(id, input) {
-          const cmd =
-            input && typeof input === "object" && "cmd" in input && typeof input.cmd === "string"
-              ? input.cmd
-              : "";
+          const cmd = Value.Check(ExecInputSchema, input) ? input.cmd : "";
           if (cmd) runtime.tracker.recordStart(id, cmd);
         },
         end: (id) => runtime.tracker.recordEnd(id),
@@ -177,7 +181,7 @@ function createNestedTools(
           ? 'const result = await tools.view_image({ path: string, detail?: "original" }); image(result)'
           : "const description = await tools.view_image({ path: string }); text(description)",
         {},
-        { ...(imageCapable ? { resultValue: codeModeImageResult } : {}) },
+        imageCapable ? { resultValue: codeModeImageResult } : {},
       ),
     );
   }
@@ -229,24 +233,10 @@ function createNestedTools(
   return tools;
 }
 
-function isRunningExecResult(
-  details: AgentToolResult<unknown>["details"],
-): details is Record<string, unknown> & { session_id: number } {
-  return Boolean(
-    details &&
-    typeof details === "object" &&
-    "session_id" in details &&
-    typeof details.session_id === "number",
-  );
+function isRunningExecResult<T>(details: T): details is T & JsonObject & { session_id: number } {
+  return Value.Check(RunningExecDetailsSchema, details);
 }
 
-function isExecResult(
-  details: AgentToolResult<unknown>["details"],
-): details is Record<string, unknown> & { output: string } {
-  return Boolean(
-    details &&
-    typeof details === "object" &&
-    "output" in details &&
-    typeof details.output === "string",
-  );
+function isExecResult<T>(details: T): details is T & JsonObject & { output: string } {
+  return Value.Check(CompletedExecDetailsSchema, details);
 }

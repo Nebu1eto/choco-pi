@@ -1,3 +1,4 @@
+import { conditionalProperties } from "../../adapter/runtime-values.ts";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
   Container,
@@ -52,7 +53,7 @@ export class TextSettingSubmenu extends Container implements Focusable {
 }
 
 export function setting(item: SettingItem, update?: ConfigSetting["update"]): ConfigSetting {
-  return { item, ...(update ? { update } : {}) };
+  return { item, ...conditionalProperties(Boolean(update), { update }) };
 }
 
 export function toggle(

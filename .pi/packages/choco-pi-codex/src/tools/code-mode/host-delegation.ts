@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../boundary.js";
 import { CodeModeDelegateRuntime } from "./delegate-runtime.js";
 import { executionCellId, type HostMessage } from "./host-protocol.js";
 import type { CodeModeToolDefinition, RuntimeResponse, ToolExecutionContext } from "./types.js";
@@ -5,12 +6,12 @@ import type { CodeModeToolDefinition, RuntimeResponse, ToolExecutionContext } fr
 export class CodeModeHostDelegation {
   private readonly runtime: CodeModeDelegateRuntime;
 
-  constructor(send: (message: unknown) => void) {
+  constructor(send: (message: BoundaryValue) => void) {
     this.runtime = new CodeModeDelegateRuntime(send);
   }
 
   bindResponse(
-    value: unknown,
+    value: BoundaryValue,
     context?: ToolExecutionContext,
     tools?: Map<string, CodeModeToolDefinition>,
   ): void {

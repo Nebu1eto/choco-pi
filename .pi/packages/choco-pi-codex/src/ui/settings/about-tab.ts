@@ -15,8 +15,7 @@ export function renderAboutTab(theme: Theme): string[] {
 }
 
 export function handleAboutTabInput(data: string, ctx: ExtensionContext): boolean {
-  const key = data.toLowerCase() as keyof typeof LINKS;
-  const target = LINKS[key];
+  const target = Object.entries(LINKS).find(([key]) => key === data.toLowerCase())?.[1];
   if (!target) return false;
   openExternalUrl(target.url);
   ctx.ui.notify(target.message, "info");

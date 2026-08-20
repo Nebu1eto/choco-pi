@@ -1,3 +1,5 @@
+import { conditionalProperties } from "../runtime-values.ts";
+import type { BoundaryValue } from "../runtime-values.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ResponsesCompatibleRequestPayload } from "../compaction/compaction-runtime.ts";
@@ -28,10 +30,10 @@ export type NativeReplaySegments = {
   trailingPreamble: ResponsesInputMessageItem[];
   compactionSummary: ResponsesInputItem[];
   preCompactionKeptWindow: SerializedReplaySlice;
-  compactedWindow: unknown[];
+  compactedWindow: BoundaryValue[];
   postCompactionTail: SerializedReplaySlice;
   originalPiReplayInput: ResponsesInputItem[];
-  replayInput: unknown[];
+  replayInput: BoundaryValue[];
 };
 
 export type NativeReplayPayloadRewrite = {
@@ -184,9 +186,9 @@ function buildNativeReplaySegmentsInternal<TApi extends Api>(args: {
       },
       rewrittenPayload: {
         ...args.payload,
-        ...(freshPreamble.instructions !== undefined
-          ? { instructions: freshPreamble.instructions }
-          : {}),
+        ...conditionalProperties(Boolean(freshPreamble.instructions !== undefined), {
+          instructions: freshPreamble.instructions,
+        }),
         input: lenientReplay.input,
       },
     };
@@ -240,9 +242,9 @@ function buildNativeReplaySegmentsInternal<TApi extends Api>(args: {
         },
         rewrittenPayload: {
           ...args.payload,
-          ...(freshPreamble.instructions !== undefined
-            ? { instructions: freshPreamble.instructions }
-            : {}),
+          ...conditionalProperties(Boolean(freshPreamble.instructions !== undefined), {
+            instructions: freshPreamble.instructions,
+          }),
           input: lenientReplay.input,
         },
       };
@@ -339,9 +341,9 @@ function buildNativeReplaySegmentsInternal<TApi extends Api>(args: {
     },
     rewrittenPayload: {
       ...args.payload,
-      ...(freshPreamble.instructions !== undefined
-        ? { instructions: freshPreamble.instructions }
-        : {}),
+      ...conditionalProperties(Boolean(freshPreamble.instructions !== undefined), {
+        instructions: freshPreamble.instructions,
+      }),
       input: [
         ...freshPreamble.leadingInput,
         ...compactedWindow,

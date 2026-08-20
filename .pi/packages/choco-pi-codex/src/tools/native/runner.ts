@@ -1,3 +1,5 @@
+import { isStringValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.js";
 import { spawn } from "node:child_process";
 import { formatNativeBinaryError, nativeBinaryRecoveryMessage } from "../../native-binary-error.ts";
 
@@ -61,7 +63,7 @@ export function runBundledTool({
       fn();
     };
     const append = (target: "stdout" | "stderr", chunk: Buffer | string) => {
-      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      const text = isStringValue(chunk) ? chunk : chunk.toString("utf8");
       outputBytes += Buffer.byteLength(text, "utf8");
       if (outputBytes > outputLimit) {
         child.kill();
@@ -107,11 +109,11 @@ export function runBundledTool({
   });
 }
 
-export function parseSingleJsonLine<T>(stdout: string, label: string): T {
+export function parseSingleJsonLine(stdout: string, label: string): BoundaryValue {
   const jsonLine = stdout
     .trimEnd()
     .split("\n")
     .findLast((line) => line.trimStart().startsWith("{"));
   if (!jsonLine) throw new Error(`${label} did not return structured JSON output`);
-  return JSON.parse(jsonLine) as T;
+  return JSON.parse(jsonLine);
 }

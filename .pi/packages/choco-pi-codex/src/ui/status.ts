@@ -1,3 +1,4 @@
+import { conditionalProperties } from "../adapter/runtime-values.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AdapterState } from "../adapter/activation/state.ts";
 import type { CodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
@@ -27,7 +28,9 @@ export function renderCodexStatus(
         imageGeneration: plan.toolNames.includes("imagegen"),
         compaction: plan.nativeCompaction,
         weeklyUsageLeft: state.weeklyUsageLeft,
-        ...(isResponsesContext(ctx) ? { verbosity: config.openai.verbosity } : {}),
+        ...conditionalProperties(Boolean(isResponsesContext(ctx)), {
+          verbosity: config.openai.verbosity,
+        }),
       },
       ctx.ui.theme,
     ),

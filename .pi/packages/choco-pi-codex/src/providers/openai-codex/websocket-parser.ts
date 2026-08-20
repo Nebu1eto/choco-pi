@@ -1,4 +1,11 @@
-import type { StreamEventShape, WebSocketLike } from "./types.ts";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+import {
+  CodexStreamEventSchema,
+  type CodexStreamEvent,
+  type WebSocketEvent,
+  type WebSocketLike,
+} from "./types.ts";
 import { DEFAULT_WEBSOCKET_CLOSE_TIMEOUT_MS } from "./constants.ts";
 import {
   extractWebSocketCloseError,
@@ -7,17 +14,24 @@ import {
 } from "./websocket-connection.ts";
 import { extractCodexTurnStateFromWebSocketEvent } from "./turn-state.ts";
 
-async function decodeWebSocketData(data: unknown): Promise<string | null> {
-  if (typeof data === "string") return data;
+const StringSchema = Type.String();
+const ArrayBufferDataSchema = Type.Object({
+  arrayBuffer: Type.Function([], Type.Unknown()),
+});
+
+async function decodeWebSocketData(data: WebSocketEvent["data"]): Promise<string | null> {
+  if (Check(StringSchema, data)) return data;
   if (data instanceof ArrayBuffer) {
     return new TextDecoder().decode(new Uint8Array(data));
   }
   if (ArrayBuffer.isView(data)) {
     return new TextDecoder().decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
   }
-  if (data && typeof data === "object" && "arrayBuffer" in data) {
-    const arrayBuffer = await (data as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer();
-    return new TextDecoder().decode(new Uint8Array(arrayBuffer));
+  if (Check(ArrayBufferDataSchema, data)) {
+    const arrayBuffer = await data.arrayBuffer();
+    if (arrayBuffer instanceof ArrayBuffer) {
+      return new TextDecoder().decode(new Uint8Array(arrayBuffer));
+    }
   }
   return null;
 }
@@ -27,8 +41,8 @@ export async function* parseWebSocket(
   signal: AbortSignal | undefined,
   idleTimeoutMs?: number,
   onTurnState?: (value: string) => void,
-): AsyncIterable<StreamEventShape> {
-  const queue: StreamEventShape[] = [];
+): AsyncIterable<CodexStreamEvent> {
+  const queue: CodexStreamEvent[] = [];
   let pending: (() => void) | null = null;
   let done = false;
   let failed: Error | null = null;
@@ -47,24 +61,25 @@ export async function* parseWebSocket(
     resolve();
   };
 
-  const onMessage = (event: unknown) => {
+  const onMessage = (event: WebSocketEvent) => {
     pendingMessages++;
     wake();
     messageChain = messageChain
       .then(async () => {
-        if (!event || typeof event !== "object" || !("data" in event)) return;
-        const text = await decodeWebSocketData((event as { data?: unknown | undefined }).data);
+        const text = await decodeWebSocketData(event.data);
         if (!text) return;
-        let parsed: StreamEventShape;
+        let parsed: CodexStreamEvent;
         try {
-          parsed = JSON.parse(text) as StreamEventShape;
+          const candidate: object = JSON.parse(text);
+          if (!Check(CodexStreamEventSchema, candidate)) return;
+          parsed = candidate;
         } catch {
           // Codex ignores malformed individual events and keeps the live stream.
           return;
         }
         const turnState = extractCodexTurnStateFromWebSocketEvent(parsed);
         if (turnState) onTurnState?.(turnState);
-        const type = typeof parsed.type === "string" ? parsed.type : "";
+        const type = parsed.type ?? "";
         if (
           type === "response.completed" ||
           type === "response.done" ||
@@ -76,7 +91,7 @@ export async function* parseWebSocket(
         }
         queue.push(parsed);
       })
-      .catch((error: unknown) => {
+      .catch((error) => {
         failed = error instanceof Error ? error : new Error(String(error));
         done = true;
       })
@@ -86,7 +101,7 @@ export async function* parseWebSocket(
       });
   };
 
-  const onError = (event: unknown) => {
+  const onError = (event: WebSocketEvent) => {
     socketError = extractWebSocketError(event);
     if (socketErrorTimer) clearTimeout(socketErrorTimer);
     socketErrorTimer = setTimeout(() => {
@@ -96,7 +111,7 @@ export async function* parseWebSocket(
     }, DEFAULT_WEBSOCKET_CLOSE_TIMEOUT_MS);
   };
 
-  const onClose = (event: unknown) => {
+  const onClose = (event: WebSocketEvent) => {
     if (socketErrorTimer) clearTimeout(socketErrorTimer);
     if (sawCompletion) {
       done = true;
@@ -135,7 +150,8 @@ export async function* parseWebSocket(
         throw new Error("Request was aborted");
       }
       if (queue.length > 0) {
-        yield queue.shift() as StreamEventShape;
+        const event = queue.shift();
+        if (event) yield event;
         continue;
       }
       if (failed && (pendingMessages === 0 || idleTimedOut)) break;
@@ -171,9 +187,9 @@ export async function* parseWebSocket(
 }
 
 export async function* startWebSocketOutputOnFirstEvent(
-  events: AsyncIterable<StreamEventShape>,
+  events: AsyncIterable<CodexStreamEvent>,
   onStart: () => void,
-): AsyncIterable<StreamEventShape> {
+): AsyncIterable<CodexStreamEvent> {
   let started = false;
   for await (const event of events) {
     if (!started) {

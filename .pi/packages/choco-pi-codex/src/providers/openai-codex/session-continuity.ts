@@ -1,4 +1,6 @@
-import type { CanonicalHistoryDecision, ResponsesBody } from "./types.ts";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+import type { CanonicalHistoryDecision, ProtocolValue, ResponsesBody } from "./types.ts";
 import { responseInputsEqual } from "./websocket-continuation.ts";
 import type { CodexCompactionReplayDecision } from "../../adapter/compaction/diagnostics.ts";
 
@@ -12,12 +14,15 @@ type CanonicalSessionLane = {
   requestSequence: number;
 };
 
+const AdditionalToolsItemSchema = Type.Object({ type: Type.Literal("additional_tools") });
+const DeveloperItemSchema = Type.Object({ role: Type.Literal("developer") });
+
 type CanonicalSessionState = {
   accountId: string;
   url: string;
   requestBody: ResponsesBody;
-  reconstructedRequestInput: readonly unknown[];
-  responseItems: readonly unknown[];
+  reconstructedRequestInput: readonly ProtocolValue[];
+  responseItems: readonly ProtocolValue[];
 };
 
 const canonicalSessions = new Map<string, CanonicalSessionState>();
@@ -32,29 +37,25 @@ function matchesLane(
   return state.url === url && state.accountId === accountId && state.requestBody.model === model;
 }
 
-function materializedInput(state: CanonicalSessionState): unknown[] {
+function materializedInput(state: CanonicalSessionState): ProtocolValue[] {
   return [...state.requestBody.input, ...state.responseItems];
 }
 
-function responsesLiteRequestPrefixLength(input: readonly unknown[]): number {
-  const first = input[0];
-  if (
-    !first ||
-    typeof first !== "object" ||
-    (first as { type?: unknown }).type !== "additional_tools"
-  )
-    return 0;
-  const second = input[1];
-  return second && typeof second === "object" && (second as { role?: unknown }).role === "developer"
-    ? 2
-    : 1;
+function responsesLiteRequestPrefixLength(input: readonly ProtocolValue[]): number {
+  if (!Check(AdditionalToolsItemSchema, input[0])) return 0;
+  return Check(DeveloperItemSchema, input[1]) ? 2 : 1;
+}
+
+interface CanonicalReplayResult {
+  input?: ProtocolValue[] | undefined;
+  decision: CanonicalHistoryDecision;
 }
 
 function replayCanonicalInput(
   state: CanonicalSessionState,
-  preparedInput: readonly unknown[],
+  preparedInput: readonly ProtocolValue[],
   requestPrefixLength = 0,
-): { input?: unknown[] | undefined; decision: CanonicalHistoryDecision } {
+): CanonicalReplayResult {
   const reconstructedRequestInput = state.reconstructedRequestInput.slice(requestPrefixLength);
   const minimumInputLength = reconstructedRequestInput.length + state.responseItems.length;
   if (preparedInput.length < minimumInputLength) {
@@ -92,7 +93,7 @@ export function recordCanonicalSessionResponse(args: {
   accountId: string;
   requestBody: ResponsesBody;
   reconstructedRequestBody?: ResponsesBody | undefined;
-  responseItems: readonly unknown[];
+  responseItems: readonly ProtocolValue[];
   token?: CanonicalSessionToken | undefined;
 }): void {
   if (!args.sessionId) return;
@@ -150,18 +151,23 @@ export function canonicalCompactionPromptInput(
   sessionId: string,
   model: string,
   identity?: { url: string; accountId: string } | undefined,
-  reconstructedInput?: readonly unknown[] | undefined,
-): unknown[] | undefined {
+  reconstructedInput?: readonly ProtocolValue[] | undefined,
+): ProtocolValue[] | undefined {
   return resolveCanonicalCompactionPromptInput(sessionId, model, identity, reconstructedInput)
     .input;
+}
+
+interface CanonicalCompactionPromptResult {
+  input?: ProtocolValue[] | undefined;
+  decision: CodexCompactionReplayDecision;
 }
 
 export function resolveCanonicalCompactionPromptInput(
   sessionId: string,
   model: string,
   identity?: { url: string; accountId: string } | undefined,
-  reconstructedInput?: readonly unknown[] | undefined,
-): { input?: unknown[] | undefined; decision: CodexCompactionReplayDecision } {
+  reconstructedInput?: readonly ProtocolValue[] | undefined,
+): CanonicalCompactionPromptResult {
   const state = canonicalSessions.get(sessionId);
   if (!state) return { decision: "no_state" };
   if (state.requestBody.model !== model) return { decision: "model_mismatch" };
@@ -174,10 +180,11 @@ export function resolveCanonicalCompactionPromptInput(
     reconstructedInput,
     responsesLiteRequestPrefixLength(state.reconstructedRequestInput),
   );
-  return {
-    ...(replay.input ? { input: replay.input } : {}),
+  const result: CanonicalCompactionPromptResult = {
     decision: replay.decision === "compaction" ? "validated" : replay.decision,
   };
+  if (replay.input) result.input = replay.input;
+  return result;
 }
 
 export function canonicalCompactionRequestBody(

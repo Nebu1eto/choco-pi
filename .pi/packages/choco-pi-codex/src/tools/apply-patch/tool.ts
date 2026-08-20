@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isObjectValue, isStringValue } from "../boundary.js";
 import { Type } from "typebox";
 import {
   type ExtensionAPI,
@@ -50,6 +52,14 @@ type ApplyPatchToolDefinition = ToolDefinition<
 export type ApplyPatchRenderCall = NonNullable<ApplyPatchToolDefinition["renderCall"]>;
 export type ApplyPatchRenderResult = NonNullable<ApplyPatchToolDefinition["renderResult"]>;
 
+interface ParsedApplyPatchParams {
+  patchText: string;
+}
+
+interface PreparedApplyPatchInput {
+  input: string;
+}
+
 export interface ApplyPatchToolOptions {
   customRustBinariesDir?: string | undefined;
   promptSnippet?: boolean | undefined;
@@ -58,25 +68,21 @@ export interface ApplyPatchToolOptions {
   renderResult?: ApplyPatchRenderResult | undefined;
 }
 
-function parseApplyPatchParams(params: unknown): { patchText: string } {
-  if (
-    !params ||
-    typeof params !== "object" ||
-    !("input" in params) ||
-    typeof params.input !== "string"
-  ) {
+function parseApplyPatchParams(params: BoundaryValue): ParsedApplyPatchParams {
+  if (!params || !isObjectValue(params) || !("input" in params) || !isStringValue(params.input)) {
     throw new Error("apply_patch requires a string 'input' parameter");
   }
   return { patchText: params.input };
 }
 
-function prepareApplyPatchArguments(args: unknown): { input: string } {
-  if (args && typeof args === "object") {
-    if ("input" in args && typeof args.input === "string") return { input: args.input };
-    if ("patchText" in args && typeof args.patchText === "string") return { input: args.patchText };
-    if ("patch" in args && typeof args.patch === "string") return { input: args.patch };
+function prepareApplyPatchArguments(args: BoundaryValue): PreparedApplyPatchInput {
+  if (args && isObjectValue(args)) {
+    if ("input" in args && isStringValue(args.input)) return { input: args.input };
+    if ("patchText" in args && isStringValue(args.patchText)) return { input: args.patchText };
+    if ("patch" in args && isStringValue(args.patch)) return { input: args.patch };
   }
-  return args as { input: string };
+  // SAFETY: prepareArguments runs before schema validation; parseApplyPatchParams verifies input before execution or binary I/O.
+  return args as PreparedApplyPatchInput;
 }
 
 function summarizePatchCounts(result: ExecutePatchResult): string {
@@ -90,9 +96,7 @@ function summarizePatchCounts(result: ExecutePatchResult): string {
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return Array.from(
-    new Set(
-      values.filter((value): value is string => typeof value === "string" && value.length > 0),
-    ),
+    new Set(values.filter((value): value is string => isStringValue(value) && value.length > 0)),
   );
 }
 
@@ -249,13 +253,11 @@ export function createApplyPatchTool(
     if (result.details.status === "partial_failure") return new Container();
     return new Container();
   };
-  return {
+  const tool: ApplyPatchToolDefinition = {
     name: "apply_patch",
     label: "apply_patch",
     description: "Patch files",
-    ...(options.promptSnippet === false ? {} : { promptSnippet: "Edit files with patch" }),
     parameters: APPLY_PATCH_PARAMETERS,
-    ...(constrainedSampling ? { constrainedSampling } : {}),
     executionMode: "sequential",
     prepareArguments: prepareApplyPatchArguments,
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
@@ -345,7 +347,10 @@ export function createApplyPatchTool(
     },
     renderCall: options.renderCall ?? defaultRenderCall,
     renderResult: options.renderResult ?? defaultRenderResult,
-  } satisfies ApplyPatchToolDefinition;
+  };
+  if (options.promptSnippet !== false) tool.promptSnippet = "Edit files with patch";
+  if (constrainedSampling) tool.constrainedSampling = constrainedSampling;
+  return tool;
 }
 
 export function registerApplyPatchTool(

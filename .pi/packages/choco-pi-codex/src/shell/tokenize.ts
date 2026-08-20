@@ -123,7 +123,7 @@ export function normalizeTokens(tokens: string[]): string[] {
   ) {
     return normalizeTokens(tokens.slice(2));
   }
-  const shell = tokens[0]!?.replace(/\\/g, "/").split("/").pop();
+  const shell = tokens[0]?.replace(/\\/g, "/").split("/").pop();
   if (
     tokens.length === 3 &&
     (shell === "bash" || shell === "zsh" || shell === "sh") &&

@@ -1,9 +1,11 @@
+import { isStringValue } from "../boundary.js";
 import type {
   ExtensionAPI,
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { Text } from "@earendil-works/pi-tui";
 import {
   codexToolProviderEnv,
@@ -45,6 +47,13 @@ type SavedImage = {
   latest_path?: string;
   latest_absolute_path?: string;
 };
+
+// Keep the post-parse validation aligned with imagegenOutputFromJson: only `path` is mandatory.
+const ImagegenDetailsSchema = Type.Unsafe<ImagegenDetails>({
+  type: "object",
+  properties: { path: { type: "string" } },
+  required: ["path"],
+});
 
 type ImagegenDetails = {
   path: string;
@@ -92,8 +101,10 @@ async function executeRustImagegen(
   if (child.status !== 0)
     throw new Error((child.stderr || child.stdout || "imagegen failed").trim());
   const parsed = imagegenOutputFromJson(child.stdout);
-  if (!parsed) throw new Error("imagegen returned output, but Pi could not parse it");
-  return parsed as ImagegenDetails;
+  if (!Value.Check(ImagegenDetailsSchema, parsed)) {
+    throw new Error("imagegen returned output, but Pi could not parse it");
+  }
+  return parsed;
 }
 
 export interface ImageGenerationToolOptions {
@@ -108,11 +119,10 @@ export function createImageGenerationTool(
   options: ImageGenerationToolOptions = {},
 ): ToolDefinition<typeof IMAGE_GENERATION_PARAMETERS, ImagegenDetails> {
   const description = "Generate/edit images";
-  return {
+  const tool: ToolDefinition<typeof IMAGE_GENERATION_PARAMETERS, ImagegenDetails> = {
     name: IMAGE_GENERATION_TOOL_NAME,
     label: IMAGE_GENERATION_TOOL_NAME,
     description,
-    ...(options.promptSnippet === false ? {} : { promptSnippet: description }),
     parameters: IMAGE_GENERATION_PARAMETERS,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (!supportsExecutableImageGeneration(ctx.model, options))
@@ -126,28 +136,24 @@ export function createImageGenerationTool(
         details,
       };
     },
-    ...(options.customRendering === false
-      ? {}
-      : {
-          renderCall(args, theme) {
-            return renderCodexToolCell(
-              "Generated Image:",
-              typeof args.prompt === "string" ? args.prompt : undefined,
-              theme,
-            );
-          },
-          renderResult(result, _options, theme) {
-            const textBlock = result.content.find((item) => item.type === "text");
-            const text = theme.fg(
-              "dim",
-              textBlock?.type === "text" ? textBlock.text : "(no output)",
-            );
-            return result.content.some((item) => item.type === "image")
-              ? renderTextWithImages(text, result.content, theme)
-              : new Text(text, 0, 0);
-          },
-        }),
   };
+  if (options.promptSnippet !== false) tool.promptSnippet = description;
+  if (options.customRendering !== false) {
+    tool.renderCall = (args, theme) =>
+      renderCodexToolCell(
+        "Generated Image:",
+        isStringValue(args.prompt) ? args.prompt : undefined,
+        theme,
+      );
+    tool.renderResult = (result, _options, theme) => {
+      const textBlock = result.content.find((item) => item.type === "text");
+      const text = theme.fg("dim", textBlock?.type === "text" ? textBlock.text : "(no output)");
+      return result.content.some((item) => item.type === "image")
+        ? renderTextWithImages(text, result.content, theme)
+        : new Text(text, 0, 0);
+    };
+  }
+  return tool;
 }
 
 export function registerImageGenerationTool(

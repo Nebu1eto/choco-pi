@@ -1,11 +1,33 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import type {
   CachedWebSocketContinuationState,
   CachedWebSocketRequestBodyResult,
+  ProtocolObject,
+  ProtocolPropertyValue,
+  ProtocolValue,
   ResponsesBody,
   WebSocketContinuationDecision,
 } from "./types.ts";
 
-export function requestBodyForWebSocketContinuationComparison(body: ResponsesBody): ResponsesBody {
+const CanonicalRecordSchema = Type.Unsafe<ProtocolObject>({ type: "object" });
+const FunctionCallSchema = Type.Object({
+  type: Type.Union([Type.Literal("function_call"), Type.Literal("custom_tool_call")]),
+  call_id: Type.String(),
+});
+const FunctionCallOutputSchema = Type.Object({
+  type: Type.Union([Type.Literal("function_call_output"), Type.Literal("custom_tool_call_output")]),
+  call_id: Type.String(),
+});
+
+type ContinuationComparableBody = Omit<
+  ResponsesBody,
+  "input" | "previous_response_id" | "client_metadata"
+>;
+
+export function requestBodyForWebSocketContinuationComparison(
+  body: ResponsesBody,
+): ContinuationComparableBody {
   const {
     input: _input,
     previous_response_id: _previousResponseId,
@@ -14,12 +36,12 @@ export function requestBodyForWebSocketContinuationComparison(body: ResponsesBod
     client_metadata: _clientMetadata,
     ...rest
   } = body;
-  return rest as ResponsesBody;
+  return rest;
 }
 
 export function responseInputsEqual(
-  a: readonly unknown[] | undefined,
-  b: readonly unknown[] | undefined,
+  a: readonly ProtocolValue[] | undefined,
+  b: readonly ProtocolValue[] | undefined,
 ): boolean {
   const left = a ?? [];
   const right = b ?? [];
@@ -29,32 +51,31 @@ export function responseInputsEqual(
   );
 }
 
-function canonicalResponseValue(value: unknown): unknown {
+function canonicalResponseValue(value: ProtocolPropertyValue): ProtocolPropertyValue {
   if (Array.isArray(value)) return value.map(canonicalResponseValue);
-  if (!value || typeof value !== "object") return value;
-  const record = value as Record<string, unknown>;
-  const canonical: Record<string, unknown> = {};
-  for (const key of Object.keys(record).sort()) {
+  if (!Check(CanonicalRecordSchema, value)) return value;
+  const canonical: ProtocolObject = {};
+  for (const key of Object.keys(value).sort()) {
     if (key === "internal_chat_message_metadata_passthrough") continue;
     if (
       key === "logprobs" &&
-      record["type"] === "output_text" &&
-      Array.isArray(record[key]) &&
-      record[key].length === 0
+      value["type"] === "output_text" &&
+      Array.isArray(value[key]) &&
+      value[key].length === 0
     )
       continue;
     if (
       key === "status" &&
-      record[key] === "completed" &&
-      (record["type"] === "function_call" || record["type"] === "custom_tool_call")
+      value[key] === "completed" &&
+      (value["type"] === "function_call" || value["type"] === "custom_tool_call")
     )
       continue;
-    canonical[key] = canonicalResponseValue(record[key]);
+    canonical[key] = canonicalResponseValue(value[key]);
   }
   return canonical;
 }
 
-function responsesValuesEqual(a: unknown, b: unknown): boolean {
+function responsesValuesEqual(a: ProtocolValue, b: ProtocolValue | undefined): boolean {
   return JSON.stringify(canonicalResponseValue(a)) === JSON.stringify(canonicalResponseValue(b));
 }
 
@@ -65,30 +86,18 @@ function requestBodiesMatchExceptInput(a: ResponsesBody, b: ResponsesBody): bool
   );
 }
 
-function getFunctionCallId(item: unknown): string | undefined {
-  return item &&
-    typeof item === "object" &&
-    ((item as { type?: unknown }).type === "function_call" ||
-      (item as { type?: unknown }).type === "custom_tool_call") &&
-    typeof (item as { call_id?: unknown }).call_id === "string"
-    ? (item as { call_id: string }).call_id
-    : undefined;
+function getFunctionCallId<T>(item: T): string | undefined {
+  return Check(FunctionCallSchema, item) ? item.call_id : undefined;
 }
 
-function getFunctionCallOutputId(item: unknown): string | undefined {
-  return item &&
-    typeof item === "object" &&
-    ((item as { type?: unknown }).type === "function_call_output" ||
-      (item as { type?: unknown }).type === "custom_tool_call_output") &&
-    typeof (item as { call_id?: unknown }).call_id === "string"
-    ? (item as { call_id: string }).call_id
-    : undefined;
+function getFunctionCallOutputId<T>(item: T): string | undefined {
+  return Check(FunctionCallOutputSchema, item) ? item.call_id : undefined;
 }
 
 function getPendingToolOutputDelta(
   body: ResponsesBody,
   continuation: CachedWebSocketContinuationState,
-): unknown[] | undefined {
+): ProtocolValue[] | undefined {
   const pendingCallIds = continuation.lastResponseItems
     .map(getFunctionCallId)
     .filter((id): id is string => id !== undefined);
@@ -109,10 +118,15 @@ function getPendingToolOutputDelta(
     : undefined;
 }
 
+interface CachedWebSocketInputDelta {
+  delta?: ProtocolValue[] | undefined;
+  decision: WebSocketContinuationDecision;
+}
+
 function getCachedWebSocketInputDelta(
   body: ResponsesBody,
   continuation: CachedWebSocketContinuationState,
-): { delta?: unknown[] | undefined; decision: WebSocketContinuationDecision } {
+): CachedWebSocketInputDelta {
   if (!requestBodiesMatchExceptInput(body, continuation.lastRequestBody)) {
     return { decision: "body_mismatch" };
   }

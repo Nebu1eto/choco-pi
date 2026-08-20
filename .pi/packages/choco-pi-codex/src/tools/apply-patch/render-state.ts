@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isNumberValue, isObjectValue, isStringValue } from "../boundary.js";
 import type { ExecutePatchResult } from "../../patch/types.ts";
 import {
   formatApplyPatchCollapsedDiff,
@@ -30,19 +32,19 @@ export type ApplyPatchToolDetails = ApplyPatchSuccessDetails | ApplyPatchPartial
 
 const applyPatchRenderStates = new Map<string, ApplyPatchRenderState>();
 
-export function isApplyPatchToolDetails(details: unknown): details is ApplyPatchToolDetails {
-  if (!details || typeof details !== "object") return false;
-  const record = details as Record<string, unknown>;
+export function isApplyPatchToolDetails(details: BoundaryValue): details is ApplyPatchToolDetails {
+  if (!details || !isObjectValue(details)) return false;
+  const record = details;
   if (record["status"] !== "success" && record["status"] !== "partial_failure") return false;
   const result = record["result"];
-  if (!result || typeof result !== "object") return false;
-  const patchResult = result as Record<string, unknown>;
+  if (!result || !isObjectValue(result)) return false;
+  const patchResult = result;
   if (
     !isStringArray(patchResult["changedFiles"]) ||
     !isStringArray(patchResult["createdFiles"]) ||
     !isStringArray(patchResult["deletedFiles"]) ||
     !isStringArray(patchResult["movedFiles"]) ||
-    typeof patchResult["fuzz"] !== "number" ||
+    !isNumberValue(patchResult["fuzz"]) ||
     !Number.isFinite(patchResult["fuzz"])
   )
     return false;
@@ -53,8 +55,8 @@ export function isApplyPatchToolDetails(details: unknown): details is ApplyPatch
   );
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
+function isStringArray(value: BoundaryValue): value is string[] {
+  return Array.isArray(value) && value.every((item) => isStringValue(item));
 }
 
 export function clearApplyPatchRenderState(): void {
@@ -187,7 +189,7 @@ export function renderApplyPatchCallFromState(
   },
 ): string {
   if (context?.argsComplete === false) return `${theme.fg("dim", "•")} ${theme.bold("Patching")}`;
-  const patchText = typeof args.input === "string" ? args.input : "";
+  const patchText = isStringValue(args.input) ? args.input : "";
   if (patchText.trim().length === 0) return `${theme.fg("dim", "•")} ${theme.bold("Patching")}`;
   const cached = context?.toolCallId ? applyPatchRenderStates.get(context.toolCallId) : undefined;
   const cwd = context?.cwd ?? cached?.cwd;

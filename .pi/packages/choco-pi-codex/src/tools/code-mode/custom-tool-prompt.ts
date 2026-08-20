@@ -83,12 +83,17 @@ export function injectCodeModeToolsPrompt(
   return `${systemPrompt.slice(0, insertAt).trimEnd()}\n\n${section}${systemPrompt.slice(insertAt)}`;
 }
 
+export interface ReplacedCodeModeToolsPrompt {
+  systemPrompt: string;
+  section: string;
+}
+
 export function replaceCodeModeToolsPrompt(
   systemPrompt: string,
   previousSection: string | undefined,
   nextTools: CodeModeToolDefinition[],
   documentationPath?: string,
-): { systemPrompt: string; section: string } {
+): ReplacedCodeModeToolsPrompt {
   const hasPrevious = Boolean(previousSection && systemPrompt.includes(previousSection));
   const basePrompt = hasPrevious ? systemPrompt.replace(previousSection!, "") : systemPrompt;
   const section = buildCodeModeToolsPrompt(nextTools, documentationPath, basePrompt);

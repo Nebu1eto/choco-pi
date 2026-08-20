@@ -1,3 +1,7 @@
+import { JsonObjectSchema } from "../runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 export type CodexCompactionInputSource = "canonical" | "reconstructed";
 
 export type CodexCompactionContinuation =
@@ -56,28 +60,33 @@ const COMPACTION_REPLAY_DECISIONS = [
   "response_prefix_mismatch",
 ] as const;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is JsonObject {
+  return Value.Check(JsonObjectSchema, value);
 }
 
-function isOneOf<T extends string>(values: readonly T[], value: unknown): value is T {
-  return typeof value === "string" && values.includes(value as T);
+function isOneOf<T extends string>(values: readonly T[], value: BoundaryValue): value is T {
+  return values.some((candidate) => candidate === value);
 }
 
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === "string";
+function isOptionalString(value: BoundaryValue): value is string | undefined {
+  return value === undefined || Value.Check(Type.String(), value);
 }
 
-function isOptionalNonNegativeNumber(value: unknown): value is number | undefined {
-  return value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0);
+function isOptionalNonNegativeNumber(value: BoundaryValue): value is number | undefined {
+  return (
+    value === undefined ||
+    (Value.Check(Type.Number(), value) && Number.isFinite(value) && value >= 0)
+  );
 }
 
-export function isCodexCompactionDiagnostic(value: unknown): value is CodexCompactionDiagnostic {
+export function isCodexCompactionDiagnostic(
+  value: BoundaryValue,
+): value is CodexCompactionDiagnostic {
   if (!isRecord(value)) return false;
   return (
     isOneOf(COMPACTION_INPUT_SOURCES, value["inputSource"]) &&
     isOneOf(COMPACTION_REPLAY_DECISIONS, value["canonicalReplay"]) &&
-    typeof value["checkpointReused"] === "boolean" &&
+    Value.Check(Type.Boolean(), value["checkpointReused"]) &&
     isOptionalString(value["model"]) &&
     isOptionalString(value["checkpointModel"]) &&
     (value["transport"] === undefined ||
@@ -86,7 +95,7 @@ export function isCodexCompactionDiagnostic(value: unknown): value is CodexCompa
     (value["continuation"] === undefined ||
       isOneOf(COMPACTION_CONTINUATIONS, value["continuation"])) &&
     (value["previousResponseId"] === undefined ||
-      typeof value["previousResponseId"] === "boolean") &&
+      Value.Check(Type.Boolean(), value["previousResponseId"])) &&
     isOptionalNonNegativeNumber(value["fullInputItems"]) &&
     isOptionalNonNegativeNumber(value["sentInputItems"]) &&
     isOptionalNonNegativeNumber(value["rewrittenToolOutputs"])

@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isFunctionValue, isObjectValue } from "../boundary.js";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export const PREFLIGHT_PROTOCOL = "@howaboua/pi-codex-conversion/code-mode-preflight/v1";
@@ -25,24 +27,21 @@ export interface PreflightBroker {
   register(preflight: CodeModeToolPreflight): () => void;
 }
 
-export function isProtocolRequest(value: unknown): boolean {
+export function isProtocolRequest(value: BoundaryValue): boolean {
   return Boolean(
-    value &&
-    typeof value === "object" &&
-    "protocol" in value &&
-    value.protocol === PREFLIGHT_PROTOCOL,
+    value && isObjectValue(value) && "protocol" in value && value.protocol === PREFLIGHT_PROTOCOL,
   );
 }
 
-export function isPreflightBroker(value: unknown): value is PreflightBroker {
+export function isPreflightBroker(value: BoundaryValue): value is PreflightBroker {
   return Boolean(
     value &&
-    typeof value === "object" &&
+    isObjectValue(value) &&
     "protocol" in value &&
     value.protocol === PREFLIGHT_PROTOCOL &&
     "isActive" in value &&
-    typeof value.isActive === "function" &&
+    isFunctionValue(value.isActive) &&
     "register" in value &&
-    typeof value.register === "function",
+    isFunctionValue(value.register),
   );
 }

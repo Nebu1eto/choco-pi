@@ -25,11 +25,13 @@ import {
   assertSuccessfulCodexOutput,
   processCodexResponsesStream,
 } from "./openai-codex/stream-events.ts";
-import type {
-  OpenAICodexStreamOptions,
-  ResponsesBody,
-  StreamEventShape,
-} from "./openai-codex/types.ts";
+import type { CodexStreamEvent, ResponsesBody } from "./openai-codex/types.ts";
+
+interface OpenAIRequestOptions {
+  signal?: AbortSignal;
+  timeout?: number;
+  maxRetries: number;
+}
 
 function initialAssistantMessage<TApi extends Api>(model: Model<TApi>): AssistantMessage {
   return {
@@ -68,11 +70,16 @@ function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean 
   );
 }
 
+interface ClientAuth {
+  apiKey: string;
+  headers: ProviderHeaders;
+}
+
 function clientAuth(
   provider: string,
   apiKey: string | undefined,
   headers: ProviderHeaders,
-): { apiKey: string; headers: ProviderHeaders } {
+): ClientAuth {
   if (apiKey) return { apiKey, headers };
   if (hasHeader(headers, "authorization")) return { apiKey: "unused", headers };
   if (hasHeader(headers, "cf-aig-authorization")) {
@@ -81,8 +88,8 @@ function clientAuth(
   throw new Error(`No API key for provider: ${provider}`);
 }
 
-async function reportErrorResponse<TApi extends Api>(
-  error: unknown,
+async function reportErrorResponse<TApi extends Api, TError>(
+  error: TError,
   options: SimpleStreamOptions | undefined,
   model: Model<TApi>,
   APIError: typeof import("openai").APIError,
@@ -113,7 +120,11 @@ export function streamCodeModeResponsesProxy<TApi extends Api>(
       let headers = mergeHeaders(model.headers, options?.headers);
       let body: ResponsesBody = buildRequestBody(model, context, effectiveOptions);
       const rewritten = await options?.onPayload?.(body, model);
-      if (rewritten !== undefined) body = rewritten as ResponsesBody;
+      if (rewritten !== undefined) {
+        // SAFETY: The provider payload hook receives a ResponsesBody and a defined replacement must
+        // preserve that request representation for the host provider API.
+        body = rewritten as ResponsesBody;
+      }
       body = isResponsesLiteRequest(body)
         ? namespaceExistingResponsesLiteRequest({ ...body, parallel_tool_calls: false })
         : applyResponsesLiteRequest(body);
@@ -128,13 +139,15 @@ export function streamCodeModeResponsesProxy<TApi extends Api>(
       });
       let response;
       try {
-        response = await client.responses
-          .create(body as unknown as ResponseCreateParamsStreaming, {
-            ...(options?.signal ? { signal: options.signal } : {}),
-            ...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-            maxRetries: options?.maxRetries ?? 0,
-          })
-          .withResponse();
+        const requestOptions: OpenAIRequestOptions = {
+          maxRetries: options?.maxRetries ?? 0,
+        };
+        if (options?.signal) requestOptions.signal = options.signal;
+        if (options?.timeoutMs !== undefined) requestOptions.timeout = options.timeoutMs;
+        // SAFETY: buildRequestBody and the Responses Lite transforms construct the documented
+        // streaming Responses request fields before this SDK boundary.
+        const requestBody = body as ResponseCreateParamsStreaming;
+        response = await client.responses.create(requestBody, requestOptions).withResponse();
       } catch (error) {
         await reportErrorResponse(error, options, model, APIError);
         throw error;
@@ -148,21 +161,18 @@ export function streamCodeModeResponsesProxy<TApi extends Api>(
       );
 
       stream.push({ type: "start", partial: output });
-      await processCodexResponsesStream(
-        response.data as unknown as AsyncIterable<StreamEventShape>,
-        output,
-        stream,
-        model,
-        effectiveOptions as OpenAICodexStreamOptions,
-      );
+      const responseData: unknown = response.data;
+      // SAFETY: OpenAI's streaming iterator emits Responses event objects; Codex processing uses
+      // the same discriminators and parses every dynamic field before use.
+      const events = responseData as AsyncIterable<CodexStreamEvent>;
+      await processCodexResponsesStream(events, output, stream, model, effectiveOptions);
       if (options?.signal?.aborted) throw new Error("Request was aborted");
       assertSuccessfulCodexOutput(output);
       stream.push({ type: "done", reason: output.stopReason, message: output });
       stream.end();
     } catch (error) {
       for (const block of output.content) {
-        if (typeof block === "object" && block !== null)
-          delete (block as { partialJson?: unknown }).partialJson;
+        if ("partialJson" in block) delete block.partialJson;
       }
       output.stopReason = options?.signal?.aborted ? "aborted" : "error";
       output.errorMessage = error instanceof Error ? error.message : String(error);
@@ -230,11 +240,13 @@ export function registerCodeModeProxyProvider(
     provider: string,
     registration: NonNullable<ReturnType<typeof registeredProviders.get>>,
   ) => {
+    // SAFETY: ModelRegistry.getRegisteredProviderConfig returns the same provider registration
+    // representation accepted by ExtensionAPI.registerProvider.
     const current = registration.modelRegistry.getRegisteredProviderConfig?.(provider) as
       | RegisteredProviderConfig
       | undefined;
     if (!current || current.streamSimple !== registration.overlayStream) return;
-    const restored = { ...current } as RegisteredProviderConfig;
+    const restored: RegisteredProviderConfig = { ...current };
     if (registration.previous?.streamSimple)
       restored.streamSimple = registration.previous.streamSimple;
     else delete restored.streamSimple;
@@ -254,6 +266,8 @@ export function registerCodeModeProxyProvider(
     const desiredProviders = resolveProviderIds(configuredProviders, modelRegistry);
     for (const provider of desiredProviders) {
       if (registeredProviders.has(provider)) continue;
+      // SAFETY: ModelRegistry.getRegisteredProviderConfig returns the same provider registration
+      // representation accepted by ExtensionAPI.registerProvider.
       const previous = modelRegistry.getRegisteredProviderConfig(provider) as
         | RegisteredProviderConfig
         | undefined;
@@ -267,7 +281,9 @@ export function registerCodeModeProxyProvider(
       ) =>
         isCodeModeRuntime(resolveCodexRuntimePlan({ model }, getConfig(), getExecutionMode()))
           ? streamCodeModeResponsesProxy(model, context, options)
-          : fallbackProvider.streamSimple(model as never, context, options);
+          : // SAFETY: The fallback provider came from this model's registered provider id, so its
+            // stream accepts the model representation supplied by the registry callback.
+            fallbackProvider.streamSimple(model as never, context, options);
       pi.registerProvider(provider, {
         api: "openai-responses",
         streamSimple: overlayStream,

@@ -1,3 +1,4 @@
+import { conditionalProperties } from "../adapter/runtime-values.ts";
 import { parseCommandString, type ParsedShellCommand } from "./parse-command.ts";
 import type { CommandSummary, ShellAction } from "./types.ts";
 
@@ -24,8 +25,8 @@ function parsedToAction(command: ParsedShellCommand): ShellAction {
     return {
       kind: "search",
       command: command.command,
-      ...(command.query ? { query: command.query } : {}),
-      ...(command.path ? { path: command.path } : {}),
+      ...conditionalProperties(Boolean(command.query), { query: command.query }),
+      ...conditionalProperties(Boolean(command.path), { path: command.path }),
     };
   }
   return { kind: "read", command: command.command, name: command.name, path: command.path };

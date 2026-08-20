@@ -1,3 +1,4 @@
+import type { BoundaryValue } from "../boundary.js";
 import type {
   RuntimeResponse,
   RuntimeToolResult,
@@ -9,6 +10,13 @@ import { boundRuntimeToolResult, cloneTrace, sanitizeTraceInput } from "./trace-
 const MAX_TRACE_COUNT = 50;
 const MAX_TRACE_INPUT_CHARS = 16_384;
 const MAX_TRACE_IMAGE_CHARS = 16 * 1024 * 1024;
+
+interface RunningTraceDetails {
+  cellId: string;
+  status: "running";
+  traces: RuntimeToolTrace[];
+  droppedTraceCount?: number | undefined;
+}
 
 export class CodeModeTraceStore {
   private readonly traces = new Map<string, RuntimeToolTrace[]>();
@@ -24,7 +32,7 @@ export class CodeModeTraceStore {
     this.droppedCounts.delete(cellId);
   }
 
-  start(cellId: string, id: string, name: string, input: unknown): RuntimeToolTrace {
+  start(cellId: string, id: string, name: string, input: BoundaryValue): RuntimeToolTrace {
     const traces = this.traces.get(cellId) ?? [];
     if (traces.length >= MAX_TRACE_COUNT) {
       traces.shift();
@@ -58,17 +66,14 @@ export class CodeModeTraceStore {
 
   emitUpdate(cellId: string, context: ToolExecutionContext): void {
     try {
-      context.onUpdate?.({
-        content: [],
-        details: {
-          cellId,
-          status: "running",
-          traces: (this.traces.get(cellId) ?? []).map(cloneTrace),
-          ...(this.droppedCounts.get(cellId)
-            ? { droppedTraceCount: this.droppedCounts.get(cellId) }
-            : {}),
-        },
-      });
+      const details: RunningTraceDetails = {
+        cellId,
+        status: "running",
+        traces: (this.traces.get(cellId) ?? []).map(cloneTrace),
+      };
+      const droppedTraceCount = this.droppedCounts.get(cellId);
+      if (droppedTraceCount) details.droppedTraceCount = droppedTraceCount;
+      context.onUpdate?.({ content: [], details });
     } catch {
       // Rendering updates must not change nested tool execution.
     }
@@ -78,12 +83,10 @@ export class CodeModeTraceStore {
     const traces = this.traces.get(response.cellId)?.map(cloneTrace);
     const droppedTraceCount = this.droppedCounts.get(response.cellId) ?? 0;
     if (response.kind !== "yielded") this.delete(response.cellId);
-    return (traces && traces.length > 0) || droppedTraceCount > 0
-      ? {
-          ...response,
-          ...(traces && traces.length > 0 ? { traces } : {}),
-          ...(droppedTraceCount > 0 ? { droppedTraceCount } : {}),
-        }
-      : response;
+    if ((!traces || traces.length === 0) && droppedTraceCount === 0) return response;
+    const attached: RuntimeResponse = { ...response };
+    if (traces && traces.length > 0) attached.traces = traces;
+    if (droppedTraceCount > 0) attached.droppedTraceCount = droppedTraceCount;
+    return attached;
   }
 }

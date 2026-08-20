@@ -1,3 +1,8 @@
+import { conditionalProperties } from "../adapter/runtime-values.ts";
+import { JsonObjectSchema } from "../adapter/runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "../adapter/runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 const WEEKLY_WINDOW_MINUTES = 7 * 24 * 60;
 
 export interface CodexUsageWindow {
@@ -17,7 +22,7 @@ export interface CodexUsageSnapshot {
   planType?: string | undefined;
   limits: CodexUsageLimit[];
   resetCredits?: CodexRateLimitResetCredits | undefined;
-  raw: unknown;
+  raw: BoundaryValue;
 }
 
 export interface CodexRateLimitResetCredit {
@@ -35,7 +40,7 @@ export interface CodexRateLimitResetCredit {
 export interface CodexRateLimitResetCredits {
   availableCount: number;
   credits: CodexRateLimitResetCredit[];
-  raw: unknown;
+  raw: BoundaryValue;
 }
 
 export type CodexRateLimitResetConsumeOutcome =
@@ -48,29 +53,30 @@ export type CodexRateLimitResetConsumeOutcome =
 export interface CodexRateLimitResetConsumeResult {
   outcome: CodexRateLimitResetConsumeOutcome;
   windowsReset?: number | undefined;
-  raw: unknown;
+  raw: BoundaryValue;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is JsonObject {
+  return Value.Check(JsonObjectSchema, value);
 }
 
-function numberValue(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function numberValue(value: BoundaryValue): number | undefined {
+  return Value.Check(Type.Number(), value) && Number.isFinite(value) ? value : undefined;
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+function stringValue(value: BoundaryValue): string | undefined {
+  return Value.Check(Type.String(), value) && value.trim().length > 0 ? value : undefined;
 }
 
-function integerValue(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.trunc(value));
-  if (typeof value !== "string" || value.trim().length === 0) return undefined;
+function integerValue(value: BoundaryValue): number | undefined {
+  if (Value.Check(Type.Number(), value) && Number.isFinite(value))
+    return Math.max(0, Math.trunc(value));
+  if (!Value.Check(Type.String(), value) || value.trim().length === 0) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : undefined;
 }
 
-function parseResetCredit(value: unknown): CodexRateLimitResetCredit | undefined {
+function parseResetCredit(value: BoundaryValue): CodexRateLimitResetCredit | undefined {
   if (!isRecord(value)) return undefined;
   return {
     id: stringValue(value["id"]!),
@@ -86,7 +92,7 @@ function parseResetCredit(value: unknown): CodexRateLimitResetCredit | undefined
 }
 
 export function parseCodexRateLimitResetCreditsPayload(
-  payload: unknown,
+  payload: BoundaryValue,
 ): CodexRateLimitResetCredits | undefined {
   const root = isRecord(payload) ? payload : undefined;
   if (!root) return undefined;
@@ -101,14 +107,14 @@ export function parseCodexRateLimitResetCreditsPayload(
 }
 
 function parseCodexRateLimitResetCreditsSummary(
-  value: unknown,
+  value: BoundaryValue,
 ): CodexRateLimitResetCredits | undefined {
   if (!isRecord(value)) return undefined;
   const availableCount = integerValue(value["available_count"]!);
   return availableCount === undefined ? undefined : { availableCount, credits: [], raw: value };
 }
 
-function parseWindow(value: unknown): CodexUsageWindow | undefined {
+function parseWindow(value: BoundaryValue): CodexUsageWindow | undefined {
   if (!isRecord(value)) return undefined;
   const usedPercent = numberValue(value["used_percent"]!);
   const limitWindowSeconds = numberValue(value["limit_window_seconds"]!);
@@ -121,28 +127,32 @@ function parseWindow(value: unknown): CodexUsageWindow | undefined {
     : { usedPercent, windowMinutes, resetsAt };
 }
 
-function parseRateLimit(value: unknown): {
+interface ParsedRateLimit {
   primary?: CodexUsageWindow | undefined;
   secondary?: CodexUsageWindow | undefined;
-} {
-  if (!isRecord(value)) return {};
-  const primary = parseWindow(value["primary_window"]!) ?? parseWindow(value["primary"]!);
-  const secondary = parseWindow(value["secondary_window"]!) ?? parseWindow(value["secondary"]!);
-  if (primary?.windowMinutes === WEEKLY_WINDOW_MINUTES && !secondary) return { secondary: primary };
-  return { primary, secondary };
 }
 
-export function parseCodexUsagePayload(payload: unknown): CodexUsageSnapshot {
+function parseRateLimit(value: BoundaryValue): ParsedRateLimit {
+  if (!isRecord(value)) return {} satisfies ParsedRateLimit;
+  const primary = parseWindow(value["primary_window"]!) ?? parseWindow(value["primary"]!);
+  const secondary = parseWindow(value["secondary_window"]!) ?? parseWindow(value["secondary"]!);
+  if (primary?.windowMinutes === WEEKLY_WINDOW_MINUTES && !secondary) {
+    return { secondary: primary } satisfies ParsedRateLimit;
+  }
+  return { primary, secondary } satisfies ParsedRateLimit;
+}
+
+export function parseCodexUsagePayload(payload: BoundaryValue): CodexUsageSnapshot {
   const root = isRecord(payload) ? payload : {};
   const limits: CodexUsageLimit[] = [];
-  const addLimit = (limitId: string, limitName: string | undefined, source: unknown) => {
+  const addLimit = (limitId: string, limitName: string | undefined, source: BoundaryValue) => {
     const rateLimit = isRecord(source) && "rate_limit" in source ? source["rate_limit"]! : source;
     const parsed = parseRateLimit(rateLimit);
     limits.push({
       limitId,
-      ...(limitName ? { limitName } : {}),
-      ...(parsed.primary ? { primary: parsed.primary } : {}),
-      ...(parsed.secondary ? { secondary: parsed.secondary } : {}),
+      ...conditionalProperties(Boolean(limitName), { limitName }),
+      ...conditionalProperties(Boolean(parsed.primary), { primary: parsed.primary }),
+      ...conditionalProperties(Boolean(parsed.secondary), { secondary: parsed.secondary }),
     });
   };
   addLimit("codex", undefined, root["rate_limit"]!);
@@ -174,7 +184,7 @@ export function codexWeeklyUsageLeft(snapshot: CodexUsageSnapshot): number | und
 }
 
 export function parseCodexRateLimitResetConsumePayload(
-  payload: unknown,
+  payload: BoundaryValue,
 ): CodexRateLimitResetConsumeResult {
   const root = isRecord(payload) ? payload : {};
   const code = stringValue(root["code"]!);

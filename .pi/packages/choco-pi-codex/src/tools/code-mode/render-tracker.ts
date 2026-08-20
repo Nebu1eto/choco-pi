@@ -1,3 +1,4 @@
+import { isStringValue } from "../boundary.js";
 type RenderStatus = "running" | "done" | "yielded";
 const MAX_TRACKED_CODE_MODE_CALLS = 1_000;
 
@@ -49,7 +50,7 @@ function trimRenderEntries(
 ): void {
   while (entries.size > MAX_TRACKED_CODE_MODE_CALLS) {
     const oldest = entries.keys().next().value;
-    if (typeof oldest !== "string") return;
+    if (!isStringValue(oldest)) return;
     entries.delete(oldest);
   }
 }

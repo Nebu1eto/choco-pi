@@ -1,10 +1,11 @@
+import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
 import { CodeModeHostProcess } from "./host-process.js";
 import { type HostMessage, parseHostMessage } from "./host-protocol.js";
 
 type Pending = {
-  resolve: (value: unknown) => void;
+  resolve: (value: BoundaryValue) => void;
   reject: (error: Error) => void;
-  onValue?: ((value: unknown) => void) | undefined;
+  onValue?: ((value: BoundaryValue) => void) | undefined;
 };
 
 type HostConnectionOptions = {
@@ -66,15 +67,18 @@ export class CodeModeHostConnection {
     await handshake;
   }
 
-  request(request: Record<string, unknown>, onValue?: (value: unknown) => void): Promise<unknown> {
+  request(
+    request: BoundaryRecord,
+    onValue?: (value: BoundaryValue) => void,
+  ): Promise<BoundaryValue> {
     return this.requestWithId(this.nextRequestId(), request, onValue);
   }
 
   requestWithId(
     id: number,
-    request: Record<string, unknown>,
-    onValue?: (value: unknown) => void,
-  ): Promise<unknown> {
+    request: BoundaryRecord,
+    onValue?: (value: BoundaryValue) => void,
+  ): Promise<BoundaryValue> {
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject, onValue });
       try {
@@ -86,13 +90,13 @@ export class CodeModeHostConnection {
     });
   }
 
-  expectInitial(id: number): Promise<unknown> {
+  expectInitial(id: number): Promise<BoundaryValue> {
     return new Promise((resolve, reject) => {
       this.initial.set(id, { resolve, reject });
     });
   }
 
-  send(message: unknown): void {
+  send(message: BoundaryValue): void {
     this.process.send(message);
   }
 

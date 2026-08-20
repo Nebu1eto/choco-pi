@@ -27,6 +27,12 @@ export const HOST_ASSETS = {
   ],
 } as const;
 
+interface HostAssetMap {
+  [target: string]: readonly [string, string] | undefined;
+}
+
+const hostAssets: HostAssetMap = HOST_ASSETS;
+
 export function codeModeHostBinaryName(platform: string): string {
   return platform === "win32" ? "codex-code-mode-host.exe" : "codex-code-mode-host";
 }
@@ -35,7 +41,7 @@ export function resolveCodeModeHostAsset(
   platform: string,
   arch: string,
 ): readonly [string, string] {
-  const asset = (HOST_ASSETS as Record<string, readonly [string, string]>)[`${platform}-${arch}`];
+  const asset = hostAssets[`${platform}-${arch}`];
   if (!asset) throw new Error(`Unsupported code-mode platform: ${platform}-${arch}`);
   return asset;
 }

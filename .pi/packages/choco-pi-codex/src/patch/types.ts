@@ -57,7 +57,7 @@ export class ExecutePatchError extends DiffError {
     this.name = "ExecutePatchError";
     this.result = result;
     this.failures = failures;
-    this.failedAction = failures[0]!?.action;
+    this.failedAction = failures[0]?.action;
   }
 
   hasPartialSuccess(): boolean {

@@ -1,4 +1,6 @@
 import type { Api, Context, Model, Tool, Usage } from "@earendil-works/pi-ai";
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import type {
   ResponseCreateParamsStreaming,
   ResponseInput,
@@ -26,6 +28,7 @@ import {
   type ImageGenerationCallBlock,
   type WebSearchCallBlock,
 } from "./native-items.ts";
+import type { ProviderOutputItem } from "../openai-codex/types.ts";
 
 type Message = Context["messages"][number];
 
@@ -33,6 +36,29 @@ type InternalAssistantContent =
   | Extract<Message, { role: "assistant" }>["content"][number]
   | ImageGenerationCallBlock
   | WebSearchCallBlock;
+type FunctionCallInput = Extract<ResponseInputItem, { type: "function_call" }> & {
+  namespace?: string | undefined;
+};
+interface CustomToolCallInput {
+  type: "custom_tool_call";
+  call_id: string;
+  name: string;
+  input: string;
+  id?: string | undefined;
+  namespace?: string | undefined;
+}
+type FunctionToolWithDeferredLoading = Omit<Extract<OpenAITool, { type: "function" }>, "strict"> & {
+  strict?: boolean | null | undefined;
+  defer_loading?: true | undefined;
+};
+interface GrammarOpenAITool {
+  type: "custom";
+  name: string;
+  description: string;
+  format: { type: "grammar"; syntax: "lark" | "regex"; definition: string };
+  defer_loading?: true | undefined;
+}
+
 type ImageContentWithDetail = {
   type: "image";
   data: string;
@@ -51,7 +77,7 @@ export interface OpenAIResponsesStreamOptions {
     usage: Usage,
     serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
   ) => void;
-  onOutputItemDone?: (item: unknown) => void;
+  onOutputItemDone?: (item: ProviderOutputItem) => void;
 }
 
 interface ConvertResponsesMessagesOptions {
@@ -70,11 +96,27 @@ interface ConvertResponsesToolsOptions {
 }
 
 export const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
+const StringSchema = Type.String();
+const ResponsesInputItemSchema = Type.Unsafe<ResponseInput[number]>({
+  anyOf: [
+    { type: "object" },
+    { type: "array" },
+    { type: "string" },
+    { type: "number" },
+    { type: "boolean" },
+    { type: "null" },
+  ],
+});
+const JsonSchemaRecordType = Type.Record(Type.String(), Type.Unknown());
+type JsonSchemaRecord = Static<typeof JsonSchemaRecordType>;
+const JsonSchemaRecordSchema = Type.Unsafe<JsonSchemaRecord>({ type: "object" });
 
-export function splitDeferredTools(
-  context: Context,
-  enabled: boolean,
-): { immediate: Tool[]; deferred: Map<string, Tool> } {
+interface DeferredToolPlacement {
+  immediate: Tool[];
+  deferred: Map<string, Tool>;
+}
+
+export function splitDeferredTools(context: Context, enabled: boolean): DeferredToolPlacement {
   const uniqueTools = new Map<string, Tool>();
   for (const tool of context.tools ?? []) uniqueTools.set(tool.name, tool);
   if (!enabled) return { immediate: [...uniqueTools.values()], deferred: new Map() };
@@ -111,7 +153,8 @@ function sanitizeSurrogates(text: string): string {
 
 function parseResponsesThinkingSignature(signature: string): ResponseInput[number] | undefined {
   try {
-    return JSON.parse(signature) as ResponseInput[number];
+    const parsed: object = JSON.parse(signature);
+    return Check(ResponsesInputItemSchema, parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
@@ -136,12 +179,12 @@ export function convertResponsesMessages<TApi extends Api>(
   };
   const normalizeToolCallId = (
     id: string,
-    _targetModel: Model<TApi>,
+    _targetModel: Model<Api>,
     source: Extract<Message, { role: "assistant" }>,
   ) => {
     if (!allowedToolCallProviders.has(model.provider)) return normalizeIdPart(id);
     if (!id.includes("|")) return normalizeIdPart(id);
-    const [callId, itemId] = id.split("|") as [string, string | undefined];
+    const [callId = "", itemId] = id.split("|");
     const normalizedCallId = normalizeIdPart(callId);
     const isForeignToolCall = source.provider !== model.provider || source.api !== model.api;
     let normalizedItemId = isForeignToolCall
@@ -154,8 +197,8 @@ export function convertResponsesMessages<TApi extends Api>(
 
   const transformedMessages = normalizeResponsesMessageHistory(
     context.messages,
-    model as Model<Api>,
-    normalizeToolCallId as never,
+    model,
+    normalizeToolCallId,
   );
   const includeSystemPrompt = options?.includeSystemPrompt ?? true;
   if (includeSystemPrompt && context.systemPrompt) {
@@ -168,7 +211,7 @@ export function convertResponsesMessages<TApi extends Api>(
   let msgIndex = 0;
   for (const msg of transformedMessages) {
     if (msg.role === "user") {
-      if (typeof msg.content === "string") {
+      if (Check(StringSchema, msg.content)) {
         messages.push({
           role: "user",
           content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }],
@@ -191,13 +234,23 @@ export function convertResponsesMessages<TApi extends Api>(
       const isSameModel = isSameProviderAndApi && msg.model === model.id;
       const isDifferentModel = isSameProviderAndApi && msg.model !== model.id;
       let textBlockIndex = 0;
+      // SAFETY: Provider assistant history may include the native image-generation and web-search
+      // blocks in InternalAssistantContent; their discriminator guards parse them before wire use.
       for (const block of msg.content as InternalAssistantContent[]) {
         if (isImageGenerationCallBlock(block)) {
           const imageGenerationCall = sanitizeImageGenerationCallItem(block.item);
-          if (imageGenerationCall) output.push(imageGenerationCall as ResponseInput[number]);
+          if (imageGenerationCall) {
+            // SAFETY: sanitizeImageGenerationCallItem validates every required Responses item field.
+            output.push(imageGenerationCall as ResponseInput[number]);
+          }
         } else if (isWebSearchCallBlock(block)) {
           const webSearchCall = sanitizeWebSearchCallItem(block.item);
-          if (webSearchCall) output.push(webSearchCall as ResponseInput[number]);
+          if (webSearchCall) {
+            const parsedWebSearchCall: unknown = webSearchCall;
+            // SAFETY: sanitizeWebSearchCallItem validates the discriminator and required item id;
+            // action/results remain the original provider payload fields.
+            output.push(parsedWebSearchCall as ResponseInput[number]);
+          }
         } else if (block.type === "thinking") {
           const thinkingItem = block.thinkingSignature
             ? parseResponsesThinkingSignature(block.thinkingSignature)
@@ -210,18 +263,33 @@ export function convertResponsesMessages<TApi extends Api>(
           textBlockIndex++;
           let msgId = parsedSignature?.id ?? fallbackMessageId;
           if (msgId.length > 64) msgId = `msg_${shortHash(msgId)}`;
-          output.push({
-            type: "message",
-            role: "assistant",
-            content: [
-              { type: "output_text", text: sanitizeSurrogates(block.text), annotations: [] },
-            ],
-            status: "completed",
-            id: msgId,
-            ...(parsedSignature?.phase ? { phase: parsedSignature.phase } : {}),
-          });
+          const messageContent = [
+            {
+              type: "output_text" as const,
+              text: sanitizeSurrogates(block.text),
+              annotations: [],
+            },
+          ];
+          if (parsedSignature?.phase) {
+            output.push({
+              type: "message",
+              role: "assistant",
+              content: messageContent,
+              status: "completed",
+              id: msgId,
+              phase: parsedSignature.phase,
+            });
+          } else {
+            output.push({
+              type: "message",
+              role: "assistant",
+              content: messageContent,
+              status: "completed",
+              id: msgId,
+            });
+          }
         } else if (block.type === "toolCall") {
-          const [callId, itemIdRaw] = block.id.split("|");
+          const [callId = "", itemIdRaw] = block.id.split("|");
           const customInputProperty = options?.grammarToolInputProperties?.get(block.name);
           let itemId: string | undefined = itemIdRaw;
           if (customInputProperty !== undefined && itemId?.startsWith("fc_")) {
@@ -234,31 +302,35 @@ export function convertResponsesMessages<TApi extends Api>(
             itemId = undefined;
           const canReplayNamespace =
             isSameModel || options?.deferredTools?.has(block.name) === true;
-          output.push(
-            customInputProperty === undefined
-              ? ({
-                  type: "function_call",
-                  ...(itemId ? { id: itemId } : {}),
-                  call_id: callId,
-                  name: block.name,
-                  arguments: JSON.stringify(block.arguments),
-                  ...(canReplayNamespace && block.namespace !== undefined
-                    ? { namespace: block.namespace }
-                    : {}),
-                } as ResponseInput[number])
-              : ({
-                  type: "custom_tool_call",
-                  ...(itemId ? { id: itemId } : {}),
-                  call_id: callId,
-                  name: block.name,
-                  input: sanitizeSurrogates(
-                    getGrammarToolInput(block.name, block.arguments, customInputProperty),
-                  ),
-                  ...(canReplayNamespace && block.namespace !== undefined
-                    ? { namespace: block.namespace }
-                    : {}),
-                } as ResponseInput[number]),
-          );
+          if (customInputProperty === undefined) {
+            const functionCall: FunctionCallInput = {
+              type: "function_call",
+              call_id: callId,
+              name: block.name,
+              arguments: JSON.stringify(block.arguments),
+            };
+            if (itemId) functionCall.id = itemId;
+            if (canReplayNamespace && block.namespace !== undefined) {
+              functionCall.namespace = block.namespace;
+            }
+            output.push(functionCall);
+          } else {
+            const customCall: CustomToolCallInput = {
+              type: "custom_tool_call",
+              call_id: callId,
+              name: block.name,
+              input: sanitizeSurrogates(
+                getGrammarToolInput(block.name, block.arguments, customInputProperty),
+              ),
+            };
+            if (itemId) customCall.id = itemId;
+            if (canReplayNamespace && block.namespace !== undefined) {
+              customCall.namespace = block.namespace;
+            }
+            // SAFETY: The custom tool item uses Codex's Responses extension fields and preserves the
+            // standard call discriminator, id, name, and input representation.
+            output.push(customCall as ResponseInput[number]);
+          }
         }
       }
       if (output.length > 0) messages.push(...output);
@@ -269,7 +341,7 @@ export function convertResponsesMessages<TApi extends Api>(
         .join("\n");
       const hasImages = msg.content.some((c) => c.type === "image");
       const hasText = textResult.length > 0;
-      const [callId] = msg.toolCallId.split("|");
+      const [callId = ""] = msg.toolCallId.split("|");
       const encryptedWebRunOutput = encryptedWebRunOutputFromDetails(msg.details);
       const output = encryptedWebRunOutput
         ? [{ type: "encrypted_content" as const, encrypted_content: encryptedWebRunOutput }]
@@ -287,13 +359,16 @@ export function convertResponsesMessages<TApi extends Api>(
                 })),
             ]
           : sanitizeSurrogates(hasText ? textResult : "(see attached image)");
-      messages.push({
+      const outputItem = {
         type: options?.grammarToolInputProperties?.has(msg.toolName)
-          ? "custom_tool_call_output"
-          : "function_call_output",
-        call_id: callId!,
-        output: output as any,
-      } as ResponseInput[number]);
+          ? ("custom_tool_call_output" as const)
+          : ("function_call_output" as const),
+        call_id: callId,
+        output,
+      };
+      // SAFETY: output is constructed from the documented string, input content, or encrypted
+      // content representations accepted by Responses tool-call output items.
+      messages.push(outputItem as ResponseInput[number]);
 
       const deferredTools: Tool[] = [];
       for (const name of msg.addedToolNames ?? []) {
@@ -303,11 +378,14 @@ export function convertResponsesMessages<TApi extends Api>(
         deferredTools.push(tool);
       }
       if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
-        messages.push({
+        const additionalTools = {
           type: "additional_tools",
           role: "developer",
           tools: convertResponsesTools(deferredTools, options.toolOptions),
-        } as unknown as ResponseInputItem);
+        };
+        // SAFETY: additional_tools is the Codex Responses extension item used only on Codex-capable
+        // paths; all nested tools are built by convertResponsesTools.
+        messages.push(additionalTools as ResponseInputItem);
       } else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
         const names = deferredTools.map((tool) => tool.name);
         const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
@@ -333,7 +411,7 @@ export function convertResponsesMessages<TApi extends Api>(
     msgIndex++;
   }
 
-  return normalizeResponsesToolHistory(messages) as ResponseInput;
+  return normalizeResponsesToolHistory(messages);
 }
 
 export function convertResponsesTools(
@@ -345,8 +423,8 @@ export function convertResponsesTools(
   const supportsOpenAIGrammarTools = options?.supportsOpenAIGrammarTools ?? false;
   return tools.map((tool): OpenAITool => {
     const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
-    if (grammar)
-      return {
+    if (grammar) {
+      const grammarTool: GrammarOpenAITool = {
         type: "custom",
         name: tool.name,
         description: tool.description,
@@ -355,22 +433,30 @@ export function convertResponsesTools(
           syntax: grammar.format,
           definition: grammar.definition,
         },
-        ...(options?.deferLoading ? { defer_loading: true } : {}),
-      } as OpenAITool;
+      };
+      if (options?.deferLoading) grammarTool.defer_loading = true;
+      // SAFETY: resolveGrammarConstrainedSampling validates the grammar format and definition;
+      // custom grammar is a Codex extension to the upstream Responses tool union.
+      return grammarTool as OpenAITool;
+    }
     const constrainedStrict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
     const strict = constrainedStrict ?? defaultStrict;
-    const functionTool = {
+    const parameters = getJsonSchemaToolParameters(tool, strict === true);
+    if (!Check(JsonSchemaRecordSchema, parameters)) {
+      throw new Error(`Tool "${tool.name}" parameters must be a JSON schema object.`);
+    }
+    const parsedParameters: JsonSchemaRecord = parameters;
+    const functionTool: FunctionToolWithDeferredLoading = {
       type: "function",
       name: tool.name,
       description: tool.description,
-      parameters: getJsonSchemaToolParameters(tool, strict === true) as unknown as Record<
-        string,
-        unknown
-      >,
-      ...(options?.deferLoading ? { defer_loading: true } : {}),
-    } as Extract<OpenAITool, { type: "function" }>;
+      parameters: parsedParameters,
+    };
+    if (options?.deferLoading) functionTool.defer_loading = true;
     if (supportsStrictMode) functionTool.strict = strict;
-    return functionTool;
+    // SAFETY: The parameters schema check and controlled construction establish a Responses
+    // function tool; strict is intentionally omitted for endpoints that do not support it.
+    return functionTool as OpenAITool;
   });
 }
 

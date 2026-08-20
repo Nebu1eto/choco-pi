@@ -1,3 +1,4 @@
+import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
 import { randomUUID } from "node:crypto";
 import { CodeModeHostConnection } from "./host-connection.js";
 import type { HostMessage } from "./host-protocol.js";
@@ -55,19 +56,19 @@ export class CodeModeHostSession {
     return this.connection.nextRequestId();
   }
 
-  expectInitial(id: number): Promise<unknown> {
+  expectInitial(id: number): Promise<BoundaryValue> {
     return this.connection.expectInitial(id);
   }
 
   requestWithId(
     id: number,
-    request: Record<string, unknown>,
-    onValue?: (value: unknown) => void,
-  ): Promise<unknown> {
+    request: BoundaryRecord,
+    onValue?: (value: BoundaryValue) => void,
+  ): Promise<BoundaryValue> {
     return this.connection.requestWithId(id, request, onValue);
   }
 
-  send(message: unknown): void {
+  send(message: BoundaryValue): void {
     this.connection.send(message);
   }
 
@@ -96,6 +97,6 @@ function shutdownDeadline(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-function toError(error: unknown): Error {
+function toError(error: BoundaryValue): Error {
   return error instanceof Error ? error : new Error(String(error));
 }

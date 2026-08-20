@@ -1,3 +1,44 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
+
+const NativeItemValueSchema = Type.Union([
+  Type.Unsafe<object>({ type: "object" }),
+  Type.Array(Type.Unknown()),
+  Type.String(),
+  Type.Number(),
+  Type.BigInt(),
+  Type.Boolean(),
+  Type.Symbol(),
+  Type.Function([], Type.Unknown()),
+  Type.Null(),
+]);
+type NativeItemValue = Static<typeof NativeItemValueSchema>;
+const EncryptedOutputSchema = Type.Object({ encrypted_output: Type.Optional(Type.Unknown()) });
+const WebRunDetailsSchema = Type.Object({ webRun: Type.Optional(Type.Unknown()) });
+const ImageGenerationBlockSchema = Type.Object({
+  type: Type.Literal("image_generation_call"),
+  item: Type.Object({ type: Type.Literal("image_generation_call") }),
+});
+const WebSearchBlockSchema = Type.Object({
+  type: Type.Literal("web_search_call"),
+  item: Type.Object({ type: Type.Literal("web_search_call") }),
+});
+const ImageGenerationCallSchema = Type.Object({
+  type: Type.Literal("image_generation_call"),
+  id: Type.String(),
+  status: Type.String(),
+  result: Type.Union([Type.String(), Type.Null()]),
+  revised_prompt: Type.Optional(Type.Unknown()),
+});
+const WebSearchCallSchema = Type.Object({
+  type: Type.Literal("web_search_call"),
+  id: Type.String(),
+  status: Type.Optional(Type.Unknown()),
+  action: Type.Optional(Type.Unknown()),
+  results: Type.Optional(Type.Unknown()),
+});
+const ImageDetailSchema = Type.Object({ detail: Type.Optional(Type.Unknown()) });
+
 export interface ImageGenerationCallItem {
   type: "image_generation_call";
   id: string;
@@ -15,8 +56,8 @@ export interface WebSearchCallItem {
   type: "web_search_call";
   id: string;
   status?: string | undefined;
-  action?: unknown | undefined;
-  results?: unknown | undefined;
+  action?: NativeItemValue | undefined;
+  results?: NativeItemValue | undefined;
 }
 
 export interface WebSearchCallBlock {
@@ -26,82 +67,55 @@ export interface WebSearchCallBlock {
 
 export type ImageDetail = "auto" | "high" | "original";
 
-export function encryptedOutputFromWebRunLike(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const encryptedOutput = (value as Record<string, unknown>)["encrypted_output"];
-  return typeof encryptedOutput === "string" && encryptedOutput.trim()
+export function encryptedOutputFromWebRunLike<T>(value: T): string | undefined {
+  if (!Check(EncryptedOutputSchema, value)) return undefined;
+  const encryptedOutput = value.encrypted_output;
+  return Check(Type.String(), encryptedOutput) && encryptedOutput.trim()
     ? encryptedOutput
     : undefined;
 }
 
-export function encryptedWebRunOutputFromDetails(details: unknown): string | undefined {
-  if (!details || typeof details !== "object") return undefined;
-  const record = details as Record<string, unknown>;
-  return encryptedOutputFromWebRunLike(record["webRun"]);
+export function encryptedWebRunOutputFromDetails<T>(details: T): string | undefined {
+  if (!Check(WebRunDetailsSchema, details)) return undefined;
+  return encryptedOutputFromWebRunLike(details.webRun);
 }
 
-export function isImageGenerationCallBlock(block: {
-  type: string;
-  item?: unknown;
-}): block is ImageGenerationCallBlock {
-  return (
-    block.type === "image_generation_call" &&
-    typeof block.item === "object" &&
-    block.item !== null &&
-    (block.item as Record<string, unknown>)["type"] === "image_generation_call"
-  );
+export function isImageGenerationCallBlock<T extends { type: string }>(
+  block: T,
+): block is T & ImageGenerationCallBlock {
+  return Check(ImageGenerationBlockSchema, block);
 }
 
-export function isWebSearchCallBlock(block: {
-  type: string;
-  item?: unknown;
-}): block is WebSearchCallBlock {
-  return (
-    block.type === "web_search_call" &&
-    typeof block.item === "object" &&
-    block.item !== null &&
-    (block.item as Record<string, unknown>)["type"] === "web_search_call"
-  );
+export function isWebSearchCallBlock<T extends { type: string }>(
+  block: T,
+): block is T & WebSearchCallBlock {
+  return Check(WebSearchBlockSchema, block);
 }
 
-export function sanitizeImageGenerationCallItem(
-  item: unknown,
-): ImageGenerationCallItem | undefined {
-  if (!item || typeof item !== "object") return undefined;
-  const candidate = item as Record<string, unknown>;
-  if (candidate["type"] !== "image_generation_call") return undefined;
-  if (typeof candidate["id"]! !== "string" || candidate["id"] === "") return undefined;
-  if (typeof candidate["status"]! !== "string" || candidate["status"] === "") return undefined;
-  if (!(typeof candidate["result"]! === "string" || candidate["result"] === null)) return undefined;
-
-  return {
+export function sanitizeImageGenerationCallItem<T>(item: T): ImageGenerationCallItem | undefined {
+  if (!Check(ImageGenerationCallSchema, item) || item.id === "" || item.status === "") {
+    return undefined;
+  }
+  const sanitized: ImageGenerationCallItem = {
     type: "image_generation_call",
-    id: candidate["id"]!,
-    status: candidate["status"]!,
-    result: candidate["result"]!,
-    ...(typeof candidate["revised_prompt"]! === "string"
-      ? { revised_prompt: candidate["revised_prompt"]! }
-      : {}),
+    id: item.id,
+    status: item.status,
+    result: item.result,
   };
+  if (Check(Type.String(), item.revised_prompt)) sanitized.revised_prompt = item.revised_prompt;
+  return sanitized;
 }
 
-export function sanitizeWebSearchCallItem(item: unknown): WebSearchCallItem | undefined {
-  if (!item || typeof item !== "object") return undefined;
-  const candidate = item as Record<string, unknown>;
-  if (candidate["type"] !== "web_search_call") return undefined;
-  if (typeof candidate["id"]! !== "string" || candidate["id"] === "") return undefined;
-
-  return {
-    type: "web_search_call",
-    id: candidate["id"]!,
-    ...(typeof candidate["status"]! === "string" ? { status: candidate["status"]! } : {}),
-    ...(candidate["action"] !== undefined ? { action: candidate["action"]! } : {}),
-    ...(candidate["results"] !== undefined ? { results: candidate["results"]! } : {}),
-  };
+export function sanitizeWebSearchCallItem<T>(item: T): WebSearchCallItem | undefined {
+  if (!Check(WebSearchCallSchema, item) || item.id === "") return undefined;
+  const sanitized: WebSearchCallItem = { type: "web_search_call", id: item.id };
+  if (Check(Type.String(), item.status)) sanitized.status = item.status;
+  if (Check(NativeItemValueSchema, item.action)) sanitized.action = item.action;
+  if (Check(NativeItemValueSchema, item.results)) sanitized.results = item.results;
+  return sanitized;
 }
 
-export function imageDetailForResponses(block: unknown): ImageDetail {
-  const detail =
-    block && typeof block === "object" ? (block as Record<string, unknown>)["detail"] : undefined;
-  return detail === "high" || detail === "original" ? detail : "auto";
+export function imageDetailForResponses<T>(block: T): ImageDetail {
+  if (!Check(ImageDetailSchema, block)) return "auto";
+  return block.detail === "high" || block.detail === "original" ? block.detail : "auto";
 }

@@ -1,3 +1,5 @@
+import type { BoundaryValue } from "../boundary.js";
+import { isFunctionValue, isObjectValue, isStringValue } from "../boundary.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -24,8 +26,8 @@ interface CodeModeProcessState {
 export interface RegisterCodeModeToolsOptions extends CodeModeToolProvider {}
 
 export interface CodeModeRegistration {
-  prepare(ctx?: unknown): Promise<void> | undefined;
-  refreshPromptTools(systemPrompt: string, ctx?: unknown): string;
+  prepare(ctx?: BoundaryValue): Promise<void> | undefined;
+  refreshPromptTools(systemPrompt: string, ctx?: BoundaryValue): string;
   checkpointNotebook(): Promise<void>;
   shutdownHost(): Promise<void>;
   shutdown(): Promise<void>;
@@ -34,13 +36,13 @@ export interface CodeModeRegistration {
 export async function registerCustomTools(
   pi: ExtensionAPI,
   toolsDir?: string | readonly string[],
-  options: { isActive?(ctx: unknown): boolean } = {},
+  options: { isActive?(ctx: BoundaryValue): boolean } = {},
 ): Promise<CodeModeRegistration> {
   const usesDefaultDirs = toolsDir === undefined;
   const toolsDirs =
     toolsDir === undefined
       ? [getCustomToolsDir()]
-      : typeof toolsDir === "string"
+      : isStringValue(toolsDir)
         ? [toolsDir]
         : [...toolsDir];
   let previousErrors = new Map<string, string>();
@@ -60,7 +62,7 @@ export async function registerCustomTools(
 }
 
 function reportCustomToolErrors(
-  ctx: unknown,
+  ctx: BoundaryValue,
   errors: CustomToolDiscoveryError[],
   previous: Map<string, string>,
 ): Map<string, string> {
@@ -73,24 +75,24 @@ function reportCustomToolErrors(
   return current;
 }
 
-function isExtensionContext(value: unknown): value is ExtensionContext {
+function isExtensionContext(value: BoundaryValue): value is ExtensionContext {
   return Boolean(
     value &&
-    typeof value === "object" &&
+    isObjectValue(value) &&
     "ui" in value &&
     value.ui &&
-    typeof value.ui === "object" &&
+    isObjectValue(value.ui) &&
     "notify" in value.ui &&
-    typeof value.ui.notify === "function",
+    isFunctionValue(value.ui.notify),
   );
 }
 
-function isTrustedProjectContext(value: unknown): value is ExtensionContext {
+function isTrustedProjectContext(value: BoundaryValue): value is ExtensionContext {
   return Boolean(
     value &&
-    typeof value === "object" &&
+    isObjectValue(value) &&
     "isProjectTrusted" in value &&
-    typeof value.isProjectTrusted === "function" &&
+    isFunctionValue(value.isProjectTrusted) &&
     value.isProjectTrusted(),
   );
 }
@@ -132,6 +134,7 @@ export async function registerCodeModeTools(
 }
 
 async function getOrCreateRuntime(pi: ExtensionAPI): Promise<SharedCodeModeRuntime> {
+  // SAFETY: REGISTRATION_KEY is a module-private symbol; this module is the sole writer and validates stored legacy/runtime values before use.
   const state = pi.events as typeof pi.events & {
     [REGISTRATION_KEY]?: CodeModeProcessState | SharedCodeModeRuntime;
   };
@@ -146,10 +149,10 @@ async function getOrCreateRuntime(pi: ExtensionAPI): Promise<SharedCodeModeRunti
   return processState.runtime;
 }
 
-function isProcessState(value: unknown): value is CodeModeProcessState {
+function isProcessState(value: BoundaryValue): value is CodeModeProcessState {
   return Boolean(
     value &&
-    typeof value === "object" &&
+    isObjectValue(value) &&
     "runtime" in value &&
     isSharedRuntime(value.runtime) &&
     "boundApis" in value &&
@@ -157,20 +160,20 @@ function isProcessState(value: unknown): value is CodeModeProcessState {
   );
 }
 
-async function replaceLegacyState(legacy: unknown): Promise<CodeModeProcessState> {
+async function replaceLegacyState(legacy: BoundaryValue): Promise<CodeModeProcessState> {
   // 2.2.0 stored the runtime directly and retained stale providers across reloads.
   if (isSharedRuntime(legacy)) await legacy.shutdownHost();
   return { runtime: new SharedCodeModeRuntime(), boundApis: new WeakSet() };
 }
 
-function isSharedRuntime(value: unknown): value is SharedCodeModeRuntime {
+function isSharedRuntime(value: BoundaryValue): value is SharedCodeModeRuntime {
   return Boolean(
     value &&
-    typeof value === "object" &&
+    isObjectValue(value) &&
     "providers" in value &&
     value.providers instanceof Map &&
     "shutdownHost" in value &&
-    typeof value.shutdownHost === "function",
+    isFunctionValue(value.shutdownHost),
   );
 }
 

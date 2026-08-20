@@ -1,20 +1,28 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import type {
   CodexDiagnosticsFailure,
   CodexDiagnosticsFailureCategory,
   CodexDiagnosticsSink,
 } from "./types.ts";
 
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+const DiagnosticRecordType = Type.Record(Type.String(), Type.Unknown());
+type DiagnosticRecord = Static<typeof DiagnosticRecordType>;
+const DiagnosticRecordSchema = Type.Unsafe<DiagnosticRecord>({ type: "object" });
+const StringSchema = Type.String();
+const NumberSchema = Type.Number();
+
+function record<T>(value: T): DiagnosticRecord | undefined {
+  return Check(DiagnosticRecordSchema, value) ? value : undefined;
 }
 
-function safeCode(value: unknown): string | undefined {
-  return typeof value === "string" && /^[a-z0-9_.-]{1,64}$/i.test(value) ? value : undefined;
+function safeCode<T>(value: T): string | undefined {
+  return Check(StringSchema, value) && /^[a-z0-9_.-]{1,64}$/i.test(value) ? value : undefined;
 }
 
-function statusCode(value: unknown): number | undefined {
-  const parsed = typeof value === "string" && /^\d{3}$/.test(value) ? Number(value) : value;
-  return typeof parsed === "number" && Number.isInteger(parsed) && parsed >= 100 && parsed <= 599
+function statusCode<T>(value: T): number | undefined {
+  const parsed = Check(StringSchema, value) && /^\d{3}$/.test(value) ? Number(value) : value;
+  return Check(NumberSchema, parsed) && Number.isInteger(parsed) && parsed >= 100 && parsed <= 599
     ? parsed
     : undefined;
 }
@@ -37,7 +45,7 @@ function category(description: string): CodexDiagnosticsFailureCategory {
   return "unknown";
 }
 
-export function codexDiagnosticsFailure(error: unknown): CodexDiagnosticsFailure {
+export function codexDiagnosticsFailure<T>(error: T): CodexDiagnosticsFailure {
   const outer = record(error);
   const payload = record(outer?.["payload"]);
   const response = record(payload?.["response"]);
@@ -53,17 +61,16 @@ export function codexDiagnosticsFailure(error: unknown): CodexDiagnosticsFailure
     statusCode(responseError?.["status"]);
   const description = [
     error instanceof Error ? error.name : undefined,
-    error instanceof Error ? error.message : typeof error === "string" ? error : undefined,
+    error instanceof Error ? error.message : Check(StringSchema, error) ? error : undefined,
     code,
     status,
   ]
     .filter((value) => value !== undefined)
     .join(" ");
-  return {
-    category: category(description),
-    ...(code ? { code } : {}),
-    ...(status !== undefined ? { status } : {}),
-  };
+  const failure: CodexDiagnosticsFailure = { category: category(description) };
+  if (code) failure.code = code;
+  if (status !== undefined) failure.status = status;
+  return failure;
 }
 
 export function noThrowCodexDiagnosticsSink(

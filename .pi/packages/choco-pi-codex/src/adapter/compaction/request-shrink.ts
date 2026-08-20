@@ -1,3 +1,7 @@
+import { JsonObjectSchema } from "../runtime-values.ts";
+import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { NativeCompactionRequestBody, ResponsesInputItem } from "./serializer.ts";
 import { supportsResponsesLiteModel } from "../../providers/openai-codex/responses-lite-model.ts";
 
@@ -22,11 +26,11 @@ export type NativeCompactionBudgetOptions = {
   contextWindow?: number | null | undefined;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: BoundaryValue): value is JsonObject {
+  return Value.Check(JsonObjectSchema, value);
 }
 
-type TokenEncoder = { encode(value: string): ArrayLike<unknown> };
+type TokenEncoder = { encode(value: string): ArrayLike<BoundaryValue> };
 let tokenEncoderPromise: Promise<TokenEncoder> | undefined;
 
 function getTokenEncoder(): Promise<TokenEncoder> {
@@ -40,8 +44,8 @@ function getTokenEncoder(): Promise<TokenEncoder> {
   return tokenEncoderPromise;
 }
 
-function estimateTokenCount(value: unknown, encoding: TokenEncoder): number {
-  const serialized = typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+function estimateTokenCount(value: BoundaryValue, encoding: TokenEncoder): number {
+  const serialized = Value.Check(Type.String(), value) ? value : (JSON.stringify(value) ?? "");
   try {
     return encoding.encode(serialized).length;
   } catch {
@@ -49,24 +53,28 @@ function estimateTokenCount(value: unknown, encoding: TokenEncoder): number {
   }
 }
 
-function rewriteToolOutputItem(item: ResponsesInputItem): {
-  recognized: boolean;
-  item: ResponsesInputItem;
-} {
+type RewrittenToolOutputItem =
+  | { recognized: false; item: ResponsesInputItem }
+  | { recognized: true; item: ResponsesInputItem };
+
+function rewriteToolOutputItem(item: ResponsesInputItem): RewrittenToolOutputItem {
   if (!isRecord(item)) return { recognized: false, item };
-  const record: Record<string, unknown> = item;
+  const record: JsonObject = item;
   if (record["type"] === "function_call_output" || record["type"] === "custom_tool_call_output") {
     if (record["output"] === COMPACTION_TRUNCATED_TOOL_OUTPUT_MESSAGE)
       return { recognized: true, item };
     return {
       recognized: true,
+      // SAFETY: The parsed output-item discriminator permits replacing only its string output field.
       item: { ...record, output: COMPACTION_TRUNCATED_TOOL_OUTPUT_MESSAGE } as ResponsesInputItem,
     };
   }
   if (record["type"] === "tool_search_output") {
     if (Array.isArray(record["tools"]) && record["tools"].length === 0)
       return { recognized: true, item };
-    return { recognized: true, item: { ...record, tools: [] } as unknown as ResponsesInputItem };
+    const rewritten = { ...record, tools: [] };
+    // SAFETY: The tool_search_output discriminator was parsed above; replacing only its tools array preserves the Responses item variant.
+    return { recognized: true, item: rewritten as ResponsesInputItem };
   }
   return { recognized: false, item };
 }
@@ -78,14 +86,22 @@ export function resolveNativeCompactionRequestBudget(
     return OPENAI_CODEX_COMPACTION_ENDPOINT_BUDGET_TOKENS;
   }
   const contextWindow = options.contextWindow;
-  if (typeof contextWindow !== "number" || !Number.isFinite(contextWindow) || contextWindow <= 0)
+  if (
+    !Value.Check(Type.Number(), contextWindow) ||
+    !Number.isFinite(contextWindow) ||
+    contextWindow <= 0
+  )
     return undefined;
   return Math.floor((contextWindow * CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT) / 100);
 }
 
 function compactRequestBudget(options: ShrinkNativeCompactionRequestOptions): number | undefined {
   const budgetTokens = options.budgetTokens;
-  if (typeof budgetTokens !== "number" || !Number.isFinite(budgetTokens) || budgetTokens <= 0)
+  if (
+    !Value.Check(Type.Number(), budgetTokens) ||
+    !Number.isFinite(budgetTokens) ||
+    budgetTokens <= 0
+  )
     return undefined;
   return Math.floor(budgetTokens);
 }

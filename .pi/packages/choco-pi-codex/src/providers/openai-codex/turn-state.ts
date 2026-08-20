@@ -1,4 +1,14 @@
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
+import type { CodexStreamEvent } from "./types.ts";
+
 export const CODEX_TURN_STATE_HEADER = "x-codex-turn-state";
+
+const TurnStateEventSchema = Type.Object({
+  type: Type.Union([Type.Literal("response.metadata"), Type.Literal("codex.response.metadata")]),
+  headers: Type.Record(Type.String(), Type.Unknown()),
+});
+type TurnStateEvent = Static<typeof TurnStateEventSchema>;
 
 export interface CodexTurnState {
   current(): string | undefined;
@@ -9,13 +19,13 @@ export interface CodexTurnState {
 }
 
 export function withCodexTurnState<
-  T extends { client_metadata?: Record<string, unknown> | undefined },
+  T extends { client_metadata?: Record<string, string> | undefined },
 >(body: T, turnState: CodexTurnState | undefined): T {
   const current = turnState?.current();
   return current
     ? {
         ...body,
-        client_metadata: { ...(body.client_metadata ?? {}), [CODEX_TURN_STATE_HEADER]: current },
+        client_metadata: { ...body.client_metadata, [CODEX_TURN_STATE_HEADER]: current },
       }
     : body;
 }
@@ -58,14 +68,17 @@ export function createCodexTurnState(): CodexTurnState {
   };
 }
 
-export function extractCodexTurnStateFromWebSocketEvent(event: unknown): string | undefined {
-  if (!event || typeof event !== "object") return undefined;
-  const type = (event as { type?: unknown }).type;
-  if (type !== "response.metadata" && type !== "codex.response.metadata") return undefined;
-  const headers = (event as { headers?: unknown }).headers;
-  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return undefined;
-  for (const [name, value] of Object.entries(headers)) {
-    if (name.toLowerCase() === CODEX_TURN_STATE_HEADER && typeof value === "string" && value.trim())
+export function extractCodexTurnStateFromWebSocketEvent(
+  event: CodexStreamEvent,
+): string | undefined {
+  if (!Check(TurnStateEventSchema, event)) return undefined;
+  const parsed: TurnStateEvent = event;
+  for (const [name, value] of Object.entries(parsed.headers)) {
+    if (
+      name.toLowerCase() === CODEX_TURN_STATE_HEADER &&
+      Check(Type.String(), value) &&
+      value.trim()
+    )
       return value.trim();
   }
   return undefined;

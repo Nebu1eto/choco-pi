@@ -1,3 +1,4 @@
+import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import type { CodeModeToolPreflightRunner } from "./nested-tool-preflight.js";
@@ -30,9 +31,13 @@ export interface CustomToolDefinition extends CodeModeToolMetadata {
 export interface ProgrammaticCodeModeToolDefinition extends CodeModeToolMetadata {
   kind: "function" | "freeform";
   inputSchema?: unknown;
-  invoke(input: unknown, context: ToolExecutionContext, signal: AbortSignal): Promise<unknown>;
+  invoke(
+    input: BoundaryValue,
+    context: ToolExecutionContext,
+    signal: AbortSignal,
+  ): Promise<BoundaryValue>;
   renderCall?(
-    input: unknown,
+    input: BoundaryValue,
     theme: CodeModeRenderTheme,
     context: CodeModeNestedRenderContext,
   ): Component;
@@ -122,7 +127,7 @@ export type NotebookControlRequest =
 
 export interface NotebookControlResult {
   message: string;
-  details: Record<string, unknown>;
+  details: BoundaryRecord;
 }
 
 export type RuntimeResponse = (

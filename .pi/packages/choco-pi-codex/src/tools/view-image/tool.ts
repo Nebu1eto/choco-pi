@@ -1,10 +1,12 @@
+import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
+import { isObjectValue, isStringValue } from "../boundary.js";
 import {
   type AgentToolResult,
   type ExtensionAPI,
   type ExtensionContext,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type TSchema } from "typebox";
+import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { parseSSE } from "../../providers/openai-codex/sse.ts";
 import {
@@ -42,38 +44,33 @@ interface CreateViewImageToolOptions {
 type ViewImageParameters = ReturnType<typeof createViewImageParameters>;
 
 function createViewImageParameters() {
-  const properties: Record<string, TSchema> = { path: Type.String() };
+  const properties = { path: Type.String() };
   return Type.Object(properties);
 }
 
-export function parseViewImageParams(params: unknown): ViewImageParams {
-  if (
-    !params ||
-    typeof params !== "object" ||
-    !("path" in params) ||
-    typeof params.path !== "string"
-  ) {
+export function parseViewImageParams(params: BoundaryValue): ViewImageParams {
+  if (!params || !isObjectValue(params) || !("path" in params) || !isStringValue(params.path)) {
     throw new Error("view_image requires a string 'path' parameter");
   }
   if ("detail" in params) {
     const rawDetail = params.detail;
-    if (rawDetail !== null && rawDetail !== undefined && typeof rawDetail !== "string") {
+    if (rawDetail !== null && rawDetail !== undefined && !isStringValue(rawDetail)) {
       throw new Error("view_image.detail must be a string when provided");
     }
-    if (typeof rawDetail === "string" && rawDetail !== "original") {
+    if (isStringValue(rawDetail) && rawDetail !== "original") {
       throw new Error(`view_image.detail only supports \`original\`, got \`${rawDetail}\``);
     }
   }
   return { path: params.path.startsWith("@") ? params.path.slice(1) : params.path };
 }
 
-function prepareViewImageArguments(args: unknown): Record<string, unknown> {
-  if (!args || typeof args !== "object") {
-    return args as Record<string, unknown>;
+function prepareViewImageArguments(args: BoundaryValue): ViewImageParams {
+  if (!args || !isObjectValue(args)) {
+    // SAFETY: prepareArguments precedes schema validation; execute parses path before use, so invalid input remains available for normal rejection.
+    return args as ViewImageParams;
   }
 
-  const record = args as Record<string, unknown>;
-  const prepared: Record<string, unknown> = { ...record };
+  const prepared: BoundaryRecord = { ...args };
   if (!("path" in prepared)) {
     if ("file_path" in prepared) {
       prepared["path"] = prepared["file_path"]!;
@@ -81,7 +78,9 @@ function prepareViewImageArguments(args: unknown): Record<string, unknown> {
       prepared["path"] = prepared["image_path"]!;
     }
   }
-  return prepared;
+  const boundaryValue: BoundaryValue = prepared;
+  // SAFETY: The registered schema and parseViewImageParams verify path before the prepared object reaches the binary.
+  return boundaryValue as ViewImageParams;
 }
 
 async function executeRustViewImageContent(
@@ -126,22 +125,22 @@ async function executeRustViewImage(
   return { content: [imageContent], details: { viewImage: true } };
 }
 
-function extractOutputText(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const record = value as Record<string, unknown>;
+function extractOutputText(value: BoundaryValue): string | undefined {
+  if (!value || !isObjectValue(value)) return undefined;
+  const record = value;
   const outputText = record["output_text"];
-  if (typeof outputText === "string" && outputText.trim()) return outputText;
+  if (isStringValue(outputText) && outputText.trim()) return outputText;
   const output = record["output"];
   if (!Array.isArray(output)) return undefined;
   const parts: string[] = [];
   for (const item of output) {
-    if (!item || typeof item !== "object") continue;
-    const content = (item as Record<string, unknown>)["content"];
+    if (!item || !isObjectValue(item)) continue;
+    const content = item.content;
     if (!Array.isArray(content)) continue;
     for (const block of content) {
-      if (!block || typeof block !== "object") continue;
-      const text = (block as Record<string, unknown>)["text"];
-      if (typeof text === "string") parts.push(text);
+      if (!block || !isObjectValue(block)) continue;
+      const text = block.text;
+      if (isStringValue(text)) parts.push(text);
     }
   }
   const text = parts.join("").trim();
@@ -172,6 +171,7 @@ function compareModelIdsDescending(left: string, right: string): number {
 }
 
 export function resolveImageDescriptionModel(ctx: ExtensionContext): string {
+  // SAFETY: ExtensionContext supplies Pi's model registry; this narrows only the documented optional lookup methods used below.
   const registry = ctx.modelRegistry as {
     getAvailable?: () => ExtensionContext["model"][];
     getAll?: () => ExtensionContext["model"][];
@@ -230,13 +230,14 @@ export async function describeImageContentForTextModel(
     );
   let text = "";
   for await (const event of parseSSE(response, signal)) {
-    const record = event as Record<string, unknown>;
-    if (record["type"] === "response.output_text.delta" && typeof record["delta"] === "string")
+    if (!isObjectValue(event)) continue;
+    const record = event;
+    if (record["type"] === "response.output_text.delta" && isStringValue(record["delta"]))
       text += record["delta"];
     if (
       record["type"] === "response.output_text.done" &&
       !text.trim() &&
-      typeof record["text"] === "string"
+      isStringValue(record["text"])
     )
       text = record["text"];
     if (record["type"] === "response.completed" && !text.trim())
@@ -252,11 +253,10 @@ export function createViewImageTool(
 ): ToolDefinition<ViewImageParameters> {
   const parameters = createViewImageParameters();
 
-  return {
+  const tool: ToolDefinition<ViewImageParameters> = {
     name: "view_image",
     label: "view_image",
     description: "View image",
-    ...(options.promptSnippet === false ? {} : { promptSnippet: "View image" }),
     parameters,
     prepareArguments: prepareViewImageArguments,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -279,29 +279,26 @@ export function createViewImageTool(
       }
       return executeRustViewImage(typedParams, ctx.cwd, signal, options.customRustBinariesDir);
     },
-    ...(options.customRendering === false
-      ? {}
-      : {
-          renderCall(args, theme) {
-            return renderCodexToolCell(
-              "Viewed Image",
-              typeof args["path"]! === "string" ? args["path"]! : undefined,
-              theme,
-            );
-          },
-          renderResult(result, { isPartial }, theme) {
-            if (isPartial) {
-              return new Text(theme.fg("warning", "Loading image..."), 0, 0);
-            }
-            const textBlock = result.content.find((item) => item.type === "text");
-            const text = theme.fg("dim", textBlock?.type === "text" ? textBlock.text : "");
-            const content = result.content.some((item) => item.type === "image")
-              ? result.content
-              : [...result.content, ...imageContentsFromViewImageDetails(result.details)];
-            return renderTextWithImages(text, content, theme);
-          },
-        }),
   };
+  if (options.promptSnippet !== false) tool.promptSnippet = "View image";
+  if (options.customRendering !== false) {
+    tool.renderCall = (args, theme) =>
+      renderCodexToolCell(
+        "Viewed Image",
+        isStringValue(args["path"]!) ? args["path"]! : undefined,
+        theme,
+      );
+    tool.renderResult = (result, { isPartial }, theme) => {
+      if (isPartial) return new Text(theme.fg("warning", "Loading image..."), 0, 0);
+      const textBlock = result.content.find((item) => item.type === "text");
+      const text = theme.fg("dim", textBlock?.type === "text" ? textBlock.text : "");
+      const content = result.content.some((item) => item.type === "image")
+        ? result.content
+        : [...result.content, ...imageContentsFromViewImageDetails(result.details)];
+      return renderTextWithImages(text, content, theme);
+    };
+  }
+  return tool;
 }
 
 export function registerViewImageTool(

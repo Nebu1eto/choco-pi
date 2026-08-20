@@ -1,3 +1,4 @@
+import { isStringValue } from "../boundary.js";
 import { highlightCode } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { expandHint } from "./render-content.js";
@@ -12,7 +13,7 @@ export function renderExecCall(
   richRendering = true,
 ): Text {
   tracker.register(context?.toolCallId, context?.invalidate);
-  const code = typeof args.code === "string" ? args.code : "";
+  const code = isStringValue(args.code) ? args.code : "";
   if (!richRendering) {
     if (!context?.executionStarted || !context.isPartial) return new Text("", 0, 0);
     const names = customToolNames(code);
@@ -49,7 +50,7 @@ export function renderWaitCall(
     : done
       ? "Waited for code cell"
       : "Waiting for code cell";
-  const cell = typeof args.cell_id === "string" ? ` #${args.cell_id}` : "";
+  const cell = isStringValue(args.cell_id) ? ` #${args.cell_id}` : "";
   return new Text(`${theme.fg("dim", "•")} ${theme.bold(title)}${theme.fg("muted", cell)}`, 0, 0);
 }
 

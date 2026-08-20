@@ -1,15 +1,11 @@
-import type * as NodeZlib from "node:zlib";
-import type { StreamEventShape } from "./types.ts";
+import { Check } from "typebox/value";
+import { CodexStreamEventSchema, type CodexStreamEvent } from "./types.ts";
 
 const REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
 
-type ProcessWithBuiltinModule = typeof process & {
-  getBuiltinModule?: (id: "node:zlib") => typeof NodeZlib;
-};
-
 export function compressRequestBodyZstd(bodyJson: string): Uint8Array | null {
-  const zlib = (process as ProcessWithBuiltinModule).getBuiltinModule?.("node:zlib");
-  if (!zlib || typeof zlib.zstdCompressSync !== "function") return null;
+  const zlib = process.getBuiltinModule?.("node:zlib");
+  if (!zlib?.zstdCompressSync) return null;
   try {
     const compressed = zlib.zstdCompressSync(bodyJson, {
       params: { [zlib.constants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },
@@ -57,10 +53,12 @@ export function normalizeTimeoutMs(
   return Math.floor(value);
 }
 
-export function combineAbortSignals(signals: Array<AbortSignal | undefined>): {
+interface CombinedAbortSignal {
   signal: AbortSignal;
   cleanup: () => void;
-} {
+}
+
+export function combineAbortSignals(signals: Array<AbortSignal | undefined>): CombinedAbortSignal {
   const controller = new AbortController();
   const listeners: Array<{ signal: AbortSignal; listener: () => void }> = [];
   for (const signal of signals) {
@@ -81,11 +79,13 @@ export function combineAbortSignals(signals: Array<AbortSignal | undefined>): {
   };
 }
 
-export function createSSEHeaderTimeout(timeoutMs: number): {
+interface SSEHeaderTimeout {
   signal: AbortSignal;
   clear: () => void;
   error: () => Error | undefined;
-} {
+}
+
+export function createSSEHeaderTimeout(timeoutMs: number): SSEHeaderTimeout {
   const controller = new AbortController();
   let error: Error | undefined;
   const timeout = setTimeout(() => {
@@ -103,7 +103,7 @@ export async function* parseSSE(
   response: Response,
   signal?: AbortSignal,
   idleTimeoutMs?: number,
-): AsyncIterable<StreamEventShape> {
+): AsyncIterable<CodexStreamEvent> {
   if (!response.body) return;
 
   const reader = response.body.getReader();
@@ -157,7 +157,8 @@ export async function* parseSSE(
           const data = dataLines.join("\n").trim();
           if (data && data !== "[DONE]") {
             try {
-              yield JSON.parse(data) as StreamEventShape;
+              const parsed: object = JSON.parse(data);
+              if (Check(CodexStreamEventSchema, parsed)) yield parsed;
             } catch {
               // Codex ignores malformed individual events and keeps the live stream.
             }

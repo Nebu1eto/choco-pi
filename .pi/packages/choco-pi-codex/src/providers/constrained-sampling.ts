@@ -1,18 +1,35 @@
 import type { Tool } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 
 // Pi's extension loader exposes pi-ai root modules, not api/* subpaths.
 // Keep aligned with pi-ai src/api/constrained-sampling.ts.
+const JsonSchemaValueSchema = Type.Union([
+  Type.Record(Type.String(), Type.Unknown()),
+  Type.Array(Type.Unknown()),
+  Type.String(),
+  Type.Number(),
+  Type.Boolean(),
+  Type.Null(),
+  Type.Undefined(),
+]);
+type JsonSchemaValue = import("typebox").Static<typeof JsonSchemaValueSchema>;
+type JsonSchemaProperty = JsonSchemaObject | undefined;
 interface JsonSchemaObject {
-  [key: string]: unknown;
-  type?: unknown;
-  properties?: Record<string, JsonSchemaObject | undefined>;
-  required?: unknown;
-  items?: unknown;
-  anyOf?: unknown;
-  additionalProperties?: unknown;
-  const?: unknown;
-  enum?: unknown;
+  [key: string]: JsonSchemaValue;
+  type?: JsonSchemaValue;
+  properties?: Record<string, JsonSchemaProperty>;
+  required?: JsonSchemaValue;
+  items?: JsonSchemaValue;
+  anyOf?: JsonSchemaValue;
+  additionalProperties?: JsonSchemaValue;
+  const?: JsonSchemaValue;
+  enum?: JsonSchemaValue;
 }
+
+const JsonSchemaObjectSchema = Type.Unsafe<JsonSchemaObject>({ type: "object" });
+const StringSchema = Type.String();
+const StringArraySchema = Type.Array(StringSchema);
 
 class UnsupportedStrictJsonSchemaError extends Error {}
 
@@ -35,14 +52,17 @@ const UNSUPPORTED_STRICT_SCHEMA_KEYS = [
   "else",
 ] as const;
 
-function isJsonSchemaObject(value: unknown): value is JsonSchemaObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isJsonSchemaObject<T>(value: T): value is Extract<T, object> & JsonSchemaObject {
+  return Check(JsonSchemaObjectSchema, value);
 }
 
-function isStructuredSchema(schema: unknown): boolean {
+function isStructuredSchema<T>(schema: T): boolean {
   if (!isJsonSchemaObject(schema)) return false;
-  const types =
-    typeof schema.type === "string" ? [schema.type] : Array.isArray(schema.type) ? schema.type : [];
+  const types = Check(StringSchema, schema.type)
+    ? [schema.type]
+    : Array.isArray(schema.type)
+      ? schema.type
+      : [];
   return (
     types.includes("object") ||
     types.includes("array") ||
@@ -51,7 +71,7 @@ function isStructuredSchema(schema: unknown): boolean {
   );
 }
 
-function schemaAllowsNull(schema: unknown): boolean {
+function schemaAllowsNull<T>(schema: T): boolean {
   if (!isJsonSchemaObject(schema)) return false;
   if (schema.type === "null" || (Array.isArray(schema.type) && schema.type.includes("null")))
     return true;
@@ -60,7 +80,7 @@ function schemaAllowsNull(schema: unknown): boolean {
   return Array.isArray(schema.anyOf) && schema.anyOf.some((variant) => schemaAllowsNull(variant));
 }
 
-function makeJsonSchemaNodeStrict(schema: unknown): void {
+function makeJsonSchemaNodeStrict<T>(schema: T): void {
   if (!isJsonSchemaObject(schema)) {
     throw new UnsupportedStrictJsonSchemaError("boolean schemas are unsupported");
   }
@@ -102,16 +122,13 @@ function makeJsonSchemaNodeStrict(schema: unknown): void {
   if (schema.properties !== undefined && !isJsonSchemaObject(schema.properties)) {
     throw new UnsupportedStrictJsonSchemaError("object properties must be a schema map");
   }
-  if (
-    schema.required !== undefined &&
-    (!Array.isArray(schema.required) || schema.required.some((key) => typeof key !== "string"))
-  ) {
+  if (schema.required !== undefined && !Check(StringArraySchema, schema.required)) {
     throw new UnsupportedStrictJsonSchemaError("object required must be a string array");
   }
 
   const properties = schema.properties ?? {};
   const propertyNames = Object.keys(properties);
-  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  const required = new Set(Check(StringArraySchema, schema.required) ? schema.required : []);
   if ([...required].some((key) => !propertyNames.includes(key))) {
     throw new UnsupportedStrictJsonSchemaError("required contains an unknown property");
   }
@@ -125,8 +142,8 @@ function makeJsonSchemaNodeStrict(schema: unknown): void {
   schema.additionalProperties = false;
 }
 
-export function makeStrictJsonSchema(schema: Tool["parameters"]): Record<string, unknown> {
-  const cloned: unknown = structuredClone(schema);
+export function makeStrictJsonSchema(schema: Tool["parameters"]): JsonSchemaObject {
+  const cloned = structuredClone(schema);
   if (!isJsonSchemaObject(cloned)) {
     throw new UnsupportedStrictJsonSchemaError("root schema must have type object");
   }
@@ -141,9 +158,7 @@ export function getJsonSchemaToolParameters(
   tool: Tool,
   strict: boolean | undefined,
 ): Tool["parameters"] {
-  return (
-    strict === true ? makeStrictJsonSchema(tool.parameters) : tool.parameters
-  ) as Tool["parameters"];
+  return strict === true ? makeStrictJsonSchema(tool.parameters) : tool.parameters;
 }
 
 export function resolveJsonSchemaStrictSampling(
@@ -185,13 +200,24 @@ export interface GrammarToolInputJsonBuffer {
   closed: boolean;
 }
 
+const GrammarArgumentValueSchema = Type.Union([
+  Type.Record(Type.String(), Type.Unknown()),
+  Type.Array(Type.Unknown()),
+  Type.String(),
+  Type.Number(),
+  Type.Boolean(),
+  Type.Null(),
+  Type.Undefined(),
+]);
+type GrammarArgumentValue = import("typebox").Static<typeof GrammarArgumentValueSchema>;
+
 export function getGrammarToolInput(
   toolName: string,
-  arguments_: Record<string, unknown>,
+  arguments_: Record<string, GrammarArgumentValue>,
   inputProperty: string,
 ): string {
   const input = arguments_[inputProperty];
-  if (typeof input !== "string") {
+  if (!Check(StringSchema, input)) {
     throw new Error(
       `Grammar tool call "${toolName}" requires argument "${inputProperty}" to be a string.`,
     );
@@ -234,19 +260,18 @@ export function appendGrammarToolInputJsonDelta(
 }
 
 function inferGrammarInputProperty(tool: Tool): string {
-  const schema = tool.parameters as JsonSchemaObject;
-  if (schema.type !== "object") {
+  const schema = tool.parameters;
+  if (!isJsonSchemaObject(schema) || schema.type !== "object") {
     throw new Error("grammar constrained sampling requires an object parameter schema");
   }
-  if (
-    !Array.isArray(schema.required) ||
-    schema.required.length !== 1 ||
-    typeof schema.required[0] !== "string"
-  ) {
+  if (!Check(StringArraySchema, schema.required) || schema.required.length !== 1) {
     throw new Error("grammar constrained sampling requires exactly one required string property");
   }
 
   const inputProperty = schema.required[0];
+  if (inputProperty === undefined) {
+    throw new Error("grammar constrained sampling requires exactly one required string property");
+  }
   if (!schema.properties?.[inputProperty]) {
     throw new Error(
       `grammar constrained sampling requires a properties entry for ${inputProperty}`,
@@ -268,10 +293,16 @@ export function resolveGrammarConstrainedSampling(
 
   const larkDefinition = config.variants.openai_lark;
   const regexDefinition = config.variants.openai_regex;
-  const hasLarkDefinition = typeof larkDefinition === "string" && larkDefinition.trim().length > 0;
+  const hasLarkDefinition = Check(StringSchema, larkDefinition) && larkDefinition.trim().length > 0;
   const hasRegexDefinition =
-    typeof regexDefinition === "string" && regexDefinition.trim().length > 0;
+    Check(StringSchema, regexDefinition) && regexDefinition.trim().length > 0;
   if (!hasLarkDefinition && !hasRegexDefinition) {
+    throw new Error(
+      `Tool "${tool.name}" cannot use grammar constrained sampling: no supported grammar variant was provided.`,
+    );
+  }
+  const definition = hasLarkDefinition ? larkDefinition : regexDefinition;
+  if (definition === undefined) {
     throw new Error(
       `Tool "${tool.name}" cannot use grammar constrained sampling: no supported grammar variant was provided.`,
     );
@@ -280,7 +311,7 @@ export function resolveGrammarConstrainedSampling(
   try {
     return {
       format: hasLarkDefinition ? "lark" : "regex",
-      definition: hasLarkDefinition ? larkDefinition : regexDefinition!,
+      definition,
       inputProperty: inferGrammarInputProperty(tool),
     };
   } catch (error) {

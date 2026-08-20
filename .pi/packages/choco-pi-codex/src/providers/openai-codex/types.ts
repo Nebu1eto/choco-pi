@@ -1,13 +1,45 @@
 import type { AssistantMessage, SimpleStreamOptions } from "@earendil-works/pi-ai";
-import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
+import { type Static, Type } from "typebox";
+import type {
+  ResponseCreateParamsStreaming,
+  ResponseOutputItem,
+} from "openai/resources/responses/responses.js";
 import type { CodexCompactionDiagnostic } from "../../adapter/compaction/diagnostics.ts";
+
+const ProtocolValueSchema = Type.Union([
+  Type.Unsafe<object>({ type: "object" }),
+  Type.String(),
+  Type.Number(),
+  Type.Boolean(),
+  Type.Null(),
+]);
+const ProtocolPropertyValueSchema = Type.Union([ProtocolValueSchema, Type.Undefined()]);
+
+export type ProtocolPrimitive = boolean | number | string | null;
+export type ProtocolValue = Static<typeof ProtocolValueSchema>;
+export type ProtocolPropertyValue = Static<typeof ProtocolPropertyValueSchema>;
+export type ProviderOutputItem = ResponseOutputItem | Extract<ProtocolValue, object>;
+export interface ProtocolObject {
+  [key: string]: ProtocolPropertyValue;
+}
+
+export interface WebSocketArrayBufferData {
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
+export interface WebSocketEvent {
+  data?: string | ArrayBuffer | ArrayBufferView | Blob | WebSocketArrayBufferData | undefined;
+  code?: number | undefined;
+  reason?: string | undefined;
+  error?: object | undefined;
+}
 
 export interface WebSocketLike {
   readyState?: number | undefined;
   send(data: string): void;
   close(code?: number, reason?: string): void;
-  addEventListener(type: string, listener: (event: unknown) => void): void;
-  removeEventListener(type: string, listener: (event: unknown) => void): void;
+  addEventListener(type: string, listener: (event: WebSocketEvent) => void): void;
+  removeEventListener(type: string, listener: (event: WebSocketEvent) => void): void;
 }
 
 export interface WebSocketConstructorLike {
@@ -33,7 +65,7 @@ export interface AcquiredWebSocket {
 export interface CachedWebSocketContinuationState {
   lastRequestBody: ResponsesBody;
   lastResponseId: string;
-  lastResponseItems: unknown[];
+  lastResponseItems: ProtocolValue[];
 }
 
 export type WebSocketContinuationDecision =
@@ -145,7 +177,7 @@ export type OpenAICodexStreamOptions = CodexProviderStreamOptions & {
   reasoningEffort?: CodexReasoningEffort | undefined;
   responsesLite?: boolean | undefined;
   grammarToolInputProperties?: ReadonlyMap<string, string> | undefined;
-  onOutputItemDone?: ((item: unknown) => void) | undefined;
+  onOutputItemDone?: ((item: ProviderOutputItem) => void) | undefined;
   websocketConnectTimeoutMs?: number | undefined;
   env?: ProviderEnv | undefined;
   canonicalCompaction?: boolean | undefined;
@@ -158,15 +190,15 @@ export interface ResponsesBody {
   stream: boolean;
   instructions?: string | undefined;
   previous_response_id?: string | undefined;
-  input: unknown[];
+  input: ProtocolValue[];
   text: { verbosity: string };
   include: string[];
   prompt_cache_key?: string | undefined;
   tool_choice: "auto" | "none" | "required";
   parallel_tool_calls: boolean;
   temperature?: number | undefined;
-  service_tier?: string | undefined;
-  tools?: unknown[] | undefined;
+  service_tier?: ServiceTier | undefined;
+  tools?: ProtocolValue[] | undefined;
   reasoning?:
     | {
         effort?: string | undefined;
@@ -175,7 +207,7 @@ export interface ResponsesBody {
       }
     | undefined;
   client_metadata?: Record<string, string> | undefined;
-  [key: string]: unknown;
+  [key: string]: ProtocolPropertyValue;
 }
 
 export interface CodexPrewarmUsage {
@@ -205,37 +237,46 @@ export interface ResponseEnvelope {
     | undefined;
   service_tier?: string | undefined;
   error?:
-    | {
+    | (ProtocolObject & {
         code?: string | undefined;
         type?: string | undefined;
         message?: string | undefined;
         status?: number | string | undefined;
         status_code?: number | string | undefined;
-        [key: string]: unknown;
-      }
+      })
     | undefined;
-  [key: string]: unknown;
+  [key: string]: ProtocolPropertyValue;
 }
 
-export interface StreamEventShape {
+export interface CodexStreamEvent {
   type?: string | undefined;
-  headers?: Record<string, unknown> | undefined;
+  headers?: ProtocolObject | undefined;
   response?: ResponseEnvelope | undefined;
   item?:
-    | {
+    | (ProtocolObject & {
         id?: string | undefined;
         type?: string | undefined;
         result?: string | null | undefined;
         output_format?: string | undefined;
         revised_prompt?: string | undefined;
         status?: string | undefined;
-        [key: string]: unknown;
-      }
+      })
     | undefined;
   code?: string | undefined;
   message?: string | undefined;
-  [key: string]: unknown;
+  [key: string]: ProtocolPropertyValue;
 }
+
+export const CodexStreamEventSchema = Type.Unsafe<CodexStreamEvent>({
+  anyOf: [
+    { type: "object" },
+    { type: "array" },
+    { type: "string" },
+    { type: "number" },
+    { type: "boolean" },
+    { type: "null" },
+  ],
+});
 
 export function createInitialAssistantMessage(model: {
   provider: string;

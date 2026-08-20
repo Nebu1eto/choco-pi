@@ -1,4 +1,6 @@
 import { calculateCost, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
 import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import {
@@ -19,18 +21,54 @@ type InternalAssistantContent =
   | ImageGenerationCallBlock
   | WebSearchCallBlock;
 
-type PartialJsonParser = (value: string) => unknown;
+const StreamingJsonSchema = Type.Unsafe<Record<string, never>>({
+  anyOf: [
+    { type: "object" },
+    { type: "array" },
+    { type: "string" },
+    { type: "number" },
+    { type: "boolean" },
+    { type: "null" },
+  ],
+});
+type StreamingJson = Static<typeof StreamingJsonSchema>;
+interface CustomToolCallItem {
+  type: "custom_tool_call";
+  id?: string | undefined;
+  call_id: string;
+  name: string;
+  input?: string | undefined;
+  namespace?: string | undefined;
+}
+const CustomToolCallSchema = Type.Unsafe<CustomToolCallItem>({
+  type: "object",
+  properties: { type: { const: "custom_tool_call" } },
+  required: ["type"],
+});
+const FunctionCallNamespaceSchema = Type.Unsafe<{ namespace?: string | undefined }>({
+  type: "object",
+});
+const InputTokenDetailsSchema = Type.Unsafe<{
+  cached_tokens?: number | undefined;
+  cache_write_tokens?: number | undefined;
+}>({ type: "object" });
+type InputTokenDetails = Static<typeof InputTokenDetailsSchema>;
+const IncompleteDetailsSchema = Type.Object({ reason: Type.Optional(Type.Unknown()) });
 
-function parseStreamingJson(
-  partialJson: string,
-  partialParse: PartialJsonParser,
-): Record<string, unknown> {
+type PartialJsonParser = (value: string) => StreamingJson | undefined;
+
+function parseInputTokenDetails<T>(value: T): InputTokenDetails | undefined {
+  return Check(InputTokenDetailsSchema, value) ? value : undefined;
+}
+
+function parseStreamingJson(partialJson: string, partialParse: PartialJsonParser): StreamingJson {
   if (!partialJson || partialJson.trim() === "") return {};
   try {
-    return JSON.parse(partialJson) as Record<string, unknown>;
+    const parsed: object = JSON.parse(partialJson);
+    return Check(StreamingJsonSchema, parsed) ? parsed : {};
   } catch {
     try {
-      return (partialParse(partialJson) ?? {}) as Record<string, unknown>;
+      return partialParse(partialJson) ?? {};
     } catch {
       return {};
     }
@@ -44,7 +82,11 @@ export async function processResponsesStream<TApi extends Api>(
   model: Model<TApi>,
   options?: OpenAIResponsesStreamOptions,
 ): Promise<void> {
-  const { parse: partialParse } = await import("partial-json");
+  const { parse } = await import("partial-json");
+  const partialParse: PartialJsonParser = (value) => {
+    const parsed = parse(value);
+    return parsed !== null && Check(StreamingJsonSchema, parsed) ? parsed : undefined;
+  };
   const blocks = output.content;
   const blockIndex = () => blocks.length - 1;
   type ThinkingBlock = Extract<AssistantMessage["content"][number], { type: "thinking" }>;
@@ -170,14 +212,8 @@ export async function processResponsesStream<TApi extends Api>(
       output.responseId = event.response.id;
     } else if (event.type === "response.output_item.added") {
       const item = event.item;
-      if ((item as unknown as { type?: string }).type === "custom_tool_call") {
-        const customItem = item as unknown as {
-          id?: string;
-          call_id: string;
-          name: string;
-          input?: string;
-          namespace?: string;
-        };
+      if (Check(CustomToolCallSchema, item)) {
+        const customItem = item;
         const input = customItem.input ?? "";
         const property = options?.grammarToolInputProperties?.get(customItem.name) ?? "input";
         const currentBlock: ToolCallBlock = {
@@ -185,8 +221,8 @@ export async function processResponsesStream<TApi extends Api>(
           id: `${customItem.call_id}|${customItem.id ?? ""}`,
           name: customItem.name,
           arguments: { [property]: input },
-          ...(customItem.namespace !== undefined ? { namespace: customItem.namespace } : {}),
         };
+        if (customItem.namespace !== undefined) currentBlock.namespace = customItem.namespace;
         output.content.push(currentBlock);
         outputStates.set(event.output_index, {
           kind: "custom_tool_call",
@@ -218,15 +254,15 @@ export async function processResponsesStream<TApi extends Api>(
         });
         stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
       } else if (item.type === "function_call") {
-        const namespace = (item as unknown as { namespace?: string }).namespace;
+        const namespace = Check(FunctionCallNamespaceSchema, item) ? item.namespace : undefined;
         const currentBlock: ToolCallBlock = {
           type: "toolCall",
           id: `${item.call_id}|${item.id}`,
           name: item.name,
           arguments: {},
-          ...(namespace !== undefined ? { namespace } : {}),
           partialJson: item.arguments || "",
         };
+        if (namespace !== undefined) currentBlock.namespace = namespace;
         output.content.push(currentBlock);
         outputStates.set(event.output_index, {
           kind: "function_call",
@@ -332,17 +368,7 @@ export async function processResponsesStream<TApi extends Api>(
       }
     } else if (event.type === "response.output_item.done") {
       const item = event.item;
-      const customItem =
-        (item as unknown as { type?: string }).type === "custom_tool_call"
-          ? (item as unknown as {
-              type: "custom_tool_call";
-              id?: string;
-              call_id: string;
-              name: string;
-              input?: string;
-              namespace?: string;
-            })
-          : undefined;
+      const customItem = Check(CustomToolCallSchema, item) ? item : undefined;
       const customState = customItem ? outputStates.get(event.output_index) : undefined;
       const customInput = customItem
         ? (customItem.input ?? (customState?.kind === "custom_tool_call" ? customState.input : ""))
@@ -366,18 +392,14 @@ export async function processResponsesStream<TApi extends Api>(
             : (options?.grammarToolInputProperties?.get(customItem.name) ?? "input");
         const toolCall: ToolCallBlock =
           state?.kind === "custom_tool_call"
-            ? {
-                ...state.block,
-                arguments: { [property]: customInput },
-                ...(customItem.namespace !== undefined ? { namespace: customItem.namespace } : {}),
-              }
+            ? { ...state.block, arguments: { [property]: customInput } }
             : {
                 type: "toolCall",
                 id: `${customItem.call_id}|${customItem.id ?? ""}`,
                 name: customItem.name,
                 arguments: { [property]: customInput },
-                ...(customItem.namespace !== undefined ? { namespace: customItem.namespace } : {}),
               };
+        if (customItem.namespace !== undefined) toolCall.namespace = customItem.namespace;
         if (state?.kind !== "custom_tool_call") {
           output.content.push(toolCall);
           stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
@@ -440,7 +462,7 @@ export async function processResponsesStream<TApi extends Api>(
         outputStates.delete(event.output_index);
       } else if (item.type === "function_call") {
         const state = outputStates.get(event.output_index);
-        const namespace = (item as unknown as { namespace?: string }).namespace;
+        const namespace = Check(FunctionCallNamespaceSchema, item) ? item.namespace : undefined;
         const args =
           state?.kind === "function_call" && state.block.partialJson
             ? parseStreamingJson(state.block.partialJson, partialParse)
@@ -457,8 +479,8 @@ export async function processResponsesStream<TApi extends Api>(
             id: `${item.call_id}|${item.id}`,
             name: item.name,
             arguments: args,
-            ...(namespace !== undefined ? { namespace } : {}),
           };
+          if (namespace !== undefined) toolCall.namespace = namespace;
           output.content.push(toolCall);
           stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
         }
@@ -473,6 +495,8 @@ export async function processResponsesStream<TApi extends Api>(
       } else if (item.type === "image_generation_call") {
         const imageGenerationCall = sanitizeImageGenerationCallItem(item);
         if (imageGenerationCall) {
+          // SAFETY: InternalAssistantContent explicitly owns the parsed native image-generation
+          // block variant retained for same-provider history replay.
           (output.content as InternalAssistantContent[]).push({
             type: "image_generation_call",
             item: imageGenerationCall,
@@ -482,6 +506,8 @@ export async function processResponsesStream<TApi extends Api>(
       } else if (item.type === "web_search_call") {
         const webSearchCall = sanitizeWebSearchCallItem(item);
         if (webSearchCall) {
+          // SAFETY: InternalAssistantContent explicitly owns the parsed native web-search block
+          // variant retained for same-provider history replay.
           (output.content as InternalAssistantContent[]).push({
             type: "web_search_call",
             item: webSearchCall,
@@ -493,9 +519,7 @@ export async function processResponsesStream<TApi extends Api>(
       const response = event.response;
       if (response?.id) output.responseId = response.id;
       if (response?.usage) {
-        const inputDetails = response.usage.input_tokens_details as
-          | { cached_tokens?: number; cache_write_tokens?: number }
-          | undefined;
+        const inputDetails = parseInputTokenDetails(response.usage.input_tokens_details);
         const cachedTokens = inputDetails?.cached_tokens || 0;
         const cacheWriteTokens = inputDetails?.cache_write_tokens || 0;
         output.usage = {
@@ -506,8 +530,9 @@ export async function processResponsesStream<TApi extends Api>(
           totalTokens: response.usage.total_tokens || 0,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         };
-        (output.usage as { reasoning?: number }).reasoning =
-          response.usage.output_tokens_details?.reasoning_tokens || 0;
+        Object.assign(output.usage, {
+          reasoning: response.usage.output_tokens_details?.reasoning_tokens || 0,
+        });
       }
       calculateCost(model, output.usage);
       if (options?.applyServiceTierPricing) {
@@ -516,12 +541,12 @@ export async function processResponsesStream<TApi extends Api>(
           : (response?.service_tier ?? options.serviceTier);
         options.applyServiceTierPricing(output.usage, serviceTier);
       }
-      const incompleteDetails = response?.incomplete_details as
-        | { reason?: unknown }
-        | null
-        | undefined;
-      const incompleteReason =
-        typeof incompleteDetails?.reason === "string" ? incompleteDetails.reason : undefined;
+      const incompleteDetails = Check(IncompleteDetailsSchema, response?.incomplete_details)
+        ? response.incomplete_details
+        : undefined;
+      const incompleteReason = Check(Type.String(), incompleteDetails?.reason)
+        ? incompleteDetails.reason
+        : undefined;
       const rawStopReason = incompleteReason
         ? `${response?.status}.${incompleteReason}`
         : response?.status;
@@ -540,11 +565,13 @@ export async function processResponsesStream<TApi extends Api>(
       throw new Error(details || "Unknown error");
     } else if (event.type === "response.failed") {
       const error = event.response?.error;
-      const details = (
-        event.response as
-          | { incomplete_details?: { reason?: string | undefined } | undefined }
-          | undefined
-      )?.incomplete_details;
+      const details =
+        // SAFETY: The response.failed event schema permits incomplete_details on this response payload.
+        (
+          event.response as
+            | { incomplete_details?: { reason?: string | undefined } | undefined }
+            | undefined
+        )?.incomplete_details;
       const msg = error
         ? `${error.code || "unknown"}: ${error.message || "no message"}`
         : details?.reason
@@ -555,10 +582,12 @@ export async function processResponsesStream<TApi extends Api>(
   }
 }
 
-function mapStopReason(
-  status: string | undefined,
-  incompleteReason?: string,
-): { stopReason: AssistantMessage["stopReason"]; errorMessage?: string } {
+interface MappedStopReason {
+  stopReason: AssistantMessage["stopReason"];
+  errorMessage?: string | undefined;
+}
+
+function mapStopReason(status: string | undefined, incompleteReason?: string): MappedStopReason {
   if (!status) return { stopReason: "pending" };
   switch (status) {
     case "completed":

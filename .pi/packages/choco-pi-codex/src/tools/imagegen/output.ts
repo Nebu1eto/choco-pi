@@ -1,5 +1,14 @@
 import { readFileSync } from "node:fs";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { ViewImageContent } from "../view-image/output.ts";
+
+// The binary protocol requires only `path`; optional fields are consumed defensively below.
+const ImagegenOutputSchema = Type.Unsafe<ImagegenOutput>({
+  type: "object",
+  properties: { path: { type: "string" } },
+  required: ["path"],
+});
 
 export interface ImagegenOutput {
   path: string;
@@ -24,13 +33,7 @@ export function imagegenOutputFromJson(output: string): ImagegenOutput | undefin
   } catch {
     return undefined;
   }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    typeof (parsed as Record<string, unknown>)["path"] !== "string"
-  )
-    return undefined;
-  return parsed as ImagegenOutput;
+  return Value.Check(ImagegenOutputSchema, parsed) ? parsed : undefined;
 }
 
 export function imageContentsFromImagegenOutput(output: ImagegenOutput): ViewImageContent[] {

@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { Container, Image, Spacer, Text } from "@earendil-works/pi-tui";
 
 interface ImageContentLike {
@@ -12,9 +14,9 @@ function isImageContent(item: ToolContentLike): item is ImageContentLike {
   return (
     item.type === "image" &&
     "data" in item &&
-    typeof item.data === "string" &&
+    Value.Check(Type.String(), item.data) &&
     "mimeType" in item &&
-    typeof item.mimeType === "string"
+    Value.Check(Type.String(), item.mimeType)
   );
 }
 

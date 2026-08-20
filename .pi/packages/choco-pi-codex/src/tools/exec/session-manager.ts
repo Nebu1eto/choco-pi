@@ -1,6 +1,7 @@
 import { normalizePipeOutput, truncateOutput, truncateToTail } from "./output.ts";
 import {
   createBridgeSessionRuntime,
+  type BridgeExecInput,
   type BridgeExecSession,
   type BridgeSessionHooks,
 } from "./bridge-session.ts";
@@ -261,20 +262,22 @@ export function createExecSessionManager(
       const shell = resolveShell(requestedShell);
       const workdir = resolveWorkdir(cwd, input.workdir);
       const execution = resolveExecution(requestedShell, input.cmd, input.env, baseEnv);
-      const session = bridgeSessions.create({
+      const bridgeInput: BridgeExecInput = {
+        command: input.cmd,
+        executionCommand: execution.command,
+        executionEnv: execution.env,
+      };
+      if (input.tty !== undefined) bridgeInput.tty = input.tty;
+      if (input.login !== undefined) bridgeInput.login = input.login;
+      const bridgeArgs: Parameters<typeof bridgeSessions.create>[0] = {
         id: nextSessionId++,
-        input: {
-          command: input.cmd,
-          executionCommand: execution.command,
-          executionEnv: execution.env,
-          ...(input.tty === undefined ? {} : { tty: input.tty }),
-          ...(input.login === undefined ? {} : { login: input.login }),
-        },
+        input: bridgeInput,
         workdir,
         shell,
-        ...(signal ? { signal } : {}),
         hooks: bridgeHooks,
-      });
+      };
+      if (signal) bridgeArgs.signal = signal;
+      const session = bridgeSessions.create(bridgeArgs);
       sessions.set(session.id, session);
       rememberCommand(session.id, session.command);
       const abortCleanup = registerAbortHandler(signal, () => {

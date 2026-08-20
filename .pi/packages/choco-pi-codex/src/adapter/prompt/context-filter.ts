@@ -1,3 +1,6 @@
+import type { BoundaryValue } from "../runtime-values.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { CustomMessageEntry } from "@earendil-works/pi-coding-agent";
 import { NATIVE_COMPACTION_DISPLAY_MESSAGE_TYPE } from "../compaction/types.ts";
 import { EXECUTION_MODE_SESSION_ENTRY } from "../activation/execution-mode.ts";
@@ -19,13 +22,13 @@ const ADAPTER_CONTEXT_EXCLUDED_CUSTOM_MESSAGE_TYPES = new Set([
 function isVoiceContextExcludedMessage(message: {
   role: string;
   customType?: string | undefined;
-  content?: unknown;
+  content?: BoundaryValue;
 }): boolean {
   if (message.role !== "custom") return false;
   if (message.customType === REALTIME_VOICE_MESSAGE_TYPE) return true;
   return (
     message.customType === CODEX_VOICE_MODE_MESSAGE_TYPE &&
-    (typeof message.content !== "string" ||
+    (!Value.Check(Type.String(), message.content) ||
       !message.content.startsWith('<realtime_voice_session state="'))
   );
 }
@@ -33,12 +36,12 @@ function isVoiceContextExcludedMessage(message: {
 export function isProviderContextExcludedMessage(message: {
   role: string;
   customType?: string | undefined;
-  content?: unknown;
+  content?: BoundaryValue;
 }): boolean {
   return (
     isVoiceContextExcludedMessage(message) ||
     (message.role === "custom" &&
-      typeof message.customType === "string" &&
+      Value.Check(Type.String(), message.customType) &&
       ADAPTER_CONTEXT_EXCLUDED_CUSTOM_MESSAGE_TYPES.has(message.customType))
   );
 }
