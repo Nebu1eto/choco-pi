@@ -44,6 +44,12 @@
     "@earendil-works/pi-coding-agent": ">=0.80.5",
     "@earendil-works/pi-tui": ">=0.80.5"
   },
+  "chocoPi": {
+    "supersedes": [
+      "pi-zentui",
+      "@maddeye/pi-nord"
+    ]
+  },
   "pi": {
     "extensions": [
       "./extensions"

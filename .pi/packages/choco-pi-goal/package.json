@@ -35,6 +35,11 @@
   "engines": {
     "node": ">=24.0.0"
   },
+  "chocoPi": {
+    "supersedes": [
+      "pi-codex-goal"
+    ]
+  },
   "pi": {
     "extensions": [
       "./src/index.ts"

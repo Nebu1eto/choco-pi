@@ -13,6 +13,7 @@
     ".pi/extensions/**/*.ts",
     ".pi/scripts/**/*.ts",
     ".pi/skills/**/scripts/**/*.ts",
+    "scripts/**/*.mts",
     "tests/**/*.ts"
   ],
   "exclude": [".pi/npm", ".pi/packages"]
