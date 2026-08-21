@@ -1,506 +1,369 @@
-import { propertiesWhen } from "./lib/runtime-values.ts";
-import { isNumber, isObject, isString, type RuntimeValue } from "./lib/runtime-values.ts";
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import path from "node:path";
-import { promisify } from "node:util";
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
-  SessionEntry,
-  Theme,
+import {
+  InteractiveMode,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  captureGitSnapshot,
+  CheckpointError,
+  checkpointRetentionMs,
+  headDriftSince,
+  pruneCheckpointRefs,
+  sessionCheckpointRef,
+  type GitSnapshot,
+} from "./checkpoints/git-snapshot.ts";
+import { restoreTurn } from "./checkpoints/rollback.ts";
+import {
+  renderCheckpointPicker,
+  resolvePickerKey,
+  TURN_ACTION_LABELS,
+  type TurnAction,
+} from "./checkpoints/picker.ts";
+import {
+  buildTurnTimeline,
+  CHECKPOINT_ENTRY,
+  messageContentLabel,
+  RESTORE_ENTRY,
+  sessionTurnsFromEntries,
+  type FileCheckpoint,
+  type SessionTurn,
+  type TurnTimelineItem,
+} from "./checkpoints/turns.ts";
+import { propertiesWhen, reinterpretHostValue, type RuntimeValue } from "./lib/runtime-values.ts";
 
-const execFileAsync = promisify(execFile);
-const CHECKPOINT_ENTRY = "choco-pi:file-checkpoint";
-const RESTORE_ENTRY = "choco-pi:file-checkpoint-restored";
-const MAX_BUFFER = 100 * 1024 * 1024;
+export {
+  buildTurnTimeline,
+  sessionTurnsFromEntries,
+  turnCheckpointsFromEntries,
+  type FileCheckpoint,
+  type SessionTurn,
+  type TurnCheckpoint,
+  type TurnTimelineItem,
+} from "./checkpoints/turns.ts";
+export { renderCheckpointPicker, resolvePickerKey, type TurnAction } from "./checkpoints/picker.ts";
+export { restoreTurn, type RollbackHost } from "./checkpoints/rollback.ts";
+export {
+  captureGitSnapshot,
+  restoreGitSnapshot,
+  type ChangeSummary,
+  type GitSnapshot,
+} from "./checkpoints/git-snapshot.ts";
 
-export type FileCheckpoint = {
-  version: 1;
+/** A recoverable capture failure is reported at most this often per session. */
+const TRANSIENT_NOTICE_INTERVAL_MS = 5 * 60 * 1000;
+
+type CaptureState = {
+  sessionId: string;
   ref: string;
-  indexTree: string;
-  worktreeTree: string;
-  timestamp: string;
-  turnIndex: number;
-  label: string;
+  previous?: GitSnapshot;
+  /** Set once the working tree can never produce checkpoints; stops retrying. */
+  disabledReason?: string;
+  lastFailure?: string;
+  lastNoticeAt?: number;
 };
 
-type GitSnapshot = Pick<FileCheckpoint, "ref" | "indexTree" | "worktreeTree">;
-type SnapshotRestorer = (cwd: string, target: GitSnapshot, safety: GitSnapshot) => Promise<void>;
-
-export type TurnCheckpoint = {
-  checkpoint: FileCheckpoint;
-  checkpointEntryId: string;
-  conversationTargetId: string;
-  userTurnIndex: number;
-  label: string;
+type PickerChoice = {
+  turn: SessionTurn;
+  /** Absent when the user pressed Enter and still has to pick an action. */
+  action?: TurnAction;
 };
 
-export type ChangeSummary = {
-  added: number;
-  deleted: number;
-  files: number;
+/** Pi's interactive mode, reached only to redirect its built-in fork selector. */
+type ForkSelectorHost = {
+  showUserMessageSelector: () => void;
+  session: { prompt: (text: string) => Promise<void> };
+  __chocoPiCheckpointPickerApplied?: boolean;
 };
-
-export type RewindTimelineItem = {
-  turn: TurnCheckpoint;
-  changes: ChangeSummary;
-};
-
-async function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
-  const result = await execFileAsync("git", args, {
-    cwd,
-    encoding: "utf8",
-    env: env ? { ...process.env, ...env } : process.env,
-    maxBuffer: MAX_BUFFER,
-  });
-  return result.stdout.trim();
-}
-
-async function repositoryRoot(cwd: string): Promise<string> {
-  return git(cwd, ["rev-parse", "--show-toplevel"]);
-}
-
-function checkpointEnvironment(indexFile?: string): NodeJS.ProcessEnv {
-  return {
-    ...propertiesWhen(indexFile, () => ({ GIT_INDEX_FILE: indexFile })),
-    GIT_AUTHOR_NAME: "choco-pi",
-    GIT_AUTHOR_EMAIL: "checkpoint@choco-pi.local",
-    GIT_COMMITTER_NAME: "choco-pi",
-    GIT_COMMITTER_EMAIL: "checkpoint@choco-pi.local",
-  };
-}
-
-async function currentHead(root: string): Promise<string | undefined> {
-  try {
-    return await git(root, ["rev-parse", "--verify", "HEAD"]);
-  } catch {
-    return undefined;
-  }
-}
-
-function safeRefSegment(value: string): string {
-  return value.replaceAll(/[^A-Za-z0-9._-]/g, "-").slice(0, 128) || "session";
-}
-
-export async function captureGitSnapshot(cwd: string, refSuffix: string): Promise<GitSnapshot> {
-  const root = await repositoryRoot(cwd);
-  const gitDirValue = await git(root, ["rev-parse", "--git-dir"]);
-  const gitDir = path.resolve(root, gitDirValue);
-  const temporaryDirectory = await mkdtemp(path.join(gitDir, "choco-pi-checkpoint-"));
-  const temporaryIndex = path.join(temporaryDirectory, "index");
-  const environment = checkpointEnvironment(temporaryIndex);
-
-  try {
-    const head = await currentHead(root);
-    await git(root, head ? ["read-tree", head] : ["read-tree", "--empty"], environment);
-    await git(root, ["add", "-A", "--", "."], environment);
-
-    const indexTree = await git(root, ["write-tree"]);
-    const worktreeTree = await git(root, ["write-tree"], environment);
-    const parentArgs = head ? ["-p", head] : [];
-    const indexCommit = await git(
-      root,
-      ["commit-tree", indexTree, ...parentArgs, "-m", "choco-pi checkpoint index"],
-      checkpointEnvironment(),
-    );
-    const worktreeCommit = await git(
-      root,
-      ["commit-tree", worktreeTree, "-p", indexCommit, "-m", "choco-pi checkpoint worktree"],
-      checkpointEnvironment(),
-    );
-    const ref = `refs/choco-pi/checkpoints/${safeRefSegment(refSuffix)}`;
-    await git(root, ["update-ref", ref, worktreeCommit]);
-    return { ref, indexTree, worktreeTree };
-  } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true });
-  }
-}
-
-async function treePaths(root: string, tree: string): Promise<Set<string>> {
-  const result = await execFileAsync("git", ["ls-tree", "-r", "--name-only", "-z", tree], {
-    cwd: root,
-    encoding: "buffer",
-    maxBuffer: MAX_BUFFER,
-  });
-  return new Set(result.stdout.toString("utf8").split("\0").filter(Boolean));
-}
-
-async function restoreSnapshotFiles(
-  cwd: string,
-  target: Pick<GitSnapshot, "indexTree" | "worktreeTree">,
-  current: Pick<GitSnapshot, "indexTree" | "worktreeTree">,
-): Promise<void> {
-  const root = await repositoryRoot(cwd);
-  const [currentIndexPaths, currentWorktreePaths] = await Promise.all([
-    treePaths(root, current.indexTree),
-    treePaths(root, current.worktreeTree),
-  ]);
-
-  for (const relativePath of currentWorktreePaths) {
-    if (!currentIndexPaths.has(relativePath)) {
-      await rm(path.join(root, relativePath), { force: true, recursive: true });
-    }
-  }
-
-  await git(root, ["read-tree", "--reset", "-u", target.indexTree]);
-
-  const gitDirValue = await git(root, ["rev-parse", "--git-dir"]);
-  const gitDir = path.resolve(root, gitDirValue);
-  const temporaryDirectory = await mkdtemp(path.join(gitDir, "choco-pi-restore-"));
-  const patchFile = path.join(temporaryDirectory, "worktree.patch");
-
-  try {
-    await git(root, [
-      "diff",
-      "--binary",
-      "--full-index",
-      "--no-ext-diff",
-      `--output=${patchFile}`,
-      target.indexTree,
-      target.worktreeTree,
-    ]);
-    const patch = await readFile(patchFile);
-    if (patch.length > 0) {
-      await git(root, ["apply", "--binary", "--whitespace=nowarn", patchFile]);
-    }
-  } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true });
-  }
-}
-
-export async function restoreGitSnapshot(
-  cwd: string,
-  target: Pick<GitSnapshot, "indexTree" | "worktreeTree">,
-  safety: GitSnapshot,
-): Promise<void> {
-  try {
-    await restoreSnapshotFiles(cwd, target, safety);
-  } catch (error) {
-    try {
-      const partial = await captureGitSnapshot(cwd, `recovery/${Date.now()}`);
-      await restoreSnapshotFiles(cwd, safety, partial);
-    } catch {
-      // Preserve the original restoration error; the safety checkpoint remains selectable.
-    }
-    throw error;
-  }
-}
-
-function messageContentLabel(content: RuntimeValue): string {
-  const text = isString(content)
-    ? content
-    : Array.isArray(content)
-      ? content
-          .flatMap((part) =>
-            isObject(part) &&
-            part !== null &&
-            "type" in part &&
-            part.type === "text" &&
-            "text" in part &&
-            isString(part.text)
-              ? [part.text]
-              : [],
-          )
-          .join(" ")
-      : "";
-  return text.replaceAll(/\s+/g, " ").trim().slice(0, 240) || "User turn";
-}
 
 function userMessageLabel(ctx: ExtensionContext): string {
   const entries = ctx.sessionManager.getBranch();
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (entry.type !== "message" || entry.message.role !== "user") continue;
+    if (entry?.type !== "message" || entry.message.role !== "user") continue;
     return messageContentLabel(entry.message.content);
   }
   return "User turn";
 }
 
-export function turnCheckpointsFromEntries(entries: readonly SessionEntry[]): TurnCheckpoint[] {
-  let pending: Pick<TurnCheckpoint, "checkpoint" | "checkpointEntryId"> | undefined;
-  let userTurnIndex = 0;
-  const checkpoints: TurnCheckpoint[] = [];
-  for (const entry of entries) {
-    if (entry.type === "message" && entry.message.role === "user") {
-      userTurnIndex += 1;
-      if (pending) {
-        checkpoints.push({
-          ...pending,
-          conversationTargetId: entry.id,
-          userTurnIndex,
-          label: messageContentLabel(entry.message.content),
-        });
-        pending = undefined;
-      }
-      continue;
-    }
-    if (entry.type !== "custom" || entry.customType !== CHECKPOINT_ENTRY) continue;
-    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-    const value = entry.data as Partial<FileCheckpoint> | undefined;
-    if (
-      value?.version === 1 &&
-      isString(value.ref) &&
-      isString(value.indexTree) &&
-      isString(value.worktreeTree) &&
-      isString(value.timestamp) &&
-      isNumber(value.turnIndex) &&
-      isString(value.label) &&
-      value.label !== "Before rewind"
-    ) {
-      pending = {
-        // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-        checkpoint: value as FileCheckpoint,
-        checkpointEntryId: entry.id,
-      };
-    }
-  }
-  return checkpoints;
-}
-
-function checkpointChoice(turn: TurnCheckpoint): string {
-  const time = new Date(turn.checkpoint.timestamp).toLocaleString();
-  return `Turn ${turn.userTurnIndex} · ${time} · ${turn.label}`;
-}
-
-async function summarizeChanges(
-  cwd: string,
-  from: Pick<GitSnapshot, "worktreeTree">,
-  to: Pick<GitSnapshot, "worktreeTree">,
-): Promise<ChangeSummary> {
-  const output = await git(cwd, ["diff", "--numstat", from.worktreeTree, to.worktreeTree]);
-  let added = 0;
-  let deleted = 0;
-  let files = 0;
-  for (const line of output.split("\n")) {
-    if (!line) continue;
-    const [addedText, deletedText] = line.split("\t");
-    files += 1;
-    if (addedText !== "-") added += Number(addedText) || 0;
-    if (deletedText !== "-") deleted += Number(deletedText) || 0;
-  }
-  return { added, deleted, files };
-}
-
-export async function buildRewindTimeline(
-  cwd: string,
-  turns: readonly TurnCheckpoint[],
-  current: GitSnapshot,
-): Promise<RewindTimelineItem[]> {
-  return Promise.all(
-    turns.map(async (turn, index) => ({
-      turn,
-      changes: await summarizeChanges(
-        cwd,
-        turn.checkpoint,
-        turns[index + 1]?.checkpoint ?? current,
-      ),
-    })),
-  );
-}
-
-function changeSummaryText(changes: ChangeSummary, theme: Theme): string {
-  if (changes.files === 0) return theme.fg("dim", "No code changes");
-  return [
-    theme.fg("dim", `${changes.files} file${changes.files === 1 ? "" : "s"}`),
-    theme.fg("toolDiffAdded", `+${changes.added}`),
-    theme.fg("toolDiffRemoved", `-${changes.deleted}`),
-  ].join(" ");
-}
-
-export function renderRewindTimeline(
-  items: readonly RewindTimelineItem[],
-  selectedIndex: number,
-  width: number,
-  theme: Theme,
-): string[] {
-  const innerWidth = Math.max(20, width - 4);
-  const visibleTurns = 7;
-  const start = Math.max(
-    0,
-    Math.min(selectedIndex - Math.floor(visibleTurns / 2), items.length - visibleTurns),
-  );
-  const end = Math.min(items.length, start + visibleTurns);
-  const lines = [
-    theme.fg("accent", theme.bold("Rewind")),
-    "",
-    "Restore the conversation, files, and Git index to the point before a user turn.",
-    "",
-  ];
-
-  if (start > 0) lines.push(theme.fg("dim", `  ↑ ${start} earlier turns`), "");
-  for (let index = start; index < end; index += 1) {
-    const item = items[index];
-    if (!item) continue;
-    const selected = index === selectedIndex;
-    const prefix = selected ? theme.fg("accent", "❯") : " ";
-    const label = selected ? theme.fg("accent", item.turn.label) : item.turn.label;
-    lines.push(truncateToWidth(`${prefix} ${label}`, innerWidth));
-    const timestamp = new Date(item.turn.checkpoint.timestamp).toLocaleString();
-    lines.push(
-      truncateToWidth(
-        `  Turn ${item.turn.userTurnIndex} · ${timestamp} · ${changeSummaryText(item.changes, theme)}`,
-        innerWidth,
-      ),
-    );
-    lines.push("");
-  }
-  if (end < items.length) lines.push(theme.fg("dim", `  ↓ ${items.length - end} later turns`), "");
-
-  if (end === items.length) {
-    const currentSelected = selectedIndex === items.length;
-    lines.push(`${currentSelected ? theme.fg("accent", "❯") : " "} ${theme.italic("(current)")}`);
-  }
-  lines.push(
-    "",
-    theme.fg("dim", theme.italic("↑↓ to navigate · Enter to continue · Esc to cancel")),
-  );
-
-  const top = theme.fg("border", `┌${"─".repeat(Math.max(1, width - 2))}┐`);
-  const bottom = theme.fg("border", `└${"─".repeat(Math.max(1, width - 2))}┘`);
-  return [
-    top,
-    ...lines.map((line) => {
-      const clipped = truncateToWidth(line, innerWidth);
-      return `${theme.fg("border", "│")} ${clipped}${" ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)))} ${theme.fg("border", "│")}`;
-    }),
-    bottom,
-  ];
-}
-
-async function selectRewindTurn(
-  ctx: ExtensionCommandContext,
-  items: readonly RewindTimelineItem[],
-): Promise<TurnCheckpoint | undefined> {
-  if (ctx.mode !== "tui") {
-    const reversed = [...items].reverse();
-    const choices = reversed.map(({ turn }) => checkpointChoice(turn));
-    const selected = await ctx.ui.select("Rewind to turn", choices);
-    return selected ? reversed[choices.indexOf(selected)]?.turn : undefined;
-  }
-
-  return ctx.ui.custom<TurnCheckpoint | undefined>((tui, theme, _keybindings, done) => {
-    let selectedIndex = items.length;
-    return {
-      render: (width: number) => renderRewindTimeline(items, selectedIndex, width, theme),
-      invalidate: () => {},
-      handleInput: (data: string) => {
-        if (matchesKey(data, "escape")) done(undefined);
-        else if (matchesKey(data, "enter")) done(items[selectedIndex]?.turn);
-        else if (matchesKey(data, "up")) {
-          selectedIndex = Math.max(0, selectedIndex - 1);
-          tui.requestRender();
-        } else if (matchesKey(data, "down")) {
-          selectedIndex = Math.min(items.length, selectedIndex + 1);
-          tui.requestRender();
-        }
-      },
-    };
-  });
-}
-
-export async function restoreTurn(
-  ctx: Pick<ExtensionCommandContext, "cwd" | "navigateTree">,
-  target: TurnCheckpoint,
-  safety: GitSnapshot,
-  restore: SnapshotRestorer = restoreGitSnapshot,
-): Promise<void> {
-  await restore(ctx.cwd, target.checkpoint, safety);
-  try {
-    const navigation = await ctx.navigateTree(target.conversationTargetId, { summarize: false });
-    if (navigation.cancelled) throw new Error("Conversation rewind was cancelled.");
-  } catch (error) {
-    try {
-      await restore(ctx.cwd, safety, target.checkpoint);
-    } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        "Conversation rewind and file rollback failed.",
-      );
-    }
-    throw error;
-  }
+function failureDetail(error: RuntimeValue): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export default function fileCheckpoints(pi: ExtensionAPI): void {
-  let warnedUnavailable = false;
+  let state: CaptureState | undefined;
+
+  function captureState(ctx: ExtensionContext): CaptureState {
+    const sessionId = ctx.sessionManager.getSessionId();
+    if (!state || state.sessionId !== sessionId) {
+      state = { sessionId, ref: sessionCheckpointRef(sessionId) };
+    }
+    return state;
+  }
+
+  function recordFailure(ctx: ExtensionContext, current: CaptureState, error: RuntimeValue): void {
+    const detail = failureDetail(error);
+    current.lastFailure = detail;
+    if (error instanceof CheckpointError && error.kind === "unsupported") {
+      current.disabledReason = detail;
+      if (ctx.hasUI) {
+        ctx.ui.notify(
+          `File checkpoints are off for this session: ${detail} Conversation rewind and fork still work.`,
+          "warning",
+        );
+      }
+      return;
+    }
+    const now = Date.now();
+    const quiet =
+      current.lastNoticeAt !== undefined &&
+      now - current.lastNoticeAt < TRANSIENT_NOTICE_INTERVAL_MS;
+    if (!ctx.hasUI || quiet) return;
+    current.lastNoticeAt = now;
+    ctx.ui.notify(`File checkpoint skipped for this turn: ${detail}`, "warning");
+  }
+
+  /** Captures the live state, returning undefined with the reason on failure. */
+  async function captureNow(
+    ctx: ExtensionContext,
+    current: CaptureState,
+    message: string,
+  ): Promise<GitSnapshot | undefined> {
+    if (current.disabledReason) return undefined;
+    try {
+      const snapshot = await captureGitSnapshot(ctx.cwd, {
+        ref: current.ref,
+        message,
+        ...propertiesWhen(current.previous, () => ({ previous: current.previous })),
+      });
+      current.previous = snapshot;
+      current.lastFailure = undefined;
+      return snapshot;
+    } catch (error) {
+      recordFailure(ctx, current, error);
+      return undefined;
+    }
+  }
+
+  pi.on("session_start", (_event, ctx) => {
+    const current = captureState(ctx);
+    void pruneCheckpointRefs(ctx.cwd, {
+      maxAgeMs: checkpointRetentionMs(),
+      keepRef: current.ref,
+    }).catch(() => undefined);
+  });
 
   pi.on("turn_start", async (event, ctx) => {
-    try {
-      const timestamp = new Date(event.timestamp).toISOString();
-      const sessionId = ctx.sessionManager.getSessionId();
-      const snapshot = await captureGitSnapshot(
-        ctx.cwd,
-        `${sessionId}/${event.timestamp}-${event.turnIndex}`,
-      );
-      pi.appendEntry<FileCheckpoint>(CHECKPOINT_ENTRY, {
-        version: 1,
-        ...snapshot,
-        timestamp,
-        turnIndex: event.turnIndex,
-        label: userMessageLabel(ctx),
-      });
-      warnedUnavailable = false;
-    } catch {
-      if (!warnedUnavailable && ctx.hasUI) {
-        ctx.ui.notify("File checkpoints are unavailable in this working tree.", "warning");
-        warnedUnavailable = true;
-      }
-    }
+    const current = captureState(ctx);
+    const snapshot = await captureNow(ctx, current, `choco-pi checkpoint turn ${event.turnIndex}`);
+    if (!snapshot) return;
+    pi.appendEntry<FileCheckpoint>(CHECKPOINT_ENTRY, {
+      version: 2,
+      ...snapshot,
+      timestamp: new Date(event.timestamp).toISOString(),
+      turnIndex: event.turnIndex,
+      label: userMessageLabel(ctx),
+    });
   });
 
-  pi.registerCommand("rewind", {
-    description: "Rewind conversation, files, and Git index to the start of a turn",
-    handler: async (_args, ctx) => {
-      await ctx.waitForIdle();
-      const checkpoints = turnCheckpointsFromEntries(ctx.sessionManager.getBranch());
-      if (checkpoints.length === 0) {
-        ctx.ui.notify("No turn checkpoints are available in this session branch.", "warning");
-        return;
-      }
+  async function selectTurn(
+    ctx: ExtensionCommandContext,
+    items: readonly TurnTimelineItem[],
+    unavailable: string | undefined,
+  ): Promise<PickerChoice | undefined> {
+    if (ctx.mode !== "tui") {
+      const reversed = items.toReversed();
+      const choices = reversed.map(
+        ({ turn }) =>
+          `Turn ${turn.index} · ${turn.label}${turn.checkpoint ? "" : " (no checkpoint)"}`,
+      );
+      const picked = await ctx.ui.select("Checkpoints", choices);
+      const turn = picked ? reversed[choices.indexOf(picked)]?.turn : undefined;
+      return turn ? { turn } : undefined;
+    }
 
-      let timeline: RewindTimelineItem[];
-      try {
-        const timestamp = Date.now();
-        const sessionId = ctx.sessionManager.getSessionId();
-        const preview = await captureGitSnapshot(
-          ctx.cwd,
-          `${sessionId}/${timestamp}-rewind-preview`,
-        );
-        timeline = await buildRewindTimeline(ctx.cwd, checkpoints, preview);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        ctx.ui.notify(`Turn rewind preview failed: ${message}`, "error");
-        return;
-      }
+    return ctx.ui.custom<PickerChoice | undefined>((tui, theme, _keybindings, done) => {
+      let selectedIndex = Math.max(0, items.length - 1);
+      let notice = unavailable;
+      return {
+        render: (width: number) =>
+          renderCheckpointPicker({
+            items,
+            selectedIndex,
+            width,
+            theme,
+            ...propertiesWhen(notice, () => ({ notice })),
+          }),
+        invalidate: () => {},
+        handleInput: (data: string) => {
+          const key = resolvePickerKey(data);
+          if (!key) return;
+          if (key.kind === "cancel") {
+            done(undefined);
+            return;
+          }
+          if (key.kind === "move") {
+            selectedIndex = Math.min(items.length - 1, Math.max(0, selectedIndex + key.delta));
+            tui.requestRender();
+            return;
+          }
+          if (key.kind === "jump") {
+            selectedIndex = key.position === "first" ? 0 : items.length - 1;
+            tui.requestRender();
+            return;
+          }
+          const focused = items[selectedIndex]?.turn;
+          if (!focused) return;
+          if (key.kind === "choose") {
+            done({ turn: focused });
+            return;
+          }
+          if (key.action === "rollback" && !focused.checkpoint) {
+            notice = unavailable ?? "This turn has no file checkpoint, so rollback is unavailable.";
+            tui.requestRender();
+            return;
+          }
+          done({ turn: focused, action: key.action });
+        },
+      };
+    });
+  }
 
-      const target = await selectRewindTurn(ctx, timeline);
-      if (!target) return;
+  async function chooseAction(
+    ctx: ExtensionCommandContext,
+    turn: SessionTurn,
+  ): Promise<TurnAction | undefined> {
+    // Rollback is offered only when this turn actually has files to restore, so
+    // the dialog never presents a choice that is guaranteed to fail.
+    const available: TurnAction[] = turn.checkpoint
+      ? ["rewind", "rollback", "fork"]
+      : ["rewind", "fork"];
+    const options = available.map((action) => TURN_ACTION_LABELS[action]);
+    const picked = await ctx.ui.select(`Turn ${turn.index} · ${turn.label}`, [
+      ...options,
+      "Cancel",
+    ]);
+    const index = picked ? options.indexOf(picked) : -1;
+    return index === -1 ? undefined : available[index];
+  }
 
+  async function rollbackTurn(
+    ctx: ExtensionCommandContext,
+    current: CaptureState,
+    turn: SessionTurn,
+  ): Promise<void> {
+    const checkpoint = turn.checkpoint;
+    if (!checkpoint) throw new Error("This turn has no file checkpoint.");
+
+    const drift = await headDriftSince(ctx.cwd, checkpoint.head);
+    if (drift) {
+      const landed =
+        drift.commits > 0
+          ? `${drift.commits} commit${drift.commits === 1 ? "" : "s"} landed after this turn.`
+          : "HEAD has moved since this turn.";
       const confirmed = await ctx.ui.confirm(
-        "Rewind this turn?",
-        "This restores the conversation, Git index, and non-ignored files to before the selected turn. Later conversation remains available as a session-tree branch.",
+        "Roll back across newer commits?",
+        `${landed} The rollback restores files and the Git index exactly, but leaves HEAD where it is, so the restored state will read as a large diff against the newer commit.`,
       );
       if (!confirmed) return;
+    }
 
-      try {
-        const timestamp = Date.now();
-        const sessionId = ctx.sessionManager.getSessionId();
-        const safety = await captureGitSnapshot(ctx.cwd, `${sessionId}/${timestamp}-before-rewind`);
-        await restoreTurn(ctx, target, safety);
-        pi.appendEntry(RESTORE_ENTRY, {
-          restoredRef: target.checkpoint.ref,
-          safetyRef: safety.ref,
-          restoredAt: new Date().toISOString(),
-        });
-        ctx.ui.notify("Turn rewound. The prompt is ready to edit and resubmit.", "info");
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        ctx.ui.notify(`Turn rewind failed: ${message}`, "error");
+    const safety = await captureGitSnapshot(ctx.cwd, {
+      ref: current.ref,
+      message: "choco-pi checkpoint before rollback",
+      ...propertiesWhen(current.previous, () => ({ previous: current.previous })),
+    });
+    current.previous = safety;
+
+    await restoreTurn(ctx, checkpoint, turn.entryId, safety);
+    pi.appendEntry(RESTORE_ENTRY, {
+      restoredCommit: checkpoint.commit ?? checkpoint.ref,
+      safetyCommit: safety.commit ?? safety.ref,
+      restoredAt: new Date().toISOString(),
+    });
+    ctx.ui.notify(
+      `Rolled back to turn ${turn.index}. The previous state stays reachable at ${safety.commit?.slice(0, 12) ?? safety.ref}.`,
+      "info",
+    );
+  }
+
+  async function runAction(
+    ctx: ExtensionCommandContext,
+    current: CaptureState,
+    turn: SessionTurn,
+    action: TurnAction,
+  ): Promise<void> {
+    try {
+      if (action === "fork") {
+        const result = await ctx.fork(turn.entryId, { position: "before" });
+        if (!result.cancelled) ctx.ui.notify(`Forked a new session at turn ${turn.index}.`, "info");
+        return;
       }
-    },
+      if (action === "rewind") {
+        const navigation = await ctx.navigateTree(turn.entryId, { summarize: false });
+        if (navigation.cancelled) return;
+        ctx.ui.notify(
+          `Rewound the conversation to turn ${turn.index}. Files were not changed.`,
+          "info",
+        );
+        return;
+      }
+      await rollbackTurn(ctx, current, turn);
+    } catch (error) {
+      ctx.ui.notify(`${TURN_ACTION_LABELS[action]} failed: ${failureDetail(error)}`, "error");
+    }
+  }
+
+  async function openPicker(ctx: ExtensionCommandContext): Promise<void> {
+    if (!ctx.isIdle()) {
+      // Every action here rewrites the session tree, which Pi refuses mid-stream.
+      ctx.ui.notify(
+        "Waiting for the current response to finish before opening checkpoints.",
+        "info",
+      );
+    }
+    await ctx.waitForIdle();
+    const turns = sessionTurnsFromEntries(ctx.sessionManager.getBranch());
+    if (turns.length === 0) {
+      ctx.ui.notify("This session branch has no user turns yet.", "warning");
+      return;
+    }
+
+    const current = captureState(ctx);
+    const live = await captureNow(ctx, current, "choco-pi checkpoint picker");
+    const unavailable = live
+      ? undefined
+      : (current.disabledReason ?? current.lastFailure ?? "File checkpoints are unavailable.");
+    const timeline = await buildTurnTimeline(ctx.cwd, turns, live);
+
+    const choice = await selectTurn(ctx, timeline, unavailable);
+    if (!choice) return;
+    const action = choice.action ?? (await chooseAction(ctx, choice.turn));
+    if (!action) return;
+    await runAction(ctx, current, choice.turn, action);
+  }
+
+  pi.registerCommand("rewind", {
+    description: "Rewind, roll back, or fork the session at a checkpointed turn",
+    handler: (_args, ctx) => openPicker(ctx),
   });
+
+  overrideForkSelector();
+}
+
+/**
+ * Points Pi's built-in fork selector at this picker.
+ *
+ * Interactive mode dispatches `/fork`, the `app.session.fork` binding, and the
+ * double-escape action straight to its own selector before extension commands
+ * are consulted, so replacing that one method is the only way to make all three
+ * entry points open the checkpoint picker.
+ */
+function overrideForkSelector(): void {
+  const prototype = reinterpretHostValue<ForkSelectorHost>(InteractiveMode.prototype);
+  if (prototype.__chocoPiCheckpointPickerApplied) return;
+  prototype.showUserMessageSelector = function openCheckpointPicker(this: ForkSelectorHost) {
+    void this.session.prompt("/rewind");
+  };
+  prototype.__chocoPiCheckpointPickerApplied = true;
 }
