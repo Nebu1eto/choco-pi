@@ -12,6 +12,7 @@ import type { PreferencesExtraSection } from "../.pi/extensions/lib/agent-prefer
 import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 
 const BRIDGE_SYMBOL = Symbol.for("choco-pi.native-settings-bridge");
+const RULE = "─".repeat(20);
 
 type PrototypeRecord = Record<PropertyKey, RuntimeValue>;
 
@@ -191,5 +192,34 @@ test(
   withPatchedPrototype(fakeNativeSettings(ROWS, []), () => {
     installNativeSettingsBridge(() => {});
     assert.equal(createHostCommandContext(reinterpretHostValue<NativeSettingsHost>({})), undefined);
+  }),
+);
+
+test(
+  "the embedded model picker drops the rules Pi draws around it",
+  withPatchedPrototype(fakeNativeSettings(ROWS, []), () => {
+    installNativeSettingsBridge(() => {});
+    const picker = {
+      render: () => [RULE, "", "Scope: all | scoped", "> ", RULE],
+      invalidate: () => {},
+      handleInput: () => {},
+    };
+    const host = reinterpretHostValue<NativeSettingsHost>({
+      session: { model: { id: "gpt-5.6-luna" } },
+      showModelSelector(this: NativeSettingsHost) {
+        this.showSelector(() => ({ component: picker, focus: picker }));
+      },
+    });
+    reinterpretHostValue<(this: NativeSettingsHost) => void>(
+      prototypeRecord()["showSettingsSelector"],
+    ).call(host);
+
+    const row = buildNativeSettingsSections()
+      .find((section) => section.id === "model")
+      ?.buildItems()
+      .find((item) => item.id === "piModel");
+    assert.equal(row?.currentValue, "gpt-5.6-luna");
+    const submenu = row?.submenu?.("gpt-5.6-luna", () => {});
+    assert.deepEqual(submenu?.render(40), ["", "Scope: all | scoped", "> "]);
   }),
 );

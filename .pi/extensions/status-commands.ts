@@ -233,7 +233,14 @@ async function showTabOnce(
       }).join(theme.fg("dim", "·"));
     const textHint = (): string =>
       theme.fg("dim", "Tab switches tabs · ↑/↓ scrolls · 1/2/3 jumps · Enter/Esc closes");
-    const panelHint = (): string => theme.fg("dim", "Tab switches tabs · 1/2/3 jumps · Esc closes");
+    // An open submenu holds Tab and the digits, so the hint must not promise them.
+    const panelHint = (): string =>
+      theme.fg(
+        "dim",
+        panel?.hasOpenSubmenu?.()
+          ? "Esc goes back"
+          : "Tab switches tabs · 1/2/3 jumps · Esc closes",
+      );
 
     const paint = (body: string, view: { preserveScroll: boolean }): void => {
       text.setText(`${header()}\n\n${body}\n\n${textHint()}`);
