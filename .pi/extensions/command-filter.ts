@@ -14,8 +14,12 @@ type FilterableRunnerPrototype = typeof ExtensionRunner.prototype & {
  * Built-in commands the prompt editor should not offer. Pi dispatches these by
  * name before extension commands, so they stay typeable; they are simply
  * reached through the settings dialog now.
+ *
+ * `session` is here because `/status` reports everything it did and more:
+ * status-commands.ts redirects the built-in handler, and offering both names
+ * would advertise two commands for one screen.
  */
-const HIDDEN_BUILTIN_COMMANDS = new Set(["scoped-models"]);
+const HIDDEN_BUILTIN_COMMANDS = new Set(["scoped-models", "session"]);
 
 function isExcludedCommand(command: ResolvedCommand): boolean {
   return (

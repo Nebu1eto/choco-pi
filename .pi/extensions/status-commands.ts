@@ -1,5 +1,9 @@
-import { isString, type RuntimeValue } from "./lib/runtime-values.ts";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { isString, reinterpretHostValue, type RuntimeValue } from "./lib/runtime-values.ts";
+import {
+  InteractiveMode,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 import { Box, matchesKey, ScrollView, Text } from "@earendil-works/pi-tui";
 import {
   AGENT_OUTCOME_PREFIX,
@@ -28,6 +32,14 @@ import {
   type NativeSettingsHost,
   type NativeSettingsFocus,
 } from "./lib/native-settings.ts";
+import {
+  computeCacheWaste,
+  formatSessionInfo,
+  summarizeMainUsage,
+  summarizeSubagentUsage,
+  type SessionInfoStyle,
+} from "./lib/session-usage.ts";
+import { hasRunningSubagents } from "./lib/subagent-manager.ts";
 import { formatStatus, summarizeStatusRows } from "./session-status.ts";
 import { usageReport } from "./provider-usage.ts";
 
@@ -107,6 +119,49 @@ export function createTabController(options: {
   };
 }
 
+/**
+ * Rows the Session Info block already states. `/status` absorbed Pi's `/session`
+ * command, so identity is reported once at the top instead of twice.
+ */
+const SESSION_INFO_ROWS: ReadonlySet<string> = new Set([
+  "Session name",
+  "Session ID",
+  "Session file",
+]);
+
+/**
+ * The Status tab: the retired `/session` block first, then the environment rows.
+ *
+ * The session block leads because it answers what the session cost, which is
+ * what someone opening `/status` mid-run is usually after; the environment rows
+ * below it change only when the configuration does.
+ */
+export function statusBody(
+  ctx: ExtensionCommandContext,
+  thinkingLevel: string,
+  style?: SessionInfoStyle,
+): string {
+  const entries = ctx.sessionManager.getEntries();
+  const sessionId = ctx.sessionManager.getSessionId();
+  const info = formatSessionInfo(
+    {
+      sessionName: ctx.sessionManager.getSessionName(),
+      sessionFile: ctx.sessionManager.getSessionFile(),
+      sessionId,
+      main: summarizeMainUsage(entries),
+      cacheWaste: computeCacheWaste(entries, ctx.modelRegistry),
+      subagents: summarizeSubagentUsage(sessionId),
+      subagentsRunning: hasRunningSubagents(),
+    },
+    style,
+  );
+  const rows = summarizeStatusRows(ctx, thinkingLevel).filter(
+    (row) => !SESSION_INFO_ROWS.has(row.label),
+  );
+  const heading = style ? style.bold("Environment") : "Environment";
+  return `${info}\n\n${heading}\n\n${formatStatus(rows, style)}`;
+}
+
 export function tabBody(
   ctx: ExtensionCommandContext,
   thinkingLevel: string,
@@ -117,7 +172,7 @@ export function tabBody(
   if (id === "usage") {
     return usageReport(ctx).then((report) => (style ? style.fg("text", report) : report));
   }
-  return Promise.resolve(formatStatus(summarizeStatusRows(ctx, thinkingLevel), style));
+  return Promise.resolve(statusBody(ctx, thinkingLevel, style));
 }
 
 type PreferencesFocus = { section?: string; focusId?: string; openSubmenu?: boolean };
@@ -425,9 +480,11 @@ async function showTab(
 
 export default function statusCommands(pi: ExtensionAPI): void {
   pi.registerCommand("status", {
-    description: "Show session, model, context, MCP, and environment status (Status/Usage tabs)",
+    description:
+      "Show session info, cost, model, context, MCP, and environment (Status/Usage tabs)",
     handler: async (_args, ctx) => showTab(ctx, pi.getThinkingLevel(), "status"),
   });
+  overrideSessionCommand();
   const usageCommand = {
     description:
       "Show connected Claude Code, OpenAI Codex, and Synthetic usage (Status/Usage tabs)",
@@ -504,6 +561,32 @@ export default function statusCommands(pi: ExtensionAPI): void {
       },
     );
   });
+}
+
+/** Pi's interactive mode, reached only to retire its built-in `/session` command. */
+type SessionCommandHost = {
+  handleSessionCommand: () => void;
+  session: { prompt: (text: string) => Promise<void> };
+  __chocoPiSessionCommandApplied?: boolean;
+};
+
+/**
+ * Retires Pi's built-in `/session` by pointing it at this dialog.
+ *
+ * Interactive mode matches `/session` by literal string and calls its own
+ * handler before any extension command is consulted, so an extension of that
+ * name could never take the word. Replacing the handler is what makes `/status`
+ * the single session command while `/session` keeps working for anyone who
+ * still types it; `command-filter.ts` drops it from the editor's completions so
+ * only one of the two is offered.
+ */
+function overrideSessionCommand(): void {
+  const prototype = reinterpretHostValue<SessionCommandHost>(InteractiveMode.prototype);
+  if (prototype.__chocoPiSessionCommandApplied) return;
+  prototype.handleSessionCommand = function openStatusDialog(this: SessionCommandHost) {
+    void this.session.prompt("/status");
+  };
+  prototype.__chocoPiSessionCommandApplied = true;
 }
 
 /**
