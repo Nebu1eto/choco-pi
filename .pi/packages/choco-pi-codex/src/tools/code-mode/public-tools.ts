@@ -150,6 +150,25 @@ function createWaitTool(
           tracker.finish(id, recovered.running ? "yielded" : "done");
           return recovered.result;
         }
+        if (response.missingCell === true) {
+          waitAttempts.delete(params.cell_id);
+          tracker.finish(id, "done");
+          return {
+            content: [
+              {
+                type: "text",
+                text: params.terminate
+                  ? `Exec cell "${params.cell_id}" is already gone.`
+                  : `Exec cell "${params.cell_id}" does not exist in this session. Exec cells do not survive a session restart and cannot be referenced across sessions. Re-run the script with exec instead of waiting.`,
+              },
+            ],
+            details: {
+              codeMode: true,
+              cellId: params.cell_id,
+              status: params.terminate ? "terminated" : "result",
+            },
+          };
+        }
         if (response.kind === "yielded") waitAttempts.set(params.cell_id, attempt + 1);
         else waitAttempts.delete(params.cell_id);
         tracker.finish(id, response.kind === "yielded" ? "yielded" : "done");
