@@ -22,21 +22,84 @@ test(
       overrides?: Record<string, string>,
     ) => string;
 
-    assert.equal(resolve("apply_patch"), "Patching");
-    assert.equal(resolve("exec_command"), "Running");
-    assert.equal(resolve("read"), "Reading");
-    assert.equal(resolve("symbol_search"), "LSP: Search Symbols");
-    assert.equal(resolve("module_report"), "LSP: Analyse Module");
-    assert.equal(resolve("Agent"), "Delegating");
+    assert.equal(resolve("apply_patch"), "File: Patching");
+    assert.equal(resolve("exec_command"), "Shell: Running");
+    assert.equal(resolve("read"), "File: Reading");
+    assert.equal(resolve("symbol_search"), "LSP: Searching Symbols");
+    assert.equal(resolve("module_report"), "LSP: Analysing Module");
+    assert.equal(resolve("Agent"), "Delegation: Launching");
+    assert.equal(resolve("steer_subagent"), "Delegation: Steering");
+    assert.equal(resolve("get_subagent_result"), "Delegation: Retrieving");
 
-    assert.equal(resolve("mcp__linear_save_document"), "MCP linear");
+    assert.equal(resolve("mcp__linear_save_document"), "MCP: linear");
     assert.equal(resolve("brand_new_tool"), "brand_new_tool", "an unknown tool keeps its name");
     assert.equal(resolve("apply_patch", { apply_patch: "Applying" }), "Applying");
     assert.equal(
       resolve("apply_patch", { apply_patch: "  " }),
-      "Patching",
+      "File: Patching",
       "a blank override is ignored",
     );
+  },
+);
+
+test("a settled tool call reads in the past tense", { skip: SKIP_WITHOUT_ZENTUI }, async () => {
+  const module = await loadZentuiModule("tool-labels.js");
+  // SAFETY: the compiled package exports this resolver.
+  const resolve = module.resolveFinishedToolLabel as (
+    name: string,
+    overrides?: Record<string, string>,
+  ) => string;
+
+  assert.equal(resolve("exec_command"), "Shell: Ran");
+  assert.equal(resolve("apply_patch"), "File: Patched");
+  assert.equal(resolve("steer_subagent"), "Delegation: Steered");
+  assert.equal(resolve("get_subagent_result"), "Delegation: Retrieved");
+  assert.equal(resolve("module_report"), "LSP: Analysed Module");
+
+  assert.equal(resolve("mcp__linear_save_document"), "MCP: linear");
+  assert.equal(resolve("brand_new_tool"), "brand_new_tool");
+  assert.equal(
+    resolve("apply_patch", { apply_patch: "Applying" }),
+    "Applying",
+    "an override names the tool in both states",
+  );
+});
+
+test(
+  "every built-in label carries a category prefix and a present-participle action",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const labels = await loadZentuiModule("tool-labels.js");
+    // SAFETY: the compiled package exports this label table.
+    const table = labels.DEFAULT_TOOL_LABELS as Record<string, string>;
+
+    for (const [tool, label] of Object.entries(table)) {
+      const match = label.match(/^([A-Za-z]+): ([A-Z][a-z]+ing)(?: [A-Z][A-Za-z]*)?$/);
+      assert.ok(match, `${tool} label "${label}" is not "Category: Doing [Object]"`);
+    }
+  },
+);
+
+test(
+  "the finished table covers exactly the same tools and categories",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const labels = await loadZentuiModule("tool-labels.js");
+    // SAFETY: the compiled package exports both label tables.
+    const running = labels.DEFAULT_TOOL_LABELS as Record<string, string>;
+    // SAFETY: the compiled package exports both label tables.
+    const finished = labels.DEFAULT_FINISHED_TOOL_LABELS as Record<string, string>;
+
+    assert.deepEqual(Object.keys(finished), Object.keys(running));
+    for (const [tool, label] of Object.entries(finished)) {
+      const match = label.match(/^([A-Za-z]+): [A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)?$/);
+      assert.ok(match, `${tool} label "${label}" is not "Category: Done [Object]"`);
+      assert.equal(
+        match![1],
+        running[tool]!.split(":")[0],
+        `${tool} changes category once it finishes`,
+      );
+    }
   },
 );
 
@@ -48,10 +111,12 @@ test(
     const workingLine = await loadZentuiModule("working-line.js");
     // SAFETY: the compiled package exports this label table.
     const table = labels.DEFAULT_TOOL_LABELS as Record<string, string>;
+    // SAFETY: the compiled package exports this label table.
+    const finished = labels.DEFAULT_FINISHED_TOOL_LABELS as Record<string, string>;
     // SAFETY: the compiled package exports this cell budget as a number constant.
     const max = workingLine.MAX_WORKING_LINE_TOOL_CELLS as number;
 
-    for (const [tool, label] of Object.entries(table)) {
+    for (const [tool, label] of [...Object.entries(table), ...Object.entries(finished)]) {
       assert.ok(
         label.length <= max,
         `${tool} label "${label}" is ${label.length} cells, over the ${max} cell budget`,

@@ -1,7 +1,10 @@
 /**
  * Splits an `mcp …` summary line into the bullet header and the detail shown
- * under the tree branch, so a call reads `MCP linear` / `save_document` rather
+ * under the tree branch, so a call reads `MCP: linear` / `save_document` rather
  * than repeating the raw prefixed tool name.
+ *
+ * The header carries the same `MCP:` category prefix the working line shows
+ * for these calls, so one tool reads the same in both places.
  *
  * Kept in its own module so it loads under Node's strip-only TypeScript mode:
  * the renderer it serves declares parameter properties, which that loader
@@ -24,12 +27,12 @@ export function splitMcpCallHeadline(title: string): McpCallHeadline {
     const prefixed = target.match(/^mcp__([^_]+)_(.+)$/);
     const server = explicitServer ?? prefixed?.[1];
     const tool = prefixed?.[2] ?? target;
-    return server ? { header: `MCP ${server}`, detail: tool } : { header: "MCP", detail: tool };
+    return server ? { header: `MCP: ${server}`, detail: tool } : { header: "MCP", detail: tool };
   }
   const action = title.match(/^mcp (\S+)(?: (.+))?$/);
   if (action) {
     const [, verb, rest] = action;
-    return rest ? { header: `MCP ${verb}`, detail: rest } : { header: `MCP ${verb}` };
+    return rest ? { header: `MCP: ${verb}`, detail: rest } : { header: `MCP: ${verb}` };
   }
   return { header: title };
 }
@@ -58,7 +61,7 @@ export function styleMcpCallLines(lines: string[], theme: McpCallTheme): string[
 
 /**
  * The one-line title for the compact collapsed row, matching the bulleted
- * shape of the expanded render: `• MCP linear save_document` instead of the
+ * shape of the expanded render: `• MCP: linear save_document` instead of the
  * raw `mcp call mcp__linear_save_document` headline.
  */
 export function formatMcpCallCompactTitle(title: string): string {

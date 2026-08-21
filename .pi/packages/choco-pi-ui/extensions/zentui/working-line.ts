@@ -30,8 +30,8 @@ export const MAX_WORKING_LINE_ROW_CELLS = 80;
 /** Indicator payload budget inside the complete Loader row. */
 export const MAX_WORKING_LINE_FRAME_CELLS = MAX_WORKING_LINE_ROW_CELLS - 3;
 export const MAX_WORKING_LINE_MESSAGE_CELLS = 43;
-/** Sized so category-prefixed labels ("LSP: Analyse Module") show untruncated. */
-export const MAX_WORKING_LINE_TOOL_CELLS = 20;
+/** Sized so category-prefixed labels ("LSP: Searching Symbols") show untruncated. */
+export const MAX_WORKING_LINE_TOOL_CELLS = 22;
 export const MAX_WORKING_LINE_FRAMES = 1024;
 export const MAX_WORKING_LINE_FRAME_CODE_UNITS = 512 * 1024;
 export const MAX_WORKING_LINE_RAW_CODE_UNITS = 4096;

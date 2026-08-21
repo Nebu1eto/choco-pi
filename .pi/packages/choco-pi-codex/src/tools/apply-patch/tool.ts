@@ -220,7 +220,7 @@ function renderCompactApplyPatchCall(theme: {
   fg(role: string, text: string): string;
   bold(text: string): string;
 }): Text {
-  return new Text(`${theme.fg("dim", "•")} ${theme.bold("Patching")}`, 0, 0);
+  return new Text(`${theme.fg("dim", "•")} ${theme.bold("File: Patching")}`, 0, 0);
 }
 
 export function createApplyPatchTool(
@@ -248,7 +248,7 @@ export function createApplyPatchTool(
       if (context.isError) return new Text(theme.fg("error", "• Patch failed"), 0, 0);
       return new Container();
     }
-    if (isPartial) return new Text(`${theme.fg("dim", "•")} ${theme.bold("Patching")}`, 0, 0);
+    if (isPartial) return new Text(`${theme.fg("dim", "•")} ${theme.bold("File: Patching")}`, 0, 0);
     if (!isApplyPatchToolDetails(result.details)) return new Container();
     if (result.details.status === "partial_failure") return new Container();
     return new Container();

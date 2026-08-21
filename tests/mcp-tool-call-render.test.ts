@@ -8,24 +8,24 @@ import {
 
 test("a proxied call reads as an MCP server and its tool", () => {
   assert.deepEqual(splitMcpCallHeadline("mcp call save_document @ linear"), {
-    header: "MCP linear",
+    header: "MCP: linear",
     detail: "save_document",
   });
 });
 
 test("a prefixed direct tool name is split into server and tool", () => {
   assert.deepEqual(splitMcpCallHeadline("mcp call mcp__linear_save_document"), {
-    header: "MCP linear",
+    header: "MCP: linear",
     detail: "save_document",
   });
 });
 
 test("non-call actions keep their verb in the header", () => {
   assert.deepEqual(splitMcpCallHeadline("mcp search ranking"), {
-    header: "MCP search",
+    header: "MCP: search",
     detail: "ranking",
   });
-  assert.deepEqual(splitMcpCallHeadline("mcp status"), { header: "MCP status" });
+  assert.deepEqual(splitMcpCallHeadline("mcp status"), { header: "MCP: status" });
 });
 
 test("an unrecognized headline is kept verbatim as the header", () => {
@@ -46,7 +46,7 @@ test("multi-line JSON args keep the branch indent on every line", () => {
     theme,
   );
   assert.deepEqual(styled, [
-    "• MCP linear",
+    "• MCP: linear",
     "  └ get_document",
     "    {",
     '      "id": "02ba"',
@@ -57,7 +57,7 @@ test("multi-line JSON args keep the branch indent on every line", () => {
 test("the compact collapsed title uses the bulleted MCP shape", () => {
   assert.equal(
     formatMcpCallCompactTitle("mcp call mcp__linear_save_document"),
-    "• MCP linear save_document",
+    "• MCP: linear save_document",
   );
-  assert.equal(formatMcpCallCompactTitle("mcp status"), "• MCP status");
+  assert.equal(formatMcpCallCompactTitle("mcp status"), "• MCP: status");
 });
