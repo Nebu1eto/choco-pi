@@ -72,6 +72,15 @@ section rather than a hardcoded `appearance`.
 `edit-working-line-messages` outcome are untouched, so restoring the rows is a
 matter of re-adding them.
 
+### choco-pi change: submenus own every key
+
+A row's submenu now suspends the panel's own shortcuts: `makeSettingsList`
+wraps each submenu factory to raise a `submenuOpen` flag until its callback
+fires, `handleInput` stops claiming ←/→ while it is raised, and
+`ZentuiPreferencesPanelHandle.hasOpenSubmenu()` lets the embedding host stand
+down too. Without it a submenu that needs Tab or plain characters — a model
+picker with a search field and a scope toggle, for instance — never sees them.
+
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
 
 - Original source code: https://github.com/maddeye/pi-nord

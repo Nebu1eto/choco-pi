@@ -24,9 +24,7 @@ import {
   buildNativeSettingsSections,
   createHostCommandContext,
   installNativeSettingsBridge,
-  NATIVE_OUTCOME_PREFIX,
   openNativeSettingsMenu,
-  runNativeSettingsOutcome,
   type NativeSettingsHost,
 } from "./lib/native-settings.ts";
 import { formatStatus, summarizeStatusRows } from "./session-status.ts";
@@ -330,6 +328,12 @@ async function showTabOnce(
         controller.dispose();
       },
       handleInput: (data: string) => {
+        // A panel submenu, such as the model picker, needs every key it can
+        // get: no tab switching or digit jumps while one is open.
+        if (active === "preferences" && panel?.hasOpenSubmenu?.()) {
+          panel.handleInput(data);
+          return;
+        }
         if (data === "1" || data === "2" || data === "3") {
           jumpToTab(Number(data) - 1);
           return;
@@ -390,11 +394,6 @@ async function showTab(
     if (outcome.startsWith(AGENT_OUTCOME_PREFIX)) {
       focus = await runAgentPreferencesOutcome(outcome, ctx);
       continue;
-    }
-    if (outcome.startsWith(NATIVE_OUTCOME_PREFIX)) {
-      // The model selector takes over the editor, so the dialog stays closed.
-      runNativeSettingsOutcome(outcome);
-      return;
     }
     if (outcome.startsWith(CODEX_OUTCOME_PREFIX)) {
       const codex = getCodexPreferencesProvider();

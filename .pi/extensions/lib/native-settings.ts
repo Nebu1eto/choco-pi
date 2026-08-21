@@ -1,13 +1,9 @@
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
-import type { SettingItem } from "@earendil-works/pi-tui";
+import type { Component, SettingItem } from "@earendil-works/pi-tui";
 import type { PreferencesExtraSection, PreferencesSectionChange } from "./agent-preferences.ts";
 import { isFunction, isString, reinterpretHostValue, type RuntimeValue } from "./runtime-values.ts";
 
 export const NATIVE_SETTINGS_SECTION_ID = "pi";
-
-/** Outcome strings the Pi sections emit use this prefix. */
-export const NATIVE_OUTCOME_PREFIX = "pi:";
-export const NATIVE_MODEL_OUTCOME = `${NATIVE_OUTCOME_PREFIX}model`;
 
 const MODEL_ROW_ID = "piModel";
 
@@ -213,32 +209,48 @@ interface NativeSettingsRows {
 }
 
 /**
- * Builds Pi's real settings rows and hands back the list plus its change
- * handler. Pi builds both inside `showSettingsSelector`, so the only way to
- * obtain them is to run that method with `showSelector` swapped for a collector.
- * Reusing them keeps every runtime effect (theme switching, chat rebuilds,
- * transport changes) in Pi's own callbacks instead of a copy that would drift.
+ * Runs a host method that would replace the editor with a selector, and returns
+ * what it built instead of showing it. Pi assembles its selectors inside those
+ * methods, wired to its own callbacks, so collecting from `showSelector` is the
+ * only way to reuse one without rebuilding it — and a rebuilt copy would drift
+ * from Pi with every release.
  */
-function captureNativeSettingsRows(host: NativeSettingsHost): NativeSettingsRows | undefined {
-  const bridge = readBridge();
-  if (!bridge) return undefined;
-
+function captureHostSelector(
+  host: NativeSettingsHost,
+  invoke: () => void,
+  done: () => void,
+): RuntimeValue {
   let captured: RuntimeValue;
   const record = reinterpretHostValue<Record<string, RuntimeValue>>(host);
   const hadOwnShowSelector = Object.prototype.hasOwnProperty.call(host, "showSelector");
   const previousShowSelector = record["showSelector"];
   record["showSelector"] = (create: SelectorFactory): void => {
-    captured = create(() => {});
+    captured = create(done);
   };
   try {
-    bridge.original.call(host);
+    invoke();
   } catch {
     return undefined;
   } finally {
     if (hadOwnShowSelector) record["showSelector"] = previousShowSelector;
     else delete record["showSelector"];
   }
+  return captured;
+}
 
+/**
+ * Builds Pi's real settings rows and hands back the list plus its change
+ * handler, so every runtime effect (theme switching, chat rebuilds, transport
+ * changes) stays in Pi's own callbacks.
+ */
+function captureNativeSettingsRows(host: NativeSettingsHost): NativeSettingsRows | undefined {
+  const bridge = readBridge();
+  if (!bridge) return undefined;
+  const captured = captureHostSelector(
+    host,
+    () => bridge.original.call(host),
+    () => {},
+  );
   const component = propertyOf(captured, "component");
   const getSettingsList = propertyOf(component, "getSettingsList");
   if (!isFunction(getSettingsList)) return undefined;
@@ -266,19 +278,77 @@ function unavailableRow(): SettingItem {
   };
 }
 
+function currentModelId(host: NativeSettingsHost): string | undefined {
+  const id = propertyOf(propertyOf(propertyOf(host, "session"), "model"), "id");
+  return isString(id) ? id : undefined;
+}
+
+/** Shown in place of the picker when Pi's model selector cannot be collected. */
+function unavailablePicker(done: (value?: string) => void): Component {
+  return {
+    render: () => ["", "  The model selector is unavailable in this session.", ""],
+    invalidate: () => {},
+    handleInput: () => done(),
+  };
+}
+
 /**
- * The row that hands off to Pi's own model selector. Pi builds no such row for
- * its settings menu, because `/model` covers it there.
+ * Pi's own model selector, rendered inside the settings list rather than in
+ * place of the editor. It applies the model itself and then calls the collected
+ * `done`, so this only has to close the submenu and report the new id.
+ */
+function modelPicker(host: NativeSettingsHost, done: (value?: string) => void): Component {
+  let created: RuntimeValue;
+  let finished = false;
+  const finish = (): void => {
+    if (finished) return;
+    finished = true;
+    const dispose = propertyOf(created, "dispose");
+    if (isFunction(dispose)) reinterpretHostValue<() => void>(dispose).call(created);
+    done(currentModelId(host));
+  };
+  const show = propertyOf(host, "showModelSelector");
+  if (!isFunction(show)) return unavailablePicker(done);
+  created = captureHostSelector(
+    host,
+    () => reinterpretHostValue<(this: NativeSettingsHost) => void>(show).call(host),
+    finish,
+  );
+  const component = propertyOf(created, "component");
+  if (component === undefined || component === null) return unavailablePicker(done);
+  // The list forwards input by hand, but the search field only draws its cursor
+  // while it believes it holds focus.
+  const record = reinterpretHostValue<Record<string, RuntimeValue>>(component);
+  if ("focused" in record) record["focused"] = true;
+  return reinterpretHostValue<Component>(component);
+}
+
+/**
+ * The row that picks the session model. Pi builds no such row for its settings
+ * menu, because `/model` covers it there.
  */
 function modelRow(host: NativeSettingsHost): SettingItem {
-  const model = propertyOf(propertyOf(host, "session"), "model");
-  const id = propertyOf(model, "id");
   return {
     id: MODEL_ROW_ID,
     label: "Model",
-    description: "Opens the model selector; the panel closes while you choose.",
-    currentValue: isString(id) ? id : "select…",
-    values: ["select…"],
+    description: "Model for this session; the picker opens in place.",
+    currentValue: currentModelId(host) ?? "select…",
+    submenu: (_currentValue, done) => modelPicker(host, done),
+  };
+}
+
+/**
+ * Applies a row's rename to the submenu it opens. Pi titles those submenus from
+ * its own wording, so a renamed row would otherwise open a panel still carrying
+ * the old name. Only the renamed rows are wrapped, and a title Pi rewords later
+ * simply stops matching.
+ */
+function relabelSubmenu(component: Component, from: string, to: string): Component {
+  const pattern = new RegExp(from.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  return {
+    render: (width: number) => component.render(width).map((line) => line.replace(pattern, to)),
+    invalidate: () => component.invalidate?.(),
+    handleInput: (data: string) => component.handleInput?.(data),
   };
 }
 
@@ -290,7 +360,17 @@ function sectionRows(rows: SettingItem[], section: string): SettingItem[] {
     const row = byId.get(id);
     if (!row) continue;
     const label = PI_ROW_LABELS.get(row.id);
-    placed.push(label === undefined ? row : { ...row, label });
+    if (label === undefined) {
+      placed.push(row);
+      continue;
+    }
+    const submenu = row.submenu;
+    const renamed: SettingItem = { ...row, label };
+    if (submenu !== undefined) {
+      renamed.submenu = (currentValue, done) =>
+        relabelSubmenu(submenu(currentValue, done), row.label, label);
+    }
+    placed.push(renamed);
   }
   return placed;
 }
@@ -318,7 +398,8 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
     return rows ? [modelRow(host), ...rows.items] : [];
   };
   const handleChange = (id: string, newValue: string): PreferencesSectionChange => {
-    if (id === MODEL_ROW_ID) return { kind: "outcome", outcome: NATIVE_MODEL_OUTCOME };
+    // The picker already applied the model; the row only has to redraw.
+    if (id === MODEL_ROW_ID) return { kind: "update" };
     if (!onChange) return { kind: "update" };
     onChange(id, newValue);
     // A refused TUI mode switch only updates Pi's own detached list, so the
@@ -356,18 +437,4 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
 
   const fallbackRows = fallback.buildItems();
   return [...merged, ...owned, ...(fallbackRows.length > 0 ? [fallback] : [])];
-}
-
-/**
- * Runs a follow-up flow for a Pi row while the dialog is closed. Opening the
- * model selector deliberately reports no focus: the selector takes over the
- * editor, so reopening the dialog on top of it would hide it.
- */
-export function runNativeSettingsOutcome(outcome: string): boolean {
-  if (outcome !== NATIVE_MODEL_OUTCOME) return false;
-  const host = readBridge()?.host;
-  const show = propertyOf(host, "showModelSelector");
-  if (!host || !isFunction(show)) return false;
-  reinterpretHostValue<(this: NativeSettingsHost) => void>(show).call(host);
-  return true;
 }

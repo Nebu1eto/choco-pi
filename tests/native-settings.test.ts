@@ -144,10 +144,10 @@ test(
       model?.buildItems().find((item) => item.id === "thinking")?.label,
       "Reasoning effort",
     );
-    assert.deepEqual(model?.handleChange("piModel", "select…"), {
-      kind: "outcome",
-      outcome: "pi:model",
-    });
+    // The picker applies the model itself, so the row only redraws.
+    const modelItem = model?.buildItems().find((item) => item.id === "piModel");
+    assert.ok(modelItem?.submenu instanceof Function, "the picker opens inside the panel");
+    assert.deepEqual(model?.handleChange("piModel", "gpt-5.6-luna"), { kind: "update" });
 
     const appearance = sections.find((section) => section.id === "pi:appearance");
     const terminal = sections.find((section) => section.id === "terminal");

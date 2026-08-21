@@ -433,3 +433,98 @@ test(
     }
   },
 );
+
+test(
+  "an open submenu suspends the panel's own shortcuts",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    await realZentuiLoader();
+    assert.ok(ZENTUI_BUILD);
+    const module: Record<string, RuntimeValue> = await import(
+      pathToFileURL(path.resolve(ZENTUI_BUILD, "settings-command.js")).href
+    );
+    // SAFETY: the compiled package exports this factory.
+    const createPanel = module.createZentuiPreferencesComponent as (
+      deps: RuntimeValue,
+      options: RuntimeValue,
+    ) => {
+      render: (width: number) => string[];
+      handleInput: (data: string) => void;
+      getActiveSection: () => string;
+      hasOpenSubmenu: () => boolean;
+      dispose: () => void;
+    };
+
+    const notices: Notice[] = [];
+    let close: ((selectedValue?: string) => void) | undefined;
+    const panel = createPanel(
+      {
+        sessionLifecycle: { defer: () => () => {} },
+        getConfig: () => ({
+          colors: {},
+          icons: { mode: "auto" },
+          components: { selectorBorders: { enabled: true, style: "zentui", colorSource: "theme" } },
+        }),
+        getActiveExtensionStatuses: () => new Map(),
+        requestRender: () => {},
+        settingsListTheme: {
+          label: (value: string) => value,
+          value: (value: string) => value,
+          description: (value: string) => value,
+          cursor: ">",
+          hint: (value: string) => value,
+        },
+      },
+      {
+        ctx: createCtx(notices),
+        tui: { requestRender: () => {} },
+        theme: {
+          fg: (_color: string, value: string) => value,
+          bold: (value: string) => value,
+        },
+        initialSection: "picker",
+        sectionOrder: ["picker"],
+        extraSections: [
+          {
+            id: "picker",
+            label: "Picker",
+            buildItems: () => [
+              {
+                id: "pickerRow",
+                label: "Picker row",
+                currentValue: "one",
+                submenu: (_currentValue: string, done: (selectedValue?: string) => void) => {
+                  close = done;
+                  return { render: () => ["  picking"], invalidate: () => {} };
+                },
+              },
+            ],
+            handleChange: () => ({ kind: "update" }),
+          },
+        ],
+        onOutcome: () => {},
+      },
+    );
+
+    try {
+      assert.equal(panel.hasOpenSubmenu(), false);
+
+      panel.handleInput("\r");
+      assert.equal(panel.hasOpenSubmenu(), true, "activating the row opens its submenu");
+      assert.match(panel.render(80).join("\n"), /picking/);
+
+      panel.handleInput("\x1b[C");
+      assert.equal(
+        panel.getActiveSection(),
+        "picker",
+        "the panel must not steal the arrow keys from an open submenu",
+      );
+
+      assert.ok(close);
+      close("two");
+      assert.equal(panel.hasOpenSubmenu(), false, "closing the submenu restores the shortcuts");
+    } finally {
+      panel.dispose();
+    }
+  },
+);
