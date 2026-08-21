@@ -24,6 +24,36 @@ test("formatStatus renders multi-line values with continuation lines", () => {
   assert.match(lines[2], /^Theme:\s+nord-dark$/);
 });
 
+test("formatStatus colors semantic environment values", () => {
+  const calls: string[] = [];
+  const style = {
+    fg: (color: string, text: string) => {
+      calls.push(`${color}:${text}`);
+      return text;
+    },
+    bold: (text: string) => text,
+  };
+  const rendered = formatStatus(
+    [
+      { label: "Model", value: "claude-fable-5" },
+      { label: "Context usage", value: "59.9% (10,000 tokens) · details in /context" },
+      { label: "Context usage", value: "60.0% (20,000 tokens) · details in /context" },
+      { label: "Context usage", value: "85.1% (30,000 tokens) · details in /context" },
+      { label: "MCP servers", value: "2 configured, 1 cached, awaiting: figma" },
+      { label: "Skills", value: "2 loaded\n  check, review" },
+    ],
+    style,
+  );
+
+  assert.match(rendered, /^Model:/m);
+  assert.ok(calls.includes("accent:claude-fable-5"));
+  assert.ok(calls.includes("success:59.9%"));
+  assert.ok(calls.includes("warning:60.0%"));
+  assert.ok(calls.includes("error:85.1%"));
+  assert.ok(calls.includes("warning:, awaiting: figma"));
+  assert.ok(calls.includes("dim:  check, review"));
+});
+
 test("normalizePackageKey strips protocol and version while keeping scopes", () => {
   assert.equal(
     normalizePackageKey("npm:@tintinweb/pi-subagents@0.16.1"),

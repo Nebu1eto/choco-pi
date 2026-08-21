@@ -380,16 +380,96 @@ export function normalizePackageKey(specifier: string): string {
   return scope + (rest.split("@")[0] ?? rest);
 }
 
-export function formatStatus(
-  rows: StatusRow[],
-  style?: { fg(color: string, text: string): string },
-): string {
+export type StatusStyle = {
+  fg(color: string, text: string): string;
+  bold(text: string): string;
+};
+
+type StatusPainter = {
+  label: (text: string) => string;
+  value: (text: string) => string;
+  dim: (text: string) => string;
+  accent: (text: string) => string;
+  good: (text: string) => string;
+  warn: (text: string) => string;
+  bad: (text: string) => string;
+  head: (text: string) => string;
+};
+
+function statusPainter(style: StatusStyle | undefined): StatusPainter {
+  const plain = (text: string): string => text;
+  if (!style) {
+    return {
+      label: plain,
+      value: plain,
+      dim: plain,
+      accent: plain,
+      good: plain,
+      warn: plain,
+      bad: plain,
+      head: plain,
+    };
+  }
+  const color = (name: string, text: string): string => {
+    try {
+      return style.fg(name, text);
+    } catch {
+      return text;
+    }
+  };
+  return {
+    label: (text) => color("muted", text),
+    value: (text) => color("text", text),
+    dim: (text) => color("dim", text),
+    accent: (text) => color("accent", text),
+    good: (text) => color("success", text),
+    warn: (text) => color("warning", text),
+    bad: (text) => color("error", text),
+    head: (text) => style.bold(color("accent", text)),
+  };
+}
+
+function contextUsageValue(value: string, paint: StatusPainter): string {
+  const match = value.match(/^(\d+(?:\.\d+)?)%(.*)$/);
+  if (!match) return paint.value(value);
+  const percentage = Number(match[1]);
+  const color = percentage < 60 ? paint.good : percentage <= 85 ? paint.warn : paint.bad;
+  return `${color(`${match[1]}%`)}${paint.value(match[2])}`;
+}
+
+function mcpValue(value: string, paint: StatusPainter): string {
+  const awaiting = value.indexOf(", awaiting: ");
+  if (awaiting === -1) return paint.value(value);
+  const suffix = value.indexOf(" (adapter cache not initialized; see /mcp)", awaiting);
+  if (suffix === -1)
+    return `${paint.value(value.slice(0, awaiting))}${paint.warn(value.slice(awaiting))}`;
+  return `${paint.value(value.slice(0, awaiting))}${paint.warn(
+    value.slice(awaiting, suffix),
+  )}${paint.dim(value.slice(suffix))}`;
+}
+
+function statusValue(row: StatusRow, value: string, paint: StatusPainter): string {
+  if (row.label === "Model") return paint.accent(value);
+  if (row.label === "Context usage") return contextUsageValue(value, paint);
+  if (row.label === "MCP servers") return mcpValue(value, paint);
+  return paint.value(value);
+}
+
+export function statusHeading(style?: StatusStyle): string {
+  return statusPainter(style).head("Environment");
+}
+
+export function formatStatus(rows: StatusRow[], style?: StatusStyle): string {
+  const paint = statusPainter(style);
   const width = rows.reduce((max, row) => Math.max(max, row.label.length + 1), 0);
   return rows
     .flatMap((row) => {
       const [first, ...rest] = row.value.split("\n");
       const label = `${row.label}:`.padEnd(width);
-      return [`${style ? style.fg("muted", label) : label} ${first}`, ...rest];
+      return [
+        `${paint.label(label)} ${statusValue(row, first, paint)}`,
+        ...rest.map((value) => paint.dim(value)),
+      ];
     })
     .join("\n");
 }
