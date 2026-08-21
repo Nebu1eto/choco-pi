@@ -26,6 +26,7 @@ import {
   installNativeSettingsBridge,
   openNativeSettingsMenu,
   type NativeSettingsHost,
+  type NativeSettingsFocus,
 } from "./lib/native-settings.ts";
 import { formatStatus, summarizeStatusRows } from "./session-status.ts";
 import { usageReport } from "./provider-usage.ts";
@@ -119,7 +120,7 @@ export function tabBody(
   return Promise.resolve(formatStatus(summarizeStatusRows(ctx, thinkingLevel), style));
 }
 
-type PreferencesFocus = { section?: string; focusId?: string };
+type PreferencesFocus = { section?: string; focusId?: string; openSubmenu?: boolean };
 
 const PREFERENCES_USAGE =
   "Usage: /preferences [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /preferences [messages|user-messages|working-line|agent], /preferences [language <name>|style <name>], or /preferences format <template>";
@@ -216,6 +217,7 @@ async function showTabOnce(
     let panel: PreferencesPanelHandle | undefined;
     let rememberedSection: string | undefined = initialFocus.section;
     let rememberedFocusId: string | undefined = initialFocus.focusId;
+    let rememberedOpenSubmenu = initialFocus.openSubmenu === true;
 
     const text = new Text("", 0, 0);
     const component = new Box(1, 1, (value) => theme.fg("border", value));
@@ -266,6 +268,7 @@ async function showTabOnce(
       if (!panel) return;
       rememberedSection = panel.getActiveSection();
       rememberedFocusId = undefined;
+      rememberedOpenSubmenu = false;
       panel.dispose();
       panel = undefined;
     };
@@ -285,6 +288,8 @@ async function showTabOnce(
       };
       if (rememberedSection !== undefined) panelOptions.initialSection = rememberedSection;
       if (rememberedFocusId !== undefined) panelOptions.initialFocusId = rememberedFocusId;
+      if (rememberedOpenSubmenu) panelOptions.openInitialSubmenu = true;
+      rememberedOpenSubmenu = false;
       panel = provider.createPanel(panelOptions);
       rememberedFocusId = undefined;
     };
@@ -480,7 +485,7 @@ export default function statusCommands(pi: ExtensionAPI): void {
 
   // Pi dispatches `/settings` itself, before extension commands, so the only way
   // to make it open this dialog is to take over the menu it would have shown.
-  installNativeSettingsBridge((host: NativeSettingsHost) => {
+  installNativeSettingsBridge((host: NativeSettingsHost, focus?: NativeSettingsFocus) => {
     const hostCtx = createHostCommandContext(host);
     // Without the panel package the dialog has no Preferences tab to show, so
     // `/settings` keeps opening Pi's own menu instead of reporting nothing.
@@ -490,11 +495,28 @@ export default function statusCommands(pi: ExtensionAPI): void {
     }
     // SAFETY: the host builds this context for its own command dispatch.
     const ctx = hostCtx as ExtensionCommandContext;
-    void showTab(ctx, pi.getThinkingLevel(), "preferences").catch((error: RuntimeValue) => {
-      ctx.ui.notify(
-        `Could not open settings: ${error instanceof Error ? error.message : String(error)}`,
-        "error",
-      );
-    });
+    void showTab(ctx, pi.getThinkingLevel(), "preferences", focus ?? {}).catch(
+      (error: RuntimeValue) => {
+        ctx.ui.notify(
+          `Could not open settings: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+      },
+    );
   });
+}
+
+/**
+ * Opens the settings dialog on one row's picker. Commands such as `/effort` use
+ * this so a bare invocation lands on the same picker the panel shows, instead
+ * of a second one rendered over the editor.
+ */
+export async function openPreferencesPicker(
+  ctx: ExtensionCommandContext,
+  thinkingLevel: string,
+  focus: NativeSettingsFocus,
+): Promise<boolean> {
+  if (ctx.mode !== "tui" || !getPreferencesProvider()) return false;
+  await showTab(ctx, thinkingLevel, "preferences", focus);
+  return true;
 }

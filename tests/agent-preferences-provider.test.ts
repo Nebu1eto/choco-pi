@@ -528,3 +528,86 @@ test(
     }
   },
 );
+
+test(
+  "the host can open a row's submenu as the panel appears",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    await realZentuiLoader();
+    assert.ok(ZENTUI_BUILD);
+    const module: Record<string, RuntimeValue> = await import(
+      pathToFileURL(path.resolve(ZENTUI_BUILD, "settings-command.js")).href
+    );
+    // SAFETY: the compiled package exports this factory.
+    const createPanel = module.createZentuiPreferencesComponent as (
+      deps: RuntimeValue,
+      options: RuntimeValue,
+    ) => {
+      render: (width: number) => string[];
+      handleInput: (data: string) => void;
+      hasOpenSubmenu: () => boolean;
+      dispose: () => void;
+    };
+
+    const notices: Notice[] = [];
+    const panel = createPanel(
+      {
+        sessionLifecycle: { defer: () => () => {} },
+        getConfig: () => ({
+          colors: {},
+          icons: { mode: "auto" },
+          components: { selectorBorders: { enabled: true, style: "zentui", colorSource: "theme" } },
+        }),
+        getActiveExtensionStatuses: () => new Map(),
+        requestRender: () => {},
+        settingsListTheme: {
+          label: (value: string) => value,
+          value: (value: string) => value,
+          description: (value: string) => value,
+          cursor: ">",
+          hint: (value: string) => value,
+        },
+      },
+      {
+        ctx: createCtx(notices),
+        tui: { requestRender: () => {} },
+        theme: {
+          fg: (_color: string, value: string) => value,
+          bold: (value: string) => value,
+        },
+        initialSection: "picker",
+        sectionOrder: ["picker"],
+        initialFocusId: "second",
+        openInitialSubmenu: true,
+        extraSections: [
+          {
+            id: "picker",
+            label: "Picker",
+            buildItems: () => [
+              { id: "first", label: "First", currentValue: "one" },
+              {
+                id: "second",
+                label: "Second",
+                currentValue: "two",
+                submenu: () => ({ render: () => ["  second picker"], invalidate: () => {} }),
+              },
+            ],
+            handleChange: () => ({ kind: "update" }),
+          },
+        ],
+        onOutcome: () => {},
+      },
+    );
+
+    try {
+      assert.equal(panel.hasOpenSubmenu(), true, "the requested row's submenu opens immediately");
+      assert.match(
+        panel.render(80).join("\n"),
+        /second picker/,
+        "and it is the focused row's own submenu",
+      );
+    } finally {
+      panel.dispose();
+    }
+  },
+);

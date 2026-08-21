@@ -81,6 +81,10 @@ fires, `handleInput` stops claiming ←/→ while it is raised, and
 down too. Without it a submenu that needs Tab or plain characters — a model
 picker with a search field and a scope toggle, for instance — never sees them.
 
+`ZentuiPreferencesPanelOptions.openInitialSubmenu` opens the focused row's
+submenu as the panel appears, by replaying the activation key on the freshly
+built list. A command can then hand the user straight to one picker.
+
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
 
 - Original source code: https://github.com/maddeye/pi-nord

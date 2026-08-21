@@ -6,6 +6,7 @@ import {
   buildNativeSettingsSections,
   createHostCommandContext,
   installNativeSettingsBridge,
+  MODEL_PICKER_FOCUS,
   type NativeSettingsHost,
 } from "../.pi/extensions/lib/native-settings.ts";
 import type { PreferencesExtraSection } from "../.pi/extensions/lib/agent-preferences.ts";
@@ -45,6 +46,7 @@ function withPatchedPrototype(showSettingsSelector: RuntimeValue, run: () => voi
     const store = reinterpretHostValue<PrototypeRecord>(globalThis);
     const originalShow = prototype["showSettingsSelector"];
     const originalSetup = prototype["setupAutocompleteProvider"];
+    const originalModelCommand = prototype["handleModelCommand"];
     const originalBridge = store[BRIDGE_SYMBOL];
     prototype["showSettingsSelector"] = showSettingsSelector;
     delete store[BRIDGE_SYMBOL];
@@ -53,6 +55,7 @@ function withPatchedPrototype(showSettingsSelector: RuntimeValue, run: () => voi
     } finally {
       prototype["showSettingsSelector"] = originalShow;
       prototype["setupAutocompleteProvider"] = originalSetup;
+      prototype["handleModelCommand"] = originalModelCommand;
       if (originalBridge === undefined) delete store[BRIDGE_SYMBOL];
       else store[BRIDGE_SYMBOL] = originalBridge;
     }
@@ -192,6 +195,32 @@ test(
   withPatchedPrototype(fakeNativeSettings(ROWS, []), () => {
     installNativeSettingsBridge(() => {});
     assert.equal(createHostCommandContext(reinterpretHostValue<NativeSettingsHost>({})), undefined);
+  }),
+);
+
+test(
+  "a bare /model opens the dialog on the picker and keeps the pattern form",
+  withPatchedPrototype(fakeNativeSettings(ROWS, []), async () => {
+    const opened: (RuntimeValue | undefined)[] = [];
+    const searched: (string | undefined)[] = [];
+    const prototype = prototypeRecord();
+    prototype["handleModelCommand"] = async function original(searchTerm?: string) {
+      searched.push(searchTerm);
+    };
+    installNativeSettingsBridge((_host, focus) => opened.push(focus));
+
+    const host = reinterpretHostValue<NativeSettingsHost>({});
+    const patched = reinterpretHostValue<
+      (this: NativeSettingsHost, searchTerm?: string) => Promise<void>
+    >(prototypeRecord()["handleModelCommand"]);
+
+    await patched.call(host);
+    assert.deepEqual(opened, [MODEL_PICKER_FOCUS], "a bare /model routes to the dialog");
+    assert.deepEqual(searched, [], "and never reaches Pi's own selector");
+
+    await patched.call(host, "sonnet");
+    assert.deepEqual(searched, ["sonnet"], "a pattern keeps Pi's matching");
+    assert.equal(opened.length, 1, "and does not open the dialog");
   }),
 );
 

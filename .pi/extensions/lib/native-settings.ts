@@ -8,8 +8,29 @@ export const NATIVE_SETTINGS_SECTION_ID = "pi";
 const MODEL_ROW_ID = "piModel";
 const SCOPED_MODELS_ROW_ID = "piScopedModels";
 
-/** The Pi row whose picker `/effort` shares with the preferences panel. */
+/** The Pi row that carries the reasoning effort picker. */
 export const THINKING_ROW_ID = "thinking";
+
+/** Where a command asks the settings dialog to open. */
+export interface NativeSettingsFocus {
+  section: string;
+  focusId: string;
+  openSubmenu: boolean;
+}
+
+/** The Model tab row holding Pi's model picker. */
+export const MODEL_PICKER_FOCUS: NativeSettingsFocus = {
+  section: "model",
+  focusId: MODEL_ROW_ID,
+  openSubmenu: true,
+};
+
+/** The Model tab row holding Pi's reasoning effort picker. */
+export const EFFORT_PICKER_FOCUS: NativeSettingsFocus = {
+  section: "model",
+  focusId: THINKING_ROW_ID,
+  openSubmenu: true,
+};
 
 /**
  * Labels that read better in this panel than in Pi's own settings menu, where
@@ -105,8 +126,10 @@ type SelectorFactory = (done: () => void) => RuntimeValue;
 interface NativeSettingsBridge {
   /** Pi's own `showSettingsSelector`, kept so the native menu stays reachable as a fallback. */
   original: (this: NativeSettingsHost) => void;
+  /** Pi's own `/model` handler, kept for the argument form this bridge leaves alone. */
+  originalModelCommand?: (this: NativeSettingsHost, searchTerm?: string) => Promise<void>;
   /** Opens the unified dialog. Replaced on every extension load. */
-  open?: (host: NativeSettingsHost) => void;
+  open?: (host: NativeSettingsHost, focus?: NativeSettingsFocus) => void;
   /** Most recent interactive mode instance seen by the patched methods. */
   host?: NativeSettingsHost;
 }
@@ -139,7 +162,9 @@ function readBridge(): NativeSettingsBridge | undefined {
  * `settings` can never run. Taking over `showSettingsSelector` is the only way
  * to make `/settings` open something else.
  */
-export function installNativeSettingsBridge(open: (host: NativeSettingsHost) => void): void {
+export function installNativeSettingsBridge(
+  open: (host: NativeSettingsHost, focus?: NativeSettingsFocus) => void,
+): void {
   const prototype = reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(
     InteractiveMode.prototype,
   );
@@ -168,6 +193,26 @@ export function installNativeSettingsBridge(open: (host: NativeSettingsHost) => 
     if (bridge.open) bridge.open(this);
     else bridge.original.call(this);
   };
+
+  // `/model` without a pattern used to replace the editor with the picker. It
+  // opens the dialog on the row that holds the same picker instead, while
+  // `/model <pattern>` keeps Pi's matching and its pre-filtered selector.
+  const modelCommand = prototype["handleModelCommand"];
+  if (isFunction(modelCommand)) {
+    bridge.originalModelCommand =
+      reinterpretHostValue<NonNullable<NativeSettingsBridge["originalModelCommand"]>>(modelCommand);
+    prototype["handleModelCommand"] = async function patchedHandleModelCommand(
+      this: NativeSettingsHost,
+      searchTerm?: string,
+    ): Promise<void> {
+      bridge.host = this;
+      if (searchTerm === undefined && bridge.open) {
+        bridge.open(this, MODEL_PICKER_FOCUS);
+        return;
+      }
+      await bridge.originalModelCommand?.call(this, searchTerm);
+    };
+  }
 
   // Runs once at startup and again after every /reload, so the host is known
   // before the user ever opens the dialog through /preferences.
@@ -494,43 +539,4 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
 
   const fallbackRows = fallback.buildItems();
   return [...merged, ...owned, ...(fallbackRows.length > 0 ? [fallback] : [])];
-}
-
-/** The `ui.custom` surface this module needs, typed structurally at the boundary. */
-interface PickerUi {
-  custom: <T>(
-    factory: (
-      tui: RuntimeValue,
-      theme: RuntimeValue,
-      keybindings: RuntimeValue,
-      done: (result: T) => void,
-    ) => Component,
-  ) => Promise<T>;
-}
-
-/**
- * Opens the picker of one of Pi's settings rows on its own, outside the
- * preferences panel, and applies the choice through Pi's own change handler.
- *
- * This is what lets a prompt command such as `/effort` show the very picker the
- * panel shows, instead of a second list that has to be kept in step with it.
- * Reports false when Pi's rows cannot be read or the row has no picker, so the
- * caller can keep its own fallback.
- */
-export async function openNativeRowPicker(rowId: string, ui: PickerUi): Promise<boolean> {
-  const host = readBridge()?.host;
-  if (!host) return false;
-  const rows = captureNativeSettingsRows(host);
-  const row = rows?.items.find((item) => item.id === rowId);
-  const submenu = row?.submenu;
-  if (!rows || !row || !submenu) return false;
-  const label = PI_ROW_LABELS.get(rowId);
-  await ui.custom<void>((_tui, _theme, _keybindings, done) => {
-    const picker = submenu(row.currentValue, (selectedValue) => {
-      if (selectedValue !== undefined) rows.onChange(rowId, selectedValue);
-      done();
-    });
-    return label === undefined ? picker : relabelSubmenu(picker, row.label, label);
-  });
-  return true;
 }

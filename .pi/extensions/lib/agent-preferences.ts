@@ -268,6 +268,7 @@ export interface PreferencesProvider {
     sectionOrder?: string[];
     initialSection?: string;
     initialFocusId?: string;
+    openInitialSubmenu?: boolean;
     onOutcome: (outcome: string) => void;
   }) => PreferencesPanelHandle;
   /** Returns the section/focus to reopen at, or `undefined` when the outcome is not recognized. */

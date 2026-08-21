@@ -223,6 +223,11 @@ export interface ZentuiPreferencesPanelOptions {
   sectionOrder?: string[];
   initialSection?: string;
   initialFocusId?: string;
+  /**
+   * Opens the focused row's submenu as soon as the panel appears, so a command
+   * can hand the user straight to one picker instead of the row that holds it.
+   */
+  openInitialSubmenu?: boolean;
   onOutcome: (outcome: string) => void;
 }
 
@@ -1892,6 +1897,11 @@ export function createZentuiPreferencesComponent(
     return list;
   };
   settingsList = makeSettingsList(options.initialFocusId);
+  if (options.initialFocusId !== undefined && options.openInitialSubmenu) {
+    // Activating the focused row is what opens its submenu; the list owns that
+    // step, so replay the key rather than reaching into it.
+    settingsList.handleInput("\r");
+  }
   startPreview();
   const renderPreviewRows = (previewWidth: number): string[] => {
     if (previewWidth <= 0) return [];
