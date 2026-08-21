@@ -1,5 +1,5 @@
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
-import type { Component, SettingItem } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, type Component, type SettingItem } from "@earendil-works/pi-tui";
 import type { PreferencesExtraSection, PreferencesSectionChange } from "./agent-preferences.ts";
 import { isFunction, isString, reinterpretHostValue, type RuntimeValue } from "./runtime-values.ts";
 
@@ -292,6 +292,32 @@ function unavailablePicker(done: (value?: string) => void): Component {
   };
 }
 
+const BOX_DRAWING_ONLY = /^[\u2500-\u257F\s]+$/;
+
+/** A rule Pi drew around a selector, as opposed to a blank or a content line. */
+function isRuleLine(line: string): boolean {
+  const text = stripTerminalSequences(line);
+  return text.trim().length > 0 && BOX_DRAWING_ONLY.test(text);
+}
+
+/**
+ * Drops the rules Pi draws around a selector meant to replace the editor. The
+ * panel already frames its own body, so an embedded selector would otherwise
+ * double the line above and below it.
+ */
+function withoutOuterRules(component: Component): Component {
+  return {
+    render: (width: number) => {
+      const lines = component.render(width);
+      const first = isRuleLine(lines[0] ?? "") ? 1 : 0;
+      const last = lines.length > first && isRuleLine(lines.at(-1) ?? "") ? 1 : 0;
+      return lines.slice(first, lines.length - last);
+    },
+    invalidate: () => component.invalidate?.(),
+    handleInput: (data: string) => component.handleInput?.(data),
+  };
+}
+
 /**
  * Pi's own model selector, rendered inside the settings list rather than in
  * place of the editor. It applies the model itself and then calls the collected
@@ -320,7 +346,7 @@ function modelPicker(host: NativeSettingsHost, done: (value?: string) => void): 
   // while it believes it holds focus.
   const record = reinterpretHostValue<Record<string, RuntimeValue>>(component);
   if ("focused" in record) record["focused"] = true;
-  return reinterpretHostValue<Component>(component);
+  return withoutOuterRules(reinterpretHostValue<Component>(component));
 }
 
 /**
