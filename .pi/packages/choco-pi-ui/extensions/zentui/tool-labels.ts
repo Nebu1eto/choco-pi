@@ -7,6 +7,10 @@
  * voice the working line already uses, and stay inside
  * `MAX_WORKING_LINE_TOOL_CELLS` so the row never truncates them.
  *
+ * The choco-pi-lsp family carries an `LSP:` category prefix with an
+ * imperative action ("LSP: Analyse Module"), so a reader can tell language
+ * intelligence from ordinary file work at a glance.
+ *
  * A name with no entry falls back to the registered name, so a newly
  * installed extension still shows something useful.
  */
@@ -54,18 +58,18 @@ export const DEFAULT_TOOL_LABELS = {
   get_goal: "Reading goal",
 
   // choco-pi-lsp
-  lsp_diagnostics: "Checking code",
-  diagnostics_report: "Reporting issues",
-  lsp_navigation: "Navigating code",
-  symbol_search: "Searching symbols",
-  module_report: "Outlining module",
-  read_symbol: "Reading symbol",
-  read_enclosing: "Reading symbol",
-  ast_grep_search: "Searching AST",
-  ast_grep_replace: "Rewriting AST",
-  ast_grep_outline: "Outlining AST",
-  ast_grep_dump: "Dumping AST",
-  lsp_activate_tools: "Activating tools",
+  lsp_diagnostics: "LSP: Diagnose Files",
+  diagnostics_report: "LSP: Report Issues",
+  lsp_navigation: "LSP: Navigate Code",
+  symbol_search: "LSP: Search Symbols",
+  module_report: "LSP: Analyse Module",
+  read_symbol: "LSP: Read Symbol",
+  read_enclosing: "LSP: Read Enclosing",
+  ast_grep_search: "LSP: Search AST",
+  ast_grep_replace: "LSP: Rewrite AST",
+  ast_grep_outline: "LSP: Outline AST",
+  ast_grep_dump: "LSP: Dump AST",
+  lsp_activate_tools: "LSP: Activate Tools",
 } satisfies Readonly<Record<string, string>>;
 
 /** Registered tool names this package ships a label for. */

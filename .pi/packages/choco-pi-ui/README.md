@@ -220,8 +220,10 @@ only ones that draw a frame.
 ### Working-line tool labels
 
 The working line shows what a tool is doing rather than its registered name, so
-`apply_patch` reads as `Patching` and `symbol_search` as `Searching symbols`.
-Names with no built-in entry fall back to the registered name, and an
+`apply_patch` reads as `Patching`, while the choco-pi-lsp family carries a
+category prefix: `module_report` reads as `LSP: Analyse Module` and
+`symbol_search` as `LSP: Search Symbols`. Names with no built-in entry fall
+back to the registered name, and an
 `mcp__<server>_<tool>` name renders as `MCP <server>`. Override or extend the
 table from JSON with `components.workingLine.toolLabels`, keyed by registered
 tool name:
