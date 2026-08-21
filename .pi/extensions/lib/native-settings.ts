@@ -5,6 +5,73 @@ import { isFunction, reinterpretHostValue, type RuntimeValue } from "./runtime-v
 
 export const NATIVE_SETTINGS_SECTION_ID = "pi";
 
+/** Sections the profile adds for settings that no built-in choco-ui section covers. */
+export const TERMINAL_SECTION_ID = "terminal";
+export const SESSION_SECTION_ID = "session";
+export const MODEL_SECTION_ID = "model";
+export const TOOLS_SECTION_ID = "tools";
+
+/**
+ * Where each of Pi's settings rows belongs, by topic rather than by the order
+ * Pi happens to build them in. A row Pi adds in a later version is unlisted and
+ * falls back to its own section, so an upgrade never drops a setting.
+ */
+const PI_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[] }> = [
+  {
+    section: "appearance",
+    rows: [
+      "theme",
+      "mermaid-rendering",
+      "hide-thinking",
+      "cache-miss-notices",
+      "show-images",
+      "image-width-cells",
+      "auto-resize-images",
+    ],
+  },
+  {
+    section: "editor",
+    rows: ["editor-padding", "autocomplete-max-visible", "double-escape-action"],
+  },
+  { section: "userMessages", rows: ["output-padding"] },
+  {
+    section: TERMINAL_SECTION_ID,
+    rows: [
+      "tui-mode",
+      "fullscreen-exit-output",
+      "fullscreen-scrollbar",
+      "terminal-progress",
+      "clear-on-shrink",
+      "show-hardware-cursor",
+    ],
+  },
+  {
+    section: SESSION_SECTION_ID,
+    rows: [
+      "autocompact",
+      "steering-mode",
+      "follow-up-mode",
+      "tree-filter-mode",
+      "block-images",
+      "default-project-trust",
+      "quiet-startup",
+      "collapse-changelog",
+      "install-telemetry",
+      "warnings",
+    ],
+  },
+  { section: MODEL_SECTION_ID, rows: ["thinking", "transport", "http-idle-timeout"] },
+  { section: TOOLS_SECTION_ID, rows: ["skill-commands"] },
+];
+
+/** Sections this module owns a tab for, in tab order. */
+const PI_OWNED_SECTIONS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: TERMINAL_SECTION_ID, label: "Terminal" },
+  { id: SESSION_SECTION_ID, label: "Session" },
+  { id: MODEL_SECTION_ID, label: "Model" },
+  { id: TOOLS_SECTION_ID, label: "Tools" },
+];
+
 /**
  * Bridge state lives on `globalThis` rather than in module scope because
  * `/reload` re-imports this module while the already-patched prototype keeps
@@ -185,27 +252,86 @@ function unavailableRow(): SettingItem {
 }
 
 /**
- * Builds the Pi section of the preferences panel from Pi's own settings rows,
- * or `undefined` when no interactive mode is available (non-TUI runs).
+ * Marks where Pi's rows begin inside a section another system owns. Rows in a
+ * section this module owns need no marker: they come first, and every block
+ * merged after them carries its own header.
  */
-export function buildNativeSettingsSection(): PreferencesExtraSection | undefined {
+function sourceHeader(section: string): SettingItem {
+  return { id: `piSourceHeader:${section}`, label: "Pi", currentValue: "" };
+}
+
+function sectionRows(rows: SettingItem[], section: string): SettingItem[] {
+  const wanted = PI_ROW_LAYOUT.find((entry) => entry.section === section)?.rows ?? [];
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const placed: SettingItem[] = [];
+  for (const id of wanted) {
+    const row = byId.get(id);
+    if (row) placed.push(row);
+  }
+  return placed;
+}
+
+/** Rows Pi built that no layout entry claims; they keep their own tab. */
+function unclaimedRows(rows: SettingItem[]): SettingItem[] {
+  const claimed = new Set(PI_ROW_LAYOUT.flatMap((entry) => entry.rows));
+  return rows.filter((row) => !claimed.has(row.id));
+}
+
+/**
+ * Spreads Pi's settings rows over the preferences panel by topic: some merge
+ * into choco-ui sections, the rest own the Terminal, Session, Model, and Tools
+ * tabs. Returns an empty list when no interactive mode is available (non-TUI
+ * runs), and a single fallback tab when Pi's rows could not be read.
+ */
+export function buildNativeSettingsSections(): PreferencesExtraSection[] {
   const host = readBridge()?.host;
-  if (!host) return undefined;
+  if (!host) return [];
+
   let onChange: NativeSettingsRows["onChange"] | undefined;
-  return {
+  const readRows = (): SettingItem[] => {
+    const rows = captureNativeSettingsRows(host);
+    onChange = rows?.onChange;
+    return rows ? rows.items : [];
+  };
+  const handleChange = (id: string, newValue: string): PreferencesSectionChange => {
+    if (!onChange) return { kind: "update" };
+    onChange(id, newValue);
+    // A refused TUI mode switch only updates Pi's own detached list, so the
+    // row has to be re-read to stay truthful.
+    return id === "tui-mode" ? { kind: "rebuild" } : { kind: "update" };
+  };
+
+  const merged = PI_ROW_LAYOUT.filter(
+    (entry) => !PI_OWNED_SECTIONS.some((owned) => owned.id === entry.section),
+  ).map(({ section }) => ({
+    id: `${NATIVE_SETTINGS_SECTION_ID}:${section}`,
+    label: "Pi",
+    mergeInto: section,
+    buildItems: (): SettingItem[] => {
+      const rows = sectionRows(readRows(), section);
+      return rows.length > 0 ? [sourceHeader(section), ...rows] : [];
+    },
+    handleChange,
+  }));
+
+  const owned = PI_OWNED_SECTIONS.map(({ id, label }) => ({
+    id,
+    label,
+    buildItems: (): SettingItem[] => sectionRows(readRows(), id),
+    handleChange,
+  }));
+
+  const fallback: PreferencesExtraSection = {
     id: NATIVE_SETTINGS_SECTION_ID,
     label: "Pi",
-    buildItems(): SettingItem[] {
-      const rows = captureNativeSettingsRows(host);
-      onChange = rows?.onChange;
-      return rows ? rows.items : [unavailableRow()];
+    buildItems: (): SettingItem[] => {
+      const rows = readRows();
+      if (rows.length === 0) return [unavailableRow()];
+      return unclaimedRows(rows);
     },
-    handleChange(id, newValue): PreferencesSectionChange {
-      if (!onChange) return { kind: "update" };
-      onChange(id, newValue);
-      // A refused TUI mode switch only updates Pi's own detached list, so the
-      // row has to be re-read to stay truthful.
-      return id === "tui-mode" ? { kind: "rebuild" } : { kind: "update" };
-    },
+    handleChange,
   };
+
+  const fallbackRows = fallback.buildItems();
+  return [...merged, ...owned, ...(fallbackRows.length > 0 ? [fallback] : [])];
 }

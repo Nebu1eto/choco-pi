@@ -21,7 +21,7 @@ import {
   getCodexPreferencesProvider,
 } from "./lib/codex-preferences.ts";
 import {
-  buildNativeSettingsSection,
+  buildNativeSettingsSections,
   createHostCommandContext,
   installNativeSettingsBridge,
   openNativeSettingsMenu,
@@ -126,15 +126,17 @@ const PREFERENCES_USAGE =
 
 /**
  * Every section the Preferences tab hosts on top of the panel's own choco-ui
- * sections: the agent preferences, the Codex adapter rows published by
- * choco-pi-codex, and Pi's own settings rows.
+ * sections. Most contribute rows to an existing section; the ones that own a
+ * tab appear in this order, after the choco-ui tabs: Terminal, Session, Model,
+ * Tools, Agent. The agent section goes last so the Codex adapter rows that
+ * merge into it sit at the end of the strip.
  */
 function buildPreferencesExtraSections(ctx: ExtensionCommandContext): PreferencesExtraSection[] {
-  const sections: PreferencesExtraSection[] = [buildAgentPreferencesSection(ctx)];
-  sections.push(...buildCodexPreferencesSections(ctx));
-  const native = buildNativeSettingsSection();
-  if (native) sections.push(native);
-  return sections;
+  return [
+    ...buildCodexPreferencesSections(ctx),
+    ...buildNativeSettingsSections(),
+    buildAgentPreferencesSection(ctx),
+  ];
 }
 
 /** Non-TUI surface for /preferences: a text summary of the agent preferences. */

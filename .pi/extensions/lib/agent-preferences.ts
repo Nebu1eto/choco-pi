@@ -229,6 +229,11 @@ export type PreferencesSectionChange =
 export interface PreferencesExtraSection {
   id: string;
   label: string;
+  /**
+   * When set, the section contributes no tab of its own and its rows are
+   * appended to the named section, built-in or host-provided.
+   */
+  mergeInto?: string;
   buildItems: () => SettingItem[];
   handleChange: (id: string, newValue: string) => PreferencesSectionChange;
 }

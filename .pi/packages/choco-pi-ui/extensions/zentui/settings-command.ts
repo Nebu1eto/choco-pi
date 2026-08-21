@@ -176,10 +176,16 @@ export type ZentuiPreferencesOutcome =
  * like built-in sections; `handleChange` performs the side effect (including
  * notifications) and reports how the list should redraw, or asks for an
  * outcome so the host can run a follow-up flow outside the dialog.
+ *
+ * With `mergeInto` the section contributes no tab of its own: its rows are
+ * appended to the named section, which may be a built-in one or another host
+ * section. Changes are routed by row id, so a merged section only ever sees
+ * the rows it built.
  */
 export interface PreferencesExtraSection {
   id: string;
   label: string;
+  mergeInto?: string;
   buildItems: () => SettingItem[];
   handleChange: (
     id: string,
@@ -989,10 +995,7 @@ function buildSectionItems(
   section: string,
   config: PolishedTuiConfig,
   active: ReadonlyMap<string, string>,
-  extras: PreferencesExtraSection[],
 ): SettingItem[] {
-  const extra = extras.find((candidate) => candidate.id === section);
-  if (extra) return extra.buildItems();
   switch (section) {
     case "appearance":
       return buildAppearanceItems(config);
@@ -1025,15 +1028,53 @@ function buildSectionItems(
   }
 }
 
+/** A host section that owns a tab rather than merging into another one. */
+function standaloneExtras(extras: PreferencesExtraSection[]): PreferencesExtraSection[] {
+  return extras.filter((extra) => extra.mergeInto === undefined);
+}
+
+/** One section's rows in render order, with the host section each contributed row belongs to. */
+interface SectionItems {
+  items: SettingItem[];
+  owners: Map<string, PreferencesExtraSection>;
+}
+
+/**
+ * Rows of one section, in render order, plus the host section each contributed
+ * row belongs to. The owner map is what lets merged rows live next to built-in
+ * rows: a change is dispatched by row id instead of by the active section.
+ */
+function collectSectionItems(
+  section: string,
+  config: PolishedTuiConfig,
+  active: ReadonlyMap<string, string>,
+  extras: PreferencesExtraSection[],
+): SectionItems {
+  const owners = new Map<string, PreferencesExtraSection>();
+  const own = (extra: PreferencesExtraSection): SettingItem[] => {
+    const built = extra.buildItems();
+    for (const item of built) owners.set(item.id, extra);
+    return built;
+  };
+  const sectionOwner = standaloneExtras(extras).find((candidate) => candidate.id === section);
+  const items = sectionOwner ? own(sectionOwner) : buildSectionItems(section, config, active);
+  for (const extra of extras) {
+    if (extra.mergeInto === section) items.push(...own(extra));
+  }
+  return { items, owners };
+}
+
 function sectionOrder(extras: PreferencesExtraSection[]): string[] {
   const builtin = new Set<string>(settingsSections);
   return [
     ...settingsSections,
-    ...extras.filter((extra) => !builtin.has(extra.id)).map((e) => e.id),
+    ...standaloneExtras(extras)
+      .filter((extra) => !builtin.has(extra.id))
+      .map((e) => e.id),
   ];
 }
 function sectionLabel(section: string, extras: PreferencesExtraSection[]): string {
-  const extra = extras.find((candidate) => candidate.id === section);
+  const extra = standaloneExtras(extras).find((candidate) => candidate.id === section);
   if (extra) return extra.label;
   // SAFETY: the lookup is nullish-guarded, so a section outside the built-in union falls back to its own id.
   return sectionLabels[section as SettingsSection] ?? section;
@@ -1364,7 +1405,7 @@ export function createZentuiPreferencesComponent(
     tui.requestRender();
   };
   const makeSettingsList = (focusId?: string): SettingsList => {
-    const items = buildSectionItems(
+    const { items, owners } = collectSectionItems(
       activeSection,
       deps.getConfig(),
       deps.getActiveExtensionStatuses(),
@@ -1376,6 +1417,18 @@ export function createZentuiPreferencesComponent(
       listTheme,
       (id, newValue) => {
         try {
+          const owner = owners.get(id);
+          if (owner) {
+            const change = owner.handleChange(id, newValue);
+            if (change.kind === "outcome") {
+              finishSettings(change.outcome);
+              return;
+            }
+            if (change.kind === "rebuild") settingsList = makeSettingsList(id);
+            else settingsList.updateValue(id, newValue);
+            tui.requestRender();
+            return;
+          }
           const enabled = isFeatureState(newValue) ? newValue === "enabled" : undefined;
           if (id === "editorEnabled" && enabled !== undefined) {
             finishSettings("close");
@@ -1763,20 +1816,6 @@ export function createZentuiPreferencesComponent(
             settingsList.updateValue(id, newValue);
             notifyChange(`Third-party status ${thirdParty.key} color`, newValue);
             return;
-          }
-          const extraSection = extraSections.find((candidate) => candidate.id === activeSection);
-          if (extraSection) {
-            const change = extraSection.handleChange(id, newValue);
-            if (change.kind === "outcome") {
-              finishSettings(change.outcome);
-              return;
-            }
-            if (change.kind === "rebuild") {
-              settingsList = makeSettingsList(id);
-            } else {
-              settingsList.updateValue(id, newValue);
-            }
-            tui.requestRender();
           }
         } catch (error) {
           stopPreview();
