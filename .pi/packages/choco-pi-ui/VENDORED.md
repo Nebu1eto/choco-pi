@@ -65,6 +65,33 @@ gained two optional fields:
 order instead of recomputing it, and the panel opens on the first visible
 section rather than a hardcoded `appearance`.
 
+### choco-pi change: a switch per footer status
+
+Upstream configures a third-party status only through its placement, and only
+while the status is on screen. Two changes in
+`extensions/zentui/settings-command.ts` turn that into an on/off switch:
+
+- `buildExtensionsItems` renders one `enabled`/`disabled` row per status key,
+  over the union of the active statuses, the keys already carrying a placement
+  override, and `knownExtensionStatuses` — `mcp` and `subagents`, the two
+  statuses this profile ships. A key is listed before its extension publishes
+  anything, which matters for `subagents`: it only publishes while agents run.
+  Listing the configured keys keeps a switched-off status reachable after it
+  stops publishing. The placement row now offers `left`, `middle`,
+  and `right` and appears only while the status is shown, so exactly one row
+  owns each question; the upstream `noThirdPartyStatuses` filler row is gone,
+  because the list is never empty.
+- the settings-list `onChange` handles the new `thirdPartyStatus:visible:<key>`
+  rows, and `ThirdPartyStatusSettingKind` gained `visible`.
+
+`clearExtensionStatusPlacement` in `extensions/zentui/config.ts` backs the on
+position: it deletes the key's override so the status follows
+`defaultPlacement` again. It passes a `cleanupRaw` callback because
+`saveComponentsMutation` overlays the normalized config onto the file's own
+keys, so a key deleted only from the normalized copy would survive on disk.
+`extensions/zentui/index.ts` exposes it to the panel as
+`ZentuiSettingsDeps.clearExtensionStatusPlacement`.
+
 ### choco-pi change: working line rows
 
 `buildWorkingLineItems` no longer offers the `workingLineCustomMessages` and

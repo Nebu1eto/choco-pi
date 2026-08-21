@@ -8,6 +8,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import {
+  clearExtensionStatusPlacement,
   type ContextStyle,
   type EditorComponentConfig,
   type ExtensionStatusColorMode,
@@ -1232,6 +1233,9 @@ export default function (pi: ExtensionAPI) {
     },
     setExtensionStatusPlacement(key: string, placement: ExtensionStatusPlacement) {
       currentConfig = saveExtensionStatusPlacement(key, placement);
+    },
+    clearExtensionStatusPlacement(key: string) {
+      currentConfig = clearExtensionStatusPlacement(key);
     },
     setExtensionStatusColorMode(key: string, colorMode: ExtensionStatusColorMode) {
       currentConfig = saveExtensionStatusColorMode(key, colorMode);

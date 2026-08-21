@@ -71,6 +71,8 @@ const extensionStatusPlacementValues: ExtensionStatusPlacement[] = [
   "middle",
   "right",
 ];
+/** Placements for a status that is shown; the per-status switch owns `off`. */
+const shownExtensionStatusPlacementValues: ExtensionStatusPlacement[] = ["left", "middle", "right"];
 const extensionStatusColorModeValues: ExtensionStatusColorMode[] = ["zentui", "original"];
 const contextStyleValues: ContextStyle[] = ["text", "gauge", "text+gauge"];
 const separatorStyleValues: SeparatorStyle[] = ["pipe", "dot", "chevron", "none"];
@@ -276,6 +278,8 @@ type SettingsCommandDeps = {
   getActiveExtensionStatuses: () => ReadonlyMap<string, string>;
   setExtensionStatusDefaultPlacement: (placement: ExtensionStatusPlacement) => void;
   setExtensionStatusPlacement: (key: string, placement: ExtensionStatusPlacement) => void;
+  /** Drops one status key's override so it follows the default placement again. */
+  clearExtensionStatusPlacement: (key: string) => void;
   setExtensionStatusColorMode: (key: string, colorMode: ExtensionStatusColorMode) => void;
   requestRender: () => void;
   settingsListTheme?: SettingsListTheme;
@@ -354,7 +358,7 @@ const directCommandSuggestions = [
 
 const thirdPartyStatusSettingPrefix = "thirdPartyStatus:";
 const footerSegmentSettingPrefix = "footerSegment:";
-type ThirdPartyStatusSettingKind = "placement" | "colorMode";
+type ThirdPartyStatusSettingKind = "placement" | "colorMode" | "visible";
 
 function featureValue(enabled: boolean): FeatureState {
   return enabled ? "enabled" : "disabled";
@@ -949,8 +953,45 @@ function thirdPartyStatusSettingFromId(
 ): { kind: ThirdPartyStatusSettingKind; key: string } | undefined {
   if (!id.startsWith(thirdPartyStatusSettingPrefix)) return undefined;
   const [kind, ...key] = id.slice(thirdPartyStatusSettingPrefix.length).split(":");
-  return kind === "placement" || kind === "colorMode" ? { kind, key: key.join(":") } : undefined;
+  return kind === "placement" || kind === "colorMode" || kind === "visible"
+    ? { kind, key: key.join(":") }
+    : undefined;
 }
+
+/**
+ * Statuses that always get a row, whether or not they are on screen right now.
+ *
+ * A status only appears in the active map while its extension publishes one:
+ * the sub-agent status exists only while agents run, so an active-only list
+ * would offer its switch exactly when it is too late to reach for it.
+ */
+const knownExtensionStatuses: ReadonlyArray<{
+  key: string;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: "mcp",
+    label: "MCP",
+    description: "MCP server connection and tool status in the footer.",
+  },
+  {
+    key: "subagents",
+    label: "Running agents",
+    description: "Running and queued sub-agent counts in the footer.",
+  },
+];
+
+function extensionStatusLabel(key: string): string {
+  return knownExtensionStatuses.find((status) => status.key === key)?.label ?? key;
+}
+
+function extensionStatusDescription(key: string, status: string | undefined): string | undefined {
+  const sanitized = status === undefined ? "" : sanitizeExtensionStatusText(status);
+  if (sanitized) return `Current status: ${sanitized}`;
+  return knownExtensionStatuses.find((known) => known.key === key)?.description;
+}
+
 function buildExtensionsItems(
   config: PolishedTuiConfig,
   active: ReadonlyMap<string, string>,
@@ -958,42 +999,55 @@ function buildExtensionsItems(
   const defaultItem: SettingItem = {
     id: "extensionStatusDefaultPlacement",
     label: "Default placement",
-    description: "Placement for active statuses without an override.",
+    description: "Placement for shown statuses without an override.",
     currentValue: config.components.footer.styles.starship.extensionStatuses.defaultPlacement,
     values: extensionStatusPlacementValues,
   };
-  const statuses = [...active.entries()].sort(([a], [b]) => a.localeCompare(b));
-  if (!statuses.length)
-    return [
-      defaultItem,
-      {
-        id: "noThirdPartyStatuses",
-        label: "No active statuses",
-        description: "Only statuses currently published through ctx.ui.setStatus().",
-        currentValue: "—",
-      },
-    ];
+  // Configured keys are listed too: a status switched off stops publishing
+  // eventually, and a row that vanishes with it would strand its own override.
+  const keys = [
+    ...new Set([
+      ...knownExtensionStatuses.map((status) => status.key),
+      ...Object.keys(config.components.footer.styles.starship.extensionStatuses.placements),
+      ...active.keys(),
+    ]),
+  ].sort((a, b) => a.localeCompare(b));
   return [
     defaultItem,
-    ...statuses.flatMap(([key, value]) => {
-      const sanitized = sanitizeExtensionStatusText(value);
-      const description = sanitized ? `Current status: ${sanitized}` : undefined;
-      return [
+    ...keys.flatMap((key) => {
+      const status = active.get(key);
+      const label = extensionStatusLabel(key);
+      const description = extensionStatusDescription(key, status);
+      const placement = getExtensionStatusPlacement(config, key);
+      const items: SettingItem[] = [
         {
-          id: thirdPartyStatusSettingId(key, "placement"),
-          label: `${key} placement`,
+          id: thirdPartyStatusSettingId(key, "visible"),
+          label,
           description,
-          currentValue: getExtensionStatusPlacement(config, key),
-          values: extensionStatusPlacementValues,
+          currentValue: featureValue(placement !== "off"),
+          values: featureStateValues,
         },
-        {
+      ];
+      // Where and how to draw a hidden status is a question about nothing, so
+      // the two rows below only exist while it is shown.
+      if (placement === "off") return items;
+      items.push({
+        id: thirdPartyStatusSettingId(key, "placement"),
+        label: `${label} placement`,
+        description,
+        currentValue: placement,
+        values: shownExtensionStatusPlacementValues,
+      });
+      if (status !== undefined) {
+        items.push({
           id: thirdPartyStatusSettingId(key, "colorMode"),
-          label: `${key} color`,
+          label: `${label} color`,
           description,
           currentValue: getExtensionStatusColorMode(config, key),
           values: extensionStatusColorModeValues,
-        },
-      ];
+        });
+      }
+      return items;
     }),
   ];
 }
@@ -1866,6 +1920,15 @@ export function createZentuiPreferencesComponent(
             return;
           }
           const thirdParty = thirdPartyStatusSettingFromId(id);
+          if (thirdParty?.kind === "visible" && enabled !== undefined) {
+            if (enabled) deps.clearExtensionStatusPlacement(thirdParty.key);
+            else deps.setExtensionStatusPlacement(thirdParty.key, "off");
+            // Hiding a status drops its placement and color rows, so the list
+            // is rebuilt rather than repainted.
+            settingsList = makeSettingsList(id);
+            notifyChange(`Status ${extensionStatusLabel(thirdParty.key)}`, newValue);
+            return;
+          }
           if (thirdParty?.kind === "placement" && isExtensionStatusPlacement(newValue)) {
             deps.setExtensionStatusPlacement(thirdParty.key, newValue);
             settingsList.updateValue(id, newValue);

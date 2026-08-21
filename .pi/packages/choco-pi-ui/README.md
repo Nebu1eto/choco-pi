@@ -40,8 +40,11 @@ Editor, User messages, Working line, and selector borders use independent `enabl
 - Right side shows context usage, token counts, and cost
 - Built-in footer segments can be shown or hidden individually from `/preferences`
 - Fully custom Starship-style layout via the `components.footer.styles.starship.format` template string — see [Footer Format Template](#footer-format-template)
-- Third-party Pi extension statuses from `ctx.ui.setStatus()` can be shown on the left,
-  middle, or right side, or hidden per status key from `/preferences`
+- Third-party Pi extension statuses from `ctx.ui.setStatus()` can be switched off per
+  status key from `/preferences`, and placed on the left, middle, or right side while
+  they are on. `MCP` and `Running agents` always have a row, even when the extension
+  is publishing nothing at that moment; every other key gets one while its status is
+  on screen
 
 ### Editor (Opencode-inspired)
 
@@ -205,7 +208,28 @@ themes, so `"theme": "nord-dark"` needs no separate theme package.
 
 User config lives at `~/.pi/agent/choco-pi-ui.json`; a pre-existing
 `~/.pi/agent/pi-choco-ui.json` or `~/.pi/agent/zentui.json` is still read and
-written when the preferred file is absent. The file is optional: missing or invalid known values fall back to choco-ui defaults, unknown keys are ignored at runtime, and `/preferences` can patch color-source settings, UI feature toggles, built-in footer segment visibility, and active third-party status placements.
+written when the preferred file is absent. The file is optional: missing or invalid known values fall back to choco-ui defaults, unknown keys are ignored at runtime, and `/preferences` can patch color-source settings, UI feature toggles, built-in footer segment visibility, and third-party status visibility and placement.
+
+A status switched off in `/preferences` is stored as `"off"` under
+`components.footer.styles.starship.extensionStatuses.placements`, keyed by the
+status key the extension passes to `ctx.ui.setStatus()` — `mcp` for the MCP
+segment, `subagents` for the running-agent counts:
+
+```json
+{
+  "components": {
+    "footer": {
+      "styles": {
+        "starship": {
+          "extensionStatuses": { "placements": { "mcp": "off", "subagents": "off" } }
+        }
+      }
+    }
+  }
+}
+```
+
+Switching a status back on removes its entry, so it follows `defaultPlacement` again.
 
 ### Frame padding
 
