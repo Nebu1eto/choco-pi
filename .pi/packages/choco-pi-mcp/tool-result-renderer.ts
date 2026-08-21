@@ -1,7 +1,7 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { isObjectValue, isStringValue, type McpObject } from "./protocol-values.js";
-import { styleMcpCallLines } from "./tool-call-headline.js";
+import { formatMcpCallCompactTitle, styleMcpCallLines } from "./tool-call-headline.js";
 
 type McpToolResultDetails = McpObject & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
@@ -308,7 +308,7 @@ function renderToolCall(
   options: McpToolRenderOptions,
 ) {
   if (context?.state) {
-    context.state.compactTitle = lines[0] ?? "mcp";
+    context.state.compactTitle = formatMcpCallCompactTitle(lines[0] ?? "mcp");
     context.state.compactInputPreview = formatCompactInputPreview(lines);
   }
   if (shouldUseCompactFinalRender(options, context)) return new EmptyComponent();

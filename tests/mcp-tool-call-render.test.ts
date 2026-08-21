@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  formatMcpCallCompactTitle,
   splitMcpCallHeadline,
   styleMcpCallLines,
 } from "../.pi/packages/choco-pi-mcp/tool-call-headline.ts";
@@ -51,4 +52,12 @@ test("multi-line JSON args keep the branch indent on every line", () => {
     '      "id": "02ba"',
     "    }",
   ]);
+});
+
+test("the compact collapsed title uses the bulleted MCP shape", () => {
+  assert.equal(
+    formatMcpCallCompactTitle("mcp call mcp__linear_save_document"),
+    "• MCP linear save_document",
+  );
+  assert.equal(formatMcpCallCompactTitle("mcp status"), "• MCP status");
 });
