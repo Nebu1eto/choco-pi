@@ -80,7 +80,8 @@ export function carriesImageProtocol(
   if (protocol === null) return true;
   if (multiplexer === null) return true;
   return (
-    multiplexer === "zellij" && protocol === "kitty" &&
+    multiplexer === "zellij" &&
+    protocol === "kitty" &&
     atLeast(zellijVersion, ZELLIJ_KITTY_MIN_VERSION)
   );
 }
