@@ -15,6 +15,7 @@ import {
   type ContextStyle,
   type EditorBorderColorMode,
   type EditorComponentConfig,
+  type EditorPaddingRows,
   type EditorStyle,
   type ExtensionStatusColorMode,
   type ExtensionStatusPlacement,
@@ -28,9 +29,11 @@ import {
   getExtensionStatusColorMode,
   getExtensionStatusPlacement,
   type IconMode,
+  isEditorPaddingRows,
   isExtensionStatusColorMode,
   isExtensionStatusPlacement,
   isSeparatorStyle,
+  isUserMessagePaddingRows,
   isValidWorkingLineIntervalMs,
   MAX_WORKING_LINE_INTERVAL_MS,
   MIN_WORKING_LINE_INTERVAL_MS,
@@ -42,6 +45,7 @@ import {
   type SeparatorStyle,
   type UserMessageStyle,
   type UserMessagesComponentConfig,
+  type UserMessagePaddingRows,
   type WorkingLineComponentPatch,
   type WorkingLineSpinner,
   type WorkingLineTextAnimation,
@@ -99,6 +103,8 @@ const footerStyleValues = Object.values(footerStyleLabels);
 const minimalistPathDisplayValues = ["compact", "project", "full"];
 const minimalistContextFormatValues = ["percent", "percent-total"];
 const editorBorderColorModeValues: EditorBorderColorMode[] = ["static", "adaptive"];
+const editorPaddingRowsValues: EditorPaddingRows[] = ["none", "top"];
+const userMessagePaddingRowsValues: UserMessagePaddingRows[] = ["none", "top", "bottom", "both"];
 const compactFooterMaxLineValues = ["1", "2", "3", "unlimited"];
 const featureStateValues: FeatureState[] = ["enabled", "disabled"];
 const workingLineSpinnerLabels = {
@@ -142,11 +148,17 @@ type FooterSegmentSettingId = keyof FooterSegmentsConfig;
 type EditorPatch = Partial<
   Pick<
     EditorComponentConfig,
-    "enabled" | "style" | "colorSource" | "borderColorMode" | "modelLabel" | "viewportIndicators"
+    | "enabled"
+    | "style"
+    | "colorSource"
+    | "borderColorMode"
+    | "modelLabel"
+    | "viewportIndicators"
+    | "paddingRows"
   >
 >;
 type UserMessagesPatch = Partial<
-  Pick<UserMessagesComponentConfig, "enabled" | "style" | "colorSource">
+  Pick<UserMessagesComponentConfig, "enabled" | "style" | "colorSource" | "paddingRows">
 >;
 type FooterPatch = Partial<Pick<FooterComponentConfig, "style" | "colorSource" | "modelLabel">>;
 type ApplyResult = { applied: boolean; reason?: string };
@@ -533,6 +545,13 @@ function buildEditorItems(config: PolishedTuiConfig): SettingItem[] {
       currentValue: featureValue(editor.viewportIndicators),
       values: featureStateValues,
     },
+    {
+      id: "editorPaddingRows",
+      label: "Editor padding row",
+      description: "Blank row under the editor's top border; none keeps the input tight.",
+      currentValue: editor.paddingRows,
+      values: editorPaddingRowsValues,
+    },
   ];
 }
 
@@ -614,6 +633,13 @@ function buildUserMessagesItems(config: PolishedTuiConfig): SettingItem[] {
       description: "Use Pi theme colors or terminal palette styles.",
       currentValue: messages.colorSource,
       values: colorSourceValues,
+    },
+    {
+      id: "userMessagesPaddingRows",
+      label: "Message padding rows",
+      description: "Blank rows inside the message frame; applies to the framed styles only.",
+      currentValue: messages.paddingRows,
+      values: userMessagePaddingRowsValues,
     },
   ];
 }
@@ -1406,6 +1432,12 @@ export function createZentuiPreferencesComponent(
             notifyChange("Editor viewport indicators", newValue);
             return;
           }
+          if (id === "editorPaddingRows" && isEditorPaddingRows(newValue)) {
+            setEditor({ paddingRows: newValue }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Editor padding row", newValue);
+            return;
+          }
           if (id.startsWith("minimalist")) {
             if (id === "minimalistPathDisplay" && ["compact", "project", "full"].includes(newValue))
               deps.setMinimalist(
@@ -1463,6 +1495,12 @@ export function createZentuiPreferencesComponent(
             setMessages({ colorSource: newValue }, ctx);
             settingsList.updateValue(id, newValue);
             notifyChange("Message colors", newValue);
+            return;
+          }
+          if (id === "userMessagesPaddingRows" && isUserMessagePaddingRows(newValue)) {
+            setMessages({ paddingRows: newValue }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Message padding rows", newValue);
             return;
           }
           if (id === "workingLineEnabled" && enabled !== undefined) {

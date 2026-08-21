@@ -5,7 +5,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { ZentuiConfig } from "./config";
+import { padsBottom, padsTop, type ZentuiConfig } from "./config";
 import {
   EDITOR_ACCENT_FALLBACK,
   EDITOR_BORDER_FALLBACK,
@@ -98,7 +98,14 @@ function renderFramed({ text, width, theme, config }: UserMessageStyleRenderInpu
     return truncateToWidth(`${rail}${fillLine(line, available)}`, width, "");
   };
   const rule = truncateToWidth(border(theme, config, "─".repeat(width)), width, "");
-  return [rule, ...body.map(row), rule];
+  const padding = config.components.userMessages.paddingRows;
+  return [
+    rule,
+    ...(padsTop(padding) ? [row("")] : []),
+    ...body.map(row),
+    ...(padsBottom(padding) ? [row("")] : []),
+    rule,
+  ];
 }
 
 function renderFramedCopyFriendly({
@@ -113,7 +120,14 @@ function renderFramedCopyFriendly({
     fillLine(`${prefix}${line}`, width),
   );
   const rule = truncateToWidth(border(theme, config, "─".repeat(width)), width, "");
-  return [rule, ...body, rule];
+  const padding = config.components.userMessages.paddingRows;
+  return [
+    rule,
+    ...(padsTop(padding) ? [""] : []),
+    ...body,
+    ...(padsBottom(padding) ? [""] : []),
+    rule,
+  ];
 }
 
 function renderCompact({ text, width, theme, config }: UserMessageStyleRenderInput): string[] {

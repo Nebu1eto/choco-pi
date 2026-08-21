@@ -207,11 +207,37 @@ User config lives at `~/.pi/agent/choco-pi-ui.json`; a pre-existing
 `~/.pi/agent/pi-choco-ui.json` or `~/.pi/agent/zentui.json` is still read and
 written when the preferred file is absent. The file is optional: missing or invalid known values fall back to choco-ui defaults, unknown keys are ignored at runtime, and `/preferences` can patch color-source settings, UI feature toggles, built-in footer segment visibility, and active third-party status placements.
 
+### Frame padding
+
+`components.editor.paddingRows` (`none | top`) controls the blank row under the
+editor's top border, and `components.userMessages.paddingRows`
+(`none | top | bottom | both`) controls the blank rows inside a message frame.
+Both default to `none`, which is the tight framing choco-pi ships; the message
+rows apply to the `framed` and `framed-copy-friendly` styles, which are the only
+ones that draw a frame. Both are editable from `/preferences`.
+
+### Working-line tool labels
+
+The working line shows what a tool is doing rather than its registered name, so
+`apply_patch` reads as `Patching` and `symbol_search` as `Searching symbols`.
+Names with no built-in entry fall back to the registered name, and an
+`mcp__<server>_<tool>` name renders as `MCP <server>`. Override or extend the
+table from JSON with `components.workingLine.toolLabels`, keyed by registered
+tool name:
+
+```json
+{
+  "components": {
+    "workingLine": { "toolLabels": { "apply_patch": "Applying", "my_tool": "Crunching" } }
+  }
+}
+```
+
 The interactive `/preferences` menu contributes exactly eight component-oriented sections, in this order. Use `←` and `→` to switch sections; the host may append its own sections after these. `Tab` and `Shift+Tab` belong to the host and switch between its Status, Usage, and Preferences tabs, as do `1`/`2`/`3`:
 
 1. **Appearance** — selector-border enablement, style, and colors; icon mode.
-2. **Editor** — editor enablement, style, colors, model label, border behavior, viewport indicators, settings for the selected editor style, and a static synthetic preview.
-3. **User messages** — message enablement, `framed | framed-copy-friendly | compact | labeled` style selection (including **Framed (copy-friendly)**), colors, and a static synthetic Markdown preview.
+2. **Editor** — editor enablement, style, colors, model label, border behavior, viewport indicators, the padding row, settings for the selected editor style, and a static synthetic preview.
+3. **User messages** — message enablement, `framed | framed-copy-friendly | compact | labeled` style selection (including **Framed (copy-friendly)**), colors, padding rows, and a static synthetic Markdown preview.
 4. **Working line** — ownership, settled Turn summary, spinner and text speeds, optional spinner-color motion, text animation, color source, custom-message toggle and editable list, Tool/Elapsed/Thinking/Tokens toggles, and animated preview.
 5. **Footer** — `Native | Starship | Hidden` style selection. Starship additionally shows colors, model label, responsive layout, separator, context style, and path display.
 6. **Segments** — visibility toggles for non-Git Starship segments.

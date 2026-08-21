@@ -60,6 +60,32 @@ export type ComponentStyleOwner = "editor" | "userMessages" | "selectorBorders" 
 export type MinimalistPathDisplayMode = "compact" | "project" | "full";
 export type MinimalistContextFormat = "percent" | "percent-total";
 export type EditorBorderColorMode = "static" | "adaptive";
+
+/**
+ * Blank rows inside a frame. The editor only ever carried a row under its top
+ * border, so it has no bottom option; a message frame can pad either end.
+ */
+export type EditorPaddingRows = "none" | "top";
+
+/** Working-line label overrides, keyed by registered tool name. */
+export type ToolLabelOverrides = Readonly<Record<string, string>>;
+export type UserMessagePaddingRows = "none" | "top" | "bottom" | "both";
+
+export function isEditorPaddingRows(value: BoundaryValue): value is EditorPaddingRows {
+  return value === "none" || value === "top";
+}
+
+export function isUserMessagePaddingRows(value: BoundaryValue): value is UserMessagePaddingRows {
+  return value === "none" || value === "top" || value === "bottom" || value === "both";
+}
+
+export function padsTop(rows: EditorPaddingRows | UserMessagePaddingRows): boolean {
+  return rows === "top" || rows === "both";
+}
+
+export function padsBottom(rows: UserMessagePaddingRows): boolean {
+  return rows === "bottom" || rows === "both";
+}
 export type CompactFooterMaxLines = 1 | 2 | 3 | "unlimited";
 
 export const DEFAULT_COMPACT_FOOTER_FORMAT =
@@ -149,6 +175,8 @@ export type EditorComponentConfig = {
   borderColorMode: EditorBorderColorMode;
   modelLabel: ModelLabelSource;
   viewportIndicators: boolean;
+  /** Blank rows rendered inside the editor frame. */
+  paddingRows: EditorPaddingRows;
   styles: {
     opencode: PolishedEditorStyleConfig;
     "opencode-copy-friendly": PolishedCopyFriendlyEditorStyleConfig;
@@ -165,6 +193,8 @@ export type UserMessagesComponentConfig = {
   enabled: boolean;
   style: UserMessageStyle;
   colorSource: ColorSource;
+  /** Blank rows rendered inside the message frame. */
+  paddingRows: UserMessagePaddingRows;
   styles: {
     framed: FramedUserMessageStyleConfig;
     "framed-copy-friendly": FramedCopyFriendlyUserMessageStyleConfig;
@@ -241,6 +271,8 @@ export type WorkingLineComponentConfig = {
   colorSource: ColorSource;
   messages: WorkingLineMessagesConfig;
   segments: WorkingLineSegmentsConfig;
+  /** Overrides for the working-line tool label, keyed by registered tool name. */
+  toolLabels: ToolLabelOverrides;
 };
 
 export type WorkingLineComponentPatch = Partial<
@@ -495,6 +527,7 @@ const defaultComponents: ComponentsConfig = {
     borderColorMode: "static",
     modelLabel: "id",
     viewportIndicators: true,
+    paddingRows: "none",
     styles: {
       opencode: { metadataFormat: DEFAULT_EDITOR_METADATA_FORMAT },
       "opencode-copy-friendly": { metadataFormat: DEFAULT_EDITOR_METADATA_FORMAT },
@@ -505,6 +538,7 @@ const defaultComponents: ComponentsConfig = {
     enabled: true,
     style: "framed",
     colorSource: "theme",
+    paddingRows: "none",
     styles: { framed: {}, "framed-copy-friendly": {}, compact: {}, labeled: {} },
   },
   workingLine: {
@@ -518,6 +552,7 @@ const defaultComponents: ComponentsConfig = {
     colorSource: "theme",
     messages: { custom: true, values: [...PI_WORKING_LINE_MESSAGES] },
     segments: { tool: true, elapsed: true, thought: true, tokens: true },
+    toolLabels: {},
   },
   selectorBorders: { enabled: true, style: "zentui", colorSource: "theme" },
   footer: {
@@ -1013,6 +1048,21 @@ function parseNonEmptyString(value: BoundaryValue, fallback: string): string {
   return isString(value) && value.length > 0 ? value : fallback;
 }
 
+/**
+ * Reads `workingLine.toolLabels` as a tool-name to label map, dropping any
+ * entry whose value is not a usable string so one bad key cannot break the
+ * working line.
+ */
+function parseToolLabels(value: BoundaryValue) {
+  const labels = new Map<string, string>();
+  if (isRecord(value)) {
+    for (const [tool, label] of Object.entries(value)) {
+      if (isString(label) && label.trim() !== "") labels.set(tool, label);
+    }
+  }
+  return Object.fromEntries(labels);
+}
+
 function resolveContextThresholds(
   canonical: BoundaryValue,
   legacy: BoundaryValue,
@@ -1254,6 +1304,9 @@ function resolveComponents(config: ConfigRecord): ComponentsConfig {
         resolvedValue(editor, "viewportIndicators", features, "viewportIndicators"),
         defaultComponents.editor.viewportIndicators,
       ),
+      paddingRows: isEditorPaddingRows(editor.paddingRows)
+        ? editor.paddingRows
+        : defaultComponents.editor.paddingRows,
       styles: {
         opencode: {
           metadataFormat: parseNonEmptyString(metadataFormat, DEFAULT_EDITOR_METADATA_FORMAT),
@@ -1294,6 +1347,9 @@ function resolveComponents(config: ConfigRecord): ComponentsConfig {
         resolvedValue(userMessages, "colorSource", colorSources, "userMessages"),
         defaultComponents.userMessages.colorSource,
       ),
+      paddingRows: isUserMessagePaddingRows(userMessages.paddingRows)
+        ? userMessages.paddingRows
+        : defaultComponents.userMessages.paddingRows,
       styles: {
         framed: {},
         "framed-copy-friendly": {},
@@ -1348,6 +1404,7 @@ function resolveComponents(config: ConfigRecord): ComponentsConfig {
           defaultComponents.workingLine.segments.tokens,
         ),
       },
+      toolLabels: parseToolLabels(workingLine.toolLabels),
     },
     selectorBorders: {
       enabled: parseBoolean(
@@ -1625,7 +1682,13 @@ function applyEditorComponentPatch(
   patch: Partial<
     Pick<
       EditorComponentConfig,
-      "enabled" | "style" | "colorSource" | "borderColorMode" | "modelLabel" | "viewportIndicators"
+      | "enabled"
+      | "style"
+      | "colorSource"
+      | "borderColorMode"
+      | "modelLabel"
+      | "viewportIndicators"
+      | "paddingRows"
     >
   >,
 ): void {
@@ -1637,13 +1700,20 @@ function applyEditorComponentPatch(
   if (patch.viewportIndicators !== undefined) {
     component.viewportIndicators = patch.viewportIndicators;
   }
+  if (patch.paddingRows !== undefined) component.paddingRows = patch.paddingRows;
 }
 
 export function saveEditorComponentPatch(
   patch: Partial<
     Pick<
       EditorComponentConfig,
-      "enabled" | "style" | "colorSource" | "borderColorMode" | "modelLabel" | "viewportIndicators"
+      | "enabled"
+      | "style"
+      | "colorSource"
+      | "borderColorMode"
+      | "modelLabel"
+      | "viewportIndicators"
+      | "paddingRows"
     >
   >,
   path = configPath,
@@ -1703,7 +1773,9 @@ export function saveMinimalistEditorStylePatch(
 }
 
 export function saveUserMessagesComponentPatch(
-  patch: Partial<Pick<UserMessagesComponentConfig, "enabled" | "style" | "colorSource">>,
+  patch: Partial<
+    Pick<UserMessagesComponentConfig, "enabled" | "style" | "colorSource" | "paddingRows">
+  >,
   path = configPath,
 ): PolishedTuiConfig {
   return saveComponentsMutation(
@@ -1712,6 +1784,7 @@ export function saveUserMessagesComponentPatch(
       if (patch.enabled !== undefined) component.enabled = patch.enabled;
       if (patch.style !== undefined) component.style = patch.style;
       if (patch.colorSource !== undefined) component.colorSource = patch.colorSource;
+      if (patch.paddingRows !== undefined) component.paddingRows = patch.paddingRows;
     },
     path,
     patch.style !== undefined ? deleteLegacyMessageCopyFriendly : undefined,
