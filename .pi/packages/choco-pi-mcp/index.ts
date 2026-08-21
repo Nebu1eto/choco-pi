@@ -428,15 +428,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         };
         syncPromptCommands();
         syncToolSurface(ctx);
-        try {
-          updateStatusBar(nextState);
-        } catch (error) {
-          // The footer status is decoration on a runtime whose servers are
-          // already usable. Letting it reach the rejection path below would
-          // report a cosmetic error as an initialization failure and, before
-          // the state is published, tear the extension down with it.
-          logger.warn(`MCP: status bar update failed: ${formatTerminalError(error)}`);
-        }
+        updateStatusBar(nextState);
         initPromise = null;
         if (earlyConfig.settings?.freezeDirectTools === true) {
           directToolsFrozen = true;

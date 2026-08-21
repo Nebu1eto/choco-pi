@@ -12,6 +12,7 @@ import {
   updateMetadataCache,
   getFailureAgeSeconds,
   updateStatusBar,
+  writeMcpStatus,
   clearFailure,
   recordFailure,
 } from "./init.ts";
@@ -999,7 +1000,7 @@ export async function executeConnect(
 
   try {
     if (state.ui) {
-      state.ui.setStatus("mcp", formatMcpStatus(state.config, `connecting to ${serverName}...`));
+      writeMcpStatus(state.ui, formatMcpStatus(state.config, `connecting to ${serverName}...`));
     }
     const currentConnection = state.manager.getConnection(serverName);
     let connection =
@@ -1435,7 +1436,7 @@ export async function executeCall(
 
     try {
       if (state.ui) {
-        state.ui.setStatus("mcp", formatMcpStatus(state.config, `connecting to ${serverName}...`));
+        writeMcpStatus(state.ui, formatMcpStatus(state.config, `connecting to ${serverName}...`));
       }
       connection = await state.manager.connect(serverName, definition, ownedSignal);
       if (connection.status === "needs-auth") {

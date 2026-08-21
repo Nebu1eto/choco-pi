@@ -30,7 +30,13 @@ import { McpServerManager } from "./server-manager.ts";
 import { buildToolMetadata, totalToolCount } from "./tool-metadata.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { UiResourceHandler } from "./ui-resource-handler.ts";
-import { formatMcpStatus, openUrl, parallelLimit, sanitizeTerminalText } from "./utils.ts";
+import {
+  formatMcpStatus,
+  formatTerminalError,
+  openUrl,
+  parallelLimit,
+  sanitizeTerminalText,
+} from "./utils.ts";
 import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { getAuthStorageOptions } from "./mcp-auth.ts";
@@ -48,15 +54,37 @@ import {
   type McpRuntimeOwner,
 } from "./runtime-owner.ts";
 import { publishMcpStatusSnapshot } from "./mcp-status.ts";
-import { formatAccentStatusText } from "./status-text.ts";
+import {
+  createStatusWriteFailureReporter,
+  writeAccentStatus,
+  writeStatus,
+  type StatusWriterUi,
+} from "./status-text.ts";
 import { isFunctionValue, isNumberValue, mergeObjectParts } from "./protocol-values.js";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
+
 const failureExpiryTimers = new WeakMap<
   McpExtensionState,
   Map<string, ReturnType<typeof setTimeout>>
 >();
+
+const reportStatusWriteFailure = createStatusWriteFailureReporter(formatTerminalError, (message) =>
+  logger.warn(`MCP: status bar update failed: ${message}`),
+);
+
+/**
+ * Write the MCP footer status, absorbing a host UI that refuses the write.
+ *
+ * The footer is decoration on work that has already happened, so no caller —
+ * initialization, a lifecycle callback, a slash command, or a tool call — may
+ * be failed by it. Every write to the `mcp` status key goes through here or
+ * through `updateStatusBar`, which uses the same boundary.
+ */
+export function writeMcpStatus(ui: StatusWriterUi, content: string | undefined): void {
+  writeStatus(ui, "mcp", content, reportStatusWriteFailure);
+}
 
 function getFailureExpiryTimers(
   state: McpExtensionState,
@@ -329,7 +357,7 @@ export async function initializeMcp(
       state.config,
       `connecting to ${startupServers.length} servers...`,
     );
-    ui.setStatus("mcp", status);
+    writeMcpStatus(ui, status);
   }
 
   const results = await parallelLimit(startupServers, 10, async ([name, definition]) => {
@@ -536,8 +564,8 @@ export async function initializeMcp(
 
   owner.throwIfInactive();
   lifecycle.startHealthChecks(runtimeSignal);
-  if (config.settings?.mcpFooterStatus === "off") {
-    ui?.setStatus("mcp", undefined);
+  if (config.settings?.mcpFooterStatus === "off" && ui) {
+    writeMcpStatus(ui, undefined);
   }
   publishMcpStatusSnapshot(state);
 
@@ -674,6 +702,16 @@ export function flushMetadataCache(state: McpExtensionState): void {
   }
 }
 
+/**
+ * Repaint the MCP footer status from the current state.
+ *
+ * Called from nineteen sites across initialization, lifecycle callbacks,
+ * slash commands, and tool calls. None of them can act on a failure to paint
+ * a footer, so the host writes are fenced here rather than at each caller.
+ * What is *not* fenced is the status text itself: it is derived from local
+ * state, and a throw while deriving it is a defect in this package that a
+ * warning would only hide.
+ */
 export function updateStatusBar(state: McpExtensionState): void {
   publishMcpStatusSnapshot(state);
   const ui = state.ui;
@@ -682,7 +720,7 @@ export function updateStatusBar(state: McpExtensionState): void {
   const disabledCount = entries.filter(([, definition]) => isServerDisabled(definition)).length;
   const enabledCount = entries.length - disabledCount;
   if (entries.length === 0) {
-    ui.setStatus("mcp", undefined);
+    writeMcpStatus(ui, undefined);
     return;
   }
   const connectedCount = [...state.manager.getAllConnections()].filter(([name, connection]) => {
@@ -693,7 +731,7 @@ export function updateStatusBar(state: McpExtensionState): void {
   }).length;
   const footerStatus = state.config.settings?.mcpFooterStatus ?? "full";
   if (footerStatus === "off") {
-    ui.setStatus("mcp", undefined);
+    writeMcpStatus(ui, undefined);
     return;
   }
 
@@ -708,10 +746,10 @@ export function updateStatusBar(state: McpExtensionState): void {
   const formattedStatus =
     footerStatus === "compact" ? status : formatMcpStatus(state.config, status);
   if (formattedStatus === undefined) {
-    ui.setStatus("mcp", undefined);
+    writeMcpStatus(ui, undefined);
     return;
   }
-  ui.setStatus("mcp", formatAccentStatusText(ui.theme, formattedStatus));
+  writeAccentStatus(ui, "mcp", formattedStatus, reportStatusWriteFailure);
 }
 
 export function getFailureAgeSeconds(state: McpExtensionState, serverName: string): number | null {
@@ -752,8 +790,7 @@ export async function lazyConnect(
 
   try {
     if (state.ui) {
-      const status = formatMcpStatus(state.config, `connecting to ${serverName}...`);
-      state.ui.setStatus("mcp", status);
+      writeMcpStatus(state.ui, formatMcpStatus(state.config, `connecting to ${serverName}...`));
     }
     const newConnection = await state.manager.connect(serverName, definition, ownedSignal);
     if (newConnection.status === "needs-auth") {
