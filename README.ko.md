@@ -83,7 +83,7 @@ Voice, notebook, background-shell 기능은 의도적으로 포함하지 않습�
 | `/fast [on\|off\|status]`                                                         | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환                                                                                                                                   |
 | `/context-cap`                                                                    | 현재 모델에 적용된 soft context cap 확인                                                                                                                                                           |
 | `/context [all]`                                                                  | prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시                                                                                            |
-| `/rewind`                                                                         | 선택한 턴으로 현재 대화 branch, 파일과 Git index를 함께 rewind                                                                                                                                     |
+| `/rewind`, `/fork`                                                                | checkpoint picker를 열어 선택한 턴에서 rewind, rollback, fork 중 하나를 실행                                                                                                                       |
 | `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | 로컬 human review 화면 열기. 인자가 없으면 대상 선택기 표시                                                                                                                                        |
 | `/usage`                                                                          | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시. 같은 탭 뷰의 두 번째 탭으로 열림                                                                                                     |
 | `/preferences [인자]`, `/pref`                                                    | 같은 탭 뷰의 세 번째 탭 열기. Agent 언어와 스타일, choco-ui 인터페이스 설정을 다룸. `agent`, `language <이름>`, `style <이름>`, choco-ui 직접 토글, `format <템플릿>` 인자 지원                    |
@@ -168,7 +168,13 @@ packages/api/src/AGENTS.md
 
 ## Checkpoint, 리뷰와 Git 경계
 
-[`file-checkpoints.ts`](.pi/extensions/file-checkpoints.ts)는 각 agent turn 시작 시 임시 Git index를 사용해 staged, unstaged, untracked 상태를 기록합니다. 실제 index는 바꾸지 않습니다. `/rewind`는 안전 checkpoint를 만든 뒤 파일과 index를 복원하고, 현재 대화 branch를 선택한 user turn 직전으로 이동해 해당 prompt를 편집기에 돌려놓습니다. 이후 대화는 Pi session tree에서 다시 접근할 수 있으며 ignored file은 건드리지 않습니다. checkpoint object는 `refs/choco-pi/checkpoints/`에 보존합니다.
+[`file-checkpoints.ts`](.pi/extensions/file-checkpoints.ts)는 각 agent turn 시작 시 staged, unstaged, untracked 상태를 기록합니다.
+
+모든 쓰기는 실제 index를 복사해 만든 scratch index에서 이뤄집니다. 그래서 capture가 agent, sub-agent, 사용자와 `index.lock`을 두고 경합하지 않고, merge나 rebase가 index를 unmerged 상태로 남겨도 성공합니다. raw index 자체를 blob으로 보관하므로 staging, conflict stage, `skip-worktree` 같은 flag까지 바이트 단위로 복원됩니다.
+
+`/rewind`와 `/fork`는 현재 branch의 user turn 목록을 보여 주는 동일한 picker를 엽니다. `r`은 파일을 그대로 둔 채 대화만 해당 turn으로 rewind하고, `b`는 대화와 파일을 함께 rollback하며, `f`는 그 turn에서 새 session을 fork합니다. Enter를 누르면 dialog에서 고를 수 있습니다. rollback은 먼저 안전 checkpoint를 만들고 그 commit을 알려 줍니다. 파일과 index는 복원하되 `HEAD`는 옮기지 않으며, 선택한 turn 이후에 commit이 생긴 경우에는 먼저 확인을 받습니다. checkpoint가 없는 turn도 rewind와 fork 대상으로 남으므로 Git이 없는 작업 트리에서도 picker가 동작합니다. ignored file은 건드리지 않습니다.
+
+session마다 `refs/choco-pi/checkpoints/` 아래 ref 하나를 두고 checkpoint를 chain으로 이어 붙이며, 바뀐 것이 없는 turn은 직전 checkpoint commit을 그대로 재사용합니다. 14일 동안 갱신되지 않은 ref는 session 시작 시 정리해 `git gc`가 object를 회수할 수 있게 합니다. 이 기간은 `CHOCO_PI_CHECKPOINT_RETENTION_DAYS`로 조정하고, `0`을 주면 유휴 checkpoint를 즉시 모두 회수합니다.
 
 [`review`](.pi/skills/review/SKILL.md)와 [`.pi/review-policy.md`](.pi/review-policy.md)는 `/review-agent`가 수행하는 수정 없는 적대적 리뷰 절차입니다. reviewer는 정확한 diff나 revision을 받아 가정을 반증하고, 재현 가능하거나 결정적으로 추적한 finding만 보고합니다. 리뷰 요청만으로 수정 권한이 생기지 않습니다.
 
@@ -508,7 +514,7 @@ choco-pi는 제 작업 방식에 맞춰 만든 harness지만, Claude Code·Codex
 - `/context`는 토큰 사용량과 active·deferred 도구, MCP 서버, context와 autocompact 상태를 한 화면에 보여줍니다.
 - `/usage`는 Claude Code·OpenAI Codex·Synthetic 등 구독 서비스의 할당량을 나란히 표시해 여러 공급자의 사용량 제한을 한눈에 확인할 수 있습니다.
 - choco-pi는 시작 시 모든 도구를 등록하지 않고 BM25 매칭으로 MCP·확장 도구를 lazy load하는 도구 검색 도구를 만들었습니다. 이는 Claude Code나 Codex 등 여러 다른 코딩 에이전트처럼 모델 context를 작게 유지할 수 있게 도와줍니다.
-- `/rewind`는 파일, Git index와 대화 branch를 선택한 turn으로 되돌리고 해당 prompt를 편집기에 복원합니다.
+- `/rewind`와 `/fork`는 하나의 checkpoint picker를 열어 대화만 rewind하거나, 파일과 Git index까지 rollback하거나, 임의의 turn에서 새 session을 fork할 수 있게 합니다.
 - 별도의 독립된 세션도 생성·조회·steer·대기할 수 있어 멀티 세션에서도 다른 에이전트에서 지원하는 세션 간 조율 기능도 그대로 쓸 수 있습니다.
 
 이 편의를 유지하면서 다중 공급자 모델 혼용과 Pi를 활용한 확장성을 얻는 것이 목표였습니다.
