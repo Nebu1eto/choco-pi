@@ -1,5 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { applyMultiplexerImagePolicy, detectMultiplexer, parseZellijVersion } from "./lib/multiplexer-images.ts";
+import {
+  applyMultiplexerImagePolicy,
+  detectMultiplexer,
+  parseZellijVersion,
+} from "./lib/multiplexer-images.ts";
 import type { ImageEnvironment, ZellijVersion } from "./lib/multiplexer-images.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getCapabilities, setCapabilities } from "@earendil-works/pi-tui";
@@ -35,7 +39,11 @@ function zellijClientVersion(env: ImageEnvironment): ZellijVersion {
 }
 
 export function installMultiplexerImagePolicy(env: ImageEnvironment): boolean {
-  const capabilities = applyMultiplexerImagePolicy(getCapabilities(), env, zellijClientVersion(env));
+  const capabilities = applyMultiplexerImagePolicy(
+    getCapabilities(),
+    env,
+    zellijClientVersion(env),
+  );
   if (!capabilities) return false;
   setCapabilities(capabilities);
   return true;
