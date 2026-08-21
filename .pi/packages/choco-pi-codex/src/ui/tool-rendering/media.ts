@@ -107,6 +107,14 @@ export function renderTextWithImages(
       continue;
     }
 
+    // With a native protocol active, pi's generic tool-result rendering
+    // already draws the image once below this widget; adding an Image here
+    // duplicated it on screen. Keep only the dim fallback line for context.
+    if (capabilities.images) {
+      box.addChild(new Text(theme.fg("dim", fallback), 0, 0));
+      continue;
+    }
+
     box.addChild(
       new Image(
         image.data,
