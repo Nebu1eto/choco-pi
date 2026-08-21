@@ -100,6 +100,18 @@ function registerBuildHooks(buildDirectory: string): void {
   });
 }
 
+/**
+ * Imports one compiled zentui module by file name, e.g. `working-line.js`.
+ *
+ * Guard the call with `SKIP_WITHOUT_ZENTUI`; it throws when the package could
+ * not be compiled, rather than silently returning a stand-in.
+ */
+export async function loadZentuiModule(file: string): Promise<Record<string, RuntimeValue>> {
+  if (!ZENTUI_BUILD) throw new Error("choco-pi-ui could not be compiled for tests");
+  registerBuildHooks(ZENTUI_BUILD);
+  return import(pathToFileURL(resolvePath(ZENTUI_BUILD, file)).href);
+}
+
 /** Loads zentui's real renderers, config reader, and provider labels. */
 export const realZentuiLoader: ZentuiLoader = async () => {
   if (!ZENTUI_BUILD) return undefined;
