@@ -104,6 +104,9 @@ upstream 3.0.x:
 - `web-tree-sitter@0.26.12` (pruned: `debug/` build dropped) +
   `tree-sitter-bash@0.25.1` (pruned to `tree-sitter-bash.wasm` + metadata; the
   native prebuilds are unused — `shell/bash.ts` loads only the wasm)
+- `pngjs@7.0.0` + `jpeg-js@0.4.4` (pure-JS PNG/JPEG decoders for the ANSI
+  half-block image fallback; `pngjs` ships no declarations, so the retained
+  synchronous decoder shape is declared locally in `src/types/pngjs.d.ts`)
 
 Dropped upstream dependencies (only used by removed features): `ws`,
 `selfsigned` (voice LAN server), `zeromq`, `unzipper` (notebook mode).
@@ -115,8 +118,9 @@ Beyond the removals above: `extension/{register,runtime,events,ui,tools}.ts`,
 `tools/code-mode/{shared-runtime,public-tools}.ts`,
 `adapter/activation/{config-store,execution-mode}.ts`,
 `adapter/prompt/context-filter.ts`, `adapter/compaction/request-shrink.ts`,
-`native-binary-error.ts`, `tools/native/binary.ts`, `src/index.ts`. Wire and
-interop identifiers (originator header `pi-codex-conversion`, preflight and
+`native-binary-error.ts`, `tools/native/binary.ts`, `src/index.ts`,
+`ui/tool-rendering/{media,halfblock-image}.ts`, and image-tool renderers. Wire
+and interop identifiers (originator header `pi-codex-conversion`, preflight and
 apply-patch-display protocol strings, code-mode host cache path) are kept
 verbatim for protocol parity.
 

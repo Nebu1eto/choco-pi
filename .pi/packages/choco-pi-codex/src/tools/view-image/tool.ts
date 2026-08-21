@@ -288,14 +288,18 @@ export function createViewImageTool(
         isStringValue(args["path"]!) ? args["path"]! : undefined,
         theme,
       );
-    tool.renderResult = (result, { isPartial }, theme) => {
+    tool.renderResult = (result, { isPartial }, theme, context) => {
       if (isPartial) return new Text(theme.fg("warning", "Loading image..."), 0, 0);
       const textBlock = result.content.find((item) => item.type === "text");
       const text = theme.fg("dim", textBlock?.type === "text" ? textBlock.text : "");
       const content = result.content.some((item) => item.type === "image")
         ? result.content
         : [...result.content, ...imageContentsFromViewImageDetails(result.details)];
-      return renderTextWithImages(text, content, theme);
+      return renderTextWithImages(text, content, theme, {
+        showImages: context.showImages,
+        cwd: context.cwd,
+        imagePaths: [isStringValue(context.args.path) ? context.args.path : undefined],
+      });
     };
   }
   return tool;

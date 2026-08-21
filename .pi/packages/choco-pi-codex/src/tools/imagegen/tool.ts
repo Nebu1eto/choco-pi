@@ -145,11 +145,15 @@ export function createImageGenerationTool(
         isStringValue(args.prompt) ? args.prompt : undefined,
         theme,
       );
-    tool.renderResult = (result, _options, theme) => {
+    tool.renderResult = (result, _options, theme, context) => {
       const textBlock = result.content.find((item) => item.type === "text");
       const text = theme.fg("dim", textBlock?.type === "text" ? textBlock.text : "(no output)");
       return result.content.some((item) => item.type === "image")
-        ? renderTextWithImages(text, result.content, theme)
+        ? renderTextWithImages(text, result.content, theme, {
+            showImages: context.showImages,
+            cwd: context.cwd,
+            imagePaths: result.details.images.map((image) => image.absolute_path),
+          })
         : new Text(text, 0, 0);
     };
   }
