@@ -1,15 +1,17 @@
 import { isCustomToolDefinition } from "./host-protocol.js";
+import { unavailableToolsGuardPreamble } from "./tools-namespace.js";
 import type { CodeModeToolDefinition } from "./types.js";
 
 export function scopeAllToolsToDeferredCustom(
   source: string,
   tools: CodeModeToolDefinition[],
 ): string {
-  const names = tools
+  const deferredNames = tools
     .filter(isCustomToolDefinition)
     .filter((tool) => tool.deferLoading)
     .map((tool) => tool.name);
-  return `globalThis.ALL_TOOLS=globalThis.ALL_TOOLS.filter(({name})=>${JSON.stringify(names)}.includes(name));${source}`;
+  const namespaceGuard = unavailableToolsGuardPreamble(tools.map((tool) => tool.name));
+  return `globalThis.ALL_TOOLS=globalThis.ALL_TOOLS.filter(({name})=>${JSON.stringify(deferredNames)}.includes(name));${namespaceGuard}${source}`;
 }
 
 export function directToolYieldTime(code: string, tools: CodeModeToolDefinition[]): number | null {
