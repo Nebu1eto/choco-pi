@@ -21,7 +21,7 @@ import {
   realBoxZentuiLoader,
   realZentuiLoader,
   SKIP_WITHOUT_ZENTUI,
-  withEditorStyle,
+  withEditorConfig,
 } from "./zentui-build.ts";
 
 // SAFETY: The fixture supplies every host member exercised by this test.
@@ -565,7 +565,11 @@ test(
     skip: SKIP_WITHOUT_ZENTUI,
   },
   async () => {
-    const adapter = await createZentuiFrameAdapter(withEditorStyle(realZentuiLoader, "opencode"));
+    // The separator row this asserts is a configurable padding row, so the
+    // fixture pins it rather than inheriting the developer's own preference.
+    const adapter = await createZentuiFrameAdapter(
+      withEditorConfig(realZentuiLoader, { style: "opencode", paddingRows: "bottom" }),
+    );
     assert.equal(adapter.available, true);
 
     for (const width of [40, 80, 120]) {
