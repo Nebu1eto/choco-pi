@@ -59,6 +59,13 @@ export function parseMcpObject<Value>(value: Value): McpObject {
   return value as Value & McpObject;
 }
 
+/**
+ * Any value a host object can hold, including callables and exotic objects.
+ * Used where a member is read before its shape is established, such as the
+ * owned-UI fence reading through a host proxy.
+ */
+export type RuntimeValue = string | number | boolean | bigint | symbol | object | null | undefined;
+
 export type RuntimeTypeName =
   | "undefined"
   | "string"
