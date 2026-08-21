@@ -381,7 +381,9 @@ After installation the skill can open pages, capture interactive snapshots, clic
 
 Both are injected into the system prompt each turn inside a `<choco_pi_agent_preferences>` block, and a change applies from the next turn without restarting Pi.
 
-A configured language overrides the default "answer in the user's language" rule, but an explicit request in a message still wins for the artifact it names: asking for a document in Japanese produces a Japanese document while the conversation continues in the configured language. Code, identifiers, file paths, and commit messages are never affected.
+A configured language overrides the default "answer in the user's language" rule. Two things still win over it, because the block is user configuration rather than project policy: an explicit request in a message, for the artifact it names, so asking for a Japanese document produces one while the conversation continues in the configured language; and a path-scoped project instruction that fixes an artifact's language, such as a repository requiring its prompts, skills, and documentation in English. The same precedence applies to a configured style.
+
+Code, identifiers, and file paths are never affected. Commit messages are decided by the repository, not by this setting: project policy first, then the language of your recent commits in that repository, and English when neither exists. A repository whose history is Korean therefore keeps Korean commit messages while your responses follow the configured language.
 
 Styles are Markdown files with optional frontmatter. `concise` and `explanatory` ship with the profile; add your own to `~/.pi/agent/agent-styles/`, where a file whose `name` matches a shipped style replaces it:
 

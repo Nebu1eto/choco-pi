@@ -180,6 +180,10 @@ export function resolveAgentStyle(
  * Builds the per-turn system-prompt block for the configured agent
  * preferences, or `undefined` when nothing is configured. A configured but
  * unresolved style contributes nothing to the block.
+ *
+ * The block closes with a precedence note because it is appended after the
+ * project context: without it, this user-level configuration would silently
+ * outrank a path-scoped project instruction that fixes an artifact's language.
  */
 export function buildAgentPreferencesBlock(
   preferences: AgentPreferences,
@@ -191,7 +195,7 @@ export function buildAgentPreferencesBlock(
     blocks.push(
       [
         `Preferred response language: ${language}`,
-        `Write all natural-language output in ${language}: responses, plans, reports, and prose in generated documents. This setting overrides the default of matching the user's message language, but an explicit language request in the user's message still wins for the artifact it names (for example, a document the user asks for in another language follows that request while the conversation stays in ${language}). Code, identifiers, file paths, and commit messages are unaffected and keep their usual conventions.`,
+        `Write natural-language output in ${language}: responses, plans, reports, and prose in documents you generate. This overrides the default of matching the user's message language. Code, identifiers, and file paths keep their usual conventions. Commit messages follow the language established by the repository's own history and policy, not this setting.`,
       ].join("\n"),
     );
   }
@@ -202,6 +206,9 @@ export function buildAgentPreferencesBlock(
     }
   }
   if (blocks.length === 0) return undefined;
+  blocks.push(
+    "These preferences are user configuration, not project policy. Two things take precedence over both the language and the style above: an explicit request in the user's message, for the artifact it names; and a path-scoped project instruction that fixes an artifact's language, format, or tone, such as a repository requiring its prompts, skills, and documentation in English.",
+  );
   return `${AGENT_PREFERENCES_MARKER}\n${blocks.join("\n\n")}\n${AGENT_PREFERENCES_MARKER_END}`;
 }
 
