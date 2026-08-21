@@ -8,6 +8,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
+import { openNativeRowPicker, THINKING_ROW_ID } from "./lib/native-settings.ts";
 
 const THINKING_LEVELS: ThinkingLevel[] = [
   "off",
@@ -249,6 +250,10 @@ export default function modelControls(pi: ExtensionAPI): void {
       }
 
       const labels = levels.map((level) => (level === current ? `${level} (current)` : level));
+      // Prefer the picker the settings panel shows, so both entry points offer
+      // the same list with the same descriptions.
+      if (await openNativeRowPicker(THINKING_ROW_ID, ctx.ui)) return;
+
       const selected = await ctx.ui.select("Reasoning effort", labels);
       if (!selected) return;
 

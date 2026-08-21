@@ -6,6 +6,10 @@ import { isFunction, isString, reinterpretHostValue, type RuntimeValue } from ".
 export const NATIVE_SETTINGS_SECTION_ID = "pi";
 
 const MODEL_ROW_ID = "piModel";
+const SCOPED_MODELS_ROW_ID = "piScopedModels";
+
+/** The Pi row whose picker `/effort` shares with the preferences panel. */
+export const THINKING_ROW_ID = "thinking";
 
 /**
  * Labels that read better in this panel than in Pi's own settings menu, where
@@ -70,7 +74,7 @@ const PI_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[] }>
   },
   {
     section: MODEL_SECTION_ID,
-    rows: [MODEL_ROW_ID, "thinking", "transport", "http-idle-timeout"],
+    rows: [MODEL_ROW_ID, SCOPED_MODELS_ROW_ID, "thinking", "transport", "http-idle-timeout"],
   },
   { section: TOOLS_SECTION_ID, rows: ["skill-commands"] },
 ];
@@ -319,11 +323,16 @@ function withoutOuterRules(component: Component): Component {
 }
 
 /**
- * Pi's own model selector, rendered inside the settings list rather than in
- * place of the editor. It applies the model itself and then calls the collected
- * `done`, so this only has to close the submenu and report the new id.
+ * One of Pi's editor-replacing selectors, rendered inside the settings list
+ * instead. Every such selector applies its own change and then calls the
+ * collected `done`, so this only disposes it and reports the row's new value.
  */
-function modelPicker(host: NativeSettingsHost, done: (value?: string) => void): Component {
+function embeddedHostPicker(
+  host: NativeSettingsHost,
+  method: string,
+  done: (value?: string) => void,
+  readValue: () => string | undefined,
+): Component {
   let created: RuntimeValue;
   let finished = false;
   const finish = (): void => {
@@ -331,9 +340,9 @@ function modelPicker(host: NativeSettingsHost, done: (value?: string) => void): 
     finished = true;
     const dispose = propertyOf(created, "dispose");
     if (isFunction(dispose)) reinterpretHostValue<() => void>(dispose).call(created);
-    done(currentModelId(host));
+    done(readValue());
   };
-  const show = propertyOf(host, "showModelSelector");
+  const show = propertyOf(host, method);
   if (!isFunction(show)) return unavailablePicker(done);
   created = captureHostSelector(
     host,
@@ -349,6 +358,13 @@ function modelPicker(host: NativeSettingsHost, done: (value?: string) => void): 
   return withoutOuterRules(reinterpretHostValue<Component>(component));
 }
 
+/** How many models Ctrl+P cycles through, as the scoped-models row shows it. */
+function scopedModelsSummary(host: NativeSettingsHost): string {
+  const scoped = propertyOf(propertyOf(host, "session"), "scopedModels");
+  const count = Array.isArray(scoped) ? scoped.length : 0;
+  return count === 0 ? "all models" : `${count} selected`;
+}
+
 /**
  * The row that picks the session model. Pi builds no such row for its settings
  * menu, because `/model` covers it there.
@@ -359,7 +375,22 @@ function modelRow(host: NativeSettingsHost): SettingItem {
     label: "Model",
     description: "Model for this session; the picker opens in place.",
     currentValue: currentModelId(host) ?? "select…",
-    submenu: (_currentValue, done) => modelPicker(host, done),
+    submenu: (_currentValue, done) =>
+      embeddedHostPicker(host, "showModelSelector", done, () => currentModelId(host)),
+  };
+}
+
+/**
+ * The row that scopes the Ctrl+P cycle, carrying what `/scoped-models` opened.
+ */
+function scopedModelsRow(host: NativeSettingsHost): SettingItem {
+  return {
+    id: SCOPED_MODELS_ROW_ID,
+    label: "Scoped models",
+    description: "Models Ctrl+P cycles through; the picker opens in place.",
+    currentValue: scopedModelsSummary(host),
+    submenu: (_currentValue, done) =>
+      embeddedHostPicker(host, "showModelsSelector", done, () => scopedModelsSummary(host)),
   };
 }
 
@@ -421,11 +452,11 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
   const readRows = (): SettingItem[] => {
     const rows = captureNativeSettingsRows(host);
     onChange = rows?.onChange;
-    return rows ? [modelRow(host), ...rows.items] : [];
+    return rows ? [modelRow(host), scopedModelsRow(host), ...rows.items] : [];
   };
   const handleChange = (id: string, newValue: string): PreferencesSectionChange => {
-    // The picker already applied the model; the row only has to redraw.
-    if (id === MODEL_ROW_ID) return { kind: "update" };
+    // These pickers already applied their change; the row only has to redraw.
+    if (id === MODEL_ROW_ID || id === SCOPED_MODELS_ROW_ID) return { kind: "update" };
     if (!onChange) return { kind: "update" };
     onChange(id, newValue);
     // A refused TUI mode switch only updates Pi's own detached list, so the
@@ -463,4 +494,43 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
 
   const fallbackRows = fallback.buildItems();
   return [...merged, ...owned, ...(fallbackRows.length > 0 ? [fallback] : [])];
+}
+
+/** The `ui.custom` surface this module needs, typed structurally at the boundary. */
+interface PickerUi {
+  custom: <T>(
+    factory: (
+      tui: RuntimeValue,
+      theme: RuntimeValue,
+      keybindings: RuntimeValue,
+      done: (result: T) => void,
+    ) => Component,
+  ) => Promise<T>;
+}
+
+/**
+ * Opens the picker of one of Pi's settings rows on its own, outside the
+ * preferences panel, and applies the choice through Pi's own change handler.
+ *
+ * This is what lets a prompt command such as `/effort` show the very picker the
+ * panel shows, instead of a second list that has to be kept in step with it.
+ * Reports false when Pi's rows cannot be read or the row has no picker, so the
+ * caller can keep its own fallback.
+ */
+export async function openNativeRowPicker(rowId: string, ui: PickerUi): Promise<boolean> {
+  const host = readBridge()?.host;
+  if (!host) return false;
+  const rows = captureNativeSettingsRows(host);
+  const row = rows?.items.find((item) => item.id === rowId);
+  const submenu = row?.submenu;
+  if (!rows || !row || !submenu) return false;
+  const label = PI_ROW_LABELS.get(rowId);
+  await ui.custom<void>((_tui, _theme, _keybindings, done) => {
+    const picker = submenu(row.currentValue, (selectedValue) => {
+      if (selectedValue !== undefined) rows.onChange(rowId, selectedValue);
+      done();
+    });
+    return label === undefined ? picker : relabelSubmenu(picker, row.label, label);
+  });
+  return true;
 }

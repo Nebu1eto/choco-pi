@@ -134,7 +134,7 @@ test(
     // A section Pi owns needs no source header: its rows come first.
     assert.deepEqual(sectionRowIds(sections, "terminal"), ["tui-mode"]);
     assert.deepEqual(sectionRowIds(sections, "session"), ["autocompact"]);
-    assert.deepEqual(sectionRowIds(sections, "model"), ["piModel", "thinking"]);
+    assert.deepEqual(sectionRowIds(sections, "model"), ["piModel", "piScopedModels", "thinking"]);
     assert.deepEqual(sectionRowIds(sections, "tools"), ["skill-commands"]);
     // A row no layout entry claims must stay reachable.
     assert.deepEqual(sectionRowIds(sections, "pi"), ["future-row"]);
