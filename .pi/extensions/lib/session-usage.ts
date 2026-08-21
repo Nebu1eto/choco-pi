@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { describePath } from "../session-status.ts";
 import { isJsonRecord, isNumber, isString, type RuntimeValue } from "./runtime-values.ts";
 
 /**
@@ -364,7 +365,14 @@ export function formatTokens(count: number): string {
 }
 
 export function formatCost(amount: number): string {
-  return `$${amount.toFixed(3)}`;
+  return `$${amount.toFixed(2)}`;
+}
+
+/** Compact token display for the status overlay, with one decimal at every scale. */
+function formatCompactTokens(count: number): string {
+  if (count < 1000) return count.toString();
+  if (count < 1_000_000) return `${(count / 1000).toFixed(1)}k`;
+  return `${(count / 1_000_000).toFixed(1)}M`;
 }
 
 /** Theme hooks used by the rendered block; omitted when the surface is plain text. */
@@ -376,6 +384,8 @@ export type SessionInfoStyle = {
 export type SessionInfoInput = {
   sessionName: string | undefined;
   sessionFile: string | undefined;
+  /** Current project directory, used to shorten a persisted session path. */
+  cwd?: string;
   sessionId: string;
   main: MainUsage;
   cacheWaste: CacheWaste;
@@ -384,20 +394,76 @@ export type SessionInfoInput = {
   subagentsRunning: boolean;
 };
 
-type Painter = { label: (text: string) => string; head: (text: string) => string };
+type Painter = {
+  label: (text: string) => string;
+  value: (text: string) => string;
+  dim: (text: string) => string;
+  head: (text: string) => string;
+  money: (text: string) => string;
+  good: (text: string) => string;
+  warn: (text: string) => string;
+  bad: (text: string) => string;
+  accent: (text: string) => string;
+};
 
 function painter(style: SessionInfoStyle | undefined): Painter {
-  if (!style) return { label: (text) => text, head: (text) => text };
-  return { label: (text) => style.fg("muted", text), head: (text) => style.bold(text) };
+  const plain = (text: string): string => text;
+  if (!style) {
+    return {
+      label: plain,
+      value: plain,
+      dim: plain,
+      head: plain,
+      money: plain,
+      good: plain,
+      warn: plain,
+      bad: plain,
+      accent: plain,
+    };
+  }
+  const color = (name: string, text: string): string => {
+    try {
+      return style.fg(name, text);
+    } catch {
+      return text;
+    }
+  };
+  return {
+    label: (text) => color("muted", text),
+    value: (text) => color("text", text),
+    dim: (text) => color("dim", text),
+    head: (text) => style.bold(color("accent", text)),
+    money: (text) => color("warning", text),
+    good: (text) => color("success", text),
+    warn: (text) => color("warning", text),
+    bad: (text) => color("error", text),
+    accent: (text) => color("accent", text),
+  };
 }
 
-function costLines(input: SessionInfoInput, paint: Painter, indent: string): string[] {
-  return input.main.breakdown.map(
-    (entry) =>
-      `${indent}${paint.label(`${entry.key}:`)} ${formatCost(entry.cost)} ${paint.label(
-        `(${formatTokens(entry.tokens)} tokens)`,
-      )}`,
-  );
+const SESSION_LABEL_WIDTH = 10;
+
+function sessionLabel(label: string, paint: Painter): string {
+  return `${paint.label(label.padEnd(SESSION_LABEL_WIDTH))}  `;
+}
+
+function modelName(key: string): string {
+  if (key === OTHER_USAGE_KEY) return key;
+  const separator = key.indexOf("/");
+  return separator === -1 ? key : key.slice(separator + 1);
+}
+
+function cacheRate(paint: Painter, percentage: number): string {
+  const value = `${percentage.toFixed(1)}%`;
+  if (percentage >= 90) return paint.good(value);
+  if (percentage >= 50) return paint.warn(value);
+  return paint.bad(value);
+}
+
+function costEntryLine(entry: CostEntry, paint: Painter, prefix: string, indent = ""): string {
+  return `${indent}${paint.label(prefix)}  ${paint.accent(modelName(entry.key))}  ${paint.money(
+    formatCost(entry.cost),
+  )} ${paint.dim(`· ${formatCompactTokens(entry.tokens)} tok`)}`;
 }
 
 /**
@@ -411,18 +477,23 @@ export function formatSessionInfo(input: SessionInfoInput, style?: SessionInfoSt
   const paint = painter(style);
   const lines: string[] = [paint.head("Session Info"), ""];
 
-  if (input.sessionName) lines.push(`${paint.label("Name:")} ${input.sessionName}`);
-  lines.push(`${paint.label("File:")} ${input.sessionFile ?? "In-memory"}`);
-  lines.push(`${paint.label("ID:")} ${input.sessionId}`, "");
+  if (input.sessionName)
+    lines.push(`${sessionLabel("Name", paint)}${paint.value(input.sessionName)}`);
+  const file = input.sessionFile
+    ? describePath(input.sessionFile, input.cwd ?? process.cwd())
+    : "In-memory";
+  lines.push(`${sessionLabel("File", paint)}${paint.value(file)}`);
+  lines.push(`${sessionLabel("ID", paint)}${paint.value(input.sessionId)}`, "");
 
   const counts = input.main.counts;
   lines.push(
-    paint.head("Messages"),
-    `${paint.label("Total:")} ${counts.total}`,
-    `${paint.label("User:")} ${counts.user}`,
-    `${paint.label("Assistant:")} ${counts.assistant}`,
-    `${paint.label("Tools:")} ${counts.toolCalls} calls, ${counts.toolResults} results`,
-    "",
+    `${sessionLabel("Messages", paint)}${paint.value(counts.total.toString())} ${paint.dim(
+      "total · ",
+    )}${paint.value(counts.user.toString())} ${paint.dim("user · ")}${paint.value(
+      counts.assistant.toString(),
+    )} ${paint.dim("assistant · ")}${paint.value(counts.toolCalls.toString())} ${paint.dim(
+      "tool calls",
+    )}`,
   );
 
   // "Input" is the whole prompt volume. The cached/uncached split is the only
@@ -430,63 +501,55 @@ export function formatSessionInfo(input: SessionInfoInput, style?: SessionInfoSt
   // uncached part.
   const totals = input.main.totals;
   const promptTokens = totals.input + totals.cacheRead + totals.cacheWrite;
-  lines.push(paint.head("Tokens"), `${paint.label("Input:")} ${promptTokens.toLocaleString()}`);
+  const tokenLine = [
+    `${sessionLabel("Tokens", paint)}${paint.value(formatCompactTokens(promptTokens))} ${paint.dim("in")}`,
+  ];
   if (promptTokens > 0 && totals.cacheRead + totals.cacheWrite > 0) {
-    const hitRate = ((totals.cacheRead / promptTokens) * 100).toFixed(1);
-    lines.push(
-      `  ${paint.label("Cached:")} ${totals.cacheRead.toLocaleString()} ${paint.label(`(${hitRate}%)`)}`,
-    );
-    const written =
-      totals.cacheWrite > 0
-        ? ` ${paint.label(`(${totals.cacheWrite.toLocaleString()} written to cache)`)}`
-        : "";
-    lines.push(
-      `  ${paint.label("Uncached:")} ${(totals.input + totals.cacheWrite).toLocaleString()}${written}`,
-    );
+    const hitRate = (totals.cacheRead / promptTokens) * 100;
+    tokenLine.push(`${cacheRate(paint, hitRate)} ${paint.dim("cached")}`);
   }
-  lines.push(
-    `${paint.label("Output:")} ${totals.output.toLocaleString()}`,
-    `${paint.label("Total:")} ${(promptTokens + totals.output).toLocaleString()}`,
-  );
+  tokenLine.push(`${paint.value(formatCompactTokens(totals.output))} ${paint.dim("out")}`);
+  lines.push(tokenLine.join(paint.dim(" · ")));
 
   const sub = input.subagents;
   const hasSubagents = sub.agents > 0 || sub.totals.cost > 0;
   const waste = input.cacheWaste;
   if (totals.cost > 0 || hasSubagents || waste.missedTokens > 0) {
-    lines.push("", paint.head("Cost"));
-    lines.push(`${paint.label("Total:")} ${formatCost(totals.cost + sub.totals.cost)}`);
-    if (hasSubagents) {
-      lines.push(`  ${paint.label("Main agent:")} ${formatCost(totals.cost)}`);
-      lines.push(...costLines(input, paint, "    "));
-      const agentLabel = sub.agents === 1 ? "1 agent" : `${sub.agents} agents`;
+    lines.push(
+      "",
+      `${sessionLabel("Cost", paint)}${paint.money(formatCost(totals.cost + sub.totals.cost))} ${paint.dim("total")}`,
+    );
+    if (input.main.breakdown.length > 0) {
+      lines.push(...input.main.breakdown.map((entry) => costEntryLine(entry, paint, "main", "  ")));
+    } else if (totals.cost > 0) {
       lines.push(
-        `  ${paint.label("Sub-agents:")} ${formatCost(sub.totals.cost)} ${paint.label(
-          `(${agentLabel}, ${formatTokens(totalTokens(sub.totals))} tokens)`,
+        `  ${paint.label("main")}  ${paint.money(formatCost(totals.cost))} ${paint.dim(
+          `· ${formatCompactTokens(totalTokens(totals))} tok`,
         )}`,
       );
-      for (const entry of sub.breakdown) {
-        lines.push(
-          `    ${paint.label(`${entry.key}:`)} ${formatCost(entry.cost)} ${paint.label(
-            `(${formatTokens(entry.tokens)} tokens)`,
-          )}`,
-        );
-      }
-    } else if (input.main.breakdown.length > 1) {
-      lines.push(...costLines(input, paint, "  "));
+    }
+    if (hasSubagents) {
+      const agentLabel = sub.agents === 1 ? "1 agent" : `${sub.agents} agents`;
+      lines.push(
+        `  ${paint.label(`sub (${agentLabel}; transcripts)`)}  ${paint.money(
+          formatCost(sub.totals.cost),
+        )} ${paint.dim(`· ${formatCompactTokens(totalTokens(sub.totals))} tok`)}`,
+      );
+      lines.push(...sub.breakdown.map((entry) => costEntryLine(entry, paint, "", "    ")));
     }
     if (waste.missedTokens > 0) {
       const missLabel = waste.missCount === 1 ? "1 miss" : `${waste.missCount} misses`;
-      const detail = `${waste.missedTokens.toLocaleString()} tokens, ${missLabel}`;
+      const amount = waste.missedCost >= 0.0001 ? `${formatCost(waste.missedCost)} · ` : "";
       lines.push(
-        waste.missedCost >= 0.0001
-          ? `${paint.label("Cache Re-billed:")} ${formatCost(waste.missedCost)} ${paint.label(`(${detail})`)}`
-          : `${paint.label("Cache Re-billed:")} ${detail}`,
+        `  ${paint.warn("cache re-billed")}  ${paint.money(amount)}${paint.warn(
+          `${formatCompactTokens(waste.missedTokens)} tok · ${missLabel}`,
+        )}`,
       );
     }
   }
 
   const notes = subagentNotes(input);
-  if (notes.length > 0) lines.push("", ...notes.map((note) => paint.label(note)));
+  if (notes.length > 0) lines.push("", ...notes.map((note) => paint.dim(note)));
 
   return lines.join("\n");
 }

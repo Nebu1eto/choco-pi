@@ -40,7 +40,7 @@ import {
   type SessionInfoStyle,
 } from "./lib/session-usage.ts";
 import { hasRunningSubagents } from "./lib/subagent-manager.ts";
-import { formatStatus, summarizeStatusRows } from "./session-status.ts";
+import { formatStatus, statusHeading, summarizeStatusRows } from "./session-status.ts";
 import { usageReport } from "./provider-usage.ts";
 
 export type StatusTabId = "status" | "usage" | "preferences";
@@ -147,6 +147,7 @@ export function statusBody(
     {
       sessionName: ctx.sessionManager.getSessionName(),
       sessionFile: ctx.sessionManager.getSessionFile(),
+      cwd: ctx.cwd,
       sessionId,
       main: summarizeMainUsage(entries),
       cacheWaste: computeCacheWaste(entries, ctx.modelRegistry),
@@ -158,8 +159,7 @@ export function statusBody(
   const rows = summarizeStatusRows(ctx, thinkingLevel).filter(
     (row) => !SESSION_INFO_ROWS.has(row.label),
   );
-  const heading = style ? style.bold("Environment") : "Environment";
-  return `${info}\n\n${heading}\n\n${formatStatus(rows, style)}`;
+  return `${info}\n\n${statusHeading(style)}\n\n${formatStatus(rows, style)}`;
 }
 
 export function tabBody(

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { InteractiveMode, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -276,10 +276,12 @@ const MAIN: MainUsage = {
   ],
 };
 
-test("formatSessionInfo keeps Pi's layout when no sub-agent ran", () => {
+test("formatSessionInfo renders a concise, unstyled session summary", () => {
+  const sessionFile = path.join(homedir(), ".pi", "agent", "sessions", "main.jsonl");
   const body = formatSessionInfo({
     sessionName: undefined,
-    sessionFile: "/sessions/main.jsonl",
+    sessionFile,
+    cwd: "/workspace/project",
     sessionId: "01a02297",
     main: MAIN,
     cacheWaste: { missedTokens: 5_662_340, missedCost: 107.584, missCount: 37 },
@@ -288,16 +290,14 @@ test("formatSessionInfo keeps Pi's layout when no sub-agent ran", () => {
   });
 
   assert.equal(body.split("\n")[0], "Session Info");
-  assert.match(body, /^File: \/sessions\/main\.jsonl$/m);
-  assert.match(body, /^Tools: 231 calls, 231 results$/m);
-  assert.match(body, /^Input: 72,741,577$/m);
-  assert.match(body, /^ {2}Cached: 65,882,725 \(90\.6%\)$/m);
-  assert.match(body, /^ {2}Uncached: 6,858,852 \(6,686,525 written to cache\)$/m);
-  assert.match(body, /^Total: 73,237,022$/m);
-  assert.match(body, /^Total: \$226\.109$/m);
-  assert.match(body, /^ {2}anthropic\/claude-fable-5: \$224\.121 \(73M tokens\)$/m);
-  assert.match(body, /^Cache Re-billed: \$107\.584 \(5,662,340 tokens, 37 misses\)$/m);
-  assert.ok(!body.includes("Sub-agents"), "no sub-agent lines without sub-agent usage");
+  assert.match(body, /^File {8}~\/\.pi\/agent\/sessions\/main\.jsonl \(missing\)$/m);
+  assert.ok(!body.includes(sessionFile), "the full absolute session path is not shown");
+  assert.match(body, /^Messages {4}504 total · 30 user · 243 assistant · 231 tool calls$/m);
+  assert.match(body, /^Tokens {6}72\.7M in · 90\.6% cached · 495\.4k out$/m);
+  assert.match(body, /^Cost {8}\$226\.11 total$/m);
+  assert.match(body, /^  main {2}claude-fable-5 {2}\$224\.12 · 73\.1M tok$/m);
+  assert.match(body, /^  cache re-billed {2}\$107\.58 · 5\.7M tok · 37 misses$/m);
+  assert.ok(!body.includes("\u001b"), "plain output contains no ANSI escapes");
 });
 
 test("formatSessionInfo separates the main agent from its sub-agents in the total", () => {
@@ -319,33 +319,49 @@ test("formatSessionInfo separates the main agent from its sub-agents in the tota
     subagentsRunning: true,
   });
 
-  assert.match(body, /^Name: novaid$/m);
-  assert.match(body, /^File: In-memory$/m);
-  assert.match(body, /^Total: \$425\.074$/m, "the total must include every sub-agent");
-  assert.match(body, /^ {2}Main agent: \$226\.109$/m);
-  assert.match(body, /^ {4}anthropic\/claude-fable-5: \$224\.121 \(73M tokens\)$/m);
-  assert.match(body, /^ {2}Sub-agents: \$198\.965 \(35 agents, 212M tokens\)$/m);
-  assert.match(body, /^ {4}openai-codex\/gpt-5\.6-sol: \$127\.669 \(178M tokens\)$/m);
+  assert.match(body, /^Name {8}novaid$/m);
+  assert.match(body, /^File {8}In-memory$/m);
+  assert.match(body, /^Cost {8}\$425\.07 total$/m, "the total must include every sub-agent");
+  assert.match(body, /^  main {2}claude-fable-5 {2}\$224\.12 · 73\.1M tok$/m);
+  assert.match(body, /^  sub \(35 agents; transcripts\) {2}\$198\.97 · 212\.0M tok$/m);
+  assert.match(body, /^ {6}gpt-5\.6-sol {2}\$127\.67 · 178\.0M tok$/m);
   assert.match(body, /transcripts, not from a live meter/);
   assert.match(body, /current turn is counted only once that turn ends/);
 });
 
-test("formatSessionInfo styles labels and headings when a theme is supplied", () => {
-  const body = formatSessionInfo(
-    {
-      sessionName: undefined,
-      sessionFile: "/sessions/main.jsonl",
-      sessionId: "01a02297",
-      main: MAIN,
-      cacheWaste: NO_WASTE,
-      subagents: NO_SUBAGENTS,
-      subagentsRunning: false,
+test("formatSessionInfo assigns semantic roles to money and cache-hit thresholds", () => {
+  const colors: string[] = [];
+  const style = {
+    fg: (color: string, text: string) => {
+      colors.push(`${color}:${text}`);
+      return text;
     },
-    { fg: (color, text) => `<${color}>${text}</${color}>`, bold: (text) => `[${text}]` },
-  );
+    bold: (text: string) => text,
+  };
+  const render = (cacheRead: number, input: number) => {
+    colors.length = 0;
+    formatSessionInfo(
+      {
+        sessionName: undefined,
+        sessionFile: undefined,
+        sessionId: "01a02297",
+        main: { ...MAIN, totals: { ...MAIN.totals, cacheRead, cacheWrite: 0, input } },
+        cacheWaste: NO_WASTE,
+        subagents: NO_SUBAGENTS,
+        subagentsRunning: false,
+      },
+      style,
+    );
+    return [...colors];
+  };
 
-  assert.match(body, /^\[Session Info\]$/m);
-  assert.match(body, /^<muted>File:<\/muted> \/sessions\/main\.jsonl$/m);
+  const good = render(900, 100);
+  assert.ok(good.includes("success:90.0%"));
+  assert.ok(good.includes("warning:$226.11"));
+  assert.ok(good.includes("accent:Session Info"));
+  assert.ok(good.includes("accent:claude-fable-5"));
+  assert.ok(render(500, 500).includes("warning:50.0%"));
+  assert.ok(render(100, 900).includes("error:10.0%"));
 });
 
 test("Pi still exposes the /session handler this extension retires", () => {
