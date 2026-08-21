@@ -125,7 +125,17 @@ export const realZentuiLoader: ZentuiLoader = async () => {
  * The user's own zentui config decides the prompt style, so a test that asserts
  * one style pins it rather than depending on whatever is configured here.
  */
-export function withEditorStyle(loader: ZentuiLoader, style: string): ZentuiLoader {
+/**
+ * Overrides editor config keys on top of the loaded configuration.
+ *
+ * zentui's `loadConfig` reads the developer's real config file, so a test that
+ * asserts a fixed frame layout has to pin every setting that moves rows;
+ * otherwise a local preference such as `paddingRows` decides the assertion.
+ */
+export function withEditorConfig(
+  loader: ZentuiLoader,
+  patch: Record<string, RuntimeValue>,
+): ZentuiLoader {
   return async () => {
     const modules = await loader();
     if (!modules) return undefined;
@@ -140,11 +150,15 @@ export function withEditorStyle(loader: ZentuiLoader, style: string): ZentuiLoad
         const editor = (components.editor ?? {}) as Record<string, RuntimeValue>;
         return {
           ...config,
-          components: { ...components, editor: { ...editor, style } },
+          components: { ...components, editor: { ...editor, ...patch } },
         };
       },
     };
   };
+}
+
+export function withEditorStyle(loader: ZentuiLoader, style: string): ZentuiLoader {
+  return withEditorConfig(loader, { style });
 }
 
 /** zentui as it draws the box: the style the polished renderer never handles. */
