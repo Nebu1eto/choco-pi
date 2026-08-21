@@ -48,6 +48,23 @@ needed three further edits in the same file:
 choco-pi uses this to spread Pi's and the Codex adapter's settings over the
 topical tabs instead of parking them in two catch-all sections.
 
+### choco-pi change: host-controlled tab layout
+
+`ZentuiPreferencesPanelOptions` in `extensions/zentui/settings-command.ts`
+gained two optional fields:
+
+- `mergeSections`, a source-to-target map. A source section keeps no tab and
+  `collectSectionItems` renders its rows inside the target under a dim heading,
+  after the target's own rows and in key order.
+- `sectionOrder`, a list of section ids. Listed sections lead the tab strip in
+  that order and everything else keeps its natural position after them, so an
+  unknown or omitted id is harmless.
+
+`sectionOrder()` now takes both and drops merged-away sections;
+`nextSection`, `previousSection`, and `formatSectionTabs` take the resolved
+order instead of recomputing it, and the panel opens on the first visible
+section rather than a hardcoded `appearance`.
+
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
 
 - Original source code: https://github.com/maddeye/pi-nord

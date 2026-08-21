@@ -107,7 +107,6 @@ test(
       "codexConfigScope",
       "executionMode",
       "extensionMode",
-      "allProviders",
       "additionalProviders",
       "heavySystemPromptOverwrite",
       "editConfig",
@@ -120,9 +119,12 @@ test(
       "cacheDiagnosticsLog",
       "statusLine",
       "compactTools",
-      "codexAboutGithub",
     ]) {
       assert.ok(placed.includes(expected), `missing row ${expected}`);
+    }
+    // The provider scope is global by default and the About links moved out.
+    for (const removed of ["allProviders", "codexAboutGithub", "codexAboutIssue"]) {
+      assert.ok(!placed.includes(removed), `${removed} must no longer render`);
     }
     assert.equal(new Set(placed).size, placed.length, "row ids must stay unique across sections");
     assert.deepEqual(sectionRowIds(sections, `${CODEX_SECTION_ID}:footer`), [

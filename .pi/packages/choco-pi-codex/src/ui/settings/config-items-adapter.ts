@@ -22,21 +22,6 @@ export function buildAdapterSettings(config: CodexConversionConfig, theme: Theme
     ),
     setting(
       {
-        id: "allProviders",
-        label: "Provider scope",
-        currentValue: formatAllProvidersMode(config.scope.allProviders),
-        values: ["Codex and configured", "all providers", "extra tools only"],
-      },
-      (value, current) => ({
-        ...current,
-        scope: {
-          ...current.scope,
-          allProviders: parseAllProvidersMode(value),
-        },
-      }),
-    ),
-    setting(
-      {
         id: "additionalProviders",
         label: "Additional providers",
         currentValue: config.scope.additionalProviders.join(", "),
@@ -83,18 +68,6 @@ export function buildAdapterSettings(config: CodexConversionConfig, theme: Theme
       action: "edit-config",
     },
   ];
-}
-
-function formatAllProvidersMode(value: CodexConversionConfig["scope"]["allProviders"]): string {
-  if (value === "on") return "all providers";
-  if (value === "extras") return "extra tools only";
-  return "Codex and configured";
-}
-
-function parseAllProvidersMode(value: string): CodexConversionConfig["scope"]["allProviders"] {
-  if (value === "all providers") return "on";
-  if (value === "extra tools only") return "extras";
-  return "off";
 }
 
 function normalizeCodexProviderText(value: string): string {

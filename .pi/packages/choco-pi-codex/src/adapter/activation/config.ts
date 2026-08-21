@@ -119,7 +119,7 @@ export const DEFAULT_CODEX_CONVERSION_CONFIG: CodexConversionConfig = {
   executionMode: "normal",
   voiceFeaturesOnly: false,
   prompt: { heavySystemPromptOverwrite: false },
-  scope: { allProviders: "off", additionalProviders: [] },
+  scope: { allProviders: "on", additionalProviders: [] },
   tools: {
     customRustBinariesDir: "",
     webRun: true,

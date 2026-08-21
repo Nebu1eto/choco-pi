@@ -347,3 +347,89 @@ test(
     }
   },
 );
+
+test(
+  "the host decides the tab order and which sections render inside another",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    await realZentuiLoader();
+    assert.ok(ZENTUI_BUILD);
+    const module: Record<string, RuntimeValue> = await import(
+      pathToFileURL(path.resolve(ZENTUI_BUILD, "settings-command.js")).href
+    );
+    // SAFETY: the compiled package exports this factory.
+    const createPanel = module.createZentuiPreferencesComponent as (
+      deps: RuntimeValue,
+      options: RuntimeValue,
+    ) => {
+      render: (width: number) => string[];
+      handleInput: (data: string) => void;
+      getActiveSection: () => string;
+      dispose: () => void;
+    };
+
+    const notices: Notice[] = [];
+    const panel = createPanel(
+      {
+        sessionLifecycle: { defer: () => () => {} },
+        getConfig: () => ({
+          colors: {},
+          icons: { mode: "auto" },
+          components: {
+            selectorBorders: { enabled: true, style: "zentui", colorSource: "theme" },
+            editor: { enabled: true, style: "polished", colorSource: "theme", modelLabel: "id" },
+            userMessages: {
+              enabled: true,
+              style: "framed",
+              colorSource: "theme",
+              paddingRows: "both",
+            },
+          },
+        }),
+        getActiveExtensionStatuses: () => new Map(),
+        requestRender: () => {},
+        settingsListTheme: {
+          label: (value: string) => value,
+          value: (value: string) => value,
+          description: (value: string) => value,
+          cursor: ">",
+          hint: (value: string) => value,
+        },
+      },
+      {
+        ctx: createCtx(notices),
+        tui: { requestRender: () => {} },
+        theme: {
+          fg: (_color: string, value: string) => value,
+          bold: (value: string) => value,
+        },
+        mergeSections: { userMessages: "appearance" },
+        sectionOrder: ["editor", "appearance"],
+        extraSections: [],
+        onOutcome: () => {},
+      },
+    );
+
+    try {
+      assert.equal(panel.getActiveSection(), "editor", "the order decides where the panel opens");
+
+      panel.handleInput("\x1b[C");
+      assert.equal(panel.getActiveSection(), "appearance", "listed sections come first, in order");
+
+      const rows = panel.render(160);
+      const tabs = rows[1] ?? "";
+      assert.match(
+        tabs,
+        /Editor \/ Appearance \/ Working line \/ Footer \/ Segments \/ Git \/ Extensions/,
+        "listed sections lead the strip and the rest keep their natural order",
+      );
+      assert.doesNotMatch(tabs, /User messages/, "a merged section keeps no tab");
+
+      const body = rows.join("\n");
+      assert.match(body, /Selector borders/, "the host section's own rows stay first");
+      assert.match(body, /User messages/, "the merged rows arrive under their section heading");
+    } finally {
+      panel.dispose();
+    }
+  },
+);

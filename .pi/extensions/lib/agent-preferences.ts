@@ -262,6 +262,8 @@ export interface PreferencesProvider {
     tui: RuntimeValue;
     theme: RuntimeValue;
     extraSections: PreferencesExtraSection[];
+    mergeSections?: Record<string, string>;
+    sectionOrder?: string[];
     initialSection?: string;
     initialFocusId?: string;
     onOutcome: (outcome: string) => void;

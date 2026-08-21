@@ -139,6 +139,28 @@ function buildPreferencesExtraSections(ctx: ExtensionCommandContext): Preference
   ];
 }
 
+/**
+ * Sections rendered inside another one, source to target. User messages and the
+ * footer describe the same screen furniture as Appearance, and the segment and
+ * git rows only configure that footer, so all four read better as headed blocks
+ * of one tab than as four tabs.
+ */
+const PREFERENCES_SECTION_MERGES = {
+  userMessages: "appearance",
+  footer: "appearance",
+} satisfies Record<string, string>;
+
+/** Tab order; sections left out keep their natural position after these. */
+const PREFERENCES_SECTION_ORDER = [
+  "model",
+  "agent",
+  "session",
+  "appearance",
+  "editor",
+  "terminal",
+  "tools",
+];
+
 /** Non-TUI surface for /preferences: a text summary of the agent preferences. */
 function preferencesSummary(ctx: ExtensionCommandContext): void {
   try {
@@ -243,6 +265,8 @@ async function showTabOnce(
         tui,
         theme,
         extraSections: buildPreferencesExtraSections(ctx),
+        mergeSections: PREFERENCES_SECTION_MERGES,
+        sectionOrder: PREFERENCES_SECTION_ORDER,
         onOutcome: (outcome) => {
           finish(outcome === "close" ? undefined : outcome);
         },
