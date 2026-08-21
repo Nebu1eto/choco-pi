@@ -14,9 +14,33 @@ import {
   formatProviderUsage,
   normalizeClaudeUsage,
   normalizeCodexUsage,
+  usageFailureMessage,
 } from "../.pi/extensions/provider-usage.ts";
+import {
+  createUsageCache,
+  UsageHttpError,
+  UsageThrottledError,
+  type UsageCacheEntry,
+  type UsageCacheStorage,
+  type UsageRequestPolicy,
+} from "../.pi/extensions/lib/usage-cache.ts";
 
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+const POLICY: UsageRequestPolicy = { minIntervalMs: 60_000, maxStaleMs: 60 * 60_000 };
+
+/** In-memory stand-in for the shared cache file. */
+function memoryStorage(): UsageCacheStorage & { entries: () => Record<string, UsageCacheEntry> } {
+  let stored: Record<string, UsageCacheEntry> = {};
+  return {
+    read: () => Promise.resolve(stored),
+    write: (entries) => {
+      stored = entries;
+      return Promise.resolve();
+    },
+    entries: () => stored,
+  };
+}
 
 test("status tabs expose Status, Usage, and Preferences in order", () => {
   assert.deepEqual(
@@ -209,4 +233,148 @@ test("keeps the last good body when a refresh fails and never auto-refreshes Sta
   await flush();
   assert.deepEqual(loads, ["usage", "usage", "status"]);
   controller.dispose();
+});
+
+test("spaces live quota requests and serves the stored snapshot in between", async () => {
+  let clock = Date.now();
+  const storage = memoryStorage();
+  const cache = createUsageCache({ storage, now: () => clock });
+  let loads = 0;
+  const load = (): Promise<RuntimeValue> => {
+    loads += 1;
+    return Promise.resolve({ five_hour: { utilization: loads } });
+  };
+
+  const fetched = await cache.request("anthropic:usage", load, POLICY);
+  assert.equal(fetched.cachedAt, undefined);
+  assert.deepEqual(fetched.payload, { five_hour: { utilization: 1 } });
+
+  clock += 30_000;
+  const throttled = await cache.request("anthropic:usage", load, POLICY);
+  assert.equal(loads, 1);
+  assert.equal(throttled.cachedAt, clock - 30_000);
+  assert.equal(throttled.reason, undefined);
+  assert.deepEqual(throttled.payload, { five_hour: { utilization: 1 } });
+
+  clock += 31_000;
+  const refreshed = await cache.request("anthropic:usage", load, POLICY);
+  assert.equal(loads, 2);
+  assert.equal(refreshed.cachedAt, undefined);
+  assert.deepEqual(refreshed.payload, { five_hour: { utilization: 2 } });
+
+  await cache.flush();
+  assert.equal(storage.entries()["anthropic:usage"]?.failures, 0);
+});
+
+test("serves the cached quota after a 429 and waits out the provider's Retry-After", async () => {
+  let clock = Date.now();
+  const cache = createUsageCache({ storage: memoryStorage(), now: () => clock });
+  const storedAt = clock;
+  await cache.request("codex:usage", () => Promise.resolve({ plan_type: "pro" }), POLICY);
+
+  clock += 61_000;
+  const rejected = await cache.request(
+    "codex:usage",
+    () => Promise.reject(new UsageHttpError(429, 300_000)),
+    POLICY,
+  );
+  assert.equal(rejected.cachedAt, storedAt);
+  assert.equal(rejected.reason, "HTTP 429");
+  assert.deepEqual(rejected.payload, { plan_type: "pro" });
+
+  clock += 120_000;
+  let attempts = 0;
+  const gated = await cache.request(
+    "codex:usage",
+    () => {
+      attempts += 1;
+      return Promise.reject(new UsageHttpError(429));
+    },
+    POLICY,
+  );
+  assert.equal(attempts, 0);
+  assert.equal(gated.reason, "HTTP 429");
+  assert.equal(gated.cachedAt, storedAt);
+
+  clock += 200_000;
+  const recovered = await cache.request(
+    "codex:usage",
+    () => Promise.resolve({ plan_type: "plus" }),
+    POLICY,
+  );
+  assert.equal(recovered.cachedAt, undefined);
+  assert.deepEqual(recovered.payload, { plan_type: "plus" });
+});
+
+test("backs off a failing endpoint and reports when it retries", async () => {
+  let clock = Date.now();
+  const cache = createUsageCache({ now: () => clock });
+  const failing = (): Promise<RuntimeValue> => Promise.reject(new UsageHttpError(503));
+
+  await assert.rejects(cache.request("synthetic:usage", failing, POLICY), /HTTP 503/);
+
+  const throttled = await cache
+    .request("synthetic:usage", failing, POLICY)
+    .then(() => undefined)
+    .catch((error: RuntimeValue) => error);
+  assert.ok(throttled instanceof UsageThrottledError);
+  assert.equal(throttled.retryAt, clock + 60_000);
+  assert.equal(usageFailureMessage(throttled), "HTTP 503 · retrying in 1m");
+
+  clock += 61_000;
+  await assert.rejects(cache.request("synthetic:usage", failing, POLICY), /HTTP 503/);
+  const second = await cache
+    .request("synthetic:usage", failing, POLICY)
+    .then(() => undefined)
+    .catch((error: RuntimeValue) => error);
+  assert.ok(second instanceof UsageThrottledError);
+  assert.equal(second.retryAt, clock + 120_000);
+});
+
+test("shares the snapshot and the gate with the next session", async () => {
+  let clock = Date.now();
+  const storage = memoryStorage();
+  const first = createUsageCache({ storage, now: () => clock });
+  await first.request("anthropic:usage", () => Promise.resolve({ five_hour: {} }), POLICY);
+  await first.flush();
+
+  let attempts = 0;
+  const second = createUsageCache({ storage, now: () => clock });
+  const gated = await second.request(
+    "anthropic:usage",
+    () => {
+      attempts += 1;
+      return Promise.resolve({ five_hour: { utilization: 99 } });
+    },
+    POLICY,
+  );
+  assert.equal(attempts, 0);
+  assert.equal(gated.cachedAt, clock);
+
+  clock += 61_000;
+  const afterFailure = await second.request(
+    "anthropic:usage",
+    () => Promise.reject(new UsageHttpError(500)),
+    POLICY,
+  );
+  assert.equal(afterFailure.cachedAt, clock - 61_000);
+  assert.deepEqual(afterFailure.payload, { five_hour: {} });
+});
+
+test("marks a usage report that was rebuilt from the cache", () => {
+  const report = formatProviderUsage({
+    name: "Claude Code",
+    plan: "Max (20x)",
+    cached: { at: new Date(Date.now() - 12 * 60_000), reason: "HTTP 429" },
+    windows: [{ label: "5h", percent: 40, qualifier: "used" }],
+  });
+  assert.match(report, /^Claude Code — Max \(20x\) · cached 12m ago · HTTP 429\n/);
+  assert.match(
+    formatProviderUsage({
+      name: "Synthetic",
+      cached: { at: new Date(Date.now() - 20_000) },
+      windows: [{ label: "Weekly credits", percent: 10, qualifier: "used" }],
+    }),
+    /^Synthetic — cached just now\n/,
+  );
 });
