@@ -12,6 +12,9 @@ function isExcludedCommand(command: ResolvedCommand): boolean {
   return (
     command.name === "llama" ||
     command.name === "apex-refresh" ||
+    // Codex settings are reachable through /settings, so the raw command is
+    // kept executable but out of the prompt editor.
+    command.name === "codex" ||
     command.name.startsWith("synthetic:") ||
     command.name.startsWith("lens-")
   );

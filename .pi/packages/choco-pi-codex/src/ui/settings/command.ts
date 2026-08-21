@@ -17,6 +17,7 @@ import { syncAdapter } from "../../adapter/activation/activation.ts";
 import type { AdapterState } from "../../adapter/activation/state.ts";
 import { ROUTABLE_SETTINGS_TABS, parseSettingsTab, type SettingsTab } from "./tabs.ts";
 import { openCodexSettingsScreen } from "./screen.ts";
+import { registerCodexPreferencesProvider } from "./preferences-sections.ts";
 
 const CODEX_COMMAND_COMPLETIONS = ROUTABLE_SETTINGS_TABS.map(({ id }) => id);
 const CODEX_USAGE = "Usage: /codex [tools|openai|display|usage|about]";
@@ -170,6 +171,13 @@ export function registerCodexCommand(
       }
       ctx.ui.notify(CODEX_USAGE, "warning");
     },
+  });
+
+  registerCodexPreferencesProvider({
+    effectiveConfig,
+    saveAndApply,
+    applyEffectiveConfig,
+    getRunningConfig: () => state.config,
   });
 }
 
