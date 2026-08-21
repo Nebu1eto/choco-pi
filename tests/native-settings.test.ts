@@ -3,11 +3,12 @@ import test from "node:test";
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
 import {
-  buildNativeSettingsSection,
+  buildNativeSettingsSections,
   createHostCommandContext,
   installNativeSettingsBridge,
   type NativeSettingsHost,
 } from "../.pi/extensions/lib/native-settings.ts";
+import type { PreferencesExtraSection } from "../.pi/extensions/lib/agent-preferences.ts";
 import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 
 const BRIDGE_SYMBOL = Symbol.for("choco-pi.native-settings-bridge");
@@ -58,9 +59,30 @@ function withPatchedPrototype(showSettingsSelector: RuntimeValue, run: () => voi
 }
 
 const ROWS: SettingItem[] = [
+  { id: "theme", label: "Theme", currentValue: "nord-dark" },
   { id: "hide-thinking", label: "Hide thinking", currentValue: "false", values: ["true", "false"] },
+  { id: "editor-padding", label: "Editor padding", currentValue: "0", values: ["0", "1"] },
+  { id: "output-padding", label: "Output padding", currentValue: "1", values: ["0", "1"] },
   { id: "tui-mode", label: "TUI mode", currentValue: "regular", values: ["regular", "fullscreen"] },
+  { id: "autocompact", label: "Auto-compact", currentValue: "true", values: ["true", "false"] },
+  { id: "thinking", label: "Thinking level", currentValue: "high" },
+  {
+    id: "skill-commands",
+    label: "Skill commands",
+    currentValue: "true",
+    values: ["true", "false"],
+  },
+  { id: "future-row", label: "Future row", currentValue: "off", values: ["off", "on"] },
 ];
+
+function sectionRowIds(sections: PreferencesExtraSection[], id: string): string[] {
+  return (
+    sections
+      .find((section) => section.id === id)
+      ?.buildItems()
+      .map((item) => item.id) ?? []
+  );
+}
 
 test(
   "/settings opens the unified dialog and remembers the interactive mode",
@@ -75,12 +97,12 @@ test(
     patched.call(host);
 
     assert.deepEqual(opened, [host]);
-    assert.equal(buildNativeSettingsSection()?.id, "pi");
+    assert.ok(buildNativeSettingsSections().length > 0);
   }),
 );
 
 test(
-  "the Pi section serves Pi's own rows and forwards changes to Pi's handler",
+  "Pi's rows are spread over the panel by topic and unknown rows keep their own tab",
   withPatchedPrototype(fakeNativeSettings(ROWS, []), () => {
     const changes: [string, string][] = [];
     const prototype = prototypeRecord();
@@ -92,14 +114,41 @@ test(
       prototype["showSettingsSelector"],
     ).call(host);
 
-    const section = buildNativeSettingsSection();
-    assert.ok(section);
-    assert.deepEqual(
-      section.buildItems().map((item) => item.id),
-      ["hide-thinking", "tui-mode"],
-    );
-    assert.deepEqual(section.handleChange("hide-thinking", "true"), { kind: "update" });
-    assert.deepEqual(section.handleChange("tui-mode", "fullscreen"), { kind: "rebuild" });
+    const sections = buildNativeSettingsSections();
+
+    // Merged sections contribute rows to an existing tab and own none.
+    for (const [id, target] of [
+      ["pi:appearance", "appearance"],
+      ["pi:editor", "editor"],
+      ["pi:userMessages", "userMessages"],
+    ] as const) {
+      assert.equal(sections.find((section) => section.id === id)?.mergeInto, target);
+    }
+    for (const id of ["terminal", "session", "model", "tools", "pi"]) {
+      assert.equal(sections.find((section) => section.id === id)?.mergeInto, undefined);
+    }
+
+    assert.deepEqual(sectionRowIds(sections, "pi:appearance"), [
+      "piSourceHeader:appearance",
+      "theme",
+      "hide-thinking",
+    ]);
+    assert.deepEqual(sectionRowIds(sections, "pi:editor"), [
+      "piSourceHeader:editor",
+      "editor-padding",
+    ]);
+    // A section Pi owns needs no source header: its rows come first.
+    assert.deepEqual(sectionRowIds(sections, "terminal"), ["tui-mode"]);
+    assert.deepEqual(sectionRowIds(sections, "session"), ["autocompact"]);
+    assert.deepEqual(sectionRowIds(sections, "model"), ["thinking"]);
+    assert.deepEqual(sectionRowIds(sections, "tools"), ["skill-commands"]);
+    // A row no layout entry claims must stay reachable.
+    assert.deepEqual(sectionRowIds(sections, "pi"), ["future-row"]);
+
+    const appearance = sections.find((section) => section.id === "pi:appearance");
+    const terminal = sections.find((section) => section.id === "terminal");
+    assert.deepEqual(appearance?.handleChange("hide-thinking", "true"), { kind: "update" });
+    assert.deepEqual(terminal?.handleChange("tui-mode", "fullscreen"), { kind: "rebuild" });
     assert.deepEqual(changes, [
       ["hide-thinking", "true"],
       ["tui-mode", "fullscreen"],
@@ -123,13 +172,10 @@ test(
         prototypeRecord()["showSettingsSelector"],
       ).call(host);
 
-      const section = buildNativeSettingsSection();
-      assert.ok(section);
-      assert.deepEqual(
-        section.buildItems().map((item) => item.id),
-        ["piSettingsUnavailable"],
-      );
-      assert.deepEqual(section.handleChange("piSettingsUnavailable", "unavailable"), {
+      const sections = buildNativeSettingsSections();
+      assert.deepEqual(sectionRowIds(sections, "pi"), ["piSettingsUnavailable"]);
+      const fallback = sections.find((section) => section.id === "pi");
+      assert.deepEqual(fallback?.handleChange("piSettingsUnavailable", "unavailable"), {
         kind: "update",
       });
     },

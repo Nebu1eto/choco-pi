@@ -29,6 +29,25 @@ the style IDs are user-config values on disk.
 saves always use the same resolved file, so existing legacy files keep working
 untouched.
 
+### choco-pi change: mergeable host sections
+
+`PreferencesExtraSection` in `extensions/zentui/settings-command.ts` gained an
+optional `mergeInto`. A section that sets it contributes no tab: its rows are
+appended to the named section, built-in or host-provided. Supporting that
+needed three further edits in the same file:
+
+- `buildSectionItems` no longer takes the host sections; the new
+  `collectSectionItems` wraps it, appends every merged section's rows, and
+  records the owning section per row id.
+- `sectionOrder` and `sectionLabel` skip merged sections through
+  `standaloneExtras`, so a merged section never appears in the tab strip.
+- the settings-list `onChange` dispatches a row to its owner by row id before
+  the built-in id chain, replacing the trailing lookup that matched the active
+  section. Host rows must therefore keep ids distinct from the built-in ones.
+
+choco-pi uses this to spread Pi's and the Codex adapter's settings over the
+topical tabs instead of parking them in two catch-all sections.
+
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
 
 - Original source code: https://github.com/maddeye/pi-nord
@@ -52,6 +71,7 @@ so `"theme": "nord-dark"` resolves exactly as before.
 ## Updating
 
 - Extension: pull the wanted `pi-zentui` release, diff it against
-  `extensions/zentui/`, and re-apply the config-file-name change above.
+  `extensions/zentui/`, and re-apply the config-file-name and host-section
+  changes above.
 - Themes: `npm pack @maddeye/pi-nord@<version>`, replace `themes/*.json` and
   `LICENSE.pi-nord`, and record the new version, shasum, and date here.

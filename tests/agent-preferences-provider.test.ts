@@ -249,3 +249,101 @@ test(
     }
   },
 );
+
+test(
+  "a merged host section adds rows to an existing tab instead of its own",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    await realZentuiLoader();
+    assert.ok(ZENTUI_BUILD);
+    const module: Record<string, RuntimeValue> = await import(
+      pathToFileURL(path.resolve(ZENTUI_BUILD, "settings-command.js")).href
+    );
+    // SAFETY: the compiled package exports this factory.
+    const createPanel = module.createZentuiPreferencesComponent as (
+      deps: RuntimeValue,
+      options: RuntimeValue,
+    ) => {
+      render: (width: number) => string[];
+      handleInput: (data: string) => void;
+      getActiveSection: () => string;
+      dispose: () => void;
+    };
+
+    const changes: [string, string][] = [];
+    const notices: Notice[] = [];
+    const panel = createPanel(
+      {
+        sessionLifecycle: { defer: () => () => {} },
+        getConfig: () => ({
+          colors: {},
+          icons: { mode: "auto" },
+          components: {
+            selectorBorders: { enabled: true, style: "zentui", colorSource: "theme" },
+            editor: { enabled: true, style: "polished", colorSource: "theme", modelLabel: "id" },
+          },
+        }),
+        getActiveExtensionStatuses: () => new Map(),
+        requestRender: () => {},
+        settingsListTheme: {
+          label: (value: string) => value,
+          value: (value: string) => value,
+          description: (value: string) => value,
+          cursor: ">",
+          hint: (value: string) => value,
+        },
+      },
+      {
+        ctx: createCtx(notices),
+        tui: { requestRender: () => {} },
+        theme: {
+          fg: (_color: string, value: string) => value,
+          bold: (value: string) => value,
+        },
+        initialSection: "appearance",
+        extraSections: [
+          {
+            id: "host:appearance",
+            label: "Host",
+            mergeInto: "appearance",
+            buildItems: () => [
+              {
+                id: "hostAppearanceRow",
+                label: "Host appearance row",
+                currentValue: "off",
+                values: ["off", "on"],
+              },
+            ],
+            handleChange: (id: string, newValue: string) => {
+              changes.push([id, newValue]);
+              return { kind: "update" };
+            },
+          },
+        ],
+        onOutcome: () => {},
+      },
+    );
+
+    try {
+      const rendered = panel.render(160).join("\n");
+      assert.match(rendered, /Selector borders/, "the built-in rows must stay");
+      assert.match(rendered, /Host appearance row/, "the merged rows must render with them");
+      const tabs = panel.render(160)[1] ?? "";
+      assert.doesNotMatch(tabs, /Host/, "a merged section must not claim a tab");
+
+      // Four built-in appearance rows come first, then the merged row.
+      for (let index = 0; index < 4; index += 1) panel.handleInput("\x1b[B");
+      panel.handleInput("\r");
+      assert.deepEqual(changes, [["hostAppearanceRow", "on"]]);
+
+      panel.handleInput("\x1b[C");
+      assert.equal(
+        panel.getActiveSection(),
+        "editor",
+        "the merged section must not appear in the section order",
+      );
+    } finally {
+      panel.dispose();
+    }
+  },
+);

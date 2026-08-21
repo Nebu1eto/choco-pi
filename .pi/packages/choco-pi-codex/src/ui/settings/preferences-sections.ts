@@ -50,6 +50,8 @@ export type CodexSectionChange =
 export interface CodexPreferencesSection {
   id: string;
   label: string;
+  /** When set, the rows are appended to the named host section instead of owning a tab. */
+  mergeInto?: string;
   buildItems: () => SettingItem[];
   handleChange: (id: string, newValue: string) => CodexSectionChange;
 }
@@ -78,8 +80,69 @@ export interface CodexPreferencesDeps {
   getRunningConfig: () => CodexConversionConfig;
 }
 
-function headerItem(id: string, label: string, theme: Theme): SettingItem {
-  return { id, label: theme.fg("dim", label), currentValue: "" };
+/**
+ * Where each Codex row belongs in the preferences panel, by topic. A row a
+ * later adapter version adds is unlisted and falls back to its own Codex tab,
+ * so an upgrade never hides a setting.
+ */
+const CODEX_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[] }> = [
+  { section: "appearance", rows: ["toolRenaming", "compactTools", "codeModeDetails"] },
+  { section: "footer", rows: ["statusLine"] },
+  {
+    section: "model",
+    rows: [
+      EXECUTION_MODE_ITEM_ID,
+      "fast",
+      "cacheKeepalive",
+      "verbosity",
+      "transportHeader",
+      "responsesLite",
+      "forceCachedWebSockets",
+      "harnessIdentifierHeader",
+      "compactionHeader",
+      "responsesCompaction",
+      "v2UserMessageRetention",
+      "diagnosticsHeader",
+      "cacheDiagnosticsStatus",
+      "cacheDiagnosticsLog",
+    ],
+  },
+  {
+    section: "tools",
+    rows: [
+      "viewImageFallback",
+      "webRun",
+      "webSearchModel",
+      "imageGeneration",
+      "activateOnlyHeader",
+      "applyPatchOnly",
+      "viewImageOnly",
+      "webRunOnly",
+      "imageGenerationOnly",
+      "customRustBinariesHelp",
+      "customRustBinariesPath",
+    ],
+  },
+  {
+    section: "agent",
+    rows: [
+      "extensionMode",
+      "allProviders",
+      "additionalProviders",
+      "heavySystemPromptOverwrite",
+      SCOPE_ITEM_ID,
+      "editConfig",
+      ...ABOUT_LINKS.map(({ id }) => id),
+    ],
+  },
+];
+
+/**
+ * Marks where the Codex rows begin inside a section it shares with choco-ui or
+ * Pi rows, so the merged list still says which system stores the value.
+ */
+function sourceHeader(section: string, theme: Theme): SettingItem {
+  return { id: `codexSourceHeader:${section}`, label: theme.fg("dim", "Codex"), currentValue: "" };
 }
 
 function scopeLabel(scope: CodexConversionConfigScope): string {
@@ -104,17 +167,17 @@ function withInPlaceEditor(setting: ConfigSetting, path: string): ConfigSetting 
 }
 
 /**
- * Builds the Codex section of the preferences panel: every row `/codex` showed
- * across its General, Tools, OpenAI, Display, and About tabs, flattened into one
- * scrollable list with dim group headers.
+ * Spreads every row `/codex` showed across its General, Tools, OpenAI, Display,
+ * and About tabs over the preferences panel by topic. All sections share one
+ * draft and one scope, so a change made on any tab writes the same document.
  *
  * The Usage tab is deliberately left out: the host dialog already reports Codex
  * usage on its own Usage tab.
  */
-export function buildCodexPreferencesSection(
+export function buildCodexPreferencesSections(
   ctx: ExtensionContext,
   deps: CodexPreferencesDeps,
-): CodexPreferencesSection {
+): CodexPreferencesSection[] {
   let scope: CodexConversionConfigScope = hasFolderCodexConversionConfig(
     ctx.cwd,
     ctx.isProjectTrusted(),
@@ -155,11 +218,11 @@ export function buildCodexPreferencesSection(
       {
         item: {
           id: SCOPE_ITEM_ID,
-          label: "Settings",
+          label: "Codex settings scope",
           description:
             scope === "folder"
-              ? "Changes update this project only and leave global defaults unchanged."
-              : "Changes update global defaults. Projects with their own .pi/choco-pi-codex.json keep their settings.",
+              ? "Every Codex row on every tab updates this project only, leaving global defaults unchanged."
+              : "Every Codex row on every tab updates global defaults. Projects with their own .pi/choco-pi-codex.json keep their settings.",
           currentValue: scopeLabel(scope),
           values: ctx.isProjectTrusted() ? [DEFAULTS_LABEL, PROJECT_LABEL] : [DEFAULTS_LABEL],
         },
@@ -180,13 +243,9 @@ export function buildCodexPreferencesSection(
       ...buildConfigSettings("adapter", draft, theme, scopePath()).map((setting) =>
         setting.action === "edit-config" ? withInPlaceEditor(setting, scopePath()) : setting,
       ),
-      { item: headerItem("codexToolsHeader", "Tools", theme) },
       ...buildConfigSettings("tools", draft, theme, scopePath()),
-      { item: headerItem("codexOpenAIHeader", "OpenAI", theme) },
       ...buildConfigSettings("openai", draft, theme, scopePath()),
-      { item: headerItem("codexDisplayHeader", "Display", theme) },
       ...buildConfigSettings("display", draft, theme, scopePath()),
-      { item: headerItem("codexAboutHeader", "About", theme) },
       ...ABOUT_LINKS.map(({ id, label, url }) => ({
         item: {
           id,
@@ -217,47 +276,76 @@ export function buildCodexPreferencesSection(
     return { kind: "rebuild" };
   };
 
-  return {
-    id: CODEX_SECTION_ID,
-    label: "Codex",
-    buildItems(): SettingItem[] {
-      draft = readDraft();
-      return buildSettings().map(({ item }) => item);
-    },
-    handleChange(id, newValue): CodexSectionChange {
-      if (id === SCOPE_ITEM_ID) return changeScope(newValue);
+  const handleChange = (id: string, newValue: string): CodexSectionChange => {
+    if (id === SCOPE_ITEM_ID) return changeScope(newValue);
 
-      const link = ABOUT_LINKS.find((candidate) => candidate.id === id);
-      if (link) {
-        openExternalUrl(link.url);
-        ctx.ui.notify(link.message, "info");
-        return { kind: "update" };
-      }
+    const link = ABOUT_LINKS.find((candidate) => candidate.id === id);
+    if (link) {
+      openExternalUrl(link.url);
+      ctx.ui.notify(link.message, "info");
+      return { kind: "update" };
+    }
 
-      const definition = buildSettings().find(({ item }) => item.id === id);
-      if (definition?.action === "edit-config") {
-        return { kind: "outcome", outcome: CODEX_EDIT_CONFIG_OUTCOME };
-      }
-      if (definition?.action === "project-cache-keepalive") {
-        const previousConfig = deps.getRunningConfig();
-        const result = setProjectCodexCacheKeepalive(
-          ctx.cwd,
-          ctx.isProjectTrusted(),
-          newValue === "on",
-        );
-        if (result.ok) deps.applyEffectiveConfig(ctx, previousConfig);
-        else ctx.ui.notify(`Failed to save project cache keepalive: ${result.error}`, "error");
-        draft = readDraft();
-        return { kind: "rebuild" };
-      }
-      if (!definition?.update) return { kind: "update" };
-
-      const nextConfig = definition.update(newValue, draft);
-      deps.saveAndApply(ctx, scope, nextConfig);
+    const definition = buildSettings().find(({ item }) => item.id === id);
+    if (definition?.action === "edit-config") {
+      return { kind: "outcome", outcome: CODEX_EDIT_CONFIG_OUTCOME };
+    }
+    if (definition?.action === "project-cache-keepalive") {
+      const previousConfig = deps.getRunningConfig();
+      const result = setProjectCodexCacheKeepalive(
+        ctx.cwd,
+        ctx.isProjectTrusted(),
+        newValue === "on",
+      );
+      if (result.ok) deps.applyEffectiveConfig(ctx, previousConfig);
+      else ctx.ui.notify(`Failed to save project cache keepalive: ${result.error}`, "error");
       draft = readDraft();
       return { kind: "rebuild" };
-    },
+    }
+    if (!definition?.update) return { kind: "update" };
+
+    const nextConfig = definition.update(newValue, draft);
+    deps.saveAndApply(ctx, scope, nextConfig);
+    draft = readDraft();
+    return { kind: "rebuild" };
   };
+
+  const rowsFor = (section: string): SettingItem[] => {
+    draft = readDraft();
+    const wanted = CODEX_ROW_LAYOUT.find((entry) => entry.section === section)?.rows ?? [];
+    const byId = new Map(buildSettings().map(({ item }) => [item.id, item]));
+    const placed: SettingItem[] = [];
+    for (const id of wanted) {
+      const item = byId.get(id);
+      if (item) placed.push(item);
+    }
+    return placed.length > 0 ? [sourceHeader(section, ctx.ui.theme), ...placed] : [];
+  };
+
+  const unclaimedRows = (): SettingItem[] => {
+    draft = readDraft();
+    const claimed = new Set(CODEX_ROW_LAYOUT.flatMap((entry) => entry.rows));
+    return buildSettings()
+      .map(({ item }) => item)
+      .filter((item) => !claimed.has(item.id));
+  };
+
+  const merged = CODEX_ROW_LAYOUT.map(({ section }) => ({
+    id: `${CODEX_SECTION_ID}:${section}`,
+    label: "Codex",
+    mergeInto: section,
+    buildItems: () => rowsFor(section),
+    handleChange,
+  }));
+
+  const fallback: CodexPreferencesSection = {
+    id: CODEX_SECTION_ID,
+    label: "Codex",
+    buildItems: unclaimedRows,
+    handleChange,
+  };
+
+  return [...merged, ...(unclaimedRows().length > 0 ? [fallback] : [])];
 }
 
 /**
@@ -320,11 +408,11 @@ async function runEditConfigOutcome(
  */
 export function registerCodexPreferencesProvider(deps: CodexPreferencesDeps): void {
   const provider: CodexPreferencesProvider = {
-    buildSections: (ctx) => [buildCodexPreferencesSection(ctx, deps)],
+    buildSections: (ctx) => buildCodexPreferencesSections(ctx, deps),
     runOutcome: async (outcome, ctx) => {
       if (outcome !== CODEX_EDIT_CONFIG_OUTCOME) return undefined;
       await runEditConfigOutcome(ctx, deps);
-      return { section: CODEX_SECTION_ID, focusId: "editConfig" };
+      return { section: "agent", focusId: "editConfig" };
     },
   };
   Object.defineProperty(globalThis, CODEX_PREFERENCES_PROVIDER_SYMBOL, {
