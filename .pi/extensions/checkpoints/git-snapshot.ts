@@ -116,17 +116,22 @@ async function optionalGit(
   }
 }
 
-async function gitWithInput(cwd: string, args: readonly string[], input: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+async function gitWithInput(cwd: string, args: readonly string[], input: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
     const child = spawn("git", [...args], { cwd, env: identityEnvironment() });
+    let stdout = "";
     let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
     });
     child.on("error", (error) => reject(error));
     child.on("close", (code) => {
-      if (code === 0) resolve();
+      if (code === 0) resolve(stdout);
       else reject(new Error(stderr.trim() || `git ${args[0] ?? ""} exited with code ${code}`));
     });
     child.stdin.end(input);
@@ -249,7 +254,7 @@ export async function captureGitSnapshot(
       root,
       options.ref,
       worktreeTree,
-      metaCommit,
+      [metaCommit],
       options.message,
     );
 
@@ -285,17 +290,17 @@ async function refTip(root: string, ref: string): Promise<string | undefined> {
 async function extendCheckpointChain(
   root: string,
   ref: string,
-  worktreeTree: string,
-  metaCommit: string,
+  tree: string,
+  parents: readonly string[],
   message: string,
 ): Promise<string> {
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const parent = await refTip(root, ref);
-    const parents = [metaCommit, ...(parent ? [parent] : [])];
+    const allParents = [...parents, ...(parent ? [parent] : [])];
     const commit = await git(root, [
       "commit-tree",
-      worktreeTree,
-      ...parents.flatMap((value) => ["-p", value]),
+      tree,
+      ...allParents.flatMap((value) => ["-p", value]),
       "-m",
       message,
     ]);
@@ -521,6 +526,106 @@ export const CHECKPOINT_REF_PREFIX = "refs/choco-pi/checkpoints";
 export function sessionCheckpointRef(sessionId: string): string {
   const segment = sessionId.replaceAll(/[^A-Za-z0-9._-]/g, "-").slice(0, 128) || "session";
   return `${CHECKPOINT_REF_PREFIX}/${segment}`;
+}
+
+/** Objects a session's own entries depend on, whoever recorded them. */
+export type CheckpointAnchors = {
+  /** Checkpoint commits; each one carries its whole chain with it. */
+  commits: readonly string[];
+  /** Trees from checkpoints predating chained commits, which anchor nothing. */
+  trees: readonly string[];
+};
+
+/** Keeps only the ids Git can still resolve, in one batch lookup. */
+async function existingObjects(root: string, ids: readonly string[]): Promise<string[]> {
+  if (ids.length === 0) return [];
+  const report = await gitWithInput(
+    root,
+    ["cat-file", "--batch-check=%(objectname) %(objecttype)"],
+    `${ids.join("\n")}\n`,
+  ).catch(() => "");
+  const alive = new Set<string>();
+  for (const line of report.split("\n")) {
+    const [name, type] = line.trim().split(" ");
+    if (name && type && type !== "missing") alive.add(name);
+  }
+  return ids.filter((id) => alive.has(id));
+}
+
+/**
+ * Re-anchors checkpoints a session inherited rather than recorded.
+ *
+ * A forked session carries its parent's checkpoint entries, and a session
+ * resumed after its own ref expired carries its own. Both cases reference
+ * objects that only some other ref keeps alive, so the picker would offer a
+ * rollback whose objects `git gc` may already have taken. Pointing this
+ * session's ref at them makes the fork independent of the parent's retention.
+ *
+ * @returns the adoption commit, or undefined when there was nothing to adopt.
+ */
+export async function adoptCheckpoints(
+  cwd: string,
+  options: { ref: string; anchors: CheckpointAnchors },
+): Promise<string | undefined> {
+  const { commits, trees } = options.anchors;
+  if (commits.length === 0 && trees.length === 0) return undefined;
+  const repository = await openRepository(cwd);
+  const { root } = repository;
+
+  const liveCommits = await existingObjects(root, [...new Set(commits)]);
+  const liveTrees = await existingObjects(root, [...new Set(trees)]);
+  if (liveCommits.length === 0 && liveTrees.length === 0) return undefined;
+
+  const tip = await refTip(root, options.ref);
+  // One chain collapses to a single parent; unrelated chains keep one each.
+  const minimal =
+    liveCommits.length > 1
+      ? ((
+          await optionalGit(root, [
+            "merge-base",
+            "--independent",
+            ...liveCommits,
+            ...(tip ? [tip] : []),
+          ])
+        )
+          ?.split("\n")
+          .filter(Boolean) ?? liveCommits)
+      : liveCommits;
+  // Nothing new to hold when the ref already reaches every adopted commit.
+  if (liveTrees.length === 0 && tip && minimal.length === 1 && minimal[0] === tip) return undefined;
+
+  return withScratchDirectory(repository, "choco-pi-adopt-", async (scratch) => {
+    const adoptedTree = await writeAdoptedTree(repository, scratch, liveTrees);
+    return extendCheckpointChain(
+      root,
+      options.ref,
+      adoptedTree,
+      minimal.filter((commit) => commit !== tip),
+      "choco-pi checkpoint adoption",
+    );
+  });
+}
+
+/** Holds trees that no commit references, so they survive as ordinary content. */
+async function writeAdoptedTree(
+  repository: GitRepository,
+  scratch: string,
+  trees: readonly string[],
+): Promise<string> {
+  // `write-tree` on an empty index names the empty tree without writing it, and
+  // a commit pointing at an object Git never stored fails `git fsck`.
+  if (trees.length === 0) {
+    return (
+      await gitWithInput(repository.root, ["hash-object", "-w", "-t", "tree", "--stdin"], "")
+    ).trim();
+  }
+  const adoptIndex = path.join(scratch, "adopt");
+  const environment = identityEnvironment(adoptIndex);
+  await git(repository.root, ["read-tree", "--empty"], environment);
+  for (const [position, tree] of trees.entries()) {
+    await git(repository.root, ["read-tree", `--prefix=adopted/${position}/`, tree], environment);
+  }
+  return git(repository.root, ["write-tree"], environment);
 }
 
 const DEFAULT_RETENTION_DAYS = 14;

@@ -8,6 +8,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import {
+  adoptCheckpoints,
   captureGitSnapshot,
   CheckpointError,
   CHECKPOINT_RETENTION_ENV,
@@ -235,6 +236,79 @@ test("captures racing on one ref all land in the same chain", async (t) => {
       "a lost compare-and-swap must retry rather than drop the checkpoint",
     );
   }
+});
+
+test("a fork can still roll back after the parent session's ref is gone", async (t) => {
+  const root = await createRepository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  await writeFile(path.join(root, "tracked.txt"), "before the fork\n");
+  const parentTurn = await capture(root);
+  await writeFile(path.join(root, "tracked.txt"), "after the fork\n");
+  const parentLatest = await capture(root, parentTurn);
+
+  // The forked session inherits both entries and opens its own ref.
+  const forkRef = sessionCheckpointRef("forked-session");
+  await adoptCheckpoints(root, {
+    ref: forkRef,
+    anchors: { commits: [parentTurn.commit ?? "", parentLatest.commit ?? ""], trees: [] },
+  });
+
+  await git(root, "update-ref", "-d", REF);
+  assert.equal(
+    await git(root, "fsck", "--unreachable", "--no-reflogs"),
+    "",
+    "the fork's ref holds the inherited checkpoints on its own",
+  );
+
+  // The rollback the picker would run for the inherited turn still works.
+  await writeFile(path.join(root, "tracked.txt"), "diverged in the fork\n");
+  const live = await captureGitSnapshot(root, { ref: forkRef, message: "fork turn" });
+  await restoreSnapshotFiles(root, parentTurn, live);
+  assert.equal(await readFile(path.join(root, "tracked.txt"), "utf8"), "before the fork\n");
+});
+
+test("adoption anchors checkpoints that predate chained commits", async (t) => {
+  const root = await createRepository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  await writeFile(path.join(root, "tracked.txt"), "legacy state\n");
+  const legacy = await capture(root);
+  const legacyTree = legacy.worktreeTree;
+  await git(root, "update-ref", "-d", REF);
+
+  const forkRef = sessionCheckpointRef("legacy-reader");
+  const adopted = await adoptCheckpoints(root, {
+    ref: forkRef,
+    anchors: { commits: [], trees: [legacyTree] },
+  });
+
+  assert.ok(adopted, "a tree-only checkpoint still gets an anchor");
+  const reachable = await git(root, "rev-list", "--objects", forkRef);
+  assert.match(
+    reachable,
+    new RegExp(legacyTree),
+    "the recorded tree hangs off this session's own ref",
+  );
+  assert.equal(
+    await git(root, "cat-file", "blob", `${legacyTree}:tracked.txt`),
+    "legacy state",
+    "the recorded content survives the parent ref",
+  );
+});
+
+test("adoption is a no-op when the ref already reaches the checkpoints", async (t) => {
+  const root = await createRepository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const first = await capture(root);
+  const adopted = await adoptCheckpoints(root, {
+    ref: REF,
+    anchors: { commits: [first.commit ?? ""], trees: [] },
+  });
+
+  assert.equal(adopted, undefined);
+  assert.equal(await git(root, "rev-parse", REF), first.commit);
 });
 
 test("summarizeChanges counts files and lines between two snapshots", async (t) => {

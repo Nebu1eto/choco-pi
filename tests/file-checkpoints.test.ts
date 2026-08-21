@@ -3,6 +3,7 @@ import test from "node:test";
 import type { SessionEntry, Theme } from "@earendil-works/pi-coding-agent";
 import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import {
+  checkpointAnchorsFromEntries,
   renderCheckpointPicker,
   resolvePickerKey,
   restoreTurn,
@@ -138,6 +139,36 @@ test("checkpoints written before the index blob existed still load", () => {
   const [turn] = sessionTurnsFromEntries(entries);
   assert.equal(turn?.checkpoint?.worktreeTree, "worktree-tree");
   assert.equal(turn?.checkpoint?.indexBlob, undefined);
+});
+
+test("anchors cover every checkpoint in the file, including abandoned branches", () => {
+  const legacy = {
+    version: 1 as const,
+    ref: "refs/choco-pi/checkpoints/old",
+    indexTree: "legacy-index-tree",
+    worktreeTree: "legacy-worktree-tree",
+    timestamp: "2026-08-13T00:00:00.000Z",
+    turnIndex: 0,
+    label: "Legacy prompt",
+  };
+  const entries = [
+    entry({ id: "c1", type: "custom", customType: "choco-pi:file-checkpoint", data: checkpoint }),
+    entry({ id: "user-1", type: "message", message: { role: "user", content: "kept" } }),
+    // A mid-turn checkpoint and one on a branch the fork walked away from: both
+    // are unreachable from the active branch yet still referenced by the file.
+    entry({
+      id: "c2",
+      type: "custom",
+      customType: "choco-pi:file-checkpoint",
+      data: { ...checkpoint, commit: "abandoned-commit" },
+    }),
+    entry({ id: "c3", type: "custom", customType: "choco-pi:file-checkpoint", data: legacy }),
+  ];
+
+  assert.deepEqual(checkpointAnchorsFromEntries(entries), {
+    commits: ["commit-1", "abandoned-commit"],
+    trees: ["legacy-worktree-tree", "legacy-index-tree"],
+  });
 });
 
 test("the picker maps its action keys and navigation keys", () => {

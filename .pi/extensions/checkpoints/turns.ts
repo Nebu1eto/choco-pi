@@ -6,7 +6,12 @@ import {
   propertiesWhen,
   type RuntimeValue,
 } from "../lib/runtime-values.ts";
-import { summarizeChanges, type ChangeSummary, type GitSnapshot } from "./git-snapshot.ts";
+import {
+  summarizeChanges,
+  type ChangeSummary,
+  type CheckpointAnchors,
+  type GitSnapshot,
+} from "./git-snapshot.ts";
 
 export const CHECKPOINT_ENTRY = "choco-pi:file-checkpoint";
 export const RESTORE_ENTRY = "choco-pi:file-checkpoint-restored";
@@ -138,6 +143,35 @@ export function turnCheckpointsFromEntries(entries: readonly SessionEntry[]): Tu
         ]
       : [],
   );
+}
+
+/**
+ * The Git objects this branch's checkpoints depend on.
+ *
+ * A forked session inherits entries whose objects only the parent session's ref
+ * keeps alive, so the caller anchors these under the new session's own ref.
+ * Chained checkpoints contribute their commit, which carries earlier ones with
+ * it; checkpoints written before chaining existed contribute their trees.
+ *
+ * Pass every entry in the session file rather than the active branch: a fork
+ * keeps the abandoned branches too, and navigating back to one must not find
+ * checkpoints whose objects were collected in the meantime.
+ */
+export function checkpointAnchorsFromEntries(entries: readonly SessionEntry[]): CheckpointAnchors {
+  const commits = new Set<string>();
+  const trees = new Set<string>();
+  for (const entry of entries) {
+    if (entry.type !== "custom" || entry.customType !== CHECKPOINT_ENTRY) continue;
+    const checkpoint = parseCheckpoint(entry.data);
+    if (!checkpoint) continue;
+    if (checkpoint.commit) {
+      commits.add(checkpoint.commit);
+      continue;
+    }
+    trees.add(checkpoint.worktreeTree);
+    if (checkpoint.indexTree) trees.add(checkpoint.indexTree);
+  }
+  return { commits: [...commits], trees: [...trees] };
 }
 
 /**

@@ -174,7 +174,7 @@ packages/api/src/AGENTS.md
 
 `/rewind`와 `/fork`는 현재 branch의 user turn 목록을 보여 주는 동일한 picker를 엽니다. `r`은 파일을 그대로 둔 채 대화만 해당 turn으로 rewind하고, `b`는 대화와 파일을 함께 rollback하며, `f`는 그 turn에서 새 session을 fork합니다. Enter를 누르면 dialog에서 고를 수 있습니다. rollback은 먼저 안전 checkpoint를 만들고 그 commit을 알려 줍니다. 파일과 index는 복원하되 `HEAD`는 옮기지 않으며, 선택한 turn 이후에 commit이 생긴 경우에는 먼저 확인을 받습니다. checkpoint가 없는 turn도 rewind와 fork 대상으로 남으므로 Git이 없는 작업 트리에서도 picker가 동작합니다. ignored file은 건드리지 않습니다.
 
-session마다 `refs/choco-pi/checkpoints/` 아래 ref 하나를 두고 checkpoint를 chain으로 이어 붙이며, 바뀐 것이 없는 turn은 직전 checkpoint commit을 그대로 재사용합니다. 14일 동안 갱신되지 않은 ref는 session 시작 시 정리해 `git gc`가 object를 회수할 수 있게 합니다. 이 기간은 `CHOCO_PI_CHECKPOINT_RETENTION_DAYS`로 조정하고, `0`을 주면 유휴 checkpoint를 즉시 모두 회수합니다.
+session마다 `refs/choco-pi/checkpoints/` 아래 ref 하나를 두고 checkpoint를 chain으로 이어 붙이며, 바뀐 것이 없는 turn은 직전 checkpoint commit을 그대로 재사용합니다. fork, clone, 자기 ref가 만료된 뒤의 resume처럼 기존 entry에서 시작한 session은 그 checkpoint를 자기 ref 아래로 넘겨받습니다. 그래서 물려받은 turn으로 rollback할 때 원래 기록한 session에 의존하지 않습니다. 14일 동안 갱신되지 않은 ref는 session 시작 시 정리해 `git gc`가 object를 회수할 수 있게 합니다. 이 기간은 `CHOCO_PI_CHECKPOINT_RETENTION_DAYS`로 조정하고, `0`을 주면 유휴 checkpoint를 즉시 모두 회수합니다.
 
 [`review`](.pi/skills/review/SKILL.md)와 [`.pi/review-policy.md`](.pi/review-policy.md)는 `/review-agent`가 수행하는 수정 없는 적대적 리뷰 절차입니다. reviewer는 정확한 diff나 revision을 받아 가정을 반증하고, 재현 가능하거나 결정적으로 추적한 finding만 보고합니다. 리뷰 요청만으로 수정 권한이 생기지 않습니다.
 
