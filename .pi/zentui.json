@@ -82,7 +82,7 @@
         ]
       },
       "segments": {
-        "tool": true,
+        "tool": false,
         "elapsed": true,
         "thought": false,
         "tokens": true
@@ -148,7 +148,9 @@
           "extensionStatuses": {
             "defaultPlacement": "right",
             "placements": {
-              "choco-pi-lsp": "right"
+              "subagents": "off",
+              "mcp": "off",
+              "choco-pi-lsp": "off"
             },
             "colorModes": {
               "choco-pi-lsp": "original"
