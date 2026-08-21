@@ -1564,7 +1564,8 @@ export default function (pi: ExtensionAPI) {
         description:
           "Opt-in only — fire later instead of now. Omit to run immediately (the default, almost always correct). " +
           'Formats: 6-field cron ("0 0 9 * * 1" = 9am Mon), interval ("5m"/"1h"), one-shot ("+10m" or ISO). ' +
-          "Forces run_in_background; incompatible with inherit_context and resume. Returns job ID.",
+          "A scheduled job always runs in the background, so run_in_background: false is refused alongside it. " +
+          "Incompatible with inherit_context and resume. Returns job ID.",
       }),
     ),
   };
@@ -1601,7 +1602,8 @@ Custom agents: .pi/agents/<name>.md (project) or ${getAgentDir()}/agents/<name>.
 
 Notes:
 - description: 3-5 words (shown in UI). Prompts must be self-contained — the agent has not seen this conversation.
-- Parallel work: one message, multiple Agent calls, run_in_background: true on each. You are notified when background agents finish — never poll or sleep.
+- Default to run_in_background: true. Omitting it runs the agent in the foreground, which blocks this conversation until the agent finishes; keep a call in the foreground only when it is short and your next step cannot proceed without its result.
+- Parallel work: one message, multiple Agent calls, run_in_background: true on each. You are notified when background agents finish — never poll or sleep; get_subagent_result retrieves each result.
 - The result is not shown to the user — summarize it for them. Verify an agent's claimed code changes before reporting work done.
 - resume continues a previous agent by ID; steer_subagent messages a running one.${isolationCompactGuideline}`;
 
@@ -1621,11 +1623,11 @@ If the target is already known, use a direct tool — \`read\` for a known path,
 ## Usage notes
 
 - Always include a short (3-5 word) description summarizing what the agent will do (shown in UI).
+- Pass run_in_background: true by default. A foreground call holds this conversation until the agent finishes, so the user cannot steer you while it runs — and the parameter is false when omitted, so background is something you must ask for explicitly. Keep a call in the foreground only when it is short and your very next step genuinely cannot proceed without its result.
+- A background call returns an agent ID, and you are notified when it completes — do NOT poll or sleep waiting for it. Continue with other work or respond to the user, then read the result with get_subagent_result when the notification arrives. Backgrounding defers the result, not your responsibility for it.
 - When you launch multiple agents for independent work, send them in a single message with multiple tool uses, with run_in_background: true on each, so they run concurrently. If the user specifies that they want agents run "in parallel", you MUST send a single message with multiple tool calls. Foreground calls run sequentially — only one executes at a time.
-- When the agent is done, it returns a single message back to you. The result is not visible to the user — to show the user, send a text message with a concise summary.
+- However you get it, an agent's answer comes back to you and not to the user — to show the user, send a text message with a concise summary.
 - Trust but verify: an agent's summary describes what it intended to do, not necessarily what it did. When an agent writes or edits code, check the actual changes before reporting work as done.
-- Use run_in_background for work you don't need immediately. You will be notified when it completes — do NOT poll or sleep waiting for it. Continue with other work or respond to the user instead.
-- Foreground vs background: use foreground (default) when you need the agent's results before you can proceed. Use background when you have genuinely independent work to do in parallel.
 - Use resume with an agent ID to continue a previous agent's work. A new (non-resume) Agent call starts a fresh agent with no memory of prior runs, so the prompt must be self-contained.
 - Use steer_subagent to send mid-run messages to a running background agent.
 - Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, etc.), since it is not aware of the user's intent.
@@ -1755,7 +1757,7 @@ Terse command-style prompts produce shallow, generic work.
       run_in_background: Type.Optional(
         Type.Boolean({
           description:
-            "Set to true to run in background. Returns agent ID immediately. You will be notified on completion.",
+            "Prefer true. True runs the agent in the background: it returns an agent ID immediately, leaves this conversation steerable while the agent works, and notifies you on completion (read the result with get_subagent_result). Omitted or false runs the agent in the foreground, which blocks the conversation until it finishes and returns its output inline — reserve that for a short call whose result you need before you can do anything else.",
         }),
       ),
       resume: Type.Optional(
