@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { splitMcpCallHeadline } from "../.pi/packages/choco-pi-mcp/tool-call-headline.ts";
+import {
+  splitMcpCallHeadline,
+  styleMcpCallLines,
+} from "../.pi/packages/choco-pi-mcp/tool-call-headline.ts";
 
 test("a proxied call reads as an MCP server and its tool", () => {
   assert.deepEqual(splitMcpCallHeadline("mcp call save_document @ linear"), {
@@ -33,4 +36,19 @@ test("a server-only call keeps a bare MCP header", () => {
     header: "MCP",
     detail: "save_document",
   });
+});
+
+test("multi-line JSON args keep the branch indent on every line", () => {
+  const theme = { fg: (_name: string, text: string) => text };
+  const styled = styleMcpCallLines(
+    ["mcp call mcp__linear_get_document", '{\n  "id": "02ba"\n}'],
+    theme,
+  );
+  assert.deepEqual(styled, [
+    "• MCP linear",
+    "  └ get_document",
+    "    {",
+    '      "id": "02ba"',
+    "    }",
+  ]);
 });

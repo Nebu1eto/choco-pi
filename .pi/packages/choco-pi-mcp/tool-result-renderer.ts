@@ -1,7 +1,7 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { isObjectValue, isStringValue, type McpObject } from "./protocol-values.js";
-import { splitMcpCallHeadline } from "./tool-call-headline.js";
+import { styleMcpCallLines } from "./tool-call-headline.js";
 
 type McpToolResultDetails = McpObject & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
@@ -262,18 +262,7 @@ export function formatMcpDirectToolCallLines(
  * with a bold header, then detail rows under a `└` branch.
  */
 function renderToolCallLines(lines: string[], theme?: RenderTheme) {
-  const activeTheme = theme ?? plainTheme;
-  const bold = (text: string) => (activeTheme.bold ? activeTheme.bold(text) : text);
-  const [title = "mcp", ...rest] = lines;
-  const { header, detail } = splitMcpCallHeadline(title);
-  const branchLines = [...(detail === undefined ? [] : [detail]), ...rest];
-  const styled = [`${activeTheme.fg("dim", "•")} ${bold(header)}`];
-  for (const [index, line] of branchLines.entries()) {
-    const prefix = index === 0 ? "  └ " : "    ";
-    const body = index === 0 ? activeTheme.fg("accent", line) : activeTheme.fg("muted", line);
-    styled.push(`${activeTheme.fg("dim", prefix)}${body}`);
-  }
-  return new Text(styled.join("\n"), 0, 0);
+  return new Text(styleMcpCallLines(lines, theme ?? plainTheme).join("\n"), 0, 0);
 }
 
 function formatCompactInputPreview(
