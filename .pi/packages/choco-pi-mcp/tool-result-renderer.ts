@@ -1,6 +1,7 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { isObjectValue, isStringValue, type McpObject } from "./protocol-values.js";
+import { splitMcpCallHeadline } from "./tool-call-headline.js";
 
 type McpToolResultDetails = McpObject & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
@@ -256,15 +257,23 @@ export function formatMcpDirectToolCallLines(
   return [displayName, formatJsonish(args, maxInputChars)];
 }
 
+/**
+ * Renders a call in the same shape as the other choco-pi tools: a dim bullet
+ * with a bold header, then detail rows under a `└` branch.
+ */
 function renderToolCallLines(lines: string[], theme?: RenderTheme) {
   const activeTheme = theme ?? plainTheme;
+  const bold = (text: string) => (activeTheme.bold ? activeTheme.bold(text) : text);
   const [title = "mcp", ...rest] = lines;
-  const styledTitle = activeTheme.fg(
-    "toolTitle",
-    activeTheme.bold ? activeTheme.bold(title) : title,
-  );
-  const styledRest = rest.map((line) => activeTheme.fg("muted", line));
-  return new Text([styledTitle, ...styledRest].join("\n"), 0, 0);
+  const { header, detail } = splitMcpCallHeadline(title);
+  const branchLines = [...(detail === undefined ? [] : [detail]), ...rest];
+  const styled = [`${activeTheme.fg("dim", "•")} ${bold(header)}`];
+  for (const [index, line] of branchLines.entries()) {
+    const prefix = index === 0 ? "  └ " : "    ";
+    const body = index === 0 ? activeTheme.fg("accent", line) : activeTheme.fg("muted", line);
+    styled.push(`${activeTheme.fg("dim", prefix)}${body}`);
+  }
+  return new Text(styled.join("\n"), 0, 0);
 }
 
 function formatCompactInputPreview(
