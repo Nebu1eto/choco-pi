@@ -157,7 +157,31 @@ test("injection block covers each settings combination and wraps markers", () =>
   assert.ok(!styleOnly?.includes("Preferred response language"));
 });
 
-test("language directive keeps explicit per-message requests ahead of the setting", () => {
+test("every block yields to explicit requests and to path-scoped project instructions", () => {
+  const resolver = (name: string) =>
+    name === "concise" ? styleOf("concise", "Be brief.") : undefined;
+  const precedence = "an explicit request in the user's message";
+  const projectRule = "path-scoped project instruction";
+
+  for (const preferences of [
+    { language: "Korean" },
+    { style: "concise" },
+    { language: "Korean", style: "concise" },
+  ]) {
+    const block = buildAgentPreferencesBlock(preferences, resolver);
+    assert.ok(block?.includes(precedence), `${JSON.stringify(preferences)} must yield to requests`);
+    assert.ok(
+      block?.includes(projectRule),
+      `${JSON.stringify(preferences)} must yield to projects`,
+    );
+  }
+});
+
+test("the language directive leaves commit messages to the repository", () => {
   const block = buildAgentPreferencesBlock({ language: "Korean" }, () => undefined);
-  assert.ok(block?.includes("an explicit language request in the user's message still wins"));
+  assert.ok(
+    block?.includes(
+      "Commit messages follow the language established by the repository's own history and policy, not this setting.",
+    ),
+  );
 });
