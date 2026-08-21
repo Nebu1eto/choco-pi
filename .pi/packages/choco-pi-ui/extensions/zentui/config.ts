@@ -62,28 +62,24 @@ export type MinimalistContextFormat = "percent" | "percent-total";
 export type EditorBorderColorMode = "static" | "adaptive";
 
 /**
- * Blank rows inside a frame. The editor only ever carried a row under its top
- * border, so it has no bottom option; a message frame can pad either end.
+ * Blank rows inside a frame: under the top border, above the closing row, or
+ * both. In the editor the bottom row is the gap between the input and its
+ * metadata line; in a message frame it is the row above the closing rule.
  */
-export type EditorPaddingRows = "none" | "top";
+export type PaddingRows = "none" | "top" | "bottom" | "both";
 
 /** Working-line label overrides, keyed by registered tool name. */
 export type ToolLabelOverrides = Readonly<Record<string, string>>;
-export type UserMessagePaddingRows = "none" | "top" | "bottom" | "both";
 
-export function isEditorPaddingRows(value: BoundaryValue): value is EditorPaddingRows {
-  return value === "none" || value === "top";
-}
-
-export function isUserMessagePaddingRows(value: BoundaryValue): value is UserMessagePaddingRows {
+export function isPaddingRows(value: BoundaryValue): value is PaddingRows {
   return value === "none" || value === "top" || value === "bottom" || value === "both";
 }
 
-export function padsTop(rows: EditorPaddingRows | UserMessagePaddingRows): boolean {
+export function padsTop(rows: PaddingRows): boolean {
   return rows === "top" || rows === "both";
 }
 
-export function padsBottom(rows: UserMessagePaddingRows): boolean {
+export function padsBottom(rows: PaddingRows): boolean {
   return rows === "bottom" || rows === "both";
 }
 export type CompactFooterMaxLines = 1 | 2 | 3 | "unlimited";
@@ -176,7 +172,7 @@ export type EditorComponentConfig = {
   modelLabel: ModelLabelSource;
   viewportIndicators: boolean;
   /** Blank rows rendered inside the editor frame. */
-  paddingRows: EditorPaddingRows;
+  paddingRows: PaddingRows;
   styles: {
     opencode: PolishedEditorStyleConfig;
     "opencode-copy-friendly": PolishedCopyFriendlyEditorStyleConfig;
@@ -194,7 +190,7 @@ export type UserMessagesComponentConfig = {
   style: UserMessageStyle;
   colorSource: ColorSource;
   /** Blank rows rendered inside the message frame. */
-  paddingRows: UserMessagePaddingRows;
+  paddingRows: PaddingRows;
   styles: {
     framed: FramedUserMessageStyleConfig;
     "framed-copy-friendly": FramedCopyFriendlyUserMessageStyleConfig;
@@ -527,7 +523,8 @@ const defaultComponents: ComponentsConfig = {
     borderColorMode: "static",
     modelLabel: "id",
     viewportIndicators: true,
-    paddingRows: "none",
+    // The gap above the metadata line is the shipped look; the top row is not.
+    paddingRows: "bottom",
     styles: {
       opencode: { metadataFormat: DEFAULT_EDITOR_METADATA_FORMAT },
       "opencode-copy-friendly": { metadataFormat: DEFAULT_EDITOR_METADATA_FORMAT },
@@ -1304,7 +1301,7 @@ function resolveComponents(config: ConfigRecord): ComponentsConfig {
         resolvedValue(editor, "viewportIndicators", features, "viewportIndicators"),
         defaultComponents.editor.viewportIndicators,
       ),
-      paddingRows: isEditorPaddingRows(editor.paddingRows)
+      paddingRows: isPaddingRows(editor.paddingRows)
         ? editor.paddingRows
         : defaultComponents.editor.paddingRows,
       styles: {
@@ -1347,7 +1344,7 @@ function resolveComponents(config: ConfigRecord): ComponentsConfig {
         resolvedValue(userMessages, "colorSource", colorSources, "userMessages"),
         defaultComponents.userMessages.colorSource,
       ),
-      paddingRows: isUserMessagePaddingRows(userMessages.paddingRows)
+      paddingRows: isPaddingRows(userMessages.paddingRows)
         ? userMessages.paddingRows
         : defaultComponents.userMessages.paddingRows,
       styles: {

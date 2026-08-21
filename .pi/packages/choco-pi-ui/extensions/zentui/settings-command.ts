@@ -15,7 +15,6 @@ import {
   type ContextStyle,
   type EditorBorderColorMode,
   type EditorComponentConfig,
-  type EditorPaddingRows,
   type EditorStyle,
   type ExtensionStatusColorMode,
   type ExtensionStatusPlacement,
@@ -29,23 +28,22 @@ import {
   getExtensionStatusColorMode,
   getExtensionStatusPlacement,
   type IconMode,
-  isEditorPaddingRows,
+  isPaddingRows,
   isExtensionStatusColorMode,
   isExtensionStatusPlacement,
   isSeparatorStyle,
-  isUserMessagePaddingRows,
   isValidWorkingLineIntervalMs,
   MAX_WORKING_LINE_INTERVAL_MS,
   MIN_WORKING_LINE_INTERVAL_MS,
   type MinimalistConfig,
   type ModelLabelSource,
+  type PaddingRows,
   type PathDisplayConfig,
   type PolishedTuiConfig,
   type SelectorBordersComponentConfig,
   type SeparatorStyle,
   type UserMessageStyle,
   type UserMessagesComponentConfig,
-  type UserMessagePaddingRows,
   type WorkingLineComponentPatch,
   type WorkingLineSpinner,
   type WorkingLineTextAnimation,
@@ -103,8 +101,7 @@ const footerStyleValues = Object.values(footerStyleLabels);
 const minimalistPathDisplayValues = ["compact", "project", "full"];
 const minimalistContextFormatValues = ["percent", "percent-total"];
 const editorBorderColorModeValues: EditorBorderColorMode[] = ["static", "adaptive"];
-const editorPaddingRowsValues: EditorPaddingRows[] = ["none", "top"];
-const userMessagePaddingRowsValues: UserMessagePaddingRows[] = ["none", "top", "bottom", "both"];
+const paddingRowsValues: PaddingRows[] = ["none", "top", "bottom", "both"];
 const compactFooterMaxLineValues = ["1", "2", "3", "unlimited"];
 const featureStateValues: FeatureState[] = ["enabled", "disabled"];
 const workingLineSpinnerLabels = {
@@ -547,10 +544,11 @@ function buildEditorItems(config: PolishedTuiConfig): SettingItem[] {
     },
     {
       id: "editorPaddingRows",
-      label: "Editor padding row",
-      description: "Blank row under the editor's top border; none keeps the input tight.",
+      label: "Editor padding rows",
+      description:
+        "Blank rows inside the editor frame: under the top border, above the metadata line, or both.",
       currentValue: editor.paddingRows,
-      values: editorPaddingRowsValues,
+      values: paddingRowsValues,
     },
   ];
 }
@@ -639,7 +637,7 @@ function buildUserMessagesItems(config: PolishedTuiConfig): SettingItem[] {
       label: "Message padding rows",
       description: "Blank rows inside the message frame; applies to the framed styles only.",
       currentValue: messages.paddingRows,
-      values: userMessagePaddingRowsValues,
+      values: paddingRowsValues,
     },
   ];
 }
@@ -1432,10 +1430,10 @@ export function createZentuiPreferencesComponent(
             notifyChange("Editor viewport indicators", newValue);
             return;
           }
-          if (id === "editorPaddingRows" && isEditorPaddingRows(newValue)) {
+          if (id === "editorPaddingRows" && isPaddingRows(newValue)) {
             setEditor({ paddingRows: newValue }, ctx);
             settingsList.updateValue(id, newValue);
-            notifyChange("Editor padding row", newValue);
+            notifyChange("Editor padding rows", newValue);
             return;
           }
           if (id.startsWith("minimalist")) {
@@ -1497,7 +1495,7 @@ export function createZentuiPreferencesComponent(
             notifyChange("Message colors", newValue);
             return;
           }
-          if (id === "userMessagesPaddingRows" && isUserMessagePaddingRows(newValue)) {
+          if (id === "userMessagesPaddingRows" && isPaddingRows(newValue)) {
             setMessages({ paddingRows: newValue }, ctx);
             settingsList.updateValue(id, newValue);
             notifyChange("Message padding rows", newValue);
