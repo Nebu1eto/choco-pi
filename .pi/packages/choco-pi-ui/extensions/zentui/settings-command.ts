@@ -231,6 +231,12 @@ export interface ZentuiPreferencesPanelHandle {
   invalidate: () => void;
   handleInput: (data: string) => void;
   dispose: () => void;
+  /**
+   * True while a row's submenu owns the panel. The host must stop claiming its
+   * own shortcuts then, because a submenu such as a model picker needs Tab and
+   * plain characters for its own search and filters.
+   */
+  hasOpenSubmenu: () => boolean;
   getActiveSection: () => string;
 }
 
@@ -1347,6 +1353,9 @@ export function createZentuiPreferencesComponent(
       : (visibleSections[0] ?? "appearance");
   const listTheme = deps.settingsListTheme ?? getSettingsListTheme();
   let activeSection = initialSection;
+  // A submenu owns every key while it is open, so the panel's own section
+  // shortcuts and the host's tab shortcuts have to stand down.
+  let submenuOpen = false;
   let settingsList: SettingsList;
   let preview: WorkingLineFrames | undefined;
   let previewFrameIndex = 0;
@@ -1442,7 +1451,24 @@ export function createZentuiPreferencesComponent(
       theme,
     );
     const list = new SettingsList(
-      items,
+      items.map((item) =>
+        item.submenu === undefined
+          ? item
+          : {
+              ...item,
+              submenu: (currentValue: string, close: (selectedValue?: string) => void) => {
+                submenuOpen = true;
+                // SAFETY: the branch above establishes that this row has a submenu.
+                return (item.submenu as NonNullable<SettingItem["submenu"]>)(
+                  currentValue,
+                  (selectedValue) => {
+                    submenuOpen = false;
+                    close(selectedValue);
+                  },
+                );
+              },
+            },
+      ),
       8,
       listTheme,
       (id, newValue) => {
@@ -1919,7 +1945,7 @@ export function createZentuiPreferencesComponent(
       settingsList.invalidate();
     },
     handleInput(data: string) {
-      if (matchesKey(data, "right")) {
+      if (!submenuOpen && matchesKey(data, "right")) {
         stopPreview();
         activeSection = nextSection(activeSection, visibleSections);
         settingsList = makeSettingsList();
@@ -1927,7 +1953,7 @@ export function createZentuiPreferencesComponent(
         tui.requestRender();
         return;
       }
-      if (matchesKey(data, "left")) {
+      if (!submenuOpen && matchesKey(data, "left")) {
         stopPreview();
         activeSection = previousSection(activeSection, visibleSections);
         settingsList = makeSettingsList();
@@ -1942,6 +1968,9 @@ export function createZentuiPreferencesComponent(
     },
     getActiveSection() {
       return activeSection;
+    },
+    hasOpenSubmenu() {
+      return submenuOpen;
     },
   };
 }

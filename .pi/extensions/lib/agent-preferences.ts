@@ -244,6 +244,8 @@ export interface PreferencesPanelHandle {
   handleInput: (data: string) => void;
   dispose: () => void;
   getActiveSection: () => string;
+  /** True while a row's submenu owns the panel and needs every key. */
+  hasOpenSubmenu?: () => boolean;
 }
 
 export interface PreferencesOutcomeFocus {
