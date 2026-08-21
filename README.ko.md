@@ -422,7 +422,7 @@ agent-browser --version
 
 ## Agent 언어와 Agent 스타일
 
-`/preferences`(별칭 `/pref`)는 Status/Usage/Preferences 뷰의 세 번째 탭을 엽니다. 이 탭의 **Agent** 섹션은 `~/.pi/agent/settings.json`에 저장하는 전역 설정 두 개를 다루므로 모든 프로젝트에 동일하게 적용됩니다.
+`/preferences`(별칭 `/pref`)는 Status/Usage/Preferences 뷰의 세 번째 탭을 엽니다. 뷰 어디에서나 `Tab`과 `Shift+Tab`으로 세 탭을 이동하고 `1`/`2`/`3`으로 곧바로 전환하며, Preferences 탭 안에서는 `←`/`→`로 설정 섹션을 이동합니다. 이 탭의 **Agent** 섹션은 `~/.pi/agent/settings.json`에 저장하는 전역 설정 두 개를 다루므로 모든 프로젝트에 동일하게 적용됩니다.
 
 | 키              | 효과                                                                                          |
 | --------------- | --------------------------------------------------------------------------------------------- |

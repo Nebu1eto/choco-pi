@@ -229,7 +229,21 @@ test(
       assert.deepEqual(changes, [["agentLanguage", "Korean"]]);
 
       panel.handleInput("\t");
-      assert.notEqual(panel.getActiveSection(), "agent", "Tab must still cycle sections");
+      assert.equal(
+        panel.getActiveSection(),
+        "agent",
+        "Tab belongs to the host's tab switching, so the panel must ignore it",
+      );
+
+      panel.handleInput("\x1b[C");
+      assert.notEqual(
+        panel.getActiveSection(),
+        "agent",
+        "the right arrow must cycle to the next section",
+      );
+
+      panel.handleInput("\x1b[D");
+      assert.equal(panel.getActiveSection(), "agent", "the left arrow must cycle back");
     } finally {
       panel.dispose();
     }

@@ -372,7 +372,7 @@ After installation the skill can open pages, capture interactive snapshots, clic
 
 ## Agent language and agent style
 
-`/preferences` (alias `/pref`) opens the third tab of the Status/Usage/Preferences view. Its **Agent** section holds two global preferences stored in `~/.pi/agent/settings.json`, so they apply to every project:
+`/preferences` (alias `/pref`) opens the third tab of the Status/Usage/Preferences view. `Tab` and `Shift+Tab` move between the three tabs from anywhere in the view, `1`/`2`/`3` jump to one directly, and inside Preferences `←`/`→` move between preference sections. Its **Agent** section holds two global preferences stored in `~/.pi/agent/settings.json`, so they apply to every project:
 
 | Key             | Effect                                                                                                                         |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------ |

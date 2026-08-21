@@ -177,8 +177,8 @@ async function showTabOnce(
         return tab.id === active ? theme.fg("accent", theme.bold(label)) : theme.fg("dim", label);
       }).join(theme.fg("dim", "·"));
     const textHint = (): string =>
-      theme.fg("dim", "←/→ or Tab switches tabs · ↑/↓ scrolls · 1/2/3 jumps · Enter/Esc closes");
-    const panelHint = (): string => theme.fg("dim", "1/2/3 jumps tabs · Esc closes");
+      theme.fg("dim", "Tab switches tabs · ↑/↓ scrolls · 1/2/3 jumps · Enter/Esc closes");
+    const panelHint = (): string => theme.fg("dim", "Tab switches tabs · 1/2/3 jumps · Esc closes");
 
     const paint = (body: string, view: { preserveScroll: boolean }): void => {
       text.setText(`${header()}\n\n${body}\n\n${textHint()}`);
@@ -275,6 +275,16 @@ async function showTabOnce(
           jumpToTab(Number(data) - 1);
           return;
         }
+        // Tab owns tab switching everywhere, so the panel keeps ←/→ for its
+        // own sections and never sees these two keys.
+        if (matchesKey(data, "tab")) {
+          switchTab(1);
+          return;
+        }
+        if (matchesKey(data, "shift+tab")) {
+          switchTab(-1);
+          return;
+        }
         if (active === "preferences") {
           if (panel) {
             panel.handleInput(data);
@@ -282,19 +292,11 @@ async function showTabOnce(
           }
           if (matchesKey(data, "enter") || matchesKey(data, "escape")) {
             finish(undefined);
-          } else if (matchesKey(data, "tab") || matchesKey(data, "right")) {
-            switchTab(1);
-          } else if (matchesKey(data, "shift+tab") || matchesKey(data, "left")) {
-            switchTab(-1);
           }
           return;
         }
         if (matchesKey(data, "enter") || matchesKey(data, "escape")) {
           finish(undefined);
-        } else if (matchesKey(data, "tab") || matchesKey(data, "right")) {
-          switchTab(1);
-        } else if (matchesKey(data, "shift+tab") || matchesKey(data, "left")) {
-          switchTab(-1);
         } else if (matchesKey(data, "up")) {
           scrollView.scrollBy(-1);
           tui.requestRender();

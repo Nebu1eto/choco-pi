@@ -207,7 +207,7 @@ User config lives at `~/.pi/agent/choco-pi-ui.json`; a pre-existing
 `~/.pi/agent/pi-choco-ui.json` or `~/.pi/agent/zentui.json` is still read and
 written when the preferred file is absent. The file is optional: missing or invalid known values fall back to choco-ui defaults, unknown keys are ignored at runtime, and `/preferences` can patch color-source settings, UI feature toggles, built-in footer segment visibility, and active third-party status placements.
 
-The interactive `/preferences` menu contributes exactly eight component-oriented sections, in this order. Use `Tab` and `Shift+Tab` to switch sections; the host may append its own sections after these, and `1`/`2`/`3` switch between the Status, Usage, and Preferences tabs:
+The interactive `/preferences` menu contributes exactly eight component-oriented sections, in this order. Use `←` and `→` to switch sections; the host may append its own sections after these. `Tab` and `Shift+Tab` belong to the host and switch between its Status, Usage, and Preferences tabs, as do `1`/`2`/`3`:
 
 1. **Appearance** — selector-border enablement, style, and colors; icon mode.
 2. **Editor** — editor enablement, style, colors, model label, border behavior, viewport indicators, settings for the selected editor style, and a static synthetic preview.
