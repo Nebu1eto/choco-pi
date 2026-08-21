@@ -57,6 +57,18 @@ export type ToolDiffToolName = "write" | "edit" | "apply_patch";
 /** Tools this module decorates. Every other tool passes through by identity. */
 export const TOOL_DIFF_TOOLS: readonly ToolDiffToolName[] = ["write", "edit", "apply_patch"];
 
+/**
+ * Transcript header labels. The registered name is an API identifier, not
+ * something to show a reader; these match the working line's verbs in
+ * choco-pi-ui's `tool-labels.ts`, so a tool reads the same mid-turn and in
+ * the transcript.
+ */
+export const TOOL_DIFF_LABELS = {
+  write: "Writing",
+  edit: "Editing",
+  apply_patch: "Patching",
+} satisfies Readonly<Record<ToolDiffToolName, string>>;
+
 export type ToolDiffRenderingOptions = {
   /**
    * Read on every render rather than captured, so a `review.json` reload
@@ -693,11 +705,12 @@ function renderWriteCall(
 ): Component {
   // While arguments still stream, Pi's incremental highlighter is the better
   // view: there is no complete file to diff yet.
-  if (context.argsComplete !== true) return fallbackCall(original, "write", args, theme, context);
+  if (context.argsComplete !== true)
+    return fallbackCall(original, TOOL_DIFF_LABELS.write, args, theme, context);
   const path = stringField(args, "path", "file_path");
   const content = stringField(args, "content");
   if (path === undefined || content === undefined)
-    return fallbackCall(original, "write", args, theme, context);
+    return fallbackCall(original, TOOL_DIFF_LABELS.write, args, theme, context);
 
   const shown = displayPath(path, context.cwd);
   const file = buildWriteDiffFile(shown, content);
@@ -706,14 +719,14 @@ function renderWriteCall(
     context.lastComponent,
     (width) =>
       renderFiles({
-        label: "write",
+        label: TOOL_DIFF_LABELS.write,
         files: [file],
         theme,
         width,
         expanded,
         collapseLimit: COLLAPSED_BODY_LINES,
       }),
-    `write ${shown}`,
+    `${TOOL_DIFF_LABELS.write} ${shown}`,
   );
 }
 
@@ -733,11 +746,12 @@ function renderEditCall(
 ): Component {
   // Before the result settles, Pi's asynchronous pre-execution preview is
   // still the only diff available; keep it.
-  if (context.isPartial !== false) return fallbackCall(original, "edit", args, theme, context);
+  if (context.isPartial !== false)
+    return fallbackCall(original, TOOL_DIFF_LABELS.edit, args, theme, context);
   const path = stringField(args, "path", "file_path");
   const box = own(new Box(1, 1, toolBackground(theme, context, true)));
   const shown = path === undefined ? "" : displayPath(path, context.cwd);
-  const title = `${theme.fg("toolTitle", theme.bold("edit"))} ${shown}`.trimEnd();
+  const title = `${theme.fg("toolTitle", theme.bold(TOOL_DIFF_LABELS.edit))} ${shown}`.trimEnd();
   box.addChild(new Text(title, 0, 0));
   return box;
 }
@@ -822,27 +836,28 @@ function renderApplyPatchCall(
   context: RenderContextLike,
 ): Component {
   if (context.argsComplete !== true)
-    return fallbackCall(original, "apply_patch", args, theme, context);
+    return fallbackCall(original, TOOL_DIFF_LABELS.apply_patch, args, theme, context);
   const patchText = stringField(args, "input", "patchText", "patch");
   if (patchText === undefined || patchText.trim().length === 0) {
-    return fallbackCall(original, "apply_patch", args, theme, context);
+    return fallbackCall(original, TOOL_DIFF_LABELS.apply_patch, args, theme, context);
   }
   const files = applyPatchDiffFiles(patchText, context);
-  if (files.length === 0) return fallbackCall(original, "apply_patch", args, theme, context);
+  if (files.length === 0)
+    return fallbackCall(original, TOOL_DIFF_LABELS.apply_patch, args, theme, context);
 
   const expanded = context.expanded === true;
   return diffLinesComponent(
     context.lastComponent,
     (width) =>
       renderFiles({
-        label: "apply_patch",
+        label: TOOL_DIFF_LABELS.apply_patch,
         files,
         theme,
         width,
         expanded,
         collapseLimit: COLLAPSED_BODY_LINES,
       }),
-    `apply_patch ${files.map((file) => file.path).join(", ")}`,
+    `${TOOL_DIFF_LABELS.apply_patch} ${files.map((file) => file.path).join(", ")}`,
   );
 }
 
@@ -894,7 +909,7 @@ export function decorateToolDefinition(definition: ToolDefinition): ToolDefiniti
   const originalCall = definition.renderCall as AnyRenderCall | undefined;
   // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const originalResult = definition.renderResult as AnyRenderResult | undefined;
-  const label = definition.name;
+  const label = TOOL_DIFF_LABELS[definition.name];
 
   // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const next = { ...definition } as ToolDefinition;

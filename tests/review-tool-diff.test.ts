@@ -440,7 +440,7 @@ test("renders write as a review diff once the arguments are complete", () => {
   const lines = renderCall(decorated, args, context({ args })).render(60);
   assert.equal(calls.call.length, 0, "the stock renderer must not run");
   assert.deepEqual(lines, [
-    "write src/a.ts  +3 -0",
+    "Writing src/a.ts  +3 -0",
     "@@ -0,0 +1,3 @@",
     "  1 │ + one",
     "  2 │ + two",
@@ -455,7 +455,7 @@ test("collapses a long write and keeps the stock renderer while arguments stream
   const args = { path: "src/a.ts", content };
 
   const collapsed = renderCall(decorated, args, context({ args, expanded: false })).render(60);
-  assert.equal(collapsed[0], "write src/a.ts  +30 -0");
+  assert.equal(collapsed[0], "Writing src/a.ts  +30 -0");
   assert.equal(collapsed.length, 13, "header, hunk header, 10 body lines and one hint");
   assert.match(collapsed.at(-1)!, /^\.\.\. \(20 more lines, 30 total, /);
 
@@ -473,7 +473,7 @@ test("renders the edit diff from the patch the tool actually applied", () => {
   const details = { diff: "ignored", patch: generateUnifiedPatch("src/a.ts", before, after) };
 
   const title = renderCall(decorated, args, context({ args })).render(60).join("\n");
-  assert.match(title, /edit src\/a\.ts/);
+  assert.match(title, /Editing src\/a\.ts/);
 
   const body = renderResult(decorated, { content: [], details }, context({ args })).render(60);
   const text = body.map((line) => line.trimEnd()).join("\n");
@@ -518,7 +518,7 @@ test("renders apply_patch through the review diff renderer", () => {
     ).render(60);
     assert.equal(calls.call.length, 0);
     assert.deepEqual(lines, [
-      "apply_patch a.ts  +1 -1",
+      "Patching a.ts  +1 -1",
       "@@ -1,2 +1,2 @@",
       "1 1 │   one",
       "2   │ - two",
@@ -636,7 +636,7 @@ test("degrades to plain text instead of throwing when the theme fails mid-render
   const decorated = decorateToolDefinition(tool);
   const args = { path: "src/a.ts", content: "one\ntwo\n" };
   const component = renderCall(decorated, args, context({ args }), throwingTheme);
-  assert.deepEqual(component.render(60), ["write src/a.ts"]);
+  assert.deepEqual(component.render(60), ["Writing src/a.ts"]);
 });
 
 test("falls back when the decorated renderer itself throws", () => {
@@ -728,7 +728,7 @@ test("decorating Pi's real write tool changes rendering and nothing else", async
 
     const rendered = renderCall(decorated, args, context({ args, cwd: dir })).render(72);
     assert.deepEqual(rendered, [
-      "write nested/created.ts  +1 -0",
+      "Writing nested/created.ts  +1 -0",
       "@@ -0,0 +1,1 @@",
       "  1 │ + export const value = 1;",
     ]);
@@ -745,6 +745,6 @@ test("survives a tool definition with no renderers at all", () => {
     renderCall(decorated, badArgs, context({ args: badArgs }))
       .render(60)
       .map((line) => line.trimEnd()),
-    ["write"],
+    ["Writing"],
   );
 });
