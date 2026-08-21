@@ -6,7 +6,7 @@ import {
 } from "./lib/multiplexer-images.ts";
 import type { ImageEnvironment, ZellijVersion } from "./lib/multiplexer-images.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getCapabilities, setCapabilities } from "@earendil-works/pi-tui";
+import { detectCapabilities, getCapabilities, setCapabilities } from "@earendil-works/pi-tui";
 
 /**
  * Align pi-tui's cached terminal capabilities with what a multiplexer can
@@ -39,13 +39,15 @@ function zellijClientVersion(env: ImageEnvironment): ZellijVersion {
 }
 
 export function installMultiplexerImagePolicy(env: ImageEnvironment): boolean {
-  const capabilities = applyMultiplexerImagePolicy(
-    getCapabilities(),
-    env,
-    zellijClientVersion(env),
-  );
-  if (!capabilities) return false;
-  setCapabilities(capabilities);
+  // Resolve from a fresh detection, not the cached capabilities: an earlier
+  // run of this policy (or an older build of it) may already have nulled the
+  // cache, and a downgrade-only view of that cache could never restore the
+  // protocol on reload.
+  const detected = detectCapabilities();
+  const resolved = applyMultiplexerImagePolicy(detected, env, zellijClientVersion(env)) ?? detected;
+  const current = getCapabilities();
+  if (current.images === resolved.images) return false;
+  setCapabilities({ ...current, images: resolved.images });
   return true;
 }
 
