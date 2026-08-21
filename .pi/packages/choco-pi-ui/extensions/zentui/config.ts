@@ -2127,6 +2127,39 @@ export function saveExtensionStatusPlacement(
   }, path);
 }
 
+/**
+ * Drops one status key's placement override so the status follows
+ * `defaultPlacement` again.
+ *
+ * The raw record has to be cleaned separately: `saveComponentsMutation`
+ * overlays the normalized config onto the file's own keys, so a key deleted
+ * only from the normalized copy would survive in the file.
+ */
+export function clearExtensionStatusPlacement(key: string, path = configPath): PolishedTuiConfig {
+  return saveComponentsMutation(
+    (components) => {
+      delete components.footer.styles.starship.extensionStatuses.placements[key];
+    },
+    path,
+    (record) => deleteRawExtensionStatusPlacement(record, key),
+  );
+}
+
+function deleteRawExtensionStatusPlacement(record: ConfigRecord, key: string): void {
+  const components = record.components;
+  if (!isRecord(components)) return;
+  const footer = components.footer;
+  if (!isRecord(footer)) return;
+  const styles = footer.styles;
+  if (!isRecord(styles)) return;
+  const starship = styles.starship;
+  if (!isRecord(starship)) return;
+  const statuses = starship.extensionStatuses;
+  if (!isRecord(statuses)) return;
+  const placements = statuses.placements;
+  if (isRecord(placements)) delete placements[key];
+}
+
 export function saveExtensionStatusColorMode(
   key: string,
   colorMode: ExtensionStatusColorMode,
