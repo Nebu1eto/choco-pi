@@ -16,6 +16,7 @@ import {
 } from "./style";
 import { PI_WORKING_LINE_MESSAGES } from "./working-line-messages";
 import { WORKING_LINE_SPINNERS } from "./working-line-spinners";
+import { resolveToolLabel } from "./tool-labels";
 import { type BoundaryValue, isBoolean, isCallable, isString } from "./runtime-values";
 
 export { WORKING_LINE_SPINNERS } from "./working-line-spinners";
@@ -1100,7 +1101,12 @@ export class WorkingLineController {
 
   startTool(toolCallId: string, toolName: string, ctx: WorkingLineContext): void {
     this.activeTools.delete(toolCallId);
-    this.activeTools.set(toolCallId, normalizeWorkingLineToolLabel(toolName));
+    this.activeTools.set(
+      toolCallId,
+      normalizeWorkingLineToolLabel(
+        resolveToolLabel(toolName, this.getConfig().components.workingLine.toolLabels),
+      ),
+    );
     this.updateIndicator(ctx);
   }
 
