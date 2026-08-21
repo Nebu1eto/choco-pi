@@ -1,10 +1,35 @@
 import { isNumber, isObject, isString, recordOf, type RuntimeValue } from "./lib/runtime-values.ts";
+import {
+  createFileUsageCacheStorage,
+  createUsageCache,
+  fetchUsageJson,
+  identityKey,
+  UsageThrottledError,
+  type UsageRequestPolicy,
+  type UsageRequestResult,
+} from "./lib/usage-cache.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-const REQUEST_TIMEOUT_MS = 10_000;
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
 const USAGE_BAR_WIDTH = 50;
-const PROFILE_CACHE_MS = 30 * 60_000;
+
+/**
+ * Quota windows move slowly, so one live read per minute per endpoint is enough
+ * for an open Usage tab while leaving the provider's rate limit alone. A stored
+ * snapshot stays on screen for an hour of failures before the tab admits it has
+ * nothing current to show.
+ */
+const USAGE_POLICY: UsageRequestPolicy = { minIntervalMs: 60_000, maxStaleMs: 60 * 60_000 };
+
+/** The plan only changes when the subscription does, so it is read far less often. */
+const PROFILE_POLICY: UsageRequestPolicy = {
+  minIntervalMs: 30 * 60_000,
+  maxStaleMs: 7 * 24 * 60 * 60_000,
+};
+
+const ANTHROPIC_HEADERS = { "anthropic-beta": "oauth-2025-04-20" };
+
+const usageCache = createUsageCache({ storage: createFileUsageCacheStorage() });
 
 type UsageWindow = {
   label: string;
@@ -20,6 +45,8 @@ type ProviderUsage = {
   name: string;
   plan?: string;
   status?: string;
+  /** Set when the report comes from the store instead of a live response. */
+  cached?: { at: Date; reason?: string };
   windows: UsageWindow[];
 };
 
@@ -52,23 +79,6 @@ function dateValue(value: RuntimeValue, unixSeconds = false): Date | undefined {
   if (!isString(value)) return undefined;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date;
-}
-
-async function fetchJson(
-  url: string,
-  token: string,
-  headers: Record<string, string>,
-): Promise<RuntimeValue> {
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-      ...headers,
-    },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
 }
 
 function parseJwtPayload(token: string): Record<string, RuntimeValue> | undefined {
@@ -364,38 +374,51 @@ async function providerToken(ctx: ExtensionContext, provider: string): Promise<s
   return ctx.modelRegistry.getApiKeyForProvider(provider);
 }
 
-let claudeProfileCache: { at: number; profile: unknown } | undefined;
+/**
+ * Marks a report that was rebuilt from the store, so the tab never presents an
+ * old snapshot as a live reading.
+ */
+function withCacheNote(usage: ProviderUsage, result: UsageRequestResult): ProviderUsage {
+  if (result.cachedAt === undefined) return usage;
+  return { ...usage, cached: { at: new Date(result.cachedAt), reason: result.reason } };
+}
 
 /**
  * Reads the live plan from Anthropic's profile endpoint. The value only changes
- * when the subscription changes, so it is cached well beyond the usage refresh
- * interval and never blocks the usage report when it fails.
+ * when the subscription changes, so it is read far less often than the usage
+ * windows and never blocks the usage report when it fails.
  */
 async function claudeProfile(token: string): Promise<RuntimeValue> {
-  if (claudeProfileCache && Date.now() - claudeProfileCache.at < PROFILE_CACHE_MS) {
-    return claudeProfileCache.profile;
-  }
   try {
-    const profile = await fetchJson("https://api.anthropic.com/api/oauth/profile", token, {
-      "anthropic-beta": "oauth-2025-04-20",
-    });
-    claudeProfileCache = { at: Date.now(), profile };
-    return profile;
+    const result = await usageCache.request(
+      "anthropic:profile",
+      () => fetchUsageJson("https://api.anthropic.com/api/oauth/profile", token, ANTHROPIC_HEADERS),
+      PROFILE_POLICY,
+    );
+    return result.payload;
   } catch {
     return undefined;
   }
 }
 
+/**
+ * Anthropic's OAuth token is opaque and rotates, and the account only appears in
+ * the profile response this key already guards. The provider therefore owns one
+ * cache slot: a snapshot from a previous account is replaced by the next live
+ * read and is labelled with its age until then.
+ */
 async function claudeUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
   const token = await providerToken(ctx, "anthropic");
   if (!token) return { name: "Claude Code", status: "not connected", windows: [] };
-  const [payload, profile] = await Promise.all([
-    fetchJson("https://api.anthropic.com/api/oauth/usage", token, {
-      "anthropic-beta": "oauth-2025-04-20",
-    }),
+  const [usage, profile] = await Promise.all([
+    usageCache.request(
+      "anthropic:usage",
+      () => fetchUsageJson("https://api.anthropic.com/api/oauth/usage", token, ANTHROPIC_HEADERS),
+      USAGE_POLICY,
+    ),
     claudeProfile(token),
   ]);
-  return normalizeClaudeUsage(payload, profile);
+  return withCacheNote(normalizeClaudeUsage(usage.payload, profile), usage);
 }
 
 async function codexUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
@@ -403,18 +426,27 @@ async function codexUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
   if (!token) return { name: "OpenAI Codex", status: "not connected", windows: [] };
   const accountId = codexAccountId(token);
   if (!accountId) throw new Error("OAuth account ID is unavailable");
-  const payload = await fetchJson("https://chatgpt.com/backend-api/wham/usage", token, {
-    "chatgpt-account-id": accountId,
-    originator: "pi",
-  });
-  return normalizeCodexUsage(payload);
+  const usage = await usageCache.request(
+    `openai-codex:usage:${identityKey(accountId)}`,
+    () =>
+      fetchUsageJson("https://chatgpt.com/backend-api/wham/usage", token, {
+        "chatgpt-account-id": accountId,
+        originator: "pi",
+      }),
+    USAGE_POLICY,
+  );
+  return withCacheNote(normalizeCodexUsage(usage.payload), usage);
 }
 
 async function syntheticUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
   const token = await providerToken(ctx, "synthetic");
   if (!token) return { name: "Synthetic", status: "not connected", windows: [] };
-  const payload = await fetchJson("https://api.synthetic.new/v2/quotas", token, {});
-  return normalizeSyntheticUsage(payload);
+  const usage = await usageCache.request(
+    `synthetic:usage:${identityKey(token)}`,
+    () => fetchUsageJson("https://api.synthetic.new/v2/quotas", token, {}),
+    USAGE_POLICY,
+  );
+  return withCacheNote(normalizeSyntheticUsage(usage.payload), usage);
 }
 
 function currencyValue(value: string): number {
@@ -445,13 +477,38 @@ function relativeTime(date: Date | undefined): string | undefined {
   return `in ${value || "<1m"}`;
 }
 
+/** Age of a stored snapshot, rounded down so it never overstates freshness. */
+function elapsedTime(date: Date, at = Date.now()): string {
+  const totalMinutes = Math.floor(Math.max(0, at - date.getTime()) / 60_000);
+  if (totalMinutes < 1) return "just now";
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const value = [
+    days ? `${days}d` : "",
+    hours ? `${hours}h` : "",
+    !days && minutes ? `${minutes}m` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `${value} ago`;
+}
+
 function progressBar(percent: number, width = USAGE_BAR_WIDTH): string {
   const filled = Math.round((clampPercent(percent) / 100) * width);
   return `${"█".repeat(filled)}${"░".repeat(width - filled)}`;
 }
 
+function cachedLabel(cached: { at: Date; reason?: string } | undefined): string | undefined {
+  if (!cached) return undefined;
+  const age = elapsedTime(cached.at);
+  return cached.reason ? `cached ${age} · ${cached.reason}` : `cached ${age}`;
+}
+
 export function formatProviderUsage(result: ProviderUsage): string {
-  const summary = [result.plan, result.status].filter(Boolean).join(" · ");
+  const summary = [result.plan, result.status, cachedLabel(result.cached)]
+    .filter(Boolean)
+    .join(" · ");
   const heading = summary ? `${result.name} — ${summary}` : result.name;
   if (result.windows.length === 0) return summary ? heading : `${heading} — no quota windows`;
   const windows = result.windows.flatMap((window) => {
@@ -470,6 +527,18 @@ export function formatProviderUsage(result: ProviderUsage): string {
 
 const PROVIDER_NAMES = ["Claude Code", "OpenAI Codex", "Synthetic"] as const;
 
+/**
+ * Describes why a provider produced nothing: a throttled request also reports
+ * when the next live request is allowed, so the tab does not look stuck.
+ */
+export function usageFailureMessage(reason: RuntimeValue): string {
+  if (reason instanceof UsageThrottledError) {
+    const retry = relativeTime(new Date(reason.retryAt));
+    return retry ? `${reason.message} · retrying ${retry}` : reason.message;
+  }
+  return reason instanceof Error ? reason.message : "unknown error";
+}
+
 export async function usageReport(ctx: ExtensionContext): Promise<string> {
   const requests = [claudeUsage(ctx), codexUsage(ctx), syntheticUsage(ctx)];
   const settled = await Promise.allSettled(requests);
@@ -477,7 +546,7 @@ export async function usageReport(ctx: ExtensionContext): Promise<string> {
     .map((result, index) =>
       result.status === "fulfilled"
         ? formatProviderUsage(result.value)
-        : `${PROVIDER_NAMES[index]} — unavailable (${result.reason instanceof Error ? result.reason.message : "unknown error"})`,
+        : `${PROVIDER_NAMES[index]} — unavailable (${usageFailureMessage(result.reason)})`,
     )
     .join("\n\n");
 }
