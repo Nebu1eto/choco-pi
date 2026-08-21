@@ -18,10 +18,10 @@ import {
 
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
-test("status tabs expose Status and Usage in order", () => {
+test("status tabs expose Status, Usage, and Preferences in order", () => {
   assert.deepEqual(
     STATUS_TABS.map((tab) => tab.title),
-    ["Status", "Usage"],
+    ["Status", "Usage", "Preferences"],
   );
 });
 

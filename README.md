@@ -73,20 +73,21 @@ Voice, notebook, and background-shell features are intentionally not included.
 
 ### Session and model controls
 
-| Command                                                                           | Description                                                                                                                                                                                                                |
-| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/exit`                                                                           | Gracefully exit Pi; alias for `/quit`                                                                                                                                                                                      |
-| `/delete`                                                                         | Permanently delete the current Pi session record and exit after confirmation                                                                                                                                               |
-| `/clear`                                                                          | Start a fresh session while preserving the current session history; alias for `/new`                                                                                                                                       |
-| `/status`                                                                         | Show Pi version, session identity, model and provider, context window, context files, skills, MCP servers, agent roles, and theme; opens the Status/Usage tab view. Interactive settings stay on Pi's built-in `/settings` |
-| `/effort [level]`                                                                 | Select or directly set a reasoning effort supported by the active model; values complete after a space                                                                                                                     |
-| `/fast [on\|off\|status]`                                                         | Control OpenAI Codex Fast mode; no argument toggles the current state                                                                                                                                                      |
-| `/context-cap`                                                                    | Show the soft context cap applied to the active model                                                                                                                                                                      |
-| `/context [all]`                                                                  | Show prompt, active/deferred tools, MCP, agents, context files, skills, messages, and autocompact buffer usage                                                                                                             |
-| `/rewind`                                                                         | Rewind the active conversation branch, files, and Git index to a selected turn                                                                                                                                             |
-| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | Open the local human review view; no argument opens the target picker                                                                                                                                                      |
-| `/usage`, `/quota`                                                                | Show Claude Code, OpenAI Codex, and Synthetic usage in one view; opens the same tab view                                                                                                                                   |
-| `/apex-refresh`                                                                   | Rediscover Callstack Apex models immediately                                                                                                                                                                               |
+| Command                                                                           | Description                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/exit`                                                                           | Gracefully exit Pi; alias for `/quit`                                                                                                                                                                                                      |
+| `/delete`                                                                         | Permanently delete the current Pi session record and exit after confirmation                                                                                                                                                               |
+| `/clear`                                                                          | Start a fresh session while preserving the current session history; alias for `/new`                                                                                                                                                       |
+| `/status`                                                                         | Show Pi version, session identity, model and provider, context window, context files, skills, MCP servers, agent roles, and theme; opens the Status/Usage/Preferences tab view. Pi's own runtime settings stay on its built-in `/settings` |
+| `/effort [level]`                                                                 | Select or directly set a reasoning effort supported by the active model; values complete after a space                                                                                                                                     |
+| `/fast [on\|off\|status]`                                                         | Control OpenAI Codex Fast mode; no argument toggles the current state                                                                                                                                                                      |
+| `/context-cap`                                                                    | Show the soft context cap applied to the active model                                                                                                                                                                                      |
+| `/context [all]`                                                                  | Show prompt, active/deferred tools, MCP, agents, context files, skills, messages, and autocompact buffer usage                                                                                                                             |
+| `/rewind`                                                                         | Rewind the active conversation branch, files, and Git index to a selected turn                                                                                                                                                             |
+| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | Open the local human review view; no argument opens the target picker                                                                                                                                                                      |
+| `/usage`, `/quota`                                                                | Show Claude Code, OpenAI Codex, and Synthetic usage in one view; opens the same tab view on its second tab                                                                                                                                 |
+| `/preferences [args]`, `/pref`                                                    | Open the third tab of the same view: agent language, agent style, and every choco-ui interface section. Accepts `agent`, `language <name>`, `style <name>`, the choco-ui direct toggles, and `format <template>`                           |
+| `/apex-refresh`                                                                   | Rediscover Callstack Apex models immediately                                                                                                                                                                                               |
 
 Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can consume usage or API credit faster than the standard tier. The hidden llama.cpp provider remains available, but choco-pi removes `/llama` from the visible command list and command path.
 
@@ -357,7 +358,7 @@ Use `openai-completions` unless Apex has been confirmed to support the Responses
 
 ## TUI and browser automation
 
-The default theme is `nord-dark`. `choco-pi-ui` supplies the editor, framed user messages, status line, and themes; `/zentui` configures those regions and stores user preferences in `~/.pi/agent/choco-pi-ui.json`. The package still reads legacy `pi-choco-ui.json` and `zentui.json` files.
+The default theme is `nord-dark`. `choco-pi-ui` supplies the editor, framed user messages, status line, and themes; the Preferences tab of `/preferences` configures those regions and stores user preferences in `~/.pi/agent/choco-pi-ui.json`. The package still reads legacy `pi-choco-ui.json` and `zentui.json` files. `/preferences` replaces the former `/zentui` command, which no longer exists.
 
 Browser automation uses the global `agent-browser` skill and CLI rather than a Pi plugin. Install the compatible executable separately:
 
@@ -368,6 +369,32 @@ agent-browser --version
 ```
 
 After installation the skill can open pages, capture interactive snapshots, click, type, take screenshots, and use authenticated browser profiles. `ffmpeg` is required only for WebM recording.
+
+## Agent language and agent style
+
+`/preferences` (alias `/pref`) opens the third tab of the Status/Usage/Preferences view. Its **Agent** section holds two global preferences stored in `~/.pi/agent/settings.json`, so they apply to every project:
+
+| Key             | Effect                                                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `agentLanguage` | Language for prose responses, plans, reports, and generated documents. Unset means the agent matches the language you write in |
+| `agentStyle`    | Name of a style file whose instructions are injected on every turn. Unset means no style block                                 |
+
+Both are injected into the system prompt each turn inside a `<choco_pi_agent_preferences>` block, and a change applies from the next turn without restarting Pi.
+
+A configured language overrides the default "answer in the user's language" rule, but an explicit request in a message still wins for the artifact it names: asking for a document in Japanese produces a Japanese document while the conversation continues in the configured language. Code, identifiers, file paths, and commit messages are never affected.
+
+Styles are Markdown files with optional frontmatter. `concise` and `explanatory` ship with the profile; add your own to `~/.pi/agent/agent-styles/`, where a file whose `name` matches a shipped style replaces it:
+
+```markdown
+---
+name: terse
+description: Shortest correct answers
+---
+
+Answer in at most three sentences unless asked for more.
+```
+
+Beyond the dialog, `/preferences language Korean`, `/preferences style concise`, and `/preferences agent` set or open these values directly; a style name with no matching file is reported and ignored rather than silently applied.
 
 ## Usage reporting
 
@@ -389,6 +416,7 @@ Claude Code and OpenAI Codex usage depend on Pi OAuth credentials and provider e
   subagents.json            Sub-agent runtime and fallback settings
   agents/                   Project-aware leaf roles
   extensions/               Provider, session, context, usage, and UI behavior
+  extensions/agent-preferences/styles/  Shipped agent styles
   prompts/                  Familiar slash-command templates
   skills/                   Workflow implementations
   scripts/                  Shared workflow utilities
