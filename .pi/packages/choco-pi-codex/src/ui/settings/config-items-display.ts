@@ -3,10 +3,6 @@ import { type ConfigSetting, toggle } from "./config-items-shared.ts";
 
 export function buildDisplaySettings(config: CodexConversionConfig): ConfigSetting[] {
   return [
-    toggle("statusLine", "Statusline", config.ui.statusLine, (enabled, current) => ({
-      ...current,
-      ui: { ...current.ui, statusLine: enabled },
-    })),
     toggle("toolRenaming", "Tool naming", config.ui.toolRenaming, (enabled, current) => ({
       ...current,
       ui: { ...current.ui, toolRenaming: enabled },

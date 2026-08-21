@@ -24,7 +24,9 @@ import {
   buildNativeSettingsSections,
   createHostCommandContext,
   installNativeSettingsBridge,
+  NATIVE_OUTCOME_PREFIX,
   openNativeSettingsMenu,
+  runNativeSettingsOutcome,
   type NativeSettingsHost,
 } from "./lib/native-settings.ts";
 import { formatStatus, summarizeStatusRows } from "./session-status.ts";
@@ -130,11 +132,15 @@ const PREFERENCES_USAGE =
  * tab appear in this order, after the choco-ui tabs: Terminal, Session, Model,
  * Tools, Agent. The agent section goes last so the Codex adapter rows that
  * merge into it sit at the end of the strip.
+ *
+ * Pi's rows come before the Codex ones in every shared section: they read as
+ * the section's own settings, which leaves the Codex heading as the only
+ * marker a merged block needs.
  */
 function buildPreferencesExtraSections(ctx: ExtensionCommandContext): PreferencesExtraSection[] {
   return [
-    ...buildCodexPreferencesSections(ctx),
     ...buildNativeSettingsSections(),
+    ...buildCodexPreferencesSections(ctx),
     buildAgentPreferencesSection(ctx),
   ];
 }
@@ -148,6 +154,7 @@ function buildPreferencesExtraSections(ctx: ExtensionCommandContext): Preference
 const PREFERENCES_SECTION_MERGES = {
   userMessages: "appearance",
   footer: "appearance",
+  extensions: "appearance",
 } satisfies Record<string, string>;
 
 /** Tab order; sections left out keep their natural position after these. */
@@ -383,6 +390,11 @@ async function showTab(
     if (outcome.startsWith(AGENT_OUTCOME_PREFIX)) {
       focus = await runAgentPreferencesOutcome(outcome, ctx);
       continue;
+    }
+    if (outcome.startsWith(NATIVE_OUTCOME_PREFIX)) {
+      // The model selector takes over the editor, so the dialog stays closed.
+      runNativeSettingsOutcome(outcome);
+      return;
     }
     if (outcome.startsWith(CODEX_OUTCOME_PREFIX)) {
       const codex = getCodexPreferencesProvider();

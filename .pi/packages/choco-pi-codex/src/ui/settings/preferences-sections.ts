@@ -3,11 +3,9 @@ import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
 import type { CodexConversionConfig } from "../../adapter/activation/config.ts";
 import {
-  clearFolderCodexConversionConfig,
   getCodexConversionConfigPath,
   getProjectCodexConversionConfigPath,
   hasFolderCodexConversionConfig,
-  materializeFolderCodexConversionConfig,
   readCodexConversionConfig,
   readLayeredCodexConversionConfig,
   setProjectCodexCacheKeepalive,
@@ -22,10 +20,7 @@ export const CODEX_SECTION_ID = "codex";
 export const CODEX_OUTCOME_PREFIX = "codex:";
 export const CODEX_EDIT_CONFIG_OUTCOME = `${CODEX_OUTCOME_PREFIX}edit-config`;
 
-const SCOPE_ITEM_ID = "codexConfigScope";
 const EXECUTION_MODE_ITEM_ID = "executionMode";
-const DEFAULTS_LABEL = "Defaults";
-const PROJECT_LABEL = "Project";
 const OPEN_LABEL = "Open";
 
 /** What the host panel does after a Codex row changed. Mirrors the panel's own section contract. */
@@ -74,7 +69,6 @@ export interface CodexPreferencesDeps {
  */
 const CODEX_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[] }> = [
   { section: "appearance", rows: ["toolRenaming", "compactTools", "codeModeDetails"] },
-  { section: "footer", rows: ["statusLine"] },
   {
     section: "model",
     rows: [
@@ -110,16 +104,7 @@ const CODEX_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[]
       "customRustBinariesPath",
     ],
   },
-  {
-    section: "agent",
-    rows: [
-      "extensionMode",
-      "additionalProviders",
-      "heavySystemPromptOverwrite",
-      SCOPE_ITEM_ID,
-      "editConfig",
-    ],
-  },
+  { section: "agent", rows: ["additionalProviders", "editConfig"] },
 ];
 
 /**
@@ -128,10 +113,6 @@ const CODEX_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[]
  */
 function sourceHeader(section: string, theme: Theme): SettingItem {
   return { id: `codexSourceHeader:${section}`, label: theme.fg("dim", "Codex"), currentValue: "" };
-}
-
-function scopeLabel(scope: CodexConversionConfigScope): string {
-  return scope === "folder" ? PROJECT_LABEL : DEFAULTS_LABEL;
 }
 
 /**
@@ -163,7 +144,12 @@ export function buildCodexPreferencesSections(
   ctx: ExtensionContext,
   deps: CodexPreferencesDeps,
 ): CodexPreferencesSection[] {
-  let scope: CodexConversionConfigScope = hasFolderCodexConversionConfig(
+  /**
+   * Rows write to the project document when the project already has one, and to
+   * the global defaults otherwise. The panel offers no scope switch: a project
+   * that wants its own file creates it, and every other project stays global.
+   */
+  const scope: CodexConversionConfigScope = hasFolderCodexConversionConfig(
     ctx.cwd,
     ctx.isProjectTrusted(),
   )
@@ -202,18 +188,6 @@ export function buildCodexPreferencesSections(
     return [
       {
         item: {
-          id: SCOPE_ITEM_ID,
-          label: "Codex settings scope",
-          description:
-            scope === "folder"
-              ? "Every Codex row on every tab updates this project only, leaving global defaults unchanged."
-              : "Every Codex row on every tab updates global defaults. Projects with their own .pi/choco-pi-codex.json keep their settings.",
-          currentValue: scopeLabel(scope),
-          values: ctx.isProjectTrusted() ? [DEFAULTS_LABEL, PROJECT_LABEL] : [DEFAULTS_LABEL],
-        },
-      },
-      {
-        item: {
           id: EXECUTION_MODE_ITEM_ID,
           label: "Execution mode",
           currentValue: draft.executionMode,
@@ -234,27 +208,7 @@ export function buildCodexPreferencesSections(
     ];
   };
 
-  const changeScope = (value: string): CodexSectionChange => {
-    const next: CodexConversionConfigScope = value === PROJECT_LABEL ? "folder" : "global";
-    if (next === scope) return { kind: "rebuild" };
-    const previousConfig = deps.getRunningConfig();
-    const result =
-      next === "folder"
-        ? materializeFolderCodexConversionConfig(ctx.cwd, ctx.isProjectTrusted())
-        : clearFolderCodexConversionConfig(ctx.cwd, ctx.isProjectTrusted());
-    if (!result.ok) {
-      ctx.ui.notify(`Could not change Codex settings scope: ${result.error}`, "error");
-      return { kind: "rebuild" };
-    }
-    scope = next;
-    deps.applyEffectiveConfig(ctx, previousConfig);
-    draft = readDraft();
-    return { kind: "rebuild" };
-  };
-
   const handleChange = (id: string, newValue: string): CodexSectionChange => {
-    if (id === SCOPE_ITEM_ID) return changeScope(newValue);
-
     const definition = buildSettings().find(({ item }) => item.id === id);
     if (definition?.action === "edit-config") {
       return { kind: "outcome", outcome: CODEX_EDIT_CONFIG_OUTCOME };

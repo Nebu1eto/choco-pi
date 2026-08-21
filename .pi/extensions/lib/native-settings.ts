@@ -1,9 +1,21 @@
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
 import type { PreferencesExtraSection, PreferencesSectionChange } from "./agent-preferences.ts";
-import { isFunction, reinterpretHostValue, type RuntimeValue } from "./runtime-values.ts";
+import { isFunction, isString, reinterpretHostValue, type RuntimeValue } from "./runtime-values.ts";
 
 export const NATIVE_SETTINGS_SECTION_ID = "pi";
+
+/** Outcome strings the Pi sections emit use this prefix. */
+export const NATIVE_OUTCOME_PREFIX = "pi:";
+export const NATIVE_MODEL_OUTCOME = `${NATIVE_OUTCOME_PREFIX}model`;
+
+const MODEL_ROW_ID = "piModel";
+
+/**
+ * Labels that read better in this panel than in Pi's own settings menu, where
+ * the surrounding rows give more context.
+ */
+const PI_ROW_LABELS = new Map<string, string>([["thinking", "Reasoning effort"]]);
 
 /** Sections the profile adds for settings that no built-in choco-ui section covers. */
 export const TERMINAL_SECTION_ID = "terminal";
@@ -60,7 +72,10 @@ const PI_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[] }>
       "warnings",
     ],
   },
-  { section: MODEL_SECTION_ID, rows: ["thinking", "transport", "http-idle-timeout"] },
+  {
+    section: MODEL_SECTION_ID,
+    rows: [MODEL_ROW_ID, "thinking", "transport", "http-idle-timeout"],
+  },
   { section: TOOLS_SECTION_ID, rows: ["skill-commands"] },
 ];
 
@@ -252,12 +267,19 @@ function unavailableRow(): SettingItem {
 }
 
 /**
- * Marks where Pi's rows begin inside a section another system owns. Rows in a
- * section this module owns need no marker: they come first, and every block
- * merged after them carries its own header.
+ * The row that hands off to Pi's own model selector. Pi builds no such row for
+ * its settings menu, because `/model` covers it there.
  */
-function sourceHeader(section: string): SettingItem {
-  return { id: `piSourceHeader:${section}`, label: "Pi", currentValue: "" };
+function modelRow(host: NativeSettingsHost): SettingItem {
+  const model = propertyOf(propertyOf(host, "session"), "model");
+  const id = propertyOf(model, "id");
+  return {
+    id: MODEL_ROW_ID,
+    label: "Model",
+    description: "Opens the model selector; the panel closes while you choose.",
+    currentValue: isString(id) ? id : "select…",
+    values: ["select…"],
+  };
 }
 
 function sectionRows(rows: SettingItem[], section: string): SettingItem[] {
@@ -266,7 +288,9 @@ function sectionRows(rows: SettingItem[], section: string): SettingItem[] {
   const placed: SettingItem[] = [];
   for (const id of wanted) {
     const row = byId.get(id);
-    if (row) placed.push(row);
+    if (!row) continue;
+    const label = PI_ROW_LABELS.get(row.id);
+    placed.push(label === undefined ? row : { ...row, label });
   }
   return placed;
 }
@@ -291,9 +315,10 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
   const readRows = (): SettingItem[] => {
     const rows = captureNativeSettingsRows(host);
     onChange = rows?.onChange;
-    return rows ? rows.items : [];
+    return rows ? [modelRow(host), ...rows.items] : [];
   };
   const handleChange = (id: string, newValue: string): PreferencesSectionChange => {
+    if (id === MODEL_ROW_ID) return { kind: "outcome", outcome: NATIVE_MODEL_OUTCOME };
     if (!onChange) return { kind: "update" };
     onChange(id, newValue);
     // A refused TUI mode switch only updates Pi's own detached list, so the
@@ -307,10 +332,7 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
     id: `${NATIVE_SETTINGS_SECTION_ID}:${section}`,
     label: "Pi",
     mergeInto: section,
-    buildItems: (): SettingItem[] => {
-      const rows = sectionRows(readRows(), section);
-      return rows.length > 0 ? [sourceHeader(section), ...rows] : [];
-    },
+    buildItems: (): SettingItem[] => sectionRows(readRows(), section),
     handleChange,
   }));
 
@@ -334,4 +356,18 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
 
   const fallbackRows = fallback.buildItems();
   return [...merged, ...owned, ...(fallbackRows.length > 0 ? [fallback] : [])];
+}
+
+/**
+ * Runs a follow-up flow for a Pi row while the dialog is closed. Opening the
+ * model selector deliberately reports no focus: the selector takes over the
+ * editor, so reopening the dialog on top of it would hide it.
+ */
+export function runNativeSettingsOutcome(outcome: string): boolean {
+  if (outcome !== NATIVE_MODEL_OUTCOME) return false;
+  const host = readBridge()?.host;
+  const show = propertyOf(host, "showModelSelector");
+  if (!host || !isFunction(show)) return false;
+  reinterpretHostValue<(this: NativeSettingsHost) => void>(show).call(host);
+  return true;
 }

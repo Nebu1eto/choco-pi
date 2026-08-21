@@ -10,18 +10,6 @@ export function buildAdapterSettings(config: CodexConversionConfig, theme: Theme
   return [
     setting(
       {
-        id: "extensionMode",
-        label: "Extension mode",
-        currentValue: config.voiceFeaturesOnly ? "extra tools only" : "full adapter",
-        values: ["full adapter", "extra tools only"],
-      },
-      (value, current) => ({
-        ...current,
-        voiceFeaturesOnly: value === "extra tools only",
-      }),
-    ),
-    setting(
-      {
         id: "additionalProviders",
         label: "Additional providers",
         currentValue: config.scope.additionalProviders.join(", "),
@@ -40,21 +28,6 @@ export function buildAdapterSettings(config: CodexConversionConfig, theme: Theme
         scope: {
           ...current.scope,
           additionalProviders: normalizeProviderList(value.split(",")),
-        },
-      }),
-    ),
-    setting(
-      {
-        id: "heavySystemPromptOverwrite",
-        label: "Heavy system prompt overwrite",
-        currentValue: config.prompt.heavySystemPromptOverwrite ? "on (40% smaller)" : "off",
-        values: ["off", "on (40% smaller)"],
-      },
-      (value, current) => ({
-        ...current,
-        prompt: {
-          ...current.prompt,
-          heavySystemPromptOverwrite: value !== "off",
         },
       }),
     ),

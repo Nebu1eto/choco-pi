@@ -128,22 +128,26 @@ test(
       assert.equal(sections.find((section) => section.id === id)?.mergeInto, undefined);
     }
 
-    assert.deepEqual(sectionRowIds(sections, "pi:appearance"), [
-      "piSourceHeader:appearance",
-      "theme",
-      "hide-thinking",
-    ]);
-    assert.deepEqual(sectionRowIds(sections, "pi:editor"), [
-      "piSourceHeader:editor",
-      "editor-padding",
-    ]);
+    assert.deepEqual(sectionRowIds(sections, "pi:appearance"), ["theme", "hide-thinking"]);
+    assert.deepEqual(sectionRowIds(sections, "pi:editor"), ["editor-padding"]);
     // A section Pi owns needs no source header: its rows come first.
     assert.deepEqual(sectionRowIds(sections, "terminal"), ["tui-mode"]);
     assert.deepEqual(sectionRowIds(sections, "session"), ["autocompact"]);
-    assert.deepEqual(sectionRowIds(sections, "model"), ["thinking"]);
+    assert.deepEqual(sectionRowIds(sections, "model"), ["piModel", "thinking"]);
     assert.deepEqual(sectionRowIds(sections, "tools"), ["skill-commands"]);
     // A row no layout entry claims must stay reachable.
     assert.deepEqual(sectionRowIds(sections, "pi"), ["future-row"]);
+
+    // The reasoning row keeps Pi's id but reads with this panel's wording.
+    const model = sections.find((section) => section.id === "model");
+    assert.equal(
+      model?.buildItems().find((item) => item.id === "thinking")?.label,
+      "Reasoning effort",
+    );
+    assert.deepEqual(model?.handleChange("piModel", "select…"), {
+      kind: "outcome",
+      outcome: "pi:model",
+    });
 
     const appearance = sections.find((section) => section.id === "pi:appearance");
     const terminal = sections.find((section) => section.id === "terminal");
