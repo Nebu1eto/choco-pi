@@ -29,14 +29,19 @@ test("Zellij is detected from its own variables, not from terminal identity", ()
   );
 });
 
-test("Ghostty keeps Kitty images on its own and loses them under Zellij", () => {
+test("Ghostty keeps Kitty images on its own and under Zellij 0.45+", () => {
   assert.equal(resolveImageProtocol("kitty", GHOSTTY), "kitty");
   assert.equal(resolveImageProtocol("kitty", GHOSTTY_IN_ZELLIJ), null);
+  assert.equal(resolveImageProtocol("kitty", GHOSTTY_IN_ZELLIJ, [0, 45, 0]), "kitty");
+  assert.equal(resolveImageProtocol("kitty", GHOSTTY_IN_ZELLIJ, [0, 46, 1]), "kitty");
+  assert.equal(resolveImageProtocol("kitty", GHOSTTY_IN_ZELLIJ, [0, 44, 0]), null);
+  assert.equal(resolveImageProtocol("kitty", GHOSTTY_IN_ZELLIJ, null), null);
 });
 
 test("iTerm2 inline images are dropped under a multiplexer too", () => {
   assert.equal(resolveImageProtocol("iterm2", { TERM: "xterm-256color" }), "iterm2");
   assert.equal(resolveImageProtocol("iterm2", { ZELLIJ: "0" }), null);
+  assert.equal(resolveImageProtocol("iterm2", { ZELLIJ: "0" }, [0, 45, 0]), null);
 });
 
 test("a terminal without image support is left alone", () => {
@@ -77,4 +82,12 @@ test("capabilities are left untouched when detection already agrees", () => {
   assert.equal(applyMultiplexerImagePolicy(kittyCapabilities, GHOSTTY), undefined);
   const noImages: TerminalCapabilities = { images: null, trueColor: true, hyperlinks: true };
   assert.equal(applyMultiplexerImagePolicy(noImages, GHOSTTY_IN_ZELLIJ), undefined);
+});
+
+test("parseZellijVersion reads the CLI banner and rejects garbage", async () => {
+  const { parseZellijVersion } = await import("../.pi/extensions/lib/multiplexer-images.ts");
+  assert.deepEqual(parseZellijVersion("zellij 0.45.0"), [0, 45, 0]);
+  assert.deepEqual(parseZellijVersion("zellij 1.2.10\n"), [1, 2, 10]);
+  assert.equal(parseZellijVersion("zellij"), null);
+  assert.equal(parseZellijVersion(undefined), null);
 });
