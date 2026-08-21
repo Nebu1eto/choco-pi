@@ -104,6 +104,32 @@ test(
 );
 
 test(
+  "the Edit config row opens in Pi's editor regardless of $EDITOR",
+  withCodexDirs(({ ctx, deps }) => {
+    const previous = process.env.EDITOR;
+    const previousVisual = process.env.VISUAL;
+    delete process.env.EDITOR;
+    delete process.env.VISUAL;
+    try {
+      // SAFETY: the fixture supplies every host member the section touches.
+      const section = buildCodexPreferencesSection(ctx as never, deps);
+      const row = section.buildItems().find((item) => item.id === "editConfig");
+      assert.deepEqual(row?.values, ["Open"]);
+      assert.equal(row?.currentValue, "Open");
+      assert.deepEqual(section.handleChange("editConfig", "Open"), {
+        kind: "outcome",
+        outcome: CODEX_EDIT_CONFIG_OUTCOME,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.EDITOR;
+      else process.env.EDITOR = previous;
+      if (previousVisual === undefined) delete process.env.VISUAL;
+      else process.env.VISUAL = previousVisual;
+    }
+  }),
+);
+
+test(
   "changing a Codex row saves the adapter config",
   withCodexDirs(({ ctx, deps, saved }) => {
     // SAFETY: the fixture supplies every host member the section touches.

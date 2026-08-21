@@ -87,6 +87,23 @@ function scopeLabel(scope: CodexConversionConfigScope): string {
 }
 
 /**
+ * Restates the Edit config row for this panel. `/codex` handed the file to
+ * `$EDITOR` and reported when none was configured; here the document opens in
+ * Pi's own editor, so the row is always available and never asks for a reload.
+ */
+function withInPlaceEditor(setting: ConfigSetting, path: string): ConfigSetting {
+  return {
+    ...setting,
+    item: {
+      ...setting.item,
+      description: `Edit ${path} as JSON.`,
+      currentValue: OPEN_LABEL,
+      values: [OPEN_LABEL],
+    },
+  };
+}
+
+/**
  * Builds the Codex section of the preferences panel: every row `/codex` showed
  * across its General, Tools, OpenAI, Display, and About tabs, flattened into one
  * scrollable list with dim group headers.
@@ -160,7 +177,9 @@ export function buildCodexPreferencesSection(
           executionMode: value as ExecutionMode,
         }),
       },
-      ...buildConfigSettings("adapter", draft, theme, scopePath()),
+      ...buildConfigSettings("adapter", draft, theme, scopePath()).map((setting) =>
+        setting.action === "edit-config" ? withInPlaceEditor(setting, scopePath()) : setting,
+      ),
       { item: headerItem("codexToolsHeader", "Tools", theme) },
       ...buildConfigSettings("tools", draft, theme, scopePath()),
       { item: headerItem("codexOpenAIHeader", "OpenAI", theme) },
