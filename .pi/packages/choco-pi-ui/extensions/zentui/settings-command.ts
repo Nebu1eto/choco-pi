@@ -2,7 +2,6 @@ import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import {
   type AutocompleteItem,
-  Key,
   matchesKey,
   type SettingItem,
   SettingsList,
@@ -1048,7 +1047,7 @@ function withSectionFooter(lines: string[], theme: ExtensionContext["ui"]["theme
       copy[index] = safeThemeFg(
         theme,
         "muted",
-        "  Enter/Space to change · Tab/Shift+Tab to switch sections · Esc to close",
+        "  Enter/Space to change · ←/→ to switch sections · Esc to close",
       );
       break;
     }
@@ -1811,7 +1810,7 @@ export function createZentuiPreferencesComponent(
       settingsList.invalidate();
     },
     handleInput(data: string) {
-      if (matchesKey(data, Key.tab)) {
+      if (matchesKey(data, "right")) {
         stopPreview();
         activeSection = nextSection(activeSection, extraSections);
         settingsList = makeSettingsList();
@@ -1819,7 +1818,7 @@ export function createZentuiPreferencesComponent(
         tui.requestRender();
         return;
       }
-      if (matchesKey(data, Key.shift("tab"))) {
+      if (matchesKey(data, "left")) {
         stopPreview();
         activeSection = previousSection(activeSection, extraSections);
         settingsList = makeSettingsList();
