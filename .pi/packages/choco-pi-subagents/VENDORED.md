@@ -153,6 +153,42 @@ sessions receive no workflow tools. `tests/workflow.test.ts` uses a stub runner
 to pin validation, topological scheduling, result bounds, failure policies,
 dynamic updates, idle waits, retention and cancellation.
 
+### Background-by-default spawn guidance
+
+Upstream's `Agent` tool prose named the foreground the recommended mode ("use
+foreground (default) when you need the agent's results before you can
+proceed"), which contradicted this repository's `.pi/SYSTEM.md` delegation
+policy: a foreground child holds the main conversation for its whole run, so
+the user cannot steer the orchestrator while it works. The prose now states one
+policy in all three places it appears — `fullAgentToolDescription`,
+`compactAgentToolDescription`, and the `run_in_background` parameter
+description in `src/index.ts` — plus `examples/agent-tool-description.md`,
+which exists to reproduce the full description for `toolDescriptionMode:
+"custom"` and would otherwise reintroduce the old advice for anyone who copied
+it. Each says to pass `run_in_background: true` by default, that omitting the
+parameter still runs foreground, and that a background result must be read back
+with `get_subagent_result` rather than polled for. The full description's
+bullets were reordered so the default-mode rule precedes the parallel-spawn
+rule that depends on it.
+
+**The behavioral default is deliberately unchanged.** `run_in_background` stays
+`Type.Optional(Type.Boolean())` with no JSON Schema `default` keyword — no tool
+schema in this package uses one — so the only real default is
+`resolveAgentInvocationConfig`'s `agentConfig?.runInBackground ??
+params.run_in_background ?? false` in `src/invocation-config.ts`, and that
+fallback is shared with the nested delegation tool. Flipping it to `true` would
+silently convert every nested `Agent` call that omits the flag from an inline
+result to a bare agent ID, and a nested child produces no completion
+notification at all (the manager's `onComplete` returns early on
+`record.parentAgentId`, `src/index.ts`), so its parent would be left with an ID
+it was never told to retrieve — through a parameter whose nested schema carries
+no description. Guidance moves; the mechanism does not.
+
+The `schedule` parameter description said it "Forces run_in_background", which
+upstream's own 0.15.2 changelog records as wrong: an explicit
+`run_in_background: false` alongside `schedule` is refused, not overridden. It
+now says so.
+
 ### Anti-slop type hardening
 
 The fork names settings, frontmatter, RPC, workflow, host-message and UI adapter

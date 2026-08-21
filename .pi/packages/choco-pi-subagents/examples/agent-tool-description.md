@@ -14,11 +14,11 @@ If the target is already known, use a direct tool — `read` for a known path, `
 ## Usage notes
 
 - Always include a short (3-5 word) description summarizing what the agent will do (shown in UI).
+- Pass run_in_background: true by default. A foreground call holds this conversation until the agent finishes, so the user cannot steer you while it runs — and the parameter is false when omitted, so background is something you must ask for explicitly. Keep a call in the foreground only when it is short and your very next step genuinely cannot proceed without its result.
+- A background call returns an agent ID, and you are notified when it completes — do NOT poll or sleep waiting for it. Continue with other work or respond to the user, then read the result with get_subagent_result when the notification arrives. Backgrounding defers the result, not your responsibility for it.
 - When you launch multiple agents for independent work, send them in a single message with multiple tool uses, with run_in_background: true on each, so they run concurrently. If the user specifies that they want agents run "in parallel", you MUST send a single message with multiple tool calls. Foreground calls run sequentially — only one executes at a time.
-- When the agent is done, it returns a single message back to you. The result is not visible to the user — to show the user, send a text message with a concise summary.
+- However you get it, an agent's answer comes back to you and not to the user — to show the user, send a text message with a concise summary.
 - Trust but verify: an agent's summary describes what it intended to do, not necessarily what it did. When an agent writes or edits code, check the actual changes before reporting work as done.
-- Use run_in_background for work you don't need immediately. You will be notified when it completes — do NOT poll or sleep waiting for it. Continue with other work or respond to the user instead.
-- Foreground vs background: use foreground (default) when you need the agent's results before you can proceed. Use background when you have genuinely independent work to do in parallel.
 - Use resume with an agent ID to continue a previous agent's work. A new (non-resume) Agent call starts a fresh agent with no memory of prior runs, so the prompt must be self-contained.
 - Use steer_subagent to send mid-run messages to a running background agent.
 - Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, etc.), since it is not aware of the user's intent.
