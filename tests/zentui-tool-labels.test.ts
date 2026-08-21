@@ -25,7 +25,8 @@ test(
     assert.equal(resolve("apply_patch"), "Patching");
     assert.equal(resolve("exec_command"), "Running");
     assert.equal(resolve("read"), "Reading");
-    assert.equal(resolve("symbol_search"), "Searching symbols");
+    assert.equal(resolve("symbol_search"), "LSP: Search Symbols");
+    assert.equal(resolve("module_report"), "LSP: Analyse Module");
     assert.equal(resolve("Agent"), "Delegating");
 
     assert.equal(resolve("mcp__linear_save_document"), "MCP linear");
