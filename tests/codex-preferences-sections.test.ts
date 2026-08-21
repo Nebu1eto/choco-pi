@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import type { CodexConversionConfig } from "../.pi/packages/choco-pi-codex/src/adapter/activation/config.ts";
 import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../.pi/packages/choco-pi-codex/src/adapter/activation/config.ts";
+import type { CodexConversionConfigScope } from "../.pi/packages/choco-pi-codex/src/adapter/activation/config-store.ts";
 import {
   buildCodexPreferencesSections,
   CODEX_EDIT_CONFIG_OUTCOME,
@@ -18,15 +19,20 @@ import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/r
 
 const CODEX_PROVIDER_SYMBOL = Symbol.for("choco-pi.codex-preferences-provider");
 
+interface SavedConfig {
+  scope: CodexConversionConfigScope;
+  config: CodexConversionConfig;
+}
+
 interface Fixture {
   ctx: RuntimeValue;
   deps: CodexPreferencesDeps;
-  saved: CodexConversionConfig[];
+  saved: SavedConfig[];
   notices: [string, string][];
 }
 
 function createFixture(cwd: string, projectTrusted: boolean): Fixture {
-  const saved: CodexConversionConfig[] = [];
+  const saved: SavedConfig[] = [];
   const notices: [string, string][] = [];
   let running: CodexConversionConfig = DEFAULT_CODEX_CONVERSION_CONFIG;
   const ctx = {
@@ -41,8 +47,8 @@ function createFixture(cwd: string, projectTrusted: boolean): Fixture {
   };
   const deps: CodexPreferencesDeps = {
     effectiveConfig: () => running,
-    saveAndApply: (_ctx, _scope, nextConfig) => {
-      saved.push(nextConfig);
+    saveAndApply: (_ctx, scope, nextConfig) => {
+      saved.push({ scope, config: nextConfig });
       running = nextConfig;
       return true;
     },
@@ -99,16 +105,13 @@ test(
     }
     assert.deepEqual(
       sections.map((section) => section.mergeInto),
-      ["appearance", "footer", "model", "tools", "agent"],
+      ["appearance", "model", "tools", "agent"],
     );
 
     const placed = sections.flatMap((section) => section.buildItems().map((item) => item.id));
     for (const expected of [
-      "codexConfigScope",
       "executionMode",
-      "extensionMode",
       "additionalProviders",
-      "heavySystemPromptOverwrite",
       "editConfig",
       "webRun",
       "webSearchModel",
@@ -117,25 +120,33 @@ test(
       "verbosity",
       "responsesCompaction",
       "cacheDiagnosticsLog",
-      "statusLine",
       "compactTools",
     ]) {
       assert.ok(placed.includes(expected), `missing row ${expected}`);
     }
-    // The provider scope is global by default and the About links moved out.
-    for (const removed of ["allProviders", "codexAboutGithub", "codexAboutIssue"]) {
+    // Rows whose default needs no control were dropped from the panel.
+    for (const removed of [
+      "allProviders",
+      "codexAboutGithub",
+      "codexAboutIssue",
+      "codexConfigScope",
+      "extensionMode",
+      "heavySystemPromptOverwrite",
+      "statusLine",
+    ]) {
       assert.ok(!placed.includes(removed), `${removed} must no longer render`);
     }
     assert.equal(new Set(placed).size, placed.length, "row ids must stay unique across sections");
-    assert.deepEqual(sectionRowIds(sections, `${CODEX_SECTION_ID}:footer`), [
-      "codexSourceHeader:footer",
-      "statusLine",
-    ]);
     assert.deepEqual(sectionRowIds(sections, `${CODEX_SECTION_ID}:appearance`), [
       "codexSourceHeader:appearance",
       "toolRenaming",
       "compactTools",
       "codeModeDetails",
+    ]);
+    assert.deepEqual(sectionRowIds(sections, `${CODEX_SECTION_ID}:agent`), [
+      "codexSourceHeader:agent",
+      "additionalProviders",
+      "editConfig",
     ]);
   }),
 );
@@ -177,44 +188,33 @@ test(
     model.buildItems();
 
     assert.deepEqual(model.handleChange("fast", "on"), { kind: "rebuild" });
-    assert.equal(saved.at(-1)?.openai.fast, true);
+    assert.equal(saved.at(-1)?.config.openai.fast, true);
+    assert.equal(
+      saved.at(-1)?.scope,
+      "global",
+      "a project without its own file edits the defaults",
+    );
 
     assert.deepEqual(model.handleChange("executionMode", "code"), { kind: "rebuild" });
-    assert.equal(saved.at(-1)?.executionMode, "code");
+    assert.equal(saved.at(-1)?.config.executionMode, "code");
   }),
 );
 
 test(
-  "switching the scope row materializes a project config",
-  withCodexDirs(({ ctx, deps }, cwd) => {
-    // SAFETY: the fixture supplies every host member the section touches.
-    const sections = buildCodexPreferencesSections(ctx as never, deps);
-    const agent = findSection(sections, `${CODEX_SECTION_ID}:agent`);
-    assert.ok(agent);
-    const scopeValue = (): string | undefined =>
-      agent.buildItems().find((item) => item.id === "codexConfigScope")?.currentValue;
-    assert.equal(scopeValue(), "Defaults");
-
-    assert.deepEqual(agent.handleChange("codexConfigScope", "Project"), { kind: "rebuild" });
-    assert.equal(scopeValue(), "Project");
-    assert.deepEqual(agent.handleChange("codexConfigScope", "Defaults"), { kind: "rebuild" });
-    assert.equal(scopeValue(), "Defaults");
-
-    // The project file itself is written by the config store, not by this test.
-    assert.ok(path.isAbsolute(cwd));
-  }),
-);
-
-test(
-  "an untrusted project cannot select the project scope",
-  withCodexDirs(({ deps }, cwd) => {
+  "an untrusted project edits the defaults even when it has its own file",
+  withCodexDirs((_fixture, cwd) => {
+    writeFileSync(
+      path.join(cwd, ".pi", "choco-pi-codex.json"),
+      `${JSON.stringify({ ui: { toolRenaming: false } }, null, 2)}\n`,
+    );
     const untrusted = createFixture(cwd, false);
     // SAFETY: the fixture supplies every host member the section touches.
-    const sections = buildCodexPreferencesSections(untrusted.ctx as never, deps);
-    const scope = findSection(sections, `${CODEX_SECTION_ID}:agent`)
-      ?.buildItems()
-      .find((item) => item.id === "codexConfigScope");
-    assert.deepEqual(scope?.values, ["Defaults"]);
+    const sections = buildCodexPreferencesSections(untrusted.ctx as never, untrusted.deps);
+    const model = findSection(sections, `${CODEX_SECTION_ID}:model`);
+    assert.ok(model);
+    model.buildItems();
+    model.handleChange("fast", "on");
+    assert.equal(untrusted.saved.at(-1)?.scope, "global");
   }),
 );
 
@@ -228,7 +228,7 @@ test(
       registerCodexPreferencesProvider(deps);
       assert.deepEqual(
         readPublishedSections(ctx).map((section) => section.mergeInto),
-        ["appearance", "footer", "model", "tools", "agent"],
+        ["appearance", "model", "tools", "agent"],
       );
     } finally {
       if (previous === undefined) delete store[CODEX_PROVIDER_SYMBOL];
@@ -238,18 +238,19 @@ test(
 );
 
 test(
-  "a project config file selects the project scope on open",
-  withCodexDirs(({ deps }, cwd) => {
+  "a trusted project with its own file edits that document",
+  withCodexDirs((_fixture, cwd) => {
     writeFileSync(
       path.join(cwd, ".pi", "choco-pi-codex.json"),
       `${JSON.stringify({ ui: { statusLine: false } }, null, 2)}\n`,
     );
     const fixture = createFixture(cwd, true);
     // SAFETY: the fixture supplies every host member the section touches.
-    const sections = buildCodexPreferencesSections(fixture.ctx as never, deps);
-    const scope = findSection(sections, `${CODEX_SECTION_ID}:agent`)
-      ?.buildItems()
-      .find((item) => item.id === "codexConfigScope");
-    assert.equal(scope?.currentValue, "Project");
+    const sections = buildCodexPreferencesSections(fixture.ctx as never, fixture.deps);
+    const model = findSection(sections, `${CODEX_SECTION_ID}:model`);
+    assert.ok(model);
+    model.buildItems();
+    model.handleChange("fast", "on");
+    assert.equal(fixture.saved.at(-1)?.scope, "folder");
   }),
 );

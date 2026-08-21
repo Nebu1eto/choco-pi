@@ -65,6 +65,13 @@ gained two optional fields:
 order instead of recomputing it, and the panel opens on the first visible
 section rather than a hardcoded `appearance`.
 
+### choco-pi change: working line rows
+
+`buildWorkingLineItems` no longer offers the `workingLineCustomMessages` and
+`workingLineMessageList` rows. The `messages.custom` config key and the
+`edit-working-line-messages` outcome are untouched, so restoring the rows is a
+matter of re-adding them.
+
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
 
 - Original source code: https://github.com/maddeye/pi-nord

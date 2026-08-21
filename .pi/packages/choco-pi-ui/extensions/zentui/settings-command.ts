@@ -726,14 +726,6 @@ function buildWorkingLineItems(config: PolishedTuiConfig): SettingItem[] {
       values: colorSourceValues,
     },
     {
-      id: "workingLineCustomMessages",
-      label: "Custom messages",
-      description:
-        "Select from the editable list once per turn; off uses styled Working… without RNG.",
-      currentValue: featureValue(workingLine.messages.custom),
-      values: featureStateValues,
-    },
-    {
       id: "workingLineTool",
       label: "Tool",
       description: "Show the latest active tool.",
@@ -761,14 +753,6 @@ function buildWorkingLineItems(config: PolishedTuiConfig): SettingItem[] {
         "Show whole-interaction tokens as ↑input ↓output; live output may be estimated until final usage reconciles.",
       currentValue: featureValue(workingLine.segments.tokens),
       values: featureStateValues,
-    },
-    {
-      id: "workingLineMessageList",
-      label: "Message list",
-      description:
-        "Edit one message per line; line order is preserved even while custom messages are off.",
-      currentValue: "Edit…",
-      values: ["Edit…"],
     },
   ];
 }
