@@ -8,7 +8,8 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import { openNativeRowPicker, THINKING_ROW_ID } from "./lib/native-settings.ts";
+import { EFFORT_PICKER_FOCUS } from "./lib/native-settings.ts";
+import { openPreferencesPicker } from "./status-commands.ts";
 
 const THINKING_LEVELS: ThinkingLevel[] = [
   "off",
@@ -250,9 +251,9 @@ export default function modelControls(pi: ExtensionAPI): void {
       }
 
       const labels = levels.map((level) => (level === current ? `${level} (current)` : level));
-      // Prefer the picker the settings panel shows, so both entry points offer
-      // the same list with the same descriptions.
-      if (await openNativeRowPicker(THINKING_ROW_ID, ctx.ui)) return;
+      // A bare /effort opens the settings dialog on the row that holds the
+      // picker, so the prompt and the panel lead to the same place.
+      if (await openPreferencesPicker(ctx, current, EFFORT_PICKER_FOCUS)) return;
 
       const selected = await ctx.ui.select("Reasoning effort", labels);
       if (!selected) return;
