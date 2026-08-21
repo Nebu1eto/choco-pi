@@ -58,16 +58,35 @@ export type ToolDiffToolName = "write" | "edit" | "apply_patch";
 export const TOOL_DIFF_TOOLS: readonly ToolDiffToolName[] = ["write", "edit", "apply_patch"];
 
 /**
- * Transcript header labels. The registered name is an API identifier, not
- * something to show a reader; these match the working line's verbs in
- * choco-pi-ui's `tool-labels.ts`, so a tool reads the same mid-turn and in
- * the transcript.
+ * Transcript header labels while the call runs. The registered name is an API
+ * identifier, not something to show a reader; these match the working line's
+ * verbs in choco-pi-ui's `tool-labels.ts`, so a tool reads the same mid-turn
+ * and in the transcript.
  */
 export const TOOL_DIFF_LABELS = {
-  write: "Writing",
-  edit: "Editing",
-  apply_patch: "Patching",
+  write: "File: Writing",
+  edit: "File: Editing",
+  apply_patch: "File: Patching",
 } satisfies Readonly<Record<ToolDiffToolName, string>>;
+
+/**
+ * The same headers once the call has settled. A transcript row outlives the
+ * work it describes, so it reads in the past tense Pi's own finished rows use
+ * ("Ran", "Explored").
+ */
+export const TOOL_DIFF_FINISHED_LABELS = {
+  write: "File: Wrote",
+  edit: "File: Edited",
+  apply_patch: "File: Patched",
+} satisfies Readonly<Record<ToolDiffToolName, string>>;
+
+/**
+ * Pi starts a tool row with `isPartial: true` and clears it when the final
+ * result arrives, so this is the moment the header switches tense.
+ */
+export function toolDiffLabel(name: ToolDiffToolName, context: RenderContextLike): string {
+  return context.isPartial === false ? TOOL_DIFF_FINISHED_LABELS[name] : TOOL_DIFF_LABELS[name];
+}
 
 export type ToolDiffRenderingOptions = {
   /**
@@ -703,14 +722,14 @@ function renderWriteCall(
   theme: Theme,
   context: RenderContextLike,
 ): Component {
+  const label = toolDiffLabel("write", context);
   // While arguments still stream, Pi's incremental highlighter is the better
   // view: there is no complete file to diff yet.
-  if (context.argsComplete !== true)
-    return fallbackCall(original, TOOL_DIFF_LABELS.write, args, theme, context);
+  if (context.argsComplete !== true) return fallbackCall(original, label, args, theme, context);
   const path = stringField(args, "path", "file_path");
   const content = stringField(args, "content");
   if (path === undefined || content === undefined)
-    return fallbackCall(original, TOOL_DIFF_LABELS.write, args, theme, context);
+    return fallbackCall(original, label, args, theme, context);
 
   const shown = displayPath(path, context.cwd);
   const file = buildWriteDiffFile(shown, content);
@@ -719,14 +738,14 @@ function renderWriteCall(
     context.lastComponent,
     (width) =>
       renderFiles({
-        label: TOOL_DIFF_LABELS.write,
+        label,
         files: [file],
         theme,
         width,
         expanded,
         collapseLimit: COLLAPSED_BODY_LINES,
       }),
-    `${TOOL_DIFF_LABELS.write} ${shown}`,
+    `${label} ${shown}`,
   );
 }
 
@@ -751,7 +770,8 @@ function renderEditCall(
   const path = stringField(args, "path", "file_path");
   const box = own(new Box(1, 1, toolBackground(theme, context, true)));
   const shown = path === undefined ? "" : displayPath(path, context.cwd);
-  const title = `${theme.fg("toolTitle", theme.bold(TOOL_DIFF_LABELS.edit))} ${shown}`.trimEnd();
+  const label = toolDiffLabel("edit", context);
+  const title = `${theme.fg("toolTitle", theme.bold(label))} ${shown}`.trimEnd();
   box.addChild(new Text(title, 0, 0));
   return box;
 }
@@ -835,29 +855,28 @@ function renderApplyPatchCall(
   theme: Theme,
   context: RenderContextLike,
 ): Component {
-  if (context.argsComplete !== true)
-    return fallbackCall(original, TOOL_DIFF_LABELS.apply_patch, args, theme, context);
+  const label = toolDiffLabel("apply_patch", context);
+  if (context.argsComplete !== true) return fallbackCall(original, label, args, theme, context);
   const patchText = stringField(args, "input", "patchText", "patch");
   if (patchText === undefined || patchText.trim().length === 0) {
-    return fallbackCall(original, TOOL_DIFF_LABELS.apply_patch, args, theme, context);
+    return fallbackCall(original, label, args, theme, context);
   }
   const files = applyPatchDiffFiles(patchText, context);
-  if (files.length === 0)
-    return fallbackCall(original, TOOL_DIFF_LABELS.apply_patch, args, theme, context);
+  if (files.length === 0) return fallbackCall(original, label, args, theme, context);
 
   const expanded = context.expanded === true;
   return diffLinesComponent(
     context.lastComponent,
     (width) =>
       renderFiles({
-        label: TOOL_DIFF_LABELS.apply_patch,
+        label,
         files,
         theme,
         width,
         expanded,
         collapseLimit: COLLAPSED_BODY_LINES,
       }),
-    `${TOOL_DIFF_LABELS.apply_patch} ${files.map((file) => file.path).join(", ")}`,
+    `${label} ${files.map((file) => file.path).join(", ")}`,
   );
 }
 
@@ -909,7 +928,7 @@ export function decorateToolDefinition(definition: ToolDefinition): ToolDefiniti
   const originalCall = definition.renderCall as AnyRenderCall | undefined;
   // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const originalResult = definition.renderResult as AnyRenderResult | undefined;
-  const label = TOOL_DIFF_LABELS[definition.name];
+  const name = definition.name;
 
   // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
   const next = { ...definition } as ToolDefinition;
@@ -919,7 +938,7 @@ export function decorateToolDefinition(definition: ToolDefinition): ToolDefiniti
       try {
         return overrides.renderCall!(originalCall, args, theme, context);
       } catch {
-        return fallbackCall(originalCall, label, args, theme, context);
+        return fallbackCall(originalCall, toolDiffLabel(name, context), args, theme, context);
       }
     }) as ToolDefinition["renderCall"];
   }

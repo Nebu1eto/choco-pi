@@ -188,9 +188,11 @@ export function renderApplyPatchCallFromState(
     showCollapsedDiff?: boolean | undefined;
   },
 ): string {
-  if (context?.argsComplete === false) return `${theme.fg("dim", "•")} ${theme.bold("Patching")}`;
+  if (context?.argsComplete === false)
+    return `${theme.fg("dim", "•")} ${theme.bold("File: Patching")}`;
   const patchText = isStringValue(args.input) ? args.input : "";
-  if (patchText.trim().length === 0) return `${theme.fg("dim", "•")} ${theme.bold("Patching")}`;
+  if (patchText.trim().length === 0)
+    return `${theme.fg("dim", "•")} ${theme.bold("File: Patching")}`;
   const cached = context?.toolCallId ? applyPatchRenderStates.get(context.toolCallId) : undefined;
   const cwd = context?.cwd ?? cached?.cwd;
   const effectivePatchText = cached?.patchText ?? patchText;
@@ -201,7 +203,7 @@ export function renderApplyPatchCallFromState(
       : (cached?.collapsed ?? formatApplyPatchSummary(effectivePatchText, cwd));
   if (baseText.trim().length === 0) {
     if (cached?.status === "failed") return theme.fg("error", "• Edit failed");
-    return `${theme.fg("dim", "•")} ${theme.bold("Patching")}`;
+    return `${theme.fg("dim", "•")} ${theme.bold("File: Patching")}`;
   }
   return cached?.status === "partial_failure"
     ? renderPartialFailureCall(baseText, theme, cached.failedTargets)

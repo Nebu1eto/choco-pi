@@ -219,14 +219,19 @@ only ones that draw a frame.
 
 ### Working-line tool labels
 
-The working line shows what a tool is doing rather than its registered name, so
-`apply_patch` reads as `Patching`, while the choco-pi-lsp family carries a
-category prefix: `module_report` reads as `LSP: Analyse Module` and
-`symbol_search` as `LSP: Search Symbols`. Names with no built-in entry fall
-back to the registered name, and an
-`mcp__<server>_<tool>` name renders as `MCP <server>`. Override or extend the
-table from JSON with `components.workingLine.toolLabels`, keyed by registered
-tool name:
+The working line shows what a tool is doing rather than its registered name,
+as `Category: Doing [Object]`: `apply_patch` reads as `File: Patching`,
+`steer_subagent` as `Delegation: Steering`, and `module_report` as
+`LSP: Analysing Module`. The category tells delegation, session, workflow,
+goal, and language-intelligence work apart from ordinary file and shell work
+at a glance. Each tool also has a settled form in the past tense Pi's own
+finished rows use — `File: Patched`, `Delegation: Steered` — exported as
+`DEFAULT_FINISHED_TOOL_LABELS` and `resolveFinishedToolLabel` for transcript
+surfaces; the working line only shows a running tool, so it reads the
+in-progress table. Names with no built-in entry fall back to the registered name,
+and an `mcp__<server>_<tool>` name renders as `MCP: <server>`. Override or
+extend the table from JSON with `components.workingLine.toolLabels`, keyed by
+registered tool name (an override applies to both states):
 
 ```json
 {
