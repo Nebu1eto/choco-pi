@@ -71,14 +71,46 @@ calls `formatAccentStatusText` from the added `status-text.ts`, which returns
 the plain text whenever the host cannot colour it. The module is separate so
 it loads under Node's strip-only mode for `tests/mcp-status-text.test.ts`.
 
-### Initialization failure boundary (`index.ts`)
+### Status write boundary (`status-text.ts`, `init.ts`, `proxy-modes.ts`, `index.ts`)
 
-Upstream calls `updateStatusBar(nextState)` directly in the initialization
-`then` handler, where any throw lands in the `catch` that reports
-`MCP initialization failed` and, when it runs before the state is published,
-stops the whole extension runtime. The status-bar update now has its own
-boundary and logs a warning instead. Genuine initialization failures still
-reach the original `catch` unchanged.
+Upstream lets a footer status write fail whatever asked for it. `init.ts`
+calls `ui.setStatus` unguarded, `updateStatusBar` has nineteen call sites
+across initialization, lifecycle callbacks, slash commands, and tool calls,
+and each one propagates a throw from the host UI. That is how the theme
+defect above surfaced as `MCP initialization failed`.
+
+`status-text.ts` now owns the boundary. `writeStatus` and `writeAccentStatus`
+guard exactly the host interaction — resolving `theme` on the UI object and
+the `setStatus` call — and hand any error to a reporter instead of the caller.
+Deriving the status text from local state stays outside the guard: a throw
+there is a defect in this package, and swallowing it would hide the class of
+bug the guard exists to expose. `createStatusWriteFailureReporter` logs each
+distinct failure once, because the status bar repaints on every server state
+change and an unusable host UI would otherwise repeat one warning for the
+whole session. `init.ts` binds it to `logger.warn` and `formatTerminalError`
+and exports `writeMcpStatus`.
+
+Every write to the `mcp` status key now goes through that boundary:
+`updateStatusBar` itself, the startup `connecting to N servers...` status, the
+footer clear when `mcpFooterStatus` is `off`, and the `connecting to X...`
+status in `lazyConnect` and in the proxy `connect` and `call` modes. The last
+three sat inside `try` blocks whose `catch` records a server failure, so a
+refused status write was recorded upstream as a connection failure and put a
+server into failure backoff it had never been asked to reach.
+
+The `mcp-auth` writes in `commands.ts` are left unguarded. They report
+progress inside an interactive OAuth flow that also drives `ui.confirm`,
+`ui.input`, and `ui.notify`; a UI that cannot accept a status write cannot
+carry that flow either, so fencing `setStatus` alone would not make the
+command survivable, and the flow already reports its own failures.
+
+The fork's earlier `try/catch` around `updateStatusBar(nextState)` in the
+`index.ts` initialization handler is removed. The failures it caught can no
+longer reach it, and the site is not otherwise special: `state` is assigned
+before that line, so the rejection path no longer tears the runtime down.
+Anything still escaping `updateStatusBar` is a defect in this package and
+should stay loud rather than be demoted to a warning at one of nineteen
+callers.
 
 ## Configuration reads
 
