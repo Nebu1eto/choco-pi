@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { migrateCodexConversionConfigIfNeeded } from "./config-migration.ts";
+import { configPathsAliasSameFile } from "./config-path-alias.ts";
 import {
   DEFAULT_CODEX_CONVERSION_CONFIG,
   normalizeCodexConversionConfig,
@@ -89,6 +90,17 @@ export function getProjectCodexConversionConfigPath(cwd: string): string {
   return join(cwd, CONFIG_DIR_NAME, CODEX_CONVERSION_CONFIG_BASENAME);
 }
 
+/**
+ * In the profile checkout the project config path and the global config are
+ * the same file, so no separate folder layer exists there to write or clear.
+ */
+function projectConfigAliasesGlobal(cwd: string, globalConfigPath?: string | undefined): boolean {
+  return configPathsAliasSameFile(
+    getProjectCodexConversionConfigPath(cwd),
+    globalConfigPath ?? getCodexConversionConfigPath(),
+  );
+}
+
 function readConfigDocument(
   configPath: string,
   scope: "global" | "trusted project",
@@ -130,6 +142,7 @@ export function readProjectCodexConversionDocument(
 }
 
 export function hasFolderCodexConversionConfig(cwd: string, projectTrusted: boolean): boolean {
+  if (projectConfigAliasesGlobal(cwd)) return false;
   const project = readProjectCodexConversionDocument(cwd, projectTrusted);
   if (!project) return false;
   return [...OWNED_CONFIG_KEYS, ...LEGACY_OWNED_CONFIG_KEYS].some((key) => {
@@ -204,6 +217,13 @@ export function materializeFolderCodexConversionConfig(
 ): { ok: true; config: CodexConversionConfig } | { ok: false; error: string } {
   if (!projectTrusted)
     return { ok: false, error: "Trust this folder before enabling folder settings" };
+  if (projectConfigAliasesGlobal(cwd, globalConfigPath)) {
+    return {
+      ok: false,
+      error:
+        "This folder's Codex config file is the global profile config; folder settings would overwrite it",
+    };
+  }
   const config = readLayeredCodexConversionConfig({ cwd, projectTrusted, globalConfigPath });
   const result = writeCodexConversionConfig(config, getProjectCodexConversionConfigPath(cwd), true);
   return result.ok ? { ok: true, config } : result;
@@ -215,6 +235,9 @@ export function clearFolderCodexConversionConfig(
 ): { ok: true } | { ok: false; error: string } {
   if (!projectTrusted)
     return { ok: false, error: "Trust this folder before changing folder settings" };
+  // The "folder" file is the global profile itself: there is no separate
+  // folder layer to clear, and stripping owned keys would erase the profile.
+  if (projectConfigAliasesGlobal(cwd)) return { ok: true };
   const path = getProjectCodexConversionConfigPath(cwd);
   const project = readProjectCodexConversionDocument(cwd, true);
   if (!project) return { ok: true };
