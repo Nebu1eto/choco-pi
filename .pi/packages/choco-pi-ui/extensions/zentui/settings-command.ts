@@ -209,6 +209,18 @@ export interface ZentuiPreferencesPanelOptions {
   tui: { requestRender(): void };
   theme: ExtensionContext["ui"]["theme"];
   extraSections?: PreferencesExtraSection[];
+  /**
+   * Renders one section's rows inside another, keyed source to target. The
+   * source keeps no tab of its own and its rows arrive under a dim heading, in
+   * the order the keys are declared.
+   */
+  mergeSections?: Record<string, string>;
+  /**
+   * Tab order. Listed sections come first in this order; anything left over
+   * keeps its natural position after them, so an unknown or missing id is
+   * harmless.
+   */
+  sectionOrder?: string[];
   initialSection?: string;
   initialFocusId?: string;
   onOutcome: (outcome: string) => void;
@@ -1033,6 +1045,9 @@ function standaloneExtras(extras: PreferencesExtraSection[]): PreferencesExtraSe
   return extras.filter((extra) => extra.mergeInto === undefined);
 }
 
+/** Source-to-target map of sections rendered inside another section. */
+type SectionMerges = Readonly<Record<string, string>>;
+
 /** One section's rows in render order, with the host section each contributed row belongs to. */
 interface SectionItems {
   items: SettingItem[];
@@ -1049,6 +1064,8 @@ function collectSectionItems(
   config: PolishedTuiConfig,
   active: ReadonlyMap<string, string>,
   extras: PreferencesExtraSection[],
+  merges: SectionMerges,
+  theme: ExtensionContext["ui"]["theme"],
 ): SectionItems {
   const owners = new Map<string, PreferencesExtraSection>();
   const own = (extra: PreferencesExtraSection): SettingItem[] => {
@@ -1056,22 +1073,49 @@ function collectSectionItems(
     for (const item of built) owners.set(item.id, extra);
     return built;
   };
-  const sectionOwner = standaloneExtras(extras).find((candidate) => candidate.id === section);
-  const items = sectionOwner ? own(sectionOwner) : buildSectionItems(section, config, active);
-  for (const extra of extras) {
-    if (extra.mergeInto === section) items.push(...own(extra));
+  const rowsOf = (target: string): SettingItem[] => {
+    const sectionOwner = standaloneExtras(extras).find((candidate) => candidate.id === target);
+    const rows = sectionOwner ? own(sectionOwner) : buildSectionItems(target, config, active);
+    for (const extra of extras) {
+      if (extra.mergeInto === target) rows.push(...own(extra));
+    }
+    return rows;
+  };
+  const items = rowsOf(section);
+  for (const [source, target] of Object.entries(merges)) {
+    if (target !== section) continue;
+    const rows = rowsOf(source);
+    if (rows.length === 0) continue;
+    items.push(
+      {
+        id: `sectionHeader:${source}`,
+        label: safeThemeFg(theme, "dim", sectionLabel(source, extras)),
+        currentValue: "",
+      },
+      ...rows,
+    );
   }
   return { items, owners };
 }
 
-function sectionOrder(extras: PreferencesExtraSection[]): string[] {
+function sectionOrder(
+  extras: PreferencesExtraSection[],
+  merges: SectionMerges = {},
+  override?: readonly string[],
+): string[] {
   const builtin = new Set<string>(settingsSections);
-  return [
+  const merged = new Set(Object.keys(merges));
+  const available = [
     ...settingsSections,
     ...standaloneExtras(extras)
       .filter((extra) => !builtin.has(extra.id))
       .map((e) => e.id),
-  ];
+  ].filter((id) => !merged.has(id));
+  if (!override) return available;
+  const known = new Set(available);
+  const ordered = override.filter((id) => known.has(id));
+  const promoted = new Set(ordered);
+  return [...ordered, ...available.filter((id) => !promoted.has(id))];
 }
 function sectionLabel(section: string, extras: PreferencesExtraSection[]): string {
   const extra = standaloneExtras(extras).find((candidate) => candidate.id === section);
@@ -1079,12 +1123,10 @@ function sectionLabel(section: string, extras: PreferencesExtraSection[]): strin
   // SAFETY: the lookup is nullish-guarded, so a section outside the built-in union falls back to its own id.
   return sectionLabels[section as SettingsSection] ?? section;
 }
-function nextSection(section: string, extras: PreferencesExtraSection[]): string {
-  const order = sectionOrder(extras);
+function nextSection(section: string, order: readonly string[]): string {
   return order[(order.indexOf(section) + 1) % order.length] ?? order[0] ?? "appearance";
 }
-function previousSection(section: string, extras: PreferencesExtraSection[]): string {
-  const order = sectionOrder(extras);
+function previousSection(section: string, order: readonly string[]): string {
   return (
     order[(order.indexOf(section) - 1 + order.length) % order.length] ?? order[0] ?? "appearance"
   );
@@ -1094,8 +1136,8 @@ function formatSectionTabs(
   extras: PreferencesExtraSection[],
   theme: ExtensionContext["ui"]["theme"],
   width: number,
+  order: readonly string[],
 ): string {
-  const order = sectionOrder(extras);
   const rendered = order.map((section) =>
     section === active
       ? theme.bold(sectionLabel(section, extras))
@@ -1313,10 +1355,12 @@ export function createZentuiPreferencesComponent(
   const { ctx, tui, theme, onOutcome } = options;
   const { setEditor, setMessages, setFooter } = createSettingsAppliers(deps);
   const extraSections = options.extraSections ?? [];
+  const sectionMerges: SectionMerges = options.mergeSections ?? {};
+  const visibleSections = sectionOrder(extraSections, sectionMerges, options.sectionOrder);
   const initialSection =
-    options.initialSection && sectionOrder(extraSections).includes(options.initialSection)
+    options.initialSection && visibleSections.includes(options.initialSection)
       ? options.initialSection
-      : "appearance";
+      : (visibleSections[0] ?? "appearance");
   const listTheme = deps.settingsListTheme ?? getSettingsListTheme();
   let activeSection = initialSection;
   let settingsList: SettingsList;
@@ -1410,6 +1454,8 @@ export function createZentuiPreferencesComponent(
       deps.getConfig(),
       deps.getActiveExtensionStatuses(),
       extraSections,
+      sectionMerges,
+      theme,
     );
     const list = new SettingsList(
       items,
@@ -1875,7 +1921,11 @@ export function createZentuiPreferencesComponent(
         : settingsRows;
       return [
         truncateToWidth(border, width, ""),
-        truncateToWidth(formatSectionTabs(activeSection, extraSections, theme, width), width, ""),
+        truncateToWidth(
+          formatSectionTabs(activeSection, extraSections, theme, width, visibleSections),
+          width,
+          "",
+        ),
         truncateToWidth(border, width, ""),
         ...bodyRows,
         truncateToWidth(border, width, ""),
@@ -1887,7 +1937,7 @@ export function createZentuiPreferencesComponent(
     handleInput(data: string) {
       if (matchesKey(data, "right")) {
         stopPreview();
-        activeSection = nextSection(activeSection, extraSections);
+        activeSection = nextSection(activeSection, visibleSections);
         settingsList = makeSettingsList();
         startPreview();
         tui.requestRender();
@@ -1895,7 +1945,7 @@ export function createZentuiPreferencesComponent(
       }
       if (matchesKey(data, "left")) {
         stopPreview();
-        activeSection = previousSection(activeSection, extraSections);
+        activeSection = previousSection(activeSection, visibleSections);
         settingsList = makeSettingsList();
         startPreview();
         tui.requestRender();

@@ -15,7 +15,6 @@ import {
 } from "../../adapter/activation/config-store.ts";
 import type { ExecutionMode } from "../../adapter/activation/execution-mode.ts";
 import { buildConfigSettings, type ConfigSetting } from "./config-items.ts";
-import { CHANGELOG_URL, DISCORD_URL, GITHUB_URL, ISSUE_URL, openExternalUrl } from "./links.ts";
 
 /** Registry key the choco-pi profile reads to host Codex rows in its preferences panel. */
 export const CODEX_PREFERENCES_PROVIDER_SYMBOL = Symbol.for("choco-pi.codex-preferences-provider");
@@ -28,18 +27,6 @@ const EXECUTION_MODE_ITEM_ID = "executionMode";
 const DEFAULTS_LABEL = "Defaults";
 const PROJECT_LABEL = "Project";
 const OPEN_LABEL = "Open";
-
-const ABOUT_LINKS: ReadonlyArray<{ id: string; label: string; url: string; message: string }> = [
-  { id: "codexAboutGithub", label: "GitHub", url: GITHUB_URL, message: "Opened GitHub" },
-  {
-    id: "codexAboutChangelog",
-    label: "Changelog",
-    url: CHANGELOG_URL,
-    message: "Opened changelog",
-  },
-  { id: "codexAboutDiscord", label: "Discord", url: DISCORD_URL, message: "Opened Discord" },
-  { id: "codexAboutIssue", label: "Report an issue", url: ISSUE_URL, message: "Opened issue form" },
-];
 
 /** What the host panel does after a Codex row changed. Mirrors the panel's own section contract. */
 export type CodexSectionChange =
@@ -127,12 +114,10 @@ const CODEX_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[]
     section: "agent",
     rows: [
       "extensionMode",
-      "allProviders",
       "additionalProviders",
       "heavySystemPromptOverwrite",
       SCOPE_ITEM_ID,
       "editConfig",
-      ...ABOUT_LINKS.map(({ id }) => id),
     ],
   },
 ];
@@ -246,15 +231,6 @@ export function buildCodexPreferencesSections(
       ...buildConfigSettings("tools", draft, theme, scopePath()),
       ...buildConfigSettings("openai", draft, theme, scopePath()),
       ...buildConfigSettings("display", draft, theme, scopePath()),
-      ...ABOUT_LINKS.map(({ id, label, url }) => ({
-        item: {
-          id,
-          label,
-          description: url,
-          currentValue: OPEN_LABEL,
-          values: [OPEN_LABEL],
-        },
-      })),
     ];
   };
 
@@ -278,13 +254,6 @@ export function buildCodexPreferencesSections(
 
   const handleChange = (id: string, newValue: string): CodexSectionChange => {
     if (id === SCOPE_ITEM_ID) return changeScope(newValue);
-
-    const link = ABOUT_LINKS.find((candidate) => candidate.id === id);
-    if (link) {
-      openExternalUrl(link.url);
-      ctx.ui.notify(link.message, "info");
-      return { kind: "update" };
-    }
 
     const definition = buildSettings().find(({ item }) => item.id === id);
     if (definition?.action === "edit-config") {
