@@ -5,6 +5,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
+  adoptCheckpoints,
   captureGitSnapshot,
   CheckpointError,
   checkpointRetentionMs,
@@ -23,6 +24,7 @@ import {
 import {
   buildTurnTimeline,
   CHECKPOINT_ENTRY,
+  checkpointAnchorsFromEntries,
   messageContentLabel,
   RESTORE_ENTRY,
   sessionTurnsFromEntries,
@@ -34,6 +36,7 @@ import { propertiesWhen, reinterpretHostValue, type RuntimeValue } from "./lib/r
 
 export {
   buildTurnTimeline,
+  checkpointAnchorsFromEntries,
   sessionTurnsFromEntries,
   turnCheckpointsFromEntries,
   type FileCheckpoint,
@@ -147,10 +150,19 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
 
   pi.on("session_start", (_event, ctx) => {
     const current = captureState(ctx);
-    void pruneCheckpointRefs(ctx.cwd, {
-      maxAgeMs: checkpointRetentionMs(),
-      keepRef: current.ref,
-    }).catch(() => undefined);
+    // Adopt before pruning: a fork's inherited checkpoints must be anchored
+    // under this session's ref before the parent's ref can expire.
+    void adoptCheckpoints(ctx.cwd, {
+      ref: current.ref,
+      anchors: checkpointAnchorsFromEntries(ctx.sessionManager.getEntries()),
+    })
+      .catch(() => undefined)
+      .then(() =>
+        pruneCheckpointRefs(ctx.cwd, {
+          maxAgeMs: checkpointRetentionMs(),
+          keepRef: current.ref,
+        }).catch(() => undefined),
+      );
   });
 
   pi.on("turn_start", async (event, ctx) => {
