@@ -55,3 +55,13 @@ export function styleMcpCallLines(lines: string[], theme: McpCallTheme): string[
   }
   return styled;
 }
+
+/**
+ * The one-line title for the compact collapsed row, matching the bulleted
+ * shape of the expanded render: `• MCP linear save_document` instead of the
+ * raw `mcp call mcp__linear_save_document` headline.
+ */
+export function formatMcpCallCompactTitle(title: string): string {
+  const { header, detail } = splitMcpCallHeadline(title);
+  return detail === undefined ? `• ${header}` : `• ${header} ${detail}`;
+}
