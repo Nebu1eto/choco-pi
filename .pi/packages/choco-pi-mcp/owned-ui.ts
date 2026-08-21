@@ -1,4 +1,4 @@
-import { isFunctionValue, isObjectValue } from "./protocol-values.ts";
+import { isFunctionValue, isObjectValue, type RuntimeValue } from "./protocol-values.ts";
 
 /**
  * The slice of a runtime owner the UI fence needs.
@@ -39,14 +39,26 @@ export function createOwnedUi<Ui extends object>(ui: Ui, owner: OwnedUiOwner): U
           descriptor = Object.getOwnPropertyDescriptor(descriptorOwner, property);
           descriptorOwner = Object.getPrototypeOf(descriptorOwner);
         }
-        // A getter is only invoked while the owner is active; a fenced runtime
-        // must not read live state to answer a property it will discard.
-        const member =
-          descriptor && "value" in descriptor
-            ? descriptor.value
-            : owner.isActive()
-              ? descriptor?.get?.call(receiver)
-              : undefined;
+        // A stored value can be handed back at any time. Every other member
+        // needs a live read, and a fenced runtime must not take one to answer
+        // a property it will discard.
+        let member;
+        if (descriptor && "value" in descriptor) {
+          member = descriptor.value;
+        } else if (!owner.isActive()) {
+          member = undefined;
+        } else if (descriptor === undefined) {
+          // No descriptor anywhere on the chain. On a plain object the member
+          // is simply absent, but a host object can answer gets from a trap
+          // while reporting no own property: Pi's global `theme` is a proxy
+          // over an empty target, so descriptor-only resolution turns every
+          // one of its methods into undefined and `ui.theme.fg(...)` throws.
+          // SAFETY: A get trap may read any member of its own target; this view names only the key already being read.
+          const trappedTarget = target as { [key: string | symbol]: RuntimeValue };
+          member = trappedTarget[property];
+        } else {
+          member = descriptor.get?.call(receiver);
+        }
 
         if (isFunctionValue(member)) {
           // Methods stay callable after deactivation and no-op instead. A

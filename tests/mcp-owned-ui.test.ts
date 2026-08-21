@@ -69,3 +69,43 @@ test("data members read as undefined once the owner stops", async () => {
   owner.stop();
   assert.equal(ui.theme, undefined, "truthiness guards keep working after the stop");
 });
+
+test("members of a trap-backed host object stay reachable", () => {
+  // Pi exports its global theme as a proxy over an empty target, so the theme
+  // reports no own property descriptor for `fg` and none of its prototypes
+  // carry one either. Descriptor-only resolution handed back undefined, and
+  // `ui.theme.fg(...)` threw "ui.theme.fg is not a function" in every TUI.
+  const calls: string[] = [];
+  const hostTheme = new Proxy(
+    {},
+    {
+      get: (_target, property) => (name: string, text: string) =>
+        `${String(property)}/${name}:${text}`,
+    },
+  );
+  const owner = createToggleOwner();
+  const ui = createOwnedUi(
+    {
+      get theme(): FakeTheme {
+        // SAFETY: The trap answers every member with the theme's colouring call.
+        return hostTheme as FakeTheme;
+      },
+      setStatus: (key: string, content?: string) => {
+        calls.push(`${key}=${content ?? ""}`);
+      },
+    },
+    owner,
+  );
+
+  assert.equal(
+    ui.theme.fg("accent", "ok"),
+    "fg/accent:ok",
+    "a trapped member must resolve to its value",
+  );
+
+  ui.setStatus("mcp", ui.theme.fg("accent", "2 servers enabled"));
+  assert.deepEqual(calls, ["mcp=fg/accent:2 servers enabled"]);
+
+  owner.stop();
+  assert.equal(ui.theme, undefined, "the fence still closes over a trap-backed member");
+});

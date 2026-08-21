@@ -48,6 +48,7 @@ import {
   type McpRuntimeOwner,
 } from "./runtime-owner.ts";
 import { publishMcpStatusSnapshot } from "./mcp-status.ts";
+import { formatAccentStatusText } from "./status-text.ts";
 import { isFunctionValue, isNumberValue, mergeObjectParts } from "./protocol-values.js";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
@@ -710,7 +711,7 @@ export function updateStatusBar(state: McpExtensionState): void {
     ui.setStatus("mcp", undefined);
     return;
   }
-  ui.setStatus("mcp", ui.theme ? ui.theme.fg("accent", formattedStatus) : formattedStatus);
+  ui.setStatus("mcp", formatAccentStatusText(ui.theme, formattedStatus));
 }
 
 export function getFailureAgeSeconds(state: McpExtensionState, serverName: string): number | null {
