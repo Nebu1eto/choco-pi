@@ -158,6 +158,85 @@ test("an unchanged working tree reuses the previous checkpoint commit", async (t
   assert.equal(await git(root, "rev-parse", REF), third.commit);
 });
 
+test("a resumed session keeps its earlier checkpoints reachable", async (t) => {
+  const root = await createRepository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  await writeFile(path.join(root, "tracked.txt"), "turn one\n");
+  const first = await capture(root);
+  await writeFile(path.join(root, "tracked.txt"), "turn two\n");
+  const second = await capture(root, first);
+
+  // Restarting Pi and resuming drops the in-memory chain, but the session's own
+  // entries still point at both commits above.
+  await writeFile(path.join(root, "tracked.txt"), "turn three\n");
+  const resumed = await capture(root);
+
+  for (const earlier of [first, second]) {
+    await assert.doesNotReject(
+      execFileAsync("git", ["merge-base", "--is-ancestor", earlier.commit ?? "", REF], {
+        cwd: root,
+      }),
+      `${earlier.commit} must stay reachable from the session ref`,
+    );
+  }
+  assert.equal(await git(root, "rev-parse", REF), resumed.commit);
+  assert.equal(
+    await git(root, "fsck", "--unreachable", "--no-reflogs"),
+    "",
+    "no checkpoint object is orphaned",
+  );
+});
+
+test("two sessions in one working tree keep separate chains", async (t) => {
+  const root = await createRepository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const otherRef = sessionCheckpointRef("other-session");
+
+  const options = (ref: string, message: string) => ({ ref, message });
+  await writeFile(path.join(root, "tracked.txt"), "round one\n");
+  const [a1, b1] = await Promise.all([
+    captureGitSnapshot(root, options(REF, "a1")),
+    captureGitSnapshot(root, options(otherRef, "b1")),
+  ]);
+  await writeFile(path.join(root, "tracked.txt"), "round two\n");
+  const [a2, b2] = await Promise.all([
+    captureGitSnapshot(root, { ...options(REF, "a2"), previous: a1 }),
+    captureGitSnapshot(root, { ...options(otherRef, "b2"), previous: b1 }),
+  ]);
+
+  assert.equal(await git(root, "rev-parse", REF), a2.commit);
+  assert.equal(await git(root, "rev-parse", otherRef), b2.commit);
+  assert.notEqual(a2.commit, b2.commit);
+  await assert.doesNotReject(
+    execFileAsync("git", ["merge-base", "--is-ancestor", a1.commit ?? "", REF], { cwd: root }),
+  );
+  await assert.rejects(
+    execFileAsync("git", ["merge-base", "--is-ancestor", b1.commit ?? "", REF], { cwd: root }),
+    "one session's ref never picks up another session's chain",
+  );
+});
+
+test("captures racing on one ref all land in the same chain", async (t) => {
+  const root = await createRepository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  await writeFile(path.join(root, "tracked.txt"), "contended\n");
+  const racers = Array.from({ length: 6 }, (_, index) =>
+    captureGitSnapshot(root, { ref: REF, message: `racer ${index}` }),
+  );
+  const snapshots = await Promise.all(racers);
+
+  for (const snapshot of snapshots) {
+    await assert.doesNotReject(
+      execFileAsync("git", ["merge-base", "--is-ancestor", snapshot.commit ?? "", REF], {
+        cwd: root,
+      }),
+      "a lost compare-and-swap must retry rather than drop the checkpoint",
+    );
+  }
+});
+
 test("summarizeChanges counts files and lines between two snapshots", async (t) => {
   const root = await createRepository();
   t.after(() => rm(root, { recursive: true, force: true }));

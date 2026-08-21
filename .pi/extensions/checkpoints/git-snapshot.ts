@@ -245,15 +245,13 @@ export async function captureGitSnapshot(
       "-m",
       "choco-pi checkpoint state",
     ]);
-    const parents = [metaCommit, ...(previous?.commit ? [previous.commit] : [])];
-    const commit = await git(root, [
-      "commit-tree",
+    const commit = await extendCheckpointChain(
+      root,
+      options.ref,
       worktreeTree,
-      ...parents.flatMap((parent) => ["-p", parent]),
-      "-m",
+      metaCommit,
       options.message,
-    ]);
-    await git(root, ["update-ref", options.ref, commit]);
+    );
 
     return {
       worktreeTree,
@@ -264,6 +262,53 @@ export async function captureGitSnapshot(
       ref: options.ref,
     };
   });
+}
+
+async function refTip(root: string, ref: string): Promise<string | undefined> {
+  return optionalGit(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+}
+
+/**
+ * Appends a checkpoint to the ref's existing chain.
+ *
+ * The parent is read from the ref rather than from the caller's in-memory
+ * state, because a resumed session starts with no memory of the checkpoints it
+ * already recorded. Chaining onto whatever the ref currently holds is what
+ * keeps those earlier checkpoints reachable instead of orphaning them on the
+ * first capture after a restart.
+ *
+ * The ref is moved with a compare-and-swap against that same parent, so a
+ * concurrent writer can never have its chain silently dropped. A lost swap is
+ * retried with backoff: the losing attempt leaves an unreferenced commit that
+ * `git gc` reclaims, which is the cheap side of never losing a chain.
+ */
+async function extendCheckpointChain(
+  root: string,
+  ref: string,
+  worktreeTree: string,
+  metaCommit: string,
+  message: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const parent = await refTip(root, ref);
+    const parents = [metaCommit, ...(parent ? [parent] : [])];
+    const commit = await git(root, [
+      "commit-tree",
+      worktreeTree,
+      ...parents.flatMap((value) => ["-p", value]),
+      "-m",
+      message,
+    ]);
+    // An empty old value asserts the ref does not exist yet.
+    const swapped = await optionalGit(root, ["update-ref", ref, commit, parent ?? ""]);
+    if (swapped !== undefined) return commit;
+    const backoff = Math.min(100, 5 * 2 ** attempt);
+    await new Promise((resolve) => setTimeout(resolve, Math.random() * backoff));
+  }
+  throw new CheckpointError(
+    "transient",
+    `Another process kept moving ${ref} while this checkpoint was being recorded.`,
+  );
 }
 
 /**
