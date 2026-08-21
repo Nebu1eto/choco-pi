@@ -209,12 +209,13 @@ written when the preferred file is absent. The file is optional: missing or inva
 
 ### Frame padding
 
-`components.editor.paddingRows` (`none | top`) controls the blank row under the
-editor's top border, and `components.userMessages.paddingRows`
-(`none | top | bottom | both`) controls the blank rows inside a message frame.
-Both default to `none`, which is the tight framing choco-pi ships; the message
-rows apply to the `framed` and `framed-copy-friendly` styles, which are the only
-ones that draw a frame. Both are editable from `/preferences`.
+`components.editor.paddingRows` and `components.userMessages.paddingRows` both
+take `none | top | bottom | both` and are editable from `/preferences`. In the
+editor, `top` is the row under the top border and `bottom` is the gap between
+the input and the metadata line; the default is `bottom`, which is the framing
+choco-pi ships. In a message frame the rows sit inside the rules, the default is
+`none`, and they apply to the `framed` and `framed-copy-friendly` styles, the
+only ones that draw a frame.
 
 ### Working-line tool labels
 

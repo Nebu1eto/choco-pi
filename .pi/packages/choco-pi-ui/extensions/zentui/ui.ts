@@ -8,7 +8,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import { padsTop, type EditorStyle, type ZentuiConfig } from "./config";
+import { padsBottom, padsTop, type EditorStyle, type ZentuiConfig } from "./config";
 import { renderEditorMetadataFormat } from "./editor-metadata-format";
 import { type MinimalistEditorMetadata, renderMinimalistFrame } from "./minimalist-editor";
 import {
@@ -701,8 +701,10 @@ export function renderPolishedEditorFrame({
       config.components.editor.viewportIndicators ? viewport.below : undefined,
     ),
   );
-  const padTop = padsTop(config.components.editor.paddingRows);
-  const lines = [...(padTop ? [""] : []), ...editorLines, "", railedMeta];
+  const paddingRows = config.components.editor.paddingRows;
+  const padTop = padsTop(paddingRows);
+  const padBottom = padsBottom(paddingRows);
+  const lines = [...(padTop ? [""] : []), ...editorLines, ...(padBottom ? [""] : []), railedMeta];
   const renderedLines = isLowRailPolishedStyle(config.components.editor.style)
     ? [
         top,
@@ -711,7 +713,7 @@ export function renderPolishedEditorFrame({
           (line, index) =>
             `${index === 0 ? prompt : lowRailContinuation}${fillLine(line, innerWidth)}`,
         ),
-        "",
+        ...(padBottom ? [""] : []),
         ` ${truncateToWidth(lowRailMeta, Math.max(0, width - 1), "")}`,
         bottom,
         ...autocompleteLines,

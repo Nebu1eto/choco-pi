@@ -82,3 +82,58 @@ test("framed user messages pad only where configured", { skip: SKIP_WITHOUT_ZENT
   assert.equal(rowsFor("bottom"), none + 1);
   assert.equal(rowsFor("both"), none + 2);
 });
+
+test("the editor frame pads both ends on request", { skip: SKIP_WITHOUT_ZENTUI }, async () => {
+  const ui = await loadZentuiModule("ui.js");
+  const configModule = await loadZentuiModule("config.js");
+  // SAFETY: the compiled package exports this editor frame renderer.
+  const renderFrame = ui.renderPolishedEditorFrame as (options: RuntimeValue) => string[];
+  // SAFETY: the compiled package exports this default config object.
+  const defaults = configModule.defaultConfig as RuntimeValue;
+  const theme = { fg: (_role: string, text: string) => text, bold: (text: string) => text };
+
+  const rowsFor = (paddingRows: string): number => {
+    // SAFETY: the clone copies the package's own default config, so it carries the asserted members.
+    const config = structuredClone(defaults) as {
+      components: { editor: { paddingRows: string } };
+    };
+    config.components.editor.paddingRows = paddingRows;
+    return renderFrame({
+      width: 60,
+      editorLines: ["hello"],
+      uiTheme: theme,
+      config,
+      modelMeta: {
+        modelLabel: "model",
+        modelId: "model",
+        modelName: "model",
+        providerLabel: "provider",
+        sessionName: "session",
+      },
+      thinkingLevel: "medium",
+    }).length;
+  };
+
+  const none = rowsFor("none");
+  assert.equal(rowsFor("top"), none + 1, "the top row is optional");
+  assert.equal(
+    rowsFor("bottom"),
+    none + 1,
+    "the row above the metadata line is optional, not structural",
+  );
+  assert.equal(rowsFor("both"), none + 2);
+});
+
+test(
+  "the shipped editor default keeps only the metadata gap",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const configModule = await loadZentuiModule("config.js");
+    // SAFETY: the compiled package exports this default config object.
+    const defaults = configModule.defaultConfig as {
+      components: { editor: { paddingRows: string }; userMessages: { paddingRows: string } };
+    };
+    assert.equal(defaults.components.editor.paddingRows, "bottom");
+    assert.equal(defaults.components.userMessages.paddingRows, "none");
+  },
+);
