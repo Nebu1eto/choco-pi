@@ -28,6 +28,7 @@ Before drafting, identify the purpose, audience, evidence boundary, claim type, 
 ## Structure and medium
 
 - Use headings only for real sections, lists only for parallel or procedural content, and tables only when aligned comparison is clearer than prose. Do not skip heading levels or mix markup syntaxes.
+- Use a diagram only when its structure carries information prose cannot, such as branching control flow, state transitions, or message ordering between actors. Never add one for decoration or to restate adjacent text, and keep it to the few nodes the point needs.
 - Use the target platform's actual syntax. Do not invent fields, tags, templates, metadata, or schema keys. Use portable plain text or simple Markdown when the platform is unknown.
 - Give each paragraph one job. Every substantive paragraph must add evidence, reasoning, a mechanism, a condition, a limitation, an example, a comparison, a decision criterion, or an implication.
 - Lead with the answer or outcome for technical responses. For longer analysis, organize claim, evidence, reasoning, limitation, and implication without narrating the document's own structure.
