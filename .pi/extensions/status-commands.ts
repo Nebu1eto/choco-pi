@@ -5,6 +5,7 @@ import {
   AGENT_OUTCOME_PREFIX,
   getPreferencesProvider,
   readAgentPreferences,
+  type PreferencesExtraSection,
   type PreferencesPanelHandle,
   type PreferencesProvider,
 } from "./lib/agent-preferences.ts";
@@ -14,6 +15,18 @@ import {
   resolveAgentPreferencesArgs,
   runAgentPreferencesOutcome,
 } from "./lib/agent-preferences-dialog.ts";
+import {
+  buildCodexPreferencesSections,
+  CODEX_OUTCOME_PREFIX,
+  getCodexPreferencesProvider,
+} from "./lib/codex-preferences.ts";
+import {
+  buildNativeSettingsSection,
+  createHostCommandContext,
+  installNativeSettingsBridge,
+  openNativeSettingsMenu,
+  type NativeSettingsHost,
+} from "./lib/native-settings.ts";
 import { formatStatus, summarizeStatusRows } from "./session-status.ts";
 import { usageReport } from "./provider-usage.ts";
 
@@ -110,6 +123,19 @@ type PreferencesFocus = { section?: string; focusId?: string };
 
 const PREFERENCES_USAGE =
   "Usage: /preferences [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /preferences [messages|user-messages|working-line|agent], /preferences [language <name>|style <name>], or /preferences format <template>";
+
+/**
+ * Every section the Preferences tab hosts on top of the panel's own choco-ui
+ * sections: the agent preferences, the Codex adapter rows published by
+ * choco-pi-codex, and Pi's own settings rows.
+ */
+function buildPreferencesExtraSections(ctx: ExtensionCommandContext): PreferencesExtraSection[] {
+  const sections: PreferencesExtraSection[] = [buildAgentPreferencesSection(ctx)];
+  sections.push(...buildCodexPreferencesSections(ctx));
+  const native = buildNativeSettingsSection();
+  if (native) sections.push(native);
+  return sections;
+}
 
 /** Non-TUI surface for /preferences: a text summary of the agent preferences. */
 function preferencesSummary(ctx: ExtensionCommandContext): void {
@@ -214,7 +240,7 @@ async function showTabOnce(
         ctx,
         tui,
         theme,
-        extraSections: [buildAgentPreferencesSection(ctx)],
+        extraSections: buildPreferencesExtraSections(ctx),
         onOutcome: (outcome) => {
           finish(outcome === "close" ? undefined : outcome);
         },
@@ -332,6 +358,14 @@ async function showTab(
       focus = await runAgentPreferencesOutcome(outcome, ctx);
       continue;
     }
+    if (outcome.startsWith(CODEX_OUTCOME_PREFIX)) {
+      const codex = getCodexPreferencesProvider();
+      if (!codex) return;
+      const handled = await codex.runOutcome(outcome, ctx);
+      if (handled === undefined) return;
+      focus = handled;
+      continue;
+    }
     const provider = getPreferencesProvider();
     if (!provider) return;
     const handled = await provider.runOutcome(outcome, ctx);
@@ -399,4 +433,24 @@ export default function statusCommands(pi: ExtensionAPI): void {
   };
   pi.registerCommand("preferences", preferencesCommand);
   pi.registerCommand("pref", preferencesCommand);
+
+  // Pi dispatches `/settings` itself, before extension commands, so the only way
+  // to make it open this dialog is to take over the menu it would have shown.
+  installNativeSettingsBridge((host: NativeSettingsHost) => {
+    const hostCtx = createHostCommandContext(host);
+    // Without the panel package the dialog has no Preferences tab to show, so
+    // `/settings` keeps opening Pi's own menu instead of reporting nothing.
+    if (hostCtx === undefined || !getPreferencesProvider()) {
+      openNativeSettingsMenu(host);
+      return;
+    }
+    // SAFETY: the host builds this context for its own command dispatch.
+    const ctx = hostCtx as ExtensionCommandContext;
+    void showTab(ctx, pi.getThinkingLevel(), "preferences").catch((error: RuntimeValue) => {
+      ctx.ui.notify(
+        `Could not open settings: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+    });
+  });
 }

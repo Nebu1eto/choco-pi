@@ -8,9 +8,14 @@ test("hides internal commands from completion without blocking execution", () =>
   const prototype = ExtensionRunner.prototype as any;
   const originalRegistered = prototype.getRegisteredCommands;
   const originalGetCommand = prototype.getCommand;
-  const commands = ["llama", "apex-refresh", "synthetic:quotas", "lens-health", "usage"].map(
-    (name) => ({ name, sourceInfo: { path: "test" } }),
-  );
+  const commands = [
+    "llama",
+    "apex-refresh",
+    "codex",
+    "synthetic:quotas",
+    "lens-health",
+    "usage",
+  ].map((name) => ({ name, sourceInfo: { path: "test" } }));
 
   prototype.getRegisteredCommands = () => commands;
   prototype.__chocoPiCommandFilterApplied = false;
