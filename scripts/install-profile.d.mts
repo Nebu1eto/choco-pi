@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "../.pi/extensions/runtime-values.ts";
+import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 export type InstallLinkResult = {
   target: string;
   action: "unchanged" | "linked" | "backed-up";
@@ -20,6 +20,7 @@ export function buildGlobalSettings(
     prompts?: string[];
   },
   root: string,
+  supersededNames?: string[],
 ): Record<string, RuntimeValue>;
 
 export function installProfile(options?: InstallProfileOptions): Promise<{

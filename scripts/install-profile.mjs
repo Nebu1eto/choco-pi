@@ -112,18 +112,56 @@ function mergePackages(canonical, existing) {
   return unique([...canonical, ...extras.values()]);
 }
 
-export function buildGlobalSettings(projectSettings, existingSettings, root) {
+/**
+ * Bare package name behind an identity, without its `npm:` or `local:` prefix.
+ * A predecessor can be installed either way — pi-zentui and pi-synthetic are
+ * listed as checkout paths, pi-lens as an npm spec — so supersession has to
+ * match on the name alone.
+ */
+function identityName(identity) {
+  const separator = identity.indexOf(":");
+  return separator === -1 ? identity : identity.slice(separator + 1);
+}
+
+/**
+ * True when the entry is some other checkout's .pi/extensions, .pi/skills or
+ * .pi/prompts directory.
+ *
+ * Such a directory is a previous install of this same profile. Keeping it
+ * alongside the new root makes pi load two copies of every extension, and it
+ * refuses to start when both register the same tool ("Tool session_create
+ * conflicts with ..."). Directories outside that shape belong to the user and
+ * are preserved.
+ */
+function isForeignProfileDirectory(entry, root, name) {
+  if (!path.isAbsolute(entry)) return false;
+  if (path.basename(entry) !== name) return false;
+  if (path.basename(path.dirname(entry)) !== ".pi") return false;
+  return path.resolve(entry) !== path.resolve(root, ".pi", name);
+}
+
+export function buildGlobalSettings(projectSettings, existingSettings, root, supersededNames = []) {
   const canonicalPackages = projectSettings.packages.map((spec) =>
     spec.startsWith("./") ? path.resolve(root, ".pi", spec) : spec,
   );
   const rooted = (name) => path.resolve(root, ".pi", name);
+  const superseded = new Set(supersededNames);
+  const retainedPackages = (existingSettings.packages ?? []).filter(
+    (spec) => !superseded.has(identityName(packageIdentity(spec))),
+  );
+  const profileDirectories = (name) => [
+    rooted(name),
+    ...(existingSettings[name] ?? []).filter(
+      (entry) => !isForeignProfileDirectory(entry, root, name),
+    ),
+  ];
   return {
     ...existingSettings,
     ...projectSettings,
-    packages: mergePackages(canonicalPackages, existingSettings.packages ?? []),
-    extensions: unique([rooted("extensions"), ...(existingSettings.extensions ?? [])]),
-    skills: unique([rooted("skills"), ...(existingSettings.skills ?? [])]),
-    prompts: unique([rooted("prompts"), ...(existingSettings.prompts ?? [])]),
+    packages: mergePackages(canonicalPackages, retainedPackages),
+    extensions: unique(profileDirectories("extensions")),
+    skills: unique(profileDirectories("skills")),
+    prompts: unique(profileDirectories("prompts")),
   };
 }
 
@@ -195,6 +233,22 @@ async function writeSettings(target, settings) {
   await rename(temporary, target);
 }
 
+/**
+ * Package names each bundled fork replaces, declared as `chocoPi.supersedes`
+ * in the fork's own package.json and documented in its VENDORED.md. Installing
+ * this profile must remove the predecessors: a fork and the package it forked
+ * register the same tools and commands, and pi refuses to start on a conflict.
+ */
+async function supersededPackageNames(root, projectSettings) {
+  const names = [];
+  for (const spec of projectSettings.packages) {
+    if (!spec.startsWith("./")) continue;
+    const manifest = await readJson(path.resolve(root, ".pi", spec, "package.json"), {});
+    for (const name of manifest.chocoPi?.supersedes ?? []) names.push(name);
+  }
+  return names;
+}
+
 export async function installProfile({
   root = SCRIPT_ROOT,
   agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent"),
@@ -227,7 +281,11 @@ export async function installProfile({
       ),
     );
   }
-  await writeSettings(settingsPath, buildGlobalSettings(projectSettings, existingSettings, root));
+  const superseded = await supersededPackageNames(root, projectSettings);
+  await writeSettings(
+    settingsPath,
+    buildGlobalSettings(projectSettings, existingSettings, root, superseded),
+  );
   return { agentDir, settingsPath, links: results };
 }
 

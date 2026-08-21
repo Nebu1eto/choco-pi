@@ -80,6 +80,12 @@
       "@earendil-works/pi-tui": "$@earendil-works/pi-coding-agent"
     }
   },
+  "chocoPi": {
+    "supersedes": [
+      "@aliou/pi-synthetic",
+      "pi-synthetic"
+    ]
+  },
   "pi": {
     "extensions": [
       "./extensions/provider/index.ts",

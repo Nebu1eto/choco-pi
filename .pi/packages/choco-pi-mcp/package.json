@@ -158,6 +158,11 @@
   "engines": {
     "node": ">=20"
   },
+  "chocoPi": {
+    "supersedes": [
+      "pi-mcp-adapter"
+    ]
+  },
   "pi": {
     "extensions": [
       "./index.ts"

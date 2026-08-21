@@ -118,3 +118,57 @@ test("profile installer preserves a conflicting file unless backup is explicit",
   assert.equal(migrated?.action, "backed-up");
   assert.equal(await readFile(migrated?.backup ?? "", "utf8"), "user-owned\n");
 });
+
+test("installing the profile removes the packages each bundled fork replaces", () => {
+  const projectSettings = { packages: ["./packages/choco-pi-lsp", "./packages/choco-pi-ui"] };
+  const existingSettings = {
+    packages: [
+      "npm:pi-lens@4.0.0",
+      "/Users/someone/Workspace/choco-pi/.pi/packages/pi-zentui",
+      "npm:@maddeye/pi-nord@1.0.0",
+      "npm:pi-mono-figma",
+    ],
+  };
+
+  const settings = buildGlobalSettings(projectSettings, existingSettings, "/repo", [
+    "pi-lens",
+    "pi-zentui",
+    "@maddeye/pi-nord",
+  ]);
+
+  assert.deepEqual(settings.packages, [
+    path.resolve("/repo/.pi/packages/choco-pi-lsp"),
+    path.resolve("/repo/.pi/packages/choco-pi-ui"),
+    "npm:pi-mono-figma",
+  ]);
+});
+
+test("installing the profile drops another checkout's resource directories", () => {
+  const projectSettings = { packages: [] };
+  const existingSettings = {
+    extensions: ["/Users/someone/Workspace/choco-pi/.pi/extensions", "/Users/someone/my-tools"],
+    skills: ["/Users/someone/Workspace/choco-pi/.pi/skills"],
+    prompts: [],
+  };
+
+  const settings = buildGlobalSettings(projectSettings, existingSettings, "/repo");
+
+  // A previous checkout's .pi/extensions would load a second copy of every
+  // extension; pi then refuses to start because both register the same tools.
+  assert.deepEqual(settings.extensions, [
+    path.resolve("/repo/.pi/extensions"),
+    "/Users/someone/my-tools",
+  ]);
+  assert.deepEqual(settings.skills, [path.resolve("/repo/.pi/skills")]);
+});
+
+test("every bundled fork declares the packages it supersedes", async () => {
+  const projectSettings = JSON.parse(await readFile(".pi/settings.json", "utf8"));
+  for (const spec of projectSettings.packages) {
+    const manifest = JSON.parse(await readFile(path.resolve(".pi", spec, "package.json"), "utf8"));
+    assert.ok(
+      Array.isArray(manifest.chocoPi?.supersedes),
+      `${spec} must declare chocoPi.supersedes (use [] when it replaces nothing)`,
+    );
+  }
+});

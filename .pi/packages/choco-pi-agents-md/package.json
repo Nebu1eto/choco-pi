@@ -20,6 +20,11 @@
     "@earendil-works/pi-coding-agent": ">=0.84.0",
     "typebox": ">=1.3.12"
   },
+  "chocoPi": {
+    "supersedes": [
+      "@howaboua/pi-markdown-workflows"
+    ]
+  },
   "pi": {
     "extensions": [
       "./index.ts"

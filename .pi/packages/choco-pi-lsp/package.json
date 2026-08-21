@@ -30,6 +30,11 @@
     "@earendil-works/pi-tui": ">=0.84.2",
     "typebox": "*"
   },
+  "chocoPi": {
+    "supersedes": [
+      "pi-lens"
+    ]
+  },
   "pi": {
     "extensions": [
       "./index.ts"

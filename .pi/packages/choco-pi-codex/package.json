@@ -39,6 +39,11 @@
   "engines": {
     "node": ">=22.19.0"
   },
+  "chocoPi": {
+    "supersedes": [
+      "@howaboua/pi-codex-conversion"
+    ]
+  },
   "pi": {
     "extensions": [
       "./src/index.ts"
