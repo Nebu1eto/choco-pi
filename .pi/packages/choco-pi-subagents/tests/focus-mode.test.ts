@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
+import type { AgentSession, AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
 import type { AgentRecord } from "../src/types.ts";
 import { continueRunningAgentNavigation, FocusedAgentController } from "../src/ui/focus-mode.ts";
 import { installMethodPatch } from "../src/ui/method-patch-registry.ts";
@@ -15,17 +16,43 @@ function partialFixture<T extends object>(fixture: Partial<T>): T {
   return fixture as T;
 }
 
+function makeUserMessage(content: string): UserMessage {
+  return { role: "user", content, timestamp: Date.now() };
+}
+
+function makeAssistantMessage(text: string): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: "openai-responses",
+    provider: "openai",
+    model: "test-model",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+}
+
 test("focus exits on one Esc and restores exact predecessors", async () => {
   const renderRequests: boolean[] = [];
-  const listeners = new Set<() => void>();
+  const listeners = new Set<AgentSessionEventListener>();
   const session = partialFixture<AgentSession>({
     messages: [
-      { role: "user", content: "inspect the focused task" },
-      { role: "assistant", content: [{ type: "text", text: "focused agent answer" }] },
+      makeUserMessage("inspect the focused task"),
+      makeAssistantMessage("focused agent answer"),
     ],
-    subscribe(listener: () => void) {
+    subscribe(listener: AgentSessionEventListener) {
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
   });
   const record = partialFixture<AgentRecord>({
@@ -36,7 +63,7 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
     status: "running",
     toolUses: 0,
     startedAt: Date.now(),
-    lifetimeUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
     compactionCount: 0,
     session,
   });
@@ -108,11 +135,8 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
   assert.equal(widgets.has("subagent-focus"), true);
   assert.equal(editor.getText(), "");
 
-  session.messages.push({
-    role: "assistant",
-    content: [{ type: "text", text: "streamed progress" }],
-  });
-  for (const listener of listeners) listener();
+  session.messages.push(makeAssistantMessage("streamed progress"));
+  for (const listener of listeners) listener({ type: "agent_settled" });
   assert.match(document.render(100).join("\n"), /streamed progress/);
   assert.equal(renderRequests.length > 0, true);
 

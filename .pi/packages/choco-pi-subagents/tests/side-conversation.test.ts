@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { type AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+import {
+  type AgentSession,
+  type AgentSessionEventListener,
+  type ExtensionContext,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../src/agent-manager.ts";
 import {
   buildEffectivePrompt,
@@ -20,70 +26,88 @@ function partialFixture<T extends object>(fixture: Partial<T>): T {
   return fixture as T;
 }
 
-function startAgentHarness(manager: AgentManager): StartAgentHarness {
-  // SAFETY: This test replaces only the named startAgent private seam.
-  return manager as StartAgentHarness;
+function makeUserMessage(content: string): UserMessage {
+  return { role: "user", content, timestamp: Date.now() };
 }
 
-function makeMainContext() {
+function makeAssistantMessage(
+  content: AssistantMessage["content"],
+  stopReason: AssistantMessage["stopReason"] = "stop",
+): AssistantMessage {
+  return {
+    role: "assistant",
+    content,
+    api: "openai-responses",
+    provider: "openai",
+    model: "main-model",
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason,
+    timestamp: Date.now(),
+  };
+}
+
+type MainContextFixture = ExtensionContext & { sessionManager: SessionManager };
+
+function makeMainContext(): MainContextFixture {
   const sessionManager = SessionManager.inMemory("/project");
   sessionManager.appendThinkingLevelChange("high");
   sessionManager.appendModelChange("openai", "main-model");
-  // SAFETY: This is a complete user message accepted by SessionManager's runtime message union.
-  sessionManager.appendMessage({ role: "user", content: "Remember ZEBRA-41." } as never);
-  // SAFETY: This fixture supplies every assistant-message field consumed by SessionManager.
-  sessionManager.appendMessage({
-    role: "assistant",
-    content: [
-      { type: "text", text: "I will inspect the cancel path." },
-      { type: "toolCall", id: "read-1", name: "read", arguments: { path: "workflow.ts" } },
-    ],
-    provider: "openai",
-    model: "main-model",
-    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: {} },
-    stopReason: "toolUse",
-    timestamp: Date.now(),
-  } as never);
-  // SAFETY: This fixture supplies every tool-result field consumed by SessionManager.
-  sessionManager.appendMessage({
+  sessionManager.appendMessage(makeUserMessage("Remember ZEBRA-41."));
+  sessionManager.appendMessage(
+    makeAssistantMessage(
+      [
+        { type: "text", text: "I will inspect the cancel path." },
+        { type: "toolCall", id: "read-1", name: "read", arguments: { path: "workflow.ts" } },
+      ],
+      "toolUse",
+    ),
+  );
+  const toolResult: ToolResultMessage = {
     role: "toolResult",
     toolCallId: "read-1",
     toolName: "read",
     content: [{ type: "text", text: "cancelWorkflow implementation" }],
     isError: false,
     timestamp: Date.now(),
-  } as never);
-  // SAFETY: This fixture supplies every assistant-message field consumed by SessionManager.
-  sessionManager.appendMessage({
-    role: "assistant",
-    content: [{ type: "text", text: "The workflow cancel path is under review." }],
-    provider: "openai",
-    model: "main-model",
-    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: {} },
-    stopReason: "stop",
-    timestamp: Date.now(),
-  } as never);
+  };
+  sessionManager.appendMessage(toolResult);
+  sessionManager.appendMessage(
+    makeAssistantMessage([{ type: "text", text: "The workflow cancel path is under review." }]),
+  );
 
-  // SAFETY: Fork capture reads only the context fields implemented by this fixture.
-  return {
+  const context: Partial<MainContextFixture> = {
     cwd: "/project",
     sessionManager,
-    model: { provider: "openai", id: "main-model" },
+    model: partialFixture<NonNullable<ExtensionContext["model"]>>({
+      provider: "openai",
+      id: "main-model",
+    }),
     thinkingLevel: "high",
     getSystemPrompt: () => "You are the main choco-pi agent.",
-  } as never;
+  };
+  // SAFETY: Fork capture reads only the context fields implemented by this fixture.
+  return context as MainContextFixture;
 }
 
 function makeSession(answer = "side answer") {
-  const listeners = new Set<() => void>();
+  const listeners = new Set<AgentSessionEventListener>();
   return partialFixture<AgentSession>({
     messages: [
-      { role: "user", content: "quick question" },
-      { role: "assistant", content: [{ type: "text", text: answer }] },
+      makeUserMessage("quick question"),
+      makeAssistantMessage([{ type: "text", text: answer }]),
     ],
-    subscribe(listener: () => void) {
+    subscribe(listener: AgentSessionEventListener) {
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
   });
 }
@@ -137,17 +161,16 @@ interface CapturedRunOptions {
   rootSessionId?: string;
 }
 
-interface StartAgentHarness {
-  startAgent: (_id: string, _record: AgentRecord, args: { options: CapturedRunOptions }) => void;
-}
-
 test("side launch forks the main session state without a context preamble", () => {
   const manager = new AgentManager();
   let capturedOptions: CapturedRunOptions | undefined;
-  const managerHarness = startAgentHarness(manager);
-  managerHarness.startAgent = (_id, _record, args) => {
-    capturedOptions = args.options;
-  };
+  Reflect.set(
+    manager,
+    "startAgent",
+    (_id: string, _record: AgentRecord, args: { options: CapturedRunOptions }) => {
+      capturedOptions = args.options;
+    },
+  );
   const controller = new SideConversationController(manager);
 
   const ctx = makeMainContext();
@@ -189,8 +212,7 @@ test("capturing a main-session fork does not move or append to the main branch",
   const parentLeaf = ctx.sessionManager.getLeafId();
 
   const fork = captureMainSessionFork(ctx);
-  // SAFETY: This is a complete user message accepted by SessionManager's runtime message union.
-  fork.sessionManager.appendMessage({ role: "user", content: "side-only turn" } as never);
+  fork.sessionManager.appendMessage(makeUserMessage("side-only turn"));
 
   assert.equal(ctx.sessionManager.getLeafId(), parentLeaf);
   assert.deepEqual(ctx.sessionManager.getBranch(), parentBranch);
@@ -258,7 +280,9 @@ test("btw type resolution falls through to an available role when defaults are d
   const agentTypes = await import("../src/agent-types.ts");
   const { DEFAULT_AGENTS } = await import("../src/default-agents.ts");
 
-  const generalConfig = { ...DEFAULT_AGENTS.get("general-purpose"), name: "general" };
+  const defaultGeneralConfig = DEFAULT_AGENTS.get("general-purpose");
+  assert.ok(defaultGeneralConfig);
+  const generalConfig = { ...defaultGeneralConfig, name: "general" };
   try {
     // The harness posture: defaults disabled, fallback "none", one custom role.
     agentTypes.setDefaultsDisabled(true);

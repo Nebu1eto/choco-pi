@@ -39,25 +39,31 @@ type TestHandler = (event: TestEvent, ctx: TestContext) => TestHandlerReturn;
 
 interface StubPi {
   on(event: string, handler: TestHandler): void;
+}
+
+interface StubPiHarness {
+  pi: StubPi;
   handlers: Map<string, TestHandler>;
 }
 
-function createStubPi(): StubPi {
+function createStubPi(): StubPiHarness {
   const handlers = new Map<string, TestHandler>();
   return {
-    on(event, handler) {
-      handlers.set(event, handler);
+    pi: {
+      on(event, handler) {
+        handlers.set(event, handler);
+      },
     },
     handlers,
   };
 }
 
-function createRegisteredStubPi(): StubPi {
-  const pi = createStubPi();
+function createRegisteredStubPi(): StubPiHarness {
+  const harness = createStubPi();
   // SAFETY: The stub supplies the three `on` registrations used by this extension; tests invoke
   // each stored handler with host-shaped fixtures and the required context fields.
-  registerAgentsMdAutoload(pi as ExtensionAPI);
-  return pi;
+  registerAgentsMdAutoload(harness.pi as ExtensionAPI);
+  return harness;
 }
 
 function readEvent(target: string) {
