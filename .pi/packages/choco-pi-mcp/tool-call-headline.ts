@@ -12,6 +12,11 @@ export interface McpCallHeadline {
   detail?: string;
 }
 
+export interface McpCallTheme {
+  fg: (name: string, text: string) => string;
+  bold?: (text: string) => string;
+}
+
 export function splitMcpCallHeadline(title: string): McpCallHeadline {
   const call = title.match(/^mcp call (\S+)(?: @ (\S+))?$/);
   if (call) {
@@ -27,4 +32,26 @@ export function splitMcpCallHeadline(title: string): McpCallHeadline {
     return rest ? { header: `MCP ${verb}`, detail: rest } : { header: `MCP ${verb}` };
   }
   return { header: title };
+}
+
+/**
+ * Styles a call in the shared choco-pi tool shape: a dim bullet with a bold
+ * header, then detail rows under a `└` branch. An entry may carry embedded
+ * newlines (pretty-printed JSON args); every visual line gets the branch
+ * indent, not only the entry's first line.
+ */
+export function styleMcpCallLines(lines: string[], theme: McpCallTheme): string[] {
+  const bold = (text: string) => (theme.bold ? theme.bold(text) : text);
+  const [title = "mcp", ...rest] = lines;
+  const { header, detail } = splitMcpCallHeadline(title);
+  const branchLines = [...(detail === undefined ? [] : [detail]), ...rest].flatMap((entry) =>
+    entry.split("\n"),
+  );
+  const styled = [`${theme.fg("dim", "•")} ${bold(header)}`];
+  for (const [index, line] of branchLines.entries()) {
+    const prefix = index === 0 ? "  └ " : "    ";
+    const body = index === 0 ? theme.fg("accent", line) : theme.fg("muted", line);
+    styled.push(`${theme.fg("dim", prefix)}${body}`);
+  }
+  return styled;
 }
