@@ -38,26 +38,43 @@ type WaitTool = {
   ): Promise<WaitResult>;
 };
 
+interface StubRegisterApi {
+  registerTool(tool: WaitTool): void;
+  events: ExtensionAPI["events"];
+  on(event: string, handler: () => void): void;
+}
+
+type StubEvents = Pick<ExtensionAPI["events"], "on" | "emit">;
+
+type RuntimeStub = Pick<
+  SharedCodeModeRuntime,
+  "getClient" | "collectTools" | "collectRenderTools" | "useRichRendering"
+>;
+
 function registerWaitTool(client: CodeModeExecutionClient): WaitTool {
   const tools: WaitTool[] = [];
-  // SAFETY: The fixture supplies every ExtensionAPI member exercised by tool registration.
-  const pi = {
-    registerTool(tool: WaitTool) {
+  const stubEvents: StubEvents = {
+    on: () => () => {},
+    emit() {},
+  };
+  const stubPi: StubRegisterApi = {
+    registerTool(tool) {
       tools.push(tool);
     },
-    events: {
-      emit() {},
-      on() {},
-    },
+    // SAFETY: The fixture supplies the on and emit members the preflight broker exercises.
+    events: stubEvents as ExtensionAPI["events"],
     on() {},
-  } as ExtensionAPI;
-  // SAFETY: The fixture supplies every SharedCodeModeRuntime member exercised by the wait tool.
-  const runtime = {
+  };
+  // SAFETY: The fixture supplies the registerTool member registerPublicCodeModeTools exercises.
+  const pi = stubPi as ExtensionAPI;
+  const runtimeStub: RuntimeStub = {
     getClient: () => Promise.resolve(client),
     collectTools: () => [],
     collectRenderTools: () => [],
     useRichRendering: () => false,
-  } as SharedCodeModeRuntime;
+  };
+  // SAFETY: The fixture supplies every SharedCodeModeRuntime member the wait tool exercises.
+  const runtime = runtimeStub as SharedCodeModeRuntime;
 
   registerPublicCodeModeTools(pi, runtime);
   const wait = tools.find((tool) => tool.name === "wait");
@@ -128,7 +145,7 @@ test("missing wait cell returns guidance and clears adaptive wait attempts", asy
       status: "result",
     },
   });
-  assert.equal(missing.isError, undefined);
+  assert.equal("isError" in missing, false);
 });
 
 test("terminating a missing cell reports that it is already gone", async () => {
@@ -163,5 +180,5 @@ test("terminating a missing cell reports that it is already gone", async () => {
       status: "terminated",
     },
   });
-  assert.equal(result.isError, undefined);
+  assert.equal("isError" in result, false);
 });

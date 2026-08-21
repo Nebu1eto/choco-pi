@@ -9,10 +9,6 @@ import {
   type WorkflowStepRunner,
 } from "../src/workflow.ts";
 
-interface CleanupHarness {
-  cleanup(): void;
-}
-
 const resolveType = (name: string) =>
   new Set(["Explore", "Plan", "implementer"]).has(name) ? name : undefined;
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -274,6 +270,7 @@ test("waiting on an idle unsealed dynamic workflow returns promptly", async () =
 test("workflow retention evicts only settled records older than ten minutes", async (t) => {
   let now = 1_000;
   t.mock.method(Date, "now", () => now);
+  t.mock.timers.enable({ apis: ["setInterval"] });
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();
   try {
@@ -300,9 +297,7 @@ test("workflow retention evicts only settled records older than ten minutes", as
     await manager.wait(fresh.workflowId);
     manager.markConsumed(fresh.workflowId);
 
-    // SAFETY: WorkflowManager owns a zero-argument cleanup method invoked by its retention timer.
-    const cleanupHarness = manager as CleanupHarness;
-    cleanupHarness.cleanup();
+    t.mock.timers.tick(60_000);
 
     assert.equal(manager.get(old.workflowId), undefined);
     assert.equal(manager.isConsumed(old.workflowId), false);
