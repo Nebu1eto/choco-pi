@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import {
   type AutocompleteItem,
@@ -56,7 +56,6 @@ import {
   SETTINGS_PREVIEW_MAX_WIDTH,
 } from "./settings-previews";
 import { EDITOR_BORDER_STYLE, renderChromeBorder, safeThemeFg } from "./style";
-import { isString } from "./runtime-values";
 import {
   buildWorkingLinePreviewFrames,
   normalizeWorkingLineMessages,
@@ -152,11 +151,62 @@ type UserMessagesPatch = Partial<
 >;
 type FooterPatch = Partial<Pick<FooterComponentConfig, "style" | "colorSource" | "modelLabel">>;
 type ApplyResult = { applied: boolean; reason?: string };
-type SettingsOutcome =
+
+/**
+ * Outcomes the settings panel emits. `"close"` asks the host to close the
+ * dialog entirely; every other value is handed back to the host, which closes
+ * the dialog, runs {@link runZentuiPreferencesOutcome}, and reopens.
+ */
+export type ZentuiPreferencesOutcome =
   | "close"
   | "edit-working-line-messages"
   | "edit-working-line-spinner-speed"
   | "edit-working-line-text-speed";
+
+/**
+ * A settings section contributed by the embedding host. Host sections render
+ * like built-in sections; `handleChange` performs the side effect (including
+ * notifications) and reports how the list should redraw, or asks for an
+ * outcome so the host can run a follow-up flow outside the dialog.
+ */
+export interface PreferencesExtraSection {
+  id: string;
+  label: string;
+  buildItems: () => SettingItem[];
+  handleChange: (
+    id: string,
+    newValue: string,
+  ) => { kind: "update" } | { kind: "rebuild" } | { kind: "outcome"; outcome: string };
+}
+
+export interface ZentuiPreferencesFocus {
+  section?: string;
+  focusId?: string;
+}
+
+/** Outcome of parsing `/preferences` arguments that this panel understands. */
+export interface ZentuiPreferencesArgsResolution {
+  open: boolean;
+  section?: string;
+}
+
+export interface ZentuiPreferencesPanelOptions {
+  ctx: ExtensionCommandContext;
+  tui: { requestRender(): void };
+  theme: ExtensionContext["ui"]["theme"];
+  extraSections?: PreferencesExtraSection[];
+  initialSection?: string;
+  initialFocusId?: string;
+  onOutcome: (outcome: string) => void;
+}
+
+export interface ZentuiPreferencesPanelHandle {
+  render: (width: number) => string[];
+  invalidate: () => void;
+  handleInput: (data: string) => void;
+  dispose: () => void;
+  getActiveSection: () => string;
+}
 
 type SettingsCommandDeps = {
   sessionLifecycle: SessionLifecycle;
@@ -403,10 +453,6 @@ function argumentCompletions(prefix: string): AutocompleteItem[] | null {
     .map((value) => ({ value, label: value }))
     .filter((item) => item.value.startsWith(normalized));
   return matches.length ? matches : null;
-}
-
-function usageText(): string {
-  return "Usage: /zentui [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /zentui [messages|user-messages|working-line], or /zentui format <template>";
 }
 
 function buildAppearanceItems(config: PolishedTuiConfig): SettingItem[] {
@@ -917,10 +963,13 @@ function buildExtensionsItems(
 }
 
 function buildSectionItems(
-  section: SettingsSection,
+  section: string,
   config: PolishedTuiConfig,
   active: ReadonlyMap<string, string>,
+  extras: PreferencesExtraSection[],
 ): SettingItem[] {
+  const extra = extras.find((candidate) => candidate.id === section);
+  if (extra) return extra.buildItems();
   switch (section) {
     case "appearance":
       return buildAppearanceItems(config);
@@ -948,35 +997,49 @@ function buildSectionItems(
       return buildGitItems(config);
     case "extensions":
       return buildExtensionsItems(config, active);
+    default:
+      return [];
   }
 }
 
-function nextSection(section: SettingsSection): SettingsSection {
-  return (
-    settingsSections[(settingsSections.indexOf(section) + 1) % settingsSections.length] ??
-    "appearance"
-  );
+function sectionOrder(extras: PreferencesExtraSection[]): string[] {
+  const builtin = new Set<string>(settingsSections);
+  return [
+    ...settingsSections,
+    ...extras.filter((extra) => !builtin.has(extra.id)).map((e) => e.id),
+  ];
 }
-function previousSection(section: SettingsSection): SettingsSection {
+function sectionLabel(section: string, extras: PreferencesExtraSection[]): string {
+  const extra = extras.find((candidate) => candidate.id === section);
+  if (extra) return extra.label;
+  // SAFETY: the lookup is nullish-guarded, so a section outside the built-in union falls back to its own id.
+  return sectionLabels[section as SettingsSection] ?? section;
+}
+function nextSection(section: string, extras: PreferencesExtraSection[]): string {
+  const order = sectionOrder(extras);
+  return order[(order.indexOf(section) + 1) % order.length] ?? order[0] ?? "appearance";
+}
+function previousSection(section: string, extras: PreferencesExtraSection[]): string {
+  const order = sectionOrder(extras);
   return (
-    settingsSections[
-      (settingsSections.indexOf(section) - 1 + settingsSections.length) % settingsSections.length
-    ] ?? "appearance"
+    order[(order.indexOf(section) - 1 + order.length) % order.length] ?? order[0] ?? "appearance"
   );
 }
 function formatSectionTabs(
-  active: SettingsSection,
+  active: string,
+  extras: PreferencesExtraSection[],
   theme: ExtensionContext["ui"]["theme"],
   width: number,
 ): string {
-  const rendered = settingsSections.map((section) =>
+  const order = sectionOrder(extras);
+  const rendered = order.map((section) =>
     section === active
-      ? theme.bold(sectionLabels[section])
-      : safeThemeFg(theme, "muted", sectionLabels[section]),
+      ? theme.bold(sectionLabel(section, extras))
+      : safeThemeFg(theme, "muted", sectionLabel(section, extras)),
   );
   const full = `  ${rendered.join(safeThemeFg(theme, "muted", " / "))}`;
   if (visibleWidth(full) <= width) return full;
-  return `  ${theme.bold(sectionLabels[active])} (${settingsSections.indexOf(active) + 1}/${settingsSections.length})`;
+  return `  ${theme.bold(sectionLabel(active, extras))} (${order.indexOf(active) + 1}/${order.length})`;
 }
 function withSectionFooter(lines: string[], theme: ExtensionContext["ui"]["theme"]): string[] {
   const copy = [...lines];
@@ -993,7 +1056,7 @@ function withSectionFooter(lines: string[], theme: ExtensionContext["ui"]["theme
   return copy;
 }
 
-export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCommandDeps): void {
+function createSettingsAppliers(deps: SettingsCommandDeps) {
   const setEditor = (patch: EditorPatch, ctx: ExtensionContext): ApplyResult =>
     deps.setEditorComponent(patch, ctx);
   const setMessages = (patch: UserMessagesPatch, ctx: ExtensionContext) => {
@@ -1002,738 +1065,799 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
   const setFooter = (patch: FooterPatch, ctx: ExtensionContext) => {
     deps.setFooterComponent(patch, ctx);
   };
+  return { setEditor, setMessages, setFooter };
+}
 
-  pi.registerCommand("zentui", {
-    description: "Configure choco-ui",
-    getArgumentCompletions: argumentCompletions,
-    handler: async (_args, ctx) => {
-      const args = isString(_args) ? _args : "";
-      const format = parseFormatCommand(args);
-      if (format) {
-        try {
-          deps.setFooterFormat(format.value ?? "", ctx);
-          deps.requestRender();
-          if (ctx.hasUI)
-            ctx.ui.notify(
-              format.value === undefined
-                ? "Footer format cleared (using default layout)"
-                : `Footer format: ${format.value}`,
-              "info",
-            );
-        } catch (error) {
-          if (ctx.hasUI)
-            ctx.ui.notify(
-              `Could not update footer format: ${error instanceof Error ? error.message : String(error)}`,
-              "error",
-            );
+function updateFooterFormat(
+  value: string | undefined,
+  deps: SettingsCommandDeps,
+  ctx: ExtensionCommandContext,
+): void {
+  try {
+    deps.setFooterFormat(value ?? "", ctx);
+    deps.requestRender();
+    if (ctx.hasUI)
+      ctx.ui.notify(
+        value === undefined
+          ? "Footer format cleared (using default layout)"
+          : `Footer format: ${value}`,
+        "info",
+      );
+  } catch (error) {
+    if (ctx.hasUI)
+      ctx.ui.notify(
+        `Could not update footer format: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+  }
+}
+
+function applyDirectOperation(
+  direct: DirectOperation,
+  deps: SettingsCommandDeps,
+  ctx: ExtensionCommandContext,
+): void {
+  const { setEditor, setMessages, setFooter } = createSettingsAppliers(deps);
+  try {
+    let result: ApplyResult = { applied: true };
+    let label = "";
+    switch (direct.kind) {
+      case "editor":
+        result = setEditor({ enabled: direct.enabled }, ctx);
+        label = "Editor";
+        break;
+      case "messages":
+        setMessages({ enabled: direct.enabled }, ctx);
+        label = "User messages";
+        break;
+      case "footer":
+        setFooter({ style: direct.enabled ? "starship" : "native" }, ctx);
+        label = "Footer";
+        break;
+      case "viewport":
+        result = setEditor({ viewportIndicators: direct.enabled }, ctx);
+        label = "Editor viewport indicators";
+        break;
+    }
+    deps.requestRender();
+    if (ctx.hasUI)
+      ctx.ui.notify(
+        `${label}: ${featureValue(direct.enabled)}${result.applied ? "" : ` (${result.reason ?? "reload Pi to apply this change"})`}`,
+        "info",
+      );
+  } catch (error) {
+    if (ctx.hasUI)
+      ctx.ui.notify(
+        `Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+  }
+}
+
+/**
+ * Handles the non-dialog `/preferences` arguments (footer format template and
+ * direct enable/disable/toggle operations). Returns `{ open: false }` when the
+ * arguments were fully handled, `{ open: true, section }` to open the dialog,
+ * or `undefined` when the arguments are not recognized — the host reports the
+ * combined usage so its own argument grammar stays visible.
+ */
+export function resolveZentuiPreferencesArgs(
+  args: string,
+  deps: SettingsCommandDeps,
+  ctx: ExtensionCommandContext,
+): ZentuiPreferencesArgsResolution | undefined {
+  const format = parseFormatCommand(args);
+  if (format) {
+    updateFooterFormat(format.value, deps, ctx);
+    return { open: false };
+  }
+  const direct = parseDirectOperation(args, deps.getConfig());
+  if (direct) {
+    applyDirectOperation(direct, deps, ctx);
+    return { open: false };
+  }
+  const initialSection = directSection(args);
+  if (args.trim() && !initialSection) return undefined;
+  const resolved: ZentuiPreferencesArgsResolution = { open: true };
+  if (initialSection) resolved.section = initialSection;
+  return resolved;
+}
+
+/**
+ * Runs the follow-up flow for a panel outcome outside the dialog and reports
+ * where the reopened dialog should focus. `undefined` means the outcome is
+ * not one of this panel's own and belongs to a host section.
+ */
+export async function runZentuiPreferencesOutcome(
+  outcome: string,
+  deps: SettingsCommandDeps,
+  ctx: ExtensionCommandContext,
+): Promise<ZentuiPreferencesFocus | undefined> {
+  if (outcome === "edit-working-line-spinner-speed" || outcome === "edit-working-line-text-speed") {
+    const spinnerSpeed = outcome === "edit-working-line-spinner-speed";
+    const workingLine = deps.getConfig().components.workingLine;
+    const before = spinnerSpeed ? workingLine.spinnerIntervalMs : workingLine.textIntervalMs;
+    const label = spinnerSpeed ? "Spinner speed" : "Text motion speed";
+    try {
+      const edited = await ctx.ui.input(
+        `${label} (${MIN_WORKING_LINE_INTERVAL_MS}–${MAX_WORKING_LINE_INTERVAL_MS} ms)`,
+        String(before),
+      );
+      if (edited === undefined) {
+        ctx.ui.notify(`${label} unchanged (input canceled)`, "info");
+      } else {
+        const trimmed = edited.trim();
+        const intervalMs = /^[+-]?\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+        if (!isValidWorkingLineIntervalMs(intervalMs)) {
+          ctx.ui.notify(
+            `${label} must be a whole number from ${MIN_WORKING_LINE_INTERVAL_MS} to ${MAX_WORKING_LINE_INTERVAL_MS} ms; unchanged.`,
+            "warning",
+          );
+        } else {
+          const result = deps.setWorkingLineComponent(
+            spinnerSpeed ? { spinnerIntervalMs: intervalMs } : { textIntervalMs: intervalMs },
+            ctx,
+          );
+          ctx.ui.notify(
+            `${label}: ${intervalMs} ms${result.applied ? "" : ` (${result.reason ?? "reload Pi to apply this change"})`}`,
+            "info",
+          );
         }
-        return;
       }
+    } catch (error) {
+      ctx.ui.notify(
+        `Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+    }
+    return {
+      section: "workingLine",
+      focusId: spinnerSpeed ? "workingLineSpinnerSpeed" : "workingLineTextSpeed",
+    };
+  }
+  if (outcome === "edit-working-line-messages") {
+    try {
+      const before = deps.getConfig().components.workingLine.messages.values.join("\n");
+      const edited = await ctx.ui.editor("Working line message list", before);
+      if (edited !== undefined) {
+        const values = normalizeWorkingLineMessages(edited.split(/\r?\n/));
+        const result = deps.setWorkingLineComponent({ messages: { values } }, ctx);
+        ctx.ui.notify(
+          `Message list: ${values.length}${values.length === 0 ? " (using styled Working…)" : ""}${result.applied ? "" : ` (${result.reason ?? "reload Pi to apply this change"})`}`,
+          "info",
+        );
+      }
+    } catch (error) {
+      ctx.ui.notify(
+        `Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+    }
+    return { section: "workingLine", focusId: "workingLineMessageList" };
+  }
+  return undefined;
+}
 
-      const direct = parseDirectOperation(args, deps.getConfig());
-      if (direct) {
+export function zentuiPreferencesCompletions(prefix: string): AutocompleteItem[] | null {
+  return argumentCompletions(prefix);
+}
+
+export function createZentuiPreferencesComponent(
+  deps: SettingsCommandDeps,
+  options: ZentuiPreferencesPanelOptions,
+): ZentuiPreferencesPanelHandle {
+  const { ctx, tui, theme, onOutcome } = options;
+  const { setEditor, setMessages, setFooter } = createSettingsAppliers(deps);
+  const extraSections = options.extraSections ?? [];
+  const initialSection =
+    options.initialSection && sectionOrder(extraSections).includes(options.initialSection)
+      ? options.initialSection
+      : "appearance";
+  const listTheme = deps.settingsListTheme ?? getSettingsListTheme();
+  let activeSection = initialSection;
+  let settingsList: SettingsList;
+  let preview: WorkingLineFrames | undefined;
+  let previewFrameIndex = 0;
+  let cancelPreview = () => {};
+  const stopPreview = (reset = true) => {
+    cancelPreview();
+    cancelPreview = () => {};
+    if (reset) {
+      preview = undefined;
+      previewFrameIndex = 0;
+    }
+  };
+  const startPreview = () => {
+    const previous = preview;
+    const previousState = previous?.frameStates[previewFrameIndex];
+    stopPreview(false);
+    if (activeSection !== "workingLine") return;
+    try {
+      const config = deps.getConfig();
+      const spinnerTick = previousState?.spinnerTick ?? 0;
+      let textTick = previousState?.textTick ?? 0;
+      let generated = buildWorkingLinePreviewFrames(
+        config.components.workingLine,
+        config.colors,
+        theme,
+        spinnerTick,
+        textTick,
+      );
+      if (previous && previousState) {
+        textTick = remapWorkingLineTextTick(
+          previous.textAnimation,
+          previous.textWidth,
+          previousState.textTick,
+          generated.textAnimation,
+          generated.textWidth,
+          previous.textOrigin,
+          generated.textOrigin,
+        );
+        generated = buildWorkingLinePreviewFrames(
+          config.components.workingLine,
+          config.colors,
+          theme,
+          spinnerTick,
+          textTick,
+        );
+      }
+      preview = generated;
+      previewFrameIndex = 0;
+      const advance = () => {
+        if (activeSection !== "workingLine" || !preview || preview.frames.length === 0) return;
+        previewFrameIndex = (previewFrameIndex + 1) % preview.frames.length;
+        tui.requestRender();
+        cancelPreview = deps.sessionLifecycle.defer(advance, preview.intervalMs);
+      };
+      cancelPreview = deps.sessionLifecycle.defer(advance, generated.intervalMs);
+    } catch {
+      stopPreview();
+    }
+  };
+  const finishSettings = (result: string) => {
+    stopPreview();
+    onOutcome(result);
+  };
+  const notifyChange = (label: string, value: string, result?: ApplyResult) => {
+    deps.requestRender();
+    ctx.ui.notify(
+      `${label}: ${value}${result && !result.applied ? ` (${result.reason ?? "reload Pi to apply this change"})` : ""}`,
+      "info",
+    );
+    startPreview();
+    tui.requestRender();
+  };
+  const notifyWorkingLineChange = (
+    label: string,
+    value: string,
+    result: ApplyResult,
+    previewChanged = true,
+  ) => {
+    ctx.ui.notify(
+      `${label}: ${value}${result.applied ? "" : ` (${result.reason ?? "reload Pi to apply this change"})`}`,
+      "info",
+    );
+    if (previewChanged) startPreview();
+    tui.requestRender();
+  };
+  const makeSettingsList = (focusId?: string): SettingsList => {
+    const items = buildSectionItems(
+      activeSection,
+      deps.getConfig(),
+      deps.getActiveExtensionStatuses(),
+      extraSections,
+    );
+    const list = new SettingsList(
+      items,
+      8,
+      listTheme,
+      (id, newValue) => {
         try {
-          let result: ApplyResult = { applied: true };
-          let label = "";
-          switch (direct.kind) {
-            case "editor":
-              result = setEditor({ enabled: direct.enabled }, ctx);
-              label = "Editor";
-              break;
-            case "messages":
-              setMessages({ enabled: direct.enabled }, ctx);
-              label = "User messages";
-              break;
-            case "footer":
-              setFooter({ style: direct.enabled ? "starship" : "native" }, ctx);
-              label = "Footer";
-              break;
-            case "viewport":
-              result = setEditor({ viewportIndicators: direct.enabled }, ctx);
-              label = "Editor viewport indicators";
-              break;
-          }
-          deps.requestRender();
-          if (ctx.hasUI)
-            ctx.ui.notify(
-              `${label}: ${featureValue(direct.enabled)}${result.applied ? "" : ` (${result.reason ?? "reload Pi to apply this change"})`}`,
-              "info",
-            );
-        } catch (error) {
-          if (ctx.hasUI)
-            ctx.ui.notify(
-              `Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
-              "error",
-            );
-        }
-        return;
-      }
-
-      const initialSection = directSection(args);
-      if (args.trim() && !initialSection) {
-        if (ctx.hasUI) ctx.ui.notify(usageText(), "warning");
-        return;
-      }
-      // SAFETY: this value comes from the selector options declared for the corresponding settings field.
-      const mode = (ctx as typeof ctx & { mode?: string }).mode;
-      if (!ctx.hasUI || (mode !== undefined && mode !== "tui")) return;
-
-      let requestedSection = initialSection ?? "appearance";
-      let requestedFocusId: string | undefined;
-      while (true) {
-        const initialFocusId = requestedFocusId;
-        requestedFocusId = undefined;
-        const outcome = await ctx.ui.custom<SettingsOutcome>((tui, theme, _keybindings, done) => {
-          const listTheme = deps.settingsListTheme ?? getSettingsListTheme();
-          let activeSection = requestedSection;
-          let settingsList: SettingsList;
-          let preview: WorkingLineFrames | undefined;
-          let previewFrameIndex = 0;
-          let cancelPreview = () => {};
-          const stopPreview = (reset = true) => {
-            cancelPreview();
-            cancelPreview = () => {};
-            if (reset) {
-              preview = undefined;
-              previewFrameIndex = 0;
-            }
-          };
-          const startPreview = () => {
-            const previous = preview;
-            const previousState = previous?.frameStates[previewFrameIndex];
-            stopPreview(false);
-            if (activeSection !== "workingLine") return;
-            try {
-              const config = deps.getConfig();
-              const spinnerTick = previousState?.spinnerTick ?? 0;
-              let textTick = previousState?.textTick ?? 0;
-              let generated = buildWorkingLinePreviewFrames(
-                config.components.workingLine,
-                config.colors,
-                theme,
-                spinnerTick,
-                textTick,
-              );
-              if (previous && previousState) {
-                textTick = remapWorkingLineTextTick(
-                  previous.textAnimation,
-                  previous.textWidth,
-                  previousState.textTick,
-                  generated.textAnimation,
-                  generated.textWidth,
-                  previous.textOrigin,
-                  generated.textOrigin,
-                );
-                generated = buildWorkingLinePreviewFrames(
-                  config.components.workingLine,
-                  config.colors,
-                  theme,
-                  spinnerTick,
-                  textTick,
-                );
-              }
-              preview = generated;
-              previewFrameIndex = 0;
-              const advance = () => {
-                if (activeSection !== "workingLine" || !preview || preview.frames.length === 0)
-                  return;
-                previewFrameIndex = (previewFrameIndex + 1) % preview.frames.length;
-                tui.requestRender();
-                cancelPreview = deps.sessionLifecycle.defer(advance, preview.intervalMs);
-              };
-              cancelPreview = deps.sessionLifecycle.defer(advance, generated.intervalMs);
-            } catch {
-              stopPreview();
-            }
-          };
-          const finishSettings = (result: SettingsOutcome) => {
-            stopPreview();
-            done(result);
-          };
-          const notifyChange = (label: string, value: string, result?: ApplyResult) => {
-            deps.requestRender();
-            ctx.ui.notify(
-              `${label}: ${value}${result && !result.applied ? ` (${result.reason ?? "reload Pi to apply this change"})` : ""}`,
-              "info",
-            );
-            startPreview();
-            tui.requestRender();
-          };
-          const notifyWorkingLineChange = (
-            label: string,
-            value: string,
-            result: ApplyResult,
-            previewChanged = true,
-          ) => {
-            ctx.ui.notify(
-              `${label}: ${value}${result.applied ? "" : ` (${result.reason ?? "reload Pi to apply this change"})`}`,
-              "info",
-            );
-            if (previewChanged) startPreview();
-            tui.requestRender();
-          };
-          const makeSettingsList = (focusId?: string): SettingsList => {
-            const items = buildSectionItems(
-              activeSection,
-              deps.getConfig(),
-              deps.getActiveExtensionStatuses(),
-            );
-            const list = new SettingsList(
-              items,
-              8,
-              listTheme,
-              (id, newValue) => {
-                try {
-                  const enabled = isFeatureState(newValue) ? newValue === "enabled" : undefined;
-                  if (id === "editorEnabled" && enabled !== undefined) {
-                    finishSettings("close");
-                    deps.sessionLifecycle.defer(() => {
-                      try {
-                        const result = setEditor({ enabled }, ctx);
-                        deps.requestRender();
-                        ctx.ui.notify(
-                          `Editor: ${newValue}${result.applied ? "" : ` (${result.reason ?? "reload Pi to apply this change"})`}`,
-                          "info",
-                        );
-                      } catch (error) {
-                        ctx.ui.notify(
-                          `Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
-                          "error",
-                        );
-                      }
-                    });
-                    return;
-                  }
-                  const selectedEditorStyle =
-                    id === "editorStyle" ? editorStyleId(newValue) : undefined;
-                  if (selectedEditorStyle) {
-                    setEditor({ style: selectedEditorStyle }, ctx);
-                    settingsList = makeSettingsList("editorStyle");
-                    notifyChange("Editor style", newValue);
-                    return;
-                  }
-                  if (id === "editorColorSource" && isColorSource(newValue)) {
-                    setEditor({ colorSource: newValue }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Editor colors", newValue);
-                    return;
-                  }
-                  if (id === "editorModelLabel" && (newValue === "id" || newValue === "name")) {
-                    setEditor({ modelLabel: newValue }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Editor model label", newValue);
-                    return;
-                  }
-                  if (
-                    id === "editorBorderColorMode" &&
-                    (newValue === "static" || newValue === "adaptive")
-                  ) {
-                    setEditor({ borderColorMode: newValue }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Editor border color", newValue);
-                    return;
-                  }
-                  if (id === "editorViewportIndicators" && enabled !== undefined) {
-                    setEditor({ viewportIndicators: enabled }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Editor viewport indicators", newValue);
-                    return;
-                  }
-                  if (id.startsWith("minimalist")) {
-                    if (
-                      id === "minimalistPathDisplay" &&
-                      ["compact", "project", "full"].includes(newValue)
-                    )
-                      deps.setMinimalist(
-                        // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
-                        { pathDisplay: newValue as MinimalistConfig["pathDisplay"] },
-                        ctx,
-                      );
-                    else if (
-                      id === "minimalistContextFormat" &&
-                      ["percent", "percent-total"].includes(newValue)
-                    )
-                      deps.setMinimalist(
-                        // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
-                        { contextFormat: newValue as MinimalistConfig["contextFormat"] },
-                        ctx,
-                      );
-                    else if (enabled !== undefined) {
-                      const key =
-                        id === "minimalistContextGauge"
-                          ? "contextGauge"
-                          : id === "minimalistShowSessionName"
-                            ? "showSessionName"
-                            : id === "minimalistShowTimer"
-                              ? "showTimer"
-                              : id === "minimalistShowCost"
-                                ? "showCost"
-                                : id === "minimalistShowGit"
-                                  ? "showGit"
-                                  : undefined;
-                      if (!key) return;
-                      deps.setMinimalist({ [key]: enabled }, ctx);
-                    } else return;
-                    settingsList.updateValue(id, newValue);
-                    notifyChange(id, newValue);
-                    return;
-                  }
-
-                  if (id === "userMessagesEnabled" && enabled !== undefined) {
-                    setMessages({ enabled }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("User messages", newValue);
-                    return;
-                  }
-                  const selectedMessageStyle =
-                    id === "userMessagesStyle" ? userMessageStyleId(newValue) : undefined;
-                  if (selectedMessageStyle) {
-                    setMessages({ style: selectedMessageStyle }, ctx);
-                    settingsList = makeSettingsList("userMessagesStyle");
-                    notifyChange("Message style", newValue);
-                    return;
-                  }
-                  if (id === "userMessagesColorSource" && isColorSource(newValue)) {
-                    setMessages({ colorSource: newValue }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Message colors", newValue);
-                    return;
-                  }
-                  if (id === "workingLineEnabled" && enabled !== undefined) {
-                    const result = deps.setWorkingLineComponent({ enabled }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyWorkingLineChange("Working line", newValue, result);
-                    return;
-                  }
-                  if (id === "workingLineTurnSummary" && enabled !== undefined) {
-                    const result = deps.setWorkingLineComponent({ turnSummary: enabled }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyWorkingLineChange("Turn summary", newValue, result, false);
-                    return;
-                  }
-                  const selectedWorkingLineSpinner =
-                    id === "workingLineSpinner" ? workingLineSpinnerId(newValue) : undefined;
-                  if (selectedWorkingLineSpinner) {
-                    const result = deps.setWorkingLineComponent(
-                      { spinner: selectedWorkingLineSpinner },
-                      ctx,
-                    );
-                    settingsList.updateValue(id, newValue);
-                    notifyWorkingLineChange("Spinner", newValue, result);
-                    return;
-                  }
-                  if (id === "workingLineSpinnerSpeed" || id === "workingLineTextSpeed") {
-                    const spinnerSpeed = id === "workingLineSpinnerSpeed";
-                    if (newValue === "Custom…") {
-                      finishSettings(
-                        spinnerSpeed
-                          ? "edit-working-line-spinner-speed"
-                          : "edit-working-line-text-speed",
-                      );
-                      return;
-                    }
-                    const presets = spinnerSpeed
-                      ? workingLineSpinnerSpeedPresets
-                      : workingLineTextSpeedPresets;
-                    const intervalMs = presets.find(
-                      (preset) => preset.label === newValue,
-                    )?.intervalMs;
-                    if (intervalMs !== undefined) {
-                      const result = deps.setWorkingLineComponent(
-                        spinnerSpeed
-                          ? { spinnerIntervalMs: intervalMs }
-                          : { textIntervalMs: intervalMs },
-                        ctx,
-                      );
-                      settingsList.updateValue(id, newValue);
-                      notifyWorkingLineChange(
-                        spinnerSpeed ? "Spinner speed" : "Text motion speed",
-                        `${intervalMs} ms`,
-                        result,
-                      );
-                    }
-                    return;
-                  }
-                  if (
-                    id === "workingLineTextAnimation" &&
-                    // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
-                    workingLineTextAnimationValues.includes(newValue as WorkingLineTextAnimation)
-                  ) {
-                    const result = deps.setWorkingLineComponent(
-                      // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
-                      { textAnimation: newValue as WorkingLineTextAnimation },
-                      ctx,
-                    );
-                    settingsList.updateValue(id, newValue);
-                    notifyWorkingLineChange("Text animation", newValue, result);
-                    return;
-                  }
-                  if (id === "workingLineColorSource" && isColorSource(newValue)) {
-                    const result = deps.setWorkingLineComponent({ colorSource: newValue }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyWorkingLineChange("Color source", newValue, result);
-                    return;
-                  }
-                  if (id === "workingLineAnimateSpinnerColor" && enabled !== undefined) {
-                    const result = deps.setWorkingLineComponent(
-                      { animateSpinnerColor: enabled },
-                      ctx,
-                    );
-                    settingsList.updateValue(id, newValue);
-                    notifyWorkingLineChange("Animate spinner color", newValue, result);
-                    return;
-                  }
-                  if (id === "workingLineCustomMessages" && enabled !== undefined) {
-                    const result = deps.setWorkingLineComponent(
-                      { messages: { custom: enabled } },
-                      ctx,
-                    );
-                    settingsList.updateValue(id, newValue);
-                    notifyWorkingLineChange("Custom messages", newValue, result);
-                    return;
-                  }
-                  if (
-                    (id === "workingLineTool" ||
-                      id === "workingLineElapsed" ||
-                      id === "workingLineThought" ||
-                      id === "workingLineTokens") &&
-                    enabled !== undefined
-                  ) {
-                    const key =
-                      id === "workingLineTool"
-                        ? "tool"
-                        : id === "workingLineElapsed"
-                          ? "elapsed"
-                          : id === "workingLineThought"
-                            ? "thought"
-                            : "tokens";
-                    const result = deps.setWorkingLineComponent(
-                      { segments: { [key]: enabled } },
-                      ctx,
-                    );
-                    settingsList.updateValue(id, newValue);
-                    notifyWorkingLineChange(id.slice("workingLine".length), newValue, result);
-                    return;
-                  }
-                  if (id === "workingLineMessageList") {
-                    finishSettings("edit-working-line-messages");
-                    return;
-                  }
-                  if (id === "selectorBordersEnabled" && enabled !== undefined) {
-                    deps.setSelectorBordersComponent({ enabled }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Selector borders", newValue);
-                    return;
-                  }
-                  if (id === "selectorBordersStyle" && newValue === "zentui") {
-                    deps.setSelectorBordersComponent({ style: newValue }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Selector border style", newValue);
-                    return;
-                  }
-                  if (id === "selectorBordersColorSource" && isColorSource(newValue)) {
-                    deps.setSelectorBordersComponent({ colorSource: newValue }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Selector border colors", newValue);
-                    return;
-                  }
-                  if (id === "iconMode" && isIconMode(newValue)) {
-                    deps.setIconMode(newValue);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Icon mode", newValue);
-                    return;
-                  }
-
-                  const selectedFooterStyle =
-                    id === "footerStyle" ? footerStyleId(newValue) : undefined;
-                  if (selectedFooterStyle) {
-                    setFooter({ style: selectedFooterStyle }, ctx);
-                    settingsList = makeSettingsList("footerStyle");
-                    notifyChange("Footer style", newValue);
-                    return;
-                  }
-                  if (id === "footerColorSource" && isColorSource(newValue)) {
-                    setFooter({ colorSource: newValue }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Footer colors", newValue);
-                    return;
-                  }
-                  if (id === "footerModelLabel" && (newValue === "id" || newValue === "name")) {
-                    setFooter({ modelLabel: newValue }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Footer model label", newValue);
-                    return;
-                  }
-
-                  if (id === "responsiveFooter" && enabled !== undefined) {
-                    deps.setResponsiveFooter({ responsiveFooter: enabled }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Responsive footer", newValue);
-                    return;
-                  }
-                  if (
-                    id === "compactFooterMaxLines" &&
-                    // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
-                    compactFooterMaxLineValues.includes(newValue as never)
-                  ) {
-                    const value: CompactFooterMaxLines =
-                      // SAFETY: this value comes from the selector options declared for the corresponding settings field.
-                      newValue === "unlimited" ? "unlimited" : (Number(newValue) as 1 | 2 | 3);
-                    deps.setResponsiveFooter({ compactFooterMaxLines: value }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Compact footer rows", newValue);
-                    return;
-                  }
-                  if (
-                    id === "contextStyle" &&
-                    // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
-                    contextStyleValues.includes(newValue as ContextStyle)
-                  ) {
-                    // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
-                    deps.setContextStyle(newValue as ContextStyle);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Context style", newValue);
-                    return;
-                  }
-                  if (id === "separator" && isSeparatorStyle(newValue)) {
-                    deps.setSeparator(newValue);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Separator", newValue);
-                    return;
-                  }
-                  // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
-                  if (id === "pathDisplay" && pathDisplayModeValues.includes(newValue as never)) {
-                    // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
-                    deps.setPathDisplay({ mode: newValue as PathDisplayConfig["mode"] });
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Path display", newValue);
-                    return;
-                  }
-                  // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
-                  if (id === "pathDepth" && pathDepthValues.includes(newValue as never)) {
-                    deps.setPathDisplay({ depth: Number(newValue) });
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Path depth", newValue);
-                    return;
-                  }
-
-                  const segment = footerSegmentSettingFromId(id);
-                  if (segment && enabled !== undefined) {
-                    deps.setFooterSegments({ [segment]: enabled }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange(footerSegmentSettingLabels[segment], newValue);
-                    return;
-                  }
-                  if (id === "branchLength") {
-                    const value = newValue === "full" ? "full" : Number(newValue);
-                    if (value !== "full" && (!Number.isInteger(value) || value <= 0)) return;
-                    deps.setGitBranch({ maxLength: value });
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Branch length", newValue);
-                    return;
-                  }
-                  if (id === "gitCommitOnlyDetached" && enabled !== undefined) {
-                    deps.setGitCommit({ onlyDetached: enabled }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Commit only on detached HEAD", newValue);
-                    return;
-                  }
-                  if (id === "gitCommitShowTag" && enabled !== undefined) {
-                    deps.setGitCommit({ showTag: enabled }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Show exact-match tag", newValue);
-                    return;
-                  }
-                  if (id === "gitMetricsOnlyNonzero" && enabled !== undefined) {
-                    deps.setGitMetrics({ onlyNonzero: enabled }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Hide zero metrics", newValue);
-                    return;
-                  }
-                  if (id === "gitMetricsIgnoreSubmodules" && enabled !== undefined) {
-                    deps.setGitMetrics({ ignoreSubmodules: enabled }, ctx);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange("Ignore submodules", newValue);
-                    return;
-                  }
-
-                  if (
-                    id === "extensionStatusDefaultPlacement" &&
-                    isExtensionStatusPlacement(newValue)
-                  ) {
-                    deps.setExtensionStatusDefaultPlacement(newValue);
-                    settingsList = makeSettingsList("extensionStatusDefaultPlacement");
-                    notifyChange("Default extension status placement", newValue);
-                    return;
-                  }
-                  const thirdParty = thirdPartyStatusSettingFromId(id);
-                  if (thirdParty?.kind === "placement" && isExtensionStatusPlacement(newValue)) {
-                    deps.setExtensionStatusPlacement(thirdParty.key, newValue);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange(`Third-party status ${thirdParty.key} placement`, newValue);
-                    return;
-                  }
-                  if (thirdParty?.kind === "colorMode" && isExtensionStatusColorMode(newValue)) {
-                    deps.setExtensionStatusColorMode(thirdParty.key, newValue);
-                    settingsList.updateValue(id, newValue);
-                    notifyChange(`Third-party status ${thirdParty.key} color`, newValue);
-                  }
-                } catch (error) {
-                  stopPreview();
-                  settingsList = makeSettingsList(id);
-                  tui.requestRender();
-                  ctx.ui.notify(
-                    `Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
-                    "error",
-                  );
-                }
-              },
-              () => finishSettings("close"),
-            );
-            if (focusId) {
-              const target = items.findIndex((item) => item.id === focusId);
-              for (let index = 0; index < target; index += 1) list.handleInput("\x1b[B");
-            }
-            return list;
-          };
-          settingsList = makeSettingsList(initialFocusId);
-          startPreview();
-          const renderPreviewRows = (previewWidth: number): string[] => {
-            if (previewWidth <= 0) return [];
-            if (activeSection === "editor")
-              return renderEditorSettingsPreview(deps.getConfig(), theme, previewWidth);
-            if (activeSection === "userMessages")
-              return renderUserMessageSettingsPreview(deps.getConfig(), theme, previewWidth);
-            if (activeSection === "workingLine" && preview && preview.frames.length > 0)
-              return [
-                truncateToWidth(
-                  preview.frames[previewFrameIndex] ?? preview.frames[0],
-                  Math.min(SETTINGS_PREVIEW_MAX_WIDTH, previewWidth),
-                  "",
-                ),
-              ];
-            return [];
-          };
-          return {
-            render(width: number) {
-              const border = renderChromeBorder(
-                theme,
-                deps.getConfig().components.selectorBorders.colorSource,
-                EDITOR_BORDER_STYLE,
-                "─".repeat(Math.max(0, width)),
-              );
-              const settingsRows = withSectionFooter(settingsList.render(width), theme).map(
-                (line) => truncateToWidth(line, width, ""),
-              );
-              const previewRows = renderPreviewRows(Math.max(0, width - 4));
-              while (previewRows.length > 0 && visibleWidth(previewRows.at(-1) ?? "") === 0)
-                previewRows.pop();
-              const indentedPreviewRows = previewRows.map((line) =>
-                truncateToWidth(`  ${line}`, width, ""),
-              );
-              const bodyRows = indentedPreviewRows.some((line) => visibleWidth(line) > 0)
-                ? ["", ...indentedPreviewRows, "", ...settingsRows]
-                : settingsRows;
-              return [
-                truncateToWidth(border, width, ""),
-                truncateToWidth(formatSectionTabs(activeSection, theme, width), width, ""),
-                truncateToWidth(border, width, ""),
-                ...bodyRows,
-                truncateToWidth(border, width, ""),
-              ];
-            },
-            invalidate() {
-              settingsList.invalidate();
-            },
-            handleInput(data: string) {
-              if (matchesKey(data, Key.tab)) {
-                stopPreview();
-                activeSection = nextSection(activeSection);
-                settingsList = makeSettingsList();
-                startPreview();
-                tui.requestRender();
-                return;
-              }
-              if (matchesKey(data, Key.shift("tab"))) {
-                stopPreview();
-                activeSection = previousSection(activeSection);
-                settingsList = makeSettingsList();
-                startPreview();
-                tui.requestRender();
-                return;
-              }
-              settingsList.handleInput(data);
-            },
-            dispose() {
-              stopPreview();
-            },
-          };
-        });
-        if (outcome === "close" || outcome === undefined) return;
-        if (
-          outcome === "edit-working-line-spinner-speed" ||
-          outcome === "edit-working-line-text-speed"
-        ) {
-          const spinnerSpeed = outcome === "edit-working-line-spinner-speed";
-          const workingLine = deps.getConfig().components.workingLine;
-          const before = spinnerSpeed ? workingLine.spinnerIntervalMs : workingLine.textIntervalMs;
-          const label = spinnerSpeed ? "Spinner speed" : "Text motion speed";
-          try {
-            const edited = await ctx.ui.input(
-              `${label} (${MIN_WORKING_LINE_INTERVAL_MS}–${MAX_WORKING_LINE_INTERVAL_MS} ms)`,
-              String(before),
-            );
-            if (edited === undefined) {
-              ctx.ui.notify(`${label} unchanged (input canceled)`, "info");
-            } else {
-              const trimmed = edited.trim();
-              const intervalMs = /^[+-]?\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
-              if (!isValidWorkingLineIntervalMs(intervalMs)) {
+          const enabled = isFeatureState(newValue) ? newValue === "enabled" : undefined;
+          if (id === "editorEnabled" && enabled !== undefined) {
+            finishSettings("close");
+            deps.sessionLifecycle.defer(() => {
+              try {
+                const result = setEditor({ enabled }, ctx);
+                deps.requestRender();
                 ctx.ui.notify(
-                  `${label} must be a whole number from ${MIN_WORKING_LINE_INTERVAL_MS} to ${MAX_WORKING_LINE_INTERVAL_MS} ms; unchanged.`,
-                  "warning",
-                );
-              } else {
-                const result = deps.setWorkingLineComponent(
-                  spinnerSpeed ? { spinnerIntervalMs: intervalMs } : { textIntervalMs: intervalMs },
-                  ctx,
-                );
-                ctx.ui.notify(
-                  `${label}: ${intervalMs} ms${result.applied ? "" : ` (${result.reason ?? "reload Pi to apply this change"})`}`,
+                  `Editor: ${newValue}${result.applied ? "" : ` (${result.reason ?? "reload Pi to apply this change"})`}`,
                   "info",
                 );
+              } catch (error) {
+                ctx.ui.notify(
+                  `Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
+                  "error",
+                );
               }
-            }
-          } catch (error) {
-            ctx.ui.notify(
-              `Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
-              "error",
-            );
+            });
+            return;
           }
-          requestedSection = "workingLine";
-          requestedFocusId = spinnerSpeed ? "workingLineSpinnerSpeed" : "workingLineTextSpeed";
-          continue;
-        }
-        try {
-          const before = deps.getConfig().components.workingLine.messages.values.join("\n");
-          const edited = await ctx.ui.editor("Working line message list", before);
-          if (edited !== undefined) {
-            const values = normalizeWorkingLineMessages(edited.split(/\r?\n/));
-            const result = deps.setWorkingLineComponent({ messages: { values } }, ctx);
-            ctx.ui.notify(
-              `Message list: ${values.length}${values.length === 0 ? " (using styled Working…)" : ""}${result.applied ? "" : ` (${result.reason ?? "reload Pi to apply this change"})`}`,
-              "info",
+          const selectedEditorStyle = id === "editorStyle" ? editorStyleId(newValue) : undefined;
+          if (selectedEditorStyle) {
+            setEditor({ style: selectedEditorStyle }, ctx);
+            settingsList = makeSettingsList("editorStyle");
+            notifyChange("Editor style", newValue);
+            return;
+          }
+          if (id === "editorColorSource" && isColorSource(newValue)) {
+            setEditor({ colorSource: newValue }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Editor colors", newValue);
+            return;
+          }
+          if (id === "editorModelLabel" && (newValue === "id" || newValue === "name")) {
+            setEditor({ modelLabel: newValue }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Editor model label", newValue);
+            return;
+          }
+          if (
+            id === "editorBorderColorMode" &&
+            (newValue === "static" || newValue === "adaptive")
+          ) {
+            setEditor({ borderColorMode: newValue }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Editor border color", newValue);
+            return;
+          }
+          if (id === "editorViewportIndicators" && enabled !== undefined) {
+            setEditor({ viewportIndicators: enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Editor viewport indicators", newValue);
+            return;
+          }
+          if (id.startsWith("minimalist")) {
+            if (id === "minimalistPathDisplay" && ["compact", "project", "full"].includes(newValue))
+              deps.setMinimalist(
+                // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
+                { pathDisplay: newValue as MinimalistConfig["pathDisplay"] },
+                ctx,
+              );
+            else if (
+              id === "minimalistContextFormat" &&
+              ["percent", "percent-total"].includes(newValue)
+            )
+              deps.setMinimalist(
+                // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
+                {
+                  contextFormat: newValue as MinimalistConfig["contextFormat"],
+                },
+                ctx,
+              );
+            else if (enabled !== undefined) {
+              const key =
+                id === "minimalistContextGauge"
+                  ? "contextGauge"
+                  : id === "minimalistShowSessionName"
+                    ? "showSessionName"
+                    : id === "minimalistShowTimer"
+                      ? "showTimer"
+                      : id === "minimalistShowCost"
+                        ? "showCost"
+                        : id === "minimalistShowGit"
+                          ? "showGit"
+                          : undefined;
+              if (!key) return;
+              deps.setMinimalist({ [key]: enabled }, ctx);
+            } else return;
+            settingsList.updateValue(id, newValue);
+            notifyChange(id, newValue);
+            return;
+          }
+
+          if (id === "userMessagesEnabled" && enabled !== undefined) {
+            setMessages({ enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("User messages", newValue);
+            return;
+          }
+          const selectedMessageStyle =
+            id === "userMessagesStyle" ? userMessageStyleId(newValue) : undefined;
+          if (selectedMessageStyle) {
+            setMessages({ style: selectedMessageStyle }, ctx);
+            settingsList = makeSettingsList("userMessagesStyle");
+            notifyChange("Message style", newValue);
+            return;
+          }
+          if (id === "userMessagesColorSource" && isColorSource(newValue)) {
+            setMessages({ colorSource: newValue }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Message colors", newValue);
+            return;
+          }
+          if (id === "workingLineEnabled" && enabled !== undefined) {
+            const result = deps.setWorkingLineComponent({ enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyWorkingLineChange("Working line", newValue, result);
+            return;
+          }
+          if (id === "workingLineTurnSummary" && enabled !== undefined) {
+            const result = deps.setWorkingLineComponent({ turnSummary: enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyWorkingLineChange("Turn summary", newValue, result, false);
+            return;
+          }
+          const selectedWorkingLineSpinner =
+            id === "workingLineSpinner" ? workingLineSpinnerId(newValue) : undefined;
+          if (selectedWorkingLineSpinner) {
+            const result = deps.setWorkingLineComponent(
+              { spinner: selectedWorkingLineSpinner },
+              ctx,
             );
+            settingsList.updateValue(id, newValue);
+            notifyWorkingLineChange("Spinner", newValue, result);
+            return;
+          }
+          if (id === "workingLineSpinnerSpeed" || id === "workingLineTextSpeed") {
+            const spinnerSpeed = id === "workingLineSpinnerSpeed";
+            if (newValue === "Custom…") {
+              finishSettings(
+                spinnerSpeed ? "edit-working-line-spinner-speed" : "edit-working-line-text-speed",
+              );
+              return;
+            }
+            const presets = spinnerSpeed
+              ? workingLineSpinnerSpeedPresets
+              : workingLineTextSpeedPresets;
+            const intervalMs = presets.find((preset) => preset.label === newValue)?.intervalMs;
+            if (intervalMs !== undefined) {
+              const result = deps.setWorkingLineComponent(
+                spinnerSpeed ? { spinnerIntervalMs: intervalMs } : { textIntervalMs: intervalMs },
+                ctx,
+              );
+              settingsList.updateValue(id, newValue);
+              notifyWorkingLineChange(
+                spinnerSpeed ? "Spinner speed" : "Text motion speed",
+                `${intervalMs} ms`,
+                result,
+              );
+            }
+            return;
+          }
+          if (
+            id === "workingLineTextAnimation" &&
+            // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
+            workingLineTextAnimationValues.includes(newValue as WorkingLineTextAnimation)
+          ) {
+            const result = deps.setWorkingLineComponent(
+              // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
+              { textAnimation: newValue as WorkingLineTextAnimation },
+              ctx,
+            );
+            settingsList.updateValue(id, newValue);
+            notifyWorkingLineChange("Text animation", newValue, result);
+            return;
+          }
+          if (id === "workingLineColorSource" && isColorSource(newValue)) {
+            const result = deps.setWorkingLineComponent({ colorSource: newValue }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyWorkingLineChange("Color source", newValue, result);
+            return;
+          }
+          if (id === "workingLineAnimateSpinnerColor" && enabled !== undefined) {
+            const result = deps.setWorkingLineComponent({ animateSpinnerColor: enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyWorkingLineChange("Animate spinner color", newValue, result);
+            return;
+          }
+          if (id === "workingLineCustomMessages" && enabled !== undefined) {
+            const result = deps.setWorkingLineComponent({ messages: { custom: enabled } }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyWorkingLineChange("Custom messages", newValue, result);
+            return;
+          }
+          if (
+            (id === "workingLineTool" ||
+              id === "workingLineElapsed" ||
+              id === "workingLineThought" ||
+              id === "workingLineTokens") &&
+            enabled !== undefined
+          ) {
+            const key =
+              id === "workingLineTool"
+                ? "tool"
+                : id === "workingLineElapsed"
+                  ? "elapsed"
+                  : id === "workingLineThought"
+                    ? "thought"
+                    : "tokens";
+            const result = deps.setWorkingLineComponent({ segments: { [key]: enabled } }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyWorkingLineChange(id.slice("workingLine".length), newValue, result);
+            return;
+          }
+          if (id === "workingLineMessageList") {
+            finishSettings("edit-working-line-messages");
+            return;
+          }
+          if (id === "selectorBordersEnabled" && enabled !== undefined) {
+            deps.setSelectorBordersComponent({ enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Selector borders", newValue);
+            return;
+          }
+          if (id === "selectorBordersStyle" && newValue === "zentui") {
+            deps.setSelectorBordersComponent({ style: newValue }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Selector border style", newValue);
+            return;
+          }
+          if (id === "selectorBordersColorSource" && isColorSource(newValue)) {
+            deps.setSelectorBordersComponent({ colorSource: newValue }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Selector border colors", newValue);
+            return;
+          }
+          if (id === "iconMode" && isIconMode(newValue)) {
+            deps.setIconMode(newValue);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Icon mode", newValue);
+            return;
+          }
+
+          const selectedFooterStyle = id === "footerStyle" ? footerStyleId(newValue) : undefined;
+          if (selectedFooterStyle) {
+            setFooter({ style: selectedFooterStyle }, ctx);
+            settingsList = makeSettingsList("footerStyle");
+            notifyChange("Footer style", newValue);
+            return;
+          }
+          if (id === "footerColorSource" && isColorSource(newValue)) {
+            setFooter({ colorSource: newValue }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Footer colors", newValue);
+            return;
+          }
+          if (id === "footerModelLabel" && (newValue === "id" || newValue === "name")) {
+            setFooter({ modelLabel: newValue }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Footer model label", newValue);
+            return;
+          }
+
+          if (id === "responsiveFooter" && enabled !== undefined) {
+            deps.setResponsiveFooter({ responsiveFooter: enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Responsive footer", newValue);
+            return;
+          }
+          if (
+            id === "compactFooterMaxLines" &&
+            // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
+            compactFooterMaxLineValues.includes(newValue as never)
+          ) {
+            const value: CompactFooterMaxLines =
+              // SAFETY: this value comes from the selector options declared for the corresponding settings field.
+              newValue === "unlimited" ? "unlimited" : (Number(newValue) as 1 | 2 | 3);
+            deps.setResponsiveFooter({ compactFooterMaxLines: value }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Compact footer rows", newValue);
+            return;
+          }
+          if (
+            id === "contextStyle" &&
+            // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
+            contextStyleValues.includes(newValue as ContextStyle)
+          ) {
+            // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
+            deps.setContextStyle(newValue as ContextStyle);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Context style", newValue);
+            return;
+          }
+          if (id === "separator" && isSeparatorStyle(newValue)) {
+            deps.setSeparator(newValue);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Separator", newValue);
+            return;
+          }
+          // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
+          if (id === "pathDisplay" && pathDisplayModeValues.includes(newValue as never)) {
+            // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
+            deps.setPathDisplay({
+              mode: newValue as PathDisplayConfig["mode"],
+            });
+            settingsList.updateValue(id, newValue);
+            notifyChange("Path display", newValue);
+            return;
+          }
+          // SAFETY: the adjacent membership check restricts this string to the asserted settings option union.
+          if (id === "pathDepth" && pathDepthValues.includes(newValue as never)) {
+            deps.setPathDisplay({ depth: Number(newValue) });
+            settingsList.updateValue(id, newValue);
+            notifyChange("Path depth", newValue);
+            return;
+          }
+
+          const segment = footerSegmentSettingFromId(id);
+          if (segment && enabled !== undefined) {
+            deps.setFooterSegments({ [segment]: enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange(footerSegmentSettingLabels[segment], newValue);
+            return;
+          }
+          if (id === "branchLength") {
+            const value = newValue === "full" ? "full" : Number(newValue);
+            if (value !== "full" && (!Number.isInteger(value) || value <= 0)) return;
+            deps.setGitBranch({ maxLength: value });
+            settingsList.updateValue(id, newValue);
+            notifyChange("Branch length", newValue);
+            return;
+          }
+          if (id === "gitCommitOnlyDetached" && enabled !== undefined) {
+            deps.setGitCommit({ onlyDetached: enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Commit only on detached HEAD", newValue);
+            return;
+          }
+          if (id === "gitCommitShowTag" && enabled !== undefined) {
+            deps.setGitCommit({ showTag: enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Show exact-match tag", newValue);
+            return;
+          }
+          if (id === "gitMetricsOnlyNonzero" && enabled !== undefined) {
+            deps.setGitMetrics({ onlyNonzero: enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Hide zero metrics", newValue);
+            return;
+          }
+          if (id === "gitMetricsIgnoreSubmodules" && enabled !== undefined) {
+            deps.setGitMetrics({ ignoreSubmodules: enabled }, ctx);
+            settingsList.updateValue(id, newValue);
+            notifyChange("Ignore submodules", newValue);
+            return;
+          }
+
+          if (id === "extensionStatusDefaultPlacement" && isExtensionStatusPlacement(newValue)) {
+            deps.setExtensionStatusDefaultPlacement(newValue);
+            settingsList = makeSettingsList("extensionStatusDefaultPlacement");
+            notifyChange("Default extension status placement", newValue);
+            return;
+          }
+          const thirdParty = thirdPartyStatusSettingFromId(id);
+          if (thirdParty?.kind === "placement" && isExtensionStatusPlacement(newValue)) {
+            deps.setExtensionStatusPlacement(thirdParty.key, newValue);
+            settingsList.updateValue(id, newValue);
+            notifyChange(`Third-party status ${thirdParty.key} placement`, newValue);
+            return;
+          }
+          if (thirdParty?.kind === "colorMode" && isExtensionStatusColorMode(newValue)) {
+            deps.setExtensionStatusColorMode(thirdParty.key, newValue);
+            settingsList.updateValue(id, newValue);
+            notifyChange(`Third-party status ${thirdParty.key} color`, newValue);
+            return;
+          }
+          const extraSection = extraSections.find((candidate) => candidate.id === activeSection);
+          if (extraSection) {
+            const change = extraSection.handleChange(id, newValue);
+            if (change.kind === "outcome") {
+              finishSettings(change.outcome);
+              return;
+            }
+            if (change.kind === "rebuild") {
+              settingsList = makeSettingsList(id);
+            } else {
+              settingsList.updateValue(id, newValue);
+            }
+            tui.requestRender();
           }
         } catch (error) {
+          stopPreview();
+          settingsList = makeSettingsList(id);
+          tui.requestRender();
           ctx.ui.notify(
             `Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
             "error",
           );
         }
-        requestedSection = "workingLine";
-        requestedFocusId = "workingLineMessageList";
+      },
+      () => finishSettings("close"),
+    );
+    if (focusId) {
+      const target = items.findIndex((item) => item.id === focusId);
+      for (let index = 0; index < target; index += 1) list.handleInput("\x1b[B");
+    }
+    return list;
+  };
+  settingsList = makeSettingsList(options.initialFocusId);
+  startPreview();
+  const renderPreviewRows = (previewWidth: number): string[] => {
+    if (previewWidth <= 0) return [];
+    if (activeSection === "editor")
+      return renderEditorSettingsPreview(deps.getConfig(), theme, previewWidth);
+    if (activeSection === "userMessages")
+      return renderUserMessageSettingsPreview(deps.getConfig(), theme, previewWidth);
+    if (activeSection === "workingLine" && preview && preview.frames.length > 0)
+      return [
+        truncateToWidth(
+          preview.frames[previewFrameIndex] ?? preview.frames[0],
+          Math.min(SETTINGS_PREVIEW_MAX_WIDTH, previewWidth),
+          "",
+        ),
+      ];
+    return [];
+  };
+  return {
+    render(width: number) {
+      const border = renderChromeBorder(
+        theme,
+        deps.getConfig().components.selectorBorders.colorSource,
+        EDITOR_BORDER_STYLE,
+        "─".repeat(Math.max(0, width)),
+      );
+      const settingsRows = withSectionFooter(settingsList.render(width), theme).map((line) =>
+        truncateToWidth(line, width, ""),
+      );
+      const previewRows = renderPreviewRows(Math.max(0, width - 4));
+      while (previewRows.length > 0 && visibleWidth(previewRows.at(-1) ?? "") === 0)
+        previewRows.pop();
+      const indentedPreviewRows = previewRows.map((line) =>
+        truncateToWidth(`  ${line}`, width, ""),
+      );
+      const bodyRows = indentedPreviewRows.some((line) => visibleWidth(line) > 0)
+        ? ["", ...indentedPreviewRows, "", ...settingsRows]
+        : settingsRows;
+      return [
+        truncateToWidth(border, width, ""),
+        truncateToWidth(formatSectionTabs(activeSection, extraSections, theme, width), width, ""),
+        truncateToWidth(border, width, ""),
+        ...bodyRows,
+        truncateToWidth(border, width, ""),
+      ];
+    },
+    invalidate() {
+      settingsList.invalidate();
+    },
+    handleInput(data: string) {
+      if (matchesKey(data, Key.tab)) {
+        stopPreview();
+        activeSection = nextSection(activeSection, extraSections);
+        settingsList = makeSettingsList();
+        startPreview();
+        tui.requestRender();
+        return;
       }
+      if (matchesKey(data, Key.shift("tab"))) {
+        stopPreview();
+        activeSection = previousSection(activeSection, extraSections);
+        settingsList = makeSettingsList();
+        startPreview();
+        tui.requestRender();
+        return;
+      }
+      settingsList.handleInput(data);
+    },
+    dispose() {
+      stopPreview();
+    },
+    getActiveSection() {
+      return activeSection;
+    },
+  };
+}
+
+export const ZENTUI_PREFERENCES_PROVIDER_SYMBOL = Symbol.for("choco-pi.preferences-provider");
+
+/**
+ * Publishes the preferences panel on the global registry so the choco-pi
+ * profile can host it as the Preferences tab of its Status/Usage dialog and
+ * register the `/preferences` command. The package registers no command
+ * itself; without the profile host the panel is simply unused.
+ */
+export function registerZentuiPreferencesProvider(deps: SettingsCommandDeps): void {
+  Object.defineProperty(globalThis, ZENTUI_PREFERENCES_PROVIDER_SYMBOL, {
+    configurable: true,
+    writable: true,
+    value: {
+      createPanel: (options: ZentuiPreferencesPanelOptions) =>
+        createZentuiPreferencesComponent(deps, options),
+      runOutcome: (outcome: string, ctx: ExtensionCommandContext) =>
+        runZentuiPreferencesOutcome(outcome, deps, ctx),
+      resolveArgs: (args: string, ctx: ExtensionCommandContext) =>
+        Promise.resolve(resolveZentuiPreferencesArgs(args, deps, ctx)),
+      completions: (prefix: string) => zentuiPreferencesCompletions(prefix),
     },
   });
 }

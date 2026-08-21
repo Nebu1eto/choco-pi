@@ -73,20 +73,21 @@ Voice, notebook, background-shell 기능은 의도적으로 포함하지 않습�
 
 ### 세션과 모델 제어
 
-| 명령                                                                              | 설명                                                                                                                                                                              |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/exit`                                                                           | Pi를 정상 종료. `/quit` 별칭                                                                                                                                                      |
-| `/delete`                                                                         | 확인 후 현재 Pi 세션 기록을 영구 삭제하고 종료                                                                                                                                    |
-| `/clear`                                                                          | 현재 세션 기록을 보존하고 새 세션 시작. `/new` 별칭                                                                                                                               |
-| `/status`                                                                         | Pi 버전, 세션 식별자, 모델과 공급자, context window, context file, skill, MCP 서버, agent 역할, theme 표시. Status/Usage 탭 뷰로 열림. 대화형 설정은 Pi 내장 `/settings`에서 유지 |
-| `/effort [level]`                                                                 | 현재 모델이 지원하는 reasoning effort 선택 또는 직접 지정. 공백 뒤에는 가능한 값 자동 완성                                                                                        |
-| `/fast [on\|off\|status]`                                                         | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환                                                                                                                  |
-| `/context-cap`                                                                    | 현재 모델에 적용된 soft context cap 확인                                                                                                                                          |
-| `/context [all]`                                                                  | prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시                                                                           |
-| `/rewind`                                                                         | 선택한 턴으로 현재 대화 branch, 파일과 Git index를 함께 rewind                                                                                                                    |
-| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | 로컬 human review 화면 열기. 인자가 없으면 대상 선택기 표시                                                                                                                       |
-| `/usage`                                                                          | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시. 같은 탭 뷰로 열림                                                                                                   |
-| `/apex-refresh`                                                                   | Callstack Apex 모델을 즉시 다시 탐색                                                                                                                                              |
+| 명령                                                                              | 설명                                                                                                                                                                                               |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/exit`                                                                           | Pi를 정상 종료. `/quit` 별칭                                                                                                                                                                       |
+| `/delete`                                                                         | 확인 후 현재 Pi 세션 기록을 영구 삭제하고 종료                                                                                                                                                     |
+| `/clear`                                                                          | 현재 세션 기록을 보존하고 새 세션 시작. `/new` 별칭                                                                                                                                                |
+| `/status`                                                                         | Pi 버전, 세션 식별자, 모델과 공급자, context window, context file, skill, MCP 서버, agent 역할, theme 표시. Status/Usage/Preferences 탭 뷰로 열림. Pi 자체 런타임 설정은 내장 `/settings`에서 유지 |
+| `/effort [level]`                                                                 | 현재 모델이 지원하는 reasoning effort 선택 또는 직접 지정. 공백 뒤에는 가능한 값 자동 완성                                                                                                         |
+| `/fast [on\|off\|status]`                                                         | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환                                                                                                                                   |
+| `/context-cap`                                                                    | 현재 모델에 적용된 soft context cap 확인                                                                                                                                                           |
+| `/context [all]`                                                                  | prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시                                                                                            |
+| `/rewind`                                                                         | 선택한 턴으로 현재 대화 branch, 파일과 Git index를 함께 rewind                                                                                                                                     |
+| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | 로컬 human review 화면 열기. 인자가 없으면 대상 선택기 표시                                                                                                                                        |
+| `/usage`                                                                          | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시. 같은 탭 뷰의 두 번째 탭으로 열림                                                                                                     |
+| `/preferences [인자]`, `/pref`                                                    | 같은 탭 뷰의 세 번째 탭 열기. Agent 언어와 스타일, choco-ui 인터페이스 설정을 다룸. `agent`, `language <이름>`, `style <이름>`, choco-ui 직접 토글, `format <템플릿>` 인자 지원                    |
+| `/apex-refresh`                                                                   | Callstack Apex 모델을 즉시 다시 탐색                                                                                                                                                               |
 
 Fast mode는 OpenAI Codex 요청에만 `service_tier: "priority"`를 추가합니다. Standard보다 사용량이나 API credit을 빠르게 소비할 수 있습니다. Pi에 숨겨진 llama.cpp 공급자는 유지하지만 `/llama` 명령은 choco-pi의 명령 목록과 실행 경로에서 제거합니다.
 
@@ -407,7 +408,7 @@ Apex가 Responses API를 지원한다고 확인하기 전에는 `openai-completi
 
 ## TUI와 브라우저 자동화
 
-기본 테마는 `nord-dark`입니다. `choco-pi-ui`가 편집기, 사용자 메시지 프레임, 상태줄과 테마를 제공하며 `/zentui`에서 각 영역을 설정합니다. 사용자 설정은 `~/.pi/agent/choco-pi-ui.json`에 저장합니다. 패키지는 기존 `pi-choco-ui.json`과 `zentui.json`도 계속 읽습니다.
+기본 테마는 `nord-dark`입니다. `choco-pi-ui`가 편집기, 사용자 메시지 프레임, 상태줄과 테마를 제공하며 `/preferences`의 Preferences 탭에서 각 영역을 설정합니다. 사용자 설정은 `~/.pi/agent/choco-pi-ui.json`에 저장합니다. 패키지는 기존 `pi-choco-ui.json`과 `zentui.json`도 계속 읽습니다. `/preferences`는 이전 `/zentui` 명령을 대체하며, `/zentui`는 더 이상 제공하지 않습니다.
 
 브라우저 자동화는 Pi plugin이 아니라 전역 `agent-browser` skill과 CLI를 사용합니다. 호환 버전을 별도로 설치합니다.
 
@@ -418,6 +419,32 @@ agent-browser --version
 ```
 
 설치 후 skill로 페이지 열기, interactive snapshot, 클릭, 입력, screenshot과 인증된 browser profile을 사용할 수 있습니다. `ffmpeg`는 WebM 녹화에만 필요합니다.
+
+## Agent 언어와 Agent 스타일
+
+`/preferences`(별칭 `/pref`)는 Status/Usage/Preferences 뷰의 세 번째 탭을 엽니다. 이 탭의 **Agent** 섹션은 `~/.pi/agent/settings.json`에 저장하는 전역 설정 두 개를 다루므로 모든 프로젝트에 동일하게 적용됩니다.
+
+| 키              | 효과                                                                                          |
+| --------------- | --------------------------------------------------------------------------------------------- |
+| `agentLanguage` | 응답, 계획, 보고서, 생성 문서의 산문에 사용할 언어. 설정하지 않으면 사용자가 쓴 언어를 따라감 |
+| `agentStyle`    | 매 턴 주입할 스타일 파일 이름. 설정하지 않으면 스타일 블록을 주입하지 않음                    |
+
+두 값은 매 턴 시스템 프롬프트의 `<choco_pi_agent_preferences>` 블록으로 주입되며, 변경은 Pi를 다시 시작하지 않아도 다음 턴부터 적용됩니다.
+
+언어를 설정하면 "사용자 언어에 맞춘다"는 기본 규칙보다 우선합니다. 다만 메시지에서 특정 산출물의 언어를 명시하면 그 산출물에는 요청이 우선합니다. 예를 들어 일본어 문서를 요청하면 문서는 일본어로 작성하고 대화는 설정한 언어를 유지합니다. 코드, 식별자, 파일 경로, 커밋 메시지는 영향을 받지 않습니다.
+
+스타일은 frontmatter를 선택적으로 갖는 Markdown 파일입니다. 프로필은 `concise`와 `explanatory`를 함께 배포하며, 사용자 스타일은 `~/.pi/agent/agent-styles/`에 추가합니다. `name`이 같으면 사용자 파일이 배포본을 대체합니다.
+
+```markdown
+---
+name: terse
+description: 가장 짧은 정확한 답변
+---
+
+추가 요청이 없으면 세 문장 이내로 답한다.
+```
+
+대화 상자를 열지 않고 `/preferences language Korean`, `/preferences style concise`, `/preferences agent`로 값을 직접 지정하거나 해당 섹션을 열 수 있습니다. 존재하지 않는 스타일 이름은 조용히 적용하지 않고 경고로 알립니다.
 
 ## 사용량 조회
 
@@ -439,6 +466,7 @@ Claude Code와 OpenAI Codex는 Pi OAuth credential과 각 CLI가 사용하는 us
   subagents.json            Sub-agent runtime과 fallback 설정
   agents/                   Project-aware leaf role
   extensions/               공급자, 세션, context, usage, UI 동작
+  extensions/agent-preferences/styles/  기본 제공 agent 스타일
   prompts/                  익숙한 slash command template
   skills/                   작업 절차 구현
   scripts/                  작업 절차 공통 utility

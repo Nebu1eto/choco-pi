@@ -69,7 +69,7 @@ import { applyProjectRefreshToState } from "./project-state";
 import { readRuntimeInfo } from "./runtime";
 import { installSelectorBorderStyle, removeSelectorBorderStyle } from "./selector-border";
 import { SessionLifecycle } from "./session-lifecycle";
-import { registerZentuiSettingsCommand } from "./settings-command";
+import { registerZentuiPreferencesProvider } from "./settings-command";
 import { createInitialState, type FooterState, modelLabelFor, syncState } from "./state";
 import { resolveFooterTelemetry } from "./telemetry";
 import { PolishedEditor, WrappedPolishedEditor } from "./ui";
@@ -1120,7 +1120,7 @@ export default function (pi: ExtensionAPI) {
     scheduleEditorReconciliation(ctx);
   });
 
-  registerZentuiSettingsCommand(pi, {
+  registerZentuiPreferencesProvider({
     sessionLifecycle,
     getConfig: getCurrentConfig,
     setEditorComponent(patch: Partial<EditorComponentConfig>, ctx: ExtensionContext) {
