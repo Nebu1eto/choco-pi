@@ -388,3 +388,31 @@ test("keeps the choco-pi-lsp mandated funnel and diagnostics gate active and out
   const text = result.content[0].text;
   for (const name of lspTools) assert.doesNotMatch(text, new RegExp(`\\b${name}\\b`));
 });
+
+test("family expansion co-activates deferred same-source siblings", async () => {
+  const { expandFamilyActivation } = await import("../.pi/extensions/tool-search.ts");
+  const tool = (name: string, path: string) => ({
+    target: {
+      kind: "pi" as const,
+      tool: { name, sourceInfo: { source: "extension", path } },
+    },
+  });
+  const documents = [
+    tool("find_roots", "computer-use"),
+    tool("observe_ui", "computer-use"),
+    tool("act_ui", "computer-use"),
+    tool("lonely_tool", "other-pkg"),
+  ];
+  assert.deepEqual(expandFamilyActivation(["find_roots"], documents, new Set()).sort(), [
+    "act_ui",
+    "observe_ui",
+  ]);
+  assert.deepEqual(expandFamilyActivation(["find_roots"], documents, new Set(["act_ui"])), [
+    "observe_ui",
+  ]);
+  assert.deepEqual(expandFamilyActivation(["lonely_tool"], documents, new Set()), []);
+  assert.deepEqual(expandFamilyActivation([], documents, new Set()), []);
+
+  const bigFamily = Array.from({ length: 13 }, (_, index) => tool(`big_${index}`, "mega-pkg"));
+  assert.deepEqual(expandFamilyActivation(["big_0"], bigFamily, new Set()), []);
+});

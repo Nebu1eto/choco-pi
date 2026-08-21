@@ -70,6 +70,71 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
 ] as const;
 const ALWAYS_ACTIVE = new Set<string>(ALWAYS_ACTIVE_TOOL_NAMES);
 
+/**
+ * Activating one tool from a package usually predicts calls to its siblings
+ * (observe_ui after find_roots, act_ui after observe_ui, ...). Each separate
+ * activation rewrites the prompt prefix and re-bills the whole context, so
+ * matched tools pull in every deferred sibling that shares their sourceInfo
+ * in the same activation. Probe evidence from a live 400k-token session: two
+ * single-tool activations two minutes apart cost one full re-bill each.
+ * Oversized families are left alone; a package that ships more tools than
+ * this cap is a toolbox, not a workflow family.
+ */
+const MAX_SIBLING_ACTIVATION = 12;
+
+/** The slice of a searchable document that family expansion actually reads. */
+export type FamilyActivationDocument = {
+  readonly target:
+    | {
+        readonly kind: "pi";
+        readonly tool: {
+          readonly name: string;
+          readonly sourceInfo: { readonly source: string; readonly path: string };
+        };
+      }
+    | { readonly kind: "mcp" };
+};
+
+/** Family key: tools registered by the same extension source belong together. */
+export function toolFamilyKey(tool: {
+  readonly sourceInfo: { readonly source: string; readonly path: string };
+}): string {
+  return `${tool.sourceInfo.source}\u0000${tool.sourceInfo.path}`;
+}
+
+/** Deferred sibling names to co-activate for the directly matched additions. */
+export function expandFamilyActivation(
+  added: readonly string[],
+  documents: readonly FamilyActivationDocument[],
+  activeNames: ReadonlySet<string>,
+): string[] {
+  if (added.length === 0) return [];
+  const families = new Map<string, string[]>();
+  const familyByName = new Map<string, string>();
+  for (const document of documents) {
+    if (document.target.kind !== "pi") continue;
+    const key = toolFamilyKey(document.target.tool);
+    familyByName.set(document.target.tool.name, key);
+    const members = families.get(key);
+    if (members) members.push(document.target.tool.name);
+    else families.set(key, [document.target.tool.name]);
+  }
+  const addedSet = new Set(added);
+  const siblings: string[] = [];
+  for (const name of added) {
+    const key = familyByName.get(name);
+    if (key === undefined) continue;
+    const members = families.get(key) ?? [];
+    if (members.length > MAX_SIBLING_ACTIVATION) continue;
+    for (const member of members) {
+      if (addedSet.has(member) || activeNames.has(member)) continue;
+      addedSet.add(member);
+      siblings.push(member);
+    }
+  }
+  return siblings;
+}
+
 type SearchTarget =
   | { kind: "pi"; tool: ToolInfo }
   | {
@@ -464,9 +529,11 @@ export default function toolSearch(pi: ExtensionAPI): void {
         .filter((target): target is Extract<SearchTarget, { kind: "pi" }> => target.kind === "pi")
         .map((target) => target.tool.name)
         .filter((name) => !activeSet.has(name));
-      if (added.length > 0) {
-        for (const name of added) loadedNames.add(name);
-        pi.setActiveTools([...new Set([...active, ...added])]);
+      const siblings = expandFamilyActivation(added, searchableDocuments, activeSet);
+      const activated = [...added, ...siblings];
+      if (activated.length > 0) {
+        for (const name of activated) loadedNames.add(name);
+        pi.setActiveTools([...new Set([...active, ...activated])]);
       }
 
       const lines = matches.map((target) =>
@@ -486,10 +553,10 @@ export default function toolSearch(pi: ExtensionAPI): void {
             text:
               matches.length === 0
                 ? `No deferred tools found for: ${query}`
-                : `Found ${matches.length} matching tool(s)${added.length > 0 ? `; activated ${added.length} Pi tool(s)` : ""}${mcpMatches > 0 ? `; ${mcpMatches} MCP tool(s) are callable through mcp` : ""}:\n${lines.join("\n")}${mcpHelp}`,
+                : `Found ${matches.length} matching tool(s)${activated.length > 0 ? `; activated ${activated.length} Pi tool(s)${siblings.length > 0 ? ` (${siblings.length} same-package sibling(s) co-activated to avoid another prompt-cache rewrite: ${siblings.join(", ")})` : ""}` : ""}${mcpMatches > 0 ? `; ${mcpMatches} MCP tool(s) are callable through mcp` : ""}:\n${lines.join("\n")}${mcpHelp}`,
           },
         ],
-        details: { matches: matches.map(targetName), added },
+        details: { matches: matches.map(targetName), added: activated },
       };
     },
   });
