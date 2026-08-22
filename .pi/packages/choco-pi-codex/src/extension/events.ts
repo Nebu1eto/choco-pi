@@ -23,25 +23,33 @@ import {
   type NativeCompactionDisplayEntry,
   type NativeCompactionUsage,
 } from "../adapter/compaction/types.ts";
-import { findLatestCompactionEntry } from "../adapter/compaction/details-store.ts";
-import { handleCodexSessionBeforeCompact } from "../adapter/compaction/compaction.ts";
-import {
-  prepareCanonicalAliasEndpoint,
-  rewriteCodexProviderHeaders,
-  rewriteCodexProviderRequest,
-} from "../adapter/provider-request.ts";
+
 import { isProviderContextExcludedMessage } from "../adapter/prompt/context-filter.ts";
 import { hasNoSkillsFlag } from "../adapter/prompt/skills.ts";
-import { extractPiPromptSkills, resolvePromptSkills } from "../prompt/build-system-prompt.ts";
+
 import type { CodeModeProxyProviderRegistration } from "../providers/code-mode-proxy-provider.ts";
-import { maybeWarnLocalCheckoutVersion } from "../adapter/local-version-warning.ts";
-import { clearApplyPatchRenderState } from "../tools/apply-patch/tool.ts";
+import { clearApplyPatchRenderState } from "../tools/apply-patch/render-state.ts";
 import type { CodeModeRegistration } from "../tools/code-mode/tools.ts";
-import { initializeBashParser } from "../shell/bash.ts";
 import { formatCompactionCacheDiagnostic } from "../adapter/compaction/diagnostics.ts";
 import type { CodexExtensionRuntime } from "./runtime.ts";
 import type { CodexToolRegistration } from "./tools.ts";
 import type { CodexUiController } from "./ui.ts";
+
+function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
+  let promise: Promise<Module> | undefined;
+  return () => (promise ??= loader());
+}
+
+const loadBash = memoizedImport(() => import("../shell/bash.ts"));
+const loadCompaction = memoizedImport(() => import("../adapter/compaction/compaction.ts"));
+const loadCompactionDetails = memoizedImport(
+  () => import("../adapter/compaction/details-store.ts"),
+);
+const loadLocalVersionWarning = memoizedImport(
+  () => import("../adapter/local-version-warning.ts"),
+);
+const loadPromptBuilder = memoizedImport(() => import("../prompt/build-system-prompt.ts"));
+const loadProviderRequest = memoizedImport(() => import("../adapter/provider-request.ts"));
 
 function formatCompactionUsage(usage: NativeCompactionUsage): string {
   const ratio =
@@ -90,6 +98,7 @@ export function registerCanonicalAliasEndpointPreflight(
       state.canonicalAliasEndpoint = undefined;
       return;
     }
+    const { prepareCanonicalAliasEndpoint } = await loadProviderRequest();
     await prepareCanonicalAliasEndpoint(ctx, state);
     syncAdapter(pi, ctx, state);
   });
@@ -108,6 +117,8 @@ export function registerCodexEvents(
 
   pi.on("session_start", async (event, ctx) => {
     ui.invalidateUsageStatus();
+    const [{ initializeBashParser }, { extractPiPromptSkills }, { maybeWarnLocalCheckoutVersion }] =
+      await Promise.all([loadBash(), loadPromptBuilder(), loadLocalVersionWarning()]);
     initializeBashParser();
     runtime.resetTransport();
     state.cwd = ctx.cwd;
@@ -143,6 +154,7 @@ export function registerCodexEvents(
   });
 
   pi.on("model_select", async (_event, ctx) => {
+    const { extractPiPromptSkills } = await loadPromptBuilder();
     ui.invalidateUsageStatus();
     runtime.resetTransport(ctx.sessionManager.getSessionId());
     state.cwd = ctx.cwd;
@@ -215,6 +227,7 @@ export function registerCodexEvents(
       state.pendingActiveProviderPromptCapture = false;
       return undefined;
     }
+    const { resolvePromptSkills } = await loadPromptBuilder();
     const skills = resolvePromptSkills(
       event.systemPromptOptions?.skills,
       hasNoSkillsFlag() ? [] : state.promptSkills,
@@ -245,19 +258,23 @@ export function registerCodexEvents(
   pi.on("before_provider_request", async (event, ctx) => {
     state.cwd = ctx.cwd;
     if (!isBoundaryValue(event.payload)) return undefined;
+    const { rewriteCodexProviderRequest } = await loadProviderRequest();
     return rewriteCodexProviderRequest(event.payload, ctx, state);
   });
-  pi.on("before_provider_headers", (event, ctx) => {
+  pi.on("before_provider_headers", async (event, ctx) => {
+    const { rewriteCodexProviderHeaders } = await loadProviderRequest();
     rewriteCodexProviderHeaders(event.headers, ctx, state);
   });
   pi.on("session_before_compact", async (event, ctx) => {
     state.cwd = ctx.cwd;
     if (!resolveCodexRuntimePlanForState(ctx, state).nativeCompaction) return undefined;
+    const { handleCodexSessionBeforeCompact } = await loadCompaction();
     return handleCodexSessionBeforeCompact(event, ctx, state, pi);
   });
   pi.on("session_compact", async (event, ctx) => {
     state.pendingPiCompactionNativeWindow = undefined;
     let nativeCompaction = false;
+    const { findLatestCompactionEntry } = await loadCompactionDetails();
     const compactionEntry = findLatestCompactionEntry(ctx.sessionManager.getBranch());
     if (
       event.fromExtension &&

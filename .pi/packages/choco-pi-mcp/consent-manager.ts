@@ -7,8 +7,10 @@ export class ConsentManager {
   private approvedServers = new Set<string>();
   private deniedServers = new Set<string>();
   private log = logger.child({ component: "ConsentManager" });
+  private mode: ToolConsentMode;
 
-  constructor(private mode: ToolConsentMode = "once-per-server") {
+  constructor(mode: ToolConsentMode = "once-per-server") {
+    this.mode = mode;
     this.log.debug("Initialized", { mode });
   }
 

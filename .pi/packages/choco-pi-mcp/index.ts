@@ -5,22 +5,11 @@ import type {
   ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
+import { isServerDisabled } from "./types.ts";
 import type { DirectToolSpec, McpAdapterOptions, McpConfig, PromptMetadata } from "./types.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
-import {
-  showStatus,
-  showTools,
-  showPrompts,
-  reconnectServer,
-  reconnectServers,
-  authenticateServer,
-  logoutServer,
-  openMcpAuthPanel,
-  openMcpPanel,
-  openMcpSetup,
-} from "./commands.ts";
 import { cloneMcpConfig, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
 import {
   buildProxyDescription,
@@ -28,29 +17,20 @@ import {
   getMissingConfiguredDirectToolServers,
   resolveDirectTools,
 } from "./direct-tools.ts";
-import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
-import { loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
-import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
-import { logger } from "./logger.ts";
+
 import {
-  executeAuthComplete,
-  executeAuthStart,
-  executeCall,
-  executeConnect,
-  executeDescribe,
-  executeInstructions,
-  executeList,
-  executeSearch,
-  executeStatus,
-  executeUiMessages,
-} from "./proxy-modes.ts";
+  isServerCacheValid,
+  loadMetadataCache,
+  reconstructPromptMetadata,
+  type MetadataCache,
+} from "./metadata-cache.ts";
+import { logger } from "./logger.ts";
 import {
   formatTerminalError,
   getConfigPathFromArgv,
   normalizeDirectToolInputSchema,
   truncateAtWord,
 } from "./utils.ts";
-import { createOAuthRuntime, shutdownOAuth } from "./mcp-auth-flow.ts";
 import {
   createMcpDirectToolCallRenderer,
   createMcpProxyToolCallRenderer,
@@ -65,8 +45,6 @@ import {
   type McpRuntimeOwner,
 } from "./runtime-owner.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
-import { runMcpScript } from "./mcp-code.ts";
-import { cleanupMaterializedBinaryResources } from "./tool-registrar.ts";
 import {
   isFunctionValue,
   isObjectValue,
@@ -75,6 +53,19 @@ import {
   runtimeTypeOf,
   type McpObject,
 } from "./protocol-values.ts";
+
+function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
+  let promise: Promise<Module> | undefined;
+  return () => (promise ??= loader());
+}
+
+const loadCommands = memoizedImport(() => import("./commands.ts"));
+const loadInitialization = memoizedImport(() => import("./init.ts"));
+const loadMcpAuth = memoizedImport(() => import("./mcp-auth-flow.ts"));
+const loadMcpCode = memoizedImport(() => import("./mcp-code.ts"));
+const loadPrompts = memoizedImport(() => import("./prompts.ts"));
+const loadProxyModes = memoizedImport(() => import("./proxy-modes.ts"));
+const loadToolRegistrar = memoizedImport(() => import("./tool-registrar.ts"));
 
 export type { McpAdapterOptions } from "./types.ts";
 export {
@@ -116,6 +107,19 @@ async function awaitWithTimeout<T>(
 // rejects it with 400 INVALID_ARGUMENT). Prefer a real Type.Number schema; fall
 // back to a plain raw schema for host TypeBox shims that omit Type.Number, since
 // a property left out of `required` is optional by default.
+function resolveCachedPrompts(config: McpConfig, cache: MetadataCache | null): PromptMetadata[] {
+  if (!cache?.servers) return [];
+  const prefix = config.settings?.toolPrefix ?? "server";
+  const specs: PromptMetadata[] = [];
+  for (const [serverName, entry] of Object.entries(cache.servers)) {
+    const definition = config.mcpServers[serverName];
+    if (!definition || isServerDisabled(definition)) continue;
+    if (!entry?.prompts?.length || !isServerCacheValid(entry, definition)) continue;
+    specs.push(...reconstructPromptMetadata(serverName, entry.prompts, prefix, definition));
+  }
+  return specs;
+}
+
 function optionalNumber(options: { minimum?: number; description: string }): TSchema {
   // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
   const number = (Type as { Number?: (opts: typeof options) => TSchema }).Number;
@@ -156,6 +160,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
     let flushError: unknown;
     try {
+      const { flushMetadataCache } = await loadInitialization();
       flushMetadataCache(currentState);
     } catch (error) {
       flushError = error;
@@ -357,10 +362,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         continue;
       }
       registeredPromptCommands.add(spec.commandName);
-      pi.registerCommand(
-        spec.commandName,
-        createPromptCommand(pi, () => state, spec),
-      );
+      const description =
+        truncateAtWord(
+          `MCP: ${spec.description || spec.title || `MCP prompt from ${spec.serverName}`}`,
+          120,
+        ) || `MCP prompt from ${spec.serverName}`;
+      pi.registerCommand(spec.commandName, {
+        description,
+        handler: async (args, ctx) => {
+          const { createPromptCommand } = await loadPrompts();
+          return createPromptCommand(pi, () => state, spec).handler(args, ctx);
+        },
+      });
     }
   }
 
@@ -368,7 +381,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     registerPromptCommands([...(state?.promptMetadata?.values() ?? [])].flat());
   }
 
-  registerPromptCommands(resolveCachedPrompts(earlyConfig));
+  registerPromptCommands(resolveCachedPrompts(earlyConfig, earlyCache));
 
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
 
@@ -384,19 +397,24 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     generation: number,
     staleReason: string,
   ): Promise<void> {
-    owner.addCleanup(() => cleanupMaterializedBinaryResources(owner.signal));
-    const promise = initializeMcp(
-      pi,
-      ctx,
-      owner,
-      mergeObjectParts(
-        programmaticConfig || options.configPath !== undefined
-          ? mergeObjectParts(
-              earlyConfigPath !== undefined ? { configPath: earlyConfigPath } : undefined,
-              sessionConfig !== undefined ? { config: sessionConfig } : undefined,
-            )
-          : undefined,
-        { oauthRuntime, statusEvents: pi.events },
+    owner.addCleanup(async () => {
+      const { cleanupMaterializedBinaryResources } = await loadToolRegistrar();
+      cleanupMaterializedBinaryResources(owner.signal);
+    });
+    const promise = loadInitialization().then(({ initializeMcp }) =>
+      initializeMcp(
+        pi,
+        ctx,
+        owner,
+        mergeObjectParts(
+          programmaticConfig || options.configPath !== undefined
+            ? mergeObjectParts(
+                earlyConfigPath !== undefined ? { configPath: earlyConfigPath } : undefined,
+                sessionConfig !== undefined ? { config: sessionConfig } : undefined,
+              )
+            : undefined,
+          { oauthRuntime, statusEvents: pi.events },
+        ),
       ),
     );
     initPromise = promise;
@@ -428,6 +446,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         };
         syncPromptCommands();
         syncToolSurface(ctx);
+        const { updateStatusBar } = await loadInitialization();
         updateStatusBar(nextState);
         initPromise = null;
         if (earlyConfig.settings?.freezeDirectTools === true) {
@@ -449,6 +468,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         if (state) return;
 
         try {
+          const { shutdownOAuth } = await loadMcpAuth();
           await Promise.all([owner.stop("MCP initialization failed"), shutdownOAuth(oauthRuntime)]);
         } catch (error) {
           console.error(
@@ -464,7 +484,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       return definition.lifecycle === "eager" || definition.lifecycle === "keep-alive";
     });
     if (!hasStartupServer) return;
-    setImmediate(() => {
+    setImmediate(async () => {
+      if (lifecycleGeneration !== 0 || state || initPromise) return;
+      const { createOAuthRuntime } = await loadMcpAuth();
       if (lifecycleGeneration !== 0 || state || initPromise) return;
       const generation = ++lifecycleGeneration;
       const owner = createMcpRuntimeOwner();
@@ -496,6 +518,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const previousOwner = currentOwner;
     const previousOAuthRuntime = currentOAuthRuntime;
     const owner = createMcpRuntimeOwner();
+    const { createOAuthRuntime, shutdownOAuth } = await loadMcpAuth();
     const oauthRuntime = createOAuthRuntime(owner.signal);
     currentOwner = owner;
     currentOAuthRuntime = oauthRuntime;
@@ -578,10 +601,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     // Pi context after session shutdown.
     const stopOwner = owner?.stop("MCP extension session shutdown") ?? Promise.resolve();
     try {
+      const shutdownAuth = oauthRuntime
+        ? loadMcpAuth().then(({ shutdownOAuth }) => shutdownOAuth(oauthRuntime))
+        : Promise.resolve();
       await Promise.all([
         stopOwner,
         shutdownState(currentState, "session_shutdown"),
-        oauthRuntime ? shutdownOAuth(oauthRuntime) : Promise.resolve(),
+        shutdownAuth,
       ]);
     } catch (error) {
       console.error(`MCP: session shutdown cleanup failed: ${formatTerminalError(error)}`);
@@ -627,6 +653,15 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       return servers.length > 0 ? servers : null;
     },
     handler: async (args, ctx) => {
+      const {
+        logoutServer,
+        openMcpPanel,
+        openMcpSetup,
+        reconnectServers,
+        showPrompts,
+        showStatus,
+        showTools,
+      } = await loadCommands();
       const commandOwner = currentOwner;
       const commandReload = isFunctionValue(ctx.reload) ? ctx.reload.bind(ctx) : async () => {};
       const commandHasUI = ctx.hasUI;
@@ -775,6 +810,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   pi.registerCommand("mcp-auth", {
     description: "Authenticate with an MCP server (OAuth)",
     handler: async (args, ctx) => {
+      const {
+        authenticateServer,
+        openMcpAuthPanel,
+        reconnectServer,
+      } = await loadCommands();
       const commandOwner = currentOwner;
       const commandHasUI = ctx.hasUI;
 
@@ -897,6 +937,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           };
         }
         executeOwner?.throwIfInactive();
+        const { runMcpScript } = await loadMcpCode();
         return runMcpScript(state, params.code, params.timeoutMs, getPiTools, signal);
       },
     });
@@ -1074,6 +1115,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           };
         }
         executeOwner?.throwIfInactive();
+        const {
+          executeAuthComplete,
+          executeAuthStart,
+          executeCall,
+          executeConnect,
+          executeDescribe,
+          executeInstructions,
+          executeList,
+          executeSearch,
+          executeStatus,
+          executeUiMessages,
+        } = await loadProxyModes();
 
         if (dispatchParams.action === "ui-messages") {
           return executeUiMessages(state);

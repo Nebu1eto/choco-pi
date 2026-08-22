@@ -1,12 +1,25 @@
 import { createHash } from "node:crypto";
 import type { AcquiredWebSocket, ProviderEnv, SessionWebSocketCacheEntry } from "./types.ts";
-import {
-  closeWebSocketSilently,
-  connectWebSocket,
-  isWebSocketReusable,
-  resolveWebSocketProxyForTarget,
-} from "./websocket-connection.ts";
 import { clearCanonicalSessions } from "./session-continuity.ts";
+
+function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
+  let promise: Promise<Module> | undefined;
+  return () => (promise ??= loader());
+}
+
+const loadWebSocketConnection = memoizedImport(() => import("./websocket-connection.ts"));
+
+function closeWebSocketSilently(
+  socket: SessionWebSocketCacheEntry["socket"],
+  code = 1000,
+  reason = "done",
+): void {
+  try {
+    socket.close(code, reason);
+  } catch {
+    // Ignore close errors during session cleanup.
+  }
+}
 
 const websocketSessionCache = new Map<string, Map<string, SessionWebSocketCacheEntry>>();
 const websocketSseFallbackSessions = new Set<string>();
@@ -30,6 +43,7 @@ async function websocketRouteKey(
   accountId: string,
   env: ProviderEnv | undefined,
 ): Promise<string> {
+  const { resolveWebSocketProxyForTarget } = await loadWebSocketConnection();
   const proxy = await resolveWebSocketProxyForTarget(url, env);
   const handshakeIdentity = JSON.stringify([
     accountId,
@@ -89,6 +103,7 @@ export async function acquireWebSocket(
   connectTimeoutMs?: number,
   env?: ProviderEnv,
 ): Promise<AcquiredWebSocket> {
+  const { connectWebSocket, isWebSocketReusable } = await loadWebSocketConnection();
   if (!sessionId) {
     const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
     return {

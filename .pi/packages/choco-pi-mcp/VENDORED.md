@@ -21,6 +21,10 @@ The upstream checks passed without protocol code changes:
 
 The npm tarball contains no tests or conformance fixtures, so there was no upstream protocol-negotiation unit test to run.
 
+### Deferred runtime imports
+
+The fork defers connection initialization, OAuth, proxy execution, MCP scripting, direct-tool execution, and command UI modules until their tool, command, or lifecycle handler runs. Registration still reads the effective config and metadata cache and emits the same tool schemas, command names, event channels, cached prompt commands, and direct-tool registrations. This is a load-time-only change; registered behavior and protocol identifiers are unchanged.
+
 ## Runtime dependencies
 
 All upstream direct dependencies were installed into this package's `node_modules`, including their registry-resolved transitive dependencies and platform-specific optional binaries. Resolved direct versions are:

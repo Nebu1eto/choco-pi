@@ -1,6 +1,31 @@
 import { Buffer } from "node:buffer";
-import { decode as decodeJpeg } from "jpeg-js";
-import { PNG } from "pngjs";
+import { createRequire } from "node:module";
+
+interface ImageCodecs {
+  decodeJpeg(
+    bytes: Uint8Array,
+    options: { formatAsRGBA: true; tolerantDecoding: true },
+  ): DecodedImage;
+  readPng(bytes: Uint8Array): DecodedImage;
+}
+
+const require = createRequire(import.meta.url);
+let imageCodecs: ImageCodecs | undefined;
+
+function getImageCodecs(): ImageCodecs {
+  if (imageCodecs) return imageCodecs;
+  // SAFETY: The pinned jpeg-js module exposes decode with this documented result shape.
+  const jpeg = require("jpeg-js") as {
+    decode(
+      bytes: Uint8Array,
+      options: { formatAsRGBA: true; tolerantDecoding: true },
+    ): DecodedImage;
+  };
+  // SAFETY: The pinned pngjs module exposes PNG.sync.read with this documented result shape.
+  const png = require("pngjs") as { PNG: { sync: { read(bytes: Uint8Array): DecodedImage } } };
+  imageCodecs = { decodeJpeg: jpeg.decode, readPng: png.PNG.sync.read };
+  return imageCodecs;
+}
 
 const DEFAULT_MAX_WIDTH_CELLS = 80;
 const DEFAULT_MAX_HEIGHT_ROWS = 40;
@@ -68,8 +93,9 @@ export function decodeBase64Image(base64Data: string, mimeType: string): Decoded
   try {
     const bytes = Buffer.from(base64Data, "base64");
     if (bytes.length === 0) return undefined;
+    const { decodeJpeg, readPng } = getImageCodecs();
     if (format === "png") {
-      const image = PNG.sync.read(bytes);
+      const image = readPng(bytes);
       const decoded = { width: image.width, height: image.height, data: image.data };
       return isDecodedImage(decoded) ? decoded : undefined;
     }

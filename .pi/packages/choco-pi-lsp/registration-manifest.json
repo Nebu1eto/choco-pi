@@ -1,0 +1,3401 @@
+{
+  "tools": [
+    {
+      "metadata": {
+        "name": "diagnostics_report",
+        "label": "Project Diagnostics",
+        "description": "Query choco-pi-lsp's diagnostic state. mode=delta/all are cache-only and instant; mode=full is an expensive active project-wide LSP scan merged with cached runner state.\n\nIMPORTANT: unlike lsp_diagnostics (LSP only), this tool covers ALL dispatch runners: LSP errors, tree-sitter structural rules, ast-grep security rules, biome/ruff/eslint lint findings, complexity violations, and more.\n\nmode=delta (default): all warnings for the current agent turn — fixable warnings (actionable-warnings cache) AND code quality/style/complexity issues (code-quality-warnings cache). Same scope as the turn-end advisory, current turn only.\n\nmode=all: blocking errors and warnings — with the actual messages (line, rule, text), not just counts — for every file the agent has EDITED this session (files that went through the dispatch pipeline). NOTE: unedited files with pre-existing errors do NOT appear here — this is not a full project scan. Use before declaring work done; stale blocking errors from earlier turns are visible even if they dropped from turn-end context.\n\nmode=full: EXPENSIVE active scan. Runs project-wide LSP diagnostics for all supported files (including unedited files), then merges/deduplicates that with mode=all cached runner state. Optional refreshRunners=cheap/all/cached folds in project-wide runner findings: the in-process scanners (tree-sitter + fact-rules + ast-grep) plus a FRESH opengrep run — rather than a possibly-stale session_start cache; each analyzer de-dupes against a concurrent background run of itself, so this can't double-spawn.",
+        "promptSnippet": "Use diagnostics_report mode=all to verify no blocking errors remain; use mode=full for expensive project-wide checks",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "delta",
+                "all",
+                "full"
+              ],
+              "description": "delta = current turn's fixable warnings (default). all = session diagnostics for edited/dispatched files. full = expensive active project-wide LSP scan plus cached runner diagnostics."
+            },
+            "refreshRunners": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "cached",
+                    "cheap",
+                    "all",
+                    "none"
+                  ]
+                }
+              ],
+              "description": "mode=full only: false/none = LSP + widget state only. cached/cheap/all trigger a FRESH run (#585) of the project analyzers (opengrep) instead of reading a possibly-stale session_start cache; safe to relaunch since each analyzer de-dupes concurrent runs against the same project root. cheap/all additionally refresh the in-process runners (tree-sitter + fact-rules + ast-grep) first."
+            },
+            "maxProjectFiles": {
+              "type": "number",
+              "description": "mode=full refreshRunners=cheap/all only: cap project files scanned by the cheap project runners (tree-sitter + fact-rules + ast-grep). Does NOT bound the LSP sweep — use maxLspFiles for that."
+            },
+            "maxLspFiles": {
+              "type": "number",
+              "description": "mode=full only: cap the number of files routed through the language server for the project-wide LSP sweep. On large projects (e.g. a Next.js app with thousands of source files) the uncapped sweep can take many minutes; set this to bound it. Default is generous (env CHOCO_PI_LSP_LSP_WORKSPACE_MAX_FILES, else 5000)."
+            },
+            "includeGenerated": {
+              "type": "boolean",
+              "description": "mode=full refreshRunners=cheap/all only (no effect with refreshRunners=cached/none, since no project scan runs to apply it to): scan WITHOUT the generated/artifact NAME-heuristic filter (lockfiles, gen.ts-style names, generated/ dirs, …). Default false. Use when a scan's 'excluded by generated-name heuristics' notice suggests a real file was skipped."
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "error",
+                "warning",
+                "all"
+              ],
+              "description": "Filter by severity (default: all)."
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 200,
+              "description": "Restrict any mode to an explicit file/directory list (max 200 entries; more errors instead of silently truncating). Entries may be relative (resolved against cwd) or absolute, and a directory entry matches all files under it (e.g. \"src/\"). mode=delta/all are a pure post-filter of cached/session state — they can only show findings for files choco-pi-lsp has already dispatched, so an unseen file shows nothing (use mode=full for an active scan). mode=full actively scans exactly these paths (LSP sweep + cheap in-process runners); the project snapshot is still a post-filtered cache reads, never relaunched. Explicitly-listed files are NOT filtered through the project ignore matcher (matching lsp_diagnostics' paths semantics) — naming a file is assumed to mean it regardless of .gitignore/.choco-pi-lsp.json; a directory entry's expansion still honors ignore (and when the list mixes directories and files, mode=full scans via the ignore-filtered walk, so an ignore-excluded file entry is only guaranteed an active scan in a files-only list). Nonexistent entries are skipped (mode=full notes them; useful for git-staged-file wrappers where a deleted-but-staged path can appear)."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "lsp_diagnostics",
+        "label": "LSP Diagnostics",
+        "description": "Get errors, warnings, and hints from language servers for a file or directory. Use BEFORE running builds to proactively check for issues. Works on directories by auto-detecting file extensions and scanning all matching files.",
+        "promptSnippet": "Get LSP diagnostics for a file or directory (use before builds)",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File or directory path to check. For directories, all matching source files are scanned."
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "maxItems": 100,
+              "description": "Explicit files to check as a bounded-concurrency batch. When provided, path is ignored."
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "error",
+                "warning",
+                "information",
+                "hint",
+                "all"
+              ],
+              "description": "Filter by severity level (default: all)"
+            },
+            "concurrency": {
+              "type": "number",
+              "description": "Batch/directory concurrency, in distinct LSP server groups run in parallel (default 8, max 16) — not individual files. Files sharing one server (e.g. a same-language batch) are always processed one at a time against that server regardless of this value; this caps how many DIFFERENT servers run concurrently."
+            },
+            "waitMs": {
+              "type": "number",
+              "description": "Optional per-file LSP wait budget for batch diagnostics. Uses server defaults when omitted."
+            },
+            "serverScope": {
+              "type": "string",
+              "enum": [
+                "primary",
+                "all"
+              ],
+              "description": "'primary' (fast, low-noise): only the file's actual language server (e.g. typescript) — for 'does this have real type errors'. 'all' (default): also touches cross-cutting auxiliary scanners (ast-grep, opengrep, zizmor, typos, marksman) attached to this file, including findings for files not yet dispatched this session. Primary confirmation is always reported separately from auxiliary findings regardless of this setting."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "symbol_search",
+        "label": "Symbol Search",
+        "description": "Ranked identifier search over the persisted word index (BM25 + priors demoting tests/vendor/docs) — answers 'which files are most relevant to <query>' by identifier. First step of the discovery funnel: symbol_search finds candidates, module_report explains the file, read_symbol reads the body. Complements grep (raw substrings) and lsp_navigation (exact references). Each hit's startLine/endLine mark its best-matching line (offset=startLine, limit=endLine-startLine+1 for a one-line peek); use module_report on `file` for the real outline. Returns available:false with a retry hint if the index isn't built yet — it self-builds in the background (never blocks this call).",
+        "promptSnippet": "Ranked identifier search — find relevant files by name/usage",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "query"
+          ],
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Identifier-ish query, e.g. 'authenticate user'. Mix in composable prefix filters: lang:<kind> (e.g. lang:jsts, lang:python — kinds from file-kinds.ts), file:<substr> (path substring), ext:<ext> (e.g. ext:ts or ext:.ts), each optionally negated with a leading '-' (-file:test). Filters apply before ranking; e.g. 'lang:jsts file:clients/ -file:test rank'. Unknown prefixes/kinds error with the supported list."
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max files to return (default 20)."
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Glob array scoping hits to matching files — same shape/semantics as ast_grep_search's `paths` (a bare directory/file entry scopes its whole subtree). Filters before ranking, so scores within the scoped set are unaffected."
+            },
+            "lang": {
+              "type": "string",
+              "description": "Restrict hits to one language, using the same identifiers as ast_grep_search's `lang` param (e.g. 'typescript', 'python', 'go')."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "project_report",
+        "label": "Project Report",
+        "description": "Project-level orientation from the review graph — 'orient me in this project' before drilling into any one file. First step of a wider discovery funnel: project_report orients, module_report explains a file, read_symbol reads a body. Six capped, ranked sections: a trust header (graph freshness, file coverage, edge-resolution-quality mix), hubs (top fan-in files — the repo's contract surface), entry points (near-zero fan-in / high fan-out files — activation/CLI/mains), a directory-level subsystem map (import cycles + layering violations, e.g. a forbidden clients/ -> tools/ edge), risk hotspots (fan-in × max per-symbol cyclomatic complexity), and suspected dead weight (zero-importer files, shipped with a low-confidence disclaimer — dynamic imports/runtime registration/test-only reachability all produce false positives). Every file line carries a `suggestedNext` module_report call. No per-symbol detail and no prose summary — structural facts only. Read-only over the cached graph: returns `available: false` with a retry hint on a cold cache and kicks off a background build (never blocks this call).\n`view: \"compact\"` returns a line-oriented text rendering instead of JSON (cheapest option); default view returns JSON. Pass `focus` to re-rank every section toward a task hint (does not expand scope).",
+        "promptSnippet": "Project-level orientation from the review graph",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "number",
+              "description": "Scales every ranked section's cap (default 10) — a single knob for all sections."
+            },
+            "focus": {
+              "type": "string",
+              "description": "Optional task hint used only to re-rank sections toward relevant subsystems (does not expand scope or trigger scans)."
+            },
+            "view": {
+              "type": "string",
+              "enum": [
+                "default",
+                "compact"
+              ],
+              "description": "Payload tier. compact (cheapest) returns a line-oriented TEXT rendering instead of JSON. Default returns JSON."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "module_report",
+        "label": "Module Report",
+        "description": "Structured, navigable overview of a source module — a token-efficient substitute for reading the whole file. Returns each symbol's name/kind/signature/line-range (plus a first-line `doc` summary when a doc comment is attached), important inline callbacks/closures/lambdas with stable handles, plus who-uses-this, risk flags, and ranked recommendedReads. To read a symbol's body: call read/read_symbol with offset=startLine, limit=endLine-startLine+1 on THIS report's `path` — those aren't repeated per symbol. Prefer this before a full read; then use read_symbol (or read) for the exact body you need.\nSingle mode: language-uniform tree-sitter outline + review-graph who-uses-this + inline executable extraction; degrades to outline-only when no cached graph is available. `semantic.source` reports whether graph data was used.\nPass `blastRadius: true` to also get the cross-file blast radius — the transitive dependents of this module aggregated to ranked file `read` args (\"if you change this, verify these files\"). Read-only over the cached graph; omitted on a cold cache. Supersedes the standalone impact query.\nPass `callGraph: true` to include bounded derived callers/callees from the cached FunctionCallGraph; unavailable cache state is explicit and never reported as zero calls.\n`view: \"compact\"` returns a line-oriented text rendering (one line per symbol/callback, cheapest option) instead of JSON — same data, roughly a quarter of the token cost; use it for a quick skim. Default view returns JSON. An outline shows shape, not bodies — it does NOT count as having read a symbol's body for editing; use read_symbol for that.",
+        "promptSnippet": "Navigable file outline — a cheap substitute for reading a whole file",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Absolute or workspace-relative path to the source file."
+            },
+            "maxRefsPerSymbol": {
+              "type": "number",
+              "description": "Cap on who-uses-this entries per symbol (default 10)."
+            },
+            "focus": {
+              "type": "string",
+              "description": "Optional task hint used only to rank recommendedReads (does not expand scope or trigger scans)."
+            },
+            "view": {
+              "type": "string",
+              "enum": [
+                "summary",
+                "default",
+                "compact"
+              ],
+              "description": "Payload tier. summary returns top-level entries/recommendedReads and section provenance with heavy callback/usedBy/blast-radius payloads omitted. compact (cheapest) returns a line-oriented TEXT rendering of the full report instead of JSON."
+            },
+            "blastRadius": {
+              "type": "boolean",
+              "description": "Include the cross-file blast-radius section: transitive dependents aggregated to ranked file reads. Read-only over the cached graph (omitted when cold)."
+            },
+            "blastRadiusDepth": {
+              "type": "number",
+              "description": "Max hops for the blast-radius walk (default 3). Only used with blastRadius."
+            },
+            "callGraph": {
+              "type": "boolean",
+              "description": "Include bounded derived callers/callees from the cached FunctionCallGraph; cold or stale cache state is explicit."
+            },
+            "maxCallGraphEntries": {
+              "type": "number",
+              "description": "Per-direction cap for call-graph relations (default 20)."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "read_symbol",
+        "label": "Read Symbol",
+        "description": "Return the verbatim source of a single named symbol or module_report callback handle in a file — a targeted, cheap alternative to reading the whole file. Pair with module_report: module_report finds the symbol/callback handle, read_symbol shows its body. Unlike an outline, this delivers the actual lines, so it counts as having read that symbol for the read-before-edit guard. The returned body includes an attached doc comment when one exists. Accepts a dotted `Class.method` name to resolve a member directly, falling back to a plain top-level lookup when the qualifier doesn't resolve. A miss embeds the ~3 nearest symbol names in the file so a typo self-corrects without a second call. When multiple same-file symbols share a name (overloads, a type and a value sharing a name), the first is returned with an `ambiguous` note; pass `kind` to pick a specific one.",
+        "promptSnippet": "Read one symbol's body instead of the whole file",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "path",
+            "symbol"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Absolute or workspace-relative path to the source file."
+            },
+            "symbol": {
+              "type": "string",
+              "description": "Exact symbol name or callback handle to read (e.g. a function, class, type, or module_report callbacks[].name). Accepts a dotted `Class.method` name to resolve a member."
+            },
+            "kind": {
+              "type": "string",
+              "description": "Optional kind filter (e.g. function, interface, class) to disambiguate when multiple same-file symbols share the requested name. Omitting it returns the first match, same as today."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "read_enclosing",
+        "label": "Read Enclosing",
+        "description": "Return the verbatim source for the smallest useful symbol/callback enclosing a line in a file. Use after ast_grep_search, diagnostics, or LSP locations when you need exact body text without reading the whole file. Uses tree-sitter only — no LSP or graph build — and records read-guard coverage for the returned range.",
+        "promptSnippet": "Read the enclosing symbol or callback body for a line",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "path",
+            "line"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Absolute or workspace-relative path to the source file."
+            },
+            "line": {
+              "type": "number",
+              "description": "1-based line number inside the desired symbol/callback."
+            },
+            "kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Optional kind filter, e.g. function, method, callback, class, object_property_callback."
+            },
+            "maxLines": {
+              "type": "number",
+              "description": "Optional maximum body size to return. Oversized matches obey onOversize."
+            },
+            "onOversize": {
+              "type": "string",
+              "enum": [
+                "error",
+                "slice",
+                "outline"
+              ],
+              "description": "Behavior when the enclosing body exceeds maxLines. error (default) returns metadata only; slice returns a bounded partial read around line; outline returns nested symbols/callbacks with read handles."
+            },
+            "aroundLine": {
+              "type": "number",
+              "description": "Maximum lines for onOversize=slice; defaults to maxLines, then 80."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "lsp_activate_tools",
+        "label": "Activate choco-pi-lsp Tools",
+        "description": "Activate one or more situational choco-pi-lsp tools that stay registered but inactive by default, so the default tool list stays lean. Call this ONCE with the tools you need before using them — they become callable starting the NEXT turn. Available:\nast_grep_search — AST-aware structural code search across ~40 languages (ast-grep patterns).\nast_grep_replace — AST-aware structural code rewrite/refactor (ast-grep patterns).\nast_grep_outline — Syntax-only file/dir structure (symbols/imports/exports/members) via ast-grep outline — no index/LSP.\nast_grep_dump — Dump the tree-sitter AST for a source snippet to discover node kinds/field names.\nlsp_navigation — IDE-style LSP navigation: definition, references, implementation, rename, call hierarchy.\ndiagnostic_mark — Record a disposition for a diagnostic: false-positive / suppress (inline ignore comment) / defer (this session) / flagged (to fix).",
+        "promptSnippet": "Activate situational ast-grep / lsp_navigation tools before using them",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "tools"
+          ],
+          "properties": {
+            "tools": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "ast_grep_search",
+                  "ast_grep_replace",
+                  "ast_grep_outline",
+                  "ast_grep_dump",
+                  "lsp_navigation",
+                  "diagnostic_mark"
+                ]
+              },
+              "minItems": 1,
+              "description": "Names of situational tools to activate (see this tool's description for the catalog)."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "ast_grep_search",
+        "label": "AST Search",
+        "description": "Search code using AST-aware pattern matching. IMPORTANT: Use specific AST patterns, NOT text search.\n\n✅ GOOD patterns (complete AST shapes; $$$ accepts zero or more nodes):\n  - function $NAME($$$ARGS) { $$$BODY } (function declaration)\n  - fetchMetrics($$$ARGS)             (call with any arguments)\n  - import { $$$NAMES } from \"module-name\" (exact string-literal import)\n  - console.log($MSG)                 (method call)\n\n❌ BAD patterns (multiple nodes / raw text):\n  - it\"test name\"                     (missing parens - use it($TEST))\n  - console.log without args           (incomplete code)\n  - arbitrary text without code structure\n\nMetavariables match AST nodes, not text inside quoted string literals: `from \"$PATH\"` matches the literal text $PATH. Use an exact quoted string for a known import, or grep for wildcard text. Use 'paths' to scope to specific files/folders. Use 'nodeKind' to find every node of a known AST kind, or 'ast_grep_dump' first when the kind is unknown. Avoid 'selector' unless you know the exact AST node kind; it narrows matching and does not extract fields. If this tool is inactive, call lsp_activate_tools with tools=[\"ast_grep_search\"]; activation takes effect next turn. If zero matches, retry once with a simpler AST pattern, then use ast_grep_dump on a small representative snippet before falling back to grep.",
+        "promptSnippet": "AST-aware structural code search",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "lang"
+          ],
+          "properties": {
+            "pattern": {
+              "type": "string",
+              "description": "AST pattern (use function/class/call context, not text). Required unless `rule` or `nodeKind` is provided. Do not put metavariables inside quoted string literals; they match literally."
+            },
+            "lang": {
+              "type": "string",
+              "enum": [
+                "bash",
+                "c",
+                "cpp",
+                "csharp",
+                "css",
+                "elixir",
+                "go",
+                "haskell",
+                "html",
+                "java",
+                "javascript",
+                "json",
+                "kotlin",
+                "lua",
+                "nix",
+                "php",
+                "python",
+                "ruby",
+                "rust",
+                "scala",
+                "solidity",
+                "swift",
+                "tsx",
+                "typescript",
+                "yaml"
+              ],
+              "description": "Target language"
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 200,
+              "description": "Specific files/folders to search (max 200 entries)"
+            },
+            "selector": {
+              "type": "string",
+              "description": "Advanced: restrict search to a specific AST node kind (for example 'call_expression' or 'function_declaration'). This narrows matching; it does not extract fields from matches."
+            },
+            "context": {
+              "type": "number",
+              "description": "Show N lines before/after each match for context"
+            },
+            "nodeKind": {
+              "type": "string",
+              "description": "Expert grammar-specific escape hatch: find every node of this exact AST kind (for example `call_expression`) without writing a pattern. Node kinds are not universal across languages; use ast_grep_dump to discover them. Mutually exclusive with `pattern` and `rule`; can be combined with structural constraints."
+            },
+            "insideKind": {
+              "type": "string",
+              "description": "Restrict matches to nodes inside an ancestor of this AST node kind. Example: `insideKind: \"function_declaration\"` finds the pattern only when it appears inside a function body. Searches all ancestors (stopBy: end), not just the immediate parent. Synthesizes a YAML rule — takes precedence over `selector` and `strictness`."
+            },
+            "hasKind": {
+              "type": "string",
+              "description": "Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `hasKind: \"await_expression\"`."
+            },
+            "hasDescendantKind": {
+              "type": "string",
+              "description": "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `hasKind` when nesting is not immediate."
+            },
+            "follows": {
+              "type": "string",
+              "description": "Restrict matches to nodes that immediately follow a sibling matching this pattern. Example: `follows: \"return $X\"` finds the pattern only when preceded by a return statement."
+            },
+            "precedes": {
+              "type": "string",
+              "description": "Restrict matches to nodes that immediately precede a sibling matching this pattern."
+            },
+            "rule": {
+              "type": "string",
+              "description": "Raw ast-grep YAML rule. When provided, routes through `sg scan --config` instead of `sg run -p`, unlocking the full rule DSL. Takes precedence over `pattern` and structural-intent params. The YAML must include `id` and `language` fields."
+            },
+            "skip": {
+              "type": "number",
+              "description": "Match offset for pagination. Skip the first N matches and return the next page. Use when results are truncated — increment by the page size to retrieve subsequent pages."
+            },
+            "maxMatches": {
+              "type": "number",
+              "description": "Cap on matches returned per call (default 50, max 200). Lower it to keep a broad search compact; raise it to page less. Also sets the pagination step for skip."
+            },
+            "groupByFile": {
+              "type": "boolean",
+              "description": "Render results grouped by file (one line per file with L<line>:<col> locations) instead of each match's body. Compact distribution view for high-volume searches; match read-slices remain in details.matchLocations."
+            },
+            "strictness": {
+              "type": "string",
+              "enum": [
+                "smart",
+                "relaxed",
+                "ast",
+                "cst",
+                "signature",
+                "template"
+              ],
+              "description": "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation — useful when optional trailing commas cause misses. 'ast' ignores all whitespace. 'signature' matches only structural shape, ignoring bodies."
+            },
+            "validateOnly": {
+              "type": "boolean",
+              "description": "Validate/compile the pattern or rule without scanning project files. Helps distinguish a bad pattern/rule from a real no-match result."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "ast_grep_replace",
+        "label": "AST Replace",
+        "description": "Replace code using AST-aware pattern matching. IMPORTANT: Use specific AST patterns, not text. Dry-run by default (use apply=true to apply).\n\n✅ GOOD patterns (single AST node):\n  - pattern='console.log($MSG)' rewrite='logger.info($MSG)'\n  - pattern='var $X' rewrite='let $X'\n  - pattern='function $NAME() { }' rewrite='' (delete)\n\n❌ BAD patterns (will error):\n  - Raw text without code structure\n  - Missing parentheses: use it($TEST) not it\"text\"\n  - Incomplete code fragments\n\nAlways use 'paths' to scope to specific files/folders. Dry-run first to preview changes.",
+        "promptSnippet": "AST-aware structural find-and-replace",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "pattern",
+            "rewrite",
+            "lang"
+          ],
+          "properties": {
+            "pattern": {
+              "type": "string",
+              "description": "AST pattern to match (be specific with context)"
+            },
+            "rewrite": {
+              "type": "string",
+              "description": "Replacement using meta-variables from pattern"
+            },
+            "lang": {
+              "type": "string",
+              "enum": [
+                "bash",
+                "c",
+                "cpp",
+                "csharp",
+                "css",
+                "elixir",
+                "go",
+                "haskell",
+                "html",
+                "java",
+                "javascript",
+                "json",
+                "kotlin",
+                "lua",
+                "nix",
+                "php",
+                "python",
+                "ruby",
+                "rust",
+                "scala",
+                "solidity",
+                "swift",
+                "tsx",
+                "typescript",
+                "yaml"
+              ],
+              "description": "Target language"
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Specific files/folders"
+            },
+            "insideKind": {
+              "type": "string",
+              "description": "Restrict matches to nodes inside an ancestor of this AST node kind. Synthesizes a YAML rule."
+            },
+            "hasKind": {
+              "type": "string",
+              "description": "Restrict matches to nodes whose immediate child has this AST node kind (ast-grep default stopBy: neighbor). Example: `hasKind: \"await_expression\"`."
+            },
+            "hasDescendantKind": {
+              "type": "string",
+              "description": "Restrict matches to nodes containing this AST node kind anywhere in their descendants. Explicit recursive form (`stopBy: end`); use this instead of `hasKind` when nesting is not immediate."
+            },
+            "follows": {
+              "type": "string",
+              "description": "Restrict matches to nodes that immediately follow a sibling matching this pattern."
+            },
+            "precedes": {
+              "type": "string",
+              "description": "Restrict matches to nodes that immediately precede a sibling matching this pattern."
+            },
+            "apply": {
+              "type": "boolean",
+              "description": "Apply changes (default: false)"
+            },
+            "strictness": {
+              "type": "string",
+              "enum": [
+                "smart",
+                "relaxed",
+                "ast",
+                "cst",
+                "signature",
+                "template"
+              ],
+              "description": "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation. 'ast' ignores all whitespace."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "ast_grep_outline",
+        "label": "AST-Grep Outline",
+        "description": "Syntax-only code structure (symbols, imports, exports, and members) via `ast-grep outline`. Fast, local, no index/LSP/cross-file semantics — useful for languages or structures where choco-pi-lsp's own extractor is weak, or for a raw second opinion.\n\nPrefer module_report for choco-pi-lsp-aware navigation (who-uses-this, complexity/fanout, recommendedReads, blast radius, callback handles). Use ast_grep_outline when you want the syntax tree's own view of a file or a whole directory.\n\nReturns JSON: per file, `items[]` with name/symbolType/signature/range, `isExported`/`isImport`, nested `members[]` (with `isPublic`), and ready `read` args on every entry. NOTE: structure only — an outline is NOT a read of a symbol's body (use read_symbol/read_enclosing for that).",
+        "promptSnippet": "Syntax-only code outline via ast-grep (no index/LSP); module_report is the richer default",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "paths"
+          ],
+          "properties": {
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "maxItems": 100,
+              "description": "Files or directories to outline (workspace-relative or absolute)."
+            },
+            "lang": {
+              "type": "string",
+              "enum": [
+                "bash",
+                "c",
+                "cpp",
+                "csharp",
+                "css",
+                "elixir",
+                "go",
+                "haskell",
+                "html",
+                "java",
+                "javascript",
+                "json",
+                "kotlin",
+                "lua",
+                "nix",
+                "php",
+                "python",
+                "ruby",
+                "rust",
+                "scala",
+                "solidity",
+                "swift",
+                "tsx",
+                "typescript",
+                "yaml"
+              ],
+              "description": "Restrict to one language. Required for stdin; for paths, ast-grep infers per file when omitted."
+            },
+            "items": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "structure",
+                "exports",
+                "imports",
+                "all"
+              ],
+              "description": "Which top-level items to include. auto = `structure` for a file, `exports` for a directory (default)."
+            },
+            "view": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "names",
+                "signatures",
+                "digest",
+                "expanded"
+              ],
+              "description": "Text presentation level for the underlying outline; `expanded` shows members."
+            },
+            "type": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Keep only these symbol types, e.g. [\"class\",\"function\"]."
+            },
+            "match": {
+              "type": "string",
+              "description": "Keep only top-level items whose name matches this regex."
+            },
+            "pubMembers": {
+              "type": "boolean",
+              "description": "Show only public members in member views."
+            },
+            "globs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Include/exclude file globs for directory input, e.g. [\"*.ts\",\"!**/dist/**\"]."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "ast_grep_dump",
+        "label": "AST-Grep Dump",
+        "description": "Dump the tree-sitter AST for a source snippet using ast-grep CLI. Use when ast_grep_search returns zero matches and you need exact node kinds, field names, or nesting. Named nodes only by default; includeAnonymous=true shows punctuation/CST nodes too.",
+        "promptSnippet": "Inspect AST node kinds before writing ast-grep patterns",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "source",
+            "lang"
+          ],
+          "properties": {
+            "source": {
+              "type": "string",
+              "description": "Source code snippet to parse and dump"
+            },
+            "lang": {
+              "type": "string",
+              "enum": [
+                "bash",
+                "c",
+                "cpp",
+                "csharp",
+                "css",
+                "elixir",
+                "go",
+                "haskell",
+                "html",
+                "java",
+                "javascript",
+                "json",
+                "kotlin",
+                "lua",
+                "nix",
+                "php",
+                "python",
+                "ruby",
+                "rust",
+                "scala",
+                "solidity",
+                "swift",
+                "tsx",
+                "typescript",
+                "yaml"
+              ],
+              "description": "Target language"
+            },
+            "includeAnonymous": {
+              "type": "boolean",
+              "description": "Show anonymous punctuation/CST nodes too (default false)"
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "lsp_navigation",
+        "label": "LSP Navigate",
+        "description": "Navigate code using LSP (Language Server Protocol). LSP is enabled by default; disable with --no-lsp.\nOperations:\n- definition: Jump to where a symbol is defined\n- typeDefinition: Jump to the definition of a symbol's TYPE (e.g. the class/interface of a variable)\n- declaration: Jump to a symbol's declaration (e.g. an extern/forward decl, distinct from its definition)\n- references: Find all usages of a symbol\n- hover: Get type/doc info at a position\n- signatureHelp: Show callable signatures at cursor\n- documentSymbol: List all symbols (functions/classes/vars) in a file\n- findSymbol: Search document symbols in a file by name/detail with optional kind/top-level/exact filters\n- workspaceSymbol: Search symbols across the whole project (best with path context)\n- codeAction: Find available quick fixes/refactors at a range\n- rename: Compute or apply workspace edits for renaming a symbol\n- rename_file: Preview/apply LSP-aware source file rename notifications\n- implementation: Jump to interface implementations\n- prepareCallHierarchy: Get callable item at position (for incoming/outgoing)\n- incomingCalls: Find all functions/methods that CALL this function\n- outgoingCalls: Find all functions/methods CALLED by this function\n- executeCommand: Run a server-advertised command via workspace/executeCommand. HARDENED: allowlisted to commands the server advertised; dry-run by default (reports whether advertised) — set apply:true to actually run. Pass command (+ optional commandArguments).\n- workspaceDiagnostics: List all diagnostics tracked by active LSP clients\n- capabilities: Show cached operation support for active LSP servers\n\nLine and character are 1-based (as shown in editors). For position-based operations, prefer passing symbol when you know the line but not the exact character; character can be omitted or -1 and choco-pi-lsp will resolve the symbol column. Use symbol#N for repeated symbols on the same line (1-based occurrence).",
+        "promptSnippet": "Find definitions, references, and hover info via LSP",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "operation"
+          ],
+          "properties": {
+            "operation": {
+              "type": "string",
+              "description": "LSP operation to perform. Valid values: definition, typeDefinition, declaration, references, hover, signatureHelp, documentSymbol, findSymbol, workspaceSymbol, codeAction, rename, rename_file, implementation, prepareCallHierarchy, incomingCalls, outgoingCalls, executeCommand, workspaceDiagnostics, capabilities"
+            },
+            "path": {
+              "type": "string",
+              "description": "Absolute or relative file path. Required for file-scoped operations; optional for workspaceSymbol/workspaceDiagnostics."
+            },
+            "line": {
+              "type": "number",
+              "description": "Line number (1-based). Required for definition/references/hover/implementation"
+            },
+            "character": {
+              "type": "number",
+              "description": "Character offset (1-based). Optional when symbol is provided; use -1 to force symbol-column resolution."
+            },
+            "symbol": {
+              "type": "string",
+              "description": "Symbol name on the target line for automatic character resolution. Use symbol#N to select the Nth occurrence on the line."
+            },
+            "endLine": {
+              "type": "number",
+              "description": "End line (1-based). Optional; used by codeAction range."
+            },
+            "endCharacter": {
+              "type": "number",
+              "description": "End character (1-based). Optional; used by codeAction range."
+            },
+            "newName": {
+              "type": "string",
+              "description": "Required for rename operation."
+            },
+            "newFilePath": {
+              "type": "string",
+              "description": "Required for rename_file operation."
+            },
+            "apply": {
+              "type": "boolean",
+              "description": "rename/executeCommand: apply for real. rename defaults to preview; executeCommand defaults to a dry-run that only reports whether the command is advertised — set apply:true to actually run it."
+            },
+            "command": {
+              "type": "string",
+              "description": "executeCommand only: the server command id to run. Must be one the server advertised (see the capabilities operation)."
+            },
+            "commandArguments": {
+              "type": "array",
+              "items": {},
+              "description": "executeCommand only: arguments array passed to workspace/executeCommand."
+            },
+            "query": {
+              "type": "string",
+              "description": "Symbol name to search. Used by workspaceSymbol and findSymbol."
+            },
+            "kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "findSymbol only: restrict matches to symbol kind labels such as function, class, method, variable, interface."
+            },
+            "exactMatch": {
+              "type": "boolean",
+              "description": "findSymbol only: match whole symbol names/details exactly instead of substring matching."
+            },
+            "topLevelOnly": {
+              "type": "boolean",
+              "description": "findSymbol only: do not search nested child symbols."
+            },
+            "maxResults": {
+              "type": "number",
+              "description": "findSymbol only: maximum matches to return. Default 20."
+            },
+            "callHierarchyItem": {
+              "type": "object",
+              "required": [
+                "name",
+                "kind",
+                "uri",
+                "range",
+                "selectionRange"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "number"
+                },
+                "uri": {
+                  "type": "string"
+                },
+                "range": {
+                  "type": "object",
+                  "required": [
+                    "start",
+                    "end"
+                  ],
+                  "properties": {
+                    "start": {
+                      "type": "object",
+                      "required": [
+                        "line",
+                        "character"
+                      ],
+                      "properties": {
+                        "line": {
+                          "type": "number"
+                        },
+                        "character": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "end": {
+                      "type": "object",
+                      "required": [
+                        "line",
+                        "character"
+                      ],
+                      "properties": {
+                        "line": {
+                          "type": "number"
+                        },
+                        "character": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                },
+                "selectionRange": {
+                  "type": "object",
+                  "required": [
+                    "start",
+                    "end"
+                  ],
+                  "properties": {
+                    "start": {
+                      "type": "object",
+                      "required": [
+                        "line",
+                        "character"
+                      ],
+                      "properties": {
+                        "line": {
+                          "type": "number"
+                        },
+                        "character": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    "end": {
+                      "type": "object",
+                      "required": [
+                        "line",
+                        "character"
+                      ],
+                      "properties": {
+                        "line": {
+                          "type": "number"
+                        },
+                        "character": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "description": "Call hierarchy item. Required for incomingCalls/outgoingCalls"
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "renderResult",
+        "execute"
+      ]
+    },
+    {
+      "metadata": {
+        "name": "diagnostic_mark",
+        "label": "Mark Diagnostic",
+        "description": "Record a disposition for a diagnostics_report finding, using the exact filePath/rule/message/line it was reported with. false-positive/suppress persist across sessions; defer lasts only for the current session (resurfaces next time); flagged marks it for you to come back and fix, and shows up tagged in a later diagnostics_report mode=full. suppress additionally writes a `choco-pi-lsp-ignore: <rule>` comment into the source above the flagged line — rule is required for suppress. The line is verified/reanchored against current diagnostics before writing (#802): if a live diagnostic for this tool/rule/message is now at a different line, that line is used instead of the one you passed. When suppressing several findings in the SAME file in one turn, work bottom-up (highest line number first) — each inserted comment shifts later lines down by one, and reanchoring can't always disambiguate two nearby findings.",
+        "promptSnippet": "Use diagnostic_mark to dismiss a false-positive, suppress a won't-fix, defer, or flag a finding to fix later",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "filePath",
+            "line",
+            "message",
+            "disposition"
+          ],
+          "properties": {
+            "filePath": {
+              "type": "string",
+              "description": "The file the diagnostic was reported on (relative or absolute)."
+            },
+            "line": {
+              "type": "number",
+              "description": "The 1-based line the diagnostic was reported at."
+            },
+            "message": {
+              "type": "string",
+              "description": "The diagnostic's message, exactly as diagnostics_report reported it."
+            },
+            "rule": {
+              "type": "string",
+              "description": "The diagnostic's rule id, if it has one (shown in diagnostics_report as [rule]). Required for disposition=suppress."
+            },
+            "tool": {
+              "type": "string",
+              "description": "The tool that produced the diagnostic, if known."
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "false-positive",
+                "suppress",
+                "defer",
+                "flagged"
+              ],
+              "description": "false-positive = the rule misfired. suppress = real finding, won't fix (writes an inline ignore comment). defer = fix later, this session only. flagged = mark for you to fix."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Optional short reason, kept alongside the disposition."
+            }
+          }
+        }
+      },
+      "functionKeys": [
+        "execute"
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "name": "lens-toggle",
+      "metadata": {
+        "description": "Toggle choco-pi-lsp on/off for the current session. Usage: /lens-toggle"
+      },
+      "functionKeys": [
+        "handler"
+      ]
+    },
+    {
+      "name": "lsp",
+      "metadata": {
+        "description": "Turn choco-pi-lsp LSP usage on or off at runtime, or show its state. Usage: /lsp on|off|status"
+      },
+      "functionKeys": [
+        "handler"
+      ]
+    },
+    {
+      "name": "lens-context-toggle",
+      "metadata": {
+        "description": "Toggle automatic context injection on/off for the current session (tools/LSP/read-guard/formatting stay active). Usage: /lens-context-toggle"
+      },
+      "functionKeys": [
+        "handler"
+      ]
+    },
+    {
+      "name": "lens-widget-toggle",
+      "metadata": {
+        "description": "Show or hide the choco-pi-lsp diagnostics widget below the editor. Usage: /lens-widget-toggle"
+      },
+      "functionKeys": [
+        "handler"
+      ]
+    },
+    {
+      "name": "lens-tdi",
+      "metadata": {
+        "description": "Show Technical Debt Index (TDI) and project health trend. Usage: /lens-tdi"
+      },
+      "functionKeys": [
+        "handler"
+      ]
+    },
+    {
+      "name": "lens-map",
+      "metadata": {
+        "description": "Render the review graph as a self-contained interactive HTML project map (pan/zoom/hover/click) and write it to disk. Usage: /lens-map"
+      },
+      "functionKeys": [
+        "handler"
+      ]
+    },
+    {
+      "name": "lens-health",
+      "metadata": {
+        "description": "Show choco-pi-lsp runtime health: pipeline crashes, slow runners, and last dispatch latency. Usage: /lens-health"
+      },
+      "functionKeys": [
+        "handler"
+      ]
+    },
+    {
+      "name": "lens-perf",
+      "metadata": {
+        "description": "Show the slowest latency-log phases by p50 and p99 for the current process session and machine-wide active log window. Usage: /lens-perf"
+      },
+      "functionKeys": [
+        "handler"
+      ]
+    },
+    {
+      "name": "lens-tools",
+      "metadata": {
+        "description": "Show choco-pi-lsp tool installation status: globally installed, auto-installed, or npx fallback. Usage: /lens-tools"
+      },
+      "functionKeys": [
+        "handler"
+      ]
+    },
+    {
+      "name": "lens-allow-edit",
+      "metadata": {
+        "description": "Allow one edit to a file without a prior read. Usage: /lens-allow-edit <path>"
+      },
+      "functionKeys": [
+        "handler"
+      ]
+    }
+  ],
+  "events": [
+    "resources_discover",
+    "session_start",
+    "session_before_fork",
+    "tool_call",
+    "tool_result",
+    "turn_start",
+    "agent_end",
+    "turn_end",
+    "agent_settled",
+    "session_shutdown",
+    "message_end",
+    "context"
+  ],
+  "flags": [
+    {
+      "name": "no-lens",
+      "options": {
+        "description": "Start choco-pi-lsp disabled for this session. Re-enable with /lens-toggle. Also via lens.enabled=false in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "no-lsp",
+      "options": {
+        "description": "Disable unified LSP diagnostics and use language-specific fallbacks (for example pyright). Also via lsp.enabled=false in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "no-autoformat",
+      "options": {
+        "description": "Disable automatic formatting entirely (deferred format runs at agent_end by default). Also via format.enabled=false in config.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "immediate-format",
+      "options": {
+        "description": "Run automatic formatting immediately after each write/edit instead of deferring to agent_end. Also via format.mode=\"immediate\" in config.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "no-autofix",
+      "options": {
+        "description": "Disable auto-fixing of lint issues (Biome, Ruff, ESLint). Also via autofix.enabled=false in config.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "no-tests",
+      "options": {
+        "description": "Disable test runner on write. Also via tests.enabled=false in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "no-delta",
+      "options": {
+        "description": "Disable delta mode (show all diagnostics, not just new ones). Also via delta.enabled=false in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "lens-guard",
+      "options": {
+        "description": "Experimental: block git commit/push when unresolved choco-pi-lsp blockers exist. Also via guard.enabled=true in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "no-opengrep",
+      "options": {
+        "description": "Disable the Opengrep security scanner (a default-on auxiliary LSP; auto-installs, uses repo rules if present else the login-free 'auto' ruleset). Also via opengrep.enabled=false in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "no-read-guard",
+      "options": {
+        "description": "Disable read-before-edit behavior monitor. Also via readGuard.enabled=false in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "no-lens-context",
+      "options": {
+        "description": "Disable automatic context injection (session-start guidance, turn-end & test findings) while keeping tools, LSP, read-guard, and formatting active. Toggle with /lens-context-toggle. Also via contextInjection.enabled=false in config or CHOCO_PI_LSP_NO_CONTEXT_INJECTION=1.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "lens-turn-summary",
+      "options": {
+        "description": "Opt-in: persist a per-turn transcript entry summarizing diagnostics found, autofixes applied, and autoformats applied this turn (#484). Collapsed one-line, expandable in place. Default off. Also via turnSummary.enabled=true in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "lens-actionable-warnings",
+      "options": {
+        "description": "Write turn-delta fixable warning reports and inject a short advisory. Also via actionableWarnings.enabled=true in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "lens-actionable-warning-actions",
+      "options": {
+        "description": "Enrich actionable-warning reports with LSP code-action titles (requires an active language server). Also via actionableWarnings.includeLspCodeActions=true in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "lens-actionable-warning-autofix",
+      "options": {
+        "description": "Experimental: apply conservative LSP quickfixes for actionable warnings at agent_end. Also via actionableWarnings.autoFix.enabled=true in config.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "lens-actionable-warning-all",
+      "options": {
+        "description": "Report every actionable warning, not just those introduced this turn. Also via actionableWarnings.deltaOnly=false in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "lens-compact-tool-line",
+      "options": {
+        "description": "Opt-in (#1327): collapse a choco-pi-lsp tool's call+result rows into ONE theme-aware line (status glyph + name + summary) instead of two. Preserves expand-to-view-full-output. Default off. Also via ui.compactToolLine=true in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
+      "name": "no-lazy-tools",
+      "options": {
+        "description": "Keep all choco-pi-lsp tools active to avoid tool-list cache changes. Also via tools.lazy=false in ~/.choco-pi-lsp/config.json.",
+        "type": "boolean",
+        "default": false
+      }
+    }
+  ],
+  "renderers": [
+    "pilens:turn-summary"
+  ],
+  "schemaMetadata": [
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "mode"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "mode"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "refreshRunners",
+        "anyOf",
+        "0"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "refreshRunners",
+        "anyOf",
+        "1"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "refreshRunners"
+      ],
+      "key": "~kind",
+      "value": "Union"
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "refreshRunners"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "maxProjectFiles"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "maxProjectFiles"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "maxLspFiles"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "maxLspFiles"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "includeGenerated"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "includeGenerated"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "severity"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "severity"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "paths",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "paths"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [
+        "properties",
+        "paths"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "diagnostics_report",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "path"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "path"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "paths",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "paths"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "paths"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "severity"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "severity"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "concurrency"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "concurrency"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "waitMs"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "waitMs"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "serverScope"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [
+        "properties",
+        "serverScope"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_diagnostics",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "symbol_search",
+      "path": [
+        "properties",
+        "query"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "symbol_search",
+      "path": [
+        "properties",
+        "limit"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "symbol_search",
+      "path": [
+        "properties",
+        "limit"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "symbol_search",
+      "path": [
+        "properties",
+        "paths",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "symbol_search",
+      "path": [
+        "properties",
+        "paths"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "symbol_search",
+      "path": [
+        "properties",
+        "paths"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "symbol_search",
+      "path": [
+        "properties",
+        "lang"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "symbol_search",
+      "path": [
+        "properties",
+        "lang"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "symbol_search",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "project_report",
+      "path": [
+        "properties",
+        "limit"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "project_report",
+      "path": [
+        "properties",
+        "limit"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "project_report",
+      "path": [
+        "properties",
+        "focus"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "project_report",
+      "path": [
+        "properties",
+        "focus"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "project_report",
+      "path": [
+        "properties",
+        "view"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "project_report",
+      "path": [
+        "properties",
+        "view"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "project_report",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "path"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "maxRefsPerSymbol"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "maxRefsPerSymbol"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "focus"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "focus"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "view"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "view"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "blastRadius"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "blastRadius"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "blastRadiusDepth"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "blastRadiusDepth"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "callGraph"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "callGraph"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "maxCallGraphEntries"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "module_report",
+      "path": [
+        "properties",
+        "maxCallGraphEntries"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "module_report",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "read_symbol",
+      "path": [
+        "properties",
+        "path"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "read_symbol",
+      "path": [
+        "properties",
+        "symbol"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "read_symbol",
+      "path": [
+        "properties",
+        "kind"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "read_symbol",
+      "path": [
+        "properties",
+        "kind"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "read_symbol",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [
+        "properties",
+        "path"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [
+        "properties",
+        "line"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [
+        "properties",
+        "kinds",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [
+        "properties",
+        "kinds"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [
+        "properties",
+        "kinds"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [
+        "properties",
+        "maxLines"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [
+        "properties",
+        "maxLines"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [
+        "properties",
+        "onOversize"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [
+        "properties",
+        "onOversize"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [
+        "properties",
+        "aroundLine"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [
+        "properties",
+        "aroundLine"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "read_enclosing",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "lsp_activate_tools",
+      "path": [
+        "properties",
+        "tools",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_activate_tools",
+      "path": [
+        "properties",
+        "tools"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "lsp_activate_tools",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "pattern"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "pattern"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "lang"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "paths",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "paths"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "paths"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "selector"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "selector"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "context"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "context"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "nodeKind"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "nodeKind"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "insideKind"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "insideKind"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "hasKind"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "hasKind"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "hasDescendantKind"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "hasDescendantKind"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "follows"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "follows"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "precedes"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "precedes"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "rule"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "rule"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "skip"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "skip"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "maxMatches"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "maxMatches"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "groupByFile"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "groupByFile"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "strictness"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "strictness"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "validateOnly"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [
+        "properties",
+        "validateOnly"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_search",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "pattern"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "rewrite"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "lang"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "paths",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "paths"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "paths"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "insideKind"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "insideKind"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "hasKind"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "hasKind"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "hasDescendantKind"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "hasDescendantKind"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "follows"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "follows"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "precedes"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "precedes"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "apply"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "apply"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "strictness"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [
+        "properties",
+        "strictness"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_replace",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "paths",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "paths"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "lang"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "lang"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "items"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "view"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "view"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "type",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "type"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "type"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "match"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "match"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "pubMembers"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "pubMembers"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "globs",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "globs"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [
+        "properties",
+        "globs"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_outline",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "ast_grep_dump",
+      "path": [
+        "properties",
+        "source"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_dump",
+      "path": [
+        "properties",
+        "lang"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "ast_grep_dump",
+      "path": [
+        "properties",
+        "includeAnonymous"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "ast_grep_dump",
+      "path": [
+        "properties",
+        "includeAnonymous"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "ast_grep_dump",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "operation"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "path"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "path"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "line"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "line"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "character"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "character"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "symbol"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "symbol"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "endLine"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "endLine"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "endCharacter"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "endCharacter"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "newName"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "newName"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "newFilePath"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "newFilePath"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "apply"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "apply"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "command"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "command"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "commandArguments",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "Unknown"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "commandArguments"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "commandArguments"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "query"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "query"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "kinds",
+        "items"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "kinds"
+      ],
+      "key": "~kind",
+      "value": "Array"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "kinds"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "exactMatch"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "exactMatch"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "topLevelOnly"
+      ],
+      "key": "~kind",
+      "value": "Boolean"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "topLevelOnly"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "maxResults"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "maxResults"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "name"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "kind"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "uri"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "range",
+        "properties",
+        "start",
+        "properties",
+        "line"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "range",
+        "properties",
+        "start",
+        "properties",
+        "character"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "range",
+        "properties",
+        "start"
+      ],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "range",
+        "properties",
+        "end",
+        "properties",
+        "line"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "range",
+        "properties",
+        "end",
+        "properties",
+        "character"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "range",
+        "properties",
+        "end"
+      ],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "range"
+      ],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "selectionRange",
+        "properties",
+        "start",
+        "properties",
+        "line"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "selectionRange",
+        "properties",
+        "start",
+        "properties",
+        "character"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "selectionRange",
+        "properties",
+        "start"
+      ],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "selectionRange",
+        "properties",
+        "end",
+        "properties",
+        "line"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "selectionRange",
+        "properties",
+        "end",
+        "properties",
+        "character"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "selectionRange",
+        "properties",
+        "end"
+      ],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem",
+        "properties",
+        "selectionRange"
+      ],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem"
+      ],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [
+        "properties",
+        "callHierarchyItem"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "lsp_navigation",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    },
+    {
+      "toolName": "diagnostic_mark",
+      "path": [
+        "properties",
+        "filePath"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "diagnostic_mark",
+      "path": [
+        "properties",
+        "line"
+      ],
+      "key": "~kind",
+      "value": "Number"
+    },
+    {
+      "toolName": "diagnostic_mark",
+      "path": [
+        "properties",
+        "message"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "diagnostic_mark",
+      "path": [
+        "properties",
+        "rule"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "diagnostic_mark",
+      "path": [
+        "properties",
+        "rule"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "diagnostic_mark",
+      "path": [
+        "properties",
+        "tool"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "diagnostic_mark",
+      "path": [
+        "properties",
+        "tool"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "diagnostic_mark",
+      "path": [
+        "properties",
+        "disposition"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "diagnostic_mark",
+      "path": [
+        "properties",
+        "reason"
+      ],
+      "key": "~kind",
+      "value": "String"
+    },
+    {
+      "toolName": "diagnostic_mark",
+      "path": [
+        "properties",
+        "reason"
+      ],
+      "key": "~optional",
+      "value": true
+    },
+    {
+      "toolName": "diagnostic_mark",
+      "path": [],
+      "key": "~kind",
+      "value": "Object"
+    }
+  ]
+}

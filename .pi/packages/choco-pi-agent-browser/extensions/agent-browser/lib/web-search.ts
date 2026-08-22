@@ -1,31 +1,40 @@
 import type { AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { hasRuntimeType, isRecord, type RuntimeValue } from "./parsing.ts";
-import { JsonSchema, type JsonSchemaBuilder } from "./json-schema.ts";
-import { WEB_SEARCH_PROMPT_GUIDELINE } from "./playbook.ts";
-import { StringEnum as localStringEnum, type StringEnumBuilder } from "./string-enum-schema.ts";
 import {
-	DEFAULT_WEB_SEARCH_PROVIDER,
-	WEB_SEARCH_PROVIDERS,
 	resolvePreferredWebSearchCredential,
 	type AgentBrowserConfigState,
 	type WebSearchProvider,
 } from "./config.ts";
+import { hasRuntimeType, isRecord, type RuntimeValue } from "./parsing.ts";
+import { WEB_SEARCH_PROMPT_GUIDELINE } from "./playbook.ts";
+import {
+	AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
+	AgentBrowserWebSearchParams,
+	DEFAULT_SEARCH_RESULT_COUNT,
+	MAX_SEARCH_RESULT_COUNT,
+	type AgentBrowserWebSearchParamsInput,
+	type ExaSearchType,
+	type SearchFreshness,
+	type WebSearchProviderParam,
+	type WebSearchToolDetails,
+} from "./web-search-registration.ts";
 
-export const AGENT_BROWSER_WEB_SEARCH_TOOL_NAME = "agent_browser_web_search";
+export {
+	AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
+	AgentBrowserWebSearchParams,
+	DEFAULT_SEARCH_RESULT_COUNT,
+	EXA_SEARCH_TYPES,
+	MAX_SEARCH_RESULT_COUNT,
+	WEB_SEARCH_PROVIDER_PARAM_VALUES,
+	createAgentBrowserWebSearchParamsSchema,
+} from "./web-search-registration.ts";
+export type { AgentBrowserWebSearchParamsInput, ExaSearchType, WebSearchProviderParam, WebSearchToolDetails } from "./web-search-registration.ts";
+
 export const BRAVE_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
 export const EXA_SEARCH_ENDPOINT = "https://api.exa.ai/search";
-export const DEFAULT_SEARCH_RESULT_COUNT = 5;
-export const MAX_SEARCH_RESULT_COUNT = 10;
 export const SEARCH_REQUEST_TIMEOUT_MS = 15_000;
 export const EXA_DEEP_SEARCH_REQUEST_TIMEOUT_MS = 45_000;
 export const WEB_SEARCH_MIN_REQUEST_INTERVAL_MS = 1_100;
-export const EXA_SEARCH_TYPES = ["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"] as const;
-export type ExaSearchType = typeof EXA_SEARCH_TYPES[number];
-export const WEB_SEARCH_PROVIDER_PARAM_VALUES = ["auto", ...WEB_SEARCH_PROVIDERS] as const;
-export type WebSearchProviderParam = typeof WEB_SEARCH_PROVIDER_PARAM_VALUES[number];
-
-type SearchFreshness = "pd" | "pw" | "pm" | "py";
 
 export type BraveWebSearchResult = {
 	title?: unknown;
@@ -80,18 +89,6 @@ export type NormalizedSearchResult = {
 	language?: string;
 };
 
-type WebSearchToolDetails = {
-	provider: WebSearchProvider;
-	query: string;
-	returnedQuery: string;
-	count: number;
-	offset: number;
-	fetchedAt: string;
-	results: NormalizedSearchResult[];
-	searchType?: string;
-	requestId?: string;
-};
-
 type WebSearchExecutionParams = {
 	country?: string;
 	count: number;
@@ -115,70 +112,6 @@ export interface WebSearchProviderAdapter<Request = unknown, Response = unknown>
 	normalizeResponse(response: Response, params: WebSearchExecutionParams): NormalizedProviderResponse;
 	provider: WebSearchProvider;
 }
-
-export function createAgentBrowserWebSearchParamsSchema(
-	Type: JsonSchemaBuilder = JsonSchema,
-	StringEnum: StringEnumBuilder = localStringEnum,
-) {
-	return Type.Object(
-		{
-		query: Type.String({
-			minLength: 1,
-			description: "Search query to run with the configured Exa or Brave web search provider.",
-		}),
-		provider: Type.Optional(
-			StringEnum(WEB_SEARCH_PROVIDER_PARAM_VALUES, {
-				description: `Optional provider override. auto uses configured keys and preferredProvider; when both Exa and Brave are available, the default preferred provider is ${DEFAULT_WEB_SEARCH_PROVIDER}.`,
-			}),
-		),
-		searchType: Type.Optional(
-			StringEnum(EXA_SEARCH_TYPES, {
-				description: "Optional Exa search type. Defaults to auto; ignored by Brave. Use deep/deep-reasoning only for harder research because they are slower.",
-			}),
-		),
-		count: Type.Optional(
-			Type.Integer({
-				minimum: 1,
-				maximum: MAX_SEARCH_RESULT_COUNT,
-				description: `Number of web results to return. Defaults to ${DEFAULT_SEARCH_RESULT_COUNT}; max ${MAX_SEARCH_RESULT_COUNT}.`,
-			}),
-		),
-		offset: Type.Optional(
-			Type.Integer({
-				minimum: 0,
-				maximum: 9,
-				description: "Zero-based result offset for pagination. Defaults to 0.",
-			}),
-		),
-		country: Type.Optional(
-			Type.String({
-				pattern: "^[A-Za-z]{2}$",
-				description: "Optional 2-letter country code, such as US or GB.",
-			}),
-		),
-		searchLang: Type.Optional(
-			Type.String({
-				minLength: 2,
-				maxLength: 8,
-				description: "Optional Brave search language code, such as en or en-US.",
-			}),
-		),
-		safesearch: Type.Optional(
-			StringEnum(["off", "moderate", "strict"] as const, {
-				description: "Optional search safety setting. Brave forwards this as safesearch; Exa maps moderate/strict to moderation=true.",
-			}),
-		),
-		freshness: Type.Optional(
-			StringEnum(["pd", "pw", "pm", "py"] as const, {
-				description: "Optional freshness window: pd=past day, pw=past week, pm=past month, py=past year.",
-			}),
-		),
-		},
-		{ additionalProperties: false },
-	);
-}
-
-export const AgentBrowserWebSearchParams = createAgentBrowserWebSearchParamsSchema();
 
 interface HtmlEntityReplacements {
 	[name: string]: string;
@@ -723,18 +656,6 @@ function buildMissingCredentialError(provider: WebSearchProviderParam): string {
 	if (provider === "exa") return "agent_browser_web_search provider exa was requested but no EXA_API_KEY/config credential resolved.";
 	return "No Exa or Brave web search credential resolved. Configure webSearch.exaApiKey or webSearch.braveApiKey, or load EXA_API_KEY/BRAVE_API_KEY in the runtime environment.";
 }
-
-type AgentBrowserWebSearchParamsInput = {
-	country?: string;
-	count?: number;
-	freshness?: SearchFreshness;
-	offset?: number;
-	provider?: WebSearchProviderParam;
-	query: string;
-	safesearch?: "off" | "moderate" | "strict";
-	searchLang?: string;
-	searchType?: ExaSearchType;
-};
 
 export function createAgentBrowserWebSearchTool(
 	configState: AgentBrowserConfigState,

@@ -1,0 +1,1 @@
+export const AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES = 64 * 1_024;

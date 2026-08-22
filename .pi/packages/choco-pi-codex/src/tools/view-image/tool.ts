@@ -8,22 +8,24 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
-import { parseSSE } from "../../providers/openai-codex/sse.ts";
-import {
-  codexToolProviderHeaders,
-  resolveCodexResponsesUrl,
-  resolveCodexToolProvider,
-} from "../../adapter/codex-tool-provider.ts";
-import { getBundledToolBinaryPath } from "../native/binary.ts";
 import {
   imageContentFromViewImageOutput,
   imageContentsFromViewImageDetails,
   type ViewImageContent,
 } from "./output.ts";
 import { renderTextWithImages } from "../../ui/tool-rendering/media.ts";
-import { runBundledTool } from "../native/runner.ts";
 import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
 import { supportsViewImageInputs } from "../../adapter/tool-support.ts";
+
+function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
+  let promise: Promise<Module> | undefined;
+  return () => (promise ??= loader());
+}
+
+const loadNativeBinary = memoizedImport(() => import("../native/binary.ts"));
+const loadNativeRunner = memoizedImport(() => import("../native/runner.ts"));
+const loadSse = memoizedImport(() => import("../../providers/openai-codex/sse.ts"));
+const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-provider.ts"));
 
 const VIEW_IMAGE_UNSUPPORTED_MESSAGE =
   "view_image is not allowed because you do not support image inputs";
@@ -89,6 +91,10 @@ async function executeRustViewImageContent(
   signal: AbortSignal | undefined,
   customRustBinariesDir?: string | undefined,
 ): Promise<ViewImageContent> {
+  const [{ getBundledToolBinaryPath }, { runBundledTool }] = await Promise.all([
+    loadNativeBinary(),
+    loadNativeRunner(),
+  ]);
   const binary = getBundledToolBinaryPath("view_image", {}, customRustBinariesDir);
   if (!binary) {
     throw new Error(`view_image binary is not bundled for ${process.platform}-${process.arch}`);
@@ -193,6 +199,8 @@ export async function describeImageContentForTextModel(
   ctx: ExtensionContext,
   signal: AbortSignal | undefined,
 ): Promise<string> {
+  const [{ parseSSE }, { codexToolProviderHeaders, resolveCodexResponsesUrl, resolveCodexToolProvider }] =
+    await Promise.all([loadSse(), loadToolProvider()]);
   const provider = await resolveCodexToolProvider(ctx);
   const model = resolveImageDescriptionModel(ctx);
   const headers = codexToolProviderHeaders(provider);

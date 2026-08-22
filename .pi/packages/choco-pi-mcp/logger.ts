@@ -123,10 +123,13 @@ class Logger {
 }
 
 class ChildLogger {
-  constructor(
-    private parent: Logger,
-    private context: LogContext,
-  ) {}
+  private parent: Logger;
+  private context: LogContext;
+
+  constructor(parent: Logger, context: LogContext) {
+    this.parent = parent;
+    this.context = context;
+  }
 
   debug(message: string, context?: LogContext): void {
     this.parent.debug(message, { ...this.context, ...context });

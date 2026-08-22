@@ -12,8 +12,8 @@ import {
   SyntheticClient,
   type SyntheticSearchResponse,
   type SyntheticSearchResult,
-} from "../../src/client";
-import { configLoader } from "../../src/config";
+} from "../../src/client/index.ts";
+import { ensureSyntheticConfig } from "../../src/config-state.ts";
 
 export const SYNTHETIC_WEB_SEARCH_TOOL = "synthetic_web_search" as const;
 const MAX_INLINE_SEARCH_BYTES = 20_000;
@@ -160,7 +160,7 @@ export const syntheticWebSearchTool = defineTool({
       details: { query: params.query },
     });
 
-    const config = configLoader.getConfig();
+    const config = await ensureSyntheticConfig();
     if (!config.webSearch) {
       throw new Error(
         "Synthetic web search is disabled. Re-enable it with synthetic:settings or pi config.",

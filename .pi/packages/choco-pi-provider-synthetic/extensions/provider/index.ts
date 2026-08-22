@@ -1,37 +1,25 @@
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
-import { Value } from "typebox/value";
-import { resolveSyntheticClientOptions, SyntheticClient } from "../../src/client";
-import {
-  configLoader,
-  emitSyntheticConfigUpdated,
-  registerSyntheticSettings,
-  SYNTHETIC_CONFIG_UPDATED_EVENT,
-  SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
-  SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
-  SyntheticConfigUpdatedPayloadSchema,
-  SyntheticExtensionsRegisterPayloadSchema,
-  type SyntheticFeatureId,
-  seedSyntheticConfigIfMissing,
-} from "../../src/config";
-import { type QuotaSnapshot, QuotaStore } from "../../src/services/quota-store";
-import {
-  parseQuotaHeader,
-  type QuotasResponse,
-  SYNTHETIC_QUOTAS_READ_EVENT,
-  SYNTHETIC_QUOTAS_REQUEST_EVENT,
-  SYNTHETIC_QUOTAS_UPDATED_EVENT,
-  SyntheticQuotasReadPayloadSchema,
-  SyntheticQuotasRequestEventPayloadSchema,
-  type SyntheticQuotasSnapshotPayload,
-} from "../../src/types/quotas";
-import { SYNTHETIC_OVERFLOW_PATTERN } from "./context-overflow";
 import {
   buildSyntheticProviderModels,
   buildSyntheticProviderModelsFromApi,
   buildSyntheticProviderModelsFromStore,
-} from "./models";
-import { createSyntheticRefreshModels } from "./refresh-models";
+} from "./models.ts";
+import { createSyntheticRefreshModels } from "./refresh-models.ts";
+
+interface ProviderRuntime {
+  activateSyntheticProvider(
+    pi: ExtensionAPI,
+    registerProvider: (pi: ExtensionAPI) => void,
+  ): Promise<void>;
+}
+
+let runtimePromise: Promise<ProviderRuntime> | undefined;
+
+function loadRuntime(): Promise<ProviderRuntime> {
+  runtimePromise ??= import("./runtime.ts");
+  return runtimePromise;
+}
 
 export function registerSyntheticProvider(pi: ExtensionAPI): void {
   const staticModels = buildSyntheticProviderModels();
@@ -47,6 +35,7 @@ export function registerSyntheticProvider(pi: ExtensionAPI): void {
     refreshModels: createSyntheticRefreshModels(
       staticModels,
       async (apiKey, signal) => {
+        const { SyntheticClient } = await import("../../src/client/synthetic-client.ts");
         const client = new SyntheticClient({ apiKey });
         const result = await client.models({ signal });
         return result.data ?? [];
@@ -64,128 +53,7 @@ export function registerSyntheticProvider(pi: ExtensionAPI): void {
   pi.registerProvider("synthetic", config);
 }
 
-export default async function (pi: ExtensionAPI) {
-  await configLoader.load();
-  await seedSyntheticConfigIfMissing();
-
-  const initialConfig = configLoader.getConfig();
-  let utilityApiProxyUrl = initialConfig.proxyUrl;
-  let utilityApiProxyRequiresAuth = initialConfig.proxyRequiresAuth;
-  const quotaStore = new QuotaStore();
-  let getApiKey: (() => Promise<string | undefined>) | undefined;
-
-  registerSyntheticProvider(pi);
-
-  pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
-    if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
-    const config = data.config;
-
-    if (
-      config.proxyUrl !== utilityApiProxyUrl ||
-      config.proxyRequiresAuth !== utilityApiProxyRequiresAuth
-    ) {
-      quotaStore.clear();
-      utilityApiProxyUrl = config.proxyUrl;
-      utilityApiProxyRequiresAuth = config.proxyRequiresAuth;
-    }
-  });
-
-  const loadedFeatures = new Set<SyntheticFeatureId>();
-
-  pi.events.on(SYNTHETIC_EXTENSIONS_REGISTER_EVENT, (data) => {
-    if (!Value.Check(SyntheticExtensionsRegisterPayloadSchema, data)) return;
-    const { feature } = data;
-    loadedFeatures.add(feature);
-  });
-
-  registerSyntheticSettings(pi, {
-    getLoadedFeatures: () => loadedFeatures,
-  });
-
-  async function fetchQuotasFromAuth(): Promise<QuotasResponse | undefined> {
-    const config = configLoader.getConfig();
-    const clientOptions = await resolveSyntheticClientOptions(config, () =>
-      getApiKey ? getApiKey() : Promise.resolve(undefined),
-    );
-    if (!clientOptions) return undefined;
-
-    const client = new SyntheticClient(clientOptions);
-    const result = await client.quotas();
-    return result.success ? result.data.quotas : undefined;
-  }
-
-  quotaStore.subscribe((snapshot) => {
-    pi.events.emit(SYNTHETIC_QUOTAS_UPDATED_EVENT, {
-      quotas: snapshot.quotas,
-      source: snapshot.source,
-      updatedAt: snapshot.updatedAt,
-    });
-  });
-
-  function toSnapshotPayload(
-    snapshot: QuotaSnapshot | undefined,
-  ): SyntheticQuotasSnapshotPayload | undefined {
-    if (!snapshot) return undefined;
-    return {
-      quotas: snapshot.quotas,
-      source: snapshot.source,
-      updatedAt: snapshot.updatedAt,
-    };
-  }
-
-  pi.on("after_provider_response", (event, ctx) => {
-    if (ctx.model?.provider !== "synthetic") return;
-    const quotas = parseQuotaHeader(event.headers);
-    if (quotas) quotaStore.ingest(quotas, "header");
-  });
-
-  pi.on("message_end", (event) => {
-    const msg = event.message;
-    if (msg.role !== "assistant") return;
-    if (msg.stopReason !== "error") return;
-    if (msg.provider !== "synthetic") return;
-
-    const errorMessage = msg.errorMessage ?? "";
-    if (errorMessage.includes("context_length_exceeded")) return;
-    if (!SYNTHETIC_OVERFLOW_PATTERN.test(errorMessage)) return;
-
-    return {
-      message: {
-        ...msg,
-        errorMessage: `context_length_exceeded: ${errorMessage}`,
-      },
-    };
-  });
-
-  pi.events.on(SYNTHETIC_QUOTAS_REQUEST_EVENT, async (data) => {
-    if (!Value.Check(SyntheticQuotasRequestEventPayloadSchema, data)) return;
-    const snapshot = await quotaStore.refreshFromApi(fetchQuotasFromAuth);
-    if (data?.respond) {
-      data.respond(toSnapshotPayload(snapshot));
-    }
-  });
-
-  pi.events.on(SYNTHETIC_QUOTAS_READ_EVENT, (data) => {
-    if (!Value.Check(SyntheticQuotasReadPayloadSchema, data)) return;
-    const { respond } = data;
-    respond(toSnapshotPayload(quotaStore.getSnapshot()));
-  });
-
-  pi.on("session_before_switch", () => {
-    quotaStore.clear();
-    getApiKey = undefined;
-  });
-
-  pi.on("session_shutdown", () => {
-    quotaStore.clear();
-    getApiKey = undefined;
-  });
-
-  pi.on("session_start", async (_event, ctx) => {
-    loadedFeatures.clear();
-    quotaStore.clear();
-    getApiKey = () => ctx.modelRegistry.getApiKeyForProvider("synthetic");
-    pi.events.emit(SYNTHETIC_EXTENSIONS_REQUEST_EVENT, undefined);
-    emitSyntheticConfigUpdated(pi);
-  });
+export default async function (pi: ExtensionAPI): Promise<void> {
+  const runtime = await loadRuntime();
+  await runtime.activateSyntheticProvider(pi, registerSyntheticProvider);
 }
