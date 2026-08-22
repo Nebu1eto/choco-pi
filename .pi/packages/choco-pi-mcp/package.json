@@ -1,12 +1,13 @@
 {
   "name": "choco-pi-mcp",
   "version": "0.1.0",
-  "description": "Vendored MCP (Model Context Protocol) adapter extension for choco-pi",
+  "description": "Vendored MCP adapter and Figma design extension for choco-pi",
   "keywords": [
     "ai",
     "claude",
     "coding-agent",
     "extension",
+    "figma",
     "llm",
     "mcp",
     "model-context-protocol",
@@ -87,6 +88,7 @@
     "errors.ts",
     "app-bridge.bundle.js",
     "banner.png",
+    "figma",
     "skills",
     "README.md",
     "CHANGELOG.md",
@@ -160,12 +162,14 @@
   },
   "chocoPi": {
     "supersedes": [
-      "pi-mcp-adapter"
+      "pi-mcp-adapter",
+      "pi-mono-figma"
     ]
   },
   "pi": {
     "extensions": [
-      "./index.ts"
+      "./index.ts",
+      "./figma/index.ts"
     ],
     "skills": [
       "./skills"

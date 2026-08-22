@@ -95,6 +95,9 @@ test("profile installer links tracked config and is idempotent", async (context)
       "choco-pi-lsp",
       "choco-pi-codex",
       "choco-pi-agents-md",
+      "choco-pi-web-access",
+      "choco-pi-agent-browser",
+      "choco-pi-computer-use",
     ].map((name) => path.resolve(".pi/packages", name)),
   );
   assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions")]);
