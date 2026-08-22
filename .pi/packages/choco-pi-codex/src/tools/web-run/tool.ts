@@ -10,18 +10,21 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Container, Text } from "@earendil-works/pi-tui";
-import {
-  codexToolProviderEnv,
-  CODEX_TOOL_PROVIDER_UNSUPPORTED_MESSAGE,
-  resolveCodexToolProvider,
-} from "../../adapter/codex-tool-provider.ts";
 import { WEB_SEARCH_TOOL_NAME } from "../../adapter/activation/tool-set.ts";
 import { supportsNativeWebSearch } from "../../adapter/tool-support.ts";
 import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
-import { getBundledToolBinaryPath } from "../native/binary.ts";
 import { buildWebSearchInput } from "./history.ts";
 
-export const WEB_SEARCH_UNSUPPORTED_MESSAGE = CODEX_TOOL_PROVIDER_UNSUPPORTED_MESSAGE;
+function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
+  let promise: Promise<Module> | undefined;
+  return () => (promise ??= loader());
+}
+
+const loadNativeBinary = memoizedImport(() => import("../native/binary.ts"));
+const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-provider.ts"));
+
+export const WEB_SEARCH_UNSUPPORTED_MESSAGE =
+  "web_run/imagegen requires an OpenAI Codex-compatible Responses provider or /login openai-codex";
 
 // Codex sends the recent visible turn in SearchRequest.input. Controlled
 // alpha/search comparisons showed no meaningful output benefit, so Pi keeps
@@ -214,6 +217,8 @@ export async function executeCodexWebSearch(
   signal: AbortSignal | undefined | null,
   options: WebSearchToolOptions = {},
 ): Promise<WebRunExecutionResult> {
+  const [{ getBundledToolBinaryPath }, { codexToolProviderEnv, resolveCodexToolProvider }] =
+    await Promise.all([loadNativeBinary(), loadToolProvider()]);
   const webRunPath =
     process.env["PI_CODEX_WEB_RUN_BIN"]?.trim() ||
     getBundledToolBinaryPath("web_run", {}, options.customRustBinariesDir);

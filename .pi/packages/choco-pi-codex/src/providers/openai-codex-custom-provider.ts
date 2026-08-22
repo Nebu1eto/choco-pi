@@ -158,8 +158,16 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
 
 type TransportDependencies = Parameters<typeof createCodexTransportStream>[3];
 
+export interface OpenAICodexProviderOptions {
+  getConfig?: () => CodexProviderRuntimeConfig | undefined;
+  useResponsesLite?: (model: Model<Api>) => boolean;
+  turnState?: CodexTurnState | undefined;
+  onPreparedPayload?: ((payload: ResponsesBody) => void) | undefined;
+  getDiagnostics?: (() => CodexDiagnosticsSink | undefined) | undefined;
+}
+
 function createTransportDependencies(
-  options: Parameters<typeof registerOpenAICodexCustomProvider>[1],
+  options: OpenAICodexProviderOptions,
 ): TransportDependencies {
   const dependencies: TransportDependencies = {
     prepareRequestBody: prepareCodexRequestBody,
@@ -172,15 +180,23 @@ function createTransportDependencies(
   return dependencies;
 }
 
+export function createOpenAICodexProviderStream<TApi extends Api>(
+  model: Model<TApi>,
+  context: Context,
+  streamOptions: OpenAICodexStreamOptions | undefined,
+  options: OpenAICodexProviderOptions,
+) {
+  return createCodexTransportStream(
+    model,
+    context,
+    streamOptions,
+    createTransportDependencies(options),
+  );
+}
+
 export function registerOpenAICodexCustomProvider(
   pi: ExtensionAPI,
-  options: {
-    getConfig?: () => CodexProviderRuntimeConfig | undefined;
-    useResponsesLite?: (model: Model<Api>) => boolean;
-    turnState?: CodexTurnState | undefined;
-    onPreparedPayload?: ((payload: ResponsesBody) => void) | undefined;
-    getDiagnostics?: (() => CodexDiagnosticsSink | undefined) | undefined;
-  },
+  options: OpenAICodexProviderOptions,
 ): void {
   pi.registerProvider("openai-codex", {
     api: "openai-codex-responses",
@@ -188,11 +204,6 @@ export function registerOpenAICodexCustomProvider(
     models: openAICodexModelsWithDaybreak(),
     oauth: openaiCodexNativeOAuthProvider,
     streamSimple: (model, context, streamOptions) =>
-      createCodexTransportStream(
-        model,
-        context,
-        streamOptions,
-        createTransportDependencies(options),
-      ),
+      createOpenAICodexProviderStream(model, context, streamOptions, options),
   });
 }

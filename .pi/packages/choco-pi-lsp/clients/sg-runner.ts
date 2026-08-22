@@ -11,7 +11,6 @@ import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getSgCommand, resolveManagedToolClient } from "./dispatch/runners/utils/runner-helpers.ts";
 import { getProjectIgnoreGlobs } from "./file-utils.ts";
 import { findGlobalBinary } from "./package-manager.ts";
 import { safeSpawnAsync, type SpawnResult } from "./safe-spawn.ts";
@@ -372,6 +371,9 @@ export class SgRunner {
 
     // Step 4: install via the typed shared seam, then validate the returned
     // absolute binary before publishing it.
+    const { resolveManagedToolClient } = await import(
+      "./dispatch/runners/utils/runner-helpers.ts"
+    );
     const installed = await resolveManagedToolClient({
       toolId: "ast-grep",
       cwd: process.cwd(),
@@ -894,6 +896,7 @@ export class SgRunner {
   ): Promise<SgScanResult> {
     const { sessionDir, configFile } = this.prepareTempScan(ruleId, ruleYaml);
     try {
+      const { getSgCommand } = await import("./dispatch/runners/utils/runner-helpers.ts");
       const { cmd: sgCmd, args: sgPre } = getSgCommand();
       const result = await safeSpawnAsync(
         sgCmd,
@@ -938,6 +941,7 @@ export class SgRunner {
   ): Promise<{ matches: SgMatch[]; error?: string }> {
     const { sessionDir, configFile } = this.prepareTempScan(ruleId, ruleYaml);
     try {
+      const { getSgCommand } = await import("./dispatch/runners/utils/runner-helpers.ts");
       const { cmd: sgCmd, args: sgPre } = getSgCommand();
       const scanArgs = [
         ...sgPre,

@@ -130,6 +130,7 @@ export function createMcpTraceEvent(
 }
 
 export class McpTraceWriter {
+  private readonly options: McpTraceWriterOptions;
   private readonly maxBytes: number;
   private readonly maxEvents: number;
   private readonly append: NonNullable<McpTraceWriterOptions["appendFile"]>;
@@ -142,7 +143,8 @@ export class McpTraceWriter {
   private initializationFailed = false;
   private readonly fileReady: Promise<void>;
 
-  constructor(private readonly options: McpTraceWriterOptions) {
+  constructor(options: McpTraceWriterOptions) {
+    this.options = options;
     this.maxBytes = boundedPositiveInteger(options.maxBytes, DEFAULT_MCP_TRACE_MAX_BYTES);
     this.maxEvents = boundedPositiveInteger(options.maxEvents, DEFAULT_MCP_TRACE_MAX_EVENTS);
     this.append =

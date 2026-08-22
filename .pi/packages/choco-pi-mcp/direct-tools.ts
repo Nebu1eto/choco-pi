@@ -3,30 +3,14 @@ import type {
   AgentToolUpdateCallback,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { UrlElicitationRequiredError, type Client } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpConfig, McpContent, ToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
-import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
-import { abortable, throwIfAborted } from "./abort.ts";
+
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
-import { formatSchema } from "./tool-metadata.ts";
-import {
-  resolveMcpResultContent,
-  transformMcpContent,
-  transformMcpResourceContents,
-} from "./tool-registrar.ts";
-import {
-  guardMcpOutput,
-  guardedMcpDetails,
-  resolveMcpOutputGuardOptions,
-} from "./mcp-output-guard.ts";
-import {
-  maybeStartUiSession,
-  summarizeUiSessionResult,
-  type UiSessionRuntime,
-} from "./ui-session.ts";
+import type { UiSessionRuntime } from "./ui-session.ts";
 import {
   createToolSelectorCandidateIndex,
   formatToolName,
@@ -37,12 +21,27 @@ import {
 } from "./types.ts";
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
-import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
+
 import { formatAuthRequiredMessage, resolveServerUrl, truncateAtWord } from "./utils.ts";
-import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
-import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
-import { ensureToolCallApproved } from "./tool-approval.ts";
+
 import { mergeObjectParts, type McpObject } from "./protocol-values.ts";
+
+function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
+  let promise: Promise<Module> | undefined;
+  return () => (promise ??= loader());
+}
+
+const loadAbort = memoizedImport(() => import("./abort.ts"));
+const loadAuth = memoizedImport(() => import("./mcp-auth-flow.ts"));
+const loadInitialization = memoizedImport(() => import("./init.ts"));
+const loadMcpClient = memoizedImport(() => import("@modelcontextprotocol/client"));
+const loadOutputGuard = memoizedImport(() => import("./mcp-output-guard.ts"));
+const loadRuntimeOwner = memoizedImport(() => import("./runtime-owner.ts"));
+const loadSessionRecovery = memoizedImport(() => import("./session-recovery.ts"));
+const loadToolApproval = memoizedImport(() => import("./tool-approval.ts"));
+const loadToolMetadata = memoizedImport(() => import("./tool-metadata.ts"));
+const loadToolRegistrar = memoizedImport(() => import("./tool-registrar.ts"));
+const loadUiSession = memoizedImport(() => import("./ui-session.ts"));
 
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
@@ -81,6 +80,10 @@ async function attemptDirectAutoAuth(
   serverName: string,
   signal?: AbortSignal,
 ): Promise<DirectAutoAuthResult> {
+  const [{ authenticate, supportsOAuth }, { isAbortError }] = await Promise.all([
+    loadAuth(),
+    loadRuntimeOwner(),
+  ]);
   if (state.config.settings?.autoAuth !== true) {
     return { status: "skipped" };
   }
@@ -478,6 +481,29 @@ export function createDirectToolExecutor(
   spec: DirectToolSpec,
 ): DirectToolExecute {
   return async function execute(_toolCallId, params, signal) {
+    const [
+      { abortable, throwIfAborted },
+      { clearFailure, getFailureAgeSeconds, lazyConnect },
+      { UrlElicitationRequiredError },
+      { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions },
+      { combineAbortSignals, isAbortError },
+      { SessionRecoveryAuthRequiredError, withSessionRecovery },
+      { ensureToolCallApproved },
+      { formatSchema },
+      { resolveMcpResultContent, transformMcpContent, transformMcpResourceContents },
+      { maybeStartUiSession, summarizeUiSessionResult },
+    ] = await Promise.all([
+      loadAbort(),
+      loadInitialization(),
+      loadMcpClient(),
+      loadOutputGuard(),
+      loadRuntimeOwner(),
+      loadSessionRecovery(),
+      loadToolApproval(),
+      loadToolMetadata(),
+      loadToolRegistrar(),
+      loadUiSession(),
+    ]);
     throwIfAborted(signal);
     let state = getState();
     const initPromise = getInitPromise();

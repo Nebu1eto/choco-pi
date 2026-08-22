@@ -16,8 +16,14 @@ import {
 import { syncAdapter } from "../../adapter/activation/activation.ts";
 import type { AdapterState } from "../../adapter/activation/state.ts";
 import { ROUTABLE_SETTINGS_TABS, parseSettingsTab, type SettingsTab } from "./tabs.ts";
-import { openCodexSettingsScreen } from "./screen.ts";
 import { registerCodexPreferencesProvider } from "./preferences-sections.ts";
+
+function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
+  let promise: Promise<Module> | undefined;
+  return () => (promise ??= loader());
+}
+
+const loadSettingsScreen = memoizedImport(() => import("./screen.ts"));
 
 const CODEX_COMMAND_COMPLETIONS = ROUTABLE_SETTINGS_TABS.map(({ id }) => id);
 const CODEX_USAGE = "Usage: /codex [tools|openai|display|usage|about]";
@@ -114,6 +120,7 @@ export function registerCodexCommand(
         },
       };
     };
+    const { openCodexSettingsScreen } = await loadSettingsScreen();
     await openCodexSettingsScreen(ctx, {
       initialConfig: readSelectedConfig(),
       initialTab: tab,

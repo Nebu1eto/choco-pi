@@ -5,9 +5,15 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 
 import { pathExists } from "../fs-utils.ts";
 import { hasRuntimeType } from "../parsing.ts";
+import {
+	ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
+	ELECTRON_DISCOVERY_MAX_RESULTS,
+} from "./discovery-constants.ts";
 
-export const ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS = 50;
-export const ELECTRON_DISCOVERY_MAX_RESULTS = 200;
+export {
+	ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
+	ELECTRON_DISCOVERY_MAX_RESULTS,
+} from "./discovery-constants.ts";
 
 const LINUX_ELECTRON_CANDIDATE_MAX_DEPTH = 7;
 const LINUX_ELECTRON_CANDIDATE_MAX_ENTRIES = 5_000;

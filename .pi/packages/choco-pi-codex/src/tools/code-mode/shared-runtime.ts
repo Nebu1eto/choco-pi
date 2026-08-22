@@ -1,6 +1,5 @@
 import type { BoundaryValue } from "../boundary.ts";
-import { ensureCodeModeHostBinary } from "./binary.ts";
-import { CodeModeHostClient } from "./host-client.ts";
+import type { CodeModeHostClient } from "./host-client.ts";
 import type {
   CodeModeToolDefinition,
   NotebookControlRequest,
@@ -8,6 +7,14 @@ import type {
   RuntimeResponse,
   ToolExecutionContext,
 } from "./types.ts";
+
+function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
+  let promise: Promise<Module> | undefined;
+  return () => (promise ??= loader());
+}
+
+const loadHostBinary = memoizedImport(() => import("./binary.ts"));
+const loadHostClient = memoizedImport(() => import("./host-client.ts"));
 
 export type CodeModeExecutionKind = "code" | "notebook";
 
@@ -142,8 +149,11 @@ export class SharedCodeModeRuntime {
     }
     if (!this.clientPromise) {
       const startupAbort = new AbortController();
-      const pending = ensureCodeModeHostBinary(startupAbort.signal).then(
-        (binary) => new CodeModeHostClient({ binary, tools: [] }),
+      const pending = Promise.all([loadHostBinary(), loadHostClient()]).then(
+        ([{ ensureCodeModeHostBinary }, { CodeModeHostClient }]) =>
+          ensureCodeModeHostBinary(startupAbort.signal).then(
+            (binary) => new CodeModeHostClient({ binary, tools: [] }),
+          ),
       );
       this.clientPromise = pending;
       this.clientStartupAbort = startupAbort;

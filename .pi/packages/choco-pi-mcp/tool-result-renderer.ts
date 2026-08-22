@@ -71,14 +71,23 @@ class EmptyComponent implements Component {
 }
 
 class CompactMcpToolResult implements Component {
+  private readonly title: string;
+  private readonly inputPreview: string;
+  private readonly display: McpToolResultDisplay;
+  private readonly theme: RenderTheme;
   private rendered: { width: number; lines: string[] } | null = null;
 
   constructor(
-    private readonly title: string,
-    private readonly inputPreview: string,
-    private readonly display: McpToolResultDisplay,
-    private readonly theme: RenderTheme,
-  ) {}
+    title: string,
+    inputPreview: string,
+    display: McpToolResultDisplay,
+    theme: RenderTheme,
+  ) {
+    this.title = title;
+    this.inputPreview = inputPreview;
+    this.display = display;
+    this.theme = theme;
+  }
 
   render(width: number): string[] {
     const safeWidth = Math.max(1, Math.floor(width));
@@ -132,19 +141,27 @@ class CompactMcpToolResult implements Component {
 }
 
 class CollapsibleText implements Component {
+  private readonly text: string;
+  private readonly expanded: boolean;
+  private readonly maxCollapsedLines: number;
+  private readonly preTruncated: boolean;
   private readonly fullText: Text;
   private readonly footerText: Text;
   private collapsedText: { charBudget: number; fullyIncluded: boolean; text: Text } | null = null;
   private collapsedRender: { width: number; charBudget: number; lines: string[] } | null = null;
 
   constructor(
-    private readonly text: string,
-    private readonly expanded: boolean,
-    private readonly maxCollapsedLines: number,
+    text: string,
+    expanded: boolean,
+    maxCollapsedLines: number,
     ellipsis: string,
     expandHint: string,
-    private readonly preTruncated = false,
+    preTruncated = false,
   ) {
+    this.text = text;
+    this.expanded = expanded;
+    this.maxCollapsedLines = maxCollapsedLines;
+    this.preTruncated = preTruncated;
     this.fullText = new Text(text, 0, 0);
     this.footerText = new Text(`${ellipsis}\n${expandHint}`, 0, 0);
   }

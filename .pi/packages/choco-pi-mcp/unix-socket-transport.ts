@@ -6,13 +6,16 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/client";
 /** MCP JSONL transport for an explicitly configured Unix-domain socket. */
 export class UnixSocketClientTransport implements Transport {
   private socket: Socket | undefined;
+  private readonly socketPath: string;
   private readonly readBuffer = new ReadBuffer();
 
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: (message: JSONRPCMessage) => void;
 
-  constructor(private readonly socketPath: string) {}
+  constructor(socketPath: string) {
+    this.socketPath = socketPath;
+  }
 
   async start(): Promise<void> {
     if (this.socket) {

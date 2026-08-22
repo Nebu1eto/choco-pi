@@ -106,7 +106,7 @@ const MAX_PATHS_ENTRIES = 200;
 const NOT_REQUESTED_REASON =
   "refreshRunners not requested this call (quick mode) — pass refreshRunners=cheap/all/cached to diagnostics_report mode=full to run it";
 
-type LSPServiceLike = ReturnType<typeof getLSPService> & {
+export type LSPServiceLike = ReturnType<typeof getLSPService> & {
   runWorkspaceDiagnostics?: (
     cwd: string,
     options?: {

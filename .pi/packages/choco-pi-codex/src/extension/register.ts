@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCodeModeProxyProvider } from "../providers/code-mode-proxy-provider.ts";
-import { registerOpenAICodexCustomProvider } from "../providers/openai-codex-custom-provider.ts";
+import { registerOpenAICodexCustomProvider } from "../providers/openai-codex-provider-registration.ts";
 import { registerApplyPatchDisplayBroker } from "../tools/apply-patch/display-broker.ts";
 import { registerCodexCommand } from "../ui/settings/command.ts";
 import { registerCodexCodeMode } from "../adapter/code-mode.ts";
@@ -13,7 +13,7 @@ import { createCodexExtensionRuntime } from "./runtime.ts";
 import { registerCodexTools } from "./tools.ts";
 import { registerCodexUi } from "./ui.ts";
 import { resolveCodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
-import { captureActiveProviderSystemPrompt } from "../adapter/provider-request.ts";
+import { captureActiveProviderSystemPrompt } from "../adapter/provider-prompt-capture.ts";
 
 export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
   registerApplyPatchDisplayBroker(pi);

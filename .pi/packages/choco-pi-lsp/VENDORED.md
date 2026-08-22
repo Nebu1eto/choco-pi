@@ -17,7 +17,26 @@ Upstream publishes a bundled `dist/` and points `pi.extensions` at
 `pi.extensions` at `./index.ts`; pi 0.84.2 loads extension entries through
 jiti 2.7.0, which compiles TS on the fly and resolves upstream's ESM-style
 `./x.js` import specifiers to the `./x.ts` sources (verified against the
-worktree's jiti). There is no build step and no generated artifacts.
+worktree's jiti). There is no build step and no generated `dist/` artifact.
+
+### Deferred runtime loading
+
+`index.ts` is a registration-only entry. It synchronously registers the exact
+vendored tool metadata, commands, flags, message renderer, and event channels
+from `registration-manifest.json`, then memoizes `await
+import("./runtime-extension.ts")` behind the first subscribed event, command,
+or tool call. The captured runtime handlers and renderers receive the original
+host arguments unchanged. This is a load-time-only fork change: registration
+names, parameter schemas, descriptions, command names, flags, event channels,
+and runtime behavior are unchanged. Native/wasm analysis, LSP machinery,
+cache/rule engines, and dispatch runners therefore stay off the entry import
+path and load at the same logical startup boundary (`session_start`) or on an
+earlier explicit invocation.
+
+The ast-grep subprocess runner also defers its shared installer/runner-helper
+graph until the first availability or scan operation, and
+`diagnostics_report` keeps only its model-visible registration definition eager
+while loading the project-scan implementation on first execution.
 
 ### `pi.skills` path
 

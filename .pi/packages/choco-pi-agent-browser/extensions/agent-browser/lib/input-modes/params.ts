@@ -1,11 +1,11 @@
 import { JsonSchema, type JsonSchemaBuilder } from "../json-schema.ts";
 import { StringEnum as localStringEnum, type StringEnumBuilder } from "../string-enum-schema.ts";
 
-import { AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES } from "./script.ts";
 import {
 	ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
 	ELECTRON_DISCOVERY_MAX_RESULTS,
-} from "../electron/discovery.ts";
+} from "../electron/discovery-constants.ts";
+import { AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES } from "./schema-constants.ts";
 import {
 	AGENT_BROWSER_ELECTRON_HANDOFFS,
 	AGENT_BROWSER_ELECTRON_TARGET_TYPES,

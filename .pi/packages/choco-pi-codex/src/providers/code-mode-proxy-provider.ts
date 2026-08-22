@@ -7,25 +7,30 @@ import {
   type ProviderHeaders,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import type { ExtensionAPI, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import type { CodexConversionConfig } from "../adapter/activation/config.ts";
 import type { ExecutionMode } from "../adapter/activation/execution-mode.ts";
 import { isCodeModeRuntime, resolveCodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
-import { buildRequestBody } from "./openai-codex/request-body.ts";
-import {
-  applyResponsesLiteRequest,
-  isResponsesLiteRequest,
-  namespaceExistingResponsesLiteRequest,
-  prepareResponsesLiteRequestImages,
-  RESPONSES_LITE_HEADER,
-} from "./openai-codex/responses-lite.ts";
-import {
-  assertSuccessfulCodexOutput,
-  processCodexResponsesStream,
-} from "./openai-codex/stream-events.ts";
 import type { CodexStreamEvent, ResponsesBody } from "./openai-codex/types.ts";
+
+function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
+  let promise: Promise<Module> | undefined;
+  return () => (promise ??= loader());
+}
+
+const loadOpenAI = memoizedImport(() => import("openai"));
+const loadConstrainedSampling = memoizedImport(() => import("./constrained-sampling.ts"));
+const loadRequestBody = memoizedImport(() => import("./openai-codex/request-body.ts"));
+const loadResponsesLite = memoizedImport(() => import("./openai-codex/responses-lite.ts"));
+const loadStreamEvents = memoizedImport(() => import("./openai-codex/stream-events.ts"));
+
+function assertSuccessfulOutput(
+  assertion: (output: AssistantMessage) => void,
+  output: AssistantMessage,
+): asserts output is AssistantMessage & { stopReason: "stop" | "length" | "toolUse" } {
+  assertion(output);
+}
 
 interface OpenAIRequestOptions {
   signal?: AbortSignal;
@@ -114,7 +119,25 @@ export function streamCodeModeResponsesProxy<TApi extends Api>(
 
   void (async () => {
     try {
-      const { default: OpenAI, APIError } = await import("openai");
+      const [
+        { default: OpenAI, APIError },
+        { createGrammarToolInputProperties },
+        { buildRequestBody },
+        {
+          applyResponsesLiteRequest,
+          isResponsesLiteRequest,
+          namespaceExistingResponsesLiteRequest,
+          prepareResponsesLiteRequestImages,
+          RESPONSES_LITE_HEADER,
+        },
+        streamEvents,
+      ] = await Promise.all([
+        loadOpenAI(),
+        loadConstrainedSampling(),
+        loadRequestBody(),
+        loadResponsesLite(),
+        loadStreamEvents(),
+      ]);
       const grammarToolInputProperties = createGrammarToolInputProperties(context.tools, true);
       const effectiveOptions = { ...options, grammarToolInputProperties };
       let headers = mergeHeaders(model.headers, options?.headers);
@@ -165,9 +188,15 @@ export function streamCodeModeResponsesProxy<TApi extends Api>(
       // SAFETY: OpenAI's streaming iterator emits Responses event objects; Codex processing uses
       // the same discriminators and parses every dynamic field before use.
       const events = responseData as AsyncIterable<CodexStreamEvent>;
-      await processCodexResponsesStream(events, output, stream, model, effectiveOptions);
+      await streamEvents.processCodexResponsesStream(
+        events,
+        output,
+        stream,
+        model,
+        effectiveOptions,
+      );
       if (options?.signal?.aborted) throw new Error("Request was aborted");
-      assertSuccessfulCodexOutput(output);
+      assertSuccessfulOutput(streamEvents.assertSuccessfulCodexOutput, output);
       stream.push({ type: "done", reason: output.stopReason, message: output });
       stream.end();
     } catch (error) {
