@@ -21,14 +21,15 @@
     "statusLine": false,
     "toolRenaming": true,
     "compactTools": true,
-    "codeModeDetails": false
+    "codeModeDetails": true,
+    "backgroundShellWidget": true,
+    "backgroundShellToggleShortcut": "alt+w",
+    "backgroundShellPrevShortcut": "alt+q",
+    "backgroundShellNextShortcut": "alt+e",
+    "backgroundShellCloseShortcut": "alt+r"
   },
   "compaction": {
-    "responsesCompaction": true
-  },
-  "beta": {
-    "codeMode": true,
-    "responsesLite": false,
+    "responsesCompaction": true,
     "v2UserMessageRetention": 64
   },
   "openai": {
@@ -38,6 +39,24 @@
     "cacheKeepalive": true,
     "cacheDiagnostics": "off",
     "harnessIdentifierHeader": false,
-    "webSearchModel": "gpt-5.6-luna"
+    "webSearchModel": "gpt-5.6-luna",
+    "proxyResponsesLite": false
+  },
+  "executionMode": "code",
+  "notebook": {
+    "maxHeapMiB": 4096
+  },
+  "voice": {
+    "v3Voice": "cove",
+    "autoResumeRealtime": false,
+    "audioSetupCompleted": false,
+    "delegationAcknowledgements": true,
+    "forwardReasoningSummaries": true,
+    "dictationShortcut": "ctrl+alt+d",
+    "realtimeShortcut": "ctrl+alt+space",
+    "muteShortcut": "ctrl+alt+m",
+    "serverShortcut": "ctrl+alt+g",
+    "dictationShortcutMode": "push",
+    "contextReasoning": "high"
   }
 }
