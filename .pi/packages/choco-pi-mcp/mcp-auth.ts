@@ -27,7 +27,7 @@ import {
   parseMcpValue,
   type McpObject,
   type McpValue,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 const require = createRequire(import.meta.url);
 const AUTH_SECRET_SERVICE = "pi-mcp-adapter.oauth";

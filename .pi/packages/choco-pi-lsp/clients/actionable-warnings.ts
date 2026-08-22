@@ -3,17 +3,17 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { CacheManager, ModifiedRange } from "./cache-manager.js";
-import type { Diagnostic } from "./dispatch/types.js";
-import type { LSPCodeAction, LSPDiagnostic } from "./lsp/client.js";
-import { applyWorkspaceEdit } from "./lsp/edits.js";
-import { getLSPService } from "./lsp/index.js";
-import { normalizeMapKey } from "./path-utils.js";
-import { recordLspMutationBatch, type LspMutationContext } from "./lsp-mutation.js";
-import { toRunnerDisplayPath } from "./dispatch/runner-context.js";
-import { logActionableWarningsEvent } from "./actionable-warnings-logger.js";
-import { getProjectDataDir } from "./file-utils.js";
-import { commitDurableStore } from "./durable-store.js";
+import type { CacheManager, ModifiedRange } from "./cache-manager.ts";
+import type { Diagnostic } from "./dispatch/types.ts";
+import type { LSPCodeAction, LSPDiagnostic } from "./lsp/client.ts";
+import { applyWorkspaceEdit } from "./lsp/edits.ts";
+import { getLSPService } from "./lsp/index.ts";
+import { normalizeMapKey } from "./path-utils.ts";
+import { recordLspMutationBatch, type LspMutationContext } from "./lsp-mutation.ts";
+import { toRunnerDisplayPath } from "./dispatch/runner-context.ts";
+import { logActionableWarningsEvent } from "./actionable-warnings-logger.ts";
+import { getProjectDataDir } from "./file-utils.ts";
+import { commitDurableStore } from "./durable-store.ts";
 
 export interface ActionableWarningAction {
   title: string;

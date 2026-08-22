@@ -13,14 +13,14 @@
 
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import { createSubsystemLogger } from "./extension-log.js";
+import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { minimatch } from "./deps/minimatch.js";
-import { detectFileRole } from "./file-role.js";
-import { findGlobalBinary } from "./package-manager.js";
-import { isMeasuredDuration, toMeasuredDurationMs } from "./run-duration.js";
-import { safeSpawn, safeSpawnAsync } from "./safe-spawn.js";
+import { minimatch } from "./deps/minimatch.ts";
+import { detectFileRole } from "./file-role.ts";
+import { findGlobalBinary } from "./package-manager.ts";
+import { isMeasuredDuration, toMeasuredDurationMs } from "./run-duration.ts";
+import { safeSpawn, safeSpawnAsync } from "./safe-spawn.ts";
 
 // --- Types ---
 

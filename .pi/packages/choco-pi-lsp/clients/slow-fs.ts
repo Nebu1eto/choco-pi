@@ -27,12 +27,12 @@
  * values are read lazily at call time, not module load, and `Number(...)` is
  * gated through `Number.isFinite` before use.
  */
-import { BoundedLruCache } from "./bounded-cache.js";
+import { BoundedLruCache } from "./bounded-cache.ts";
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { toPositiveFinite } from "./env-utils.js";
-import { normalizeFilePath } from "./path-utils.js";
+import { toPositiveFinite } from "./env-utils.ts";
+import { normalizeFilePath } from "./path-utils.ts";
 
 /** Default median-stat threshold (microseconds) above which a workspace is
  * classified as slow FS. Measured anchor: 9p ≈ 1300µs/stat, native NTFS/ext4

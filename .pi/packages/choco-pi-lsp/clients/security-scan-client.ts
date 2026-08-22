@@ -14,8 +14,8 @@
  */
 
 import * as path from "node:path";
-import { createSubsystemLogger } from "./extension-log.js";
-import { safeSpawnAsync } from "./safe-spawn.js";
+import { createSubsystemLogger } from "./extension-log.ts";
+import { safeSpawnAsync } from "./safe-spawn.ts";
 import {
   type AvailabilityCause,
   type AvailabilityOutcome,
@@ -26,7 +26,7 @@ import {
   describeProbeEvidence,
   logAvailabilityDecision,
   startHostStallSampler,
-} from "./dispatch/runners/utils/availability-policy.js";
+} from "./dispatch/runners/utils/availability-policy.ts";
 
 type GetAvailabilityVerdictResultContract = {
   outcome: AvailabilityOutcome | null;
@@ -288,7 +288,7 @@ export abstract class SecurityScanClient<TResult> {
       return false;
     }
     this.log(`${this.toolName} not found, attempting auto-install`);
-    const { ensureTool, getInstallAttempt } = await import("./installer/index.js");
+    const { ensureTool, getInstallAttempt } = await import("./installer/index.ts");
     const installStartedAt = Date.now();
     const installed = await ensureTool(this.toolName);
     if (!installed) {

@@ -18,7 +18,7 @@ import {
   type SamplingMessage,
   type SamplingMessageContentBlock,
 } from "@modelcontextprotocol/client";
-import { isStringValue, mergeObjectParts, type McpObject } from "./protocol-values.js";
+import { isStringValue, mergeObjectParts, type McpObject } from "./protocol-values.ts";
 
 export type SamplingUIContext = Pick<ExtensionUIContext, "confirm">;
 export type SamplingModelRegistry = Pick<ModelRegistry, "getAvailable" | "getApiKeyAndHeaders">;

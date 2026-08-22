@@ -1,9 +1,9 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { PRIORITY } from "../priorities.js";
-import { createCwdCachedProbe } from "./utils/runner-helpers.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { PRIORITY } from "../priorities.ts";
+import { createCwdCachedProbe } from "./utils/runner-helpers.ts";
 
 const CREDO_PROBE_BUDGET_MS = 10_000;
 

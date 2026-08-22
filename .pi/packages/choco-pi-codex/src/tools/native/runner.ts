@@ -1,5 +1,5 @@
-import { isStringValue } from "../boundary.js";
-import type { BoundaryValue } from "../boundary.js";
+import { isStringValue } from "../boundary.ts";
+import type { BoundaryValue } from "../boundary.ts";
 import { spawn } from "node:child_process";
 import { formatNativeBinaryError, nativeBinaryRecoveryMessage } from "../../native-binary-error.ts";
 

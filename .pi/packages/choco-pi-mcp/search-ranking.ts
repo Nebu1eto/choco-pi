@@ -7,7 +7,7 @@ import {
   matchesToolPattern,
   resolveToolPrefix,
 } from "./types.ts";
-import { isObjectValue, isStringValue } from "./protocol-values.js";
+import { isObjectValue, isStringValue } from "./protocol-values.ts";
 
 /**
  * Shortest field token allowed to stem-match a longer query token.

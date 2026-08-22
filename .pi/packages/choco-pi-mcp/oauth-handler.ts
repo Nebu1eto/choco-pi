@@ -1,7 +1,7 @@
 // oauth-handler.ts - OAuth token compatibility helpers for MCP servers
 import type { OAuthTokens } from "@modelcontextprotocol/client";
 import { getAuthEntry } from "./mcp-auth.ts";
-import { mergeObjectParts } from "./protocol-values.js";
+import { mergeObjectParts } from "./protocol-values.ts";
 
 /**
  * Get stored OAuth tokens for a server (if any).

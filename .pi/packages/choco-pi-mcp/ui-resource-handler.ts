@@ -23,7 +23,7 @@ import {
   mergeObjectParts,
   parseMcpObject,
   type McpObject,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 interface ResourceContentRecord {
   uri?: string;

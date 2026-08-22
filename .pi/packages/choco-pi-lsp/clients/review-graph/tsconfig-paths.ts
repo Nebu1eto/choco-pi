@@ -1,10 +1,10 @@
-import type { RuntimeValue } from "../../tools/runtime-values.js";
-import { isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.js";
+import type { RuntimeValue } from "../../tools/runtime-values.ts";
+import { isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { BoundedLruCache } from "../bounded-cache.js";
+import { BoundedLruCache } from "../bounded-cache.ts";
 import * as path from "node:path";
-import { findGoverningTsconfigDir, getDirectoryMarkers } from "../workspace-topology.js";
+import { findGoverningTsconfigDir, getDirectoryMarkers } from "../workspace-topology.ts";
 
 export interface TsconfigPathMatcher {
   pattern: string;

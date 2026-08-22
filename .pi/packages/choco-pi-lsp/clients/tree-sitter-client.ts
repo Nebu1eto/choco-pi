@@ -27,10 +27,10 @@ import {
   incrementDegradationCount,
   recordDegradation,
   recordDegradationOnce,
-} from "./degradation-ledger.js";
-import { loadWebTreeSitter } from "./deps/web-tree-sitter.js";
-import { transientRetryDelayMs } from "./dispatch/runners/utils/availability-policy.js";
-import { getProjectIgnoreMatcher, isExcludedDirName } from "./file-utils.js";
+} from "./degradation-ledger.ts";
+import { loadWebTreeSitter } from "./deps/web-tree-sitter.ts";
+import { transientRetryDelayMs } from "./dispatch/runners/utils/availability-policy.ts";
+import { getProjectIgnoreMatcher, isExcludedDirName } from "./file-utils.ts";
 import {
   downloadGrammarDetailed,
   fileHasWasmMagic,
@@ -39,11 +39,11 @@ import {
   LANGUAGE_TO_GRAMMAR,
   vendoredGrammarRefusal,
   vendoredGrammarsDir,
-} from "./grammar-source.js";
-import { resolvePackagePath } from "./package-root.js";
-import { assertInstallAllowed, getProjectTrustGeneration } from "./project-trust.js";
-import { logTreeSitterDiagnostic } from "./tree-sitter-logger.js";
-import { notifyUserDegradation } from "./user-notify.js";
+} from "./grammar-source.ts";
+import { resolvePackagePath } from "./package-root.ts";
+import { assertInstallAllowed, getProjectTrustGeneration } from "./project-trust.ts";
+import { logTreeSitterDiagnostic } from "./tree-sitter-logger.ts";
+import { notifyUserDegradation } from "./user-notify.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
@@ -79,9 +79,9 @@ import {
   TreeCache,
   type TreeCacheCounters,
   type TreeCacheStats,
-} from "./tree-sitter-cache.js";
-import { TreeSitterNavigator } from "./tree-sitter-navigator.js";
-import { type TreeSitterQuery, TreeSitterQueryLoader } from "./tree-sitter-query-loader.js";
+} from "./tree-sitter-cache.ts";
+import { TreeSitterNavigator } from "./tree-sitter-navigator.ts";
+import { type TreeSitterQuery, TreeSitterQueryLoader } from "./tree-sitter-query-loader.ts";
 
 // Hard cap on a single structural-search file walk. Bounds a misrooted scan so
 // it can't enumerate an unbounded tree synchronously before result collection

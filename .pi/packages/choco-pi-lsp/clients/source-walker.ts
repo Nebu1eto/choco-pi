@@ -30,10 +30,10 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ProjectIgnoreMatcher } from "./file-utils.js";
-import { isExcludedDirName } from "./file-utils.js";
-import { isGeneratedArtifactDirectoryName } from "./generated-artifacts.js";
-import { createDeadline, yieldIfOverBudget } from "./cooperative-budget.js";
+import type { ProjectIgnoreMatcher } from "./file-utils.ts";
+import { isExcludedDirName } from "./file-utils.ts";
+import { isGeneratedArtifactDirectoryName } from "./generated-artifacts.ts";
+import { createDeadline, yieldIfOverBudget } from "./cooperative-budget.ts";
 
 /**
  * Read a directory's entries, returning `[]` for a permission-denied or

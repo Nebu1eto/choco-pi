@@ -1,5 +1,5 @@
-import type { FactRule } from "./fact-provider-types.js";
-import type { Diagnostic, DispatchContext } from "./types.js";
+import type { FactRule } from "./fact-provider-types.ts";
+import type { Diagnostic, DispatchContext } from "./types.ts";
 
 const rules: FactRule[] = [];
 

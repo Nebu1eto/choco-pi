@@ -1,10 +1,10 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isBooleanValue, isObjectValue, isStringValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isBooleanValue, isObjectValue, isStringValue } from "../boundary.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { parse } from "smol-toml";
-import type { CustomToolDefinition, CustomToolInputMode } from "./types.js";
+import type { CustomToolDefinition, CustomToolInputMode } from "./types.ts";
 
 export interface CustomToolDiscoveryError {
   path: string;

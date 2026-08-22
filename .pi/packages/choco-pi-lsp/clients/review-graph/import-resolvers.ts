@@ -1,5 +1,5 @@
-import type { ProtocolDictionary } from "../../tools/runtime-values.js";
-import { isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.js";
+import type { ProtocolDictionary } from "../../tools/runtime-values.ts";
+import { isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.ts";
 /**
  * Internal-import resolution-to-file for tree-sitter languages (#249 follow-up).
  *
@@ -26,9 +26,9 @@ import { isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.js"
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { normalizeMapKey } from "../path-utils.js";
-import { aliasedImportTargets, referencedProjectImportTarget } from "./tsconfig-paths.js";
-import { buildModuleGraph, type WorkspaceModule } from "./workspace-modules.js";
+import { normalizeMapKey } from "../path-utils.ts";
+import { aliasedImportTargets, referencedProjectImportTarget } from "./tsconfig-paths.ts";
+import { buildModuleGraph, type WorkspaceModule } from "./workspace-modules.ts";
 
 /** True when `p` is inside (or equal to) `cwd` — blocks resolution escaping the workspace. */
 function isWithin(cwd: string, p: string): boolean {
@@ -89,7 +89,7 @@ function resolveDart(cwd: string, filePath: string, source: string): string[] {
 
 // --- JS/TS -------------------------------------------------------------------
 
-// TS-as-ESM sources commonly write `import { x } from "./service.js"` while
+// TS-as-ESM sources commonly write `import { x } from "./service.ts"` while
 // the real file on disk is `service.ts` (Node's ESM resolver requires the
 // RUNTIME extension in the specifier, which is `.js` even for a `.ts` source —
 // this repo's own `clients/**/*.ts` does this throughout). Stripping a known

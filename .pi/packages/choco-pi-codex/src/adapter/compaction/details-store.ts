@@ -3,7 +3,7 @@ import {
   isNativeCompactionEntry,
   type NativeCompactionEntry,
   type NativeCompactionIdentity,
-} from "../compaction/types.js";
+} from "../compaction/types.ts";
 
 export type NativeCompactionEntryMatch = Partial<NativeCompactionIdentity>;
 

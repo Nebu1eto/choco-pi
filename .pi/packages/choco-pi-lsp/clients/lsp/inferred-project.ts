@@ -23,14 +23,14 @@
  */
 
 import * as path from "node:path";
-import type { LSPDiagnostic } from "./client.js";
+import type { LSPDiagnostic } from "./client.ts";
 import {
   fetchTsserverProjectIdentity,
   type TsserverProjectIdentity,
   type TsserverSyncCapableService,
-} from "./tsserver-sync.js";
-import { toProjectRelativePath } from "../path-utils.js";
-import { logLatency } from "../latency-logger.js";
+} from "./tsserver-sync.ts";
+import { toProjectRelativePath } from "../path-utils.ts";
+import { logLatency } from "../latency-logger.ts";
 
 /**
  * The stable, greppable half of the label. Tests and renderers match on this;

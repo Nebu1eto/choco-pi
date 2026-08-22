@@ -1,43 +1,43 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createDispatchContext } from "../dispatch/dispatcher.js";
-import { evaluateRules } from "../dispatch/fact-rule-runner.js";
-import { runProviders } from "../dispatch/fact-runner.js";
-import { FactStore } from "../dispatch/fact-store.js";
+import { createDispatchContext } from "../dispatch/dispatcher.ts";
+import { evaluateRules } from "../dispatch/fact-rule-runner.ts";
+import { runProviders } from "../dispatch/fact-runner.ts";
+import { FactStore } from "../dispatch/fact-store.ts";
 import {
   canHandle as astGrepCanHandle,
   getLang as astGrepGetLang,
   evaluateAstGrepRules,
   loadSg,
-} from "../dispatch/runners/ast-grep-napi.js";
-import type { Diagnostic } from "../dispatch/types.js";
-import { isTestFile } from "../file-utils.js";
-import { isAtOrAboveHomeDir } from "../path-utils.js";
-import { getProjectDiagnosticsScannerMaxFiles } from "../project-scale.js";
-import { captureReviewGraphStructuralIr } from "../review-graph/builder.js";
+} from "../dispatch/runners/ast-grep-napi.ts";
+import type { Diagnostic } from "../dispatch/types.ts";
+import { isTestFile } from "../file-utils.ts";
+import { isAtOrAboveHomeDir } from "../path-utils.ts";
+import { getProjectDiagnosticsScannerMaxFiles } from "../project-scale.ts";
+import { captureReviewGraphStructuralIr } from "../review-graph/builder.ts";
 import {
   publishReviewGraphFileIr,
   reviewGraphIrContentHash,
-} from "../review-graph/shared-extraction-ir.js";
+} from "../review-graph/shared-extraction-ir.ts";
 import {
   collectSourceFilesWithBudgetAsync,
   type SourceCollectionResult,
-} from "../source-filter.js";
-import { logTreeSitter, logTreeSitterCacheStats } from "../tree-sitter-logger.js";
-import { queriesForLanguage, queryLoader } from "../tree-sitter-query-loader.js";
+} from "../source-filter.ts";
+import { logTreeSitter, logTreeSitterCacheStats } from "../tree-sitter-logger.ts";
+import { queriesForLanguage, queryLoader } from "../tree-sitter-query-loader.ts";
 import {
   EXT_TO_LANG,
   getSharedTreeSitterClient,
   isTreeSitterWasmAborted,
-} from "../tree-sitter-shared.js";
-import { PROJECT_DIAGNOSTICS_CACHE_VERSION, saveProjectDiagnosticsSnapshot } from "./cache.js";
+} from "../tree-sitter-shared.ts";
+import { PROJECT_DIAGNOSTICS_CACHE_VERSION, saveProjectDiagnosticsSnapshot } from "./cache.ts";
 import type {
   ProjectDiagnostic,
   ProjectDiagnosticsScanOptions,
   ProjectDiagnosticsSnapshot,
-} from "./types.js";
+} from "./types.ts";
 // Side-effect import: registers fact providers and fact rules.
-import "../dispatch/integration.js";
+import "../dispatch/integration.ts";
 
 // Skip files this large: matches the per-edit ast-grep runner's guard so a single
 // generated megafile can't dominate a project scan.

@@ -1,5 +1,5 @@
-import type { FactStore, ReadonlyFactStore } from "./fact-store.js";
-import type { DispatchContext } from "./types.js";
+import type { FactStore, ReadonlyFactStore } from "./fact-store.ts";
+import type { DispatchContext } from "./types.ts";
 
 export interface FactProvider {
   /** e.g. "fact.file.content" */
@@ -18,5 +18,5 @@ export interface FactRule {
   /** Keys required from the store — rule is skipped if any are absent */
   requires: string[];
   appliesTo(ctx: DispatchContext): boolean;
-  evaluate(ctx: DispatchContext, store: ReadonlyFactStore): import("./types.js").Diagnostic[];
+  evaluate(ctx: DispatchContext, store: ReadonlyFactStore): import("./types.ts").Diagnostic[];
 }

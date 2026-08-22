@@ -1,53 +1,53 @@
-import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "../../tools/runtime-values.js";
+import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "../../tools/runtime-values.ts";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Worker } from "node:worker_threads";
 import { constants as zlibConstants, gunzipSync, gzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
-import { writeFileAtomic } from "../atomic-write.js";
-import type { CallGraphEvidenceCoverage } from "../call-graph.js";
-import type { FactStore } from "../dispatch/fact-store.js";
-import { fileContentProvider } from "../dispatch/facts/file-content.js";
-import type { FunctionSummary } from "../dispatch/facts/function-facts.js";
-import type { ImportEntry, ReExportEntry } from "../dispatch/facts/import-facts.js";
-import type { DispatchContext } from "../dispatch/types.js";
-import { lazyEnvNumber } from "../env-utils.js";
-import { featureHintMetadata } from "../feature-hints.js";
-import { detectFileKind, KIND_EXTENSIONS } from "../file-kinds.js";
-import { detectFileRole } from "../file-role.js";
-import { getProjectDataDir } from "../file-utils.js";
-import { collectUntrackedIgnoredIds } from "../git-tracked-ignore.js";
-import { realIsPidAlive } from "../instance-reaper.js";
-import { logLatency } from "../latency-logger.js";
+import { writeFileAtomic } from "../atomic-write.ts";
+import type { CallGraphEvidenceCoverage } from "../call-graph.ts";
+import type { FactStore } from "../dispatch/fact-store.ts";
+import { fileContentProvider } from "../dispatch/facts/file-content.ts";
+import type { FunctionSummary } from "../dispatch/facts/function-facts.ts";
+import type { ImportEntry, ReExportEntry } from "../dispatch/facts/import-facts.ts";
+import type { DispatchContext } from "../dispatch/types.ts";
+import { lazyEnvNumber } from "../env-utils.ts";
+import { featureHintMetadata } from "../feature-hints.ts";
+import { detectFileKind, KIND_EXTENSIONS } from "../file-kinds.ts";
+import { detectFileRole } from "../file-role.ts";
+import { getProjectDataDir } from "../file-utils.ts";
+import { collectUntrackedIgnoredIds } from "../git-tracked-ignore.ts";
+import { realIsPidAlive } from "../instance-reaper.ts";
+import { logLatency } from "../latency-logger.ts";
 import {
   containerNameChain,
   getOpenDocumentSymbols,
   lspSymbolKindName,
-} from "../lsp-document-symbols.js";
-import type { LSPSymbol } from "../lsp/client.js";
+} from "../lsp-document-symbols.ts";
+import type { LSPSymbol } from "../lsp/client.ts";
 import {
   isAtOrAboveHomeDir,
   normalizeFilePath,
   normalizeMapKey,
   toProjectRelativePath,
-} from "../path-utils.js";
-import { collectProjectSourceFilesWithBudgetAsync } from "../project-scan-policy.js";
-import { getReviewGraphMaxFilesDerived } from "../project-scale.js";
+} from "../path-utils.ts";
+import { collectProjectSourceFilesWithBudgetAsync } from "../project-scan-policy.ts";
+import { getReviewGraphMaxFilesDerived } from "../project-scale.ts";
 import {
   jsTsCandidatePaths,
   resolveAliasedImport,
   resolveImportToFiles,
   resolveProjectReferenceImport,
   resolveWorkspacePackageImport,
-} from "./import-resolvers.js";
-import { RUNTIME_CONFIG } from "../runtime-config.js";
+} from "./import-resolvers.ts";
+import { RUNTIME_CONFIG } from "../runtime-config.ts";
 import {
   buildReverseDependencyIndexFromGraph,
   rankFilesByReverseDependencyCentrality,
-} from "../reverse-deps.js";
-import { buildQualifiedName, findOwnerName } from "../symbol-containment.js";
-import { logTreeSitterCacheStats } from "../tree-sitter-logger.js";
+} from "../reverse-deps.ts";
+import { buildQualifiedName, findOwnerName } from "../symbol-containment.ts";
+import { logTreeSitterCacheStats } from "../tree-sitter-logger.ts";
 import {
   flushReviewGraphLogSync,
   logReviewGraph,
@@ -55,33 +55,33 @@ import {
   type ReviewGraphBuildMode,
   type ReviewGraphBuildMetadata,
   type ReviewGraphPersistenceMetadata,
-} from "../review-graph-logger.js";
-import { getSharedTreeSitterClient } from "../tree-sitter-shared.js";
+} from "../review-graph-logger.ts";
+import { getSharedTreeSitterClient } from "../tree-sitter-shared.ts";
 import {
   type ExtractedSymbols,
   TreeSitterSymbolExtractor,
-} from "../tree-sitter-symbol-extractor.js";
-import { withTreeSitterRoot } from "../tree-sitter-shared.js";
-import { resolveGitIdentity } from "./git-identity.js";
-import { buildSymbolId } from "./symbol-id.js";
+} from "../tree-sitter-symbol-extractor.ts";
+import { withTreeSitterRoot } from "../tree-sitter-shared.ts";
+import { resolveGitIdentity } from "./git-identity.ts";
+import { buildSymbolId } from "./symbol-id.ts";
 import type {
   ReviewGraph,
   ReviewGraphEdge,
   ReviewGraphNode,
   ReviewGraphPersistCoverage,
-} from "./types.js";
-import type { SymbolKind, SymbolRef } from "../symbol-types.js";
+} from "./types.ts";
+import type { SymbolKind, SymbolRef } from "../symbol-types.ts";
 import type {
   ReviewGraphPersistWorkerRequest,
   ReviewGraphPersistWorkerResult,
-} from "./persist-worker.js";
+} from "./persist-worker.ts";
 import {
   clearReviewGraphFileIr,
   getFreshReviewGraphFileIr,
   type ReviewGraphExtractionStatus,
   type ReviewGraphStructuralIr,
   reviewGraphIrContentHash,
-} from "./shared-extraction-ir.js";
+} from "./shared-extraction-ir.ts";
 
 // v3 (#260): test files are no longer indexed. Bumping the version makes
 // loadPersistedGraph reject any v2 snapshot (which still contains test-file
@@ -2933,8 +2933,8 @@ async function ensureReviewGraphFacts(
   // web-tree-sitter lazily, so that degrade otherwise lives at client.init()).
   try {
     const [{ importFactProvider }, { functionFactProvider }] = await Promise.all([
-      import("../dispatch/facts/import-facts.js"),
-      import("../dispatch/facts/function-facts.js"),
+      import("../dispatch/facts/import-facts.ts"),
+      import("../dispatch/facts/function-facts.ts"),
     ]);
     // Both providers are async (tree-sitter parse) — await so the facts are
     // populated before the graph reads them.
@@ -4853,9 +4853,9 @@ export function buildOrUpdateGraph(
  * buildCallGraph will not turn those records into concrete edges.
  */
 export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph) {
-  const allSymbols = new Map<string, import("../symbol-types.js").Symbol[]>();
-  const allRefs = new Map<string, import("../symbol-types.js").SymbolRef[]>();
-  const nodeSymbols = new Map<string, import("../symbol-types.js").Symbol>();
+  const allSymbols = new Map<string, import("../symbol-types.ts").Symbol[]>();
+  const allRefs = new Map<string, import("../symbol-types.ts").SymbolRef[]>();
+  const nodeSymbols = new Map<string, import("../symbol-types.ts").Symbol>();
   const coverage: CallGraphEvidenceCoverage = {
     totalEvidence: 0,
     callsEvidence: 0,
@@ -4892,7 +4892,7 @@ export function extractSymbolsAndRefsFromGraph(graph: ReviewGraph) {
 
   for (const node of graph.nodes.values()) {
     if (node.kind !== "symbol" || !node.filePath || !node.symbolName) continue;
-    const sym: import("../symbol-types.js").Symbol = {
+    const sym: import("../symbol-types.ts").Symbol = {
       id: node.id,
       name: node.symbolName,
       kind: symbolKind(node),

@@ -1,4 +1,4 @@
-import { isStringValue } from "../boundary.js";
+import { isStringValue } from "../boundary.ts";
 import { resolve } from "node:path";
 import {
   CODEX_FALLBACK_SHELL,

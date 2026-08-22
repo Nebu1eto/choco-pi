@@ -3,7 +3,7 @@ import type { BoundaryValue } from "../runtime-values.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { ResponsesCompatibleRequestPayload } from "../compaction/compaction-runtime.ts";
-import type { ResponsesInputMessageItem } from "../compaction/serializer.js";
+import type { ResponsesInputMessageItem } from "../compaction/serializer.ts";
 import {
   cloneResponsesInputMessageItem,
   isPreambleRole,

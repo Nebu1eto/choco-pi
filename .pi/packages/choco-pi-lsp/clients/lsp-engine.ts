@@ -17,29 +17,29 @@
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import * as path from "node:path";
-import { minimatch } from "./deps/minimatch.js";
-import { getDiagnosticTracker } from "./diagnostic-tracker.js";
-import { type DispatchLatencyReport, getLatencyReports } from "./dispatch/integration.js";
+import { minimatch } from "./deps/minimatch.ts";
+import { getDiagnosticTracker } from "./diagnostic-tracker.ts";
+import { type DispatchLatencyReport, getLatencyReports } from "./dispatch/integration.ts";
 import {
   getResourceFootprint as getResourceFootprintSnapshot,
   type ResourceFootprint,
-} from "./instance-registry.js";
-import { initLSPConfig } from "./lsp/config.js";
-import { getLSPService } from "./lsp/index.js";
-import { acquireWarmWordIndex } from "./mcp/analyze.js";
-import { normalizeMapKey } from "./path-utils.js";
-import { scanProjectDiagnostics } from "./project-diagnostics/scanner.js";
-import type { ProjectDiagnosticsSnapshot } from "./project-diagnostics/types.js";
-import { loadProjectSnapshotWithoutWordIndex } from "./project-snapshot.js";
-import type { ReviewGraph } from "./review-graph/types.js";
-import { getTreeSitterRuntimeStatus, type TreeSitterRuntimeStatus } from "./tree-sitter-shared.js";
+} from "./instance-registry.ts";
+import { initLSPConfig } from "./lsp/config.ts";
+import { getLSPService } from "./lsp/index.ts";
+import { acquireWarmWordIndex } from "./mcp/analyze.ts";
+import { normalizeMapKey } from "./path-utils.ts";
+import { scanProjectDiagnostics } from "./project-diagnostics/scanner.ts";
+import type { ProjectDiagnosticsSnapshot } from "./project-diagnostics/types.ts";
+import { loadProjectSnapshotWithoutWordIndex } from "./project-snapshot.ts";
+import type { ReviewGraph } from "./review-graph/types.ts";
+import { getTreeSitterRuntimeStatus, type TreeSitterRuntimeStatus } from "./tree-sitter-shared.ts";
 import {
   centralityFromReverseDeps,
   getWordIndexBuildStatus,
   type RankedFile,
   searchWordIndex,
   triggerBackgroundWordIndexBuild,
-} from "./word-index.js";
+} from "./word-index.ts";
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,
@@ -56,8 +56,8 @@ function assignOptionalProperties<T extends object, U extends object, C>(
 
 // --- Facades (re-exported so adapters import only this module) ---------------
 
-export { type AnalyzeFileOptions, analyzeFile, type McpAnalyzeResult } from "./mcp/analyze.js";
-export { createMcpHost } from "./mcp/host-shim.js";
+export { type AnalyzeFileOptions, analyzeFile, type McpAnalyzeResult } from "./mcp/analyze.ts";
+export { createMcpHost } from "./mcp/host-shim.ts";
 export {
   createWarmIpcLineReader,
   createWarmIpcRequestQueue,
@@ -69,7 +69,7 @@ export {
   type WarmAnalyzeRequest,
   type WarmTurnEndRequest,
   type WarmTurnEndResponse,
-} from "./mcp/ipc.js";
+} from "./mcp/ipc.ts";
 export {
   analyzeFileFresh,
   canRebuildPiLens,
@@ -78,7 +78,7 @@ export {
   runRebuild,
   type ScanDiagnostic,
   summarizeScan,
-} from "./mcp/review.js";
+} from "./mcp/review.ts";
 export {
   acknowledgeTurnEnd,
   runSessionStart,
@@ -87,7 +87,7 @@ export {
   type SessionStartOutcome,
   type TurnEndDelivery,
   type TurnEndOutcome,
-} from "./mcp/session.js";
+} from "./mcp/session.ts";
 export {
   type ModuleReport,
   type ModuleReportOptions,
@@ -100,19 +100,19 @@ export {
   readEnclosing,
   readSymbol,
   renderCompactModuleReport,
-} from "./module-report.js";
+} from "./module-report.ts";
 export {
   type ProjectReport,
   type ProjectReportOptions,
   projectReport,
   renderCompactProjectReport,
-} from "./project-report.js";
+} from "./project-report.ts";
 export {
   createDefaultHostPorts,
   type HostLogSink,
   type HostPorts,
   type HostPortsOverrides,
-} from "./host-ports.js";
+} from "./host-ports.ts";
 
 // --- Query wrappers (own the remaining internal reach-ins) -------------------
 
@@ -269,7 +269,7 @@ export function ensureLspConfig(cwd: string): Promise<void> {
   return initLSPConfig(cwd);
 }
 
-export type { ResourceFootprint } from "./instance-registry.js";
+export type { ResourceFootprint } from "./instance-registry.ts";
 
 /**
  * #620: total CPU/RAM footprint attributable to choco-pi-lsp across every process
@@ -546,7 +546,7 @@ export async function symbolSearch(
   }
   const hits = results.map(toSymbolSearchHit);
 
-  const { getCachedReviewGraph } = await import("./review-graph/builder.js");
+  const { getCachedReviewGraph } = await import("./review-graph/builder.ts");
   const graph = getCachedReviewGraph(cwd);
   if (graph) annotateSymbolSearchHitsWithGraph(hits, centrality, graph);
 

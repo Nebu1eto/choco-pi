@@ -13,7 +13,7 @@ import {
   getGrammarToolInput,
   resolveGrammarConstrainedSampling,
   resolveJsonSchemaStrictSampling,
-} from "../constrained-sampling.js";
+} from "../constrained-sampling.ts";
 import { parseTextSignature, shortHash } from "./signatures.ts";
 import { normalizeResponsesToolHistory } from "./tool-history.ts";
 import { normalizeResponsesMessageHistory } from "./message-history.ts";

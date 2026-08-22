@@ -1,6 +1,6 @@
-import type { ProtocolDictionary } from "../../tools/runtime-values.js";
-import type { RuntimeValue } from "../../tools/runtime-values.js";
-import { isRuntimeNumber, isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.js";
+import type { ProtocolDictionary } from "../../tools/runtime-values.ts";
+import type { RuntimeValue } from "../../tools/runtime-values.ts";
+import { isRuntimeNumber, isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.ts";
 /**
  * Periodic version refresh for choco-pi-lsp's managed npm tools (#1730).
  *
@@ -41,11 +41,11 @@ import { isRuntimeNumber, isRuntimeObject, isRuntimeString } from "../../tools/r
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { recordDegradationOnce } from "../degradation-ledger.js";
-import { commitDurableStoreAsync } from "../durable-store.js";
-import { pmBinary, resolveNodePackageManager, updateArgs } from "../package-manager.js";
-import { safeSpawnAsync as hostSafeSpawnAsync, type SpawnResult } from "../safe-spawn.js";
-import { logSessionStart } from "../sessionstart-logger.js";
+import { recordDegradationOnce } from "../degradation-ledger.ts";
+import { commitDurableStoreAsync } from "../durable-store.ts";
+import { pmBinary, resolveNodePackageManager, updateArgs } from "../package-manager.ts";
+import { safeSpawnAsync as hostSafeSpawnAsync, type SpawnResult } from "../safe-spawn.ts";
+import { logSessionStart } from "../sessionstart-logger.ts";
 import {
   getManagedToolsDir,
   getRefreshableManagedNpmTools,
@@ -53,11 +53,11 @@ import {
   npmToolNeedsPostinstall,
   resolveManagedNpmBinPath,
   verifyToolBinary,
-} from "./index.js";
+} from "./index.ts";
 import {
   releaseManagedToolRefreshSlot,
   reserveManagedToolRefreshSlot,
-} from "./managed-tool-refresh-session.js";
+} from "./managed-tool-refresh-session.ts";
 
 async function safeSpawnAsync(
   ...args: Parameters<typeof hostSafeSpawnAsync>

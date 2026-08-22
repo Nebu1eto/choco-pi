@@ -1,8 +1,8 @@
 import * as path from "node:path";
-import { isTestMode } from "./env-utils.js";
-import { getGlobalPiLensDir } from "./file-utils.js";
-import { createNdjsonLogger } from "./ndjson-logger.js";
-import { getMaxLogSizeMB } from "./log-cleanup.js";
+import { isTestMode } from "./env-utils.ts";
+import { getGlobalPiLensDir } from "./file-utils.ts";
+import { createNdjsonLogger } from "./ndjson-logger.ts";
+import { getMaxLogSizeMB } from "./log-cleanup.ts";
 
 const CASCADE_LOG_DIR = getGlobalPiLensDir();
 const CASCADE_LOG_FILE = path.join(CASCADE_LOG_DIR, "cascade.log");

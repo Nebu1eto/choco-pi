@@ -9,9 +9,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { Diagnostic } from "./dispatch/types.js";
-import { getProjectDataDir } from "./file-utils.js";
-import { redactSecrets } from "./redact/secrets.js";
+import type { Diagnostic } from "./dispatch/types.ts";
+import { getProjectDataDir } from "./file-utils.ts";
+import { redactSecrets } from "./redact/secrets.ts";
 
 // --- Types ---
 

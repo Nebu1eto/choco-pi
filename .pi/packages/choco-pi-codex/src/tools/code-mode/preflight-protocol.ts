@@ -1,5 +1,5 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isFunctionValue, isObjectValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isFunctionValue, isObjectValue } from "../boundary.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export const PREFLIGHT_PROTOCOL = "@howaboua/pi-codex-conversion/code-mode-preflight/v1";

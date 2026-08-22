@@ -10,11 +10,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { logSessionStart } from "../../../sessionstart-logger.js";
-import { getGlobalPiLensDir } from "../../../file-utils.js";
-import { createGenerationSource, type GenerationHandle } from "../../../generation-guard.js";
-import { PathKeyedMap } from "../../../path-keyed-map.js";
-import { normalizeEphemeralMapKey, normalizeMapKey } from "../../../path-utils.js";
+import { logSessionStart } from "../../../sessionstart-logger.ts";
+import { getGlobalPiLensDir } from "../../../file-utils.ts";
+import { createGenerationSource, type GenerationHandle } from "../../../generation-guard.ts";
+import { PathKeyedMap } from "../../../path-keyed-map.ts";
+import { normalizeEphemeralMapKey, normalizeMapKey } from "../../../path-utils.ts";
 import {
   ensureTool,
   getInstallAttempt,
@@ -23,12 +23,12 @@ import {
   isSpawnableCommand,
   resetPathWalkMemo,
   type InstallAttempt,
-} from "../../../installer/index.js";
-import { getServersForFileWithConfig, isServerDisabled } from "../../../lsp/config.js";
-import { findGlobalBinary } from "../../../package-manager.js";
-import { safeSpawnAsync } from "../../../safe-spawn.js";
-import { getToolCommandSpec, shouldAutoInstallTool } from "../../../tool-policy.js";
-import type { DispatchContext } from "../../types.js";
+} from "../../../installer/index.ts";
+import { getServersForFileWithConfig, isServerDisabled } from "../../../lsp/config.ts";
+import { findGlobalBinary } from "../../../package-manager.ts";
+import { safeSpawnAsync } from "../../../safe-spawn.ts";
+import { getToolCommandSpec, shouldAutoInstallTool } from "../../../tool-policy.ts";
+import type { DispatchContext } from "../../types.ts";
 import {
   type AvailabilityCause,
   type AvailabilityLatch,
@@ -43,14 +43,14 @@ import {
   logAvailabilityDecision,
   startHostStallSampler,
   transientRetryDelayMs,
-} from "./availability-policy.js";
+} from "./availability-policy.ts";
 
 export type {
   AvailabilityCause,
   AvailabilityDecision,
   AvailabilityLatch,
   AvailabilityOutcome,
-} from "./availability-policy.js";
+} from "./availability-policy.ts";
 export {
   createAvailabilityLatch,
   classifyProbeFailure,
@@ -59,7 +59,7 @@ export {
   isTransientDecision,
   logAvailabilityDecision,
   startHostStallSampler,
-} from "./availability-policy.js";
+} from "./availability-policy.ts";
 
 /**
  * True when the LSP runner will cover `ctx.filePath` via the given PRIMARY server
@@ -182,7 +182,7 @@ async function runManagedVerification(
   let transient = false;
   let ok: boolean;
   try {
-    const { verifyToolBinary } = await import("../../../installer/index.js");
+    const { verifyToolBinary } = await import("../../../installer/index.ts");
     ok = await verifyToolBinary(
       candidate,
       undefined,
@@ -406,7 +406,7 @@ export async function getManagedToolEnvironment(
 ): Promise<NodeJS.ProcessEnv> {
   let env: NodeJS.ProcessEnv;
   try {
-    const { getToolEnvironment } = await import("../../../installer/index.js");
+    const { getToolEnvironment } = await import("../../../installer/index.ts");
     env = await getToolEnvironment();
   } catch {
     // Installer-isolated unit tests historically mock only ensureTool. The

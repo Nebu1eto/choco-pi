@@ -1,7 +1,7 @@
-import type { BoundaryValue } from "../boundary.js";
-import { CodeModeDelegateRuntime } from "./delegate-runtime.js";
-import { executionCellId, type HostMessage } from "./host-protocol.js";
-import type { CodeModeToolDefinition, RuntimeResponse, ToolExecutionContext } from "./types.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { CodeModeDelegateRuntime } from "./delegate-runtime.ts";
+import { executionCellId, type HostMessage } from "./host-protocol.ts";
+import type { CodeModeToolDefinition, RuntimeResponse, ToolExecutionContext } from "./types.ts";
 
 export class CodeModeHostDelegation {
   private readonly runtime: CodeModeDelegateRuntime;

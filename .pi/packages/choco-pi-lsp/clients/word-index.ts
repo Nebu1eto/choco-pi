@@ -18,13 +18,13 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createDeadline, forEachCooperatively, yieldIfOverBudget } from "./cooperative-budget.js";
-import { KIND_EXTENSIONS, type FileKind } from "./file-kinds.js";
-import { PathKeyedMap } from "./path-keyed-map.js";
-import { isAtOrAboveHomeDir, normalizeEphemeralMapKey } from "./path-utils.js";
-import { createDebounceScheduler, type DebounceScheduler } from "./persist-debounce.js";
-import { getWordIndexMaxFilesDerived } from "./project-scale.js";
-import { logWordIndex } from "./word-index-logger.js";
+import { createDeadline, forEachCooperatively, yieldIfOverBudget } from "./cooperative-budget.ts";
+import { KIND_EXTENSIONS, type FileKind } from "./file-kinds.ts";
+import { PathKeyedMap } from "./path-keyed-map.ts";
+import { isAtOrAboveHomeDir, normalizeEphemeralMapKey } from "./path-utils.ts";
+import { createDebounceScheduler, type DebounceScheduler } from "./persist-debounce.ts";
+import { getWordIndexMaxFilesDerived } from "./project-scale.ts";
+import { logWordIndex } from "./word-index-logger.ts";
 
 export interface WordHit {
   file: string;
@@ -627,7 +627,7 @@ export async function collectWordIndexDocs(
     skipped: number;
   }
 > {
-  const { collectSourceFilesAsync } = await import("./source-filter.js");
+  const { collectSourceFilesAsync } = await import("./source-filter.ts");
   // #747 hardening: pass the cap INTO the walk — without it,
   // `collectSourceFilesAsync` defaults to an unbounded traversal and the
   // `WORD_INDEX_MAX_FILES` slice below only trims the result AFTER the whole
@@ -777,7 +777,7 @@ export async function refreshWordIndexIncrementally(
       timings: { sourceWalkMs: 0, statWalkMs: 0, refreshReadsMs: 0 },
     };
   }
-  const { collectSourceFilesAsync } = await import("./source-filter.js");
+  const { collectSourceFilesAsync } = await import("./source-filter.ts");
   const maxFiles = getWordIndexMaxFilesDerived(root);
   const sourceWalkStartMs = Date.now();
   const walked = await collectSourceFilesAsync(root, {
@@ -1584,7 +1584,7 @@ export function triggerBackgroundWordIndexBuild(
     const startMs = Date.now();
     try {
       const { loadProjectSnapshot, saveProjectSnapshot, PROJECT_SNAPSHOT_VERSION } =
-        await import("./project-snapshot.js");
+        await import("./project-snapshot.ts");
       const docs = await collectWordIndexDocs(key);
       const index = await buildWordIndexAsync(docs);
       const existing = loadProjectSnapshot(key);
@@ -1681,7 +1681,7 @@ async function writeWordIndexSnapshot(
 ): Promise<void> {
   try {
     const { loadProjectSnapshot, saveProjectSnapshot, PROJECT_SNAPSHOT_VERSION } =
-      await import("./project-snapshot.js");
+      await import("./project-snapshot.ts");
     const existing = loadProjectSnapshot(cwd);
     const snapshot = existing ?? {
       version: PROJECT_SNAPSHOT_VERSION,

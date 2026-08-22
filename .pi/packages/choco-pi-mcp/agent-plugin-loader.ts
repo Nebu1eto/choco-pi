@@ -7,7 +7,7 @@ import {
   isStringValue,
   mergeObjectParts,
   type McpObject,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";

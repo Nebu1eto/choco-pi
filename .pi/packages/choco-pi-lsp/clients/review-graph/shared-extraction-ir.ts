@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import type { FunctionSummary } from "../dispatch/facts/function-facts.js";
-import type { ImportEntry, ReExportEntry } from "../dispatch/facts/import-facts.js";
-import { normalizeMapKey } from "../path-utils.js";
-import type { ExtractedSymbols } from "../tree-sitter-symbol-extractor.js";
+import type { FunctionSummary } from "../dispatch/facts/function-facts.ts";
+import type { ImportEntry, ReExportEntry } from "../dispatch/facts/import-facts.ts";
+import { normalizeMapKey } from "../path-utils.ts";
+import type { ExtractedSymbols } from "../tree-sitter-symbol-extractor.ts";
 
 export type ReviewGraphExtractionStatus = "complete" | "partial" | "unavailable";
 

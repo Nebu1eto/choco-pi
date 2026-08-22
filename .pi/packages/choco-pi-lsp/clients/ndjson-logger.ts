@@ -23,8 +23,8 @@ import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { normalizeFilePath } from "./path-utils.js";
-import { redactSecrets } from "./redact/secrets.js";
+import { normalizeFilePath } from "./path-utils.ts";
+import { redactSecrets } from "./redact/secrets.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

@@ -1,5 +1,5 @@
-import type { RuntimeValue } from "../../tools/runtime-values.js";
-import { isRuntimeNumber, isRuntimeObject } from "../../tools/runtime-values.js";
+import type { RuntimeValue } from "../../tools/runtime-values.ts";
+import { isRuntimeNumber, isRuntimeObject } from "../../tools/runtime-values.ts";
 /**
  * Warm side-channel for the push path. The MCP server is a long-lived process
  * with a warm LSP, but its stdio is owned by the MCP client — so the
@@ -21,9 +21,9 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import { writeFileAtomic } from "../atomic-write.js";
-import type { LSPCodeAction, LSPDiagnostic } from "../lsp/client.js";
-import type { McpAnalyzeResult } from "./analyze.js";
+import { writeFileAtomic } from "../atomic-write.ts";
+import type { LSPCodeAction, LSPDiagnostic } from "../lsp/client.ts";
+import type { McpAnalyzeResult } from "./analyze.ts";
 
 export const WARM_DIAGNOSTICS_SCHEMA_VERSION = 1;
 export const WARM_CODE_ACTION_LOOKUP_LIMIT = 6;

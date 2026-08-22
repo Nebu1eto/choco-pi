@@ -14,22 +14,22 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CacheManager, MCP_TURN_STATE_OWNER_ID } from "../cache-manager.js";
+import { CacheManager, MCP_TURN_STATE_OWNER_ID } from "../cache-manager.ts";
 import {
   CASCADE_GRAPH_KINDS,
   dispatchLintWithResult,
   getLatencyReports,
-} from "../dispatch/integration.js";
-import { FactStore } from "../dispatch/fact-store.js";
-import type { Diagnostic } from "../dispatch/types.js";
-import { detectFileKind } from "../file-kinds.js";
-import { getDiagnosticTracker } from "../diagnostic-tracker.js";
-import { getLSPService } from "../lsp/index.js";
-import { PathKeyedMap } from "../path-keyed-map.js";
-import { normalizeMapKey } from "../path-utils.js";
-import { loadProjectSnapshot } from "../project-snapshot.js";
-import { buildOrUpdateGraph } from "../review-graph/service.js";
-import { recordDiagnostics } from "../widget-state.js";
+} from "../dispatch/integration.ts";
+import { FactStore } from "../dispatch/fact-store.ts";
+import type { Diagnostic } from "../dispatch/types.ts";
+import { detectFileKind } from "../file-kinds.ts";
+import { getDiagnosticTracker } from "../diagnostic-tracker.ts";
+import { getLSPService } from "../lsp/index.ts";
+import { PathKeyedMap } from "../path-keyed-map.ts";
+import { normalizeMapKey } from "../path-utils.ts";
+import { loadProjectSnapshot } from "../project-snapshot.ts";
+import { buildOrUpdateGraph } from "../review-graph/service.ts";
+import { recordDiagnostics } from "../widget-state.ts";
 import {
   deserializeWordIndex,
   removeWordIndexDocument,
@@ -37,9 +37,9 @@ import {
   updateWordIndexDocument,
   WORD_INDEX_MAX_BYTES,
   type WordIndex,
-} from "../word-index.js";
-import { logWordIndex } from "../word-index-logger.js";
-import { createMcpHost } from "./host-shim.js";
+} from "../word-index.ts";
+import { logWordIndex } from "../word-index-logger.ts";
+import { createMcpHost } from "./host-shim.ts";
 
 // #536: module-scoped FactStore for the warm-analyze graph seam, mirroring the
 // per-edit cascade path's own module-level `sessionFacts` singleton

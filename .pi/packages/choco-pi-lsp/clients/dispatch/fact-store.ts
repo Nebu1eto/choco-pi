@@ -1,4 +1,4 @@
-import { normalizeMapKey } from "../path-utils.js";
+import { normalizeMapKey } from "../path-utils.ts";
 
 export interface ReadonlyFactStore {
   getFileFact<T>(filePath: string, factId: string): T | undefined;

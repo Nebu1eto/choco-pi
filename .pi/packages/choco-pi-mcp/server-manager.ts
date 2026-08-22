@@ -59,7 +59,7 @@ import {
   wrapTransportWithMcpTrace,
 } from "./mcp-trace.ts";
 import { createRequestHeadersCommandFetch } from "./request-headers-command.ts";
-import { isNumberValue, isStringValue, mergeObjectParts } from "./protocol-values.js";
+import { isNumberValue, isStringValue, mergeObjectParts } from "./protocol-values.ts";
 
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;

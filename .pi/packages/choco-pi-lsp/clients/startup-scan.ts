@@ -11,19 +11,19 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import * as os from "node:os";
 import * as path from "node:path";
-import { BoundedLruCache } from "./bounded-cache.js";
-import { normalizeMapKey } from "./path-utils.js";
-import { lazyEnvNumber } from "./env-utils.js";
-import { getProjectIgnoreMatcher, type ProjectIgnoreMatcher } from "./file-utils.js";
-import { isAtOrAboveHomeDir } from "./path-utils.js";
-import { getStartupScanMaxSourceFilesDerived } from "./project-scale.js";
+import { BoundedLruCache } from "./bounded-cache.ts";
+import { normalizeMapKey } from "./path-utils.ts";
+import { lazyEnvNumber } from "./env-utils.ts";
+import { getProjectIgnoreMatcher, type ProjectIgnoreMatcher } from "./file-utils.ts";
+import { isAtOrAboveHomeDir } from "./path-utils.ts";
+import { getStartupScanMaxSourceFilesDerived } from "./project-scale.ts";
 import {
   shouldRecurseIntoDir,
   walkTreeStackAsync,
   walkTreeStackSync,
   type WalkVisitor,
-} from "./source-walker.js";
-import { getDirectoryMarkers } from "./workspace-topology.js";
+} from "./source-walker.ts";
+import { getDirectoryMarkers } from "./workspace-topology.ts";
 
 export const PROJECT_ROOT_MARKERS = [
   ".git",

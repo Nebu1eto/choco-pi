@@ -1,5 +1,5 @@
-import type { FactRule } from "../fact-provider-types.js";
-import type { Diagnostic } from "../types.js";
+import type { FactRule } from "../fact-provider-types.ts";
+import type { Diagnostic } from "../types.ts";
 
 /**
  * no-commented-credentials — password/token/secret in comments (TS/JS/Python/Go/

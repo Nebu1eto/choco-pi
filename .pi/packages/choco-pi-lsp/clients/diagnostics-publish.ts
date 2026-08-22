@@ -59,16 +59,16 @@
  * fields may be added under `v: 1`; a breaking change to an existing field's
  * meaning must bump `v`.
  */
-import { logBusEvent } from "./bus-events-logger.js";
-import { normalizeFilePath } from "./path-utils.js";
+import { logBusEvent } from "./bus-events-logger.ts";
+import { normalizeFilePath } from "./path-utils.ts";
 import {
   createLiveBusEmitter,
   recordStaleBusFailure,
   resolveLiveBusEmitter,
   type BusEmitFn,
   type BusEmitGetter,
-} from "./live-bus-emitter.js";
-import { isBusPublishEnabled } from "./bus-publish.js";
+} from "./live-bus-emitter.ts";
+import { isBusPublishEnabled } from "./bus-publish.ts";
 
 export const BUS_DIAGNOSTICS_EVENT = "pilens:diagnostics";
 export const BUS_DIAGNOSTICS_VERSION = 1;

@@ -15,7 +15,7 @@
  * native enum signature for good. Ellipsis enum: Unicode=0 ("…"), Ascii=1
  * ("..."), Omit=2.
  */
-import { truncateToWidth } from "./deps/pi-tui.js";
+import { truncateToWidth } from "./deps/pi-tui.ts";
 
 interface ELLIPSISKINDValues extends Record<string, number> {}
 const ELLIPSIS_KIND: ELLIPSISKINDValues = { "…": 0, "...": 1, "": 2 };

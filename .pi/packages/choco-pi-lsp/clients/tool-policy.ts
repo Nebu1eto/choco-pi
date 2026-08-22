@@ -1,12 +1,12 @@
 import { type Static, Type } from "typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { TERRAGRUNT_FILENAMES } from "./file-kinds.js";
-import { logLatency } from "./latency-logger.js";
-import { resolvePackagePath } from "./package-root.js";
-import { findNearestContaining, walkUpDirs } from "./path-utils.js";
-import type { ProjectConventions } from "./project-conventions.js";
-import { loadProjectSnapshotWithoutWordIndex } from "./project-snapshot.js";
+import { TERRAGRUNT_FILENAMES } from "./file-kinds.ts";
+import { logLatency } from "./latency-logger.ts";
+import { resolvePackagePath } from "./package-root.ts";
+import { findNearestContaining, walkUpDirs } from "./path-utils.ts";
+import type { ProjectConventions } from "./project-conventions.ts";
+import { loadProjectSnapshotWithoutWordIndex } from "./project-snapshot.ts";
 
 const LspDictionaryValueSchema = Type.Unknown();
 type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;

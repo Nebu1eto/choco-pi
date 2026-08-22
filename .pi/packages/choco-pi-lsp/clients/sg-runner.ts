@@ -7,15 +7,15 @@
 
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import { createSubsystemLogger } from "./extension-log.js";
+import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getSgCommand, resolveManagedToolClient } from "./dispatch/runners/utils/runner-helpers.js";
-import { getProjectIgnoreGlobs } from "./file-utils.js";
-import { findGlobalBinary } from "./package-manager.js";
-import { safeSpawnAsync, type SpawnResult } from "./safe-spawn.js";
-import { createSingleFlight } from "./single-flight.js";
+import { getSgCommand, resolveManagedToolClient } from "./dispatch/runners/utils/runner-helpers.ts";
+import { getProjectIgnoreGlobs } from "./file-utils.ts";
+import { findGlobalBinary } from "./package-manager.ts";
+import { safeSpawnAsync, type SpawnResult } from "./safe-spawn.ts";
+import { createSingleFlight } from "./single-flight.ts";
 import {
   type AvailabilityCause,
   type ProbeEvidence,
@@ -24,7 +24,7 @@ import {
   createAvailabilityLatch,
   logAvailabilityDecision,
   startHostStallSampler,
-} from "./dispatch/runners/utils/availability-policy.js";
+} from "./dispatch/runners/utils/availability-policy.ts";
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,
@@ -398,7 +398,7 @@ export class SgRunner {
     // fact separating "never installable here" from "the download failed", and
     // from "no install was attempted at all" (auto-install off, trust denied,
     // or an attempt already suppressed this session).
-    const { getInstallAttempt } = await import("./installer/index.js");
+    const { getInstallAttempt } = await import("./installer/index.ts");
     return this.noteUnavailable(
       startedAt,
       "missing",

@@ -1,4 +1,4 @@
-import { isObjectValue } from "./protocol-values.js";
+import { isObjectValue } from "./protocol-values.ts";
 const PROBE_TIMEOUT_MS = 5_000;
 const MODERN_PROTOCOL_VERSION = "2026-07-28";
 const LEGACY_PROTOCOL_VERSION = "2025-06-18";

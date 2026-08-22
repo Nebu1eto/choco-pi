@@ -8,14 +8,14 @@ import {
   KIND_EXTENSIONS,
   TERRAGRUNT_FILENAMES,
   type FileKind,
-} from "./file-kinds.js";
-import { getProjectIgnoreMatcher } from "./file-utils.js";
-import { direntsHaveMarkerGlobMatch, normalizeMapKey } from "./path-utils.js";
-import { LANGUAGE_POLICY, type ProjectLanguageProfile } from "./language-policy.js";
-import { getSourceFiles } from "./scan-utils.js";
-import { readDirEntriesSafe, shouldRecurseIntoDir } from "./source-walker.js";
-import { findNearestDirWithAnyBasename } from "./workspace-topology.js";
-import { BoundedLruCache } from "./bounded-cache.js";
+} from "./file-kinds.ts";
+import { getProjectIgnoreMatcher } from "./file-utils.ts";
+import { direntsHaveMarkerGlobMatch, normalizeMapKey } from "./path-utils.ts";
+import { LANGUAGE_POLICY, type ProjectLanguageProfile } from "./language-policy.ts";
+import { getSourceFiles } from "./scan-utils.ts";
+import { readDirEntriesSafe, shouldRecurseIntoDir } from "./source-walker.ts";
+import { findNearestDirWithAnyBasename } from "./workspace-topology.ts";
+import { BoundedLruCache } from "./bounded-cache.ts";
 
 /** Every registered kind participates in project-language detection (#894). */
 function isRegisteredFileKind(value: string): value is FileKind {

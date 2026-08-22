@@ -1,4 +1,4 @@
-import { type RuntimeValue, isRuntimeString } from "../../tools/runtime-values.js";
+import { type RuntimeValue, isRuntimeString } from "../../tools/runtime-values.ts";
 /**
  * THE heavyweight-analyzer reader for `diagnostics_report mode=full` (#585).
  *
@@ -83,17 +83,17 @@ import { type RuntimeValue, isRuntimeString } from "../../tools/runtime-values.j
  */
 
 import * as path from "node:path";
-import type { BootstrapClients } from "../bootstrap.js";
-import type { CacheManager } from "../cache-manager.js";
-import type { RuntimeCoordinator } from "../runtime-coordinator.js";
-import { applyDispositionsMultiFile } from "../diagnostic-dispositions.js";
-import { isAtOrAboveHomeDir } from "../path-utils.js";
-import { reasonFromAvailabilityVerdict } from "./extractors.js";
-import { opengrepResultToProjectDiagnostics } from "./runner-adapters/opengrep.js";
-import type { TestRunnerFindingsCache } from "./runner-adapters/runner-findings.js";
-import { testRunnerFindingsToProjectDiagnostics } from "./runner-adapters/runner-findings.js";
-import type { ProjectDiagnostic } from "./types.js";
-import type { FailedProjectAnalyzer } from "./extractors.js";
+import type { BootstrapClients } from "../bootstrap.ts";
+import type { CacheManager } from "../cache-manager.ts";
+import type { RuntimeCoordinator } from "../runtime-coordinator.ts";
+import { applyDispositionsMultiFile } from "../diagnostic-dispositions.ts";
+import { isAtOrAboveHomeDir } from "../path-utils.ts";
+import { reasonFromAvailabilityVerdict } from "./extractors.ts";
+import { opengrepResultToProjectDiagnostics } from "./runner-adapters/opengrep.ts";
+import type { TestRunnerFindingsCache } from "./runner-adapters/runner-findings.ts";
+import { testRunnerFindingsToProjectDiagnostics } from "./runner-adapters/runner-findings.ts";
+import type { ProjectDiagnostic } from "./types.ts";
+import type { FailedProjectAnalyzer } from "./extractors.ts";
 
 export interface FreshProjectDiagnosticsResult {
   diagnostics: ProjectDiagnostic[];

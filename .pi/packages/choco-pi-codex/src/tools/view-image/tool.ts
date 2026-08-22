@@ -1,5 +1,5 @@
-import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
-import { isObjectValue, isStringValue } from "../boundary.js";
+import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
+import { isObjectValue, isStringValue } from "../boundary.ts";
 import {
   type AgentToolResult,
   type ExtensionAPI,

@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { Transport } from "@modelcontextprotocol/client";
 import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/client";
-import { isNumberValue, isStringValue, mergeObjectParts } from "./protocol-values.js";
+import { isNumberValue, isStringValue, mergeObjectParts } from "./protocol-values.ts";
 
 export const MCP_TRACE_SCHEMA_VERSION = 1;
 export const DEFAULT_MCP_TRACE_MAX_BYTES = 256 * 1024;

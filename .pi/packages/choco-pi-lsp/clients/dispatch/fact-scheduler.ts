@@ -1,4 +1,4 @@
-import type { FactProvider } from "./fact-provider-types.js";
+import type { FactProvider } from "./fact-provider-types.ts";
 
 /**
  * Orders providers topologically so each provider's `requires` are satisfied

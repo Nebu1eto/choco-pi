@@ -1,14 +1,14 @@
 import { type Static, Type } from "typebox";
-import { logExtension } from "./extension-log.js";
-import type { Diagnostic } from "./dispatch/types.js";
-import { logBusEvent } from "./bus-events-logger.js";
-import { normalizeFilePath } from "./path-utils.js";
+import { logExtension } from "./extension-log.ts";
+import type { Diagnostic } from "./dispatch/types.ts";
+import { logBusEvent } from "./bus-events-logger.ts";
+import { normalizeFilePath } from "./path-utils.ts";
 import {
   createLiveBusEmitter,
   recordStaleBusFailure,
   resolveLiveBusEmitter,
   type BusEmitGetter,
-} from "./live-bus-emitter.js";
+} from "./live-bus-emitter.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

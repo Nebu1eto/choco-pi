@@ -7,7 +7,7 @@ import {
   type ProviderHeaders,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { createGrammarToolInputProperties } from "./constrained-sampling.js";
+import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import type { ExtensionAPI, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import type { CodexConversionConfig } from "../adapter/activation/config.ts";

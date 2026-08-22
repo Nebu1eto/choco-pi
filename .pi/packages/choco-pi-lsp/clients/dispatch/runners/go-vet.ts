@@ -6,12 +6,12 @@
 
 import { relative, resolve, sep, posix } from "node:path";
 
-import { GoClient } from "../../go-client.js";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { stripAnsi } from "../../sanitize.js";
-import { parseGoVetOutput } from "./utils/diagnostic-parsers.js";
-import type { DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { PRIORITY } from "../priorities.js";
+import { GoClient } from "../../go-client.ts";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { stripAnsi } from "../../sanitize.ts";
+import { parseGoVetOutput } from "./utils/diagnostic-parsers.ts";
+import type { DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { PRIORITY } from "../priorities.ts";
 
 const goClient = new GoClient();
 

@@ -1,7 +1,7 @@
-import { isObjectValue, isStringValue } from "../boundary.js";
+import { isObjectValue, isStringValue } from "../boundary.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildCodeModeToolsPrompt, injectCodeModeToolsPrompt } from "./custom-tool-prompt.js";
-import type { SharedCodeModeRuntime } from "./shared-runtime.js";
+import { buildCodeModeToolsPrompt, injectCodeModeToolsPrompt } from "./custom-tool-prompt.ts";
+import type { SharedCodeModeRuntime } from "./shared-runtime.ts";
 
 export function registerCodeModeEvents(pi: ExtensionAPI, runtime: SharedCodeModeRuntime): void {
   pi.on("session_start", (_event, ctx) => {

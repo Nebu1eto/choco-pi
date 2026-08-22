@@ -56,10 +56,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { mkdtempSync } from "node:fs";
-import { resolveOpengrepConfig } from "./opengrep-config.js";
-import { getScratchTreeDirNames } from "./scratch-tree-policy.js";
-import { safeSpawnAsync } from "./safe-spawn.js";
-import { SecurityScanClient } from "./security-scan-client.js";
+import { resolveOpengrepConfig } from "./opengrep-config.ts";
+import { getScratchTreeDirNames } from "./scratch-tree-policy.ts";
+import { safeSpawnAsync } from "./safe-spawn.ts";
+import { SecurityScanClient } from "./security-scan-client.ts";
 
 const LspDictionaryValueSchema = Type.Unknown();
 type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;

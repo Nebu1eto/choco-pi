@@ -6,22 +6,22 @@ import {
   type ActionableWarningsReport,
   applyConservativeActionableWarningFixes,
   checkActionableWarningsReportFresh,
-} from "./actionable-warnings.js";
-import { publishFilesTouched } from "./bus-publish.js";
-import type { CacheManager } from "./cache-manager.js";
-import type { BiomeClient } from "./biome-client.js";
-import type { RuffClient } from "./ruff-client.js";
-import { publishAutofixStart, publishFormatStart } from "./format-events-publish.js";
-import type { FormatService } from "./format-service.js";
-import { logLatency } from "./latency-logger.js";
-import { isPathIgnoredByProject } from "./file-utils.js";
-import { admitBounded, emitBounded } from "./bounded-telemetry.js";
-import { newLspMutationCorrelationId, type LspMutationContext } from "./lsp-mutation.js";
-import { getGlobalActionableWarningMaxFixes, type PiLensFlagSource } from "./lsp-config.js";
-import { resyncLspFile, runAutofix, runFormatPhase } from "./pipeline.js";
-import { getAmbientAbortSignal } from "./safe-spawn.js";
-import { appendProjectChange, type ProjectChangeSource } from "./project-changes.js";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
+} from "./actionable-warnings.ts";
+import { publishFilesTouched } from "./bus-publish.ts";
+import type { CacheManager } from "./cache-manager.ts";
+import type { BiomeClient } from "./biome-client.ts";
+import type { RuffClient } from "./ruff-client.ts";
+import { publishAutofixStart, publishFormatStart } from "./format-events-publish.ts";
+import type { FormatService } from "./format-service.ts";
+import { logLatency } from "./latency-logger.ts";
+import { isPathIgnoredByProject } from "./file-utils.ts";
+import { admitBounded, emitBounded } from "./bounded-telemetry.ts";
+import { newLspMutationCorrelationId, type LspMutationContext } from "./lsp-mutation.ts";
+import { getGlobalActionableWarningMaxFixes, type PiLensFlagSource } from "./lsp-config.ts";
+import { resyncLspFile, runAutofix, runFormatPhase } from "./pipeline.ts";
+import { getAmbientAbortSignal } from "./safe-spawn.ts";
+import { appendProjectChange, type ProjectChangeSource } from "./project-changes.ts";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
 import {
   getAutofixPolicyForFile,
   hasBiomeConfig,
@@ -34,7 +34,7 @@ import {
   hasRubocopConfig,
   hasSqlfluffConfig,
   hasStylelintConfig,
-} from "./tool-policy.js";
+} from "./tool-policy.ts";
 
 /**
  * A queued file is claimed by any flush once it has sat unclaimed by its own

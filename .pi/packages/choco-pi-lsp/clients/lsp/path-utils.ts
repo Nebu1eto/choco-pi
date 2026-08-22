@@ -11,4 +11,4 @@ export {
   pathToUri,
   uriToDiskPath,
   uriToPath,
-} from "../path-utils.js";
+} from "../path-utils.ts";

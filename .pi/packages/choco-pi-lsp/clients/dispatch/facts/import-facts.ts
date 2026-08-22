@@ -1,13 +1,13 @@
-import { logLatency } from "../../latency-logger.js";
-import { isJstsFactFile } from "../../file-kinds.js";
-import type { FactProvider } from "../fact-provider-types.js";
+import { logLatency } from "../../latency-logger.ts";
+import { isJstsFactFile } from "../../file-kinds.ts";
+import type { FactProvider } from "../fact-provider-types.ts";
 import {
   childrenOfType,
   firstChildOfType,
   withFactTree,
   type TsNode,
   walk,
-} from "./tree-sitter-facts.js";
+} from "./tree-sitter-facts.ts";
 
 export interface ImportEntry {
   /** Module specifier, e.g. "node:fs", "./utils.js", "react" */

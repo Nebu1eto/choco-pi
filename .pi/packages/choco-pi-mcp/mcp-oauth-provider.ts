@@ -31,7 +31,7 @@ import {
 } from "./mcp-auth.ts";
 import { resolveCommandSecret } from "./utils.ts";
 import { getAppClientUri, getAppName } from "./agent-dir.ts";
-import { mergeObjectParts } from "./protocol-values.js";
+import { mergeObjectParts } from "./protocol-values.ts";
 
 /**
  * Client name advertised during Dynamic Client Registration.

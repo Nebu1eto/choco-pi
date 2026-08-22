@@ -1,21 +1,21 @@
-import type { ProtocolDictionary } from "./runtime-values.js";
-import type { RuntimeValue } from "./runtime-values.js";
+import type { ProtocolDictionary } from "./runtime-values.ts";
+import type { RuntimeValue } from "./runtime-values.ts";
 /**
  * ast_grep_replace tool definition
  *
  * Extracted from index.ts for maintainability.
  */
 
-import { Type } from "../clients/deps/typebox.js";
-import type { AstGrepClient } from "../clients/ast-grep-client.js";
+import { Type } from "../clients/deps/typebox.ts";
+import type { AstGrepClient } from "../clients/ast-grep-client.ts";
 import {
   astGrepRemediationHint,
   classifyAstGrepError,
   logAstGrepToolEvent,
   type AstGrepToolOutcome,
-} from "../clients/ast-grep-tool-logger.js";
-import { hasStructuralIntent, synthesizeReplaceRule } from "../clients/ast-grep-yaml-synth.js";
-import { compactRenderResult } from "./render-compact.js";
+} from "../clients/ast-grep-tool-logger.ts";
+import { hasStructuralIntent, synthesizeReplaceRule } from "../clients/ast-grep-yaml-synth.ts";
+import { compactRenderResult } from "./render-compact.ts";
 
 /**
  * Build the agent-facing error text, appending a remediation hint derived from
@@ -27,7 +27,7 @@ function errorTextWithHint(raw: string): string {
   const hint = astGrepRemediationHint(classifyAstGrepError(raw));
   return hint ? `Error: ${raw}\n\n${hint}` : `Error: ${raw}`;
 }
-import { LANGUAGES } from "./shared.js";
+import { LANGUAGES } from "./shared.ts";
 
 function lineCount(value: string): number {
   if (!value) return 0;

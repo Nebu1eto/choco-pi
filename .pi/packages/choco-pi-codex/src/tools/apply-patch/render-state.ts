@@ -1,5 +1,5 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isNumberValue, isObjectValue, isStringValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isNumberValue, isObjectValue, isStringValue } from "../boundary.ts";
 import type { ExecutePatchResult } from "../../patch/types.ts";
 import {
   formatApplyPatchCollapsedDiff,

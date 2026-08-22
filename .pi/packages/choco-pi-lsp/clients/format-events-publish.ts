@@ -75,16 +75,16 @@
  * per event type on first failure so a wired caller can log it without
  * spamming.
  */
-import { logBusEvent } from "./bus-events-logger.js";
-import { isBusPublishEnabled } from "./bus-publish.js";
-import { normalizeFilePath } from "./path-utils.js";
+import { logBusEvent } from "./bus-events-logger.ts";
+import { isBusPublishEnabled } from "./bus-publish.ts";
+import { normalizeFilePath } from "./path-utils.ts";
 import {
   createLiveBusEmitter,
   recordStaleBusFailure,
   resolveLiveBusEmitter,
   type BusEmitFn,
   type BusEmitGetter,
-} from "./live-bus-emitter.js";
+} from "./live-bus-emitter.ts";
 
 export const BUS_FORMAT_QUEUED_EVENT = "pilens:format:queued";
 export const BUS_FORMAT_QUEUED_VERSION = 1;

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { getAgentPath } from "./agent-dir.ts";
-import { isObjectValue, isStringValue, mergeObjectParts } from "./protocol-values.js";
+import { isObjectValue, isStringValue, mergeObjectParts } from "./protocol-values.ts";
 
 export interface McpOnboardingState {
   version: 1;

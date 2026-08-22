@@ -1,5 +1,5 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isObjectValue, isStringValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isObjectValue, isStringValue } from "../boundary.ts";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
 type SearchInputMessage = {

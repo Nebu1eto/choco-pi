@@ -11,7 +11,7 @@
  * indicators. These are silent metrics surfaced in the session summary.
  */
 
-import { createSubsystemLogger } from "./extension-log.js";
+import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -20,7 +20,7 @@ import {
   resolveTreeSitterLanguage,
   type TsNode,
   walk,
-} from "./tree-sitter-shared.js";
+} from "./tree-sitter-shared.ts";
 
 // --- Types ---
 

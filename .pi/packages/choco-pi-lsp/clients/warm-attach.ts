@@ -1,11 +1,11 @@
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
-import { type InstanceEntry, readInstanceRegistry } from "./instance-registry.js";
-import { realIsPidAlive, STALE_HEARTBEAT_MS } from "./instance-reaper.js";
-import { logLatency } from "./latency-logger.js";
-import { touchCoverageGap } from "./lsp/diagnostic-binding.js";
-import { loadLspService } from "./lsp-lazy.js";
+import { type InstanceEntry, readInstanceRegistry } from "./instance-registry.ts";
+import { realIsPidAlive, STALE_HEARTBEAT_MS } from "./instance-reaper.ts";
+import { logLatency } from "./latency-logger.ts";
+import { touchCoverageGap } from "./lsp/diagnostic-binding.ts";
+import { loadLspService } from "./lsp-lazy.ts";
 import {
   contentHash,
   createWarmIpcLineReader,
@@ -20,8 +20,8 @@ import {
   type WarmDiagnosticsResult,
   WARM_CODE_ACTION_LOOKUP_LIMIT,
   WARM_DIAGNOSTICS_SCHEMA_VERSION,
-} from "./mcp/ipc.js";
-import { normalizeFilePath } from "./path-utils.js";
+} from "./mcp/ipc.ts";
+import { normalizeFilePath } from "./path-utils.ts";
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,

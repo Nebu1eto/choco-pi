@@ -14,10 +14,10 @@
 
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
-import { logTreeSitterDiagnostic } from "./tree-sitter-logger.js";
+import { logTreeSitterDiagnostic } from "./tree-sitter-logger.ts";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import { normalizeFilePath } from "./path-utils.js";
+import { normalizeFilePath } from "./path-utils.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

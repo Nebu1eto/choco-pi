@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "../../tools/runtime-values.js";
+import type { RuntimeValue } from "../../tools/runtime-values.ts";
 /**
  * Workspace / monorepo module scanner
  *
@@ -12,9 +12,9 @@ import {
   getProjectIgnoreMatcher,
   isExcludedDirName,
   type ProjectIgnoreMatcher,
-} from "../file-utils.js";
-import { normalizeMapKey } from "../path-utils.js";
-import { getWorkspaceManifestMarkers } from "../workspace-topology.js";
+} from "../file-utils.ts";
+import { normalizeMapKey } from "../path-utils.ts";
+import { getWorkspaceManifestMarkers } from "../workspace-topology.ts";
 
 export interface WorkspaceModule {
   name: string;

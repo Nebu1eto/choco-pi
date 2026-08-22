@@ -20,7 +20,7 @@ import { isGlimpseAvailable, openGlimpseWindow } from "./glimpse-ui.ts";
 import type { SessionRecoveryDeps } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { throwIfAborted } from "./abort.ts";
-import { isObjectValue, mergeObjectParts, type McpObject } from "./protocol-values.js";
+import { isObjectValue, mergeObjectParts, type McpObject } from "./protocol-values.ts";
 
 let activeGlimpseWindow: { close(): void } | null = null;
 

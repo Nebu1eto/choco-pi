@@ -1,15 +1,15 @@
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import type { CacheManager } from "./cache-manager.js";
-import type { TurnEndFindingsCache } from "./git-guard.js";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
+import type { CacheManager } from "./cache-manager.ts";
+import type { TurnEndFindingsCache } from "./git-guard.ts";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
 import {
   provenanceStamp,
   validateAdvisoryProvenance,
   type AdvisoryProvenance,
-} from "./advisory-provenance.js";
-import type { TestRunnerFindingsCache } from "./project-diagnostics/runner-adapters/runner-findings.js";
-import { logLatency } from "./latency-logger.js";
+} from "./advisory-provenance.ts";
+import type { TestRunnerFindingsCache } from "./project-diagnostics/runner-adapters/runner-findings.ts";
+import { logLatency } from "./latency-logger.ts";
 
 type TurnEndMessageResultContract = { role: "user"; content: string };
 

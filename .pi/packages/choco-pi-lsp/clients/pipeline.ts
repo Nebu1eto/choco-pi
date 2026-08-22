@@ -16,22 +16,22 @@ import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
-import type { PiLensFlagSource } from "./lsp-config.js";
-import { findNearestContaining, normalizeEphemeralMapKey } from "./path-utils.js";
+import type { PiLensFlagSource } from "./lsp-config.ts";
+import { findNearestContaining, normalizeEphemeralMapKey } from "./path-utils.ts";
 import {
   recordFromDispatchDiagnostic,
   type ActionableWarningRecord,
-} from "./actionable-warnings.js";
+} from "./actionable-warnings.ts";
 import {
   recordFromCodeQualityDiagnostic,
   type CodeQualityWarningRecord,
-} from "./code-quality-warnings.js";
-import type { BiomeClient } from "./biome-client.js";
-import { recordDiagnostics } from "./widget-state.js";
-import { getDiagnosticLogger } from "./diagnostic-logger.js";
-import { getDiagnosticTracker } from "./diagnostic-tracker.js";
-import { loadDispatchIntegration } from "./dispatch/lazy.js";
-import { toRunnerDisplayPath } from "./dispatch/runner-context.js";
+} from "./code-quality-warnings.ts";
+import type { BiomeClient } from "./biome-client.ts";
+import { recordDiagnostics } from "./widget-state.ts";
+import { getDiagnosticLogger } from "./diagnostic-logger.ts";
+import { getDiagnosticTracker } from "./diagnostic-tracker.ts";
+import { loadDispatchIntegration } from "./dispatch/lazy.ts";
+import { toRunnerDisplayPath } from "./dispatch/runner-context.ts";
 import {
   type AvailabilityLatch,
   classifyProbeFailure,
@@ -44,34 +44,34 @@ import {
   resolveCommandArgsWithInstallFallback,
   resolveToolCommand,
   resolveToolCommandWithInstallFallback,
-} from "./dispatch/runners/utils/runner-helpers.js";
-import { findDetektConfig } from "./dispatch/runners/detekt.js";
-import type { Diagnostic, PiAgentAPI } from "./dispatch/types.js";
-import { detectFileKind, getFileKindLabel } from "./file-kinds.js";
+} from "./dispatch/runners/utils/runner-helpers.ts";
+import { findDetektConfig } from "./dispatch/runners/detekt.ts";
+import type { Diagnostic, PiAgentAPI } from "./dispatch/types.ts";
+import { detectFileKind, getFileKindLabel } from "./file-kinds.ts";
 import {
   detectFileChangedAfterCommand,
   getProjectIgnoreMatcher,
   isExcludedDirName,
-} from "./file-utils.js";
-import type { FormatService } from "./format-service.js";
-import { logLatency } from "./latency-logger.js";
-import { emitLensAnalysisComplete } from "./lsp-events.js";
-import { publishFilesTouched } from "./bus-publish.js";
+} from "./file-utils.ts";
+import type { FormatService } from "./format-service.ts";
+import { logLatency } from "./latency-logger.ts";
+import { emitLensAnalysisComplete } from "./lsp-events.ts";
+import { publishFilesTouched } from "./bus-publish.ts";
 import {
   publishDiagnostics,
   wasPreviouslyReportedDirty,
   type PilensDiagnosticEntry,
-} from "./diagnostics-publish.js";
-import { loadLspService } from "./lsp-lazy.js";
-import type { MetricsClient } from "./metrics-client.js";
-import { clearGraphCache } from "./review-graph/builder.js";
-import { BoundedLruCache } from "./bounded-cache.js";
-import type { RuffClient } from "./ruff-client.js";
-import { RUNTIME_CONFIG } from "./runtime-config.js";
-import type { WordIndex } from "./word-index.js";
-import { getAmbientAbortSignal, safeSpawnAsync } from "./safe-spawn.js";
-import { combineAbortSignals } from "./deadline-utils.js";
-import { recordDegradationOnce } from "./degradation-ledger.js";
+} from "./diagnostics-publish.ts";
+import { loadLspService } from "./lsp-lazy.ts";
+import type { MetricsClient } from "./metrics-client.ts";
+import { clearGraphCache } from "./review-graph/builder.ts";
+import { BoundedLruCache } from "./bounded-cache.ts";
+import type { RuffClient } from "./ruff-client.ts";
+import { RUNTIME_CONFIG } from "./runtime-config.ts";
+import type { WordIndex } from "./word-index.ts";
+import { getAmbientAbortSignal, safeSpawnAsync } from "./safe-spawn.ts";
+import { combineAbortSignals } from "./deadline-utils.ts";
+import { recordDegradationOnce } from "./degradation-ledger.ts";
 import {
   getAutofixPolicyForFile,
   getPreferredAutofixTools,
@@ -87,8 +87,8 @@ import {
   hasSqlfluffConfig,
   hasStylelintConfig,
   markdownlintConfigArgs,
-} from "./tool-policy.js";
-import type { PathSetLike } from "./runtime-coordinator.js";
+} from "./tool-policy.ts";
+import type { PathSetLike } from "./runtime-coordinator.ts";
 
 const LspDictionaryValueSchema = Type.Unknown();
 type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;
@@ -308,7 +308,7 @@ export interface PipelineResult {
    * settled (bounded) and surfaced at turn_end so mid-refactor intermediate
    * errors don't derail the agent. Never rejects (see the `.catch` below).
    */
-  cascadePromise?: Promise<import("./cascade-types.js").CascadeRun>;
+  cascadePromise?: Promise<import("./cascade-types.ts").CascadeRun>;
   /** True if secrets found — block the agent */
   isError: boolean;
   /** True if file was modified by format/autofix */
@@ -1075,7 +1075,7 @@ function toPilensDiagnosticEntry(d: Diagnostic): PilensDiagnosticEntry {
 }
 
 type DispatchResult = Awaited<
-  ReturnType<(typeof import("./dispatch/integration.js"))["dispatchLintWithResult"]>
+  ReturnType<(typeof import("./dispatch/integration.ts"))["dispatchLintWithResult"]>
 >;
 function buildAllClearOutput(
   _dispatchResult: DispatchResult,
@@ -1489,7 +1489,7 @@ export async function runPipeline(
         onWordIndexUpdated: ctx.onWordIndexUpdated,
       })
         .then((run) => ({ ...run, origin: cascadeOrigin }))
-        .catch((err): import("./cascade-types.js").CascadeRun => {
+        .catch((err): import("./cascade-types.ts").CascadeRun => {
           dbg(`cascade compute failed for ${filePath}: ${err}`);
           return {
             filePath,

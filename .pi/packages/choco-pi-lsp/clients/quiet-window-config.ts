@@ -18,7 +18,7 @@
  * working and there is still exactly one memo behind `isQuietWindowEnabled`.
  */
 
-import { toPositiveFinite } from "./env-utils.js";
+import { toPositiveFinite } from "./env-utils.ts";
 
 let _enabledCache: boolean | undefined;
 

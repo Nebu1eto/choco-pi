@@ -24,14 +24,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import {
   createAvailabilityChecker,
   lspPrimaryCoversFile,
   resolveAvailableOrInstall,
-} from "./utils/runner-helpers.js";
+} from "./utils/runner-helpers.ts";
 
 const shellcheck = createAvailabilityChecker("shellcheck", ".exe");
 

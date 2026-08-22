@@ -7,7 +7,7 @@ import type {
   JsonSchemaValidator,
   jsonSchemaValidator as JsonSchemaValidatorProvider,
 } from "@modelcontextprotocol/client";
-import { isStringValue } from "./protocol-values.js";
+import { isStringValue } from "./protocol-values.ts";
 
 // ajv-formats types target its bundled ajv; the runtime accepts both instances.
 const addFormats = (instance: Ajv): void => {

@@ -21,21 +21,21 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getProjectIgnoreMatcher } from "./file-utils.js";
+import { getProjectIgnoreMatcher } from "./file-utils.ts";
 import {
   classifyGeneratedOrArtifactDetailed,
   type GeneratedArtifactClassification,
   isDeclarationFile,
-} from "./generated-artifacts.js";
-import { isCodeKindFile, KIND_EXTENSIONS } from "./file-kinds.js";
-import { logLatency } from "./latency-logger.js";
-import { normalizeEphemeralMapKey } from "./path-utils.js";
-import { isSlowFs, SLOW_FS_REDUCED_MAX_FILES } from "./slow-fs.js";
+} from "./generated-artifacts.ts";
+import { isCodeKindFile, KIND_EXTENSIONS } from "./file-kinds.ts";
+import { logLatency } from "./latency-logger.ts";
+import { normalizeEphemeralMapKey } from "./path-utils.ts";
+import { isSlowFs, SLOW_FS_REDUCED_MAX_FILES } from "./slow-fs.ts";
 import {
   shouldRecurseIntoDir,
   walkTreeRecursiveSync,
   walkTreeStackAsync,
-} from "./source-walker.js";
+} from "./source-walker.ts";
 
 type CreateKeptFilesAccumulatorResultContract = {
   push(file: string): void;

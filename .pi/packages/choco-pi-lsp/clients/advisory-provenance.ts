@@ -3,11 +3,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
-import { logLatency } from "./latency-logger.js";
-import { normalizeMapKey, toProjectRelativePath } from "./path-utils.js";
-import { resolveRunnerPath } from "./dispatch/runner-context.js";
-import { MTIME_DRIFT_TOLERANCE_MS } from "./blocker-freshness.js";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
+import { logLatency } from "./latency-logger.ts";
+import { normalizeMapKey, toProjectRelativePath } from "./path-utils.ts";
+import { resolveRunnerPath } from "./dispatch/runner-context.ts";
+import { MTIME_DRIFT_TOLERANCE_MS } from "./blocker-freshness.ts";
 
 export type AdvisoryFileRole = "source" | "test" | "affected";
 

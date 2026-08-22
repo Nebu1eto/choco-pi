@@ -29,14 +29,14 @@
  * re-evaluated per call and a later grant must retry (#1350).
  */
 
-import { safeSpawnAsync, type SpawnResult } from "../../../safe-spawn.js";
-import { assertInstallAllowed } from "../../../project-trust.js";
-import { logExtension } from "../../../extension-log.js";
+import { safeSpawnAsync, type SpawnResult } from "../../../safe-spawn.ts";
+import { assertInstallAllowed } from "../../../project-trust.ts";
+import { logExtension } from "../../../extension-log.ts";
 import {
   classifyProbeFailure,
   installRetryDelayMs,
   type InstallAttemptFact,
-} from "./availability-policy.js";
+} from "./availability-policy.ts";
 
 export type LazyInstallTool = "rubocop" | "rust-clippy" | "rustfmt";
 

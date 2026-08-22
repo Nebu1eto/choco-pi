@@ -1,9 +1,9 @@
 /** Lazy dispatch integration seam for startup-cost control (#1394). */
-import { createLazyImport } from "../lazy-import.js";
+import { createLazyImport } from "../lazy-import.ts";
 
-type DispatchIntegration = typeof import("./integration.js");
+type DispatchIntegration = typeof import("./integration.ts");
 
-const lazyIntegration = createLazyImport<DispatchIntegration>(() => import("./integration.js"));
+const lazyIntegration = createLazyImport<DispatchIntegration>(() => import("./integration.ts"));
 
 /** Start loading the runner graph once; callers may fire-and-forget this. */
 export function warmDispatchIntegration(): Promise<DispatchIntegration> {

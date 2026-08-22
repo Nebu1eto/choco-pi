@@ -16,9 +16,9 @@ import {
   pmBinary,
   resolveNodePackageManager,
   runScriptArgs,
-} from "../package-manager.js";
-import { safeSpawnAsync as hostSafeSpawnAsync, type SpawnResult } from "../safe-spawn.js";
-import type { AnalyzeFileOptions, McpAnalyzeResult } from "./analyze.js";
+} from "../package-manager.ts";
+import { safeSpawnAsync as hostSafeSpawnAsync, type SpawnResult } from "../safe-spawn.ts";
+import type { AnalyzeFileOptions, McpAnalyzeResult } from "./analyze.ts";
 
 async function safeSpawnAsync(
   ...args: Parameters<typeof hostSafeSpawnAsync>

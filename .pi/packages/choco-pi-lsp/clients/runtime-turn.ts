@@ -6,57 +6,57 @@ import {
   buildActionableWarningsReport,
   formatActionableWarningsAdvisory,
   writeActionableWarningsReport,
-} from "./actionable-warnings.js";
-import { logActionableWarningsEvent } from "./actionable-warnings-logger.js";
+} from "./actionable-warnings.ts";
+import { logActionableWarningsEvent } from "./actionable-warnings-logger.ts";
 import {
   appendCodeQualityWarningsHistory,
   buildCodeQualityWarningsReport,
   formatCodeQualityWarningsAdvisory,
   writeCodeQualityWarningsReport,
-} from "./code-quality-warnings.js";
-import type { CacheManager } from "./cache-manager.js";
-import type { CascadeSkipReason } from "./cascade-types.js";
+} from "./code-quality-warnings.ts";
+import type { CacheManager } from "./cache-manager.ts";
+import type { CascadeSkipReason } from "./cascade-types.ts";
 import {
   clearGitGuardTestFailure,
   mergeGitGuardTestFailure,
   writeGitGuardRecord,
   type TurnEndFindingsCache,
-} from "./git-guard.js";
-import { cascadeSettleWaitMs } from "./cascade-budget.js";
-import { logCascade } from "./cascade-logger.js";
-import { normalizeMapKey } from "./path-utils.js";
-import { resolveRunnerPath, toRunnerDisplayPath } from "./dispatch/runner-context.js";
+} from "./git-guard.ts";
+import { cascadeSettleWaitMs } from "./cascade-budget.ts";
+import { logCascade } from "./cascade-logger.ts";
+import { normalizeMapKey } from "./path-utils.ts";
+import { resolveRunnerPath, toRunnerDisplayPath } from "./dispatch/runner-context.ts";
 import {
   getFullScanWallClockMs,
   isWorkspaceSweepActive,
   runWhenWorkspaceSweepIdle,
   SWEEP_IDLE_SAFETY_MARGIN_MS,
-} from "./lsp/workspace-sweep-hold.js";
-import { isTestRoleCollateral } from "./collateral-test-role.js";
-import { isSecretWarning, secretLocationKey } from "./secret-findings.js";
+} from "./lsp/workspace-sweep-hold.ts";
+import { isTestRoleCollateral } from "./collateral-test-role.ts";
+import { isSecretWarning, secretLocationKey } from "./secret-findings.ts";
 import {
   PROJECT_DIAGNOSTICS_CACHE_VERSION,
   writeProjectDiagnosticsDeltaReport,
-} from "./project-diagnostics/cache.js";
-import type { ProjectDiagnostic } from "./project-diagnostics/types.js";
-import { logLatency } from "./latency-logger.js";
-import { getLspBudgetIdleTimeoutMs, shouldShortenLspIdleTimeout } from "./lsp-budget.js";
-import { updateHeartbeat } from "./instance-registry.js";
-import { emitLensTurnFindings } from "./lsp-events.js";
-import { RUNTIME_CONFIG } from "./runtime-config.js";
-import { isSubagentSession } from "./subagent-mode.js";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
-import type { TurnStateOwner } from "./cache-manager.js";
-import { formatRunDurationMs } from "./run-duration.js";
-import type { TestResult, TestRunnerClient } from "./test-runner-client.js";
-import { MAX_ADVISORY_AFFECTED_FILES, snapshotAdvisoryProvenance } from "./advisory-provenance.js";
-import { sweepInlineBlockerFreshness } from "./blocker-freshness.js";
-import { sweepInlineBlockerPastEof } from "./blocker-past-eof.js";
+} from "./project-diagnostics/cache.ts";
+import type { ProjectDiagnostic } from "./project-diagnostics/types.ts";
+import { logLatency } from "./latency-logger.ts";
+import { getLspBudgetIdleTimeoutMs, shouldShortenLspIdleTimeout } from "./lsp-budget.ts";
+import { updateHeartbeat } from "./instance-registry.ts";
+import { emitLensTurnFindings } from "./lsp-events.ts";
+import { RUNTIME_CONFIG } from "./runtime-config.ts";
+import { isSubagentSession } from "./subagent-mode.ts";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
+import type { TurnStateOwner } from "./cache-manager.ts";
+import { formatRunDurationMs } from "./run-duration.ts";
+import type { TestResult, TestRunnerClient } from "./test-runner-client.ts";
+import { MAX_ADVISORY_AFFECTED_FILES, snapshotAdvisoryProvenance } from "./advisory-provenance.ts";
+import { sweepInlineBlockerFreshness } from "./blocker-freshness.ts";
+import { sweepInlineBlockerPastEof } from "./blocker-past-eof.ts";
 // #1631 review V2: moved to its own leaf module so a low-level store
 // (widget-state.ts) can use the marker without importing this orchestrator —
 // see clients/stale-marker.ts's doc comment.
-import { STALE_LINE_MARKER } from "./stale-marker.js";
-import type { TestRunnerFindingsCache } from "./project-diagnostics/runner-adapters/runner-findings.js";
+import { STALE_LINE_MARKER } from "./stale-marker.ts";
+import type { TestRunnerFindingsCache } from "./project-diagnostics/runner-adapters/runner-findings.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
@@ -1117,9 +1117,9 @@ export async function handleTurnEnd(deps: TurnEndDeps): Promise<void> {
       );
     } else {
       try {
-        const { impact, formatImpact, parseSymbolKey } = await import("./call-graph.js");
+        const { impact, formatImpact, parseSymbolKey } = await import("./call-graph.ts");
         const { callGraphImpactToProjectDiagnostics } =
-          await import("./project-diagnostics/runner-adapters/call-graph-impact.js");
+          await import("./project-diagnostics/runner-adapters/call-graph-impact.ts");
         const impactLines: string[] = [];
         const impactFindings: {
           calleeKey: string;

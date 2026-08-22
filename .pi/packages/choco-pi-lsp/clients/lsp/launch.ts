@@ -16,13 +16,13 @@ import {
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isTestMode } from "../env-utils.js";
-import { getGlobalPiLensDir } from "../file-utils.js";
-import { isFullyQualified } from "../path-utils.js";
-import { findGlobalBinary } from "../package-manager.js";
-import { redactSecrets } from "../redact/secrets.js";
-import { classifySpawnFailure, SpawnFailureError } from "../safe-spawn.js";
-import { getRubyVersionDirNamesAsync } from "./ruby-drive-dirs.js";
+import { isTestMode } from "../env-utils.ts";
+import { getGlobalPiLensDir } from "../file-utils.ts";
+import { isFullyQualified } from "../path-utils.ts";
+import { findGlobalBinary } from "../package-manager.ts";
+import { redactSecrets } from "../redact/secrets.ts";
+import { classifySpawnFailure, SpawnFailureError } from "../safe-spawn.ts";
+import { getRubyVersionDirNamesAsync } from "./ruby-drive-dirs.ts";
 
 export interface LSPProcess {
   process: ChildProcess;

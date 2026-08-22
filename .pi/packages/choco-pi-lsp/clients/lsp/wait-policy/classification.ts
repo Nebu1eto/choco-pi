@@ -6,10 +6,10 @@
  * runtime-session, runtime-turn, or warm-attach.
  */
 
-import { getServersForFileWithConfig } from "../config.js";
-import type { LSPService } from "../index.js";
-import { getStrategy } from "./strategies.js";
-import type { LSPCapabilitySnapshot } from "./capability-snapshot.js";
+import { getServersForFileWithConfig } from "../config.ts";
+import type { LSPService } from "../index.ts";
+import { getStrategy } from "./strategies.ts";
+import type { LSPCapabilitySnapshot } from "./capability-snapshot.ts";
 
 export type CascadeWaitTier = "pull-capable" | "tier3-silent" | "waits";
 

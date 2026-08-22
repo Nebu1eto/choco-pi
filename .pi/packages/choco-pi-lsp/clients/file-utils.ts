@@ -5,17 +5,17 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { minimatch } from "./deps/minimatch.js";
-import { collectTrackedFiles, getTrackedFilesSnapshot } from "./git-tracked-ignore.js";
-import { getGlobalIgnorePatterns, getPiLensGlobalConfigPath } from "./lsp-config.js";
-import { normalizeEphemeralMapKey, normalizeFilePath } from "./path-utils.js";
+import { minimatch } from "./deps/minimatch.ts";
+import { collectTrackedFiles, getTrackedFilesSnapshot } from "./git-tracked-ignore.ts";
+import { getGlobalIgnorePatterns, getPiLensGlobalConfigPath } from "./lsp-config.ts";
+import { normalizeEphemeralMapKey, normalizeFilePath } from "./path-utils.ts";
 import {
   findPiLensConfigInDir,
   findPiLensProjectConfig,
   loadPiLensConfigInDir,
   loadPiLensProjectConfig,
-} from "./project-lsp-config.js";
-import { safeSpawnAsync } from "./safe-spawn.js";
+} from "./project-lsp-config.ts";
+import { safeSpawnAsync } from "./safe-spawn.ts";
 
 /**
  * Return the directory where choco-pi-lsp stores project-specific data

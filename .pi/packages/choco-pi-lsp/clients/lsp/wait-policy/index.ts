@@ -6,6 +6,6 @@
  * runtime-session, runtime-turn, or warm-attach here.
  */
 
-export * from "./capability-snapshot.js";
-export * from "./classification.js";
-export * from "./strategies.js";
+export * from "./capability-snapshot.ts";
+export * from "./classification.ts";
+export * from "./strategies.ts";

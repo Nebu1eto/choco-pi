@@ -1,7 +1,7 @@
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { createAvailabilityChecker } from "./utils/runner-helpers.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { PRIORITY } from "../priorities.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { createAvailabilityChecker } from "./utils/runner-helpers.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { PRIORITY } from "../priorities.ts";
 
 const gleam = createAvailabilityChecker("gleam", ".exe");
 

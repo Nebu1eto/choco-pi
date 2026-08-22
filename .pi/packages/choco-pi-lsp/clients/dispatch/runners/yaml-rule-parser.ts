@@ -17,8 +17,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import yaml from "../../deps/js-yaml.js";
-import { BoundedLruCache } from "../../bounded-cache.js";
+import yaml from "../../deps/js-yaml.ts";
+import { BoundedLruCache } from "../../bounded-cache.ts";
 
 // --- Types ---
 

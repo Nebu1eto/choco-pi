@@ -1,7 +1,7 @@
-import type { CascadeNeighborResult, CascadeRun } from "./cascade-types.js";
-import type { LSPDiagnostic } from "./lsp/client.js";
-import { convertLspDiagnostics } from "./dispatch/utils/lsp-diagnostics.js";
-import { toRunnerDisplayPath } from "./dispatch/runner-context.js";
+import type { CascadeNeighborResult, CascadeRun } from "./cascade-types.ts";
+import type { LSPDiagnostic } from "./lsp/client.ts";
+import { convertLspDiagnostics } from "./dispatch/utils/lsp-diagnostics.ts";
+import { toRunnerDisplayPath } from "./dispatch/runner-context.ts";
 
 export function formatCascadeNeighborDiagnostics(
   cwd: string,

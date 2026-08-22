@@ -26,8 +26,8 @@ import {
   isTransientDecision,
   logAvailabilityDecision,
   startHostStallSampler,
-} from "./dispatch/runners/utils/availability-policy.js";
-import { safeSpawnAsync } from "./safe-spawn.js";
+} from "./dispatch/runners/utils/availability-policy.ts";
+import { safeSpawnAsync } from "./safe-spawn.ts";
 
 type ExecArgsResultContract = { command: string; args: string[] };
 

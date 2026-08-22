@@ -1,6 +1,6 @@
 import * as path from "node:path";
-import type { OpengrepFinding, OpengrepResult } from "../../opengrep-client.js";
-import type { ProjectDiagnostic, ProjectDiagnosticSeverity } from "../types.js";
+import type { OpengrepFinding, OpengrepResult } from "../../opengrep-client.ts";
+import type { ProjectDiagnostic, ProjectDiagnosticSeverity } from "../types.ts";
 
 /**
  * opengrep's `extra.severity` is semgrep-compatible: `ERROR` / `WARNING` /

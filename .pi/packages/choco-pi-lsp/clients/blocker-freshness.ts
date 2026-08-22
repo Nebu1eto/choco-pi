@@ -45,10 +45,10 @@
  * not a silently-closed one.
  */
 import * as fs from "node:fs";
-import { resolveImportToFiles } from "./review-graph/import-resolvers.js";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
-import { getSharedTreeSitterClient, resolveTreeSitterLanguage } from "./tree-sitter-shared.js";
-import { TreeSitterSymbolExtractor } from "./tree-sitter-symbol-extractor.js";
+import { resolveImportToFiles } from "./review-graph/import-resolvers.ts";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
+import { getSharedTreeSitterClient, resolveTreeSitterLanguage } from "./tree-sitter-shared.ts";
+import { TreeSitterSymbolExtractor } from "./tree-sitter-symbol-extractor.ts";
 
 /**
  * Per-turn result of the freshness sweep over the cached inline blockers.

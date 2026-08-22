@@ -33,9 +33,9 @@
  */
 
 import * as path from "node:path";
-import { isExcludedDirName } from "./file-utils.js";
-import { normalizeEphemeralMapKey, normalizeMapKey } from "./path-utils.js";
-import { safeSpawnAsync } from "./safe-spawn.js";
+import { isExcludedDirName } from "./file-utils.ts";
+import { normalizeEphemeralMapKey, normalizeMapKey } from "./path-utils.ts";
+import { safeSpawnAsync } from "./safe-spawn.ts";
 
 /**
  * Parses `git ls-files --others --ignored --exclude-standard` output

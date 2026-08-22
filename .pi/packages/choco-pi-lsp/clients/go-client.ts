@@ -7,12 +7,12 @@
  * Docs: https://pkg.go.dev/golang.org/x/tools/gopls
  */
 
-import { createSubsystemLogger } from "./extension-log.js";
+import { createSubsystemLogger } from "./extension-log.ts";
 import * as path from "node:path";
 import {
   type ToolchainAvailability,
   createToolchainAvailability,
-} from "./dispatch/runners/utils/toolchain-availability.js";
+} from "./dispatch/runners/utils/toolchain-availability.ts";
 
 // --- Types ---
 

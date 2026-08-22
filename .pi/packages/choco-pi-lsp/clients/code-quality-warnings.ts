@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { CacheManager, ModifiedRange } from "./cache-manager.js";
-import type { Diagnostic } from "./dispatch/types.js";
-import { toRunnerDisplayPath } from "./dispatch/runner-context.js";
-import { getProjectDataDir } from "./file-utils.js";
-import { normalizeMapKey } from "./path-utils.js";
+import type { CacheManager, ModifiedRange } from "./cache-manager.ts";
+import type { Diagnostic } from "./dispatch/types.ts";
+import { toRunnerDisplayPath } from "./dispatch/runner-context.ts";
+import { getProjectDataDir } from "./file-utils.ts";
+import { normalizeMapKey } from "./path-utils.ts";
 
 export interface CodeQualityWarningRecord {
   id: string;

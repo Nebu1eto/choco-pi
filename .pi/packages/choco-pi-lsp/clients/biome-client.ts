@@ -8,19 +8,19 @@
  * Docs: https://biomejs.dev/
  */
 
-import { createSubsystemLogger } from "./extension-log.js";
+import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { isFileKind } from "./file-kinds.js";
-import { getGlobalPiLensDir } from "./file-utils.js";
-import { findGlobalBinary } from "./package-manager.js";
-import { safeSpawnAsync } from "./safe-spawn.js";
-import { createSingleFlight } from "./single-flight.js";
-import { biomeConfigArgs } from "./tool-policy.js";
+import { isFileKind } from "./file-kinds.ts";
+import { getGlobalPiLensDir } from "./file-utils.ts";
+import { findGlobalBinary } from "./package-manager.ts";
+import { safeSpawnAsync } from "./safe-spawn.ts";
+import { createSingleFlight } from "./single-flight.ts";
+import { biomeConfigArgs } from "./tool-policy.ts";
 import {
   type ClientAvailabilityResult,
   resolveManagedToolClient,
-} from "./dispatch/runners/utils/runner-helpers.js";
+} from "./dispatch/runners/utils/runner-helpers.ts";
 import {
   type AvailabilityCause,
   type AvailabilityOutcome,
@@ -30,7 +30,7 @@ import {
   createAvailabilityLatch,
   logAvailabilityDecision,
   startHostStallSampler,
-} from "./dispatch/runners/utils/availability-policy.js";
+} from "./dispatch/runners/utils/availability-policy.ts";
 
 // --- Types ---
 
@@ -279,7 +279,7 @@ export class BiomeClient {
     // needed the fact was the one shipping without it.
     let installEvidence: ProbeEvidence | undefined;
     if (resolved.outcome === "missing") {
-      const { getInstallAttempt } = await import("./installer/index.js");
+      const { getInstallAttempt } = await import("./installer/index.ts");
       installEvidence = describeInstallAttempt(getInstallAttempt("biome"));
     }
     const evidence = { ...this.lastProbeEvidence, ...installEvidence };

@@ -42,7 +42,7 @@ import { formatAuthRequiredMessage, resolveServerUrl, truncateAtWord } from "./u
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
-import { mergeObjectParts, type McpObject } from "./protocol-values.js";
+import { mergeObjectParts, type McpObject } from "./protocol-values.ts";
 
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 type ClientReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;

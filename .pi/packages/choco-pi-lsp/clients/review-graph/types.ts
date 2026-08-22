@@ -1,4 +1,4 @@
-import type { ProtocolDictionary } from "../../tools/runtime-values.js";
+import type { ProtocolDictionary } from "../../tools/runtime-values.ts";
 export type ReviewGraphNodeKind = "file" | "symbol" | "module" | "external";
 export type ReviewGraphEdgeKind = "contains" | "defines" | "imports" | "calls" | "references";
 

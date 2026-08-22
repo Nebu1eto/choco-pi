@@ -1,7 +1,7 @@
-import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
+import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
 import { randomUUID } from "node:crypto";
-import { CodeModeHostConnection } from "./host-connection.js";
-import type { HostMessage } from "./host-protocol.js";
+import { CodeModeHostConnection } from "./host-connection.ts";
+import type { HostMessage } from "./host-protocol.ts";
 
 const DEFAULT_SHUTDOWN_GRACE_MS = 250;
 

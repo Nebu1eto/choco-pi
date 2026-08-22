@@ -2,18 +2,18 @@ import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { CacheManager } from "./cache-manager.js";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
-import { isPathIgnoredByProject } from "./file-utils.js";
-import { tokenizeShellCommand } from "./bash-file-access.js";
-import { logLatency } from "./latency-logger.js";
+import type { CacheManager } from "./cache-manager.ts";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
+import { isPathIgnoredByProject } from "./file-utils.ts";
+import { tokenizeShellCommand } from "./bash-file-access.ts";
+import { logLatency } from "./latency-logger.ts";
 import {
   advisoryFileHash,
   advisoryPathKey,
   MAX_ADVISORY_AFFECTED_FILES,
   snapshotAdvisoryProvenance,
   type AdvisoryProvenance,
-} from "./advisory-provenance.js";
+} from "./advisory-provenance.ts";
 
 /** The structured, single-source turn record used by context and git-guard. */
 const ErrorCodeSchema = Type.Object({ code: Type.Optional(Type.String()) });

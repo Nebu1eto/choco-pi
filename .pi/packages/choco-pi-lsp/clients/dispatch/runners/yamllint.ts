@@ -1,11 +1,11 @@
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { getLinterPolicyForCwd, hasYamllintConfig } from "../../tool-policy.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { getLinterPolicyForCwd, hasYamllintConfig } from "../../tool-policy.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import {
   createAvailabilityChecker,
   resolveToolCommandWithInstallFallback,
-} from "./utils/runner-helpers.js";
+} from "./utils/runner-helpers.ts";
 
 const yamllint = createAvailabilityChecker("yamllint", ".exe");
 

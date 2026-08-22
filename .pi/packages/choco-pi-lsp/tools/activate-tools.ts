@@ -1,6 +1,6 @@
-import type { ProtocolDictionary } from "./runtime-values.js";
-import type { RuntimeValue } from "./runtime-values.js";
-import { isRuntimeString } from "./runtime-values.js";
+import type { ProtocolDictionary } from "./runtime-values.ts";
+import type { RuntimeValue } from "./runtime-values.ts";
+import { isRuntimeString } from "./runtime-values.ts";
 /**
  * lsp_activate_tools — the loader tool that bootstraps pi's dynamic
  * tooling (registered-but-inactive tools activated via `pi.setActiveTools`).
@@ -21,7 +21,7 @@ import { isRuntimeString } from "./runtime-values.js";
  * instead, so calling this tool is harmless, just unnecessary.
  */
 
-import { Type } from "../clients/deps/typebox.js";
+import { Type } from "../clients/deps/typebox.ts";
 
 export interface ActivatableToolInfo {
   name: string;

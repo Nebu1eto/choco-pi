@@ -1,6 +1,6 @@
-import type { FactRule } from "../fact-provider-types.js";
-import type { Diagnostic } from "../types.js";
-import type { FunctionSummary } from "../facts/function-facts.js";
+import type { FactRule } from "../fact-provider-types.ts";
+import type { Diagnostic } from "../types.ts";
+import type { FunctionSummary } from "../facts/function-facts.ts";
 
 export const asyncUnnecessaryWrapperRule: FactRule = {
   id: "async-unnecessary-wrapper",

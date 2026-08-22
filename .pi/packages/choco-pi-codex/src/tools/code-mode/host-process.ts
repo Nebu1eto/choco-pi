@@ -1,4 +1,4 @@
-import type { BoundaryValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 
 const MAX_FRAME_BYTES = 64 * 1024 * 1024;

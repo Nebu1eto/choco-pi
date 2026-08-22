@@ -23,9 +23,9 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getGlobalPiLensDir } from "./file-utils.js";
-import { getRegisteredLogFiles } from "./ndjson-logger.js";
-import { pathsEqual } from "./path-utils.js";
+import { getGlobalPiLensDir } from "./file-utils.ts";
+import { getRegisteredLogFiles } from "./ndjson-logger.ts";
+import { pathsEqual } from "./path-utils.ts";
 
 type CleanupOldLogsResultContract = { deleted: string[]; errors: string[] };
 type RotateLogIfNeededResultContract = { rotated: boolean; newFile?: string };

@@ -12,11 +12,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { getProjectDataDir } from "./file-utils.js";
-import { writeFileAtomic } from "./atomic-write.js";
-import { parseSymbolKey as parseCanonicalSymbolKey } from "./review-graph/symbol-id.js";
-import { normalizeMapKey, toProjectRelativePath } from "./path-utils.js";
-import type { Symbol, SymbolRef, SymbolResolution } from "./symbol-types.js";
+import { getProjectDataDir } from "./file-utils.ts";
+import { writeFileAtomic } from "./atomic-write.ts";
+import { parseSymbolKey as parseCanonicalSymbolKey } from "./review-graph/symbol-id.ts";
+import { normalizeMapKey, toProjectRelativePath } from "./path-utils.ts";
+import type { Symbol, SymbolRef, SymbolResolution } from "./symbol-types.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

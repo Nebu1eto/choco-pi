@@ -1,5 +1,5 @@
-import type { ProtocolDictionary } from "./runtime-values.js";
-import { isRuntimeString } from "./runtime-values.js";
+import type { ProtocolDictionary } from "./runtime-values.ts";
+import { isRuntimeString } from "./runtime-values.ts";
 // Compact tool-result rendering (refs #345).
 //
 // The navigable/structural tools (module_report, read_symbol, read_enclosing,
@@ -21,7 +21,7 @@ import { isRuntimeString } from "./runtime-values.js";
 // (overrideExistingRenderers === false), so these renderers win and still coexist
 // with a globally-installed renderer extension.
 
-import { Text } from "../clients/deps/pi-tui.js";
+import { Text } from "../clients/deps/pi-tui.ts";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 
 /** Minimal shape of the tool result handed to renderResult — kept structural so

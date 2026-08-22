@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.ts";
 /**
  * symbol_search pi tool (#348) — the entry point of the discovery funnel:
  * symbol_search finds ranked candidate files by identifier, module_report
@@ -8,9 +8,9 @@ import type { RuntimeValue } from "./runtime-values.js";
  */
 
 import * as path from "node:path";
-import { Type } from "../clients/deps/typebox.js";
-import { symbolSearch, type SymbolSearchResult } from "../clients/lsp-engine.js";
-import { baseName, compactRenderResult } from "./render-compact.js";
+import { Type } from "../clients/deps/typebox.ts";
+import { symbolSearch, type SymbolSearchResult } from "../clients/lsp-engine.ts";
+import { baseName, compactRenderResult } from "./render-compact.ts";
 
 /**
  * Machine-actionable follow-up hint (#771) — mirrors ast-grep-search.ts's

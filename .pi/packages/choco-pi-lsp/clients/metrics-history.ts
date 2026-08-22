@@ -10,8 +10,8 @@
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getProjectDataDir } from "./file-utils.js";
-import { writeFileAtomic } from "./atomic-write.js";
+import { getProjectDataDir } from "./file-utils.ts";
+import { writeFileAtomic } from "./atomic-write.ts";
 
 type GetTrendSummaryResultContract = {
   improving: number;

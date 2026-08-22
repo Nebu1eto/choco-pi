@@ -1,5 +1,5 @@
-import type { BoundaryRecord } from "../boundary.js";
-import { isNumberValue, isStringValue } from "../boundary.js";
+import type { BoundaryRecord } from "../boundary.ts";
+import { isNumberValue, isStringValue } from "../boundary.ts";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { Type } from "typebox";

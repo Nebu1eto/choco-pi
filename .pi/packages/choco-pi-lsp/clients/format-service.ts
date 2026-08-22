@@ -11,12 +11,12 @@
  * - Explicit config wins; otherwise smart defaults apply
  */
 
-import { logExtension } from "./extension-log.js";
+import { logExtension } from "./extension-log.ts";
 import * as path from "node:path";
-import { recordFormatter } from "./widget-state.js";
-import { FileTime } from "./file-time.js";
-import type { FormatterInfo, FormatterResult } from "./formatters.js";
-import { loadFormatters } from "./formatters-lazy.js";
+import { recordFormatter } from "./widget-state.ts";
+import { FileTime } from "./file-time.ts";
+import type { FormatterInfo, FormatterResult } from "./formatters.ts";
+import { loadFormatters } from "./formatters-lazy.ts";
 
 // --- Configuration ---
 
@@ -264,4 +264,4 @@ export function clearFormatServiceAndFileState(): void {
 }
 
 // Re-export for convenience
-export { clearAllSessions } from "./file-time.js";
+export { clearAllSessions } from "./file-time.ts";

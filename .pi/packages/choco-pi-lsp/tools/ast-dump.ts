@@ -1,10 +1,10 @@
-import type { ProtocolDictionary } from "./runtime-values.js";
-import type { RuntimeValue } from "./runtime-values.js";
-import { isRuntimeString } from "./runtime-values.js";
-import { Type } from "../clients/deps/typebox.js";
-import type { AstGrepClient } from "../clients/ast-grep-client.js";
-import { compactRenderResult } from "./render-compact.js";
-import { LANGUAGES } from "./shared.js";
+import type { ProtocolDictionary } from "./runtime-values.ts";
+import type { RuntimeValue } from "./runtime-values.ts";
+import { isRuntimeString } from "./runtime-values.ts";
+import { Type } from "../clients/deps/typebox.ts";
+import type { AstGrepClient } from "../clients/ast-grep-client.ts";
+import { compactRenderResult } from "./render-compact.ts";
+import { LANGUAGES } from "./shared.ts";
 
 function createAstDumpToolWithName(astGrepClient: AstGrepClient, name: "ast_grep_dump") {
   return {

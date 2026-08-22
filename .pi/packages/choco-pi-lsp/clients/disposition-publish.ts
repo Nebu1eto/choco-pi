@@ -21,16 +21,16 @@
  * optional fields may be added under `v: 1`; a breaking change to an existing
  * field's meaning must bump `v`.
  */
-import { logBusEvent } from "./bus-events-logger.js";
-import { isBusPublishEnabled } from "./bus-publish.js";
-import { normalizeFilePath } from "./path-utils.js";
+import { logBusEvent } from "./bus-events-logger.ts";
+import { isBusPublishEnabled } from "./bus-publish.ts";
+import { normalizeFilePath } from "./path-utils.ts";
 import {
   createLiveBusEmitter,
   recordStaleBusFailure,
   resolveLiveBusEmitter,
   type BusEmitFn,
   type BusEmitGetter,
-} from "./live-bus-emitter.js";
+} from "./live-bus-emitter.ts";
 
 export const BUS_DISPOSITION_EVENT = "pilens:diagnostic:disposition";
 export const BUS_DISPOSITION_VERSION = 1;

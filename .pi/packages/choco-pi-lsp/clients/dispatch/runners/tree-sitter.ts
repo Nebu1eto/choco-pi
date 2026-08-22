@@ -8,22 +8,22 @@
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { RuleCache } from "../../cache/rule-cache.js";
-import { minimatch } from "../../deps/minimatch.js";
-import { isTestFile } from "../../file-utils.js";
+import { RuleCache } from "../../cache/rule-cache.ts";
+import { minimatch } from "../../deps/minimatch.ts";
+import { isTestFile } from "../../file-utils.ts";
 import {
   buildOrUpdateGraph,
   computeImpactCascade,
   recordEntitySnapshotDiff,
-} from "../../review-graph/service.js";
-import type { TreeSitterClient } from "../../tree-sitter-client.js";
+} from "../../review-graph/service.ts";
+import type { TreeSitterClient } from "../../tree-sitter-client.ts";
 import {
   getSharedTreeSitterClient,
   isTreeSitterWasmAborted,
   markTreeSitterWasmAborted,
   resolveTreeSitterLanguage,
-} from "../../tree-sitter-shared.js";
-import { logTreeSitter } from "../../tree-sitter-logger.js";
+} from "../../tree-sitter-shared.ts";
+import { logTreeSitter } from "../../tree-sitter-logger.ts";
 import {
   isDisabledQueryFilePath,
   queriesForLanguage,
@@ -31,17 +31,17 @@ import {
   ruleFilesForLanguage,
   ruleSourceLanguages,
   type TreeSitterQuery,
-} from "../../tree-sitter-query-loader.js";
-import type { ProtocolDictionary, ProtocolValue } from "../../../tools/runtime-values.js";
-import { classifyDefect } from "../diagnostic-taxonomy.js";
-import { PRIORITY } from "../priorities.js";
+} from "../../tree-sitter-query-loader.ts";
+import type { ProtocolDictionary, ProtocolValue } from "../../../tools/runtime-values.ts";
+import { classifyDefect } from "../diagnostic-taxonomy.ts";
+import { PRIORITY } from "../priorities.ts";
 import type {
   DefectClass,
   Diagnostic,
   DispatchContext,
   RunnerDefinition,
   RunnerResult,
-} from "../types.js";
+} from "../types.ts";
 
 const blastCooldownByFile = new Map<string, number>();
 const BLAST_COOLDOWN_MS = 5_000;

@@ -3,48 +3,48 @@ import { Check } from "typebox/value";
 import * as nodeCrypto from "node:crypto";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
-import { noteAuthoritativeContentAttachment } from "./agent-nudge.js";
+import { noteAuthoritativeContentAttachment } from "./agent-nudge.ts";
 import {
   extractReadPathsFromCommand,
   extractDeletedPathsFromCommand,
   extractGrepSearchReadsFromOutput,
   extractWrittenPathsFromCommand,
-} from "./bash-file-access.js";
-import type { BiomeClient } from "./biome-client.js";
-import { registerSearchReads, type SearchReadLocation } from "./search-read-registration.js";
-import type { CacheManager } from "./cache-manager.js";
-import { createFileTime } from "./file-time.js";
-import { publishFormatQueued } from "./format-events-publish.js";
-import { isPathIgnoredByProject } from "./file-utils.js";
-import type { ReadGuard } from "./read-guard.js";
-import { getFormatService } from "./format-service.js";
-import { isExternalOrVendorFile, normalizeEphemeralMapKey, pathsEqual } from "./path-utils.js";
-import { PathKeyedMap } from "./path-keyed-map.js";
-import { resolveLanguageRootForFile } from "./language-profile.js";
-import { logLatency } from "./latency-logger.js";
-import { resolveToolCallCorrelationId } from "./tool-event.js";
+} from "./bash-file-access.ts";
+import type { BiomeClient } from "./biome-client.ts";
+import { registerSearchReads, type SearchReadLocation } from "./search-read-registration.ts";
+import type { CacheManager } from "./cache-manager.ts";
+import { createFileTime } from "./file-time.ts";
+import { publishFormatQueued } from "./format-events-publish.ts";
+import { isPathIgnoredByProject } from "./file-utils.ts";
+import type { ReadGuard } from "./read-guard.ts";
+import { getFormatService } from "./format-service.ts";
+import { isExternalOrVendorFile, normalizeEphemeralMapKey, pathsEqual } from "./path-utils.ts";
+import { PathKeyedMap } from "./path-keyed-map.ts";
+import { resolveLanguageRootForFile } from "./language-profile.ts";
+import { logLatency } from "./latency-logger.ts";
+import { resolveToolCallCorrelationId } from "./tool-event.ts";
 import {
   boundedIndexesForCount,
   createReadGuardEditBatchSummary,
   getReadGuardCorrelationId,
   logReadGuardEvent,
-} from "./read-guard-logger.js";
-import type { PiLensFlagSource } from "./lsp-config.js";
+} from "./read-guard-logger.ts";
+import type { PiLensFlagSource } from "./lsp-config.ts";
 import type { EditToolDetails } from "@earendil-works/pi-coding-agent";
-import type { LSPShutdownOptions } from "./lsp/client.js";
-import { notifyExternalFileChange } from "./lsp/index.js";
-import type { MetricsClient } from "./metrics-client.js";
-import { runPipeline, type PipelineResult } from "./pipeline.js";
+import type { LSPShutdownOptions } from "./lsp/client.ts";
+import { notifyExternalFileChange } from "./lsp/index.ts";
+import type { MetricsClient } from "./metrics-client.ts";
+import { runPipeline, type PipelineResult } from "./pipeline.ts";
 import {
   appendProjectChange,
   type ProjectChangeRange,
   type ProjectChangeSource,
-} from "./project-changes.js";
-import type { RuffClient } from "./ruff-client.js";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
-import { syncGitGuardRecord } from "./git-guard.js";
-import { scheduleWordIndexPersist } from "./word-index.js";
-import { RUNTIME_CONFIG } from "./runtime-config.js";
+} from "./project-changes.ts";
+import type { RuffClient } from "./ruff-client.ts";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
+import { syncGitGuardRecord } from "./git-guard.ts";
+import { scheduleWordIndexPersist } from "./word-index.ts";
+import { RUNTIME_CONFIG } from "./runtime-config.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

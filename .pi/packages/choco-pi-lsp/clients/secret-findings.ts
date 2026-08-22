@@ -22,8 +22,8 @@
 
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import type { ActionableWarningRecord } from "./actionable-warnings.js";
-import { normalizeFilePath } from "./path-utils.js";
+import type { ActionableWarningRecord } from "./actionable-warnings.ts";
+import { normalizeFilePath } from "./path-utils.ts";
 
 /** The scanners that can flag a secret, in display/priority order. */
 export type SecretSource = "gitleaks" | "trivy" | "ast-grep";

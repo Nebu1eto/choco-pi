@@ -1,5 +1,5 @@
-import type { FactRule } from "../fact-provider-types.js";
-import type { Diagnostic } from "../types.js";
+import type { FactRule } from "../fact-provider-types.ts";
+import type { Diagnostic } from "../types.ts";
 
 /**
  * cors-wildcard — Access-Control-Allow-Origin: * (TS/JS/Python/Go). Regex/line-based

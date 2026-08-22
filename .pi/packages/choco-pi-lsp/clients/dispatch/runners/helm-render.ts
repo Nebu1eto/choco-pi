@@ -67,17 +67,17 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { logLatency } from "../../latency-logger.js";
-import { PathKeyedMap } from "../../path-keyed-map.js";
-import { normalizeMapKey } from "../../path-utils.js";
-import { loadPiLensProjectConfig } from "../../project-lsp-config.js";
-import { getProjectTrustState, projectTrustDenialReason } from "../../project-trust.js";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { findNearestDirWithMarker } from "../../workspace-topology.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { describeUnavailability } from "./utils/availability-policy.js";
-import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.js";
+import { logLatency } from "../../latency-logger.ts";
+import { PathKeyedMap } from "../../path-keyed-map.ts";
+import { normalizeMapKey } from "../../path-utils.ts";
+import { loadPiLensProjectConfig } from "../../project-lsp-config.ts";
+import { getProjectTrustState, projectTrustDenialReason } from "../../project-trust.ts";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { findNearestDirWithMarker } from "../../workspace-topology.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { describeUnavailability } from "./utils/availability-policy.ts";
+import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.ts";
 
 const helm = createAvailabilityChecker("helm", ".exe");
 

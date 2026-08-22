@@ -1,5 +1,5 @@
-import { isExcludedDirName, isTestFile } from "./file-utils.js";
-import { collectSourceFiles, collectSourceFilesAsync, isBuildArtifact } from "./source-filter.js";
+import { isExcludedDirName, isTestFile } from "./file-utils.ts";
+import { collectSourceFiles, collectSourceFilesAsync, isBuildArtifact } from "./source-filter.ts";
 
 /**
  * Common parsing logic for ast-grep JSON output (handles both array and NDJSON).

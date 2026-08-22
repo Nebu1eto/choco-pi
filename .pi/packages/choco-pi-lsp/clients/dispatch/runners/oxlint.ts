@@ -11,15 +11,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { walkUpDirs } from "../../path-utils.js";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { getJstsLintPolicyForCwd, hasVitePlusConfig } from "../../tool-policy.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
+import { walkUpDirs } from "../../path-utils.ts";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { getJstsLintPolicyForCwd, hasVitePlusConfig } from "../../tool-policy.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import {
   resolveToolCommand,
   resolveToolCommandWithInstallFallback,
-} from "./utils/runner-helpers.js";
+} from "./utils/runner-helpers.ts";
 
 function resolveLocalVp(cwd: string): string | null {
   const isWin = process.platform === "win32";

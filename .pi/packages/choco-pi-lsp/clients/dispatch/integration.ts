@@ -7,11 +7,11 @@
 
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { getDiagnosticLogger, type LogContext } from "../diagnostic-logger.js";
-import type { FileKind } from "../file-kinds.js";
-import { detectFileKind } from "../file-kinds.js";
-import { getLspCapableKinds, getPrimaryDispatchGroup } from "../language-policy.js";
-import { formatSlopScoreSummary, type SlopScoreSummary } from "../session-summary.js";
+import { getDiagnosticLogger, type LogContext } from "../diagnostic-logger.ts";
+import type { FileKind } from "../file-kinds.ts";
+import { detectFileKind } from "../file-kinds.ts";
+import { getLspCapableKinds, getPrimaryDispatchGroup } from "../language-policy.ts";
+import { formatSlopScoreSummary, type SlopScoreSummary } from "../session-summary.ts";
 import {
   clearCoverageNoticeState,
   clearLatencyReports,
@@ -23,16 +23,16 @@ import {
   type RunnerLatency,
   RunnerRegistry,
   type RunnerResultSink,
-} from "./dispatcher.js";
-import { FactStore } from "./fact-store.js";
-import { TOOL_PLANS } from "./plan.js";
+} from "./dispatcher.ts";
+import { FactStore } from "./fact-store.ts";
+import { TOOL_PLANS } from "./plan.ts";
 import type {
   DispatchResult,
   ModifiedRange,
   PiAgentAPI,
   RunnerGroup,
   RunnerResult,
-} from "./types.js";
+} from "./types.ts";
 
 export type { DispatchLatencyReport, RunnerLatency };
 // Re-export latency tracking types and functions
@@ -45,76 +45,76 @@ import {
   CASCADE_NEIGHBOUR_BUDGET,
   type CascadeBudgetZone,
   deriveCascadeNeighbourBudget,
-} from "../cascade-budget.js";
-import { formatCascadeNeighborDiagnostics } from "../cascade-format.js";
-import { logCascade } from "../cascade-logger.js";
-import type { CascadeResult, CascadeRun, CascadeSkipReason } from "../cascade-types.js";
-import { getDiagnosticTracker } from "../diagnostic-tracker.js";
+} from "../cascade-budget.ts";
+import { formatCascadeNeighborDiagnostics } from "../cascade-format.ts";
+import { logCascade } from "../cascade-logger.ts";
+import type { CascadeResult, CascadeRun, CascadeSkipReason } from "../cascade-types.ts";
+import { getDiagnosticTracker } from "../diagnostic-tracker.ts";
 import {
   classifyCascadeWaitTier,
   isTierAwareCascadeEnabled,
   recordOutstandingCascadeTouch,
-} from "../lsp/cascade-tier.js";
+} from "../lsp/cascade-tier.ts";
 import {
   type BoundToCurrentDisk,
   type TouchFileResult,
   bindingStateLabel,
   touchCoverageGap,
-} from "../lsp/diagnostic-binding.js";
-import { getServersForFileWithConfig } from "../lsp/config.js";
-import { getLSPService } from "../lsp/index.js";
-import { isExternalOrVendorFile, normalizeMapKey } from "../path-utils.js";
-import { getProjectIgnoreMatcher } from "../file-utils.js";
+} from "../lsp/diagnostic-binding.ts";
+import { getServersForFileWithConfig } from "../lsp/config.ts";
+import { getLSPService } from "../lsp/index.ts";
+import { isExternalOrVendorFile, normalizeMapKey } from "../path-utils.ts";
+import { getProjectIgnoreMatcher } from "../file-utils.ts";
 import {
   resetAstGrepNapiLoadState,
   resetAstGrepUnsupportedLanguageLog,
-} from "./runners/ast-grep-napi.js";
-import { resetTreeSitterClientLoadState } from "../tree-sitter-shared.js";
-import { isTestRoleCollateral } from "../collateral-test-role.js";
+} from "./runners/ast-grep-napi.ts";
+import { resetTreeSitterClientLoadState } from "../tree-sitter-shared.ts";
+import { isTestRoleCollateral } from "../collateral-test-role.ts";
 import {
   clearReviewGraphWorkspaceCache,
   getGraphBuildInfoForGraph,
   getGraphImportChanges,
   graphBuildInfoIsTrustworthy,
-} from "../review-graph/builder.js";
+} from "../review-graph/builder.ts";
 import {
   buildReverseDependencyIndexFromGraph,
   getAffectedFilesFromIndex,
   patchReverseDependencyIndex,
   writeReverseDependencyIndexToSnapshot,
   type ReverseDependencyIndex,
-} from "../reverse-deps.js";
+} from "../reverse-deps.ts";
 import {
   buildOrUpdateGraph,
   computeImpactCascade,
   computeTransitiveImpact,
   formatImpactCascade,
-} from "../review-graph/service.js";
-import { clearModuleGraphCache } from "../review-graph/workspace-modules.js";
-import { releaseWorkspaceTopologyIdleTimers } from "../workspace-topology.js";
-import { RUNTIME_CONFIG } from "../runtime-config.js";
-import { findCompiledClassesDir, hasJavaBuildDescriptor } from "../tool-policy.js";
+} from "../review-graph/service.ts";
+import { clearModuleGraphCache } from "../review-graph/workspace-modules.ts";
+import { releaseWorkspaceTopologyIdleTimers } from "../workspace-topology.ts";
+import { RUNTIME_CONFIG } from "../runtime-config.ts";
+import { findCompiledClassesDir, hasJavaBuildDescriptor } from "../tool-policy.ts";
 import {
   removeWordIndexDocument,
   updateWordIndexDocument,
   WORD_INDEX_MAX_BYTES,
   type WordIndex,
-} from "../word-index.js";
-import { reconcileCascadeNeighborLspErrors } from "../widget-state.js";
-import { findAuxiliaryProfileForSource } from "./auxiliary-lsp.js";
+} from "../word-index.ts";
+import { reconcileCascadeNeighborLspErrors } from "../widget-state.ts";
+import { findAuxiliaryProfileForSource } from "./auxiliary-lsp.ts";
 // Register fact providers. All register eagerly here (the dispatch entry) — the
 // tree-sitter-backed providers included, since the parsing stack loads
 // `web-tree-sitter` lazily inside client.init(), not at module import, so it
 // stays out of the eager graph and degrades there rather than crashing at load.
-import { registerProvider, runProviders } from "./fact-runner.js";
-import { commentFactProvider } from "./facts/comment-facts.js";
-import { fileContentProvider } from "./facts/file-content.js";
-import { functionFactProvider } from "./facts/function-facts.js";
-import { importFactProvider } from "./facts/import-facts.js";
-import { tryCatchFactProvider } from "./facts/try-catch-facts.js";
-import { resolveRunnerPath, toRunnerDisplayPath } from "./runner-context.js";
-import { registerDefaultRunners } from "./runners/index.js";
-import { convertLspDiagnostics } from "./utils/lsp-diagnostics.js";
+import { registerProvider, runProviders } from "./fact-runner.ts";
+import { commentFactProvider } from "./facts/comment-facts.ts";
+import { fileContentProvider } from "./facts/file-content.ts";
+import { functionFactProvider } from "./facts/function-facts.ts";
+import { importFactProvider } from "./facts/import-facts.ts";
+import { tryCatchFactProvider } from "./facts/try-catch-facts.ts";
+import { resolveRunnerPath, toRunnerDisplayPath } from "./runner-context.ts";
+import { registerDefaultRunners } from "./runners/index.ts";
+import { convertLspDiagnostics } from "./utils/lsp-diagnostics.ts";
 
 registerProvider(fileContentProvider);
 registerProvider(tryCatchFactProvider);
@@ -123,21 +123,21 @@ registerProvider(commentFactProvider);
 registerProvider(importFactProvider);
 
 // Register fact rules
-import { registerRule } from "./fact-rule-runner.js";
-import { asyncNoiseRule } from "./rules/async-noise.js";
-import { asyncUnnecessaryWrapperRule } from "./rules/async-unnecessary-wrapper.js";
-import { corsWildcardRule } from "./rules/cors-wildcard.js";
-import { errorObscuringRule } from "./rules/error-obscuring.js";
-import { errorSwallowingRule } from "./rules/error-swallowing.js";
-import { highComplexityRule } from "./rules/high-complexity.js";
-import { highFanOutRule } from "./rules/high-fan-out.js";
-import { highImportCouplingRule } from "./rules/high-import-coupling.js";
-import { missingErrorPropagationRule } from "./rules/missing-error-propagation.js";
-import { commentedCredentialsRule } from "./rules/no-commented-credentials.js";
-import { passThroughWrappersRule } from "./rules/pass-through-wrappers.js";
-import { placeholderCommentsRule } from "./rules/placeholder-comments.js";
-import { unsafeBoundaryRule } from "./rules/unsafe-boundary.js";
-import { loadPiLensProjectConfig, type PiLensProjectConfig } from "../project-lsp-config.js";
+import { registerRule } from "./fact-rule-runner.ts";
+import { asyncNoiseRule } from "./rules/async-noise.ts";
+import { asyncUnnecessaryWrapperRule } from "./rules/async-unnecessary-wrapper.ts";
+import { corsWildcardRule } from "./rules/cors-wildcard.ts";
+import { errorObscuringRule } from "./rules/error-obscuring.ts";
+import { errorSwallowingRule } from "./rules/error-swallowing.ts";
+import { highComplexityRule } from "./rules/high-complexity.ts";
+import { highFanOutRule } from "./rules/high-fan-out.ts";
+import { highImportCouplingRule } from "./rules/high-import-coupling.ts";
+import { missingErrorPropagationRule } from "./rules/missing-error-propagation.ts";
+import { commentedCredentialsRule } from "./rules/no-commented-credentials.ts";
+import { passThroughWrappersRule } from "./rules/pass-through-wrappers.ts";
+import { placeholderCommentsRule } from "./rules/placeholder-comments.ts";
+import { unsafeBoundaryRule } from "./rules/unsafe-boundary.ts";
+import { loadPiLensProjectConfig, type PiLensProjectConfig } from "../project-lsp-config.ts";
 
 registerRule(errorObscuringRule);
 registerRule(errorSwallowingRule);
@@ -166,7 +166,7 @@ export function applyProjectLensConfig(cwd: string): PiLensProjectConfig {
 }
 
 const sessionFacts = new FactStore();
-const cascadeDiagnosticBaselines = new Map<string, import("./types.js").Diagnostic[]>();
+const cascadeDiagnosticBaselines = new Map<string, import("./types.ts").Diagnostic[]>();
 const sessionRunnerRegistry = new RunnerRegistry();
 registerDefaultRunners(sessionRunnerRegistry);
 const LSP_CAPABLE_KINDS = new Set<FileKind>(getLspCapableKinds());
@@ -431,7 +431,7 @@ export function getCascadeSessionStats() {
 type NeighborCacheEntry = {
   turnSeq: number;
   writeSeq: number;
-  diagnostics: import("./types.js").Diagnostic[];
+  diagnostics: import("./types.ts").Diagnostic[];
 };
 const neighborTouchCache = new Map<string, NeighborCacheEntry>();
 
@@ -498,7 +498,7 @@ const MAX_FILES = RUNTIME_CONFIG.pipeline.cascadeMaxFiles;
  * that is pre-existing cascade output behavior, out of scope for #1093.
  */
 function cascadeReconcilableLspErrors(
-  rawDiags: readonly import("../lsp/client.js").LSPDiagnostic[],
+  rawDiags: readonly import("../lsp/client.ts").LSPDiagnostic[],
   neighborPath: string,
 ): ReturnType<typeof convertLspDiagnostics> {
   return convertLspDiagnostics(
@@ -2179,7 +2179,7 @@ export async function computeCascadeForFile(
   }
 }
 
-function diagnosticDeltaKey(diagnostic: import("./types.js").Diagnostic): string {
+function diagnosticDeltaKey(diagnostic: import("./types.ts").Diagnostic): string {
   return [
     diagnostic.id,
     diagnostic.rule ?? "",
@@ -2196,7 +2196,7 @@ function applyCascadeDeltaBaselines(
     const baselineKey = `session.baseline.cascade.${normalizeMapKey(neighbor.filePath)}`;
     const previous =
       cascadeDiagnosticBaselines.get(baselineKey) ??
-      sessionFacts.getSessionFact<import("./types.js").Diagnostic[]>(baselineKey);
+      sessionFacts.getSessionFact<import("./types.ts").Diagnostic[]>(baselineKey);
     cascadeDiagnosticBaselines.set(baselineKey, [...neighbor.diagnostics]);
     sessionFacts.setSessionFact(baselineKey, [...neighbor.diagnostics]);
     if (!previous) return neighbor;
@@ -2217,7 +2217,7 @@ function applyCascadeDeltaBaselines(
  */
 function appendFallbackNeighbors(
   neighbors: CascadeResult["neighbors"],
-  allDiags: Map<string, { diags: import("../lsp/client.js").LSPDiagnostic[]; ts: number }>,
+  allDiags: Map<string, { diags: import("../lsp/client.ts").LSPDiagnostic[]; ts: number }>,
   normalizedFileKey: string,
   cwd: string,
   filePath: string,

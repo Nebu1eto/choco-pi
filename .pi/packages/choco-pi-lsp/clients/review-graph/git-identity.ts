@@ -15,8 +15,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { BoundedLruCache } from "../bounded-cache.js";
-import { normalizeFilePath, walkUpDirs } from "../path-utils.js";
+import { BoundedLruCache } from "../bounded-cache.ts";
+import { normalizeFilePath, walkUpDirs } from "../path-utils.ts";
 
 export interface GitIdentity {
   /** Resolved HEAD commit SHA (detached or resolved from a symbolic ref). */

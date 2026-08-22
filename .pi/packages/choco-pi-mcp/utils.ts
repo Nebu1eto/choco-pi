@@ -9,7 +9,7 @@ import {
   isStringValue,
   parseMcpObject,
   type McpObject,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 async function execOpen(pi: ExtensionAPI, target: string, browser?: string, signal?: AbortSignal) {
   const os = platform();

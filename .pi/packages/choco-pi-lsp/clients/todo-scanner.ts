@@ -9,7 +9,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { collectSourceFiles } from "./source-filter.js";
+import { collectSourceFiles } from "./source-filter.ts";
 
 // --- Types ---
 

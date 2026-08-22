@@ -7,7 +7,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getAstGrepRuleSources } from "../sgconfig.js";
+import { getAstGrepRuleSources } from "../sgconfig.ts";
 
 /** Derive language tags from shipped rule filenames, rather than a list. */
 export function deriveRuleIdLanguageSuffixes(ruleRoot: string): Set<string> {

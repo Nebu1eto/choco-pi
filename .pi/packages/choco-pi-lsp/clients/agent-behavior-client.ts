@@ -9,7 +9,7 @@
  * No external dependencies — purely tracks tool call history.
  */
 
-import { normalizeMapKey } from "./path-utils.js";
+import { normalizeMapKey } from "./path-utils.ts";
 
 // --- Types ---
 

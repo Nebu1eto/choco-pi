@@ -44,8 +44,8 @@ import {
   demotePastEofDiagnostics,
   resyncDocumentOnPastEof,
   type LineCountCache,
-} from "./diagnostic-line-freshness.js";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
+} from "./diagnostic-line-freshness.ts";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
 
 /** Per-turn result of the past-EOF sweep over the cached inline blockers. */
 export interface BlockerPastEofCounts {

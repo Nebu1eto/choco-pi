@@ -22,11 +22,11 @@
  * implementation; do not re-flag in dead-code sweeps while #236 is open.
  */
 
-import { withinRemaining } from "./deadline-utils.js";
-import type { LSPLocation } from "./lsp/client.js";
-import type { ModuleSymbolUsedBy } from "./module-report.js";
-import { uriToPath } from "./path-utils.js";
-import type { Symbol as ExtractedSymbol } from "./symbol-types.js";
+import { withinRemaining } from "./deadline-utils.ts";
+import type { LSPLocation } from "./lsp/client.ts";
+import type { ModuleSymbolUsedBy } from "./module-report.ts";
+import { uriToPath } from "./path-utils.ts";
+import type { Symbol as ExtractedSymbol } from "./symbol-types.ts";
 
 type LspPositionResultContract = { line: number; character: number };
 
@@ -166,8 +166,8 @@ async function enrichModuleReportWithLspNow(
   let getServersForFileWithConfig: (f: string) => unknown[];
   let getLSPService: () => LspServiceLike;
   try {
-    ({ getServersForFileWithConfig } = await import("./lsp/config.js"));
-    ({ getLSPService } = await import("./lsp/index.js"));
+    ({ getServersForFileWithConfig } = await import("./lsp/config.ts"));
+    ({ getLSPService } = await import("./lsp/index.ts"));
   } catch {
     return NO_LSP;
   }

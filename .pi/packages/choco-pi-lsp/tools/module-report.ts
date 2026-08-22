@@ -1,5 +1,5 @@
-import type { RuntimeValue } from "./runtime-values.js";
-import { isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.ts";
+import { isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
 /**
  * module_report + read_symbol tool definitions (#245).
  *
@@ -13,15 +13,15 @@ import { isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
  */
 
 import * as path from "node:path";
-import { Type } from "../clients/deps/typebox.js";
-import { logLatency } from "../clients/latency-logger.js";
+import { Type } from "../clients/deps/typebox.ts";
+import { logLatency } from "../clients/latency-logger.ts";
 import {
   moduleReport,
   readEnclosing,
   readSymbol,
   renderCompactModuleReport,
-} from "../clients/module-report.js";
-import { baseName, compactRenderResult } from "./render-compact.js";
+} from "../clients/module-report.ts";
+import { baseName, compactRenderResult } from "./render-compact.ts";
 
 function resolveFile(filePath: string, cwd: string | undefined): string {
   return path.isAbsolute(filePath) ? filePath : path.resolve(cwd || ".", filePath);

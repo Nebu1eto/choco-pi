@@ -1,5 +1,5 @@
-import type { BoundaryValue } from "../boundary.js";
-import type { CodeModeHostSession } from "./host-session.js";
+import type { BoundaryValue } from "../boundary.ts";
+import type { CodeModeHostSession } from "./host-session.ts";
 
 export function cancelOperation(session: CodeModeHostSession, id: number): Error {
   const error = abortError();

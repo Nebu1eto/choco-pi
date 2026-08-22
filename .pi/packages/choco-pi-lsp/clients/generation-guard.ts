@@ -51,7 +51,7 @@
  * path exists at all.
  */
 
-import { incrementDegradationCount } from "./degradation-ledger.js";
+import { incrementDegradationCount } from "./degradation-ledger.ts";
 
 /**
  * Names of every generation-carrying store created through this module.

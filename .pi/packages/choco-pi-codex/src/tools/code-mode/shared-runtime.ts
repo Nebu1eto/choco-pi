@@ -1,13 +1,13 @@
-import type { BoundaryValue } from "../boundary.js";
-import { ensureCodeModeHostBinary } from "./binary.js";
-import { CodeModeHostClient } from "./host-client.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { ensureCodeModeHostBinary } from "./binary.ts";
+import { CodeModeHostClient } from "./host-client.ts";
 import type {
   CodeModeToolDefinition,
   NotebookControlRequest,
   NotebookControlResult,
   RuntimeResponse,
   ToolExecutionContext,
-} from "./types.js";
+} from "./types.ts";
 
 export type CodeModeExecutionKind = "code" | "notebook";
 

@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { normalizeMapKey } from "../path-utils.js";
+import { normalizeMapKey } from "../path-utils.ts";
 
 function resolveAgainstAncestors(cwd: string, filePath: string): string {
   if (path.isAbsolute(filePath)) {

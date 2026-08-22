@@ -9,26 +9,26 @@
  * Inspired by OpenCode's formatter.ts pattern
  */
 
-import { logExtension } from "./extension-log.js";
+import { logExtension } from "./extension-log.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { BoundedLruCache } from "./bounded-cache.js";
-import { normalizeMapKey } from "./path-utils.js";
-import { TERRAGRUNT_FILENAMES } from "./file-kinds.js";
-import { detectIndentation, hasDetectableIndentation } from "./dispatch/indent-detect.js";
-import { logLatency } from "./latency-logger.js";
+import { BoundedLruCache } from "./bounded-cache.ts";
+import { normalizeMapKey } from "./path-utils.ts";
+import { TERRAGRUNT_FILENAMES } from "./file-kinds.ts";
+import { detectIndentation, hasDetectableIndentation } from "./dispatch/indent-detect.ts";
+import { logLatency } from "./latency-logger.ts";
 import {
   type AvailabilityLatch,
   classifyProbeFailure,
   createAvailabilityLatch,
   logAvailabilityDecision,
   startHostStallSampler,
-} from "./dispatch/runners/utils/availability-policy.js";
-import { findGlobalBinary, findLocalBinUpwards } from "./package-manager.js";
-import { safeSpawnAsync } from "./safe-spawn.js";
-import { assertInstallAllowed } from "./project-trust.js";
-import { tryLazyInstallForFormatter } from "./dispatch/runners/utils/lazy-installer.js";
+} from "./dispatch/runners/utils/availability-policy.ts";
+import { findGlobalBinary, findLocalBinUpwards } from "./package-manager.ts";
+import { safeSpawnAsync } from "./safe-spawn.ts";
+import { assertInstallAllowed } from "./project-trust.ts";
+import { tryLazyInstallForFormatter } from "./dispatch/runners/utils/lazy-installer.ts";
 import {
   findPSScriptAnalyzerConfigPath,
   getAutoInstallToolIdForFormatter,
@@ -64,7 +64,7 @@ import {
   hasTerraformConfig,
   hasVitePlusConfig,
   OXFMT_SUPPORTED_EXTENSIONS,
-} from "./tool-policy.js";
+} from "./tool-policy.ts";
 
 /**
  * Lazy-install a formatter's tool, through the shared seam (#1537).
@@ -538,7 +538,7 @@ async function resolveManagedSmartDefaultCommand(
 ): Promise<string[] | null> {
   const toolId = getAutoInstallToolIdForFormatter(formatterName);
   if (!toolId) return null;
-  const { ensureTool } = await import("./installer/index.js");
+  const { ensureTool } = await import("./installer/index.ts");
   const installed = await ensureTool(toolId);
   if (!installed) return null;
   return [installed, ...args, filePath];
@@ -713,7 +713,7 @@ export const biomeFormatter: FormatterInfo = {
     if (global) return [global, ...args, filePath];
     const toolId = getAutoInstallToolIdForFormatter("biome");
     if (!toolId) return null;
-    const { ensureTool } = await import("./installer/index.js");
+    const { ensureTool } = await import("./installer/index.ts");
     const installed = await ensureTool(toolId);
     if (installed) return [installed, ...args, filePath];
     return null;
@@ -843,7 +843,7 @@ export const ruffFormatter: FormatterInfo = {
     if (venv) return [venv, ...args, filePath];
     const toolId = getAutoInstallToolIdForFormatter("ruff");
     if (!toolId) return null;
-    const { ensureTool } = await import("./installer/index.js");
+    const { ensureTool } = await import("./installer/index.ts");
     const installed = await ensureTool(toolId);
     if (installed) return [installed, ...args, filePath];
     return null;
@@ -852,7 +852,7 @@ export const ruffFormatter: FormatterInfo = {
     if (hasRuffConfig(cwd)) return true;
     // No-config fallback: if Ruff is already available, allow formatter usage.
     // This keeps Python default behavior consistent with startup defaults.
-    const { getToolPath } = await import("./installer/index.js");
+    const { getToolPath } = await import("./installer/index.ts");
     const installed = await getToolPath("ruff");
     return Boolean(installed);
   },
@@ -952,7 +952,7 @@ export const shfmtFormatter: FormatterInfo = {
   },
   async detect(_cwd: string) {
     if ((await which("shfmt")) !== null) return true;
-    const { getToolPath } = await import("./installer/index.js");
+    const { getToolPath } = await import("./installer/index.ts");
     return Boolean(await getToolPath("shfmt"));
   },
 };
@@ -1021,7 +1021,7 @@ export const ktlintFormatter: FormatterInfo = {
   },
   async detect(_cwd: string) {
     if ((await which("ktlint")) !== null) return true;
-    const { getToolPath } = await import("./installer/index.js");
+    const { getToolPath } = await import("./installer/index.ts");
     return Boolean(await getToolPath("ktlint"));
   },
 };
@@ -1034,7 +1034,7 @@ export const ktfmtFormatter: FormatterInfo = {
   async resolveCommand(filePath, _cwd) {
     const inPath = await which("ktfmt");
     if (inPath) return [inPath, filePath];
-    const { ensureTool } = await import("./installer/index.js");
+    const { ensureTool } = await import("./installer/index.ts");
     const installed = await ensureTool("ktfmt");
     return installed ? [installed, filePath] : null;
   },
@@ -1236,7 +1236,7 @@ export const taploFormatter: FormatterInfo = {
   },
   async detect(_cwd: string) {
     if ((await which("taplo")) !== null) return true;
-    const { getToolPath } = await import("./installer/index.js");
+    const { getToolPath } = await import("./installer/index.ts");
     return Boolean(await getToolPath("taplo"));
   },
 };

@@ -1,4 +1,4 @@
-import { isStringValue, mergeObjectParts, type McpValue } from "./protocol-values.js";
+import { isStringValue, mergeObjectParts, type McpValue } from "./protocol-values.ts";
 /**
  * Centralized logging for MCP UI operations.
  * Provides structured, contextual logs with levels.

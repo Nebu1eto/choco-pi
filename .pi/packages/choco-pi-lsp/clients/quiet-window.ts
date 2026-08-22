@@ -30,15 +30,15 @@
  * and returns immediately.
  */
 
-import { type HeartbeatPatch, readInstanceRegistry, updateHeartbeat } from "./instance-registry.js";
-import { logLatency } from "./latency-logger.js";
-import { sampleProcesses } from "./resource-sampler.js";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
+import { type HeartbeatPatch, readInstanceRegistry, updateHeartbeat } from "./instance-registry.ts";
+import { logLatency } from "./latency-logger.ts";
+import { sampleProcesses } from "./resource-sampler.ts";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
 import {
   _resetQuietWindowEnabledForTests,
   isQuietWindowEnabled,
   quietWindowWaitMs,
-} from "./quiet-window-config.js";
+} from "./quiet-window-config.ts";
 
 export interface QuietWindowTaskResult {
   name: string;

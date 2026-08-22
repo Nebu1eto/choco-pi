@@ -1,7 +1,7 @@
-import type { FactRule } from "../fact-provider-types.js";
-import type { Diagnostic } from "../types.js";
-import type { FunctionSummary } from "../facts/function-facts.js";
-import { isTestFrameworkNoiseCall, isTestSuiteOrganizer } from "./framework-call-noise.js";
+import type { FactRule } from "../fact-provider-types.ts";
+import type { Diagnostic } from "../types.ts";
+import type { FunctionSummary } from "../facts/function-facts.ts";
+import { isTestFrameworkNoiseCall, isTestSuiteOrganizer } from "./framework-call-noise.ts";
 
 // Default matches the historical hardcoded value so behavior is unchanged for
 // projects without a config. Project-specific overrides are read from the

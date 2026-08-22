@@ -1,6 +1,6 @@
-import { isCustomToolDefinition } from "./host-protocol.js";
-import { unavailableToolsGuardPreamble } from "./tools-namespace.js";
-import type { CodeModeToolDefinition } from "./types.js";
+import { isCustomToolDefinition } from "./host-protocol.ts";
+import { unavailableToolsGuardPreamble } from "./tools-namespace.ts";
+import type { CodeModeToolDefinition } from "./types.ts";
 
 export function scopeAllToolsToDeferredCustom(
   source: string,

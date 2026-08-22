@@ -2,15 +2,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { getProjectDataDir } from "../file-utils.js";
-import { writeFileAtomic } from "../atomic-write.js";
-import { readJsonCache } from "../json-cache-read.js";
-import { createGenerationMap } from "../generation-guard.js";
-import { normalizeMapKey } from "../path-utils.js";
-import { loadReverseDependencyIndexFromSnapshot } from "../reverse-deps.js";
-import { MTIME_DRIFT_TOLERANCE_MS } from "../blocker-freshness.js";
-import type { LSPDiagnostic } from "./client.js";
-import { createDiskBindingCache, type DiagnosticBinding } from "./diagnostic-binding.js";
+import { getProjectDataDir } from "../file-utils.ts";
+import { writeFileAtomic } from "../atomic-write.ts";
+import { readJsonCache } from "../json-cache-read.ts";
+import { createGenerationMap } from "../generation-guard.ts";
+import { normalizeMapKey } from "../path-utils.ts";
+import { loadReverseDependencyIndexFromSnapshot } from "../reverse-deps.ts";
+import { MTIME_DRIFT_TOLERANCE_MS } from "../blocker-freshness.ts";
+import type { LSPDiagnostic } from "./client.ts";
+import { createDiskBindingCache, type DiagnosticBinding } from "./diagnostic-binding.ts";
 
 /**
  * #671: per-file cache of the last CONFIRMED `runWorkspaceDiagnostics` sweep

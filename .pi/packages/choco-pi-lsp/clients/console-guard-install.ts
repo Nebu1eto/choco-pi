@@ -3,7 +3,7 @@
 // side-effect-free module (#1434 S3d) — see eval-timestamp.ts's docstring for
 // why: `startup-timing.ts` needs this constant but must never trigger a
 // console-guard install merely by importing it.
-import { CHOCO_PI_LSP_EVAL_STARTED_MS } from "./eval-timestamp.js";
+import { CHOCO_PI_LSP_EVAL_STARTED_MS } from "./eval-timestamp.ts";
 
 // #1333: install the console guard as an import side-effect so it runs before
 // any other module's initialization code. Installing inside the extension
@@ -16,7 +16,7 @@ import { CHOCO_PI_LSP_EVAL_STARTED_MS } from "./eval-timestamp.js";
 // #1434: the guard captures only while choco-pi-lsp owns execution, so the module
 // window must be open for the rest of the import graph. index.ts closes it on
 // its last line; an unref'd backstop closes it if that never runs.
-import { installConsoleGuard, openModuleLoadConsoleWindow } from "./extension-log.js";
+import { installConsoleGuard, openModuleLoadConsoleWindow } from "./extension-log.ts";
 
 installConsoleGuard();
 openModuleLoadConsoleWindow();

@@ -1,6 +1,6 @@
-import type { FactRule } from "../fact-provider-types.js";
-import type { ImportEntry } from "../facts/import-facts.js";
-import type { Diagnostic } from "../types.js";
+import type { FactRule } from "../fact-provider-types.ts";
+import type { ImportEntry } from "../facts/import-facts.ts";
+import type { Diagnostic } from "../types.ts";
 
 /**
  * high-import-coupling — a file importing from > 15 distinct modules. Fact-based

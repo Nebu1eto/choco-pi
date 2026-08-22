@@ -1,13 +1,13 @@
-import type { FactStore } from "../dispatch/fact-store.js";
+import type { FactStore } from "../dispatch/fact-store.ts";
 import {
   computeImpactCascade as computeImpactCascadeImpl,
   computeTransitiveImpact as computeTransitiveImpactImpl,
   type TransitiveImpactResult,
-} from "./query.js";
-import { buildOrUpdateGraph as buildOrUpdateGraphImpl, type GraphSeqHint } from "./builder.js";
-import { formatImpactCascade as formatImpactCascadeImpl } from "./format.js";
-import { buildModuleGraph } from "./workspace-modules.js";
-import type { ImpactCascadeResult, ReviewGraph } from "./types.js";
+} from "./query.ts";
+import { buildOrUpdateGraph as buildOrUpdateGraphImpl, type GraphSeqHint } from "./builder.ts";
+import { formatImpactCascade as formatImpactCascadeImpl } from "./format.ts";
+import { buildModuleGraph } from "./workspace-modules.ts";
+import type { ImpactCascadeResult, ReviewGraph } from "./types.ts";
 
 const CHANGED_SYMBOLS_PREFIX = "session.reviewGraph.changedSymbols:";
 const ENTITY_SNAPSHOT_PREFIX = "session.reviewGraph.entitySnapshot:";

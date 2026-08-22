@@ -15,7 +15,7 @@ import {
   type RuntimeUsageGoalStatus,
   type SessionEntryLike,
   type ThreadGoal,
-} from "./types.js";
+} from "./types.ts";
 
 const GoalStatusSchema = Type.Union([
   Type.Literal("active"),

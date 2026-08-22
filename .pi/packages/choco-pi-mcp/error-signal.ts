@@ -1,4 +1,4 @@
-import { isObjectValue } from "./protocol-values.js";
+import { isObjectValue } from "./protocol-values.ts";
 /**
  * Decide the `isError` override for a finished tool result in the `tool_result` hook.
  *

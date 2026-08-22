@@ -2,7 +2,7 @@ import type {
   CodeModeToolDefinition,
   CodeModeToolMetadata,
   CustomToolDefinition,
-} from "./types.js";
+} from "./types.ts";
 
 export const EXEC_DESCRIPTION = `Run JavaScript to compose tools; source only, no JSON or fences
 Runtime follows the selected mode: Code is fresh restricted JS with no console/imports/Node/browser APIs; Notebook is one persistent Deno TypeScript global environment shared by every exec call, with console, imports, npm, Deno, and Web APIs

@@ -7,10 +7,10 @@ import {
   serializeMessagesToResponsesInput,
   type ResponsesInputItem,
   type SerializeResponsesMessagesOptions,
-} from "../compaction/serializer.js";
+} from "../compaction/serializer.ts";
 import { areEquivalentValues, cloneResponsesInputSlice } from "./payload-structured.ts";
 import type { FreshAuthoritativePreamble } from "./payload-preamble.ts";
-import type { NativeCompactionEntry } from "../compaction/types.js";
+import type { NativeCompactionEntry } from "../compaction/types.ts";
 import { toPiReplayAgentMessage, toReplayAgentMessage } from "./replay-message-conversion.ts";
 
 export type SerializedReplaySlice = {

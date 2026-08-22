@@ -11,9 +11,9 @@
  * The dispatcher must handle these semantics consistently.
  */
 
-import type { FileKind } from "../file-kinds.js";
-import type { FileRole } from "../file-role.js";
-import type { PiLensProjectConfig } from "../project-lsp-config.js";
+import type { FileKind } from "../file-kinds.ts";
+import type { FileRole } from "../file-role.ts";
+import type { PiLensProjectConfig } from "../project-lsp-config.ts";
 
 export type DefectClass =
   | "silent-error"
@@ -174,7 +174,7 @@ export interface DispatchContext {
   readonly pi: PiAgentAPI;
   readonly autofix: boolean;
   readonly deltaMode: boolean;
-  readonly facts: import("./fact-store.js").FactStore;
+  readonly facts: import("./fact-store.ts").FactStore;
   /** Project-local .choco-pi-lsp.json config captured for this dispatch. */
   readonly projectConfig?: PiLensProjectConfig;
   /** Only run blocking rules (severity: error) - used for fast feedback on file write */

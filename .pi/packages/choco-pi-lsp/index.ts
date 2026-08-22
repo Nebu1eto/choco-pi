@@ -1,44 +1,44 @@
-import type { RuntimeValue } from "./tools/runtime-values.js";
+import type { RuntimeValue } from "./tools/runtime-values.ts";
 import {
   isRuntimeFunction,
   isRuntimeObject,
   isRuntimeString,
   isRuntimeUndefined,
-} from "./tools/runtime-values.js";
-import "./clients/console-guard-install.js";
+} from "./tools/runtime-values.ts";
+import "./clients/console-guard-install.ts";
 import {
   closeModuleLoadConsoleWindow,
   installConsoleGuard,
   logExtension,
   runInConsoleCaptureWindow,
   withConsoleCaptureWindows,
-} from "./clients/extension-log.js";
-import { wireUserNotifier } from "./clients/user-notify.js";
-import { getDegradationSummary, recordDegradation } from "./clients/degradation-ledger.js";
+} from "./clients/extension-log.ts";
+import { wireUserNotifier } from "./clients/user-notify.ts";
+import { getDegradationSummary, recordDegradation } from "./clients/degradation-ledger.ts";
 import {
   adoptProjectTrustFromPorts,
   assertInstallAllowed,
   readProjectTrustFromContext,
-} from "./clients/project-trust.js";
+} from "./clients/project-trust.ts";
 import {
   type ExtensionRunMode,
   modeSuppressionNote,
   readExtensionMode,
   suppressesUserNotify,
   supportsTuiWidget,
-} from "./clients/extension-mode.js";
+} from "./clients/extension-mode.ts";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createDefaultHostPorts, type HostPorts } from "./clients/host-ports.js";
-import { AstGrepClient } from "./clients/ast-grep-client.js";
-import { loadBootstrapClients } from "./clients/bootstrap.js";
-import { CacheManager } from "./clients/cache-manager.js";
+import { createDefaultHostPorts, type HostPorts } from "./clients/host-ports.ts";
+import { AstGrepClient } from "./clients/ast-grep-client.ts";
+import { loadBootstrapClients } from "./clients/bootstrap.ts";
+import { CacheManager } from "./clients/cache-manager.ts";
 // #1561 F2: the retire hook re-syncs the gate latch and the persisted record
 // the same way the per-dispatch path does, so a retired blocker stops gating
 // the commit.
-import { retireInlineBlockerAndResyncGuard } from "./clients/git-guard.js";
-import { resolvePackagePath } from "./clients/package-root.js";
+import { retireInlineBlockerAndResyncGuard } from "./clients/git-guard.ts";
+import { resolvePackagePath } from "./clients/package-root.ts";
 import {
   clearWidgetState,
   exportWidgetState,
@@ -50,121 +50,121 @@ import {
   renderWidget,
   scheduleStaleReconcile,
   setRenderCallback,
-} from "./clients/widget-state.js";
-import { selectLspStatus } from "./clients/lsp-status.js";
-import type { PersistedReadGuardState } from "./clients/read-guard.js";
-import { registerReadBridge } from "./clients/read-bridge.js";
-import { isExternalOrVendorFile } from "./clients/path-utils.js";
-import { isPathIgnoredByProject } from "./clients/file-utils.js";
+} from "./clients/widget-state.ts";
+import { selectLspStatus } from "./clients/lsp-status.ts";
+import type { PersistedReadGuardState } from "./clients/read-guard.ts";
+import { registerReadBridge } from "./clients/read-bridge.ts";
+import { isExternalOrVendorFile } from "./clients/path-utils.ts";
+import { isPathIgnoredByProject } from "./clients/file-utils.ts";
 import {
   dropStaleFiles,
   loadSessionState,
   saveSessionState,
   sessionStartMode,
-} from "./clients/session-state-store.js";
-import { getDiagnosticTracker } from "./clients/diagnostic-tracker.js";
-import { warmDispatchIntegration, loadDispatchIntegration } from "./clients/dispatch/lazy.js";
-import { getFormatService, resetFormatService } from "./clients/format-service.js";
-import { getAllToolStatuses } from "./clients/installer/index.js";
+} from "./clients/session-state-store.ts";
+import { getDiagnosticTracker } from "./clients/diagnostic-tracker.ts";
+import { warmDispatchIntegration, loadDispatchIntegration } from "./clients/dispatch/lazy.ts";
+import { getFormatService, resetFormatService } from "./clients/format-service.ts";
+import { getAllToolStatuses } from "./clients/installer/index.ts";
 import {
   loadPiLensGlobalConfig,
   persistPiLensGlobalConfigKey,
   resolvePiLensFlag,
   resolvePiLensFlagWithSource,
   setRuntimeLensFlagOverride,
-} from "./clients/lsp-config.js";
-import { LENS_FLAGS } from "./clients/lsp-flag-registry.js";
-import { wrapToolsForCompactLine } from "./clients/tool-render.js";
-import { loadPiLensProjectConfig } from "./clients/project-lsp-config.js";
-import { initLensEventsGetter } from "./clients/lsp-events.js";
-import { wireBusEmitterGetter } from "./clients/bus-publish.js";
-import { wireDiagnosticsBusEmitterGetter } from "./clients/diagnostics-publish.js";
-import { wireDispositionBusEmitterGetter } from "./clients/disposition-publish.js";
-import { wireFormatEventsBusEmitterGetter } from "./clients/format-events-publish.js";
-import { emitBusEventRollupAtSessionEnd } from "./clients/bus-events-logger.js";
+} from "./clients/lsp-config.ts";
+import { LENS_FLAGS } from "./clients/lsp-flag-registry.ts";
+import { wrapToolsForCompactLine } from "./clients/tool-render.ts";
+import { loadPiLensProjectConfig } from "./clients/project-lsp-config.ts";
+import { initLensEventsGetter } from "./clients/lsp-events.ts";
+import { wireBusEmitterGetter } from "./clients/bus-publish.ts";
+import { wireDiagnosticsBusEmitterGetter } from "./clients/diagnostics-publish.ts";
+import { wireDispositionBusEmitterGetter } from "./clients/disposition-publish.ts";
+import { wireFormatEventsBusEmitterGetter } from "./clients/format-events-publish.ts";
+import { emitBusEventRollupAtSessionEnd } from "./clients/bus-events-logger.ts";
 import {
   consumeAgentNudge,
   recordCrossProcessTouches,
   wireAgentNudgeSubscriber,
-} from "./clients/agent-nudge.js";
+} from "./clients/agent-nudge.ts";
 import {
   readCrossProcessTouchesForSessionStart,
   readCrossProcessTouchesForTurnStart,
-} from "./clients/recent-touches.js";
-import { registerCascadeTierReconcileTask } from "./clients/lsp/cascade-tier.js";
-import { buildResolvedFoundCascadeRun } from "./clients/cascade-format.js";
-import { initLSPConfig } from "./clients/lsp/config.js";
-import { getLSPService, resetLSPService } from "./clients/lsp/index.js";
-import { warmLspService } from "./clients/lsp-lazy.js";
-import { sweepOrphans, sweepUntrackedOrphans } from "./clients/instance-reaper.js";
+} from "./clients/recent-touches.ts";
+import { registerCascadeTierReconcileTask } from "./clients/lsp/cascade-tier.ts";
+import { buildResolvedFoundCascadeRun } from "./clients/cascade-format.ts";
+import { initLSPConfig } from "./clients/lsp/config.ts";
+import { getLSPService, resetLSPService } from "./clients/lsp/index.ts";
+import { warmLspService } from "./clients/lsp-lazy.ts";
+import { sweepOrphans, sweepUntrackedOrphans } from "./clients/instance-reaper.ts";
 import {
   deregisterInstance,
   readInstanceRegistry,
   registerInstance,
-} from "./clients/instance-registry.js";
-import { logVanishedInstances } from "./clients/vanished-instance-marker.js";
+} from "./clients/instance-registry.ts";
+import { logVanishedInstances } from "./clients/vanished-instance-marker.ts";
 import {
   buildMemorySample,
   formatMemoryHealthLine,
   shouldEmitMemorySample,
-} from "./clients/memory-sampler.js";
-import { dumpActiveHandles } from "./clients/debug-handles.js";
-import { isDebugHeapEnabled, writeHeapSnapshotNow } from "./clients/debug-heap.js";
+} from "./clients/memory-sampler.ts";
+import { dumpActiveHandles } from "./clients/debug-handles.ts";
+import { isDebugHeapEnabled, writeHeapSnapshotNow } from "./clients/debug-heap.ts";
 import {
   checkSmellsAndNoteOnce,
   countRecentSmells,
   formatSmellsHealthLine,
   shouldCheckSmellsThisTurn,
-} from "./clients/smells-rollup.js";
-import { configureWarmAttach } from "./clients/warm-attach.js";
-import { checkCrossProcessLspBudget } from "./clients/lsp-budget.js";
-import { handleAgentEnd } from "./clients/runtime-agent-end.js";
+} from "./clients/smells-rollup.ts";
+import { configureWarmAttach } from "./clients/warm-attach.ts";
+import { checkCrossProcessLspBudget } from "./clients/lsp-budget.ts";
+import { handleAgentEnd } from "./clients/runtime-agent-end.ts";
 import {
   consumeSessionStartGuidance,
   consumeTestFindings,
   consumeTurnEndFindings,
-} from "./clients/runtime-context.js";
-import { readHostModelIdentity, RuntimeCoordinator } from "./clients/runtime-coordinator.js";
-import { handleSessionStart } from "./clients/runtime-session.js";
-import { codeModeMutationToolResults } from "./clients/code-mode-tool-results.js";
-import { handleToolCall } from "./clients/runtime-tool-call.js";
+} from "./clients/runtime-context.ts";
+import { readHostModelIdentity, RuntimeCoordinator } from "./clients/runtime-coordinator.ts";
+import { handleSessionStart } from "./clients/runtime-session.ts";
+import { codeModeMutationToolResults } from "./clients/code-mode-tool-results.ts";
+import { handleToolCall } from "./clients/runtime-tool-call.ts";
 import {
   classifyCurrentSessionEmission,
   decideSessionStart,
   decrementSecondarySessionCount,
   noteSessionShutdown,
-} from "./clients/session-lifecycle.js";
+} from "./clients/session-lifecycle.ts";
 import {
   clearLastAnalyzedStateCache,
   flushDebouncedToolResults,
   handleToolResult,
-} from "./clients/runtime-tool-result.js";
-import { cancelLSPIdleReset, handleTurnEnd } from "./clients/runtime-turn.js";
+} from "./clients/runtime-tool-result.ts";
+import { cancelLSPIdleReset, handleTurnEnd } from "./clients/runtime-turn.ts";
 import {
   registerBuiltinQuietWindowTasks,
   registerQuietWindowTask,
   runQuietWindow,
-} from "./clients/quiet-window.js";
-import { setAmbientAbortSignal } from "./clients/safe-spawn.js";
-import { initI18n, t } from "./i18n.js";
-import { createAstGrepDumpTool } from "./tools/ast-dump.js";
-import { createActivateToolsTool, type ActivatableToolInfo } from "./tools/activate-tools.js";
-import { createLensDiagnosticsTool } from "./tools/diagnostics-report.js";
-import { createLensDiagnosticMarkTool } from "./tools/diagnostic-mark.js";
-import { createAstGrepReplaceTool } from "./tools/ast-grep-replace.js";
-import { createAstGrepSearchTool } from "./tools/ast-grep-search.js";
-import { createAstGrepOutlineTool } from "./tools/ast-grep-outline.js";
-import { createLspDiagnosticsTool } from "./tools/lsp-diagnostics.js";
-import { createLspNavigationTool } from "./tools/lsp-navigation.js";
+} from "./clients/quiet-window.ts";
+import { setAmbientAbortSignal } from "./clients/safe-spawn.ts";
+import { initI18n, t } from "./i18n.ts";
+import { createAstGrepDumpTool } from "./tools/ast-dump.ts";
+import { createActivateToolsTool, type ActivatableToolInfo } from "./tools/activate-tools.ts";
+import { createLensDiagnosticsTool } from "./tools/diagnostics-report.ts";
+import { createLensDiagnosticMarkTool } from "./tools/diagnostic-mark.ts";
+import { createAstGrepReplaceTool } from "./tools/ast-grep-replace.ts";
+import { createAstGrepSearchTool } from "./tools/ast-grep-search.ts";
+import { createAstGrepOutlineTool } from "./tools/ast-grep-outline.ts";
+import { createLspDiagnosticsTool } from "./tools/lsp-diagnostics.ts";
+import { createLspNavigationTool } from "./tools/lsp-navigation.ts";
 import {
   createModuleReportTool,
   createReadEnclosingTool,
   createReadSymbolTool,
-} from "./tools/module-report.js";
-import { createProjectReportTool } from "./tools/project-report.js";
-import { createSymbolSearchTool } from "./tools/symbol-search.js";
-import { getLastLoggedPhase, getRecentLoggedPhases, logLatency } from "./clients/latency-logger.js";
-import { emitBounded } from "./clients/bounded-telemetry.js";
+} from "./tools/module-report.ts";
+import { createProjectReportTool } from "./tools/project-report.ts";
+import { createSymbolSearchTool } from "./tools/symbol-search.ts";
+import { getLastLoggedPhase, getRecentLoggedPhases, logLatency } from "./clients/latency-logger.ts";
+import { emitBounded } from "./clients/bounded-telemetry.ts";
 
 /**
  * Identity for the `loop_block` record (#1743). An event-loop block is a
@@ -178,32 +178,32 @@ import {
   planToolSet,
   recordToolSetMutation,
   supportsDeferredTools,
-} from "./clients/tool-set-policy.js";
+} from "./clients/tool-set-policy.ts";
 import {
   clearCachePrefixSession,
   logCacheUsage,
   observeCacheContext,
   observeCachePrefix,
-} from "./clients/cache-observability.js";
+} from "./clients/cache-observability.ts";
 import {
   getPiLensEvalMs,
   markPiLensLoaded,
   CHOCO_PI_LSP_HOST_BOOT_MS,
   CHOCO_PI_LSP_LOADED_FROM,
-} from "./clients/startup-timing.js";
-import { toRunnerDisplayPath } from "./clients/dispatch/runner-context.js";
-import { formatTurnSummaryLine, TURN_SUMMARY_CUSTOM_TYPE } from "./clients/turn-summary.js";
-import { renderTurnSummaryMessage } from "./clients/turn-summary-render.js";
+} from "./clients/startup-timing.ts";
+import { toRunnerDisplayPath } from "./clients/dispatch/runner-context.ts";
+import { formatTurnSummaryLine, TURN_SUMMARY_CUSTOM_TYPE } from "./clients/turn-summary.ts";
+import { renderTurnSummaryMessage } from "./clients/turn-summary-render.ts";
 import {
   getEventLoopStats,
   resetEventLoopMonitor,
   shouldLogLoopBlock,
   shouldLogWorstBlock,
   startEventLoopMonitor,
-} from "./clients/event-loop-monitor.js";
-import { logSessionStart } from "./clients/sessionstart-logger.js";
-import { logConcurrentSessionBind } from "./clients/session-start-observability.js";
-import { warmFormatters } from "./clients/formatters-lazy.js";
+} from "./clients/event-loop-monitor.ts";
+import { logSessionStart } from "./clients/sessionstart-logger.ts";
+import { logConcurrentSessionBind } from "./clients/session-start-observability.ts";
+import { warmFormatters } from "./clients/formatters-lazy.ts";
 
 type DispatchIntegration = Awaited<ReturnType<typeof loadDispatchIntegration>>;
 let loadedDispatchIntegration: DispatchIntegration | undefined;
@@ -1037,7 +1037,7 @@ function activateExtension(hostPi: ExtensionAPI) {
   pi.registerCommand("lens-tdi", {
     description: "Show Technical Debt Index (TDI) and project health trend. Usage: /lens-tdi",
     handler: async (_args, ctx) => {
-      const { loadHistory, computeTDI } = await import("./clients/metrics-history.js");
+      const { loadHistory, computeTDI } = await import("./clients/metrics-history.ts");
       const history = loadHistory();
       const tdi = computeTDI(history);
 
@@ -1075,7 +1075,7 @@ function activateExtension(hostPi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       const cwd = ctx.cwd ?? process.cwd();
       try {
-        const { generateLensMap } = await import("./clients/lsp-map.js");
+        const { generateLensMap } = await import("./clients/lsp-map.ts");
         const result = await generateLensMap(cwd);
         // testFileCount is normally 0 (the review graph excludes tests by
         // role since #260) — only mention it when the map-level guard
@@ -1309,7 +1309,7 @@ function activateExtension(hostPi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       try {
         const { collectLatencyPerformance, renderLatencyPerformanceReport } =
-          await import("./clients/performance-report.js");
+          await import("./clients/performance-report.ts");
         const report = await collectLatencyPerformance({
           sessionStartedAt: runtime.sessionStartedAt,
         });
@@ -1909,7 +1909,7 @@ function activateExtension(hostPi: ExtensionAPI) {
         goClient,
         rustClient,
         ensureTool: async (name: string) =>
-          (await import("./clients/installer/index.js")).ensureTool(name),
+          (await import("./clients/installer/index.ts")).ensureTool(name),
         cleanStaleTsBuildInfo,
         resetDispatchBaselines,
         resetLSPService,

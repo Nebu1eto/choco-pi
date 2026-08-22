@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { FetchLike } from "@modelcontextprotocol/client";
 import type { HttpRequestHeadersCommand } from "./types.ts";
 import { interpolateEnvVars } from "./utils.ts";
-import { isObjectValue, isStringValue, mergeObjectParts } from "./protocol-values.js";
+import { isObjectValue, isStringValue, mergeObjectParts } from "./protocol-values.ts";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;

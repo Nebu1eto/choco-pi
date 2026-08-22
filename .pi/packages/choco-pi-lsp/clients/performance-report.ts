@@ -2,8 +2,8 @@ import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as readline from "node:readline";
-import { flushLatencyLog, getLatencyLogPath, type LatencyEntry } from "./latency-logger.js";
-import { getMaxLogSizeMB } from "./log-cleanup.js";
+import { flushLatencyLog, getLatencyLogPath, type LatencyEntry } from "./latency-logger.ts";
+import { getMaxLogSizeMB } from "./log-cleanup.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

@@ -1,7 +1,7 @@
 import * as path from "node:path";
-import { parseSymbolKey, type ImpactResult, type SymbolKey } from "../../call-graph.js";
-import { isTestRoleCollateral } from "../../collateral-test-role.js";
-import type { ProjectDiagnostic } from "../types.js";
+import { parseSymbolKey, type ImpactResult, type SymbolKey } from "../../call-graph.ts";
+import { isTestRoleCollateral } from "../../collateral-test-role.ts";
+import type { ProjectDiagnostic } from "../types.ts";
 
 /**
  * One `impact()` call's worth of results (`clients/call-graph.ts`), scoped to

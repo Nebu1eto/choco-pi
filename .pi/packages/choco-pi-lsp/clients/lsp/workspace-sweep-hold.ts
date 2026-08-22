@@ -40,7 +40,7 @@
  * apart again (#1618 acceptance criterion 6).
  */
 
-import { logLatency } from "../latency-logger.js";
+import { logLatency } from "../latency-logger.ts";
 
 /** Extra headroom beyond the sweep's own wall-clock ceiling before an
  *  idle-reset delay (or the max-hold-age failsafe) trusts that a real sweep

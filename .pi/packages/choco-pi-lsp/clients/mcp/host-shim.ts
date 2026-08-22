@@ -10,9 +10,9 @@
  * host-neutral.
  */
 
-import { loadPiLensGlobalConfig, resolvePiLensFlag } from "../lsp-config.js";
-import type { PiAgentAPI } from "../dispatch/types.js";
-import { loadPiLensProjectConfig } from "../project-lsp-config.js";
+import { loadPiLensGlobalConfig, resolvePiLensFlag } from "../lsp-config.ts";
+import type { PiAgentAPI } from "../dispatch/types.ts";
+import { loadPiLensProjectConfig } from "../project-lsp-config.ts";
 
 /**
  * Build a `PiAgentAPI` for the MCP path. `overrides` lets a single MCP tool call

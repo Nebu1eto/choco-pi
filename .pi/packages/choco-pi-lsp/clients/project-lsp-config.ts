@@ -59,12 +59,12 @@
  */
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
-import { logExtension } from "./extension-log.js";
-import { notifyUserDegradation } from "./user-notify.js";
+import { logExtension } from "./extension-log.ts";
+import { notifyUserDegradation } from "./user-notify.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { toPositiveFinite } from "./env-utils.js";
+import { toPositiveFinite } from "./env-utils.ts";
 import {
   assignFlagConfigSection,
   flagConfigSectionKeys,
@@ -74,9 +74,9 @@ import {
   PROJECT_FOREIGN_CONFIG_NAMESPACES,
   PROJECT_SCOPED_LENS_FLAGS,
   readFlagConfigValue,
-} from "./lsp-flag-registry.js";
-import { isAtOrAboveHomeDir, walkUpDirs } from "./path-utils.js";
-import { findPiLensConfigMarkerInDir } from "./workspace-topology.js";
+} from "./lsp-flag-registry.ts";
+import { isAtOrAboveHomeDir, walkUpDirs } from "./path-utils.ts";
+import { findPiLensConfigMarkerInDir } from "./workspace-topology.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

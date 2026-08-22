@@ -2,41 +2,41 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
-import type { AstGrepClient } from "./ast-grep-client.js";
-import type { BiomeClient } from "./biome-client.js";
-import { resetBoundedTelemetry } from "./bounded-telemetry.js";
-import type { CacheManager } from "./cache-manager.js";
-import { createDeadline, yieldIfOverBudget } from "./cooperative-budget.js";
-import { resetDegradationLedger } from "./degradation-ledger.js";
-import { getDiagnosticTracker } from "./diagnostic-tracker.js";
-import { resetPsScriptAnalyzerAvailability } from "./dispatch/runners/psscriptanalyzer.js";
-import { resetInstallRetryLatches } from "./dispatch/runners/utils/availability-policy.js";
-import { resetLazyInstallAttempts } from "./dispatch/runners/utils/lazy-installer.js";
-import { resetDispatchAvailabilityState } from "./dispatch/runners/utils/runner-helpers.js";
-import type { FileKind } from "./file-kinds.js";
-import { clearAllSessions as clearFileTimeSessions } from "./file-time.js";
-import { getGlobalPiLensDir, getProjectDataDir } from "./file-utils.js";
-import type { GoClient } from "./go-client.js";
-import { sweepAtomicWriteStages } from "./instance-reaper.js";
-import { canRunStartupHeavyScans } from "./language-policy.js";
-import { detectProjectLanguageProfile, getDefaultStartupTools } from "./language-profile.js";
-import { logLatency } from "./latency-logger.js";
-import { runLogCleanup } from "./log-cleanup.js";
-import type { LSPShutdownOptions } from "./lsp/client.js";
-import { initLSPConfig, loadLSPConfig } from "./lsp/config.js";
-import { loadLspService } from "./lsp-lazy.js";
-import type { MetricsClient } from "./metrics-client.js";
-import type { OpengrepClient, OpengrepResult } from "./opengrep-client.js";
-import { resetManagedToolRefreshSession } from "./installer/managed-tool-refresh-session.js";
-import { _resetPackageManagerCache } from "./package-manager.js";
-import { isAtOrAboveHomeDir } from "./path-utils.js";
-import { isPrintMode } from "./print-mode.js";
+import type { AstGrepClient } from "./ast-grep-client.ts";
+import type { BiomeClient } from "./biome-client.ts";
+import { resetBoundedTelemetry } from "./bounded-telemetry.ts";
+import type { CacheManager } from "./cache-manager.ts";
+import { createDeadline, yieldIfOverBudget } from "./cooperative-budget.ts";
+import { resetDegradationLedger } from "./degradation-ledger.ts";
+import { getDiagnosticTracker } from "./diagnostic-tracker.ts";
+import { resetPsScriptAnalyzerAvailability } from "./dispatch/runners/psscriptanalyzer.ts";
+import { resetInstallRetryLatches } from "./dispatch/runners/utils/availability-policy.ts";
+import { resetLazyInstallAttempts } from "./dispatch/runners/utils/lazy-installer.ts";
+import { resetDispatchAvailabilityState } from "./dispatch/runners/utils/runner-helpers.ts";
+import type { FileKind } from "./file-kinds.ts";
+import { clearAllSessions as clearFileTimeSessions } from "./file-time.ts";
+import { getGlobalPiLensDir, getProjectDataDir } from "./file-utils.ts";
+import type { GoClient } from "./go-client.ts";
+import { sweepAtomicWriteStages } from "./instance-reaper.ts";
+import { canRunStartupHeavyScans } from "./language-policy.ts";
+import { detectProjectLanguageProfile, getDefaultStartupTools } from "./language-profile.ts";
+import { logLatency } from "./latency-logger.ts";
+import { runLogCleanup } from "./log-cleanup.ts";
+import type { LSPShutdownOptions } from "./lsp/client.ts";
+import { initLSPConfig, loadLSPConfig } from "./lsp/config.ts";
+import { loadLspService } from "./lsp-lazy.ts";
+import type { MetricsClient } from "./metrics-client.ts";
+import type { OpengrepClient, OpengrepResult } from "./opengrep-client.ts";
+import { resetManagedToolRefreshSession } from "./installer/managed-tool-refresh-session.ts";
+import { _resetPackageManagerCache } from "./package-manager.ts";
+import { isAtOrAboveHomeDir } from "./path-utils.ts";
+import { isPrintMode } from "./print-mode.ts";
 import {
   type ProjectSequenceBase,
   type ProjectSequenceIndex,
   readLatestProjectSequence,
   readLatestProjectSequenceAsync,
-} from "./project-changes.js";
+} from "./project-changes.ts";
 import {
   getProjectSnapshotPath,
   hydrateRuntimeFromProjectSnapshot,
@@ -47,38 +47,38 @@ import {
   type ProjectSnapshot,
   readProjectSnapshotMeta,
   saveRuntimeProjectSnapshot,
-} from "./project-snapshot.js";
-import { clearTsconfigPathsCache } from "./review-graph/tsconfig-paths.js";
-import type { RuffClient } from "./ruff-client.js";
-import { scanProjectRules } from "./rules-scanner.js";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
-import type { RustClient } from "./rust-client.js";
-import { resetSafeSpawnWindowsCommandCache } from "./safe-spawn.js";
-import { getSlowFsVerdict, isSlowFs, slowFsDegradationNotice } from "./slow-fs.js";
+} from "./project-snapshot.ts";
+import { clearTsconfigPathsCache } from "./review-graph/tsconfig-paths.ts";
+import type { RuffClient } from "./ruff-client.ts";
+import { scanProjectRules } from "./rules-scanner.ts";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
+import type { RustClient } from "./rust-client.ts";
+import { resetSafeSpawnWindowsCommandCache } from "./safe-spawn.ts";
+import { getSlowFsVerdict, isSlowFs, slowFsDegradationNotice } from "./slow-fs.ts";
 import {
   countRecentSmells,
   formatSmellsSessionStartLine,
   resetSmellsSessionState,
-} from "./smells-rollup.js";
+} from "./smells-rollup.ts";
 import {
   findNearestProjectRoot,
   getStartupScanMaxEntries,
   isStartupScanVerdictFresh,
   resolveStartupScanContext,
   type StartupScanContext,
-} from "./startup-scan.js";
+} from "./startup-scan.ts";
 import {
   getSubagentIdentity,
   isSubagentSession,
   subagentLightModeNotice,
-} from "./subagent-mode.js";
-import type { TestRunnerClient } from "./test-runner-client.js";
-import type { TodoScanner } from "./todo-scanner.js";
-import { isWarmAttached } from "./warm-attach.js";
-import { setSessionLanguages } from "./widget-state.js";
-import { logWordIndex } from "./word-index-logger.js";
-import { resetWorkspaceTopology } from "./workspace-topology.js";
-import { resetZizmorTokenAvailability } from "./zizmor-config.js";
+} from "./subagent-mode.ts";
+import type { TestRunnerClient } from "./test-runner-client.ts";
+import type { TodoScanner } from "./todo-scanner.ts";
+import { isWarmAttached } from "./warm-attach.ts";
+import { setSessionLanguages } from "./widget-state.ts";
+import { logWordIndex } from "./word-index-logger.ts";
+import { resetWorkspaceTopology } from "./workspace-topology.ts";
+import { resetZizmorTokenAvailability } from "./zizmor-config.ts";
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,
@@ -454,8 +454,8 @@ async function igniteDominantLanguageWarm(
     if (!runtime.isCurrentSession(sessionGeneration)) return;
 
     const lspService = (await loadLspService()).getLSPService();
-    const { collectSourceFilesAsync } = await import("./source-filter.js");
-    const { CODE_KINDS, detectFileKind } = await import("./file-kinds.js");
+    const { collectSourceFilesAsync } = await import("./source-filter.ts");
+    const { CODE_KINDS, detectFileKind } = await import("./file-kinds.ts");
     // Async, event-loop-yielding walk (deferred off the interactive path).
     // inspectGeneratedHeaders:false keeps the walk to directory reads only — no
     // per-file content opens — so we never hold a file handle (cheaper, and it
@@ -567,7 +567,7 @@ function scheduleManagedToolRefresh(dbg: SessionStartDeps["dbg"]): void {
     () => {
       void (async () => {
         try {
-          const refresh = await import("./installer/managed-tool-refresh.js");
+          const refresh = await import("./installer/managed-tool-refresh.ts");
           const outcome = await refresh.runManagedToolRefresh();
           if (outcome.skipped) {
             dbg(`session_start tool-refresh: skipped (${outcome.skipped})`);
@@ -652,7 +652,7 @@ async function collectTodoBaselineItems(
 ): Promise<unknown[]> {
   const items: unknown[] = [];
   try {
-    const { getSourceFilesAsync } = await import("./scan-utils.js");
+    const { getSourceFilesAsync } = await import("./scan-utils.ts");
     // Enumerate with the chunked-yield walker so the file collection itself
     // (the previously-synchronous ~1.5s burst on a 2k-file tree) no longer
     // blocks the event loop before the per-file scan loop below even starts.
@@ -698,7 +698,7 @@ async function buildOrRefreshWordIndex(args: {
   const { runtime, sessionGeneration, analysisRoot, snapshotRoot, dbg } = args;
   if (!runtime.isCurrentSession(sessionGeneration)) return;
   const startMs = Date.now();
-  let rebuildPreflightFiles: import("./word-index.js").WordIndexPreflightFiles | undefined;
+  let rebuildPreflightFiles: import("./word-index.ts").WordIndexPreflightFiles | undefined;
 
   const latestSeq = readLatestProjectSequence(snapshotRoot, snapshotSequenceBase(snapshotRoot));
   const effectiveSeq = runtime.projectSeq ?? latestSeq.projectSeq;
@@ -706,7 +706,7 @@ async function buildOrRefreshWordIndex(args: {
   const snapshot = loadProjectSnapshot(snapshotRoot);
   const snapshotLoadMs = Date.now() - snapshotLoadStartMs;
   if (snapshot?.wordIndex) {
-    const { deserializeWordIndex, refreshWordIndexIncrementally } = await import("./word-index.js");
+    const { deserializeWordIndex, refreshWordIndexIncrementally } = await import("./word-index.ts");
     const deserializeStartMs = Date.now();
     const index = deserializeWordIndex(snapshot.wordIndex);
     const deserializeMs = Date.now() - deserializeStartMs;
@@ -806,7 +806,7 @@ async function buildOrRefreshWordIndex(args: {
   // implementation backs this task, the quick-mode warmup call below, AND the
   // stateless cold-query background trigger in word-index.ts — a bound/skip
   // -rule change lands once, not in three copies.
-  const { buildWordIndexAsync, collectWordIndexDocs } = await import("./word-index.js");
+  const { buildWordIndexAsync, collectWordIndexDocs } = await import("./word-index.ts");
   const docs = await collectWordIndexDocs(
     analysisRoot,
     () => runtime.isCurrentSession(sessionGeneration),
@@ -1037,10 +1037,10 @@ function scheduleStartupScans(
   // call-graph — build function-level call graph from review graph data
   let callGraphIdentity: { reviewGraphVersion: string; reviewGraphSignature: string } | undefined;
   const callGraphTask = runTask("call-graph", async () => {
-    const { FactStore } = await import("./dispatch/fact-store.js");
+    const { FactStore } = await import("./dispatch/fact-store.ts");
     const { buildOrUpdateGraph, extractSymbolsAndRefsFromGraph, getReviewGraphCacheIdentity } =
-      await import("./review-graph/builder.js");
-    const { buildCallGraph, saveCallGraph, loadCallGraph } = await import("./call-graph.js");
+      await import("./review-graph/builder.ts");
+    const { buildCallGraph, saveCallGraph, loadCallGraph } = await import("./call-graph.ts");
     if (!runtime.isCurrentSession(sessionGeneration)) return;
     const startMs = Date.now();
     // Build (or hydrate) the canonical review graph first. The call graph is a
@@ -1093,7 +1093,7 @@ function scheduleStartupScans(
     if (!runtime.isCurrentSession(sessionGeneration)) return;
     if (!runtime.callGraph) return;
     const { buildCodebaseModel, saveCodebaseModel, DEFAULT_CODEBASE_MODEL_TOKEN_BUDGET } =
-      await import("./codebase-model.js");
+      await import("./codebase-model.ts");
     if (!callGraphIdentity) return;
     const model = buildCodebaseModel(
       runtime.callGraph,
@@ -1316,8 +1316,8 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
           // Dynamic imports keep the warmup pipeline off the hot
           // startup path — these modules don't load until the timer
           // fires, well after the TUI is interactive.
-          const startupScanModule = await import("./startup-scan.js");
-          const languageProfileModule = await import("./language-profile.js");
+          const startupScanModule = await import("./startup-scan.ts");
+          const languageProfileModule = await import("./language-profile.ts");
           const warmupSnapshotRoot = resolveSnapshotRoot(warmupCwd);
 
           // #699: this background timer is the ONLY place a quick-mode

@@ -1,11 +1,11 @@
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { getLinterPolicyForCwd, markdownlintConfigArgs } from "../../tool-policy.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { getLinterPolicyForCwd, markdownlintConfigArgs } from "../../tool-policy.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import {
   createAvailabilityChecker,
   resolveToolCommandWithInstallFallback,
-} from "./utils/runner-helpers.js";
+} from "./utils/runner-helpers.ts";
 
 const markdownlint = createAvailabilityChecker("markdownlint-cli2", ".cmd");
 

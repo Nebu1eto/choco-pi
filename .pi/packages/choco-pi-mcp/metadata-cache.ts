@@ -44,7 +44,7 @@ import {
   isObjectValue,
   mergeObjectParts,
   type McpObject,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;

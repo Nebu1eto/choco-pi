@@ -1,6 +1,6 @@
-import type { ProtocolDictionary } from "./runtime-values.js";
-import type { RuntimeValue } from "./runtime-values.js";
-import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
+import type { ProtocolDictionary } from "./runtime-values.ts";
+import type { RuntimeValue } from "./runtime-values.ts";
+import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
 /**
  * lsp_diagnostics tool definition
  *
@@ -10,41 +10,41 @@ import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "./runtime-v
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Type } from "../clients/deps/typebox.js";
-import { getProjectIgnoreMatcher, isExcludedDirName } from "../clients/file-utils.js";
+import { Type } from "../clients/deps/typebox.ts";
+import { getProjectIgnoreMatcher, isExcludedDirName } from "../clients/file-utils.ts";
 import {
   getLSPService,
   groupFilesByPrimaryServer,
   runPerServerGroups,
-} from "../clients/lsp/index.js";
+} from "../clients/lsp/index.ts";
 import {
   buildScopeKey,
   createWorkspaceDiagnosticsCacheContext,
   type WorkspaceDiagnosticsCacheContext,
-} from "../clients/lsp/workspace-diagnostics-cache.js";
-import { getServersForFileWithConfig, primaryServerId } from "../clients/lsp/config.js";
-import { combineAbortSignals, withDeadline } from "../clients/deadline-utils.js";
+} from "../clients/lsp/workspace-diagnostics-cache.ts";
+import { getServersForFileWithConfig, primaryServerId } from "../clients/lsp/config.ts";
+import { combineAbortSignals, withDeadline } from "../clients/deadline-utils.ts";
 import {
   applyAuxiliarySuppressions,
   retagAuxiliaryDiagnostics,
-} from "../clients/dispatch/auxiliary-lsp.js";
-import { detectFileRole } from "../clients/file-role.js";
-import type { LSPDiagnostic } from "../clients/lsp/client.js";
+} from "../clients/dispatch/auxiliary-lsp.ts";
+import { detectFileRole } from "../clients/file-role.ts";
+import type { LSPDiagnostic } from "../clients/lsp/client.ts";
 import {
   hashDiagnosticContent,
   touchCompletedConfirmationPolicy,
   touchCoverageGap,
   type DiagnosticBinding,
   type TouchFileResult,
-} from "../clients/lsp/diagnostic-binding.js";
-import { classifyCascadeWaitTier } from "../clients/lsp/wait-policy/index.js";
-import { attemptTsserverSyncDiagnostics } from "../clients/lsp/tsserver-sync.js";
-import { convertLspDiagnostics } from "../clients/dispatch/utils/lsp-diagnostics.js";
-import { demoteInferredProjectDiagnostics } from "../clients/lsp/inferred-project.js";
-import { isBlocking, reconcileScanDiagnostics } from "../clients/widget-state.js";
-import { baseName, compactRenderResult } from "./render-compact.js";
-import { makeProgressReporter, scanningSummaryLine } from "./scan-progress.js";
-import { isWarmAttached, tryWarmAttachedDiagnostics } from "../clients/warm-attach.js";
+} from "../clients/lsp/diagnostic-binding.ts";
+import { classifyCascadeWaitTier } from "../clients/lsp/wait-policy/index.ts";
+import { attemptTsserverSyncDiagnostics } from "../clients/lsp/tsserver-sync.ts";
+import { convertLspDiagnostics } from "../clients/dispatch/utils/lsp-diagnostics.ts";
+import { demoteInferredProjectDiagnostics } from "../clients/lsp/inferred-project.ts";
+import { isBlocking, reconcileScanDiagnostics } from "../clients/widget-state.ts";
+import { baseName, compactRenderResult } from "./render-compact.ts";
+import { makeProgressReporter, scanningSummaryLine } from "./scan-progress.ts";
+import { isWarmAttached, tryWarmAttachedDiagnostics } from "../clients/warm-attach.ts";
 
 interface LanguageExtensions {
   [language: string]: string[];

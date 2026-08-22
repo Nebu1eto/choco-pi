@@ -1,7 +1,7 @@
-import { isTestFile } from "../../file-utils.js";
-import type { FactRule } from "../fact-provider-types.js";
-import type { CommentSummary } from "../facts/comment-facts.js";
-import type { Diagnostic } from "../types.js";
+import { isTestFile } from "../../file-utils.ts";
+import type { FactRule } from "../fact-provider-types.ts";
+import type { CommentSummary } from "../facts/comment-facts.ts";
+import type { Diagnostic } from "../types.ts";
 
 const PLACEHOLDER_PATTERNS = [
   /add\s+more\s+validation/i,

@@ -1,13 +1,13 @@
 import type { EditToolInput } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
-import { detectLineEnding, normalizeToLF, restoreLineEndings } from "./host-edit-normalize.js";
+import { detectLineEnding, normalizeToLF, restoreLineEndings } from "./host-edit-normalize.ts";
 import {
   boundedEditIndexes,
   createReadGuardEditBatchSummary,
   formatBoundedEditIndexes,
   logReadGuardEvent,
   type ReadGuardEditBatchSummary,
-} from "./read-guard-logger.js";
+} from "./read-guard-logger.ts";
 
 type ReplaceOnceResultContract = {
   content: string;

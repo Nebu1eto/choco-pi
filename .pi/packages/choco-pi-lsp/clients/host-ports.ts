@@ -1,9 +1,9 @@
 /** Host-neutral capabilities available to the choco-pi-lsp engine (#1358 S2). */
 
-import type { ExtensionLogEntry } from "./extension-log.js";
-import type { ExtensionRunMode } from "./extension-mode.js";
-import type { ProjectTrustState } from "./project-trust.js";
-import type { UserNotifyLevel } from "./user-notify.js";
+import type { ExtensionLogEntry } from "./extension-log.ts";
+import type { ExtensionRunMode } from "./extension-mode.ts";
+import type { ProjectTrustState } from "./project-trust.ts";
+import type { UserNotifyLevel } from "./user-notify.ts";
 
 export type HostLogValue =
   | string

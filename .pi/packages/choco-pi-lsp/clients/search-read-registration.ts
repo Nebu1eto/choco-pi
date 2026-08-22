@@ -10,9 +10,9 @@
  */
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
-import { isPathIgnoredByProject } from "./file-utils.js";
-import { isExternalOrVendorFile } from "./path-utils.js";
-import type { ReadRecord } from "./read-guard.js";
+import { isPathIgnoredByProject } from "./file-utils.ts";
+import { isExternalOrVendorFile } from "./path-utils.ts";
+import type { ReadRecord } from "./read-guard.ts";
 
 export interface SearchReadLocation {
   /** Absolute or project-relative file path. */

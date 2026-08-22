@@ -16,7 +16,7 @@ import {
   isStringValue,
   mergeObjectParts,
   type McpObject,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 export function buildToolMetadata(
   tools: McpTool[],

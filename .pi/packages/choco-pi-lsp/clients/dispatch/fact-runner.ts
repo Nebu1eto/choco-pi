@@ -1,6 +1,6 @@
-import type { FactProvider } from "./fact-provider-types.js";
-import { scheduleProviders } from "./fact-scheduler.js";
-import type { DispatchContext } from "./types.js";
+import type { FactProvider } from "./fact-provider-types.ts";
+import { scheduleProviders } from "./fact-scheduler.ts";
+import type { DispatchContext } from "./types.ts";
 
 const providers: FactProvider[] = [];
 

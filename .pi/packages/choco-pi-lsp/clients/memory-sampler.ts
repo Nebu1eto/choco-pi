@@ -30,10 +30,10 @@
  * memory backs an ArrayBuffer, so it is already included there.
  */
 
-import type { WordIndex } from "./word-index.js";
-import { getSharedTreeSitterClient } from "./tree-sitter-shared.js";
-import { getReviewGraphWorkspaceCacheSnapshot } from "./review-graph/builder.js";
-import { getDispatchCascadeCacheStats } from "./dispatch/integration.js";
+import type { WordIndex } from "./word-index.ts";
+import { getSharedTreeSitterClient } from "./tree-sitter-shared.ts";
+import { getReviewGraphWorkspaceCacheSnapshot } from "./review-graph/builder.ts";
+import { getDispatchCascadeCacheStats } from "./dispatch/integration.ts";
 
 /** Every N turns, emit one `memory_sample` latency.log line (#1123 item 2). */
 export const MEMORY_SAMPLE_TURN_INTERVAL = 10;

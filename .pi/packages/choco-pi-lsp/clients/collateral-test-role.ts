@@ -23,7 +23,7 @@
  *    invent a heuristic or silently drop a potentially actionable file, and must
  *    never convert an incomplete/indeterminate computation into a clean result.
  */
-import { detectFileRole } from "./file-role.js";
+import { detectFileRole } from "./file-role.ts";
 
 /**
  * True when `filePath` is a KNOWN test-role file that must not surface as a

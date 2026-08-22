@@ -11,7 +11,7 @@ import {
 } from "./metadata-cache.ts";
 import { logger } from "./logger.ts";
 import { truncateAtWord } from "./utils.ts";
-import { isObjectValue, isStringValue } from "./protocol-values.js";
+import { isObjectValue, isStringValue } from "./protocol-values.ts";
 
 /**
  * Resolve prompt metadata for slash-command registration at extension load

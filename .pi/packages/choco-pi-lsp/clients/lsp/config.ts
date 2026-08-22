@@ -47,16 +47,16 @@
  * clients/lsp/server.ts (e.g. "rust", "nix", "bash", "python", "go", "ts").
  */
 
-import { logExtension } from "../extension-log.js";
-import { notifyUserDegradation } from "../user-notify.js";
+import { logExtension } from "../extension-log.ts";
+import { notifyUserDegradation } from "../user-notify.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { BoundedLruCache } from "../bounded-cache.js";
-import { getGlobalPiLensDir } from "../file-utils.js";
-import { launchLSP } from "./launch.js";
-import { createRootDetector, LSP_SERVERS, type LSPServerInfo } from "./server.js";
+import { BoundedLruCache } from "../bounded-cache.ts";
+import { getGlobalPiLensDir } from "../file-utils.ts";
+import { launchLSP } from "./launch.ts";
+import { createRootDetector, LSP_SERVERS, type LSPServerInfo } from "./server.ts";
 
 // --- Types ---
 

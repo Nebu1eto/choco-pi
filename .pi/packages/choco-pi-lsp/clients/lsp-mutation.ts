@@ -5,10 +5,10 @@ import {
   getReadGuardCorrelationId,
   logReadGuardEvent,
   type ReadGuardEditBatchSummary,
-} from "./read-guard-logger.js";
-import { appendProjectChange, type ProjectChangeSource } from "./project-changes.js";
-import type { AppliedWorkspaceEdit } from "./lsp/edits.js";
-import { normalizeMapKey } from "./path-utils.js";
+} from "./read-guard-logger.ts";
+import { appendProjectChange, type ProjectChangeSource } from "./project-changes.ts";
+import type { AppliedWorkspaceEdit } from "./lsp/edits.ts";
+import { normalizeMapKey } from "./path-utils.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

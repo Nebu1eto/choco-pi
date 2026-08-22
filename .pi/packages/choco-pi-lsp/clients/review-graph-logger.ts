@@ -1,8 +1,8 @@
 import * as path from "node:path";
-import { isTestMode } from "./env-utils.js";
-import { getGlobalPiLensDir } from "./file-utils.js";
-import { createNdjsonLogger } from "./ndjson-logger.js";
-import type { ReviewGraph, ReviewGraphPersistCoverage } from "./review-graph/types.js";
+import { isTestMode } from "./env-utils.ts";
+import { getGlobalPiLensDir } from "./file-utils.ts";
+import { createNdjsonLogger } from "./ndjson-logger.ts";
+import type { ReviewGraph, ReviewGraphPersistCoverage } from "./review-graph/types.ts";
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,

@@ -8,15 +8,15 @@
  * Supports bundle exec (preferred in Bundler projects).
  */
 
-import { safeSpawnAsync } from "../../safe-spawn.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
 import {
   getAutofixCapability,
   getLinterPolicyForCwd,
   getRubocopCommand,
-} from "../../tool-policy.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { resolveCommandArgsWithInstallFallback } from "./utils/runner-helpers.js";
+} from "../../tool-policy.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { resolveCommandArgsWithInstallFallback } from "./utils/runner-helpers.ts";
 
 interface RubocopOffense {
   severity: string;

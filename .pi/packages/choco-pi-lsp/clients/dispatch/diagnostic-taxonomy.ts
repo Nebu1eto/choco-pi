@@ -1,4 +1,4 @@
-import type { DefectClass, Diagnostic } from "./types.js";
+import type { DefectClass, Diagnostic } from "./types.ts";
 
 const SILENT_ERROR_HINTS = [
   "empty-catch",

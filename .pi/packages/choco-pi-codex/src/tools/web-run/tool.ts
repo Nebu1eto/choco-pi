@@ -1,5 +1,5 @@
-import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
-import { isFunctionValue, isObjectValue, isStringValue } from "../boundary.js";
+import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
+import { isFunctionValue, isObjectValue, isStringValue } from "../boundary.ts";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { formatNativeBinaryError, nativeBinaryRecoveryMessage } from "../../native-binary-error.ts";

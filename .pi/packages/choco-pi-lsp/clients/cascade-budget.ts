@@ -46,14 +46,14 @@
  * cascade at ~10 neighbours.
  */
 
-import { recordDegradationOnce } from "./degradation-ledger.js";
-import { toPositiveFinite } from "./env-utils.js";
+import { recordDegradationOnce } from "./degradation-ledger.ts";
+import { toPositiveFinite } from "./env-utils.ts";
 // The knobs only, never the scheduler — this module is arithmetic and has no
 // business depending on a task registry to read two numbers (#1462 review N4).
 // Note it buys nothing at load time: `runtime-config.js` below already reaches
 // `pidusage` via `lsp-config.js`.
-import { isQuietWindowEnabled, quietWindowWaitMs } from "./quiet-window-config.js";
-import { RUNTIME_CONFIG } from "./runtime-config.js";
+import { isQuietWindowEnabled, quietWindowWaitMs } from "./quiet-window-config.ts";
+import { RUNTIME_CONFIG } from "./runtime-config.ts";
 
 /**
  * Bounded wait for the turn's deferred cascade computes (#450) to settle before

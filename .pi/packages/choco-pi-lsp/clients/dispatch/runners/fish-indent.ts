@@ -1,7 +1,7 @@
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { createAvailabilityChecker } from "./utils/runner-helpers.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { createAvailabilityChecker } from "./utils/runner-helpers.ts";
 
 // fish_indent ships with fish — not separately installable, no managed fallback
 const fishIndent = createAvailabilityChecker("fish_indent");

@@ -15,14 +15,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { getProjectDataDir } from "./file-utils.js";
-import { writeFileAtomic } from "./atomic-write.js";
-import { parseSymbolKey } from "./call-graph.js";
-import type { CallGraphCacheIdentity } from "./call-graph.js";
-import { detectFileRole } from "./file-role.js";
-import { isExternalOrVendorFile } from "./path-utils.js";
-import { isBuildArtifact } from "./source-filter.js";
-import type { FunctionCallGraph, SymbolKey } from "./call-graph.js";
+import { getProjectDataDir } from "./file-utils.ts";
+import { writeFileAtomic } from "./atomic-write.ts";
+import { parseSymbolKey } from "./call-graph.ts";
+import type { CallGraphCacheIdentity } from "./call-graph.ts";
+import { detectFileRole } from "./file-role.ts";
+import { isExternalOrVendorFile } from "./path-utils.ts";
+import { isBuildArtifact } from "./source-filter.ts";
+import type { FunctionCallGraph, SymbolKey } from "./call-graph.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

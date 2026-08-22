@@ -1,4 +1,4 @@
-import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
+import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
 import {
   isBigIntValue,
   isBooleanValue,
@@ -7,8 +7,8 @@ import {
   isObjectValue,
   isStringValue,
   isSymbolValue,
-} from "../boundary.js";
-import type { RuntimeToolResult, RuntimeToolTrace } from "./types.js";
+} from "../boundary.ts";
+import type { RuntimeToolResult, RuntimeToolTrace } from "./types.ts";
 
 const MAX_TRACE_TEXT_CHARS = 32_768;
 const MAX_TRACE_DETAILS_CHARS = 65_536;

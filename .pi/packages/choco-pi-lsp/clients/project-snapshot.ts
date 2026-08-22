@@ -5,25 +5,25 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { writeFileAtomic } from "./atomic-write.js";
-import { getProjectDataDir } from "./file-utils.js";
-import { readJsonCache } from "./json-cache-read.js";
-import { logLatency } from "./latency-logger.js";
-import { normalizeMapKey } from "./path-utils.js";
+import { writeFileAtomic } from "./atomic-write.ts";
+import { getProjectDataDir } from "./file-utils.ts";
+import { readJsonCache } from "./json-cache-read.ts";
+import { logLatency } from "./latency-logger.ts";
+import { normalizeMapKey } from "./path-utils.ts";
 import type {
   ProjectSnapshotPersistWorkerRequest,
   ProjectSnapshotPersistWorkerResult,
-} from "./project-snapshot-persist-worker.js";
-import type { ProjectLanguageProfile } from "./language-policy.js";
-import { detectProjectConventions, type ProjectConventions } from "./project-conventions.js";
-import type { RuleScanResult } from "./rules-scanner.js";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
-import type { StartupScanContext } from "./startup-scan.js";
+} from "./project-snapshot-persist-worker.ts";
+import type { ProjectLanguageProfile } from "./language-policy.ts";
+import { detectProjectConventions, type ProjectConventions } from "./project-conventions.ts";
+import type { RuleScanResult } from "./rules-scanner.ts";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
+import type { StartupScanContext } from "./startup-scan.ts";
 import {
   deserializeWordIndex,
   serializeWordIndex,
   type SerializedWordIndex,
-} from "./word-index.js";
+} from "./word-index.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

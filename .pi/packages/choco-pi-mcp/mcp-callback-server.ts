@@ -15,7 +15,7 @@ import {
   setOAuthCallbackPath,
   setOAuthCallbackPort,
 } from "./mcp-oauth-provider.ts";
-import { isNumberValue, isStringValue, mergeObjectParts } from "./protocol-values.js";
+import { isNumberValue, isStringValue, mergeObjectParts } from "./protocol-values.ts";
 
 // HTML templates for callback responses.
 //

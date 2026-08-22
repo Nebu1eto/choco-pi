@@ -25,9 +25,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { writeFileAtomic, writeFileAtomicAsync } from "./atomic-write.js";
-import { recordDegradationOnce } from "./degradation-ledger.js";
-import { getGlobalPiLensDir } from "./file-utils.js";
+import { writeFileAtomic, writeFileAtomicAsync } from "./atomic-write.ts";
+import { recordDegradationOnce } from "./degradation-ledger.ts";
+import { getGlobalPiLensDir } from "./file-utils.ts";
 // #735: reuse the #449/#525 reaper's exact conservative liveness check
 // (`process.kill(pid, 0)`, ESRCH-only-means-dead) rather than inventing a
 // second one — see realIsPidAlive's own docstring, which already calls out
@@ -37,9 +37,9 @@ import { getGlobalPiLensDir } from "./file-utils.js";
 // use on both sides happens inside function bodies, never at module-
 // evaluation time, so both modules are fully initialized before either
 // import is actually invoked.
-import { realIsPidAlive } from "./instance-reaper.js";
-import { normalizeFilePath } from "./path-utils.js";
-import { getSubagentIdentity, isSubagentSession } from "./subagent-mode.js";
+import { realIsPidAlive } from "./instance-reaper.ts";
+import { normalizeFilePath } from "./path-utils.ts";
+import { getSubagentIdentity, isSubagentSession } from "./subagent-mode.ts";
 
 export interface LspChildEntry {
   pid: number;

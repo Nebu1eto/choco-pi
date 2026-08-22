@@ -62,9 +62,9 @@
  *     healing direction never re-trigger a resync — only the rising edge does.
  */
 import * as fs from "node:fs";
-import { logLatency } from "./latency-logger.js";
-import { toProjectRelativePath } from "./path-utils.js";
-import { STALE_LINE_MARKER } from "./stale-marker.js";
+import { logLatency } from "./latency-logger.ts";
+import { toProjectRelativePath } from "./path-utils.ts";
+import { STALE_LINE_MARKER } from "./stale-marker.ts";
 
 /** Marker rendered in place of a demoted diagnostic's now-untrustworthy line.
  * Shares the base `STALE_LINE_MARKER` vocabulary with sibling freshness
@@ -343,7 +343,7 @@ export function resyncDocumentOnPastEof(filePath: string): void {
   void (async () => {
     try {
       const [{ getLSPService }, content] = await Promise.all([
-        import("./lsp/index.js"),
+        import("./lsp/index.ts"),
         fs.promises.readFile(filePath, "utf-8"),
       ]);
       await getLSPService().openFile(filePath, content, {

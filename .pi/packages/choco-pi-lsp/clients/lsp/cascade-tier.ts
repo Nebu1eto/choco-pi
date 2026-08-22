@@ -62,19 +62,19 @@
  * watch this sets up for a future TS7 build that becomes silent again.
  */
 
-import { logCascade } from "../cascade-logger.js";
-import { logLatency } from "../latency-logger.js";
-import { normalizeMapKey } from "../path-utils.js";
-import { registerQuietWindowTask } from "../quiet-window.js";
-import type { LSPDiagnostic } from "./client.js";
-import type { LSPService } from "./index.js";
+import { logCascade } from "../cascade-logger.ts";
+import { logLatency } from "../latency-logger.ts";
+import { normalizeMapKey } from "../path-utils.ts";
+import { registerQuietWindowTask } from "../quiet-window.ts";
+import type { LSPDiagnostic } from "./client.ts";
+import type { LSPService } from "./index.ts";
 
 import {
   classifyCascadeWaitTier as classifySharedCascadeWaitTier,
   classifyServerWaitTier,
   resolvePrimaryServerForWaitPolicy,
   type CascadeWaitTier as SharedCascadeWaitTier,
-} from "./wait-policy/classification.js";
+} from "./wait-policy/classification.ts";
 
 export { classifyServerWaitTier };
 

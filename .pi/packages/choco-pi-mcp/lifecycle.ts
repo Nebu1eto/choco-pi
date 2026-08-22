@@ -5,7 +5,7 @@ import { hasPendingAuth } from "./mcp-auth-flow.ts";
 import { logger } from "./logger.ts";
 import { formatTerminalError, parallelLimit, sanitizeTerminalText } from "./utils.ts";
 import { isTerminatedSession } from "./session-recovery.ts";
-import { isFunctionValue, isNumberValue } from "./protocol-values.js";
+import { isFunctionValue, isNumberValue } from "./protocol-values.ts";
 
 export type ReconnectCallback = (serverName: string) => void | Promise<void>;
 

@@ -1,16 +1,16 @@
-import { logExtension } from "./extension-log.js";
+import { logExtension } from "./extension-log.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { AgentBehaviorClient } from "./agent-behavior-client.js";
-import type { BiomeClient } from "./biome-client.js";
-import type { ComplexityClient } from "./complexity-client.js";
-import type { GoClient } from "./go-client.js";
-import type { MetricsClient } from "./metrics-client.js";
-import type { OpengrepClient } from "./opengrep-client.js";
-import type { RuffClient } from "./ruff-client.js";
-import type { RustClient } from "./rust-client.js";
-import type { TestRunnerClient } from "./test-runner-client.js";
-import type { TodoScanner } from "./todo-scanner.js";
+import type { AgentBehaviorClient } from "./agent-behavior-client.ts";
+import type { BiomeClient } from "./biome-client.ts";
+import type { ComplexityClient } from "./complexity-client.ts";
+import type { GoClient } from "./go-client.ts";
+import type { MetricsClient } from "./metrics-client.ts";
+import type { OpengrepClient } from "./opengrep-client.ts";
+import type { RuffClient } from "./ruff-client.ts";
+import type { RustClient } from "./rust-client.ts";
+import type { TestRunnerClient } from "./test-runner-client.ts";
+import type { TodoScanner } from "./todo-scanner.ts";
 
 // choco-pi fork: the heavyweight project analyzers (knip, jscpd, madge/
 // dependency-checker, gitleaks, govulncheck, trivy, dead-code/vulture) are
@@ -72,7 +72,7 @@ async function logBootstrapFailures(failures: { name: string; err: unknown }[]):
   }
   try {
     const { collectInstallDiagnostics, formatInstallDiagnostics } =
-      await import("./install-diagnostics.js");
+      await import("./install-diagnostics.ts");
     logExtension({
       subsystem: "bootstrap",
       message: formatInstallDiagnostics(collectInstallDiagnostics(), failures[0]?.err),
@@ -118,24 +118,24 @@ export function loadBootstrapClients(): Promise<BootstrapClients> {
       rustClient,
       agentBehaviorClient,
     ] = await Promise.all([
-      load("ruff", async () => new (await import("./ruff-client.js")).RuffClient()),
-      load("biome", async () => new (await import("./biome-client.js")).BiomeClient()),
-      load("todo", async () => new (await import("./todo-scanner.js")).TodoScanner()),
+      load("ruff", async () => new (await import("./ruff-client.ts")).RuffClient()),
+      load("biome", async () => new (await import("./biome-client.ts")).BiomeClient()),
+      load("todo", async () => new (await import("./todo-scanner.ts")).TodoScanner()),
       load(
         "test-runner",
-        async () => new (await import("./test-runner-client.js")).TestRunnerClient(),
+        async () => new (await import("./test-runner-client.ts")).TestRunnerClient(),
       ),
-      load("metrics", async () => new (await import("./metrics-client.js")).MetricsClient()),
+      load("metrics", async () => new (await import("./metrics-client.ts")).MetricsClient()),
       load(
         "complexity",
-        async () => new (await import("./complexity-client.js")).ComplexityClient(),
+        async () => new (await import("./complexity-client.ts")).ComplexityClient(),
       ),
-      load("go", async () => new (await import("./go-client.js")).GoClient()),
-      load("opengrep", async () => new (await import("./opengrep-client.js")).OpengrepClient()),
-      load("rust", async () => new (await import("./rust-client.js")).RustClient()),
+      load("go", async () => new (await import("./go-client.ts")).GoClient()),
+      load("opengrep", async () => new (await import("./opengrep-client.ts")).OpengrepClient()),
+      load("rust", async () => new (await import("./rust-client.ts")).RustClient()),
       load(
         "agent-behavior",
-        async () => new (await import("./agent-behavior-client.js")).AgentBehaviorClient(),
+        async () => new (await import("./agent-behavior-client.ts")).AgentBehaviorClient(),
       ),
     ]);
 

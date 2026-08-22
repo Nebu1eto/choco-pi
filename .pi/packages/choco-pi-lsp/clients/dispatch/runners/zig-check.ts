@@ -1,8 +1,8 @@
 import * as path from "node:path";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { createAvailabilityChecker } from "./utils/runner-helpers.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { PRIORITY } from "../priorities.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { createAvailabilityChecker } from "./utils/runner-helpers.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { PRIORITY } from "../priorities.ts";
 
 // zig rejects `--version`; the version subcommand is `zig version`. Using the
 // default probe would make this runner skip on every machine.

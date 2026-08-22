@@ -58,7 +58,7 @@ import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getGlobalPiLensDir } from "./file-utils.js";
+import { getGlobalPiLensDir } from "./file-utils.ts";
 
 const LspDictionaryValueSchema = Type.Unknown();
 type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;

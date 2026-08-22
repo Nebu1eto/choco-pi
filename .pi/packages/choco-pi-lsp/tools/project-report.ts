@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.ts";
 /**
  * project_report pi tool (#773) — the top of the discovery funnel:
  * project_report orients the agent in the project, module_report explains one
@@ -9,13 +9,13 @@ import type { RuntimeValue } from "./runtime-values.js";
  * `available: false` with a retry hint, never blocking the call.
  */
 
-import { Type } from "../clients/deps/typebox.js";
+import { Type } from "../clients/deps/typebox.ts";
 import {
   projectReport,
   renderCompactProjectReport,
   type ProjectReport,
-} from "../clients/lsp-engine.js";
-import { compactRenderResult } from "./render-compact.js";
+} from "../clients/lsp-engine.ts";
+import { compactRenderResult } from "./render-compact.ts";
 
 function errorMessage<T>(err: T): string {
   return err instanceof Error ? err.message : String(err);
