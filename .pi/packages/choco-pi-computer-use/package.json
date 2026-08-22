@@ -1,0 +1,40 @@
+{
+  "name": "choco-pi-computer-use",
+  "version": "0.5.0-choco.0",
+  "private": true,
+  "description": "Vendored choco-pi fork of pi-computer-use for macOS desktop automation.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "chocoPi": {
+    "supersedes": [
+      "@injaneity/pi-computer-use"
+    ]
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/computer-use.ts"
+    ]
+  }
+}
