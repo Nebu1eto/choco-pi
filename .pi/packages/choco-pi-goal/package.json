@@ -43,9 +43,6 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
-    ],
-    "prompts": [
-      "./prompts"
     ]
   }
 }

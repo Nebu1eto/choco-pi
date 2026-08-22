@@ -37,7 +37,10 @@ function createStubUi(): StubUi {
 
 /** Minimal ExtensionAPI stub: records `on()` handlers by event name. */
 function createStubPi() {
-  const handlers = new Map<string, (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue>();
+  const handlers = new Map<
+    string,
+    (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue | Promise<RuntimeValue>
+  >();
   return {
     on(event: string, handler: (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue) {
       handlers.set(event, handler);

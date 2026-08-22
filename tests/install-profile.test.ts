@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -171,4 +171,21 @@ test("every bundled fork declares the packages it supersedes", async () => {
       `${spec} must declare chocoPi.supersedes (use [] when it replaces nothing)`,
     );
   }
+});
+
+test("malformed JSON names the file instead of reporting a bare parse position", async (context) => {
+  const home = await mkdtemp(path.join(tmpdir(), "choco-pi-install-json-"));
+  context.after(() => rm(home, { recursive: true, force: true }));
+  const agentDir = path.join(home, "agent");
+  const settingsPath = path.join(agentDir, "settings.json");
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(settingsPath, "{ not json", "utf8");
+
+  await assert.rejects(
+    () => installProfile({ root: process.cwd(), agentDir }),
+    (error) =>
+      error instanceof Error &&
+      error.message.includes(settingsPath) &&
+      error.message.includes("valid JSON"),
+  );
 });

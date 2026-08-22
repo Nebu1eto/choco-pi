@@ -3,7 +3,10 @@ import test from "node:test";
 import {
   cacheableSegments,
   canonicalJson,
+  changedSystemRegions,
   diffCacheableSegments,
+  systemRegionHashes,
+  systemText,
 } from "../.pi/extensions/cache-probe.ts";
 
 test("canonicalJson is stable across object key order", () => {
@@ -61,4 +64,56 @@ test("diffCacheableSegments identifies tool changes and segment growth", () => {
     segmentsAdded: 1,
     segmentsRemoved: 0,
   });
+});
+
+const SYSTEM = [
+  "<runtime_environment>",
+  'Current model: "anthropic/claude-opus-5"',
+  "</runtime_environment>",
+  "Base rules and project context files.",
+  "<choco_pi_writing_policy>",
+  "Be concise.",
+  "</choco_pi_writing_policy>",
+].join("\n");
+
+test("systemText reads the prompt from a string or a block array", () => {
+  assert.equal(systemText({ system: "plain" }), "plain");
+  assert.equal(
+    systemText({
+      system: [
+        { type: "text", text: "first" },
+        { type: "text", text: "second" },
+      ],
+    }),
+    "first\nsecond",
+  );
+  assert.equal(systemText({}), "");
+});
+
+test("a system change names the region that moved, not just the block", () => {
+  const before = systemRegionHashes(SYSTEM);
+
+  // The model name lives inside the runtime block, so only that region moves.
+  const switched = systemRegionHashes(SYSTEM.replace("claude-opus-5", "claude-fable-5"));
+  assert.deepEqual(changedSystemRegions(before, switched), ["runtime-environment"]);
+
+  // An edited policy file moves only its own block.
+  const policy = systemRegionHashes(SYSTEM.replace("Be concise.", "Be extremely concise."));
+  assert.deepEqual(changedSystemRegions(before, policy), ["writing-policy"]);
+
+  // Anything no marker claims — Pi's prompt, context files — lands in base.
+  const context = systemRegionHashes(`${SYSTEM}\nAn added AGENTS.md section.`);
+  assert.deepEqual(changedSystemRegions(before, context), ["base"]);
+
+  assert.deepEqual(changedSystemRegions(before, systemRegionHashes(SYSTEM)), []);
+  assert.deepEqual(changedSystemRegions(undefined, before), [], "the first turn has no baseline");
+});
+
+test("a dropped region is reported rather than silently ignored", () => {
+  const before = systemRegionHashes(SYSTEM);
+  const withoutPolicy = systemRegionHashes(
+    SYSTEM.slice(0, SYSTEM.indexOf("<choco_pi_writing_policy>")),
+  );
+  // The remainder is untouched, so only the dropped block is named.
+  assert.deepEqual(changedSystemRegions(before, withoutPolicy), ["writing-policy"]);
 });

@@ -39,15 +39,23 @@ import {
   summarizeSubagentUsage,
   type SessionInfoStyle,
 } from "./lib/session-usage.ts";
+import { renderContext } from "./lib/context-report.ts";
 import { hasRunningSubagents } from "./lib/subagent-manager.ts";
-import { formatStatus, statusHeading, summarizeStatusRows } from "./session-status.ts";
+import {
+  condenseStatusRows,
+  formatStatus,
+  statusHeading,
+  summarizeStatusRows,
+} from "./session-status.ts";
+import { buildContextCapSection } from "./model-context-cap.ts";
 import { usageReport } from "./provider-usage.ts";
 
-export type StatusTabId = "status" | "usage" | "preferences";
-export type TextTabId = "status" | "usage";
+export type StatusTabId = "status" | "context" | "usage" | "preferences";
+export type TextTabId = "status" | "context" | "usage";
 
 export const STATUS_TABS: ReadonlyArray<{ id: StatusTabId; title: string }> = [
   { id: "status", title: "Status" },
+  { id: "context", title: "Context" },
   { id: "usage", title: "Usage" },
   { id: "preferences", title: "Preferences" },
 ];
@@ -58,9 +66,26 @@ export const USAGE_REFRESH_MS = 3 * 60_000;
 /** Tabs whose body comes from a remote provider and therefore goes stale while the view stays open. */
 const AUTO_REFRESH_TABS: ReadonlySet<TextTabId> = new Set<TextTabId>(["usage"]);
 
+/**
+ * Tabs that hold back their inventories until Ctrl+O asks for them. Both
+ * default to the one-line-per-fact view; the Usage tab has no long form.
+ */
+const EXPANDABLE_TABS: ReadonlySet<StatusTabId> = new Set<StatusTabId>(["status", "context"]);
+
+export function isExpandableTab(id: StatusTabId): boolean {
+  return EXPANDABLE_TABS.has(id);
+}
+
+/**
+ * The API this module registered with, kept so the Context tab can read the
+ * tool inventory. Every extension receives the same runtime behind its own
+ * `pi` object, so the one handed to `statusCommands` answers for the session.
+ */
+let toolInventory: Pick<ExtensionAPI, "getAllTools" | "getActiveTools"> | undefined;
+
 export type TabController = {
-  /** Switch to a tab, repaint the last body, and re-query it. */
-  activate: (id: TextTabId) => void;
+  /** Switch to a tab in one of its two views, repaint the last body, and re-query it. */
+  activate: (id: TextTabId, expanded?: boolean) => void;
   /** Stop the refresh timer. */
   dispose: () => void;
 };
@@ -70,29 +95,36 @@ export type TabController = {
  * an auto-refreshing tab is re-queried again every `intervalMs` while it stays
  * open. A cached body is painted immediately so a refetch never blanks the view,
  * and a failed background refresh keeps the last good body instead of replacing it.
+ *
+ * A tab's concise and expanded bodies are cached separately, so toggling the
+ * view paints the other one immediately instead of blanking on every keypress.
  */
 export function createTabController(options: {
-  load: (id: TextTabId) => Promise<string>;
+  load: (id: TextTabId, expanded: boolean) => Promise<string>;
   paint: (body: string, view: { preserveScroll: boolean }) => void;
   loading: string;
   failure: (id: TextTabId, message: string) => string;
   intervalMs?: number;
 }): TabController {
-  const cache = new Map<TextTabId, string>();
+  const cache = new Map<string, string>();
   const intervalMs = options.intervalMs ?? USAGE_REFRESH_MS;
   let active: TextTabId | undefined;
+  let activeExpanded = false;
   let token = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
-  const query = (id: TextTabId, background: boolean): void => {
+  const viewKey = (id: TextTabId, expanded: boolean): string => `${id}:${expanded ? "all" : ""}`;
+  const query = (id: TextTabId, expanded: boolean, background: boolean): void => {
     const current = ++token;
     options
-      .load(id)
+      .load(id, expanded)
       .then((body) => {
-        cache.set(id, body);
-        if (current === token && active === id) options.paint(body, { preserveScroll: background });
+        cache.set(viewKey(id, expanded), body);
+        if (current === token && active === id && activeExpanded === expanded)
+          options.paint(body, { preserveScroll: background });
       })
       .catch((error: RuntimeValue) => {
-        if (current !== token || active !== id || cache.has(id)) return;
+        if (current !== token || active !== id || activeExpanded !== expanded) return;
+        if (cache.has(viewKey(id, expanded))) return;
         const message = error instanceof Error ? error.message : String(error);
         options.paint(options.failure(id, message), { preserveScroll: background });
       });
@@ -100,16 +132,18 @@ export function createTabController(options: {
   const restartTimer = (): void => {
     if (timer !== undefined) clearInterval(timer);
     timer = setInterval(() => {
-      if (active !== undefined && AUTO_REFRESH_TABS.has(active)) query(active, true);
+      if (active !== undefined && AUTO_REFRESH_TABS.has(active))
+        query(active, activeExpanded, true);
     }, intervalMs);
     timer.unref?.();
   };
   return {
-    activate: (id: TextTabId) => {
+    activate: (id: TextTabId, expanded = false) => {
       active = id;
-      options.paint(cache.get(id) ?? options.loading, { preserveScroll: false });
+      activeExpanded = expanded;
+      options.paint(cache.get(viewKey(id, expanded)) ?? options.loading, { preserveScroll: false });
       restartTimer();
-      query(id, false);
+      query(id, expanded, false);
     },
     dispose: () => {
       if (timer !== undefined) clearInterval(timer);
@@ -135,11 +169,16 @@ const SESSION_INFO_ROWS: ReadonlySet<string> = new Set([
  * The session block leads because it answers what the session cost, which is
  * what someone opening `/status` mid-run is usually after; the environment rows
  * below it change only when the configuration does.
+ *
+ * Concise mode keeps every environment row on one line and drops the session
+ * footnotes; expanded mode adds the skill, agent, and context-file inventories
+ * those row counts stand for.
  */
 export function statusBody(
   ctx: ExtensionCommandContext,
   thinkingLevel: string,
   style?: SessionInfoStyle,
+  expanded = false,
 ): string {
   const entries = ctx.sessionManager.getEntries();
   const sessionId = ctx.sessionManager.getSessionId();
@@ -155,11 +194,22 @@ export function statusBody(
       subagentsRunning: hasRunningSubagents(),
     },
     style,
+    expanded,
   );
-  const rows = summarizeStatusRows(ctx, thinkingLevel).filter(
+  const all = summarizeStatusRows(ctx, thinkingLevel).filter(
     (row) => !SESSION_INFO_ROWS.has(row.label),
   );
+  const rows = expanded ? all : condenseStatusRows(all);
   return `${info}\n\n${statusHeading(style)}\n\n${formatStatus(rows, style)}`;
+}
+
+/** The Context tab body, or a notice when no extension API was captured. */
+function contextBody(ctx: ExtensionCommandContext, expanded: boolean, styled: boolean): string {
+  if (!toolInventory) return "The context report is unavailable in this session.";
+  const body = renderContext(toolInventory, ctx, expanded, styled);
+  if (!styled) return body;
+  const heading = ctx.ui.theme.bold(ctx.ui.theme.fg("accent", "Context Usage"));
+  return body.replace(/^Context Usage/, () => heading);
 }
 
 export function tabBody(
@@ -167,12 +217,14 @@ export function tabBody(
   thinkingLevel: string,
   id: TextTabId,
   styled: boolean,
+  expanded = false,
 ): Promise<string> {
   const style = styled ? ctx.ui.theme : undefined;
   if (id === "usage") {
-    return usageReport(ctx).then((report) => (style ? style.fg("text", report) : report));
+    return usageReport(ctx, style);
   }
-  return Promise.resolve(statusBody(ctx, thinkingLevel, style));
+  if (id === "context") return Promise.resolve(contextBody(ctx, expanded, styled));
+  return Promise.resolve(statusBody(ctx, thinkingLevel, style, expanded));
 }
 
 type PreferencesFocus = { section?: string; focusId?: string; openSubmenu?: boolean };
@@ -194,6 +246,7 @@ const PREFERENCES_USAGE =
 function buildPreferencesExtraSections(ctx: ExtensionCommandContext): PreferencesExtraSection[] {
   return [
     ...buildNativeSettingsSections(),
+    buildContextCapSection(ctx),
     ...buildCodexPreferencesSections(ctx),
     buildAgentPreferencesSection(ctx),
   ];
@@ -252,13 +305,14 @@ async function showTabOnce(
   thinkingLevel: string,
   initial: StatusTabId,
   initialFocus: PreferencesFocus,
+  initialExpanded: boolean,
 ): Promise<string | undefined> {
   if (ctx.mode !== "tui") {
     if (initial === "preferences") {
       preferencesSummary(ctx);
       return undefined;
     }
-    const body = await tabBody(ctx, thinkingLevel, initial, false);
+    const body = await tabBody(ctx, thinkingLevel, initial, false, initialExpanded);
     ctx.ui.notify(ctx.ui.theme.fg("text", body), "info");
     return undefined;
   }
@@ -269,6 +323,7 @@ async function showTabOnce(
   }
   return ctx.ui.custom<string | undefined>((tui, theme, _keybindings, done) => {
     let active = initial;
+    let expanded = initialExpanded;
     let panel: PreferencesPanelHandle | undefined;
     let rememberedSection: string | undefined = initialFocus.section;
     let rememberedFocusId: string | undefined = initialFocus.focusId;
@@ -288,15 +343,20 @@ async function showTabOnce(
         const label = `  ${tab.title}  `;
         return tab.id === active ? theme.fg("accent", theme.bold(label)) : theme.fg("dim", label);
       }).join(theme.fg("dim", "·"));
-    const textHint = (): string =>
-      theme.fg("dim", "Tab switches tabs · ↑/↓ scrolls · 1/2/3 jumps · Enter/Esc closes");
+    const digitHint = STATUS_TABS.map((_tab, index) => index + 1).join("/");
+    const textHint = (): string => {
+      const parts = ["Tab switches tabs", "↑/↓ scrolls", `${digitHint} jumps`];
+      if (isExpandableTab(active)) parts.push(expanded ? "Ctrl+O collapses" : "Ctrl+O expands");
+      parts.push("Enter/Esc closes");
+      return theme.fg("dim", parts.join(" · "));
+    };
     // An open submenu holds Tab and the digits, so the hint must not promise them.
     const panelHint = (): string =>
       theme.fg(
         "dim",
         panel?.hasOpenSubmenu?.()
           ? "Esc goes back"
-          : "Tab switches tabs · 1/2/3 jumps · Esc closes",
+          : `Tab switches tabs · ${digitHint} jumps · Esc closes`,
       );
 
     const paint = (body: string, view: { preserveScroll: boolean }): void => {
@@ -306,7 +366,7 @@ async function showTabOnce(
     };
 
     const controller = createTabController({
-      load: (id) => tabBody(ctx, thinkingLevel, id, true),
+      load: (id, view) => tabBody(ctx, thinkingLevel, id, true, view),
       paint,
       loading: theme.fg("dim", "Loading…"),
       failure: (id, message) => theme.fg("error", `Failed to load the ${id} tab: ${message}`),
@@ -354,7 +414,15 @@ async function showTabOnce(
       if (active === "preferences") closePanel();
       active = id;
       if (id === "preferences") openPanel();
-      else controller.activate(id);
+      else controller.activate(id, expanded);
+      tui.requestRender();
+    };
+
+    /** Ctrl+O on a text tab; the view choice is shared by every tab that has one. */
+    const toggleExpanded = (): void => {
+      if (!isExpandableTab(active) || active === "preferences") return;
+      expanded = !expanded;
+      controller.activate(active, expanded);
       tui.requestRender();
     };
 
@@ -364,13 +432,21 @@ async function showTabOnce(
       activate(next.id);
     };
 
+    /** True when the key is a digit naming one of the tabs. */
+    const tabDigit = (data: string): number | undefined => {
+      const index = Number(data) - 1;
+      return data.length === 1 && Number.isInteger(index) && STATUS_TABS[index] !== undefined
+        ? index
+        : undefined;
+    };
+
     const jumpToTab = (index: number): void => {
       const tab = STATUS_TABS[index];
       if (tab) activate(tab.id);
     };
 
     if (initial === "preferences") openPanel();
-    else controller.activate(initial);
+    else controller.activate(initial, expanded);
 
     return {
       render: (width: number) => {
@@ -401,8 +477,9 @@ async function showTabOnce(
           panel.handleInput(data);
           return;
         }
-        if (data === "1" || data === "2" || data === "3") {
-          jumpToTab(Number(data) - 1);
+        const digit = tabDigit(data);
+        if (digit !== undefined) {
+          jumpToTab(digit);
           return;
         }
         // Tab owns tab switching everywhere, so the panel keeps ←/→ for its
@@ -413,6 +490,10 @@ async function showTabOnce(
         }
         if (matchesKey(data, "shift+tab")) {
           switchTab(-1);
+          return;
+        }
+        if (matchesKey(data, "ctrl+o")) {
+          toggleExpanded();
           return;
         }
         if (active === "preferences") {
@@ -450,11 +531,12 @@ async function showTab(
   thinkingLevel: string,
   initial: StatusTabId,
   initialFocus: PreferencesFocus = {},
+  initialExpanded = false,
 ): Promise<void> {
   let focus = initialFocus;
   let startTab = initial;
   for (;;) {
-    const outcome = await showTabOnce(ctx, thinkingLevel, startTab, focus);
+    const outcome = await showTabOnce(ctx, thinkingLevel, startTab, focus, initialExpanded);
     focus = {};
     if (outcome === undefined) return;
     startTab = "preferences";
@@ -479,15 +561,16 @@ async function showTab(
 }
 
 export default function statusCommands(pi: ExtensionAPI): void {
+  toolInventory = pi;
   pi.registerCommand("status", {
     description:
-      "Show session info, cost, model, context, MCP, and environment (Status/Usage tabs)",
+      "Show session info, cost, model, context, MCP, and environment (Status/Context/Usage tabs)",
     handler: async (_args, ctx) => showTab(ctx, pi.getThinkingLevel(), "status"),
   });
   overrideSessionCommand();
   const usageCommand = {
     description:
-      "Show connected Claude Code, OpenAI Codex, and Synthetic usage (Status/Usage tabs)",
+      "Show connected Claude Code, OpenAI Codex, and Synthetic usage (Status/Context/Usage tabs)",
     handler: async (_args: string, ctx: ExtensionCommandContext) =>
       showTab(ctx, pi.getThinkingLevel(), "usage"),
   };
@@ -495,7 +578,7 @@ export default function statusCommands(pi: ExtensionAPI): void {
   pi.registerCommand("quota", usageCommand);
 
   const preferencesCommand = {
-    description: "Adjust choco-ui and agent preferences (Status/Usage/Preferences tabs)",
+    description: "Adjust choco-ui and agent preferences (Preferences tab of /status)",
     getArgumentCompletions: (prefix: string) => {
       const agent = agentPreferencesCompletions(prefix);
       if (agent.length > 0) return agent;
@@ -602,4 +685,17 @@ export async function openPreferencesPicker(
   if (ctx.mode !== "tui" || !getPreferencesProvider()) return false;
   await showTab(ctx, thinkingLevel, "preferences", focus);
   return true;
+}
+
+/**
+ * Opens the dialog on one of its text tabs. `/context` uses this so its report
+ * is one tab of the status view instead of a second overlay of its own.
+ */
+export async function openStatusTab(
+  ctx: ExtensionCommandContext,
+  thinkingLevel: string,
+  tab: TextTabId,
+  expanded = false,
+): Promise<void> {
+  await showTab(ctx, thinkingLevel, tab, {}, expanded);
 }

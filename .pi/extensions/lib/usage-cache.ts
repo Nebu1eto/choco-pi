@@ -61,6 +61,13 @@ export class UsageThrottledError extends Error {
 export type UsageCacheEntry = {
   /** Last successful response and the epoch ms it arrived; absent until one succeeds. */
   snapshot?: { payload: RuntimeValue; storedAt: number };
+  /**
+   * The response `snapshot` replaced. A provider whose quota refills instead of
+   * resetting can only be paced by comparing two readings, and the live one is
+   * fetched at most once a minute, so the older reading is kept rather than
+   * recomputed on every paint.
+   */
+  previous?: { payload: RuntimeValue; storedAt: number };
   /** Earliest epoch ms at which a live request may run again. */
   nextAttemptAt: number;
   /** Consecutive failures, which drive the backoff step. */
@@ -83,6 +90,10 @@ export type UsageRequestPolicy = {
 
 export type UsageRequestResult = {
   payload: RuntimeValue;
+  /** Epoch ms the returned payload was read from the endpoint. */
+  payloadAt: number;
+  /** The reading before `payload`, when one is still stored. */
+  previous?: { payload: RuntimeValue; storedAt: number };
   /** Epoch ms the payload was fetched; absent when the payload is a live response. */
   cachedAt?: number;
   /** Why the payload came from the cache instead of the endpoint. */
@@ -172,17 +183,27 @@ function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
   return isObject(value) && value !== null && !Array.isArray(value);
 }
 
+function parseSnapshot(
+  value: RuntimeValue,
+): { payload: RuntimeValue; storedAt: number } | undefined {
+  if (!isRecord(value) || !isNumber(value.storedAt)) return undefined;
+  return { payload: value.payload, storedAt: value.storedAt };
+}
+
 function parseEntry(value: RuntimeValue): UsageCacheEntry | undefined {
   if (!isRecord(value)) return undefined;
   if (!isNumber(value.nextAttemptAt) || !isNumber(value.failures)) return undefined;
   const lastError = isString(value.lastError) ? value.lastError : undefined;
+  const previous = parseSnapshot(value.previous);
   const snapshot = value.snapshot;
   if (snapshot === undefined) {
-    return { nextAttemptAt: value.nextAttemptAt, failures: value.failures, lastError };
+    return { previous, nextAttemptAt: value.nextAttemptAt, failures: value.failures, lastError };
   }
-  if (!isRecord(snapshot) || !isNumber(snapshot.storedAt)) return undefined;
+  const parsed = parseSnapshot(snapshot);
+  if (!parsed) return undefined;
   return {
-    snapshot: { payload: snapshot.payload, storedAt: snapshot.storedAt },
+    snapshot: parsed,
+    previous,
     nextAttemptAt: value.nextAttemptAt,
     failures: value.failures,
     lastError,
@@ -208,9 +229,11 @@ function mergeEntry(
   if (!right) return left;
   const leftAt = left.snapshot?.storedAt ?? -1;
   const rightAt = right.snapshot?.storedAt ?? -1;
+  const newest = leftAt >= rightAt ? left : right;
   const gated = left.nextAttemptAt >= right.nextAttemptAt ? left : right;
   return {
-    snapshot: leftAt >= rightAt ? left.snapshot : right.snapshot,
+    snapshot: newest.snapshot,
+    previous: newest.previous,
     nextAttemptAt: gated.nextAttemptAt,
     failures: Math.max(left.failures, right.failures),
     lastError: gated.lastError,
@@ -310,7 +333,13 @@ export function createUsageCache(
 
     if (entry && startedAt < entry.nextAttemptAt) {
       if (usable) {
-        return { payload: usable.payload, cachedAt: usable.storedAt, reason: entry.lastError };
+        return {
+          payload: usable.payload,
+          payloadAt: usable.storedAt,
+          previous: entry.previous,
+          cachedAt: usable.storedAt,
+          reason: entry.lastError,
+        };
       }
       throw new UsageThrottledError(entry.nextAttemptAt, entry.lastError);
     }
@@ -318,22 +347,35 @@ export function createUsageCache(
     try {
       const payload = await load();
       const completedAt = now();
+      // The reading this one replaces becomes the comparison point; a repeated
+      // timestamp would make the interval zero, so it is never kept.
+      const previous = snapshot && snapshot.storedAt < completedAt ? snapshot : entry?.previous;
       saveEntry(key, {
         snapshot: { payload, storedAt: completedAt },
+        previous,
         nextAttemptAt: completedAt + policy.minIntervalMs,
         failures: 0,
       });
-      return { payload };
+      return { payload, payloadAt: completedAt, previous };
     } catch (error) {
       const failures = (entry?.failures ?? 0) + 1;
       const reason = errorMessage(error);
       saveEntry(key, {
         snapshot,
+        previous: entry?.previous,
         nextAttemptAt: now() + retryDelayMs(error, failures, policy.minIntervalMs),
         failures,
         lastError: reason,
       });
-      if (usable) return { payload: usable.payload, cachedAt: usable.storedAt, reason };
+      if (usable) {
+        return {
+          payload: usable.payload,
+          payloadAt: usable.storedAt,
+          previous: entry?.previous,
+          cachedAt: usable.storedAt,
+          reason,
+        };
+      }
       throw error;
     }
   };

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   agentLabels,
+  condenseStatusRows,
   describePath,
   formatStatus,
   lookupModelRecord,
@@ -160,4 +161,48 @@ test("summarizeStatusRows includes session and model essentials", async (context
   assert.match(rendered, /Reasoning effort:\s+medium/);
   assert.match(rendered, /Context files:\s+none/);
   assert.match(rendered, /Skills:\s+none loaded/);
+});
+
+test("condenseStatusRows keeps each row's headline and drops its inventory", () => {
+  assert.deepEqual(
+    condenseStatusRows([
+      { label: "Skills", value: "2 loaded\n  check, review" },
+      { label: "Agent roles", value: "1 defined\n  reviewer (opus, high)" },
+      { label: "Theme", value: "nord-dark" },
+    ]),
+    [
+      { label: "Skills", value: "2 loaded" },
+      { label: "Agent roles", value: "1 defined" },
+      { label: "Theme", value: "nord-dark" },
+    ],
+  );
+});
+
+test("context files report a count so the concise Status tab has a headline", async (context) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "choco-pi-status-files-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const ctx = {
+    cwd: directory,
+    model: undefined,
+    sessionManager: {
+      getSessionName: () => undefined,
+      getSessionId: () => "session-1",
+      getSessionFile: () => undefined,
+      getHeader: () => undefined,
+    },
+    getContextUsage: () => undefined,
+    modelRegistry: { find: () => undefined },
+    getSystemPromptOptions: () => ({
+      contextFiles: [
+        { path: path.join(directory, "AGENTS.md"), content: "policy" },
+        { path: path.join(directory, "src", "AGENTS.md"), content: "policy" },
+      ],
+      skills: [],
+    }),
+  };
+  // SAFETY: The fixture supplies every host member exercised by this test.
+  const rows = summarizeStatusRows(ctx as never, "medium");
+  const files = rows.find((row) => row.label === "Context files");
+  assert.equal(files?.value.split("\n")[0], "2 loaded");
+  assert.match(formatStatus(condenseStatusRows(rows)), /Context files:\s+2 loaded$/m);
 });

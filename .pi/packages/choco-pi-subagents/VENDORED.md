@@ -199,6 +199,21 @@ the known members they consume instead of running enumerating object schemas
 over host-owned instances. This is type-only hardening: tool schemas, event
 names, persistence formats and valid runtime paths are unchanged.
 
+### Lean tool surface for sub-agents
+
+`installExtensionToolScope` in `src/agent-runner.ts` intersects the extension
+tools it admits with the lean surface choco-pi's `tool-search` extension
+publishes on `Symbol.for("choco-pi.tool-search.lean-surface")`, and remembers
+what a turn earned through `tool_search` so the next re-narrow does not take it
+back. Upstream admits every tool of every loaded extension: probe evidence put
+child sessions at 78-83 tool schemas against the main agent's 22-28, all of it
+carried in the cached prefix for the life of the task.
+
+Tool names the agent's own configuration lists stay active regardless, so a
+role with an explicit `tools:` set is unaffected. When the extension is absent
+the symbol is unset and scope falls back to upstream behavior, so the package
+still runs standalone.
+
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 
 The repository previously ran `npm:@tintinweb/pi-subagents@0.16.1`. Two entries

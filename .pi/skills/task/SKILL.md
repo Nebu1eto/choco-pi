@@ -19,6 +19,8 @@ The main agent owns scope, authority, orchestration, integration, validation, co
 
 Spawn one fresh `planner` with the objective, instructions, direct and indirect write risks, acceptance ledger, and available model/reasoning choices. Require a dependency-aware plan and spawn manifest containing each unit's objective, read/write scope, indirect effects, dependencies, done criteria, and verification plan.
 
+Require the plan to carry a `mermaid` flowchart of the units, their dependencies, and the waves that run in parallel. Disjoint write scopes and wave ordering are what this workflow gets wrong most often, and both are easier to check as a graph than as a list.
+
 Select each role from the unit's work before resolving model or reasoning effort; an override must never replace a specialized role with `general`. Resolve model and reasoning effort in the system-prompt priority order. Read the selected role file's `default_model` and `default_thinking`, then pass both explicitly on every spawn; these fields are overridable defaults, not pinned runtime fields. Present the plan only when it contains a material user decision.
 
 ## 3. Execute

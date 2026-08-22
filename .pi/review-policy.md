@@ -44,4 +44,6 @@ Order findings by severity. Each finding must contain:
 - expected and observed behavior;
 - smallest recommendation.
 
+When a finding's evidence is a path across several call sites, components, or states, draw that path as a small `mermaid` flowchart beside the evidence. The path is what makes the finding reproducible, and a chain of hops is the part a paragraph states least clearly.
+
 If no finding meets the threshold, say so and list material checks performed. If required evidence is unavailable, mark the review incomplete rather than clean.

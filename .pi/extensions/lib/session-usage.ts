@@ -472,8 +472,16 @@ function costEntryLine(entry: CostEntry, paint: Painter, prefix: string, indent 
  * The cost section splits into the main agent and its sub-agents whenever any
  * sub-agent usage was found, so neither figure hides inside the other. With no
  * sub-agents it collapses to the per-model breakdown alone.
+ *
+ * The footnotes below the block explain how the sub-agent figure was obtained;
+ * they are detail rather than state, so the concise Status tab leaves them out
+ * and only the expanded view prints them.
  */
-export function formatSessionInfo(input: SessionInfoInput, style?: SessionInfoStyle): string {
+export function formatSessionInfo(
+  input: SessionInfoInput,
+  style?: SessionInfoStyle,
+  expanded = true,
+): string {
   const paint = painter(style);
   const lines: string[] = [paint.head("Session Info"), ""];
 
@@ -548,7 +556,7 @@ export function formatSessionInfo(input: SessionInfoInput, style?: SessionInfoSt
     }
   }
 
-  const notes = subagentNotes(input);
+  const notes = expanded ? subagentNotes(input) : [];
   if (notes.length > 0) lines.push("", ...notes.map((note) => paint.dim(note)));
 
   return lines.join("\n");

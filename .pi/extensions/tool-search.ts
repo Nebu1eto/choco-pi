@@ -26,6 +26,12 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
   "apply_patch",
   "exec_command",
   "write_stdin",
+  // Pi's own path discovery. A session that reads or edits anything reaches
+  // these before it reaches the file, so deferring them buys a prompt-cache
+  // rewrite at the start of nearly every task.
+  "grep",
+  "find",
+  "ls",
   "Agent",
   // Launching Agent inevitably leads to checking on or redirecting the
   // background agent it started; deferring these guarantees a mid-session
@@ -35,6 +41,13 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
   // in getActiveTools() and are dropped silently (see applyLeanSurface).
   "get_subagent_result",
   "steer_subagent",
+  // Dependent delegation is the same coordination path as Agent: a workflow is
+  // declared, updated while it runs, then collected or cancelled. Provided by
+  // choco-pi-subagents.
+  "workflow_run",
+  "workflow_update",
+  "get_workflow_result",
+  "workflow_cancel",
   // choco-pi's cross-session tools are the same kind of coordination path:
   // listing, reading, waiting on, and steering another conversation happen
   // together, so deferring any of them costs a prompt-cache rewrite in the
@@ -44,22 +57,37 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
   "session_list",
   "session_read",
   "session_wait",
+  // Goal mode is driven from the system prompt, which tells the agent to call
+  // the creation tool in the same turn the user asks for a goal. A deferred
+  // tool cannot satisfy that instruction without a search first. Provided by
+  // choco-pi-goal.
+  "get_goal",
+  "create_goal",
+  "update_goal",
+  // Research tools travel together: a search is followed by fetching and
+  // checking what it returned, so deferring any of them costs a rewrite in the
+  // middle of one lookup.
+  "web_search",
+  "source_check",
+  "fetch_content",
+  "get_search_content",
   // choco-pi-lsp's own mandated funnel and completion gate (see .pi/SYSTEM.md
   // and the package's own runtime status line, which calls exactly this set
   // its "Key tools"): symbol_search finds candidates, module_report inspects
   // one, read_symbol/read_enclosing read a body before editing, and
   // lsp_diagnostics/diagnostics_report are required before declaring work
-  // done. A session that reads or edits code with choco-pi-lsp active reaches
-  // all six every time, so deferring any of them buys a mid-session
-  // prompt-cache rewrite in the middle of that mandatory path. The package's
-  // remaining tools (project_report, ast_grep_*, lsp_navigation,
-  // diagnostic_mark) are choco-pi-lsp's own "situational" tools, gated behind
-  // its own lsp_activate_tools call even when this extension's tool_search is
-  // bypassed; they stay deferred here. Provided by choco-pi-lsp; if that
-  // package is absent or renames a tool, these names simply never
-  // appear in getActiveTools() and are dropped silently (see
-  // applyLeanSurface).
+  // done, with project_report opening the same funnel at repository scope. A
+  // session that reads or edits code with choco-pi-lsp active reaches these
+  // every time, so deferring any of them buys a mid-session prompt-cache
+  // rewrite in the middle of that mandatory path. The package's remaining
+  // tools (ast_grep_*, lsp_navigation, diagnostic_mark) are choco-pi-lsp's own
+  // "situational" tools, gated behind its own lsp_activate_tools call even
+  // when this extension's tool_search is bypassed; they stay deferred here.
+  // Provided by choco-pi-lsp; if that package is absent or renames a tool,
+  // these names simply never appear in getActiveTools() and are dropped
+  // silently (see applyLeanSurface).
   "symbol_search",
+  "project_report",
   "module_report",
   "read_symbol",
   "read_enclosing",
@@ -69,6 +97,31 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
   "tool_search",
 ] as const;
 const ALWAYS_ACTIVE = new Set<string>(ALWAYS_ACTIVE_TOOL_NAMES);
+
+/**
+ * Where the lean tool surface is published for other packages.
+ *
+ * choco-pi-subagents has to apply the same surface to every sub-agent, and the
+ * profile must not be imported by a package, so both sides type this boundary
+ * independently over `Symbol.for` — the same arrangement the preferences and
+ * Codex providers use.
+ */
+export const LEAN_SURFACE_SYMBOL = Symbol.for("choco-pi.tool-search.lean-surface");
+
+/** Structural view of the surface a sub-agent starts with. */
+export interface LeanSurfacePolicy {
+  /** Tool names no session has to search for. */
+  alwaysActive: () => string[];
+}
+
+function publishLeanSurface(): void {
+  const policy: LeanSurfacePolicy = { alwaysActive: () => [...ALWAYS_ACTIVE_TOOL_NAMES] };
+  Object.defineProperty(globalThis, LEAN_SURFACE_SYMBOL, {
+    configurable: true,
+    writable: true,
+    value: policy,
+  });
+}
 
 /**
  * Activating one tool from a package usually predicts calls to its siblings
@@ -461,6 +514,7 @@ function compactDescription(value: string): string {
 }
 
 export default function toolSearch(pi: ExtensionAPI): void {
+  publishLeanSurface();
   let searchableNames = new Set<string>();
   let searchableDocuments: SearchDocument[] = [];
   let allowedNames = new Set<string>();
