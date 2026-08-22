@@ -5,7 +5,7 @@ import { performance } from "node:perf_hooks";
 // module measuring load time) would have silently installed the guard
 // wherever this file is imported, including test-only measurement code that
 // has no business flipping a global switch.
-import { CHOCO_PI_LSP_EVAL_STARTED_MS } from "./eval-timestamp.js";
+import { CHOCO_PI_LSP_EVAL_STARTED_MS } from "./eval-timestamp.ts";
 
 /**
  * Startup timing for choco-pi-lsp.

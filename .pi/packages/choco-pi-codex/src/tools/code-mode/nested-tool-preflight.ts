@@ -1,5 +1,5 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isObjectValue, isStringValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isObjectValue, isStringValue } from "../boundary.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   type CodeModeToolPreflight,
@@ -9,8 +9,8 @@ import {
   PREFLIGHT_PROTOCOL,
   PREFLIGHT_REQUEST_CHANNEL,
   type PreflightBroker,
-} from "./preflight-protocol.js";
-import type { ToolExecutionContext } from "./types.js";
+} from "./preflight-protocol.ts";
+import type { ToolExecutionContext } from "./types.ts";
 
 export type CodeModeToolPreflightRunner = (call: CodeModeToolPreflightCall) => Promise<void>;
 

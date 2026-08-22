@@ -1,12 +1,12 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isNumberValue, isObjectValue, isStringValue } from "../boundary.js";
-import { DEFAULT_CODE_MODE_OUTPUT_TOKENS, MAX_CODE_MODE_OUTPUT_TOKENS } from "./host-protocol.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isNumberValue, isObjectValue, isStringValue } from "../boundary.ts";
+import { DEFAULT_CODE_MODE_OUTPUT_TOKENS, MAX_CODE_MODE_OUTPUT_TOKENS } from "./host-protocol.ts";
 import type {
   NotebookMemoryUsage,
   RuntimeContentItem,
   RuntimeResponse,
   RuntimeToolTrace,
-} from "./types.js";
+} from "./types.ts";
 
 interface CodeModeToolResultDetails {
   codeMode: true;

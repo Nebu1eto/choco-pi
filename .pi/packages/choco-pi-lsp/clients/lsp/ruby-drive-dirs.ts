@@ -22,8 +22,8 @@
  * readers build different suffixes: `bin/<tool>` vs `bin`), so only the raw
  * `ruby<N>` names are cached.
  */
-import { BoundedLruCache } from "../bounded-cache.js";
-import { normalizeMapKey } from "../path-utils.js";
+import { BoundedLruCache } from "../bounded-cache.ts";
+import { normalizeMapKey } from "../path-utils.ts";
 
 import * as fs from "node:fs";
 

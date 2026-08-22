@@ -3,8 +3,8 @@
  * Keep these values in one place so behavior is consistent and easy to tune.
  */
 
-import { toPositiveFinite } from "./env-utils.js";
-import { loadPiLensGlobalConfig } from "./lsp-config.js";
+import { toPositiveFinite } from "./env-utils.ts";
+import { loadPiLensGlobalConfig } from "./lsp-config.ts";
 
 let _runnerTimeoutFloorCache: number | undefined;
 

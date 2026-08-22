@@ -43,7 +43,7 @@ import {
 } from "./onboarding-state.ts";
 import { openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
-import { mergeObjectParts } from "./protocol-values.js";
+import { mergeObjectParts } from "./protocol-values.ts";
 
 function terminalHyperlink(label: string, url: string): string {
   return `\u001B]8;;${sanitizeTerminalText(url)}\u001B\\${sanitizeTerminalText(label)}\u001B]8;;\u001B\\`;

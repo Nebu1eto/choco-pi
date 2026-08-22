@@ -9,13 +9,13 @@
 
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { stripAnsi } from "../../sanitize.js";
-import { getAutofixCapability, getLinterPolicyForCwd, ruffConfigArgs } from "../../tool-policy.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { parseRuffOutput } from "./utils/diagnostic-parsers.js";
-import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { stripAnsi } from "../../sanitize.ts";
+import { getAutofixCapability, getLinterPolicyForCwd, ruffConfigArgs } from "../../tool-policy.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { parseRuffOutput } from "./utils/diagnostic-parsers.ts";
+import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.ts";
 
 const ruff = createAvailabilityChecker("ruff", ".exe");
 

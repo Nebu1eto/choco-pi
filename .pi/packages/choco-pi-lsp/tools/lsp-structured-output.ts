@@ -1,5 +1,5 @@
-import type { ProtocolDictionary } from "./runtime-values.js";
-import { isRuntimeNumber, isRuntimeObject, isRuntimeString } from "./runtime-values.js";
+import type { ProtocolDictionary } from "./runtime-values.ts";
+import { isRuntimeNumber, isRuntimeObject, isRuntimeString } from "./runtime-values.ts";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export type LspToolName = "lsp_navigation" | "lsp_diagnostics";

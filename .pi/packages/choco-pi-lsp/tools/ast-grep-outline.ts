@@ -1,14 +1,14 @@
-import type { RuntimeValue } from "./runtime-values.js";
-import { isRuntimeString } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.ts";
+import { isRuntimeString } from "./runtime-values.ts";
 import * as path from "node:path";
 import type {
   AstGrepClient,
   AstGrepOutlineFile,
   AstGrepOutlineItem,
-} from "../clients/ast-grep-client.js";
-import { Type } from "../clients/deps/typebox.js";
-import { compactRenderResult } from "./render-compact.js";
-import { LANGUAGES } from "./shared.js";
+} from "../clients/ast-grep-client.ts";
+import { Type } from "../clients/deps/typebox.ts";
+import { compactRenderResult } from "./render-compact.ts";
+import { LANGUAGES } from "./shared.ts";
 
 // Cap the wire payload so an outline over a large directory can't flood context.
 const MAX_FILES = 50;

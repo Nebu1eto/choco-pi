@@ -1,6 +1,6 @@
-import type { FactRule } from "../fact-provider-types.js";
-import type { Diagnostic } from "../types.js";
-import type { TryCatchSummary } from "../facts/try-catch-facts.js";
+import type { FactRule } from "../fact-provider-types.ts";
+import type { Diagnostic } from "../types.ts";
+import type { TryCatchSummary } from "../facts/try-catch-facts.ts";
 
 export const errorObscuringRule: FactRule = {
   id: "error-obscuring",

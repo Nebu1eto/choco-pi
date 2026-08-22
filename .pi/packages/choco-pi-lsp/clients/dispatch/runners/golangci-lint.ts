@@ -11,11 +11,11 @@
  */
 
 import * as path from "node:path";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { getLinterPolicyForCwd, hasGolangciConfig } from "../../tool-policy.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { getLinterPolicyForCwd, hasGolangciConfig } from "../../tool-policy.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.ts";
 
 const golangci = createAvailabilityChecker("golangci-lint", ".exe");
 

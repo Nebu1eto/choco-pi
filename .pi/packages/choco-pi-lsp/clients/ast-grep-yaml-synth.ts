@@ -14,7 +14,7 @@
  * evaluates all of them as an implicit AND.
  */
 
-import { dump } from "./deps/js-yaml.js";
+import { dump } from "./deps/js-yaml.ts";
 
 export interface StructuralIntent {
   /** A code pattern to match. Omit when using nodeKind for a kind-only search. */

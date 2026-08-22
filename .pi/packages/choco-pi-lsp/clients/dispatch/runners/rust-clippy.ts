@@ -5,15 +5,15 @@
  */
 
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { findNearestContaining } from "../../path-utils.js";
-import { RustClient } from "../../rust-client.js";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { stripAnsi } from "../../sanitize.js";
-import { getLazyInstallAttempt, tryLazyInstall } from "./utils/lazy-installer.js";
-import { describeInstallAttempt, logAvailabilityDecision } from "./utils/availability-policy.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { PRIORITY } from "../priorities.js";
-import { createCwdCachedProbe } from "./utils/runner-helpers.js";
+import { findNearestContaining } from "../../path-utils.ts";
+import { RustClient } from "../../rust-client.ts";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { stripAnsi } from "../../sanitize.ts";
+import { getLazyInstallAttempt, tryLazyInstall } from "./utils/lazy-installer.ts";
+import { describeInstallAttempt, logAvailabilityDecision } from "./utils/availability-policy.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { PRIORITY } from "../priorities.ts";
+import { createCwdCachedProbe } from "./utils/runner-helpers.ts";
 
 const rustClient = new RustClient();
 

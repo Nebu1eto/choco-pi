@@ -2,52 +2,52 @@ import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
-import { loadBootstrapClients } from "./bootstrap.js";
-import type { CacheManager } from "./cache-manager.js";
-import { recordDegradationOnce } from "./degradation-ledger.js";
-import { detectFileKind } from "./file-kinds.js";
-import { isPathIgnoredByProject } from "./file-utils.js";
-import { evaluateGitGuard, isGitCommitOrPushAttempt } from "./git-guard.js";
-import { normalizeForGuardMatch } from "./host-edit-normalize.js";
-import { retargetReplacementIndentation } from "./indent-retarget.js";
-import { LANGUAGE_POLICY } from "./language-policy.js";
-import type { LSPShutdownOptions } from "./lsp/client.js";
-import { getLSPService } from "./lsp/index.js";
+import { loadBootstrapClients } from "./bootstrap.ts";
+import type { CacheManager } from "./cache-manager.ts";
+import { recordDegradationOnce } from "./degradation-ledger.ts";
+import { detectFileKind } from "./file-kinds.ts";
+import { isPathIgnoredByProject } from "./file-utils.ts";
+import { evaluateGitGuard, isGitCommitOrPushAttempt } from "./git-guard.ts";
+import { normalizeForGuardMatch } from "./host-edit-normalize.ts";
+import { retargetReplacementIndentation } from "./indent-retarget.ts";
+import { LANGUAGE_POLICY } from "./language-policy.ts";
+import type { LSPShutdownOptions } from "./lsp/client.ts";
+import { getLSPService } from "./lsp/index.ts";
 import {
   findDocumentSymbolAtLine,
   getOpenDocumentSymbols,
   lspSymbolKindName,
   qualifiedLspSymbolName,
-} from "./lsp-document-symbols.js";
+} from "./lsp-document-symbols.ts";
 import {
   computeTrailingWhitespaceOldTextPatch,
   findUniqueMatchLineRange,
-} from "./oldtext-autopatch.js";
-import { applyPartiallyApplicableEdits } from "./partial-edit-apply.js";
+} from "./oldtext-autopatch.ts";
+import { applyPartiallyApplicableEdits } from "./partial-edit-apply.ts";
 import {
   type HostPathVariantResolution,
   isExternalOrVendorFile,
   resolveHostPathVariants,
   resolveHostToolPath,
-} from "./path-utils.js";
-import { EXPANSION_BUDGET_MS, EXPANSION_LIMIT_LINES, tryExpandRead } from "./read-expansion.js";
+} from "./path-utils.ts";
+import { EXPANSION_BUDGET_MS, EXPANSION_LIMIT_LINES, tryExpandRead } from "./read-expansion.ts";
 import {
   boundedIndexesForCount,
   createReadGuardEditBatchSummary,
   getReadGuardCorrelationId,
   logReadGuardEvent,
-} from "./read-guard-logger.js";
+} from "./read-guard-logger.ts";
 import {
   countFileLines,
   getTouchedLinesForGuard,
   relocateEditRange,
   tryCorrectIndentationMismatch,
   tryCorrectIndentationMismatchFromContent,
-} from "./read-guard-tool-lines.js";
-import type { RuntimeCoordinator } from "./runtime-coordinator.js";
-import { handleToolResult } from "./runtime-tool-result.js";
-import { isToolCallEventType, resolveToolCallCorrelationId } from "./tool-event.js";
-import { getSharedTreeSitterClient } from "./tree-sitter-shared.js";
+} from "./read-guard-tool-lines.ts";
+import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
+import { handleToolResult } from "./runtime-tool-result.ts";
+import { isToolCallEventType, resolveToolCallCorrelationId } from "./tool-event.ts";
+import { getSharedTreeSitterClient } from "./tree-sitter-shared.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
@@ -781,7 +781,7 @@ async function handleToolCallImpl(deps: ToolCallDeps): Promise<ToolCallResult> {
     const baseline = await complexityClient.analyzeFile(filePath);
     if (baseline) {
       runtime.complexityBaselines.set(filePath, baseline);
-      const { captureSnapshot } = await import("./metrics-history.js");
+      const { captureSnapshot } = await import("./metrics-history.ts");
       captureSnapshot(filePath, {
         maintainabilityIndex: baseline.maintainabilityIndex,
         cognitiveComplexity: baseline.cognitiveComplexity,

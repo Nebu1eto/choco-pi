@@ -1,9 +1,9 @@
-import { isStringValue } from "../boundary.js";
+import { isStringValue } from "../boundary.ts";
 import { highlightCode } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { expandHint } from "./render-content.js";
-import type { CodeModeRenderTracker } from "./render-tracker.js";
-import type { CodeModeRenderContext, CodeModeRenderTheme } from "./types.js";
+import { expandHint } from "./render-content.ts";
+import type { CodeModeRenderTracker } from "./render-tracker.ts";
+import type { CodeModeRenderContext, CodeModeRenderTheme } from "./types.ts";
 
 export function renderExecCall(
   args: { code?: unknown },

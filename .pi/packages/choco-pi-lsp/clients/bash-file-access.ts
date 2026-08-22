@@ -15,9 +15,9 @@
  */
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
-import { isReadableSourceFile } from "./file-kinds.js";
-import { countFileLines } from "./read-guard-tool-lines.js";
-import type { SearchReadLocation } from "./search-read-registration.js";
+import { isReadableSourceFile } from "./file-kinds.ts";
+import { countFileLines } from "./read-guard-tool-lines.ts";
+import type { SearchReadLocation } from "./search-read-registration.ts";
 
 /** A contiguous range of lines a bash command showed the agent. */
 export interface ReadSpan {

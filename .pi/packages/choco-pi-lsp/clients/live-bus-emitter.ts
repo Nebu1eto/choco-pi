@@ -1,8 +1,8 @@
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
-import { recordDegradation } from "./degradation-ledger.js";
-import { probeCtxActive } from "./session-lifecycle.js";
-import { logBusEvent, type BusEventLogEntry } from "./bus-events-logger.js";
+import { recordDegradation } from "./degradation-ledger.ts";
+import { probeCtxActive } from "./session-lifecycle.ts";
+import { logBusEvent, type BusEventLogEntry } from "./bus-events-logger.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

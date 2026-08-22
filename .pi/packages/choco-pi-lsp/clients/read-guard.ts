@@ -13,10 +13,10 @@
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import * as fs from "node:fs";
-import { createFileTime, type FileTime } from "./file-time.js";
-import { hashDiagnosticContent } from "./lsp/diagnostic-binding.js";
-import { normalizeEphemeralMapKey, normalizeFilePath } from "./path-utils.js";
-import { logReadGuardEvent } from "./read-guard-logger.js";
+import { createFileTime, type FileTime } from "./file-time.ts";
+import { hashDiagnosticContent } from "./lsp/diagnostic-binding.ts";
+import { normalizeEphemeralMapKey, normalizeFilePath } from "./path-utils.ts";
+import { logReadGuardEvent } from "./read-guard-logger.ts";
 
 const LspDictionaryValueSchema = Type.Unknown();
 type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;

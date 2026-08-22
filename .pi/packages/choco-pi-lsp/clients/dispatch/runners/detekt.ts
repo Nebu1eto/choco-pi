@@ -1,11 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { getLinterPolicyForCwd } from "../../tool-policy.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { createAvailabilityChecker } from "./utils/runner-helpers.js";
-import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { getLinterPolicyForCwd } from "../../tool-policy.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { createAvailabilityChecker } from "./utils/runner-helpers.ts";
+import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.ts";
 
 const detekt = createAvailabilityChecker("detekt", ".bat");
 

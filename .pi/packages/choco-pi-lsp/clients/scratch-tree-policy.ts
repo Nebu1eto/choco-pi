@@ -54,7 +54,7 @@
  *     fully in scope.
  */
 
-import { EXCLUDED_DIRS, getExcludedDirGlobs } from "./file-utils.js";
+import { EXCLUDED_DIRS, getExcludedDirGlobs } from "./file-utils.ts";
 
 /** Directory-name entries only — drops glob entries (e.g. `*.dSYM`) that a
  * bare directory-name/regex exclude can't express. */

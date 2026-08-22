@@ -1,27 +1,27 @@
-import type { ProtocolDictionary } from "./runtime-values.js";
-import type { RuntimeValue } from "./runtime-values.js";
-import { isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
+import type { ProtocolDictionary } from "./runtime-values.ts";
+import type { RuntimeValue } from "./runtime-values.ts";
+import { isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
 /**
  * ast_grep_search tool definition
  *
  * Extracted from index.ts for maintainability.
  */
 
-import { Type } from "../clients/deps/typebox.js";
-import type { AstGrepClient } from "../clients/ast-grep-client.js";
-import type { AstGrepMatch } from "../clients/ast-grep-types.js";
+import { Type } from "../clients/deps/typebox.ts";
+import type { AstGrepClient } from "../clients/ast-grep-client.ts";
+import type { AstGrepMatch } from "../clients/ast-grep-types.ts";
 import {
   astGrepRemediationHint,
   classifyAstGrepError,
   logAstGrepToolEvent,
   type AstGrepToolOutcome,
-} from "../clients/ast-grep-tool-logger.js";
-import { hasStructuralIntent, synthesizeRule } from "../clients/ast-grep-yaml-synth.js";
-import type { SearchReadLocation } from "../clients/search-read-registration.js";
-import { isAtOrAboveHomeDir } from "../clients/path-utils.js";
-import { compactRenderResult } from "./render-compact.js";
-import { combineAbortSignals } from "../clients/deadline-utils.js";
-import { LANGUAGES } from "./shared.js";
+} from "../clients/ast-grep-tool-logger.ts";
+import { hasStructuralIntent, synthesizeRule } from "../clients/ast-grep-yaml-synth.ts";
+import type { SearchReadLocation } from "../clients/search-read-registration.ts";
+import { isAtOrAboveHomeDir } from "../clients/path-utils.ts";
+import { compactRenderResult } from "./render-compact.ts";
+import { combineAbortSignals } from "../clients/deadline-utils.ts";
+import { LANGUAGES } from "./shared.ts";
 
 /**
  * Build the agent-facing error text, appending a remediation hint derived from

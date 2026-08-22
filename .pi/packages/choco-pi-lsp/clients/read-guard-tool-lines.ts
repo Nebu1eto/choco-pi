@@ -7,16 +7,16 @@ import {
   normalizeForGuardMatch,
   normalizeToLF,
   stripBom,
-} from "./host-edit-normalize.js";
-import type { PartiallyApplicableEdit } from "./partial-edit-apply.js";
+} from "./host-edit-normalize.ts";
+import type { PartiallyApplicableEdit } from "./partial-edit-apply.ts";
 import {
   boundedIndexesForCount,
   createReadGuardEditBatchSummary,
   logReadGuardEvent,
   type EditBatchRejection,
   type ReadGuardEditBatchSummary,
-} from "./read-guard-logger.js";
-import { isToolCallEventType } from "./tool-event.js";
+} from "./read-guard-logger.ts";
+import { isToolCallEventType } from "./tool-event.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

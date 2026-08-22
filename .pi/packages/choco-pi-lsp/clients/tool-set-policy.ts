@@ -1,5 +1,5 @@
 import { type Static, Type } from "typebox";
-import { logLatency } from "./latency-logger.js";
+import { logLatency } from "./latency-logger.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

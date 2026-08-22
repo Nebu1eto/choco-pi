@@ -11,11 +11,11 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { writeFileAtomicAsync } from "./atomic-write.js";
-import { getProjectDataDir } from "./file-utils.js";
-import { readJsonCacheAsync } from "./json-cache-read.js";
-import type { PersistedReadGuardState } from "./read-guard.js";
-import type { PersistedWidgetState } from "./widget-state.js";
+import { writeFileAtomicAsync } from "./atomic-write.ts";
+import { getProjectDataDir } from "./file-utils.ts";
+import { readJsonCacheAsync } from "./json-cache-read.ts";
+import type { PersistedReadGuardState } from "./read-guard.ts";
+import type { PersistedWidgetState } from "./widget-state.ts";
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,

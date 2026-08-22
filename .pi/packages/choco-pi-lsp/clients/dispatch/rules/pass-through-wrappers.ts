@@ -1,8 +1,8 @@
-import { isTestFile } from "../../file-utils.js";
-import type { FactRule } from "../fact-provider-types.js";
-import type { CommentSummary } from "../facts/comment-facts.js";
-import type { FunctionSummary } from "../facts/function-facts.js";
-import type { Diagnostic } from "../types.js";
+import { isTestFile } from "../../file-utils.ts";
+import type { FactRule } from "../fact-provider-types.ts";
+import type { CommentSummary } from "../facts/comment-facts.ts";
+import type { FunctionSummary } from "../facts/function-facts.ts";
+import type { Diagnostic } from "../types.ts";
 
 const ALIAS_COMMENT_RE =
   /\b(alias|backward\s*compat|backwards\s*compat|compatibility|shim|adapter)\b/i;

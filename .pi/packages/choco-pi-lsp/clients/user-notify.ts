@@ -31,7 +31,7 @@ let notifierGetter: (() => UserNotifier | undefined) | undefined;
 
 /** Called once from the extension entry with a getter over the live `ctx.ui.notify`. */
 export function wireUserNotifier(
-  portsOrGetter: import("./host-ports.js").HostPorts | (() => UserNotifier | undefined),
+  portsOrGetter: import("./host-ports.ts").HostPorts | (() => UserNotifier | undefined),
 ): void {
   notifierGetter = Check(Type.Function([], Type.Unknown()), portsOrGetter)
     ? portsOrGetter

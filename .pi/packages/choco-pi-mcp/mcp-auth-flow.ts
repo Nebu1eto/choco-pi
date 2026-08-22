@@ -44,7 +44,7 @@ import {
   isObjectValue,
   isStringValue,
   mergeObjectParts,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 /** Auth status for a server */
 export type AuthStatus = "authenticated" | "expired" | "not_authenticated";

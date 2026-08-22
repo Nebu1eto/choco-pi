@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 
-import { CUSTOM_ENTRY_TYPE } from "./types.js";
+import { CUSTOM_ENTRY_TYPE } from "./types.ts";
 
 const StringSchema = Type.String();
 const NumberSchema = Type.Number();

@@ -43,11 +43,11 @@
  * than a real event worth a log line.
  */
 import * as path from "node:path";
-import { isTestMode } from "./env-utils.js";
-import { getGlobalPiLensDir } from "./file-utils.js";
-import { createNdjsonLogger } from "./ndjson-logger.js";
-import { getMaxLogSizeMB } from "./log-cleanup.js";
-import { logLatency } from "./latency-logger.js";
+import { isTestMode } from "./env-utils.ts";
+import { getGlobalPiLensDir } from "./file-utils.ts";
+import { createNdjsonLogger } from "./ndjson-logger.ts";
+import { getMaxLogSizeMB } from "./log-cleanup.ts";
+import { logLatency } from "./latency-logger.ts";
 
 const BUS_EVENTS_LOG_FILE = path.join(getGlobalPiLensDir(), "bus-events.log");
 

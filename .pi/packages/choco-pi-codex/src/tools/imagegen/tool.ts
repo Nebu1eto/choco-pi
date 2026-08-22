@@ -1,4 +1,4 @@
-import { isStringValue } from "../boundary.js";
+import { isStringValue } from "../boundary.ts";
 import type {
   ExtensionAPI,
   ExtensionContext,

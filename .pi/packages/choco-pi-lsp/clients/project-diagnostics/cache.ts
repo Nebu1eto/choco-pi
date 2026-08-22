@@ -1,11 +1,11 @@
-import { isRuntimeObject } from "../../tools/runtime-values.js";
+import { isRuntimeObject } from "../../tools/runtime-values.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getProjectDataDir } from "../file-utils.js";
-import { writeFileAtomic } from "../atomic-write.js";
-import { readJsonCache } from "../json-cache-read.js";
-import { MTIME_DRIFT_TOLERANCE_MS } from "../blocker-freshness.js";
-import type { ProjectDiagnosticsDeltaReport, ProjectDiagnosticsSnapshot } from "./types.js";
+import { getProjectDataDir } from "../file-utils.ts";
+import { writeFileAtomic } from "../atomic-write.ts";
+import { readJsonCache } from "../json-cache-read.ts";
+import { MTIME_DRIFT_TOLERANCE_MS } from "../blocker-freshness.ts";
+import type { ProjectDiagnosticsDeltaReport, ProjectDiagnosticsSnapshot } from "./types.ts";
 
 // v2: cheap-tier scan now also runs ast-grep-napi (#308); invalidate older
 // snapshots so a pre-ast-grep cache isn't served as complete via refreshRunners=cached.

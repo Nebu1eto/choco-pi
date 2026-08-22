@@ -1,7 +1,7 @@
 import type {
   AvailabilityCause,
   AvailabilityOutcome,
-} from "../dispatch/runners/utils/availability-policy.js";
+} from "../dispatch/runners/utils/availability-policy.ts";
 
 /**
  * Provenance metadata for the heavyweight project analyzers surfaced in

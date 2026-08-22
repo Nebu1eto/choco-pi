@@ -1,11 +1,11 @@
-import type { ProtocolDictionary } from "./runtime-values.js";
-import type { RuntimeValue } from "./runtime-values.js";
+import type { ProtocolDictionary } from "./runtime-values.ts";
+import type { RuntimeValue } from "./runtime-values.ts";
 import {
   isRuntimeFunction,
   isRuntimeNumber,
   isRuntimeObject,
   isRuntimeString,
-} from "./runtime-values.js";
+} from "./runtime-values.ts";
 /**
  * lsp_navigation tool definition
  *
@@ -15,20 +15,20 @@ import {
 import * as nodeFs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { Type } from "../clients/deps/typebox.js";
-import { logLatency } from "../clients/latency-logger.js";
+import { Type } from "../clients/deps/typebox.ts";
+import { logLatency } from "../clients/latency-logger.ts";
 import {
   newLspMutationCorrelationId,
   recordLspMutationOutcome,
   type LspMutationContext,
-} from "../clients/lsp-mutation.js";
-import type { LSPCallHierarchyItem } from "../clients/lsp/client.js";
-import { compactRenderResult } from "./render-compact.js";
-import { applyWorkspaceEdit, summarizeWorkspaceEdit } from "../clients/lsp/edits.js";
-import { getLSPService } from "../clients/lsp/index.js";
-import type { SearchReadLocation } from "../clients/search-read-registration.js";
-import { buildLspNavigationEnvelope } from "./lsp-structured-output.js";
-import { SYMBOL_KIND_NAMES } from "../clients/lsp-document-symbols.js";
+} from "../clients/lsp-mutation.ts";
+import type { LSPCallHierarchyItem } from "../clients/lsp/client.ts";
+import { compactRenderResult } from "./render-compact.ts";
+import { applyWorkspaceEdit, summarizeWorkspaceEdit } from "../clients/lsp/edits.ts";
+import { getLSPService } from "../clients/lsp/index.ts";
+import type { SearchReadLocation } from "../clients/search-read-registration.ts";
+import { buildLspNavigationEnvelope } from "./lsp-structured-output.ts";
+import { SYMBOL_KIND_NAMES } from "../clients/lsp-document-symbols.ts";
 
 const VALID_OPERATIONS = [
   "definition",
@@ -98,7 +98,7 @@ function isValidOperation(value: string): value is LspNavigationOperation {
 
 function operationSupportStatus(
   operation: LspNavigationOperation,
-  support: import("../clients/lsp/client.js").LSPOperationSupport | null,
+  support: import("../clients/lsp/client.ts").LSPOperationSupport | null,
 ): boolean | null {
   if (!support) return null;
   if (operation === "definition") return support.definition;

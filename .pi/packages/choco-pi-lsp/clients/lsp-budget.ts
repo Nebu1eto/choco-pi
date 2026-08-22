@@ -47,9 +47,9 @@ import {
   type InstanceEntry,
   isInstanceRegistryEnabled,
   readInstanceRegistry,
-} from "./instance-registry.js";
-import { realIsPidAlive, STALE_HEARTBEAT_MS } from "./instance-reaper.js";
-import { logLatency } from "./latency-logger.js";
+} from "./instance-registry.ts";
+import { realIsPidAlive, STALE_HEARTBEAT_MS } from "./instance-reaper.ts";
+import { logLatency } from "./latency-logger.ts";
 
 /** See the module docstring for the derivation. */
 export const DEFAULT_LSP_BUDGET_CEILING = 16;

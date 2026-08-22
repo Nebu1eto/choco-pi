@@ -43,9 +43,9 @@
  * calling in.
  */
 
-import type { DegradationKind } from "./degradation-ledger.js";
-import { incrementDegradationCount } from "./degradation-ledger.js";
-import { type LatencyEntry, logLatency } from "./latency-logger.js";
+import type { DegradationKind } from "./degradation-ledger.ts";
+import { incrementDegradationCount } from "./degradation-ledger.ts";
+import { type LatencyEntry, logLatency } from "./latency-logger.ts";
 
 /**
  * Phases that emit through this helper. The `phase` parameter is typed to

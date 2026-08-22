@@ -3,8 +3,8 @@ import {
   getLanguageId as getKindLanguageId,
   KIND_EXTENSIONS,
   SPECIAL_FILENAMES,
-} from "../file-kinds.js";
-import { getLspCapableKinds } from "../language-policy.js";
+} from "../file-kinds.ts";
+import { getLspCapableKinds } from "../language-policy.ts";
 
 /**
  * Language ID Mappings for LSP

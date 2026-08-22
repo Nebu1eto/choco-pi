@@ -1,9 +1,9 @@
-import type { BoundaryRecord } from "../boundary.js";
-import type { CodeModeHostDelegation } from "./host-delegation.js";
-import { operationAbort, throwIfAborted } from "./host-operation.js";
-import { isMissingRuntimeOutcome, parseRuntimeResponse, runtimeOutcome } from "./host-protocol.js";
-import type { CodeModeHostSession } from "./host-session.js";
-import type { RuntimeResponse, ToolExecutionContext } from "./types.js";
+import type { BoundaryRecord } from "../boundary.ts";
+import type { CodeModeHostDelegation } from "./host-delegation.ts";
+import { operationAbort, throwIfAborted } from "./host-operation.ts";
+import { isMissingRuntimeOutcome, parseRuntimeResponse, runtimeOutcome } from "./host-protocol.ts";
+import type { CodeModeHostSession } from "./host-session.ts";
+import type { RuntimeResponse, ToolExecutionContext } from "./types.ts";
 
 export class CodeModeHostCellOperations {
   private readonly session: CodeModeHostSession;

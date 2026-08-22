@@ -17,16 +17,16 @@
  * callback is invoked at most once on first failure so a wired caller can log
  * it without spamming.
  */
-import { logBusEvent } from "./bus-events-logger.js";
-import { normalizeFilePath } from "./path-utils.js";
-import { appendRecentTouches } from "./recent-touches.js";
+import { logBusEvent } from "./bus-events-logger.ts";
+import { normalizeFilePath } from "./path-utils.ts";
+import { appendRecentTouches } from "./recent-touches.ts";
 import {
   createLiveBusEmitter,
   recordStaleBusFailure,
   resolveLiveBusEmitter,
   type BusEmitFn,
   type BusEmitGetter,
-} from "./live-bus-emitter.js";
+} from "./live-bus-emitter.ts";
 
 export const BUS_FILES_TOUCHED_EVENT = "pilens:files:touched";
 export const BUS_FILES_TOUCHED_VERSION = 1;

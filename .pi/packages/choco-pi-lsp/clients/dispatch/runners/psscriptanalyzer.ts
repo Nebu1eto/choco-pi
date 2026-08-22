@@ -1,10 +1,10 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { incrementDegradationCount } from "../../degradation-ledger.js";
-import { safeSpawnAsync, type SpawnResult } from "../../safe-spawn.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { PRIORITY } from "../priorities.js";
+import { incrementDegradationCount } from "../../degradation-ledger.ts";
+import { safeSpawnAsync, type SpawnResult } from "../../safe-spawn.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { PRIORITY } from "../priorities.ts";
 import {
   type AvailabilityCause,
   type AvailabilityOutcome,
@@ -13,7 +13,7 @@ import {
   isLatchingOutcome,
   logAvailabilityDecision,
   startHostStallSampler,
-} from "./utils/availability-policy.js";
+} from "./utils/availability-policy.ts";
 
 interface PSAnalyzerResult {
   RuleName?: string;

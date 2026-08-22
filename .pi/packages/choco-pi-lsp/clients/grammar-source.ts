@@ -15,9 +15,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { writeFileAtomic } from "./atomic-write.js";
-import { recordDegradationOnce } from "./degradation-ledger.js";
-import { getPackageRoot } from "./package-root.js";
+import { writeFileAtomic } from "./atomic-write.ts";
+import { recordDegradationOnce } from "./degradation-ledger.ts";
+import { getPackageRoot } from "./package-root.ts";
 
 /** tree-sitter-wasms release the grammars are pulled from. */
 export const TREE_SITTER_WASMS_VERSION = "0.1.13";

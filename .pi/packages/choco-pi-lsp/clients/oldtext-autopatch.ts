@@ -1,4 +1,4 @@
-import { normalizeForGuardMatch } from "./host-edit-normalize.js";
+import { normalizeForGuardMatch } from "./host-edit-normalize.ts";
 
 export interface TrailingWhitespacePatch {
   oldText: string;

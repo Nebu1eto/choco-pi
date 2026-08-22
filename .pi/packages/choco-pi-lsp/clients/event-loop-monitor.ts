@@ -40,7 +40,7 @@
  * letting them poison the "worst real block" high-water.
  */
 
-import { logExtension } from "./extension-log.js";
+import { logExtension } from "./extension-log.ts";
 import { monitorEventLoopDelay, type IntervalHistogram } from "node:perf_hooks";
 
 const NS_PER_MS = 1e6;

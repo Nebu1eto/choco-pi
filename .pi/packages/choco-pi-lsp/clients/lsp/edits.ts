@@ -11,10 +11,10 @@ import {
   pathsEqual,
   uriToDiskPath,
   uriToPath,
-} from "./path-utils.js";
-import { convertCharacterOffset, lineTextAt, type PositionEncoding } from "./position-encoding.js";
-import { recordLspMutation, type LspMutationContext } from "../lsp-mutation.js";
-import { detectLineEnding, normalizeToLF, restoreLineEndings } from "../host-edit-normalize.js";
+} from "./path-utils.ts";
+import { convertCharacterOffset, lineTextAt, type PositionEncoding } from "./position-encoding.ts";
+import { recordLspMutation, type LspMutationContext } from "../lsp-mutation.ts";
+import { detectLineEnding, normalizeToLF, restoreLineEndings } from "../host-edit-normalize.ts";
 
 export interface LSPPosition {
   line: number;

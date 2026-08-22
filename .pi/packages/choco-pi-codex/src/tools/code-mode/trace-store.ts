@@ -1,11 +1,11 @@
-import type { BoundaryValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
 import type {
   RuntimeResponse,
   RuntimeToolResult,
   RuntimeToolTrace,
   ToolExecutionContext,
-} from "./types.js";
-import { boundRuntimeToolResult, cloneTrace, sanitizeTraceInput } from "./trace-values.js";
+} from "./types.ts";
+import { boundRuntimeToolResult, cloneTrace, sanitizeTraceInput } from "./trace-values.ts";
 
 const MAX_TRACE_COUNT = 50;
 const MAX_TRACE_INPUT_CHARS = 16_384;

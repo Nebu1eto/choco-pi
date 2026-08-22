@@ -29,7 +29,7 @@ import {
   parseMcpValue,
   type McpObject,
   type McpValue,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATHS = [

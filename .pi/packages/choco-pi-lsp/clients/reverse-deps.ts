@@ -2,15 +2,15 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { normalizeMapKey } from "./path-utils.js";
+import { normalizeMapKey } from "./path-utils.ts";
 import {
   loadProjectSnapshot,
   saveProjectSnapshot,
   type ProjectSnapshot,
   type ProjectSnapshotFile,
-} from "./project-snapshot.js";
-import type { GraphFileImportChange } from "./review-graph/builder.js";
-import type { ReviewGraph } from "./review-graph/types.js";
+} from "./project-snapshot.ts";
+import type { GraphFileImportChange } from "./review-graph/builder.ts";
+import type { ReviewGraph } from "./review-graph/types.ts";
 
 export interface ReverseDependencyIndex {
   projectRoot: string;

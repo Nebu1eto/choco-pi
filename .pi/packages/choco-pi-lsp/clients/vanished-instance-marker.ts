@@ -20,9 +20,9 @@
  * and passes the same snapshot to both this marker and `sweepOrphans`).
  */
 
-import { logSessionStart } from "./sessionstart-logger.js";
-import type { InstanceEntry } from "./instance-registry.js";
-import { realIsPidAlive } from "./instance-reaper.js";
+import { logSessionStart } from "./sessionstart-logger.ts";
+import type { InstanceEntry } from "./instance-registry.ts";
+import { realIsPidAlive } from "./instance-reaper.ts";
 
 export interface VanishedInstance {
   pid: number;

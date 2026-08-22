@@ -4,7 +4,7 @@ import {
   isObjectValue,
   isStringValue,
   type McpObject,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 type Schema = McpObject;
 

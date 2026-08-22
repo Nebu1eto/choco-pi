@@ -1,4 +1,4 @@
-import { isObjectValue } from "../boundary.js";
+import { isObjectValue } from "../boundary.ts";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {

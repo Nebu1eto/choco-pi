@@ -1,15 +1,15 @@
 import * as path from "node:path";
-import { PathKeyedMap } from "../../path-keyed-map.js";
-import { normalizeMapKey } from "../../path-utils.js";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { findNearestDirWithMarker } from "../../workspace-topology.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
+import { PathKeyedMap } from "../../path-keyed-map.ts";
+import { normalizeMapKey } from "../../path-utils.ts";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { findNearestDirWithMarker } from "../../workspace-topology.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import {
   createAvailabilityChecker,
   resolveAvailableOrInstall,
   type AvailabilityOutcome,
-} from "./utils/runner-helpers.js";
+} from "./utils/runner-helpers.ts";
 
 const helm = createAvailabilityChecker("helm", ".exe");
 const inFlightByChartRoot = new PathKeyedMap<Promise<RunnerResult>>(normalizeMapKey);

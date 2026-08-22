@@ -10,7 +10,7 @@
  * diagnostic or the line immediately above it.
  */
 
-import { normalizeRuleId } from "./rule-id-normalize.js";
+import { normalizeRuleId } from "./rule-id-normalize.ts";
 
 export interface SuppressibleDiagnostic {
   line?: number;

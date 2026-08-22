@@ -1,7 +1,7 @@
-import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
+import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
-import type { CodeModeToolPreflightRunner } from "./nested-tool-preflight.js";
+import type { CodeModeToolPreflightRunner } from "./nested-tool-preflight.ts";
 
 export type CustomToolInputMode = "arg" | "stdin";
 

@@ -49,7 +49,7 @@ import {
   parseMcpObject,
   type McpObject,
   type McpValue,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 const MAX_BODY_SIZE = 2 * 1024 * 1024;
 const ABANDONED_GRACE_MS = 60_000;

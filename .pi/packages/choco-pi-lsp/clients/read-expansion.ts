@@ -8,8 +8,8 @@
  */
 
 import * as fs from "node:fs";
-import { withBudget } from "./deadline-utils.js";
-import type { TreeSitterClient } from "./tree-sitter-client.js";
+import { withBudget } from "./deadline-utils.ts";
+import type { TreeSitterClient } from "./tree-sitter-client.ts";
 
 /** Only expand reads smaller than this (lines). Larger reads don't benefit. */
 export const EXPANSION_LIMIT_LINES = 100;

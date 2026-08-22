@@ -1,5 +1,5 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isFunctionValue, isObjectValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isFunctionValue, isObjectValue } from "../boundary.ts";
 export const APPLY_PATCH_DISPLAY_PROTOCOL = "@howaboua/pi-codex-conversion/apply-patch-display/v1";
 export const APPLY_PATCH_DISPLAY_REQUEST_CHANNEL = `${APPLY_PATCH_DISPLAY_PROTOCOL}/request`;
 export const APPLY_PATCH_DISPLAY_AVAILABLE_CHANNEL = `${APPLY_PATCH_DISPLAY_PROTOCOL}/available`;

@@ -1,7 +1,7 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { isObjectValue, isStringValue, type McpObject } from "./protocol-values.js";
-import { formatMcpCallCompactTitle, styleMcpCallLines } from "./tool-call-headline.js";
+import { isObjectValue, isStringValue, type McpObject } from "./protocol-values.ts";
+import { formatMcpCallCompactTitle, styleMcpCallLines } from "./tool-call-headline.ts";
 
 type McpToolResultDetails = McpObject & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];

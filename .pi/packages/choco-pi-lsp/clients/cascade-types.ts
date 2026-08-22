@@ -1,5 +1,5 @@
-import type { Diagnostic } from "./dispatch/types.js";
-import type { CascadeIndeterminate, ImpactCascadeResult } from "./review-graph/types.js";
+import type { Diagnostic } from "./dispatch/types.ts";
+import type { CascadeIndeterminate, ImpactCascadeResult } from "./review-graph/types.ts";
 
 export type { CascadeIndeterminate };
 

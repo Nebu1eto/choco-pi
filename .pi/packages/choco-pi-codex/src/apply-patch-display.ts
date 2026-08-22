@@ -5,8 +5,8 @@ import {
   APPLY_PATCH_DISPLAY_REQUEST_CHANNEL,
   type ApplyPatchDisplayBroker,
   isApplyPatchDisplayBroker,
-} from "./tools/apply-patch/display-protocol.js";
-import type { ApplyPatchToolDetails } from "./tools/apply-patch/render-state.js";
+} from "./tools/apply-patch/display-protocol.ts";
+import type { ApplyPatchToolDetails } from "./tools/apply-patch/render-state.ts";
 
 export interface ApplyPatchDisplayData {
   toolCallId: string;

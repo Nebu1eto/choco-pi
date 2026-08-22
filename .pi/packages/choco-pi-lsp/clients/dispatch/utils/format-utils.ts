@@ -2,7 +2,7 @@
  * Shared formatting utilities for the dispatch system.
  */
 
-import type { Diagnostic, OutputSemantic } from "../types.js";
+import type { Diagnostic, OutputSemantic } from "../types.ts";
 
 interface EmojiMap {
   [semantic: string]: string;

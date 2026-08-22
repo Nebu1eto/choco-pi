@@ -1,5 +1,5 @@
-import type { RunnerGroup } from "./dispatch/types.js";
-import type { FileKind } from "./file-kinds.js";
+import type { RunnerGroup } from "./dispatch/types.ts";
+import type { FileKind } from "./file-kinds.ts";
 
 export interface ProjectLanguageProfile {
   present: Record<FileKind, boolean>;
@@ -271,7 +271,7 @@ export function getPrimaryDispatchGroup(
 }
 
 // Note: getStartupDefaultsForProfile has been moved to language-profile.ts as getDefaultStartupTools
-// Import from there if needed: import { getDefaultStartupTools } from "./language-profile.js"
+// Import from there if needed: import { getDefaultStartupTools } from "./language-profile.ts"
 
 export function canRunStartupHeavyScans(profile: ProjectLanguageProfile, kind: FileKind): boolean {
   if (!profile.present[kind]) return false;

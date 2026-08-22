@@ -30,7 +30,7 @@
 import { createHash } from "node:crypto";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { logLatency } from "./latency-logger.js";
+import { logLatency } from "./latency-logger.ts";
 
 const HostStringSchema = Type.String();
 const HostNumberSchema = Type.Number();

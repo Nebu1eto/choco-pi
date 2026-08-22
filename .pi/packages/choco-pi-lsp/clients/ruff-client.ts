@@ -8,16 +8,16 @@
  * Docs: https://docs.astral.sh/ruff/
  */
 
-import { createSubsystemLogger } from "./extension-log.js";
+import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   createAvailabilityChecker,
   resolveAvailableOrInstall,
-} from "./dispatch/runners/utils/runner-helpers.js";
-import { isFileKind } from "./file-kinds.js";
-import { safeSpawnAsync } from "./safe-spawn.js";
-import { ruffConfigArgs } from "./tool-policy.js";
+} from "./dispatch/runners/utils/runner-helpers.ts";
+import { isFileKind } from "./file-kinds.ts";
+import { safeSpawnAsync } from "./safe-spawn.ts";
+import { ruffConfigArgs } from "./tool-policy.ts";
 
 // --- Types ---
 

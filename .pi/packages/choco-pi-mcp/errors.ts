@@ -1,4 +1,4 @@
-import { mergeObjectParts, type McpObject, type McpValue } from "./protocol-values.js";
+import { mergeObjectParts, type McpObject, type McpValue } from "./protocol-values.ts";
 /**
  * Custom error types for MCP UI operations.
  * Provides structured errors with context and recovery hints.

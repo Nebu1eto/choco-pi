@@ -7,11 +7,11 @@
  * Gate: skips when no ESLint config is detected (project uses Biome/OxLint instead).
  */
 
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { getAutofixCapability, hasEslintConfig } from "../../tool-policy.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { createCwdCachedProbe, resolveToolCommand } from "./utils/runner-helpers.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { getAutofixCapability, hasEslintConfig } from "../../tool-policy.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { createCwdCachedProbe, resolveToolCommand } from "./utils/runner-helpers.ts";
 
 const ESLINT_PROBE_BUDGET_MS = 5000;
 

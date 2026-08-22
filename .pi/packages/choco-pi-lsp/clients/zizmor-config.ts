@@ -1,7 +1,7 @@
 import * as path from "node:path";
-import { type SpawnResult, safeSpawnAsync } from "./safe-spawn.js";
-import { findLocalToolConfig } from "./path-utils.js";
-import { incrementDegradationCount } from "./degradation-ledger.js";
+import { type SpawnResult, safeSpawnAsync } from "./safe-spawn.ts";
+import { findLocalToolConfig } from "./path-utils.ts";
+import { incrementDegradationCount } from "./degradation-ledger.ts";
 import {
   type AvailabilityCause,
   type AvailabilityOutcome,
@@ -9,7 +9,7 @@ import {
   createAvailabilityLatch,
   logAvailabilityDecision,
   startHostStallSampler,
-} from "./dispatch/runners/utils/availability-policy.js";
+} from "./dispatch/runners/utils/availability-policy.ts";
 
 type ClassifyGhTokenFailureResultContract = {
   outcome: AvailabilityOutcome;

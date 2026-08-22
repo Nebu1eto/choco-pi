@@ -12,13 +12,13 @@
 
 import type { MessageRenderer, MessageRenderOptions } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import type { Component } from "./deps/pi-tui.js";
-import { fitLines } from "./tui-fit.js";
+import type { Component } from "./deps/pi-tui.ts";
+import { fitLines } from "./tui-fit.ts";
 import {
   formatTurnSummaryLine,
   type TurnSummaryDetails,
   type TurnSummaryEvent,
-} from "./turn-summary.js";
+} from "./turn-summary.ts";
 
 // `CustomMessage<T>` itself is not re-exported from the package root (only
 // reachable via the internal extensions/types subpath, which package.json's

@@ -9,8 +9,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { isWindowsPath } from "./path-utils.js";
-import { BoundedLruCache } from "./bounded-cache.js";
+import { isWindowsPath } from "./path-utils.ts";
+import { BoundedLruCache } from "./bounded-cache.ts";
 
 const DEFAULT_HEADER_BYTES = 4096;
 

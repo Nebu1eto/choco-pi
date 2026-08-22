@@ -15,7 +15,7 @@ import {
   type ToolMetadata,
 } from "./types.ts";
 import { sanitizeTerminalText } from "./utils.ts";
-import { isObjectValue, mergeObjectParts, type McpObject } from "./protocol-values.js";
+import { isObjectValue, mergeObjectParts, type McpObject } from "./protocol-values.ts";
 
 export type ToolCallApprovalResult =
   | { ok: true }

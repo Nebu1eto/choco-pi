@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isObjectValue, type McpObject } from "./protocol-values.js";
+import { isObjectValue, type McpObject } from "./protocol-values.ts";
 
 export const UI_STREAM_HOST_CONTEXT_KEY = "pi-mcp-adapter/stream";
 export const UI_STREAM_REQUEST_META_KEY = "pi-mcp-adapter/stream-token";

@@ -17,35 +17,35 @@ import {
   getGlobalPiLensDir,
   getProjectIgnoreGlobs,
   isPathIgnoredByProject,
-} from "../file-utils.js";
-import { STAGE_TMP_PATTERN } from "../atomic-write-staging.js";
+} from "../file-utils.ts";
+import { STAGE_TMP_PATTERN } from "../atomic-write-staging.ts";
 import {
   DOTNET_CSHARP_ROOT_MARKERS,
   DOTNET_FSHARP_ROOT_MARKERS,
   KIND_EXTENSIONS,
-} from "../file-kinds.js";
+} from "../file-kinds.ts";
 import {
   direntsHaveMarkerGlobMatch,
   isAtOrAboveHomeDir,
   isFullyQualified,
   isWindowsPath,
   pathsEqual,
-} from "../path-utils.js";
-import { ensureTool, getToolEnvironment, getToolPath } from "../installer/index.js";
-import { resolveOpengrepConfig } from "../opengrep-config.js";
-import { isZizmorAuditTarget, resolveZizmorGitHubToken } from "../zizmor-config.js";
-import { logLatency } from "../latency-logger.js";
-import { logSessionStart } from "../sessionstart-logger.js";
-import { findLocalSgconfig, resolveBaselineSgconfig } from "../sgconfig.js";
-import { findLocalTyposConfig } from "../typos-config.js";
-import { resolvePackagePath } from "../package-root.js";
-import { resolveAstGrepNativeExe } from "./wait-policy/index.js";
-import { hasSpawnFailureKind, isCommandAvailableAsync, safeSpawnAsync } from "../safe-spawn.js";
-import { type LSPProcess, launchLSP } from "./launch.js";
-import { createLombokJdtlsArgs } from "./lombok.js";
-import { resolveJavaRuntimeEnv } from "./jvm-runtime.js";
-import { normalizeMapKey } from "./path-utils.js";
-import { getRubyVersionDirNamesSync } from "./ruby-drive-dirs.js";
+} from "../path-utils.ts";
+import { ensureTool, getToolEnvironment, getToolPath } from "../installer/index.ts";
+import { resolveOpengrepConfig } from "../opengrep-config.ts";
+import { isZizmorAuditTarget, resolveZizmorGitHubToken } from "../zizmor-config.ts";
+import { logLatency } from "../latency-logger.ts";
+import { logSessionStart } from "../sessionstart-logger.ts";
+import { findLocalSgconfig, resolveBaselineSgconfig } from "../sgconfig.ts";
+import { findLocalTyposConfig } from "../typos-config.ts";
+import { resolvePackagePath } from "../package-root.ts";
+import { resolveAstGrepNativeExe } from "./wait-policy/index.ts";
+import { hasSpawnFailureKind, isCommandAvailableAsync, safeSpawnAsync } from "../safe-spawn.ts";
+import { type LSPProcess, launchLSP } from "./launch.ts";
+import { createLombokJdtlsArgs } from "./lombok.ts";
+import { resolveJavaRuntimeEnv } from "./jvm-runtime.ts";
+import { normalizeMapKey } from "./path-utils.ts";
+import { getRubyVersionDirNamesSync } from "./ruby-drive-dirs.ts";
 
 // --- Types ---
 

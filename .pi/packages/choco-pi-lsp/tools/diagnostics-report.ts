@@ -1,6 +1,6 @@
-import type { ProtocolDictionary } from "./runtime-values.js";
-import type { RuntimeValue } from "./runtime-values.js";
-import { isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
+import type { ProtocolDictionary } from "./runtime-values.ts";
+import type { RuntimeValue } from "./runtime-values.ts";
+import { isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
 /**
  * diagnostics_report tool — cached project diagnostic state (issue #159).
  *
@@ -15,56 +15,56 @@ import { isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
 import { promises as fs } from "node:fs";
 import * as fsSync from "node:fs";
 import * as path from "node:path";
-import { Type } from "../clients/deps/typebox.js";
+import { Type } from "../clients/deps/typebox.ts";
 import {
   anchorsForDiagnostic,
   applyDispositions,
   applyWeakDispositions,
   getDisposition,
   type DispositionCandidate,
-} from "../clients/diagnostic-dispositions.js";
-import { applyInlineSuppressions } from "../clients/dispatch/inline-suppressions.js";
-import { gateFindingsByPathFreshness } from "../clients/advisory-provenance.js";
-import { normalizeRuleId } from "../clients/dispatch/rule-id-normalize.js";
-import { applyRulePolicy, rulePolicyMapFromConfig } from "../clients/dispatch/rule-policy.js";
-import { loadPiLensProjectConfig } from "../clients/project-lsp-config.js";
-import { compactRenderResult } from "./render-compact.js";
-import { combineAbortSignals } from "../clients/deadline-utils.js";
-import { getProjectIgnoreMatcher } from "../clients/file-utils.js";
-import { isAtOrAboveHomeDir, normalizeFilePath } from "../clients/path-utils.js";
-import { getLSPService } from "../clients/lsp/index.js";
-import { primaryServerId } from "../clients/lsp/config.js";
-import type { LSPDiagnostic } from "../clients/lsp/client.js";
-import type { LSPWorkspaceUnconfirmedReason } from "../clients/lsp/index.js";
-import { getFullScanWallClockMs } from "../clients/lsp/workspace-sweep-hold.js";
-import { demoteInferredProjectSweepResults } from "../clients/lsp/inferred-project.js";
+} from "../clients/diagnostic-dispositions.ts";
+import { applyInlineSuppressions } from "../clients/dispatch/inline-suppressions.ts";
+import { gateFindingsByPathFreshness } from "../clients/advisory-provenance.ts";
+import { normalizeRuleId } from "../clients/dispatch/rule-id-normalize.ts";
+import { applyRulePolicy, rulePolicyMapFromConfig } from "../clients/dispatch/rule-policy.ts";
+import { loadPiLensProjectConfig } from "../clients/project-lsp-config.ts";
+import { compactRenderResult } from "./render-compact.ts";
+import { combineAbortSignals } from "../clients/deadline-utils.ts";
+import { getProjectIgnoreMatcher } from "../clients/file-utils.ts";
+import { isAtOrAboveHomeDir, normalizeFilePath } from "../clients/path-utils.ts";
+import { getLSPService } from "../clients/lsp/index.ts";
+import { primaryServerId } from "../clients/lsp/config.ts";
+import type { LSPDiagnostic } from "../clients/lsp/client.ts";
+import type { LSPWorkspaceUnconfirmedReason } from "../clients/lsp/index.ts";
+import { getFullScanWallClockMs } from "../clients/lsp/workspace-sweep-hold.ts";
+import { demoteInferredProjectSweepResults } from "../clients/lsp/inferred-project.ts";
 import {
   hashDiagnosticContent,
   type BoundToCurrentDisk,
-} from "../clients/lsp/diagnostic-binding.js";
-import type { CacheManager } from "../clients/cache-manager.js";
+} from "../clients/lsp/diagnostic-binding.ts";
+import type { CacheManager } from "../clients/cache-manager.ts";
 import {
   loadProjectDiagnosticsDeltaReport,
   loadProjectDiagnosticsSnapshot,
   PROJECT_DIAGNOSTICS_CACHE_VERSION,
   reconcileProjectDiagnosticsSnapshot,
-} from "../clients/project-diagnostics/cache.js";
-import { formatCacheAge, formatNotRunEntry } from "../clients/project-diagnostics/extractors.js";
-import type { FreshProjectDiagnosticsResult } from "../clients/project-diagnostics/fresh-fetch.js";
+} from "../clients/project-diagnostics/cache.ts";
+import { formatCacheAge, formatNotRunEntry } from "../clients/project-diagnostics/extractors.ts";
+import type { FreshProjectDiagnosticsResult } from "../clients/project-diagnostics/fresh-fetch.ts";
 import {
   ANALYZER_IDS,
   fetchFreshProjectDiagnostics,
-} from "../clients/project-diagnostics/fresh-fetch.js";
-import { loadBootstrapClients } from "../clients/bootstrap.js";
-import { generatedSkipNotice, scanTruncationNotice } from "../clients/lsp-engine.js";
-import { scanProjectDiagnostics } from "../clients/project-diagnostics/scanner.js";
+} from "../clients/project-diagnostics/fresh-fetch.ts";
+import { loadBootstrapClients } from "../clients/bootstrap.ts";
+import { generatedSkipNotice, scanTruncationNotice } from "../clients/lsp-engine.ts";
+import { scanProjectDiagnostics } from "../clients/project-diagnostics/scanner.ts";
 import type {
   ProjectDiagnostic,
   ProjectDiagnosticsDeltaReport,
   ProjectDiagnosticsSnapshot,
-} from "../clients/project-diagnostics/types.js";
-import type { ActionableWarningsReport } from "../clients/actionable-warnings.js";
-import type { CodeQualityWarningsReport } from "../clients/code-quality-warnings.js";
+} from "../clients/project-diagnostics/types.ts";
+import type { ActionableWarningsReport } from "../clients/actionable-warnings.ts";
+import type { CodeQualityWarningsReport } from "../clients/code-quality-warnings.ts";
 import {
   getFileDiagnosticSummaries,
   type FileDiagnosticSummary,
@@ -72,18 +72,18 @@ import {
   reconcileStaleWidgetDependencyBlockers,
   reconcileStaleWidgetFiles,
   type WidgetDiagnostic,
-} from "../clients/widget-state.js";
-import { logLatency } from "../clients/latency-logger.js";
-import { convertLspDiagnostics } from "../clients/dispatch/utils/lsp-diagnostics.js";
-import { retagAuxiliaryDiagnostics } from "../clients/dispatch/auxiliary-lsp.js";
-import { detectFileRole } from "../clients/file-role.js";
-import { STALE_LINE_MARKER } from "../clients/stale-marker.js";
-import { makeProgressReporter, scanningSummaryLine } from "./scan-progress.js";
+} from "../clients/widget-state.ts";
+import { logLatency } from "../clients/latency-logger.ts";
+import { convertLspDiagnostics } from "../clients/dispatch/utils/lsp-diagnostics.ts";
+import { retagAuxiliaryDiagnostics } from "../clients/dispatch/auxiliary-lsp.ts";
+import { detectFileRole } from "../clients/file-role.ts";
+import { STALE_LINE_MARKER } from "../clients/stale-marker.ts";
+import { makeProgressReporter, scanningSummaryLine } from "./scan-progress.ts";
 import {
   demotePastEofDiagnostics,
   PAST_EOF_STALE_MARKER,
   resyncDocumentOnPastEof,
-} from "../clients/diagnostic-line-freshness.js";
+} from "../clients/diagnostic-line-freshness.ts";
 
 // The widget state exposes the full per-file diagnostic set; this is the tool's
 // own generous display budget per file (independent of the TUI's 12 cap), to
@@ -223,7 +223,7 @@ export function createLensDiagnosticsTool(
   // The returned closure is safe for the later async sweep to invoke because it
   // never dereferences the session-guarded ctx.ui getter.
   captureLspStatusRepaint?: (ctx: RuntimeValue) => (() => void) | undefined,
-  getRuntime?: () => import("../clients/runtime-coordinator.js").RuntimeCoordinator | undefined,
+  getRuntime?: () => import("../clients/runtime-coordinator.ts").RuntimeCoordinator | undefined,
 ) {
   return {
     name: "diagnostics_report" as const,
@@ -1437,7 +1437,7 @@ async function formatFullMode(
     onServerReady?: () => void;
     pathsScope?: PathsScope;
     nextWriteIndex?: () => number;
-    runtime?: import("../clients/runtime-coordinator.js").RuntimeCoordinator;
+    runtime?: import("../clients/runtime-coordinator.ts").RuntimeCoordinator;
     /**
      * #1107 phase 2 review: scan WITHOUT the generated/artifact NAME-
      * heuristic filter — the actionable opt-out `generatedSkipNotice`

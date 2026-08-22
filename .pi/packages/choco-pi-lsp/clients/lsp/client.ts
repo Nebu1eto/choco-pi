@@ -15,10 +15,10 @@ import * as os from "node:os";
 import { pathToFileURL } from "node:url";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
-import { emitBounded } from "../bounded-telemetry.js";
-import { withTimeout } from "../deadline-utils.js";
-import { incrementDegradationCount } from "../degradation-ledger.js";
-import type { MessageConnection } from "../deps/vscode-jsonrpc.js";
+import { emitBounded } from "../bounded-telemetry.ts";
+import { withTimeout } from "../deadline-utils.ts";
+import { incrementDegradationCount } from "../degradation-ledger.ts";
+import type { MessageConnection } from "../deps/vscode-jsonrpc.ts";
 // vscode-jsonrpc v9 ships an `exports` map exposing the Node entry as the
 // `./node` subpath (no `.js`); the old `/node.js` file path no longer resolves.
 import {
@@ -26,37 +26,37 @@ import {
   createMessageConnection,
   StreamMessageReader,
   StreamMessageWriter,
-} from "../deps/vscode-jsonrpc.js";
-import { logExtension } from "../extension-log.js";
-import { recordLspChild, removeLspChild } from "../instance-registry.js";
-import { logLatency } from "../latency-logger.js";
-import { type LspMutationContext, newLspMutationCorrelationId } from "../lsp-mutation.js";
-import { getAmbientAbortSignal } from "../safe-spawn.js";
-import { raceToCompletion } from "./aggregation.js";
-import { hashDiagnosticContent, type StoredDiagnosticBinding } from "./diagnostic-binding.js";
-import { applyWorkspaceEdit, normalizeWorkspaceEditToUtf16 } from "./edits.js";
-import type { LSPProcess } from "./launch.js";
-import { normalizeMapKey, uriToPath } from "./path-utils.js";
+} from "../deps/vscode-jsonrpc.ts";
+import { logExtension } from "../extension-log.ts";
+import { recordLspChild, removeLspChild } from "../instance-registry.ts";
+import { logLatency } from "../latency-logger.ts";
+import { type LspMutationContext, newLspMutationCorrelationId } from "../lsp-mutation.ts";
+import { getAmbientAbortSignal } from "../safe-spawn.ts";
+import { raceToCompletion } from "./aggregation.ts";
+import { hashDiagnosticContent, type StoredDiagnosticBinding } from "./diagnostic-binding.ts";
+import { applyWorkspaceEdit, normalizeWorkspaceEditToUtf16 } from "./edits.ts";
+import type { LSPProcess } from "./launch.ts";
+import { normalizeMapKey, uriToPath } from "./path-utils.ts";
 import {
   ADVERTISED_POSITION_ENCODINGS,
   convertCharacterOffset,
   lineTextAt,
   negotiatePositionEncoding,
   type PositionEncoding,
-} from "./position-encoding.js";
+} from "./position-encoding.ts";
 import {
   negotiateSyncKind,
   TEXT_DOCUMENT_SYNC_KIND_FULL,
   TEXT_DOCUMENT_SYNC_KIND_INCREMENTAL,
   type TextDocumentSyncKind,
-} from "./sync-kind.js";
-import { probeTsserverProjectIdentity } from "./tsserver-sync.js";
-import { getStrategy } from "./wait-policy/index.js";
-import { WatchedFilesQueue } from "./watch-queue.js";
+} from "./sync-kind.ts";
+import { probeTsserverProjectIdentity } from "./tsserver-sync.ts";
+import { getStrategy } from "./wait-policy/index.ts";
+import { WatchedFilesQueue } from "./watch-queue.ts";
 import {
   clearAllWorkspaceDiagnosticsCaches,
   clearWorkspaceDiagnosticsCache,
-} from "./workspace-diagnostics-cache.js";
+} from "./workspace-diagnostics-cache.ts";
 
 // Opt-in publishDiagnostics trace (PILENS_PUB_DEBUG=1) — read once, negligible
 // hot-path cost. Surfaces each server's publish behavior (version + count) to

@@ -1,5 +1,5 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isFunctionValue, isObjectValue, isStringValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isFunctionValue, isObjectValue, isStringValue } from "../boundary.ts";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -8,11 +8,11 @@ import {
   discoverCustomToolsFromDirectories,
   getCustomToolsDir,
   getProjectCustomToolsDir,
-} from "./custom-tools.js";
-import { replaceCodeModeToolsPrompt } from "./custom-tool-prompt.js";
-import { registerPublicCodeModeTools } from "./public-tools.js";
-import { SharedCodeModeRuntime, type CodeModeToolProvider } from "./shared-runtime.js";
-import { registerCodeModeEvents } from "./tool-events.js";
+} from "./custom-tools.ts";
+import { replaceCodeModeToolsPrompt } from "./custom-tool-prompt.ts";
+import { registerPublicCodeModeTools } from "./public-tools.ts";
+import { SharedCodeModeRuntime, type CodeModeToolProvider } from "./shared-runtime.ts";
+import { registerCodeModeEvents } from "./tool-events.ts";
 
 // Providers in one extension instance share a process-lifetime host runtime.
 // Pi replaces ExtensionAPI registrations on reload, so each API binds its own surface.

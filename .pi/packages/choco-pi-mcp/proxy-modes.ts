@@ -52,7 +52,7 @@ import {
   resolveSearchKeywords,
 } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
-import { mergeObjectParts, parseMcpObject, type McpObject } from "./protocol-values.js";
+import { mergeObjectParts, parseMcpObject, type McpObject } from "./protocol-values.ts";
 
 type ProxyToolResult = AgentToolResult<McpObject>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;

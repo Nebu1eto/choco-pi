@@ -36,8 +36,8 @@
 
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
-import { logExtension } from "./extension-log.js";
-import { recordDegradation } from "./degradation-ledger.js";
+import { logExtension } from "./extension-log.ts";
+import { recordDegradation } from "./degradation-ledger.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
@@ -141,7 +141,7 @@ export function adoptProjectTrustFromContext(ctx: LspBoundaryValue): ProjectTrus
 
 /** Adopt through the canonical host capability boundary. */
 export function adoptProjectTrustFromPorts(
-  ports: import("./host-ports.js").HostPorts,
+  ports: import("./host-ports.ts").HostPorts,
 ): ProjectTrustState {
   const next = ports.trust.isProjectTrusted();
   setProjectTrustState(next);

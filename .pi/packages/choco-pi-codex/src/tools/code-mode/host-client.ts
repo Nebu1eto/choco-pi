@@ -1,18 +1,18 @@
-import { CodeModeHostCellOperations } from "./host-cell-operations.js";
-import { CodeModeHostDelegation } from "./host-delegation.js";
-import { abortError, cancelOperation, throwIfAborted, toError } from "./host-operation.js";
+import { CodeModeHostCellOperations } from "./host-cell-operations.ts";
+import { CodeModeHostDelegation } from "./host-delegation.ts";
+import { abortError, cancelOperation, throwIfAborted, toError } from "./host-operation.ts";
 import {
   DEFAULT_CODE_MODE_EXEC_YIELD_MS,
   executionCellId,
   parseExecSource,
   parseRuntimeResponse,
   toWireToolDefinition,
-} from "./host-protocol.js";
-import { CodeModeHostSession } from "./host-session.js";
-import { directToolYieldTime, scopeAllToolsToDeferredCustom } from "./tool-source.js";
-import type { CodeModeToolDefinition, RuntimeResponse, ToolExecutionContext } from "./types.js";
+} from "./host-protocol.ts";
+import { CodeModeHostSession } from "./host-session.ts";
+import { directToolYieldTime, scopeAllToolsToDeferredCustom } from "./tool-source.ts";
+import type { CodeModeToolDefinition, RuntimeResponse, ToolExecutionContext } from "./types.ts";
 
-export { scopeAllToolsToDeferredCustom } from "./tool-source.js";
+export { scopeAllToolsToDeferredCustom } from "./tool-source.ts";
 
 type HostClientOptions = {
   binary: string;

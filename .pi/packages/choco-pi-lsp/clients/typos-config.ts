@@ -1,4 +1,4 @@
-import { findLocalToolConfig } from "./path-utils.js";
+import { findLocalToolConfig } from "./path-utils.ts";
 
 /**
  * typos (source-code spell checker) configuration discovery. typos runs as a

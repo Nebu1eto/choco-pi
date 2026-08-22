@@ -14,36 +14,36 @@
  * - BaselineStore: Track pre-existing issues for delta mode
  */
 
-import { logExtension } from "../extension-log.js";
+import { logExtension } from "../extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { FileKind } from "../file-kinds.js";
-import { recordRunner } from "../widget-state.js";
-import { detectFileKind } from "../file-kinds.js";
-import { detectFileRole } from "../file-role.js";
-import { isTestFile } from "../file-utils.js";
-import { getPrimaryDispatchGroup } from "../language-policy.js";
-import { resolveLanguageRootForFile } from "../language-profile.js";
-import { logLatency } from "../latency-logger.js";
-import { isSpawnableCommand } from "../installer/index.js";
-import { normalizeMapKey } from "../path-utils.js";
-import { loadPiLensProjectConfig } from "../project-lsp-config.js";
-import { RUNTIME_CONFIG, getRunnerTimeoutFloorMs } from "../runtime-config.js";
-import { safeSpawnAsync } from "../safe-spawn.js";
-import { classifyDiagnostic } from "./diagnostic-taxonomy.js";
+import type { FileKind } from "../file-kinds.ts";
+import { recordRunner } from "../widget-state.ts";
+import { detectFileKind } from "../file-kinds.ts";
+import { detectFileRole } from "../file-role.ts";
+import { isTestFile } from "../file-utils.ts";
+import { getPrimaryDispatchGroup } from "../language-policy.ts";
+import { resolveLanguageRootForFile } from "../language-profile.ts";
+import { logLatency } from "../latency-logger.ts";
+import { isSpawnableCommand } from "../installer/index.ts";
+import { normalizeMapKey } from "../path-utils.ts";
+import { loadPiLensProjectConfig } from "../project-lsp-config.ts";
+import { RUNTIME_CONFIG, getRunnerTimeoutFloorMs } from "../runtime-config.ts";
+import { safeSpawnAsync } from "../safe-spawn.ts";
+import { classifyDiagnostic } from "./diagnostic-taxonomy.ts";
 import {
   classifyProbeFailure,
   logAvailabilityDecision,
   startHostStallSampler,
   transientRetryDelayMs,
-} from "./runners/utils/availability-policy.js";
-import type { FactStore } from "./fact-store.js";
-import { applyDispositions } from "../diagnostic-dispositions.js";
-import { applyInlineSuppressions } from "./inline-suppressions.js";
-import { getToolPlan } from "./plan.js";
-import { resolveRunnerPath } from "./runner-context.js";
-import { applyRulePolicy, rulePolicyMapFromConfig } from "./rule-policy.js";
-import { getToolProfile } from "./tool-profile.js";
+} from "./runners/utils/availability-policy.ts";
+import type { FactStore } from "./fact-store.ts";
+import { applyDispositions } from "../diagnostic-dispositions.ts";
+import { applyInlineSuppressions } from "./inline-suppressions.ts";
+import { getToolPlan } from "./plan.ts";
+import { resolveRunnerPath } from "./runner-context.ts";
+import { applyRulePolicy, rulePolicyMapFromConfig } from "./rule-policy.ts";
+import { getToolProfile } from "./tool-profile.ts";
 import type {
   Diagnostic,
   DispatchContext,
@@ -54,8 +54,8 @@ import type {
   RunnerGroup,
   RunnerRegistry as RunnerRegistryContract,
   RunnerResult,
-} from "./types.js";
-import { formatDiagnostics } from "./utils/format-utils.js";
+} from "./types.ts";
+import { formatDiagnostics } from "./utils/format-utils.ts";
 
 // --- Runner Registry ---
 
@@ -254,7 +254,7 @@ export function createDispatchContext(
   pi: PiAgentAPI,
   facts: FactStore,
   blockingOnly?: boolean,
-  modifiedRanges?: import("./types.js").ModifiedRange[],
+  modifiedRanges?: import("./types.ts").ModifiedRange[],
   /** Authoritative workspace root; `cwd` may be a nested language root. */
   projectRoot?: string,
   /** Ordered per-file pipeline token, when this is a post-write dispatch. */
@@ -926,7 +926,7 @@ export async function dispatchForFile(
     provider: ctx.telemetryProvider,
   };
   if (fixedItems.length > 0) {
-    import("../fix-worklog.js")
+    import("../fix-worklog.ts")
       .then(({ appendToWorklog }) => {
         appendToWorklog(ctx.cwd, fixedItems, true, worklogIdentity);
       })
@@ -934,7 +934,7 @@ export async function dispatchForFile(
   }
   const fixableWarnings = warnings.filter((d) => d.fixable);
   if (fixableWarnings.length > 0) {
-    import("../fix-worklog.js")
+    import("../fix-worklog.ts")
       .then(({ appendToWorklog }) => {
         appendToWorklog(ctx.cwd, fixableWarnings, false, worklogIdentity);
       })

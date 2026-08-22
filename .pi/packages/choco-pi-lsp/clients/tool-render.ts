@@ -36,9 +36,9 @@ import { Check } from "typebox/value";
  */
 
 import type { Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { Component } from "./deps/pi-tui.js";
-import { stripAnsi } from "./sanitize.js";
-import { fitLines } from "./tui-fit.js";
+import type { Component } from "./deps/pi-tui.ts";
+import { stripAnsi } from "./sanitize.ts";
+import { fitLines } from "./tui-fit.ts";
 
 const EMPTY_COMPONENT: Component = {
   render: () => [],

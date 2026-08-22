@@ -1,7 +1,7 @@
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
-import { logExtension } from "./extension-log.js";
-import { notifyUserDegradation } from "./user-notify.js";
+import { logExtension } from "./extension-log.ts";
+import { notifyUserDegradation } from "./user-notify.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -13,8 +13,8 @@ import {
   GLOBAL_NON_FLAG_CONFIG_SECTIONS,
   LENS_FLAGS,
   readFlagConfigValue,
-} from "./lsp-flag-registry.js";
-import { findNestedProjectMutationValue, type PiLensProjectConfig } from "./project-lsp-config.js";
+} from "./lsp-flag-registry.ts";
+import { findNestedProjectMutationValue, type PiLensProjectConfig } from "./project-lsp-config.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

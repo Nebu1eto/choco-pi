@@ -3,14 +3,14 @@ import { Check } from "typebox/value";
 import { stat } from "node:fs/promises";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import { demotePastEofDiagnostics, type LineCountCache } from "./diagnostic-line-freshness.js";
-import { visibleWidth } from "./deps/pi-tui.js";
-import { normalizeEphemeralMapKey, normalizeMapKey } from "./path-utils.js";
-import { fitLine } from "./tui-fit.js";
-import { WriteOrderingGuard } from "./write-ordering-guard.js";
-import { collectForwardImportMtimes, MTIME_DRIFT_TOLERANCE_MS } from "./blocker-freshness.js";
-import { PAST_EOF_STALE_MARKER } from "./diagnostic-line-freshness.js";
-import { STALE_LINE_MARKER } from "./stale-marker.js";
+import { demotePastEofDiagnostics, type LineCountCache } from "./diagnostic-line-freshness.ts";
+import { visibleWidth } from "./deps/pi-tui.ts";
+import { normalizeEphemeralMapKey, normalizeMapKey } from "./path-utils.ts";
+import { fitLine } from "./tui-fit.ts";
+import { WriteOrderingGuard } from "./write-ordering-guard.ts";
+import { collectForwardImportMtimes, MTIME_DRIFT_TOLERANCE_MS } from "./blocker-freshness.ts";
+import { PAST_EOF_STALE_MARKER } from "./diagnostic-line-freshness.ts";
+import { STALE_LINE_MARKER } from "./stale-marker.ts";
 
 type CountDiagnosticsResultContract = {
   blocking: number;

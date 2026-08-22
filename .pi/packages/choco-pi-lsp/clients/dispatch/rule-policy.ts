@@ -21,7 +21,7 @@
  */
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { normalizeRuleId } from "./rule-id-normalize.js";
+import { normalizeRuleId } from "./rule-id-normalize.ts";
 
 export interface RulePolicyEntry {
   disable?: string[];

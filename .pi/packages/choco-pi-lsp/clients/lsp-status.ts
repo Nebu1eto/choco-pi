@@ -17,8 +17,8 @@
  *     language failure. They still appear in the Active list via the alive set.
  */
 
-import { getFileKindsForExtension } from "./file-kinds.js";
-import { LSP_SERVERS } from "./lsp/server.js";
+import { getFileKindsForExtension } from "./file-kinds.ts";
+import { LSP_SERVERS } from "./lsp/server.ts";
 
 export interface LspStatusSelection {
   /** Alive servers, as-is (#267 ordering; includes auxiliaries). */

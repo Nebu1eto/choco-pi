@@ -1,17 +1,17 @@
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { findLocalBinUpwards } from "../../package-manager.js";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { getLinterPolicyForCwd } from "../../tool-policy.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
+import { findLocalBinUpwards } from "../../package-manager.ts";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { getLinterPolicyForCwd } from "../../tool-policy.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import {
   createAvailabilityChecker,
   lspPrimaryCoversFile,
   resolveToolCommandWithInstallFallback,
-} from "./utils/runner-helpers.js";
-import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.js";
+} from "./utils/runner-helpers.ts";
+import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.ts";
 
 const taplo = createAvailabilityChecker("taplo", ".exe");
 

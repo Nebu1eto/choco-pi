@@ -28,7 +28,7 @@
  * rather than this text-based one.
  */
 
-import type { ModuleSymbolEntry } from "./module-report.js";
+import type { ModuleSymbolEntry } from "./module-report.ts";
 
 /** Self-reference token + member-access separator, per languageId. Both the
  * self→field and field→method hops use the SAME separator in every language

@@ -17,15 +17,15 @@
  * `role:"auxiliary"` (clients/lsp/server.ts) + one profile entry here.
  */
 
-import type { LSPDiagnostic } from "../lsp/client.js";
-import { shouldDegradeAuxiliaryLsp } from "../lsp-budget.js";
-import { isSubagentSession } from "../subagent-mode.js";
-import type { FileRole } from "../file-role.js";
-import { findLocalOpengrepConfig } from "../opengrep-config.js";
-import { findLocalTyposConfig } from "../typos-config.js";
-import { findLocalZizmorConfig } from "../zizmor-config.js";
-import { classifyDefect } from "./diagnostic-taxonomy.js";
-import type { DefectClass, Diagnostic, OutputSemantic } from "./types.js";
+import type { LSPDiagnostic } from "../lsp/client.ts";
+import { shouldDegradeAuxiliaryLsp } from "../lsp-budget.ts";
+import { isSubagentSession } from "../subagent-mode.ts";
+import type { FileRole } from "../file-role.ts";
+import { findLocalOpengrepConfig } from "../opengrep-config.ts";
+import { findLocalTyposConfig } from "../typos-config.ts";
+import { findLocalZizmorConfig } from "../zizmor-config.ts";
+import { classifyDefect } from "./diagnostic-taxonomy.ts";
+import type { DefectClass, Diagnostic, OutputSemantic } from "./types.ts";
 
 export interface AuxiliaryLspProfile {
   /** LSPServerInfo.id of the auxiliary server. */

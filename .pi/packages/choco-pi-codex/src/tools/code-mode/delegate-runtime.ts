@@ -1,11 +1,11 @@
-import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
-import { runCustomTool } from "./custom-tool-runner.js";
-import { isCustomToolDefinition, type DelegateRequestMessage } from "./host-protocol.js";
-import { runCodeModeToolPreflight } from "./nested-tool-preflight.js";
+import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
+import { runCustomTool } from "./custom-tool-runner.ts";
+import { isCustomToolDefinition, type DelegateRequestMessage } from "./host-protocol.ts";
+import { runCodeModeToolPreflight } from "./nested-tool-preflight.ts";
 import { codeModeNameForToolIdentity } from "./tool-identity.ts";
-import { CodeModeTraceStore } from "./trace-store.js";
-import { toolResultFromValue, truncateTraceText } from "./trace-values.js";
-import type { CodeModeToolDefinition, RuntimeResponse, ToolExecutionContext } from "./types.js";
+import { CodeModeTraceStore } from "./trace-store.ts";
+import { toolResultFromValue, truncateTraceText } from "./trace-values.ts";
+import type { CodeModeToolDefinition, RuntimeResponse, ToolExecutionContext } from "./types.ts";
 
 const MAX_TRACE_ERROR_CHARS = 16_384;
 const MAX_NOTIFICATION_CHARS = 16_384;

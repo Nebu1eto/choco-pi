@@ -64,8 +64,8 @@
  * standalone per the issue's "derive or standalone, justify" instruction.
  */
 
-import { lazyEnvNumber, toPositiveFinite } from "./env-utils.js";
-import { loadPiLensProjectConfig } from "./project-lsp-config.js";
+import { lazyEnvNumber, toPositiveFinite } from "./env-utils.ts";
+import { loadPiLensProjectConfig } from "./project-lsp-config.ts";
 
 /**
  * Default base value: chosen so every ratio in the table above reproduces

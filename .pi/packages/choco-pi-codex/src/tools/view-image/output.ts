@@ -1,5 +1,5 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isObjectValue, isStringValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isObjectValue, isStringValue } from "../boundary.ts";
 export type ViewImageContent = {
   type: "image";
   data: string;

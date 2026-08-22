@@ -9,15 +9,15 @@
  * All paths are relative to project root (process.cwd()).
  */
 
-import { createSubsystemLogger } from "./extension-log.js";
+import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { getProjectDataDir } from "./file-utils.js";
-import { writeFileAtomic } from "./atomic-write.js";
-import { readJsonCache } from "./json-cache-read.js";
-import { normalizeMapKey } from "./path-utils.js";
+import { getProjectDataDir } from "./file-utils.ts";
+import { writeFileAtomic } from "./atomic-write.ts";
+import { readJsonCache } from "./json-cache-read.ts";
+import { normalizeMapKey } from "./path-utils.ts";
 
 // --- Types ---
 

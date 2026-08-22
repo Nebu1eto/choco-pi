@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import type { FactProvider } from "../fact-provider-types.js";
+import type { FactProvider } from "../fact-provider-types.ts";
 
 export const fileContentProvider: FactProvider = {
   id: "fact.file.content",

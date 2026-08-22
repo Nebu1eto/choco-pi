@@ -1,4 +1,4 @@
-import type { SpawnResult } from "../../../safe-spawn.js";
+import type { SpawnResult } from "../../../safe-spawn.ts";
 
 /**
  * True when a tool both failed and produced nothing to parse — it never got as

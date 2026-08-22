@@ -16,7 +16,7 @@ import {
   isNumberValue,
   isStringValue,
   mergeObjectParts,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 export type ElicitationValue = string | number | boolean | string[] | undefined;
 type FormProperty = ElicitRequestFormParams["requestedSchema"]["properties"][string];

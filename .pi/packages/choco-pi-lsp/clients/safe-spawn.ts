@@ -19,11 +19,11 @@ import { Check } from "typebox/value";
 import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { logLatency } from "./latency-logger.js";
-import { recordDegradation } from "./degradation-ledger.js";
-import { logExtension } from "./extension-log.js";
-import { isFullyQualifiedWin32 } from "./path-utils.js";
-import { startSpawnUsageSampler } from "./resource-sampler.js";
+import { logLatency } from "./latency-logger.ts";
+import { recordDegradation } from "./degradation-ledger.ts";
+import { logExtension } from "./extension-log.ts";
+import { isFullyQualifiedWin32 } from "./path-utils.ts";
+import { startSpawnUsageSampler } from "./resource-sampler.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

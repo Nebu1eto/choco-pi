@@ -1,6 +1,6 @@
 import { keyHint, truncateToVisualLines } from "@earendil-works/pi-coding-agent";
 import { Container, Image, Spacer, Text } from "@earendil-works/pi-tui";
-import type { CodeModeRenderTheme } from "./types.js";
+import type { CodeModeRenderTheme } from "./types.ts";
 
 export interface RenderedToolContent {
   type: string;

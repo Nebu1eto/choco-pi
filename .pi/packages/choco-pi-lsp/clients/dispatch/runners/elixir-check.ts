@@ -1,10 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getProjectDataDir } from "../../file-utils.js";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { createAvailabilityChecker } from "./utils/runner-helpers.js";
+import { getProjectDataDir } from "../../file-utils.ts";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { createAvailabilityChecker } from "./utils/runner-helpers.ts";
 
 // Per-cwd cached `--version` probes (#120). Before this, each dispatch
 // invocation fired a fresh `safeSpawnAsync` per command — once per Elixir

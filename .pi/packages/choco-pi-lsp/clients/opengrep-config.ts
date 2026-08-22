@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import * as path from "node:path";
-import { findLocalToolConfig } from "./path-utils.js";
+import { findLocalToolConfig } from "./path-utils.ts";
 
 export interface ResolvedOpengrepConfig {
   enabled: boolean;

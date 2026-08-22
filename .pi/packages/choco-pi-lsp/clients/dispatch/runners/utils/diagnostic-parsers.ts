@@ -5,8 +5,8 @@
  * Supports the common `file:line:col: message` format used by most linters.
  */
 
-import { getAutofixCapability } from "../../../tool-policy.js";
-import type { DefectClass, Diagnostic } from "../../types.js";
+import { getAutofixCapability } from "../../../tool-policy.ts";
+import type { DefectClass, Diagnostic } from "../../types.ts";
 
 const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 

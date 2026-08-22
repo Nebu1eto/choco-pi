@@ -12,13 +12,13 @@
  */
 
 import * as fs from "node:fs";
-import { safeSpawnAsync } from "../../../safe-spawn.js";
+import { safeSpawnAsync } from "../../../safe-spawn.ts";
 import {
   type AvailabilityCause,
   type ProbeEvidence,
   classifyProbeFailure,
   startHostStallSampler,
-} from "./availability-policy.js";
+} from "./availability-policy.ts";
 
 export interface CandidateSweepResult {
   /** The candidate that answered, or `null` if none did. */

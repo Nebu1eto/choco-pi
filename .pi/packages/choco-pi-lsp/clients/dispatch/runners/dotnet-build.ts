@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { createAvailabilityChecker } from "./utils/runner-helpers.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { createAvailabilityChecker } from "./utils/runner-helpers.ts";
 
 const dotnet = createAvailabilityChecker("dotnet", ".exe");
 

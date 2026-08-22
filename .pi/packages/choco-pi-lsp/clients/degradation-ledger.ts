@@ -2,7 +2,7 @@
 
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { logExtension } from "./extension-log.js";
+import { logExtension } from "./extension-log.ts";
 
 export type DegradationKind =
   | "trust-refusal"

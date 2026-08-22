@@ -60,7 +60,7 @@ import { Check } from "typebox/value";
  */
 
 /** Stable Symbol key — identical across module reloads in the same process. */
-import { captureReadContentBinding, type ReadContentBinding } from "./read-guard.js";
+import { captureReadContentBinding, type ReadContentBinding } from "./read-guard.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

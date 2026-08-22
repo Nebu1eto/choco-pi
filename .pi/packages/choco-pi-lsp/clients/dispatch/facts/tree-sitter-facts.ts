@@ -13,9 +13,9 @@ import {
   withTreeSitterRoot,
   type TsNode,
   walk,
-} from "../../tree-sitter-shared.js";
-import type { FactStore } from "../fact-store.js";
-import type { DispatchContext } from "../types.js";
+} from "../../tree-sitter-shared.ts";
+import type { FactStore } from "../fact-store.ts";
+import type { DispatchContext } from "../types.ts";
 
 export { childrenOfType, firstChildOfType, type TsNode, walk };
 

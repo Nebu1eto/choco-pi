@@ -35,9 +35,9 @@
 
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { LSPDiagnostic } from "./client.js";
-import { logLatency } from "../latency-logger.js";
-import { normalizeMapKey } from "../path-utils.js";
+import type { LSPDiagnostic } from "./client.ts";
+import { logLatency } from "../latency-logger.ts";
+import { normalizeMapKey } from "../path-utils.ts";
 
 // ---------------------------------------------------------------------------
 // Types

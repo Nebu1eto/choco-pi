@@ -11,7 +11,7 @@
  * they don't gate or interrupt the agent mid-task.
  */
 
-import { createSubsystemLogger } from "./extension-log.js";
+import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 

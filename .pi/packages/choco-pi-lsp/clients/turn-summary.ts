@@ -29,7 +29,7 @@
  * comparison (see the two red CI rounds on PR #491 the raw-key trap cost).
  */
 
-import { normalizeMapKey } from "./path-utils.js";
+import { normalizeMapKey } from "./path-utils.ts";
 
 export type TurnSummaryEventKind = "diagnostic" | "autofix" | "format";
 

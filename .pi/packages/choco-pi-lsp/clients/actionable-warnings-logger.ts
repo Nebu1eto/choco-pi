@@ -1,7 +1,7 @@
 import * as path from "node:path";
-import { isTestMode } from "./env-utils.js";
-import { getGlobalPiLensDir } from "./file-utils.js";
-import { createNdjsonLogger } from "./ndjson-logger.js";
+import { isTestMode } from "./env-utils.ts";
+import { getGlobalPiLensDir } from "./file-utils.ts";
+import { createNdjsonLogger } from "./ndjson-logger.ts";
 
 const AW_LOG_DIR = getGlobalPiLensDir();
 const AW_LOG_FILE = path.join(AW_LOG_DIR, "actionable-warnings.log");

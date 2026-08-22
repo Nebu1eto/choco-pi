@@ -1,13 +1,13 @@
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { getLinterPolicyForCwd } from "../../tool-policy.js";
-import { findNearestDirWithAnyBasename } from "../../workspace-topology.js";
-import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.js";
-import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { PRIORITY } from "../priorities.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { getLinterPolicyForCwd } from "../../tool-policy.ts";
+import { findNearestDirWithAnyBasename } from "../../workspace-topology.ts";
+import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.ts";
+import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { PRIORITY } from "../priorities.ts";
 
 const tflint = createAvailabilityChecker("tflint", ".exe");
 

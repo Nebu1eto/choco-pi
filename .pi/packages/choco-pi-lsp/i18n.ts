@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "./tools/runtime-values.js";
+import type { RuntimeValue } from "./tools/runtime-values.ts";
 type Locale = "en" | "es" | "fr" | "pt-BR";
 type Params = Record<string, string | number>;
 

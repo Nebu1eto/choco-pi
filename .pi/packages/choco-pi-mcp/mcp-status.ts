@@ -5,7 +5,7 @@ import {
   type McpServerStatusSnapshot,
   type McpStatusSnapshot,
 } from "./types.ts";
-import { mergeObjectParts } from "./protocol-values.js";
+import { mergeObjectParts } from "./protocol-values.ts";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 

@@ -4,9 +4,9 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { load as loadYaml } from "./deps/js-yaml.js";
-import { resolvePackagePath } from "./package-root.js";
-import { findLocalToolConfig } from "./path-utils.js";
+import { load as loadYaml } from "./deps/js-yaml.ts";
+import { resolvePackagePath } from "./package-root.ts";
+import { findLocalToolConfig } from "./path-utils.ts";
 
 // ast-grep's root config marker. The `ast-grep lsp` server is workspace-gated:
 // it only operates in a project that has an `sgconfig.y[a]ml` at (or above) the

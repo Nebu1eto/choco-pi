@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { RuleDescription } from "./ast-grep-types.js";
+import type { RuleDescription } from "./ast-grep-types.ts";
 
 export class AstGrepRuleManager {
   private ruleDescriptions: Map<string, RuleDescription> | null = null;

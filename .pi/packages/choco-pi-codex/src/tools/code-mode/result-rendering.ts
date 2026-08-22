@@ -1,22 +1,22 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isObjectValue, isStringValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isObjectValue, isStringValue } from "../boundary.ts";
 import { type Component, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import {
   imagesByMimeType,
   previewText,
   renderTextAndImages,
   type RenderedToolContent,
-} from "./render-content.js";
-import type { CodeModeRenderTracker } from "./render-tracker.js";
-import { formatNotebookMemory } from "./tool-result.js";
-import { renderTraceAndOutput } from "./trace-rendering.js";
+} from "./render-content.ts";
+import type { CodeModeRenderTracker } from "./render-tracker.ts";
+import { formatNotebookMemory } from "./tool-result.ts";
+import { renderTraceAndOutput } from "./trace-rendering.ts";
 import type {
   CodeModeRenderContext,
   CodeModeRenderTheme,
   CodeModeToolDefinition,
   NotebookMemoryUsage,
   RuntimeToolTrace,
-} from "./types.js";
+} from "./types.ts";
 
 interface CodeModeResultDetails {
   cellId?: string | undefined;

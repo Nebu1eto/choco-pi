@@ -51,9 +51,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as v8 from "node:v8";
-import { getGlobalPiLensDir } from "./file-utils.js";
-import { getMaxLogSizeMB } from "./log-cleanup.js";
-import { createNdjsonLogger, type NdjsonLogger } from "./ndjson-logger.js";
+import { getGlobalPiLensDir } from "./file-utils.ts";
+import { getMaxLogSizeMB } from "./log-cleanup.ts";
+import { createNdjsonLogger, type NdjsonLogger } from "./ndjson-logger.ts";
 
 /** Read once at module load — see module docstring. Not re-read per call. */
 const DEBUG_HEAP_ENABLED = process.env.CHOCO_PI_LSP_DEBUG_HEAP === "1";

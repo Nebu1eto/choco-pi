@@ -60,7 +60,7 @@ import {
   writeStatus,
   type StatusWriterUi,
 } from "./status-text.ts";
-import { isFunctionValue, isNumberValue, mergeObjectParts } from "./protocol-values.js";
+import { isFunctionValue, isNumberValue, mergeObjectParts } from "./protocol-values.ts";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;

@@ -40,8 +40,8 @@ import { type Static, Type } from "typebox";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { logLatency } from "./latency-logger.js";
-import { isAtOrAboveHomeDir, nameMatchesMarkerGlob, walkUpDirs } from "./path-utils.js";
+import { logLatency } from "./latency-logger.ts";
+import { isAtOrAboveHomeDir, nameMatchesMarkerGlob, walkUpDirs } from "./path-utils.ts";
 
 const LspDictionaryValueSchema = Type.Unknown();
 type LspDictionaryValue = Static<typeof LspDictionaryValueSchema>;

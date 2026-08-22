@@ -104,11 +104,11 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.js";
-import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { PRIORITY } from "../priorities.js";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.ts";
+import { spawnFailedWithNoOutput } from "./utils/spawn-outcome.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { PRIORITY } from "../priorities.ts";
 
 const cue = createAvailabilityChecker("cue", ".exe", ["version"]);
 

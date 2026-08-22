@@ -13,11 +13,11 @@
 
 import * as fs from "node:fs";
 import fsp from "node:fs/promises";
-import { writeFileAtomic, writeFileAtomicAsync } from "./atomic-write.js";
+import { writeFileAtomic, writeFileAtomicAsync } from "./atomic-write.ts";
 import {
   acquireBoundedPidFileLock,
   acquireQuarantinePidFileLock,
-} from "./bounded-pid-file-lock.js";
+} from "./bounded-pid-file-lock.ts";
 
 // Shared fields WITHOUT the post-write callback: the sync and async commit
 // variants declare their own callback signatures (void vs void|Promise<void>)

@@ -5,11 +5,11 @@
 
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import { logTreeSitterDiagnostic } from "./tree-sitter-logger.js";
+import { logTreeSitterDiagnostic } from "./tree-sitter-logger.ts";
 import * as path from "node:path";
-import { loadWebTreeSitter } from "./deps/web-tree-sitter.js";
-import type { Symbol, SymbolKind, SymbolRef } from "./symbol-types.js";
-import type { TreeSitterClient } from "./tree-sitter-client.js";
+import { loadWebTreeSitter } from "./deps/web-tree-sitter.ts";
+import type { Symbol, SymbolKind, SymbolRef } from "./symbol-types.ts";
+import type { TreeSitterClient } from "./tree-sitter-client.ts";
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,

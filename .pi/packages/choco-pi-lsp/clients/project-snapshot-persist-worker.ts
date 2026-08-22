@@ -2,7 +2,7 @@ import {
   type GzipStageWorkerRequest,
   type GzipStageWorkerResult,
   serveGzipStageWorker,
-} from "./gzip-stage-write.js";
+} from "./gzip-stage-write.ts";
 
 /**
  * Worker-thread persist for the project snapshot BODY (#958 item 2). The parent

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { isStringValue } from "./protocol-values.js";
+import { isStringValue } from "./protocol-values.ts";
 
 export function getConfigDirName(): string {
   const configDir = readPiConfig()?.configDir;

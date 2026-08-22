@@ -1,4 +1,4 @@
-import { logLatency } from "./latency-logger.js";
+import { logLatency } from "./latency-logger.ts";
 
 /**
  * The complete observability path for a concurrent secondary. It deliberately

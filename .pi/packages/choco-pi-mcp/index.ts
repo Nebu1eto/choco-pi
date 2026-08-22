@@ -74,7 +74,7 @@ import {
   mergeObjectParts,
   runtimeTypeOf,
   type McpObject,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 export type { McpAdapterOptions } from "./types.ts";
 export {

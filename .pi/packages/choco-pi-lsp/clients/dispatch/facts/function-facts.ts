@@ -1,7 +1,7 @@
-import type { FactProvider } from "../fact-provider-types.js";
-import { isJstsFactFile } from "../../file-kinds.js";
-import { findOwnerName } from "../../symbol-containment.js";
-import { extractFactsFromTree, firstChildOfType, type TsNode, walk } from "./tree-sitter-facts.js";
+import type { FactProvider } from "../fact-provider-types.ts";
+import { isJstsFactFile } from "../../file-kinds.ts";
+import { findOwnerName } from "../../symbol-containment.ts";
+import { extractFactsFromTree, firstChildOfType, type TsNode, walk } from "./tree-sitter-facts.ts";
 
 const BOUNDARY_PREFIXES = ["fetch", "fs.", "db.", "http", "axios", "got", "req.", "res."];
 

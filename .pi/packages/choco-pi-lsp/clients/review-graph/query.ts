@@ -1,18 +1,18 @@
-import { detectFileRole } from "../file-role.js";
-import { normalizeMapKey } from "../path-utils.js";
-import type { ModuleGraph } from "./workspace-modules.js";
+import { detectFileRole } from "../file-role.ts";
+import { normalizeMapKey } from "../path-utils.ts";
+import type { ModuleGraph } from "./workspace-modules.ts";
 import {
   findModuleForPath,
   getDownstreamModules,
   getModuleSourceFiles,
-} from "./workspace-modules.js";
+} from "./workspace-modules.ts";
 import type {
   CascadeMissingNodeDiagnostic,
   ImpactCascadeResult,
   ReviewGraph,
   ReviewGraphEdge,
   ReviewGraphEdgeKind,
-} from "./types.js";
+} from "./types.ts";
 
 function dedupe(items: Iterable<string>): string[] {
   return [...new Set(items)].sort((a, b) => a.localeCompare(b));

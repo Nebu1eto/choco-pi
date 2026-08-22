@@ -66,16 +66,16 @@ export const STALE_HEARTBEAT_MS = 6 * 60 * 60 * 1000;
 import { spawn as nodeSpawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { writeFileAtomicAsync } from "./atomic-write.js";
-import { type AtomicStageSweepResult, sweepOwnStagingFiles } from "./atomic-write-staging.js";
-import { spawnCollectStdout, unrefChildAndPipes } from "./child-unref.js";
-import { getGlobalPiLensDir } from "./file-utils.js";
+import { writeFileAtomicAsync } from "./atomic-write.ts";
+import { type AtomicStageSweepResult, sweepOwnStagingFiles } from "./atomic-write-staging.ts";
+import { spawnCollectStdout, unrefChildAndPipes } from "./child-unref.ts";
+import { getGlobalPiLensDir } from "./file-utils.ts";
 import {
   type InstanceEntry,
   isInstanceRegistryEnabled,
   readInstanceRegistry,
-} from "./instance-registry.js";
-import { logLatency } from "./latency-logger.js";
+} from "./instance-registry.ts";
+import { logLatency } from "./latency-logger.ts";
 
 const isWindows = process.platform === "win32";
 
@@ -288,7 +288,7 @@ export function realIsPidAlive(pid: number): boolean {
 /** Maximum number of directory entries inspected by one staging sweep. */
 export const ATOMIC_STAGE_SWEEP_MAX_ENTRIES = 512;
 
-export type { AtomicStageSweepResult } from "./atomic-write-staging.js";
+export type { AtomicStageSweepResult } from "./atomic-write-staging.ts";
 
 export interface AtomicStageSweepOptions {
   /** Test-only cap override; production callers use the default cap. */

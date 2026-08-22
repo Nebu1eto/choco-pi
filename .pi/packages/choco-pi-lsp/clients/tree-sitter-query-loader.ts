@@ -7,10 +7,10 @@ import { Check } from "typebox/value";
  * and provides them to the TreeSitterClient.
  */
 
-import { logTreeSitterDiagnostic } from "./tree-sitter-logger.js";
+import { logTreeSitterDiagnostic } from "./tree-sitter-logger.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolvePackagePath } from "./package-root.js";
+import { resolvePackagePath } from "./package-root.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

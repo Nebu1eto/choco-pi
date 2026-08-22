@@ -1,6 +1,6 @@
-import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
-import { CodeModeHostProcess } from "./host-process.js";
-import { type HostMessage, parseHostMessage } from "./host-protocol.js";
+import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
+import { CodeModeHostProcess } from "./host-process.ts";
+import { type HostMessage, parseHostMessage } from "./host-protocol.ts";
 
 type Pending = {
   resolve: (value: BoundaryValue) => void;

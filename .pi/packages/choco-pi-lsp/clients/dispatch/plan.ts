@@ -1,6 +1,6 @@
-import type { FileKind } from "../file-kinds.js";
-import { getPrimaryDispatchGroup } from "../language-policy.js";
-import type { RunnerGroup, ToolPlan } from "./types.js";
+import type { FileKind } from "../file-kinds.ts";
+import { getPrimaryDispatchGroup } from "../language-policy.ts";
+import type { RunnerGroup, ToolPlan } from "./types.ts";
 
 type CapabilityDimension = "types" | "security" | "smells" | "format" | "lint" | "docs";
 

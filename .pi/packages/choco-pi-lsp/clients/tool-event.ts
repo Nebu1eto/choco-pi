@@ -54,7 +54,7 @@ import { type Static, Type } from "typebox";
  * payloads (`searchReads`, `piLensPartialApply`) stay hand-declared — no host
  * type describes them.
  */
-import { sanitizeCorrelationId } from "./read-guard-logger.js";
+import { sanitizeCorrelationId } from "./read-guard-logger.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

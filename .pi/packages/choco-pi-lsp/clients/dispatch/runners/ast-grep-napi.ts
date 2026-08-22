@@ -16,18 +16,18 @@ import {
   loadAstGrepNapi,
   type NapiConfig,
   type SgRoot,
-} from "../../deps/ast-grep-napi.js";
-import { minimatch } from "../../deps/minimatch.js";
-import { type AstGrepRuleSource, getAstGrepRuleSources } from "../../sgconfig.js";
-import { logLatency } from "../../latency-logger.js";
-import { hasEslintConfig } from "../../tool-policy.js";
-import { enabledAuxiliaryLspServerIds } from "../auxiliary-lsp.js";
-import { classifyDefect } from "../diagnostic-taxonomy.js";
-import { recordDegradationOnce } from "../../degradation-ledger.js";
-import { isAuxiliaryLspAlive } from "../../lsp/index.js";
-import { resolveAstGrepNativeExe } from "../../lsp/wait-policy/index.js";
-import { PRIORITY } from "../priorities.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
+} from "../../deps/ast-grep-napi.ts";
+import { minimatch } from "../../deps/minimatch.ts";
+import { type AstGrepRuleSource, getAstGrepRuleSources } from "../../sgconfig.ts";
+import { logLatency } from "../../latency-logger.ts";
+import { hasEslintConfig } from "../../tool-policy.ts";
+import { enabledAuxiliaryLspServerIds } from "../auxiliary-lsp.ts";
+import { classifyDefect } from "../diagnostic-taxonomy.ts";
+import { recordDegradationOnce } from "../../degradation-ledger.ts";
+import { isAuxiliaryLspAlive } from "../../lsp/index.ts";
+import { resolveAstGrepNativeExe } from "../../lsp/wait-policy/index.ts";
+import { PRIORITY } from "../priorities.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
 import {
   calculateRuleComplexity,
   isOverlyBroadPattern,
@@ -37,7 +37,7 @@ import {
   MAX_BLOCKING_RULE_COMPLEXITY,
   type YamlRule,
   type YamlRuleCondition,
-} from "./yaml-rule-parser.js";
+} from "./yaml-rule-parser.ts";
 
 interface RawNativeConfig {
   rule: YamlRuleCondition;

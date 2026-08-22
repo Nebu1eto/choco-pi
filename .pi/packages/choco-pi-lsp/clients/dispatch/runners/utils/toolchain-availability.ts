@@ -17,8 +17,8 @@ import {
   type ProbeEvidence,
   createAvailabilityLatch,
   logAvailabilityDecision,
-} from "./availability-policy.js";
-import { probeAvailabilityCandidates } from "./candidate-probe.js";
+} from "./availability-policy.ts";
+import { probeAvailabilityCandidates } from "./candidate-probe.ts";
 
 export interface ToolchainAvailabilityConfig {
   /** Tool name as it appears in the `availability_decision` record. */

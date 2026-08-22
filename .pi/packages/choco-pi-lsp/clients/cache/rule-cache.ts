@@ -1,4 +1,4 @@
-import type { ProtocolDictionary } from "../../tools/runtime-values.js";
+import type { ProtocolDictionary } from "../../tools/runtime-values.ts";
 /**
  * Rule Cache for choco-pi-lsp
  *
@@ -9,10 +9,10 @@ import type { ProtocolDictionary } from "../../tools/runtime-values.js";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getProjectDataDir } from "../file-utils.js";
-import { readJsonCache } from "../json-cache-read.js";
-import { resolvePackagePath } from "../package-root.js";
-import { writeFileAtomic } from "../atomic-write.js";
+import { getProjectDataDir } from "../file-utils.ts";
+import { readJsonCache } from "../json-cache-read.ts";
+import { resolvePackagePath } from "../package-root.ts";
+import { writeFileAtomic } from "../atomic-write.ts";
 
 // v4: cache skip_test_files + fix_action — v3 entries silently dropped them,
 // and ruleHash (rule-file mtimes) never invalidates on a code-only fix.

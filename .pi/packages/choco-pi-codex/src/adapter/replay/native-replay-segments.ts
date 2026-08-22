@@ -3,14 +3,14 @@ import type { BoundaryValue } from "../runtime-values.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ResponsesCompatibleRequestPayload } from "../compaction/compaction-runtime.ts";
-import type { NativeCompactionEntry } from "../compaction/types.js";
+import type { NativeCompactionEntry } from "../compaction/types.ts";
 import {
   compareResponsesInputParity,
   serializeMessagesToResponsesInput,
   type ResponsesInputItem,
   type ResponsesInputMessageItem,
   type SerializeResponsesMessagesOptions,
-} from "../compaction/serializer.js";
+} from "../compaction/serializer.ts";
 import { cloneOpaqueCompactedWindow, cloneResponsesInputSlice } from "./payload-structured.ts";
 import { extractFreshAuthoritativePreamble } from "./payload-preamble.ts";
 import {

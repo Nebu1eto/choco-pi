@@ -1,7 +1,7 @@
-import { isTestFile } from "../../file-utils.js";
-import type { FactRule } from "../fact-provider-types.js";
-import type { FunctionSummary } from "../facts/function-facts.js";
-import type { Diagnostic } from "../types.js";
+import { isTestFile } from "../../file-utils.ts";
+import type { FactRule } from "../fact-provider-types.ts";
+import type { FunctionSummary } from "../facts/function-facts.ts";
+import type { Diagnostic } from "../types.ts";
 
 export const asyncNoiseRule: FactRule = {
   id: "async-noise",

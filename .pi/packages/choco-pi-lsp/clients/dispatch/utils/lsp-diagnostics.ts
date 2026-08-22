@@ -1,5 +1,5 @@
-import type { LSPDiagnostic } from "../../lsp/client.js";
-import type { Diagnostic } from "../types.js";
+import type { LSPDiagnostic } from "../../lsp/client.ts";
+import type { Diagnostic } from "../types.ts";
 
 interface LspSeverityMap {
   [severity: number]: "error" | "warning" | "hint";

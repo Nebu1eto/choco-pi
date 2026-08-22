@@ -20,9 +20,9 @@ import {
   createAvailabilityLatch,
   logAvailabilityDecision,
   startHostStallSampler,
-} from "../dispatch/runners/utils/availability-policy.js";
-import { getGlobalPiLensDir } from "../file-utils.js";
-import { safeSpawnAsync } from "../safe-spawn.js";
+} from "../dispatch/runners/utils/availability-policy.ts";
+import { getGlobalPiLensDir } from "../file-utils.ts";
+import { safeSpawnAsync } from "../safe-spawn.ts";
 
 const JAVA_EXE = process.platform === "win32" ? "java.exe" : "java";
 const JAVA_PROBE_TIMEOUT_MS = 5_000;

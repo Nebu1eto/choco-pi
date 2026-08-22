@@ -6,7 +6,7 @@ import type {
   ResponsesInputContentItem,
   ResponsesInputItem,
   ResponsesInputMessageItem,
-} from "../compaction/serializer.js";
+} from "../compaction/serializer.ts";
 
 export function isRecord(value: BoundaryValue): value is JsonObject {
   return Value.Check(JsonObjectSchema, value);

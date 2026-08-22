@@ -8,16 +8,16 @@
  * Rules: ./rules/ directory
  */
 
-import { createSubsystemLogger } from "./extension-log.js";
+import { createSubsystemLogger } from "./extension-log.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { AstGrepRuleManager } from "./ast-grep-rule-manager.js";
-import type { AstGrepDiagnostic, AstGrepMatch, RuleDescription } from "./ast-grep-types.js";
-import { resolvePackagePath } from "./package-root.js";
-import { SgRunner, type SgExecutionOptions, type SgScanResult } from "./sg-runner.js";
+import { AstGrepRuleManager } from "./ast-grep-rule-manager.ts";
+import type { AstGrepDiagnostic, AstGrepMatch, RuleDescription } from "./ast-grep-types.ts";
+import { resolvePackagePath } from "./package-root.ts";
+import { SgRunner, type SgExecutionOptions, type SgScanResult } from "./sg-runner.ts";
 
 // --- Client ---
 

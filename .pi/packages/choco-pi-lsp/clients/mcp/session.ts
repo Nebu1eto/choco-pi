@@ -1,4 +1,4 @@
-import type { RuntimeValue } from "../../tools/runtime-values.js";
+import type { RuntimeValue } from "../../tools/runtime-values.ts";
 /**
  * Tier 2 of the MCP path: drive choco-pi-lsp's *real* lifecycle handlers
  * (`handleSessionStart`, `handleTurnEnd`) instead of re-implementing the runners
@@ -21,12 +21,12 @@ import type { RuntimeValue } from "../../tools/runtime-values.js";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { AstGrepClient } from "../ast-grep-client.js";
-import { type BootstrapClients, loadBootstrapClients } from "../bootstrap.js";
-import { CacheManager, MCP_TURN_STATE_OWNER_ID, type TurnStateOwner } from "../cache-manager.js";
-import { resetDispatchBaselines } from "../dispatch/integration.js";
-import { resetFormatService } from "../format-service.js";
-import { getLSPService, resetLSPService } from "../lsp/index.js";
+import { AstGrepClient } from "../ast-grep-client.ts";
+import { type BootstrapClients, loadBootstrapClients } from "../bootstrap.ts";
+import { CacheManager, MCP_TURN_STATE_OWNER_ID, type TurnStateOwner } from "../cache-manager.ts";
+import { resetDispatchBaselines } from "../dispatch/integration.ts";
+import { resetFormatService } from "../format-service.ts";
+import { getLSPService, resetLSPService } from "../lsp/index.ts";
 import {
   acknowledgeTestFindings,
   acknowledgeTurnEndFindings,
@@ -35,11 +35,11 @@ import {
   consumeTurnEndFindings,
   peekTestFindings,
   peekTurnEndFindings,
-} from "../runtime-context.js";
-import { RuntimeCoordinator } from "../runtime-coordinator.js";
-import { handleSessionStart } from "../runtime-session.js";
-import { handleTurnEnd } from "../runtime-turn.js";
-import { createMcpHost } from "./host-shim.js";
+} from "../runtime-context.ts";
+import { RuntimeCoordinator } from "../runtime-coordinator.ts";
+import { handleSessionStart } from "../runtime-session.ts";
+import { handleTurnEnd } from "../runtime-turn.ts";
+import { createMcpHost } from "./host-shim.ts";
 
 interface McpSessionContext {
   runtime: RuntimeCoordinator;
@@ -138,7 +138,7 @@ export async function runSessionStart(cwd: string): Promise<SessionStartOutcome>
     testRunnerClient: ctx.clients.testRunnerClient,
     goClient: ctx.clients.goClient,
     rustClient: ctx.clients.rustClient,
-    ensureTool: async (name: string) => (await import("../installer/index.js")).ensureTool(name),
+    ensureTool: async (name: string) => (await import("../installer/index.ts")).ensureTool(name),
     cleanStaleTsBuildInfo: () => [],
     resetDispatchBaselines: (cwdArg?: string) => resetDispatchBaselines(cwdArg ?? cwd),
     resetLSPService,

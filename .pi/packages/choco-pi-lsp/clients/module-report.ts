@@ -36,22 +36,22 @@ import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { detectFileKind } from "./file-kinds.js";
-import { logLatency } from "./latency-logger.js";
-import { annotateMiddleMan } from "./middle-man-analysis.js";
-import { normalizeMapKey, toProjectRelativePath } from "./path-utils.js";
+import { detectFileKind } from "./file-kinds.ts";
+import { logLatency } from "./latency-logger.ts";
+import { annotateMiddleMan } from "./middle-man-analysis.ts";
+import { normalizeMapKey, toProjectRelativePath } from "./path-utils.ts";
 import {
   loadCallGraph,
   type CallGraphCacheIdentity,
   type CallGraphEvidenceCoverage,
   type ResolvedCallEdge,
-} from "./call-graph.js";
-import { resolveImportToFiles } from "./review-graph/import-resolvers.js";
-import { buildSymbolId } from "./review-graph/symbol-id.js";
-import type { ReviewGraph, ReviewGraphEdgeKind } from "./review-graph/types.js";
-import type { Symbol as ExtractedSymbol } from "./symbol-types.js";
-import { getSharedTreeSitterClient, resolveTreeSitterLanguage } from "./tree-sitter-shared.js";
-import { type ImportRef, TreeSitterSymbolExtractor } from "./tree-sitter-symbol-extractor.js";
+} from "./call-graph.ts";
+import { resolveImportToFiles } from "./review-graph/import-resolvers.ts";
+import { buildSymbolId } from "./review-graph/symbol-id.ts";
+import type { ReviewGraph, ReviewGraphEdgeKind } from "./review-graph/types.ts";
+import type { Symbol as ExtractedSymbol } from "./symbol-types.ts";
+import { getSharedTreeSitterClient, resolveTreeSitterLanguage } from "./tree-sitter-shared.ts";
+import { type ImportRef, TreeSitterSymbolExtractor } from "./tree-sitter-symbol-extractor.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
@@ -1046,7 +1046,7 @@ async function computeBlastRadius(
   projectRoot: string,
   maxDepth: number,
 ): Promise<BlastRadius | undefined> {
-  const { computeTransitiveImpact } = await import("./review-graph/query.js");
+  const { computeTransitiveImpact } = await import("./review-graph/query.ts");
   const result = computeTransitiveImpact(graph, normalizedPath, { maxDepth });
   const byFile = new Map<
     string,
@@ -1920,7 +1920,7 @@ export async function moduleReport(
   let callGraphIdentity: CallGraphCacheIdentity | undefined;
   try {
     const { getCachedReviewGraph, getReviewGraphCacheIdentity, getReviewGraphSizeSkipVerdict } =
-      await import("./review-graph/builder.js");
+      await import("./review-graph/builder.ts");
     graph = getCachedReviewGraph(cwd);
     graphFileCap = getReviewGraphSizeSkipVerdict(cwd)?.maxFileCount;
     callGraphIdentity = graph

@@ -4,15 +4,15 @@ import {
   getProjectIgnoreMatcher,
   isExcludedDirName,
   type ProjectIgnoreMatcher,
-} from "./file-utils.js";
-import { isGeneratedArtifactDirectoryName, isGeneratedOrArtifact } from "./generated-artifacts.js";
+} from "./file-utils.ts";
+import { isGeneratedArtifactDirectoryName, isGeneratedOrArtifact } from "./generated-artifacts.ts";
 import {
   collectSourceFiles,
   collectSourceFilesAsync,
   collectSourceFilesWithBudgetAsync,
   type SourceCollectionOptions,
   type SourceCollectionResult,
-} from "./source-filter.js";
+} from "./source-filter.ts";
 
 export interface ProjectPathPolicyOptions {
   rootDir: string;

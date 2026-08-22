@@ -1,13 +1,13 @@
-import type { BoundaryRecord, BoundaryValue } from "../boundary.js";
-import { isObjectValue, isStringValue } from "../boundary.js";
-import { formatCodeModeToolHelp } from "./custom-tool-prompt.js";
+import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
+import { isObjectValue, isStringValue } from "../boundary.ts";
+import { formatCodeModeToolHelp } from "./custom-tool-prompt.ts";
 import { codeModeNameForToolIdentity, resolveCodeModeToolIdentity } from "./tool-identity.ts";
 import type {
   CodeModeToolDefinition,
   CustomToolDefinition,
   RuntimeContentItem,
   RuntimeResponse,
-} from "./types.js";
+} from "./types.ts";
 
 export const MAX_CODE_MODE_OUTPUT_TOKENS = 100_000;
 export const DEFAULT_CODE_MODE_OUTPUT_TOKENS = 10_000;

@@ -1,4 +1,4 @@
-import { isObjectValue, parseMcpObject } from "./protocol-values.js";
+import { isObjectValue, parseMcpObject } from "./protocol-values.ts";
 export type UiToolVisibility = "model" | "app";
 
 export function extractUiToolVisibility<BoundaryValue>(

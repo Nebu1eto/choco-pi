@@ -1,9 +1,9 @@
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import * as path from "node:path";
-import { isTestMode } from "./env-utils.js";
-import { getGlobalPiLensDir } from "./file-utils.js";
-import { createNdjsonLogger } from "./ndjson-logger.js";
+import { isTestMode } from "./env-utils.ts";
+import { getGlobalPiLensDir } from "./file-utils.ts";
+import { createNdjsonLogger } from "./ndjson-logger.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;

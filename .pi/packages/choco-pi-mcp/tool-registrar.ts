@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { McpContent, ContentBlock } from "./types.ts";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
-import { isStringValue, type McpObject } from "./protocol-values.js";
+import { isStringValue, type McpObject } from "./protocol-values.ts";
 
 const McpContentSchema = Type.Object(
   { type: Type.Optional(Type.Union([Type.String(), Type.Null()])) },

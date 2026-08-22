@@ -18,14 +18,14 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { FactStore } from "./dispatch/fact-store.js";
-import { getProjectDataDir } from "./file-utils.js";
-import { collectUntrackedIgnoredIds } from "./git-tracked-ignore.js";
-import { normalizeMapKey, toProjectRelativePath } from "./path-utils.js";
-import { canonicalSourceTwin } from "./source-filter.js";
-import { buildOrUpdateGraph } from "./review-graph/service.js";
-import type { ReviewGraph } from "./review-graph/types.js";
-import { detectFileRole } from "./file-role.js";
+import { FactStore } from "./dispatch/fact-store.ts";
+import { getProjectDataDir } from "./file-utils.ts";
+import { collectUntrackedIgnoredIds } from "./git-tracked-ignore.ts";
+import { normalizeMapKey, toProjectRelativePath } from "./path-utils.ts";
+import { canonicalSourceTwin } from "./source-filter.ts";
+import { buildOrUpdateGraph } from "./review-graph/service.ts";
+import type { ReviewGraph } from "./review-graph/types.ts";
+import { detectFileRole } from "./file-role.ts";
 
 type DegreesForResultContract = {
   inNeighbors: Map<string, Set<string>>;
@@ -1201,7 +1201,7 @@ function resolveMaxNodes(): number {
 // review-graph builder's ignore-gated node creation. Re-exported here so
 // existing imports of `parseUntrackedIgnoredOutput` from this module keep
 // working unchanged.
-export { parseUntrackedIgnoredOutput } from "./git-tracked-ignore.js";
+export { parseUntrackedIgnoredOutput } from "./git-tracked-ignore.ts";
 
 // Human-facing display path: cwd-relative + forward-slashed when the file
 // sits under the project root, else the absolute (slash-normalized) path.

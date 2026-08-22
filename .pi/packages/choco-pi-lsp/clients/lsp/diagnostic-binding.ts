@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
-import { PathKeyedMap } from "../path-keyed-map.js";
-import { normalizeEphemeralMapKey } from "../path-utils.js";
+import { PathKeyedMap } from "../path-keyed-map.ts";
+import { normalizeEphemeralMapKey } from "../path-utils.ts";
 
 /**
  * #1095: bind LSP diagnostics to the document CONTENT they were computed
@@ -119,7 +119,7 @@ export interface DiagnosticBinding extends StoredDiagnosticBinding {
  * gates need.
  */
 export interface TouchFileResult {
-  diags: import("./client.js").LSPDiagnostic[];
+  diags: import("./client.ts").LSPDiagnostic[];
   confirmation?: "confirmed" | "partial";
   inconclusive?: boolean;
   /**

@@ -15,7 +15,7 @@ import {
   mergeObjectParts,
   type McpObject,
   type McpValue,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 export type Transport = McpTransport;
 

@@ -59,12 +59,12 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { commitDurableStore } from "./durable-store.js";
-import { logDispositionEvent } from "./disposition-logger.js";
-import { publishDisposition } from "./disposition-publish.js";
-import { getProjectDataDir } from "./file-utils.js";
-import { normalizeMapKey } from "./path-utils.js";
-import { lineContentHash } from "./read-guard.js";
+import { commitDurableStore } from "./durable-store.ts";
+import { logDispositionEvent } from "./disposition-logger.ts";
+import { publishDisposition } from "./disposition-publish.ts";
+import { getProjectDataDir } from "./file-utils.ts";
+import { normalizeMapKey } from "./path-utils.ts";
+import { lineContentHash } from "./read-guard.ts";
 
 /** Minimal shape a diagnostic needs for anchoring/filtering — deliberately
  * narrower than dispatch's `Diagnostic` so this also works over

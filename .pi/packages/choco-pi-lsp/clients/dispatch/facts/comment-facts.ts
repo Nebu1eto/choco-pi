@@ -1,5 +1,5 @@
-import type { FactProvider } from "../fact-provider-types.js";
-import { extractFactsFromTree, walk } from "./tree-sitter-facts.js";
+import type { FactProvider } from "../fact-provider-types.ts";
+import { extractFactsFromTree, walk } from "./tree-sitter-facts.ts";
 
 export interface CommentSummary {
   line: number;

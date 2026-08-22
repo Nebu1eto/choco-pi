@@ -1,4 +1,4 @@
-import type { LSPOperationSupport, LSPWorkspaceDiagnosticsSupport } from "../client.js";
+import type { LSPOperationSupport, LSPWorkspaceDiagnosticsSupport } from "../client.ts";
 
 /**
  * Capability inventory consumed by incumbent wait policy for attached

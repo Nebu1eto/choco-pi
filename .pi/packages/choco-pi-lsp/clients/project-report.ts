@@ -37,9 +37,9 @@ import { Check } from "typebox/value";
  */
 
 import * as path from "node:path";
-import { normalizeMapKey, toProjectRelativePath } from "./path-utils.js";
-import { loadProjectSnapshotWithoutWordIndex } from "./project-snapshot.js";
-import type { ReviewGraph } from "./review-graph/types.js";
+import { normalizeMapKey, toProjectRelativePath } from "./path-utils.ts";
+import { loadProjectSnapshotWithoutWordIndex } from "./project-snapshot.ts";
+import type { ReviewGraph } from "./review-graph/types.ts";
 
 function assignOptionalProperties<T extends object, U extends object, C>(
   target: T,
@@ -406,7 +406,7 @@ async function computeHubs(
   limit: number,
   focusTerms: string[],
 ): Promise<ProjectReportHub[]> {
-  const { computeTransitiveImpact } = await import("./review-graph/query.js");
+  const { computeTransitiveImpact } = await import("./review-graph/query.ts");
   const ranked = [...graph.fileNodes.entries()]
     .map(([filePath, fileNodeId]) => ({
       filePath,
@@ -729,8 +729,8 @@ function triggerBackgroundGraphBuild(cwd: string): boolean {
   inFlightGraphBuilds.add(key);
   void (async () => {
     try {
-      const { buildOrUpdateGraph } = await import("./review-graph/builder.js");
-      const { FactStore } = await import("./dispatch/fact-store.js");
+      const { buildOrUpdateGraph } = await import("./review-graph/builder.ts");
+      const { FactStore } = await import("./dispatch/fact-store.ts");
       await buildOrUpdateGraph(key, [], new FactStore());
     } catch {
       // buildOrUpdateGraph records the durable failure and surfaced status.
@@ -757,7 +757,7 @@ export async function projectReport(
   const view = options?.view;
 
   const { getCachedReviewGraph, getReviewGraphSizeSkipVerdict, getLastReviewGraphBuildAttempt } =
-    await import("./review-graph/builder.js");
+    await import("./review-graph/builder.ts");
   let graph: ReviewGraph | undefined;
   try {
     graph = getCachedReviewGraph(cwd);

@@ -1,4 +1,4 @@
-import { isStringValue } from "../boundary.js";
+import { isStringValue } from "../boundary.ts";
 type RenderStatus = "running" | "done" | "yielded";
 const MAX_TRACKED_CODE_MODE_CALLS = 1_000;
 

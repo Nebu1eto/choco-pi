@@ -7,8 +7,8 @@
  */
 
 import { basename, dirname, win32 } from "node:path";
-import { isGeneratedOrArtifact } from "./generated-artifacts.js";
-import { isWindowsPath } from "./path-utils.js";
+import { isGeneratedOrArtifact } from "./generated-artifacts.ts";
+import { isWindowsPath } from "./path-utils.ts";
 
 // --- Types ---
 

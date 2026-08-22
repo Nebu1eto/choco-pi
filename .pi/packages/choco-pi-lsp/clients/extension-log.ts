@@ -25,10 +25,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import * as path from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { isTestMode } from "./env-utils.js";
-import { getGlobalPiLensDir } from "./file-utils.js";
-import { getMaxLogSizeMB } from "./log-cleanup.js";
-import { createNdjsonLogger } from "./ndjson-logger.js";
+import { isTestMode } from "./env-utils.ts";
+import { getGlobalPiLensDir } from "./file-utils.ts";
+import { getMaxLogSizeMB } from "./log-cleanup.ts";
+import { createNdjsonLogger } from "./ndjson-logger.ts";
 
 export const EXTENSION_LOG_FILE = path.join(getGlobalPiLensDir(), "extension.log");
 

@@ -13,7 +13,7 @@ import {
   parseMcpObject,
   runtimeTypeOf,
   type McpObject,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 export const DEFAULT_MCP_OUTPUT_MAX_BYTES = 50 * 1024;
 export const DEFAULT_MCP_OUTPUT_MAX_LINES = 2000;

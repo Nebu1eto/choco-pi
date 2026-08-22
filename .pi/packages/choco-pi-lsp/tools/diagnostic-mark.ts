@@ -1,6 +1,6 @@
-import type { ProtocolDictionary } from "./runtime-values.js";
-import type { RuntimeValue } from "./runtime-values.js";
-import { isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
+import type { ProtocolDictionary } from "./runtime-values.ts";
+import type { RuntimeValue } from "./runtime-values.ts";
+import { isRuntimeNumber, isRuntimeString } from "./runtime-values.ts";
 /**
  * diagnostic_mark — agent-facing disposition operation (#690, unifying
  * #181/#503/#504's discussion into one triage layer).
@@ -46,14 +46,14 @@ import { isRuntimeNumber, isRuntimeString } from "./runtime-values.js";
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { Type } from "../clients/deps/typebox.js";
+import { Type } from "../clients/deps/typebox.ts";
 import {
   markDisposition,
   normalizeMessage,
   type Disposition,
-} from "../clients/diagnostic-dispositions.js";
-import { insertSuppressComment } from "../clients/dispatch/suppress-writer.js";
-import { getFileDiagnostics, type WidgetDiagnostic } from "../clients/widget-state.js";
+} from "../clients/diagnostic-dispositions.ts";
+import { insertSuppressComment } from "../clients/dispatch/suppress-writer.ts";
+import { getFileDiagnostics, type WidgetDiagnostic } from "../clients/widget-state.ts";
 
 const DISPOSITIONS = ["false-positive", "suppress", "defer", "flagged"] as const;
 

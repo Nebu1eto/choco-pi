@@ -8,9 +8,9 @@
  * only during full scans (blockingOnly === false).
  */
 
-import type { DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { PRIORITY } from "../priorities.js";
-import { evaluateRules } from "../fact-rule-runner.js";
+import type { DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { PRIORITY } from "../priorities.ts";
+import { evaluateRules } from "../fact-rule-runner.ts";
 
 const factRulesRunner: RunnerDefinition = {
   id: "fact-rules",

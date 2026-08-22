@@ -1,13 +1,13 @@
-import type { TestFailure, TestResult } from "../../test-runner-client.js";
-import type { ProjectDiagnostic } from "../types.js";
+import type { TestFailure, TestResult } from "../../test-runner-client.ts";
+import type { ProjectDiagnostic } from "../types.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { RuntimeCoordinator } from "../../runtime-coordinator.js";
+import type { RuntimeCoordinator } from "../../runtime-coordinator.ts";
 import {
   advisoryPathKey,
   validateAdvisoryProvenance,
   type AdvisoryProvenance,
-} from "../../advisory-provenance.js";
+} from "../../advisory-provenance.ts";
 
 /**
  * #628 item 4: the test-runner-findings cache (written at turn_end, see

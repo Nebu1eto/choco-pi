@@ -1,14 +1,14 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isStringValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isStringValue } from "../boundary.ts";
 import { type Component, Container, Spacer, Text } from "@earendil-works/pi-tui";
-import { previewText, renderTextAndImages } from "./render-content.js";
+import { previewText, renderTextAndImages } from "./render-content.ts";
 import type {
   CodeModeRenderContext,
   CodeModeRenderTheme,
   CodeModeToolDefinition,
   ProgrammaticCodeModeToolDefinition,
   RuntimeToolTrace,
-} from "./types.js";
+} from "./types.ts";
 
 export function renderTraceAndOutput(
   traces: RuntimeToolTrace[],

@@ -14,33 +14,33 @@ import path from "node:path";
 import { pathToFileURL, URL } from "node:url";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { getProjectIgnoreMatcher, isExcludedDirName } from "../file-utils.js";
-import { recordLsp } from "../widget-state.js";
-import { applyAuxiliarySuppressions } from "../dispatch/auxiliary-lsp.js";
-import { detectFileRole } from "../file-role.js";
-import { emitBounded } from "../bounded-telemetry.js";
-import { logLatency } from "../latency-logger.js";
-import { logSessionStart } from "../sessionstart-logger.js";
+import { getProjectIgnoreMatcher, isExcludedDirName } from "../file-utils.ts";
+import { recordLsp } from "../widget-state.ts";
+import { applyAuxiliarySuppressions } from "../dispatch/auxiliary-lsp.ts";
+import { detectFileRole } from "../file-role.ts";
+import { emitBounded } from "../bounded-telemetry.ts";
+import { logLatency } from "../latency-logger.ts";
+import { logSessionStart } from "../sessionstart-logger.ts";
 import {
   incrementDegradationCount,
   recordDegradation,
   recordDegradationOnce,
-} from "../degradation-ledger.js";
+} from "../degradation-ledger.ts";
 import {
   isLspSpawnAllowedByTrust,
   assertInstallAllowed,
   projectTrustDenialReason,
-} from "../project-trust.js";
-import { shouldPreferPullOnlyDiagnostics } from "../lsp-budget.js";
-import { withDeadline, withTimeout } from "../deadline-utils.js";
+} from "../project-trust.ts";
+import { shouldPreferPullOnlyDiagnostics } from "../lsp-budget.ts";
+import { withDeadline, withTimeout } from "../deadline-utils.ts";
 import {
   acquireWorkspaceSweepHold,
   clearWorkspaceSweepHoldForSessionStart,
-} from "./workspace-sweep-hold.js";
-import { isAtOrAboveHomeDir, isWindowsPath, normalizeMapKey, uriToPath } from "../path-utils.js";
-import type { LSPClientInfo, LSPPullFailure, LSPShutdownOptions } from "./client.js";
-import { recordLspMutation, type LspMutationContext } from "../lsp-mutation.js";
-import { createLSPClient } from "./client.js";
+} from "./workspace-sweep-hold.ts";
+import { isAtOrAboveHomeDir, isWindowsPath, normalizeMapKey, uriToPath } from "../path-utils.ts";
+import type { LSPClientInfo, LSPPullFailure, LSPShutdownOptions } from "./client.ts";
+import { recordLspMutation, type LspMutationContext } from "../lsp-mutation.ts";
+import { createLSPClient } from "./client.ts";
 import {
   auxiliaryCoverageGap,
   bindingStateLabel,
@@ -54,38 +54,38 @@ import {
   type DiskBindingCache,
   type StoredDiagnosticBinding,
   type TouchFileResult,
-} from "./diagnostic-binding.js";
-import { getServersForFileWithConfig, getServerInitOverride } from "./config.js";
-import { getLanguageId } from "./language.js";
-import type { LSPServerInfo } from "./server.js";
+} from "./diagnostic-binding.ts";
+import { getServersForFileWithConfig, getServerInitOverride } from "./config.ts";
+import { getLanguageId } from "./language.ts";
+import type { LSPServerInfo } from "./server.ts";
 import {
   LSP_SERVERS,
   enforceLspRootCeiling,
   hasProjectBoundaryMarker,
   isDirectLspCommandTemporarilyUnavailable,
   resetClassicTsRepairGuard,
-} from "./server.js";
+} from "./server.ts";
 import {
   classifyCascadeWaitTier,
   classifyServerWaitTier,
   getStrategy,
   type LSPCapabilitySnapshot,
-} from "./wait-policy/index.js";
-export type { LSPCapabilitySnapshot } from "./wait-policy/index.js";
-import { raceToCompletion, type PromiseDescriptor } from "./aggregation.js";
+} from "./wait-policy/index.ts";
+export type { LSPCapabilitySnapshot } from "./wait-policy/index.ts";
+import { raceToCompletion, type PromiseDescriptor } from "./aggregation.ts";
 import {
   applyWorkspaceEdit,
   type AppliedWorkspaceEdit,
   mergeWorkspaceTextEditsByPriority,
   summarizeWorkspaceEdit,
   validateWorkspaceEdit,
-} from "./edits.js";
+} from "./edits.ts";
 import {
   buildScopeKey,
   createWorkspaceDiagnosticsCacheContext,
-} from "./workspace-diagnostics-cache.js";
-import { attemptTsserverSyncDiagnostics } from "./tsserver-sync.js";
-import { isWarmAttached, tryWarmAttachedDiagnostics } from "../warm-attach.js";
+} from "./workspace-diagnostics-cache.ts";
+import { attemptTsserverSyncDiagnostics } from "./tsserver-sync.ts";
+import { isWarmAttached, tryWarmAttachedDiagnostics } from "../warm-attach.ts";
 
 function destinationUriPreservingSpelling(
   oldUri: string,
@@ -480,9 +480,9 @@ export interface LSPDiagnosticsHealth {
 }
 
 function mergeLspDiagnostics(
-  diagnostics: import("./client.js").LSPDiagnostic[],
-): import("./client.js").LSPDiagnostic[] {
-  const merged: import("./client.js").LSPDiagnostic[] = [];
+  diagnostics: import("./client.ts").LSPDiagnostic[],
+): import("./client.ts").LSPDiagnostic[] {
+  const merged: import("./client.ts").LSPDiagnostic[] = [];
   const seen = new Set<string>();
   for (const diagnostic of diagnostics) {
     const key = [
@@ -627,7 +627,7 @@ export type LSPWorkspaceUnconfirmedReason =
 
 export interface LSPWorkspaceDiagnosticResult {
   filePath: string;
-  diagnostics: import("./client.js").LSPDiagnostic[];
+  diagnostics: import("./client.ts").LSPDiagnostic[];
   count: number;
   error?: string;
   /**
@@ -1033,7 +1033,7 @@ export class LSPService {
    * Returned as a fallback when no live LSP clients are available so the
    * widget keeps showing the last known issues rather than going blank.
    */
-  private readonly lastKnownDiagnostics = new Map<string, import("./client.js").LSPDiagnostic[]>();
+  private readonly lastKnownDiagnostics = new Map<string, import("./client.ts").LSPDiagnostic[]>();
   /**
    * SHA-256 of the file content that produced the matching {@link
    * lastKnownDiagnostics} entry, when that content is known (set by
@@ -3324,7 +3324,7 @@ export class LSPService {
       // (undefined = the race didn't produce an answer; the end-of-wait
       // fallback below may still fill it in on a timed-out empty result).
       let tsserverSyncEligible = false;
-      let tsserverSyncConfirmed: import("./client.js").LSPDiagnostic[] | undefined;
+      let tsserverSyncConfirmed: import("./client.ts").LSPDiagnostic[] | undefined;
       if (diagnosticsMode !== "none") {
         // Resolution: env wins so users can tune the cap without rebuilding.
         // Otherwise, on the single-server hot path (primary scope), use that
@@ -3794,7 +3794,7 @@ export class LSPService {
           // (push already answered, sync unavailable/failed, push won while
           // in flight) so the race is then decided by the push wait's own
           // budget — exactly today's behavior.
-          const syncRacer = (async (): Promise<import("./client.js").LSPDiagnostic[]> => {
+          const syncRacer = (async (): Promise<import("./client.ts").LSPDiagnostic[]> => {
             await new Promise<void>((resolve) => {
               const timer = setTimeout(resolve, graceMs);
               timer.unref?.();
@@ -4764,7 +4764,7 @@ export class LSPService {
   getLastKnownDiagnostics(
     filePath: string,
     expectedContentHash?: string,
-  ): import("./client.js").LSPDiagnostic[] | undefined {
+  ): import("./client.ts").LSPDiagnostic[] | undefined {
     const normalizedKey = normalizeMapKey(filePath);
     if (expectedContentHash !== undefined) {
       const knownHash = this.lastKnownContentHash.get(normalizedKey);
@@ -4778,7 +4778,7 @@ export class LSPService {
   async getDiagnostics(
     filePath: string,
     diagnosticsMode: LSPDiagnosticsMode = "full",
-  ): Promise<import("./client.js").LSPDiagnostic[]> {
+  ): Promise<import("./client.ts").LSPDiagnostic[]> {
     const normalizedPath = normalizeMapKey(filePath);
     if (this.checkDestroyed()) {
       this.lastDiagnosticsHealth.set(normalizedPath, {
@@ -4834,7 +4834,7 @@ export class LSPService {
       launchVariant?: "classic" | "native-ts7";
       waitMs: number;
       diagnosticCount: number;
-      diagnostics: import("./client.js").LSPDiagnostic[];
+      diagnostics: import("./client.ts").LSPDiagnostic[];
     };
 
     const clientWaits: Promise<PerServerEntry>[] = spawned.map(async (entry) => {
@@ -4936,7 +4936,7 @@ export class LSPService {
 
     // Deduplicate across servers (same diagnostic reported by multiple tools).
 
-    const merged: import("./client.js").LSPDiagnostic[] = [];
+    const merged: import("./client.ts").LSPDiagnostic[] = [];
     const seen = new Set<string>();
     for (const entry of perServerFull) {
       for (const diagnostic of entry.diagnostics) {
@@ -5217,7 +5217,7 @@ export class LSPService {
    */
   async getOperationSupport(
     filePath?: string,
-  ): Promise<import("./client.js").LSPOperationSupport | null> {
+  ): Promise<import("./client.ts").LSPOperationSupport | null> {
     if (filePath) {
       const spawned = await this.getClientForFile(filePath);
       if (!spawned) return null;
@@ -5280,7 +5280,7 @@ export class LSPService {
 
   async getWorkspaceDiagnosticsSupport(
     filePath?: string,
-  ): Promise<import("./client.js").LSPWorkspaceDiagnosticsSupport | null> {
+  ): Promise<import("./client.ts").LSPWorkspaceDiagnosticsSupport | null> {
     if (filePath) {
       const spawned = await this.getClientForFile(filePath);
       if (!spawned) return null;
@@ -5633,7 +5633,7 @@ export class LSPService {
   /**
    * Navigation: find incoming calls (callers)
    */
-  async incomingCalls(item: import("./client.js").LSPCallHierarchyItem) {
+  async incomingCalls(item: import("./client.ts").LSPCallHierarchyItem) {
     const spawned = await this.getClientForFile(uriToPath(item.uri), NAV_CLIENT_WAIT_TIMEOUT_MS);
     if (!spawned) return [];
     return spawned.client.incomingCalls(item);
@@ -5642,7 +5642,7 @@ export class LSPService {
   /**
    * Navigation: find outgoing calls (callees)
    */
-  async outgoingCalls(item: import("./client.js").LSPCallHierarchyItem) {
+  async outgoingCalls(item: import("./client.ts").LSPCallHierarchyItem) {
     const spawned = await this.getClientForFile(uriToPath(item.uri), NAV_CLIENT_WAIT_TIMEOUT_MS);
     if (!spawned) return [];
     return spawned.client.outgoingCalls(item);
@@ -6637,7 +6637,7 @@ export class LSPService {
       const byPath = new Map<
         string,
         {
-          diagnostics: import("./client.js").LSPDiagnostic[];
+          diagnostics: import("./client.ts").LSPDiagnostic[];
           contentHash?: string;
         }
       >();
@@ -6673,7 +6673,7 @@ export class LSPService {
     Map<
       string,
       {
-        diags: import("./client.js").LSPDiagnostic[];
+        diags: import("./client.ts").LSPDiagnostic[];
         ts: number;
         binding?: DiagnosticBinding;
       }
@@ -6682,7 +6682,7 @@ export class LSPService {
     const all = new Map<
       string,
       {
-        diags: import("./client.js").LSPDiagnostic[];
+        diags: import("./client.ts").LSPDiagnostic[];
         ts: number;
         binding?: DiagnosticBinding;
       }

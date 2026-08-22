@@ -23,7 +23,7 @@ import {
   type CachedTool,
 } from "./metadata-cache.ts";
 import { isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
-import { mergeObjectParts } from "./protocol-values.js";
+import { mergeObjectParts } from "./protocol-values.ts";
 
 interface PanelTheme {
   border: string;

@@ -1,4 +1,4 @@
-import { isRuntimeFunction, isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.js";
+import { isRuntimeFunction, isRuntimeObject, isRuntimeString } from "../../tools/runtime-values.ts";
 /**
  * Auto-Installation System for choco-pi-lsp
  *
@@ -44,7 +44,7 @@ import { isRuntimeFunction, isRuntimeObject, isRuntimeString } from "../../tools
  * - GitHub releases (platform-specific binaries → ~/.choco-pi-lsp/bin/)
  */
 
-import { logExtension } from "../extension-log.js";
+import { logExtension } from "../extension-log.ts";
 import { spawn } from "node:child_process";
 import { existsSync, statSync, unlinkSync } from "node:fs";
 import fs from "node:fs/promises";
@@ -52,28 +52,28 @@ import https from "node:https";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { writeFileAtomicAsync } from "../atomic-write.js";
-import { BoundedLruCache } from "../bounded-cache.js";
-import { isFullyQualified } from "../path-utils.js";
-import { assertInstallAllowed, projectTrustDenialReason } from "../project-trust.js";
+import { writeFileAtomicAsync } from "../atomic-write.ts";
+import { BoundedLruCache } from "../bounded-cache.ts";
+import { isFullyQualified } from "../path-utils.ts";
+import { assertInstallAllowed, projectTrustDenialReason } from "../project-trust.ts";
 
 const _installerRequire = createRequire(import.meta.url);
 import { createGunzip } from "node:zlib";
-import { logSessionStart } from "../sessionstart-logger.js";
-import { commitDurableStoreAsync } from "../durable-store.js";
-import { getGlobalPiLensDir } from "../file-utils.js";
-import { TRANSIENT_MAX_COOLDOWN_MS } from "../dispatch/runners/utils/availability-policy.js";
+import { logSessionStart } from "../sessionstart-logger.ts";
+import { commitDurableStoreAsync } from "../durable-store.ts";
+import { getGlobalPiLensDir } from "../file-utils.ts";
+import { TRANSIENT_MAX_COOLDOWN_MS } from "../dispatch/runners/utils/availability-policy.ts";
 import {
   allAvailableGlobalBinDirs,
   installArgs,
   pmBinary,
   resolveNodePackageManager,
-} from "../package-manager.js";
+} from "../package-manager.ts";
 import {
   resetSafeSpawnWindowsCommandCache,
   safeSpawnAsync as hostSafeSpawnAsync,
   type SpawnResult,
-} from "../safe-spawn.js";
+} from "../safe-spawn.ts";
 
 async function safeSpawnAsync(
   ...args: Parameters<typeof hostSafeSpawnAsync>
@@ -3647,7 +3647,7 @@ export async function installTool(toolId: string): Promise<boolean> {
           // since evaluated, so the lazy import is safe and also keeps the
           // refresh module off the startup path.
           // SAFETY: The npm strategy guard above establishes packageName before this asynchronous callback is created.
-          await import("./managed-tool-refresh.js")
+          await import("./managed-tool-refresh.ts")
             .then((m) => m.stampManagedToolInstalled(tool.id, tool.packageName as string))
             .catch(() => {
               // Best-effort telemetry: a missing stamp costs one wasted

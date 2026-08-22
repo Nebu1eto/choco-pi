@@ -5,7 +5,7 @@ import {
   parseMcpObject,
   type McpObject,
   type McpValue,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 export const RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 

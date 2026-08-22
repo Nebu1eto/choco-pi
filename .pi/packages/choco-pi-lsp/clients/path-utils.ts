@@ -16,7 +16,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { minimatch } from "./deps/minimatch.js";
+import { minimatch } from "./deps/minimatch.ts";
 
 /**
  * Detect a positively Windows-shaped path, regardless of the host OS.

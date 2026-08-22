@@ -46,7 +46,7 @@
 
 import * as path from "node:path";
 import pidusage from "pidusage";
-import { spawnCollectStdout } from "./child-unref.js";
+import { spawnCollectStdout } from "./child-unref.ts";
 
 type StartSpawnUsageSamplerResultContract = { stop: () => SpawnUsageSummary | null };
 

@@ -23,7 +23,7 @@ import {
   isSymbolValue,
   mergeObjectParts,
   type McpObject,
-} from "./protocol-values.js";
+} from "./protocol-values.ts";
 
 export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
 

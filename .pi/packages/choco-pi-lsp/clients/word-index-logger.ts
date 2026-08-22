@@ -20,10 +20,10 @@
  * host's `dbg` wiring.
  */
 import * as path from "node:path";
-import { isTestMode } from "./env-utils.js";
-import { getGlobalPiLensDir } from "./file-utils.js";
-import { getMaxLogSizeMB } from "./log-cleanup.js";
-import { createNdjsonLogger } from "./ndjson-logger.js";
+import { isTestMode } from "./env-utils.ts";
+import { getGlobalPiLensDir } from "./file-utils.ts";
+import { getMaxLogSizeMB } from "./log-cleanup.ts";
+import { createNdjsonLogger } from "./ndjson-logger.ts";
 
 const WORD_INDEX_LOG_FILE = path.join(getGlobalPiLensDir(), "word-index.log");
 

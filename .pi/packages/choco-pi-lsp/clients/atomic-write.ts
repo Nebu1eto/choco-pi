@@ -76,8 +76,8 @@
  */
 
 import * as fs from "node:fs";
-export { STAGE_TMP_PATTERN, stageOwnerPidFromName, stagePathFor } from "./atomic-write-staging.js";
-import { stagePathFor } from "./atomic-write-staging.js";
+export { STAGE_TMP_PATTERN, stageOwnerPidFromName, stagePathFor } from "./atomic-write-staging.ts";
+import { stagePathFor } from "./atomic-write-staging.ts";
 
 export interface WriteFileAtomicOptions {
   /**

@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import type { ImpactCascadeResult } from "./types.js";
+import type { ImpactCascadeResult } from "./types.ts";
 
 const MAX_SYMBOLS = 5;
 

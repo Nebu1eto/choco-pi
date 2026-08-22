@@ -6,10 +6,10 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { goalToolResponse, toToolText, type GoalToolResponse } from "./format.js";
-import { createGoal, replaceGoal } from "./state.js";
-import { TOOL_PROMPT_GUIDELINES } from "./prompts.js";
-import type { GoalEntrySource, GoalResult, ThreadGoal } from "./types.js";
+import { goalToolResponse, toToolText, type GoalToolResponse } from "./format.ts";
+import { createGoal, replaceGoal } from "./state.ts";
+import { TOOL_PROMPT_GUIDELINES } from "./prompts.ts";
+import type { GoalEntrySource, GoalResult, ThreadGoal } from "./types.ts";
 
 const EmptyParams = Type.Object({});
 

@@ -33,9 +33,9 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { writeFileAtomicAsync } from "./atomic-write.js";
-import { getProjectDataDir } from "./file-utils.js";
-import { normalizeFilePath } from "./path-utils.js";
+import { writeFileAtomicAsync } from "./atomic-write.ts";
+import { getProjectDataDir } from "./file-utils.ts";
+import { normalizeFilePath } from "./path-utils.ts";
 
 export const RECENT_TOUCHES_MAX_ENTRIES = 50;
 /** Freshness window for the CHILD session_start consumer (15 minutes). */

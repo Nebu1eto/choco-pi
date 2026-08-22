@@ -1,5 +1,5 @@
-import type { BoundaryValue } from "../boundary.js";
-import { isBooleanValue, isNumberValue, isObjectValue, isStringValue } from "../boundary.js";
+import type { BoundaryValue } from "../boundary.ts";
+import { isBooleanValue, isNumberValue, isObjectValue, isStringValue } from "../boundary.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { keyHint, truncateToVisualLines } from "@earendil-works/pi-coding-agent";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";

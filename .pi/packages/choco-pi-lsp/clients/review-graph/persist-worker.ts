@@ -2,7 +2,7 @@ import {
   type GzipStageWorkerRequest,
   type GzipStageWorkerResult,
   serveGzipStageWorker,
-} from "../gzip-stage-write.js";
+} from "../gzip-stage-write.ts";
 
 export interface ReviewGraphPersistWorkerRequest extends GzipStageWorkerRequest {
   cwd: string;

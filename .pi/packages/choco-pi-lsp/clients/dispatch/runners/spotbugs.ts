@@ -1,18 +1,18 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { BoundedLruCache } from "../../bounded-cache.js";
-import { safeSpawnAsync } from "../../safe-spawn.js";
-import { findCompiledClassesDir } from "../../tool-policy.js";
-import { PRIORITY } from "../priorities.js";
+import { BoundedLruCache } from "../../bounded-cache.ts";
+import { safeSpawnAsync } from "../../safe-spawn.ts";
+import { findCompiledClassesDir } from "../../tool-policy.ts";
+import { PRIORITY } from "../priorities.ts";
 import type {
   DefectClass,
   Diagnostic,
   DispatchContext,
   RunnerDefinition,
   RunnerResult,
-} from "../types.js";
-import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.js";
+} from "../types.ts";
+import { createAvailabilityChecker, resolveAvailableOrInstall } from "./utils/runner-helpers.ts";
 
 // SpotBugs is a JVM tool installed via the archive strategy (#133); java gates
 // it (no JRE → skip). It analyzes the *bytecode tree*, not the edited source.

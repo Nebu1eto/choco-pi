@@ -1,5 +1,5 @@
-import type { RuntimeValue } from "./runtime-values.js";
-import { isRuntimeFunction } from "./runtime-values.js";
+import type { RuntimeValue } from "./runtime-values.ts";
+import { isRuntimeFunction } from "./runtime-values.ts";
 /**
  * Shared progress-streaming helper for the long-running full/batch/directory
  * diagnostic scans (`diagnostics_report mode=full`, `lsp_diagnostics`). Those runs

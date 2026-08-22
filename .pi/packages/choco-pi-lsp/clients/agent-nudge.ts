@@ -47,10 +47,10 @@
  */
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { FilesTouchedPayload } from "./bus-publish.js";
-import { logLatency } from "./latency-logger.js";
-import { normalizeMapKey } from "./path-utils.js";
-import type { ReadGuard } from "./read-guard.js";
+import type { FilesTouchedPayload } from "./bus-publish.ts";
+import { logLatency } from "./latency-logger.ts";
+import { normalizeMapKey } from "./path-utils.ts";
+import type { ReadGuard } from "./read-guard.ts";
 
 const BUS_FILES_TOUCHED_EVENT = "pilens:files:touched";
 const FilesTouchedPayloadSchema = Type.Object({

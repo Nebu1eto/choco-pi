@@ -12,20 +12,20 @@
  * unified runner that delegates to the LSP service.
  */
 
-import { logExtension } from "../../extension-log.js";
-import { getLspCapableKinds } from "../../language-policy.js";
-import { touchCoverageGap } from "../../lsp/diagnostic-binding.js";
-import { getLSPService } from "../../lsp/index.js";
-import { RUNTIME_CONFIG } from "../../runtime-config.js";
-import { PRIORITY } from "../priorities.js";
-import { resolveRunnerPath } from "../runner-context.js";
-import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.js";
-import { convertLspDiagnostics } from "../utils/lsp-diagnostics.js";
-import { demoteInferredProjectDiagnostics } from "../../lsp/inferred-project.js";
-import { enabledAuxiliaryLspServerIds, retagAuxiliaryDiagnostics } from "../auxiliary-lsp.js";
-import { readFileContent } from "./utils.js";
-import { tryWarmAttachedCodeActions, tryWarmAttachedDiagnostics } from "../../warm-attach.js";
-import { contentHash, WARM_CODE_ACTION_LOOKUP_LIMIT } from "../../mcp/ipc.js";
+import { logExtension } from "../../extension-log.ts";
+import { getLspCapableKinds } from "../../language-policy.ts";
+import { touchCoverageGap } from "../../lsp/diagnostic-binding.ts";
+import { getLSPService } from "../../lsp/index.ts";
+import { RUNTIME_CONFIG } from "../../runtime-config.ts";
+import { PRIORITY } from "../priorities.ts";
+import { resolveRunnerPath } from "../runner-context.ts";
+import type { Diagnostic, DispatchContext, RunnerDefinition, RunnerResult } from "../types.ts";
+import { convertLspDiagnostics } from "../utils/lsp-diagnostics.ts";
+import { demoteInferredProjectDiagnostics } from "../../lsp/inferred-project.ts";
+import { enabledAuxiliaryLspServerIds, retagAuxiliaryDiagnostics } from "../auxiliary-lsp.ts";
+import { readFileContent } from "./utils.ts";
+import { tryWarmAttachedCodeActions, tryWarmAttachedDiagnostics } from "../../warm-attach.ts";
+import { contentHash, WARM_CODE_ACTION_LOOKUP_LIMIT } from "../../mcp/ipc.ts";
 
 const LSP_MAX_FILE_BYTES = RUNTIME_CONFIG.pipeline.lspMaxFileBytes;
 const LSP_MAX_FILE_LINES = RUNTIME_CONFIG.pipeline.lspMaxFileLines;
@@ -44,7 +44,7 @@ function normalizeActionTitle(title: string): string {
 }
 
 function buildCodeActionSuggestion(
-  actions: import("../../lsp/client.js").LSPCodeAction[],
+  actions: import("../../lsp/client.ts").LSPCodeAction[],
 ): string | undefined {
   if (!actions.length) return undefined;
   const quickFixes = actions.filter((action) => action.kind?.startsWith("quickfix"));
@@ -89,7 +89,7 @@ const lspRunner: RunnerDefinition = {
 
     // Always sync current file content before reading diagnostics so dispatch
     // does not operate on stale LSP snapshots.
-    let lspDiags: import("../../lsp/client.js").LSPDiagnostic[] = [];
+    let lspDiags: import("../../lsp/client.ts").LSPDiagnostic[] = [];
     let serverFailed = false;
     // touchFile resolves to `undefined` when no LSP client was ready (a cold
     // spawn that didn't complete in the budget, or LSP unavailable for this
