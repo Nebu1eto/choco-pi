@@ -73,27 +73,28 @@ Voice, notebook, background-shell 기능은 의도적으로 포함하지 않습�
 
 ### 세션과 모델 제어
 
-| 명령                                                                              | 설명                                                                                                                                                                                               |
-| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/exit`                                                                           | Pi를 정상 종료. `/quit` 별칭                                                                                                                                                                       |
-| `/delete`                                                                         | 확인 후 현재 Pi 세션 기록을 영구 삭제하고 종료                                                                                                                                                     |
-| `/clear`                                                                          | 현재 세션 기록을 보존하고 새 세션 시작. `/new` 별칭                                                                                                                                                |
-| `/status`                                                                         | Pi 버전, 세션 식별자, 모델과 공급자, context window, context file, skill, MCP 서버, agent 역할, theme 표시. Status/Usage/Preferences 탭 뷰로 열림. Pi 자체 런타임 설정은 내장 `/settings`에서 유지 |
-| `/effort [level]`                                                                 | 현재 모델이 지원하는 reasoning effort 선택 또는 직접 지정. 공백 뒤에는 가능한 값 자동 완성                                                                                                         |
-| `/fast [on\|off\|status]`                                                         | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환                                                                                                                                   |
-| `/context-cap`                                                                    | 현재 모델에 적용된 soft context cap 확인                                                                                                                                                           |
-| `/context [all]`                                                                  | prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시                                                                                            |
-| `/rewind`, `/fork`                                                                | checkpoint picker를 열어 선택한 턴에서 rewind, rollback, fork 중 하나를 실행                                                                                                                       |
-| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | 로컬 human review 화면 열기. 인자가 없으면 대상 선택기 표시                                                                                                                                        |
-| `/usage`                                                                          | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시. 같은 탭 뷰의 두 번째 탭으로 열림                                                                                                     |
-| `/preferences [인자]`, `/pref`                                                    | 같은 탭 뷰의 세 번째 탭 열기. Agent 언어와 스타일, choco-ui 인터페이스 설정을 다룸. `agent`, `language <이름>`, `style <이름>`, choco-ui 직접 토글, `format <템플릿>` 인자 지원                    |
-| `/apex-refresh`                                                                   | Callstack Apex 모델을 즉시 다시 탐색                                                                                                                                                               |
+| 명령                                                                              | 설명                                                                                                                                                                                                       |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/exit`                                                                           | Pi를 정상 종료. `/quit` 별칭                                                                                                                                                                               |
+| `/delete`                                                                         | 확인 후 현재 Pi 세션 기록을 영구 삭제하고 종료                                                                                                                                                             |
+| `/clear`                                                                          | 현재 세션 기록을 보존하고 새 세션 시작. `/new` 별칭                                                                                                                                                        |
+| `/status`                                                                         | Pi 버전, 세션 식별자, 모델과 공급자, context window, context file, skill, MCP 서버, agent 역할, theme 표시. Status/Context/Usage/Preferences 탭 뷰로 열림. Pi 자체 런타임 설정은 내장 `/settings`에서 유지 |
+| `/effort [level]`                                                                 | 현재 모델이 지원하는 reasoning effort 선택 또는 직접 지정. 공백 뒤에는 가능한 값 자동 완성                                                                                                                 |
+| `/fast [on\|off\|status]`                                                         | OpenAI Codex Fast mode 제어. 인자 없이 실행하면 현재 상태를 전환                                                                                                                                           |
+| `/context [all]`                                                                  | Context 탭 열기. prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시. `all`은 펼친 상태로 시작                                                         |
+| `/rewind`, `/fork`                                                                | checkpoint picker를 열어 선택한 턴에서 rewind, rollback, fork 중 하나를 실행                                                                                                                               |
+| `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | 로컬 human review 화면 열기. 인자가 없으면 대상 선택기 표시                                                                                                                                                |
+| `/usage`                                                                          | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시. 같은 탭 뷰의 Usage 탭으로 열림                                                                                                               |
+| `/preferences [인자]`, `/pref`                                                    | 같은 탭 뷰의 Preferences 탭 열기. Agent 언어와 스타일, choco-ui 인터페이스 설정을 다룸. `agent`, `language <이름>`, `style <이름>`, choco-ui 직접 토글, `format <템플릿>` 인자 지원                        |
+| `/apex-refresh`                                                                   | Callstack Apex 모델을 즉시 다시 탐색                                                                                                                                                                       |
 
 Fast mode는 OpenAI Codex 요청에만 `service_tier: "priority"`를 추가합니다. Standard보다 사용량이나 API credit을 빠르게 소비할 수 있습니다. Pi에 숨겨진 llama.cpp 공급자는 유지하지만 `/llama` 명령은 choco-pi의 명령 목록과 실행 경로에서 제거합니다.
 
 `Ctrl+S`는 현재 입력, 커서 위치와 접힌 paste를 임시 보관하고 입력창을 비웁니다. 빈 입력창에서 다시 누르면 복원합니다. 이 stash는 현재 Pi 프로세스에서만 유지됩니다.
 
 MCP는 `choco-pi-mcp` gateway만 모델 context에 넣고 시작하며, cached MCP 도구를 direct tool로 등록하지 않습니다. 모델은 `tool_search`에 자연어 capability를 전달해 compact parameter 요약을 포함한 BM25 상위 결과를 최대 5개만 받습니다. MCP 결과는 `mcp`를 통해 호출하고 Pi 도구는 세션에 additive하게 활성화합니다. 따라서 시작 시 대량 tool schema와 direct-tool 경고가 발생하지 않습니다. `/context all`에서 active/deferred 도구 목록을 확인할 수 있습니다.
+
+세션이 매번 지나가는 경로는 지연 로딩하지 않고 처음부터 활성화합니다. 세션 도중에 활성화하면 prompt prefix를 다시 쓰면서 전체 context를 다시 청구하기 때문입니다. Pi의 실행과 탐색 도구, sub-agent와 workflow 위임, 세션 간 조율, goal 모드, 웹 조사, `choco-pi-lsp` funnel과 진단 게이트가 여기에 해당합니다. 목록은 [`tool-search.ts`](.pi/extensions/tool-search.ts)의 `ALWAYS_ACTIVE_TOOL_NAMES`입니다. sub-agent도 같은 surface로 시작하고 나머지는 `tool_search`로 가져옵니다.
 
 ### 작업 절차 명령
 
@@ -328,7 +329,7 @@ Native context window가 1,000,000 tokens 이상인 모델은 soft cap을 600,00
 
 - 숫자는 해당 모델의 정확한 soft cap을 적용하고 object는 cap과 compaction 임계값을 함께 지정합니다.
 - `null`은 해당 모델의 두 override를 모두 끕니다. Object의 개별 필드에도 `null`을 지정할 수 있습니다.
-- `/context-cap`은 현재 세션에 적용된 값을 표시합니다.
+- `/preferences`의 Model 탭에 있는 **Context cap** 행이 현재 세션에 적용된 값을 표시합니다.
 
 OpenAI Codex에서는 `/codex openai`로 native Responses compaction을 켭니다. 추적하는 [`.pi/choco-pi-codex.json`](.pi/choco-pi-codex.json)은 `npm run install:profile` 실행 시 `~/.pi/agent/choco-pi-codex.json`에 링크되므로 `/codex` 설정도 프로젝트와 동기화됩니다. Fast mode의 기본값은 꺼짐입니다.
 
@@ -406,7 +407,7 @@ Apex가 Responses API를 지원한다고 확인하기 전에는 `openai-completi
 
 - [`.pi/mcp.example.json`](.pi/mcp.example.json)을 `~/.pi/agent/mcp.json`으로 복사하고 로컬 OAuth client 설정을 추가합니다. 이 checkout 안에는 두지 않습니다. Pi는 `~/.pi/agent/mcp.json`과 프로젝트의 `.pi/mcp.json`을 서로 다른 소스로 읽으므로, choco-pi 안에 사본을 두면 이 디렉터리에서 Pi를 실행할 때 모든 서버가 두 번 등록됩니다. 반대로 Git에서 제외된 그 파일이 사라지면 서버가 하나도 없는 상태로 조용히 시작합니다. `/mcp`에서 설정과 실행 상태를 확인합니다.
 - 인증 서버가 dynamic client registration을 지원하지 않으면 사전 등록한 client가 필요합니다. 해당 서버 항목에 `oauth.clientId`와 `oauth.clientSecret`을 넣습니다. `clientSecret` 값이 `!`로 시작하면 나머지를 셸 명령으로 실행하므로 비밀값을 파일에 남기지 않을 수 있습니다. 공급자에는 redirect URL로 `http://localhost:19876/callback`을 등록합니다.
-- `/create-goal <목표>`로 지속형 goal을 만들고 `/goal`에서 상태와 사용량을 확인합니다.
+- `/goal <목표>`는 작업을 지속형 goal 목표로 작성해 생성합니다. 인자 없는 `/goal`은 상태와 사용량을 보여주고, `/goal pause|resume|clear|copy`로 관리합니다.
 - `synthetic_web_search`는 Synthetic 패키지를 통해 웹을 검색합니다.
 - `/btw <질문>`은 메인 에이전트가 작업 중일 때 읽기 전용 사이드 대화를 시작합니다.
 - `/btw:model`, `/btw:thinking`은 사이드 대화의 모델과 effort를 지정합니다.
@@ -428,7 +429,7 @@ agent-browser --version
 
 ## Agent 언어와 Agent 스타일
 
-`/preferences`(별칭 `/pref`)는 Status/Usage/Preferences 뷰의 세 번째 탭을 엽니다. 뷰 어디에서나 `Tab`과 `Shift+Tab`으로 세 탭을 이동하고 `1`/`2`/`3`으로 곧바로 전환하며, Preferences 탭 안에서는 `←`/`→`로 설정 섹션을 이동합니다. 이 탭의 **Agent** 섹션은 `~/.pi/agent/settings.json`에 저장하는 전역 설정 두 개를 다루므로 모든 프로젝트에 동일하게 적용됩니다.
+`/preferences`(별칭 `/pref`)는 Status/Context/Usage/Preferences 뷰의 마지막 탭을 엽니다. 뷰 어디에서나 `Tab`과 `Shift+Tab`으로 네 탭을 이동하고 `1`/`2`/`3`/`4`로 곧바로 전환하며, Preferences 탭 안에서는 `←`/`→`로 설정 섹션을 이동합니다. Status 탭과 Context 탭은 간략한 형태로 열리고 `Ctrl+O`로 상세 목록을 펼칩니다. 이 탭의 **Agent** 섹션은 `~/.pi/agent/settings.json`에 저장하는 전역 설정 두 개를 다루므로 모든 프로젝트에 동일하게 적용됩니다.
 
 | 키              | 효과                                                                                          |
 | --------------- | --------------------------------------------------------------------------------------------- |
@@ -459,6 +460,10 @@ description: 가장 짧은 정확한 답변
 `/usage`는 Claude Code, OpenAI Codex, Synthetic을 병렬 조회해 현재 사용률과 reset 또는 regeneration 시각을 보여줍니다. Credential과 공급자의 원문 오류 응답은 출력하지 않습니다.
 
 화면을 연 상태에서 3분마다, 그리고 Usage 탭을 다시 선택할 때마다 공급자를 재조회하므로 명령을 다시 실행하지 않아도 최신 값을 유지합니다. 재조회 중에는 직전 내용을 그대로 보여주고, 재조회가 실패하면 마지막으로 성공한 결과를 유지합니다.
+
+각 창의 막대와 백분율은 할당량 상태에 따라 색이 달라집니다. 모두 사용한 창은 빨간색입니다. 그 밖에 Claude Code와 OpenAI Codex 구독 창은 자기 시계와 비교합니다. 보고서는 창에서 이미 지난 시간의 비율을 함께 표시하고, 사용률이 그 비율보다 높으면 노란색, 낮으면 초록색입니다. 지난 비율만큼만 사용하면 창이 reset될 때까지 할당량이 유지됩니다.
+
+Synthetic은 reset 대신 regeneration으로 채워지므로 소진되는 창 자체가 없고, 한 번의 조회만으로는 속도를 판단할 수 없습니다. 남은 양이 곧 사용한 양이자 다시 채우는 데 필요한 시간이기 때문입니다. 그래서 직전에 저장한 조회 결과와 비교합니다. 두 조회 사이에 잔량이 줄었다면 regeneration보다 빠르게 사용한 것이므로 노란색, 잔량이 유지되거나 늘었다면 초록색입니다. 실제 잔량끼리 비교하므로 regeneration tick 사이의 유휴 구간이 과다 사용으로 잘못 표시되지도 않습니다. 비교할 조회가 아직 없거나 요금제 변경으로 최대치가 달라지면 해당 창에는 색을 넣지 않습니다.
 
 Claude Code는 Anthropic OAuth profile에서 확인한 요금제를 `Pro`, `Max (5x)`, `Max (20x)`, `Team`, `Team Premium`, `Enterprise`로 표시합니다. OpenAI Codex는 ChatGPT가 응답한 요금제를 `Plus`, `Pro (5x)`, `Pro (20x)`, `Team`, `Business`, `Enterprise`로 표시합니다. 알려지지 않은 값은 숨기지 않고 응답 그대로 보여줍니다.
 

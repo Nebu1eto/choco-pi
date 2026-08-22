@@ -5,6 +5,8 @@ import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
+  buildContextCapSection,
+  CONTEXT_CAP_ROW_ID,
   default as modelContextCap,
   resolvePolicy,
   shouldRequestCompaction,
@@ -49,7 +51,10 @@ test("policy compaction starts only after 550K tokens", () => {
 });
 
 test("compaction is requested only after the agent run settles", async () => {
-  const handlers = new Map<string, (event: RuntimeValue, context: RuntimeValue) => RuntimeValue>();
+  const handlers = new Map<
+    string,
+    (event: RuntimeValue, context: RuntimeValue) => RuntimeValue | Promise<RuntimeValue>
+  >();
   const pi = reinterpretHostValue<ExtensionAPI>({
     on: (event: string, handler: (event: RuntimeValue, context: RuntimeValue) => RuntimeValue) =>
       handlers.set(event, handler),
@@ -79,7 +84,10 @@ test("compaction is requested only after the agent run settles", async () => {
 });
 
 test("caps are re-applied to models replaced by a catalog refresh", async () => {
-  const handlers = new Map<string, (event: RuntimeValue, context: RuntimeValue) => RuntimeValue>();
+  const handlers = new Map<
+    string,
+    (event: RuntimeValue, context: RuntimeValue) => RuntimeValue | Promise<RuntimeValue>
+  >();
   const pi = reinterpretHostValue<ExtensionAPI>({
     on: (event: string, handler: (event: RuntimeValue, context: RuntimeValue) => RuntimeValue) =>
       handlers.set(event, handler),
@@ -117,7 +125,10 @@ test("caps are re-applied to models replaced by a catalog refresh", async () => 
 
 test("a replaced session cancels pending re-applications instead of crashing Pi", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const handlers = new Map<string, (event: RuntimeValue, context: RuntimeValue) => RuntimeValue>();
+  const handlers = new Map<
+    string,
+    (event: RuntimeValue, context: RuntimeValue) => RuntimeValue | Promise<RuntimeValue>
+  >();
   const pi = reinterpretHostValue<ExtensionAPI>({
     on: (event: string, handler: (event: RuntimeValue, context: RuntimeValue) => RuntimeValue) =>
       handlers.set(event, handler),
@@ -157,7 +168,10 @@ test("a replaced session cancels pending re-applications instead of crashing Pi"
 
 test("session shutdown stops scheduled re-applications", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const handlers = new Map<string, (event: RuntimeValue, context: RuntimeValue) => RuntimeValue>();
+  const handlers = new Map<
+    string,
+    (event: RuntimeValue, context: RuntimeValue) => RuntimeValue | Promise<RuntimeValue>
+  >();
   const pi = reinterpretHostValue<ExtensionAPI>({
     on: (event: string, handler: (event: RuntimeValue, context: RuntimeValue) => RuntimeValue) =>
       handlers.set(event, handler),
@@ -186,4 +200,38 @@ test("session shutdown stops scheduled re-applications", async (t) => {
   handlers.get("session_shutdown")?.({ type: "session_shutdown" }, context);
   t.mock.timers.tick(20_000);
   assert.equal(registryReads, readsAfterStart);
+});
+
+test("the cap is a Model preference row instead of a command", async () => {
+  const handlers = new Map<
+    string,
+    (event: RuntimeValue, context: RuntimeValue) => RuntimeValue | Promise<RuntimeValue>
+  >();
+  const commands: string[] = [];
+  const pi = reinterpretHostValue<ExtensionAPI>({
+    on: (event: string, handler: (event: RuntimeValue, context: RuntimeValue) => RuntimeValue) =>
+      handlers.set(event, handler),
+    registerCommand: (name: string) => commands.push(name),
+  });
+  modelContextCap(pi);
+  assert.deepEqual(commands, [], "the retired /context-cap command must not come back");
+
+  const activeModel = model(1_000_000);
+  const context = {
+    cwd: process.cwd(),
+    model: activeModel,
+    modelRegistry: { getAll: () => [activeModel] },
+    getContextUsage: () => ({ tokens: 0, contextWindow: 600_000, percent: 0 }),
+    compact: () => {},
+    ui: { notify: () => {} },
+  };
+  await handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
+
+  // SAFETY: The fixture supplies every host member exercised by this test.
+  const section = buildContextCapSection(context as never);
+  assert.equal(section.mergeInto, "model");
+  const [row] = section.buildItems();
+  assert.equal(row.id, CONTEXT_CAP_ROW_ID);
+  assert.equal(row.currentValue, "1,000,000 → 600,000 · compact at 550,000");
+  assert.equal(row.values, undefined, "the row reports the policy rather than editing it");
 });

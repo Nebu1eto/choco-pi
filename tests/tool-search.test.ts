@@ -321,12 +321,7 @@ test("keeps the choco-pi-lsp mandated funnel and diagnostics gate active and out
 
   // Situational choco-pi-lsp tools (gated behind the package's own
   // lsp_activate_tools call) are deliberately left out.
-  for (const name of [
-    "project_report",
-    "ast_grep_search",
-    "lsp_navigation",
-    "lsp_activate_tools",
-  ]) {
+  for (const name of ["ast_grep_search", "lsp_navigation", "lsp_activate_tools"]) {
     // SAFETY: The fixture supplies every host member exercised by this test.
     assert.ok(!ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never), `${name} must stay deferred`);
   }
@@ -415,4 +410,47 @@ test("family expansion co-activates deferred same-source siblings", async () => 
 
   const bigFamily = Array.from({ length: 13 }, (_, index) => tool(`big_${index}`, "mega-pkg"));
   assert.deepEqual(expandFamilyActivation(["big_0"], bigFamily, new Set()), []);
+});
+
+test("the eager surface covers discovery, delegation, goals, research, and the code funnel", () => {
+  const eager = [
+    // Pi execution and path discovery.
+    "read",
+    "bash",
+    "edit",
+    "write",
+    "grep",
+    "find",
+    "ls",
+    "exec",
+    "wait",
+    // Dependent delegation, collected and cancelled from the same path.
+    "workflow_run",
+    "workflow_update",
+    "get_workflow_result",
+    "workflow_cancel",
+    // Goal mode, which the system prompt requires in the turn the user asks.
+    "get_goal",
+    "create_goal",
+    "update_goal",
+    // A lookup and the calls that read what it returned.
+    "web_search",
+    "source_check",
+    "fetch_content",
+    "get_search_content",
+    // Repository-scope entry to the choco-pi-lsp funnel.
+    "project_report",
+  ];
+  for (const name of eager) {
+    // SAFETY: The list is a literal set of tool names checked against the export.
+    assert.ok(
+      ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never),
+      `${name} must be eager, not deferred`,
+    );
+  }
+  assert.equal(
+    new Set(ALWAYS_ACTIVE_TOOL_NAMES).size,
+    ALWAYS_ACTIVE_TOOL_NAMES.length,
+    "the eager surface must not repeat a name",
+  );
 });

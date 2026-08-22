@@ -40,6 +40,30 @@ type SegmentDiff = {
   segmentsRemoved: number;
 };
 
+/**
+ * Named parts of the composed system prompt, so a system-block divergence can
+ * name what moved instead of only reporting that something did. A system
+ * change invalidates the whole cached prefix, which is the most expensive
+ * cache event there is, and the hash alone gives nothing to act on.
+ *
+ * Each entry is delimited by markers the harness or Pi emits verbatim. An
+ * absent marker simply leaves that content in `base`, so an upgrade that
+ * renames a block degrades to coarser attribution rather than to a wrong one.
+ */
+const SYSTEM_REGIONS: ReadonlyArray<{ name: string; start: string; end: string }> = [
+  { name: "runtime-environment", start: "<runtime_environment>", end: "</runtime_environment>" },
+  {
+    name: "agent-preferences",
+    start: "<choco_pi_agent_preferences>",
+    end: "</choco_pi_agent_preferences>",
+  },
+  { name: "writing-policy", start: "<choco_pi_writing_policy>", end: "</choco_pi_writing_policy>" },
+  { name: "skills", start: "<skills_instructions>", end: "</skills_instructions>" },
+];
+
+/** One hash per named region of the composed system prompt, plus `base`. */
+export type SystemRegionHashes = Readonly<Record<string, string>>;
+
 type ProbeRecord = {
   ts: string;
   type: "prefix" | "usage";
@@ -110,6 +134,53 @@ function normalizedTool(tool: JsonValue): JsonValue {
 
 function namesForTools(tools: JsonValue[]): string[] {
   return tools.flatMap((tool) => (isJsonRecord(tool) && isString(tool.name) ? [tool.name] : []));
+}
+
+/** The composed system prompt as one string, however the provider carries it. */
+export function systemText(payload: JsonValue): string {
+  const system = isJsonRecord(payload) ? payload.system : undefined;
+  if (isString(system)) return system;
+  if (!Array.isArray(system)) return "";
+  return system
+    .map((block) => {
+      if (isString(block)) return block;
+      return isJsonRecord(block) && isString(block.text) ? block.text : "";
+    })
+    .join("\n");
+}
+
+/**
+ * Splits the system prompt into its named regions plus the `base` remainder,
+ * and hashes each one. Regions are cut out as they are found, so `base` holds
+ * exactly what no marker claimed: Pi's own prompt, the project context files,
+ * and anything an unknown extension appended.
+ */
+export function systemRegionHashes(systemPrompt: string) {
+  const entries: Array<[string, string]> = [];
+  let rest = systemPrompt;
+  for (const region of SYSTEM_REGIONS) {
+    const from = rest.indexOf(region.start);
+    if (from === -1) continue;
+    const closes = rest.indexOf(region.end, from);
+    if (closes === -1) continue;
+    const to = closes + region.end.length;
+    entries.push([region.name, createHash("sha256").update(rest.slice(from, to)).digest("hex")]);
+    rest = rest.slice(0, from) + rest.slice(to);
+  }
+  entries.push(["base", createHash("sha256").update(rest).digest("hex")]);
+  return Object.fromEntries(entries);
+}
+
+/** Region names that differ between two turns, including ones added or dropped. */
+export function changedSystemRegions(
+  previous: SystemRegionHashes | undefined,
+  current: SystemRegionHashes,
+): string[] {
+  if (!previous) return [];
+  const names = new Set([...Object.keys(previous), ...Object.keys(current)]);
+  return [...names]
+    .filter((name) => previous[name] !== current[name])
+    .sort((left, right) => left.localeCompare(right));
 }
 
 /** Extracts only the prefix that can participate in provider prompt caching. */
@@ -220,6 +291,7 @@ function numberValue(value: JsonValue): number | undefined {
 
 export default function cacheProbe(pi: ExtensionAPI): void {
   const previousByStream = new Map<string, CacheSegment[]>();
+  const systemByStream = new Map<string, SystemRegionHashes>();
   const requestByStream = new Map<string, number>();
   let nextRequestId = 1;
   let errors = 0;
@@ -243,9 +315,13 @@ export default function cacheProbe(pi: ExtensionAPI): void {
       const snapshot = cacheableSegments(payload);
       const previous = previousByStream.get(stream);
       const diff = diffCacheableSegments(previous, snapshot.segments);
+      const regions = systemRegionHashes(systemText(payload));
+      const changedRegions = changedSystemRegions(systemByStream.get(stream), regions);
+      systemByStream.set(stream, regions);
       const notes: string[] = [];
       if (!previous) notes.push("initial");
       if (diff.divergedKind === "tools") notes.push(toolNote(snapshot.toolNames));
+      if (changedRegions.length > 0) notes.push(`system-changed=${changedRegions.join(",")}`);
       if (snapshot.capped) notes.push(`segments-capped:${MAX_SEGMENTS}`);
       if (snapshot.truncatedHashes > 0) notes.push(`hash-chars-capped:${snapshot.truncatedHashes}`);
       const requestId = nextRequestId;

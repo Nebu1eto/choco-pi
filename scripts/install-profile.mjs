@@ -48,7 +48,16 @@ async function exists(target) {
 
 async function readJson(target, fallback) {
   if (!(await exists(target))) return fallback;
-  return JSON.parse(await readFile(target, "utf8"));
+  const contents = await readFile(target, "utf8");
+  try {
+    return JSON.parse(contents);
+  } catch (error) {
+    // The CLI prints only `error.message`, so a bare SyntaxError would report a
+    // parse position with no file. Returning the fallback instead would be
+    // worse: the installer would silently write settings derived from a file it
+    // could not read.
+    throw new Error(`${target} does not contain valid JSON`, { cause: error });
+  }
 }
 
 function unique(values) {

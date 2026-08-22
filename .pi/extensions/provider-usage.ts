@@ -12,6 +12,13 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
 const USAGE_BAR_WIDTH = 50;
+const HOUR_SECONDS = 3_600;
+const DAY_SECONDS = 86_400;
+/**
+ * Shortest gap between two Synthetic readings worth reading a pace from. Below
+ * it a single request dominates the difference and the verdict would flicker.
+ */
+const MIN_PACE_INTERVAL_MS = 30_000;
 
 /**
  * Quota windows move slowly, so one live read per minute per endpoint is enough
@@ -39,6 +46,17 @@ type UsageWindow = {
   eventLabel?: string;
   detail?: string;
   precision?: number;
+  /**
+   * Full length of the quota window. Set only where the provider states a
+   * fixed window, which is what makes `eventAt` measurable as a pace.
+   */
+  windowSeconds?: number;
+  /**
+   * Pace decided by the provider rather than by the clock. A refilling bucket
+   * has no window to run out of, so its verdict comes from comparing two
+   * snapshots against the refill rate.
+   */
+  pace?: { health: "over" | "under"; label: string };
 };
 
 type ProviderUsage = {
@@ -54,6 +72,39 @@ type QuotaWindow = {
   utilization?: number;
   resets_at?: string;
 };
+
+/**
+ * How a quota window is doing against its own clock: `over` means quota is
+ * being spent faster than the window replaces it, `under` means slower, and
+ * `unknown` means nothing measurable was reported.
+ */
+export type QuotaHealth = "exhausted" | "over" | "under" | "unknown";
+
+/**
+ * Share of a fixed window already elapsed, which is the pace a subscription
+ * window can be judged against: spending exactly this much of the quota keeps
+ * the allowance lasting until the window resets.
+ */
+export function windowElapsedPercent(window: UsageWindow, now: number): number | undefined {
+  if (window.windowSeconds === undefined || window.windowSeconds <= 0) return undefined;
+  if (window.eventAt === undefined) return undefined;
+  const remainingSeconds = (window.eventAt.getTime() - now) / 1000;
+  if (!Number.isFinite(remainingSeconds)) return undefined;
+  return clampPercent(((window.windowSeconds - remainingSeconds) / window.windowSeconds) * 100);
+}
+
+/**
+ * A window's colour verdict. An exhausted quota outranks everything; a
+ * provider-supplied pace is used where it exists; otherwise the used share is
+ * compared against the share of the window that has already passed.
+ */
+export function quotaHealth(window: UsageWindow, now: number): QuotaHealth {
+  if (window.percent >= 100) return "exhausted";
+  if (window.pace) return window.pace.health;
+  const elapsed = windowElapsedPercent(window, now);
+  if (elapsed === undefined) return "unknown";
+  return window.percent > elapsed ? "over" : "under";
+}
 
 function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
   return isObject(value) && value !== null && !Array.isArray(value);
@@ -114,14 +165,18 @@ function structuredClaudeWindow(value: RuntimeValue): UsageWindow | undefined {
   if (percent === undefined || !kind) return undefined;
 
   let label: string;
+  let windowSeconds: number;
   if (kind === "session") {
     label = "5h";
+    windowSeconds = 5 * HOUR_SECONDS;
   } else if (kind === "weekly_all") {
     label = "7d";
+    windowSeconds = 7 * DAY_SECONDS;
   } else if (kind === "weekly_scoped") {
     const scope = isRecord(value.scope) ? value.scope : undefined;
     const model = scope && isRecord(scope.model) ? scope.model : undefined;
     label = `${stringValue(model?.display_name) ?? "Scoped"} 7d`;
+    windowSeconds = 7 * DAY_SECONDS;
   } else {
     return undefined;
   }
@@ -132,6 +187,7 @@ function structuredClaudeWindow(value: RuntimeValue): UsageWindow | undefined {
     qualifier: "used",
     eventAt: dateValue(value.resets_at),
     eventLabel: "resets",
+    windowSeconds,
   };
 }
 
@@ -188,14 +244,14 @@ export function normalizeClaudeUsage(payload: RuntimeValue, profile?: RuntimeVal
         return window ? [window] : [];
       })
     : [];
-  const definitions: Array<[string, string]> = [
-    ["five_hour", "5h"],
-    ["seven_day", "7d"],
-    ["seven_day_sonnet", "Sonnet 7d"],
-    ["seven_day_opus", "Opus 7d"],
-    ["seven_day_fable", "Fable 7d"],
+  const definitions: Array<[string, string, number]> = [
+    ["five_hour", "5h", 5 * HOUR_SECONDS],
+    ["seven_day", "7d", 7 * DAY_SECONDS],
+    ["seven_day_sonnet", "Sonnet 7d", 7 * DAY_SECONDS],
+    ["seven_day_opus", "Opus 7d", 7 * DAY_SECONDS],
+    ["seven_day_fable", "Fable 7d", 7 * DAY_SECONDS],
   ];
-  const legacyWindows = definitions.flatMap(([key, label]) => {
+  const legacyWindows = definitions.flatMap(([key, label, windowSeconds]) => {
     const value = quotaWindow(payload[key]);
     return value?.utilization === undefined
       ? []
@@ -206,6 +262,7 @@ export function normalizeClaudeUsage(payload: RuntimeValue, profile?: RuntimeVal
             qualifier: "used" as const,
             eventAt: dateValue(value.resets_at),
             eventLabel: "resets",
+            windowSeconds,
           },
         ];
   });
@@ -234,18 +291,20 @@ function codexWindow(value: RuntimeValue, label: string): UsageWindow | undefine
   const resolvedLabel =
     seconds === undefined
       ? label
-      : seconds % 86_400 === 0
-        ? `${seconds / 86_400}d`
-        : seconds % 3_600 === 0
-          ? `${seconds / 3_600}h`
+      : seconds % DAY_SECONDS === 0
+        ? `${seconds / DAY_SECONDS}d`
+        : seconds % HOUR_SECONDS === 0
+          ? `${seconds / HOUR_SECONDS}h`
           : label;
-  return {
+  const window: UsageWindow = {
     label: resolvedLabel,
     percent: clampPercent(percent),
     qualifier: "used",
     eventAt: dateValue(value.reset_at, true),
     eventLabel: "resets",
   };
+  if (seconds !== undefined && seconds > 0) window.windowSeconds = seconds;
+  return window;
 }
 
 const CODEX_PLAN_LABELS = recordOf<string, string>()({
@@ -306,9 +365,71 @@ export function normalizeCodexUsage(payload: RuntimeValue): ProviderUsage {
   };
 }
 
-export function normalizeSyntheticUsage(payload: RuntimeValue): ProviderUsage {
+/** One reading of a bucket that refills instead of resetting. */
+type RefillReading = { capacity: number; remaining: number };
+
+type SyntheticReadings = { rolling?: RefillReading; weekly?: RefillReading };
+
+/** The two refilling buckets a `/v2/quotas` response reports, when present. */
+export function syntheticReadings(payload: RuntimeValue): SyntheticReadings {
+  if (!isRecord(payload)) return {};
+  const readings: SyntheticReadings = {};
+  const rolling = isRecord(payload.rollingFiveHourLimit) ? payload.rollingFiveHourLimit : undefined;
+  const capacity = rolling ? numberValue(rolling.max) : undefined;
+  const remaining = rolling ? numberValue(rolling.remaining) : undefined;
+  if (capacity !== undefined && capacity > 0 && remaining !== undefined) {
+    readings.rolling = { capacity, remaining };
+  }
+  const weekly = isRecord(payload.weeklyTokenLimit) ? payload.weeklyTokenLimit : undefined;
+  const maxCredits = weekly ? stringValue(weekly.maxCredits) : undefined;
+  const remainingCredits = weekly ? stringValue(weekly.remainingCredits) : undefined;
+  if (maxCredits && remainingCredits) {
+    const weeklyCapacity = currencyValue(maxCredits);
+    if (weeklyCapacity > 0) {
+      readings.weekly = { capacity: weeklyCapacity, remaining: currencyValue(remainingCredits) };
+    }
+  }
+  return readings;
+}
+
+/**
+ * Pace of a refilling bucket, read from how its level moved between two
+ * readings.
+ *
+ * A bucket that regenerates has no window to run out of, so the clock says
+ * nothing about it and a single reading cannot be paced at all: the level alone
+ * is both the quota spent and the time needed to earn it back. What can be read
+ * is the net movement, which already nets consumption against regeneration — a
+ * level that fell was drained faster than it refilled, and a level that held or
+ * rose was not. Comparing observed levels also survives the regeneration being
+ * granted in discrete ticks, which a continuous refill estimate would report as
+ * overspending on every idle gap between ticks.
+ *
+ * A changed capacity means the subscription tier moved, which is not usage.
+ */
+export function refillPace(
+  current: RefillReading | undefined,
+  previous: RefillReading | undefined,
+  elapsedMs: number,
+): UsageWindow["pace"] {
+  if (!current || !previous) return undefined;
+  if (previous.capacity !== current.capacity) return undefined;
+  if (!Number.isFinite(elapsedMs) || elapsedMs < MIN_PACE_INTERVAL_MS) return undefined;
+  return current.remaining < previous.remaining
+    ? { health: "over", label: "spending faster than it refills" }
+    : { health: "under", label: "refill keeping up" };
+}
+
+export function normalizeSyntheticUsage(
+  payload: RuntimeValue,
+  previous?: { payload: RuntimeValue; storedAt: number },
+  payloadAt = Date.now(),
+): ProviderUsage {
   if (!isRecord(payload)) throw new Error("Unexpected response");
   const windows: UsageWindow[] = [];
+  const readings = syntheticReadings(payload);
+  const priorReadings = previous ? syntheticReadings(previous.payload) : {};
+  const elapsedMs = previous ? payloadAt - previous.storedAt : Number.NaN;
   const subscription = isRecord(payload.subscription) ? payload.subscription : undefined;
   const rolling = isRecord(payload.rollingFiveHourLimit) ? payload.rollingFiveHourLimit : undefined;
   const rollingMaximum = rolling ? numberValue(rolling.max) : undefined;
@@ -330,7 +451,7 @@ export function normalizeSyntheticUsage(payload: RuntimeValue): ProviderUsage {
     const requestDetail =
       requestsUsed === 0 ? "No requests used" : `${boundedRemaining}/${maximum} requests remaining`;
     const detail = `${requestDetail}${rolling?.limited === true ? " · limited" : ""}`;
-    windows.push({
+    const window: UsageWindow = {
       label: "Five-hour requests",
       percent: clampPercent(((maximum - boundedRemaining) / maximum) * 100),
       qualifier: "used",
@@ -338,7 +459,10 @@ export function normalizeSyntheticUsage(payload: RuntimeValue): ProviderUsage {
       eventLabel: rolling ? "regenerates" : "resets",
       detail,
       precision: 0,
-    });
+    };
+    const pace = refillPace(readings.rolling, priorReadings.rolling, elapsedMs);
+    if (pace) window.pace = pace;
+    windows.push(window);
   }
 
   const weekly = isRecord(payload.weeklyTokenLimit) ? payload.weeklyTokenLimit : undefined;
@@ -353,7 +477,7 @@ export function normalizeSyntheticUsage(payload: RuntimeValue): ProviderUsage {
     const regenDescription = nextRegenCredits
       ? `regenerates${regenPercent !== undefined && Number.isFinite(regenPercent) ? ` ${formatNumber(regenPercent, 2)}%` : ""} (${nextRegenCredits})`
       : "regenerates";
-    windows.push({
+    const window: UsageWindow = {
       label: "Weekly credits",
       percent: clampPercent(100 - remainingPercent),
       qualifier: "used",
@@ -363,7 +487,10 @@ export function normalizeSyntheticUsage(payload: RuntimeValue): ProviderUsage {
         ? `${weekly?.remainingCredits} remaining`
         : undefined,
       precision: 2,
-    });
+    };
+    const pace = refillPace(readings.weekly, priorReadings.weekly, elapsedMs);
+    if (pace) window.pace = pace;
+    windows.push(window);
   }
 
   return { name: "Synthetic", windows };
@@ -446,7 +573,10 @@ async function syntheticUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
     () => fetchUsageJson("https://api.synthetic.new/v2/quotas", token, {}),
     USAGE_POLICY,
   );
-  return withCacheNote(normalizeSyntheticUsage(usage.payload), usage);
+  return withCacheNote(
+    normalizeSyntheticUsage(usage.payload, usage.previous, usage.payloadAt),
+    usage,
+  );
 }
 
 function currencyValue(value: string): number {
@@ -459,9 +589,9 @@ function formatNumber(value: number, precision: number): string {
   return fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
 }
 
-function relativeTime(date: Date | undefined): string | undefined {
+function relativeTime(date: Date | undefined, at = Date.now()): string | undefined {
   if (!date) return undefined;
-  const milliseconds = date.getTime() - Date.now();
+  const milliseconds = date.getTime() - at;
   if (milliseconds <= 0) return "soon";
   const totalMinutes = Math.ceil(milliseconds / 60_000);
   const days = Math.floor(totalMinutes / 1440);
@@ -494,9 +624,57 @@ function elapsedTime(date: Date, at = Date.now()): string {
   return `${value} ago`;
 }
 
-function progressBar(percent: number, width = USAGE_BAR_WIDTH): string {
+/**
+ * The usage bar. The filled part carries the window's verdict colour and the
+ * empty part stays dim, so a glance at the bar answers the pace question the
+ * percentage below it states in words.
+ */
+function progressBar(
+  percent: number,
+  paint: UsagePainter,
+  health: QuotaHealth,
+  width = USAGE_BAR_WIDTH,
+): string {
   const filled = Math.round((clampPercent(percent) / 100) * width);
-  return `${"█".repeat(filled)}${"░".repeat(width - filled)}`;
+  return `${paint.health(health, "█".repeat(filled))}${paint.dim("░".repeat(width - filled))}`;
+}
+
+/** Theme hooks used by a coloured report; omitted when the surface is plain text. */
+export type UsageStyle = { fg(color: string, text: string): string };
+
+type UsagePainter = {
+  value: (text: string) => string;
+  dim: (text: string) => string;
+  label: (text: string) => string;
+  head: (text: string) => string;
+  health: (health: QuotaHealth, text: string) => string;
+};
+
+function usagePainter(style: UsageStyle | undefined): UsagePainter {
+  const plain = (text: string): string => text;
+  if (!style) {
+    return { value: plain, dim: plain, label: plain, head: plain, health: (_health, t) => t };
+  }
+  const color = (name: string, text: string): string => {
+    try {
+      return style.fg(name, text);
+    } catch {
+      return text;
+    }
+  };
+  const HEALTH_COLORS = recordOf<QuotaHealth, string>()({
+    exhausted: "error",
+    over: "warning",
+    under: "success",
+    unknown: "text",
+  });
+  return {
+    value: (text) => color("text", text),
+    dim: (text) => color("dim", text),
+    label: (text) => color("muted", text),
+    head: (text) => color("accent", text),
+    health: (health, text) => color(HEALTH_COLORS[health], text),
+  };
 }
 
 function cachedLabel(cached: { at: Date; reason?: string } | undefined): string | undefined {
@@ -505,21 +683,35 @@ function cachedLabel(cached: { at: Date; reason?: string } | undefined): string 
   return cached.reason ? `cached ${age} · ${cached.reason}` : `cached ${age}`;
 }
 
-export function formatProviderUsage(result: ProviderUsage): string {
+export function formatProviderUsage(
+  result: ProviderUsage,
+  style?: UsageStyle,
+  now = Date.now(),
+): string {
+  const paint = usagePainter(style);
   const summary = [result.plan, result.status, cachedLabel(result.cached)]
     .filter(Boolean)
     .join(" · ");
-  const heading = summary ? `${result.name} — ${summary}` : result.name;
-  if (result.windows.length === 0) return summary ? heading : `${heading} — no quota windows`;
+  const heading = summary
+    ? `${paint.head(result.name)}${paint.dim(" — ")}${paint.value(summary)}`
+    : paint.head(result.name);
+  if (result.windows.length === 0) {
+    return summary ? heading : `${heading}${paint.dim(" — no quota windows")}`;
+  }
   const windows = result.windows.flatMap((window) => {
+    const health = quotaHealth(window, now);
     const percent = formatNumber(window.percent, window.precision ?? 0);
-    const eventTime = relativeTime(window.eventAt);
+    const eventTime = relativeTime(window.eventAt, now);
     const event = window.eventLabel && eventTime ? `${window.eventLabel} ${eventTime}` : undefined;
-    const detail = [event, window.detail].filter(Boolean).join(" · ");
+    const elapsed = windowElapsedPercent(window, now);
+    const pace =
+      window.pace?.label ??
+      (elapsed === undefined ? undefined : `${formatNumber(elapsed, 0)}% of window elapsed`);
+    const detail = [event, pace, window.detail].filter(Boolean).join(" · ");
     return [
-      `  ${window.label}`,
-      `  ${progressBar(window.percent)} ${percent}% ${window.qualifier}`,
-      ...(detail ? [`  ${detail}`] : []),
+      `  ${paint.label(window.label)}`,
+      `  ${progressBar(window.percent, paint, health)} ${paint.health(health, `${percent}% ${window.qualifier}`)}`,
+      ...(detail ? [`  ${paint.dim(detail)}`] : []),
     ];
   });
   return [heading, ...windows].join("\n");
@@ -539,14 +731,18 @@ export function usageFailureMessage(reason: RuntimeValue): string {
   return reason instanceof Error ? reason.message : "unknown error";
 }
 
-export async function usageReport(ctx: ExtensionContext): Promise<string> {
+export async function usageReport(ctx: ExtensionContext, style?: UsageStyle): Promise<string> {
+  const paint = usagePainter(style);
   const requests = [claudeUsage(ctx), codexUsage(ctx), syntheticUsage(ctx)];
   const settled = await Promise.allSettled(requests);
   return settled
     .map((result, index) =>
       result.status === "fulfilled"
-        ? formatProviderUsage(result.value)
-        : `${PROVIDER_NAMES[index]} — unavailable (${usageFailureMessage(result.reason)})`,
+        ? formatProviderUsage(result.value, style)
+        : `${paint.head(PROVIDER_NAMES[index])}${paint.dim(" — ")}${paint.health(
+            "exhausted",
+            `unavailable (${usageFailureMessage(result.reason)})`,
+          )}`,
     )
     .join("\n\n");
 }

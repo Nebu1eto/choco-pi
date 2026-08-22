@@ -110,6 +110,38 @@ export const SUBAGENT_TOOL_NAMES = {
 /** Names of tools registered by this extension that subagents must NOT inherit. */
 const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
 
+/**
+ * The lean tool surface choco-pi's `tool-search` extension publishes.
+ *
+ * A sub-agent used to start with every tool its loaded extensions register —
+ * probe evidence put child sessions at 78-83 tool schemas against the main
+ * agent's 22-28 — so each one carried the whole catalog in its cached prefix
+ * for the life of the task. Sub-agents now start from the same always-active
+ * set as the main agent and reach the rest through `tool_search`.
+ *
+ * Matched over `Symbol.for` because a package must not import the profile.
+ * When the extension is absent the policy is undefined and scope falls back to
+ * the previous behavior, so this package still runs standalone.
+ */
+const LEAN_SURFACE_SYMBOL = Symbol.for("choco-pi.tool-search.lean-surface");
+
+interface LeanSurfaceRegistry {
+  [LEAN_SURFACE_SYMBOL]?: { alwaysActive?: () => readonly string[] };
+}
+
+function leanSurfaceNames(): Set<string> | undefined {
+  try {
+    // SAFETY: The registry slot is optional in this declaration, so an absent
+    // publisher yields undefined; a publisher that throws is caught below.
+    const registry = globalThis as typeof globalThis & LeanSurfaceRegistry;
+    const names = registry[LEAN_SURFACE_SYMBOL]?.alwaysActive?.();
+    if (!Array.isArray(names) || names.length === 0) return undefined;
+    return new Set(names);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Built-ins available to read-only side conversations. No shell or write path. */
 const READ_ONLY_TOOL_NAMES = new Set(["read", "grep", "find", "ls"]);
 
@@ -320,6 +352,15 @@ export function installExtensionToolScope(
 ): void {
   const { loader, toolNames, disallowedSet, extNames, narrowing, nestedToolNames } = ctx;
 
+  // Extension tools this agent earned through `tool_search`. pi grants them by
+  // reporting `addedToolNames` to the calling session, so they show up in the
+  // active set; without remembering them here the next re-narrow would take
+  // back the tool the agent just searched for.
+  const granted = new Set<string>();
+  const lean = leanSurfaceNames();
+  const leanAllows = (name: string): boolean =>
+    lean === undefined || lean.has(name) || granted.has(name);
+
   // The names allowed right now. Mirrors the `ext:` opt-in flip: when any `ext:`
   // selector is present, extension tools become an explicit allowlist — a loaded
   // extension not named by a selector contributes nothing (its handlers still ran),
@@ -336,6 +377,9 @@ export function installExtensionToolScope(
       for (const name of extension.tools.keys()) {
         if (narrowed && !narrowed.has(name)) continue;
         if (disallowedSet?.has(name)) continue;
+        // An explicitly configured tool name stays available; the lean surface
+        // only gates what an extension contributes on its own.
+        if (!toolNames.includes(name) && !leanAllows(name)) continue;
         keep.add(name);
       }
     }
@@ -350,6 +394,13 @@ export function installExtensionToolScope(
   };
 
   const renarrow = () => {
+    // Record what this turn was granted before scope is recomputed, or the
+    // recomputation would drop it.
+    if (lean !== undefined) {
+      for (const name of session.getActiveToolNames()) {
+        if (!lean.has(name) && !toolNames.includes(name)) granted.add(name);
+      }
+    }
     const allowed = inScope();
     const next = session
       .getAllTools()

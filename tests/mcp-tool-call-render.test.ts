@@ -42,14 +42,14 @@ test("a server-only call keeps a bare MCP header", () => {
 test("multi-line JSON args keep the branch indent on every line", () => {
   const theme = { fg: (_name: string, text: string) => text };
   const styled = styleMcpCallLines(
-    ["mcp call mcp__linear_get_document", '{\n  "id": "02ba"\n}'],
+    ["mcp call mcp__linear_get_document", '{\n  "id": "02cf"\n}'],
     theme,
   );
   assert.deepEqual(styled, [
     "• MCP: linear",
     "  └ get_document",
     "    {",
-    '      "id": "02ba"',
+    '      "id": "02cf"',
     "    }",
   ]);
 });

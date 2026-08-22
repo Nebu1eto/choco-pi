@@ -22,7 +22,8 @@ own the package identity and the user-facing wording, not to change behavior.
 
 ## What was copied
 
-`src/`, `prompts/`, and `LICENSE` from the published tarball. Upstream
+`src/`, `prompts/`, and `LICENSE` from the published tarball; `prompts/` was
+later folded into `src/prompts.ts` (change 4 below). Upstream
 `README.md`, `CHANGELOG.md`, `AGENTS.md`, `docs/`, `scripts/`,
 `platform-smoke.config.mjs`, and `.crabboxignore` are not vendored; they cover
 the upstream release process, which does not apply to a local harness package.
@@ -31,27 +32,35 @@ the upstream release process, which does not apply to a local harness package.
 
 Full parity with `0.2.0` is intended and preserved:
 
-- `/goal` command (show, set, clear, resume, and completion flows).
+- `/goal` command (show, clear, pause, resume, copy, and completion flows).
 - `get_goal`, `create_goal`, `update_goal` tools — **names are unchanged** on
   purpose, because harness documentation and prompts reference them.
 - Continuation scheduler, recovery machinery (including provider-limit
   auto-resume and host-overflow recovery), goal accounting, and the
   stale-queued-work guard.
 
+Setting a goal is the one deliberate divergence; see change 4 below.
+
 ## choco-pi changes on top of `0.2.0`
 
 1. `package.json`: renamed to `choco-pi-goal`, marked `private`, description
-   updated, upstream release scripts and repository metadata dropped. Both Pi
-   entry points are kept: `pi.extensions` → `./src/index.ts`,
-   `pi.prompts` → `./prompts`.
+   updated, upstream release scripts and repository metadata dropped. Only the
+   `pi.extensions` → `./src/index.ts` entry point is kept; `pi.prompts` is
+   dropped with the prompt directory (change 4).
 2. `tsconfig.json`: added for package-local `tsc --noEmit`; upstream does not
    ship one in the tarball. Matches the harness root compiler options.
 3. `src/commands.ts`: the user-visible `/goal` command description now reads
-   "Show or manage the current choco-pi goal." (was "Codex-style goal").
-4. `prompts/create-goal.md`: upstream `pi-codex`/`pi-codex-goal` wording
-   renamed to "choco-pi goal", plus one added paragraph requiring the agent to
-   draft the objective itself and call the goal creation tool in the same turn
-   without asking for confirmation.
+   "Show or manage the current choco-pi goal; /goal <objective> drafts and
+   creates one." (was "Codex-style goal").
+4. `prompts/create-goal.md` is removed, and with it the `/create-goal` command.
+   Its text lives in `src/prompts.ts` as `goalObjectivePrompt`, which
+   `/goal <objective>` now sends: the agent drafts the completion contract and
+   calls `create_goal` itself, where upstream stored the typed words verbatim
+   after a "Replace goal?" confirmation. A prompt template named `goal` could
+   not replace the rename, because Pi dispatches an extension command before it
+   expands a template of the same name. The prompt keeps the choco-pi wording
+   and the added paragraph requiring the agent to draft the objective and call
+   the tool in the same turn without asking for confirmation.
 
 Deliberately **not** renamed, because they are internal identifiers rather than
 user-visible branding, and changing them would break behavior parity:
@@ -81,5 +90,6 @@ the former `npm:pi-codex-goal@0.2.0` entry.
 
 ## Updating
 
-Re-run `npm pack pi-codex-goal@<version>`, diff `src/` and `prompts/` against
-this copy, and re-apply the four changes listed above.
+Re-run `npm pack pi-codex-goal@<version>` and diff `src/` against this copy;
+upstream `prompts/create-goal.md` diffs against `goalObjectivePrompt` in
+`src/prompts.ts`. Re-apply the four changes listed above.

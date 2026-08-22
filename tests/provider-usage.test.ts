@@ -5,6 +5,7 @@ import statusCommands, {
   createTabController,
   STATUS_TABS,
   type StatusTabId,
+  type TextTabId,
   tabBody,
   USAGE_REFRESH_MS,
 } from "../.pi/extensions/status-commands.ts";
@@ -14,7 +15,11 @@ import {
   formatProviderUsage,
   normalizeClaudeUsage,
   normalizeCodexUsage,
+  normalizeSyntheticUsage,
+  quotaHealth,
+  refillPace,
   usageFailureMessage,
+  windowElapsedPercent,
 } from "../.pi/extensions/provider-usage.ts";
 import {
   createUsageCache,
@@ -42,14 +47,14 @@ function memoryStorage(): UsageCacheStorage & { entries: () => Record<string, Us
   };
 }
 
-test("status tabs expose Status, Usage, and Preferences in order", () => {
+test("status tabs expose Status, Context, Usage, and Preferences in order", () => {
   assert.deepEqual(
     STATUS_TABS.map((tab) => tab.title),
-    ["Status", "Usage", "Preferences"],
+    ["Status", "Context", "Usage", "Preferences"],
   );
 });
 
-test("usage tab keeps the white body text for readability", async () => {
+test("the usage tab paints its own body instead of one flat colour", async () => {
   const body = await tabBody(
     // SAFETY: The fixture supplies every host member exercised by this test.
     {
@@ -60,7 +65,7 @@ test("usage tab keeps the white body text for readability", async () => {
     "usage",
     true,
   );
-  assert.match(body, /^<text>Claude Code — not connected/);
+  assert.match(body, /^<accent>Claude Code<\/accent><dim> — <\/dim><text>not connected<\/text>/);
 });
 
 test("registers /quota as a white-text alias for /usage", async () => {
@@ -233,6 +238,163 @@ test("keeps the last good body when a refresh fails and never auto-refreshes Sta
   await flush();
   assert.deepEqual(loads, ["usage", "usage", "status"]);
   controller.dispose();
+});
+
+test("caches a tab's concise and expanded bodies separately", async () => {
+  const loads: Array<[TextTabId, boolean]> = [];
+  const paints: string[] = [];
+  const controller = createTabController({
+    load: (id, expanded) => {
+      loads.push([id, expanded]);
+      return Promise.resolve(`${id}-${expanded ? "all" : "brief"}`);
+    },
+    paint: (body) => paints.push(body),
+    loading: "loading",
+    failure: (id, message) => `failed ${id}: ${message}`,
+  });
+
+  controller.activate("context");
+  await flush();
+  controller.activate("context", true);
+  await flush();
+  controller.activate("context");
+  await flush();
+
+  assert.deepEqual(loads, [
+    ["context", false],
+    ["context", true],
+    ["context", false],
+  ]);
+  // Toggling back paints the cached concise body instead of blanking to "loading".
+  assert.deepEqual(paints, [
+    "loading",
+    "context-brief",
+    "loading",
+    "context-all",
+    "context-brief",
+    "context-brief",
+  ]);
+  controller.dispose();
+});
+
+const NOW = Date.parse("2026-08-20T12:00:00Z");
+
+/** A Codex payload whose 5-hour window resets `resetInHours` from `NOW`. */
+function codexPayload(usedPercent: number, resetInHours: number): RuntimeValue {
+  return {
+    plan_type: "pro",
+    rate_limit: {
+      primary_window: {
+        used_percent: usedPercent,
+        limit_window_seconds: 5 * 3_600,
+        reset_at: (NOW + resetInHours * 3_600_000) / 1000,
+      },
+    },
+  };
+}
+
+test("a fixed window is paced against the share of it that has passed", () => {
+  const [window] = normalizeCodexUsage(codexPayload(40, 2.5)).windows;
+  assert.equal(window.windowSeconds, 18_000);
+  assert.equal(windowElapsedPercent(window, NOW), 50);
+
+  assert.equal(quotaHealth(window, NOW), "under");
+  assert.equal(quotaHealth({ ...window, percent: 60 }, NOW), "over");
+  assert.equal(quotaHealth({ ...window, percent: 100 }, NOW), "exhausted");
+  // Without a stated window length there is no clock to judge the usage by.
+  assert.equal(quotaHealth({ ...window, windowSeconds: undefined }, NOW), "unknown");
+});
+
+test("Claude windows carry the length their reset time is measured against", () => {
+  const usage = normalizeClaudeUsage({
+    limits: [
+      { kind: "session", percent: 10, resets_at: "2026-08-20T14:00:00Z" },
+      { kind: "weekly_all", percent: 90, resets_at: "2026-08-25T12:00:00Z" },
+    ],
+  });
+  assert.deepEqual(
+    usage.windows.map((window) => window.windowSeconds),
+    [5 * 3_600, 7 * 86_400],
+  );
+  // 3h of a 5h window gone against 10% used, then 2d of 7d left against 90% used.
+  assert.deepEqual(
+    usage.windows.map((window) => quotaHealth(window, NOW)),
+    ["under", "over"],
+  );
+});
+
+test("a refilling bucket is paced by how its level moved, not by a clock", () => {
+  const previous = { capacity: 1_000, remaining: 800 };
+  const minute = 60_000;
+  assert.deepEqual(refillPace({ capacity: 1_000, remaining: 750 }, previous, minute), {
+    health: "over",
+    label: "spending faster than it refills",
+  });
+  // An idle gap between regeneration ticks holds the level and must read as green.
+  assert.equal(refillPace({ capacity: 1_000, remaining: 800 }, previous, minute)?.health, "under");
+  assert.equal(refillPace({ capacity: 1_000, remaining: 850 }, previous, minute)?.health, "under");
+  // A changed capacity is a plan change, and a near-simultaneous pair is noise.
+  assert.equal(refillPace({ capacity: 2_000, remaining: 750 }, previous, minute), undefined);
+  assert.equal(refillPace({ capacity: 1_000, remaining: 750 }, previous, 1_000), undefined);
+  assert.equal(refillPace({ capacity: 1_000, remaining: 750 }, undefined, minute), undefined);
+});
+
+function syntheticPayload(remaining: number, remainingCredits: string): RuntimeValue {
+  return {
+    rollingFiveHourLimit: {
+      nextTickAt: "2026-08-20T12:15:00Z",
+      tickPercent: 0.05,
+      remaining,
+      max: 1_000,
+      limited: false,
+    },
+    weeklyTokenLimit: {
+      nextRegenAt: "2026-08-20T18:00:00Z",
+      percentRemaining: 40,
+      maxCredits: "$100.00",
+      remainingCredits,
+      nextRegenCredits: "$5.00",
+    },
+  };
+}
+
+test("Synthetic pacing compares the stored reading with the live one", () => {
+  const previous = { payload: syntheticPayload(800, "$40.00"), storedAt: NOW - 5 * 60_000 };
+  const draining = normalizeSyntheticUsage(syntheticPayload(700, "$39.00"), previous, NOW);
+  assert.deepEqual(
+    draining.windows.map((window) => quotaHealth(window, NOW)),
+    ["over", "over"],
+  );
+
+  const recovering = normalizeSyntheticUsage(syntheticPayload(850, "$40.00"), previous, NOW);
+  assert.deepEqual(
+    recovering.windows.map((window) => quotaHealth(window, NOW)),
+    ["under", "under"],
+  );
+
+  // With nothing to compare against, a refilling bucket has no pace at all.
+  const alone = normalizeSyntheticUsage(syntheticPayload(700, "$39.00"), undefined, NOW);
+  assert.deepEqual(
+    alone.windows.map((window) => quotaHealth(window, NOW)),
+    ["unknown", "unknown"],
+  );
+
+  // An exhausted bucket outranks the pace verdict.
+  const empty = normalizeSyntheticUsage(syntheticPayload(0, "$0.00"), previous, NOW);
+  assert.equal(quotaHealth(empty.windows[0], NOW), "exhausted");
+});
+
+test("a window's bar and percentage carry its verdict colour", () => {
+  const style = { fg: (color: string, text: string) => `<${color}>${text}</${color}>` };
+  const under = formatProviderUsage(normalizeCodexUsage(codexPayload(40, 2.5)), style, NOW);
+  assert.match(under, /<success>█+<\/success><dim>░+<\/dim> <success>40% used<\/success>/);
+  assert.match(under, /<dim>resets in 2h 30m · 50% of window elapsed<\/dim>/);
+
+  const over = formatProviderUsage(normalizeCodexUsage(codexPayload(60, 2.5)), style, NOW);
+  assert.match(over, /<warning>60% used<\/warning>/);
+
+  const exhausted = formatProviderUsage(normalizeCodexUsage(codexPayload(100, 2.5)), style, NOW);
+  assert.match(exhausted, /<error>100% used<\/error>/);
 });
 
 test("spaces live quota requests and serves the stored snapshot in between", async () => {

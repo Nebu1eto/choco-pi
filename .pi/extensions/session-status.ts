@@ -325,7 +325,9 @@ export function summarizeStatusRows(
     value:
       contextFiles.length === 0
         ? "none"
-        : contextFiles.map((file) => describePath(file.path, cwd)).join(" | "),
+        : `${contextFiles.length} loaded\n  ${contextFiles
+            .map((file) => describePath(file.path, cwd))
+            .join("\n  ")}`,
   });
 
   const skills = (ctx.getSystemPromptOptions().skills ?? []).map((skill) => skill.name);
@@ -378,6 +380,18 @@ export function normalizePackageKey(specifier: string): string {
   const scope = raw.startsWith("@") ? raw.slice(0, raw.indexOf("/") + 1) : "";
   const rest = raw.slice(scope.length);
   return scope + (rest.split("@")[0] ?? rest);
+}
+
+/**
+ * The concise Status tab: every row keeps its headline and drops the indented
+ * inventory beneath it, so a row such as `Skills` reports `12 loaded` and the
+ * names wait for the expanded view.
+ */
+export function condenseStatusRows(rows: StatusRow[]): StatusRow[] {
+  return rows.map((row) => {
+    const newline = row.value.indexOf("\n");
+    return newline === -1 ? row : { label: row.label, value: row.value.slice(0, newline) };
+  });
 }
 
 export type StatusStyle = {

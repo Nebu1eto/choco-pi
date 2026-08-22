@@ -3,9 +3,9 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { copyTextToClipboard, type ClipboardCopyResult } from "./clipboard.js";
 import { formatGoalSummary } from "./format.js";
 import type { GoalStartTurnStrategy } from "./recovery-machine.js";
-import { compactContinuationPrompt, continuationPrompt } from "./prompts.js";
-import { replaceGoal, updateGoalStatus } from "./state.js";
-import { CUSTOM_ENTRY_TYPE, type GoalEntrySource, type ThreadGoal } from "./types.js";
+import { compactContinuationPrompt, goalObjectivePrompt } from "./prompts.js";
+import { updateGoalStatus } from "./state.js";
+import type { GoalEntrySource, ThreadGoal } from "./types.js";
 
 export interface CommandHost {
   getGoal(): ThreadGoal | null;
@@ -24,13 +24,9 @@ const COMMANDS = ["pause", "resume", "resume cancel", "clear", "copy"] as const;
 
 type CopyText = (text: string) => Promise<ClipboardCopyResult>;
 
-export type GoalCommandPi = Pick<
-  ExtensionAPI,
-  "registerCommand" | "sendMessage" | "sendUserMessage"
->;
+export type GoalCommandPi = Pick<ExtensionAPI, "registerCommand" | "sendUserMessage">;
 
 export interface GoalCommandContext {
-  hasUI: boolean;
   ui: Pick<ExtensionCommandContext["ui"], "confirm" | "notify" | "setStatus">;
 }
 
@@ -42,24 +38,17 @@ function completions(prefix: string) {
   }));
 }
 
-function queueGoalTurn(
-  pi: GoalCommandPi,
-  goal: ThreadGoal,
-  kind: "command_start" | "command_resume",
-): void {
-  pi.sendMessage(
-    {
-      customType: CUSTOM_ENTRY_TYPE,
-      content: continuationPrompt(goal),
-      display: false,
-      details: { kind, goalId: goal.goalId },
-    },
-    { triggerTurn: true, deliverAs: "followUp" },
-  );
-}
-
 function queueGoalUserTurn(pi: GoalCommandPi, goal: ThreadGoal): void {
   pi.sendUserMessage(compactContinuationPrompt(goal), { deliverAs: "followUp" });
+}
+
+/**
+ * Hands the objective to the agent instead of storing the typed words as the
+ * goal. `/goal <objective>` absorbed the retired `/create-goal` prompt, so the
+ * agent drafts the full completion contract and calls the goal creation tool.
+ */
+function queueGoalDrafting(pi: GoalCommandPi, task: string): void {
+  pi.sendUserMessage(goalObjectivePrompt(task), { deliverAs: "followUp" });
 }
 
 export async function handleGoalCommand(
@@ -145,39 +134,13 @@ export async function handleGoalCommand(
     return;
   }
 
-  const current = host.getGoal();
-  if (current && current.status !== "complete") {
-    if (!ctx.hasUI) {
-      ctx.ui.notify("Clear the existing goal before replacing it.", "error");
-      return;
-    }
-    const shouldReplace = await ctx.ui.confirm(
-      "Replace goal?",
-      `Current goal:\n${current.objective}\n\nNew goal:\n${trimmed}`,
-    );
-    if (!shouldReplace) {
-      ctx.ui.notify("Goal unchanged.");
-      return;
-    }
-  }
-
-  const result = replaceGoal(trimmed);
-  if (!result.ok || !result.goal) {
-    ctx.ui.notify(result.message, "error");
-    return;
-  }
-  host.setGoal(result.goal, "command", ctx);
-  ctx.ui.notify(result.message);
-  if (host.getGoalStartTurnStrategy() === "userFollowUp") {
-    queueGoalUserTurn(pi, result.goal);
-  } else {
-    queueGoalTurn(pi, result.goal, "command_start");
-  }
+  queueGoalDrafting(pi, trimmed);
 }
 
 export function registerGoalCommand(pi: GoalCommandPi, host: CommandHost): void {
   pi.registerCommand("goal", {
-    description: "Show or manage the current choco-pi goal.",
+    description:
+      "Show or manage the current choco-pi goal; /goal <objective> drafts and creates one.",
     getArgumentCompletions(argumentPrefix) {
       return completions(argumentPrefix.trim());
     },

@@ -7,7 +7,11 @@ import {
   getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
+  type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
+import type { SettingItem } from "@earendil-works/pi-tui";
+import type { PreferencesExtraSection } from "./lib/agent-preferences.ts";
+import { MODEL_SECTION_ID } from "./lib/native-settings.ts";
 
 type ContextCapConfig = {
   defaultCap?: number;
@@ -275,25 +279,45 @@ export default function modelContextCap(pi: ExtensionAPI): void {
       },
     });
   });
+}
 
-  pi.registerCommand("context-cap", {
-    description: "Show the current model's context soft cap",
-    handler: async (_args, ctx) => {
-      if (!ctx.model) {
-        ctx.ui.notify("No model is currently selected.", "info");
-        return;
-      }
-      reapplyContextCaps(ctx);
-      const key = modelKey(ctx.model);
-      const applied = appliedPolicies.find((entry) => entry.key === key);
-      const detail = applied
-        ? `${applied.original.toLocaleString()} → ${applied.cap.toLocaleString()}` +
-          (applied.compactAt ? `; compact at ${applied.compactAt.toLocaleString()}` : "")
-        : `${ctx.model.contextWindow.toLocaleString()} (native)`;
-      ctx.ui.notify(
-        `${key}: ${detail}\nPolicies applied to ${appliedPolicies.length.toLocaleString()} models`,
-        "info",
-      );
-    },
-  });
+export const CONTEXT_CAP_ROW_ID = "contextCap";
+
+/** What the Model tab reports for the active model's context window. */
+export function contextCapSummary(ctx: ExtensionCommandContext): string {
+  const model = ctx.model;
+  if (!model) return "no model selected";
+  try {
+    reapplyContextCaps(ctx);
+  } catch {
+    // A stale context only means the row reports the last applied policy.
+  }
+  const applied = appliedPolicies.find((entry) => entry.key === modelKey(model));
+  if (!applied) return `${model.contextWindow.toLocaleString()} (native)`;
+  const compaction = applied.compactAt ? ` · compact at ${applied.compactAt.toLocaleString()}` : "";
+  return `${applied.original.toLocaleString()} → ${applied.cap.toLocaleString()}${compaction}`;
+}
+
+/**
+ * The Model tab row that replaced the `/context-cap` command. It reports the
+ * cap rather than setting it: the policy is per model and lives in
+ * `context-cap.json`, which a single row could not express without hiding the
+ * rest of the configuration.
+ */
+export function buildContextCapSection(ctx: ExtensionCommandContext): PreferencesExtraSection {
+  return {
+    id: "contextCapPolicy",
+    label: "Context cap",
+    mergeInto: MODEL_SECTION_ID,
+    buildItems: (): SettingItem[] => [
+      {
+        id: CONTEXT_CAP_ROW_ID,
+        label: "Context cap",
+        description:
+          "Soft context window applied to this model, and the token count that triggers compaction. Configure it in .pi/extensions/context-cap.json.",
+        currentValue: contextCapSummary(ctx),
+      },
+    ],
+    handleChange: () => ({ kind: "update" }),
+  };
 }
