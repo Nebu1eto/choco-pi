@@ -131,3 +131,7 @@ are the upstream prebuilt Rust binaries for those tools (same tarball provenance
 ~10.5 MB). Only darwin-arm64 is vendored; add other platforms the same way or set
 `tools.customRustBinariesDir`. The fork's resolver
 (`src/tools/native/binary.ts`) finds them automatically when the config is empty.
+
+## Deferred runtime imports (choco-pi addition)
+
+Load-time-only changes defer provider stream processing, websocket connection setup, Code Mode host process support, exec session internals, apply-patch execution, optional image and web tool execution, settings screens, and image codecs until the corresponding provider request, tool call, command, or event handler runs. Registration keeps the same provider, tool and command names, schemas, event channels, descriptions, and `Symbol.for` keys. Public helper exports remain synchronous and load their implementation on first use.

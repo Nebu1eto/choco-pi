@@ -22,10 +22,6 @@ import {
   resolveCodexRuntimePlanForState,
 } from "../adapter/activation/runtime-plan.ts";
 import type { AdapterState } from "../adapter/activation/state.ts";
-import {
-  rewriteCodexPrewarmProviderRequest,
-  rewriteCodexProviderRequest,
-} from "../adapter/provider-request.ts";
 import { getPiCodexRuntimeShell } from "../adapter/prompt/runtime-shell.ts";
 import { isProviderContextExcludedMessage } from "../adapter/prompt/context-filter.ts";
 import {
@@ -34,9 +30,8 @@ import {
 } from "../prompt/build-system-prompt.ts";
 import {
   closeOpenAICodexWebSocketSessions,
-  prewarmOpenAICodexWebSocket,
-} from "../providers/openai-codex-custom-provider.ts";
-import { resetOpenAICodexWebSocketSessions } from "../providers/openai-codex/websocket.ts";
+  resetOpenAICodexWebSocketSessions,
+} from "../providers/openai-codex/websocket-session-cache.ts";
 import { createCodexTurnState } from "../providers/openai-codex/turn-state.ts";
 import type {
   CodexPrewarmUsage,
@@ -44,7 +39,8 @@ import type {
   ResponsesBody,
 } from "../providers/openai-codex/types.ts";
 import { createExecCommandTracker } from "../tools/exec/command-state.ts";
-import { createExecSessionManager } from "../tools/exec/session-manager.ts";
+import { createLazyExecSessionManager } from "../tools/exec/lazy-session-manager.ts";
+import type { ExecSessionManager } from "../tools/exec/session-manager.ts";
 import { getBundledToolBinaryPath } from "../tools/native/binary.ts";
 import { getActiveToolsInActiveOrder } from "../adapter/active-tools.ts";
 import { createLazyCodexDiagnostics } from "../diagnostics/lazy.ts";
@@ -61,7 +57,7 @@ export type CodexPrewarmResult =
 export interface CodexExtensionRuntime {
   state: AdapterState;
   tracker: ReturnType<typeof createExecCommandTracker>;
-  sessions: ReturnType<typeof createExecSessionManager>;
+  sessions: ExecSessionManager;
   execEnv(config?: CodexConversionConfig): NodeJS.ProcessEnv;
   codexSystemPrompt(
     basePrompt: string,
@@ -88,6 +84,16 @@ export interface CodexExtensionRuntime {
   diagnosticsSink(): CodexDiagnosticsSink | undefined;
   shutdownDiagnostics(): Promise<void>;
 }
+
+function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
+  let promise: Promise<Module> | undefined;
+  return () => (promise ??= loader());
+}
+
+const loadOpenAICodexProvider = memoizedImport(
+  () => import("../providers/openai-codex-custom-provider.ts"),
+);
+const loadProviderRequest = memoizedImport(() => import("../adapter/provider-request.ts"));
 
 const CACHE_KEEPALIVE_INTERVAL_MS = 25 * 60 * 1000;
 
@@ -117,7 +123,7 @@ export function createCodexExtensionRuntime(pi: ExtensionAPI): CodexExtensionRun
     codexTurnState: createCodexTurnState(),
   };
   const tracker = createExecCommandTracker();
-  const sessions = createExecSessionManager({
+  const sessions = createLazyExecSessionManager({
     env: { ...process.env, PI_CODEX_MODEL: state.config.openai.webSearchModel },
     bridgeBinaryPath: () =>
       getBundledToolBinaryPath("exec_bridge", {}, state.config.tools.customRustBinariesDir),
@@ -224,6 +230,10 @@ export function createCodexExtensionRuntime(pi: ExtensionAPI): CodexExtensionRun
         } as const;
       const requestModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
       try {
+        const [{ prewarmOpenAICodexWebSocket }, providerRequest] = await Promise.all([
+          loadOpenAICodexProvider(),
+          loadProviderRequest(),
+        ]);
         const transportSettlement = prewarmOpenAICodexWebSocket(
           requestModel,
           { systemPrompt: preparedSystemPrompt, messages, tools },
@@ -241,8 +251,12 @@ export function createCodexExtensionRuntime(pi: ExtensionAPI): CodexExtensionRun
             onPayload: (body) => {
               if (!isBoundaryValue(body)) return undefined;
               return rewriteFinalRequest
-                ? rewriteCodexProviderRequest(body, ctx, { ...state, config, executionMode })
-                : rewriteCodexPrewarmProviderRequest(body, ctx, {
+                ? providerRequest.rewriteCodexProviderRequest(body, ctx, {
+                    ...state,
+                    config,
+                    executionMode,
+                  })
+                : providerRequest.rewriteCodexPrewarmProviderRequest(body, ctx, {
                     ...state,
                     config,
                     executionMode,

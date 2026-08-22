@@ -43,6 +43,25 @@ already declares supported efforts per model via
 Verification: `pnpm typecheck`, `pnpm lint`, `pnpm test` (153 tests) — run
 against an upstream checkout at commit `3a66c5b` with this patch applied.
 
+## choco-pi patch: extension entry load time
+
+The six Pi extension entries run under separate uncached jiti loaders. Five
+entries now keep their registration modules small and load their existing
+runtime implementation through a memoized dynamic `.ts` import. The provider
+entry keeps only the model catalog needed to preserve synchronous provider
+registration; its config, quota store, settings, and event machinery move to
+the deferred runtime, while API clients load only when model or quota refresh
+runs. The provider publishes its validated config snapshot through
+`Symbol.for("choco-pi.provider-synthetic.config-state")`, so later entries do
+not reload the config/client graph under their separate jiti instances. The
+quotas command similarly defers its client and TUI implementation until
+invocation.
+
+This is a load-time-only change. Provider, tool, command, schema, and event
+identities are unchanged, as are activation and event-handler ordering. The
+sub-bar entry remains eager because its exported synchronous registration and
+first event-driven render path must stay immediately available.
+
 ## How this copy is used
 
 `.pi/settings.json` references it as a local Pi package (`./packages/pi-synthetic`,

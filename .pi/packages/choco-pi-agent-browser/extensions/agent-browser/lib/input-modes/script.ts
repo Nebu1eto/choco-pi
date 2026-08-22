@@ -20,8 +20,9 @@ import {
 } from "./shared.ts";
 import { validateToolArgs } from "../runtime.ts";
 import type { AgentBrowserFailureCategory, AgentBrowserNextAction, AgentBrowserResultCategory, AgentBrowserSuccessCategory } from "../results/contracts.ts";
+import { AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES } from "./schema-constants.ts";
 
-export const AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES = 64 * 1_024;
+export { AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES } from "./schema-constants.ts";
 export const AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000;
 export const AGENT_BROWSER_SCRIPT_NAMESPACE = "";
 export const AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS = 300_000;

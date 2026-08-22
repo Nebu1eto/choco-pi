@@ -1,20 +1,28 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import {
-  configLoader,
   SYNTHETIC_CONFIG_UPDATED_EVENT,
   SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
   SyntheticConfigUpdatedPayloadSchema,
-} from "../../src/config";
+} from "../../src/config-events.ts";
+import {
+  ensureSyntheticConfig,
+  getSyntheticConfigState,
+  publishSyntheticConfig,
+} from "../../src/config-state.ts";
 import {
   type QuotasResponse,
   SYNTHETIC_QUOTAS_UPDATED_EVENT,
   SyntheticQuotasUpdatedPayloadSchema,
-} from "../../src/types/quotas";
-import { formatResetTime } from "../../src/utils/quotas";
-import { type QuotaWindow, safePercent, toWindows } from "../../src/utils/quotas-severity";
-import { requestQuotas } from "../_shared/quota-events";
+} from "../../src/types/quotas.ts";
+import { formatResetTime } from "../../src/utils/quotas.ts";
+import {
+  type QuotaWindow,
+  safePercent,
+  toWindows,
+} from "../../src/utils/quotas-severity.ts";
+import { requestQuotas } from "../_shared/quota-events.ts";
 
 interface RateWindow {
   label: string;
@@ -76,7 +84,7 @@ function toUsageSnapshot(quotas: QuotasResponse): UsageSnapshot {
 export function registerSubBarIntegration(pi: ExtensionAPI): void {
   let subCoreReady = false;
   let currentProvider: string | undefined;
-  let enabled = configLoader.getConfig().subBarIntegration;
+  let enabled = getSyntheticConfigState()?.subBarIntegration ?? true;
 
   function isSynthetic(): boolean {
     return enabled && currentProvider === "synthetic";
@@ -102,6 +110,7 @@ export function registerSubBarIntegration(pi: ExtensionAPI): void {
   pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
     if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
     enabled = data.config.subBarIntegration;
+    publishSyntheticConfig(data.config);
 
     if (!enabled) return;
 
@@ -136,7 +145,7 @@ export function registerSubBarIntegration(pi: ExtensionAPI): void {
 }
 
 export default async function (pi: ExtensionAPI) {
-  await configLoader.load();
+  await ensureSyntheticConfig();
   registerSubBarIntegration(pi);
 
   pi.events.on(SYNTHETIC_EXTENSIONS_REQUEST_EVENT, () => {

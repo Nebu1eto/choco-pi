@@ -1,23 +1,17 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  configLoader,
-  SYNTHETIC_EXTENSIONS_REGISTER_EVENT,
-  SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
-} from "../../src/config";
-import { registerQuotasCommand } from "./command";
 
-export default async function (pi: ExtensionAPI) {
-  await configLoader.load();
+interface CommandQuotasRuntime {
+  default(pi: ExtensionAPI): Promise<void>;
+}
 
-  const config = configLoader.getConfig();
+let runtimePromise: Promise<CommandQuotasRuntime> | undefined;
 
-  if (config.quotasCommand) {
-    registerQuotasCommand(pi);
-  }
+function loadRuntime(): Promise<CommandQuotasRuntime> {
+  runtimePromise ??= import("./runtime.ts");
+  return runtimePromise;
+}
 
-  pi.events.on(SYNTHETIC_EXTENSIONS_REQUEST_EVENT, () => {
-    pi.events.emit(SYNTHETIC_EXTENSIONS_REGISTER_EVENT, {
-      feature: "quotasCommand",
-    });
-  });
+export default async function (pi: ExtensionAPI): Promise<void> {
+  const runtime = await loadRuntime();
+  await runtime.default(pi);
 }

@@ -59,6 +59,12 @@ The fork lets choco-pi customize the extension in-tree and load its TypeScript s
 - The `script-mode.ts` to `script-worker.ts` child-process contract was deliberately left intact; the partition that owned `script-mode.ts` did not edit `script-worker.ts`, and no breaking change to a shared export was made across partition boundaries.
 - `TARGET_AGENT_BROWSER_VERSION` and the upstream version gate still resolve through the retained `scripts/agent-browser-target.mjs` import.
 
+### Deferred extension runtime loading
+
+- Split the extension entrypoint into a lightweight registration module and a memoized runtime module. Tool names, labels, descriptions, prompt text, parameter schemas, renderers, and event registrations remain synchronous and byte-identical; the session, orchestration, process, result, and Electron graph loads on the first runtime event or `agent_browser` execution.
+- Kept schema-only limits in small constant modules so registering `agent_browser` no longer imports the script runner or Electron discovery implementation. The optional web-search tool likewise registers from a lightweight schema/metadata module and memoizes its existing implementation on first execution.
+- This is a load-time-only divergence. External CLI argv construction, result details, lifecycle handling, TypeBox imports, and the retained `.mjs` target-version edge are unchanged.
+
 ## Updating
 
 Diff a new upstream revision against the base commit, copy the same runtime subset, and reapply every divergence above. Run the target-checking specifier codemod rather than a blind replacement, then update the base revision, version, fork date, rewrite counts, and divergence log here.

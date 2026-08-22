@@ -7,21 +7,24 @@ import type {
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { Text } from "@earendil-works/pi-tui";
-import {
-  codexToolProviderEnv,
-  resolveCodexToolProvider,
-} from "../../adapter/codex-tool-provider.ts";
 import { IMAGE_GENERATION_TOOL_NAME } from "../../adapter/activation/tool-set.ts";
 import { supportsNativeImageGeneration } from "../../adapter/tool-support.ts";
-import { getBundledToolBinaryPath } from "../native/binary.ts";
 import {
   formatImagegenOutput,
   imageContentsFromImagegenOutput,
   imagegenOutputFromJson,
 } from "./output.ts";
 import { renderTextWithImages } from "../../ui/tool-rendering/media.ts";
-import { runBundledTool } from "../native/runner.ts";
 import { renderCodexToolCell } from "../../ui/tool-rendering/codex-tool-cell.ts";
+
+function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
+  let promise: Promise<Module> | undefined;
+  return () => (promise ??= loader());
+}
+
+const loadNativeBinary = memoizedImport(() => import("../native/binary.ts"));
+const loadNativeRunner = memoizedImport(() => import("../native/runner.ts"));
+const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-provider.ts"));
 
 export const IMAGE_GENERATION_UNSUPPORTED_MESSAGE =
   "imagegen requires an image-capable OpenAI Codex-compatible Responses provider";
@@ -86,6 +89,11 @@ async function executeRustImagegen(
   options: ImageGenerationToolOptions,
 ): Promise<ImagegenDetails> {
   if (signal?.aborted) throw new Error("imagegen aborted");
+  const [
+    { getBundledToolBinaryPath },
+    { runBundledTool },
+    { codexToolProviderEnv, resolveCodexToolProvider },
+  ] = await Promise.all([loadNativeBinary(), loadNativeRunner(), loadToolProvider()]);
   const binary = getBundledToolBinaryPath("imagegen", {}, options.customRustBinariesDir);
   if (!binary)
     throw new Error(`imagegen binary is not bundled for ${process.platform}-${process.arch}`);

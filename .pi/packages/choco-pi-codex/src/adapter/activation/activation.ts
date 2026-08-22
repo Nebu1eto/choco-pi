@@ -8,6 +8,9 @@ import {
 } from "./runtime-plan.ts";
 import { DEFAULT_TOOL_NAMES, STATUS_KEY, buildExtraToolsOnlyStatusText } from "./tool-set.ts";
 import { renderCodexStatus } from "../../ui/status.ts";
+import { mergeAdapterTools, restoreTools, stripAdapterTools } from "./tool-list.ts";
+
+export { mergeAdapterTools, restoreTools, stripAdapterTools } from "./tool-list.ts";
 
 export function syncAdapter(
   pi: ExtensionAPI,
@@ -85,36 +88,6 @@ function disableAdapter(
 
 function mergeToolNames(...groups: string[][]): string[] {
   return [...new Set(groups.flat())];
-}
-
-export function mergeAdapterTools(
-  activeTools: string[],
-  adapterTools: string[],
-  adapterOwnedTools: string[] = adapterTools,
-): string[] {
-  const owned = new Set([...adapterTools, ...adapterOwnedTools]);
-  const preserved = activeTools.filter(
-    (name) => !DEFAULT_TOOL_NAMES.includes(name) && !owned.has(name),
-  );
-  return [...adapterTools, ...preserved];
-}
-
-export function restoreTools(
-  previousTools: string[],
-  activeTools: string[],
-  adapterOwnedTools: string[] = ALL_CODEX_ADAPTER_TOOL_NAMES,
-): string[] {
-  const restored = stripAdapterTools(previousTools, adapterOwnedTools);
-  for (const name of activeTools)
-    if (!adapterOwnedTools.includes(name) && !restored.includes(name)) restored.push(name);
-  return restored;
-}
-
-export function stripAdapterTools(
-  toolNames: string[],
-  adapterOwnedTools: string[] = ALL_CODEX_ADAPTER_TOOL_NAMES,
-): string[] {
-  return toolNames.filter((name) => !adapterOwnedTools.includes(name));
 }
 
 function sameToolSet(left: string[], right: string[]): boolean {
