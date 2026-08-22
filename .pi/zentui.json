@@ -55,9 +55,9 @@
       "enabled": true,
       "turnSummary": true,
       "spinner": "braille",
-      "spinnerIntervalMs": 50,
-      "animateSpinnerColor": true,
-      "textIntervalMs": 50,
+      "spinnerIntervalMs": 40,
+      "animateSpinnerColor": false,
+      "textIntervalMs": 40,
       "textAnimation": "classic",
       "colorSource": "theme",
       "messages": {
@@ -84,7 +84,7 @@
       "segments": {
         "tool": false,
         "elapsed": true,
-        "thought": false,
+        "thought": true,
         "tokens": true
       },
       "toolLabels": {}
