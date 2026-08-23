@@ -76,12 +76,20 @@ export function isExpandableTab(id: StatusTabId): boolean {
   return EXPANDABLE_TABS.has(id);
 }
 
-/**
- * The API this module registered with, kept so the Context tab can read the
- * tool inventory. Every extension receives the same runtime behind its own
- * `pi` object, so the one handed to `statusCommands` answers for the session.
- */
-let toolInventory: Pick<ExtensionAPI, "getAllTools" | "getActiveTools"> | undefined;
+type ToolInventory = Pick<ExtensionAPI, "getAllTools" | "getActiveTools">;
+
+const TOOL_INVENTORY_KEY: unique symbol = Symbol.for("choco-pi.status.tool-inventory");
+
+function getToolInventory(): ToolInventory | undefined {
+  return reinterpretHostValue<{ [TOOL_INVENTORY_KEY]?: ToolInventory }>(globalThis)[
+    TOOL_INVENTORY_KEY
+  ];
+}
+
+function setToolInventory(inventory: ToolInventory): void {
+  reinterpretHostValue<{ [TOOL_INVENTORY_KEY]?: ToolInventory }>(globalThis)[TOOL_INVENTORY_KEY] =
+    inventory;
+}
 
 export type TabController = {
   /** Switch to a tab in one of its two views, repaint the last body, and re-query it. */
@@ -205,8 +213,9 @@ export function statusBody(
 
 /** The Context tab body, or a notice when no extension API was captured. */
 function contextBody(ctx: ExtensionCommandContext, expanded: boolean, styled: boolean): string {
-  if (!toolInventory) return "The context report is unavailable in this session.";
-  const body = renderContext(toolInventory, ctx, expanded, styled);
+  const inventory = getToolInventory();
+  if (!inventory) return "The context report is unavailable in this session.";
+  const body = renderContext(inventory, ctx, expanded, styled);
   if (!styled) return body;
   const heading = ctx.ui.theme.bold(ctx.ui.theme.fg("accent", "Context Usage"));
   return body.replace(/^Context Usage/, () => heading);
@@ -578,7 +587,7 @@ async function showTab(
 }
 
 export default function statusCommands(pi: ExtensionAPI): void {
-  toolInventory = pi;
+  setToolInventory(pi);
   pi.on("session_shutdown", closeOpenDialogs);
   pi.registerCommand("status", {
     description:
