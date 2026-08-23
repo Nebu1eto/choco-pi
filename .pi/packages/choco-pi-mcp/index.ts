@@ -35,6 +35,7 @@ import {
   createMcpDirectToolCallRenderer,
   createMcpProxyToolCallRenderer,
   createMcpToolResultRenderer,
+  MCP_TOOL_RENDER_SHELL,
   resolveMcpToolRenderOptions,
 } from "./tool-result-renderer.ts";
 import { formatMcpDirectToolHeadline } from "./tool-call-headline.ts";
@@ -203,7 +204,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const registeredDirectTools = new Map<string, string>();
   const fallbackDeactivatedTools = new Set<string>();
   const toolRenderOptions = resolveMcpToolRenderOptions(earlyConfig.settings);
-  const toolRenderShell = toolRenderOptions.resultRendering === "compact" ? "self" : "default";
+  const toolRenderShell = MCP_TOOL_RENDER_SHELL;
   const renderMcpToolResult = createMcpToolResultRenderer(toolRenderOptions);
   let proxyToolRegistered = false;
   let proxyToolDescription: string | null = null;
