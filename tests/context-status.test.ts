@@ -157,3 +157,23 @@ test("base system prompt is not reduced by separately listed context files", () 
   assert.match(rendered, /System prompt: 4 tokens/);
   assert.match(rendered, /Context files: 4 tokens/);
 });
+
+test("a reloaded status module refreshes the inventory used by an older handler", async () => {
+  const moduleUrl = new URL("../.pi/extensions/status-commands.ts", import.meta.url).href;
+  const older = await import(`${moduleUrl}?context-before-reload`);
+  const reloaded = await import(`${moduleUrl}?context-after-reload`);
+  // SAFETY: the fixture supplies every extension API member statusCommands registers against.
+  reloaded.default({
+    on: () => {},
+    registerCommand: () => {},
+    getThinkingLevel: () => "medium",
+    getAllTools: () => TOOLS,
+    getActiveTools: () => ["read"],
+  } as never);
+
+  // SAFETY: the fixture supplies every host member exercised by the Context tab.
+  const body = await older.tabBody(contextTabContext() as never, "medium", "context", false);
+
+  assert.match(body, /^Context Usage\n/);
+  assert.doesNotMatch(body, /unavailable in this session/);
+});
