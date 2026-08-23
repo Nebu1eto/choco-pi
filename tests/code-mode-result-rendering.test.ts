@@ -83,7 +83,14 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
         {
           id: "trace-2",
           name: "apply_patch",
-          input: "*** Begin Patch",
+          input: [
+            "*** Begin Patch",
+            "*** Update File: src/example.ts",
+            "@@",
+            "-old value",
+            "+new value",
+            "*** End Patch",
+          ].join("\n"),
           status: "done" as const,
         },
       ],
@@ -101,6 +108,16 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
       renderCall: () => new Text("Execute command: npm run test -- --watch=false", 0, 0),
       renderResult: () => new Text("nested command output", 0, 0),
     },
+    {
+      name: "apply_patch",
+      label: "apply_patch",
+      usage: "apply_patch(patch)",
+      description: "Apply a patch",
+      deferLoading: false,
+      kind: "freeform" as const,
+      invoke: async () => undefined,
+      renderCall: () => new Text("Apply patch: src/example.ts\n-old value\n+new value", 0, 0),
+    },
   ];
   const collapsed = renderTrackedCodeModeResult(
     result,
@@ -114,9 +131,10 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
     .join("\n");
 
   assert.match(collapsed, /3\. • Ran Exec command · npm run test/);
-  assert.match(collapsed, /4\. • Ran Apply patch/);
+  assert.match(collapsed, /4\. • Ran Apply patch · src\/example\.ts/);
   assert.doesNotMatch(collapsed, /--watch=false/);
   assert.doesNotMatch(collapsed, /nested command output/);
+  assert.doesNotMatch(collapsed, /new value/);
   assert.doesNotMatch(collapsed, /final output/);
   assert.ok(collapsed.indexOf("3. •") < collapsed.indexOf("4. •"));
 
@@ -133,6 +151,8 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
 
   assert.match(expanded, /npm run test -- --watch=false/);
   assert.match(expanded, /nested command output/);
+  assert.match(expanded, /src\/example\.ts/);
+  assert.match(expanded, /\+new value/);
   assert.match(expanded, /final output/);
 });
 
