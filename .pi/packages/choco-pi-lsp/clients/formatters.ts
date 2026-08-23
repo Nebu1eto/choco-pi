@@ -19,6 +19,11 @@ import { TERRAGRUNT_FILENAMES } from "./file-kinds.ts";
 import { detectIndentation, hasDetectableIndentation } from "./dispatch/indent-detect.ts";
 import { logLatency } from "./latency-logger.ts";
 import {
+  isIgnoredFileExit,
+  OXFMT_IGNORED_FILE_EXIT,
+  type IgnoredFileExit,
+} from "./formatter-exit.ts";
+import {
   type AvailabilityLatch,
   classifyProbeFailure,
   createAvailabilityLatch,
@@ -138,6 +143,12 @@ export interface FormatterInfo {
    * read as success (the #1336 bug surviving behind the lenient label).
    */
   lenientStatuses?: number[];
+  /**
+   * Exact nonzero output that means the existing target was intentionally
+   * excluded rather than rejected. Status and diagnostic must both match so a
+   * real formatter error at the same status remains a failure.
+   */
+  ignoredFileExit?: IgnoredFileExit;
 }
 
 export interface FormatterResult {
@@ -799,6 +810,7 @@ export const oxfmtFormatter: FormatterInfo = {
   // mode, so there is no documented nonzero-on-reformat. Absent a documented
   // benign-nonzero mode, it stays strict — the safe direction, since the failure
   // mode of guessing wrong the other way is a silent no-op (#1336).
+  ignoredFileExit: OXFMT_IGNORED_FILE_EXIT,
   async resolveCommand(filePath, cwd) {
     if (hasVitePlusConfig(cwd)) {
       const localVp = await findInNodeModules("vp", cwd);
@@ -1823,6 +1835,9 @@ export async function formatFile(
       formatter.lenientExitCode !== undefined &&
       result.status !== null &&
       (formatter.lenientStatuses ?? []).includes(result.status);
+    if (isIgnoredFileExit(formatter.ignoredFileExit, result)) {
+      return { success: true, changed: false };
+    }
     if (result.error || (result.status !== 0 && !lenientOk)) {
       return {
         success: false,
