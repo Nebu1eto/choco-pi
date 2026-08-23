@@ -367,7 +367,10 @@ test("summary generation has a hard deadline and preserves caller cancellation",
   assert.equal(SUMMARY_GENERATION_DEADLINE_MS, 30_000);
   assert.match(summarySrc, /Promise\.race\(contenders\)/);
   assert.match(summarySrc, /deadlineController\.abort\(\)/);
-  assert.match(summarySrc, /void operation\.then\(\(\) => undefined, \(\) => undefined\)/);
+  assert.match(
+    summarySrc,
+    /void operation\.then\(\s*\(\) => undefined,\s*\(\) => undefined,?\s*\)/,
+  );
 });
 
 async function summaryGenerationDeadline(config) {
