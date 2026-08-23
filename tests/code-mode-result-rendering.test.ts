@@ -60,3 +60,42 @@ test("concise results use the native tool output hierarchy", () => {
   assert.match(rendered, /<toolOutput><bold>2 output lines<\/bold><\/toolOutput>/);
   assert.match(rendered, /<muted> · .*to expand<\/muted>/);
 });
+
+test("nested calls show their execution order and command or tool identity", () => {
+  const rendered = renderTrackedCodeModeResult(
+    {
+      content: [{ type: "text", text: "Script completed" }],
+      details: {
+        status: "result",
+        droppedTraceCount: 2,
+        traces: [
+          {
+            id: "trace-1",
+            name: "exec_command",
+            input: { cmd: "printf 'first command'" },
+            status: "done",
+          },
+          {
+            id: "trace-2",
+            name: "apply_patch",
+            input: "*** Begin Patch",
+            status: "done",
+          },
+        ],
+      },
+    },
+    { expanded: false, isPartial: false },
+    PLAIN_THEME,
+    { toolCallId: "ordered-call" },
+    createCodeModeRenderTracker(),
+    [],
+    false,
+  )
+    .render(200)
+    .join("\n");
+
+  assert.match(rendered, /3\. • Ran exec_command/);
+  assert.match(rendered, /printf 'first command'/);
+  assert.match(rendered, /4\. • Ran apply_patch/);
+  assert.ok(rendered.indexOf("3. •") < rendered.indexOf("4. •"));
+});
