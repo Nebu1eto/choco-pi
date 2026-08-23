@@ -189,6 +189,29 @@ test("collapsed MCP results summarize JSON and expansion preserves full output",
   assert.match(expanded, /"issues"/);
 });
 
+test("gateway metadata results never repeat raw prefixed names", () => {
+  const result = {
+    content: [{ type: "text" as const, text: "mcp__linear_list_issues\nInput schema: {...}" }],
+    details: {
+      mode: "describe",
+      server: "linear",
+      tool: { name: "mcp__linear_list_issues", description: "List issues", inputSchema: {} },
+    },
+  };
+  const rendered = renderMcpToolResult(
+    result,
+    { expanded: false, isPartial: false },
+    SEMANTIC_THEME,
+    { isError: false, state: { compactTitle: "MCP: Describe · linear list issues" } },
+    COMPACT_OPTIONS,
+  )
+    .render(220)
+    .join("\n");
+
+  assert.match(rendered, /3 fields/);
+  assert.doesNotMatch(rendered, /mcp__|[{}]/);
+});
+
 test("MCP input summaries redact sensitive values", () => {
   assert.equal(
     formatMcpInputPreview({ query: "roadmap", api_key: "secret-value", ids: [1, 2, 3] }),

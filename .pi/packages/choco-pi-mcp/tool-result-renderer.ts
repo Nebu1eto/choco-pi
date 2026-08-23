@@ -316,6 +316,51 @@ function jsonResultPreview(
   }
 }
 
+function gatewayResultPreview(details: McpToolResultDetails): string | undefined {
+  const mode = isStringValue(details.mode) ? details.mode : undefined;
+  if (mode === "describe") {
+    const tool = details.tool;
+    if (!isObjectValue(tool) || Array.isArray(tool)) return "Tool metadata";
+    const name = isStringValue(tool["name"])
+      ? formatMcpDisplayName(tool["name"].replace(/^mcp__/, ""))
+      : "Tool metadata";
+    return `${name} · ${Object.keys(tool).length} fields`;
+  }
+  if (mode === "search") {
+    const count = isNumberValue(details.count)
+      ? details.count
+      : Array.isArray(details.matches)
+        ? details.matches.length
+        : 0;
+    return `${count} matching tool${count === 1 ? "" : "s"}${details.hasMore === true ? " · more available" : ""}`;
+  }
+  if (mode === "list") {
+    const count = isNumberValue(details.count)
+      ? details.count
+      : Array.isArray(details.tools)
+        ? details.tools.length
+        : 0;
+    return `${count} tool${count === 1 ? "" : "s"}`;
+  }
+  if (mode === "status") {
+    const connected = isNumberValue(details.connectedCount) ? details.connectedCount : 0;
+    const servers = Array.isArray(details.servers) ? details.servers.length : 0;
+    const tools = isNumberValue(details.totalTools) ? details.totalTools : 0;
+    return `${connected}/${servers} servers · ${tools} tools`;
+  }
+  if (mode === "instructions" && isNumberValue(details.length)) {
+    return `${details.length} characters`;
+  }
+  if (mode === "connect" && isStringValue(details.server)) {
+    const count = isNumberValue(details.toolCount) ? ` · ${details.toolCount} tools` : "";
+    return `${formatMcpDisplayName(details.server, false)} connected${count}`;
+  }
+  if (mode === "script" && Array.isArray(details.calls)) {
+    return `${details.calls.length} MCP call${details.calls.length === 1 ? "" : "s"}`;
+  }
+  return undefined;
+}
+
 export function formatMcpProxyToolCallLines(
   args: McpProxyToolCallInput,
   maxInputChars = DEFAULT_MAX_CALL_INPUT_CHARS,
@@ -588,13 +633,19 @@ export function renderMcpToolResult(
   const hasErrorDetails = Boolean(result.details.error);
   const expanded = options.expanded || context?.isError === true || hasErrorDetails;
   if (!expanded && renderOptions.resultRendering === "compact") {
-    const display = formatMcpToolResultLines(result, false, renderOptions.collapsedResultLines);
+    const summary = gatewayResultPreview(result.details);
+    const display = summary
+      ? { lines: [summary], truncated: true }
+      : formatMcpToolResultLines(result, false, renderOptions.collapsedResultLines);
     const title = context?.state?.compactTitle ?? formatMcpToolResultIdentity(result.details) ?? "";
     const inputPreview = context?.state?.compactInputPreview ?? "";
     return new CompactMcpToolResult(title, inputPreview, display, activeTheme);
   }
 
-  const display = formatMcpToolResultLines(result, expanded, renderOptions.collapsedResultLines);
+  const summary = expanded ? undefined : gatewayResultPreview(result.details);
+  const display = summary
+    ? { lines: [summary], truncated: true }
+    : formatMcpToolResultLines(result, expanded, renderOptions.collapsedResultLines);
   const identity = formatMcpToolResultIdentity(result.details);
   const output = [
     ...(identity ? [activeTheme.fg("muted", identity)] : []),
