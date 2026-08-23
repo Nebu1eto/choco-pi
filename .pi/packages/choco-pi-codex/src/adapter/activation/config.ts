@@ -116,7 +116,7 @@ export interface CodexConversionConfig {
 }
 
 export const DEFAULT_CODEX_CONVERSION_CONFIG: CodexConversionConfig = {
-  executionMode: "normal",
+  executionMode: "code",
   voiceFeaturesOnly: false,
   prompt: { heavySystemPromptOverwrite: false },
   scope: { allProviders: "on", additionalProviders: [] },
