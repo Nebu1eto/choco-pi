@@ -1,7 +1,19 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { isObjectValue, isStringValue, type McpObject } from "./protocol-values.ts";
-import { formatMcpCallCompactTitle, styleMcpCallLines } from "./tool-call-headline.ts";
+import {
+  isBooleanValue,
+  isNumberValue,
+  isObjectValue,
+  isStringValue,
+  parseMcpValue,
+  type McpObject,
+  type McpValue,
+} from "./protocol-values.ts";
+import {
+  formatMcpCallCompactTitle,
+  formatMcpDisplayName,
+  styleMcpCallLines,
+} from "./tool-call-headline.ts";
 
 type McpToolResultDetails = McpObject & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
@@ -19,6 +31,7 @@ export interface McpProxyToolCallInput {
   args?: string | McpObject;
   connect?: string;
   describe?: string;
+  instructions?: string;
   search?: string;
   regex?: boolean;
   includeSchemas?: boolean;
@@ -126,17 +139,21 @@ class CompactMcpToolResult implements Component {
   private renderPrefix(width: number): string {
     if (!this.title) return "";
     const arrow = " → ";
-    if (!this.inputPreview) return `${this.theme.fg("toolTitle", this.title)}${arrow}`;
+    const title = this.theme.fg(
+      "toolTitle",
+      this.theme.bold ? this.theme.bold(this.title) : this.title,
+    );
+    if (!this.inputPreview) return `${this.theme.fg("dim", "•")} ${title}${arrow}`;
 
     const maxPrefixWidth = Math.max(12, Math.floor(width * 0.55));
     const titleWidth = visibleWidth(this.title);
     const inputWidth = Math.max(0, maxPrefixWidth - titleWidth - 1);
     if (inputWidth <= 3) {
-      return `${this.theme.fg("toolTitle", truncateToWidth(this.title, maxPrefixWidth, "…"))}${arrow}`;
+      return `${this.theme.fg("dim", "•")} ${this.theme.fg("toolTitle", truncateToWidth(this.title, maxPrefixWidth, "…"))}${arrow}`;
     }
 
     const input = truncateToWidth(this.inputPreview, inputWidth, "…");
-    return `${this.theme.fg("toolTitle", this.title)} ${this.theme.fg("muted", input)}${arrow}`;
+    return `${this.theme.fg("dim", "•")} ${title} ${this.theme.fg("muted", input)}${arrow}`;
   }
 }
 
@@ -212,17 +229,33 @@ function truncateText(value: string, maxChars: number): string {
   return `${value.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
-function formatJsonish<BoundaryValue>(value: BoundaryValue, maxChars: number): string {
+const SENSITIVE_INPUT_KEY =
+  /^(?:access[_-]?token|api[_-]?key|authorization|client[_-]?secret|cookie|credential|id[_-]?token|password|private[_-]?key|refresh[_-]?token|secret|session[_-]?id|token)$/i;
+
+function redactMcpInput(value: McpValue, key?: string, depth = 0): McpValue {
+  if (key && SENSITIVE_INPUT_KEY.test(key)) return "[redacted]";
+  if (depth >= 8) return "[nested value]";
+  if (Array.isArray(value)) return value.map((item) => redactMcpInput(item, undefined, depth + 1));
+  if (!isObjectValue(value)) return value;
+  const output: McpObject = {};
+  for (const [entryKey, item] of Object.entries(value)) {
+    output[entryKey] = redactMcpInput(item, entryKey, depth + 1);
+  }
+  return output;
+}
+
+function formatJsonish(value: McpValue, maxChars: number): string {
   if (isStringValue(value)) {
     try {
-      return truncateText(JSON.stringify(JSON.parse(value), null, 2), maxChars);
+      const parsed = parseMcpValue(JSON.parse(value));
+      return truncateText(JSON.stringify(redactMcpInput(parsed), null, 2), maxChars);
     } catch {
       return truncateText(value, maxChars);
     }
   }
 
   try {
-    return truncateText(JSON.stringify(value, null, 2), maxChars);
+    return truncateText(JSON.stringify(redactMcpInput(value), null, 2), maxChars);
   } catch {
     return truncateText(String(value), maxChars);
   }
@@ -232,6 +265,55 @@ function hasUsefulObjectContent<BoundaryValue>(value: BoundaryValue): boolean {
   return (
     isObjectValue(value) && value !== null && !Array.isArray(value) && Object.keys(value).length > 0
   );
+}
+
+function semanticValue(value: McpValue, key?: string): string {
+  if (key && SENSITIVE_INPUT_KEY.test(key)) return "[redacted]";
+  if (isStringValue(value)) return truncateText(value.replace(/\s+/g, " ").trim(), 64);
+  if (isNumberValue(value) || isBooleanValue(value) || value === null) return String(value);
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}`;
+  if (isObjectValue(value)) {
+    const count = Object.keys(value).length;
+    return `${count} field${count === 1 ? "" : "s"}`;
+  }
+  return "";
+}
+
+function semanticObjectPreview(value: McpObject, maxChars: number): string {
+  const entries = Object.entries(value)
+    .slice(0, 4)
+    .map(([key, item]) => `${formatMcpDisplayName(key, false)}=${semanticValue(item, key)}`);
+  const omitted = Math.max(0, Object.keys(value).length - entries.length);
+  if (omitted > 0) entries.push(`+${omitted} more`);
+  return truncateText(entries.join(" · "), maxChars);
+}
+
+export function formatMcpInputPreview(
+  value: McpValue,
+  maxChars = DEFAULT_MAX_COMPACT_INPUT_CHARS,
+): string {
+  let parsed = value;
+  if (isStringValue(value)) {
+    try {
+      parsed = parseMcpValue(JSON.parse(value));
+    } catch {
+      return truncateText(value.replace(/\s+/g, " ").trim(), maxChars);
+    }
+  }
+  if (Array.isArray(parsed)) return truncateText(`${parsed.length} items`, maxChars);
+  if (isObjectValue(parsed)) return semanticObjectPreview(parsed, maxChars);
+  return truncateText(semanticValue(parsed), maxChars);
+}
+
+function jsonResultPreview(
+  result: Pick<AgentToolResult<McpToolResultDetails>, "content">,
+): string | undefined {
+  if (result.content.length !== 1 || result.content[0]?.type !== "text") return undefined;
+  try {
+    return formatMcpInputPreview(parseMcpValue(JSON.parse(result.content[0].text)));
+  } catch {
+    return undefined;
+  }
 }
 
 export function formatMcpProxyToolCallLines(
@@ -249,6 +331,7 @@ export function formatMcpProxyToolCallLines(
 
   if (args.connect) return [`mcp connect ${args.connect}`];
   if (args.describe) return [`mcp describe ${args.describe}`];
+  if (args.instructions) return [`mcp instructions ${args.instructions}`];
 
   if (args.search) {
     let line = `mcp search ${args.search}`;
@@ -258,8 +341,9 @@ export function formatMcpProxyToolCallLines(
     return [line];
   }
 
+  if (args.action)
+    return [args.server ? `mcp ${args.action} ${args.server}` : `mcp ${args.action}`];
   if (args.server) return [`mcp list ${args.server}`];
-  if (args.action) return [`mcp ${args.action}`];
 
   return ["mcp status"];
 }
@@ -323,13 +407,18 @@ function renderToolCall(
   theme: RenderTheme | undefined,
   context: McpToolRenderContext | undefined,
   options: McpToolRenderOptions,
+  compactInputPreview = formatCompactInputPreview(lines),
 ) {
   if (context?.state) {
     context.state.compactTitle = formatMcpCallCompactTitle(lines[0] ?? "mcp");
-    context.state.compactInputPreview = formatCompactInputPreview(lines);
+    context.state.compactInputPreview = compactInputPreview;
   }
   if (shouldUseCompactFinalRender(options, context)) return new EmptyComponent();
-  return renderToolCallLines(lines, theme);
+  const visibleLines =
+    context?.expanded === true || !compactInputPreview
+      ? lines
+      : [lines[0] ?? "mcp", compactInputPreview];
+  return renderToolCallLines(visibleLines, theme);
 }
 
 export function renderMcpProxyToolCall(
@@ -342,12 +431,19 @@ export function renderMcpProxyToolCall(
     theme,
     context,
     resolveMcpToolRenderOptions(),
+    args.args === undefined ? "" : formatMcpInputPreview(args.args),
   );
 }
 
 export function createMcpProxyToolCallRenderer(options: McpToolRenderOptions) {
   return (args: McpProxyToolCallInput, theme?: RenderTheme, context?: McpToolRenderContext) => {
-    return renderToolCall(formatMcpProxyToolCallLines(args), theme, context, options);
+    return renderToolCall(
+      formatMcpProxyToolCallLines(args),
+      theme,
+      context,
+      options,
+      args.args === undefined ? "" : formatMcpInputPreview(args.args),
+    );
   };
 }
 
@@ -356,7 +452,13 @@ export function createMcpDirectToolCallRenderer(
   options = resolveMcpToolRenderOptions(),
 ) {
   return (args: McpObject, theme?: RenderTheme, context?: McpToolRenderContext) => {
-    return renderToolCall(formatMcpDirectToolCallLines(displayName, args), theme, context, options);
+    return renderToolCall(
+      formatMcpDirectToolCallLines(displayName, args),
+      theme,
+      context,
+      options,
+      formatMcpInputPreview(args),
+    );
   };
 }
 
@@ -443,11 +545,14 @@ export function formatMcpToolResultIdentity(
       : null;
   if (!server) return null;
 
-  if (isStringValue(details.tool)) return `MCP ${server}/${details.tool}`;
+  if (isStringValue(details.tool))
+    return `MCP: ${formatMcpDisplayName(server, false)} · ${formatMcpDisplayName(details.tool)}`;
 
-  if (isStringValue(details.resourceUri)) return `MCP ${server} resource ${details.resourceUri}`;
+  if (isStringValue(details.resourceUri))
+    return `MCP: ${formatMcpDisplayName(server, false)} · Resource ${details.resourceUri}`;
 
-  if (isStringValue(details.requestedTool)) return `MCP ${server}/${details.requestedTool}`;
+  if (isStringValue(details.requestedTool))
+    return `MCP: ${formatMcpDisplayName(server, false)} · ${formatMcpDisplayName(details.requestedTool)}`;
   return null;
 }
 
@@ -458,6 +563,8 @@ export function formatMcpToolResultLines(
   maxCollapsedChars = DEFAULT_MAX_COLLAPSED_CHARS,
 ): McpToolResultDisplay {
   if (!expanded) {
+    const semantic = jsonResultPreview(result);
+    if (semantic) return { lines: [semantic], truncated: true };
     return collectCollapsedResultLines(result.content, maxCollapsedLines, maxCollapsedChars);
   }
 

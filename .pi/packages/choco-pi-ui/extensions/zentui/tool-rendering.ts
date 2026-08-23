@@ -95,6 +95,17 @@ export function summarizeToolInput(name: string, value: BoundaryValue): string {
         compact(stringField(args, "query") ?? "", 100),
         numberField(args, "limit") ? `limit ${numberField(args, "limit")}` : undefined,
       ]);
+    case "mcpScript": {
+      const code = stringField(args, "code") ?? "";
+      const calls = [...code.matchAll(/\btools\.([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g)].map((match) =>
+        readableKey((match[1] ?? "MCP tool").replace(/^mcp__/, "")),
+      );
+      return join([
+        `${calls.length} MCP call${calls.length === 1 ? "" : "s"}`,
+        calls.slice(0, 3).join(" · "),
+        numberField(args, "timeoutMs") ? `${numberField(args, "timeoutMs")}ms` : undefined,
+      ]);
+    }
     case "get_subagent_result":
       return join([
         idSummary(args, "agent_id", "Agent"),
