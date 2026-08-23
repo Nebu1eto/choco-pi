@@ -12,19 +12,12 @@ export function renderExecCall(
   theme: CodeModeRenderTheme,
   context: CodeModeRenderContext | undefined,
   tracker: CodeModeRenderTracker,
-  richRendering = true,
 ): Text {
   tracker.register(context?.toolCallId, context?.invalidate);
   const code = isStringValue(args.code) ? args.code : "";
-  if (!richRendering) {
-    if (!context?.executionStarted || !context.isPartial) return new Text("", 0, 0);
-    const names = customToolNames(code);
-    const suffix = names.length > 0 ? ` · ${names.join(" · ")}` : "";
-    return new Text(`${theme.fg("dim", "•")} ${theme.bold(`Running code${suffix}`)}`, 0, 0);
-  }
   const status = tracker.status(context?.toolCallId);
   const verb = status === "running" ? "Running" : status === "yielded" ? "Started" : "Ran";
-  let text = `${theme.fg("dim", "•")} ${theme.bold(`${verb} code`)}`;
+  let text = `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} code`))}`;
   if (!context?.expanded && code.trim()) text += `\n${previewCode(code, theme)}`;
   const names = customToolNames(code);
   if (names.length > 0)
@@ -39,10 +32,8 @@ export function renderWaitCall(
   theme: CodeModeRenderTheme,
   context: CodeModeRenderContext | undefined,
   tracker: CodeModeRenderTracker,
-  richRendering = true,
 ): Text {
   tracker.register(context?.toolCallId, context?.invalidate);
-  if (!richRendering) return new Text("", 0, 0);
   const done = tracker.status(context?.toolCallId) !== "running";
   const terminate = args.terminate === true;
   const title = terminate
@@ -53,7 +44,11 @@ export function renderWaitCall(
       ? "Waited for code cell"
       : "Waiting for code cell";
   const cell = isStringValue(args.cell_id) ? ` #${args.cell_id}` : "";
-  return new Text(`${theme.fg("dim", "•")} ${theme.bold(title)}${theme.fg("muted", cell)}`, 0, 0);
+  return new Text(
+    `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(title))}${theme.fg("muted", cell)}`,
+    0,
+    0,
+  );
 }
 
 function customToolNames(code: string): string[] {

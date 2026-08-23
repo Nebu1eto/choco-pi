@@ -123,7 +123,7 @@ function renderGenericTraceCall(
   expanded: boolean,
 ): Text {
   const verb = trace.status === "running" ? "Running" : trace.status === "error" ? "Failed" : "Ran";
-  let text = `${theme.fg("dim", "•")} ${theme.bold(`${verb} ${trace.name}`)}`;
+  let text = `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} ${trace.name}`))}`;
   if (expanded) {
     const input = isStringValue(trace.input) ? trace.input : safeRenderString(trace.input);
     if (input) text += `\n${theme.fg("dim", input)}`;
@@ -146,7 +146,7 @@ function renderGenericTraceResult(
     (item): item is typeof item & { data: string; mimeType: string } =>
       item.type === "image" && isStringValue(item.data) && isStringValue(item.mimeType),
   );
-  const renderedText = theme.fg("dim", text);
+  const renderedText = theme.fg("toolOutput", text);
   return renderTextAndImages(full ? renderedText : previewText(renderedText, theme), images, theme);
 }
 
