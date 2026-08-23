@@ -1,5 +1,6 @@
 import type { BoundaryValue } from "../boundary.ts";
 import { isObjectValue, isStringValue } from "../boundary.ts";
+import { shellSplit } from "../../shell/tokenize.ts";
 import { type Component, Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { previewText, renderTextAndImages } from "./render-content.ts";
 import { codeModeToolDisplayName } from "./tool-identity.ts";
@@ -118,11 +119,58 @@ function renderCollapsedTraceCall(
 ): Text {
   const verb = trace.status === "running" ? "Running" : trace.status === "error" ? "Failed" : "Ran";
   const label = codeModeToolDisplayName(trace.name, tool?.label);
+  const command = shortExecCommandName(trace);
+  const detail = command ? theme.fg("muted", ` · ${command}`) : "";
   return new Text(
-    `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} ${label}`))}`,
+    `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} ${label}`))}${detail}`,
     0,
     0,
   );
+}
+
+const SUBCOMMAND_TOOLS = new Set([
+  "bun",
+  "cargo",
+  "docker",
+  "gh",
+  "git",
+  "go",
+  "kubectl",
+  "npm",
+  "npx",
+  "pnpm",
+  "terraform",
+  "yarn",
+]);
+
+function shortExecCommandName(trace: RuntimeToolTrace): string | undefined {
+  if (trace.name !== "exec_command" || !isObjectValue(trace.input)) return undefined;
+  const command = trace.input["cmd"];
+  if (!isStringValue(command)) return undefined;
+  const tokens = shellSplit(command);
+  const executable = safeCommandToken(tokens[0]);
+  if (!executable) return undefined;
+  if (!SUBCOMMAND_TOOLS.has(executable)) return executable;
+  const subcommandIndex = tokens.findIndex((token, index) => index > 0 && !token.startsWith("-"));
+  const subcommand = safeCommandToken(tokens[subcommandIndex]);
+  if (!subcommand) return executable;
+  const parts = [executable, subcommand];
+  if (
+    (executable === "npm" ||
+      executable === "pnpm" ||
+      executable === "yarn" ||
+      executable === "bun") &&
+    subcommand === "run"
+  ) {
+    const script = safeCommandToken(tokens[subcommandIndex + 1]);
+    if (script) parts.push(script);
+  }
+  return parts.join(" ");
+}
+
+function safeCommandToken(token: string | undefined): string | undefined {
+  const name = token?.split(/[\\/]/).at(-1);
+  return name && /^[A-Za-z0-9._+-]+$/.test(name) ? name : undefined;
 }
 
 function orderedTraceCall(
