@@ -5,6 +5,8 @@ import { expandHint } from "./render-content.ts";
 import type { CodeModeRenderTracker } from "./render-tracker.ts";
 import type { CodeModeRenderContext, CodeModeRenderTheme } from "./types.ts";
 
+const BACKGROUND_SAFE_RESET = "\x1b[22;23;24;25;27;28;29;39m";
+
 export function renderExecCall(
   args: { code?: unknown },
   theme: CodeModeRenderTheme,
@@ -68,7 +70,11 @@ function customToolNames(code: string): string[] {
 
 function previewCode(code: string, theme: CodeModeRenderTheme): string {
   const highlighted = highlightCode(code.trim(), "javascript");
-  const lines = highlighted.slice(0, 3).map((line) => truncateToWidth(`  ${line}`, 100, "..."));
+  const lines = highlighted
+    .slice(0, 3)
+    .map((line) =>
+      truncateToWidth(`  ${line}`, 100, "...").replaceAll("\x1b[0m", BACKGROUND_SAFE_RESET),
+    );
   const skippedCount = highlighted.length - lines.length;
   if (skippedCount > 0)
     lines.push(theme.fg("muted", `  ... (${skippedCount} more lines, ${expandHint()})`));

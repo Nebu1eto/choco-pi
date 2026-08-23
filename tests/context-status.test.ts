@@ -80,6 +80,7 @@ function contextTabContext() {
 test("the Context tab is concise by default and expands its inventories on request", async () => {
   // SAFETY: The fixture supplies every host member the registration path touches.
   statusCommands({
+    on: () => {},
     registerCommand: () => {},
     getThinkingLevel: () => "medium",
     getAllTools: () => TOOLS,

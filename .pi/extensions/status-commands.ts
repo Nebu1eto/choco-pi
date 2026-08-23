@@ -229,6 +229,17 @@ export function tabBody(
 
 type PreferencesFocus = { section?: string; focusId?: string; openSubmenu?: boolean };
 
+const openDialogs = new Set<() => void>();
+
+function registerDialogClose(close: () => void): () => void {
+  openDialogs.add(close);
+  return () => openDialogs.delete(close);
+}
+
+function closeOpenDialogs(): void {
+  for (const close of openDialogs) close();
+}
+
 const PREFERENCES_USAGE =
   "Usage: /preferences [editor|messages|statusline|viewport-indicators] [enable|disable|toggle], /preferences [messages|user-messages|working-line|agent], /preferences [language <name>|style <name>], or /preferences format <template>";
 
@@ -372,12 +383,18 @@ async function showTabOnce(
       failure: (id, message) => theme.fg("error", `Failed to load the ${id} tab: ${message}`),
     });
 
+    let finished = false;
+    let unregisterClose = (): void => {};
     const finish = (outcome?: string): void => {
+      if (finished) return;
+      finished = true;
+      unregisterClose();
       panel?.dispose();
       panel = undefined;
       controller.dispose();
       done(outcome);
     };
+    unregisterClose = registerDialogClose(() => finish());
 
     const closePanel = (): void => {
       if (!panel) return;
@@ -562,6 +579,7 @@ async function showTab(
 
 export default function statusCommands(pi: ExtensionAPI): void {
   toolInventory = pi;
+  pi.on("session_shutdown", closeOpenDialogs);
   pi.registerCommand("status", {
     description:
       "Show session info, cost, model, context, MCP, and environment (Status/Context/Usage tabs)",
