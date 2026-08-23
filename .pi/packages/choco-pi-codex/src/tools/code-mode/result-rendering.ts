@@ -2,6 +2,7 @@ import type { BoundaryValue } from "../boundary.ts";
 import { isObjectValue, isStringValue } from "../boundary.ts";
 import { type Component, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import {
+  expandHint,
   imagesByMimeType,
   previewText,
   renderTextAndImages,
@@ -81,23 +82,27 @@ function renderCodeModeResult(
       item.type === "image" && isStringValue(item.data) && isStringValue(item.mimeType),
   );
   const emittedImages = imagesByMimeType(images);
-  const showOutput =
+  const forceOutput =
     richRendering ||
     Boolean(details.scriptError && !scriptErrorRenderedByTrace) ||
     details.notification === true ||
     images.length > 0;
+  const showOutput = forceOutput || options.expanded;
+  const hideCollapsedOutput = !showOutput && Boolean(renderedText);
   const output =
     showOutput && (options.expanded || options.isPartial)
       ? renderTextAndImages(renderedText, [], theme)
       : showOutput
         ? renderTextAndImages(previewText(renderedText, theme), [], theme)
-        : new Container();
+        : hideCollapsedOutput
+          ? renderHiddenOutputSummary(text, theme)
+          : new Container();
   const body = renderTraceAndOutput(
     details.traces ?? [],
     details.droppedTraceCount ?? 0,
     tools,
     output,
-    showOutput && Boolean(renderedText),
+    hideCollapsedOutput || (showOutput && Boolean(renderedText)),
     options,
     theme,
     context,
@@ -121,6 +126,16 @@ function renderCodeModeResult(
     container.addChild(body);
   }
   return container;
+}
+
+function renderHiddenOutputSummary(text: string, theme: CodeModeRenderTheme): Text {
+  const lineCount = text.trimEnd().split("\n").length;
+  const lines = `${lineCount} output line${lineCount === 1 ? "" : "s"}`;
+  return new Text(
+    `${theme.fg("muted", "  └ ")}${theme.fg("dim", `${lines} · ${expandHint()}`)}`,
+    0,
+    0,
+  );
 }
 
 function asDetails(value: BoundaryValue): CodeModeResultDetails {
