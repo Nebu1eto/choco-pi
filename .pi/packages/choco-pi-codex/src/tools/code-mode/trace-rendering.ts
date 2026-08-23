@@ -1,5 +1,7 @@
 import type { BoundaryValue } from "../boundary.ts";
 import { isObjectValue, isStringValue } from "../boundary.ts";
+import { parsePatchActions } from "../../patch/parser.ts";
+import { formatPatchTarget } from "../apply-patch/rendering.ts";
 import { shellSplit } from "../../shell/tokenize.ts";
 import { type Component, Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { previewText, renderTextAndImages } from "./render-content.ts";
@@ -67,7 +69,9 @@ function renderTrace(
   emittedImages: Map<string, Set<string>>,
 ): Component[] {
   if (!options.expanded) {
-    return [orderedTraceCall(renderCollapsedTraceCall(trace, tool, theme), trace, order, theme)];
+    return [
+      orderedTraceCall(renderCollapsedTraceCall(trace, tool, theme, context), trace, order, theme),
+    ];
   }
   const renderedTrace = withoutEmittedImages(trace, emittedImages);
   const renderContext = {
@@ -116,16 +120,21 @@ function renderCollapsedTraceCall(
   trace: RuntimeToolTrace,
   tool: CodeModeToolDefinition | undefined,
   theme: CodeModeRenderTheme,
+  context: CodeModeRenderContext | undefined,
 ): Text {
   const verb = trace.status === "running" ? "Running" : trace.status === "error" ? "Failed" : "Ran";
   const label = codeModeToolDisplayName(trace.name, tool?.label);
-  const command = shortExecCommandName(trace);
-  const detail = command ? theme.fg("muted", ` · ${command}`) : "";
+  const summary = shortTraceSummary(trace, context?.cwd);
+  const detail = summary ? theme.fg("muted", ` · ${summary}`) : "";
   return new Text(
     `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} ${label}`))}${detail}`,
     0,
     0,
   );
+}
+
+function shortTraceSummary(trace: RuntimeToolTrace, cwd = process.cwd()): string | undefined {
+  return shortExecCommandName(trace) ?? shortApplyPatchTarget(trace, cwd);
 }
 
 const SUBCOMMAND_TOOLS = new Set([
@@ -171,6 +180,26 @@ function shortExecCommandName(trace: RuntimeToolTrace): string | undefined {
 function safeCommandToken(token: string | undefined): string | undefined {
   const name = token?.split(/[\\/]/).at(-1);
   return name && /^[A-Za-z0-9._+-]+$/.test(name) ? name : undefined;
+}
+
+function shortApplyPatchTarget(trace: RuntimeToolTrace, cwd: string): string | undefined {
+  if (trace.name !== "apply_patch") return undefined;
+  const patch = isStringValue(trace.input)
+    ? trace.input
+    : isObjectValue(trace.input) && isStringValue(trace.input["patch"])
+      ? trace.input["patch"]
+      : undefined;
+  if (!patch) return undefined;
+  try {
+    const targets = parsePatchActions({ text: patch }).map((action) =>
+      formatPatchTarget(action.path, action.movePath, cwd),
+    );
+    if (targets.length === 1) return targets[0];
+    if (targets.length > 1) return `${targets.length} files`;
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 function orderedTraceCall(
