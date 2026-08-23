@@ -60,13 +60,13 @@ export interface NormalRuntimePlan extends RuntimePlanBase {
 export interface CodeRuntimePlan extends RuntimePlanBase {
   kind: "code";
   prompt: "code";
-  transport: "responses-lite";
+  transport: "responses" | "responses-lite";
 }
 
 export interface NotebookRuntimePlan extends RuntimePlanBase {
   kind: "notebook";
   prompt: "notebook";
-  transport: "responses-lite";
+  transport: "responses" | "responses-lite";
 }
 
 export type CodexRuntimePlan =
@@ -104,8 +104,13 @@ function proxySupportsCodeMode(ctx: RuntimeContext, config: CodexConversionConfi
   return /^gpt-5\.6(?:-(?:luna|terra|sol))?$/.test(id.toLowerCase());
 }
 
-function codeModeEligible(ctx: RuntimeContext, config: CodexConversionConfig): boolean {
-  return isCodexTransportContext(ctx) || proxySupportsCodeMode(ctx, config);
+function codeModeTransport(
+  ctx: RuntimeContext,
+  config: CodexConversionConfig,
+): "responses" | "responses-lite" {
+  return isCodexTransportContext(ctx) || proxySupportsCodeMode(ctx, config)
+    ? "responses-lite"
+    : "responses";
 }
 
 function hasExtras(config: CodexConversionConfig): boolean {
@@ -210,14 +215,15 @@ export function resolveCodexRuntimePlan(
       : configuredExecutionMode === "normal"
         ? undefined
         : undefined;
-  if (requestedCodeMode && codeModeEligible(ctx, config)) {
+  if (requestedCodeMode) {
+    const transport = codeModeTransport(ctx, config);
     if (requestedCodeMode === "notebook") {
       return {
         ...base,
         kind: "notebook",
         toolNames: [...NOTEBOOK_MODE_TOOL_NAMES],
         prompt: "notebook",
-        transport: "responses-lite",
+        transport,
         nativeCompaction,
       };
     }
@@ -226,7 +232,7 @@ export function resolveCodexRuntimePlan(
       kind: "code",
       toolNames: [...CODE_MODE_TOOL_NAMES],
       prompt: "code",
-      transport: "responses-lite",
+      transport,
       nativeCompaction,
     };
   }

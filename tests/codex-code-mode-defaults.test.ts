@@ -24,6 +24,22 @@ test("Code Mode is the append-style default for every OpenAI Codex model", () =>
   assert.match(prompt, /Use tools\.exec_command for shell commands/);
 });
 
+test("Code Mode activates on non-OpenAI models without changing their transport", () => {
+  const config = structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);
+  const models = [
+    { provider: "anthropic", id: "claude-sonnet-5" },
+    { provider: "synthetic", id: "hf:moonshotai/Kimi-K3" },
+  ];
+
+  for (const model of models) {
+    // SAFETY: Runtime planning reads only provider/id/api/baseUrl, and this case exercises the provider-agnostic path that needs only provider and id.
+    const plan = resolveCodexRuntimePlan({ model: model as never }, config);
+    assert.equal(plan.kind, "code", `${model.provider}/${model.id} should use Code Mode`);
+    assert.ok(plan.toolNames.includes("exec"), `${model.provider}/${model.id} should expose exec`);
+    assert.equal(plan.transport, "responses", "the model keeps its native provider transport");
+  }
+});
+
 test("the choco-pi profile keeps appended prompts and concise Code Mode results", () => {
   const profile = JSON.parse(
     readFileSync(new URL("../.pi/choco-pi-codex.json", import.meta.url), "utf8"),
