@@ -44,3 +44,23 @@ test("Code Mode calls use the native tool title hierarchy after settling", () =>
   assert.match(rendered, /<toolTitle><bold>Ran code<\/bold><\/toolTitle>/);
   assert.match(rendered, /text\('done'\)/);
 });
+
+test("expanded orchestration hides wrapper code and patch text", () => {
+  const source = [
+    "await tools.exec_command({ cmd: 'pwd' });",
+    'await tools["apply_patch"]("*** Begin Patch\\n*** Update File: src/example.ts\\n@@\\n-old\\n+new\\n*** End Patch");',
+  ].join("\n");
+  const tracker = createCodeModeRenderTracker();
+  tracker.finish("call-3");
+  const rendered = renderExecCall(
+    { code: source },
+    PLAIN_THEME,
+    { toolCallId: "call-3", isPartial: false, expanded: true },
+    tracker,
+  )
+    .render(200)
+    .join("\n");
+
+  assert.match(rendered, /Ran code · Compose tools with JavaScript/);
+  assert.doesNotMatch(rendered, /tools\.|tools\[|Begin Patch|src\/example\.ts|-old|\+new/);
+});
