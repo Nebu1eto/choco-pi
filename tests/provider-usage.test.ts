@@ -72,6 +72,7 @@ test("registers /quota as a white-text alias for /usage", async () => {
   const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>();
   // SAFETY: The fixture supplies every host member exercised by this test.
   statusCommands({
+    on: () => {},
     registerCommand: (
       name: string,
       command: { handler: (args: string, ctx: any) => Promise<void> },
@@ -98,6 +99,56 @@ test("registers /quota as a white-text alias for /usage", async () => {
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.[1], "info");
   assert.match(notifications[0]?.[0] ?? "", /^<text>Claude Code — not connected/);
+});
+
+test("closes an open status dialog before its session context becomes stale", async () => {
+  type Command = { handler: (args: string, ctx: never) => Promise<void> };
+  type DialogFactory = (
+    tui: { requestRender: () => void },
+    theme: { fg: (color: string, text: string) => string; bold: (text: string) => string },
+    keybindings: Record<string, never>,
+    done: (result: RuntimeValue) => void,
+  ) => RuntimeValue;
+
+  const commands = new Map<string, Command>();
+  let shutdown: (() => void) | undefined;
+  const api = {
+    on: (event: string, handler: () => void) => {
+      if (event === "session_shutdown") shutdown = handler;
+    },
+    registerCommand: (name: string, command: Command) => commands.set(name, command),
+    getThinkingLevel: () => "medium",
+  };
+  // SAFETY: The fixture supplies every host member the registration path touches.
+  statusCommands(api as never);
+
+  let dialogOpen = false;
+  const ctx = {
+    mode: "tui",
+    modelRegistry: { getProviderAuthStatus: () => ({ configured: false }) },
+    ui: {
+      custom: (factory: DialogFactory) =>
+        new Promise<RuntimeValue>((resolve) => {
+          dialogOpen = true;
+          void factory(
+            { requestRender: () => {} },
+            { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+            {},
+            (result: RuntimeValue) => {
+              dialogOpen = false;
+              resolve(result);
+            },
+          );
+        }),
+    },
+  };
+  // SAFETY: The fixture supplies every command-context member exercised by the Usage dialog.
+  const command = commands.get("usage")?.handler("", ctx as never);
+
+  assert.equal(dialogOpen, true);
+  shutdown?.();
+  await command;
+  assert.equal(dialogOpen, false);
 });
 
 test("labels Claude plans from the live profile, with Team seats before the rate-limit tier", () => {
