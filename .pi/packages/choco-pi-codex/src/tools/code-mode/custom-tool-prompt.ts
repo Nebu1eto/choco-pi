@@ -20,7 +20,7 @@ const CUSTOM_TOOLS_GUIDANCE = "Prefer custom tools for command-backed capabiliti
 const COMPACT_BUNDLED_TOOL_USAGE = new Map([
   [
     "apply_patch",
-    "await tools.apply_patch(patch) // *** Begin Patch; add/delete/move; ordered exact hunks",
+    "await tools.apply_patch(patch) // envelope: *** Begin Patch … *** End Patch; actions: *** Add File: path | *** Update File: path | *** Delete File: path; *** Move to: path immediately follows its *** Update File: path header; hunks in file order; @@ is context, not a line range",
   ],
   [
     "exec_command",
@@ -28,11 +28,11 @@ const COMPACT_BUNDLED_TOOL_USAGE = new Map([
   ],
   [
     "web__run",
-    "await tools.web__run({search_query?, image_query?, open?, click?, find?}) // refs come from web__run; cite result URLs",
+    "await tools.web__run({search_query?: [{q, recency?, domains?}], image_query?: [{q}], open?: [{ref_id, lineno?}], click?: [{ref_id, id}], find?: [{ref_id, pattern}], response_length?}) // refs from web__run; final answers cite result URLs; never emit internal turn… or cite… citation artifacts",
   ],
   [
     "web_run",
-    "await tools.web__run({search_query?, image_query?, open?, click?, find?}) // refs come from web__run; cite result URLs",
+    "await tools.web__run({search_query?: [{q, recency?, domains?}], image_query?: [{q}], open?: [{ref_id, lineno?}], click?: [{ref_id, id}], find?: [{ref_id, pattern}], response_length?}) // refs from web__run; final answers cite result URLs; never emit internal turn… or cite… citation artifacts",
   ],
   [
     "write_stdin",
@@ -89,7 +89,7 @@ export function buildCodeModeToolsPrompt(
       ? DEFERRED_CUSTOM_TOOLS_GUIDANCE
       : undefined,
     documentationPath && !existingPrompt.includes(CUSTOM_TOOL_DOCUMENTATION_MARKER)
-      ? `${CUSTOM_TOOL_DOCUMENTATION_MARKER} ${documentationPath}; not Pi docs or tool discovery/calls`
+      ? `${CUSTOM_TOOL_DOCUMENTATION_MARKER} ${documentationPath} only when creating or editing a custom tool; never for discovering or calling tools; do not read Pi docs`
       : undefined,
     custom.length > 0 && !existingPrompt.includes(CUSTOM_TOOLS_GUIDANCE)
       ? CUSTOM_TOOLS_GUIDANCE
