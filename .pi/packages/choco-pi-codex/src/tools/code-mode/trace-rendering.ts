@@ -65,6 +65,9 @@ function renderTrace(
   context: CodeModeRenderContext | undefined,
   emittedImages: Map<string, Set<string>>,
 ): Component[] {
+  if (!options.expanded) {
+    return [orderedTraceCall(renderCollapsedTraceCall(trace, tool, theme), trace, order, theme)];
+  }
   const renderedTrace = withoutEmittedImages(trace, emittedImages);
   const renderContext = {
     toolCallId: trace.id,
@@ -75,9 +78,6 @@ function renderTrace(
     invalidate: context?.invalidate,
   };
   const programmatic = isProgrammaticTool(tool) ? tool : undefined;
-  if (!options.expanded) {
-    return [orderedTraceCall(renderCollapsedTraceCall(trace, tool, theme), trace, order, theme)];
-  }
   let call: Component;
   try {
     call = programmatic?.renderCall
@@ -151,11 +151,20 @@ function withoutEmittedImages(
   trace: RuntimeToolTrace,
   emittedImages: Map<string, Set<string>>,
 ): RuntimeToolTrace {
-  if (!trace.result) return trace;
-  const content = trace.result.content.filter(
+  const normalized = normalizeTraceResult(trace);
+  if (!normalized.result) return normalized;
+  const content = normalized.result.content.filter(
     (item) => item.type !== "image" || !emittedImages.get(item.mimeType)?.has(item.data),
   );
-  if (content.length === trace.result.content.length) return trace;
+  if (content.length === normalized.result.content.length) return normalized;
+  return { ...normalized, result: { ...normalized.result, content } };
+}
+
+function normalizeTraceResult(trace: RuntimeToolTrace): RuntimeToolTrace {
+  if (!trace.result) return trace;
+  const rawContent: unknown = trace.result.content;
+  if (Array.isArray(rawContent)) return trace;
+  const content = isStringValue(rawContent) ? [{ type: "text" as const, text: rawContent }] : [];
   return { ...trace, result: { ...trace.result, content } };
 }
 

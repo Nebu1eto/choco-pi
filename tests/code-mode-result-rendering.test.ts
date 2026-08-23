@@ -75,7 +75,10 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
           name: "exec_command",
           input: { cmd: "printf 'first command'" },
           status: "done" as const,
-          result: { content: [{ type: "text" as const, text: "nested command output" }] },
+          result: {
+            // Persisted host traces may carry string content at this boundary.
+            content: "nested command output",
+          },
         },
         {
           id: "trace-2",
