@@ -73,6 +73,7 @@ import { SessionLifecycle } from "./session-lifecycle";
 import { registerZentuiPreferencesProvider } from "./settings-command";
 import { createInitialState, type FooterState, modelLabelFor, syncState } from "./state";
 import { resolveFooterTelemetry } from "./telemetry";
+import { installToolRendering } from "./tool-rendering";
 import { PolishedEditor, WrappedPolishedEditor } from "./ui";
 import { installUserMessageStyle, removeUserMessageStyle } from "./user-message";
 import { type BoundaryValue, isBoundaryValue, isCallable, isSymbol } from "./runtime-values";
@@ -177,6 +178,11 @@ function isTuiContext(ctx: ExtensionContext): boolean {
 }
 
 export default function (pi: ExtensionAPI) {
+  try {
+    installToolRendering();
+  } catch {
+    // Renderer API drift must degrade to each tool's stock renderer.
+  }
   const state: FooterState = createInitialState(emptyGitStatus());
   const sessionLifecycle = new SessionLifecycle();
   const editorOwnerToken = Symbol("zentui-editor-owner");
