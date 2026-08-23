@@ -75,7 +75,7 @@ function renderCodeModeResult(
   );
   const status = scriptErrorRenderedByTrace ? "" : statusText(details);
   const outputText = [text, status].filter(Boolean).join("\n");
-  const tone = context?.isError ? "error" : details.status === "yielded" ? "accent" : "dim";
+  const tone = context?.isError ? "error" : details.status === "yielded" ? "accent" : "toolOutput";
   const renderedText = outputText ? theme.fg(tone, outputText) : "";
   const images = renderedContent.filter(
     (item): item is RenderedToolContent & { data: string; mimeType: string } =>
@@ -132,7 +132,7 @@ function renderHiddenOutputSummary(text: string, theme: CodeModeRenderTheme): Te
   const lineCount = text.trimEnd().split("\n").length;
   const lines = `${lineCount} output line${lineCount === 1 ? "" : "s"}`;
   return new Text(
-    `${theme.fg("muted", "  └ ")}${theme.fg("dim", `${lines} · ${expandHint()}`)}`,
+    `${theme.fg("muted", "  └ ")}${theme.fg("toolOutput", theme.bold(lines))}${theme.fg("muted", ` · ${expandHint()}`)}`,
     0,
     0,
   );
