@@ -37,6 +37,10 @@ export const DEFAULT_TOOL_LABELS = {
 
   // Web
   web_run: "Web: Browsing",
+  web_search: "Web: Searching",
+  source_check: "Web: Checking Sources",
+  fetch_content: "Web: Fetching Content",
+  get_search_content: "Web: Reading Content",
   synthetic_web_search: "Web: Searching",
 
   // Images
@@ -111,6 +115,10 @@ export const DEFAULT_FINISHED_TOOL_LABELS = {
 
   // Web
   web_run: "Web: Browsed",
+  web_search: "Web: Searched",
+  source_check: "Web: Checked Sources",
+  fetch_content: "Web: Fetched Content",
+  get_search_content: "Web: Read Content",
   synthetic_web_search: "Web: Searched",
 
   // Images
