@@ -1,6 +1,6 @@
 ---
 name: check
-description: Verify the base environment required by choco-pi before implementation or when the user invokes /check. Checks Pi and Node versions, configured packages, harness resources, command aliases, and optional scoped capabilities without relying on Claude Code, Codex, or Compound Engineering.
+description: Run choco-pi's baseline environment check before implementation or for explicit /check requests, covering versions, packages, harness resources, aliases, and optional capabilities.
 ---
 
 # choco-pi Environment Check

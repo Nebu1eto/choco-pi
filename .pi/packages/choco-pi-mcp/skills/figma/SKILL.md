@@ -1,6 +1,6 @@
 ---
 name: figma
-description: Access Figma design files using native pi tools — read LLM-ready summaries, explanations, implementation context, screenshots, components, styles, variables, and design tokens. Requires a Figma personal access token.
+description: Use native Pi tools to inspect Figma summaries, context, screenshots, components, styles, variables, and tokens when implementing from Figma; requires a personal access token.
 ---
 
 # Figma Design Integration

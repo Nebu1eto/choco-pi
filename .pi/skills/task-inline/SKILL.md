@@ -1,6 +1,6 @@
 ---
 name: task-inline
-description: Execute a new repository-changing implementation directly in the main choco-pi agent when parallel implementation would not materially help. Use as the authoritative default modifying workflow, not for read-only, diagnostic, or operational work, or a follow-up inside an already active workflow.
+description: Default to direct implementation for ordinary repository changes when parallel work adds no material benefit; exclude read-only, diagnosis, operations, and active follow-ups.
 ---
 
 # choco-pi Direct Implementation

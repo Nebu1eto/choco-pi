@@ -55,11 +55,11 @@ const NORMAL_CODEX_GUIDELINES = [
 ];
 
 const CODE_MODE_GUIDELINES = [
-  "Use tools.exec_command for shell commands; prefer rg and rg --files",
-  "For tools.exec_command cmd, use String.raw only without backticks or ${}; avoid nested quoting; split independent commands into separate calls",
-  "Long command: keep tools.exec_command awaited inside exec; resume the yielded cell_id with wait near completion. Do not request a short child yield and poll its session_id with tools.write_stdin",
-  "Use tty=true only for input or persistent processes",
-  "Use tools.apply_patch(patch) for file edits; split large patches; reserve shell/Python for formatting or bulk rewrites",
+  "Use tools.exec_command for shell commands; prefer rg / rg --files",
+  "With exec_command cmd, use String.raw (no backticks/${}); avoid nested quotes; split independent commands",
+  "Keep long exec_command calls awaited in exec; resume yielded cells with wait near completion; never short-yield then poll exec_command via write_stdin",
+  "Use tty=true only for input/persistent processes",
+  "Use tools.apply_patch(patch) for edits; split large patches; shell/Python only for formatting/bulk work",
   "Await dependencies; use Promise.all for independent calls",
   "Use text() only for concise final output",
 ];
@@ -105,6 +105,20 @@ const STATIC_CODEX_GUIDELINES_BY_KEY = new Map([
   ),
   ["Use tty=true for dev servers, watchers, REPLs, and prompts", NORMAL_CODEX_GUIDELINES[1]!],
   ["Use tty=true for interactive commands", NORMAL_CODEX_GUIDELINES[1]!],
+  ["Use tools.exec_command for shell commands; prefer rg and rg --files", CODE_MODE_GUIDELINES[0]!],
+  [
+    "For tools.exec_command cmd, use String.raw only without backticks or ${}; avoid nested quoting; split independent commands into separate calls",
+    CODE_MODE_GUIDELINES[1]!,
+  ],
+  [
+    "Long command: keep tools.exec_command awaited inside exec; resume the yielded cell_id with wait near completion. Do not request a short child yield and poll its session_id with tools.write_stdin",
+    CODE_MODE_GUIDELINES[2]!,
+  ],
+  ["Use tty=true only for input or persistent processes", CODE_MODE_GUIDELINES[3]!],
+  [
+    "Use tools.apply_patch(patch) for file edits; split large patches; reserve shell/Python for formatting or bulk rewrites",
+    CODE_MODE_GUIDELINES[4]!,
+  ],
 ]);
 
 function canonicalizeGuidelineLine(line: string): string {

@@ -1,6 +1,6 @@
 ---
 name: choco-pi-lsp-ast-grep
-description: Use when searching or replacing code patterns - use ast-grep instead of text search for semantic accuracy
+description: Use for semantic code-pattern search or replacement; prefer ast-grep over text search for accurate syntax-aware matches.
 ---
 
 # AST-Grep Code Search

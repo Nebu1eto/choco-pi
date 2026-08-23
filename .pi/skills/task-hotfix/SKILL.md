@@ -1,6 +1,6 @@
 ---
 name: task-hotfix
-description: Apply an urgent production fix or critical regression patch directly in the main choco-pi agent. Use as the authoritative hotfix workflow only when the user requests an actual fix; do not trigger for diagnosis, incident explanation, status checks, or ordinary follow-ups.
+description: Apply an urgent production or critical-regression fix directly; use only for an actual requested hotfix, not diagnosis, status, incident explanation, or ordinary follow-up.
 ---
 
 # choco-pi Urgent Fix
