@@ -30,10 +30,6 @@ export function formatMcpDisplayName(value: string, capitalize = true): string {
   return `${words[0]!.toUpperCase()}${words.slice(1).toLowerCase()}`;
 }
 
-export function formatMcpDirectToolHeadline(server: string, tool: string): string {
-  return `mcp call ${tool} @ ${server}`;
-}
-
 export function splitMcpCallHeadline(title: string): McpCallHeadline {
   const call = title.match(/^mcp call (\S+)(?: @ (\S+))?$/);
   if (call) {

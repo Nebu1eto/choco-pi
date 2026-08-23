@@ -37,7 +37,6 @@ import {
   createMcpToolResultRenderer,
   resolveMcpToolRenderOptions,
 } from "./tool-result-renderer.ts";
-import { formatMcpDirectToolHeadline } from "./tool-call-headline.ts";
 import { toolErrorOverride } from "./error-signal.ts";
 import {
   createMcpRuntimeOwner,
@@ -248,7 +247,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ),
       renderShell: toolRenderShell,
       renderCall: createMcpDirectToolCallRenderer(
-        formatMcpDirectToolHeadline(spec.serverName, spec.originalName),
+        `mcp call ${spec.originalName} @ ${spec.serverName}`,
         toolRenderOptions,
       ),
       renderResult: renderMcpToolResult,
