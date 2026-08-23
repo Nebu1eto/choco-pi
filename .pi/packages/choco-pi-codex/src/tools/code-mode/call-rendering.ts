@@ -20,11 +20,12 @@ export function renderExecCall(
   let text = `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} code`))}`;
   text += theme.fg("muted", ` · ${EXEC_SUMMARY}`);
   const names = customToolNames(code);
+  const orchestratesTools = /\btools\s*(?:\.|\[)/.test(code);
   if (!context?.expanded && names.length > 0) {
     const labels = names.map((name) => codeModeToolDisplayName(name));
     text += `\n${theme.fg("dim", "  └ ")}${theme.fg("muted", "Calls ")}${theme.fg("accent", labels.join(" · "))}`;
   }
-  if (context?.expanded && code.trim())
+  if (context?.expanded && code.trim() && !orchestratesTools)
     text += `\n\n${highlightCode(code, "javascript").join("\n")}`;
   return new Text(text, 0, 0);
 }
@@ -54,9 +55,13 @@ export function renderWaitCall(
 }
 
 function customToolNames(code: string): string[] {
+  const matches = [
+    ...code.matchAll(/\btools\.([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g),
+    ...code.matchAll(/\btools\s*\[\s*["']([A-Za-z_$][A-Za-z0-9_$]*)["']\s*\]\s*\(/g),
+  ].sort((left, right) => (left.index ?? 0) - (right.index ?? 0));
   const names: string[] = [];
   const seen = new Set<string>();
-  for (const match of code.matchAll(/\btools\.([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g)) {
+  for (const match of matches) {
     const name = match[1]!;
     if (seen.has(name)) continue;
     seen.add(name);
