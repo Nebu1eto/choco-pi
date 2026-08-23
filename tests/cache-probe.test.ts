@@ -5,6 +5,7 @@ import {
   canonicalJson,
   changedSystemRegions,
   diffCacheableSegments,
+  providerPrefixMetricsFromPayload,
   systemRegionHashes,
   systemText,
 } from "../.pi/extensions/cache-probe.ts";
@@ -88,6 +89,26 @@ test("systemText reads the prompt from a string or a block array", () => {
     "first\nsecond",
   );
   assert.equal(systemText({}), "");
+  assert.equal(systemText({ instructions: "codex instructions" }), "codex instructions");
+});
+
+test("Codex Responses instructions and tools contribute provider prefix metrics", () => {
+  const payload = {
+    instructions: "x".repeat(40),
+    tools: [{ name: "read", description: "Read", parameters: { type: "object" } }],
+    input: [{ role: "user", content: "hello" }],
+  };
+
+  const metrics = providerPrefixMetricsFromPayload(payload);
+  const snapshot = cacheableSegments(payload);
+
+  assert.equal(metrics.systemTokens, 10);
+  assert.equal(metrics.toolCount, 1);
+  assert.ok(metrics.toolsTokens > 0);
+  assert.deepEqual(
+    snapshot.segments.map((segment) => segment.kind),
+    ["system", "tools"],
+  );
 });
 
 test("a system change names the region that moved, not just the block", () => {

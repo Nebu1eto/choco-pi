@@ -8,6 +8,7 @@ import {
   isJsonRecord,
   isNumber,
   isString,
+  reinterpretHostValue,
   type JsonRecord,
   type JsonValue,
 } from "./lib/runtime-values.ts";
@@ -39,6 +40,27 @@ type SegmentDiff = {
   segmentsAdded: number;
   segmentsRemoved: number;
 };
+
+export interface ProviderPrefixMetrics {
+  systemTokens: number;
+  toolsTokens: number;
+  toolCount: number;
+}
+
+const PROVIDER_PREFIX_METRICS_KEY: unique symbol = Symbol.for(
+  "choco-pi.cache-probe.provider-prefix-metrics",
+);
+
+function providerPrefixRegistry(): Map<string, ProviderPrefixMetrics> {
+  const store = reinterpretHostValue<{
+    [PROVIDER_PREFIX_METRICS_KEY]?: Map<string, ProviderPrefixMetrics>;
+  }>(globalThis);
+  const existing = store[PROVIDER_PREFIX_METRICS_KEY];
+  if (existing) return existing;
+  const registry = new Map<string, ProviderPrefixMetrics>();
+  store[PROVIDER_PREFIX_METRICS_KEY] = registry;
+  return registry;
+}
 
 /**
  * Named parts of the composed system prompt, so a system-block divergence can
@@ -138,7 +160,8 @@ function namesForTools(tools: JsonValue[]): string[] {
 
 /** The composed system prompt as one string, however the provider carries it. */
 export function systemText(payload: JsonValue): string {
-  const system = isJsonRecord(payload) ? payload.system : undefined;
+  const request = isJsonRecord(payload) ? payload : {};
+  const system = request.system ?? request.instructions;
   if (isString(system)) return system;
   if (!Array.isArray(system)) return "";
   return system
@@ -147,6 +170,19 @@ export function systemText(payload: JsonValue): string {
       return isJsonRecord(block) && isString(block.text) ? block.text : "";
     })
     .join("\n");
+}
+
+/** Provider-observed prompt and tool sizes, estimated with the Context tab's chars/4 rule. */
+export function providerPrefixMetricsFromPayload(payload: JsonValue): ProviderPrefixMetrics {
+  const request: JsonRecord = isJsonRecord(payload) ? payload : {};
+  const tools = Array.isArray(request.tools) ? request.tools : [];
+  const normalizedTools = tools.map(normalizedTool);
+  return {
+    systemTokens: Math.ceil(systemText(payload).length / 4),
+    toolsTokens:
+      normalizedTools.length > 0 ? Math.ceil(canonicalJson(normalizedTools).length / 4) : 0,
+    toolCount: tools.length,
+  };
 }
 
 /**
@@ -187,7 +223,7 @@ export function changedSystemRegions(
 export function cacheableSegments(payload: JsonValue): SegmentSnapshot {
   const request: JsonRecord = isJsonRecord(payload) ? payload : {};
   const collected: Array<{ kind: SegmentKind; value: JsonValue }> = [];
-  const system = request.system;
+  const system = request.system ?? request.instructions;
   if (Array.isArray(system)) {
     for (const block of system) collected.push({ kind: "system", value: block });
   } else if (system !== undefined) {
@@ -197,7 +233,11 @@ export function cacheableSegments(payload: JsonValue): SegmentSnapshot {
   const tools = Array.isArray(request.tools) ? request.tools : undefined;
   if (tools) collected.push({ kind: "tools", value: tools.map(normalizedTool) });
 
-  const messages = Array.isArray(request.messages) ? request.messages : [];
+  const messages = Array.isArray(request.messages)
+    ? request.messages
+    : Array.isArray(request.input)
+      ? request.input
+      : [];
   let lastBreakpoint = -1;
   for (let index = 0; index < messages.length; index += 1) {
     if (hasCacheBreakpoint(messages[index])) lastBreakpoint = index;
@@ -253,6 +293,12 @@ function streamId(ctx: ExtensionContext): string {
   }
 }
 
+export function currentProviderPrefixMetrics(
+  ctx: ExtensionContext,
+): ProviderPrefixMetrics | undefined {
+  return providerPrefixRegistry().get(streamId(ctx));
+}
+
 function payloadProvider(payload: JsonValue, ctx: ExtensionContext): string {
   if (isJsonRecord(payload) && isString(payload.provider)) return payload.provider;
   return ctx.model?.provider ?? "unknown";
@@ -290,6 +336,7 @@ function numberValue(value: JsonValue): number | undefined {
 }
 
 export default function cacheProbe(pi: ExtensionAPI): void {
+  providerPrefixRegistry().clear();
   const previousByStream = new Map<string, CacheSegment[]>();
   const systemByStream = new Map<string, SystemRegionHashes>();
   const requestByStream = new Map<string, number>();
@@ -312,6 +359,7 @@ export default function cacheProbe(pi: ExtensionAPI): void {
       // SAFETY: Pi supplies provider payloads as JSON request bodies at this host boundary.
       const payload = event.payload as JsonValue;
       const stream = streamId(ctx);
+      providerPrefixRegistry().set(stream, providerPrefixMetricsFromPayload(payload));
       const snapshot = cacheableSegments(payload);
       const previous = previousByStream.get(stream);
       const diff = diffCacheableSegments(previous, snapshot.segments);
