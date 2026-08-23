@@ -1,11 +1,11 @@
 import { isStringValue } from "../boundary.ts";
 import { highlightCode } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { expandHint } from "./render-content.ts";
+import { Text } from "@earendil-works/pi-tui";
 import type { CodeModeRenderTracker } from "./render-tracker.ts";
+import { codeModeToolDisplayName } from "./tool-identity.ts";
 import type { CodeModeRenderContext, CodeModeRenderTheme } from "./types.ts";
 
-const BACKGROUND_SAFE_RESET = "\x1b[22;23;24;25;27;28;29;39m";
+const EXEC_SUMMARY = "Compose tools with JavaScript";
 
 export function renderExecCall(
   args: { code?: unknown },
@@ -18,10 +18,12 @@ export function renderExecCall(
   const status = tracker.status(context?.toolCallId);
   const verb = status === "running" ? "Running" : status === "yielded" ? "Started" : "Ran";
   let text = `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} code`))}`;
-  if (!context?.expanded && code.trim()) text += `\n${previewCode(code, theme)}`;
+  text += theme.fg("muted", ` · ${EXEC_SUMMARY}`);
   const names = customToolNames(code);
-  if (names.length > 0)
-    text += `\n${theme.fg("dim", "  └ ")}${theme.fg("accent", names.join(" · "))}`;
+  if (!context?.expanded && names.length > 0) {
+    const labels = names.map((name) => codeModeToolDisplayName(name));
+    text += `\n${theme.fg("dim", "  └ ")}${theme.fg("muted", "Calls ")}${theme.fg("accent", labels.join(" · "))}`;
+  }
   if (context?.expanded && code.trim())
     text += `\n\n${highlightCode(code, "javascript").join("\n")}`;
   return new Text(text, 0, 0);
@@ -61,17 +63,4 @@ function customToolNames(code: string): string[] {
     names.push(name);
   }
   return names;
-}
-
-function previewCode(code: string, theme: CodeModeRenderTheme): string {
-  const highlighted = highlightCode(code.trim(), "javascript");
-  const lines = highlighted
-    .slice(0, 3)
-    .map((line) =>
-      truncateToWidth(`  ${line}`, 100, "...").replaceAll("\x1b[0m", BACKGROUND_SAFE_RESET),
-    );
-  const skippedCount = highlighted.length - lines.length;
-  if (skippedCount > 0)
-    lines.push(theme.fg("muted", `  ... (${skippedCount} more lines, ${expandHint()})`));
-  return lines.join("\n");
 }

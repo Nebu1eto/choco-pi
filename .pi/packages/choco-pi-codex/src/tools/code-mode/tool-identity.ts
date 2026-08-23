@@ -13,3 +13,10 @@ export function codeModeNameForToolIdentity(identity: CodeModeToolIdentity): str
     ? `${namespace}${identity.name}`
     : `${namespace}__${identity.name}`;
 }
+
+export function codeModeToolDisplayName(name: string, label?: string): string {
+  const explicit = label?.trim();
+  if (explicit) return explicit;
+  const words = name.replaceAll("__", " ").replaceAll(/[_-]+/g, " ").trim();
+  return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : name;
+}
