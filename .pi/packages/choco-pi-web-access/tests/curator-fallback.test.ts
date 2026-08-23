@@ -20,7 +20,7 @@ test("web_search curator auto-open failures keep the curator alive with a manual
 test("curator add-search receives the active extension context", () => {
   assert.match(
     indexSrc,
-    /openCuratorBrowser\(callId: string, pc: PendingCurate, ctx: ExtensionContext,/,
+    /openCuratorBrowser\(\s*callId: string,\s*pc: PendingCurate,\s*ctx: ExtensionContext,/,
   );
   assert.match(indexSrc, /openCuratorBrowser\(callId, pc, ctx, false\)/);
   assert.match(indexSrc, /extensionContext: ctx,/);
@@ -29,11 +29,13 @@ test("curator add-search receives the active extension context", () => {
 test("curator fallback helper is visible to the browser-open catch block", () => {
   const functionIndex = indexSrc.indexOf("async function openCuratorBrowser");
   const declarationIndex = indexSrc.indexOf("const sendCuratorFallbackUpdate", functionIndex);
-  const tryIndex = indexSrc.indexOf('\n\t\ttry {\n\t\t\tpc.phase = "curating";', functionIndex);
-  const catchCallIndex = indexSrc.indexOf(
-    'sendCuratorFallbackUpdate("Search curator is running, but the browser did not open automatically.")',
-    tryIndex,
-  );
+  const tryMatch = /\n\s*try \{\s*pc\.phase = "curating";/.exec(indexSrc.slice(functionIndex));
+  const tryIndex = tryMatch?.index === undefined ? -1 : functionIndex + tryMatch.index;
+  const catchMatch =
+    /sendCuratorFallbackUpdate\(\s*"Search curator is running, but the browser did not open automatically\.",?\s*\)/.exec(
+      indexSrc.slice(tryIndex),
+    );
+  const catchCallIndex = catchMatch?.index === undefined ? -1 : tryIndex + catchMatch.index;
 
   assert.ok(functionIndex >= 0);
   assert.ok(declarationIndex > functionIndex);
@@ -56,7 +58,7 @@ test("manual websearch command reports browser-open fallback without closing cur
   assert.match(indexSrc, /let browserOpenError: string \| null = null;/);
   assert.match(
     indexSrc,
-    /ctx\.ui\.notify\(`Search curator is running, but the browser did not open automatically\. Open manually: \$\{handle\.url\}`/,
+    /ctx\.ui\.notify\(\s*`Search curator is running, but the browser did not open automatically\. Open manually: \$\{handle\.url\}`/,
   );
   assert.match(indexSrc, /if \(queries\.length > 0\) \{/);
 });
