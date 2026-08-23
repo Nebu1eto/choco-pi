@@ -1,6 +1,6 @@
 import type { BoundaryValue } from "../boundary.ts";
-import { isStringValue } from "../boundary.ts";
-import { type Component, Container, Spacer, Text } from "@earendil-works/pi-tui";
+import { isObjectValue, isStringValue } from "../boundary.ts";
+import { type Component, Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { previewText, renderTextAndImages } from "./render-content.ts";
 import type {
   CodeModeRenderContext,
@@ -36,9 +36,10 @@ export function renderTraceAndOutput(
       ),
     );
   }
-  for (const trace of traces) {
+  for (const [index, trace] of traces.entries()) {
     const rendered = renderTrace(
       trace,
+      droppedTraceCount + index + 1,
       byName.get(trace.name),
       options,
       theme,
@@ -56,6 +57,7 @@ export function renderTraceAndOutput(
 
 function renderTrace(
   trace: RuntimeToolTrace,
+  order: number,
   tool: CodeModeToolDefinition | undefined,
   options: { expanded: boolean; isPartial: boolean },
   theme: CodeModeRenderTheme,
@@ -80,7 +82,7 @@ function renderTrace(
   } catch {
     call = renderGenericTraceCall(trace, theme, options.expanded);
   }
-  const components = [call];
+  const components = [orderedTraceCall(call, trace, order, theme)];
   if (renderedTrace.result && programmatic?.renderResult) {
     try {
       components.push(
@@ -105,6 +107,28 @@ function renderTrace(
   return components;
 }
 
+function orderedTraceCall(
+  component: Component,
+  trace: RuntimeToolTrace,
+  order: number,
+  theme: CodeModeRenderTheme,
+): Component {
+  const label = `${order}.`;
+  const prefix = `${theme.fg("muted", label)} `;
+  const prefixWidth = visibleWidth(label) + 1;
+  return {
+    render(width: number): string[] {
+      const lines = component.render(Math.max(1, width - prefixWidth));
+      if (lines.length === 0) return [`${prefix}${theme.fg("toolTitle", theme.bold(trace.name))}`];
+      const continuation = " ".repeat(prefixWidth);
+      return lines.map((line, index) => `${index === 0 ? prefix : continuation}${line}`);
+    },
+    invalidate(): void {
+      component.invalidate();
+    },
+  };
+}
+
 function withoutEmittedImages(
   trace: RuntimeToolTrace,
   emittedImages: Map<string, Set<string>>,
@@ -124,11 +148,17 @@ function renderGenericTraceCall(
 ): Text {
   const verb = trace.status === "running" ? "Running" : trace.status === "error" ? "Failed" : "Ran";
   let text = `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} ${trace.name}`))}`;
-  if (expanded) {
-    const input = isStringValue(trace.input) ? trace.input : safeRenderString(trace.input);
-    if (input) text += `\n${theme.fg("dim", input)}`;
-  }
+  const input = traceInputText(trace.input, expanded);
+  if (input) text += `\n${theme.fg("dim", "  └ ")}${theme.fg("accent", input)}`;
   return new Text(text, 0, 0);
+}
+
+function traceInputText(input: BoundaryValue, expanded: boolean): string {
+  const command = isObjectValue(input) && isStringValue(input["cmd"]) ? input["cmd"] : undefined;
+  const text = command ?? (isStringValue(input) ? input : safeRenderString(input));
+  if (expanded) return text;
+  const compact = text.replace(/\s+/g, " ").trim();
+  return compact.length <= 100 ? compact : `${compact.slice(0, 97)}...`;
 }
 
 function renderGenericTraceResult(
