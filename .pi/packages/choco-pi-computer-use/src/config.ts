@@ -4,111 +4,117 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isJsonObject, isNumber, isString, type JsonField, type JsonValue } from "./json.ts";
 
 export interface ComputerUseConfig {
-	browser_use: boolean;
-	headless: boolean;
-	cursor_overlay: boolean;
-	managed_browser: "helium" | "chrome";
+  browser_use: boolean;
+  headless: boolean;
+  cursor_overlay: boolean;
+  managed_browser: "helium" | "chrome";
 }
 
 export interface ComputerUseConfigSource {
-	path: string;
-	exists: boolean;
-	values?: Partial<ComputerUseConfig>;
-	error?: string;
+  path: string;
+  exists: boolean;
+  values?: Partial<ComputerUseConfig>;
+  error?: string;
 }
 
 export interface LoadedComputerUseConfig {
-	config: ComputerUseConfig;
-	sources: ComputerUseConfigSource[];
-	env: Partial<ComputerUseConfig>;
+  config: ComputerUseConfig;
+  sources: ComputerUseConfigSource[];
+  env: Partial<ComputerUseConfig>;
 }
 
 const DEFAULT_CONFIG: ComputerUseConfig = {
-	browser_use: true,
-	headless: false,
-	cursor_overlay: true,
-	managed_browser: "chrome",
+  browser_use: true,
+  headless: false,
+  cursor_overlay: true,
+  managed_browser: "chrome",
 };
 
 let activeConfig: ComputerUseConfig = { ...DEFAULT_CONFIG };
 let activeLoadedConfig: LoadedComputerUseConfig = { config: activeConfig, sources: [], env: {} };
 
 function parseBoolean(value: JsonField): boolean | undefined {
-	if (value === true || value === false) return value;
-	if (isNumber(value)) return value === 1 ? true : value === 0 ? false : undefined;
-	if (!isString(value)) return undefined;
-	const normalized = value.trim().toLowerCase();
-	if (["1", "true", "yes", "on", "enabled"].includes(normalized)) return true;
-	if (["0", "false", "no", "off", "disabled"].includes(normalized)) return false;
-	return undefined;
+  if (value === true || value === false) return value;
+  if (isNumber(value)) return value === 1 ? true : value === 0 ? false : undefined;
+  if (!isString(value)) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on", "enabled"].includes(normalized)) return true;
+  if (["0", "false", "no", "off", "disabled"].includes(normalized)) return false;
+  return undefined;
 }
 
 function normalizePartial(raw: JsonValue): Partial<ComputerUseConfig> {
-	if (!isJsonObject(raw)) return {};
-	const source = isJsonObject(raw.computer_use) ? raw.computer_use : raw;
-	const out: Partial<ComputerUseConfig> = {};
-	const browserUse = parseBoolean(source.browser_use);
-	const headless = parseBoolean(source.headless);
-	const cursorOverlay = parseBoolean(source.cursor_overlay);
-	if (browserUse !== undefined) out.browser_use = browserUse;
-	if (headless !== undefined) out.headless = headless;
-	if (cursorOverlay !== undefined) out.cursor_overlay = cursorOverlay;
-	const managedBrowser = source.managed_browser;
-	if (managedBrowser === "helium" || managedBrowser === "chrome") out.managed_browser = managedBrowser;
-	return out;
+  if (!isJsonObject(raw)) return {};
+  const source = isJsonObject(raw.computer_use) ? raw.computer_use : raw;
+  const out: Partial<ComputerUseConfig> = {};
+  const browserUse = parseBoolean(source.browser_use);
+  const headless = parseBoolean(source.headless);
+  const cursorOverlay = parseBoolean(source.cursor_overlay);
+  if (browserUse !== undefined) out.browser_use = browserUse;
+  if (headless !== undefined) out.headless = headless;
+  if (cursorOverlay !== undefined) out.cursor_overlay = cursorOverlay;
+  const managedBrowser = source.managed_browser;
+  if (managedBrowser === "helium" || managedBrowser === "chrome")
+    out.managed_browser = managedBrowser;
+  return out;
 }
 
 function readConfigFile(filePath: string): ComputerUseConfigSource {
-	if (!existsSync(filePath)) return { path: filePath, exists: false };
-	try {
-		const parsed: JsonValue = JSON.parse(readFileSync(filePath, "utf-8"));
-		return { path: filePath, exists: true, values: normalizePartial(parsed) };
-	} catch (error) {
-		return { path: filePath, exists: true, error: error instanceof Error ? error.message : String(error) };
-	}
+  if (!existsSync(filePath)) return { path: filePath, exists: false };
+  try {
+    const parsed: JsonValue = JSON.parse(readFileSync(filePath, "utf-8"));
+    return { path: filePath, exists: true, values: normalizePartial(parsed) };
+  } catch (error) {
+    return {
+      path: filePath,
+      exists: true,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function readEnv(): Partial<ComputerUseConfig> {
-	const out: Partial<ComputerUseConfig> = {};
-	const browserUse = parseBoolean(process.env.PI_COMPUTER_USE_BROWSER_USE);
-	const headless = parseBoolean(process.env.PI_COMPUTER_USE_HEADLESS);
-	const cursorOverlay = parseBoolean(process.env.PI_COMPUTER_USE_CURSOR_OVERLAY);
-	if (browserUse !== undefined) out.browser_use = browserUse;
-	if (headless !== undefined) out.headless = headless;
-	if (cursorOverlay !== undefined) out.cursor_overlay = cursorOverlay;
-	const managedBrowser = process.env.PI_COMPUTER_USE_MANAGED_BROWSER;
-	if (managedBrowser === "helium" || managedBrowser === "chrome") out.managed_browser = managedBrowser;
-	return out;
+  const out: Partial<ComputerUseConfig> = {};
+  const browserUse = parseBoolean(process.env.PI_COMPUTER_USE_BROWSER_USE);
+  const headless = parseBoolean(process.env.PI_COMPUTER_USE_HEADLESS);
+  const cursorOverlay = parseBoolean(process.env.PI_COMPUTER_USE_CURSOR_OVERLAY);
+  if (browserUse !== undefined) out.browser_use = browserUse;
+  if (headless !== undefined) out.headless = headless;
+  if (cursorOverlay !== undefined) out.cursor_overlay = cursorOverlay;
+  const managedBrowser = process.env.PI_COMPUTER_USE_MANAGED_BROWSER;
+  if (managedBrowser === "helium" || managedBrowser === "chrome")
+    out.managed_browser = managedBrowser;
+  return out;
 }
 
 export function loadComputerUseConfig(cwd: string): LoadedComputerUseConfig {
-	const sources = [
-		readConfigFile(path.join(getAgentDir(), "extensions", "pi-computer-use.json")),
-		readConfigFile(path.join(cwd, ".pi", "computer-use.json")),
-	];
-	const env = readEnv();
-	const config = { ...DEFAULT_CONFIG };
-	for (const source of sources) {
-		if (source.values) Object.assign(config, source.values);
-	}
-	Object.assign(config, env);
-	activeConfig = config;
-	activeLoadedConfig = { config, sources, env };
-	return activeLoadedConfig;
+  const sources = [
+    readConfigFile(path.join(getAgentDir(), "extensions", "pi-computer-use.json")),
+    readConfigFile(path.join(cwd, ".pi", "computer-use.json")),
+  ];
+  const env = readEnv();
+  const config = { ...DEFAULT_CONFIG };
+  for (const source of sources) {
+    if (source.values) Object.assign(config, source.values);
+  }
+  Object.assign(config, env);
+  activeConfig = config;
+  activeLoadedConfig = { config, sources, env };
+  return activeLoadedConfig;
 }
 
 export function getComputerUseConfig(): ComputerUseConfig {
-	return activeConfig;
+  return activeConfig;
 }
 
 export function getLoadedComputerUseConfig(): LoadedComputerUseConfig {
-	return activeLoadedConfig;
+  return activeLoadedConfig;
 }
 
 export function isHeadlessMode(): boolean {
-	return activeConfig.headless;
+  return activeConfig.headless;
 }
 
 export function isBrowserUseEnabled(): boolean {
-	return activeConfig.browser_use;
+  return activeConfig.browser_use;
 }

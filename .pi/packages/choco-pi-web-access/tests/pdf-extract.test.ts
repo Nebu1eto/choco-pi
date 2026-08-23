@@ -6,7 +6,7 @@ import { test } from "node:test";
 const extractorUrl = new URL("../pdf-extract.ts", import.meta.url).href;
 
 function childScript(provider = "unpdf", datalab = false) {
-	return `
+  return `
 		import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 		import { tmpdir } from 'node:os';
 		import { join } from 'node:path';
@@ -43,33 +43,42 @@ function childScript(provider = "unpdf", datalab = false) {
 }
 
 test("local unpdf extraction works without native Promise.try", () => {
-	const child = spawnSync(process.execPath, ["--input-type=module"], { input: childScript(), encoding: "utf8" });
-	assert.equal(child.status, 0, child.stderr);
-	const result = JSON.parse(child.stdout.trim());
-	assert.match(result.content, /Hello PDF/);
-	assert.equal(result.pages, 1);
-	assert.deepEqual(result.calls, []);
+  const child = spawnSync(process.execPath, ["--input-type=module"], {
+    input: childScript(),
+    encoding: "utf8",
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const result = JSON.parse(child.stdout.trim());
+  assert.match(result.content, /Hello PDF/);
+  assert.equal(result.pages, 1);
+  assert.deepEqual(result.calls, []);
 });
 
 test("auto PDF extraction uses Datalab when configured", () => {
-	const child = spawnSync(process.execPath, ["--input-type=module"], { input: childScript("auto", true), encoding: "utf8" });
-	assert.equal(child.status, 0, child.stderr);
-	const result = JSON.parse(child.stdout.trim());
-	assert.match(result.content, /Datalab PDF/);
-	assert.ok(result.calls.some((url) => url.includes("/convert")));
+  const child = spawnSync(process.execPath, ["--input-type=module"], {
+    input: childScript("auto", true),
+    encoding: "utf8",
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const result = JSON.parse(child.stdout.trim());
+  assert.match(result.content, /Datalab PDF/);
+  assert.ok(result.calls.some((url) => url.includes("/convert")));
 });
 
 test("provider=unpdf skips an available Datalab backend", () => {
-	const child = spawnSync(process.execPath, ["--input-type=module"], { input: childScript("unpdf", true), encoding: "utf8" });
-	assert.equal(child.status, 0, child.stderr);
-	const result = JSON.parse(child.stdout.trim());
-	assert.match(result.content, /Hello PDF/);
-	assert.deepEqual(result.calls, []);
+  const child = spawnSync(process.execPath, ["--input-type=module"], {
+    input: childScript("unpdf", true),
+    encoding: "utf8",
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const result = JSON.parse(child.stdout.trim());
+  assert.match(result.content, /Hello PDF/);
+  assert.deepEqual(result.calls, []);
 });
 
 test("isPDF recognizes URL and content type", async () => {
-	const { isPDF } = await import(extractorUrl);
-	assert.equal(isPDF("https://example.test/file.pdf"), true);
-	assert.equal(isPDF("https://example.test/download", "application/pdf"), true);
-	assert.equal(isPDF("https://example.test/page", "text/html"), false);
+  const { isPDF } = await import(extractorUrl);
+  assert.equal(isPDF("https://example.test/file.pdf"), true);
+  assert.equal(isPDF("https://example.test/download", "application/pdf"), true);
+  assert.equal(isPDF("https://example.test/page", "text/html"), false);
 });

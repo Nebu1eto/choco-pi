@@ -6,10 +6,7 @@ import {
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
   SyntheticConfigUpdatedPayloadSchema,
 } from "../../src/config-events.ts";
-import {
-  ensureSyntheticConfig,
-  publishSyntheticConfig,
-} from "../../src/config-state.ts";
+import { ensureSyntheticConfig, publishSyntheticConfig } from "../../src/config-state.ts";
 import { QuotaHistory } from "../../src/services/quota-history.ts";
 import { QuotaWarningNotifier } from "../../src/services/quota-warnings.ts";
 import {

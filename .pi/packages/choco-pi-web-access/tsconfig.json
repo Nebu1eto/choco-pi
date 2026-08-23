@@ -3,11 +3,6 @@
   "compilerOptions": {
     "skipLibCheck": true
   },
-  "include": [
-    "*.ts",
-    "tests/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
+  "include": ["*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules"]
 }

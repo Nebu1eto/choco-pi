@@ -78,7 +78,9 @@ function expectedContextPreview(cause: string): string | undefined {
 function summarizePatchCause(cause: string): string {
   const preview = expectedContextPreview(cause);
   if (preview === undefined) return cause;
-  return preview ? `expected context not found\nExpected near: ${preview}` : "expected context not found";
+  return preview
+    ? `expected context not found\nExpected near: ${preview}`
+    : "expected context not found";
 }
 
 function describeFailedActions(error: ExecutePatchError, cwd: string): string[] {
@@ -115,15 +117,21 @@ export async function executeApplyPatch(
         : `${prefix}: ${cause}`;
       if (partial) {
         const failedFiles = getFailedPaths(error);
-        const appliedFiles = error.result.changedFiles.filter((path) => !failedFiles.includes(path));
+        const appliedFiles = error.result.changedFiles.filter(
+          (path) => !failedFiles.includes(path),
+        );
         const lines = [rawMessage];
         if (failedFiles.length > 0) {
-          lines.push(`Failed file${failedFiles.length === 1 ? "" : "s"}: ${failedFiles.join(", ")}`);
+          lines.push(
+            `Failed file${failedFiles.length === 1 ? "" : "s"}: ${failedFiles.join(", ")}`,
+          );
           lines.push(`Recovery: MUST read ${failedFiles.join(", ")} before retrying`);
         }
         if (appliedFiles.length > 0) {
           lines.push("Earlier file actions in this patch were already applied");
-          lines.push("Recovery: MUST NOT reread other files from this patch unless a specific dependency requires it");
+          lines.push(
+            "Recovery: MUST NOT reread other files from this patch unless a specific dependency requires it",
+          );
         }
         const recoveryMessage = lines.join("\n");
         markApplyPatchPartialFailure(toolCallId, failedTargets);

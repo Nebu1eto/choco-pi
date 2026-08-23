@@ -822,59 +822,69 @@
 ## 0.2.32 - 2026-05-21
 
 ### Added
+
 - First-class Electron desktop-app support for `agent_browser`: top-level `electron` now covers bounded app discovery, isolated wrapper-owned launch/attach, status, compact probe, and cleanup without requiring agents to hand-build the CDP launch sequence.
 - Electron launch safety and lifecycle details: wrapper-owned launches use a temporary profile and OS-chosen debug port, record a `launchId`, surface exact status/probe/cleanup next actions, support caller-owned `allow` / `deny` policies, and avoid touching manually launched apps.
 - `qa.attached` for current attached browser/Electron sessions, so agents can run quick smoke checks without opening a URL or replacing the active desktop-app target.
 - A dedicated public Electron guide at [`docs/ELECTRON.md`](docs/ELECTRON.md), linked from the README, command reference, tool contract, architecture, requirements, release, and support-matrix docs and included in the published package.
 
 ### Changed
+
 - `sourceLookup`, broad `get text`, fill verification, tab/session mismatch, and stale-ref guidance now include Electron-aware context and recovery actions for packaged desktop apps.
 - Verification coverage now includes deterministic Electron lifecycle/probe benchmark scenarios, fake-upstream Electron discovery/lifecycle tests, lifecycle restore/shutdown cleanup checks, and real-app dogfood evidence recorded in the Electron plan.
 - The configured-source lifecycle harness (`npm run verify -- lifecycle`, `scripts/verify-lifecycle.mjs`) now defaults to Pi model `zai/glm-5.2` with `--model <id>` override; `npm run verify` lifecycle passthrough rejects `--model` without a value.
 - Updated the local Pi development baseline to `@earendil-works/*` `0.75.4` and refreshed the npm lockfile.
 
 ### Fixed
+
 - Runtime validation now rejects `electron.status` / `electron.cleanup` with `all: false`, keeping runtime behavior aligned with the public schema and contract.
 - Electron + caller `stdin` validation now reports a direct Electron-specific error instead of mixing in generated-batch mode guidance.
 
 ## 0.2.31 - 2026-05-18
 
 ### Added
+
 - First-class native dropdown selection for `agent_browser`: `semanticAction.action = "select"` and constrained `job` `select` steps now compile to upstream `select <selector> <value...>`, with tests against fake and real upstream fixtures.
 - Bounded machine `details.nextActions` for compact `network requests` output, including exact request-detail, source-lookup, filter, and HAR-capture follow-ups with session preservation and sensitive path/query suppression.
 
 ### Changed
+
 - Release smoke guidance now uses bounded extension-focused prompts with `--no-skills` for Sauce Demo validation, keeping skill-enabled dogfood/report routing as a separate test mode.
 - Network diagnostics preserve app page/ref context so request-detail and `networkSourceLookup` URLs do not replace the active browser target or stale current-page refs.
 
 ### Fixed
+
 - Narrowed the `eval --stdin` empty-result hint so valid empty array results no longer warn like uninvoked function snippets that serialize to `{}`.
 
 ## 0.2.30 - 2026-05-18
 
 ### Added
+
 - Current-snapshot ref fallback for locator misses: raw `find` and compiled `semanticAction` selector misses can now surface exact visible `@ref` retry actions when a fresh snapshot shows the intended control.
 - Public Sauce Demo checkout smoke guidance for validating natural browser workflows, artifact paths, and final-action stop boundaries before release.
 - Efficiency benchmark coverage for multi-ref extraction workflows.
 
 ### Changed
+
 - Reduced wrapper-induced click fragility by replacing serial post-click title/URL probes with one read-only navigation summary eval and limiting tab-list pinning/correction probes to sessions with observed drift risk.
 - Allowed same-snapshot form-fill batching: `fill @e…` remains stale-ref guarded but no longer invalidates later same-snapshot fills before the first click/submit/navigation row.
 - Tightened browser playbook guidance for signed-in profile use, multi-value extraction, exact requested artifact paths, and explicit order/post/purchase/submit stop boundaries.
 
 ### Fixed
+
 - Removed stale release/support documentation notes after the post-`v0.2.29` review and kept command-reference, support-matrix, README, and tool-contract guidance aligned with the current wrapper behavior.
 
 ## 0.2.29 - 2026-05-18
 
 ### Changed
+
 - Updated the local pi package baseline to `@earendil-works/*` `0.75.3`, including the Node.js `>=22.19.0` runtime floor and refreshed npm lockfile.
 - Removed tracked CueLoop runtime state from the repository and ignored local `.cueloop/` artifacts.
-
 
 ## 0.2.28 - 2026-05-15
 
 ### Added
+
 - Compact runtime guidance now points agents to the installed package's `README.md`, `docs/COMMAND_REFERENCE.md`, and `docs/TOOL_CONTRACT.md` for on-demand detail instead of injecting the full browser playbook into every browser-oriented turn.
 - Successful top-level `scroll` calls can now report `details.scrollNoop`, visible no-op scroll diagnostics, and exact snapshot/screenshot recovery `nextActions` when wrapper-side probes show the viewport and sampled scroll containers did not move.
 - Successful explicit combobox-targeted actions can now report `details.comboboxFocus` and exact `snapshot -i`, `press ArrowDown`, and `press Enter` recovery `nextActions` when a focused combobox has explicit `aria-expanded` state but no visible options, including after active-session semanticAction role/name clicks resolve through current visible `@ref`s.
@@ -882,12 +892,14 @@
 - `docs/RELEASE.md` now includes a repeatable public Grafana Play stress checklist for dense-dashboard release dogfood without bundling private dogfood/VFR skills or adding a recipe runtime.
 
 ### Fixed
+
 - Network request redaction now treats secret-like query and field names such as `sentry_key` and `writeKey` as sensitive in model-visible summaries and details.
 - README and command-reference setup notes now call out `ffmpeg` as the external dependency required for recording workflows.
 
 ## 0.2.27 - 2026-05-14
 
 ### Fixed
+
 - `semanticAction` role/name click, check, and uncheck calls in active sessions now resolve through the current `snapshot -i` refs before execution, preventing hidden duplicate upstream `find` matches from stealing the action while preserving the original target in `details.compiledSemanticAction` and showing the executed ref in `details.effectiveArgs`.
 - QA presets now default to `loadState: "domcontentloaded"` and accept explicit `domcontentloaded`, `load`, or `networkidle`, avoiding wrapper watchdog timeouts on analytics-heavy or long-polling docs sites while keeping stricter waits opt-in.
 - Network request presentation now shows actionable and benign failed rows before successful rows, so late failures remain visible even when request previews are capped.
@@ -897,6 +909,7 @@
 ## 0.2.26 - 2026-05-14
 
 ### Added
+
 - artifact lifecycle cleanup guidance (`RQ-0079`): successful `close` results now include `details.artifactCleanup` and a visible `Artifact lifecycle` note when recent artifact metadata exists, making explicit that browser close does not delete user-chosen screenshot/download/PDF/trace/HAR/recording paths and listing paths for host-tool cleanup.
 - getter/eval discoverability diagnostics (`RQ-0078`): common unknown getter shortcuts such as `title`, `url`, and `text` now get grouped-`get` guidance (with exact `use-get-title` / `use-get-url` next actions where unambiguous), and function-shaped `eval --stdin` snippets that serialize to `{}` now add visible `Eval stdin hint` plus `details.evalStdinHint` so agents know to pass a plain expression or invoke the function explicitly.
 - managed-session outcome diagnostics for failed `sessionMode: "fresh"` calls (`RQ-0077`): failed or timed-out fresh launches now report `details.managedSessionOutcome` and, when the plan used `sessionMode: "fresh"` with a failing outcome, append visible `Managed session outcome: …` text so agents know whether the prior managed session was preserved or no managed session became current.
@@ -908,11 +921,13 @@
 - compact oversized `snapshot` output now documents the `Omitted high-value controls` prose block and matching `details.data.highValueControlRefIds` (plus related compact snapshot metadata) in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#snapshot), [`README.md`](README.md), and generated playbook guidance from `extensions/agent-browser/lib/playbook.ts`, with implementation in `extensions/agent-browser/lib/results/snapshot.ts` and regression coverage in `test/agent-browser.presentation.test.ts`
 
 ### Changed
+
 - documentation for `RQ-0077` managed-session outcomes now matches `buildManagedSessionOutcome` / `formatManagedSessionOutcomeText`: when the visible `Managed session outcome: …` line is emitted (including ordering after other diagnostic tails per `rawAppendedDiagnosticText` in `extensions/agent-browser/index.ts`, and the missing-binary-only case), how `details.managedSessionOutcome` behaves after **`qa`** reclassification, and that `"auto"` failures can populate `details` without the extra prose line; updates in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md), [`README.md`](README.md), [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#session-model), [`AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md), and this changelog.
 - documentation for `RQ-0076` timeout partial progress now matches `collectTimeoutPartialProgress` / `formatTimeoutPartialProgressText` in code: compiled `qa` shares the `job` step-list path; otherwise planned steps come from JSON-array `batch` stdin (caller-provided or wrapper-generated for `sourceLookup` / `networkSourceLookup`), only when each element is a string[] argv row; optional planned-URL fallback and `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` watchdog tuning are called out in [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md), [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md), [`README.md`](README.md), and [`AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md); [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) now documents `timeoutPartialProgress.summary`, the batch stdin parse rule, the six-step cap on visible `Planned steps` lines, and the `0/0` declared-path count when only page context is recovered.
 - batch stdin page-scoped ref preflight clears the ref-invalidating latch when a later `snapshot` step appears in the same JSON plan (`getBatchRefInvalidationMessage` in `extensions/agent-browser/index.ts`), matching documented `snapshot -i` spacing inside `batch`; contract expanded under [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) (`refSnapshot`); regression `agentBrowserExtension allows batch stdin ref steps after snapshot following an invalidating step` in [`test/agent-browser.extension-validation.test.ts`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/test/agent-browser.extension-validation.test.ts)
 
 ### Fixed
+
 - explicit `--json` calls keep machine-readable visible content parseable even when the wrapper attaches extra diagnostic structs such as `details.evalStdinHint`; diagnostic guidance remains available on `details` without being appended after the JSON payload.
 - overlay blocker candidate actions (`try-overlay-blocker-candidate-*`) no longer appear under the semantic-action `Agent-browser candidate fallbacks` heading; that prose is now limited to the bounded semantic locator fallback ids.
 - packaged Pi smoke now forces its temporary `npm pack` to write a tarball even when invoked from `npm publish --dry-run`, so the release lifecycle dry run validates the same smoke path instead of inheriting npm's outer dry-run mode.
@@ -920,6 +935,7 @@
 ## 0.2.25 - 2026-05-14
 
 ### Added
+
 - [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md) as the durable upstream support and release-readiness matrix keyed to `CAPABILITY_BASELINE.inventorySections` in `scripts/agent-browser-capability-baseline.mjs`, including maintainer refresh steps, verification gate evidence, and per-inventory documentation/runtime/test pointers; cross-linked from [`README.md`](README.md), [`AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md), [`docs/RELEASE.md`](docs/RELEASE.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and the published tarball `files` list in `package.json`
 - machine-readable `details.nextActions` id `retry-semantic-action-after-stale-ref` when a top-level `semanticAction` call fails with `failureCategory: "stale-ref"` and the wrapper still has the compiled upstream `find` argv: it is appended after `refresh-interactive-refs` so agents can retry the same locator-stable target without hand-rebuilding argv, while direct stale `@e…` flows keep snapshot-only recovery; merged in `extensions/agent-browser/index.ts`, documented in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#semanticaction) and [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), agent playbook string in `extensions/agent-browser/lib/playbook.ts`, regression coverage in `test/agent-browser.extension-validation.test.ts`
 - optional top-level `semanticAction` on native `agent_browser` as a mutually exclusive alternative to `args`, compiling common locator intents into upstream `find` argv and echoing `{ action, locator, args }` (redacted like other argv) in `details.compiledSemanticAction` when the unified or early-validation `details` object includes that field; contract in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#semanticaction), compilation in `extensions/agent-browser/index.ts` (`compileAgentBrowserSemanticAction`), regression coverage in `test/agent-browser.extension-validation.test.ts`
@@ -928,6 +944,7 @@
 - optional experimental top-level `sourceLookup` on native `agent_browser` (mutually exclusive with `args`, `semanticAction`, `job`, and `qa`) that compiles to upstream `batch` steps (`is visible`, `get html`, `react inspect`, and `react tree` when the corresponding fields are set), performs a bounded workspace component scan under the Pi session cwd when `componentName` is present, and merges structured `details.sourceLookup` (`status`, `candidates`, `limitations`, `summary`) plus `details.compiledSourceLookup` for observability; `details.sourceLookup.status` distinguishes `candidates-found`, `no-candidates`, and `unsupported` (the last only when no candidates were collected and a `react` batch step failed). Operator and agent contracts in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#sourcelookup), [`README.md`](README.md), [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md), [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/RELEASE.md`](docs/RELEASE.md), and [`AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md); compilation and post-batch analysis in `extensions/agent-browser/index.ts` (`compileAgentBrowserSourceLookup`, `analyzeSourceLookupResults`); regression coverage in `test/agent-browser.extension-validation.test.ts` and a representative scenario in `scripts/agent-browser-efficiency-benchmark.mjs`
 
 ### Changed
+
 - documented closed `RQ-0068` (no first-class reusable named browser recipe runtime above constrained `job`, the `qa` preset, experimental `sourceLookup` / `networkSourceLookup`, and raw `batch`): evidence bar tied to deterministic efficiency-benchmark scenario ids in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet), operator and maintainer cross-links in [`README.md`](README.md), [`AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md), [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md), [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md), [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md), and agent playbook guidance in `extensions/agent-browser/lib/playbook.ts`
 - presentation layer treats `cookies`, `storage`, `auth`, `dialog`, `frame`, and `state` as stateful: successful `details.data` and per-step `batch` results pass through field-aware or full-tree redaction, argv echo uses `redactInvocationArgs` for cookie/storage set values, failed batch steps strip the same literals from structured errors, and aggregate `batch` tool calls expose a compact redacted `details.data` roll-up—documented in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#use-stateful-browser-context-commands-safely), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/RELEASE.md`](docs/RELEASE.md), [`README.md`](README.md), and [`AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md), with regression coverage in `test/agent-browser.presentation.test.ts` and `test/agent-browser.extension-validation.test.ts`
 - documented real-upstream suite mechanics (single 120s contract test, output-shape JSON, temp `HOME` / socket / screenshot isolation, React DevTools branch) plus triage notes in [`docs/RELEASE.md`](docs/RELEASE.md#real-upstream-suite-mechanics-isolation-and-troubleshooting); cross-links from [`README.md`](README.md) and [`AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md)
@@ -946,33 +963,39 @@
 ## 0.2.24 - 2026-05-11
 
 ### Added
+
 - added custom `agent_browser` TUI rendering with colorized call/output text and built-in-style visual truncation for long visible output while preserving model-facing tool content
 
 ## 0.2.23 - 2026-05-10
 
 ### Fixed
+
 - added safe `auth save --password-stdin` support for native tool calls and redacted password stdin from model-visible content, tool details, upstream failure output, and preserved parse-failure spill files
 - improved session and launch-flag handling for agent workflows, including disabled `--auto-connect`, optional boolean flag values, dash-starting `--args` values, and stale `@ref` recovery guidance through pinned commands and user batch stdin
 - expanded sensitive argument redaction for password and credential command forms
 
 ### Changed
+
 - rewrote the public README around outcome-first usage, fastest install paths, profile/auth workflow guidance, and release verification proof
 - clarified native-tool command guidance for password stdin, cookie/privacy handling, stable tab ids, and explicit session persistence limits
 
 ## 0.2.22 - 2026-05-07
 
 ### Compatibility
+
 - migrated the local pi development baseline and peer metadata from deprecated `@mariozechner/*` packages to maintained `@earendil-works/*` `0.74.0`
 - regenerated the npm lockfile against the current stable dependency graph and confirmed package verification remains green
 
 ## 0.2.21 - 2026-05-07
 
 ### Fixed
+
 - fixed the published `pi-agent-browser-doctor` bin entrypoint so it runs when invoked through npm's `.bin` symlink
 
 ## 0.2.20 - 2026-05-07
 
 ### Compatibility
+
 - updated the extension's upstream capability baseline and command reference for `agent-browser` `0.27.0`
 - documented and passed through the new React introspection commands (`react tree`, `react inspect`, `react renders`, `react suspense`), Web Vitals (`vitals`), SPA navigation (`pushstate`), init-script flags (`--init-script`, `--enable react-devtools`), `network route --resource-type`, and `cookies set --curl`
 - treat `--init-script` and `--enable` as launch-scoped flags in managed-session planning so agents get the same clear `sessionMode: "fresh"` recovery path as profile/state/CDP launches
@@ -980,15 +1003,18 @@
 ## 0.2.19 - 2026-05-03
 
 ### Fixed
+
 - resolve relative Pi package sources from the settings file directory in `pi-agent-browser-doctor`, so global settings that point at a local checkout are detected correctly
 
 ## 0.2.18 - 2026-05-03
 
 ### Fixed
+
 - persist oversized parse-failure spill files when Pi provides a session directory without a session file
 - isolate the opt-in real-upstream download contract test from the user's global Downloads folder and avoid killing unrelated `agent-browser` processes
 
 ### Changed
+
 - clarified the README and repo guidance for the current published package state
 - marked the completed implementation plan as superseded so current design guidance stays canonical
 - tightened the implicit-session idle-timeout helper to return milliseconds as a number and convert to an environment string only at the process boundary
@@ -996,15 +1022,18 @@
 ## 0.2.17 - 2026-05-03
 
 ### Fixed
+
 - close the active extension-managed `piab-*` browser session when the originating `pi` process quits, while preserving managed browser continuity across `/reload` and resumable session transitions
 - added lifecycle regression coverage for quit-time managed-session cleanup and reload-time preservation
 
 ### Changed
+
 - clarified that the managed-session idle timeout is now an abnormal-exit backstop, not the primary cleanup path for normal `pi` exits
 
 ## 0.2.16 - 2026-05-02
 
 ### Fixed
+
 - made screenshot artifact paths reliable for agent workflows by normalizing explicit screenshot output paths, including dot-directory paths such as `.dogfood/...`, to absolute paths before invoking upstream `agent-browser`
 - repaired screenshot outputs from upstream temp files when needed and made the requested path the primary visible artifact path
 - extended the screenshot path contract to annotated batch screenshots, so top-level `--annotate` batch calls preserve and verify per-step requested output paths
@@ -1012,6 +1041,7 @@
 - added wrapper-observed trace/profiler owner guards to prevent known conflicting start/stop sequences from corrupting upstream tracing state
 
 ### Changed
+
 - artifact-producing commands now render direct visible artifact metadata, including artifact type, requested path, absolute path, existence, size, status, cwd, session, and temp path when repaired
 - explicit `--json` calls now render valid JSON in visible tool content; `stream status` JSON is enriched with `wsUrl` and frame format metadata
 - documented the artifact contract, batch annotation guidance, trace/profiler caveat, and package-development bash bypass for upstream debugging
@@ -1019,73 +1049,84 @@
 ## 0.2.15 - 2026-05-01
 
 ### Changed
+
 - updated the local pi development baseline to `@mariozechner/pi-coding-agent` / `@mariozechner/pi-ai` `0.72.0`
 - regenerated the npm lockfile against the current stable dependency graph
 - aligned pi core peer metadata with current pi package guidance
 
 ### Compatibility
-- reviewed the pi `0.72.0` changelog and confirmed the extension does not use the removed `compat.reasoningEffortMap` provider shape or depend on the new Xiaomi MiMo/provider base URL behavior
 
+- reviewed the pi `0.72.0` changelog and confirmed the extension does not use the removed `compat.reasoningEffortMap` provider shape or depend on the new Xiaomi MiMo/provider base URL behavior
 
 ## 0.2.14 - 2026-05-01
 
 ### Changed
+
 - updated the local pi development baseline to `@mariozechner/pi-coding-agent` `0.71.1`
 - regenerated the npm lockfile against the current stable dependency graph
 
 ### Compatibility
-- reviewed the pi `0.71.1` changelog and confirmed the extension is compatible with the current TypeBox 1.x package guidance, session-replacement safety rules, and latest package install/update behavior
 
+- reviewed the pi `0.71.1` changelog and confirmed the extension is compatible with the current TypeBox 1.x package guidance, session-replacement safety rules, and latest package install/update behavior
 
 ## 0.2.13 - 2026-04-30
 
 ### Fixed
+
 - improved model-facing redaction across generic output, scalar extraction summaries, diagnostics, console/error previews, and compacted spill files so nested, multiline, and prefixed structured secrets are masked before entering tool content or summaries
 - adapted upstream `agent-browser skills get` output for Pi's native `agent_browser` tool by removing bash-oriented allowlist hints and translating quoted and heredoc CLI examples into native tool-call examples
 - reduced artifact-retention noise for routine explicit saved files while preserving retention metadata in details, and fixed explicit artifact manifest deduplication for same relative paths in different working directories
 
 ### Changed
+
 - documented that oversized spill files contain redacted upstream payloads rather than raw secret-bearing output
 - added command-reference guidance for converting upstream standalone CLI examples into native `agent_browser` tool calls
 
 ## 0.2.12 - 2026-04-23
 
 ### Changed
+
 - updated the local pi development baseline to `@mariozechner/pi-coding-agent` `0.70.0`
 - migrated published TypeBox integration metadata and source imports from `@sinclair/typebox` to `typebox` for pi `0.69.0` compatibility
 - regenerated the npm lockfile against the current stable dependency graph
 
 ### Compatibility
-- reviewed the pi `0.70.0` changelog and confirmed the extension already follows the current session-replacement guidance while now using the required TypeBox 1.x package name and has no dependency on the changed terminal progress defaults
 
+- reviewed the pi `0.70.0` changelog and confirmed the extension already follows the current session-replacement guidance while now using the required TypeBox 1.x package name and has no dependency on the changed terminal progress defaults
 
 ## 0.2.11 - 2026-04-21
 
 ### Changed
+
 - updated the local pi development baseline to `@mariozechner/pi-coding-agent` `0.68.0`
 - regenerated the npm lockfile against the current stable dependency graph
 
 ### Compatibility
+
 - reviewed the pi `0.68.0` changelog and confirmed the extension already uses the current named-tool registration model instead of removed cwd-bound tool exports
 
 ## 0.2.10 - 2026-04-18
 
 ### Changed
+
 - bumped the local pi development baseline to `@mariozechner/pi-coding-agent` `0.67.68` and `typescript` `6.0.3`
 - refreshed the release lockfile against the current stable pi patch line
 
 ### Fixed
+
 - pinned the transitive `basic-ftp` dependency to `5.3.0` to clear the current audit finding during local verification and publish checks
 
 ## 0.2.9 - 2026-04-17
 
 ### Fixed
+
 - large non-snapshot outputs such as oversized `eval --stdin` payloads now compact inline content, spill the full payload to a private file, and print the actual spill path directly in tool content instead of dumping huge raw output into model context
 - file-save flows now render `download` results as explicit saved-file summaries so agents can see the downloaded path directly
 - when a known target tab stays correct at command start but a restored/background tab steals focus after the command completes, the wrapper now best-effort restores the intended tab before returning control
 - compact snapshot text now prints the actual raw-spill file path directly instead of only referring agents to `details.fullOutputPath`
 
 ### Changed
+
 - added a published `docs/COMMAND_REFERENCE.md` so agents have a repo-readable local command/help surface even when direct `agent-browser` binary usage is blocked
 - expanded tool guidance, README, release notes, and repo guidance with download workflows, better `wait` usage, oversized-output handling, and the documentation-sync rule for upstream `agent-browser` updates
 - clarified the checkout-versus-installed-package workflow in README, release notes, and repo agent guidance so local development keeps one active Pi package source for this extension at a time instead of treating the published entrypoint file as optional
@@ -1093,6 +1134,7 @@
 ## 0.2.8 - 2026-04-16
 
 ### Fixed
+
 - updated the tab-correction and tab-pinning wrapper paths for `agent-browser` `0.26.0` tab metadata, so profiled launches and follow-up commands now re-select tabs using stable upstream tab ids instead of the retired numeric index shape
 - updated tab-list rendering and tool guidance to show `agent-browser`'s stable tab ids/labels instead of suggesting `tab <n>` commands that no longer work in `0.26.0`
 - extended the narrow ChatGPT/OpenAI headless user-agent compatibility fallback to cover `chat.com`, so `chat.com` redirects reuse the same authenticated headless path as `chatgpt.com`
@@ -1100,6 +1142,7 @@
 ## 0.2.7 - 2026-04-16
 
 ### Changed
+
 - updated the local pi development baseline to `@mariozechner/pi-coding-agent` `0.67.4`
 - aligned `packageManager` metadata to `npm@10.9.8`, the latest stable npm line compatible with the declared Node runtime floor
 - removed the published `@mariozechner/pi-coding-agent` peer dependency so installs rely on pi's bundled runtime instead of npm peer-resolution churn
@@ -1107,18 +1150,21 @@
 ## 0.2.6 - 2026-04-15
 
 ### Changed
+
 - pinned `packageManager` metadata to `npm@11.12.1` so lockfile refreshes resolve consistently during release verification
 - refreshed the compatible transitive development dependency resolution pulled by the current pi toolchain without changing the published `agent_browser` runtime contract
 
 ## 0.2.5 - 2026-04-14
 
 ### Changed
+
 - refreshed the development and release-verification baseline to `@mariozechner/pi-coding-agent` `0.67.2` and `@types/node` `25.6.0`, keeping local typechecking and package verification aligned with the latest stable pi release used for this extension
 - re-locked the compatible transitive development dependency set pulled by the updated pi toolchain without changing the published `agent_browser` runtime contract
 
 ## 0.2.4 - 2026-04-13
 
 ### Fixed
+
 - wrapper-spawned local Unix `agent-browser` runs now use a short private socket directory under `/tmp`, so extension-generated session names no longer fail the upstream Unix socket-path length limit in longer cwd/session-name combinations
 - once the wrapper knows which tab a session should stay on, later active-tab commands like `click` and `snapshot -i` now best-effort pin that same tab inside the same upstream invocation instead of letting reconnect drift send the action to a restored/background tab
 - persisted `sessionTabTarget` state now survives `/reload` / `/resume` for both managed and explicit sessions, so the reconnect-time tab pinning behavior can continue after restart/resume flows
@@ -1127,6 +1173,7 @@
 ## 0.2.3 - 2026-04-13
 
 ### Fixed
+
 - direct headless local Chrome launches to `chatgpt.com` and `chat.openai.com` now inject a normal Chrome user agent when the caller did not explicitly choose one, keeping authenticated ChatGPT/OpenAI browsing working without forcing `--headed` or `--auto-connect`
 - profiled `open` / `goto` / `navigate` calls now best-effort switch back to the page that was just opened when restored profile tabs steal focus during launch, reducing confusing cross-tab drift in profile-backed sessions
 - command parsing now treats additional value-taking global flags like `--user-agent`, `--args`, `--allowed-domains`, `--action-policy`, and related launch options as launch metadata instead of accidentally parsing their values as subcommands
@@ -1135,6 +1182,7 @@
 ## 0.2.2 - 2026-04-12
 
 ### Fixed
+
 - plain-text inspection commands like `agent_browser --help` and `--version` now stay stateless: they no longer claim the implicit managed session or leave behind ambiguous `parseError` details on success
 - extension-managed session ownership is now reconstructed from persisted tool details on resume/reload while still preserving cwd-hash isolation across same-named checkouts and worktrees
 - echoed tool updates/details now redact sensitive invocation values and structured secret-bearing fields instead of replaying headers, proxy credentials, cookies, or auth-bearing URL params back into `pi`
@@ -1145,6 +1193,7 @@
 ## 0.2.1 - 2026-04-12
 
 ### Fixed
+
 - the GitHub source trial docs now use `pi --no-extensions -e https://github.com/fitchmultz/pi-agent-browser-native` so published-package users do not hit duplicate `agent_browser` registration conflicts during source-path testing
 - successful unnamed `sessionMode: "fresh"` launches now rotate the extension-managed session to the new browser, and later default `sessionMode: "auto"` calls keep following that fresh session instead of silently snapping back to the older one
 - mixed-success `batch` failures now preserve per-step rendering, include the first failing step in the visible output and structured details, and still mark the overall tool call as an error so agents can recover from partial progress
@@ -1155,6 +1204,7 @@
 ## 0.2.0 - 2026-04-12
 
 ### Changed
+
 - `batch` now reuses the richer standalone renderers, so batched snapshots keep the compact main-content-first view and batched screenshots keep inline image attachments instead of degrading to raw JSON-ish text
 - the tool schema now uses `sessionMode: "auto" | "fresh"` instead of the old implicit-session boolean so agents have a first-class way to request a fresh profiled/debug launch, and blocked startup-scoped reuse errors now include structured recovery hints
 - plain-text inspection commands like `agent_browser --help` and `--version` are now always allowed, removing the old prompt-dependent inspection gate and making the inspection contract local and predictable
@@ -1163,12 +1213,14 @@
 - README and tool prompt guidance now include a compact agent quick start with the core call shapes for `open` + `snapshot`, `click` + re-snapshot, `batch`, `eval --stdin`, and fresh profiled launches, while turn-level system-prompt injection stays minimal
 
 ### Migration notes
+
 - replace any use of `useActiveSession` with `sessionMode`
 - use `sessionMode: "fresh"` when you need a new `--profile`, `--session-name`, or `--cdp` launch after the implicit session is already active
 
 ## 0.1.6 - 2026-04-12
 
 ### Changed
+
 - hardened the implicit browser-session lifecycle so failed first launches no longer mark the convenience session active, startup-scoped flags behave correctly across launches and closes, and the highest-risk entrypoint paths now have direct automated and isolated-`pi` coverage
 - added explicit temp-root ownership markers, aggregate spill-file disk budgeting, inline image size limits, and graceful fallback behavior when large snapshot or stdout artifacts exceed temp budgets
 - consolidated the shared browser operating playbook into the tool prompt guidance while keeping turn-level system-prompt injection minimal, and added direct extension-hook coverage for prompt injection, bash blocking, and session resets
@@ -1178,12 +1230,14 @@
 ## 0.1.5 - 2026-04-12
 
 ### Changed
+
 - pinned the transitive `basic-ftp` dependency to `5.2.2` via `overrides` so local development and GitHub install flows no longer pull the vulnerable `5.2.1` version through `@mariozechner/pi-coding-agent`
 - kept the 0.1.4 startup fix and metadata updates intact while clearing the audit failure that surfaced during release verification
 
 ## 0.1.4 - 2026-04-12
 
 ### Changed
+
 - removed the tracked repo-local `.pi/extensions/agent-browser.ts` autoload shim because it conflicts with the globally installed package and blocks `pi` startup from this repository root
 - local checkout validation now uses explicit CLI loading with `pi --no-extensions -e .` instead of repo-local `.pi/extensions/` auto-discovery
 - aligned the package description and keywords with the GitHub repository metadata used for your other public `pi` extensions
@@ -1191,6 +1245,7 @@
 ## 0.1.3 - 2026-04-12
 
 ### Changed
+
 - when `BRAVE_API_KEY` is present and non-empty, the extension now tells agents to prefer the Brave Search API via `bash`/`curl` for URL discovery and then open the chosen destination with `agent_browser` instead of driving a search engine results page in the browser
 - when `BRAVE_API_KEY` is absent, the extension behavior remains unchanged
 - added a small runtime helper and unit coverage for the `BRAVE_API_KEY` gate so the change stays explicit and minimal
@@ -1198,6 +1253,7 @@
 ## 0.1.2 - 2026-04-11
 
 ### Changed
+
 - renamed the public GitHub repository to `pi-agent-browser-native` so the repo name, npm package name, install docs, and package metadata all align
 - updated package metadata and install guidance to use the new GitHub source path `https://github.com/fitchmultz/pi-agent-browser-native`
 - switched the local global pi install from the repo checkout path to the published npm package `pi-agent-browser-native`
@@ -1205,6 +1261,7 @@
 ## 0.1.1 - 2026-04-11
 
 ### Changed
+
 - startup-scoped flags like `--profile`, `--session-name`, and `--cdp` now fail clearly when reused against an already-active implicit session instead of silently relying on upstream to ignore them
 - prompt-based bash/help allowances are now derived from the current user prompt instead of mutable extension-global booleans, and the inspection allowance only triggers for tool-specific requests
 - oversized subprocess stdout is now bounded in memory and spilled to private temp files before JSON parsing, reducing unbounded buffering risk without breaking large snapshot handling
@@ -1216,6 +1273,7 @@
 ## 0.1.0 - 2026-04-09
 
 ### Added
+
 - initial package scaffold for `pi-agent-browser`
 - native `agent_browser` extension tool that wraps upstream `agent-browser --json`
 - thin implicit-session support for the common path
@@ -1226,6 +1284,7 @@
 - concise product and implementation docs
 
 ### Changed
+
 - removed the shipped skill override; extension hooks are the primary mechanism for preferring the native tool
 - implicit `piab-*` sessions are now best-effort closed on `pi` shutdown and get an idle timeout so abandoned background daemons do not accumulate as easily
 - tightened tool guidance so agents avoid falling back to osascript or other generic browser-driving bash commands when the native tool should be used

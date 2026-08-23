@@ -17,11 +17,7 @@ import {
   SyntheticQuotasUpdatedPayloadSchema,
 } from "../../src/types/quotas.ts";
 import { formatResetTime } from "../../src/utils/quotas.ts";
-import {
-  type QuotaWindow,
-  safePercent,
-  toWindows,
-} from "../../src/utils/quotas-severity.ts";
+import { type QuotaWindow, safePercent, toWindows } from "../../src/utils/quotas-severity.ts";
 import { requestQuotas } from "../_shared/quota-events.ts";
 
 interface RateWindow {

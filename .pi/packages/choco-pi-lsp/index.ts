@@ -193,10 +193,7 @@ export default function chocoPiLspExtension(pi: ExtensionAPI): void {
   }
 
   // SAFETY: Every manifest channel was captured from this extension's own pi.on calls; the proxy forwards the same event/context pair.
-  const registerEvent = pi.on.bind(pi) as (
-    channel: string,
-    handler: DeferredEventHandler,
-  ) => void;
+  const registerEvent = pi.on.bind(pi) as (channel: string, handler: DeferredEventHandler) => void;
   for (const channel of manifest.events) {
     registerEvent(channel, async (event, ctx) => {
       const captured = await getRuntime();

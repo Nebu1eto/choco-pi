@@ -28,13 +28,9 @@
       "style": { "fontFamily": "Inter", "fontSize": 14, "fontWeight": 600 },
       "styles": { "text": "S:text-button" },
       "boundVariables": {
-        "fills": [
-          { "type": "VARIABLE_ALIAS", "id": "VariableID:text-on-primary" }
-        ]
+        "fills": [{ "type": "VARIABLE_ALIAS", "id": "VariableID:text-on-primary" }]
       },
-      "fills": [
-        { "type": "SOLID", "color": { "r": 1, "g": 1, "b": 1 }, "opacity": 1 }
-      ]
+      "fills": [{ "type": "SOLID", "color": { "r": 1, "g": 1, "b": 1 }, "opacity": 1 }]
     }
   ]
 }

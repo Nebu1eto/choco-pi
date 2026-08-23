@@ -11,11 +11,7 @@
           "properties": {
             "mode": {
               "type": "string",
-              "enum": [
-                "delta",
-                "all",
-                "full"
-              ],
+              "enum": ["delta", "all", "full"],
               "description": "delta = current turn's fixable warnings (default). all = session diagnostics for edited/dispatched files. full = expensive active project-wide LSP scan plus cached runner diagnostics."
             },
             "refreshRunners": {
@@ -25,12 +21,7 @@
                 },
                 {
                   "type": "string",
-                  "enum": [
-                    "cached",
-                    "cheap",
-                    "all",
-                    "none"
-                  ]
+                  "enum": ["cached", "cheap", "all", "none"]
                 }
               ],
               "description": "mode=full only: false/none = LSP + widget state only. cached/cheap/all trigger a FRESH run (#585) of the project analyzers (opengrep) instead of reading a possibly-stale session_start cache; safe to relaunch since each analyzer de-dupes concurrent runs against the same project root. cheap/all additionally refresh the in-process runners (tree-sitter + fact-rules + ast-grep) first."
@@ -49,11 +40,7 @@
             },
             "severity": {
               "type": "string",
-              "enum": [
-                "error",
-                "warning",
-                "all"
-              ],
+              "enum": ["error", "warning", "all"],
               "description": "Filter by severity (default: all)."
             },
             "paths": {
@@ -67,10 +54,7 @@
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -96,13 +80,7 @@
             },
             "severity": {
               "type": "string",
-              "enum": [
-                "error",
-                "warning",
-                "information",
-                "hint",
-                "all"
-              ],
+              "enum": ["error", "warning", "information", "hint", "all"],
               "description": "Filter by severity level (default: all)"
             },
             "concurrency": {
@@ -115,19 +93,13 @@
             },
             "serverScope": {
               "type": "string",
-              "enum": [
-                "primary",
-                "all"
-              ],
+              "enum": ["primary", "all"],
               "description": "'primary' (fast, low-noise): only the file's actual language server (e.g. typescript) — for 'does this have real type errors'. 'all' (default): also touches cross-cutting auxiliary scanners (ast-grep, opengrep, zizmor, typos, marksman) attached to this file, including findings for files not yet dispatched this session. Primary confirmation is always reported separately from auxiliary findings regardless of this setting."
             }
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -137,9 +109,7 @@
         "promptSnippet": "Ranked identifier search — find relevant files by name/usage",
         "parameters": {
           "type": "object",
-          "required": [
-            "query"
-          ],
+          "required": ["query"],
           "properties": {
             "query": {
               "type": "string",
@@ -163,10 +133,7 @@
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -187,19 +154,13 @@
             },
             "view": {
               "type": "string",
-              "enum": [
-                "default",
-                "compact"
-              ],
+              "enum": ["default", "compact"],
               "description": "Payload tier. compact (cheapest) returns a line-oriented TEXT rendering instead of JSON. Default returns JSON."
             }
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -209,9 +170,7 @@
         "promptSnippet": "Navigable file outline — a cheap substitute for reading a whole file",
         "parameters": {
           "type": "object",
-          "required": [
-            "path"
-          ],
+          "required": ["path"],
           "properties": {
             "path": {
               "type": "string",
@@ -227,11 +186,7 @@
             },
             "view": {
               "type": "string",
-              "enum": [
-                "summary",
-                "default",
-                "compact"
-              ],
+              "enum": ["summary", "default", "compact"],
               "description": "Payload tier. summary returns top-level entries/recommendedReads and section provenance with heavy callback/usedBy/blast-radius payloads omitted. compact (cheapest) returns a line-oriented TEXT rendering of the full report instead of JSON."
             },
             "blastRadius": {
@@ -253,10 +208,7 @@
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -266,10 +218,7 @@
         "promptSnippet": "Read one symbol's body instead of the whole file",
         "parameters": {
           "type": "object",
-          "required": [
-            "path",
-            "symbol"
-          ],
+          "required": ["path", "symbol"],
           "properties": {
             "path": {
               "type": "string",
@@ -286,10 +235,7 @@
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -299,10 +245,7 @@
         "promptSnippet": "Read the enclosing symbol or callback body for a line",
         "parameters": {
           "type": "object",
-          "required": [
-            "path",
-            "line"
-          ],
+          "required": ["path", "line"],
           "properties": {
             "path": {
               "type": "string",
@@ -325,11 +268,7 @@
             },
             "onOversize": {
               "type": "string",
-              "enum": [
-                "error",
-                "slice",
-                "outline"
-              ],
+              "enum": ["error", "slice", "outline"],
               "description": "Behavior when the enclosing body exceeds maxLines. error (default) returns metadata only; slice returns a bounded partial read around line; outline returns nested symbols/callbacks with read handles."
             },
             "aroundLine": {
@@ -339,10 +278,7 @@
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -352,9 +288,7 @@
         "promptSnippet": "Activate situational ast-grep / lsp_navigation tools before using them",
         "parameters": {
           "type": "object",
-          "required": [
-            "tools"
-          ],
+          "required": ["tools"],
           "properties": {
             "tools": {
               "type": "array",
@@ -375,9 +309,7 @@
           }
         }
       },
-      "functionKeys": [
-        "execute"
-      ]
+      "functionKeys": ["execute"]
     },
     {
       "metadata": {
@@ -387,9 +319,7 @@
         "promptSnippet": "AST-aware structural code search",
         "parameters": {
           "type": "object",
-          "required": [
-            "lang"
-          ],
+          "required": ["lang"],
           "properties": {
             "pattern": {
               "type": "string",
@@ -484,14 +414,7 @@
             },
             "strictness": {
               "type": "string",
-              "enum": [
-                "smart",
-                "relaxed",
-                "ast",
-                "cst",
-                "signature",
-                "template"
-              ],
+              "enum": ["smart", "relaxed", "ast", "cst", "signature", "template"],
               "description": "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation — useful when optional trailing commas cause misses. 'ast' ignores all whitespace. 'signature' matches only structural shape, ignoring bodies."
             },
             "validateOnly": {
@@ -501,10 +424,7 @@
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -514,11 +434,7 @@
         "promptSnippet": "AST-aware structural find-and-replace",
         "parameters": {
           "type": "object",
-          "required": [
-            "pattern",
-            "rewrite",
-            "lang"
-          ],
+          "required": ["pattern", "rewrite", "lang"],
           "properties": {
             "pattern": {
               "type": "string",
@@ -592,23 +508,13 @@
             },
             "strictness": {
               "type": "string",
-              "enum": [
-                "smart",
-                "relaxed",
-                "ast",
-                "cst",
-                "signature",
-                "template"
-              ],
+              "enum": ["smart", "relaxed", "ast", "cst", "signature", "template"],
               "description": "Pattern matching strictness. 'smart' (default) ignores comments and whitespace. 'relaxed' also ignores unnamed nodes like punctuation. 'ast' ignores all whitespace."
             }
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -618,9 +524,7 @@
         "promptSnippet": "Syntax-only code outline via ast-grep (no index/LSP); module_report is the richer default",
         "parameters": {
           "type": "object",
-          "required": [
-            "paths"
-          ],
+          "required": ["paths"],
           "properties": {
             "paths": {
               "type": "array",
@@ -664,24 +568,12 @@
             },
             "items": {
               "type": "string",
-              "enum": [
-                "auto",
-                "structure",
-                "exports",
-                "imports",
-                "all"
-              ],
+              "enum": ["auto", "structure", "exports", "imports", "all"],
               "description": "Which top-level items to include. auto = `structure` for a file, `exports` for a directory (default)."
             },
             "view": {
               "type": "string",
-              "enum": [
-                "auto",
-                "names",
-                "signatures",
-                "digest",
-                "expanded"
-              ],
+              "enum": ["auto", "names", "signatures", "digest", "expanded"],
               "description": "Text presentation level for the underlying outline; `expanded` shows members."
             },
             "type": {
@@ -709,10 +601,7 @@
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -722,10 +611,7 @@
         "promptSnippet": "Inspect AST node kinds before writing ast-grep patterns",
         "parameters": {
           "type": "object",
-          "required": [
-            "source",
-            "lang"
-          ],
+          "required": ["source", "lang"],
           "properties": {
             "source": {
               "type": "string",
@@ -769,10 +655,7 @@
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -782,9 +665,7 @@
         "promptSnippet": "Find definitions, references, and hover info via LSP",
         "parameters": {
           "type": "object",
-          "required": [
-            "operation"
-          ],
+          "required": ["operation"],
           "properties": {
             "operation": {
               "type": "string",
@@ -860,13 +741,7 @@
             },
             "callHierarchyItem": {
               "type": "object",
-              "required": [
-                "name",
-                "kind",
-                "uri",
-                "range",
-                "selectionRange"
-              ],
+              "required": ["name", "kind", "uri", "range", "selectionRange"],
               "properties": {
                 "name": {
                   "type": "string"
@@ -879,17 +754,11 @@
                 },
                 "range": {
                   "type": "object",
-                  "required": [
-                    "start",
-                    "end"
-                  ],
+                  "required": ["start", "end"],
                   "properties": {
                     "start": {
                       "type": "object",
-                      "required": [
-                        "line",
-                        "character"
-                      ],
+                      "required": ["line", "character"],
                       "properties": {
                         "line": {
                           "type": "number"
@@ -901,10 +770,7 @@
                     },
                     "end": {
                       "type": "object",
-                      "required": [
-                        "line",
-                        "character"
-                      ],
+                      "required": ["line", "character"],
                       "properties": {
                         "line": {
                           "type": "number"
@@ -918,17 +784,11 @@
                 },
                 "selectionRange": {
                   "type": "object",
-                  "required": [
-                    "start",
-                    "end"
-                  ],
+                  "required": ["start", "end"],
                   "properties": {
                     "start": {
                       "type": "object",
-                      "required": [
-                        "line",
-                        "character"
-                      ],
+                      "required": ["line", "character"],
                       "properties": {
                         "line": {
                           "type": "number"
@@ -940,10 +800,7 @@
                     },
                     "end": {
                       "type": "object",
-                      "required": [
-                        "line",
-                        "character"
-                      ],
+                      "required": ["line", "character"],
                       "properties": {
                         "line": {
                           "type": "number"
@@ -961,10 +818,7 @@
           }
         }
       },
-      "functionKeys": [
-        "renderResult",
-        "execute"
-      ]
+      "functionKeys": ["renderResult", "execute"]
     },
     {
       "metadata": {
@@ -974,12 +828,7 @@
         "promptSnippet": "Use diagnostic_mark to dismiss a false-positive, suppress a won't-fix, defer, or flag a finding to fix later",
         "parameters": {
           "type": "object",
-          "required": [
-            "filePath",
-            "line",
-            "message",
-            "disposition"
-          ],
+          "required": ["filePath", "line", "message", "disposition"],
           "properties": {
             "filePath": {
               "type": "string",
@@ -1003,12 +852,7 @@
             },
             "disposition": {
               "type": "string",
-              "enum": [
-                "false-positive",
-                "suppress",
-                "defer",
-                "flagged"
-              ],
+              "enum": ["false-positive", "suppress", "defer", "flagged"],
               "description": "false-positive = the rule misfired. suppress = real finding, won't fix (writes an inline ignore comment). defer = fix later, this session only. flagged = mark for you to fix."
             },
             "reason": {
@@ -1018,9 +862,7 @@
           }
         }
       },
-      "functionKeys": [
-        "execute"
-      ]
+      "functionKeys": ["execute"]
     }
   ],
   "commands": [
@@ -1029,90 +871,70 @@
       "metadata": {
         "description": "Toggle choco-pi-lsp on/off for the current session. Usage: /lens-toggle"
       },
-      "functionKeys": [
-        "handler"
-      ]
+      "functionKeys": ["handler"]
     },
     {
       "name": "lsp",
       "metadata": {
         "description": "Turn choco-pi-lsp LSP usage on or off at runtime, or show its state. Usage: /lsp on|off|status"
       },
-      "functionKeys": [
-        "handler"
-      ]
+      "functionKeys": ["handler"]
     },
     {
       "name": "lens-context-toggle",
       "metadata": {
         "description": "Toggle automatic context injection on/off for the current session (tools/LSP/read-guard/formatting stay active). Usage: /lens-context-toggle"
       },
-      "functionKeys": [
-        "handler"
-      ]
+      "functionKeys": ["handler"]
     },
     {
       "name": "lens-widget-toggle",
       "metadata": {
         "description": "Show or hide the choco-pi-lsp diagnostics widget below the editor. Usage: /lens-widget-toggle"
       },
-      "functionKeys": [
-        "handler"
-      ]
+      "functionKeys": ["handler"]
     },
     {
       "name": "lens-tdi",
       "metadata": {
         "description": "Show Technical Debt Index (TDI) and project health trend. Usage: /lens-tdi"
       },
-      "functionKeys": [
-        "handler"
-      ]
+      "functionKeys": ["handler"]
     },
     {
       "name": "lens-map",
       "metadata": {
         "description": "Render the review graph as a self-contained interactive HTML project map (pan/zoom/hover/click) and write it to disk. Usage: /lens-map"
       },
-      "functionKeys": [
-        "handler"
-      ]
+      "functionKeys": ["handler"]
     },
     {
       "name": "lens-health",
       "metadata": {
         "description": "Show choco-pi-lsp runtime health: pipeline crashes, slow runners, and last dispatch latency. Usage: /lens-health"
       },
-      "functionKeys": [
-        "handler"
-      ]
+      "functionKeys": ["handler"]
     },
     {
       "name": "lens-perf",
       "metadata": {
         "description": "Show the slowest latency-log phases by p50 and p99 for the current process session and machine-wide active log window. Usage: /lens-perf"
       },
-      "functionKeys": [
-        "handler"
-      ]
+      "functionKeys": ["handler"]
     },
     {
       "name": "lens-tools",
       "metadata": {
         "description": "Show choco-pi-lsp tool installation status: globally installed, auto-installed, or npx fallback. Usage: /lens-tools"
       },
-      "functionKeys": [
-        "handler"
-      ]
+      "functionKeys": ["handler"]
     },
     {
       "name": "lens-allow-edit",
       "metadata": {
         "description": "Allow one edit to a file without a prior read. Usage: /lens-allow-edit <path>"
       },
-      "functionKeys": [
-        "handler"
-      ]
+      "functionKeys": ["handler"]
     }
   ],
   "events": [
@@ -1275,165 +1097,107 @@
       }
     }
   ],
-  "renderers": [
-    "pilens:turn-summary"
-  ],
+  "renderers": ["pilens:turn-summary"],
   "schemaMetadata": [
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "mode"
-      ],
+      "path": ["properties", "mode"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "mode"
-      ],
+      "path": ["properties", "mode"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "refreshRunners",
-        "anyOf",
-        "0"
-      ],
+      "path": ["properties", "refreshRunners", "anyOf", "0"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "refreshRunners",
-        "anyOf",
-        "1"
-      ],
+      "path": ["properties", "refreshRunners", "anyOf", "1"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "refreshRunners"
-      ],
+      "path": ["properties", "refreshRunners"],
       "key": "~kind",
       "value": "Union"
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "refreshRunners"
-      ],
+      "path": ["properties", "refreshRunners"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "maxProjectFiles"
-      ],
+      "path": ["properties", "maxProjectFiles"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "maxProjectFiles"
-      ],
+      "path": ["properties", "maxProjectFiles"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "maxLspFiles"
-      ],
+      "path": ["properties", "maxLspFiles"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "maxLspFiles"
-      ],
+      "path": ["properties", "maxLspFiles"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "includeGenerated"
-      ],
+      "path": ["properties", "includeGenerated"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "includeGenerated"
-      ],
+      "path": ["properties", "includeGenerated"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "severity"
-      ],
+      "path": ["properties", "severity"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "severity"
-      ],
+      "path": ["properties", "severity"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "paths",
-        "items"
-      ],
+      "path": ["properties", "paths", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "paths"
-      ],
+      "path": ["properties", "paths"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "diagnostics_report",
-      "path": [
-        "properties",
-        "paths"
-      ],
+      "path": ["properties", "paths"],
       "key": "~optional",
       "value": true
     },
@@ -1445,119 +1209,79 @@
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "path"
-      ],
+      "path": ["properties", "path"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "path"
-      ],
+      "path": ["properties", "path"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "paths",
-        "items"
-      ],
+      "path": ["properties", "paths", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "paths"
-      ],
+      "path": ["properties", "paths"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "paths"
-      ],
+      "path": ["properties", "paths"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "severity"
-      ],
+      "path": ["properties", "severity"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "severity"
-      ],
+      "path": ["properties", "severity"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "concurrency"
-      ],
+      "path": ["properties", "concurrency"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "concurrency"
-      ],
+      "path": ["properties", "concurrency"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "waitMs"
-      ],
+      "path": ["properties", "waitMs"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "waitMs"
-      ],
+      "path": ["properties", "waitMs"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "serverScope"
-      ],
+      "path": ["properties", "serverScope"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_diagnostics",
-      "path": [
-        "properties",
-        "serverScope"
-      ],
+      "path": ["properties", "serverScope"],
       "key": "~optional",
       "value": true
     },
@@ -1569,74 +1293,49 @@
     },
     {
       "toolName": "symbol_search",
-      "path": [
-        "properties",
-        "query"
-      ],
+      "path": ["properties", "query"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "symbol_search",
-      "path": [
-        "properties",
-        "limit"
-      ],
+      "path": ["properties", "limit"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "symbol_search",
-      "path": [
-        "properties",
-        "limit"
-      ],
+      "path": ["properties", "limit"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "symbol_search",
-      "path": [
-        "properties",
-        "paths",
-        "items"
-      ],
+      "path": ["properties", "paths", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "symbol_search",
-      "path": [
-        "properties",
-        "paths"
-      ],
+      "path": ["properties", "paths"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "symbol_search",
-      "path": [
-        "properties",
-        "paths"
-      ],
+      "path": ["properties", "paths"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "symbol_search",
-      "path": [
-        "properties",
-        "lang"
-      ],
+      "path": ["properties", "lang"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "symbol_search",
-      "path": [
-        "properties",
-        "lang"
-      ],
+      "path": ["properties", "lang"],
       "key": "~optional",
       "value": true
     },
@@ -1648,55 +1347,37 @@
     },
     {
       "toolName": "project_report",
-      "path": [
-        "properties",
-        "limit"
-      ],
+      "path": ["properties", "limit"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "project_report",
-      "path": [
-        "properties",
-        "limit"
-      ],
+      "path": ["properties", "limit"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "project_report",
-      "path": [
-        "properties",
-        "focus"
-      ],
+      "path": ["properties", "focus"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "project_report",
-      "path": [
-        "properties",
-        "focus"
-      ],
+      "path": ["properties", "focus"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "project_report",
-      "path": [
-        "properties",
-        "view"
-      ],
+      "path": ["properties", "view"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "project_report",
-      "path": [
-        "properties",
-        "view"
-      ],
+      "path": ["properties", "view"],
       "key": "~optional",
       "value": true
     },
@@ -1708,136 +1389,91 @@
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "path"
-      ],
+      "path": ["properties", "path"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "maxRefsPerSymbol"
-      ],
+      "path": ["properties", "maxRefsPerSymbol"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "maxRefsPerSymbol"
-      ],
+      "path": ["properties", "maxRefsPerSymbol"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "focus"
-      ],
+      "path": ["properties", "focus"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "focus"
-      ],
+      "path": ["properties", "focus"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "view"
-      ],
+      "path": ["properties", "view"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "view"
-      ],
+      "path": ["properties", "view"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "blastRadius"
-      ],
+      "path": ["properties", "blastRadius"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "blastRadius"
-      ],
+      "path": ["properties", "blastRadius"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "blastRadiusDepth"
-      ],
+      "path": ["properties", "blastRadiusDepth"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "blastRadiusDepth"
-      ],
+      "path": ["properties", "blastRadiusDepth"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "callGraph"
-      ],
+      "path": ["properties", "callGraph"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "callGraph"
-      ],
+      "path": ["properties", "callGraph"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "maxCallGraphEntries"
-      ],
+      "path": ["properties", "maxCallGraphEntries"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "module_report",
-      "path": [
-        "properties",
-        "maxCallGraphEntries"
-      ],
+      "path": ["properties", "maxCallGraphEntries"],
       "key": "~optional",
       "value": true
     },
@@ -1849,37 +1485,25 @@
     },
     {
       "toolName": "read_symbol",
-      "path": [
-        "properties",
-        "path"
-      ],
+      "path": ["properties", "path"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "read_symbol",
-      "path": [
-        "properties",
-        "symbol"
-      ],
+      "path": ["properties", "symbol"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "read_symbol",
-      "path": [
-        "properties",
-        "kind"
-      ],
+      "path": ["properties", "kind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "read_symbol",
-      "path": [
-        "properties",
-        "kind"
-      ],
+      "path": ["properties", "kind"],
       "key": "~optional",
       "value": true
     },
@@ -1891,101 +1515,67 @@
     },
     {
       "toolName": "read_enclosing",
-      "path": [
-        "properties",
-        "path"
-      ],
+      "path": ["properties", "path"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "read_enclosing",
-      "path": [
-        "properties",
-        "line"
-      ],
+      "path": ["properties", "line"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "read_enclosing",
-      "path": [
-        "properties",
-        "kinds",
-        "items"
-      ],
+      "path": ["properties", "kinds", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "read_enclosing",
-      "path": [
-        "properties",
-        "kinds"
-      ],
+      "path": ["properties", "kinds"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "read_enclosing",
-      "path": [
-        "properties",
-        "kinds"
-      ],
+      "path": ["properties", "kinds"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "read_enclosing",
-      "path": [
-        "properties",
-        "maxLines"
-      ],
+      "path": ["properties", "maxLines"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "read_enclosing",
-      "path": [
-        "properties",
-        "maxLines"
-      ],
+      "path": ["properties", "maxLines"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "read_enclosing",
-      "path": [
-        "properties",
-        "onOversize"
-      ],
+      "path": ["properties", "onOversize"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "read_enclosing",
-      "path": [
-        "properties",
-        "onOversize"
-      ],
+      "path": ["properties", "onOversize"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "read_enclosing",
-      "path": [
-        "properties",
-        "aroundLine"
-      ],
+      "path": ["properties", "aroundLine"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "read_enclosing",
-      "path": [
-        "properties",
-        "aroundLine"
-      ],
+      "path": ["properties", "aroundLine"],
       "key": "~optional",
       "value": true
     },
@@ -1997,20 +1587,13 @@
     },
     {
       "toolName": "lsp_activate_tools",
-      "path": [
-        "properties",
-        "tools",
-        "items"
-      ],
+      "path": ["properties", "tools", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_activate_tools",
-      "path": [
-        "properties",
-        "tools"
-      ],
+      "path": ["properties", "tools"],
       "key": "~kind",
       "value": "Array"
     },
@@ -2022,308 +1605,205 @@
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "pattern"
-      ],
+      "path": ["properties", "pattern"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "pattern"
-      ],
+      "path": ["properties", "pattern"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "lang"
-      ],
+      "path": ["properties", "lang"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "paths",
-        "items"
-      ],
+      "path": ["properties", "paths", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "paths"
-      ],
+      "path": ["properties", "paths"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "paths"
-      ],
+      "path": ["properties", "paths"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "selector"
-      ],
+      "path": ["properties", "selector"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "selector"
-      ],
+      "path": ["properties", "selector"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "context"
-      ],
+      "path": ["properties", "context"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "context"
-      ],
+      "path": ["properties", "context"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "nodeKind"
-      ],
+      "path": ["properties", "nodeKind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "nodeKind"
-      ],
+      "path": ["properties", "nodeKind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "insideKind"
-      ],
+      "path": ["properties", "insideKind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "insideKind"
-      ],
+      "path": ["properties", "insideKind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "hasKind"
-      ],
+      "path": ["properties", "hasKind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "hasKind"
-      ],
+      "path": ["properties", "hasKind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "hasDescendantKind"
-      ],
+      "path": ["properties", "hasDescendantKind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "hasDescendantKind"
-      ],
+      "path": ["properties", "hasDescendantKind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "follows"
-      ],
+      "path": ["properties", "follows"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "follows"
-      ],
+      "path": ["properties", "follows"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "precedes"
-      ],
+      "path": ["properties", "precedes"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "precedes"
-      ],
+      "path": ["properties", "precedes"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "rule"
-      ],
+      "path": ["properties", "rule"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "rule"
-      ],
+      "path": ["properties", "rule"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "skip"
-      ],
+      "path": ["properties", "skip"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "skip"
-      ],
+      "path": ["properties", "skip"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "maxMatches"
-      ],
+      "path": ["properties", "maxMatches"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "maxMatches"
-      ],
+      "path": ["properties", "maxMatches"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "groupByFile"
-      ],
+      "path": ["properties", "groupByFile"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "groupByFile"
-      ],
+      "path": ["properties", "groupByFile"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "strictness"
-      ],
+      "path": ["properties", "strictness"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "strictness"
-      ],
+      "path": ["properties", "strictness"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "validateOnly"
-      ],
+      "path": ["properties", "validateOnly"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "ast_grep_search",
-      "path": [
-        "properties",
-        "validateOnly"
-      ],
+      "path": ["properties", "validateOnly"],
       "key": "~optional",
       "value": true
     },
@@ -2335,182 +1815,121 @@
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "pattern"
-      ],
+      "path": ["properties", "pattern"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "rewrite"
-      ],
+      "path": ["properties", "rewrite"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "lang"
-      ],
+      "path": ["properties", "lang"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "paths",
-        "items"
-      ],
+      "path": ["properties", "paths", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "paths"
-      ],
+      "path": ["properties", "paths"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "paths"
-      ],
+      "path": ["properties", "paths"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "insideKind"
-      ],
+      "path": ["properties", "insideKind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "insideKind"
-      ],
+      "path": ["properties", "insideKind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "hasKind"
-      ],
+      "path": ["properties", "hasKind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "hasKind"
-      ],
+      "path": ["properties", "hasKind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "hasDescendantKind"
-      ],
+      "path": ["properties", "hasDescendantKind"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "hasDescendantKind"
-      ],
+      "path": ["properties", "hasDescendantKind"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "follows"
-      ],
+      "path": ["properties", "follows"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "follows"
-      ],
+      "path": ["properties", "follows"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "precedes"
-      ],
+      "path": ["properties", "precedes"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "precedes"
-      ],
+      "path": ["properties", "precedes"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "apply"
-      ],
+      "path": ["properties", "apply"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "apply"
-      ],
+      "path": ["properties", "apply"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "strictness"
-      ],
+      "path": ["properties", "strictness"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_replace",
-      "path": [
-        "properties",
-        "strictness"
-      ],
+      "path": ["properties", "strictness"],
       "key": "~optional",
       "value": true
     },
@@ -2522,166 +1941,109 @@
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "paths",
-        "items"
-      ],
+      "path": ["properties", "paths", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "paths"
-      ],
+      "path": ["properties", "paths"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "lang"
-      ],
+      "path": ["properties", "lang"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "lang"
-      ],
+      "path": ["properties", "lang"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "items"
-      ],
+      "path": ["properties", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "items"
-      ],
+      "path": ["properties", "items"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "view"
-      ],
+      "path": ["properties", "view"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "view"
-      ],
+      "path": ["properties", "view"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "type",
-        "items"
-      ],
+      "path": ["properties", "type", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "type"
-      ],
+      "path": ["properties", "type"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "type"
-      ],
+      "path": ["properties", "type"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "match"
-      ],
+      "path": ["properties", "match"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "match"
-      ],
+      "path": ["properties", "match"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "pubMembers"
-      ],
+      "path": ["properties", "pubMembers"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "pubMembers"
-      ],
+      "path": ["properties", "pubMembers"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "globs",
-        "items"
-      ],
+      "path": ["properties", "globs", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "globs"
-      ],
+      "path": ["properties", "globs"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "ast_grep_outline",
-      "path": [
-        "properties",
-        "globs"
-      ],
+      "path": ["properties", "globs"],
       "key": "~optional",
       "value": true
     },
@@ -2693,37 +2055,25 @@
     },
     {
       "toolName": "ast_grep_dump",
-      "path": [
-        "properties",
-        "source"
-      ],
+      "path": ["properties", "source"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_dump",
-      "path": [
-        "properties",
-        "lang"
-      ],
+      "path": ["properties", "lang"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "ast_grep_dump",
-      "path": [
-        "properties",
-        "includeAnonymous"
-      ],
+      "path": ["properties", "includeAnonymous"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "ast_grep_dump",
-      "path": [
-        "properties",
-        "includeAnonymous"
-      ],
+      "path": ["properties", "includeAnonymous"],
       "key": "~optional",
       "value": true
     },
@@ -2735,351 +2085,229 @@
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "operation"
-      ],
+      "path": ["properties", "operation"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "path"
-      ],
+      "path": ["properties", "path"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "path"
-      ],
+      "path": ["properties", "path"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "line"
-      ],
+      "path": ["properties", "line"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "line"
-      ],
+      "path": ["properties", "line"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "character"
-      ],
+      "path": ["properties", "character"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "character"
-      ],
+      "path": ["properties", "character"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "symbol"
-      ],
+      "path": ["properties", "symbol"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "symbol"
-      ],
+      "path": ["properties", "symbol"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "endLine"
-      ],
+      "path": ["properties", "endLine"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "endLine"
-      ],
+      "path": ["properties", "endLine"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "endCharacter"
-      ],
+      "path": ["properties", "endCharacter"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "endCharacter"
-      ],
+      "path": ["properties", "endCharacter"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "newName"
-      ],
+      "path": ["properties", "newName"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "newName"
-      ],
+      "path": ["properties", "newName"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "newFilePath"
-      ],
+      "path": ["properties", "newFilePath"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "newFilePath"
-      ],
+      "path": ["properties", "newFilePath"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "apply"
-      ],
+      "path": ["properties", "apply"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "apply"
-      ],
+      "path": ["properties", "apply"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "command"
-      ],
+      "path": ["properties", "command"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "command"
-      ],
+      "path": ["properties", "command"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "commandArguments",
-        "items"
-      ],
+      "path": ["properties", "commandArguments", "items"],
       "key": "~kind",
       "value": "Unknown"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "commandArguments"
-      ],
+      "path": ["properties", "commandArguments"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "commandArguments"
-      ],
+      "path": ["properties", "commandArguments"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "query"
-      ],
+      "path": ["properties", "query"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "query"
-      ],
+      "path": ["properties", "query"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "kinds",
-        "items"
-      ],
+      "path": ["properties", "kinds", "items"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "kinds"
-      ],
+      "path": ["properties", "kinds"],
       "key": "~kind",
       "value": "Array"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "kinds"
-      ],
+      "path": ["properties", "kinds"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "exactMatch"
-      ],
+      "path": ["properties", "exactMatch"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "exactMatch"
-      ],
+      "path": ["properties", "exactMatch"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "topLevelOnly"
-      ],
+      "path": ["properties", "topLevelOnly"],
       "key": "~kind",
       "value": "Boolean"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "topLevelOnly"
-      ],
+      "path": ["properties", "topLevelOnly"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "maxResults"
-      ],
+      "path": ["properties", "maxResults"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "maxResults"
-      ],
+      "path": ["properties", "maxResults"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "callHierarchyItem",
-        "properties",
-        "name"
-      ],
+      "path": ["properties", "callHierarchyItem", "properties", "name"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "callHierarchyItem",
-        "properties",
-        "kind"
-      ],
+      "path": ["properties", "callHierarchyItem", "properties", "kind"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "callHierarchyItem",
-        "properties",
-        "uri"
-      ],
+      "path": ["properties", "callHierarchyItem", "properties", "uri"],
       "key": "~kind",
       "value": "String"
     },
@@ -3115,14 +2343,7 @@
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "callHierarchyItem",
-        "properties",
-        "range",
-        "properties",
-        "start"
-      ],
+      "path": ["properties", "callHierarchyItem", "properties", "range", "properties", "start"],
       "key": "~kind",
       "value": "Object"
     },
@@ -3158,25 +2379,13 @@
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "callHierarchyItem",
-        "properties",
-        "range",
-        "properties",
-        "end"
-      ],
+      "path": ["properties", "callHierarchyItem", "properties", "range", "properties", "end"],
       "key": "~kind",
       "value": "Object"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "callHierarchyItem",
-        "properties",
-        "range"
-      ],
+      "path": ["properties", "callHierarchyItem", "properties", "range"],
       "key": "~kind",
       "value": "Object"
     },
@@ -3268,30 +2477,19 @@
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "callHierarchyItem",
-        "properties",
-        "selectionRange"
-      ],
+      "path": ["properties", "callHierarchyItem", "properties", "selectionRange"],
       "key": "~kind",
       "value": "Object"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "callHierarchyItem"
-      ],
+      "path": ["properties", "callHierarchyItem"],
       "key": "~kind",
       "value": "Object"
     },
     {
       "toolName": "lsp_navigation",
-      "path": [
-        "properties",
-        "callHierarchyItem"
-      ],
+      "path": ["properties", "callHierarchyItem"],
       "key": "~optional",
       "value": true
     },
@@ -3303,91 +2501,61 @@
     },
     {
       "toolName": "diagnostic_mark",
-      "path": [
-        "properties",
-        "filePath"
-      ],
+      "path": ["properties", "filePath"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "diagnostic_mark",
-      "path": [
-        "properties",
-        "line"
-      ],
+      "path": ["properties", "line"],
       "key": "~kind",
       "value": "Number"
     },
     {
       "toolName": "diagnostic_mark",
-      "path": [
-        "properties",
-        "message"
-      ],
+      "path": ["properties", "message"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "diagnostic_mark",
-      "path": [
-        "properties",
-        "rule"
-      ],
+      "path": ["properties", "rule"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "diagnostic_mark",
-      "path": [
-        "properties",
-        "rule"
-      ],
+      "path": ["properties", "rule"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "diagnostic_mark",
-      "path": [
-        "properties",
-        "tool"
-      ],
+      "path": ["properties", "tool"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "diagnostic_mark",
-      "path": [
-        "properties",
-        "tool"
-      ],
+      "path": ["properties", "tool"],
       "key": "~optional",
       "value": true
     },
     {
       "toolName": "diagnostic_mark",
-      "path": [
-        "properties",
-        "disposition"
-      ],
+      "path": ["properties", "disposition"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "diagnostic_mark",
-      "path": [
-        "properties",
-        "reason"
-      ],
+      "path": ["properties", "reason"],
       "key": "~kind",
       "value": "String"
     },
     {
       "toolName": "diagnostic_mark",
-      "path": [
-        "properties",
-        "reason"
-      ],
+      "path": ["properties", "reason"],
       "key": "~optional",
       "value": true
     },

@@ -3,305 +3,347 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { ApiError } from "./errors.ts";
-import { MissingAuthTokenError, readAuthToken, setAuthTokenOverride, type ReadAuthTokenOptions } from "./auth.ts";
 import {
-	isPropertyContainer,
-	parseFigmaJson,
-	type FigmaRecord,
-	type FigmaValue,
+  MissingAuthTokenError,
+  readAuthToken,
+  setAuthTokenOverride,
+  type ReadAuthTokenOptions,
+} from "./auth.ts";
+import {
+  isPropertyContainer,
+  parseFigmaJson,
+  type FigmaRecord,
+  type FigmaValue,
 } from "../src/figma-values.ts";
 
 const execFileAsync = promisify(execFile);
 
 export interface AuthConfiguratorOptions extends ReadAuthTokenOptions {
-	service: string;
-	displayName: string;
-	commandName: string;
-	toolName: string;
-	tokenUrl?: string;
-	scopeInstructions: readonly string[];
+  service: string;
+  displayName: string;
+  commandName: string;
+  toolName: string;
+  tokenUrl?: string;
+  scopeInstructions: readonly string[];
 }
 
 interface ConfigureAuthParams {
-	force?: boolean;
+  force?: boolean;
 }
 
 const ConfigureAuthParamsSchema = Type.Object({
-	force: Type.Optional(Type.Boolean({ description: "Prompt even if a token is already configured. Defaults to false." })),
+  force: Type.Optional(
+    Type.Boolean({
+      description: "Prompt even if a token is already configured. Defaults to false.",
+    }),
+  ),
 });
 
 export function registerAuthConfigurator(pi: ExtensionAPI, options: AuthConfiguratorOptions): void {
-	pi.registerCommand(options.commandName, {
-		description: `Configure ${options.displayName} authentication token securely`,
-		handler: async (args, ctx) => {
-			const force = args.trim().split(/\s+/).includes("--force") || args.trim() === "force";
-			try {
-				const result = await configureAuthToken(ctx, options, { force });
-				ctx.ui.notify(result.message, "info");
-			} catch (error) {
-				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-			}
-		},
-	});
+  pi.registerCommand(options.commandName, {
+    description: `Configure ${options.displayName} authentication token securely`,
+    handler: async (args, ctx) => {
+      const force = args.trim().split(/\s+/).includes("--force") || args.trim() === "force";
+      try {
+        const result = await configureAuthToken(ctx, options, { force });
+        ctx.ui.notify(result.message, "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    },
+  });
 
-	pi.registerTool({
-		name: options.toolName,
-		label: `${options.displayName} Auth`,
-		description: `Securely prompt the user for a ${options.displayName} token and store it without exposing it to the model. Use only when auth is missing/expired/invalid, or when the user asks to update the token.`,
-		parameters: ConfigureAuthParamsSchema,
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const result = await configureAuthToken(ctx, options, { force: params.force });
-			return {
-				content: [{ type: "text", text: result.message }],
-				details: {
-					service: options.service,
-					stored: result.stored,
-					authPath: options.authPath.join("."),
-					envName: options.envName,
-					envWasSet: result.envWasSet,
-				},
-			};
-		},
-	});
+  pi.registerTool({
+    name: options.toolName,
+    label: `${options.displayName} Auth`,
+    description: `Securely prompt the user for a ${options.displayName} token and store it without exposing it to the model. Use only when auth is missing/expired/invalid, or when the user asks to update the token.`,
+    parameters: ConfigureAuthParamsSchema,
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const result = await configureAuthToken(ctx, options, { force: params.force });
+      return {
+        content: [{ type: "text", text: result.message }],
+        details: {
+          service: options.service,
+          stored: result.stored,
+          authPath: options.authPath.join("."),
+          envName: options.envName,
+          envWasSet: result.envWasSet,
+        },
+      };
+    },
+  });
 }
 
 export async function runWithAuthRetry<T>(
-	ctx: ExtensionContext,
-	options: AuthConfiguratorOptions,
-	operation: () => Promise<T>,
+  ctx: ExtensionContext,
+  options: AuthConfiguratorOptions,
+  operation: () => Promise<T>,
 ): Promise<T> {
-	try {
-		return await operation();
-	} catch (error) {
-		if (!isAuthError(error)) throw error;
-		if (!ctx.hasUI) throw error;
-		await configureAuthToken(ctx, options, { force: true });
-		return operation();
-	}
+  try {
+    return await operation();
+  } catch (error) {
+    if (!isAuthError(error)) throw error;
+    if (!ctx.hasUI) throw error;
+    await configureAuthToken(ctx, options, { force: true });
+    return operation();
+  }
 }
 
 export async function configureAuthToken(
-	ctx: ExtensionContext | ExtensionCommandContext,
-	options: AuthConfiguratorOptions,
-	params: ConfigureAuthParams = {},
+  ctx: ExtensionContext | ExtensionCommandContext,
+  options: AuthConfiguratorOptions,
+  params: ConfigureAuthParams = {},
 ): Promise<{ stored: boolean; message: string; envWasSet: boolean }> {
-	if (!params.force) {
-		try {
-			await readAuthToken(options);
-			return {
-				stored: false,
-				envWasSet: Boolean(process.env[options.envName]?.trim()),
-				message: `${options.displayName} token is already configured. Use /${options.commandName} --force to replace it.`,
-			};
-		} catch (error) {
-			if (!(error instanceof MissingAuthTokenError)) throw error;
-		}
-	}
+  if (!params.force) {
+    try {
+      await readAuthToken(options);
+      return {
+        stored: false,
+        envWasSet: Boolean(process.env[options.envName]?.trim()),
+        message: `${options.displayName} token is already configured. Use /${options.commandName} --force to replace it.`,
+      };
+    } catch (error) {
+      if (!(error instanceof MissingAuthTokenError)) throw error;
+    }
+  }
 
-	if (!ctx.hasUI) {
-		throw new Error(`${options.displayName} auth setup requires interactive UI.`);
-	}
+  if (!ctx.hasUI) {
+    throw new Error(`${options.displayName} auth setup requires interactive UI.`);
+  }
 
-	const token = await promptSecret(ctx, `${options.displayName} token`);
-	if (!token) throw new Error(`${options.displayName} token setup cancelled.`);
+  const token = await promptSecret(ctx, `${options.displayName} token`);
+  if (!token) throw new Error(`${options.displayName} token setup cancelled.`);
 
-	await writeAuthToken({ authFile: options.authFile, authPath: options.authPath, token });
-	setAuthTokenOverride(options, token);
+  await writeAuthToken({ authFile: options.authFile, authPath: options.authPath, token });
+  setAuthTokenOverride(options, token);
 
-	const envWasSet = Boolean(process.env[options.envName]?.trim());
-	const envNote = envWasSet
-		? ` ${options.envName} is set and normally takes precedence; this pi session will use the new token, but update your environment for future sessions.`
-		: "";
+  const envWasSet = Boolean(process.env[options.envName]?.trim());
+  const envNote = envWasSet
+    ? ` ${options.envName} is set and normally takes precedence; this pi session will use the new token, but update your environment for future sessions.`
+    : "";
 
-	return {
-		stored: true,
-		envWasSet,
-		message: `${options.displayName} token stored in ~/.pi/agent/auth.json at ${options.authPath.join(".")}.${envNote}`,
-	};
+  return {
+    stored: true,
+    envWasSet,
+    message: `${options.displayName} token stored in ~/.pi/agent/auth.json at ${options.authPath.join(".")}.${envNote}`,
+  };
 }
 
-export async function writeAuthToken(options: { authPath: readonly string[]; token: string; authFile?: string }): Promise<void> {
-	const authFile = options.authFile ?? resolve(homedir(), ".pi", "agent", "auth.json");
-	await mkdir(dirname(authFile), { recursive: true });
-	await safeChmod(dirname(authFile), 0o700);
+export async function writeAuthToken(options: {
+  authPath: readonly string[];
+  token: string;
+  authFile?: string;
+}): Promise<void> {
+  const authFile = options.authFile ?? resolve(homedir(), ".pi", "agent", "auth.json");
+  await mkdir(dirname(authFile), { recursive: true });
+  await safeChmod(dirname(authFile), 0o700);
 
-	const next = await readExistingAuth(authFile);
-	setPath(next, options.authPath, options.token);
-	await writeFile(authFile, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
-	await safeChmod(authFile, 0o600);
+  const next = await readExistingAuth(authFile);
+  setPath(next, options.authPath, options.token);
+  await writeFile(authFile, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  await safeChmod(authFile, 0o600);
 }
 
 export function isAuthError(cause: unknown): boolean {
-	if (cause instanceof MissingAuthTokenError) return true;
-	if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) return true;
-	const message = cause instanceof Error ? cause.message : String(cause);
-	return /token expired|invalid token|missing token|no .*token|unauthorized|forbidden|authentication|api key/i.test(message);
+  if (cause instanceof MissingAuthTokenError) return true;
+  if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) return true;
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return /token expired|invalid token|missing token|no .*token|unauthorized|forbidden|authentication|api key/i.test(
+    message,
+  );
 }
 
-async function promptSecret(ctx: ExtensionContext | ExtensionCommandContext, title: string): Promise<string | null> {
-	return ctx.ui.custom<string | null>((tui, _theme, _keybindings, done) => {
-		let value = "";
-		let cached: string[] | undefined;
+async function promptSecret(
+  ctx: ExtensionContext | ExtensionCommandContext,
+  title: string,
+): Promise<string | null> {
+  return ctx.ui.custom<string | null>(
+    (tui, _theme, _keybindings, done) => {
+      let value = "";
+      let cached: string[] | undefined;
 
-		function refresh(): void {
-			cached = undefined;
-			tui.requestRender();
-		}
+      function refresh(): void {
+        cached = undefined;
+        tui.requestRender();
+      }
 
-		function row(content: string, contentWidth: number): string {
-			const safe = content.length > contentWidth ? content.slice(0, contentWidth) : content;
-			return `│ ${safe.padEnd(contentWidth)} │`;
-		}
+      function row(content: string, contentWidth: number): string {
+        const safe = content.length > contentWidth ? content.slice(0, contentWidth) : content;
+        return `│ ${safe.padEnd(contentWidth)} │`;
+      }
 
-		function maskedInput(contentWidth: number): string {
-			if (value.length === 0) return "> ▌";
+      function maskedInput(contentWidth: number): string {
+        if (value.length === 0) return "> ▌";
 
-			const inputChromeWidth = 3; // "> " + cursor.
-			const availableMaskWidth = Math.max(1, contentWidth - inputChromeWidth);
-			const suffix = value.length > availableMaskWidth ? ` ${value.length} chars` : "";
-			const bulletCount = Math.max(1, Math.min(value.length, availableMaskWidth - suffix.length));
-			return `> ${"•".repeat(bulletCount)}${suffix}▌`;
-		}
+        const inputChromeWidth = 3; // "> " + cursor.
+        const availableMaskWidth = Math.max(1, contentWidth - inputChromeWidth);
+        const suffix = value.length > availableMaskWidth ? ` ${value.length} chars` : "";
+        const bulletCount = Math.max(1, Math.min(value.length, availableMaskWidth - suffix.length));
+        return `> ${"•".repeat(bulletCount)}${suffix}▌`;
+      }
 
-		return {
-			render(width: number): string[] {
-				if (cached) return cached;
-				const boxWidth = Math.max(4, Math.min(width, 48));
-				const contentWidth = Math.max(0, boxWidth - 4);
-				const border = `┌${"─".repeat(Math.max(0, boxWidth - 2))}┐`;
-				const bottom = `└${"─".repeat(Math.max(0, boxWidth - 2))}┘`;
-				const lines = [border, row(title, contentWidth), row(maskedInput(contentWidth), contentWidth), bottom];
-				cached = lines;
-				return cached;
-			},
-			handleInput(data: string): void {
-				if (matchesKey(data, Key.escape)) {
-					done(null);
-					return;
-				}
-				if (matchesKey(data, Key.enter)) {
-					done(value.trim() || null);
-					return;
-				}
-				if (matchesKey(data, Key.backspace)) {
-					value = value.slice(0, -1);
-					refresh();
-					return;
-				}
-				if (data === "\u0015") {
-					value = "";
-					refresh();
-					return;
-				}
-				if (data === "\u0016") {
-					void readClipboardText().then((text) => {
-						const sanitized = sanitizeSecretInput(text);
-						if (sanitized) {
-							value += sanitized;
-							refresh();
-						}
-					});
-					return;
-				}
+      return {
+        render(width: number): string[] {
+          if (cached) return cached;
+          const boxWidth = Math.max(4, Math.min(width, 48));
+          const contentWidth = Math.max(0, boxWidth - 4);
+          const border = `┌${"─".repeat(Math.max(0, boxWidth - 2))}┐`;
+          const bottom = `└${"─".repeat(Math.max(0, boxWidth - 2))}┘`;
+          const lines = [
+            border,
+            row(title, contentWidth),
+            row(maskedInput(contentWidth), contentWidth),
+            bottom,
+          ];
+          cached = lines;
+          return cached;
+        },
+        handleInput(data: string): void {
+          if (matchesKey(data, Key.escape)) {
+            done(null);
+            return;
+          }
+          if (matchesKey(data, Key.enter)) {
+            done(value.trim() || null);
+            return;
+          }
+          if (matchesKey(data, Key.backspace)) {
+            value = value.slice(0, -1);
+            refresh();
+            return;
+          }
+          if (data === "\u0015") {
+            value = "";
+            refresh();
+            return;
+          }
+          if (data === "\u0016") {
+            void readClipboardText().then((text) => {
+              const sanitized = sanitizeSecretInput(text);
+              if (sanitized) {
+                value += sanitized;
+                refresh();
+              }
+            });
+            return;
+          }
 
-				const sanitized = sanitizeSecretInput(data);
-				if (sanitized) {
-					value += sanitized;
-					refresh();
-				}
-			},
-			invalidate(): void {
-				cached = undefined;
-			},
-		};
-	}, {
-		overlay: true,
-		overlayOptions: {
-			width: 48,
-			minWidth: 32,
-			maxHeight: 4,
-			margin: 1,
-		},
-	});
+          const sanitized = sanitizeSecretInput(data);
+          if (sanitized) {
+            value += sanitized;
+            refresh();
+          }
+        },
+        invalidate(): void {
+          cached = undefined;
+        },
+      };
+    },
+    {
+      overlay: true,
+      overlayOptions: {
+        width: 48,
+        minWidth: 32,
+        maxHeight: 4,
+        margin: 1,
+      },
+    },
+  );
 }
 
 function sanitizeSecretInput(data: string): string {
-	if (!data) return "";
+  if (!data) return "";
 
-	// Bracketed paste: ESC [ 200 ~ pasted text ESC [ 201 ~
-	if (data.includes("\u001b[200~") || data.includes("\u001b[201~")) {
-		return data.split("\u001b[200~").join("").split("\u001b[201~").join("").replaceAll("\r", "").replaceAll("\n", "").replaceAll("\t", "").trim();
-	}
+  // Bracketed paste: ESC [ 200 ~ pasted text ESC [ 201 ~
+  if (data.includes("\u001b[200~") || data.includes("\u001b[201~")) {
+    return data
+      .split("\u001b[200~")
+      .join("")
+      .split("\u001b[201~")
+      .join("")
+      .replaceAll("\r", "")
+      .replaceAll("\n", "")
+      .replaceAll("\t", "")
+      .trim();
+  }
 
-	// Ignore non-paste escape sequences such as arrows and modified keys.
-	if (data.startsWith("\u001b")) return "";
+  // Ignore non-paste escape sequences such as arrows and modified keys.
+  if (data.startsWith("\u001b")) return "";
 
-	return [...data].filter((character) => {
-		const code = character.codePointAt(0) ?? 0;
-		return code > 0x1f && code !== 0x7f;
-	}).join("").trim();
+  return [...data]
+    .filter((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code > 0x1f && code !== 0x7f;
+    })
+    .join("")
+    .trim();
 }
 
 async function readClipboardText(): Promise<string> {
-	try {
-		if (process.platform === "darwin") return (await execFileAsync("pbpaste", [])).stdout;
-		if (process.platform === "win32") {
-			return (await execFileAsync("powershell.exe", ["-NoProfile", "-Command", "Get-Clipboard"])).stdout;
-		}
+  try {
+    if (process.platform === "darwin") return (await execFileAsync("pbpaste", [])).stdout;
+    if (process.platform === "win32") {
+      return (await execFileAsync("powershell.exe", ["-NoProfile", "-Command", "Get-Clipboard"]))
+        .stdout;
+    }
 
-		for (const [command, args] of [
-			["wl-paste", ["--no-newline"]],
-			["xclip", ["-selection", "clipboard", "-out"]],
-			["xsel", ["--clipboard", "--output"]],
-		] as const) {
-			try {
-				return (await execFileAsync(command, args)).stdout;
-			} catch {
-				// Try next clipboard provider.
-			}
-		}
-	} catch {
-		// Clipboard access is best-effort; normal terminal paste can still work.
-	}
-	return "";
+    for (const [command, args] of [
+      ["wl-paste", ["--no-newline"]],
+      ["xclip", ["-selection", "clipboard", "-out"]],
+      ["xsel", ["--clipboard", "--output"]],
+    ] as const) {
+      try {
+        return (await execFileAsync(command, args)).stdout;
+      } catch {
+        // Try next clipboard provider.
+      }
+    }
+  } catch {
+    // Clipboard access is best-effort; normal terminal paste can still work.
+  }
+  return "";
 }
 
 async function readExistingAuth(authFile: string): Promise<FigmaRecord> {
-	try {
-		const parsed = parseFigmaJson(await readFile(authFile, "utf8"));
-		return isPropertyContainer(parsed) ? parsed : {};
-	} catch (cause) {
-		if (!isMissingFileError(cause)) throw cause;
-		return {};
-	}
+  try {
+    const parsed = parseFigmaJson(await readFile(authFile, "utf8"));
+    return isPropertyContainer(parsed) ? parsed : {};
+  } catch (cause) {
+    if (!isMissingFileError(cause)) throw cause;
+    return {};
+  }
 }
 
 function isMissingFileError(cause: unknown): cause is NodeJS.ErrnoException {
-	return cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+  return cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 }
 
 function setPath(target: FigmaRecord, path: readonly string[], value: string): void {
-	let current = target;
-	for (const [index, segment] of path.entries()) {
-		if (index === path.length - 1) {
-			current[segment] = value;
-			return;
-		}
-		const next: FigmaValue = current[segment];
-		if (!isPropertyContainer(next) || Array.isArray(next)) current[segment] = {};
-		const child = current[segment];
-		if (isPropertyContainer(child)) current = child;
-	}
+  let current = target;
+  for (const [index, segment] of path.entries()) {
+    if (index === path.length - 1) {
+      current[segment] = value;
+      return;
+    }
+    const next: FigmaValue = current[segment];
+    if (!isPropertyContainer(next) || Array.isArray(next)) current[segment] = {};
+    const child = current[segment];
+    if (isPropertyContainer(child)) current = child;
+  }
 }
 
 async function safeChmod(path: string, mode: number): Promise<void> {
-	try {
-		await chmod(path, mode);
-	} catch (error) {
-		if (process.platform !== "win32") throw error;
-	}
+  try {
+    await chmod(path, mode);
+  } catch (error) {
+    if (process.platform !== "win32") throw error;
+  }
 }

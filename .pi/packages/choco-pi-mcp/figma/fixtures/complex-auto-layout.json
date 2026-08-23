@@ -15,12 +15,8 @@
   "paddingRight": 24,
   "paddingTop": 20,
   "paddingBottom": 20,
-  "layoutGrids": [
-    { "pattern": "COLUMNS", "count": 12, "gutterSize": 16, "sectionSize": 56 }
-  ],
-  "fills": [
-    { "type": "SOLID", "color": { "r": 1, "g": 1, "b": 1 }, "opacity": 1 }
-  ],
+  "layoutGrids": [{ "pattern": "COLUMNS", "count": 12, "gutterSize": 16, "sectionSize": 56 }],
+  "fills": [{ "type": "SOLID", "color": { "r": 1, "g": 1, "b": 1 }, "opacity": 1 }],
   "strokes": [
     {
       "type": "SOLID",

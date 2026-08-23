@@ -6,143 +6,204 @@ import { hasRuntimeType, isRecord } from "../parsing.ts";
 import type { AgentBrowserToolResult } from "./browser-run/types.ts";
 
 interface OutputPayload {
-	source: AgentBrowserOutputFileDetails["source"];
-	value: AgentBrowserToolResult["details"] | string;
+  source: AgentBrowserOutputFileDetails["source"];
+  value: AgentBrowserToolResult["details"] | string;
 }
 
 function isOutputString(value: OutputPayload["value"]): value is string {
-	return hasRuntimeType(value, "string");
+  return hasRuntimeType(value, "string");
 }
 
 function isDetailString(value: AgentBrowserToolResult["details"]): value is string {
-	return hasRuntimeType(value, "string");
+  return hasRuntimeType(value, "string");
 }
 
 export interface AgentBrowserOutputFileDetails {
-	absolutePath: string;
-	bytes?: number;
-	error?: string;
-	path: string;
-	source: "content.text" | "details.data";
-	status: "failed" | "saved";
+  absolutePath: string;
+  bytes?: number;
+  error?: string;
+  path: string;
+  source: "content.text" | "details.data";
+  status: "failed" | "saved";
 }
 
 export function normalizeRequestedOutputPath(path: string): string {
-	return path.startsWith("@") ? path.slice(1) : path;
+  return path.startsWith("@") ? path.slice(1) : path;
 }
 
 function getTextContent(result: AgentBrowserToolResult): string {
-	return result.content
-		?.filter((item): item is { text: string; type: "text" } => item.type === "text")
-		.map((item) => item.text)
-		.join("\n\n") ?? "";
+  return (
+    result.content
+      ?.filter((item): item is { text: string; type: "text" } => item.type === "text")
+      .map((item) => item.text)
+      .join("\n\n") ?? ""
+  );
 }
 
 function getOutputPayload(result: AgentBrowserToolResult): OutputPayload {
-	const details = isRecord(result.details) ? result.details : undefined;
-	if (details && details.data !== undefined) return { source: "details.data", value: details.data };
-	return { source: "content.text", value: getTextContent(result) };
+  const details = isRecord(result.details) ? result.details : undefined;
+  if (details && details.data !== undefined) return { source: "details.data", value: details.data };
+  return { source: "content.text", value: getTextContent(result) };
 }
 
 function serializeOutputPayload(value: OutputPayload["value"]): string {
-	return isOutputString(value) ? value : `${JSON.stringify(value, null, 2)}\n`;
+  return isOutputString(value) ? value : `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function appendOutputFileNotice(result: AgentBrowserToolResult, message: string): AgentBrowserToolResult["content"] {
-	const content: NonNullable<AgentBrowserToolResult["content"]> = [...(result.content ?? [])];
-	if (content[0]?.type === "text") {
-		content[0] = { ...content[0], text: `${content[0].text}\n\n${message}` };
-		return content;
-	}
-	return [{ type: "text", text: message }, ...content];
+function appendOutputFileNotice(
+  result: AgentBrowserToolResult,
+  message: string,
+): AgentBrowserToolResult["content"] {
+  const content: NonNullable<AgentBrowserToolResult["content"]> = [...(result.content ?? [])];
+  if (content[0]?.type === "text") {
+    content[0] = { ...content[0], text: `${content[0].text}\n\n${message}` };
+    return content;
+  }
+  return [{ type: "text", text: message }, ...content];
 }
 
-export function getAgentBrowserOutputPathValidationError(outputPath: string | undefined, cwd: string): string | undefined {
-	return outputPath ? getAgentBrowserStoragePathValidationError(normalizeRequestedOutputPath(outputPath), cwd) : undefined;
+export function getAgentBrowserOutputPathValidationError(
+  outputPath: string | undefined,
+  cwd: string,
+): string | undefined {
+  return outputPath
+    ? getAgentBrowserStoragePathValidationError(normalizeRequestedOutputPath(outputPath), cwd)
+    : undefined;
 }
 
 function getArtifactPaths(result: AgentBrowserToolResult, cwd: string): string[] {
-	const details = isRecord(result.details) ? result.details : undefined;
-	if (!details || !Array.isArray(details.artifacts)) return [];
-	return details.artifacts.flatMap((artifact) => {
-		if (!isRecord(artifact)) return [];
-		const path = isDetailString(artifact.absolutePath) ? artifact.absolutePath : isDetailString(artifact.path) ? artifact.path : undefined;
-		return path ? [isAbsolute(path) ? path : resolve(cwd, path)] : [];
-	});
+  const details = isRecord(result.details) ? result.details : undefined;
+  if (!details || !Array.isArray(details.artifacts)) return [];
+  return details.artifacts.flatMap((artifact) => {
+    if (!isRecord(artifact)) return [];
+    const path = isDetailString(artifact.absolutePath)
+      ? artifact.absolutePath
+      : isDetailString(artifact.path)
+        ? artifact.path
+        : undefined;
+    return path ? [isAbsolute(path) ? path : resolve(cwd, path)] : [];
+  });
 }
 
 async function pathsReferToSameFile(left: string, right: string): Promise<boolean> {
-	if (resolve(left) === resolve(right)) return true;
-	try {
-		if (await realpath(left) === await realpath(right)) return true;
-	} catch {}
-	try {
-		const [leftStat, rightStat] = await Promise.all([stat(left), stat(right)]);
-		return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
-	} catch {
-		return false;
-	}
+  if (resolve(left) === resolve(right)) return true;
+  try {
+    if ((await realpath(left)) === (await realpath(right))) return true;
+  } catch {}
+  try {
+    const [leftStat, rightStat] = await Promise.all([stat(left), stat(right)]);
+    return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+  } catch {
+    return false;
+  }
 }
 
 export async function applyAgentBrowserOutputPath(options: {
-	cwd: string;
-	outputPath?: string;
-	preserveTextContent?: boolean;
-	result: AgentBrowserToolResult;
+  cwd: string;
+  outputPath?: string;
+  preserveTextContent?: boolean;
+  result: AgentBrowserToolResult;
 }): Promise<AgentBrowserToolResult> {
-	if (!options.outputPath) return options.result;
-	const validationError = getAgentBrowserOutputPathValidationError(options.outputPath, options.cwd);
-	if (validationError) {
-		return {
-			content: [{ type: "text", text: validationError }],
-			details: { failureCategory: "validation-error", resultCategory: "failure", validationError },
-			isError: true,
-		};
-	}
-	if (options.result.isError || (isRecord(options.result.details) && options.result.details.resultCategory === "failure")) return options.result;
-	const requestedPath = normalizeRequestedOutputPath(options.outputPath);
-	const absolutePath = isAbsolute(requestedPath) ? requestedPath : resolve(options.cwd, requestedPath);
-	const payload = getOutputPayload(options.result);
-	for (const artifactPath of getArtifactPaths(options.result, options.cwd)) {
-		if (!await pathsReferToSameFile(absolutePath, artifactPath)) continue;
-		const message = "outputPath resolves to the same file as a browser artifact destination; choose a separate outputPath or omit it. The browser artifact was preserved.";
-		const outputFile: AgentBrowserOutputFileDetails = { absolutePath, error: message, path: requestedPath, source: payload.source, status: "failed" };
-		const details = isRecord(options.result.details) ? { ...options.result.details } : {};
-		delete details.successCategory;
-		return {
-			...options.result,
-			content: appendOutputFileNotice(options.result, `Output file rejected: ${message}`),
-			details: { ...details, failureCategory: "validation-error", outputFile, resultCategory: "failure" },
-			isError: true,
-		};
-	}
-	try {
-		const serialized = serializeOutputPayload(payload.value);
-		await mkdir(dirname(absolutePath), { recursive: true });
-		await writeFile(absolutePath, serialized, "utf8");
-		const bytes = Buffer.byteLength(serialized, "utf8");
-		const outputFile: AgentBrowserOutputFileDetails = { absolutePath, bytes, path: requestedPath, source: payload.source, status: "saved" };
-		const details = isRecord(options.result.details) ? { ...options.result.details, outputFile } : { outputFile };
-		return {
-			...options.result,
-			content: options.preserveTextContent ? options.result.content : appendOutputFileNotice(options.result, `Output file: ${requestedPath} (${bytes} bytes from ${payload.source}).`),
-			details,
-		};
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		const outputFile: AgentBrowserOutputFileDetails = { absolutePath, error: message, path: requestedPath, source: payload.source, status: "failed" };
-		const details = isRecord(options.result.details)
-			? (() => {
-				const rest = { ...options.result.details };
-				delete rest.successCategory;
-				return { ...rest, failureCategory: rest.failureCategory ?? "upstream-error", outputFile, resultCategory: "failure" };
-			})()
-			: { failureCategory: "upstream-error", outputFile, resultCategory: "failure" };
-		return {
-			...options.result,
-			content: options.preserveTextContent ? options.result.content : appendOutputFileNotice(options.result, `Output file failed: ${requestedPath} (${message}).`),
-			details,
-			isError: true,
-		};
-	}
+  if (!options.outputPath) return options.result;
+  const validationError = getAgentBrowserOutputPathValidationError(options.outputPath, options.cwd);
+  if (validationError) {
+    return {
+      content: [{ type: "text", text: validationError }],
+      details: { failureCategory: "validation-error", resultCategory: "failure", validationError },
+      isError: true,
+    };
+  }
+  if (
+    options.result.isError ||
+    (isRecord(options.result.details) && options.result.details.resultCategory === "failure")
+  )
+    return options.result;
+  const requestedPath = normalizeRequestedOutputPath(options.outputPath);
+  const absolutePath = isAbsolute(requestedPath)
+    ? requestedPath
+    : resolve(options.cwd, requestedPath);
+  const payload = getOutputPayload(options.result);
+  for (const artifactPath of getArtifactPaths(options.result, options.cwd)) {
+    if (!(await pathsReferToSameFile(absolutePath, artifactPath))) continue;
+    const message =
+      "outputPath resolves to the same file as a browser artifact destination; choose a separate outputPath or omit it. The browser artifact was preserved.";
+    const outputFile: AgentBrowserOutputFileDetails = {
+      absolutePath,
+      error: message,
+      path: requestedPath,
+      source: payload.source,
+      status: "failed",
+    };
+    const details = isRecord(options.result.details) ? { ...options.result.details } : {};
+    delete details.successCategory;
+    return {
+      ...options.result,
+      content: appendOutputFileNotice(options.result, `Output file rejected: ${message}`),
+      details: {
+        ...details,
+        failureCategory: "validation-error",
+        outputFile,
+        resultCategory: "failure",
+      },
+      isError: true,
+    };
+  }
+  try {
+    const serialized = serializeOutputPayload(payload.value);
+    await mkdir(dirname(absolutePath), { recursive: true });
+    await writeFile(absolutePath, serialized, "utf8");
+    const bytes = Buffer.byteLength(serialized, "utf8");
+    const outputFile: AgentBrowserOutputFileDetails = {
+      absolutePath,
+      bytes,
+      path: requestedPath,
+      source: payload.source,
+      status: "saved",
+    };
+    const details = isRecord(options.result.details)
+      ? { ...options.result.details, outputFile }
+      : { outputFile };
+    return {
+      ...options.result,
+      content: options.preserveTextContent
+        ? options.result.content
+        : appendOutputFileNotice(
+            options.result,
+            `Output file: ${requestedPath} (${bytes} bytes from ${payload.source}).`,
+          ),
+      details,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const outputFile: AgentBrowserOutputFileDetails = {
+      absolutePath,
+      error: message,
+      path: requestedPath,
+      source: payload.source,
+      status: "failed",
+    };
+    const details = isRecord(options.result.details)
+      ? (() => {
+          const rest = { ...options.result.details };
+          delete rest.successCategory;
+          return {
+            ...rest,
+            failureCategory: rest.failureCategory ?? "upstream-error",
+            outputFile,
+            resultCategory: "failure",
+          };
+        })()
+      : { failureCategory: "upstream-error", outputFile, resultCategory: "failure" };
+    return {
+      ...options.result,
+      content: options.preserveTextContent
+        ? options.result.content
+        : appendOutputFileNotice(
+            options.result,
+            `Output file failed: ${requestedPath} (${message}).`,
+          ),
+      details,
+      isError: true,
+    };
+  }
 }

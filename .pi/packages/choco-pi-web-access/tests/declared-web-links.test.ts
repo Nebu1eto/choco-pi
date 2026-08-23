@@ -6,41 +6,37 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parseHTML } from "linkedom";
-import {
-	appendDeclaredWebLinks,
-	discoverDeclaredWebLinks,
-} from "../declared-web-links.ts";
+import { appendDeclaredWebLinks, discoverDeclaredWebLinks } from "../declared-web-links.ts";
 
 const extractModuleUrl = new URL("../extract.ts", import.meta.url).href;
 
 function runChild(script) {
-	const home = mkdtempSync(join(tmpdir(), "pi-web-access-declared-links-"));
-	writeFileSync(
-		join(home, "web-search.json"),
-		JSON.stringify({ fetchRouting: { providers: ["http"] } }) +
-			"\n",
-		"utf8",
-	);
-	const childEnv = {
-		...process.env,
-		HOME: home,
-		USERPROFILE: home,
-		PI_CODING_AGENT_DIR: home,
-	};
-	try {
-		return spawnSync(process.execPath, ["--input-type=module"], {
-			input: script,
-			encoding: "utf8",
-			env: childEnv,
-			maxBuffer: 2 * 1024 * 1024,
-		});
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
+  const home = mkdtempSync(join(tmpdir(), "pi-web-access-declared-links-"));
+  writeFileSync(
+    join(home, "web-search.json"),
+    JSON.stringify({ fetchRouting: { providers: ["http"] } }) + "\n",
+    "utf8",
+  );
+  const childEnv = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    PI_CODING_AGENT_DIR: home,
+  };
+  try {
+    return spawnSync(process.execPath, ["--input-type=module"], {
+      input: script,
+      encoding: "utf8",
+      env: childEnv,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 }
 
 test("discovers registered relations from Link headers and HTML declarations", () => {
-	const { document } = parseHTML(`<!doctype html><html><head>
+  const { document } = parseHTML(`<!doctype html><html><head>
 		<base href="/v2/">
 		<link rel="stylesheet service-doc" href="docs" type="text/html">
 		<link rel="alternate" href="/feed.xml">
@@ -49,70 +45,66 @@ test("discovers registered relations from Link headers and HTML declarations", (
 		<a href="/developers">Developer careers</a>
 		<a rel="service-desc" href="javascript:alert(1)">Unsafe</a>
 	</body></html>`);
-	const links = discoverDeclaredWebLinks(
-		document,
-		'</catalog>; title="API, <catalog>"; rel="API-CATALOG"; type="application/linkset+json", ' +
-			'</schema>; rel="service-desc"; type="application/schema+json", ' +
-			'</metadata>; rel="service-meta"; optional, ' +
-			'</quoted>; title="x; rel=service-doc"; rel="alternate", ' +
-			'</anchored>; rel="service-doc"; anchor="/other", ' +
-			'</ignored>; rel="alternate"',
-		"https://example.com/root/start",
-	);
+  const links = discoverDeclaredWebLinks(
+    document,
+    '</catalog>; title="API, <catalog>"; rel="API-CATALOG"; type="application/linkset+json", ' +
+      '</schema>; rel="service-desc"; type="application/schema+json", ' +
+      '</metadata>; rel="service-meta"; optional, ' +
+      '</quoted>; title="x; rel=service-doc"; rel="alternate", ' +
+      '</anchored>; rel="service-doc"; anchor="/other", ' +
+      '</ignored>; rel="alternate"',
+    "https://example.com/root/start",
+  );
 
-	assert.deepEqual(links, [
-		{
-			url: "https://example.com/catalog",
-			relations: ["api-catalog"],
-			type: "application/linkset+json",
-		},
-		{
-			url: "https://example.com/schema",
-			relations: ["service-desc", "describedby"],
-			type: "application/schema+json",
-		},
-		{
-			url: "https://example.com/metadata",
-			relations: ["service-meta"],
-		},
-		{
-			url: "https://example.com/v2/docs",
-			relations: ["service-doc"],
-			type: "text/html",
-		},
-	]);
+  assert.deepEqual(links, [
+    {
+      url: "https://example.com/catalog",
+      relations: ["api-catalog"],
+      type: "application/linkset+json",
+    },
+    {
+      url: "https://example.com/schema",
+      relations: ["service-desc", "describedby"],
+      type: "application/schema+json",
+    },
+    {
+      url: "https://example.com/metadata",
+      relations: ["service-meta"],
+    },
+    {
+      url: "https://example.com/v2/docs",
+      relations: ["service-doc"],
+      type: "text/html",
+    },
+  ]);
 });
 
 test("bounds declarations while preserving their relation annotations", () => {
-	const declarations = Array.from(
-		{ length: 25 },
-		(_, index) => `<link rel="service-doc" href="/docs/${index}">`,
-	).join("");
-	const { document } = parseHTML(`<html><head>${declarations}</head></html>`);
-	const links = discoverDeclaredWebLinks(
-		document,
-		null,
-		"https://example.com/",
-	);
-	assert.equal(links.length, 20);
+  const declarations = Array.from(
+    { length: 25 },
+    (_, index) => `<link rel="service-doc" href="/docs/${index}">`,
+  ).join("");
+  const { document } = parseHTML(`<html><head>${declarations}</head></html>`);
+  const links = discoverDeclaredWebLinks(document, null, "https://example.com/");
+  assert.equal(links.length, 20);
 
-	const oversized = discoverDeclaredWebLinks(
-		parseHTML("<html></html>").document,
-		`<https://example.com/${"x".repeat(4096)}>; rel="service-doc"`,
-		"https://example.com/",
-	);
-	assert.deepEqual(oversized, []);
+  const oversized = discoverDeclaredWebLinks(
+    parseHTML("<html></html>").document,
+    `<https://example.com/${"x".repeat(4096)}>; rel="service-doc"`,
+    "https://example.com/",
+  );
+  assert.deepEqual(oversized, []);
 
-	const content = appendDeclaredWebLinks(
-		"Existing: https://example.com/docs/0-extra",
-		links.slice(0, 2),
-	);
-	assert.match(content, /<https:\/\/example\.com\/docs\/0>/);
-	assert.match(content, /<https:\/\/example\.com\/docs\/1>/);
+  const content = appendDeclaredWebLinks(
+    "Existing: https://example.com/docs/0-extra",
+    links.slice(0, 2),
+  );
+  assert.match(content, /<https:\/\/example\.com\/docs\/0>/);
+  assert.match(content, /<https:\/\/example\.com\/docs\/1>/);
 });
 
 test("HTML extraction surfaces declared documentation links without broad URL heuristics", () => {
-	const child = runChild(`
+  const child = runChild(`
 		const { extractContent } = await import(${JSON.stringify(extractModuleUrl)});
 		const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
 		const article = "Readable article content remains the primary result. ".repeat(20);
@@ -157,35 +149,26 @@ test("HTML extraction surfaces declared documentation links without broad URL he
 		const generic = await extractContent("https://example.com/generic", undefined, { lookup });
 		console.log(JSON.stringify({ readable, readableCalls, shell, shellCalls, fallback, fallbackCalls, generic }));
 	`);
-	assert.equal(child.status, 0, child.stderr);
-	const output = JSON.parse(child.stdout.trim());
+  assert.equal(child.status, 0, child.stderr);
+  const output = JSON.parse(child.stdout.trim());
 
-	assert.equal(output.readable.error, null);
-	assert.match(output.readable.content, /Readable article content/);
-	assert.match(output.readable.content, /## Declared links/);
-	assert.match(output.readable.content, /service-desc/);
-	assert.match(
-		output.readable.content,
-		/https:\/\/example\.com\/openapi\.json/,
-	);
-	assert.deepEqual(output.readableCalls, ["https://example.com/readable"]);
+  assert.equal(output.readable.error, null);
+  assert.match(output.readable.content, /Readable article content/);
+  assert.match(output.readable.content, /## Declared links/);
+  assert.match(output.readable.content, /service-desc/);
+  assert.match(output.readable.content, /https:\/\/example\.com\/openapi\.json/);
+  assert.deepEqual(output.readableCalls, ["https://example.com/readable"]);
 
-	assert.equal(output.shell.error, null);
-	assert.match(output.shell.content, /service-doc/);
-	assert.match(output.shell.content, /https:\/\/example\.com\/docs/);
-	assert.deepEqual(output.shellCalls, ["https://example.com/shell"]);
+  assert.equal(output.shell.error, null);
+  assert.match(output.shell.content, /service-doc/);
+  assert.match(output.shell.content, /https:\/\/example\.com\/docs/);
+  assert.deepEqual(output.shellCalls, ["https://example.com/shell"]);
 
-	assert.equal(output.fallback.error, null);
-	assert.match(output.fallback.content, /service-desc/);
-	assert.match(
-		output.fallback.content,
-		/https:\/\/example\.com\/openapi\.json/,
-	);
-	assert.deepEqual(output.fallbackCalls, ["https://example.com/fallback"]);
+  assert.equal(output.fallback.error, null);
+  assert.match(output.fallback.content, /service-desc/);
+  assert.match(output.fallback.content, /https:\/\/example\.com\/openapi\.json/);
+  assert.deepEqual(output.fallbackCalls, ["https://example.com/fallback"]);
 
-	assert.doesNotMatch(
-		output.generic.content,
-		/https:\/\/example\.com\/developers/,
-	);
-	assert.ok(output.generic.error);
+  assert.doesNotMatch(output.generic.content, /https:\/\/example\.com\/developers/);
+  assert.ok(output.generic.error);
 });
