@@ -166,9 +166,7 @@ export interface OpenAICodexProviderOptions {
   getDiagnostics?: (() => CodexDiagnosticsSink | undefined) | undefined;
 }
 
-function createTransportDependencies(
-  options: OpenAICodexProviderOptions,
-): TransportDependencies {
+function createTransportDependencies(options: OpenAICodexProviderOptions): TransportDependencies {
   const dependencies: TransportDependencies = {
     prepareRequestBody: prepareCodexRequestBody,
   };

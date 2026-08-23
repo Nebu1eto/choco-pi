@@ -6,10 +6,7 @@
 import { createRequire } from "node:module";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
-import type {
-  ApplyPatchToolDetails,
-  ApplyPatchToolOptions,
-} from "./tools/apply-patch/tool.ts";
+import type { ApplyPatchToolDetails, ApplyPatchToolOptions } from "./tools/apply-patch/tool.ts";
 import type { BoundaryValue } from "./tools/boundary.ts";
 import { registerCodexConversion } from "./extension/register.ts";
 
@@ -28,7 +25,9 @@ interface ActivationModule {
 }
 
 interface ApplyPatchModule {
-  createApplyPatchTool(options?: ApplyPatchToolOptions): ToolDefinition<TSchema, ApplyPatchToolDetails>;
+  createApplyPatchTool(
+    options?: ApplyPatchToolOptions,
+  ): ToolDefinition<TSchema, ApplyPatchToolDetails>;
   isApplyPatchToolDetails(details: BoundaryValue): details is ApplyPatchToolDetails;
   registerApplyPatchResultEvent(pi: ExtensionAPI): void;
 }
@@ -72,8 +71,9 @@ export const createApplyPatchTool: ApplyPatchModule["createApplyPatchTool"] = (o
   getApplyPatchModule().createApplyPatchTool(options);
 export const isApplyPatchToolDetails: ApplyPatchModule["isApplyPatchToolDetails"] = (details) =>
   getApplyPatchModule().isApplyPatchToolDetails(details);
-export const registerApplyPatchResultEvent: ApplyPatchModule["registerApplyPatchResultEvent"] =
-  (pi) => getApplyPatchModule().registerApplyPatchResultEvent(pi);
+export const registerApplyPatchResultEvent: ApplyPatchModule["registerApplyPatchResultEvent"] = (
+  pi,
+) => getApplyPatchModule().registerApplyPatchResultEvent(pi);
 export const getCodexSkillPaths: SkillsModule["getCodexSkillPaths"] = (cwd, home) =>
   getSkillsModule().getCodexSkillPaths(cwd, home);
 export const mergeAdapterTools: ActivationModule["mergeAdapterTools"] = (

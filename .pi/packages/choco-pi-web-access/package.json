@@ -1,10 +1,10 @@
 {
   "name": "choco-pi-web-access",
   "version": "0.24.1-choco.0",
-  "description": "Vendored pi web search and content extraction with OpenAI, Exa, and Kagi search providers.",
   "private": true,
-  "type": "module",
+  "description": "Vendored pi web search and content extraction with OpenAI, Exa, and Kagi search providers.",
   "license": "MIT",
+  "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
@@ -25,14 +25,14 @@
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
-  "pi": {
-    "extensions": [
-      "./index.ts"
-    ]
-  },
   "chocoPi": {
     "supersedes": [
       "pi-web-access"
+    ]
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
     ]
   }
 }

@@ -1,8 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  createAssistantMessageEventStream,
-  type AssistantMessage,
-} from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
 import { DEFAULT_CODEX_BASE_URL } from "./openai-codex/constants.ts";
 import { openAICodexModelsWithDaybreak } from "./openai-codex/model-catalog.ts";
 import { openaiCodexNativeOAuthProvider } from "./openai-codex/oauth.ts";

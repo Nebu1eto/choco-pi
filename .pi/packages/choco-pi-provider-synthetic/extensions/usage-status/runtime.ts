@@ -6,14 +6,8 @@ import {
   SYNTHETIC_EXTENSIONS_REQUEST_EVENT,
   SyntheticConfigUpdatedPayloadSchema,
 } from "../../src/config-events.ts";
-import {
-  ensureSyntheticConfig,
-  publishSyntheticConfig,
-} from "../../src/config-state.ts";
-import type {
-  QuotasResponse,
-  SyntheticQuotasSnapshotPayload,
-} from "../../src/types/quotas.ts";
+import { ensureSyntheticConfig, publishSyntheticConfig } from "../../src/config-state.ts";
+import type { QuotasResponse, SyntheticQuotasSnapshotPayload } from "../../src/types/quotas.ts";
 import { formatResetTime } from "../../src/utils/quotas.ts";
 import {
   assessWindow,

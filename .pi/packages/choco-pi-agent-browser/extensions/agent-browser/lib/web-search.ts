@@ -1,34 +1,39 @@
 import type { AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
-	resolvePreferredWebSearchCredential,
-	type AgentBrowserConfigState,
-	type WebSearchProvider,
+  resolvePreferredWebSearchCredential,
+  type AgentBrowserConfigState,
+  type WebSearchProvider,
 } from "./config.ts";
 import { hasRuntimeType, isRecord, type RuntimeValue } from "./parsing.ts";
 import { WEB_SEARCH_PROMPT_GUIDELINE } from "./playbook.ts";
 import {
-	AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
-	AgentBrowserWebSearchParams,
-	DEFAULT_SEARCH_RESULT_COUNT,
-	MAX_SEARCH_RESULT_COUNT,
-	type AgentBrowserWebSearchParamsInput,
-	type ExaSearchType,
-	type SearchFreshness,
-	type WebSearchProviderParam,
-	type WebSearchToolDetails,
+  AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
+  AgentBrowserWebSearchParams,
+  DEFAULT_SEARCH_RESULT_COUNT,
+  MAX_SEARCH_RESULT_COUNT,
+  type AgentBrowserWebSearchParamsInput,
+  type ExaSearchType,
+  type SearchFreshness,
+  type WebSearchProviderParam,
+  type WebSearchToolDetails,
 } from "./web-search-registration.ts";
 
 export {
-	AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
-	AgentBrowserWebSearchParams,
-	DEFAULT_SEARCH_RESULT_COUNT,
-	EXA_SEARCH_TYPES,
-	MAX_SEARCH_RESULT_COUNT,
-	WEB_SEARCH_PROVIDER_PARAM_VALUES,
-	createAgentBrowserWebSearchParamsSchema,
+  AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
+  AgentBrowserWebSearchParams,
+  DEFAULT_SEARCH_RESULT_COUNT,
+  EXA_SEARCH_TYPES,
+  MAX_SEARCH_RESULT_COUNT,
+  WEB_SEARCH_PROVIDER_PARAM_VALUES,
+  createAgentBrowserWebSearchParamsSchema,
 } from "./web-search-registration.ts";
-export type { AgentBrowserWebSearchParamsInput, ExaSearchType, WebSearchProviderParam, WebSearchToolDetails } from "./web-search-registration.ts";
+export type {
+  AgentBrowserWebSearchParamsInput,
+  ExaSearchType,
+  WebSearchProviderParam,
+  WebSearchToolDetails,
+} from "./web-search-registration.ts";
 
 export const BRAVE_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
 export const EXA_SEARCH_ENDPOINT = "https://api.exa.ai/search";
@@ -37,687 +42,803 @@ export const EXA_DEEP_SEARCH_REQUEST_TIMEOUT_MS = 45_000;
 export const WEB_SEARCH_MIN_REQUEST_INTERVAL_MS = 1_100;
 
 export type BraveWebSearchResult = {
-	title?: unknown;
-	url?: unknown;
-	description?: unknown;
-	age?: unknown;
-	language?: unknown;
-	profile?: {
-		name?: unknown;
-		url?: unknown;
-	};
-	meta_url?: {
-		hostname?: unknown;
-	};
+  title?: unknown;
+  url?: unknown;
+  description?: unknown;
+  age?: unknown;
+  language?: unknown;
+  profile?: {
+    name?: unknown;
+    url?: unknown;
+  };
+  meta_url?: {
+    hostname?: unknown;
+  };
 };
 
 export type BraveWebSearchResponse = {
-	query?: {
-		original?: unknown;
-		altered?: unknown;
-	};
-	web?: {
-		results?: BraveWebSearchResult[];
-	};
+  query?: {
+    original?: unknown;
+    altered?: unknown;
+  };
+  web?: {
+    results?: BraveWebSearchResult[];
+  };
 };
 
 export type ExaWebSearchResult = {
-	title?: unknown;
-	url?: unknown;
-	publishedDate?: unknown;
-	author?: unknown;
-	text?: unknown;
-	highlights?: unknown;
-	summary?: unknown;
+  title?: unknown;
+  url?: unknown;
+  publishedDate?: unknown;
+  author?: unknown;
+  text?: unknown;
+  highlights?: unknown;
+  summary?: unknown;
 };
 
 export type ExaWebSearchResponse = {
-	requestId?: unknown;
-	searchType?: unknown;
-	results?: ExaWebSearchResult[];
-	output?: unknown;
-	costDollars?: unknown;
+  requestId?: unknown;
+  searchType?: unknown;
+  results?: ExaWebSearchResult[];
+  output?: unknown;
+  costDollars?: unknown;
 };
 
 export type NormalizedSearchResult = {
-	title: string;
-	url: string;
-	description?: string;
-	highlights?: string[];
-	source?: string;
-	age?: string;
-	language?: string;
+  title: string;
+  url: string;
+  description?: string;
+  highlights?: string[];
+  source?: string;
+  age?: string;
+  language?: string;
 };
 
 type WebSearchExecutionParams = {
-	country?: string;
-	count: number;
-	freshness?: SearchFreshness;
-	offset: number;
-	query: string;
-	safesearch?: "off" | "moderate" | "strict";
-	searchLang?: string;
-	searchType?: ExaSearchType;
+  country?: string;
+  count: number;
+  freshness?: SearchFreshness;
+  offset: number;
+  query: string;
+  safesearch?: "off" | "moderate" | "strict";
+  searchLang?: string;
+  searchType?: ExaSearchType;
 };
 
 type NormalizedProviderResponse = {
-	extraDetails?: Pick<WebSearchToolDetails, "requestId" | "searchType">;
-	results: NormalizedSearchResult[];
-	returnedQuery: string;
+  extraDetails?: Pick<WebSearchToolDetails, "requestId" | "searchType">;
+  results: NormalizedSearchResult[];
+  returnedQuery: string;
 };
 
 export interface WebSearchProviderAdapter<Request = unknown, Response = unknown> {
-	buildRequest(params: WebSearchExecutionParams): Request;
-	fetchJson(request: Request, apiKey: string, signal?: AbortSignal): Promise<Response>;
-	normalizeResponse(response: Response, params: WebSearchExecutionParams): NormalizedProviderResponse;
-	provider: WebSearchProvider;
+  buildRequest(params: WebSearchExecutionParams): Request;
+  fetchJson(request: Request, apiKey: string, signal?: AbortSignal): Promise<Response>;
+  normalizeResponse(
+    response: Response,
+    params: WebSearchExecutionParams,
+  ): NormalizedProviderResponse;
+  provider: WebSearchProvider;
 }
 
 interface HtmlEntityReplacements {
-	[name: string]: string;
+  [name: string]: string;
 }
 
 const HTML_ENTITY_REPLACEMENTS: HtmlEntityReplacements = {
-	amp: "&",
-	apos: "'",
-	gt: ">",
-	lt: "<",
-	nbsp: " ",
-	quot: '"',
+  amp: "&",
+  apos: "'",
+  gt: ">",
+  lt: "<",
+  nbsp: " ",
+  quot: '"',
 };
 
 const HTML_TAG_NAMES_TO_STRIP = new Set([
-	"a",
-	"abbr",
-	"address",
-	"article",
-	"aside",
-	"audio",
-	"b",
-	"base",
-	"blockquote",
-	"body",
-	"br",
-	"button",
-	"canvas",
-	"code",
-	"div",
-	"em",
-	"embed",
-	"footer",
-	"form",
-	"h1",
-	"h2",
-	"h3",
-	"h4",
-	"h5",
-	"h6",
-	"head",
-	"header",
-	"html",
-	"i",
-	"iframe",
-	"img",
-	"input",
-	"li",
-	"link",
-	"main",
-	"mark",
-	"math",
-	"meta",
-	"nav",
-	"object",
-	"ol",
-	"option",
-	"p",
-	"pre",
-	"script",
-	"section",
-	"select",
-	"source",
-	"span",
-	"strong",
-	"style",
-	"svg",
-	"table",
-	"tbody",
-	"td",
-	"textarea",
-	"tfoot",
-	"th",
-	"thead",
-	"tr",
-	"u",
-	"ul",
-	"video",
+  "a",
+  "abbr",
+  "address",
+  "article",
+  "aside",
+  "audio",
+  "b",
+  "base",
+  "blockquote",
+  "body",
+  "br",
+  "button",
+  "canvas",
+  "code",
+  "div",
+  "em",
+  "embed",
+  "footer",
+  "form",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "head",
+  "header",
+  "html",
+  "i",
+  "iframe",
+  "img",
+  "input",
+  "li",
+  "link",
+  "main",
+  "mark",
+  "math",
+  "meta",
+  "nav",
+  "object",
+  "ol",
+  "option",
+  "p",
+  "pre",
+  "script",
+  "section",
+  "select",
+  "source",
+  "span",
+  "strong",
+  "style",
+  "svg",
+  "table",
+  "tbody",
+  "td",
+  "textarea",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "u",
+  "ul",
+  "video",
 ]);
 
 function decodeHtmlEntity(entity: string): string {
-	const named = HTML_ENTITY_REPLACEMENTS[entity.toLowerCase()];
-	if (named !== undefined) return named;
-	const decimalMatch = /^#(\d+)$/.exec(entity);
-	const hexMatch = /^#x([0-9a-f]+)$/i.exec(entity);
-	const codePoint = decimalMatch ? Number.parseInt(decimalMatch[1] ?? "", 10) : hexMatch ? Number.parseInt(hexMatch[1] ?? "", 16) : undefined;
-	if (codePoint === undefined || !Number.isFinite(codePoint)) return `&${entity};`;
-	try {
-		return String.fromCodePoint(codePoint);
-	} catch {
-		return `&${entity};`;
-	}
+  const named = HTML_ENTITY_REPLACEMENTS[entity.toLowerCase()];
+  if (named !== undefined) return named;
+  const decimalMatch = /^#(\d+)$/.exec(entity);
+  const hexMatch = /^#x([0-9a-f]+)$/i.exec(entity);
+  const codePoint = decimalMatch
+    ? Number.parseInt(decimalMatch[1] ?? "", 10)
+    : hexMatch
+      ? Number.parseInt(hexMatch[1] ?? "", 16)
+      : undefined;
+  if (codePoint === undefined || !Number.isFinite(codePoint)) return `&${entity};`;
+  try {
+    return String.fromCodePoint(codePoint);
+  } catch {
+    return `&${entity};`;
+  }
 }
 
 export function decodeHtmlEntities(value: string): string {
-	return value.replace(/&([a-z][a-z0-9]+|#\d+|#x[0-9a-f]+);/gi, (_match, entity: string) => decodeHtmlEntity(entity));
+  return value.replace(/&([a-z][a-z0-9]+|#\d+|#x[0-9a-f]+);/gi, (_match, entity: string) =>
+    decodeHtmlEntity(entity),
+  );
 }
 
 function stripDecodedHtmlTags(value: string): string {
-	return value.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, " ").replace(/<\/?([a-z][a-z0-9-]*)(\s[^>]*)?>/gi, (match, tagName: string, attributes: string | undefined) => {
-		if (attributes || match.startsWith("</") || HTML_TAG_NAMES_TO_STRIP.has(tagName.toLowerCase())) return " ";
-		return match;
-	});
+  return value
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(
+      /<\/?([a-z][a-z0-9-]*)(\s[^>]*)?>/gi,
+      (match, tagName: string, attributes: string | undefined) => {
+        if (
+          attributes ||
+          match.startsWith("</") ||
+          HTML_TAG_NAMES_TO_STRIP.has(tagName.toLowerCase())
+        )
+          return " ";
+        return match;
+      },
+    );
 }
 
 export function cleanSearchText<Value>(value: Value, maxLength = 500): string | undefined {
-	if (!hasRuntimeType(value, "string")) return undefined;
-	const cleaned = stripDecodedHtmlTags(decodeHtmlEntities(value.replace(/<[^>]*>/g, " ")))
-		.replace(/\s+/g, " ")
-		.trim();
-	if (!cleaned) return undefined;
-	if (cleaned.length <= maxLength) return cleaned;
-	return `${cleaned.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  if (!hasRuntimeType(value, "string")) return undefined;
+  const cleaned = stripDecodedHtmlTags(decodeHtmlEntities(value.replace(/<[^>]*>/g, " ")))
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return undefined;
+  if (cleaned.length <= maxLength) return cleaned;
+  return `${cleaned.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
 export function normalizeSearchUrl<Value>(value: Value): string | undefined {
-	if (!hasRuntimeType(value, "string")) return undefined;
-	try {
-		const url = new URL(value);
-		if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
-		return url.toString();
-	} catch {
-		return undefined;
-	}
+  if (!hasRuntimeType(value, "string")) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 function getHostname(url: string): string | undefined {
-	try {
-		return new URL(url).hostname;
-	} catch {
-		return undefined;
-	}
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeHighlightList<Value>(value: Value): string[] | undefined {
-	if (!Array.isArray(value)) return undefined;
-	const highlights = value
-		.map((entry) => cleanSearchText(entry, 320))
-		.filter((entry): entry is string => Boolean(entry))
-		.slice(0, 3);
-	return highlights.length > 0 ? highlights : undefined;
+  if (!Array.isArray(value)) return undefined;
+  const highlights = value
+    .map((entry) => cleanSearchText(entry, 320))
+    .filter((entry): entry is string => Boolean(entry))
+    .slice(0, 3);
+  return highlights.length > 0 ? highlights : undefined;
 }
 
-export function normalizeBraveSearchResult(result: BraveWebSearchResult): NormalizedSearchResult | undefined {
-	const title = cleanSearchText(result.title, 180);
-	const url = normalizeSearchUrl(result.url);
-	if (!title || !url) return undefined;
-	return {
-		title,
-		url,
-		description: cleanSearchText(result.description, 320),
-		source: cleanSearchText(result.profile?.name, 120) ?? cleanSearchText(result.meta_url?.hostname, 120),
-		age: cleanSearchText(result.age, 80),
-		language: cleanSearchText(result.language, 40),
-	};
+export function normalizeBraveSearchResult(
+  result: BraveWebSearchResult,
+): NormalizedSearchResult | undefined {
+  const title = cleanSearchText(result.title, 180);
+  const url = normalizeSearchUrl(result.url);
+  if (!title || !url) return undefined;
+  return {
+    title,
+    url,
+    description: cleanSearchText(result.description, 320),
+    source:
+      cleanSearchText(result.profile?.name, 120) ?? cleanSearchText(result.meta_url?.hostname, 120),
+    age: cleanSearchText(result.age, 80),
+    language: cleanSearchText(result.language, 40),
+  };
 }
 
-export function normalizeExaSearchResult(result: ExaWebSearchResult): NormalizedSearchResult | undefined {
-	const title = cleanSearchText(result.title, 180);
-	const url = normalizeSearchUrl(result.url);
-	if (!title || !url) return undefined;
-	const highlights = normalizeHighlightList(result.highlights);
-	return {
-		title,
-		url,
-		description: cleanSearchText(result.summary, 320) ?? highlights?.[0] ?? cleanSearchText(result.text, 320),
-		highlights,
-		source: cleanSearchText(result.author, 120) ?? cleanSearchText(getHostname(url), 120),
-		age: cleanSearchText(result.publishedDate, 80),
-	};
+export function normalizeExaSearchResult(
+  result: ExaWebSearchResult,
+): NormalizedSearchResult | undefined {
+  const title = cleanSearchText(result.title, 180);
+  const url = normalizeSearchUrl(result.url);
+  if (!title || !url) return undefined;
+  const highlights = normalizeHighlightList(result.highlights);
+  return {
+    title,
+    url,
+    description:
+      cleanSearchText(result.summary, 320) ?? highlights?.[0] ?? cleanSearchText(result.text, 320),
+    highlights,
+    source: cleanSearchText(result.author, 120) ?? cleanSearchText(getHostname(url), 120),
+    age: cleanSearchText(result.publishedDate, 80),
+  };
 }
 
 function getProviderLabel(provider: WebSearchProvider): string {
-	return provider === "exa" ? "Exa" : "Brave";
+  return provider === "exa" ? "Exa" : "Brave";
 }
 
-export function formatSearchResults(provider: WebSearchProvider, query: string, results: NormalizedSearchResult[]): string {
-	const providerLabel = getProviderLabel(provider);
-	if (results.length === 0) {
-		return `No ${providerLabel} web results found for: ${query}`;
-	}
-	const lines = [`${providerLabel} web search results for: ${query}`, ""];
-	results.forEach((result, index) => {
-		lines.push(`${index + 1}. ${result.title}`);
-		lines.push(`   URL: ${result.url}`);
-		if (result.source) lines.push(`   Source: ${result.source}`);
-		if (result.age) lines.push(`   Age: ${result.age}`);
-		if (result.description) lines.push(`   Summary: ${result.description}`);
-		if (result.highlights && result.highlights.length > 1) {
-			lines.push("   Highlights:");
-			for (const highlight of result.highlights) lines.push(`   - ${highlight}`);
-		}
-		lines.push("");
-	});
-	return lines.join("\n").trimEnd();
+export function formatSearchResults(
+  provider: WebSearchProvider,
+  query: string,
+  results: NormalizedSearchResult[],
+): string {
+  const providerLabel = getProviderLabel(provider);
+  if (results.length === 0) {
+    return `No ${providerLabel} web results found for: ${query}`;
+  }
+  const lines = [`${providerLabel} web search results for: ${query}`, ""];
+  results.forEach((result, index) => {
+    lines.push(`${index + 1}. ${result.title}`);
+    lines.push(`   URL: ${result.url}`);
+    if (result.source) lines.push(`   Source: ${result.source}`);
+    if (result.age) lines.push(`   Age: ${result.age}`);
+    if (result.description) lines.push(`   Summary: ${result.description}`);
+    if (result.highlights && result.highlights.length > 1) {
+      lines.push("   Highlights:");
+      for (const highlight of result.highlights) lines.push(`   - ${highlight}`);
+    }
+    lines.push("");
+  });
+  return lines.join("\n").trimEnd();
 }
 
 export function buildBraveSearchUrl(params: {
-	query: string;
-	count: number;
-	offset: number;
-	country?: string;
-	searchLang?: string;
-	safesearch?: "off" | "moderate" | "strict";
-	freshness?: SearchFreshness;
+  query: string;
+  count: number;
+  offset: number;
+  country?: string;
+  searchLang?: string;
+  safesearch?: "off" | "moderate" | "strict";
+  freshness?: SearchFreshness;
 }): URL {
-	const url = new URL(BRAVE_SEARCH_ENDPOINT);
-	url.searchParams.set("q", params.query);
-	url.searchParams.set("count", String(params.count));
-	url.searchParams.set("offset", String(params.offset));
-	if (params.country) url.searchParams.set("country", params.country.toUpperCase());
-	if (params.searchLang) url.searchParams.set("search_lang", params.searchLang);
-	if (params.safesearch) url.searchParams.set("safesearch", params.safesearch);
-	if (params.freshness) url.searchParams.set("freshness", params.freshness);
-	return url;
+  const url = new URL(BRAVE_SEARCH_ENDPOINT);
+  url.searchParams.set("q", params.query);
+  url.searchParams.set("count", String(params.count));
+  url.searchParams.set("offset", String(params.offset));
+  if (params.country) url.searchParams.set("country", params.country.toUpperCase());
+  if (params.searchLang) url.searchParams.set("search_lang", params.searchLang);
+  if (params.safesearch) url.searchParams.set("safesearch", params.safesearch);
+  if (params.freshness) url.searchParams.set("freshness", params.freshness);
+  return url;
 }
 
 const FRESHNESS_DAYS = {
-	pd: 1,
-	pw: 7,
-	pm: 31,
-	py: 365,
+  pd: 1,
+  pw: 7,
+  pm: 31,
+  py: 365,
 } satisfies Record<SearchFreshness, number>;
 
-function getStartPublishedDate(freshness: SearchFreshness | undefined, now: () => Date): string | undefined {
-	if (!freshness) return undefined;
-	const days = FRESHNESS_DAYS[freshness];
-	return new Date(now().getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+function getStartPublishedDate(
+  freshness: SearchFreshness | undefined,
+  now: () => Date,
+): string | undefined {
+  if (!freshness) return undefined;
+  const days = FRESHNESS_DAYS[freshness];
+  return new Date(now().getTime() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
 export interface ExaSearchRequestBody {
-	contents: { highlights: true };
-	moderation?: true;
-	numResults: number;
-	query: string;
-	startPublishedDate?: string;
-	type: ExaSearchType;
-	userLocation?: string;
+  contents: { highlights: true };
+  moderation?: true;
+  numResults: number;
+  query: string;
+  startPublishedDate?: string;
+  type: ExaSearchType;
+  userLocation?: string;
 }
 
-export function buildExaSearchRequestBody(params: {
-	query: string;
-	count: number;
-	offset: number;
-	country?: string;
-	safesearch?: "off" | "moderate" | "strict";
-	freshness?: SearchFreshness;
-	searchType?: ExaSearchType;
-}, now: () => Date = () => new Date()): ExaSearchRequestBody {
-	const body: ExaSearchRequestBody = {
-		query: params.query,
-		type: params.searchType ?? "auto",
-		numResults: Math.min(params.count + params.offset, 100),
-		contents: { highlights: true },
-	};
-	if (params.country) body.userLocation = params.country.toUpperCase();
-	if (params.safesearch && params.safesearch !== "off") body.moderation = true;
-	const startPublishedDate = getStartPublishedDate(params.freshness, now);
-	if (startPublishedDate) body.startPublishedDate = startPublishedDate;
-	return body;
+export function buildExaSearchRequestBody(
+  params: {
+    query: string;
+    count: number;
+    offset: number;
+    country?: string;
+    safesearch?: "off" | "moderate" | "strict";
+    freshness?: SearchFreshness;
+    searchType?: ExaSearchType;
+  },
+  now: () => Date = () => new Date(),
+): ExaSearchRequestBody {
+  const body: ExaSearchRequestBody = {
+    query: params.query,
+    type: params.searchType ?? "auto",
+    numResults: Math.min(params.count + params.offset, 100),
+    contents: { highlights: true },
+  };
+  if (params.country) body.userLocation = params.country.toUpperCase();
+  if (params.safesearch && params.safesearch !== "off") body.moderation = true;
+  const startPublishedDate = getStartPublishedDate(params.freshness, now);
+  if (startPublishedDate) body.startPublishedDate = startPublishedDate;
+  return body;
 }
 
 function redactSearchSecret(text: string, apiKey: string): string {
-	return apiKey ? text.split(apiKey).join("[REDACTED]") : text;
+  return apiKey ? text.split(apiKey).join("[REDACTED]") : text;
 }
 
 function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
-	if (ms <= 0) return Promise.resolve();
-	if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("Web search cancelled"));
-	return new Promise((resolve, reject) => {
-		const cleanup = () => signal?.removeEventListener("abort", abort);
-		const timeout = setTimeout(() => {
-			cleanup();
-			resolve();
-		}, ms);
-		const abort = () => {
-			clearTimeout(timeout);
-			cleanup();
-			reject(signal?.reason ?? new Error("Web search cancelled"));
-		};
-		signal?.addEventListener("abort", abort, { once: true });
-	});
+  if (ms <= 0) return Promise.resolve();
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("Web search cancelled"));
+  return new Promise((resolve, reject) => {
+    const cleanup = () => signal?.removeEventListener("abort", abort);
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    const abort = () => {
+      clearTimeout(timeout);
+      cleanup();
+      reject(signal?.reason ?? new Error("Web search cancelled"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 export class WebSearchRequestGate {
-	private lastRequestStartedAt = 0;
-	private readonly now: () => number;
-	private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
-	private tail: Promise<unknown> = Promise.resolve();
+  private lastRequestStartedAt = 0;
+  private readonly now: () => number;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  private tail: Promise<unknown> = Promise.resolve();
 
-	constructor(
-		now: () => number = Date.now,
-		sleep: (ms: number, signal?: AbortSignal) => Promise<void> = sleepWithAbort,
-	) {
-		this.now = now;
-		this.sleep = sleep;
-	}
+  constructor(
+    now: () => number = Date.now,
+    sleep: (ms: number, signal?: AbortSignal) => Promise<void> = sleepWithAbort,
+  ) {
+    this.now = now;
+    this.sleep = sleep;
+  }
 
-	run<T>(signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
-		const runTask = async () => {
-			const elapsedMs = this.lastRequestStartedAt === 0 ? WEB_SEARCH_MIN_REQUEST_INTERVAL_MS : this.now() - this.lastRequestStartedAt;
-			const waitMs = Math.max(0, WEB_SEARCH_MIN_REQUEST_INTERVAL_MS - elapsedMs);
-			if (waitMs > 0) await this.sleep(waitMs, signal);
-			if (signal?.aborted) throw signal.reason ?? new Error("Web search cancelled");
-			this.lastRequestStartedAt = this.now();
-			return task();
-		};
-		const result = this.tail.then(runTask, runTask);
-		this.tail = result.catch(() => undefined);
-		return result;
-	}
+  run<T>(signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
+    const runTask = async () => {
+      const elapsedMs =
+        this.lastRequestStartedAt === 0
+          ? WEB_SEARCH_MIN_REQUEST_INTERVAL_MS
+          : this.now() - this.lastRequestStartedAt;
+      const waitMs = Math.max(0, WEB_SEARCH_MIN_REQUEST_INTERVAL_MS - elapsedMs);
+      if (waitMs > 0) await this.sleep(waitMs, signal);
+      if (signal?.aborted) throw signal.reason ?? new Error("Web search cancelled");
+      this.lastRequestStartedAt = this.now();
+      return task();
+    };
+    const result = this.tail.then(runTask, runTask);
+    this.tail = result.catch(() => undefined);
+    return result;
+  }
 }
 
-function formatSearchHttpError(provider: WebSearchProvider, status: number, statusText: string, body: string, apiKey: string): string {
-	const providerLabel = getProviderLabel(provider);
-	const errorPreview = cleanSearchText(redactSearchSecret(body, apiKey), 300);
-	if (status === 429) {
-		const preview = errorPreview ? ` Upstream details: ${redactSearchSecret(errorPreview, apiKey)}` : "";
-		return `${providerLabel} search rate limit exceeded (HTTP 429). Do not issue parallel or repeated agent_browser_web_search calls; use one high-signal query, inspect those results, then wait before retrying or ask the user to adjust their ${providerLabel} API plan/limits.${preview}`;
-	}
-	return `${providerLabel} search failed with HTTP ${status}: ${errorPreview ? redactSearchSecret(errorPreview, apiKey) : statusText}`;
+function formatSearchHttpError(
+  provider: WebSearchProvider,
+  status: number,
+  statusText: string,
+  body: string,
+  apiKey: string,
+): string {
+  const providerLabel = getProviderLabel(provider);
+  const errorPreview = cleanSearchText(redactSearchSecret(body, apiKey), 300);
+  if (status === 429) {
+    const preview = errorPreview
+      ? ` Upstream details: ${redactSearchSecret(errorPreview, apiKey)}`
+      : "";
+    return `${providerLabel} search rate limit exceeded (HTTP 429). Do not issue parallel or repeated agent_browser_web_search calls; use one high-signal query, inspect those results, then wait before retrying or ask the user to adjust their ${providerLabel} API plan/limits.${preview}`;
+  }
+  return `${providerLabel} search failed with HTTP ${status}: ${errorPreview ? redactSearchSecret(errorPreview, apiKey) : statusText}`;
 }
 
 async function fetchSearchJson<T>(options: {
-	apiKey: string;
-	cancelMessage: string;
-	init?: RequestInit;
-	invalidJsonMessage: string;
-	parse: (value: RuntimeValue) => T;
-	provider: WebSearchProvider;
-	request: string | URL;
-	signal?: AbortSignal;
-	timeoutMessage: string;
-	timeoutMs: number;
+  apiKey: string;
+  cancelMessage: string;
+  init?: RequestInit;
+  invalidJsonMessage: string;
+  parse: (value: RuntimeValue) => T;
+  provider: WebSearchProvider;
+  request: string | URL;
+  signal?: AbortSignal;
+  timeoutMessage: string;
+  timeoutMs: number;
 }): Promise<T> {
-	if (options.signal?.aborted) {
-		throw options.signal.reason ?? new Error(options.cancelMessage);
-	}
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(new Error(options.timeoutMessage)), options.timeoutMs);
-	const abort = () => controller.abort(options.signal?.reason ?? new Error(options.cancelMessage));
-	options.signal?.addEventListener("abort", abort, { once: true });
-	try {
-		const response = await fetch(options.request, {
-			...options.init,
-			signal: controller.signal,
-		});
-		const text = await response.text();
-		if (!response.ok) {
-			throw new Error(formatSearchHttpError(options.provider, response.status, response.statusText, text, options.apiKey));
-		}
-		try {
-			const value: RuntimeValue = JSON.parse(text);
-			return options.parse(value);
-		} catch (error) {
-			throw new Error(`${options.invalidJsonMessage}: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	} finally {
-		clearTimeout(timeout);
-		options.signal?.removeEventListener("abort", abort);
-	}
+  if (options.signal?.aborted) {
+    throw options.signal.reason ?? new Error(options.cancelMessage);
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(new Error(options.timeoutMessage)),
+    options.timeoutMs,
+  );
+  const abort = () => controller.abort(options.signal?.reason ?? new Error(options.cancelMessage));
+  options.signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const response = await fetch(options.request, {
+      ...options.init,
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(
+        formatSearchHttpError(
+          options.provider,
+          response.status,
+          response.statusText,
+          text,
+          options.apiKey,
+        ),
+      );
+    }
+    try {
+      const value: RuntimeValue = JSON.parse(text);
+      return options.parse(value);
+    } catch (error) {
+      throw new Error(
+        `${options.invalidJsonMessage}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", abort);
+  }
 }
 
 function parseBraveSearchResult<Value>(value: Value): BraveWebSearchResult | undefined {
-	if (!isRecord(value)) return undefined;
-	const profile = isRecord(value.profile) ? { name: value.profile.name, url: value.profile.url } : undefined;
-	const metaUrl = isRecord(value.meta_url) ? { hostname: value.meta_url.hostname } : undefined;
-	return {
-		age: value.age,
-		description: value.description,
-		language: value.language,
-		meta_url: metaUrl,
-		profile,
-		title: value.title,
-		url: value.url,
-	};
+  if (!isRecord(value)) return undefined;
+  const profile = isRecord(value.profile)
+    ? { name: value.profile.name, url: value.profile.url }
+    : undefined;
+  const metaUrl = isRecord(value.meta_url) ? { hostname: value.meta_url.hostname } : undefined;
+  return {
+    age: value.age,
+    description: value.description,
+    language: value.language,
+    meta_url: metaUrl,
+    profile,
+    title: value.title,
+    url: value.url,
+  };
 }
 
 function parseBraveSearchResponse(value: RuntimeValue): BraveWebSearchResponse {
-	if (!isRecord(value)) return {};
-	const query = isRecord(value.query)
-		? { altered: value.query.altered, original: value.query.original }
-		: undefined;
-	const web = isRecord(value.web) && Array.isArray(value.web.results)
-		? { results: value.web.results.map(parseBraveSearchResult).filter((result): result is BraveWebSearchResult => result !== undefined) }
-		: undefined;
-	return { query, web };
+  if (!isRecord(value)) return {};
+  const query = isRecord(value.query)
+    ? { altered: value.query.altered, original: value.query.original }
+    : undefined;
+  const web =
+    isRecord(value.web) && Array.isArray(value.web.results)
+      ? {
+          results: value.web.results
+            .map(parseBraveSearchResult)
+            .filter((result): result is BraveWebSearchResult => result !== undefined),
+        }
+      : undefined;
+  return { query, web };
 }
 
 function parseExaSearchResult<Value>(value: Value): ExaWebSearchResult | undefined {
-	if (!isRecord(value)) return undefined;
-	return {
-		author: value.author,
-		highlights: value.highlights,
-		publishedDate: value.publishedDate,
-		summary: value.summary,
-		text: value.text,
-		title: value.title,
-		url: value.url,
-	};
+  if (!isRecord(value)) return undefined;
+  return {
+    author: value.author,
+    highlights: value.highlights,
+    publishedDate: value.publishedDate,
+    summary: value.summary,
+    text: value.text,
+    title: value.title,
+    url: value.url,
+  };
 }
 
 function parseExaSearchResponse(value: RuntimeValue): ExaWebSearchResponse {
-	if (!isRecord(value)) return {};
-	const results = Array.isArray(value.results)
-		? value.results.map(parseExaSearchResult).filter((result): result is ExaWebSearchResult => result !== undefined)
-		: undefined;
-	return {
-		costDollars: value.costDollars,
-		output: value.output,
-		requestId: value.requestId,
-		results,
-		searchType: value.searchType,
-	};
+  if (!isRecord(value)) return {};
+  const results = Array.isArray(value.results)
+    ? value.results
+        .map(parseExaSearchResult)
+        .filter((result): result is ExaWebSearchResult => result !== undefined)
+    : undefined;
+  return {
+    costDollars: value.costDollars,
+    output: value.output,
+    requestId: value.requestId,
+    results,
+    searchType: value.searchType,
+  };
 }
 
-export async function fetchBraveSearchJson(url: URL, apiKey: string, signal?: AbortSignal): Promise<BraveWebSearchResponse> {
-	return fetchSearchJson<BraveWebSearchResponse>({
-		apiKey,
-		cancelMessage: "Brave search cancelled",
-		init: {
-			headers: {
-				Accept: "application/json",
-				"X-Subscription-Token": apiKey,
-			},
-		},
-		invalidJsonMessage: "Brave search returned invalid JSON",
-		parse: parseBraveSearchResponse,
-		provider: "brave",
-		request: url,
-		signal,
-		timeoutMessage: "Brave search timed out",
-		timeoutMs: SEARCH_REQUEST_TIMEOUT_MS,
-	});
+export async function fetchBraveSearchJson(
+  url: URL,
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<BraveWebSearchResponse> {
+  return fetchSearchJson<BraveWebSearchResponse>({
+    apiKey,
+    cancelMessage: "Brave search cancelled",
+    init: {
+      headers: {
+        Accept: "application/json",
+        "X-Subscription-Token": apiKey,
+      },
+    },
+    invalidJsonMessage: "Brave search returned invalid JSON",
+    parse: parseBraveSearchResponse,
+    provider: "brave",
+    request: url,
+    signal,
+    timeoutMessage: "Brave search timed out",
+    timeoutMs: SEARCH_REQUEST_TIMEOUT_MS,
+  });
 }
 
 function getExaRequestTimeoutMs(searchType: ExaSearchType | undefined): number {
-	return searchType?.startsWith("deep") ? EXA_DEEP_SEARCH_REQUEST_TIMEOUT_MS : SEARCH_REQUEST_TIMEOUT_MS;
+  return searchType?.startsWith("deep")
+    ? EXA_DEEP_SEARCH_REQUEST_TIMEOUT_MS
+    : SEARCH_REQUEST_TIMEOUT_MS;
 }
 
-export async function fetchExaSearchJson(body: ExaSearchRequestBody, apiKey: string, signal?: AbortSignal, timeoutMs = SEARCH_REQUEST_TIMEOUT_MS): Promise<ExaWebSearchResponse> {
-	return fetchSearchJson<ExaWebSearchResponse>({
-		apiKey,
-		cancelMessage: "Exa search cancelled",
-		init: {
-			body: JSON.stringify(body),
-			headers: {
-				Accept: "application/json",
-				"Content-Type": "application/json",
-				"x-api-key": apiKey,
-			},
-			method: "POST",
-		},
-		invalidJsonMessage: "Exa search returned invalid JSON",
-		parse: parseExaSearchResponse,
-		provider: "exa",
-		request: EXA_SEARCH_ENDPOINT,
-		signal,
-		timeoutMessage: "Exa search timed out",
-		timeoutMs,
-	});
+export async function fetchExaSearchJson(
+  body: ExaSearchRequestBody,
+  apiKey: string,
+  signal?: AbortSignal,
+  timeoutMs = SEARCH_REQUEST_TIMEOUT_MS,
+): Promise<ExaWebSearchResponse> {
+  return fetchSearchJson<ExaWebSearchResponse>({
+    apiKey,
+    cancelMessage: "Exa search cancelled",
+    init: {
+      body: JSON.stringify(body),
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+      },
+      method: "POST",
+    },
+    invalidJsonMessage: "Exa search returned invalid JSON",
+    parse: parseExaSearchResponse,
+    provider: "exa",
+    request: EXA_SEARCH_ENDPOINT,
+    signal,
+    timeoutMessage: "Exa search timed out",
+    timeoutMs,
+  });
 }
 
 const BRAVE_WEB_SEARCH_ADAPTER: WebSearchProviderAdapter<URL, BraveWebSearchResponse> = {
-	provider: "brave",
-	buildRequest(params) {
-		return buildBraveSearchUrl({
-			query: params.query,
-			count: params.count,
-			offset: params.offset,
-			country: params.country,
-			searchLang: params.searchLang,
-			safesearch: params.safesearch,
-			freshness: params.freshness,
-		});
-	},
-	fetchJson(request, apiKey, signal) {
-		return fetchBraveSearchJson(request, apiKey, signal);
-	},
-	normalizeResponse(response, params) {
-		return {
-			results: (response.web?.results ?? [])
-				.map(normalizeBraveSearchResult)
-				.filter((result): result is NormalizedSearchResult => Boolean(result)),
-			returnedQuery: cleanSearchText(response.query?.altered, 300) ?? cleanSearchText(response.query?.original, 300) ?? params.query,
-		};
-	},
+  provider: "brave",
+  buildRequest(params) {
+    return buildBraveSearchUrl({
+      query: params.query,
+      count: params.count,
+      offset: params.offset,
+      country: params.country,
+      searchLang: params.searchLang,
+      safesearch: params.safesearch,
+      freshness: params.freshness,
+    });
+  },
+  fetchJson(request, apiKey, signal) {
+    return fetchBraveSearchJson(request, apiKey, signal);
+  },
+  normalizeResponse(response, params) {
+    return {
+      results: (response.web?.results ?? [])
+        .map(normalizeBraveSearchResult)
+        .filter((result): result is NormalizedSearchResult => Boolean(result)),
+      returnedQuery:
+        cleanSearchText(response.query?.altered, 300) ??
+        cleanSearchText(response.query?.original, 300) ??
+        params.query,
+    };
+  },
 };
 
 type ExaSearchRequest = {
-	body: ExaSearchRequestBody;
-	timeoutMs: number;
+  body: ExaSearchRequestBody;
+  timeoutMs: number;
 };
 
 const EXA_WEB_SEARCH_ADAPTER: WebSearchProviderAdapter<ExaSearchRequest, ExaWebSearchResponse> = {
-	provider: "exa",
-	buildRequest(params) {
-		const searchType = params.searchType ?? "auto";
-		return {
-			body: buildExaSearchRequestBody({
-				query: params.query,
-				count: params.count,
-				offset: params.offset,
-				country: params.country,
-				safesearch: params.safesearch,
-				freshness: params.freshness,
-				searchType,
-			}),
-			timeoutMs: getExaRequestTimeoutMs(searchType),
-		};
-	},
-	fetchJson(request, apiKey, signal) {
-		return fetchExaSearchJson(request.body, apiKey, signal, request.timeoutMs);
-	},
-	normalizeResponse(response, params) {
-		const searchType = params.searchType ?? "auto";
-		return {
-			extraDetails: {
-				requestId: cleanSearchText(response.requestId, 120),
-				searchType: cleanSearchText(response.searchType, 80) ?? searchType,
-			},
-			results: (response.results ?? [])
-				.map(normalizeExaSearchResult)
-				.filter((result): result is NormalizedSearchResult => Boolean(result))
-				.slice(params.offset, params.offset + params.count),
-			returnedQuery: params.query,
-		};
-	},
+  provider: "exa",
+  buildRequest(params) {
+    const searchType = params.searchType ?? "auto";
+    return {
+      body: buildExaSearchRequestBody({
+        query: params.query,
+        count: params.count,
+        offset: params.offset,
+        country: params.country,
+        safesearch: params.safesearch,
+        freshness: params.freshness,
+        searchType,
+      }),
+      timeoutMs: getExaRequestTimeoutMs(searchType),
+    };
+  },
+  fetchJson(request, apiKey, signal) {
+    return fetchExaSearchJson(request.body, apiKey, signal, request.timeoutMs);
+  },
+  normalizeResponse(response, params) {
+    const searchType = params.searchType ?? "auto";
+    return {
+      extraDetails: {
+        requestId: cleanSearchText(response.requestId, 120),
+        searchType: cleanSearchText(response.searchType, 80) ?? searchType,
+      },
+      results: (response.results ?? [])
+        .map(normalizeExaSearchResult)
+        .filter((result): result is NormalizedSearchResult => Boolean(result))
+        .slice(params.offset, params.offset + params.count),
+      returnedQuery: params.query,
+    };
+  },
 };
 
 export const WEB_SEARCH_PROVIDER_ADAPTERS = {
-	exa: EXA_WEB_SEARCH_ADAPTER,
-	brave: BRAVE_WEB_SEARCH_ADAPTER,
+  exa: EXA_WEB_SEARCH_ADAPTER,
+  brave: BRAVE_WEB_SEARCH_ADAPTER,
 } satisfies Readonly<Record<WebSearchProvider, WebSearchProviderAdapter>>;
 
 export function getWebSearchProviderAdapter(provider: WebSearchProvider): WebSearchProviderAdapter {
-	return WEB_SEARCH_PROVIDER_ADAPTERS[provider];
+  return WEB_SEARCH_PROVIDER_ADAPTERS[provider];
 }
 
 function buildMissingCredentialError(provider: WebSearchProviderParam): string {
-	if (provider === "brave") return "agent_browser_web_search provider brave was requested but no BRAVE_API_KEY/config credential resolved.";
-	if (provider === "exa") return "agent_browser_web_search provider exa was requested but no EXA_API_KEY/config credential resolved.";
-	return "No Exa or Brave web search credential resolved. Configure webSearch.exaApiKey or webSearch.braveApiKey, or load EXA_API_KEY/BRAVE_API_KEY in the runtime environment.";
+  if (provider === "brave")
+    return "agent_browser_web_search provider brave was requested but no BRAVE_API_KEY/config credential resolved.";
+  if (provider === "exa")
+    return "agent_browser_web_search provider exa was requested but no EXA_API_KEY/config credential resolved.";
+  return "No Exa or Brave web search credential resolved. Configure webSearch.exaApiKey or webSearch.braveApiKey, or load EXA_API_KEY/BRAVE_API_KEY in the runtime environment.";
 }
 
 export function createAgentBrowserWebSearchTool(
-	configState: AgentBrowserConfigState,
-	options: { loadConfigState?: (ctx: { cwd: string; isProjectTrusted?: () => boolean }) => AgentBrowserConfigState } = {},
+  configState: AgentBrowserConfigState,
+  options: {
+    loadConfigState?: (ctx: {
+      cwd: string;
+      isProjectTrusted?: () => boolean;
+    }) => AgentBrowserConfigState;
+  } = {},
 ) {
-	const requestGate = new WebSearchRequestGate();
-	return {
-		name: AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
-		label: "Agent Browser Web Search",
-		description: `Search the web with Exa or Brave when configured. Returns up to ${MAX_SEARCH_RESULT_COUNT} concise web results.`,
-		promptSnippet: "Search the live web with Exa or Brave for current or external information.",
-		promptGuidelines: [
-			WEB_SEARCH_PROMPT_GUIDELINE,
-			"agent_browser_web_search chooses Exa or Brave from configured keys; when both are available, Exa is preferred by default unless webSearch.preferredProvider says otherwise. Use provider only when the user/config calls for a specific provider.",
-			"Prefer agent_browser_web_search over opening or typing into public search engine result pages with agent_browser when a quick result list is enough; browser-automated search forms are often anti-bot/CAPTCHA-gated, and this tool is the fallback for discovery rather than a CAPTCHA bypass.",
-			"Do not issue parallel or repeated agent_browser_web_search calls; use one high-signal query, inspect the results, then only run a focused follow-up if needed. If the provider returns HTTP 429, stop searching and tell the user the API plan/rate limit needs time or a plan change.",
-			"After using agent_browser_web_search, cite result URLs in the final answer when web evidence informed the answer.",
-		],
-		parameters: AgentBrowserWebSearchParams,
-		async execute(_toolCallId: string, params: AgentBrowserWebSearchParamsInput, signal?: AbortSignal, _onUpdate?: AgentToolUpdateCallback<WebSearchToolDetails>, ctx?: ExtensionContext) {
-			const runtimeConfigState = ctx ? options.loadConfigState?.(ctx) ?? configState : configState;
-			if (runtimeConfigState.errors.length > 0) {
-				throw new Error(`agent_browser_web_search config is invalid: ${runtimeConfigState.errors.join("; ")}`);
-			}
-			if (!runtimeConfigState.webSearchEnabled) {
-				throw new Error("agent_browser_web_search is disabled by pi-agent-browser-native config.");
-			}
-			const requestedProvider: WebSearchProviderParam = params.provider ?? "auto";
-			const resolved = await resolvePreferredWebSearchCredential(runtimeConfigState, { provider: requestedProvider, signal });
-			if (!resolved) throw new Error(buildMissingCredentialError(requestedProvider));
-			const query = params.query.trim();
-			if (!query) throw new Error("query must not be blank");
-			const count = Math.min(Math.max(params.count ?? DEFAULT_SEARCH_RESULT_COUNT, 1), MAX_SEARCH_RESULT_COUNT);
-			const offset = Math.max(params.offset ?? 0, 0);
-			const adapter = getWebSearchProviderAdapter(resolved.provider);
-			const executionParams: WebSearchExecutionParams = {
-				country: params.country,
-				count,
-				freshness: params.freshness,
-				offset,
-				query,
-				safesearch: params.safesearch,
-				searchLang: params.searchLang,
-				searchType: params.searchType ?? "auto",
-			};
-			const request = adapter.buildRequest(executionParams);
-			const data = await requestGate.run(signal, () => adapter.fetchJson(request, resolved.credential.value, signal));
-			const normalized = adapter.normalizeResponse(data, executionParams);
-			const details: WebSearchToolDetails = {
-				provider: adapter.provider,
-				query,
-				returnedQuery: normalized.returnedQuery,
-				count,
-				offset,
-				...normalized.extraDetails,
-				fetchedAt: new Date().toISOString(),
-				results: normalized.results,
-			};
-			return {
-				content: [{ type: "text" as const, text: formatSearchResults(adapter.provider, normalized.returnedQuery, normalized.results) }],
-				details,
-			};
-		},
-	};
+  const requestGate = new WebSearchRequestGate();
+  return {
+    name: AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
+    label: "Agent Browser Web Search",
+    description: `Search the web with Exa or Brave when configured. Returns up to ${MAX_SEARCH_RESULT_COUNT} concise web results.`,
+    promptSnippet: "Search the live web with Exa or Brave for current or external information.",
+    promptGuidelines: [
+      WEB_SEARCH_PROMPT_GUIDELINE,
+      "agent_browser_web_search chooses Exa or Brave from configured keys; when both are available, Exa is preferred by default unless webSearch.preferredProvider says otherwise. Use provider only when the user/config calls for a specific provider.",
+      "Prefer agent_browser_web_search over opening or typing into public search engine result pages with agent_browser when a quick result list is enough; browser-automated search forms are often anti-bot/CAPTCHA-gated, and this tool is the fallback for discovery rather than a CAPTCHA bypass.",
+      "Do not issue parallel or repeated agent_browser_web_search calls; use one high-signal query, inspect the results, then only run a focused follow-up if needed. If the provider returns HTTP 429, stop searching and tell the user the API plan/rate limit needs time or a plan change.",
+      "After using agent_browser_web_search, cite result URLs in the final answer when web evidence informed the answer.",
+    ],
+    parameters: AgentBrowserWebSearchParams,
+    async execute(
+      _toolCallId: string,
+      params: AgentBrowserWebSearchParamsInput,
+      signal?: AbortSignal,
+      _onUpdate?: AgentToolUpdateCallback<WebSearchToolDetails>,
+      ctx?: ExtensionContext,
+    ) {
+      const runtimeConfigState = ctx
+        ? (options.loadConfigState?.(ctx) ?? configState)
+        : configState;
+      if (runtimeConfigState.errors.length > 0) {
+        throw new Error(
+          `agent_browser_web_search config is invalid: ${runtimeConfigState.errors.join("; ")}`,
+        );
+      }
+      if (!runtimeConfigState.webSearchEnabled) {
+        throw new Error("agent_browser_web_search is disabled by pi-agent-browser-native config.");
+      }
+      const requestedProvider: WebSearchProviderParam = params.provider ?? "auto";
+      const resolved = await resolvePreferredWebSearchCredential(runtimeConfigState, {
+        provider: requestedProvider,
+        signal,
+      });
+      if (!resolved) throw new Error(buildMissingCredentialError(requestedProvider));
+      const query = params.query.trim();
+      if (!query) throw new Error("query must not be blank");
+      const count = Math.min(
+        Math.max(params.count ?? DEFAULT_SEARCH_RESULT_COUNT, 1),
+        MAX_SEARCH_RESULT_COUNT,
+      );
+      const offset = Math.max(params.offset ?? 0, 0);
+      const adapter = getWebSearchProviderAdapter(resolved.provider);
+      const executionParams: WebSearchExecutionParams = {
+        country: params.country,
+        count,
+        freshness: params.freshness,
+        offset,
+        query,
+        safesearch: params.safesearch,
+        searchLang: params.searchLang,
+        searchType: params.searchType ?? "auto",
+      };
+      const request = adapter.buildRequest(executionParams);
+      const data = await requestGate.run(signal, () =>
+        adapter.fetchJson(request, resolved.credential.value, signal),
+      );
+      const normalized = adapter.normalizeResponse(data, executionParams);
+      const details: WebSearchToolDetails = {
+        provider: adapter.provider,
+        query,
+        returnedQuery: normalized.returnedQuery,
+        count,
+        offset,
+        ...normalized.extraDetails,
+        fetchedAt: new Date().toISOString(),
+        results: normalized.results,
+      };
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: formatSearchResults(
+              adapter.provider,
+              normalized.returnedQuery,
+              normalized.results,
+            ),
+          },
+        ],
+        details,
+      };
+    },
+  };
 }
