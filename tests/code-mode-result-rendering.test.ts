@@ -7,6 +7,10 @@ const PLAIN_THEME = {
   fg: (_role: string, text: string) => text,
   bold: (text: string) => text,
 };
+const SEMANTIC_THEME = {
+  fg: (role: string, text: string) => `<${role}>${text}</${role}>`,
+  bold: (text: string) => `<bold>${text}</bold>`,
+};
 const RESULT = {
   content: [
     { type: "text", text: "Script completed" },
@@ -25,7 +29,7 @@ function render(expanded: boolean): string {
     [],
     false,
   )
-    .render(100)
+    .render(200)
     .join("\n");
 }
 
@@ -38,4 +42,21 @@ test("concise Code Mode results summarize hidden output and reveal it on expansi
   assert.match(expanded, /first output line/);
   assert.match(expanded, /second output line/);
   assert.doesNotMatch(expanded, /output lines · .*to expand/);
+});
+
+test("concise results use the native tool output hierarchy", () => {
+  const rendered = renderTrackedCodeModeResult(
+    RESULT,
+    { expanded: false, isPartial: false },
+    SEMANTIC_THEME,
+    { toolCallId: "styled-call" },
+    createCodeModeRenderTracker(),
+    [],
+    false,
+  )
+    .render(200)
+    .join("\n");
+
+  assert.match(rendered, /<toolOutput><bold>2 output lines<\/bold><\/toolOutput>/);
+  assert.match(rendered, /<muted> · .*to expand<\/muted>/);
 });

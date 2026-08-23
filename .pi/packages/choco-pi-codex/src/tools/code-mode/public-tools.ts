@@ -94,7 +94,7 @@ function createExecTool(
       args: { code?: unknown },
       theme: CodeModeRenderTheme,
       context: CodeModeRenderContext,
-    ) => renderExecCall(args, theme, context, tracker, runtime.useRichRendering())) as any,
+    ) => renderExecCall(args, theme, context, tracker)) as any,
     renderResult: renderResult as any,
   };
 }
@@ -183,7 +183,7 @@ function createWaitTool(
       args: { cell_id?: unknown; terminate?: unknown },
       theme: CodeModeRenderTheme,
       context: CodeModeRenderContext,
-    ) => renderWaitCall(args, theme, context, tracker, runtime.useRichRendering())) as any,
+    ) => renderWaitCall(args, theme, context, tracker)) as any,
     renderResult: renderResult as any,
   };
   if (constrainedSampling) tool.constrainedSampling = constrainedSampling;
