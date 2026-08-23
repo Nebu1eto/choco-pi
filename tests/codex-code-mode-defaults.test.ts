@@ -5,6 +5,11 @@ import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../.pi/packages/choco-pi-codex/
 import { resolveCodexRuntimePlan } from "../.pi/packages/choco-pi-codex/src/adapter/activation/runtime-plan.ts";
 import { openAICodexModelsWithDaybreak } from "../.pi/packages/choco-pi-codex/src/providers/openai-codex/model-catalog.ts";
 import { buildCodexSystemPrompt } from "../.pi/packages/choco-pi-codex/src/prompt/build-system-prompt.ts";
+import {
+  buildCodeModeToolsPrompt,
+  EXEC_DESCRIPTION,
+} from "../.pi/packages/choco-pi-codex/src/tools/code-mode/custom-tool-prompt.ts";
+import type { CodeModeToolDefinition } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/types.ts";
 
 test("Code Mode is the append-style default for every OpenAI Codex model", () => {
   const config = structuredClone(DEFAULT_CODEX_CONVERSION_CONFIG);
@@ -22,6 +27,79 @@ test("Code Mode is the append-style default for every OpenAI Codex model", () =>
   const prompt = buildCodexSystemPrompt("BASE PROMPT", { mode: "code" });
   assert.match(prompt, /^BASE PROMPT/);
   assert.match(prompt, /Use tools\.exec_command for shell commands/);
+});
+
+test("Code Mode guidance canonicalizes legacy rules without losing execution semantics", () => {
+  const legacy = [
+    "Use tools.exec_command for shell commands; prefer rg and rg --files",
+    "For tools.exec_command cmd, use String.raw only without backticks or ${}; avoid nested quoting; split independent commands into separate calls",
+    "Long command: keep tools.exec_command awaited inside exec; resume the yielded cell_id with wait near completion. Do not request a short child yield and poll its session_id with tools.write_stdin",
+    "Use tty=true only for input or persistent processes",
+    "Use tools.apply_patch(patch) for file edits; split large patches; reserve shell/Python for formatting or bulk rewrites",
+  ];
+  const prompt = buildCodexSystemPrompt(
+    `Guidelines:\n${legacy.map((line) => `- ${line}`).join("\n")}\n\nCurrent date: 2026-03-16`,
+    { mode: "code" },
+  );
+
+  for (const line of legacy) assert.ok(!prompt.includes(line));
+  assert.match(prompt, /String\.raw \(no backticks\/\$\{\}\)/);
+  assert.match(prompt, /never short-yield then poll exec_command via write_stdin/);
+  assert.match(prompt, /tools\.apply_patch\(patch\) for edits/);
+});
+
+test("Code Mode tool guidance is compact and retains callable forms and discovery guard", () => {
+  const tools: CodeModeToolDefinition[] = [
+    {
+      name: "apply_patch",
+      usage: "long apply_patch schema",
+      deferLoading: false,
+      kind: "freeform",
+      invoke: async () => undefined,
+    },
+    {
+      name: "exec_command",
+      usage: "long exec_command schema",
+      deferLoading: false,
+      kind: "freeform",
+      invoke: async () => undefined,
+    },
+    {
+      name: "web_run",
+      usage: "long web__run schema",
+      deferLoading: false,
+      kind: "freeform",
+      invoke: async () => undefined,
+    },
+    {
+      name: "write_stdin",
+      usage: "long write_stdin schema",
+      deferLoading: false,
+      kind: "freeform",
+      invoke: async () => undefined,
+    },
+  ];
+  const guidance = buildCodeModeToolsPrompt(tools, "/tmp/CUSTOM-TOOLS.md");
+
+  assert.match(guidance, /await tools\.apply_patch\(patch\).*Begin Patch/);
+  assert.match(guidance, /await tools\.exec_command\(\{cmd, workdir\?, shell\?, tty\?/);
+  assert.match(
+    guidance,
+    /await tools\.web__run\(\{search_query\?, image_query\?, open\?, click\?, find\?\}\)/,
+  );
+  assert.match(
+    guidance,
+    /await tools\.write_stdin\(\{session_id, chars\?, yield_time_ms\?, max_output_tokens\?\}\)/,
+  );
+  assert.match(
+    guidance,
+    /To create or edit a custom tool, read .*not Pi docs or tool discovery\/calls/,
+  );
+  assert.ok(guidance.length < 700);
+  assert.match(EXEC_DESCRIPTION, /JavaScript source only; no JSON\/fences/);
+  assert.match(EXEC_DESCRIPTION, /Code: fresh restricted JS/);
+  assert.match(EXEC_DESCRIPTION, /Notebook: persistent shared Deno TypeScript globals/);
+  assert.match(EXEC_DESCRIPTION, /text\(value\) serializes output/);
 });
 
 test("Code Mode activates on non-OpenAI models without changing their transport", () => {

@@ -195,7 +195,7 @@ export function buildAgentPreferencesBlock(
     blocks.push(
       [
         `Preferred response language: ${language}`,
-        `Write natural-language output in ${language}: responses, plans, reports, and prose in documents you generate. This overrides the default of matching the user's message language. A user message written in another language is not, by itself, a request to answer in that language — only an explicit instruction naming a language is. For example, when a message arrives in another language with no such instruction, reply in ${language} anyway. Code, identifiers, and file paths keep their usual conventions. Commit messages follow the language established by the repository's own history and policy, not this setting.`,
+        `Governs responses, plans, reports, and generated prose regardless of message language, unless overridden for an artifact. Code, identifiers, and paths are unaffected. Commit messages follow the language established by the repository's own history and policy, not this setting.`,
       ].join("\n"),
     );
   }
@@ -207,7 +207,7 @@ export function buildAgentPreferencesBlock(
   }
   if (blocks.length === 0) return undefined;
   blocks.push(
-    "These preferences are user configuration, not project policy. Two things take precedence over both the language and the style above: an explicit request in the user's message, for the artifact it names; and a path-scoped project instruction that fixes an artifact's language, format, or tone, such as a repository requiring its prompts, skills, and documentation in English.",
+    "Yields to an explicit request in the user's message, or a path-scoped project instruction on language, format, or tone.",
   );
   return `${AGENT_PREFERENCES_MARKER}\n${blocks.join("\n\n")}\n${AGENT_PREFERENCES_MARKER_END}`;
 }

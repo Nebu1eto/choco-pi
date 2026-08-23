@@ -1,6 +1,6 @@
 ---
 name: review
-description: Runs a read-only adversarial review of an exact diff or revision through shared choco-pi review rules and a fresh reviewer sub-agent. Use when the user invokes /review-agent or explicitly requests an independent agentic code review.
+description: Perform an independent, adversarial, read-only review of an exact diff or revision when /review-agent or an explicit agentic code-review request is given.
 ---
 
 # choco-pi Adversarial Review

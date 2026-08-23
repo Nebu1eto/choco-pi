@@ -1,6 +1,6 @@
 ---
 name: choco-pi-lsp-write-tree-sitter-rule
-description: Use when writing a new choco-pi-lsp tree-sitter query rule YAML file — covers schema, S-expression syntax, capture names, predicates, and gotchas
+description: Use when writing a choco-pi-lsp tree-sitter query rule YAML file; covers schema, S-expression syntax, captures, predicates, and gotchas.
 ---
 
 # Writing a choco-pi-lsp tree-sitter Rule
