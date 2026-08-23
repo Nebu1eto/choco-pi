@@ -100,6 +100,10 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
     applyPatchGuidance,
     /\*\*\* Move to: path immediately follows its \*\*\* Update File: path header/,
   );
+  assert.match(
+    applyPatchGuidance,
+    /pure moves need a nonempty @@ hunk with one unchanged context line/,
+  );
   assert.match(applyPatchGuidance, /hunks in file order/);
   assert.match(applyPatchGuidance, /@@ is context, not a line range/);
   assert.ok(applyPatchGuidance.length < longApplyPatchUsage.length);

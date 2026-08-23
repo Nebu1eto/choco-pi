@@ -20,7 +20,7 @@ const CUSTOM_TOOLS_GUIDANCE = "Prefer custom tools for command-backed capabiliti
 const COMPACT_BUNDLED_TOOL_USAGE = new Map([
   [
     "apply_patch",
-    "await tools.apply_patch(patch) // envelope: *** Begin Patch … *** End Patch; actions: *** Add File: path | *** Update File: path | *** Delete File: path; *** Move to: path immediately follows its *** Update File: path header; hunks in file order; @@ is context, not a line range",
+    "await tools.apply_patch(patch) // envelope: *** Begin Patch … *** End Patch; actions: *** Add File: path | *** Update File: path | *** Delete File: path; *** Move to: path immediately follows its *** Update File: path header; pure moves need a nonempty @@ hunk with one unchanged context line; hunks in file order; @@ is context, not a line range",
   ],
   [
     "exec_command",
