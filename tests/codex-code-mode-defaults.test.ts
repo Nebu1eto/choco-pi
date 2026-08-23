@@ -48,54 +48,77 @@ test("Code Mode guidance canonicalizes legacy rules without losing execution sem
   assert.match(prompt, /tools\.apply_patch\(patch\) for edits/);
 });
 
-test("Code Mode tool guidance is compact and retains callable forms and discovery guard", () => {
+test("Code Mode tool guidance is compact and retains callable patch, web, and custom-tool guidance", () => {
+  const longApplyPatchUsage =
+    "await tools.apply_patch(patch) // *** Begin Patch / *** End Patch; actions: *** Add File: path | *** Update File: path | *** Delete File: path | *** Move to: path must immediately follow its Update File header and still needs a nonempty @@ hunk (use one unchanged context line for a pure move); Update hunks MUST follow file order; copy exact context; @@ text is context, not a line range; reread a file before patching if it changed since your last read";
+  const longWebRunUsage =
+    'await tools.web__run({ search_query?: [{ q: string, recency?: number, domains?: string[] }], image_query?: [{ q: string }], open?: [{ ref_id: string, lineno?: number }], click?: [{ ref_id: string, id: number }], find?: [{ ref_id: string, pattern: string }], response_length?: "short" | "medium" | "long" }) // turn… ref_ids only for web__run; final answers cite result URLs with Markdown links, never turn… or cite…';
   const tools: CodeModeToolDefinition[] = [
     {
       name: "apply_patch",
-      usage: "long apply_patch schema",
+      usage: longApplyPatchUsage,
       deferLoading: false,
       kind: "freeform",
       invoke: async () => undefined,
     },
     {
       name: "exec_command",
-      usage: "long exec_command schema",
+      usage:
+        "await tools.exec_command({ cmd: string, workdir?: string, shell?: string, tty?: boolean, yield_time_ms?: number, max_output_tokens?: number, login?: boolean }) // returns { output: string, session_id?: number, exit_code?: number }",
       deferLoading: false,
       kind: "freeform",
       invoke: async () => undefined,
     },
     {
-      name: "web_run",
-      usage: "long web__run schema",
+      name: "web__run",
+      usage: longWebRunUsage,
       deferLoading: false,
       kind: "freeform",
       invoke: async () => undefined,
     },
     {
       name: "write_stdin",
-      usage: "long write_stdin schema",
+      usage:
+        "await tools.write_stdin({ session_id: number, chars: string, yield_time_ms?: number, max_output_tokens?: number })",
       deferLoading: false,
       kind: "freeform",
       invoke: async () => undefined,
     },
   ];
   const guidance = buildCodeModeToolsPrompt(tools, "/tmp/CUSTOM-TOOLS.md");
+  const applyPatchGuidance = guidance
+    .split("\n")
+    .find((line) => line.includes("tools.apply_patch"))!;
+  const webRunGuidance = guidance.split("\n").find((line) => line.includes("tools.web__run"))!;
 
-  assert.match(guidance, /await tools\.apply_patch\(patch\).*Begin Patch/);
+  assert.match(applyPatchGuidance, /envelope: \*\*\* Begin Patch … \*\*\* End Patch/);
+  assert.match(
+    applyPatchGuidance,
+    /actions: \*\*\* Add File: path \| \*\*\* Update File: path \| \*\*\* Delete File: path/,
+  );
+  assert.match(
+    applyPatchGuidance,
+    /\*\*\* Move to: path immediately follows its \*\*\* Update File: path header/,
+  );
+  assert.match(applyPatchGuidance, /hunks in file order/);
+  assert.match(applyPatchGuidance, /@@ is context, not a line range/);
+  assert.ok(applyPatchGuidance.length < longApplyPatchUsage.length);
   assert.match(guidance, /await tools\.exec_command\(\{cmd, workdir\?, shell\?, tty\?/);
   assert.match(
-    guidance,
-    /await tools\.web__run\(\{search_query\?, image_query\?, open\?, click\?, find\?\}\)/,
+    webRunGuidance,
+    /\{search_query\?: \[\{q, recency\?, domains\?\}\], image_query\?: \[\{q\}\], open\?: \[\{ref_id, lineno\?\}\], click\?: \[\{ref_id, id\}\], find\?: \[\{ref_id, pattern\}\], response_length\?\}/,
   );
+  assert.match(webRunGuidance, /final answers cite result URLs/);
+  assert.match(webRunGuidance, /never emit internal turn… or cite… citation artifacts/);
+  assert.ok(webRunGuidance.length < longWebRunUsage.length);
   assert.match(
     guidance,
     /await tools\.write_stdin\(\{session_id, chars\?, yield_time_ms\?, max_output_tokens\?\}\)/,
   );
   assert.match(
     guidance,
-    /To create or edit a custom tool, read .*not Pi docs or tool discovery\/calls/,
+    /To create or edit a custom tool, read .* only when creating or editing a custom tool; never for discovering or calling tools; do not read Pi docs/,
   );
-  assert.ok(guidance.length < 700);
   assert.match(EXEC_DESCRIPTION, /JavaScript source only; no JSON\/fences/);
   assert.match(EXEC_DESCRIPTION, /Code: fresh restricted JS/);
   assert.match(EXEC_DESCRIPTION, /Notebook: persistent shared Deno TypeScript globals/);

@@ -22,7 +22,7 @@ Before drafting, identify purpose, audience, evidence boundary, claim type, outp
 
 - Use headings only for real sections, lists only for parallel content, and tables only when clearer than prose. Use the platform's actual syntax; never invent fields.
 - Every paragraph does one job: evidence, reasoning, mechanism, limitation, or implication. Lead with the answer, or order claim, evidence, reasoning, limitation, implication.
-- Add a diagram only when structure carries information prose cannot. Expect one for an architecture description, a review report tracing a value through code, or an execution plan showing units and parallel work. Omit it when linear; use only diagram types the renderer supports.
+- Add a diagram only when structure carries information prose cannot. Expect one for an architecture description, a review report tracing a value through code, or an execution plan showing units and parallel work. Omit it when linear; use only renderer-supported types: `flowchart`/`graph`, `sequenceDiagram`, `stateDiagram-v2`, `classDiagram`, `erDiagram`.
 
 ## English output
 
