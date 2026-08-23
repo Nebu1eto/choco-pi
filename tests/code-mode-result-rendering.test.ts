@@ -92,7 +92,7 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
   const tools = [
     {
       name: "exec_command",
-      label: "Execute command",
+      label: "exec_command",
       usage: "exec_command({ cmd })",
       description: "Execute a shell command",
       deferLoading: false,
@@ -113,7 +113,7 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
     .render(200)
     .join("\n");
 
-  assert.match(collapsed, /3\. • Ran Execute command/);
+  assert.match(collapsed, /3\. • Ran Exec command/);
   assert.match(collapsed, /4\. • Ran Apply patch/);
   assert.doesNotMatch(collapsed, /printf 'first command'/);
   assert.doesNotMatch(collapsed, /nested command output/);

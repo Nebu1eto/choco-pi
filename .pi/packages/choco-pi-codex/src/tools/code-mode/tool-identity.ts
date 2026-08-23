@@ -16,7 +16,7 @@ export function codeModeNameForToolIdentity(identity: CodeModeToolIdentity): str
 
 export function codeModeToolDisplayName(name: string, label?: string): string {
   const explicit = label?.trim();
-  if (explicit) return explicit;
+  if (explicit && explicit !== name && !/[_-]/.test(explicit)) return explicit;
   const words = name.replaceAll("__", " ").replaceAll(/[_-]+/g, " ").trim();
   return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : name;
 }
