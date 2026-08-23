@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   formatMcpCallCompactTitle,
-  formatMcpDirectToolHeadline,
   splitMcpCallHeadline,
   styleMcpCallLines,
 } from "../.pi/packages/choco-pi-mcp/tool-call-headline.ts";
@@ -130,7 +129,7 @@ test("direct MCP tools inherit the same renderer for every server", () => {
     ["expo", "build_list"],
   ]) {
     const renderer = createMcpDirectToolCallRenderer(
-      formatMcpDirectToolHeadline(server, tool),
+      `mcp call ${tool} @ ${server}`,
       COMPACT_OPTIONS,
     );
     const rendered = renderer({ id: "abc", limit: 10 }, SEMANTIC_THEME, {
