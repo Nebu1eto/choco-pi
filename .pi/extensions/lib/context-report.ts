@@ -10,6 +10,7 @@ import {
   type ExtensionCommandContext,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
+import { currentProviderPrefixMetrics, type ProviderPrefixMetrics } from "../cache-probe.ts";
 
 const GRID_COLUMNS = 10;
 const GRID_ROWS = 10;
@@ -166,28 +167,59 @@ function messageTokens(ctx: ExtensionCommandContext): number {
   return estimate(messages);
 }
 
+function allocateTokens(values: number[], total: number): number[] {
+  const available = Math.max(0, Math.round(total));
+  const sum = values.reduce((current, value) => current + Math.max(0, value), 0);
+  if (sum === 0) return values.map(() => 0);
+  let used = 0;
+  const lastPositive = values.findLastIndex((value) => value > 0);
+  return values.map((value, index) => {
+    if (value <= 0) return 0;
+    if (index === lastPositive) return available - used;
+    const allocated = Math.floor((value / sum) * available);
+    used += allocated;
+    return allocated;
+  });
+}
+
 function categoryData(
   ctx: ExtensionCommandContext,
   options: BuildSystemPromptOptions,
   tools: ToolInfo[],
   activeNames: Set<string>,
-  total: number,
+  measuredTotal: number | undefined,
   messagesEstimate: number,
+  providerMetrics: ProviderPrefixMetrics | undefined,
 ): Category[] {
   const activeTools = tools.filter((tool) => activeNames.has(tool.name));
-  const mcp = activeTools.filter(isMcpTool).reduce((sum, tool) => sum + toolTokens(tool), 0);
-  const agents = activeTools.filter(isAgentTool).reduce((sum, tool) => sum + toolTokens(tool), 0);
-  const systemTools = activeTools
+  let mcp = activeTools.filter(isMcpTool).reduce((sum, tool) => sum + toolTokens(tool), 0);
+  let agents = activeTools.filter(isAgentTool).reduce((sum, tool) => sum + toolTokens(tool), 0);
+  let systemTools = activeTools
     .filter((tool) => !isMcpTool(tool) && !isAgentTool(tool))
     .reduce((sum, tool) => sum + toolTokens(tool), 0);
-  const skills = estimate(formatSkillsForPrompt(options.skills ?? []));
-  const contextFiles = (options.contextFiles ?? []).reduce(
+  if (providerMetrics) {
+    [systemTools, mcp, agents] = allocateTokens(
+      [systemTools, mcp, agents],
+      providerMetrics.toolsTokens,
+    );
+  }
+  let skills = estimate(formatSkillsForPrompt(options.skills ?? []));
+  let contextFiles = (options.contextFiles ?? []).reduce(
     (sum, file) => sum + estimate(file.content),
     0,
   );
-  const prompt = Math.max(0, estimate(ctx.getSystemPrompt()) - skills - contextFiles);
+  let prompt = providerMetrics
+    ? Math.max(0, providerMetrics.systemTokens - skills - contextFiles)
+    : estimate(ctx.getSystemPrompt());
+  if (measuredTotal !== undefined) {
+    [prompt, systemTools, mcp, agents, contextFiles, skills] = allocateTokens(
+      [prompt, systemTools, mcp, agents, contextFiles, skills],
+      Math.min(measuredTotal, prompt + systemTools + mcp + agents + contextFiles + skills),
+    );
+  }
   const known = prompt + systemTools + mcp + agents + contextFiles + skills;
-  const messages = Math.max(messagesEstimate, total - known, 0);
+  const messages =
+    measuredTotal === undefined ? messagesEstimate : Math.max(0, measuredTotal - known);
   return [
     { label: "System prompt", tokens: prompt, marker: "S" },
     { label: "System tools", tokens: systemTools, marker: "T" },
@@ -299,6 +331,7 @@ export function renderContext(
   ctx: ExtensionCommandContext,
   expanded: boolean,
   colorize: boolean,
+  providerMetrics: ProviderPrefixMetrics | undefined = currentProviderPrefixMetrics(ctx),
 ): string {
   const usage = ctx.getContextUsage();
   const window = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
@@ -306,17 +339,22 @@ export function renderContext(
   const tools = pi.getAllTools();
   const activeNames = new Set(pi.getActiveTools());
   const messagesEstimate = messageTokens(ctx);
-  const initialEstimate =
-    estimate(ctx.getSystemPrompt()) +
-    tools
-      .filter((tool) => activeNames.has(tool.name))
-      .reduce((sum, tool) => sum + toolTokens(tool), 0) +
-    messagesEstimate;
-  const total = usage?.tokens && usage.tokens > 0 ? usage.tokens : initialEstimate;
+  const matchingProviderMetrics =
+    providerMetrics?.toolCount === activeNames.size ? providerMetrics : undefined;
+  const measuredTotal = usage?.tokens && usage.tokens > 0 ? usage.tokens : undefined;
   const reserve = Math.min(reserveTokens(ctx.cwd), window);
-  const categories = categoryData(ctx, options, tools, activeNames, total, messagesEstimate);
+  const categories = categoryData(
+    ctx,
+    options,
+    tools,
+    activeNames,
+    measuredTotal,
+    messagesEstimate,
+    matchingProviderMetrics,
+  );
   const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0);
-  const free = Math.max(0, window - categoryTotal - reserve);
+  const total = measuredTotal ?? categoryTotal;
+  const free = Math.max(0, window - total - reserve);
   const deferred = tools.filter((tool) => !activeNames.has(tool.name));
   const deferredMcp = deferred.filter(isMcpTool);
   const activeAgents = tools.filter((tool) => activeNames.has(tool.name) && isAgentTool(tool));

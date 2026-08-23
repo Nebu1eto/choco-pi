@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { usageBar } from "../.pi/extensions/lib/context-report.ts";
+import { renderContext, usageBar } from "../.pi/extensions/lib/context-report.ts";
 import statusCommands, { tabBody } from "../.pi/extensions/status-commands.ts";
 
 const GRID_ROWS = 10;
@@ -99,4 +99,61 @@ test("the Context tab is concise by default and expands its inventories on reque
 
   assert.match(expanded, /^Active tools$/m);
   assert.match(expanded, /^- AGENTS\.md \(/m);
+});
+
+test("measured usage caps message estimates and keeps categories inside the window", () => {
+  const ctx = {
+    ...contextTabContext(),
+    model: { id: "test-model", contextWindow: 20_000 },
+    getContextUsage: () => ({ tokens: 1_000, contextWindow: 20_000, percent: 5 }),
+    sessionManager: {
+      buildContextEntries: () => [
+        {
+          type: "message",
+          message: { role: "user", content: "x".repeat(100_000), timestamp: 0 },
+        },
+      ],
+    },
+  };
+
+  // SAFETY: the fixture supplies every host member exercised by renderContext.
+  const rendered = renderContext(
+    {
+      getAllTools: () => TOOLS,
+      getActiveTools: () => ["read"],
+    } as never,
+    ctx as never,
+    false,
+    false,
+    { systemTokens: 100, toolsTokens: 60, toolCount: 1 },
+  );
+
+  assert.match(rendered, /System prompt: 96 tokens/);
+  assert.match(rendered, /System tools: 60 tokens/);
+  assert.match(rendered, /Context files: 4 tokens/);
+  assert.match(rendered, /Messages: 840 tokens/);
+  assert.match(rendered, /Free space: 2\.6k tokens/);
+  assert.doesNotMatch(rendered, /\(1\d\d(?:\.\d)?%\)/);
+});
+
+test("base system prompt is not reduced by separately listed context files", () => {
+  const ctx = {
+    ...contextTabContext(),
+    getContextUsage: () => ({ tokens: 500, contextWindow: 20_000, percent: 2.5 }),
+  };
+
+  // SAFETY: the fixture supplies every host member exercised by renderContext.
+  const rendered = renderContext(
+    {
+      getAllTools: () => TOOLS,
+      getActiveTools: () => ["read"],
+    } as never,
+    ctx as never,
+    false,
+    false,
+    undefined,
+  );
+
+  assert.match(rendered, /System prompt: 4 tokens/);
+  assert.match(rendered, /Context files: 4 tokens/);
 });
