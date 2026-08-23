@@ -2,6 +2,7 @@ import type { BoundaryValue } from "../boundary.ts";
 import { isObjectValue, isStringValue } from "../boundary.ts";
 import { type Component, Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { previewText, renderTextAndImages } from "./render-content.ts";
+import { codeModeToolDisplayName } from "./tool-identity.ts";
 import type {
   CodeModeRenderContext,
   CodeModeRenderTheme,
@@ -74,6 +75,9 @@ function renderTrace(
     invalidate: context?.invalidate,
   };
   const programmatic = isProgrammaticTool(tool) ? tool : undefined;
+  if (!options.expanded) {
+    return [orderedTraceCall(renderCollapsedTraceCall(trace, tool, theme), trace, order, theme)];
+  }
   let call: Component;
   try {
     call = programmatic?.renderCall
@@ -105,6 +109,20 @@ function renderTrace(
     );
   }
   return components;
+}
+
+function renderCollapsedTraceCall(
+  trace: RuntimeToolTrace,
+  tool: CodeModeToolDefinition | undefined,
+  theme: CodeModeRenderTheme,
+): Text {
+  const verb = trace.status === "running" ? "Running" : trace.status === "error" ? "Failed" : "Ran";
+  const label = codeModeToolDisplayName(trace.name, tool?.label);
+  return new Text(
+    `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} ${label}`))}`,
+    0,
+    0,
+  );
 }
 
 function orderedTraceCall(
