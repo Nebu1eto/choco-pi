@@ -49,7 +49,8 @@ export function splitMcpCallHeadline(title: string): McpCallHeadline {
   if (action) {
     const [, verb, rest] = action;
     const header = `MCP: ${formatMcpDisplayName(verb)}`;
-    return rest ? { header, detail: formatMcpDisplayName(rest, false) } : { header };
+    const detail = rest?.replace(/^mcp__/, "");
+    return detail ? { header, detail: formatMcpDisplayName(detail, false) } : { header };
   }
   return { header: title };
 }
