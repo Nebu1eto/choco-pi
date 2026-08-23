@@ -291,6 +291,5 @@ function createResultRenderer(runtime: SharedCodeModeRuntime, tracker: RenderTra
       context,
       tracker,
       runtime.collectRenderTools(),
-      runtime.useRichRendering(),
     );
 }

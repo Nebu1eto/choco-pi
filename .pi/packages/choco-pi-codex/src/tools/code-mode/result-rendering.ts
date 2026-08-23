@@ -4,7 +4,6 @@ import { type Component, Container, Spacer, Text } from "@earendil-works/pi-tui"
 import {
   expandHint,
   imagesByMimeType,
-  previewText,
   renderTextAndImages,
   type RenderedToolContent,
 } from "./render-content.ts";
@@ -36,13 +35,12 @@ export function renderTrackedCodeModeResult(
   context: CodeModeRenderContext | undefined,
   tracker: CodeModeRenderTracker,
   tools: CodeModeToolDefinition[] = [],
-  richRendering = true,
 ): Component {
   if (!options.isPartial && context?.toolCallId) {
     const details = asDetails(result.details);
     tracker.finish(context.toolCallId, details.status === "yielded" ? "yielded" : "done");
   }
-  return renderCodeModeResult(result, options, theme, context, tools, richRendering);
+  return renderCodeModeResult(result, options, theme, context, tools);
 }
 
 function renderCodeModeResult(
@@ -51,7 +49,6 @@ function renderCodeModeResult(
   theme: CodeModeRenderTheme,
   context: CodeModeRenderContext | undefined,
   tools: CodeModeToolDefinition[],
-  richRendering: boolean,
 ): Component {
   const details = asDetails(result.details);
   const content =
@@ -82,21 +79,13 @@ function renderCodeModeResult(
       item.type === "image" && isStringValue(item.data) && isStringValue(item.mimeType),
   );
   const emittedImages = imagesByMimeType(images);
-  const forceOutput =
-    richRendering ||
-    Boolean(details.scriptError && !scriptErrorRenderedByTrace) ||
-    details.notification === true ||
-    images.length > 0;
-  const showOutput = forceOutput || options.expanded;
-  const hideCollapsedOutput = !showOutput && Boolean(renderedText);
-  const output =
-    showOutput && (options.expanded || options.isPartial)
-      ? renderTextAndImages(renderedText, [], theme)
-      : showOutput
-        ? renderTextAndImages(previewText(renderedText, theme), [], theme)
-        : hideCollapsedOutput
-          ? renderHiddenOutputSummary(text, theme)
-          : new Container();
+  const showOutput = options.expanded;
+  const hideCollapsedOutput = !showOutput && Boolean(renderedText || images.length > 0);
+  const output = showOutput
+    ? renderTextAndImages(renderedText, [], theme)
+    : hideCollapsedOutput
+      ? renderHiddenOutputSummary(outputText, images.length, theme)
+      : new Container();
   const body = renderTraceAndOutput(
     details.traces ?? [],
     details.droppedTraceCount ?? 0,
@@ -128,11 +117,18 @@ function renderCodeModeResult(
   return container;
 }
 
-function renderHiddenOutputSummary(text: string, theme: CodeModeRenderTheme): Text {
-  const lineCount = text.trimEnd().split("\n").length;
-  const lines = `${lineCount} output line${lineCount === 1 ? "" : "s"}`;
+function renderHiddenOutputSummary(
+  text: string,
+  imageCount: number,
+  theme: CodeModeRenderTheme,
+): Text {
+  const lineCount = text ? text.trimEnd().split("\n").length : 0;
+  const parts: string[] = [];
+  if (lineCount > 0) parts.push(`${lineCount} output line${lineCount === 1 ? "" : "s"}`);
+  if (imageCount > 0) parts.push(`${imageCount} image${imageCount === 1 ? "" : "s"}`);
+  const summary = parts.join(" · ");
   return new Text(
-    `${theme.fg("muted", "  └ ")}${theme.fg("toolOutput", theme.bold(lines))}${theme.fg("muted", ` · ${expandHint()}`)}`,
+    `${theme.fg("muted", "  └ ")}${theme.fg("toolOutput", theme.bold(summary))}${theme.fg("muted", ` · ${expandHint()}`)}`,
     0,
     0,
   );

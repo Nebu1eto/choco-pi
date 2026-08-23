@@ -40,6 +40,7 @@ export function toNestedTool<TParams extends TSchema, TDetails, TState>(
     contract.prepareInput ? contract.prepareInput(input) : input;
   return {
     name: tool.name,
+    label: tool.label,
     usage,
     description: tool.description,
     deferLoading: false,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createCodeModeRenderTracker } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/render-tracker.ts";
 import { renderTrackedCodeModeResult } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/result-rendering.ts";
+import { Text } from "@earendil-works/pi-tui";
 
 const PLAIN_THEME = {
   fg: (_role: string, text: string) => text,
@@ -27,7 +28,6 @@ function render(expanded: boolean): string {
     { toolCallId: `call-${expanded}` },
     createCodeModeRenderTracker(),
     [],
-    false,
   )
     .render(200)
     .join("\n");
@@ -52,7 +52,6 @@ test("concise results use the native tool output hierarchy", () => {
     { toolCallId: "styled-call" },
     createCodeModeRenderTracker(),
     [],
-    false,
   )
     .render(200)
     .join("\n");
@@ -61,41 +60,97 @@ test("concise results use the native tool output hierarchy", () => {
   assert.match(rendered, /<muted> · .*to expand<\/muted>/);
 });
 
-test("nested calls show their execution order and command or tool identity", () => {
-  const rendered = renderTrackedCodeModeResult(
-    {
-      content: [{ type: "text", text: "Script completed" }],
-      details: {
-        status: "result",
-        droppedTraceCount: 2,
-        traces: [
-          {
-            id: "trace-1",
-            name: "exec_command",
-            input: { cmd: "printf 'first command'" },
-            status: "done",
-          },
-          {
-            id: "trace-2",
-            name: "apply_patch",
-            input: "*** Begin Patch",
-            status: "done",
-          },
-        ],
-      },
+test("collapsed nested calls show ordered labels while expansion reveals inputs and outputs", () => {
+  const result = {
+    content: [
+      { type: "text" as const, text: "Script completed" },
+      { type: "text" as const, text: "final output" },
+    ],
+    details: {
+      status: "result" as const,
+      droppedTraceCount: 2,
+      traces: [
+        {
+          id: "trace-1",
+          name: "exec_command",
+          input: { cmd: "printf 'first command'" },
+          status: "done" as const,
+          result: { content: [{ type: "text" as const, text: "nested command output" }] },
+        },
+        {
+          id: "trace-2",
+          name: "apply_patch",
+          input: "*** Begin Patch",
+          status: "done" as const,
+        },
+      ],
     },
+  };
+  const tools = [
+    {
+      name: "exec_command",
+      label: "Execute command",
+      usage: "exec_command({ cmd })",
+      description: "Execute a shell command",
+      deferLoading: false,
+      kind: "function" as const,
+      invoke: async () => undefined,
+      renderCall: () => new Text("Execute command: printf 'first command'", 0, 0),
+      renderResult: () => new Text("nested command output", 0, 0),
+    },
+  ];
+  const collapsed = renderTrackedCodeModeResult(
+    result,
     { expanded: false, isPartial: false },
     PLAIN_THEME,
     { toolCallId: "ordered-call" },
     createCodeModeRenderTracker(),
-    [],
-    false,
+    tools,
   )
     .render(200)
     .join("\n");
 
-  assert.match(rendered, /3\. • Ran exec_command/);
-  assert.match(rendered, /printf 'first command'/);
-  assert.match(rendered, /4\. • Ran apply_patch/);
-  assert.ok(rendered.indexOf("3. •") < rendered.indexOf("4. •"));
+  assert.match(collapsed, /3\. • Ran Execute command/);
+  assert.match(collapsed, /4\. • Ran Apply patch/);
+  assert.doesNotMatch(collapsed, /printf 'first command'/);
+  assert.doesNotMatch(collapsed, /nested command output/);
+  assert.doesNotMatch(collapsed, /final output/);
+  assert.ok(collapsed.indexOf("3. •") < collapsed.indexOf("4. •"));
+
+  const expanded = renderTrackedCodeModeResult(
+    result,
+    { expanded: true, isPartial: false },
+    PLAIN_THEME,
+    { toolCallId: "ordered-call-expanded" },
+    createCodeModeRenderTracker(),
+    tools,
+  )
+    .render(200)
+    .join("\n");
+
+  assert.match(expanded, /printf 'first command'/);
+  assert.match(expanded, /nested command output/);
+  assert.match(expanded, /final output/);
+});
+
+test("collapsed output stays concise regardless of the former detail flag", () => {
+  const rendered = renderTrackedCodeModeResult(
+    {
+      content: [
+        { type: "text", text: "Script completed" },
+        { type: "text", text: "secret" },
+      ],
+      details: { status: "result" },
+    },
+    { expanded: false, isPartial: false },
+    PLAIN_THEME,
+    { toolCallId: "detail-independent" },
+    createCodeModeRenderTracker(),
+    [],
+  )
+    .render(200)
+    .join("\n");
+
+  assert.match(rendered, /1 output line/);
+  assert.doesNotMatch(rendered, /secret/);
 });
