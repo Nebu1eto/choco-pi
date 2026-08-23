@@ -4,7 +4,6 @@ import {
   supportsNativeWebSearch,
   supportsViewImageInputs,
 } from "../tool-support.ts";
-import { supportsResponsesLiteModel } from "../../providers/openai-codex/responses-lite-model.ts";
 import {
   canonicalCodexAliasModelKey,
   isCanonicalCodexAliasModel,
@@ -106,9 +105,7 @@ function proxySupportsCodeMode(ctx: RuntimeContext, config: CodexConversionConfi
 }
 
 function codeModeEligible(ctx: RuntimeContext, config: CodexConversionConfig): boolean {
-  return isCodexTransportContext(ctx)
-    ? supportsResponsesLiteModel(ctx.model?.id)
-    : proxySupportsCodeMode(ctx, config);
+  return isCodexTransportContext(ctx) || proxySupportsCodeMode(ctx, config);
 }
 
 function hasExtras(config: CodexConversionConfig): boolean {
