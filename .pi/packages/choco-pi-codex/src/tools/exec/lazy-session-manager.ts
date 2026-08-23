@@ -51,6 +51,7 @@ export function createLazyExecSessionManager(
       exitListeners.add(listener);
       return () => exitListeners.delete(listener);
     },
-    shutdown: () => (managerPromise ? managerPromise.then((loaded) => loaded.shutdown()) : Promise.resolve()),
+    shutdown: () =>
+      managerPromise ? managerPromise.then((loaded) => loaded.shutdown()) : Promise.resolve(),
   };
 }

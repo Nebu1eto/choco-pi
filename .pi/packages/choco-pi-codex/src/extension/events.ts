@@ -45,9 +45,7 @@ const loadCompaction = memoizedImport(() => import("../adapter/compaction/compac
 const loadCompactionDetails = memoizedImport(
   () => import("../adapter/compaction/details-store.ts"),
 );
-const loadLocalVersionWarning = memoizedImport(
-  () => import("../adapter/local-version-warning.ts"),
-);
+const loadLocalVersionWarning = memoizedImport(() => import("../adapter/local-version-warning.ts"));
 const loadPromptBuilder = memoizedImport(() => import("../prompt/build-system-prompt.ts"));
 const loadProviderRequest = memoizedImport(() => import("../adapter/provider-request.ts"));
 

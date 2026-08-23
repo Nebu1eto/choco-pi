@@ -5,243 +5,355 @@ import { buildBrowserProfileConfigRecovery } from "./browser-profile-recovery.ts
 import { redactModelFacingText } from "./common.ts";
 import { buildAgentBrowserNextActions } from "../action-recommendations.ts";
 import { buildAgentBrowserResultCategoryDetails } from "../categories.ts";
-import type { AgentBrowserNextAction, AgentBrowserResultRecord, AgentBrowserResultValue, ToolPresentation } from "../contracts.ts";
+import type {
+  AgentBrowserNextAction,
+  AgentBrowserResultRecord,
+  AgentBrowserResultValue,
+  ToolPresentation,
+} from "../contracts.ts";
 import { withOptionalSessionArgs } from "../next-actions.ts";
 
 const STALE_REF_ERROR_HINT = [
-	"Agent-browser hint: This ref may be stale after navigation, scrolling, or re-rendering.",
-	"Run `snapshot -i` again and retry with a current `@e…` ref; for less ref churn, use `find role|text|label|placeholder|alt|title|testid ...` or `scrollintoview` before interacting with off-screen elements.",
+  "Agent-browser hint: This ref may be stale after navigation, scrolling, or re-rendering.",
+  "Run `snapshot -i` again and retry with a current `@e…` ref; for less ref churn, use `find role|text|label|placeholder|alt|title|testid ...` or `scrollintoview` before interacting with off-screen elements.",
 ].join(" ");
 
 const SELECTOR_DIALECT_ERROR_HINT = [
-	"Agent-browser hint: This selector may use an unsupported selector dialect.",
-	"Prefer refs from `snapshot -i`, or use supported `find role|text|label|placeholder|alt|title|testid ...` locators; use `scrollintoview` before interacting with off-screen elements.",
+  "Agent-browser hint: This selector may use an unsupported selector dialect.",
+  "Prefer refs from `snapshot -i`, or use supported `find role|text|label|placeholder|alt|title|testid ...` locators; use `scrollintoview` before interacting with off-screen elements.",
 ].join(" ");
 
 const CLIPBOARD_PERMISSION_ERROR_HINT = [
-	"Agent-browser clipboard hint: Clipboard read/write access is environment-dependent and often fails in headless, managed, remote-profile, or file:// sessions.",
-	"If you see `NotAllowedError` or `permission denied`, treat it as a browser/OS permission limitation rather than proof that page state changed.",
-	"When possible, prefer page-native reads (`snapshot -i`, `get text`, `eval --stdin`) or direct input (`keyboard inserttext` / `keyboard type`) instead of relying on OS clipboard access.",
-	"If true clipboard access is required, retry in a browser/profile/session with explicit clipboard permission on a normal http(s) page.",
+  "Agent-browser clipboard hint: Clipboard read/write access is environment-dependent and often fails in headless, managed, remote-profile, or file:// sessions.",
+  "If you see `NotAllowedError` or `permission denied`, treat it as a browser/OS permission limitation rather than proof that page state changed.",
+  "When possible, prefer page-native reads (`snapshot -i`, `get text`, `eval --stdin`) or direct input (`keyboard inserttext` / `keyboard type`) instead of relying on OS clipboard access.",
+  "If true clipboard access is required, retry in a browser/profile/session with explicit clipboard permission on a normal http(s) page.",
 ].join(" ");
 
 const KEYBOARD_PRESS_ERROR_HINT = [
-	"Agent-browser keyboard hint: upstream keyboard commands are `keyboard type <text>` and `keyboard inserttext <text>`; `keyboard press` is not a supported subcommand in the targeted upstream version.",
-	'For Enter in text fields, use `keyboard type "\\n"` after focusing the intended control, then verify with a fresh snapshot, URL, or page-state check.',
+  "Agent-browser keyboard hint: upstream keyboard commands are `keyboard type <text>` and `keyboard inserttext <text>`; `keyboard press` is not a supported subcommand in the targeted upstream version.",
+  'For Enter in text fields, use `keyboard type "\\n"` after focusing the intended control, then verify with a fresh snapshot, URL, or page-state check.',
 ].join(" ");
 
 function getSelectorRecoveryHint(errorText: string): string | undefined {
-	const normalized = errorText.trim();
-	if (normalized.length === 0) return undefined;
+  const normalized = errorText.trim();
+  if (normalized.length === 0) return undefined;
 
-	if (/\bUnknown ref\b|\bstale ref\b|\bref\b.*\b(?:not found|missing|expired)\b/i.test(normalized)) {
-		return STALE_REF_ERROR_HINT;
-	}
+  if (
+    /\bUnknown ref\b|\bstale ref\b|\bref\b.*\b(?:not found|missing|expired)\b/i.test(normalized)
+  ) {
+    return STALE_REF_ERROR_HINT;
+  }
 
-	const mentionsPlaywrightSelectorDialect = /(?:\btext=|:has-text\(|\bgetByRole\b|\bgetByText\b)/i.test(normalized);
-	const reportsSelectorMatchFailure =
-		/\b(?:no elements? found|failed to find|could not find|unable to find)\b.*\b(?:selector|locator)\b/i.test(normalized) ||
-		/\b(?:selector|locator)\b.*\b(?:no elements? found|not found|missing|failed to find|could not find|unable to find)\b/i.test(normalized);
+  const mentionsPlaywrightSelectorDialect =
+    /(?:\btext=|:has-text\(|\bgetByRole\b|\bgetByText\b)/i.test(normalized);
+  const reportsSelectorMatchFailure =
+    /\b(?:no elements? found|failed to find|could not find|unable to find)\b.*\b(?:selector|locator)\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:selector|locator)\b.*\b(?:no elements? found|not found|missing|failed to find|could not find|unable to find)\b/i.test(
+      normalized,
+    );
 
-	if (
-		/\b(?:unsupported|unknown|invalid)\s+(?:selector|locator)\b/i.test(normalized) ||
-		/\bfailed to parse selector\b/i.test(normalized) ||
-		/\bselector\b.*\b(?:parse|syntax|unsupported|invalid)\b/i.test(normalized) ||
-		(mentionsPlaywrightSelectorDialect && reportsSelectorMatchFailure)
-	) {
-		return SELECTOR_DIALECT_ERROR_HINT;
-	}
+  if (
+    /\b(?:unsupported|unknown|invalid)\s+(?:selector|locator)\b/i.test(normalized) ||
+    /\bfailed to parse selector\b/i.test(normalized) ||
+    /\bselector\b.*\b(?:parse|syntax|unsupported|invalid)\b/i.test(normalized) ||
+    (mentionsPlaywrightSelectorDialect && reportsSelectorMatchFailure)
+  ) {
+    return SELECTOR_DIALECT_ERROR_HINT;
+  }
 
-	return undefined;
+  return undefined;
 }
 
-function getClipboardPermissionHint(commandInfo: CommandInfo, errorText: string): string | undefined {
-	if (commandInfo.command !== "clipboard") return undefined;
-	if (!/\bNotAllowedError\b|\bclipboard\b.*\bpermission denied\b|\bpermission denied\b.*\bclipboard\b/i.test(errorText)) {
-		return undefined;
-	}
-	return CLIPBOARD_PERMISSION_ERROR_HINT;
+function getClipboardPermissionHint(
+  commandInfo: CommandInfo,
+  errorText: string,
+): string | undefined {
+  if (commandInfo.command !== "clipboard") return undefined;
+  if (
+    !/\bNotAllowedError\b|\bclipboard\b.*\bpermission denied\b|\bpermission denied\b.*\bclipboard\b/i.test(
+      errorText,
+    )
+  ) {
+    return undefined;
+  }
+  return CLIPBOARD_PERMISSION_ERROR_HINT;
 }
 
 function getKeyboardPressHint(commandInfo: CommandInfo, errorText: string): string | undefined {
-	if (commandInfo.command !== "keyboard" || commandInfo.subcommand !== "press") return undefined;
-	if (!/\bunknown\s+subcommand\b|\bvalid options?\b/i.test(errorText)) return undefined;
-	return KEYBOARD_PRESS_ERROR_HINT;
+  if (commandInfo.command !== "keyboard" || commandInfo.subcommand !== "press") return undefined;
+  if (!/\bunknown\s+subcommand\b|\bvalid options?\b/i.test(errorText)) return undefined;
+  return KEYBOARD_PRESS_ERROR_HINT;
 }
 
 export function redactClipboardPermissionEcho(commandInfo: CommandInfo, errorText: string): string {
-	if (commandInfo.command !== "clipboard") return errorText;
-	return errorText
-		.replace(/(\b(?:read|write)\s+permission denied\b(?:\s+for)?\s+)([\s\S]+)$/gi, "$1[REDACTED]")
-		.replace(/(\bFailed to execute '[^']+' on 'Clipboard':\s*)([\s\S]+)$/gi, (match, prefix: string, suffix: string) => {
-			if (!/\bpermission denied\b/i.test(suffix)) return match;
-			return `${prefix}${suffix.replace(/(\bpermission denied\b(?:\s+for)?\s+)([\s\S]+)$/i, "$1[REDACTED]")}`;
-		});
+  if (commandInfo.command !== "clipboard") return errorText;
+  return errorText
+    .replace(/(\b(?:read|write)\s+permission denied\b(?:\s+for)?\s+)([\s\S]+)$/gi, "$1[REDACTED]")
+    .replace(
+      /(\bFailed to execute '[^']+' on 'Clipboard':\s*)([\s\S]+)$/gi,
+      (match, prefix: string, suffix: string) => {
+        if (!/\bpermission denied\b/i.test(suffix)) return match;
+        return `${prefix}${suffix.replace(/(\bpermission denied\b(?:\s+for)?\s+)([\s\S]+)$/i, "$1[REDACTED]")}`;
+      },
+    );
 }
 
 export function getClipboardWritePayloadCandidates(commandTokens: readonly string[]): string[] {
-	if (commandTokens[0] !== "clipboard" || commandTokens[1] !== "write") return [];
-	const payloadTokens = commandTokens.slice(2).filter((value) => value.length > 0);
-	return [...new Set([...payloadTokens, payloadTokens.join(" ")].filter((value) => value.length > 0))];
+  if (commandTokens[0] !== "clipboard" || commandTokens[1] !== "write") return [];
+  const payloadTokens = commandTokens.slice(2).filter((value) => value.length > 0);
+  return [
+    ...new Set([...payloadTokens, payloadTokens.join(" ")].filter((value) => value.length > 0)),
+  ];
 }
 
-function shouldRedactClipboardPayloadField(key: string, value: string, payloadCandidates: readonly string[]): boolean {
-	return payloadCandidates.some((candidate) => {
-		if (value === candidate) return true;
-		if (candidate.length < 8 || !/payload|clipboard|argument/i.test(key)) return false;
-		return value.includes(candidate);
-	});
+function shouldRedactClipboardPayloadField(
+  key: string,
+  value: string,
+  payloadCandidates: readonly string[],
+): boolean {
+  return payloadCandidates.some((candidate) => {
+    if (value === candidate) return true;
+    if (candidate.length < 8 || !/payload|clipboard|argument/i.test(key)) return false;
+    return value.includes(candidate);
+  });
 }
 
-function isAgentBrowserResultRecord(value: AgentBrowserResultValue): value is AgentBrowserResultRecord {
-	return hasRuntimeType(value, "object") && value !== null && !Array.isArray(value);
+function isAgentBrowserResultRecord(
+  value: AgentBrowserResultValue,
+): value is AgentBrowserResultRecord {
+  return hasRuntimeType(value, "object") && value !== null && !Array.isArray(value);
 }
 
 function redactParsedClipboardPermissionErrorValue(
-	commandInfo: CommandInfo,
-	value: AgentBrowserResultValue,
-	payloadCandidates: readonly string[],
+  commandInfo: CommandInfo,
+  value: AgentBrowserResultValue,
+  payloadCandidates: readonly string[],
 ): AgentBrowserResultValue {
-	if (hasRuntimeType(value, "string")) return payloadCandidates.includes(value) ? "[REDACTED]" : redactClipboardPermissionEcho(commandInfo, value);
-	if (Array.isArray(value)) return value.map((item) => redactParsedClipboardPermissionErrorValue(commandInfo, item, payloadCandidates));
-	if (!isAgentBrowserResultRecord(value)) return value;
-	return Object.fromEntries(Object.entries(value).map(([key, entryValue]) => [
-		key,
-		hasRuntimeType(entryValue, "string") && shouldRedactClipboardPayloadField(key, entryValue, payloadCandidates)
-			? "[REDACTED]"
-			: redactParsedClipboardPermissionErrorValue(commandInfo, entryValue, payloadCandidates),
-	]));
+  if (hasRuntimeType(value, "string"))
+    return payloadCandidates.includes(value)
+      ? "[REDACTED]"
+      : redactClipboardPermissionEcho(commandInfo, value);
+  if (Array.isArray(value))
+    return value.map((item) =>
+      redactParsedClipboardPermissionErrorValue(commandInfo, item, payloadCandidates),
+    );
+  if (!isAgentBrowserResultRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entryValue]) => [
+      key,
+      hasRuntimeType(entryValue, "string") &&
+      shouldRedactClipboardPayloadField(key, entryValue, payloadCandidates)
+        ? "[REDACTED]"
+        : redactParsedClipboardPermissionErrorValue(commandInfo, entryValue, payloadCandidates),
+    ]),
+  );
 }
 
 export function redactClipboardPermissionErrorValue<Value>(
-	commandInfo: CommandInfo,
-	value: Value,
-	payloadCandidates: readonly string[] = [],
+  commandInfo: CommandInfo,
+  value: Value,
+  payloadCandidates: readonly string[] = [],
 ): Value | AgentBrowserResultValue {
-	if (commandInfo.command !== "clipboard") return value;
-	// SAFETY: callers pass the error member decoded from the agent-browser CLI JSON envelope.
-	const parsedValue = value as AgentBrowserResultValue;
-	return redactParsedClipboardPermissionErrorValue(commandInfo, parsedValue, payloadCandidates);
+  if (commandInfo.command !== "clipboard") return value;
+  // SAFETY: callers pass the error member decoded from the agent-browser CLI JSON envelope.
+  const parsedValue = value as AgentBrowserResultValue;
+  return redactParsedClipboardPermissionErrorValue(commandInfo, parsedValue, payloadCandidates);
 }
 
 interface CommandSuggestion {
-	args?: string[];
-	description: string;
-	id?: string;
+  args?: string[];
+  description: string;
+  id?: string;
 }
 
 interface CommandSuggestionCatalog {
-	[command: string]: CommandSuggestion[];
+  [command: string]: CommandSuggestion[];
 }
 
 const UNKNOWN_COMMAND_SUGGESTIONS: CommandSuggestionCatalog = {
-	attr: [{ description: "Use `get attr <selector> <name>` to read an attribute from a selector or current `@ref`." }],
-	count: [{ description: "Use `get count <selector>` to count matching elements." }],
-	html: [{ description: "Use `get html <selector>` to read element HTML from a selector or current `@ref`; use `get html body` when you need whole-page body HTML." }],
-	text: [{ description: "Use `get text <selector>` to read text from a selector or current `@ref`; run `snapshot -i` first when you need a safe `@ref`." }],
-	title: [{ args: ["get", "title"], description: "Use `get title` to read the current page title.", id: "use-get-title" }],
-	url: [{ args: ["get", "url"], description: "Use `get url` to read the current page URL.", id: "use-get-url" }],
-	value: [{ description: "Use `get value <selector>` to read form control value from a selector or current `@ref`." }],
+  attr: [
+    {
+      description:
+        "Use `get attr <selector> <name>` to read an attribute from a selector or current `@ref`.",
+    },
+  ],
+  count: [{ description: "Use `get count <selector>` to count matching elements." }],
+  html: [
+    {
+      description:
+        "Use `get html <selector>` to read element HTML from a selector or current `@ref`; use `get html body` when you need whole-page body HTML.",
+    },
+  ],
+  text: [
+    {
+      description:
+        "Use `get text <selector>` to read text from a selector or current `@ref`; run `snapshot -i` first when you need a safe `@ref`.",
+    },
+  ],
+  title: [
+    {
+      args: ["get", "title"],
+      description: "Use `get title` to read the current page title.",
+      id: "use-get-title",
+    },
+  ],
+  url: [
+    {
+      args: ["get", "url"],
+      description: "Use `get url` to read the current page URL.",
+      id: "use-get-url",
+    },
+  ],
+  value: [
+    {
+      description:
+        "Use `get value <selector>` to read form control value from a selector or current `@ref`.",
+    },
+  ],
 };
 
-function getUnknownCommandSuggestions(command: string | undefined, errorText: string): CommandSuggestion[] {
-	if (!command) return [];
-	const normalizedCommand = command.trim().toLowerCase();
-	if (!/\bunknown\s+command\b|\bunknown\s+subcommand\b|\bunrecognized\s+command\b/i.test(errorText)) return [];
-	return UNKNOWN_COMMAND_SUGGESTIONS[normalizedCommand] ?? [];
+function getUnknownCommandSuggestions(
+  command: string | undefined,
+  errorText: string,
+): CommandSuggestion[] {
+  if (!command) return [];
+  const normalizedCommand = command.trim().toLowerCase();
+  if (!/\bunknown\s+command\b|\bunknown\s+subcommand\b|\bunrecognized\s+command\b/i.test(errorText))
+    return [];
+  return UNKNOWN_COMMAND_SUGGESTIONS[normalizedCommand] ?? [];
 }
 
 function formatUnknownCommandSuggestionText(suggestions: CommandSuggestion[]): string | undefined {
-	if (suggestions.length === 0) return undefined;
-	return ["Agent-browser hint: This looks like a getter shortcut, but upstream getter commands are grouped under `get`.", ...suggestions.map((suggestion) => suggestion.description)].join(" ");
+  if (suggestions.length === 0) return undefined;
+  return [
+    "Agent-browser hint: This looks like a getter shortcut, but upstream getter commands are grouped under `get`.",
+    ...suggestions.map((suggestion) => suggestion.description),
+  ].join(" ");
 }
 
-function buildUnknownCommandSuggestionActions(suggestions: CommandSuggestion[], sessionName: string | undefined): AgentBrowserNextAction[] | undefined {
-	const actions = suggestions
-		.filter((suggestion): suggestion is CommandSuggestion & { args: string[]; id: string } => suggestion.args !== undefined && suggestion.id !== undefined)
-		.map((suggestion) => ({
-			id: suggestion.id,
-			params: { args: withOptionalSessionArgs(sessionName, suggestion.args) },
-			reason: suggestion.description,
-			safety: "Read-only getter command; safe to retry when you intended to inspect page state.",
-			tool: "agent_browser" as const,
-		}));
-	return actions.length > 0 ? actions : undefined;
+function buildUnknownCommandSuggestionActions(
+  suggestions: CommandSuggestion[],
+  sessionName: string | undefined,
+): AgentBrowserNextAction[] | undefined {
+  const actions = suggestions
+    .filter(
+      (suggestion): suggestion is CommandSuggestion & { args: string[]; id: string } =>
+        suggestion.args !== undefined && suggestion.id !== undefined,
+    )
+    .map((suggestion) => ({
+      id: suggestion.id,
+      params: { args: withOptionalSessionArgs(sessionName, suggestion.args) },
+      reason: suggestion.description,
+      safety: "Read-only getter command; safe to retry when you intended to inspect page state.",
+      tool: "agent_browser" as const,
+    }));
+  return actions.length > 0 ? actions : undefined;
 }
 
-function getLocalhostNavigationHint(commandInfo: CommandInfo, errorText: string): string | undefined {
-	if (!commandInfo.command || !isOpenNavigationCommand(commandInfo.command) || !commandInfo.subcommand) return undefined;
-	if (!/\bnet::ERR_(?:EMPTY_RESPONSE|CONNECTION_REFUSED|ADDRESS_UNREACHABLE|TIMED_OUT|CONNECTION_RESET)\b/i.test(errorText)) return undefined;
+function getLocalhostNavigationHint(
+  commandInfo: CommandInfo,
+  errorText: string,
+): string | undefined {
+  if (
+    !commandInfo.command ||
+    !isOpenNavigationCommand(commandInfo.command) ||
+    !commandInfo.subcommand
+  )
+    return undefined;
+  if (
+    !/\bnet::ERR_(?:EMPTY_RESPONSE|CONNECTION_REFUSED|ADDRESS_UNREACHABLE|TIMED_OUT|CONNECTION_RESET)\b/i.test(
+      errorText,
+    )
+  )
+    return undefined;
 
-	let targetUrl: URL;
-	try {
-		targetUrl = new URL(commandInfo.subcommand);
-	} catch {
-		return undefined;
-	}
+  let targetUrl: URL;
+  try {
+    targetUrl = new URL(commandInfo.subcommand);
+  } catch {
+    return undefined;
+  }
 
-	if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(targetUrl.hostname.toLowerCase())) return undefined;
+  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(targetUrl.hostname.toLowerCase()))
+    return undefined;
 
-	return [
-		"Agent-browser local fixture hint: the browser process could not read a loopback URL from its own network namespace or browser host.",
-		"Verify the server is still running and bound to an address the browser host can reach; if curl works from the shell but browser navigation fails, try the other loopback alias, add a proxy bypass for localhost/127.0.0.1 if a proxy is configured, or use a browser-host-reachable URL.",
-		"Use file:// only for static fallback fixtures and clean up any temporary server process outside agent_browser when the check is done.",
-	].join(" ");
+  return [
+    "Agent-browser local fixture hint: the browser process could not read a loopback URL from its own network namespace or browser host.",
+    "Verify the server is still running and bound to an address the browser host can reach; if curl works from the shell but browser navigation fails, try the other loopback alias, add a proxy bypass for localhost/127.0.0.1 if a proxy is configured, or use a browser-host-reachable URL.",
+    "Use file:// only for static fallback fixtures and clean up any temporary server process outside agent_browser when the check is done.",
+  ].join(" ");
 }
 
 export function appendSelectorRecoveryHint(errorText: string): string {
-	const hint = getSelectorRecoveryHint(errorText);
-	if (!hint || errorText.includes("Agent-browser hint:")) return errorText;
-	return `${errorText}\n\n${hint}`;
+  const hint = getSelectorRecoveryHint(errorText);
+  if (!hint || errorText.includes("Agent-browser hint:")) return errorText;
+  return `${errorText}\n\n${hint}`;
 }
 
 export function buildErrorPresentation(options: {
-	args?: string[];
-	commandInfo: CommandInfo;
-	errorText: string;
-	sessionName?: string;
+  args?: string[];
+  commandInfo: CommandInfo;
+  errorText: string;
+  sessionName?: string;
 }): ToolPresentation {
-	const { args, commandInfo, errorText, sessionName } = options;
-	const safeErrorText = redactModelFacingText(
-		redactSensitiveText(redactClipboardPermissionEcho(commandInfo, errorText)),
-	);
-	const selectorHintedErrorText = appendSelectorRecoveryHint(safeErrorText);
-	const unknownCommandSuggestions = getUnknownCommandSuggestions(commandInfo.command, safeErrorText);
-	const unknownCommandSuggestionText = formatUnknownCommandSuggestionText(unknownCommandSuggestions);
-	const browserProfileConfigRecovery = buildBrowserProfileConfigRecovery({ args, commandInfo, errorText: safeErrorText });
-	const localhostNavigationHint = getLocalhostNavigationHint(commandInfo, safeErrorText);
-	const clipboardPermissionHint = getClipboardPermissionHint(commandInfo, safeErrorText);
-	const keyboardPressHint = getKeyboardPressHint(commandInfo, safeErrorText);
-	const hintedErrorParts = [
-		selectorHintedErrorText,
-		unknownCommandSuggestionText && !selectorHintedErrorText.includes("Agent-browser hint:") ? unknownCommandSuggestionText : undefined,
-		browserProfileConfigRecovery?.hint,
-		localhostNavigationHint,
-		clipboardPermissionHint,
-		keyboardPressHint,
-	].filter((part): part is string => Boolean(part));
-	const hintedErrorText = hintedErrorParts.join("\n\n");
-	const categoryDetails = buildAgentBrowserResultCategoryDetails({
-		args: [commandInfo.command, commandInfo.subcommand].filter((item): item is string => item !== undefined),
-		command: commandInfo.command,
-		errorText: hintedErrorText,
-		succeeded: false,
-	});
-	const nextActions = [
-		...(buildUnknownCommandSuggestionActions(unknownCommandSuggestions, sessionName) ?? []),
-		...(browserProfileConfigRecovery?.actions ?? []),
-		...(browserProfileConfigRecovery ? [] : buildAgentBrowserNextActions({
-			args,
-			command: commandInfo.command,
-			failureCategory: categoryDetails.failureCategory,
-			resultCategory: "failure",
-			sessionName,
-		}) ?? []),
-	];
-	return {
-		...categoryDetails,
-		content: [{ type: "text", text: hintedErrorText }],
-		nextActions: nextActions.length > 0 ? nextActions : undefined,
-		summary: hintedErrorText,
-	};
+  const { args, commandInfo, errorText, sessionName } = options;
+  const safeErrorText = redactModelFacingText(
+    redactSensitiveText(redactClipboardPermissionEcho(commandInfo, errorText)),
+  );
+  const selectorHintedErrorText = appendSelectorRecoveryHint(safeErrorText);
+  const unknownCommandSuggestions = getUnknownCommandSuggestions(
+    commandInfo.command,
+    safeErrorText,
+  );
+  const unknownCommandSuggestionText =
+    formatUnknownCommandSuggestionText(unknownCommandSuggestions);
+  const browserProfileConfigRecovery = buildBrowserProfileConfigRecovery({
+    args,
+    commandInfo,
+    errorText: safeErrorText,
+  });
+  const localhostNavigationHint = getLocalhostNavigationHint(commandInfo, safeErrorText);
+  const clipboardPermissionHint = getClipboardPermissionHint(commandInfo, safeErrorText);
+  const keyboardPressHint = getKeyboardPressHint(commandInfo, safeErrorText);
+  const hintedErrorParts = [
+    selectorHintedErrorText,
+    unknownCommandSuggestionText && !selectorHintedErrorText.includes("Agent-browser hint:")
+      ? unknownCommandSuggestionText
+      : undefined,
+    browserProfileConfigRecovery?.hint,
+    localhostNavigationHint,
+    clipboardPermissionHint,
+    keyboardPressHint,
+  ].filter((part): part is string => Boolean(part));
+  const hintedErrorText = hintedErrorParts.join("\n\n");
+  const categoryDetails = buildAgentBrowserResultCategoryDetails({
+    args: [commandInfo.command, commandInfo.subcommand].filter(
+      (item): item is string => item !== undefined,
+    ),
+    command: commandInfo.command,
+    errorText: hintedErrorText,
+    succeeded: false,
+  });
+  const nextActions = [
+    ...(buildUnknownCommandSuggestionActions(unknownCommandSuggestions, sessionName) ?? []),
+    ...(browserProfileConfigRecovery?.actions ?? []),
+    ...(browserProfileConfigRecovery
+      ? []
+      : (buildAgentBrowserNextActions({
+          args,
+          command: commandInfo.command,
+          failureCategory: categoryDetails.failureCategory,
+          resultCategory: "failure",
+          sessionName,
+        }) ?? [])),
+  ];
+  return {
+    ...categoryDetails,
+    content: [{ type: "text", text: hintedErrorText }],
+    nextActions: nextActions.length > 0 ? nextActions : undefined,
+    summary: hintedErrorText,
+  };
 }

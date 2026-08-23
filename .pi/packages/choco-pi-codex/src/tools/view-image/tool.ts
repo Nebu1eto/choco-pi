@@ -199,8 +199,10 @@ export async function describeImageContentForTextModel(
   ctx: ExtensionContext,
   signal: AbortSignal | undefined,
 ): Promise<string> {
-  const [{ parseSSE }, { codexToolProviderHeaders, resolveCodexResponsesUrl, resolveCodexToolProvider }] =
-    await Promise.all([loadSse(), loadToolProvider()]);
+  const [
+    { parseSSE },
+    { codexToolProviderHeaders, resolveCodexResponsesUrl, resolveCodexToolProvider },
+  ] = await Promise.all([loadSse(), loadToolProvider()]);
   const provider = await resolveCodexToolProvider(ctx);
   const model = resolveImageDescriptionModel(ctx);
   const headers = codexToolProviderHeaders(provider);

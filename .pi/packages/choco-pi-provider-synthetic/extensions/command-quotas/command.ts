@@ -1,7 +1,4 @@
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 interface CommandHandlerRuntime {
   handleQuotasCommand(args: string, ctx: ExtensionCommandContext): Promise<void>;

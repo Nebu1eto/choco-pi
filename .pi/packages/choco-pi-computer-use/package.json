@@ -3,11 +3,8 @@
   "version": "0.5.0-choco.0",
   "private": true,
   "description": "Vendored choco-pi fork of pi-computer-use for macOS desktop automation.",
-  "type": "module",
   "license": "MIT",
-  "engines": {
-    "node": ">=24.0.0"
-  },
+  "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
@@ -26,6 +23,9 @@
     "typebox": {
       "optional": true
     }
+  },
+  "engines": {
+    "node": ">=24.0.0"
   },
   "chocoPi": {
     "supersedes": [

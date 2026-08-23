@@ -1,10 +1,6 @@
 import type { BoundaryValue } from "./runtime-values.ts";
 import type { AdapterState } from "./activation/state.ts";
-import {
-  isObjectValue,
-  isStringValue,
-  type BoundaryRecord,
-} from "../tools/boundary.ts";
+import { isObjectValue, isStringValue, type BoundaryRecord } from "../tools/boundary.ts";
 
 function providerSystemPrompt(payload: BoundaryRecord): string | undefined {
   if (isStringValue(payload["instructions"])) return payload["instructions"];

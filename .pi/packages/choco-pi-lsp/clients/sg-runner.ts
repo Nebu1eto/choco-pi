@@ -371,9 +371,7 @@ export class SgRunner {
 
     // Step 4: install via the typed shared seam, then validate the returned
     // absolute binary before publishing it.
-    const { resolveManagedToolClient } = await import(
-      "./dispatch/runners/utils/runner-helpers.ts"
-    );
+    const { resolveManagedToolClient } = await import("./dispatch/runners/utils/runner-helpers.ts");
     const installed = await resolveManagedToolClient({
       toolId: "ast-grep",
       cwd: process.cwd(),

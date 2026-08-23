@@ -604,11 +604,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const shutdownAuth = oauthRuntime
         ? loadMcpAuth().then(({ shutdownOAuth }) => shutdownOAuth(oauthRuntime))
         : Promise.resolve();
-      await Promise.all([
-        stopOwner,
-        shutdownState(currentState, "session_shutdown"),
-        shutdownAuth,
-      ]);
+      await Promise.all([stopOwner, shutdownState(currentState, "session_shutdown"), shutdownAuth]);
     } catch (error) {
       console.error(`MCP: session shutdown cleanup failed: ${formatTerminalError(error)}`);
     }
@@ -810,11 +806,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   pi.registerCommand("mcp-auth", {
     description: "Authenticate with an MCP server (OAuth)",
     handler: async (args, ctx) => {
-      const {
-        authenticateServer,
-        openMcpAuthPanel,
-        reconnectServer,
-      } = await loadCommands();
+      const { authenticateServer, openMcpAuthPanel, reconnectServer } = await loadCommands();
       const commandOwner = currentOwner;
       const commandHasUI = ctx.hasUI;
 

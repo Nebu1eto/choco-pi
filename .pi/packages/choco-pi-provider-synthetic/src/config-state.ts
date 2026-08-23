@@ -1,8 +1,6 @@
 import type { ResolvedSyntheticConfig } from "./config.ts";
 
-const SYNTHETIC_CONFIG_STATE_KEY = Symbol.for(
-  "choco-pi.provider-synthetic.config-state",
-);
+const SYNTHETIC_CONFIG_STATE_KEY = Symbol.for("choco-pi.provider-synthetic.config-state");
 
 type SyntheticConfigRegistry = {
   [key: symbol]: ResolvedSyntheticConfig | undefined;
