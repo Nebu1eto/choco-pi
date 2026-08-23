@@ -73,7 +73,7 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
         {
           id: "trace-1",
           name: "exec_command",
-          input: { cmd: "printf 'first command'" },
+          input: { cmd: "npm run test -- --watch=false" },
           status: "done" as const,
           result: {
             // Persisted host traces may carry string content at this boundary.
@@ -98,7 +98,7 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
       deferLoading: false,
       kind: "function" as const,
       invoke: async () => undefined,
-      renderCall: () => new Text("Execute command: printf 'first command'", 0, 0),
+      renderCall: () => new Text("Execute command: npm run test -- --watch=false", 0, 0),
       renderResult: () => new Text("nested command output", 0, 0),
     },
   ];
@@ -113,9 +113,9 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
     .render(200)
     .join("\n");
 
-  assert.match(collapsed, /3\. • Ran Exec command/);
+  assert.match(collapsed, /3\. • Ran Exec command · npm run test/);
   assert.match(collapsed, /4\. • Ran Apply patch/);
-  assert.doesNotMatch(collapsed, /printf 'first command'/);
+  assert.doesNotMatch(collapsed, /--watch=false/);
   assert.doesNotMatch(collapsed, /nested command output/);
   assert.doesNotMatch(collapsed, /final output/);
   assert.ok(collapsed.indexOf("3. •") < collapsed.indexOf("4. •"));
@@ -131,7 +131,7 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
     .render(200)
     .join("\n");
 
-  assert.match(expanded, /printf 'first command'/);
+  assert.match(expanded, /npm run test -- --watch=false/);
   assert.match(expanded, /nested command output/);
   assert.match(expanded, /final output/);
 });
