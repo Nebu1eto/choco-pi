@@ -1,6 +1,6 @@
 ---
 name: choco-pi-lsp-navigation
-description: Navigate code with IDE features and run proactive LSP diagnostics on files/folders/batches. Use as PRIMARY for code intelligence and type/error checks.
+description: Use as the primary tool for IDE code navigation and proactive LSP diagnostics on files, folders, or batches, including type and error checks.
 ---
 
 # LSP Navigation and Diagnostics

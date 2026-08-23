@@ -1,6 +1,6 @@
 ---
 name: choco-pi-lsp-write-ast-grep-rule
-description: Use when writing a new choco-pi-lsp ast-grep rule YAML file — covers schema, drop path, gotchas, and NAPI runner constraints
+description: Use when writing a choco-pi-lsp ast-grep rule YAML file; covers schema, drop path, gotchas, and NAPI runner constraints.
 ---
 
 # Writing a choco-pi-lsp ast-grep Rule

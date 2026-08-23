@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Create one well-scoped local Git checkpoint with choco-pi when the user requests a commit or an active workflow requires one. Use as the authoritative commit workflow; handle intended staging, repository policy, message construction, AI-assistance and sign-off trailers, configured signing, and final revision verification without ever pushing.
+description: Create an authorized local Git checkpoint only when requested or required by workflow; follow repository policy, staging, trailers, signing, and final verification, never push.
 ---
 
 # choco-pi Commit

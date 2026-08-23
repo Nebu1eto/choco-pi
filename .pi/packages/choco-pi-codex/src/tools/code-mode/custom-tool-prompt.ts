@@ -4,10 +4,10 @@ import type {
   CustomToolDefinition,
 } from "./types.ts";
 
-export const EXEC_DESCRIPTION = `Run JavaScript to compose tools; source only, no JSON or fences
-Runtime follows the selected mode: Code is fresh restricted JS with no console/imports/Node/browser APIs; Notebook is one persistent Deno TypeScript global environment shared by every exec call, with console, imports, npm, Deno, and Web APIs
-Optional // @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}; defaults 30000 ms/10000 tokens
-Await work; bare values are discarded; globals: tools, image, generatedImage, store, load, exit, setTimeout, clearTimeout, ALL_TOOLS; text(value) serializes output, notify(value) emits, yield_control() yields`;
+export const EXEC_DESCRIPTION = `Run JavaScript source only; no JSON/fences
+Code: fresh restricted JS with no console, imports, Node, or browser APIs. Notebook: persistent shared Deno TypeScript globals with console, imports/npm, Deno, and Web APIs
+Optional // @exec: {"yield_time_ms":10000,"max_output_tokens":1000}; defaults 30000 ms/10000 tokens
+Await work; bare values are discarded. Globals: tools, image, generatedImage, store, load, exit, setTimeout, clearTimeout, ALL_TOOLS; text(value) serializes output, notify(value) emits, yield_control() yields`;
 
 export const WAIT_DESCRIPTION = "Resume or terminate a yielded exec cell";
 
@@ -15,8 +15,30 @@ const BUNDLED_TOOLS_HEADING = "Tools available in exec:";
 const CUSTOM_TOOLS_HEADING = "Configured custom tools:";
 const DEFERRED_CUSTOM_TOOLS_GUIDANCE = "Deferred custom tools: find by name in ALL_TOOLS";
 const CUSTOM_TOOL_DOCUMENTATION_MARKER = "To create or edit a custom tool, read";
-const CUSTOM_TOOL_DOCUMENTATION_GUIDANCE = "Never read that file to discover or call tools";
 const CUSTOM_TOOLS_GUIDANCE = "Prefer custom tools for command-backed capabilities";
+
+const COMPACT_BUNDLED_TOOL_USAGE = new Map([
+  [
+    "apply_patch",
+    "await tools.apply_patch(patch) // *** Begin Patch; add/delete/move; ordered exact hunks",
+  ],
+  [
+    "exec_command",
+    "await tools.exec_command({cmd, workdir?, shell?, tty?, yield_time_ms?, max_output_tokens?, login?}) // returns output, session_id?, exit_code?",
+  ],
+  [
+    "web__run",
+    "await tools.web__run({search_query?, image_query?, open?, click?, find?}) // refs come from web__run; cite result URLs",
+  ],
+  [
+    "web_run",
+    "await tools.web__run({search_query?, image_query?, open?, click?, find?}) // refs come from web__run; cite result URLs",
+  ],
+  [
+    "write_stdin",
+    "await tools.write_stdin({session_id, chars?, yield_time_ms?, max_output_tokens?})",
+  ],
+]);
 
 function isConfiguredCustomTool(tool: CodeModeToolDefinition): tool is CustomToolDefinition {
   return "command" in tool;
@@ -32,11 +54,18 @@ export function formatCodeModeToolHelp(tool: CodeModeToolMetadata): string {
     .join("\n");
 }
 
-function buildUsageSection(heading: string, tools: CodeModeToolMetadata[]): string {
+function buildUsageSection(
+  heading: string,
+  tools: CodeModeToolMetadata[],
+  compactBundledUsage = false,
+): string {
   if (tools.length === 0) return "";
   return `${heading}\n${[...tools]
     .sort((left, right) => left.name.localeCompare(right.name))
-    .map((tool) => `- ${tool.usage}`)
+    .map(
+      (tool) =>
+        `- ${compactBundledUsage ? (COMPACT_BUNDLED_TOOL_USAGE.get(tool.name) ?? tool.usage) : tool.usage}`,
+    )
     .join("\n")}`;
 }
 
@@ -51,7 +80,7 @@ export function buildCodeModeToolsPrompt(
   const sections = [
     existingPrompt.includes(BUNDLED_TOOLS_HEADING)
       ? undefined
-      : buildUsageSection(BUNDLED_TOOLS_HEADING, bundled),
+      : buildUsageSection(BUNDLED_TOOLS_HEADING, bundled, true),
     existingPrompt.includes(CUSTOM_TOOLS_HEADING)
       ? undefined
       : buildUsageSection(CUSTOM_TOOLS_HEADING, promotedCustom),
@@ -60,7 +89,7 @@ export function buildCodeModeToolsPrompt(
       ? DEFERRED_CUSTOM_TOOLS_GUIDANCE
       : undefined,
     documentationPath && !existingPrompt.includes(CUSTOM_TOOL_DOCUMENTATION_MARKER)
-      ? `${CUSTOM_TOOL_DOCUMENTATION_MARKER} ${documentationPath}; do not read Pi docs\n${CUSTOM_TOOL_DOCUMENTATION_GUIDANCE}`
+      ? `${CUSTOM_TOOL_DOCUMENTATION_MARKER} ${documentationPath}; not Pi docs or tool discovery/calls`
       : undefined,
     custom.length > 0 && !existingPrompt.includes(CUSTOM_TOOLS_GUIDANCE)
       ? CUSTOM_TOOLS_GUIDANCE

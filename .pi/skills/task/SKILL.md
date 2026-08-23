@@ -1,6 +1,6 @@
 ---
 name: task
-description: Orchestrate a new repository-changing implementation with choco-pi sub-agents when at least two independent units materially benefit from separate planning and parallel execution. Use as the authoritative parallel workflow; do not trigger merely because many files or packages are involved.
+description: Use parallel planning and agents for repository changes only when at least two genuinely independent implementation units materially benefit; do not route by file count.
 ---
 
 # choco-pi Parallel Implementation
