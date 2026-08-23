@@ -174,6 +174,9 @@ test("collapsed MCP results summarize JSON and expansion preserves full output",
 
   assert.match(collapsed, /<toolTitle><bold>MCP: linear · List issues<\/bold><\/toolTitle>/);
   assert.match(collapsed, /issues=2 items · has more=true/);
+  assert.match(collapsed, /\n<dim>  └ <\/dim><muted>team=MED · limit=2<\/muted>/);
+  assert.match(collapsed, /\n<dim>    <\/dim><toolOutput>issues=2 items · has more=true/);
+  assert.doesNotMatch(collapsed, /→/);
   assert.doesNotMatch(collapsed, /[{}"]|"id"/);
 
   const expanded = renderMcpToolResult(

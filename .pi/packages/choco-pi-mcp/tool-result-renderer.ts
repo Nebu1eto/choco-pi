@@ -1,4 +1,8 @@
-import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import {
+  keyHint,
+  type AgentToolResult,
+  type ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
 import { type Component, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
   isBooleanValue,
@@ -74,6 +78,24 @@ const DEFAULT_BOXED_COLLAPSED_LINES = 3;
 const DEFAULT_COMPACT_COLLAPSED_LINES = 1;
 const DEFAULT_MAX_COLLAPSED_CHARS = 8000;
 const COLLAPSED_RENDER_CHAR_SLACK = 8;
+const BACKGROUND_SAFE_RESET = "\x1b[22;23;24;25;27;28;29;39m";
+
+export const MCP_TOOL_RENDER_SHELL = "default" as const;
+
+function expandHint(): string {
+  try {
+    return keyHint("app.tools.expand", "to expand");
+  } catch {
+    return "ctrl+o to expand";
+  }
+}
+
+function safeTruncate(text: string, width: number): string {
+  return truncateToWidth(text, Math.max(1, width), "…").replaceAll(
+    "\x1b[0m",
+    BACKGROUND_SAFE_RESET,
+  );
+}
 
 class EmptyComponent implements Component {
   render(): string[] {
@@ -110,50 +132,37 @@ class CompactMcpToolResult implements Component {
       return !(this.display.truncated && index === lines.length - 1 && line === "…");
     });
     const lines = resultLines.length > 0 ? resultLines : [""];
-    const bodies = lines.map((line, index) => {
-      const prefix = index === 0 ? this.renderPrefix(safeWidth) : "";
-      return `${prefix}${this.theme.fg("toolOutput", line)}`;
-    });
+    const title = this.theme.fg(
+      "toolTitle",
+      this.theme.bold ? this.theme.bold(this.title || "MCP") : this.title || "MCP",
+    );
+    const bodies = [`${this.theme.fg("dim", "•")} ${title}`];
+    if (this.inputPreview) {
+      bodies.push(`${this.theme.fg("dim", "  └ ")}${this.theme.fg("muted", this.inputPreview)}`);
+    }
+    for (const [index, line] of lines.entries()) {
+      const prefix = this.inputPreview || index > 0 ? "    " : "  └ ";
+      bodies.push(`${this.theme.fg("dim", prefix)}${this.theme.fg("toolOutput", line)}`);
+    }
     const hiddenText =
       this.display.truncated || bodies.some((body) => visibleWidth(body) > safeWidth);
-    const rendered = bodies.map((body, index) => {
-      const suffix = hiddenText && index === bodies.length - 1 ? " … (Ctrl+O to expand)" : "";
-      if (!suffix) return truncateToWidth(body, safeWidth, "…");
-      if (safeWidth >= suffix.length + 20) {
-        return `${truncateToWidth(body, safeWidth - suffix.length, "…")}${this.theme.fg("muted", suffix)}`;
-      }
-      const shortSuffix = " (Ctrl+O)";
-      if (safeWidth >= shortSuffix.length + 5) {
-        return `${truncateToWidth(body, safeWidth - shortSuffix.length, "…")}${this.theme.fg("muted", shortSuffix)}`;
-      }
-      return truncateToWidth(this.theme.fg("muted", shortSuffix.trim()), safeWidth, "…");
-    });
+    const rendered = bodies.map((body) => safeTruncate(body, safeWidth));
+    if (hiddenText) {
+      const suffix = ` · ${expandHint()}`;
+      const lastIndex = rendered.length - 1;
+      const body = rendered[lastIndex] ?? "";
+      const suffixWidth = visibleWidth(suffix);
+      rendered[lastIndex] =
+        safeWidth > suffixWidth + 4
+          ? `${safeTruncate(body, safeWidth - suffixWidth)}${this.theme.fg("muted", suffix)}`
+          : safeTruncate(this.theme.fg("muted", expandHint()), safeWidth);
+    }
     this.rendered = { width: safeWidth, lines: rendered };
     return rendered;
   }
 
   invalidate(): void {
     this.rendered = null;
-  }
-
-  private renderPrefix(width: number): string {
-    if (!this.title) return "";
-    const arrow = " → ";
-    const title = this.theme.fg(
-      "toolTitle",
-      this.theme.bold ? this.theme.bold(this.title) : this.title,
-    );
-    if (!this.inputPreview) return `${this.theme.fg("dim", "•")} ${title}${arrow}`;
-
-    const maxPrefixWidth = Math.max(12, Math.floor(width * 0.55));
-    const titleWidth = visibleWidth(this.title);
-    const inputWidth = Math.max(0, maxPrefixWidth - titleWidth - 1);
-    if (inputWidth <= 3) {
-      return `${this.theme.fg("dim", "•")} ${this.theme.fg("toolTitle", truncateToWidth(this.title, maxPrefixWidth, "…"))}${arrow}`;
-    }
-
-    const input = truncateToWidth(this.inputPreview, inputWidth, "…");
-    return `${this.theme.fg("dim", "•")} ${title} ${this.theme.fg("muted", input)}${arrow}`;
   }
 }
 
