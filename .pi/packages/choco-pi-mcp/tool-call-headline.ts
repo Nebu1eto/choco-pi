@@ -20,19 +20,36 @@ export interface McpCallTheme {
   bold?: (text: string) => string;
 }
 
+export function formatMcpDisplayName(value: string, capitalize = true): string {
+  const words = value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_.-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!words || !capitalize) return words || value;
+  return `${words[0]!.toUpperCase()}${words.slice(1).toLowerCase()}`;
+}
+
+export function formatMcpDirectToolHeadline(server: string, tool: string): string {
+  return `mcp call ${tool} @ ${server}`;
+}
+
 export function splitMcpCallHeadline(title: string): McpCallHeadline {
   const call = title.match(/^mcp call (\S+)(?: @ (\S+))?$/);
   if (call) {
     const [, target, explicitServer] = call;
     const prefixed = target.match(/^mcp__([^_]+)_(.+)$/);
     const server = explicitServer ?? prefixed?.[1];
-    const tool = prefixed?.[2] ?? target;
-    return server ? { header: `MCP: ${server}`, detail: tool } : { header: "MCP", detail: tool };
+    const tool = formatMcpDisplayName(prefixed?.[2] ?? target);
+    return server
+      ? { header: `MCP: ${formatMcpDisplayName(server, false)}`, detail: tool }
+      : { header: "MCP", detail: tool };
   }
   const action = title.match(/^mcp (\S+)(?: (.+))?$/);
   if (action) {
     const [, verb, rest] = action;
-    return rest ? { header: `MCP: ${verb}`, detail: rest } : { header: `MCP: ${verb}` };
+    const header = `MCP: ${formatMcpDisplayName(verb)}`;
+    return rest ? { header, detail: formatMcpDisplayName(rest, false) } : { header };
   }
   return { header: title };
 }
@@ -50,7 +67,7 @@ export function styleMcpCallLines(lines: string[], theme: McpCallTheme): string[
   const branchLines = [...(detail === undefined ? [] : [detail]), ...rest].flatMap((entry) =>
     entry.split("\n"),
   );
-  const styled = [`${theme.fg("dim", "•")} ${bold(header)}`];
+  const styled = [`${theme.fg("dim", "•")} ${theme.fg("toolTitle", bold(header))}`];
   for (const [index, line] of branchLines.entries()) {
     const prefix = index === 0 ? "  └ " : "    ";
     const body = index === 0 ? theme.fg("accent", line) : theme.fg("muted", line);
@@ -66,5 +83,5 @@ export function styleMcpCallLines(lines: string[], theme: McpCallTheme): string[
  */
 export function formatMcpCallCompactTitle(title: string): string {
   const { header, detail } = splitMcpCallHeadline(title);
-  return detail === undefined ? `• ${header}` : `• ${header} ${detail}`;
+  return detail === undefined ? header : `${header} · ${detail}`;
 }

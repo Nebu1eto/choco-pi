@@ -81,3 +81,20 @@ test("specialized tool renderers keep their identity", { skip: SKIP_WITHOUT_ZENT
 
   assert.equal(decorate(definition), definition);
 });
+
+test(
+  "MCP scripts summarize calls without exposing source code",
+  { skip: SKIP_WITHOUT_ZENTUI },
+  async () => {
+    const rendering = await loadZentuiModule("tool-rendering.js");
+    // SAFETY: the compiled module exports the pure input summarizer.
+    const summarize = rendering.summarizeToolInput as (name: string, value: RuntimeValue) => string;
+    const summary = summarize("mcpScript", {
+      code: "await tools.mcp__linear_list_issues({}); await tools.mcp__notion_notion_search({});",
+      timeoutMs: 5000,
+    });
+
+    assert.equal(summary, "2 MCP calls · linear list issues · notion notion search · 5000ms");
+    assert.doesNotMatch(summary, /await|tools\./);
+  },
+);
