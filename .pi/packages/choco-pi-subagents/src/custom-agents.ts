@@ -46,6 +46,8 @@ interface AgentFrontmatter {
   inherit_skills?: FrontmatterValue;
   model?: FrontmatterValue;
   thinking?: FrontmatterValue;
+  default_model?: FrontmatterValue;
+  default_thinking?: FrontmatterValue;
   max_turns?: FrontmatterValue;
   persist_session?: FrontmatterValue;
   output_transcript?: FrontmatterValue;
@@ -172,6 +174,8 @@ function loadFromDir(
       skills: inheritField(fm.skills ?? fm.inherit_skills),
       model: str(fm.model),
       thinking: parseThinkingLevel(fm.thinking),
+      defaultModel: str(fm.default_model),
+      defaultThinking: parseThinkingLevel(fm.default_thinking),
       maxTurns: nonNegativeInt(fm.max_turns),
       persistSession: fm.persist_session != null ? fm.persist_session === true : undefined,
       outputTranscript: fm.output_transcript != null ? fm.output_transcript !== false : undefined,
