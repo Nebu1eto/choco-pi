@@ -16,6 +16,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, type TUI } from "@earendil-works/pi-tui";
 import type { AgentInvocation, AgentRecord, SubagentType } from "../src/types.ts";
+import { formatAgentMessage } from "../src/messaging.ts";
 import { ConversationViewer } from "../src/ui/conversation-viewer.ts";
 
 initTheme("dark", false);
@@ -159,6 +160,18 @@ test("user and assistant messages render as styled transcript, not raw labels", 
   assert.ok(text.includes("why"), "user text survives");
   assert.ok(text.includes("the build failed"), "user text survives");
   assert.ok(text.includes("tsc"), "assistant text survives");
+  viewer.dispose();
+});
+
+test("agent-message envelopes render with a sender header and no raw markup", () => {
+  const { session } = makeSession([
+    makeUserMessage(formatAgentMessage("planner", "Check the second branch.", "TASK")),
+  ]);
+  const { viewer, rendered } = makeViewer(session);
+  const text = rendered();
+  assert.match(text, /✉ planner \[TASK\]/);
+  assert.match(text, /Check the second branch\./);
+  assert.doesNotMatch(text, /<agent-message/);
   viewer.dispose();
 });
 

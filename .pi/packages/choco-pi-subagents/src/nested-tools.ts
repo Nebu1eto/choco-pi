@@ -17,6 +17,8 @@ import {
 } from "./agent-types.ts";
 import { loadCustomAgents } from "./custom-agents.ts";
 import { isolationParam, resolveAgentInvocationConfig } from "./invocation-config.ts";
+import { SUBAGENT_DEPTH_CEILING } from "./limits.ts";
+import { formatSteerMessage, getAgentIdentity } from "./messaging.ts";
 import { resolveModel } from "./model-resolver.ts";
 import { checkModelScope } from "./model-scope.ts";
 import {
@@ -48,7 +50,7 @@ export function getMaxSubagentDepth(): number {
   return maxSubagentDepth;
 }
 export function setMaxSubagentDepth(n: number): void {
-  maxSubagentDepth = Math.max(0, Math.floor(n));
+  maxSubagentDepth = Math.min(SUBAGENT_DEPTH_CEILING, Math.max(0, Math.floor(n)));
 }
 
 const NESTED_TOOL_NAMES = [
@@ -60,6 +62,7 @@ const NESTED_TOOL_NAMES = [
 
 interface NestedSpawnOptions {
   description: string;
+  name?: string;
   model?: Model<any>;
   maxTurns?: number;
   isolated?: boolean;
@@ -96,6 +99,10 @@ export interface NestedAgentManager {
     onSpawned?: (id: string) => void,
   ): Promise<{ id: string; record: AgentRecord }>;
   getRecord(id: string): AgentRecord | undefined;
+  listAgents(): AgentRecord[];
+  getActiveCount(): number;
+  getScheduledActiveCount(): number;
+  getMaxConcurrent(): number;
   abort(id: string): boolean;
   resume(id: string, prompt: string, signal?: AbortSignal): Promise<AgentRecord | undefined>;
 }
@@ -175,6 +182,12 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
     parameters: Type.Object({
       prompt: Type.String({ description: "Self-contained task for the nested agent." }),
       description: Type.String({ description: "Short 3-5 word task description." }),
+      name: Type.Optional(
+        Type.String({
+          description:
+            "Callers SHOULD name every spawn with a distinct short kebab-case goal label: `role-goal`, one to three dash-joined words (e.g. `implementer-limits-core` or `reviewer-e2e-validation`). It becomes the alias, agent_message/steering address, and fleet label; collisions are globally auto-numbered, and allowed characters are letters, digits, `_`, and `-`.",
+        }),
+      ),
       subagent_type: Type.String({
         description: `Allowed nested agent type. Available: ${availableIn(loadRegistry()).join(", ") || "none"}.`,
       }),
@@ -269,6 +282,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       const childDepth = context.depth + 1;
       const options: NestedSpawnOptions = {
         description: params.description,
+        name: params.name,
         model,
         maxTurns: invocation.maxTurns,
         isolated: invocation.isolated,
@@ -404,7 +418,8 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
   const steerTool = defineTool({
     name: NESTED_TOOL_NAMES[2],
     label: "Steer Nested Agent",
-    description: "Send guidance to a running nested agent owned by this parent.",
+    description:
+      "Send an agent-authored MESSAGE envelope to a running or queued nested agent you own. It interrupts the agent after its current tool execution and only works while the agent is running or queued.",
     parameters: Type.Object({
       agent_id: Type.String(),
       message: Type.String(),
@@ -417,15 +432,20 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           true,
         );
       }
+      const sender = context.manager.getRecord(context.parentAgentId);
+      if (!sender) {
+        return textResult(`Calling agent not found: "${context.parentAgentId}".`, true);
+      }
+      const envelope = formatSteerMessage(getAgentIdentity(sender), params.message);
       // Session not ready yet — queue the steer. The manager flushes pending
       // steers when the session is created (same contract as the top-level tool).
       if (!record.session) {
         if (!record.pendingSteers) record.pendingSteers = [];
-        record.pendingSteers.push(params.message);
+        record.pendingSteers.push(envelope);
         return textResult(`Steering message queued for nested agent ${params.agent_id}.`);
       }
       try {
-        await record.session.steer(params.message);
+        await record.session.steer(envelope);
       } catch (err) {
         return textResult(
           `Failed to steer nested agent: ${err instanceof Error ? err.message : String(err)}`,

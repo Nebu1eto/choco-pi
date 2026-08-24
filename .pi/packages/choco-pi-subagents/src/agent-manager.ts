@@ -15,6 +15,7 @@ import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-wor
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { resumeAgent, runAgent, type MainSessionFork, type ToolActivity } from "./agent-runner.ts";
+import { normalizeMaxConcurrent, schedulingMaxConcurrent } from "./limits.ts";
 import { assignHandle, handleBase } from "./mention.ts";
 import type {
   AgentInvocation,
@@ -105,7 +106,7 @@ interface SpawnArgs {
 interface SpawnOptions {
   description: string;
   /**
-   * Optional memorable name for this instance, becoming a second handle
+   * Optional goal-derived name for this instance, becoming a second handle
    * (`@auth-audit`) alongside the type-derived one. Slugged, not validated —
    * anything unusable degrades via `handleBase` rather than failing the spawn.
    */
@@ -248,7 +249,7 @@ export class AgentManager {
     this.onComplete = onComplete;
     this.onStart = onStart;
     this.onCompact = onCompact;
-    this.maxConcurrent = maxConcurrent;
+    this.maxConcurrent = normalizeMaxConcurrent(maxConcurrent);
     // Cleanup completed agents after 10 minutes (but keep sessions for resume)
     this.cleanupInterval = setInterval(() => this.cleanup(), 60_000);
     this.cleanupInterval.unref();
@@ -256,13 +257,18 @@ export class AgentManager {
 
   /** Update the max concurrent background agents limit. */
   setMaxConcurrent(n: number) {
-    this.maxConcurrent = Math.max(1, n);
+    this.maxConcurrent = normalizeMaxConcurrent(n);
     // Start queued agents if the new limit allows
     this.drainQueue();
   }
 
   getMaxConcurrent(): number {
     return this.maxConcurrent;
+  }
+
+  /** Concrete scheduler bound; configured 0 remains displayable as unlimited. */
+  getSchedulingMaxConcurrent(): number {
+    return schedulingMaxConcurrent(this.maxConcurrent);
   }
 
   /**
@@ -286,15 +292,14 @@ export class AgentManager {
     const record: AgentRecord = {
       id,
       type,
-      // Nested children are filtered out of every top-level surface, so no
-      // handle: nothing can address them and they must not consume a name a
-      // top-level sibling could otherwise take.
+      // Handles are unique across the live tree, so every agent has one flat,
+      // unambiguous address regardless of its ownership branch.
       handle:
-        options.parentAgentId !== undefined
-          ? undefined
-          : // A reclaimed handle is used as-is: it belongs to the conversation this
+        options.parentAgentId === undefined && options.reclaim?.handle
+          ? // A reclaimed handle is used as-is: it belongs to the conversation this
             // spawn is reopening, and re-deriving it would lose the numbering.
-            (options.reclaim?.handle ?? assignHandle(handleBase(type), this.takenHandles())),
+            options.reclaim.handle
+          : assignHandle(handleBase(type), this.takenHandles(options.parentAgentId)),
       description: options.description,
       // Reclaimed here, or filled in below from `name` — in which case it must
       // see the handle this record just took, since both come out of the same
@@ -326,7 +331,10 @@ export class AgentManager {
     // handle — a spawn named after its own type gets `explore-2`, not a
     // duplicate `explore` that would make resolution ambiguous.
     if (record.handle !== undefined && record.alias === undefined && options.name !== undefined) {
-      record.alias = assignHandle(handleBase(options.name), this.takenHandles());
+      record.alias = assignHandle(
+        handleBase(options.name),
+        this.takenHandles(options.parentAgentId),
+      );
     }
 
     const args: SpawnArgs = { pi, ctx, type, prompt, options };
@@ -334,7 +342,7 @@ export class AgentManager {
     if (
       occupiesPoolSlot(record) &&
       !options.bypassQueue &&
-      this.runningBackground >= this.maxConcurrent
+      this.runningBackground >= this.getSchedulingMaxConcurrent()
     ) {
       // Queue it — will be started when a running agent completes
       this.queue.push({ id, start: () => this.startAgent(id, record, args) });
@@ -609,7 +617,7 @@ export class AgentManager {
 
   /** Start queued agents up to the concurrency limit. */
   private drainQueue() {
-    while (this.queue.length > 0 && this.runningBackground < this.maxConcurrent) {
+    while (this.queue.length > 0 && this.runningBackground < this.getSchedulingMaxConcurrent()) {
       const next = this.queue.shift()!;
       const record = this.agents.get(next.id);
       if (!record || record.status !== "queued") continue;
@@ -704,7 +712,7 @@ export class AgentManager {
       record.status = "queued";
 
       const start = () => this.startResume(id, record, prompt, signal, options);
-      if (occupiesPoolSlot(record) && this.runningBackground >= this.maxConcurrent) {
+      if (occupiesPoolSlot(record) && this.runningBackground >= this.getSchedulingMaxConcurrent()) {
         // At the concurrency limit — queue it, drains when a slot frees.
         this.queue.push({ id, start });
       } else {
@@ -890,8 +898,8 @@ export class AgentManager {
     return this.agents.get(id);
   }
 
-  /** Handles already in use, so a fresh spawn can pick an unclaimed one. */
-  private takenHandles(): Set<string> {
+  /** Handles and aliases already in use across the live tree. */
+  private takenHandles(parentAgentId: string | undefined): Set<string> {
     const taken = new Set<string>();
     for (const record of this.agents.values()) {
       if (record.handle) taken.add(record.handle);
@@ -900,9 +908,11 @@ export class AgentManager {
     // Tombstones hold their names too: an evicted `@explore` is still
     // resurrectable, so a later Explore must become `explore-2` rather than
     // shadowing a conversation the user can still reach.
-    for (const entry of this.tombstones.values()) {
-      taken.add(entry.handle);
-      if (entry.alias) taken.add(entry.alias);
+    if (parentAgentId === undefined) {
+      for (const entry of this.tombstones.values()) {
+        taken.add(entry.handle);
+        if (entry.alias) taken.add(entry.alias);
+      }
     }
     return taken;
   }
@@ -966,6 +976,21 @@ export class AgentManager {
     return [...this.agents.values()].sort((a, b) => b.startedAt - a.startedAt);
   }
 
+  /** Active records across the full tree, including ownership-scoped nested agents. */
+  getActiveCount(): number {
+    return [...this.agents.values()].filter(
+      (record) => record.status === "running" || record.status === "queued",
+    ).length;
+  }
+
+  /** Active top-level background records governed by the shared pool cap. */
+  getScheduledActiveCount(): number {
+    return [...this.agents.values()].filter(
+      (record) =>
+        (record.status === "running" || record.status === "queued") && occupiesPoolSlot(record),
+    ).length;
+  }
+
   abort(id: string): boolean {
     const record = this.agents.get(id);
     if (!record) return false;
@@ -1010,7 +1035,7 @@ export class AgentManager {
    * transcript, so the mention would have nothing to continue from.
    */
   private tombstone(record: AgentRecord): void {
-    if (!record.handle || !record.sessionFile) return;
+    if (record.parentAgentId !== undefined || !record.handle || !record.sessionFile) return;
     this.tombstones.set(record.handle, {
       handle: record.handle,
       alias: record.alias,

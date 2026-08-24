@@ -27,10 +27,12 @@ import {
   getReadOnlyMemoryToolNames,
   getToolNamesForType,
 } from "./agent-types.ts";
+import { AGENT_MESSAGE_TOOL_NAME, createAgentMessageTool } from "./agent-message.ts";
 import { runInChildSessionContext } from "./child-context.ts";
 import { buildParentContext, extractText } from "./context.ts";
 import { DEFAULT_AGENTS } from "./default-agents.ts";
 import { detectEnv } from "./env.ts";
+import { registerSubagentReminder } from "./limits.ts";
 import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.ts";
 import {
   createNestedSubagentTools,
@@ -106,10 +108,52 @@ export const SUBAGENT_TOOL_NAMES = {
   GET_RESULT: "get_subagent_result",
   STEER: "steer_subagent",
   STOP: "stop_subagent",
+  MESSAGE: AGENT_MESSAGE_TOOL_NAME,
+  LIMITS: "subagent_limits",
 } as const;
 
 /** Names of tools registered by this extension that subagents must NOT inherit. */
 const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
+
+export function computeChildToolGate({
+  noExtensions,
+  toolNames,
+  disallowedSet,
+  nestedToolNames,
+  alwaysToolNames,
+}: {
+  noExtensions: boolean;
+  toolNames: string[];
+  disallowedSet: Set<string> | undefined;
+  nestedToolNames: Set<string>;
+  alwaysToolNames: Set<string>;
+}) {
+  if (noExtensions) {
+    return {
+      sessionTools: [
+        ...toolNames.filter(
+          (name) => !EXCLUDED_TOOL_NAMES.includes(name) && !disallowedSet?.has(name),
+        ),
+        ...alwaysToolNames,
+        ...[...nestedToolNames].filter((name) => !disallowedSet?.has(name)),
+      ],
+    };
+  }
+
+  const builtinToolNameSet = new Set(toolNames);
+  const denyTools = new Set<string>(
+    EXCLUDED_TOOL_NAMES.filter((name) => !nestedToolNames.has(name) && !alwaysToolNames.has(name)),
+  );
+  for (const name of BUILTIN_TOOL_NAMES) {
+    if (!builtinToolNameSet.has(name)) denyTools.add(name);
+  }
+  if (disallowedSet) {
+    for (const name of disallowedSet) {
+      if (!alwaysToolNames.has(name)) denyTools.add(name);
+    }
+  }
+  return { sessionExcludeTools: [...denyTools] };
+}
 
 /**
  * The lean tool surface choco-pi's `tool-search` extension publishes.
@@ -349,9 +393,19 @@ export function installExtensionToolScope(
     narrowing: Map<string, Set<string>>;
     /** Opt-in nested-delegation tool names to keep active despite the EXCLUDED strip. */
     nestedToolNames: Set<string>;
+    /** Tree messaging is always available, regardless of depth or frontmatter tool denies. */
+    alwaysToolNames: Set<string>;
   },
 ): void {
-  const { loader, toolNames, disallowedSet, extNames, narrowing, nestedToolNames } = ctx;
+  const {
+    loader,
+    toolNames,
+    disallowedSet,
+    extNames,
+    narrowing,
+    nestedToolNames,
+    alwaysToolNames,
+  } = ctx;
 
   // Extension tools this agent earned through `tool_search`. pi grants them by
   // reporting `addedToolNames` to the calling session, so they show up in the
@@ -391,6 +445,7 @@ export function installExtensionToolScope(
     for (const name of nestedToolNames) {
       if (!disallowedSet?.has(name)) keep.add(name);
     }
+    for (const name of alwaysToolNames) keep.add(name);
     return keep;
   };
 
@@ -656,11 +711,10 @@ export interface RunOptions {
    */
   resumeSessionFile?: string;
   /**
-   * True when another agent spawned this one. Only top-level agents get a
-   * handle, so only they can be reopened by name — which is the whole reason
-   * `rememberAgents` persists a session at all. A nested run's transcript would
-   * be unreachable by anything, so it stays in memory unless its own
-   * frontmatter asks otherwise.
+   * True when another agent spawned this one. Nested handles form messaging
+   * paths but stay outside prompt mentions and persisted resume/tombstone
+   * surfaces, so nested runs remain in memory unless their own frontmatter asks
+   * otherwise.
    */
   nested?: boolean;
   /** Override working directory (e.g. for worktree isolation). */
@@ -836,6 +890,16 @@ export async function runAgent(
   // Filesystem work happens in effectiveCwd; config discovery in configCwd.
   // They differ only for SpawnOptions.cwd spawns (config stays with the parent).
   const configCwd = options.configCwd ?? effectiveCwd;
+  const effectiveMaxDepth = options.nestedRuntime?.maxSubagentDepth ?? getMaxSubagentDepth();
+  const subagentReminder = options.nestedRuntime
+    ? {
+        getActiveCount: () => options.nestedRuntime!.manager.getActiveCount(),
+        getScheduledActiveCount: () => options.nestedRuntime!.manager.getScheduledActiveCount(),
+        getMaxConcurrent: () => options.nestedRuntime!.manager.getMaxConcurrent(),
+        getMaxSubagentDepth: () => effectiveMaxDepth,
+        depth: options.nestedRuntime.depth,
+      }
+    : undefined;
 
   const env = await detectEnv(options.pi, effectiveCwd);
 
@@ -989,6 +1053,15 @@ export async function runAgent(
     noExtensions,
     additionalExtensionPaths,
     extensionsOverride,
+    extensionFactories: subagentReminder
+      ? [
+          {
+            name: "subagent-concurrency-reminder",
+            hidden: true,
+            factory: (childPi) => registerSubagentReminder(childPi, subagentReminder),
+          },
+        ]
+      : undefined,
     noSkills,
     noPromptTemplates: true,
     noThemes: true,
@@ -1086,11 +1159,23 @@ export async function runAgent(
     ? new Set(agentConfig.disallowedTools)
     : undefined;
 
+  // Messaging belongs to every child session, including isolated/read-only and
+  // depth-capped leaves. It coordinates existing work and never grants spawning.
+  const messagingTools = options.nestedRuntime
+    ? [
+        createAgentMessageTool({
+          manager: options.nestedRuntime.manager,
+          pi: options.pi,
+          senderAgentId: options.nestedRuntime.parentAgentId,
+        }),
+      ]
+    : [];
+  const alwaysToolNames = new Set(messagingTools.map((tool) => tool.name));
+
   // Nested delegation tools (opt-in, ownership-scoped). Empty unless the agent
   // set `allowed_subagents` and a nestedRuntime was provided — and never when
   // isolated. Their names collide with EXCLUDED_TOOL_NAMES by design, so the
   // scoping below re-admits them explicitly (registry deny + active-set narrow).
-  const effectiveMaxDepth = options.nestedRuntime?.maxSubagentDepth ?? getMaxSubagentDepth();
   // At (or past) the cap this agent can never spawn, so it can never own a child
   // to fetch from or steer either — inject nothing rather than three tools whose
   // every call is an error. This is also what makes `maxSubagentDepth` 0/1 mean
@@ -1112,6 +1197,7 @@ export async function runAgent(
         })
       : [];
   const nestedToolNames = new Set(nestedTools.map((tool) => tool.name));
+  const childTools = [...messagingTools, ...nestedTools];
 
   // ─── Tool scoping ───────────────────────────────────────────────────────
   //
@@ -1140,31 +1226,16 @@ export async function runAgent(
   //
   // `noExtensions`/`isolated` keeps the historical static allowlist: nothing
   // async can appear there, and a hard registry gate is the correct boundary.
-  const builtinToolNameSet = new Set(toolNames);
-
-  let sessionTools: string[] | undefined;
-  let sessionExcludeTools: string[] | undefined;
-  if (noExtensions) {
-    // Strict allowlist: built-ins the agent asked for, plus any opt-in nested
-    // tools (whose names would otherwise be dropped as EXCLUDED_TOOL_NAMES).
-    sessionTools = [
-      ...toolNames.filter((t) => !EXCLUDED_TOOL_NAMES.includes(t) && !disallowedSet?.has(t)),
-      ...[...nestedToolNames].filter((t) => !disallowedSet?.has(t)),
-    ];
-  } else {
-    // Deny the orchestration tools EXCEPT the nested ones this agent opted into —
-    // those are injected as customTools and must survive the registry gate.
-    const denyTools = new Set<string>(EXCLUDED_TOOL_NAMES.filter((t) => !nestedToolNames.has(t)));
-    // Keep only the built-ins the agent asked for — deny the rest.
-    for (const name of BUILTIN_TOOL_NAMES) {
-      if (!builtinToolNameSet.has(name)) denyTools.add(name);
-    }
-    if (disallowedSet) {
-      // disallowed_tools wins even over an opt-in nested tool of the same name.
-      for (const name of disallowedSet) denyTools.add(name);
-    }
-    sessionExcludeTools = [...denyTools];
-  }
+  // Strict no-extension sessions use a static allowlist. Extension-enabled
+  // sessions use a registry denylist so asynchronously registered tools can
+  // still arrive; always-on messaging must survive either gate.
+  const { sessionTools, sessionExcludeTools } = computeChildToolGate({
+    noExtensions,
+    toolNames,
+    disallowedSet,
+    nestedToolNames,
+    alwaysToolNames,
+  });
 
   const settingsManager = SettingsManager.create(configCwd, agentDir);
   const configuredSessionDir = resolveConfiguredSessionDir(agentConfig?.sessionDir, effectiveCwd);
@@ -1215,7 +1286,7 @@ export async function runAgent(
     ...(parentModelRuntime !== undefined && { modelRuntime: parentModelRuntime as never }),
     model,
     tools: sessionTools,
-    customTools: nestedTools,
+    customTools: childTools,
     resourceLoader: loader,
   };
   if (sessionExcludeTools) {
@@ -1259,6 +1330,7 @@ export async function runAgent(
       extNames,
       narrowing,
       nestedToolNames,
+      alwaysToolNames,
     });
   }
 

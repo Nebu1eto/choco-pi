@@ -8,9 +8,11 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { NO_FALLBACK } from "./agent-types.ts";
+import { MAX_CONCURRENT_SANITY_CAP, SUBAGENT_DEPTH_CEILING } from "./limits.ts";
 import type { AgentMentionMode, JoinMode, WidgetMode } from "./types.ts";
 
 export interface SubagentsSettings {
+  /** Maximum concurrent background agents. 0 = unlimited, with a sanity cap of 1024. */
   maxConcurrent?: number;
   /**
    * 0 = unlimited — the extension's single source of truth for that convention:
@@ -218,10 +220,8 @@ export type SettingsEmit = (event: string, payload: SettingsEventPayload) => voi
 // Sanity ceilings — prevent hand-edited configs from asking for values that
 // make no operational sense (e.g. 1e6 concurrent subagents). Permissive enough
 // that any realistic power-user setting passes through.
-const MAX_CONCURRENT_CEILING = 1024;
 const MAX_TURNS_CEILING = 10_000;
 const GRACE_TURNS_CEILING = 1_000;
-const SUBAGENT_DEPTH_CEILING = 16;
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -277,10 +277,10 @@ function parseAgentMentionMode(value: JsonValue | undefined): AgentMentionMode |
 }
 
 /** Drop fields that don't match the expected shape. Silent — garbage becomes absent. */
-function sanitize(raw: JsonValue): SubagentsSettings {
+export function sanitizeSettings(raw: JsonValue): SubagentsSettings {
   if (!isJsonObject(raw)) return {};
   const out: SubagentsSettings = {};
-  const maxConcurrent = boundedInteger(raw.maxConcurrent, 1, MAX_CONCURRENT_CEILING);
+  const maxConcurrent = boundedInteger(raw.maxConcurrent, 0, MAX_CONCURRENT_SANITY_CAP);
   if (maxConcurrent !== undefined) out.maxConcurrent = maxConcurrent;
   const defaultMaxTurns = boundedInteger(raw.defaultMaxTurns, 0, MAX_TURNS_CEILING);
   if (defaultMaxTurns !== undefined) out.defaultMaxTurns = defaultMaxTurns;
@@ -342,7 +342,7 @@ function projectPath(cwd: string): string {
 function readSettingsFile(path: string): SubagentsSettings {
   if (!existsSync(path)) return {};
   try {
-    return sanitize(JSON.parse(readFileSync(path, "utf-8")));
+    return sanitizeSettings(JSON.parse(readFileSync(path, "utf-8")));
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.warn(`[choco-pi-subagents] Ignoring malformed settings at ${path}: ${reason}`);

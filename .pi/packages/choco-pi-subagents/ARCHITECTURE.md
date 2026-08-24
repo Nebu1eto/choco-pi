@@ -11,8 +11,8 @@ focus-mode, side-conversation and dynamic-workflow designs so future changes can
 compose with their UI ownership, scheduling and delivery rules.
 
 Current choco-pi additions over the vendored core are fullscreen subagent focus,
-dismissible read-only `/btw` conversations, and root-orchestrated dynamic DAG
-workflows with parallel subagents and aggregate results.
+dismissible read-only `/btw` conversations, root-orchestrated dynamic DAG
+workflows, runtime limits, and tree-wide agent messaging.
 
 ## Load path
 
@@ -32,15 +32,22 @@ this extension out must stay completely silent.
 
 ### Orchestration core
 
-| Module                   | Role                                                                                                                                                                                                                                       |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `index.ts`               | Extension factory: tool registration (`Agent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`), the `/agents` command tree, settings menus, the `input` mention hook, batch grouping, and every lifecycle handler.               |
-| `agent-manager.ts`       | Record lifecycle: spawn, queue, concurrency, abort, steer, resume, completion callbacks, handle allocation and tombstones, `maxConcurrent` scheduling. Workflow steps carry aggregate/step ids but otherwise use this lifecycle unchanged. |
-| `workflow.ts`            | TypeBox workflow definition, graph/type/reference validation, bounded prompt rendering, mutable DAG scheduler, failure policy, cancellation and aggregate results. The runner interface keeps scheduling tests independent of live agents. |
-| `agent-runner.ts`        | Builds and drives the child `AgentSession`: tool allow/denylists, `ext:` narrowing, extension filtering, model runtime inheritance, turn limits, final-status classification.                                                              |
-| `agent-types.ts`         | The registry of spawnable types: defaults overlaid by user agents, `enabled` filtering, `resolveType`/`resolveSpawnType`, fallback policy.                                                                                                 |
-| `nested-tools.ts`        | The scoped `Agent`/`get_subagent_result`/`steer_subagent`/`stop_subagent` a subagent receives when its frontmatter sets `allowed_subagents`, plus the depth cap.                                                                           |
-| `cross-extension-rpc.ts` | `subagents:rpc:ping` / `:spawn` / `:stop` over the `pi.events` bus, with scoped reply channels.                                                                                                                                            |
+| Module                   | Role                                                                                                                                                                                                                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`               | Extension factory: root tool registration (`Agent`, result/steer/stop, `agent_message`, workflows and limits), the `/agents` command tree, settings menus, the `input` mention hook, batch grouping, and lifecycle handlers.                               |
+| `agent-manager.ts`       | Record lifecycle: spawn, queue, concurrency, abort, steer, resume, completion callbacks, globally unique handle allocation and tombstones, `maxConcurrent` scheduling. Workflow steps carry aggregate/step ids but otherwise use this lifecycle unchanged. |
+| `workflow.ts`            | TypeBox workflow definition, graph/type/reference validation, bounded prompt rendering, mutable DAG scheduler, failure policy, cancellation and aggregate results. The runner interface keeps scheduling tests independent of live agents.                 |
+| `agent-runner.ts`        | Builds and drives the child `AgentSession`: tool allow/denylists, always-on child messaging, `ext:` narrowing, extension filtering, model runtime inheritance, turn limits, final-status classification.                                                   |
+| `agent-types.ts`         | The registry of spawnable types: defaults overlaid by user agents, `enabled` filtering, `resolveType`/`resolveSpawnType`, fallback policy.                                                                                                                 |
+| `nested-tools.ts`        | The scoped `Agent`/`get_subagent_result`/`steer_subagent`/`stop_subagent` a subagent receives when its frontmatter sets `allowed_subagents`, plus the depth cap.                                                                                           |
+| `limits.ts`              | Pure runtime-limit normalization and formatting, the root-only `subagent_limits` tool, and root/nested per-context concurrency reminders.                                                                                                                  |
+| `messaging.ts`           | Pure tree-path computation, whole-tree recipient resolution, agent-message envelope formatting/parsing and delivery classification.                                                                                                                        |
+| `agent-message.ts`       | Root/nested `agent_message` tool delivery through child sessions, `pendingSteers`, or the root follow-up queue; emits `subagents:message`.                                                                                                                 |
+| `cross-extension-rpc.ts` | `subagents:rpc:ping` / `:spawn` / `:stop` over the `pi.events` bus, with scoped reply channels.                                                                                                                                                            |
+
+`subagents:message` is a cross-extension event with `{ from, to, toId, type,
+queued }`; paths are canonical tree identities and `toId` is undefined for
+`/root`.
 
 ### Configuration
 
@@ -73,13 +80,15 @@ this extension out must stay completely silent.
 
 ### UI
 
-| Module                                                          | Role                                                                                                                                                                                                                     |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ui/agent-widget.ts`                                            | The `aboveEditor` widget and the `subagents` status-bar key. `WidgetMode` (`all`/`background`/`off`) is read live at render.                                                                                             |
-| `ui/fleet-list.ts`                                              | The `belowEditor` FleetView. All key handling goes through `ui.onTerminalInput`, gated on pi's prompt editor being the focused component.                                                                                |
-| `ui/conversation-viewer.ts`                                     | The live conversation overlay: scroll, stop (two-press), inline steering/reply composer, focus handoff. Messages render through the main transcript's message components (user/assistant/tool/bash), shared with zentui. |
-| `ui/side-conversation.ts`                                       | BTW launch defaults, dismissible overlay ownership, continuation, and notice-only completion delivery.                                                                                                                   |
-| `ui/schedule-menu.ts`, `ui/select-item.ts`, `ui/viewer-keys.ts` | Scheduled-job menu, list row formatting, keybinding resolution through `tui.select.*`.                                                                                                                                   |
+| Module                                                          | Role                                                                                                                                                                                                   |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ui/agent-tree.ts`                                              | Pure parent-first tree ordering shared by FleetView and the widget; siblings retain `startedAt` order and orphan records remain visible.                                                               |
+| `ui/agent-widget.ts`                                            | The `aboveEditor` whole-tree widget and the `subagents` status-bar key. The status text is the tree-wide `active / cap` summary; `WidgetMode` (`all`/`background`/`off`) is read live at render.       |
+| `ui/fleet-list.ts`                                              | The `belowEditor` parent/child FleetView. Nested rows retain the ordinary focus/view/stop actions. All keys go through `ui.onTerminalInput`, gated on pi's prompt editor being focused.                |
+| `ui/conversation-viewer.ts`                                     | The live conversation overlay: scroll, stop, steering/reply and focus handoff. Ordinary messages use the main transcript components; agent-message envelopes render as a sender/type header plus body. |
+| `ui/notification-render.ts`                                     | Pure completion and compact `subagents:message` notification formatters, independent of host/TUI side effects.                                                                                         |
+| `ui/side-conversation.ts`                                       | BTW launch defaults, dismissible overlay ownership, continuation, and notice-only completion delivery.                                                                                                 |
+| `ui/schedule-menu.ts`, `ui/select-item.ts`, `ui/viewer-keys.ts` | Scheduled-job menu, list row formatting, keybinding resolution through `tui.select.*`.                                                                                                                 |
 
 ## The choco-pi role convention is not an upstream feature
 
@@ -264,11 +273,11 @@ cleanup.
 
 The root extension registers four workflow tools beside `Agent`:
 `workflow_run`, `workflow_update`, `get_workflow_result` and `workflow_cancel`.
-Child sessions return before registering extension tools, and their scoped
-nested tool set remains exactly `Agent`, `get_subagent_result`,
-`steer_subagent` and `stop_subagent`. A workflow step therefore cannot launch
-another workflow; the existing child-session/depth boundary remains the
-privilege boundary.
+Child sessions return before registering root extension tools. They always get
+`agent_message`; below the depth cap, eligible agents also receive the scoped
+`Agent`, `get_subagent_result`, `steer_subagent` and `stop_subagent` set. A
+workflow step therefore cannot launch another workflow; the existing child-
+session/depth boundary remains the privilege boundary.
 
 ### Definition and validation
 
@@ -361,7 +370,8 @@ and its consumed marker together.
   constructor parameter properties). Relative imports use explicit `.ts`
   extensions. Both are what let `node --test` import this package directly; new
   code must keep them true.
-- Nested agent records stay internal to their parent: absent from top-level
-  tools, lifecycle events and the agent UI, and stopped when the parent ends.
+- Nested agent records stay hidden from top-level lifecycle events, prompt
+  mentions and the agent UI, but are addressable by path through `agent_message`;
+  they are stopped when the parent ends.
 - A run that never started fails the tool call; a run that started and failed
   settles on its record. Do not collapse the two.
