@@ -233,6 +233,14 @@ markdown markers, inline tool results, bash blocks, streaming-tail updates,
 first-open history hydration and invalidate idempotence;
 `tests/side-conversation.test.ts` and `tests/focus-mode.test.ts` initialize the
 theme because the transcript components read it.
+theme because the transcript components read it. Streaming stays interactive
+under pi-tui's ~60 fps paint cadence through three levers: the tail re-renders
+at most every 100 ms (TAIL_RENDER_INTERVAL_MS) and reuses its lines between
+budget ticks; the tail's markdown theme drops syntax highlighting while it
+streams (the settle-time rebuild restores it); and the joined transcript lines
+are cached and only rebuilt on session events, budget ticks or width changes.
+Component render() of cached messages stays out of the steady-state frame path.
+
 
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 

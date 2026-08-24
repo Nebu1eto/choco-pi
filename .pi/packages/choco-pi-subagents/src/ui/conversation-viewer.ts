@@ -18,6 +18,7 @@ import {
   type Component,
   Input,
   matchesKey,
+  type MarkdownTheme,
   type TUI,
   truncateToWidth,
   visibleWidth,
@@ -45,6 +46,14 @@ const CHROME_LINES_BASE = 6;
 const MIN_VIEWPORT = 3;
 /** Height ceiling shared by the overlay's `maxHeight` and the viewer's internal viewport cap. */
 export const VIEWPORT_HEIGHT_PCT = 70;
+
+/**
+ * Frame budget for the streaming tail. pi-tui paints up to ~60 fps; re-parsing
+ * the growing tail's markdown on every streamed token is the per-frame cost
+ * that stalls the whole TUI, so the tail re-renders at ~10 fps and keeps its
+ * cached lines in between. Settling always gets one final full render.
+ */
+const TAIL_RENDER_INTERVAL_MS = 100;
 
 interface HostBashExecutionTrace {
   role?: any;
@@ -133,6 +142,27 @@ export class ConversationViewer implements Component {
   /** toolCallId -> owning assistant message, for line-cache invalidation. */
   private toolOwners = new Map<string, object>();
 
+  /** Wall-clock stamp of the last streaming-tail render, for throttling. */
+  private lastTailRenderAt = 0;
+  /**
+   * Messages whose head component was built with the streaming-fast markdown
+   * theme (no syntax highlighting). Rebuilt at full fidelity once they are no
+   * longer the streaming tail.
+   */
+  private fastAssistantHeads = new Set<object>();
+
+  /**
+   * Whole-transcript line cache. buildContentLines runs on every TUI frame
+   * (up to ~60 fps during streaming), so between session events the joined
+   * array, block spacing and the empty-state are reused; a session event,
+   * a throttle tick or a width change marks it dirty.
+   */
+  private contentCache: { width: number; lines: string[] } | undefined;
+  private contentDirty = true;
+
+  /** Last seen running state, so settle transitions invalidate the cache. */
+  private wasRunning: boolean;
+
   // choco-pi fork: parameter properties desugared to explicit fields (see the
   // note in `group-join.ts`) so this file stays erasable-syntax-only. The
   // assignments below run before the original constructor body, exactly where
@@ -178,9 +208,11 @@ export class ConversationViewer implements Component {
     this.allowReplyWhenFinished = options.allowReplyWhenFinished === true;
     this.replyLabel = options.replyLabel ?? "steer";
 
+    this.wasRunning = this.record.status === "running";
     this.keys = createViewerKeys(keybindings);
     this.unsubscribe = session.subscribe(() => {
       if (this.closed) return;
+      this.contentDirty = true;
       this.tui.requestRender();
     });
   }
@@ -432,6 +464,10 @@ export class ConversationViewer implements Component {
     this.toolComponents.clear();
     this.settledTools.clear();
     this.toolOwners.clear();
+    this.lastTailRenderAt = 0;
+    this.fastAssistantHeads.clear();
+    this.contentCache = undefined;
+    this.contentDirty = true;
   }
 
   dispose(): void {
@@ -467,23 +503,53 @@ export class ConversationViewer implements Component {
   private buildContentLines(width: number): string[] {
     if (width <= 0) return [];
 
+    const running = this.record.status === "running";
+    if (running !== this.wasRunning) {
+      // Settling flips the tail out of streaming mode and rebuilds it at full
+      // fidelity; that transition alone must refresh the cached lines.
+      this.wasRunning = running;
+      this.contentDirty = true;
+    }
+
+    const now = Date.now();
+    const streaming = running;
+    const renderTail =
+      streaming && now - this.lastTailRenderAt >= TAIL_RENDER_INTERVAL_MS;
+    if (renderTail) this.contentDirty = true;
+
+    if (!this.contentDirty && this.contentCache && this.contentCache.width === width) {
+      return this.contentCache.lines;
+    }
+    this.contentDirty = false;
+
     const th = this.theme;
     const messages = this.session.messages;
     const lines: string[] = [];
 
     if (messages.length === 0) {
       lines.push(th.fg("dim", "(waiting for first message...)"));
+      this.contentCache = { width, lines };
       return lines;
     }
 
-    this.syncComponents();
-    const streaming = this.record.status === "running";
+    this.syncComponents(renderTail);
 
     messages.forEach((msg, index) => {
       const isTail = streaming && index === messages.length - 1;
       let block: string[];
       const cached = this.messageLineCache.get(msg);
-      if (!isTail && cached && cached.width === width) {
+      const reusable = !!cached && cached.width === width;
+      if (isTail) {
+        // Inside the frame budget the tail keeps its last lines; a budget tick
+        // or a width change re-renders it. Either way the lines get cached.
+        if (renderTail || !reusable) {
+          block = this.renderMessage(msg, width);
+          this.messageLineCache.set(msg, { width, lines: block });
+          this.lastTailRenderAt = now;
+        } else {
+          block = cached.lines;
+        }
+      } else if (reusable) {
         block = cached.lines;
       } else {
         block = this.renderMessage(msg, width);
@@ -503,7 +569,10 @@ export class ConversationViewer implements Component {
       lines.push(truncateToWidth(th.fg("accent", "▍ ") + th.fg("dim", act), width));
     }
 
-    return lines.map((l) => truncateToWidth(l, width));
+    // Rows are truncated at paint time; clipping every line here would be
+    // redundant per-frame work on the whole transcript.
+    this.contentCache = { width, lines };
+    return lines;
   }
 
   /**
@@ -512,7 +581,7 @@ export class ConversationViewer implements Component {
    * tail and freshly landed tool results do work. Runs before any rendering,
    * so a result arriving in the same frame as its call still settles first.
    */
-  private syncComponents(): void {
+  private syncComponents(renderTail: boolean): void {
     const messages = this.session.messages;
     const streaming = this.record.status === "running";
     for (let i = 0; i < messages.length; i++) {
@@ -532,38 +601,50 @@ export class ConversationViewer implements Component {
 
       if (msg.role === "assistant") {
         let components = this.messageComponents.get(msg);
-        if (!components) {
+        const wantFastTheme = isTail;
+        if (!components || this.fastAssistantHeads.has(msg) !== wantFastTheme) {
+          // (Re)build the head. While the message is the streaming tail it
+          // uses a theme without syntax highlighting — re-highlighting every
+          // code block on each tick is the streaming hot path; once the
+          // message stops being the tail it is rebuilt highlighted, exactly
+          // like the main transcript's final render.
           components = [
             new AssistantMessageComponent(
               msg,
               false,
-              getMarkdownTheme(),
+              this.markdownThemeFor(wantFastTheme),
               undefined,
               1,
               this.markdownTransformers(),
             ),
           ];
+          if (wantFastTheme) this.fastAssistantHeads.add(msg);
+          else this.fastAssistantHeads.delete(msg);
+          this.messageLineCache.delete(msg);
           for (const content of msg.content) {
             if (content.type !== "toolCall") continue;
-            const tool = new ToolExecutionComponent(
-              content.name,
-              content.id,
-              content.arguments,
-              undefined,
-              this.toolDefinition(content.name),
-              this.tui,
-              this.cwd(),
-            );
-            tool.setArgsComplete();
-            tool.markExecutionStarted();
+            let tool = this.toolComponents.get(content.id);
+            if (!tool) {
+              tool = new ToolExecutionComponent(
+                content.name,
+                content.id,
+                content.arguments,
+                undefined,
+                this.toolDefinition(content.name),
+                this.tui,
+                this.cwd(),
+              );
+              tool.setArgsComplete();
+              tool.markExecutionStarted();
+              this.toolComponents.set(content.id, tool);
+              this.toolOwners.set(content.id, msg);
+            }
             components.push(tool);
-            this.toolComponents.set(content.id, tool);
-            this.toolOwners.set(content.id, msg);
           }
           this.messageComponents.set(msg, components);
         }
         const head = components[0];
-        if (isTail && head instanceof AssistantMessageComponent) {
+        if (isTail && renderTail && head instanceof AssistantMessageComponent) {
           head.updateContent(msg, true);
         }
         // A run that died mid-tool settles the call with its error instead of
@@ -604,8 +685,8 @@ export class ConversationViewer implements Component {
       const bash = parseBashExecution(msg);
       if (!bash) continue;
       // A streaming bash message keeps mutating in place; rebuild it each
-      // frame. Settled ones keep their component (and its rendered cache).
-      if (isTail || !this.messageComponents.has(msg)) {
+      // budget tick. Settled ones keep their component (and its cache).
+      if (!this.messageComponents.has(msg) || (isTail && renderTail)) {
         const component = new BashExecutionComponent(
           bash.command,
           this.tui,
@@ -644,6 +725,21 @@ export class ConversationViewer implements Component {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Markdown theme for an assistant component. The streaming variant skips
+   * syntax highlighting: cli-highlight re-runs on every code block for each
+   * streaming tick, dominating the tail's per-frame cost. The settle-time
+   * rebuild restores full highlighting.
+   */
+  private markdownThemeFor(streamingTail: boolean): MarkdownTheme {
+    const theme = getMarkdownTheme();
+    if (!streamingTail) return theme;
+    return {
+      ...theme,
+      highlightCode: (code: string) => code.split("\n"),
+    };
   }
 
   private cwd(): string {
