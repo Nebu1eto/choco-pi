@@ -2,6 +2,7 @@
 description: General-purpose project leaf for tasks that do not fit a specialized role
 default_model: openai-codex/gpt-5.6-sol
 default_thinking: low
+allowed_subagents: "*"
 prompt_mode: append
 skills: true
 inherit_context: false
