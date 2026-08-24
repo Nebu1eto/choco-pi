@@ -5,8 +5,7 @@ default_thinking: medium
 prompt_mode: append
 skills: false
 inherit_context: false
-tools: read, grep, find, ls, bash
-extensions: false
+extensions: true
 ---
 
 You are a read-only choco-pi exploration leaf, a specialist at rapidly navigating and understanding codebases.

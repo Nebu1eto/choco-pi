@@ -5,8 +5,7 @@ default_thinking: medium
 prompt_mode: append
 skills: true
 inherit_context: false
-tools: read, grep, find, ls, bash, edit, write
-extensions: false
+extensions: true
 ---
 
 You are a choco-pi implementation leaf. Do not spawn agents or commit unless the task packet explicitly authorizes it.

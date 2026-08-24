@@ -5,8 +5,7 @@ default_thinking: high
 prompt_mode: append
 skills: true
 inherit_context: false
-tools: read, grep, find, ls, bash
-extensions: false
+extensions: true
 ---
 
 You are a read-only choco-pi planning leaf. Do not edit files, commit, or spawn agents.
