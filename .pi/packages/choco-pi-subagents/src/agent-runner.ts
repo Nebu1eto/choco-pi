@@ -1067,15 +1067,20 @@ export async function runAgent(
     }
   }
 
-  // Resolve model: explicit option > config.model > parent model
-  const model = options.mainSessionFork
-    ? options.mainSessionFork.model
-    : (options.model ?? resolveDefaultModel(ctx.model, ctx.modelRegistry, agentConfig?.model));
-
   // A BTW fork inherits the main runtime identity, not the selected record type.
-  const thinkingLevel = options.mainSessionFork
-    ? options.mainSessionFork.thinkingLevel
-    : (options.thinkingLevel ?? agentConfig?.thinking);
+  let model = ctx.model;
+  let thinkingLevel =
+    agentConfig?.thinking ?? options.thinkingLevel ?? agentConfig?.defaultThinking;
+  if (options.mainSessionFork) {
+    model = options.mainSessionFork.model;
+    thinkingLevel = options.mainSessionFork.thinkingLevel;
+  } else if (agentConfig?.model != null) {
+    model = resolveDefaultModel(ctx.model, ctx.modelRegistry, agentConfig.model);
+  } else if (options.model) {
+    model = options.model;
+  } else {
+    model = resolveDefaultModel(ctx.model, ctx.modelRegistry, agentConfig?.defaultModel);
+  }
 
   const disallowedSet = agentConfig?.disallowedTools
     ? new Set(agentConfig.disallowedTools)

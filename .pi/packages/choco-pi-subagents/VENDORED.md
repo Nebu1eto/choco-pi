@@ -172,6 +172,18 @@ workflow runner observes the manager's terminal record and settles the step as
 an error, preserving scheduler state and failure policy. `src/stop-subagent.ts`
 holds the pure decision logic; `tests/stop-subagent.test.ts` pins every outcome.
 
+### Role model and effort defaults
+
+The fork parses `default_model:` and `default_thinking:` from agent frontmatter
+into `AgentConfig.defaultModel` / `.defaultThinking` and resolves model and
+effort as frontmatter pin, then caller parameter, then role default, then the
+parent runtime. Upstream has no such tier: an omitted `model` fell straight
+through to the parent session's model, so an orchestrator on one provider
+produced children on that provider regardless of the role's declared
+preference. An explicit caller value still wins, which preserves provider
+fallback on overload. `tests/subagent-config.test.ts` pins the parsed fields and
+the resolution order.
+
 ### Background-by-default spawn guidance
 
 Upstream's `Agent` tool prose named the foreground the recommended mode ("use

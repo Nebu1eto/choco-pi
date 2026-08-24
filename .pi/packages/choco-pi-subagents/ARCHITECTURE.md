@@ -84,21 +84,30 @@ this extension out must stay completely silent.
 ## The choco-pi role convention is not an upstream feature
 
 `.pi/agents/*.md` in this repository carry `default_model:` and
-`default_thinking:`. **Upstream parses neither.** `custom-agents.ts` reads
-`model:` and `thinking:`, and unknown frontmatter keys are ignored.
+`default_thinking:`. **Upstream parses neither**; this fork does, as
+non-pinning defaults.
 
-That is deliberate and load-bearing: because the role file leaves
-`AgentConfig.model` and `.thinking` undefined, `resolveAgentInvocationConfig`
-lets the caller's spawn parameters win (`modelFromParams: true`). The
-`default_*` keys are read by the **orchestrating agent** as documented baselines
-it may adjust per unit, never by this extension. A later phase that wants the
-extension itself to honor them must add the fields in `custom-agents.ts` _and_
-decide the precedence question the current split avoids — pinning `model:`
-there would make every spawn override inert.
+`custom-agents.ts` maps them to `AgentConfig.defaultModel` / `.defaultThinking`,
+kept distinct from `model:` / `thinking:` so the precedence stays four-tiered in
+`resolveAgentInvocationConfig` (and mirrored in `runAgent` for direct runner
+callers):
 
-`tests/subagent-config.test.ts` pins this: `implementer.model === undefined`,
-`implementer.thinking === undefined`, and a caller-supplied model surviving
-resolution.
+1. `model:` / `thinking:` in frontmatter — a hard pin that outranks the caller.
+2. the caller's spawn parameter — how an orchestrator moves a unit off an
+   overloaded provider; it still beats the role default, which is what keeps
+   that fallback usable.
+3. `default_model:` / `default_thinking:` — the role's own preference.
+4. the parent session's model runtime, last.
+
+Tier 3 is why an omitted `model` no longer inherits the orchestrator's provider:
+before it existed, an Anthropic orchestrator silently produced Anthropic
+children whatever the role declared. Pinning `model:` instead of adding tier 3
+would have made every spawn override inert, which is the trap this split avoids.
+
+`tests/subagent-config.test.ts` pins it: `implementer.model === undefined` and
+`implementer.thinking === undefined` (no pin), the parsed `defaultModel` /
+`defaultThinking`, a caller-supplied model surviving resolution, and the
+no-parameter case resolving to the role default.
 
 ## Seam A — focused agent fullscreen takeover
 

@@ -161,7 +161,7 @@ Built-in package roles are disabled through [`.pi/subagents.json`](.pi/subagents
 | `reviewer`    | Fresh-context evidence-based review             |           No |
 | `handoff`     | Concise report of verified state                |           No |
 
-Use `/agents` to inspect roles, running agents, transcripts, schedules, and operational defaults. An `Agent` call can select `model` and `thinking` when the role does not pin them. Resolution follows explicit invocation, role configuration, then parent/runtime defaults.
+Use `/agents` to inspect roles, running agents, transcripts, schedules, and operational defaults. A role's `default_model` and `default_thinking` apply on their own, so a spawn that omits `model` and `thinking` runs the role on its declared preference rather than inheriting the orchestrator's. An `Agent` call can still select both when the role does not pin them, and an explicit value wins — that is how the orchestrator moves a unit off an overloaded provider. Resolution order is frontmatter `model:`/`thinking:` pin, then the explicit invocation parameter, then the role's `default_*`, then parent/runtime defaults.
 
 Use `steer_subagent` to redirect a running agent after its current tool, `get_subagent_result` to retrieve a background result, and an `Agent` call with `resume: <id>` for a completed agent's same-unit follow-up. New calls start with fresh conversation context; each custom role appends its instructions to the current parent system prompt and inherits skills.
 
