@@ -1,4 +1,4 @@
-import { matchesKey, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { AgentRecord } from "../types.ts";
@@ -34,6 +34,7 @@ export type FocusUICtx = {
 
 export type FocusManager = {
   steer(id: string, message: string): boolean;
+  abort(id: string): boolean;
   resume(
     id: string,
     message: string,
@@ -166,6 +167,12 @@ function findEditor(tui: TUI): EditorLike | undefined {
 
 function focusLabel(record: AgentRecord): string {
   return `@${record.alias ?? record.handle ?? record.type}`;
+}
+
+/** `/exit` and its aliases, as typed at a prompt that a focused agent owns. */
+function isExitCommand(text: string): boolean {
+  const command = text.trim().toLowerCase();
+  return command === "/exit" || command === "/quit";
 }
 
 /** Owns the orchestrator ↔ focused-agent state transition and both host patches. */
@@ -302,6 +309,15 @@ export class FocusedAgentController {
       ({ predecessor, receiver, args }) => {
         if (!this.active) return Function.prototype.apply.call(predecessor, receiver, args);
         const data = hostString(args[0]) ?? "";
+        // SAFETY: This adapter is installed only on the EditorLike value found above.
+        const submitTarget = receiver as EditorLike;
+        // `/exit` addressed to a focused agent means "end this agent", not "quit
+        // pi" — the prompt belongs to the subagent while focus is active. Claim
+        // it before the predecessor so Pi's own command dispatch never sees it.
+        if (matchesKey(data, Key.enter) && isExitCommand(submitTarget.getText())) {
+          this.stopFocused(submitTarget);
+          return undefined;
+        }
         // Esc does NOT leave focus while the switcher is up: focus is switched
         // there (↑↓, with `main` restoring the orchestrator), exactly like
         // selecting any other agent. Swallowing it also keeps a prompt addressed
@@ -324,6 +340,26 @@ export class FocusedAgentController {
         }
       },
     );
+  }
+
+  /**
+   * Stop the focused agent and return to the orchestrator. Reached from `/exit`
+   * typed at the focused prompt, which must not quit the session.
+   */
+  private stopFocused(editor: EditorLike): void {
+    const active = this.active;
+    if (!active) return;
+    const { record } = active;
+    const label = focusLabel(record);
+    editor.setText("");
+    const running = record.status === "running" || record.status === "queued";
+    const stopped = running ? this.manager.abort(record.id) : false;
+    this.unfocus();
+    if (stopped) {
+      this.ui?.notify(`Stopped ${label}. Its partial transcript is still readable.`, "info");
+      return;
+    }
+    this.ui?.notify(`Agent ${label} is already ${record.status}; left it as is.`, "info");
   }
 
   private submitFocused(text: string, editor: EditorLike): void {
