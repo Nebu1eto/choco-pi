@@ -118,11 +118,11 @@ and prompt-editor adapters remain composed. `tests/focus-mode.test.ts` pins
 transcript swapping, streaming refresh, steering ownership, focus propagation,
 single-Esc exit and restoration.
 
-### `W side conversations
+### BTW side conversations
 
 The fork adds `src/ui/side-conversation.ts`, the `/btw` command, an
 orchestrator-owned `AgentRecord.sideConversation` marker, and a read-only runner
-profile. `W launches clone the main session's typed active branch into an
+profile. BTW launches clone the main session's typed active branch into an
 in-memory `SessionManager`, inherit the main model, thinking level and effective
 system prompt, and send the side question without the ordinary text context
 preamble. They share `maxConcurrent`, handles, FleetView and fullscreen focus,
@@ -240,7 +240,6 @@ budget ticks; the tail's markdown theme drops syntax highlighting while it
 streams (the settle-time rebuild restores it); and the joined transcript lines
 are cached and only rebuilt on session events, budget ticks or width changes.
 Component render() of cached messages stays out of the steady-state frame path.
-
 
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 

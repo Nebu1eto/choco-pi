@@ -84,9 +84,7 @@ interface BashExecutionTrace {
   excludeFromContext: boolean;
 }
 
-function parseBashExecution(
-  message: HostBashExecutionTrace,
-): BashExecutionTrace | undefined {
+function parseBashExecution(message: HostBashExecutionTrace): BashExecutionTrace | undefined {
   if (message.role !== "bashExecution") return undefined;
   const command = parseHostString(message.command);
   if (command === undefined) return undefined;
@@ -291,6 +289,16 @@ export class ConversationViewer implements Component {
 
   render(width: number): string[] {
     if (width < 6) return []; // too narrow for any meaningful rendering
+    if (this.profile === "focus") {
+      // Focus takes over Pi's whole conversation area; any chrome of our own
+      // (box, header, footer) would break the illusion that this IS the main
+      // transcript. The focus widget above the editor carries the hints.
+      return this.buildContentLines(width);
+    }
+    return this.renderOverlay(width);
+  }
+
+  private renderOverlay(width: number): string[] {
     const th = this.theme;
     const innerW = width - 4; // border + padding
     this.lastInnerW = innerW;
@@ -348,10 +356,7 @@ export class ConversationViewer implements Component {
     // Pi's main transcript already owns clipping, native scrolling and follow-
     // end behavior. In focus mode give it the whole subagent transcript instead
     // of imposing the modal's 70% viewport inside that scroll view.
-    const viewportHeight =
-      this.profile === "focus"
-        ? Math.max(MIN_VIEWPORT, contentLines.length)
-        : this.viewportHeight();
+    const viewportHeight = this.viewportHeight();
     const maxScroll = Math.max(0, contentLines.length - viewportHeight);
 
     if (this.autoScroll) {
@@ -383,24 +388,12 @@ export class ConversationViewer implements Component {
       // the right group so "Esc close" is the only part that truncates first.
       const sep = th.fg("dim", " · ");
       const actions: string[] = [];
-      if (this.profile === "focus") {
-        actions.push(
-          th.fg(
-            "dim",
-            this.isAgentActive() ? "prompt steers this agent" : "conversation is read-only",
-          ),
-        );
-      } else {
-        if (this.canSteer()) actions.push(th.fg("dim", `Enter ${this.replyLabel}`));
-        if (this.onFocus) actions.push(th.fg("dim", "f focus"));
-        if (this.isStoppable()) {
-          actions.push(this.stopArmed ? th.fg("error", "x again to STOP") : th.fg("dim", "x stop"));
-        }
+      if (this.canSteer()) actions.push(th.fg("dim", `Enter ${this.replyLabel}`));
+      if (this.onFocus) actions.push(th.fg("dim", "f focus"));
+      if (this.isStoppable()) {
+        actions.push(this.stopArmed ? th.fg("error", "x again to STOP") : th.fg("dim", "x stop"));
       }
-      const footerRight =
-        this.profile === "focus"
-          ? th.fg("dim", "Esc return to main")
-          : th.fg("dim", "↑↓ scroll · PgUp/PgDn or Shift+↑↓ · Esc close");
+      const footerRight = th.fg("dim", "↑↓ scroll · PgUp/PgDn or Shift+↑↓ · Esc close");
 
       // Prepend the line-count/scroll-% readout only when there's spare width —
       // it's the first thing dropped so it never crowds out the hints.
@@ -513,8 +506,7 @@ export class ConversationViewer implements Component {
 
     const now = Date.now();
     const streaming = running;
-    const renderTail =
-      streaming && now - this.lastTailRenderAt >= TAIL_RENDER_INTERVAL_MS;
+    const renderTail = streaming && now - this.lastTailRenderAt >= TAIL_RENDER_INTERVAL_MS;
     if (renderTail) this.contentDirty = true;
 
     if (!this.contentDirty && this.contentCache && this.contentCache.width === width) {
@@ -593,7 +585,12 @@ export class ConversationViewer implements Component {
         if (!text.trim()) continue;
         if (!this.messageComponents.has(msg)) {
           this.messageComponents.set(msg, [
-            new UserMessageComponent(text.trim(), getMarkdownTheme(), 1, this.markdownTransformers()),
+            new UserMessageComponent(
+              text.trim(),
+              getMarkdownTheme(),
+              1,
+              this.markdownTransformers(),
+            ),
           ]);
         }
         continue;
@@ -656,7 +653,10 @@ export class ConversationViewer implements Component {
             if (content.type !== "toolCall" || this.settledTools.has(content.id)) continue;
             this.toolComponents
               .get(content.id)
-              ?.updateResult({ content: [{ type: "text", text: errorText }], isError: true }, false);
+              ?.updateResult(
+                { content: [{ type: "text", text: errorText }], isError: true },
+                false,
+              );
             this.settledTools.add(content.id);
           }
         }
@@ -669,6 +669,7 @@ export class ConversationViewer implements Component {
         if (tool && !this.settledTools.has(msg.toolCallId)) {
           tool.updateResult(
             {
+              // SAFETY: pi-ai tool results carry exactly this content-item shape.
               content: msg.content as Array<{ type: string; text?: string; data?: string }>,
               details: msg.details,
               isError: msg.isError,
@@ -693,23 +694,20 @@ export class ConversationViewer implements Component {
           bash.excludeFromContext,
         );
         if (bash.output) component.appendOutput(bash.output);
-        component.setComplete(
-          bash.exitCode,
-          bash.cancelled,
-          // The wire message carries only the flag; the component reads it.
-          bash.truncated
-            ? ({ truncated: true } as Parameters<BashExecutionComponent["setComplete"]>[2])
-            : undefined,
-          bash.fullOutputPath,
-        );
+        // SAFETY: the wire message carries only the truncated flag, and the
+        // component reads only that flag from this value.
+        const truncation = bash.truncated
+          ? ({ truncated: true } as Parameters<BashExecutionComponent["setComplete"]>[2])
+          : undefined;
+        component.setComplete(bash.exitCode, bash.cancelled, truncation, bash.fullOutputPath);
         this.messageComponents.set(msg, [component]);
         this.messageLineCache.delete(msg);
       }
     }
   }
 
-  private renderMessage(msg: unknown, width: number): string[] {
-    const components = this.messageComponents.get(msg as object);
+  private renderMessage(msg: AgentSession["messages"][number], width: number): string[] {
+    const components = this.messageComponents.get(msg);
     if (!components) return [];
     const lines: string[] = [];
     for (const component of components) {
@@ -753,6 +751,8 @@ export class ConversationViewer implements Component {
   /** Extension markdown transformers (e.g. diagrams) registered on the child session. */
   private markdownTransformers(): readonly MarkdownTransformer[] {
     try {
+      // SAFETY: extensionRunner exposes this accessor in the pi runtime; the
+      // optional-chain guards sessions that do not carry one.
       const runner = this.session.extensionRunner as
         | { getMarkdownTransformers?: () => MarkdownTransformer[] }
         | undefined;
