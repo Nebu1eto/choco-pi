@@ -179,8 +179,10 @@ Restoration is ordered: set state to `orchestrator`; deactivate/restore editor
 input; deactivate/restore document render; unsubscribe and dispose the focused
 viewer; clear the `subagent-focus` indicator; request a forced render. This
 prevents a visible orchestrator transcript from briefly retaining subagent
-input ownership. The subtle above-editor indicator names the focused handle and
-states that ↑↓ switch agents and `main` returns. FleetView keeps rendering its
+input ownership. The above-editor indicator renders nothing while FleetView is
+up — the switcher already names the focused agent and its keys — and speaks only
+when the switcher is off, where it is the sole signal focus is active and Esc is
+the exit. FleetView keeps rendering its
 rows while focus is active — it is the switcher — and keeps claiming ↑/↓, Enter,
 `f` and Esc through `onTerminalInput` whenever list navigation is active, which
 focusing leaves on. Its cursor is clamped to the focused record's row on every
