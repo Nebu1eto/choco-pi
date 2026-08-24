@@ -157,7 +157,13 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
   assert.match(EXEC_DESCRIPTION, /do not emit one exec toolCall per wrapped call/);
   assert.match(EXEC_DESCRIPTION, /Code: fresh restricted JS/);
   assert.match(EXEC_DESCRIPTION, /Notebook: persistent shared Deno TypeScript globals/);
-  assert.match(EXEC_DESCRIPTION, /text\(value\) serializes output/);
+  // text()/notify() emit and return undefined; the description must not imply
+  // that text(value) yields a string, which reads as safe to nest in an expression.
+  assert.match(
+    EXEC_DESCRIPTION,
+    /text\(value\) and notify\(value\) EMIT output and return nothing/,
+  );
+  assert.doesNotMatch(EXEC_DESCRIPTION, /serializes output/);
 });
 
 test("Code Mode activates on non-OpenAI models without changing their transport", () => {
