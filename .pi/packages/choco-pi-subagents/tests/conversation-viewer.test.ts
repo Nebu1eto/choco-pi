@@ -15,7 +15,7 @@ import {
   initTheme,
 } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, type TUI } from "@earendil-works/pi-tui";
-import type { AgentRecord, SubagentType } from "../src/types.ts";
+import type { AgentInvocation, AgentRecord, SubagentType } from "../src/types.ts";
 import { ConversationViewer } from "../src/ui/conversation-viewer.ts";
 
 initTheme("dark", false);
@@ -128,6 +128,23 @@ function makeViewer(session: AgentSession, record?: AgentRecord) {
         .join("\n"),
   };
 }
+
+test("append-mode roles omit prompt-mode labels while keeping invocation tags", () => {
+  const { session } = makeSession([]);
+  const record = makeRecord(session);
+  // SAFETY: general-purpose is a registered default agent type with prompt mode append.
+  record.type = "general-purpose" as SubagentType;
+  record.invocation = partialFixture<AgentInvocation>({
+    modelName: "gpt-5.6 terra",
+    thinking: "medium",
+    runInBackground: true,
+  });
+
+  const { rendered } = makeViewer(session, record);
+  const output = rendered();
+  assert.doesNotMatch(output, /\(twin\)/);
+  assert.match(output, /gpt-5\.6 terra · thinking: medium · background/);
+});
 
 test("user and assistant messages render as styled transcript, not raw labels", () => {
   const { session } = makeSession([
