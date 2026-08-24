@@ -1199,6 +1199,9 @@ export default function (pi: ExtensionAPI) {
   const focus = new FocusedAgentController(manager, {
     getActivity: (id) => agentActivity.get(id),
     onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
+    // FleetView is the focus switcher; when it is turned off, focus mode keeps
+    // its own Esc exit so the prompt can always return to main.
+    hasSwitcher: () => isFleetViewEnabled(),
   });
 
   // BTW side conversations are root records backed by non-persisted forks of
@@ -1213,7 +1216,8 @@ export default function (pi: ExtensionAPI) {
   // Claude Code-style FleetView: navigable list of main + subagents below the editor.
   const fleet = new FleetList(manager, agentActivity, {
     focusAgent: (record, tui, theme) => focus.focus(record, tui, theme),
-    isAgentFocused: () => focus.isFocused(),
+    focusedAgentId: () => focus.getFocusedAgentId(),
+    unfocusAgent: () => focus.unfocus(),
     openSideConversation: (record) => sideConversations.open(record),
   });
   let fleetViewEnabled = true;

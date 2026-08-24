@@ -47,6 +47,12 @@ export type FocusState = { kind: "orchestrator" } | { kind: "agent"; agentId: st
 export type FocusControllerOptions = {
   getActivity?: (id: string) => AgentActivity | undefined;
   onSteered?: (id: string, message: string) => void;
+  /**
+   * Whether a visible switcher (FleetView) can currently move focus. Focus is
+   * normally left by selecting another row there, so Esc is swallowed; without a
+   * switcher Esc stays the escape hatch and must not strand the prompt.
+   */
+  hasSwitcher?: () => boolean;
 };
 
 /** Preserve fullscreen focus while unwinding nested `/agents` menus. */
@@ -64,43 +70,74 @@ type ActiveFocus = {
   document: RenderTarget;
 };
 
-type TUIWithFocusedComponent = TUI & { getFocusedComponent?: () => any };
+/**
+ * A value that crossed Pi's host boundary — a TUI child, the focused component,
+ * or a patched method argument. Unparsed by construction: the guards below are
+ * its parser. Spelled as a union rather than `unknown` to match the named
+ * host-boundary type choco-pi-lsp uses for the same job.
+ */
+type HostBoundaryValue = {} | null | undefined;
+
+/**
+ * The properties this module probes on a host object. Named rather than an
+ * index signature so the value contract stays explicit, mirroring
+ * choco-pi-lsp's `HostObject` convention.
+ */
+interface HostProbe {
+  handleInput?: HostBoundaryValue;
+  getText?: HostBoundaryValue;
+  setText?: HostBoundaryValue;
+  render?: HostBoundaryValue;
+  children?: HostBoundaryValue;
+}
+
+type TUIWithFocusedComponent = TUI & { getFocusedComponent?: () => HostBoundaryValue };
 
 const HostNumberSchema = Type.Number();
 const HostStringSchema = Type.String();
 
-function isHostObject(value: any): boolean {
+/**
+ * A plain host object whose probed properties stay unnarrowed until each one is
+ * checked below, rather than passing `any` around.
+ */
+function hostObject(value: HostBoundaryValue): HostProbe | undefined {
+  if (
+    value === null ||
+    Object(value) !== value ||
+    Array.isArray(value) ||
+    value instanceof Function
+  ) {
+    return undefined;
+  }
+  // SAFETY: The guard above admits only a non-array, non-callable host object,
+  // whose probed properties are host-boundary values narrowed at each use below.
+  return value as HostProbe;
+}
+
+function isEditorLike(value: HostBoundaryValue): value is EditorLike {
+  const host = hostObject(value);
   return (
-    value !== null &&
-    Object(value) === value &&
-    !Array.isArray(value) &&
-    !(value instanceof Function)
+    host !== undefined &&
+    host.handleInput instanceof Function &&
+    host.getText instanceof Function &&
+    host.setText instanceof Function
   );
 }
 
-function isEditorLike(value: any): value is EditorLike {
-  return (
-    isHostObject(value) &&
-    value.handleInput instanceof Function &&
-    value.getText instanceof Function &&
-    value.setText instanceof Function
-  );
+function isRenderTarget(value: HostBoundaryValue): value is RenderTarget {
+  return hostObject(value)?.render instanceof Function;
 }
 
-function isRenderTarget(value: any): value is RenderTarget {
-  return isHostObject(value) && value.render instanceof Function;
+function childrenOf(value: HostBoundaryValue): HostBoundaryValue[] {
+  const children = hostObject(value)?.children;
+  return Array.isArray(children) ? children : [];
 }
 
-function childrenOf(value: any): any[] {
-  if (!value || Object(value) !== value) return [];
-  return Array.isArray(value.children) ? value.children : [];
-}
-
-function hostNumber(value: any): number | undefined {
+function hostNumber(value: HostBoundaryValue): number | undefined {
   return Value.Check(HostNumberSchema, value) ? value : undefined;
 }
 
-function hostString(value: any): string | undefined {
+function hostString(value: HostBoundaryValue): string | undefined {
   return Value.Check(HostStringSchema, value) ? value : undefined;
 }
 
@@ -162,6 +199,11 @@ export class FocusedAgentController {
     return this.active !== undefined;
   }
 
+  /** Id of the focused record, for UI that mirrors focus (FleetView's cursor). */
+  getFocusedAgentId(): string | undefined {
+    return this.active?.record.id;
+  }
+
   /** Replace the main transcript renderer and bind the current prompt editor. */
   focus(record: AgentRecord, tui: TUI, theme: Theme): boolean {
     if (!record.session) {
@@ -174,7 +216,7 @@ export class FocusedAgentController {
       return false;
     }
 
-    this.unfocus(false);
+    this.restoreOrchestrator("silent");
     const viewer = new ConversationViewer(
       tui,
       record.session,
@@ -205,8 +247,17 @@ export class FocusedAgentController {
     return true;
   }
 
-  /** Restore editor input before transcript output, then remove focus chrome. */
-  unfocus(requestRender = true): void {
+  /** Leave focus and repaint the restored orchestrator transcript. */
+  unfocus(): void {
+    this.restoreOrchestrator("render");
+  }
+
+  /**
+   * Restore editor input before transcript output, then remove focus chrome.
+   * `silent` skips the repaint for a caller that paints something else in the
+   * same tick — a focus switch — or is tearing the controller down.
+   */
+  private restoreOrchestrator(repaint: "render" | "silent"): void {
     const previous = this.active;
     if (!previous) return;
     this.active = undefined;
@@ -223,11 +274,11 @@ export class FocusedAgentController {
     this.restoreDocument = undefined;
     previous.viewer.dispose();
     this.ui?.setWidget(FOCUS_WIDGET_KEY, undefined);
-    if (requestRender) previous.tui.requestRender(true);
+    if (repaint === "render") previous.tui.requestRender(true);
   }
 
   dispose(): void {
-    this.unfocus(false);
+    this.restoreOrchestrator("silent");
     this.ui = undefined;
   }
 
@@ -251,8 +302,13 @@ export class FocusedAgentController {
       ({ predecessor, receiver, args }) => {
         if (!this.active) return Function.prototype.apply.call(predecessor, receiver, args);
         const data = hostString(args[0]) ?? "";
+        // Esc does NOT leave focus while the switcher is up: focus is switched
+        // there (↑↓, with `main` restoring the orchestrator), exactly like
+        // selecting any other agent. Swallowing it also keeps a prompt addressed
+        // to a subagent from reaching the main session's interrupt. With no
+        // switcher rendered, Esc remains the only way back and still exits.
         if (matchesKey(data, "escape")) {
-          this.unfocus();
+          if (this.options.hasSwitcher?.() !== true) this.unfocus();
           return undefined;
         }
 
@@ -335,7 +391,7 @@ export class FocusedAgentController {
           truncateToWidth(
             theme.fg(
               "dim",
-              `Focused ${focusLabel(record)} · prompt targets this agent · Esc returns to main`,
+              `Focused ${focusLabel(record)} · prompt targets this agent · ↑↓ switch agent · select main to return`,
             ),
             width,
           ),
