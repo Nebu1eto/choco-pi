@@ -41,6 +41,8 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
   // in getActiveTools() and are dropped silently (see applyLeanSurface).
   "get_subagent_result",
   "steer_subagent",
+  // Stopping a background agent belongs to the same coordination path.
+  "stop_subagent",
   // Dependent delegation is the same coordination path as Agent: a workflow is
   // declared, updated while it runs, then collected or cancelled. Provided by
   // choco-pi-subagents.

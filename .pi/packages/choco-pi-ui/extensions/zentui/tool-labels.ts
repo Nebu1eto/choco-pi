@@ -56,6 +56,7 @@ export const DEFAULT_TOOL_LABELS = {
   Agent: "Delegation: Launching",
   get_subagent_result: "Delegation: Retrieving",
   steer_subagent: "Delegation: Steering",
+  stop_subagent: "Delegation: Stopping",
 
   // Sub-agent workflows
   workflow_run: "Workflow: Running",
@@ -134,6 +135,7 @@ export const DEFAULT_FINISHED_TOOL_LABELS = {
   Agent: "Delegation: Launched",
   get_subagent_result: "Delegation: Retrieved",
   steer_subagent: "Delegation: Steered",
+  stop_subagent: "Delegation: Stopped",
 
   // Sub-agent workflows
   workflow_run: "Workflow: Ran",

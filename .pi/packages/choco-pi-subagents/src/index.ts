@@ -5,6 +5,7 @@
  *   Agent             — LLM-callable: spawn a sub-agent
  *   get_subagent_result  — LLM-callable: check background agent status/result
  *   steer_subagent       — LLM-callable: send a steering message to a running agent
+ *   stop_subagent        — LLM-callable: stop a running or queued agent
  *
  * Commands:
  *   /agents                 — Interactive agent management menu
@@ -108,6 +109,7 @@ import {
   type ToolDescriptionMode,
 } from "./settings.ts";
 import { getForegroundOutcomeNote, getStatusNote, partialOutputSuffix } from "./status-note.ts";
+import { resolveStopOutcome } from "./stop-subagent.ts";
 import {
   type AgentConfig,
   type AgentInvocation,
@@ -2787,6 +2789,71 @@ Terse command-style prompts produce shallow, generic work.
         return textResult(
           `Steering message sent to agent ${record.id}. The agent will process it after its current tool execution.\n` +
             `Current state: ${stateParts.join(" · ")}`,
+        );
+      },
+    }),
+  );
+
+  // ---- stop_subagent tool ----
+
+  pi.registerTool(
+    defineTool({
+      name: SUBAGENT_TOOL_NAMES.STOP,
+      label: "Stop Agent",
+      description:
+        "Stop a running or queued background agent. The partial transcript remains available through get_subagent_result. " +
+        "Stopping a workflow step settles that step as an error, which fail-fast then applies to the rest of the workflow " +
+        "unless the step set continue_on_error — use workflow_cancel to end a whole workflow deliberately.",
+      promptSnippet: "Stop a running or queued background agent",
+      parameters: Type.Object({
+        agent_id: Type.String({
+          description:
+            "The agent ID to stop. The agent's handle also works — its `name` if you gave it one, otherwise its type (`explore`, `explore-2`).",
+        }),
+      }),
+      execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+        const outcome = resolveStopOutcome(resolveAgentRef(params.agent_id));
+        if (outcome.kind === "not_found") {
+          return textResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
+        }
+        if (outcome.kind === "nested") {
+          return textResult(
+            `Agent "${params.agent_id}" is nested under another agent and cannot be stopped from the top-level orchestrator.`,
+          );
+        }
+        const record = outcome.record;
+        if (outcome.kind === "already_settled") {
+          return textResult(
+            `Agent "${params.agent_id}" is already settled (status: ${record.status}). ` +
+              "Its transcript is still readable with get_subagent_result.",
+          );
+        }
+
+        // The tool result already reports this stop. Mark it consumed before
+        // aborting so the asynchronous completion callback cannot schedule a
+        // redundant follow-up turn when the runner finishes unwinding.
+        record.resultConsumed = true;
+        cancelNudge(record.id);
+        if (!manager.abort(record.id)) {
+          return textResult(
+            `Failed to stop agent ${record.id}. It is no longer running or queued.`,
+          );
+        }
+        pi.events.emit("subagents:stopped", buildEventData(record));
+        const tokens = formatLifetimeTokens(record);
+        const contextPercent = getSessionContextPercent(record.session);
+        const stateParts: string[] = [];
+        if (tokens) stateParts.push(tokens);
+        stateParts.push(`${record.toolUses} tool ${record.toolUses === 1 ? "use" : "uses"}`);
+        if (contextPercent !== null) stateParts.push(`context ${Math.round(contextPercent)}% full`);
+        if (record.compactionCount)
+          stateParts.push(
+            `${record.compactionCount} compaction${record.compactionCount === 1 ? "" : "s"}`,
+          );
+        return textResult(
+          `Agent ${record.id} stopped.\n` +
+            `Current state: ${stateParts.join(" · ")}\n` +
+            "Its partial transcript is still readable with get_subagent_result.",
         );
       },
     }),
