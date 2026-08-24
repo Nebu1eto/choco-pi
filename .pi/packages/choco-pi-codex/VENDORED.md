@@ -124,6 +124,22 @@ and interop identifiers (originator header `pi-codex-conversion`, preflight and
 apply-patch-display protocol strings, code-mode host cache path) are kept
 verbatim for protocol parity.
 
+## Registered-tool bridge (choco-pi addition)
+
+tools/code-mode/registered-tool-bridge.ts exposes every tool Pi has registered
+(LSP navigation and diagnostics, the MCP gateway, sub-agent and session
+control, goals, browser and web access) inside the code-mode tools namespace.
+Pi hands extensions tool schemas but not executable definitions and no event
+carries the live session, so the bridge patches ExtensionRunner.prototype the
+way .pi/extensions/command-filter.ts does, captures the runner the first time
+Pi assembles its tool list, and wraps each definition through the existing
+nested-tool adapter. Bridged tools are deferred, so they add no per-tool prompt
+lines; tool-source.ts now keeps every deferred tool in ALL_TOOLS (not just
+custom ones) and custom-tool-prompt.ts adds one line naming them. Code mode's
+own entry points and the natively wrapped Codex tools stay excluded.
+tests/codex-code-mode-bridge.test.ts pins exclusions, usage lines, deferral,
+the ALL_TOOLS scope and the prompt line.
+
 ## Runtime batching advice (choco-pi addition)
 
 tools/code-mode/batching-advice.ts counts consecutive exec blocks that made at

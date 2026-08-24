@@ -20,6 +20,10 @@ import {
   registerCustomTools,
 } from "../tools/code-mode/tools.ts";
 import type { ProgrammaticCodeModeToolDefinition } from "../tools/code-mode/types.ts";
+import {
+  collectBridgedTools,
+  installRegisteredToolCapture,
+} from "../tools/code-mode/registered-tool-bridge.ts";
 import { createApplyPatchTool } from "../tools/apply-patch/tool.ts";
 import { createExecCommandTool } from "../tools/exec/command-tool.ts";
 import { createWriteStdinTool } from "../tools/exec/write-stdin-tool.ts";
@@ -43,6 +47,9 @@ export async function registerCodexCodeMode(
   const isActive = (ctx: BoundaryValue) =>
     // SAFETY: registerCodeModeTools invokes isActive with Pi's current ExtensionContext.
     isCodeModeRuntime(resolveCodexRuntimePlanForState(ctx as ExtensionContext, runtime.state));
+  // Capture Pi's runner so every registered tool can be bridged into the
+  // tools namespace; harmless when the bridge is never used.
+  installRegisteredToolCapture();
   const customToolsRuntime = await registerCustomTools(pi, undefined, {
     isActive,
   });
@@ -230,6 +237,10 @@ function createNestedTools(
       ),
     );
   }
+  // Everything else Pi has registered (LSP, MCP, sub-agents, sessions, goals,
+  // web access) rides along as deferred tools: no prompt cost, callable as
+  // tools.<name>(...) inside a block, discoverable through ALL_TOOLS.
+  tools.push(...collectBridgedTools());
   return tools;
 }
 
