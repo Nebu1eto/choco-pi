@@ -190,8 +190,9 @@ linger window expires.
 ## Seam B — dismissible side-conversation overlay
 
 `/btw <question>` launches an ordinary top-level `AgentRecord` with
-`sideConversation: true`. It uses the resolved `general-purpose` type for record naming and the existing
-`twin` UI label, carries no `parentAgentId` (the package's representation of
+`sideConversation: true`. It uses the resolved `general-purpose` type for record
+naming, is prefixed with `[btw]` in FleetView and conversation views, carries no
+`parentAgentId` (the package's representation of
 orchestrator ownership), and sets `isBackground: true`, so `AgentManager` applies
 the same `maxConcurrent` queue as every other root background agent. Its runtime
 identity comes from the main agent rather than that record type.

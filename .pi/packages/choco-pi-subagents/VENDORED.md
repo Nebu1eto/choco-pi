@@ -184,6 +184,13 @@ preference. An explicit caller value still wins, which preserves provider
 fallback on overload. `tests/subagent-config.test.ts` pins the parsed fields and
 the resolution order.
 
+### No prompt-mode label on append-mode agents
+
+The fork removes upstream's `twin` UI label from append-mode agents. Every
+choco-pi role uses `prompt_mode: append`, so the label carried no distinguishing
+information and conflicted with the `[btw]` marker reserved for side
+conversations; thinking and background invocation tags are unchanged.
+
 ### Background-by-default spawn guidance
 
 Upstream's `Agent` tool prose named the foreground the recommended mode ("use

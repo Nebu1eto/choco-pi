@@ -187,13 +187,7 @@ export function getDisplayName(type: SubagentType): string {
   return getConfig(type).displayName;
 }
 
-/** Short label for prompt mode: "twin" for append, nothing for replace (the default). */
-export function getPromptModeLabel(type: SubagentType): string | undefined {
-  const config = getConfig(type);
-  return config.promptMode === "append" ? "twin" : undefined;
-}
-
-/** Mode label is not included — callers add it where they want it. */
+/** Build the invocation metadata shown by Agent tool results and conversation views. */
 export function buildInvocationTags(invocation: AgentInvocation | undefined): InvocationTags {
   const tags: string[] = [];
   if (!invocation) return { tags };
@@ -378,7 +372,6 @@ export class AgentWidget {
     },
     theme: Theme,
   ): string {
-    const modeLabel = getPromptModeLabel(a.type);
     const duration = formatMs((a.completedAt ?? Date.now()) - a.startedAt);
 
     let icon: string;
@@ -408,8 +401,7 @@ export class AgentWidget {
     if (a.toolUses > 0) parts.push(`${a.toolUses} tool use${a.toolUses === 1 ? "" : "s"}`);
     parts.push(duration);
 
-    const modeTag = modeLabel ? ` ${theme.fg("dim", `(${modeLabel})`)}` : "";
-    return `${icon} ${renderAgentName(a.type, theme, { fallbackColor: "dim" })}${modeTag}  ${theme.fg("dim", a.description)} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}${statusText}`;
+    return `${icon} ${renderAgentName(a.type, theme, { fallbackColor: "dim" })}  ${theme.fg("dim", a.description)} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}${statusText}`;
   }
 
   /**
@@ -450,8 +442,6 @@ export class AgentWidget {
 
     const runningLines: string[][] = []; // each entry is [header, activity]
     for (const a of running) {
-      const modeLabel = getPromptModeLabel(a.type);
-      const modeTag = modeLabel ? ` ${theme.fg("dim", `(${modeLabel})`)}` : "";
       const elapsed = formatMs(Date.now() - a.startedAt);
 
       const bg = this.agentActivity.get(a.id);
@@ -473,7 +463,7 @@ export class AgentWidget {
       runningLines.push([
         truncate(
           theme.fg("dim", "├─") +
-            ` ${theme.fg("accent", frame)} ${renderAgentName(a.type, theme, { bold: true })}${modeTag}  ${theme.fg("muted", a.description)} ${theme.fg("dim", "·")} ${fgPreservingNestedStyles(theme, "dim", statsText)}`,
+            ` ${theme.fg("accent", frame)} ${renderAgentName(a.type, theme, { bold: true })}  ${theme.fg("muted", a.description)} ${theme.fg("dim", "·")} ${fgPreservingNestedStyles(theme, "dim", statsText)}`,
         ),
         truncate(theme.fg("dim", "│  ") + theme.fg("dim", `  ⎿  ${activity}`)),
       ]);
