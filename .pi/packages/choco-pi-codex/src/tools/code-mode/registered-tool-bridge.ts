@@ -19,15 +19,23 @@
  * ones.
  */
 
-import { ExtensionRunner, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+  ExtensionRunner,
+  type ExtensionContext,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { toNestedTool } from "../../adapter/code-mode/nested-tool-adapter.ts";
+import { withLiveCtx } from "../../extension/live-context.ts";
 import type { ProgrammaticCodeModeToolDefinition } from "./types.ts";
 
 type BridgedRunnerPrototype = typeof ExtensionRunner.prototype & {
-  __chocoPiCodeModeToolBridgeApplied?: boolean;
+  __chocoPiCodeModeToolBridgeVersion?: number;
+  __chocoPiCodeModeToolBridgeRunners?: ExtensionRunner[] | undefined;
 };
+
+const BRIDGE_CAPTURE_VERSION = 1;
 
 /**
  * Names code mode must never bridge: its own entry points (recursion) and the
@@ -48,33 +56,61 @@ export const BRIDGE_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
 /** The single runner method the bridge needs; keeps fakes and tests honest. */
 export type RegisteredToolSource = Pick<ExtensionRunner, "getAllRegisteredTools">;
 
-let capturedRunner: RegisteredToolSource | undefined;
+function bridgedRunnerPrototype(): BridgedRunnerPrototype {
+  // SAFETY: Both added properties are this module's bookkeeping on the SDK prototype.
+  return ExtensionRunner.prototype as BridgedRunnerPrototype;
+}
 
-function rememberRunner(runner: RegisteredToolSource): void {
-  capturedRunner = runner;
+function rememberRunner(runner: ExtensionRunner): void {
+  const runners = (bridgedRunnerPrototype().__chocoPiCodeModeToolBridgeRunners ??= []);
+  const existingIndex = runners.indexOf(runner);
+  if (existingIndex !== -1) runners.splice(existingIndex, 1);
+  runners.push(runner);
 }
 
 /** Install the capture patch once per process. */
 export function installRegisteredToolCapture(): void {
-  // SAFETY: the marker property is this module's own bookkeeping on the SDK prototype.
-  const prototype = ExtensionRunner.prototype as BridgedRunnerPrototype;
-  if (prototype.__chocoPiCodeModeToolBridgeApplied) return;
+  const prototype = bridgedRunnerPrototype();
+  if (prototype.__chocoPiCodeModeToolBridgeVersion === BRIDGE_CAPTURE_VERSION) return;
   const getAllRegisteredTools = prototype.getAllRegisteredTools;
   prototype.getAllRegisteredTools = function captureRegisteredTools(this: ExtensionRunner) {
     rememberRunner(this);
     return getAllRegisteredTools.call(this);
   };
-  prototype.__chocoPiCodeModeToolBridgeApplied = true;
+  prototype.__chocoPiCodeModeToolBridgeVersion = BRIDGE_CAPTURE_VERSION;
 }
 
 /** The live runner, once Pi has assembled its tool list at least once. */
 export function registeredToolRunner(): RegisteredToolSource | undefined {
-  return capturedRunner;
+  const runners = bridgedRunnerPrototype().__chocoPiCodeModeToolBridgeRunners ?? [];
+  for (let index = runners.length - 1; index >= 0; index -= 1) {
+    const runner = runners[index];
+    if (!runner) continue;
+    const live = withLiveCtx(() => {
+      runner.createContext().isIdle();
+      return true;
+    });
+    if (live) return runner;
+    runners.splice(index, 1);
+  }
+  return undefined;
 }
 
 /** Test seam: forget the captured runner. */
-export function resetRegisteredToolCapture(): void {
-  capturedRunner = undefined;
+export function resetRegisteredToolCapture(ctx?: ExtensionContext): void {
+  const runners = bridgedRunnerPrototype().__chocoPiCodeModeToolBridgeRunners ?? [];
+  if (!ctx) {
+    runners.length = 0;
+    return;
+  }
+  const targetSessionManager = withLiveCtx(() => ctx.sessionManager);
+  if (!targetSessionManager) return;
+  for (let index = runners.length - 1; index >= 0; index -= 1) {
+    const runner = runners[index];
+    if (!runner) continue;
+    const sessionManager = withLiveCtx(() => runner.createContext().sessionManager);
+    if (!sessionManager || sessionManager === targetSessionManager) runners.splice(index, 1);
+  }
 }
 
 const ToolParametersSchema = Type.Object({
@@ -100,7 +136,7 @@ export function bridgedToolUsage(definition: ToolDefinition): string {
  * native tools rather than failing.
  */
 export function collectBridgedTools(
-  runner: RegisteredToolSource | undefined = capturedRunner,
+  runner: RegisteredToolSource | undefined = registeredToolRunner(),
 ): ProgrammaticCodeModeToolDefinition[] {
   if (!runner) return [];
   const bridged: ProgrammaticCodeModeToolDefinition[] = [];

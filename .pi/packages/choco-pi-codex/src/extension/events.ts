@@ -34,6 +34,8 @@ import { formatCompactionCacheDiagnostic } from "../adapter/compaction/diagnosti
 import type { CodexExtensionRuntime } from "./runtime.ts";
 import type { CodexToolRegistration } from "./tools.ts";
 import type { CodexUiController } from "./ui.ts";
+import { withLiveCtx } from "./live-context.ts";
+import { resetRegisteredToolCapture } from "../tools/code-mode/registered-tool-bridge.ts";
 
 function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
   let promise: Promise<Module> | undefined;
@@ -77,11 +79,15 @@ function isAbortError(error: Error | BoundaryValue): boolean {
 }
 
 export function prepareCodeModeHost(codeMode: CodeModeRegistration, ctx: ExtensionContext): void {
-  void codeMode.prepare(ctx)?.catch((error) => {
+  const preparation = withLiveCtx(() => codeMode.prepare(ctx));
+  if (!preparation) return;
+  void preparation.catch((error) => {
     if (isAbortError(error)) return;
-    ctx.ui.notify(
-      `Code Mode host setup failed: ${error instanceof Error ? error.message : String(error)}`,
-      "error",
+    withLiveCtx(() =>
+      ctx.ui.notify(
+        `Code Mode host setup failed: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      ),
     );
   });
 }
@@ -102,6 +108,37 @@ export function registerCanonicalAliasEndpointPreflight(
   });
 }
 
+export function registerSessionReplacementEvents(
+  pi: ExtensionAPI,
+  runtime: Pick<CodexExtensionRuntime, "cancelCacheKeepalive">,
+): void {
+  pi.on("session_before_switch", (_event, ctx) => {
+    runtime.cancelCacheKeepalive();
+    resetRegisteredToolCapture(ctx);
+  });
+  pi.on("session_before_fork", (_event, ctx) => {
+    runtime.cancelCacheKeepalive();
+    resetRegisteredToolCapture(ctx);
+  });
+}
+
+export function handleCodexAgentSettled(
+  runtime: Pick<CodexExtensionRuntime, "armCacheKeepalive" | "state">,
+  ui: Pick<CodexUiController, "refreshUsageStatus">,
+  ctx: ExtensionContext,
+): void {
+  const { state } = runtime;
+  state.pendingActiveProviderPromptCapture = false;
+  state.voiceSystemPromptOverride = undefined;
+  state.codexTurnState.reset();
+  const hasUI = withLiveCtx(() => ctx.hasUI);
+  if (hasUI === undefined) return;
+  if (hasUI && !state.config.voiceFeaturesOnly) {
+    void withLiveCtx(() => ui.refreshUsageStatus(ctx));
+  }
+  runtime.armCacheKeepalive(ctx);
+}
+
 export function registerCodexEvents(
   pi: ExtensionAPI,
   runtime: CodexExtensionRuntime,
@@ -112,6 +149,7 @@ export function registerCodexEvents(
 ): void {
   const { state, tracker, sessions } = runtime;
   sessions.onSessionExit((sessionId) => tracker.recordSessionFinished(sessionId));
+  registerSessionReplacementEvents(pi, runtime);
 
   pi.on("session_start", async (event, ctx) => {
     ui.invalidateUsageStatus();
@@ -144,10 +182,12 @@ export function registerCodexEvents(
     tools.ensureOptionalTools();
     syncAdapter(pi, ctx, state);
     await runtime.configureDiagnostics(ctx);
-    void ui.refreshUsageStatus(ctx);
+    void withLiveCtx(() => ui.refreshUsageStatus(ctx));
     prepareCodeModeHost(codeMode, ctx);
     if (!state.config.prompt.heavySystemPromptOverwrite)
-      void runtime.startPrewarm(ctx, codeMode.refreshPromptTools(ctx.getSystemPrompt(), ctx));
+      void withLiveCtx(() =>
+        runtime.startPrewarm(ctx, codeMode.refreshPromptTools(ctx.getSystemPrompt(), ctx)),
+      );
     if (event.reason === "startup") await maybeWarnLocalCheckoutVersion(ctx);
   });
 
@@ -171,10 +211,12 @@ export function registerCodexEvents(
     tools.ensureOptionalTools();
     syncAdapter(pi, ctx, state);
     await runtime.configureDiagnostics(ctx);
-    void ui.refreshUsageStatus(ctx);
+    void withLiveCtx(() => ui.refreshUsageStatus(ctx));
     prepareCodeModeHost(codeMode, ctx);
     if (!state.config.prompt.heavySystemPromptOverwrite)
-      void runtime.startPrewarm(ctx, codeMode.refreshPromptTools(ctx.getSystemPrompt(), ctx));
+      void withLiveCtx(() =>
+        runtime.startPrewarm(ctx, codeMode.refreshPromptTools(ctx.getSystemPrompt(), ctx)),
+      );
   });
   pi.on("session_tree", async (_event, ctx) => {
     state.activeProviderSystemPrompt = undefined;
@@ -203,6 +245,8 @@ export function registerCodexEvents(
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
+    runtime.cancelCacheKeepalive();
+    resetRegisteredToolCapture(ctx);
     const failures: BoundaryValue[] = [];
     await runShutdownStep(failures, () =>
       runtime.shutdownTransport(ctx.sessionManager.getSessionId()),
@@ -247,11 +291,7 @@ export function registerCodexEvents(
     runtime.cancelCacheKeepalive();
   });
   pi.on("agent_settled", async (_event, ctx) => {
-    state.pendingActiveProviderPromptCapture = false;
-    state.voiceSystemPromptOverride = undefined;
-    state.codexTurnState.reset();
-    if (!state.config.voiceFeaturesOnly) void ui.refreshUsageStatus(ctx);
-    runtime.armCacheKeepalive(ctx);
+    handleCodexAgentSettled(runtime, ui, ctx);
   });
   pi.on("before_provider_request", async (event, ctx) => {
     state.cwd = ctx.cwd;

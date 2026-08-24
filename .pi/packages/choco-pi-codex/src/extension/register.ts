@@ -14,6 +14,7 @@ import { registerCodexTools } from "./tools.ts";
 import { registerCodexUi } from "./ui.ts";
 import { resolveCodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
 import { captureActiveProviderSystemPrompt } from "../adapter/provider-prompt-capture.ts";
+import { withLiveCtx } from "./live-context.ts";
 
 export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
   registerApplyPatchDisplayBroker(pi);
@@ -54,10 +55,12 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
       tools.applyConfig(config);
       ui.applyConfig(config, ctx, previousConfig);
       if (config.openai.cacheDiagnostics !== previousConfig.openai.cacheDiagnostics) {
-        void runtime.configureDiagnostics(
-          ctx,
-          previousConfig.openai.cacheDiagnostics !== "status-and-log" &&
-            config.openai.cacheDiagnostics === "status-and-log",
+        void withLiveCtx(() =>
+          runtime.configureDiagnostics(
+            ctx,
+            previousConfig.openai.cacheDiagnostics !== "status-and-log" &&
+              config.openai.cacheDiagnostics === "status-and-log",
+          ),
         );
       }
       if (config.openai.cacheKeepalive !== previousConfig.openai.cacheKeepalive) {
@@ -75,22 +78,28 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
         runtime.resetTransport(ctx.sessionManager.getSessionId());
       }
       if (config.voiceFeaturesOnly && !previousConfig.voiceFeaturesOnly) {
-        void codeMode.shutdownHost().catch((error) => {
-          ctx.ui.notify(
-            `Could not stop Code Mode host: ${error instanceof Error ? error.message : String(error)}`,
-            "warning",
+        void codeMode
+          .shutdownHost()
+          .catch((error) =>
+            withLiveCtx(() =>
+              ctx.ui.notify(
+                `Could not stop Code Mode host: ${error instanceof Error ? error.message : String(error)}`,
+                "warning",
+              ),
+            ),
           );
-        });
       } else if (executionModeChanged) {
         void codeMode
           .shutdownHost()
           .then(() => prepareCodeModeHost(codeMode, ctx))
-          .catch((error) => {
-            ctx.ui.notify(
-              `Could not switch execution mode: ${error instanceof Error ? error.message : String(error)}`,
-              "warning",
-            );
-          });
+          .catch((error) =>
+            withLiveCtx(() =>
+              ctx.ui.notify(
+                `Could not switch execution mode: ${error instanceof Error ? error.message : String(error)}`,
+                "warning",
+              ),
+            ),
+          );
       }
     });
     registerCodexEvents(pi, runtime, tools, ui, codeMode, proxyProvider);
