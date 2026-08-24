@@ -260,6 +260,13 @@ streams (the settle-time rebuild restores it); and the joined transcript lines
 are cached and only rebuilt on session events, budget ticks or width changes.
 Component render() of cached messages stays out of the steady-state frame path.
 
+### Zentui-aligned subagent completion notifications
+
+The fork adds a pure completion-notification formatter whose status glyphs match
+the Agent tool and whose title, continuation, detail, result and bounded transcript
+path follow the main transcript's zentui conventions. Grouped notifications share
+the same layout without requiring zentui to be loaded.
+
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 
 The repository previously ran `npm:@tintinweb/pi-subagents@0.16.1`. Two entries
