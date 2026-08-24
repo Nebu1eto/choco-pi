@@ -124,6 +124,19 @@ and interop identifiers (originator header `pi-codex-conversion`, preflight and
 apply-patch-display protocol strings, code-mode host cache path) are kept
 verbatim for protocol parity.
 
+## Runtime batching advice (choco-pi addition)
+
+tools/code-mode/batching-advice.ts counts consecutive exec blocks that made at
+most one tools.* call and, on the fifth (then every tenth), prepends a
+<system-reminder> block to that call's tool result pointing back at the
+injected Composition pattern, tagged the way choco-pi marks its other
+out-of-band guidance. Blocks using Promise.all, loops, or several tools.* calls
+reset the streak, so only the degenerate single-call habit nudges; the tool
+schema, results, and execution path are otherwise untouched, and the nudge is
+wired as an optional parameter in tools/code-mode/public-tools.ts.
+tests/codex-code-mode-batching.test.ts pins detection, streak/interval policy
+and the advisory wording.
+
 ## Bundled native binaries (choco-pi addition)
 
 `src/tools/{apply-patch,exec,imagegen,view-image,web-run}/bin/darwin-arm64/`
