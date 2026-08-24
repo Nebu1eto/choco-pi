@@ -165,7 +165,7 @@ Use `/agents` to inspect roles, running agents, transcripts, schedules, and oper
 
 Use `steer_subagent` to redirect a running agent after its current tool, `get_subagent_result` to retrieve a background result, and an `Agent` call with `resume: <id>` for a completed agent's same-unit follow-up. New calls start with fresh conversation context; each custom role appends its instructions to the current parent system prompt and inherits skills.
 
-All custom roles disable ambient child extensions, so declared native tools cannot be replaced by a model adapter. Writer roles use the current checkout by default and may run concurrently only when the orchestrator assigns disjoint direct and indirect ownership scopes. `isolation: "worktree"` is explicit opt-in.
+All custom roles load the same extensions as the main agent and declare no `tools:` allowlist, so a subagent starts from the same lean tool surface the orchestrator has — code mode (`exec`), the choco-pi-lsp funnel, `tool_search` for everything deferred — rather than a hand-written subset. Because ambient child extensions now load, a model adapter can shadow a declared native tool in a child as it can in the main session. Nested delegation stays off regardless: `Agent`, `get_subagent_result` and `steer_subagent` are stripped from a child unless its role sets `allowed_subagents`. Writer roles use the current checkout by default and may run concurrently only when the orchestrator assigns disjoint direct and indirect ownership scopes. `isolation: "worktree"` is explicit opt-in.
 
 ## Checkpoints, review, and Git boundaries
 
