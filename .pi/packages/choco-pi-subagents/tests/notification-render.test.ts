@@ -16,6 +16,11 @@ const theme = partialFixture<Theme>({
   bold: (text: string) => text,
 });
 
+const backgroundTheme = partialFixture<Theme>({
+  ...theme,
+  getBgAnsi: (color) => (color === "toolErrorBg" ? "\u001b[41m" : "\u001b[42m"),
+});
+
 function notificationFixture(overrides: Partial<NotificationDetails> = {}): NotificationDetails {
   return {
     id: "agent-1",
@@ -41,12 +46,45 @@ test("renders a successful completion in the shared transcript style", () => {
   assert.equal(
     output,
     [
-      "✓ Agent completed",
-      "  └ Review notification rendering · ↻3≤5 · 2 tool uses · 1.5k token · 2.5s",
-      "    All done.",
-      "    Transcript · …/tasks/agent-1.output",
+      " • ✓ Delegation: Completed",
+      "    └ Agent · Review notification rendering · ↻3≤5 · 2 tool uses · 1.5k token · 2.5s",
+      "      All done.",
+      "      Transcript · …/tasks/agent-1.output",
     ].join("\n"),
   );
+});
+
+test("opens the settled tool background band on every rendered row", () => {
+  const success = renderSubagentNotification(
+    notificationFixture({ outputFile: "/tmp/tasks/agent-1.output" }),
+    { expanded: false },
+    backgroundTheme,
+  );
+  const error = renderSubagentNotification(
+    notificationFixture({ status: "error", error: "failed" }),
+    { expanded: false },
+    backgroundTheme,
+  );
+
+  assert.ok(success.split("\n").every((line) => line.startsWith("\u001b[42m")));
+  assert.ok(error.split("\n").every((line) => line.startsWith("\u001b[41m")));
+});
+
+test("strips markdown markup from the collapsed preview", () => {
+  const output = renderSubagentNotification(
+    notificationFixture({
+      resultPreview:
+        "## Findings\n\n- **(a) Spawn-relevant literals**\n\nMissing presets fail loudly.",
+    }),
+    { expanded: false },
+    theme,
+  );
+
+  const body = output.split("\n")[2] ?? "";
+  assert.match(body, /\(a\) Spawn-relevant literals/);
+  assert.doesNotMatch(output, /#{2}/, "no heading markers");
+  assert.doesNotMatch(output, /\*\*/, "no bold markers");
+  assert.doesNotMatch(body, /^\s*[-*+]\s/, "no list bullet");
 });
 
 test("carries the agent role badge, falling back to a generic label", () => {
@@ -68,10 +106,12 @@ test("carries the agent role badge, falling back to a generic label", () => {
     { expanded: false },
     theme,
   );
-  assert.match(typed.split("\n")[0] ?? "", /implementer completed$/);
+  const [, typedDetail = ""] = typed.split("\n");
+  assert.match(typedDetail, /^    └ implementer · /);
 
   const untyped = renderSubagentNotification(notificationFixture(), { expanded: false }, theme);
-  assert.match(untyped.split("\n")[0] ?? "", /Agent completed$/);
+  const [, untypedDetail = ""] = untyped.split("\n");
+  assert.match(untypedDetail, /^    └ Agent · /);
   registerAgents(new Map());
 });
 
@@ -96,12 +136,12 @@ test("distinguishes error, stopped, and aborted outcomes", () => {
     theme,
   );
 
-  assert.match(error, /^✗ Agent failed$/m);
-  assert.match(error, /^    Error: model unavailable$/m);
-  assert.match(stopped, /^■ Agent stopped$/m);
-  assert.match(stopped, /^    Partial answer$/m);
-  assert.match(aborted, /^✗ Agent aborted$/m);
-  assert.match(aborted, /^    Turn limit reached$/m);
+  assert.match(error, /^ • ✗ Delegation: Failed$/m);
+  assert.match(error, /^      Error: model unavailable$/m);
+  assert.match(stopped, /^ • ■ Delegation: Stopped$/m);
+  assert.match(stopped, /^      Partial answer$/m);
+  assert.match(aborted, /^ • ✗ Delegation: Aborted$/m);
+  assert.match(aborted, /^      Turn limit reached$/m);
 });
 
 test("labels steered completions as wrapped up", () => {
@@ -111,8 +151,8 @@ test("labels steered completions as wrapped up", () => {
     theme,
   );
 
-  assert.match(output, /^✓ Agent wrapped up$/m);
-  assert.match(output, /^    Delivered a bounded result$/m);
+  assert.match(output, /^ • ✓ Delegation: Wrapped up$/m);
+  assert.match(output, /^      Delivered a bounded result$/m);
 });
 
 test("collapses to one result line and expands to the bounded result body", () => {
@@ -120,11 +160,24 @@ test("collapses to one result line and expands to the bounded result body", () =
   const collapsed = renderSubagentNotification(details, { expanded: false }, theme);
   const expanded = renderSubagentNotification(details, { expanded: true }, theme);
 
-  assert.match(collapsed, /^    first line$/m);
+  assert.match(collapsed, /^      first line$/m);
   assert.doesNotMatch(collapsed, /second line/);
-  assert.match(expanded, /^    first line$/m);
-  assert.match(expanded, /^    second line$/m);
-  assert.match(expanded, /^    third line$/m);
+  assert.match(expanded, /^      first line$/m);
+  assert.match(expanded, /^      second line$/m);
+  assert.match(expanded, /^      third line$/m);
+});
+
+test("summarizes the first prose line without markdown heading or list markers", () => {
+  const details = notificationFixture({
+    resultPreview: "## Findings\n\n- The role name is hardcoded in one renderer.\n- Another item.",
+  });
+  const collapsed = renderSubagentNotification(details, { expanded: false }, theme);
+  const expanded = renderSubagentNotification(details, { expanded: true }, theme);
+
+  assert.match(collapsed, /^      The role name is hardcoded in one renderer\.$/m);
+  assert.doesNotMatch(collapsed, /Findings|^\s*##(?:\s|$)/m);
+  assert.match(expanded, /^      Another item\.$/m);
+  assert.doesNotMatch(expanded, /^\s*##(?:\s|$)/m);
 });
 
 test("renders grouped notifications as adjacent complete blocks", () => {
@@ -143,8 +196,8 @@ test("renders grouped notifications as adjacent complete blocks", () => {
     theme,
   );
 
-  assert.equal(output.match(/^(?:✓|■) Agent /gm)?.length, 2);
-  assert.match(output, /    All done\.\n■ Agent stopped\n  └ Second task/);
+  assert.equal(output.match(/^ • (?:✓|■) Delegation: /gm)?.length, 2);
+  assert.match(output, /      All done\.\n • ■ Delegation: Stopped\n    └ Agent · Second task/);
 });
 
 test("omits the transcript row when outputFile is absent", () => {
@@ -162,7 +215,7 @@ test("bounds long descriptions and transcript paths", () => {
     { expanded: false },
     theme,
   );
-  const detail = output.split("\n").find((line) => line.startsWith("  └ "));
+  const detail = output.split("\n").find((line) => line.startsWith("    └ "));
   const transcript = output.split("\n").find((line) => line.includes("Transcript"));
 
   assert.ok(detail);
@@ -170,6 +223,6 @@ test("bounds long descriptions and transcript paths", () => {
   assert.ok(detail.length <= 124);
   assert.match(detail, /\.\.\. · ↻3≤5/);
   assert.ok(transcript.length <= 119);
-  assert.match(transcript, /^    Transcript · …\/tasks\/x+\.\.\.$/);
+  assert.match(transcript, /^      Transcript · …\/tasks\/x+\.\.\.$/);
   assert.doesNotMatch(transcript, /\/var\/folders/);
 });
