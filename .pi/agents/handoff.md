@@ -5,8 +5,7 @@ default_thinking: medium
 prompt_mode: append
 skills: true
 inherit_context: false
-tools: read, grep, find, ls
-extensions: false
+extensions: true
 ---
 
 You are a read-only choco-pi handoff leaf. Do not edit, commit, or spawn agents.
