@@ -37,6 +37,10 @@ import {
   codeModeWebResult,
   toNestedTool,
 } from "./code-mode/nested-tool-adapter.ts";
+import {
+  activeRegisteredSessionToolNames,
+  scopeCodeModeToolsToSessionPermissions,
+} from "./code-mode/session-tool-permissions.ts";
 
 const LONG_RUNNING_TOOL_OUTER_YIELD_MS = 1_800_000;
 
@@ -55,7 +59,12 @@ export async function registerCodexCodeMode(
   });
   const programmaticRuntime = await registerCodeModeTools(pi, {
     // SAFETY: registerCodeModeTools supplies either Pi's current ExtensionContext or no context.
-    getTools: (ctx) => createNestedTools(runtime, ctx as ExtensionContext | undefined),
+    getTools: (ctx) =>
+      createNestedTools(
+        runtime,
+        activeRegisteredSessionToolNames(pi, runtime.state.previousToolNames),
+        ctx as ExtensionContext | undefined,
+      ),
     isActive,
     executionKind: (ctx) =>
       // SAFETY: registerCodeModeTools invokes executionKind with Pi's current ExtensionContext.
@@ -88,6 +97,7 @@ export async function registerCodexCodeMode(
 
 function createNestedTools(
   runtime: CodexExtensionRuntime,
+  activeToolNames: ReadonlySet<string>,
   ctx?: ExtensionContext,
 ): ProgrammaticCodeModeToolDefinition[] {
   const options = {
@@ -241,7 +251,7 @@ function createNestedTools(
   // web access) rides along as deferred tools: no prompt cost, callable as
   // tools.<name>(...) inside a block, discoverable through ALL_TOOLS.
   tools.push(...collectBridgedTools());
-  return tools;
+  return scopeCodeModeToolsToSessionPermissions(tools, activeToolNames);
 }
 
 function isRunningExecResult<T>(details: T): details is T & JsonObject & { session_id: number } {
