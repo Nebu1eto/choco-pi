@@ -1,4 +1,3 @@
-import { isCustomToolDefinition } from "./host-protocol.ts";
 import { unavailableToolsGuardPreamble } from "./tools-namespace.ts";
 import type { CodeModeToolDefinition } from "./types.ts";
 
@@ -6,10 +5,10 @@ export function scopeAllToolsToDeferredCustom(
   source: string,
   tools: CodeModeToolDefinition[],
 ): string {
-  const deferredNames = tools
-    .filter(isCustomToolDefinition)
-    .filter((tool) => tool.deferLoading)
-    .map((tool) => tool.name);
+  // Deferred tools are the ones kept out of the prompt, so ALL_TOOLS is how a
+  // script discovers them: configured custom tools and the bridged Pi tools
+  // (LSP, MCP, sub-agents, sessions) alike.
+  const deferredNames = tools.filter((tool) => tool.deferLoading).map((tool) => tool.name);
   const namespaceGuard = unavailableToolsGuardPreamble(tools.map((tool) => tool.name));
   return `globalThis.ALL_TOOLS=globalThis.ALL_TOOLS.filter(({name})=>${JSON.stringify(deferredNames)}.includes(name));${namespaceGuard}${source}`;
 }
