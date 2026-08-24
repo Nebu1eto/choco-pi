@@ -142,6 +142,16 @@ test("focus survives Esc and restores exact predecessors on exit", async () => {
   assert.match(focusedRender, /focused agent answer/);
   assert.doesNotMatch(focusedRender, /ORCHESTRATOR CONVERSATION/);
   assert.equal(widgets.has("subagent-focus"), true);
+  // With the FleetView switcher up, the above-editor indicator stays silent —
+  // it would only repeat the switcher. It speaks when the switcher is off.
+  const indicator = widgets.get("subagent-focus");
+  const renderIndicator = (): string[] => {
+    if (!(indicator instanceof Function)) return [];
+    // SAFETY: setWidget stores the factory this test registered above.
+    const widget = indicator(tui as never, theme as never) as { render(width: number): string[] };
+    return widget.render(100);
+  };
+  assert.deepEqual(renderIndicator(), []);
   assert.equal(editor.getText(), "");
 
   session.messages.push(makeAssistantMessage("streamed progress"));
@@ -187,6 +197,7 @@ test("focus survives Esc and restores exact predecessors on exit", async () => {
 
   // With no switcher rendered, Esc stays the escape hatch.
   switcherUp = false;
+  assert.match(renderIndicator()[0] ?? "", /Esc returns to main/);
   editor.handleInput("\x1b");
   assert.deepEqual(controller.getState(), { kind: "orchestrator" });
   assert.equal(controller.getFocusedAgentId(), undefined);
