@@ -11,6 +11,8 @@ import test from "node:test";
 import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import {
   type AgentSession,
+  type AgentSessionEvent,
+  type AgentSessionEventListener,
   initTheme,
 } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, type TUI } from "@earendil-works/pi-tui";
@@ -36,15 +38,20 @@ function makeTui(): TUI {
   });
 }
 
-function makeSession(messages: unknown[]): AgentSession {
-  return partialFixture<AgentSession>({
+function makeSession(messages: unknown[]): { session: AgentSession; fire: () => void } {
+  const listeners: Array<() => void> = [];
+  const session = partialFixture<AgentSession>({
     messages: messages as AgentSession["messages"],
-    subscribe: () => () => {},
+    subscribe: (listener: AgentSessionEventListener) => {
+      listeners.push(() => listener({ type: "custom", data: {} } as unknown as AgentSessionEvent));
+      return () => {};
+    },
     getToolDefinition: () => undefined,
     sessionManager: partialFixture<AgentSession["sessionManager"]>({
       getCwd: () => "/project",
     }),
   });
+  return { session, fire: () => listeners.forEach((listener) => listener()) };
 }
 
 function makeRecord(session: AgentSession, status: AgentRecord["status"] = "completed"): AgentRecord {
@@ -117,7 +124,7 @@ function makeViewer(
 }
 
 test("user and assistant messages render as styled transcript, not raw labels", () => {
-  const session = makeSession([
+  const { session } = makeSession([
     makeUserMessage("Explain **why** the build failed."),
     makeAssistantMessage([{ type: "text", text: "It failed because tsc errored." }]),
   ]);
@@ -133,7 +140,7 @@ test("user and assistant messages render as styled transcript, not raw labels", 
 });
 
 test("assistant text renders as markdown: headings lose their # markers", () => {
-  const session = makeSession([
+  const { session } = makeSession([
     makeAssistantMessage([{ type: "text", text: "## Findings\n\nThe answer is **42**." }]),
   ]);
   const { viewer, rendered } = makeViewer(session);
@@ -145,7 +152,7 @@ test("assistant text renders as markdown: headings lose their # markers", () => 
 });
 
 test("tool calls and their results render through ToolExecutionComponent", () => {
-  const session = makeSession([
+  const { session } = makeSession([
     makeUserMessage("Read workflow.ts"),
     makeAssistantMessage(
       [
@@ -166,7 +173,7 @@ test("tool calls and their results render through ToolExecutionComponent", () =>
 });
 
 test("bash executions render as transcript bash blocks", () => {
-  const session = makeSession([
+  const { session } = makeSession([
     {
       role: "bashExecution",
       command: "git status --short",
@@ -183,29 +190,62 @@ test("bash executions render as transcript bash blocks", () => {
   viewer.dispose();
 });
 
-test("a running agent streams: mutated tail re-renders, new messages appear", () => {
+test("a running agent streams: deltas reach frames within the throttle window", async () => {
   const messages: unknown[] = [
     makeUserMessage("Work on it."),
     makeAssistantMessage([{ type: "text", text: "Starting" }]),
   ];
-  const session = makeSession(messages);
+  const { session, fire } = makeSession(messages);
   const { viewer, rendered } = makeViewer(session, makeRecord(session, "running"));
   assert.ok(rendered().includes("Starting"));
 
-  // Streaming mutates the tail message in place, as pi-ai delivers deltas.
+  // Streaming mutates the tail message in place, as pi-ai delivers deltas,
+  // and every mutation arrives with a session event. Within the throttle
+  // window a frame may keep the previous lines...
   const tail = messages[1] as AssistantMessage;
   (tail.content[0] as { text: string }).text = "Starting... now halfway through";
+  fire();
+  const withinWindow = rendered();
+  assert.ok(withinWindow.includes("Starting"), "throttled frame still renders the tail");
+  assert.ok(!withinWindow.includes("halfway through"), "throttled frame reuses tail lines");
+
+  // ...and the next budget tick repaints it.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  fire();
   const updated = rendered();
-  assert.ok(updated.includes("halfway through"), "mutated tail text reaches the next frame");
+  assert.ok(updated.includes("halfway through"), "next budget tick re-renders the tail");
 
   messages.push(makeAssistantMessage([{ type: "text", text: "Done." }]));
+  fire();
   const grown = rendered();
-  assert.ok(grown.includes("Done."), "newly appended messages render");
+  assert.ok(grown.includes("Done."), "newly appended messages render immediately");
+  viewer.dispose();
+});
+
+test("settling flushes the throttled tail into its final render immediately", () => {
+  const messages: unknown[] = [
+    makeUserMessage("Work on it."),
+    makeAssistantMessage([{ type: "text", text: "Half" }]),
+  ];
+  const { session, fire } = makeSession(messages);
+  const record = makeRecord(session, "running");
+  const { viewer, rendered } = makeViewer(session, record);
+  assert.ok(rendered().includes("Half"));
+
+  // The final delta lands together with the status flip, inside the throttle
+  // window: the settle must bypass the window, not wait 100ms.
+  const tail = messages[1] as AssistantMessage;
+  (tail.content[0] as { text: string }).text = "Half — the full answer.";
+  record.status = "completed";
+  record.completedAt = Date.now();
+  fire();
+  const settled = rendered();
+  assert.ok(settled.includes("the full answer"), "settle render is fresh immediately");
   viewer.dispose();
 });
 
 test("a settled transcript catches tool results that landed before viewing", () => {
-  const session = makeSession([
+  const { session } = makeSession([
     makeAssistantMessage(
       [{ type: "toolCall", id: "call-9", name: "grep", arguments: { pattern: "needle" } }],
       "toolUse",
@@ -218,7 +258,7 @@ test("a settled transcript catches tool results that landed before viewing", () 
 });
 
 test("invalidate drops the caches and re-renders identically", () => {
-  const session = makeSession([
+  const { session } = makeSession([
     makeUserMessage("Hello **there**."),
     makeAssistantMessage([{ type: "text", text: "General **Kenobi**." }]),
   ]);
