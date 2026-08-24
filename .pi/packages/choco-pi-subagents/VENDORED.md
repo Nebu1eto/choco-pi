@@ -107,16 +107,24 @@ test suite import the fork directly.
 ### Focused-subagent fullscreen mode
 
 The fork adds `src/ui/focus-mode.ts` and `src/ui/method-patch-registry.ts` and
-extends FleetView and `ConversationViewer` with fullscreen focus. `f` on a
-selected FleetView row (or in its modal viewer) replaces Pi's main transcript
-rendering with that agent's live conversation and binds the existing main editor
-to `AgentManager.steer`; Esc restores the exact orchestrator renderer and editor
-input predecessor. `/agents` propagates a focus request through both nested menu
+extends FleetView and `ConversationViewer` with fullscreen focus. Moving the
+FleetView cursor onto a subagent row (or pressing `f`, or `f focus` in its modal
+viewer) replaces Pi's main transcript rendering with that agent's live
+conversation and binds the existing main editor to `AgentManager.steer`; moving
+the cursor back onto `main` restores the exact orchestrator renderer and editor
+input predecessor. FleetView therefore keeps rendering and keeps owning ↑/↓ while
+an agent is focused, and Esc neither exits focus nor reaches the main session —
+except with FleetView turned off, where Esc stays the only escape hatch and still
+exits.
+`/btw` rows are excluded from selection-focus because they own a dismissible
+overlay. `/agents` propagates a focus request through both nested menu
 levels instead of reopening the parent selector, which would consume the first
 Esc. The method registry uses an additive, instance-scoped wrapper so pi-zentui
 and prompt-editor adapters remain composed. `tests/focus-mode.test.ts` pins
 transcript swapping, streaming refresh, steering ownership, focus propagation,
-single-Esc exit and restoration.
+Esc being swallowed, and restoration on exit; `tests/fleet-list.test.ts` pins
+selection-driven focus switching, the `main` return, Esc leaving navigation only,
+and the `/btw` exclusion.
 
 ### BTW side conversations
 

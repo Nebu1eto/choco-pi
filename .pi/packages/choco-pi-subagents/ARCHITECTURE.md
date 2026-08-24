@@ -103,7 +103,9 @@ resolution.
 ## Seam A — focused agent fullscreen takeover
 
 The modal remains the default conversation viewer. FleetView uses **Enter** to
-open it and **f** on a selected agent to enter fullscreen focus directly; the
+open it, and its selection doubles as the focus: moving the cursor with ↑/↓ onto
+a subagent row focuses that agent, and moving onto `main` restores the
+orchestrator. **f** still focuses the selected row explicitly; the
 modal also exposes **f focus**. Focus mode uses the existing
 `ConversationViewer` with `profile: "focus"`, so message extraction, tool-call
 rows, nested `Agent` calls, activity text and `session.subscribe()` streaming
@@ -114,11 +116,19 @@ follow-end behavior in this profile instead of the modal's 70% viewport.
 
 ```text
 orchestrator (default)
-  -- FleetView f / modal f --> focused(agentId, session)
+  -- FleetView ↑↓ onto an agent row / FleetView f / modal f --> focused(agentId, session)
 focused(agentId, session)
-  -- Esc / session switch / shutdown --> orchestrator
-focused(A) -- focus(B) --> orchestrator -- focus(B)
+  -- FleetView ↑↓ onto main or a [btw] row / session switch / shutdown --> orchestrator
+focused(A) -- ↑↓ onto B / focus(B) --> orchestrator -- focus(B)
 ```
+
+Esc is not part of this machine. In FleetView it only leaves list navigation,
+and the focused editor adapter swallows it, so a prompt addressed to a subagent
+can neither exit focus by accident nor interrupt the main session. The adapter
+asks `hasSwitcher()` (wired to the FleetView enabled flag) first: with the
+switcher turned off there is no other way back, so Esc still exits. `/btw` rows
+are excluded from selection-focus because they own a dismissible overlay opened
+with Enter; selecting one restores the orchestrator transcript.
 
 A finished agent may remain focused as a read-only transcript. Submitting text
 there is consumed and retained in the editor; it never falls through to the
@@ -161,8 +171,12 @@ input; deactivate/restore document render; unsubscribe and dispose the focused
 viewer; clear the `subagent-focus` indicator; request a forced render. This
 prevents a visible orchestrator transcript from briefly retaining subagent
 input ownership. The subtle above-editor indicator names the focused handle and
-keeps `Esc returns to main` visible. FleetView renders no rows and claims no
-global input while focus is active.
+states that ↑↓ switch agents and `main` returns. FleetView keeps rendering its
+rows while focus is active — it is the switcher — and keeps claiming ↑/↓, Enter,
+`f` and Esc through `onTerminalInput` whenever list navigation is active, which
+focusing leaves on. Its cursor is clamped to the focused record's row on every
+refresh, and its roster keeps that record listed even after the finished-agent
+linger window expires.
 
 ## Seam B — dismissible side-conversation overlay
 

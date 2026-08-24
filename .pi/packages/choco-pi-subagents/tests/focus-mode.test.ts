@@ -43,7 +43,7 @@ function makeAssistantMessage(text: string): AssistantMessage {
   };
 }
 
-test("focus exits on one Esc and restores exact predecessors", async () => {
+test("focus survives Esc and restores exact predecessors on exit", async () => {
   const renderRequests: boolean[] = [];
   const listeners = new Set<AgentSessionEventListener>();
   const session = partialFixture<AgentSession>({
@@ -74,6 +74,7 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
   const orchestratorRender = (_width: number) => ["ORCHESTRATOR CONVERSATION"];
   const document = { render: orchestratorRender };
   const orchestratorSubmits: string[] = [];
+  const orchestratorInputs: string[] = [];
   const editor = {
     text: "orchestrator draft",
     onSubmit(text: string) {
@@ -87,6 +88,7 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
     },
     addToHistory(_text: string) {},
     handleInput(data: string) {
+      orchestratorInputs.push(data);
       if (data === "\r") this.onSubmit?.(this.text);
     },
   };
@@ -106,6 +108,7 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
   const events: Array<{ id: string; message: string }> = [];
   const widgets = new Map<string, unknown>();
   const notifications: string[] = [];
+  let switcherUp = true;
   const controller = new FocusedAgentController(
     {
       steer(id, message) {
@@ -117,7 +120,10 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
         return record;
       },
     },
-    { onSteered: (id, message) => events.push({ id, message }) },
+    {
+      onSteered: (id, message) => events.push({ id, message }),
+      hasSwitcher: () => switcherUp,
+    },
   );
   controller.setUICtx({
     setWidget(key, content) {
@@ -169,8 +175,21 @@ test("focus exits on one Esc and restores exact predecessors", async () => {
   assert.match(notifications.at(-1) ?? "", /cannot be steered/);
   record.session = realSession;
 
+  // Esc no longer leaves focus — the FleetView switcher owns that transition —
+  // and it must not reach the orchestrator editor either.
+  editor.setText("still focused");
+  editor.handleInput("\x1b");
+  assert.deepEqual(controller.getState(), { kind: "agent", agentId: "agent-7" });
+  assert.equal(controller.getFocusedAgentId(), "agent-7");
+  assert.equal(editor.getText(), "still focused");
+  assert.equal(orchestratorInputs.includes("\x1b"), false, "Esc is swallowed while focused");
+  editor.setText("");
+
+  // With no switcher rendered, Esc stays the escape hatch.
+  switcherUp = false;
   editor.handleInput("\x1b");
   assert.deepEqual(controller.getState(), { kind: "orchestrator" });
+  assert.equal(controller.getFocusedAgentId(), undefined);
   assert.equal(document.render, orchestratorRender);
   assert.equal(editor.handleInput, orchestratorInput);
   assert.equal(editor.getText(), "orchestrator draft");

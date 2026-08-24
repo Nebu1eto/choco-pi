@@ -21,10 +21,15 @@ tree, the above-editor widget, FleetView, the live conversation overlay,
 fullscreen subagent focus, `isolation: "worktree"`, cron/interval scheduling,
 opt-in nested delegation, and cross-extension RPC.
 
-In FleetView, Enter keeps the modal conversation viewer and `f` focuses the
-selected subagent in Pi's main conversation area. The main prompt then steers
-that agent; Esc restores the orchestrator conversation and prompt unchanged.
-The modal also offers `f focus`.
+In FleetView, the selection is the focus: ↑/↓ onto a subagent row focuses it in
+Pi's main conversation area, and moving back onto `main` restores the
+orchestrator conversation and prompt unchanged. The switcher stays visible while
+an agent is focused, so `main` and every other agent are always one arrow key
+away; Esc only leaves list navigation and never unfocuses. Enter no longer opens
+the modal viewer for an ordinary agent — the row is already focused in the main
+area, so it would duplicate what is on screen — and simply ends navigation. A
+`/btw` row is the exception: side conversations never take focus, so Enter opens
+their dismissible overlay. The main prompt steers whichever agent is focused.
 
 ## Wiring
 
