@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, UserMessage } from "@earendil-works/pi-ai";
 import type { AgentSession, AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { AgentRecord } from "../src/types.ts";
 import { continueRunningAgentNavigation, FocusedAgentController } from "../src/ui/focus-mode.ts";
+import {
+  FOCUSED_AGENT_RUNTIME_SYMBOL,
+  type FocusedAgentRuntimeSource,
+} from "../src/ui/focused-runtime.ts";
 import { installMethodPatch } from "../src/ui/method-patch-registry.ts";
 
 initTheme("dark", false);
@@ -17,6 +21,16 @@ const theme = {
 function partialFixture<T extends object>(fixture: Partial<T>): T {
   // SAFETY: Each test supplies the named slice exercised by its subject.
   return fixture as T;
+}
+
+interface FocusedAgentRuntimeRegistry {
+  [FOCUSED_AGENT_RUNTIME_SYMBOL]?: FocusedAgentRuntimeSource;
+}
+
+function currentFocusedRuntime() {
+  // SAFETY: The publisher and this fixture share the exported symbol and source type.
+  const registry = globalThis as typeof globalThis & FocusedAgentRuntimeRegistry;
+  return registry[FOCUSED_AGENT_RUNTIME_SYMBOL]?.current();
 }
 
 function makeUserMessage(content: string): UserMessage {
@@ -43,10 +57,16 @@ function makeAssistantMessage(text: string): AssistantMessage {
   };
 }
 
-test("focus survives Esc and restores exact predecessors on exit", async () => {
+test("focus survives Esc and restores exact predecessors on exit", async (t) => {
   const renderRequests: boolean[] = [];
   const listeners = new Set<AgentSessionEventListener>();
   const session = partialFixture<AgentSession>({
+    model: partialFixture<Model<Api>>({
+      id: "gpt-5.6-terra",
+      name: "GPT-5.6 Terra",
+      provider: "openai-codex",
+    }),
+    thinkingLevel: "medium",
     messages: [
       makeUserMessage("inspect the focused task"),
       makeAssistantMessage("focused agent answer"),
@@ -131,6 +151,7 @@ test("focus survives Esc and restores exact predecessors on exit", async () => {
       hasSwitcher: () => switcherUp,
     },
   );
+  t.after(() => controller.dispose());
   controller.setUICtx({
     setWidget(key, content) {
       if (content === undefined) widgets.delete(key);
@@ -143,6 +164,27 @@ test("focus survives Esc and restores exact predecessors on exit", async () => {
 
   // SAFETY: The focus controller uses only the TUI and theme methods implemented by these fixtures.
   assert.equal(controller.focus(record, tui as never, theme as never), true);
+  assert.deepEqual(currentFocusedRuntime(), {
+    modelId: "gpt-5.6-terra",
+    modelName: "GPT-5.6 Terra",
+    provider: "openai-codex",
+    thinking: "medium",
+  });
+  record.session = partialFixture<AgentSession>({
+    model: partialFixture<Model<Api>>({
+      id: "claude-fable-5",
+      name: "Claude Fable 5",
+      provider: "anthropic",
+    }),
+    thinkingLevel: "high",
+  });
+  assert.deepEqual(currentFocusedRuntime(), {
+    modelId: "claude-fable-5",
+    modelName: "Claude Fable 5",
+    provider: "anthropic",
+    thinking: "high",
+  });
+  record.session = session;
   assert.deepEqual(controller.getState(), { kind: "agent", agentId: "agent-7" });
   const focusedRender = document.render(100).join("\n");
   assert.match(focusedRender, /focused agent answer/);
@@ -206,6 +248,7 @@ test("focus survives Esc and restores exact predecessors on exit", async () => {
   assert.match(renderIndicator()[0] ?? "", /Esc returns to main/);
   editor.handleInput("\x1b");
   assert.deepEqual(controller.getState(), { kind: "orchestrator" });
+  assert.equal(currentFocusedRuntime(), undefined, "unfocus clears the shared runtime");
   assert.equal(controller.getFocusedAgentId(), undefined);
   assert.equal(document.render, orchestratorRender);
   assert.equal(editor.handleInput, orchestratorInput);
@@ -218,6 +261,12 @@ test("focus survives Esc and restores exact predecessors on exit", async () => {
   editor.handleInput("\r");
   assert.deepEqual(orchestratorSubmits, ["back on main"]);
   assert.equal(renderRequests.includes(true), true);
+
+  // SAFETY: The controller uses only the TUI and theme members these fixtures implement.
+  assert.equal(controller.focus(record, tui as never, theme as never), true);
+  assert.notEqual(currentFocusedRuntime(), undefined);
+  controller.dispose();
+  assert.equal(currentFocusedRuntime(), undefined, "dispose clears the shared runtime");
 });
 
 test("/exit at a focused prompt stops the agent instead of quitting pi", () => {

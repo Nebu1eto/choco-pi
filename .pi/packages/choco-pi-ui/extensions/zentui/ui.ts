@@ -93,6 +93,51 @@ export type EditorMeta = {
   sessionName?: string;
 };
 
+const FOCUSED_AGENT_RUNTIME_SYMBOL = Symbol.for("choco-pi.subagents.focused-agent-runtime");
+
+type FocusedAgentRuntime = {
+  modelId: string;
+  modelName: string;
+  provider: string;
+  thinking: string;
+};
+
+interface FocusedAgentRuntimeRegistry {
+  [FOCUSED_AGENT_RUNTIME_SYMBOL]?: BoundaryValue;
+}
+
+/** Defensively consume the optional subagent publisher without coupling either package. */
+function readFocusedAgentRuntime(): FocusedAgentRuntime | undefined {
+  try {
+    // SAFETY: The slot is optional and remains a BoundaryValue until every
+    // property used below has passed the existing host-boundary guards.
+    const registry = globalThis as typeof globalThis & FocusedAgentRuntimeRegistry;
+    const source = registry[FOCUSED_AGENT_RUNTIME_SYMBOL];
+    if (!isBoundaryRecord(source) || !isCallable(source["current"])) return undefined;
+    const value = source["current"]();
+    if (!isBoundaryRecord(value)) return undefined;
+    const modelId = value["modelId"];
+    const modelName = value["modelName"];
+    const provider = value["provider"];
+    const thinking = value["thinking"];
+    if (!isString(modelId) || !isString(modelName) || !isString(provider) || !isString(thinking)) {
+      return undefined;
+    }
+    return { modelId, modelName, provider, thinking };
+  } catch {
+    return undefined;
+  }
+}
+
+function focusedProviderLabel(provider: string): string {
+  if (!provider) return "Unknown";
+  if (provider === "anthropic") return "Anthropic";
+  if (provider === "gemini" || provider === "google") return "Google";
+  if (provider === "ollama") return "Ollama";
+  if (provider === "openai" || provider === "openai-codex") return "OpenAI";
+  return provider.replace(/[-_]/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export type PolishedEditorFrameOptions = {
   width: number;
   editorLines: string[];
@@ -651,16 +696,33 @@ export function renderPolishedEditorFrame({
   const { prompt, promptWidth, rail, railWidth } = getEditorChromeWidths(config, uiTheme, reset);
   const innerWidth = Math.max(0, width - railWidth);
   const lowRailContinuation = " ".repeat(promptWidth);
+  const focusedRuntime = readFocusedAgentRuntime();
+  let effectiveModelMeta = modelMeta;
+  let effectiveThinkingLevel = thinkingLevel;
+  if (focusedRuntime) {
+    let modelLabel = focusedRuntime.modelId || "no-model";
+    if (config.components.editor.modelLabel === "name") {
+      modelLabel = focusedRuntime.modelName || focusedRuntime.modelId || "no-model";
+    }
+    effectiveModelMeta = {
+      modelLabel,
+      modelId: focusedRuntime.modelId,
+      modelName: focusedRuntime.modelName,
+      providerLabel: focusedProviderLabel(focusedRuntime.provider),
+      sessionName: modelMeta.sessionName,
+    };
+    effectiveThinkingLevel = focusedRuntime.thinking;
+  }
   const meta = renderEditorMetadataFormat(
     selectedPolishedConfig(config)?.metadataFormat ??
       config.components.editor.styles.opencode.metadataFormat,
     {
-      model: modelMeta.modelLabel,
-      modelId: modelMeta.modelId ?? "",
-      modelName: modelMeta.modelName ?? "",
-      provider: modelMeta.providerLabel,
-      thinking: thinkingLevel ?? "",
-      sessionName: modelMeta.sessionName ?? "",
+      model: effectiveModelMeta.modelLabel,
+      modelId: effectiveModelMeta.modelId ?? "",
+      modelName: effectiveModelMeta.modelName ?? "",
+      provider: effectiveModelMeta.providerLabel,
+      thinking: effectiveThinkingLevel ?? "",
+      sessionName: effectiveModelMeta.sessionName ?? "",
     },
     uiTheme,
     config,

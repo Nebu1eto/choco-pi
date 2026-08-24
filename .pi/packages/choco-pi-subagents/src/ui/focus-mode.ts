@@ -4,6 +4,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { AgentRecord } from "../types.ts";
 import type { AgentActivity, Theme } from "./agent-widget.ts";
 import { ConversationViewer } from "./conversation-viewer.ts";
+import { focusedAgentRuntime, publishFocusedAgentRuntime } from "./focused-runtime.ts";
 import { installMethodPatch } from "./method-patch-registry.ts";
 
 const FOCUS_WIDGET_KEY = "subagent-focus";
@@ -181,6 +182,7 @@ export class FocusedAgentController {
   private active: ActiveFocus | undefined;
   private restoreDocument: (() => void) | undefined;
   private restoreEditor: (() => void) | undefined;
+  private clearFocusedRuntime: (() => void) | undefined;
   private patchedEditor: EditorLike | undefined;
   /** Main prompt draft held outside the focused editor and restored on exit. */
   private orchestratorEditorText: string | undefined;
@@ -213,7 +215,8 @@ export class FocusedAgentController {
 
   /** Replace the main transcript renderer and bind the current prompt editor. */
   focus(record: AgentRecord, tui: TUI, theme: Theme): boolean {
-    if (!record.session) {
+    const session = record.session;
+    if (!session) {
       this.ui?.notify(`Agent is ${record.status} — no session available.`, "info");
       return false;
     }
@@ -226,7 +229,7 @@ export class FocusedAgentController {
     this.restoreOrchestrator("silent");
     const viewer = new ConversationViewer(
       tui,
-      record.session,
+      session,
       record,
       this.options.getActivity?.(record.id),
       theme,
@@ -250,6 +253,9 @@ export class FocusedAgentController {
     );
     this.ensureEditorPatch();
     this.installIndicator(record);
+    this.clearFocusedRuntime = publishFocusedAgentRuntime(() =>
+      focusedAgentRuntime(record.session ?? session),
+    );
     tui.requestRender(true);
     return true;
   }
@@ -266,8 +272,10 @@ export class FocusedAgentController {
    */
   private restoreOrchestrator(repaint: "render" | "silent"): void {
     const previous = this.active;
-    if (!previous) return;
     this.active = undefined;
+    this.clearFocusedRuntime?.();
+    this.clearFocusedRuntime = undefined;
+    if (!previous) return;
 
     const editor = this.patchedEditor;
     this.restoreEditor?.();
