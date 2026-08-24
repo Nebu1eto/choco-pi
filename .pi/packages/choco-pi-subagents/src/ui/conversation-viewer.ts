@@ -5,7 +5,15 @@
  * Subscribes to session events for real-time streaming updates.
  */
 
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import {
+  type AgentSession,
+  AssistantMessageComponent,
+  BashExecutionComponent,
+  getMarkdownTheme,
+  type MarkdownTransformer,
+  ToolExecutionComponent,
+  UserMessageComponent,
+} from "@earendil-works/pi-coding-agent";
 import {
   type Component,
   Input,
@@ -13,7 +21,6 @@ import {
   type TUI,
   truncateToWidth,
   visibleWidth,
-  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -39,35 +46,52 @@ const MIN_VIEWPORT = 3;
 /** Height ceiling shared by the overlay's `maxHeight` and the viewer's internal viewport cap. */
 export const VIEWPORT_HEIGHT_PCT = 70;
 
-interface HostToolCallTrace {
-  type?: string;
-  name?: any;
-  toolName?: any;
-}
-
 interface HostBashExecutionTrace {
   role?: any;
   command?: any;
   output?: any;
+  exitCode?: any;
+  cancelled?: any;
+  truncated?: any;
+  fullOutputPath?: any;
+  excludeFromContext?: any;
 }
 
 const HostStringSchema = Type.String();
+const HostNumberSchema = Type.Number();
+const HostBooleanSchema = Type.Boolean();
 
 function parseHostString(value: any): string | undefined {
   return Value.Check(HostStringSchema, value) ? value : undefined;
 }
 
-function hostToolCallName(trace: HostToolCallTrace): string {
-  return parseHostString(trace.name) ?? parseHostString(trace.toolName) ?? "unknown";
+interface BashExecutionTrace {
+  command: string;
+  output?: string;
+  exitCode?: number;
+  cancelled: boolean;
+  truncated: boolean;
+  fullOutputPath?: string;
+  excludeFromContext: boolean;
 }
 
 function parseBashExecution(
   message: HostBashExecutionTrace,
-): { command: string; output?: string } | undefined {
+): BashExecutionTrace | undefined {
   if (message.role !== "bashExecution") return undefined;
   const command = parseHostString(message.command);
   if (command === undefined) return undefined;
-  return { command, output: parseHostString(message.output) };
+  return {
+    command,
+    output: parseHostString(message.output),
+    exitCode: Value.Check(HostNumberSchema, message.exitCode) ? message.exitCode : undefined,
+    cancelled: Value.Check(HostBooleanSchema, message.cancelled) ? message.cancelled : false,
+    truncated: Value.Check(HostBooleanSchema, message.truncated) ? message.truncated : false,
+    fullOutputPath: parseHostString(message.fullOutputPath),
+    excludeFromContext: Value.Check(HostBooleanSchema, message.excludeFromContext)
+      ? message.excludeFromContext
+      : false,
+  };
 }
 
 export type ConversationViewerOptions = {
@@ -92,6 +116,22 @@ export class ConversationViewer implements Component {
   private keys: ViewerKeys;
   /** Steering composer — present while the user is typing a message to the agent. */
   private composer: Input | undefined;
+
+  /**
+   * Transcript message components, keyed by message object identity. Every
+   * message renders through the exact components the main Pi transcript uses
+   * (UserMessageComponent, AssistantMessageComponent, ToolExecutionComponent,
+   * BashExecutionComponent), so a zentui install restyles this overlay the
+   * same way it restyles the main agent.
+   */
+  private messageComponents = new Map<object, Array<{ render(w: number): string[] }>>();
+  /** Rendered lines per message + width; dropped when a tool result lands. */
+  private messageLineCache = new Map<object, { width: number; lines: string[] }>();
+  private toolComponents = new Map<string, ToolExecutionComponent>();
+  /** Tool calls whose result (real or synthesized error) has been applied. */
+  private settledTools = new Set<string>();
+  /** toolCallId -> owning assistant message, for line-cache invalidation. */
+  private toolOwners = new Map<string, object>();
 
   // choco-pi fork: parameter properties desugared to explicit fields (see the
   // note in `group-join.ts`) so this file stays erasable-syntax-only. The
@@ -387,11 +427,16 @@ export class ConversationViewer implements Component {
   }
 
   invalidate(): void {
-    /* no cached state to clear */
+    this.messageComponents.clear();
+    this.messageLineCache.clear();
+    this.toolComponents.clear();
+    this.settledTools.clear();
+    this.toolOwners.clear();
   }
 
   dispose(): void {
     this.closed = true;
+    this.invalidate();
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = undefined;
@@ -431,59 +476,25 @@ export class ConversationViewer implements Component {
       return lines;
     }
 
-    let needsSeparator = false;
-    for (const msg of messages) {
-      if (msg.role === "user") {
-        const text = Array.isArray(msg.content) ? extractText(msg.content) : msg.content;
-        if (!text.trim()) continue;
-        if (needsSeparator) lines.push(th.fg("dim", "───"));
-        lines.push(th.fg("accent", "[User]"));
-        for (const line of wrapTextWithAnsi(text.trim(), width)) {
-          lines.push(line);
-        }
-      } else if (msg.role === "assistant") {
-        const textParts: string[] = [];
-        const toolCalls: string[] = [];
-        for (const c of msg.content) {
-          if (c.type === "text" && c.text) textParts.push(c.text);
-          else if (c.type === "toolCall") {
-            toolCalls.push(hostToolCallName(c));
-          }
-        }
-        if (needsSeparator) lines.push(th.fg("dim", "───"));
-        lines.push(th.bold("[Assistant]"));
-        if (textParts.length > 0) {
-          for (const line of wrapTextWithAnsi(textParts.join("\n").trim(), width)) {
-            lines.push(line);
-          }
-        }
-        for (const name of toolCalls) {
-          lines.push(truncateToWidth(th.fg("muted", `  [Tool: ${name}]`), width));
-        }
-      } else if (msg.role === "toolResult") {
-        const text = extractText(msg.content);
-        const truncated = text.length > 500 ? text.slice(0, 500) + "... (truncated)" : text;
-        if (!truncated.trim()) continue;
-        if (needsSeparator) lines.push(th.fg("dim", "───"));
-        lines.push(th.fg("dim", "[Result]"));
-        for (const line of wrapTextWithAnsi(truncated.trim(), width)) {
-          lines.push(th.fg("dim", line));
-        }
+    this.syncComponents();
+    const streaming = this.record.status === "running";
+
+    messages.forEach((msg, index) => {
+      const isTail = streaming && index === messages.length - 1;
+      let block: string[];
+      const cached = this.messageLineCache.get(msg);
+      if (!isTail && cached && cached.width === width) {
+        block = cached.lines;
       } else {
-        const bash = parseBashExecution(msg);
-        if (!bash) continue;
-        if (needsSeparator) lines.push(th.fg("dim", "───"));
-        lines.push(truncateToWidth(th.fg("muted", `  $ ${bash.command}`), width));
-        if (bash.output?.trim()) {
-          const out =
-            bash.output.length > 500 ? bash.output.slice(0, 500) + "... (truncated)" : bash.output;
-          for (const line of wrapTextWithAnsi(out.trim(), width)) {
-            lines.push(th.fg("dim", line));
-          }
-        }
+        block = this.renderMessage(msg, width);
+        this.messageLineCache.set(msg, { width, lines: block });
       }
-      needsSeparator = true;
-    }
+      if (block.length === 0) return;
+      // Pi spaces transcript blocks with a blank row before user messages;
+      // one row between rendered blocks reads the same inside this overlay.
+      if (lines.length > 0) lines.push("");
+      lines.push(...block);
+    });
 
     // Streaming indicator for running agents
     if (this.record.status === "running" && this.activity) {
@@ -493,5 +504,166 @@ export class ConversationViewer implements Component {
     }
 
     return lines.map((l) => truncateToWidth(l, width));
+  }
+
+  /**
+   * Bring message components level with the session transcript. Idempotent:
+   * an unchanged message keeps its components; only new messages, a streaming
+   * tail and freshly landed tool results do work. Runs before any rendering,
+   * so a result arriving in the same frame as its call still settles first.
+   */
+  private syncComponents(): void {
+    const messages = this.session.messages;
+    const streaming = this.record.status === "running";
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      const isTail = streaming && i === messages.length - 1;
+
+      if (msg.role === "user") {
+        const text = Array.isArray(msg.content) ? extractText(msg.content) : msg.content;
+        if (!text.trim()) continue;
+        if (!this.messageComponents.has(msg)) {
+          this.messageComponents.set(msg, [
+            new UserMessageComponent(text.trim(), getMarkdownTheme(), 1, this.markdownTransformers()),
+          ]);
+        }
+        continue;
+      }
+
+      if (msg.role === "assistant") {
+        let components = this.messageComponents.get(msg);
+        if (!components) {
+          components = [
+            new AssistantMessageComponent(
+              msg,
+              false,
+              getMarkdownTheme(),
+              undefined,
+              1,
+              this.markdownTransformers(),
+            ),
+          ];
+          for (const content of msg.content) {
+            if (content.type !== "toolCall") continue;
+            const tool = new ToolExecutionComponent(
+              content.name,
+              content.id,
+              content.arguments,
+              undefined,
+              this.toolDefinition(content.name),
+              this.tui,
+              this.cwd(),
+            );
+            tool.setArgsComplete();
+            tool.markExecutionStarted();
+            components.push(tool);
+            this.toolComponents.set(content.id, tool);
+            this.toolOwners.set(content.id, msg);
+          }
+          this.messageComponents.set(msg, components);
+        }
+        const head = components[0];
+        if (isTail && head instanceof AssistantMessageComponent) {
+          head.updateContent(msg, true);
+        }
+        // A run that died mid-tool settles the call with its error instead of
+        // spinning forever — the main transcript rows read the same way.
+        if (msg.stopReason === "aborted" || msg.stopReason === "error") {
+          const errorText =
+            msg.stopReason === "error" ? msg.errorMessage || "Error" : "Operation aborted";
+          for (const content of msg.content) {
+            if (content.type !== "toolCall" || this.settledTools.has(content.id)) continue;
+            this.toolComponents
+              .get(content.id)
+              ?.updateResult({ content: [{ type: "text", text: errorText }], isError: true }, false);
+            this.settledTools.add(content.id);
+          }
+        }
+        continue;
+      }
+
+      if (msg.role === "toolResult") {
+        // Results render inside their tool component; no standalone block.
+        const tool = this.toolComponents.get(msg.toolCallId);
+        if (tool && !this.settledTools.has(msg.toolCallId)) {
+          tool.updateResult(
+            {
+              content: msg.content as Array<{ type: string; text?: string; data?: string }>,
+              details: msg.details,
+              isError: msg.isError,
+            },
+            false,
+          );
+          this.settledTools.add(msg.toolCallId);
+          const owner = this.toolOwners.get(msg.toolCallId);
+          if (owner) this.messageLineCache.delete(owner);
+        }
+        continue;
+      }
+
+      const bash = parseBashExecution(msg);
+      if (!bash) continue;
+      // A streaming bash message keeps mutating in place; rebuild it each
+      // frame. Settled ones keep their component (and its rendered cache).
+      if (isTail || !this.messageComponents.has(msg)) {
+        const component = new BashExecutionComponent(
+          bash.command,
+          this.tui,
+          bash.excludeFromContext,
+        );
+        if (bash.output) component.appendOutput(bash.output);
+        component.setComplete(
+          bash.exitCode,
+          bash.cancelled,
+          // The wire message carries only the flag; the component reads it.
+          bash.truncated
+            ? ({ truncated: true } as Parameters<BashExecutionComponent["setComplete"]>[2])
+            : undefined,
+          bash.fullOutputPath,
+        );
+        this.messageComponents.set(msg, [component]);
+        this.messageLineCache.delete(msg);
+      }
+    }
+  }
+
+  private renderMessage(msg: unknown, width: number): string[] {
+    const components = this.messageComponents.get(msg as object);
+    if (!components) return [];
+    const lines: string[] = [];
+    for (const component of components) {
+      lines.push(...component.render(width));
+    }
+    return lines;
+  }
+
+  /** Registered tool renderers, exactly what the main transcript passes. */
+  private toolDefinition(name: string): ConstructorParameters<typeof ToolExecutionComponent>[4] {
+    try {
+      return this.session.getToolDefinition(name);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private cwd(): string {
+    try {
+      return this.session.sessionManager.getCwd();
+    } catch {
+      return process.cwd();
+    }
+  }
+
+  /** Extension markdown transformers (e.g. diagrams) registered on the child session. */
+  private markdownTransformers(): readonly MarkdownTransformer[] {
+    try {
+      const runner = this.session.extensionRunner as
+        | { getMarkdownTransformers?: () => MarkdownTransformer[] }
+        | undefined;
+      const transformers = runner?.getMarkdownTransformers?.();
+      return Array.isArray(transformers) ? transformers : [];
+    } catch {
+      return [];
+    }
   }
 }

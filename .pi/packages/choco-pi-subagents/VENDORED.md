@@ -118,11 +118,11 @@ and prompt-editor adapters remain composed. `tests/focus-mode.test.ts` pins
 transcript swapping, streaming refresh, steering ownership, focus propagation,
 single-Esc exit and restoration.
 
-### BTW side conversations
+### `W side conversations
 
 The fork adds `src/ui/side-conversation.ts`, the `/btw` command, an
 orchestrator-owned `AgentRecord.sideConversation` marker, and a read-only runner
-profile. BTW launches clone the main session's typed active branch into an
+profile. `W launches clone the main session's typed active branch into an
 in-memory `SessionManager`, inherit the main model, thinking level and effective
 system prompt, and send the side question without the ordinary text context
 preamble. They share `maxConcurrent`, handles, FleetView and fullscreen focus,
@@ -213,6 +213,26 @@ Tool names the agent's own configuration lists stay active regardless, so a
 role with an explicit `tools:` set is unaffected. When the extension is absent
 the symbol is unset and scope falls back to upstream behavior, so the package
 still runs standalone.
+
+### Main-transcript message rendering in the conversation viewer
+
+Upstream's `ConversationViewer` draws messages as plain text: accent `[User]` /
+bold `[Assistant]` / dim `[Result]` labels, unrendered markdown, and a one-line
+`[Tool: name]` stub per call. The fork rebuilds every message through the exact
+components the main Pi transcript uses — `UserMessageComponent`,
+`AssistantMessageComponent`, `ToolExecutionComponent` (with the child session's
+registered tool definition, so extension and MCP tools keep their own renderers)
+and `BashExecutionComponent` — themed by the live `getMarkdownTheme()`. zentui
+or any other extension that restyles those prototypes restyles the overlay the
+same way, and tool results render inline under their call. Components are
+created incrementally per message identity, tool results patch their pending
+component (real result, or a synthesized error when the run died mid-call), and
+the streaming tail re-renders every frame while a dead run's transcript stays
+cached. `tests/conversation-viewer.test.ts` pins label-free rendering, consumed
+markdown markers, inline tool results, bash blocks, streaming-tail updates,
+first-open history hydration and invalidate idempotence;
+`tests/side-conversation.test.ts` and `tests/focus-mode.test.ts` initialize the
+theme because the transcript components read it.
 
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 

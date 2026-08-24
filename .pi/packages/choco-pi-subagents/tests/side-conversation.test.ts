@@ -7,6 +7,7 @@ import {
   type ExtensionContext,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../src/agent-manager.ts";
 import {
   buildEffectivePrompt,
@@ -15,6 +16,8 @@ import {
 } from "../src/agent-runner.ts";
 import type { AgentRecord } from "../src/types.ts";
 import { SideConversationController } from "../src/ui/side-conversation.ts";
+
+initTheme("dark", false);
 
 const theme = {
   fg: (_color: string, text: string) => text,
