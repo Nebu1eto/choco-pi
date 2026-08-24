@@ -387,15 +387,22 @@ export class FocusedAgentController {
     this.ui?.setWidget(
       FOCUS_WIDGET_KEY,
       (_tui, theme) => ({
-        render: (width) => [
-          truncateToWidth(
-            theme.fg(
-              "dim",
-              `Focused ${focusLabel(record)} · prompt targets this agent · ↑↓ switch agent · select main to return`,
+        // The FleetView switcher already names the focused agent and its keys,
+        // so a second line above the editor only repeats it. Speak only when
+        // the switcher is off, where this is the one signal focus is active —
+        // and there Esc is the exit, not the switcher.
+        render: (width) => {
+          if (this.options.hasSwitcher?.() === true) return [];
+          return [
+            truncateToWidth(
+              theme.fg(
+                "dim",
+                `Focused ${focusLabel(record)} · prompt targets this agent · Esc returns to main`,
+              ),
+              width,
             ),
-            width,
-          ),
-        ],
+          ];
+        },
         invalidate: () => {},
       }),
       { placement: "aboveEditor" },
