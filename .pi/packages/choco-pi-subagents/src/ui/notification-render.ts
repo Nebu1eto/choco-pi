@@ -156,8 +156,9 @@ function renderOne(details: NotificationDetails, expanded: boolean, theme: Theme
       )}`,
     );
   }
-  // Leave the band open: the host Text component pads each row to its render width.
-  return lines.map((line) => background + line).join("\n");
+  // Match settled tool cells with one empty band row above and below the content.
+  // Leave each row open so the host Text component pads it to its render width.
+  return ["", ...lines, ""].map((line) => background + line).join("\n");
 }
 
 /** Render one notification and any grouped completions without host or TUI side effects. */
