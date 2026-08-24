@@ -68,7 +68,7 @@ without producing a compile error:
 
 - `Symbol.for("pi-subagents:manager")`, the global manager registry slot
 - every `subagents:*` event name (`subagents:ready`, `subagents:started`,
-  `subagents:completed`, `subagents:failed`, `subagents:steered`,
+  `subagents:completed`, `subagents:failed`, `subagents:steered`, `subagents:stopped`,
   `subagents:settings_loaded`, `subagents:record`, the `subagents:rpc:*`
   channels)
 - the `subagents` status-bar key and `.pi/subagents.json` settings filename
@@ -160,6 +160,17 @@ workflow. Settled workflow records remain queryable for 10 minutes, then a
 sessions receive no workflow tools. `tests/workflow.test.ts` uses a stub runner
 to pin validation, topological scheduling, result bounds, failure policies,
 dynamic updates, idle waits, retention and cancellation.
+
+### LLM-callable subagent stopping
+
+The fork adds root and ownership-scoped nested `stop_subagent` tools. Both use
+`AgentManager.abort`, keep partial transcripts readable, and no-op after
+settlement. Root stops resolve ids or handles, exclude nested children, emit
+`subagents:stopped`, and consume the result before aborting so completion cannot
+trigger a redundant follow-up turn. Workflow-step stops remain allowed: the
+workflow runner observes the manager's terminal record and settles the step as
+an error, preserving scheduler state and failure policy. `src/stop-subagent.ts`
+holds the pure decision logic; `tests/stop-subagent.test.ts` pins every outcome.
 
 ### Background-by-default spawn guidance
 
