@@ -10,6 +10,7 @@ import {
 } from "../adapter/compaction/types.ts";
 import type { CodexExtensionRuntime } from "./runtime.ts";
 import { renderCodexStatus } from "../ui/status.ts";
+import { withLiveCtx } from "./live-context.ts";
 import {
   isAdapterRuntime,
   resolveCodexRuntimePlanForState,
@@ -102,7 +103,7 @@ export function registerCodexUi(
       if (config.voiceFeaturesOnly || !config.ui.statusLine) {
         invalidateUsageStatus();
       } else if (previousConfig.voiceFeaturesOnly || !previousConfig.ui.statusLine) {
-        void refreshUsageStatus(ctx);
+        void withLiveCtx(() => refreshUsageStatus(ctx));
       }
     },
   };

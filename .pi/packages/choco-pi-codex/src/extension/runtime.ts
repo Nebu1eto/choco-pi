@@ -45,6 +45,7 @@ import { getBundledToolBinaryPath } from "../tools/native/binary.ts";
 import { getActiveToolsInActiveOrder } from "../adapter/active-tools.ts";
 import { createLazyCodexDiagnostics } from "../diagnostics/lazy.ts";
 import type { CodexDiagnosticsSink } from "../providers/openai-codex/types.ts";
+import { withLiveCtx } from "./live-context.ts";
 
 export type CodexContext = ExtensionContext;
 
@@ -85,6 +86,10 @@ export interface CodexExtensionRuntime {
   shutdownDiagnostics(): Promise<void>;
 }
 
+export interface CodexExtensionRuntimeOptions {
+  cacheKeepaliveIntervalMs?: number | undefined;
+}
+
 function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
   let promise: Promise<Module> | undefined;
   return () => (promise ??= loader());
@@ -109,7 +114,10 @@ function prewarmReasoningOption(
   return level === "off" ? {} : { reasoning: level };
 }
 
-export function createCodexExtensionRuntime(pi: ExtensionAPI): CodexExtensionRuntime {
+export function createCodexExtensionRuntime(
+  pi: ExtensionAPI,
+  options: CodexExtensionRuntimeOptions = {},
+): CodexExtensionRuntime {
   const initialConfig = readEffectiveCodexConversionConfig({
     cwd: process.cwd(),
     projectTrusted: false,
@@ -356,29 +364,45 @@ export function createCodexExtensionRuntime(pi: ExtensionAPI): CodexExtensionRun
     if (!state.config.openai.cacheKeepalive) return;
     if (cacheKeepaliveTimer) clearTimeout(cacheKeepaliveTimer);
     cacheKeepaliveTimer = setTimeout(() => {
-      cacheKeepaliveTimer = undefined;
-      if (epoch !== cacheKeepaliveEpoch || !ctx.isIdle()) return;
-      const keepalive = currentContextPrewarm(ctx, true);
-      if (!keepalive) return;
-      void keepalive.then((result) => {
-        if (
-          epoch !== cacheKeepaliveEpoch ||
-          result.status === "aborted" ||
-          result.status === "skipped"
-        )
-          return;
-        if (result.status === "failed") {
-          ctx.ui.notify(`Codex cache keepalive failed: ${result.error.message}`, "warning");
-          scheduleCacheKeepalive(ctx, epoch);
-          return;
-        }
-        ctx.ui.notify(
-          `Codex cache keepalive refreshed · WS ${result.socketReused ? "reused" : "new"}`,
-          "info",
-        );
-        scheduleCacheKeepalive(ctx, epoch);
-      });
-    }, CACHE_KEEPALIVE_INTERVAL_MS);
+      try {
+        const completed = withLiveCtx(() => {
+          cacheKeepaliveTimer = undefined;
+          if (epoch !== cacheKeepaliveEpoch || !ctx.isIdle()) return true;
+          const keepalive = currentContextPrewarm(ctx, true);
+          if (!keepalive) return true;
+          void keepalive
+            .then((result) => {
+              const continuationCompleted = withLiveCtx(() => {
+                if (
+                  epoch !== cacheKeepaliveEpoch ||
+                  result.status === "aborted" ||
+                  result.status === "skipped"
+                )
+                  return true;
+                if (result.status === "failed") {
+                  ctx.ui.notify(`Codex cache keepalive failed: ${result.error.message}`, "warning");
+                  scheduleCacheKeepalive(ctx, epoch);
+                  return true;
+                }
+                ctx.ui.notify(
+                  `Codex cache keepalive refreshed · WS ${result.socketReused ? "reused" : "new"}`,
+                  "info",
+                );
+                scheduleCacheKeepalive(ctx, epoch);
+                return true;
+              });
+              if (!continuationCompleted) cancelCacheKeepalive();
+            })
+            .catch(() => {
+              cancelCacheKeepalive();
+            });
+          return true;
+        });
+        if (!completed) cancelCacheKeepalive();
+      } catch {
+        cancelCacheKeepalive();
+      }
+    }, options.cacheKeepaliveIntervalMs ?? CACHE_KEEPALIVE_INTERVAL_MS);
     cacheKeepaliveTimer.unref?.();
   };
 

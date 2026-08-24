@@ -1,5 +1,6 @@
 import type { BoundaryValue } from "../adapter/runtime-values.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { withLiveCtx } from "../extension/live-context.ts";
 import type { CacheDiagnosticsMode } from "../adapter/activation/config.ts";
 import type {
   CodexDiagnosticsEvent,
@@ -74,10 +75,25 @@ export async function createCodexDiagnosticsRuntime(options: {
     latestAfterMiss = undefined;
     show(themedStatus(`${suffix}${logActive ? " • log" : ""}`, true));
     holdTimer = setTimeout(() => {
-      holdingMiss = false;
-      holdTimer = undefined;
-      if (latestAfterMiss) show(latestAfterMiss);
-      latestAfterMiss = undefined;
+      try {
+        const completed = withLiveCtx(() => {
+          holdingMiss = false;
+          holdTimer = undefined;
+          if (latestAfterMiss) show(latestAfterMiss);
+          latestAfterMiss = undefined;
+          return true;
+        });
+        if (completed) return;
+        if (holdTimer) clearTimeout(holdTimer);
+        holdTimer = undefined;
+        holdingMiss = false;
+        latestAfterMiss = undefined;
+      } catch {
+        if (holdTimer) clearTimeout(holdTimer);
+        holdTimer = undefined;
+        holdingMiss = false;
+        latestAfterMiss = undefined;
+      }
     }, options.missHoldMs ?? CACHE_MISS_HOLD_MS);
     holdTimer.unref?.();
   };
