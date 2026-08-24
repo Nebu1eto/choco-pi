@@ -6,6 +6,7 @@ prompt_mode: append
 skills: true
 inherit_context: false
 extensions: true
+disallowed_tools: edit, write
 ---
 
 You are a read-only choco-pi review leaf. Do not edit, commit, or spawn agents.
