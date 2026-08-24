@@ -37,7 +37,6 @@ import {
   fgPreservingNestedStyles,
   formatDuration,
   formatSessionTokens,
-  getPromptModeLabel,
 } from "./agent-widget.ts";
 import { createViewerKeys, type ViewerKeybindings, type ViewerKeys } from "./viewer-keys.ts";
 
@@ -320,8 +319,6 @@ export class ConversationViewer implements Component {
 
     // Header
     lines.push(hrTop);
-    const modeLabel = getPromptModeLabel(this.record.type);
-    const modeTag = modeLabel ? ` ${th.fg("dim", `(${modeLabel})`)}` : "";
     const statusIcon =
       this.record.status === "running"
         ? th.fg("accent", "●")
@@ -344,7 +341,7 @@ export class ConversationViewer implements Component {
     const sideTag = this.record.sideConversation ? `${th.fg("accent", "[btw]")} ` : "";
     lines.push(
       row(
-        `${statusIcon} ${sideTag}${renderAgentName(this.record.type, th, { bold: true })}${modeTag}  ${th.fg("muted", this.record.description)} ${th.fg("dim", "·")} ${fgPreservingNestedStyles(th, "dim", headerParts.join(" · "))}`,
+        `${statusIcon} ${sideTag}${renderAgentName(this.record.type, th, { bold: true })}  ${th.fg("muted", this.record.description)} ${th.fg("dim", "·")} ${fgPreservingNestedStyles(th, "dim", headerParts.join(" · "))}`,
       ),
     );
     const invocationLine = this.invocationLine();
