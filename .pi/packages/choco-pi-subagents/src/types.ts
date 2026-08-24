@@ -53,6 +53,10 @@ export interface AgentConfig {
   skills: true | string[] | false;
   model?: string;
   thinking?: ThinkingLevel;
+  /** Preferred model when neither frontmatter nor the caller pins one. */
+  defaultModel?: string;
+  /** Preferred thinking level when neither frontmatter nor the caller pins one. */
+  defaultThinking?: ThinkingLevel;
   maxTurns?: number;
   /** Persist this subagent as a normal pi session instead of keeping it in memory only. */
   persistSession?: boolean;

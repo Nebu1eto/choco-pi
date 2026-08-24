@@ -105,7 +105,8 @@ export function resolveAgentInvocationConfig(
   const isolation =
     requested === "worktree" && opts?.worktreeAllowed !== false ? "worktree" : undefined;
 
-  const requestedThinking = agentConfig?.thinking ?? params.thinking;
+  const requestedThinking =
+    agentConfig?.thinking ?? params.thinking ?? agentConfig?.defaultThinking;
   // SAFETY: Pi accepts the advertised "off" level at runtime although ThinkingLevel omits it.
   const thinking = (
     requestedThinking === "off" ||
@@ -120,7 +121,7 @@ export function resolveAgentInvocationConfig(
   ) as ThinkingLevel | undefined;
 
   return {
-    modelInput: agentConfig?.model ?? params.model,
+    modelInput: agentConfig?.model ?? params.model ?? agentConfig?.defaultModel,
     modelFromParams: agentConfig?.model == null && params.model != null,
     thinking,
     maxTurns: agentConfig?.maxTurns ?? params.max_turns,

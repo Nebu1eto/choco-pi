@@ -66,11 +66,12 @@ A follow-up continues the active workflow; an added constraint never restarts it
 - Delegate only on request or when substantial independent workstreams need separate context; do small or coupled work yourself.
 - The main agent keeps scope, authority, integration, verification, and the final answer, and inspects a child's changes and evidence before accepting it.
 - Send a fresh child a bounded packet: objective, instructions, read/write scope, dependencies, done criteria, verification.
-- Pick the role from the work (`planner`, `implementer`, `reviewer`, `handoff`, `general` only if none fits); model or effort never replaces it. Resolve model and effort as user choice, then project policy, then the role's `default_model` and `default_thinking` adjusted for difficulty and risk; pass both explicitly on every spawn.
+- Pick the role by matching the unit against each available role's own description, and use `general` only if none fits; model or effort never replaces that choice. The role's `default_model` and `default_thinking` are the default and the harness applies them itself, so omit `model` and `thinking` unless you have a stated reason to override — omitting them IS choosing the role default, never an oversight.
+- Pass `model` or `thinking` explicitly only for a reason you can name: the user chose one, project policy requires one, the unit's difficulty or risk warrants adjusting the role baseline, or you are moving a unit off a failing provider. An explicit value always wins over the role default, which is what keeps the fallback below usable.
 - On OpenAI capacity errors, retry the same task and model three times with bounded backoff, then use Anthropic. On 429 or rate limits, move Fable to Anthropic Opus because its quota is separate, other Anthropic models to a similar OpenAI model or Kimi K3, and OpenAI models to a similar Anthropic model or Kimi K3.
 - Spawn with explicit `run_in_background: true` by default, since omitting it blocks the main conversation; launch independent units in one message and verify each on completion notification.
 - Parallelize only disjoint direct and indirect write scopes: generated output, schemas, lockfiles, formatters, repo-wide commands, databases, and devices conflict.
-- Workers stay leaves unless the user requests nesting; a reviewer child stays read-only.
+- Workers stay leaves unless the user requests nesting; a child spawned to review stays read-only.
 
 ## Review
 
