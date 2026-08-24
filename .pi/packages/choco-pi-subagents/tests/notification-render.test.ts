@@ -46,10 +46,12 @@ test("renders a successful completion in the shared transcript style", () => {
   assert.equal(
     output,
     [
+      "",
       " • ✓ Delegation: Completed",
       "    └ Agent · Review notification rendering · ↻3≤5 · 2 tool uses · 1.5k token · 2.5s",
       "      All done.",
       "      Transcript · …/tasks/agent-1.output",
+      "",
     ].join("\n"),
   );
 });
@@ -70,6 +72,18 @@ test("opens the settled tool background band on every rendered row", () => {
   assert.ok(error.split("\n").every((line) => line.startsWith("\u001b[41m")));
 });
 
+test("adds one background row above and below each completion", () => {
+  const output = renderSubagentNotification(
+    notificationFixture(),
+    { expanded: false },
+    backgroundTheme,
+  );
+  const lines = output.split("\n");
+
+  assert.equal(lines[0], "\u001b[42m");
+  assert.equal(lines.at(-1), "\u001b[42m");
+});
+
 test("strips markdown markup from the collapsed preview", () => {
   const output = renderSubagentNotification(
     notificationFixture({
@@ -80,7 +94,7 @@ test("strips markdown markup from the collapsed preview", () => {
     theme,
   );
 
-  const body = output.split("\n")[2] ?? "";
+  const body = output.split("\n")[3] ?? "";
   assert.match(body, /\(a\) Spawn-relevant literals/);
   assert.doesNotMatch(output, /#{2}/, "no heading markers");
   assert.doesNotMatch(output, /\*\*/, "no bold markers");
@@ -106,11 +120,11 @@ test("carries the agent role badge, falling back to a generic label", () => {
     { expanded: false },
     theme,
   );
-  const [, typedDetail = ""] = typed.split("\n");
+  const [, , typedDetail = ""] = typed.split("\n");
   assert.match(typedDetail, /^    └ implementer · /);
 
   const untyped = renderSubagentNotification(notificationFixture(), { expanded: false }, theme);
-  const [, untypedDetail = ""] = untyped.split("\n");
+  const [, , untypedDetail = ""] = untyped.split("\n");
   assert.match(untypedDetail, /^    └ Agent · /);
   registerAgents(new Map());
 });
@@ -197,7 +211,7 @@ test("renders grouped notifications as adjacent complete blocks", () => {
   );
 
   assert.equal(output.match(/^ • (?:✓|■) Delegation: /gm)?.length, 2);
-  assert.match(output, /      All done\.\n • ■ Delegation: Stopped\n    └ Agent · Second task/);
+  assert.match(output, /      All done\.\n\n\n • ■ Delegation: Stopped\n    └ Agent · Second task/);
 });
 
 test("omits the transcript row when outputFile is absent", () => {
