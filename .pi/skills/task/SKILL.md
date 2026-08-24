@@ -7,6 +7,8 @@ description: Use parallel planning and agents for repository changes only when a
 
 The main agent owns scope, authority, orchestration, integration, validation, commit preparation, and the final answer. Delegate semantic implementation to leaf agents; do not edit implementation code in the orchestrator.
 
+When the user explicitly invokes `task-dynamic`, that workflow supersedes this one for dynamically decomposed nested work; never auto-route to it.
+
 ## 1. Bootstrap
 
 1. Run `check`, including sub-agent discovery, plus repository gates required by applicable `AGENTS.md`.
@@ -26,7 +28,7 @@ Select each role from the unit's work before resolving model or reasoning effort
 ## 3. Execute
 
 1. Assign each parallel unit an exclusive direct and indirect write scope, and validate that the scopes are disjoint. Work in the current checkout unless the user requests a worktree or repository policy requires isolation.
-2. Spawn leaf `implementer` agents by dependency wave. Each receives a bounded task packet and returns uncommitted changes plus exact evidence.
+2. Spawn leaf `implementer` agents by dependency wave. Name every spawned child by its goal (`role-goal`, one to three dashed words, unique among its siblings). Each receives a bounded task packet and returns uncommitted changes plus exact evidence.
 3. Prevent parallel workers from committing, rebasing, generating shared output, formatting repository-wide state, running shared migrations, or mutating common databases, ports, devices, fixtures, schemas, or lockfiles.
 4. Use `steer_subagent` to correct running work after its current tool. Use `resume` only for a follow-up within the same unit, and preserve message order.
 5. Inspect every worker's actual diff and evidence. Send a correction back only while it remains inside that worker's scope; otherwise create a sequential integration unit.
