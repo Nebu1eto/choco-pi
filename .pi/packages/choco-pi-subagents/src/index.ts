@@ -1164,7 +1164,7 @@ export default function (pi: ExtensionAPI) {
     onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
     // FleetView is the focus switcher; when it is turned off, focus mode keeps
     // its own Esc exit so the prompt can always return to main.
-    hasSwitcher: () => isFleetViewEnabled(),
+    hasSwitcher: () => isFleetViewEnabled() && fleet.isShowingRows(),
   });
 
   // BTW side conversations are root records backed by non-persisted forks of
