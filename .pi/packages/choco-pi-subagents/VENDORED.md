@@ -118,6 +118,10 @@ except with FleetView turned off, where Esc stays the only escape hatch and stil
 exits.
 The above-editor focus indicator follows the same rule: silent while the switcher
 is up, since it would only repeat it.
+`/exit` (and `/quit`) typed at a focused prompt stops that agent and returns to
+the orchestrator instead of quitting the session: the prompt belongs to the
+subagent while focus is active, so the focused editor adapter claims the key
+before Pi's command dispatch sees it.
 `/btw` rows are excluded from selection-focus because they own a dismissible
 overlay. `/agents` propagates a focus request through both nested menu
 levels instead of reopening the parent selector, which would consume the first

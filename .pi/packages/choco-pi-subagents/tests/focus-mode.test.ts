@@ -105,6 +105,7 @@ test("focus survives Esc and restores exact predecessors on exit", async () => {
 
   const steerCalls: Array<{ id: string; message: string }> = [];
   const resumeCalls: Array<{ id: string; message: string }> = [];
+  const abortCalls: string[] = [];
   const events: Array<{ id: string; message: string }> = [];
   const widgets = new Map<string, unknown>();
   const notifications: string[] = [];
@@ -114,6 +115,11 @@ test("focus survives Esc and restores exact predecessors on exit", async () => {
       steer(id, message) {
         steerCalls.push({ id, message });
         return record.status === "running";
+      },
+      abort(id) {
+        abortCalls.push(id);
+        record.status = "aborted";
+        return true;
       },
       async resume(id, message) {
         resumeCalls.push({ id, message });
@@ -212,6 +218,77 @@ test("focus survives Esc and restores exact predecessors on exit", async () => {
   editor.handleInput("\r");
   assert.deepEqual(orchestratorSubmits, ["back on main"]);
   assert.equal(renderRequests.includes(true), true);
+});
+
+test("/exit at a focused prompt stops the agent instead of quitting pi", () => {
+  const record = partialFixture<AgentRecord>({
+    id: "agent-9",
+    type: "implementer",
+    handle: "implementer",
+    description: "focused work",
+    status: "running",
+    toolUses: 0,
+    startedAt: Date.now(),
+    lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+    compactionCount: 0,
+    session: partialFixture<AgentSession>({
+      messages: [],
+      subscribe: () => () => {},
+    }),
+  });
+  const orchestratorInputs: string[] = [];
+  const editor = {
+    text: "",
+    onSubmit(_text: string) {},
+    getText() {
+      return this.text;
+    },
+    setText(text: string) {
+      this.text = text;
+    },
+    addToHistory(_text: string) {},
+    handleInput(data: string) {
+      orchestratorInputs.push(data);
+    },
+  };
+  const document = { render: (_width: number) => ["ORCHESTRATOR"] };
+  const tui = {
+    children: [document, { children: [editor], render: (): string[] => [] }],
+    terminal: { columns: 100, rows: 40 },
+    getFocusedComponent: () => editor,
+    requestRender() {},
+  };
+  const aborted: string[] = [];
+  const notifications: string[] = [];
+  const controller = new FocusedAgentController(
+    {
+      steer: () => true,
+      abort(id) {
+        aborted.push(id);
+        return true;
+      },
+      async resume() {
+        return undefined;
+      },
+    },
+    { hasSwitcher: () => true },
+  );
+  controller.setUICtx({
+    setWidget() {},
+    notify(message) {
+      notifications.push(message);
+    },
+  });
+
+  // SAFETY: The controller uses only the TUI and theme members these fixtures implement.
+  assert.equal(controller.focus(record, tui as never, theme as never), true);
+  editor.setText("/exit");
+  editor.handleInput("\r");
+
+  assert.deepEqual(aborted, ["agent-9"], "/exit stops the focused agent");
+  assert.deepEqual(controller.getState(), { kind: "orchestrator" }, "and leaves focus");
+  assert.equal(orchestratorInputs.includes("\r"), false, "pi never sees the command");
+  assert.match(notifications.at(-1) ?? "", /Stopped @implementer/);
 });
 
 test("focused running-agent navigation does not reopen a key-consuming selector", async () => {
