@@ -6,6 +6,13 @@
  * Enter opens the selected agent's live conversation overlay, Esc returns to the prompt.
  * A viewer stays open when its agent finishes; finished agents linger briefly in the list.
  *
+ * The selection IS the fullscreen focus: moving onto a subagent row focuses it in
+ * Pi's main conversation area, and moving back onto `main` restores the orchestrator.
+ * The list therefore keeps rendering and keeps owning ↑/↓ while an agent is focused,
+ * so switching agents is the same gesture as switching back to main; Esc only leaves
+ * list navigation and never unfocuses. `/btw` rows are excluded from auto-focus —
+ * they own their dismissible overlay, opened with Enter.
+ *
  * Mechanics (see plan): the list is a `belowEditor` widget (render-only), and ALL key
  * handling goes through `onTerminalInput` — which fires before the focused editor and
  * can `consume` keys — gated on `getEditorText() === ""` so normal typing is untouched.
@@ -16,6 +23,7 @@ import {
   isKeyRelease,
   Key,
   matchesKey,
+  type TUI,
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -25,10 +33,14 @@ import type { AgentRecord } from "../types.ts";
 import { getLifetimeTotal } from "../usage.ts";
 import { type AgentActivity, type Theme } from "./agent-widget.ts";
 import { ConversationViewer, VIEWPORT_HEIGHT_PCT } from "./conversation-viewer.ts";
+import type { ViewerKeybindings } from "./viewer-keys.ts";
 
 export type FleetFocusOptions = {
-  focusAgent?: (record: AgentRecord, tui: any, theme: Theme) => boolean;
-  isAgentFocused?: () => boolean;
+  focusAgent?: (record: AgentRecord, tui: TUI, theme: Theme) => boolean;
+  /** Id of the agent currently holding fullscreen focus, if any. */
+  focusedAgentId?: () => string | undefined;
+  /** Restore the orchestrator transcript (selection moved to `main` or an unfocusable row). */
+  unfocusAgent?: () => void;
   /** Side conversations own their dismissible/replyable overlay lifecycle. */
   openSideConversation?: (record: AgentRecord) => boolean;
 };
@@ -49,7 +61,7 @@ export type FleetUICtx = {
     content:
       | undefined
       | ((
-          tui: any,
+          tui: TUI,
           theme: Theme,
         ) => { render(width: number): string[]; invalidate(): void; dispose?(): void }),
     options?: { placement?: "aboveEditor" | "belowEditor" },
@@ -61,9 +73,9 @@ export type FleetUICtx = {
   notify(message: string, type?: "info" | "warning" | "error"): void;
   custom<T>(
     factory: (
-      tui: any,
+      tui: TUI,
       theme: Theme,
-      keybindings: any,
+      keybindings: ViewerKeybindings | undefined,
       done: (result: T) => void,
     ) => { render(width: number): string[]; invalidate(): void; dispose?(): void },
     options?: { overlay?: boolean; overlayOptions?: unknown },
@@ -103,7 +115,7 @@ function rightAlign(left: string, right: string, width: number): string {
 
 export class FleetList {
   private ui: FleetUICtx | undefined;
-  private tui: any | undefined;
+  private tui: TUI | undefined;
   private inputUnsub: (() => void) | undefined;
   private widgetRegistered = false;
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -244,6 +256,7 @@ export class FleetList {
    */
   private agentRecords(): AgentRecord[] {
     const now = Date.now();
+    const focusedId = this.focusOptions.focusedAgentId?.();
     return this.manager
       .listAgents()
       .filter(
@@ -253,6 +266,7 @@ export class FleetList {
           (a.status === "running" ||
             a.status === "queued" ||
             a.id === this.viewingAgentId ||
+            a.id === focusedId ||
             (a.completedAt != null && now - a.completedAt < FINISHED_LINGER_MS)),
       )
       .sort((a, b) => a.startedAt - b.startedAt);
@@ -266,16 +280,33 @@ export class FleetList {
   }
 
   private clampSelection(): void {
+    // A focused agent owns the cursor: its row is what the prompt targets, so the
+    // marker must follow it even when the roster reorders underneath.
+    const focusedIndex = this.focusedIndex();
+    if (focusedIndex >= 0) this.selectedIndex = focusedIndex;
     const max = this.roster().length - 1;
     if (this.selectedIndex > max) this.selectedIndex = Math.max(0, max);
     if (this.selectedIndex < 0) this.selectedIndex = 0;
+  }
+
+  /** Roster index of the focused agent, or -1 when nothing is focused/listed. */
+  private focusedIndex(): number {
+    const focusedId = this.focusOptions.focusedAgentId?.();
+    if (!focusedId) return -1;
+    return this.roster().findIndex((e) => e.kind === "agent" && e.record.id === focusedId);
+  }
+
+  private isFocused(agentId?: string): boolean {
+    const focusedId = this.focusOptions.focusedAgentId?.();
+    if (agentId === undefined) return focusedId !== undefined;
+    return focusedId === agentId;
   }
 
   // ---- Key handling ----
 
   /** Returns `{consume:true}` to swallow a key, or undefined to let it through. */
   handleKey(data: string): { consume?: boolean; data?: string } | undefined {
-    if (!this.enabled || !this.ui || this.focusOptions.isAgentFocused?.()) return undefined;
+    if (!this.enabled || !this.ui) return undefined;
     // Input listeners receive BOTH key-press and key-release (the kitty protocol
     // emits both, and matchesKey matches either) — act on press only, or every
     // tap would move/fire twice. Repeats still pass through for held-key nav.
@@ -296,17 +327,24 @@ export class FleetList {
       const isActivator = matchesKey(data, "down") || matchesKey(data, "left");
       if (isActivator && this.agentRecords().length > 0 && this.ui.getEditorText() === "") {
         this.active = true;
-        this.selectedIndex = 0;
+        // Re-entering the list while an agent is focused keeps the cursor on that
+        // agent, so the activating press never switches away from it.
+        if (!this.isFocused()) this.selectedIndex = 0;
         this.update();
         return { consume: true };
       }
       return undefined;
     }
 
-    // Active — arrows navigate, Enter opens, Esc / Up-past-top exits.
+    // Active — arrows switch the focused agent, Enter opens the modal viewer,
+    // Esc / Up-past-top leaves list navigation without changing focus.
     if (matchesKey(data, "down")) {
       const max = this.roster().length - 1;
-      this.selectedIndex = Math.min(max, this.selectedIndex + 1);
+      const next = Math.min(max, this.selectedIndex + 1);
+      if (next !== this.selectedIndex) {
+        this.selectedIndex = next;
+        this.applySelection();
+      }
       this.update();
       return { consume: true };
     }
@@ -316,6 +354,7 @@ export class FleetList {
         return { consume: true };
       }
       this.selectedIndex -= 1;
+      this.applySelection();
       this.update();
       return { consume: true };
     }
@@ -324,7 +363,7 @@ export class FleetList {
       return { consume: true };
     }
     if (matchesKey(data, Key.enter)) {
-      this.openSelected();
+      this.acceptSelection();
       return { consume: true };
     }
     if (matchesKey(data, "f")) {
@@ -353,13 +392,57 @@ export class FleetList {
 
   private deactivate(): void {
     this.active = false;
-    this.selectedIndex = 0;
+    // Leaving navigation never unfocuses, so the cursor stays on the focused row.
+    if (!this.isFocused()) this.selectedIndex = 0;
     this.update();
+  }
+
+  /**
+   * Enter no longer opens the modal viewer for an ordinary agent: moving onto its
+   * row already focused it in the main conversation area, so the overlay would
+   * duplicate what is on screen. Enter simply ends navigation, leaving the prompt
+   * addressed to that agent. A `/btw` row is the exception — its dismissible
+   * overlay is the only way to read it, since side conversations never take focus.
+   */
+  private acceptSelection(): void {
+    const entry = this.roster()[this.selectedIndex];
+    if (entry?.kind === "agent" && entry.record.sideConversation) {
+      this.openSelected();
+      return;
+    }
+    this.deactivate();
+  }
+
+  /**
+   * Selection is focus. Landing on a subagent row takes over Pi's main transcript
+   * immediately; landing on `main`, on a `/btw` row (it owns a dismissible overlay
+   * instead), or on a row that cannot be focused restores the orchestrator.
+   */
+  private applySelection(): void {
+    const entry = this.roster()[this.selectedIndex];
+    if (!entry) return;
+    if (entry.kind === "main" || entry.record.sideConversation) {
+      this.unfocusAgent();
+      return;
+    }
+    const record = entry.record;
+    if (this.isFocused(record.id)) return;
+    const focusAgent = this.focusOptions.focusAgent;
+    if (!record.session || !this.tui || !this.theme || !focusAgent) {
+      this.unfocusAgent();
+      return;
+    }
+    if (!focusAgent(record, this.tui, this.theme)) this.unfocusAgent();
+  }
+
+  private unfocusAgent(): void {
+    if (this.isFocused()) this.focusOptions.unfocusAgent?.();
   }
 
   private focusSelected(): void {
     const entry = this.roster()[this.selectedIndex];
     if (!entry || entry.kind === "main") {
+      this.unfocusAgent();
       this.deactivate();
       return;
     }
@@ -367,7 +450,6 @@ export class FleetList {
       this.ui?.notify(`Agent is ${entry.record.status} — fullscreen focus is unavailable.`, "info");
       return;
     }
-    this.active = false;
     this.focusOptions.focusAgent(entry.record, this.tui, this.theme);
     this.update();
   }
@@ -449,16 +531,31 @@ export class FleetList {
   // ---- Rendering ----
 
   private renderBar(width: number, theme: Theme): string[] {
-    if (this.focusOptions.isAgentFocused?.()) return [];
     const agents = this.roster().filter((entry): entry is AgentEntry => entry.kind === "agent");
     if (agents.length === 0) return [];
     // Clamp locally so a render between a roster shrink and the next update()
     // (e.g. on terminal resize) never loses the selection marker.
     const sel = Math.min(this.selectedIndex, agents.length);
 
-    const hint = this.active
-      ? "↑↓ select · enter view · f focus · esc back"
-      : "esc to interrupt · ← for agents · ↓ to manage";
+    // The switcher stays visible while an agent is focused — it is the only
+    // affordance that says how to reach another agent or return to main.
+    const focused = this.isFocused();
+    // Enter is only meaningful on a `/btw` row now that selection is focus.
+    const selectedEntry = this.roster()[this.selectedIndex];
+    const selectedIsSide =
+      selectedEntry?.kind === "agent" && selectedEntry.record.sideConversation === true;
+    let hint: string;
+    if (this.active) {
+      if (selectedIsSide) {
+        hint = "↑↓ switch agent · enter opens the [btw] overlay · esc back";
+      } else {
+        hint = "↑↓ switch agent · main returns to orchestrator · esc back";
+      }
+    } else {
+      hint = focused
+        ? "prompt targets the focused agent · ↓ to switch agents"
+        : "esc to interrupt · ← for agents · ↓ to manage";
+    }
     const lines: string[] = [];
     lines.push(truncateToWidth("  " + theme.fg("dim", hint), width));
     lines.push("");
@@ -472,7 +569,9 @@ export class FleetList {
 
     if (start > 0) lines.push(rightAlign("", theme.fg("dim", `↑ ${start} more`), width));
     for (let a = start; a < start + visible; a++) {
-      lines.push(this.renderAgentRow(a + 1, sel, agents[a].record, width, theme));
+      lines.push(
+        this.renderAgentRow({ rosterIndex: a + 1, sel, record: agents[a].record, width, theme }),
+      );
     }
     if (hiddenBelow > 0)
       lines.push(rightAlign("", theme.fg("dim", `↓ ${hiddenBelow} more`), width));
@@ -484,13 +583,14 @@ export class FleetList {
     return rosterIndex === sel ? theme.fg("accent", "●") : theme.fg("dim", "○");
   }
 
-  private renderAgentRow(
-    rosterIndex: number,
-    sel: number,
-    record: AgentRecord,
-    width: number,
-    theme: Theme,
-  ): string {
+  private renderAgentRow(row: {
+    rosterIndex: number;
+    sel: number;
+    record: AgentRecord;
+    width: number;
+    theme: Theme;
+  }): string {
+    const { rosterIndex, sel, record, width, theme } = row;
     // The selected row renders in the theme's primary text color so it reads as
     // one selection (#230). A configured badge survives — Claude Code's FleetView
     // keeps the agent color on the selected row too and only bolds it — which also
