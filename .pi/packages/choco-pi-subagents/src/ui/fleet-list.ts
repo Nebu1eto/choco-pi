@@ -27,11 +27,12 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import { hasAgentBadge, renderAgentName } from "../agent-color.ts";
+import { hasAgentBadge } from "../agent-color.ts";
 import type { AgentManager } from "../agent-manager.ts";
 import type { AgentRecord } from "../types.ts";
 import { getLifetimeTotal } from "../usage.ts";
-import { type AgentActivity, type Theme } from "./agent-widget.ts";
+import { buildAgentTree, type AgentTreeRow } from "./agent-tree.ts";
+import { type AgentActivity, renderAgentTreeLabel, type Theme } from "./agent-widget.ts";
 import { ConversationViewer, VIEWPORT_HEIGHT_PCT } from "./conversation-viewer.ts";
 import type { ViewerKeybindings } from "./viewer-keys.ts";
 
@@ -83,7 +84,7 @@ export type FleetUICtx = {
 };
 
 type MainEntry = { kind: "main" };
-type AgentEntry = { kind: "agent"; record: AgentRecord };
+type AgentEntry = { kind: "agent"; record: AgentRecord; depth: number };
 type FleetEntry = MainEntry | AgentEntry;
 
 /** `11s` — integer seconds, no decimal/suffix (matches Claude Code, unlike formatMs). */
@@ -176,7 +177,7 @@ export class FleetList {
    * must stay the escape hatch.
    */
   isShowingRows(): boolean {
-    return this.enabled && this.agentRecords().length > 0;
+    return this.enabled && this.agentRows().length > 0;
   }
 
   /**
@@ -211,7 +212,7 @@ export class FleetList {
   /** Re-register/refresh the below-editor widget; clears it when no agents remain. */
   update(): void {
     if (!this.ui) return;
-    const hasAgents = this.enabled && this.agentRecords().length > 0;
+    const hasAgents = this.enabled && this.agentRows().length > 0;
 
     if (!hasAgents) {
       // The switcher is the only way out of focus, so it must never vanish
@@ -262,34 +263,46 @@ export class FleetList {
 
   /**
    * Agents shown in the list, ordered earliest-launched first so the ones you
-   * started sooner sit at the top. Every row is openable (has a session), so Enter
-   * never dead-ends. Included: running/queued, plus the agent currently being
-   * viewed, plus recently-finished ones (they linger briefly before dropping out).
-   * Pending agents with no session yet are hidden until they start.
-   * (`listAgents()` is newest-first, so we re-sort.)
+   * started sooner sit at the top. Children sit directly under their parent,
+   * recursively, with siblings in the same launch order. Included: running/queued,
+   * the viewed/focused agent, recently-finished records, and ancestors needed to
+   * preserve a visible descendant's ownership path. A queued row without a session
+   * remains selectable; focus/view reports that the session is not available yet.
    */
-  private agentRecords(): AgentRecord[] {
+  private agentRows(): AgentTreeRow<AgentRecord>[] {
     const now = Date.now();
     const focusedId = this.focusOptions.focusedAgentId?.();
-    return this.manager
-      .listAgents()
-      .filter(
-        (a) =>
-          !a.parentAgentId &&
-          a.session &&
-          (a.status === "running" ||
-            a.status === "queued" ||
-            a.id === this.viewingAgentId ||
-            a.id === focusedId ||
-            (a.completedAt != null && now - a.completedAt < FINISHED_LINGER_MS)),
-      )
-      .sort((a, b) => a.startedAt - b.startedAt);
+    const records = this.manager.listAgents();
+    const byId = new Map(records.map((record) => [record.id, record]));
+    const visibleIds = new Set(
+      records
+        .filter(
+          (record) =>
+            record.status === "running" ||
+            record.status === "queued" ||
+            record.id === this.viewingAgentId ||
+            record.id === focusedId ||
+            (record.completedAt != null && now - record.completedAt < FINISHED_LINGER_MS),
+        )
+        .map((record) => record.id),
+    );
+
+    // Keep ancestors visible while a descendant is active so indentation keeps
+    // showing ownership even though textual agent identities are flat.
+    for (const id of visibleIds) {
+      let parentId = byId.get(id)?.parentAgentId;
+      while (parentId !== undefined) {
+        visibleIds.add(parentId);
+        parentId = byId.get(parentId)?.parentAgentId;
+      }
+    }
+    return buildAgentTree(records).filter((row) => visibleIds.has(row.record.id));
   }
 
   private roster(): FleetEntry[] {
     return [
       { kind: "main" },
-      ...this.agentRecords().map((record) => ({ kind: "agent" as const, record })),
+      ...this.agentRows().map(({ record, depth }) => ({ kind: "agent" as const, record, depth })),
     ];
   }
 
@@ -339,7 +352,7 @@ export class FleetList {
     if (!this.active) {
       // Activate: ↓ or ← at an empty prompt moves focus into the list.
       const isActivator = matchesKey(data, "down") || matchesKey(data, "left");
-      if (isActivator && this.agentRecords().length > 0 && this.ui.getEditorText() === "") {
+      if (isActivator && this.agentRows().length > 0 && this.ui.getEditorText() === "") {
         this.active = true;
         // Re-entering the list while an agent is focused keeps the cursor on that
         // agent, so the activating press never switches away from it.
@@ -584,7 +597,14 @@ export class FleetList {
     if (start > 0) lines.push(rightAlign("", theme.fg("dim", `↑ ${start} more`), width));
     for (let a = start; a < start + visible; a++) {
       lines.push(
-        this.renderAgentRow({ rosterIndex: a + 1, sel, record: agents[a].record, width, theme }),
+        this.renderAgentRow({
+          rosterIndex: a + 1,
+          sel,
+          record: agents[a].record,
+          depth: agents[a].depth,
+          width,
+          theme,
+        }),
       );
     }
     if (hiddenBelow > 0)
@@ -601,28 +621,31 @@ export class FleetList {
     rosterIndex: number;
     sel: number;
     record: AgentRecord;
+    depth: number;
     width: number;
     theme: Theme;
   }): string {
-    const { rosterIndex, sel, record, width, theme } = row;
+    const { rosterIndex, sel, record, depth, width, theme } = row;
     // The selected row renders in the theme's primary text color so it reads as
     // one selection (#230). A configured badge survives — Claude Code's FleetView
     // keeps the agent color on the selected row too and only bolds it — which also
     // keeps the row's width fixed as the selection moves.
     const selected = rosterIndex === sel;
-    const name = renderAgentName(
-      record.type,
-      theme,
-      selected
+    const name = renderAgentTreeLabel(record, depth, theme, {
+      topLevel: selected
         ? { fallbackColor: "text", bold: hasAgentBadge(record.type) }
         : { fallbackColor: "muted" },
-    );
+      nestedAliasColor: selected ? "text" : "accent",
+      nestedHandleColor: selected ? "text" : "muted",
+    });
     const sideTag = record.sideConversation ? theme.fg("accent", "[btw] ") : "";
     const workflowTag = record.workflowStepId
       ? theme.fg("accent", `[wf:${record.workflowStepId}] `)
       : "";
     const description = selected ? theme.fg("text", record.description) : record.description;
-    const left = `  ${this.bullet(rosterIndex, sel, theme)} ${sideTag}${workflowTag}${name}  ${description}`;
+    const treePrefix = depth > 0 ? `${"  ".repeat(depth - 1)}└ ` : "";
+    const status = depth > 0 ? theme.fg("dim", `[${record.status}] `) : "";
+    const left = `  ${this.bullet(rosterIndex, sel, theme)} ${treePrefix}${sideTag}${workflowTag}${name}  ${status}${description}`;
     const tokens = getLifetimeTotal(
       this.agentActivity.get(record.id)?.lifetimeUsage ?? record.lifetimeUsage,
     );

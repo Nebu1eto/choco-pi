@@ -4,7 +4,11 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { registerAgents } from "../src/agent-types.ts";
 import type { AgentConfig } from "../src/types.ts";
 import type { NotificationDetails } from "../src/types.ts";
-import { renderSubagentNotification } from "../src/ui/notification-render.ts";
+import {
+  parseSubagentMessageNotification,
+  renderAgentMessageNotification,
+  renderSubagentNotification,
+} from "../src/ui/notification-render.ts";
 
 function partialFixture<T extends object>(fixture: Partial<T>): T {
   // SAFETY: Each test supplies the named slice exercised by its subject.
@@ -99,6 +103,36 @@ test("strips markdown markup from the collapsed preview", () => {
   assert.doesNotMatch(output, /#{2}/, "no heading markers");
   assert.doesNotMatch(output, /\*\*/, "no bold markers");
   assert.doesNotMatch(body, /^\s*[-*+]\s/, "no list bullet");
+});
+
+test("renders compact agent_message routes and queued delivery", () => {
+  assert.deepEqual(
+    parseSubagentMessageNotification({
+      from: "planner",
+      to: "scout-2",
+      type: "MESSAGE",
+      queued: true,
+    }),
+    {
+      from: "planner",
+      to: "scout-2",
+      type: "MESSAGE",
+      queued: true,
+    },
+  );
+  assert.equal(parseSubagentMessageNotification({ from: "planner" }), undefined);
+  assert.equal(
+    renderAgentMessageNotification(
+      {
+        from: "reviewer-code",
+        to: "/root",
+        type: "MESSAGE",
+        queued: true,
+      },
+      theme,
+    ),
+    "✉ reviewer-code → /root [MESSAGE] (queued)",
+  );
 });
 
 test("carries the agent role badge, falling back to a generic label", () => {

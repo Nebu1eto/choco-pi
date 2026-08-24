@@ -147,9 +147,9 @@ export interface AgentRecord {
   type: SubagentType;
   /**
    * Typeable name for the `@handle message` prompt mention, derived from the
-   * agent type and numbered when siblings collide (`explore`, `explore-2`).
-   * Top-level agents only — nested children are hidden from every top-level
-   * surface, so nothing can address them.
+   * agent type and numbered when any live identity collides (`explore`,
+   * `explore-2`). Nested handles stay hidden from top-level UI/mention surfaces
+   * but remain globally unique addresses for agent messaging.
    */
   handle?: string;
   /**

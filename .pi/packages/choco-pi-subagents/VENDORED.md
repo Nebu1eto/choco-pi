@@ -178,6 +178,92 @@ workflow runner observes the manager's terminal record and settles the step as
 an error, preserving scheduler state and failure policy. `src/stop-subagent.ts`
 holds the pure decision logic; `tests/stop-subagent.test.ts` pins every outcome.
 
+### Runtime-adjustable subagent limits and reminders
+
+- `maxConcurrent: 0` now means unlimited concurrency while the scheduler still
+  enforces a 1024-agent machine-safety cap. Persisted settings accept 0, runtime
+  changes drain the shared manager queue immediately, and workflow fan-out uses
+  the concrete capped value rather than treating 0 as no capacity.
+- The root session gains the runtime-only `subagent_limits` tool. It reads or
+  updates concurrency and depth without writing `.pi/subagents.json`; nested
+  sessions do not receive the tool.
+- Root and nested model contexts receive one fresh, hidden `<system-reminder>`
+  line while any running or queued record exists. It compares the active
+  top-level background records governed by `maxConcurrent` with that cap and
+  separately reports the whole ownership-tree total. Nested reminders also
+  carry the current agent depth and inherited depth ceiling. The root-only
+  limits tool reports the same scheduled and whole-tree counts.
+  `tests/limits.test.ts` pins parsing, capped unlimited scheduling, tool output,
+  reminder suppression/formatting and non-accumulating context injection.
+
+### Tree-wide agent messaging
+
+The fork gives every live record a globally unique handle and alias, auto-numbered
+on collisions, and uses the bare `alias ?? handle` as its agent-message identity.
+Root and every child session receive `agent_message`, including isolated,
+read-only and depth-capped leaves; recipients resolve across the whole tree by
+alias, handle or id. Legacy `/root/...` input remains accepted by its final
+segment. `/root` reuses the completion-notification follow-up path:
+`pi.sendMessage(..., { deliverAs: "followUp", triggerTurn: true })`.
+Running sessions receive messages immediately, pre-session records reuse
+`pendingSteers`, and settled records reject delivery.
+
+When a spawn has `name`, that globally unique alias becomes its preferred flat
+address and its fleet/widget label while the type-derived handle remains valid.
+The nested `Agent` tool forwards `name` just like the root tool. Both schemas
+guide callers to use distinct role-prefixed, goal-derived aliases; duplicate
+names anywhere in the live tree are numbered. Tombstone reservation remains
+top-level-scoped.
+
+Agent-originated text is always wrapped as `<agent-message from="…"
+type="MESSAGE|TASK|FINAL">…</agent-message>` at the tool boundary. Root and
+nested `steer_subagent` now use the same MESSAGE wrapper while prompt mentions,
+focus mode and UI composers continue to steer with unwrapped user text.
+Envelope-like opening and closing delimiters inside agent-authored bodies are
+neutralized case-insensitively with U+200B before wrapping, so body text cannot
+escape or forge an envelope; parsing round-trips that neutralized body. A real
+user who literally types a complete envelope can still make the viewer render
+it as an agent message; this accepted divergence is cosmetic.
+Successful delivery emits the new cross-extension `subagents:message` event;
+`tests/messaging.test.ts` pins identities, resolution, envelopes and delivery
+classification without a live extension host.
+
+Recipient resolution no longer depends on parent lookup, so a nested record that
+outlives an evicted parent keeps its flat identity. Records without any identity
+are skipped, and missing callers return ordinary tool errors.
+
+The fork also exposes a pure compact event formatter (`✉ from → to [TYPE]`,
+with `(queued)` when applicable) in `ui/notification-render.ts`. It is separate
+from steer notifications so only `agent_message` traffic is eligible.
+The main bound session now surfaces those events through a lightweight UI
+notice.
+
+Child tool registry gates now explicitly re-admit the always-on `agent_message`
+custom tool in extension-enabled sessions as well as no-extension sessions.
+The same centralized exclusion list now includes the root-only
+`subagent_limits` tool, preventing standalone child sessions from inheriting
+process-wide limit mutation when no lean-surface registry is present.
+
+### Whole-tree agent UI
+
+Upstream's FleetView and persistent agent widget filtered out every record with
+`parentAgentId`, making nested workers invisible. The fork adds a shared pure
+parent-first tree ordering helper, renders descendants with two-space depth
+indentation and globally unique flat aliases, and keeps the existing FleetView row
+selection/focus/view/stop paths for nested records. Active descendants retain
+their ancestor rows, while orphan records remain visible at depth zero. The
+`subagents` status-bar text now compares the scheduled top-level background
+count with the configured concurrency cap, including `unlimited`, and adds the
+whole-tree active count when it differs.
+
+`tests/fleet-tree.test.ts` pins recursive grouping, launch ordering and orphan
+visibility; the existing FleetView/focus tests continue to exercise the shared
+row actions.
+
+Named rows now retain both identity layers: nested rows render the alias first
+with the agent role beside it, while top-level rows keep their type-name rendering
+and add a dim `@alias`. Unnamed nested rows keep the existing `@handle` fallback.
+
 ### Role model and effort defaults
 
 The fork parses `default_model:` and `default_thinking:` from agent frontmatter
@@ -284,6 +370,10 @@ budget ticks; the tail's markdown theme drops syntax highlighting while it
 streams (the settle-time rebuild restores it); and the joined transcript lines
 are cached and only rebuilt on session events, budget ticks or width changes.
 Component render() of cached messages stays out of the steady-state frame path.
+Agent-authored user-role messages are the exception to ordinary user rendering:
+`parseAgentMessage` recognizes a complete envelope, and the viewer replaces its
+raw XML-like markup with `✉ /sender/path [TYPE]` followed by the multiline body.
+Real user messages still use `UserMessageComponent` unchanged.
 
 ### Zentui-aligned subagent completion notifications
 

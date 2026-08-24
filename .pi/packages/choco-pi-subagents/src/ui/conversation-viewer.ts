@@ -19,6 +19,7 @@ import {
   Input,
   matchesKey,
   type MarkdownTheme,
+  Text,
   type TUI,
   truncateToWidth,
   visibleWidth,
@@ -27,6 +28,7 @@ import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { renderAgentName } from "../agent-color.ts";
 import { extractText } from "../context.ts";
+import { parseAgentMessage } from "../messaging.ts";
 import type { AgentRecord } from "../types.ts";
 import { getLifetimeTotal, getSessionContextPercent } from "../usage.ts";
 import type { Theme } from "./agent-widget.ts";
@@ -581,14 +583,23 @@ export class ConversationViewer implements Component {
         const text = Array.isArray(msg.content) ? extractText(msg.content) : msg.content;
         if (!text.trim()) continue;
         if (!this.messageComponents.has(msg)) {
-          this.messageComponents.set(msg, [
-            new UserMessageComponent(
-              text.trim(),
-              getMarkdownTheme(),
-              1,
-              this.markdownTransformers(),
-            ),
-          ]);
+          const envelope = parseAgentMessage(text.trim());
+          this.messageComponents.set(
+            msg,
+            envelope
+              ? [
+                  new Text(this.theme.fg("accent", `✉ ${envelope.from} [${envelope.type}]`), 0, 0),
+                  new Text(envelope.body, 2, 0),
+                ]
+              : [
+                  new UserMessageComponent(
+                    text.trim(),
+                    getMarkdownTheme(),
+                    1,
+                    this.markdownTransformers(),
+                  ),
+                ],
+          );
         }
         continue;
       }
