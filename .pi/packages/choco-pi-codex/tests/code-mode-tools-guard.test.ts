@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 
 import {
   activeRegisteredSessionToolNames,
+  codeModeExecutionKindForPermissions,
   scopeCodeModeToolsToSessionPermissions,
   type SessionToolSource,
 } from "../src/adapter/code-mode/session-tool-permissions.ts";
@@ -110,4 +111,17 @@ test("the cell preamble explains unavailable tools namespace members", () => {
         '"module_report" is not available in code mode. Available tools: apply_patch, exec_command, write_stdin. If it exists as a regular tool, call it directly as a tool call outside exec.',
     },
   );
+});
+
+test("a session without write or shell permissions cannot reach the notebook", () => {
+  const readOnly = new Set(["read", "grep", "exec"]);
+  const withShell = new Set(["read", "grep", "bash", "exec"]);
+  const writable = new Set(["read", "edit", "write", "exec"]);
+
+  // Notebook cells run on shared Deno globals, so `Deno.writeTextFile` would
+  // reopen the write path that scoping the tools namespace just closed.
+  assert.equal(codeModeExecutionKindForPermissions("notebook", readOnly), "code");
+  assert.equal(codeModeExecutionKindForPermissions("notebook", withShell), "notebook");
+  assert.equal(codeModeExecutionKindForPermissions("notebook", writable), "notebook");
+  assert.equal(codeModeExecutionKindForPermissions("code", writable), "code");
 });
