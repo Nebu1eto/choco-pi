@@ -8,7 +8,7 @@ export const EXEC_DESCRIPTION = `Run JavaScript source only; no JSON/fences
 Batch several tools.* calls per block: Promise.all for independent ones, in-code filtering/aggregation; do not emit one exec toolCall per wrapped call
 Code: fresh restricted JS with no console, imports, Node, or browser APIs. Notebook: persistent shared Deno TypeScript globals with console, imports/npm, Deno, and Web APIs
 Optional // @exec: {"yield_time_ms":10000,"max_output_tokens":1000}; defaults 30000 ms/10000 tokens
-Await work; bare values are discarded. Globals: tools, image, generatedImage, store, load, exit, setTimeout, clearTimeout, ALL_TOOLS; text(value) serializes output, notify(value) emits, yield_control() yields`;
+Await work; bare values are discarded. Globals: tools, image, generatedImage, store, load, exit, setTimeout, clearTimeout, ALL_TOOLS; text(value) and notify(value) EMIT output and return nothing — never nest them in an expression, use String()/JSON.stringify() to build one; yield_control() yields`;
 
 export const WAIT_DESCRIPTION = "Resume or terminate a yielded exec cell";
 
