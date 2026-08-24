@@ -100,6 +100,7 @@ function mount(records: AgentRecord[]) {
     opened,
     focusedId: () => focusedId,
     unfocusCalls: () => unfocusCalls,
+    showingRows: () => fleet.isShowingRows(),
     overlayCount: () => overlayCount,
   };
 }
@@ -145,6 +146,27 @@ test("arrow navigation switches fullscreen focus, and main restores the orchestr
     assert.deepEqual(view.press("\r"), { consume: true });
     assert.equal(view.overlayCount(), 0, "Enter opens no popup for a focused agent");
     assert.equal(view.focusedId(), "a1", "Enter keeps the agent focused");
+  } finally {
+    view.fleet.dispose();
+  }
+});
+
+test("losing the focused row from the roster restores the orchestrator", () => {
+  const records = [makeRecord("a1", "first")];
+  const view = mount(records);
+  try {
+    view.press(KEY_DOWN);
+    view.press(KEY_DOWN);
+    assert.equal(view.focusedId(), "a1");
+    assert.equal(view.showingRows(), true);
+
+    // The manager evicts a settled record ten minutes after completion; the
+    // switcher then has no rows, so focus must not strand the transcript.
+    records.length = 0;
+    view.fleet.update();
+
+    assert.equal(view.focusedId(), undefined, "eviction unfocuses");
+    assert.equal(view.showingRows(), false, "and the switcher reports itself gone");
   } finally {
     view.fleet.dispose();
   }

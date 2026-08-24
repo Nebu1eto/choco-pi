@@ -171,6 +171,15 @@ export class FleetList {
   }
 
   /**
+   * Whether the switcher is actually on screen. Focus mode asks this before
+   * swallowing Esc: with no rows drawn there is nothing to switch with, so Esc
+   * must stay the escape hatch.
+   */
+  isShowingRows(): boolean {
+    return this.enabled && this.agentRecords().length > 0;
+  }
+
+  /**
    * Called when an agent finishes. The viewer (if open on it) stays open so the
    * final output remains readable, and the row lingers in the list — just refresh.
    */
@@ -205,6 +214,11 @@ export class FleetList {
     const hasAgents = this.enabled && this.agentRecords().length > 0;
 
     if (!hasAgents) {
+      // The switcher is the only way out of focus, so it must never vanish
+      // while an agent is focused: a settled focused record is evicted by the
+      // manager's cleanup after ten minutes, which would otherwise leave the
+      // orchestrator transcript unreachable with Esc swallowed.
+      this.unfocusAgent();
       if (this.widgetRegistered) {
         this.ui.setWidget(FLEET_KEY, undefined);
         this.widgetRegistered = false;
