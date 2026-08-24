@@ -16,8 +16,8 @@ of [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents)
 ## What it provides
 
 The `Agent` tool (foreground and `run_in_background`), `get_subagent_result`,
-`steer_subagent`, `resume`, `@handle` prompt mentions, the `/agents` command
-tree, the above-editor widget, FleetView, the live conversation overlay,
+`steer_subagent`, `stop_subagent`, `resume`, `@handle` prompt mentions, the
+`/agents` command tree, the above-editor widget, FleetView, the live conversation overlay,
 fullscreen subagent focus, `isolation: "worktree"`, cron/interval scheduling,
 opt-in nested delegation, and cross-extension RPC.
 

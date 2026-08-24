@@ -51,7 +51,12 @@ export function setMaxSubagentDepth(n: number): void {
   maxSubagentDepth = Math.max(0, Math.floor(n));
 }
 
-const NESTED_TOOL_NAMES = ["Agent", "get_subagent_result", "steer_subagent"] as const;
+const NESTED_TOOL_NAMES = [
+  "Agent",
+  "get_subagent_result",
+  "steer_subagent",
+  "stop_subagent",
+] as const;
 
 interface NestedSpawnOptions {
   description: string;
@@ -91,6 +96,7 @@ export interface NestedAgentManager {
     onSpawned?: (id: string) => void,
   ): Promise<{ id: string; record: AgentRecord }>;
   getRecord(id: string): AgentRecord | undefined;
+  abort(id: string): boolean;
   resume(id: string, prompt: string, signal?: AbortSignal): Promise<AgentRecord | undefined>;
 }
 
@@ -430,5 +436,36 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
     },
   });
 
-  return [agentTool, resultTool, steerTool];
+  const stopTool = defineTool({
+    name: NESTED_TOOL_NAMES[3],
+    label: "Stop Nested Agent",
+    description: "Stop a running or queued nested agent owned by this parent.",
+    parameters: Type.Object({
+      agent_id: Type.String(),
+    }),
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const record = context.manager.getRecord(params.agent_id);
+      if (!ownsRecord(record, context.parentAgentId)) {
+        return textResult(
+          `Nested agent not found or not owned by this parent: "${params.agent_id}".`,
+          true,
+        );
+      }
+      if (record.status !== "running" && record.status !== "queued") {
+        return textResult(
+          `Nested agent "${params.agent_id}" is already settled (status: ${record.status}). ` +
+            "Its transcript is still readable with get_subagent_result.",
+        );
+      }
+      if (!context.manager.abort(record.id)) {
+        return textResult(`Failed to stop nested agent ${record.id}.`, true);
+      }
+      return textResult(
+        `Nested agent ${record.id} stopped. ` +
+          "Its partial transcript is still readable with get_subagent_result.",
+      );
+    },
+  });
+
+  return [agentTool, resultTool, steerTool, stopTool];
 }

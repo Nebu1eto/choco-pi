@@ -34,12 +34,12 @@ this extension out must stay completely silent.
 
 | Module                   | Role                                                                                                                                                                                                                                       |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `index.ts`               | Extension factory: tool registration (`Agent`, `get_subagent_result`, `steer_subagent`), the `/agents` command tree, settings menus, the `input` mention hook, batch grouping, and every lifecycle handler.                                |
+| `index.ts`               | Extension factory: tool registration (`Agent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`), the `/agents` command tree, settings menus, the `input` mention hook, batch grouping, and every lifecycle handler.               |
 | `agent-manager.ts`       | Record lifecycle: spawn, queue, concurrency, abort, steer, resume, completion callbacks, handle allocation and tombstones, `maxConcurrent` scheduling. Workflow steps carry aggregate/step ids but otherwise use this lifecycle unchanged. |
 | `workflow.ts`            | TypeBox workflow definition, graph/type/reference validation, bounded prompt rendering, mutable DAG scheduler, failure policy, cancellation and aggregate results. The runner interface keeps scheduling tests independent of live agents. |
 | `agent-runner.ts`        | Builds and drives the child `AgentSession`: tool allow/denylists, `ext:` narrowing, extension filtering, model runtime inheritance, turn limits, final-status classification.                                                              |
 | `agent-types.ts`         | The registry of spawnable types: defaults overlaid by user agents, `enabled` filtering, `resolveType`/`resolveSpawnType`, fallback policy.                                                                                                 |
-| `nested-tools.ts`        | The scoped `Agent`/`get_subagent_result`/`steer_subagent` a subagent receives when its frontmatter sets `allowed_subagents`, plus the depth cap.                                                                                           |
+| `nested-tools.ts`        | The scoped `Agent`/`get_subagent_result`/`steer_subagent`/`stop_subagent` a subagent receives when its frontmatter sets `allowed_subagents`, plus the depth cap.                                                                           |
 | `cross-extension-rpc.ts` | `subagents:rpc:ping` / `:spawn` / `:stop` over the `pi.events` bus, with scoped reply channels.                                                                                                                                            |
 
 ### Configuration
@@ -253,9 +253,10 @@ cleanup.
 The root extension registers four workflow tools beside `Agent`:
 `workflow_run`, `workflow_update`, `get_workflow_result` and `workflow_cancel`.
 Child sessions return before registering extension tools, and their scoped
-nested tool set remains exactly `Agent`, `get_subagent_result` and
-`steer_subagent`. A workflow step therefore cannot launch another workflow; the
-existing child-session/depth boundary remains the privilege boundary.
+nested tool set remains exactly `Agent`, `get_subagent_result`,
+`steer_subagent` and `stop_subagent`. A workflow step therefore cannot launch
+another workflow; the existing child-session/depth boundary remains the
+privilege boundary.
 
 ### Definition and validation
 
