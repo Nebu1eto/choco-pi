@@ -2,7 +2,7 @@ import type { BoundaryValue } from "../boundary.ts";
 import { isObjectValue, isStringValue } from "../boundary.ts";
 import { parsePatchActions } from "../../patch/parser.ts";
 import { formatPatchTarget } from "../apply-patch/rendering.ts";
-import { shellSplit } from "../../shell/tokenize.ts";
+import { shellSplit, splitOnConnectors } from "../../shell/tokenize.ts";
 import { type Component, Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { previewText, renderTextAndImages } from "./render-content.ts";
 import { codeModeToolDisplayName } from "./tool-identity.ts";
@@ -145,6 +145,7 @@ const SUBCOMMAND_TOOLS = new Set([
   "git",
   "go",
   "kubectl",
+  "nohup",
   "npm",
   "npx",
   "pnpm",
@@ -156,7 +157,13 @@ function shortExecCommandName(trace: RuntimeToolTrace): string | undefined {
   if (trace.name !== "exec_command" || !isObjectValue(trace.input)) return undefined;
   const command = trace.input["cmd"];
   if (!isStringValue(command)) return undefined;
-  const tokens = shellSplit(command);
+  const summaries = splitOnConnectors(shellSplit(command))
+    .map(shortCommandName)
+    .filter((summary): summary is string => summary !== undefined);
+  return summaries.length > 0 ? summaries.join(", ") : undefined;
+}
+
+function shortCommandName(tokens: string[]): string | undefined {
   const executable = safeCommandToken(tokens[0]);
   if (!executable) return undefined;
   if (!SUBCOMMAND_TOOLS.has(executable)) return executable;
