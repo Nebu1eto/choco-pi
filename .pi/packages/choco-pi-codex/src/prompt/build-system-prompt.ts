@@ -60,8 +60,8 @@ const CODE_MODE_GUIDELINES = [
   "Keep long exec_command calls awaited in exec; resume yielded cells with wait near completion; never short-yield then poll exec_command via write_stdin",
   "Use tty=true only for input/persistent processes",
   "Use tools.apply_patch(patch) for edits; split large patches; shell/Python only for formatting/bulk work",
-  "Await dependencies; use Promise.all for independent calls",
-  "Use text() only for concise final output",
+  "Batch independent tools.* calls in one exec block with Promise.all and await dependent chains; never spread one step across several exec toolCalls",
+  "Filter and shape results inside the block; use text() only for a concise digest, not raw envelopes",
 ];
 
 const NOTEBOOK_MODE_GUIDELINES = [
@@ -119,6 +119,8 @@ const STATIC_CODEX_GUIDELINES_BY_KEY = new Map([
     "Use tools.apply_patch(patch) for file edits; split large patches; reserve shell/Python for formatting or bulk rewrites",
     CODE_MODE_GUIDELINES[4]!,
   ],
+  ["Await dependencies; use Promise.all for independent calls", CODE_MODE_GUIDELINES[5]!],
+  ["Use text() only for concise final output", CODE_MODE_GUIDELINES[6]!],
 ]);
 
 function canonicalizeGuidelineLine(line: string): string {
