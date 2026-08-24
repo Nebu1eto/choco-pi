@@ -156,6 +156,43 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
   assert.match(expanded, /final output/);
 });
 
+test("collapsed exec calls summarize every chained command", () => {
+  const renderCommand = (cmd: string) =>
+    renderTrackedCodeModeResult(
+      {
+        content: [{ type: "text" as const, text: "Script completed" }],
+        details: {
+          status: "result" as const,
+          traces: [
+            {
+              id: "trace-1",
+              name: "exec_command",
+              input: { cmd },
+              status: "done" as const,
+            },
+          ],
+        },
+      },
+      { expanded: false, isPartial: false },
+      PLAIN_THEME,
+      { toolCallId: `chained-${cmd}` },
+      createCodeModeRenderTracker(),
+    )
+      .render(200)
+      .join("\n");
+
+  assert.match(
+    renderCommand(
+      "cd /Users/Nebuleto/Workspace/choco-pi && rm -f /tmp/e2e-ro.txt && nohup pi -p 'Use the Agent tool'",
+    ),
+    /Ran Exec command · cd, rm, nohup pi/,
+  );
+  assert.match(
+    renderCommand("cd /tmp && wc -c e2e-ro.txt e2e-ro.err; tail -30 e2e-ro.txt"),
+    /Ran Exec command · cd, wc, tail/,
+  );
+});
+
 test("collapsed output stays concise regardless of the former detail flag", () => {
   const rendered = renderTrackedCodeModeResult(
     {
