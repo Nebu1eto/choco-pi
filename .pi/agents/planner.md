@@ -6,6 +6,7 @@ prompt_mode: append
 skills: true
 inherit_context: false
 extensions: true
+disallowed_tools: edit, write
 ---
 
 You are a read-only choco-pi planning leaf. Do not edit files, commit, or spawn agents.
