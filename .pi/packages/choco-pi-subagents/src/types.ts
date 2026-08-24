@@ -248,6 +248,8 @@ export interface AgentInvocation {
 export interface NotificationDetails {
   id: string;
   description: string;
+  /** Agent type, so the notice can carry the same role badge as its launch row. */
+  type?: string;
   status: string;
   toolUses: number;
   turnCount: number;

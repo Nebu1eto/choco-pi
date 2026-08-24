@@ -140,6 +140,7 @@ import {
 } from "./ui/agent-widget.ts";
 import { FleetList, type FleetUICtx } from "./ui/fleet-list.ts";
 import { continueRunningAgentNavigation, FocusedAgentController } from "./ui/focus-mode.ts";
+import { renderSubagentNotification } from "./ui/notification-render.ts";
 import { showSchedulesMenu } from "./ui/schedule-menu.ts";
 import { resolveBtwType, SideConversationController } from "./ui/side-conversation.ts";
 import { selectItem } from "./ui/select-item.ts";
@@ -345,6 +346,7 @@ function buildNotificationDetails(
   return {
     id: record.id,
     description: record.description,
+    type: record.type,
     status: record.status,
     toolUses: record.toolUses,
     turnCount: activity?.turnCount ?? 0,
@@ -405,54 +407,14 @@ export default function (pi: ExtensionAPI) {
   if (inChildSessionContext()) return;
 
   // ---- Register custom notification renderer ----
+  // Layout lives in ui/notification-render.ts so it stays testable and matches
+  // the zentui transcript conventions the rest of this session renders with.
   pi.registerMessageRenderer<NotificationDetails>(
     "subagent-notification",
     (message, { expanded }, theme) => {
-      const d = message.details;
-      if (!d) return undefined;
-
-      function renderOne(d: NotificationDetails): string {
-        const isError = d.status === "error" || d.status === "stopped" || d.status === "aborted";
-        const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
-        const statusText = isError
-          ? d.status
-          : d.status === "steered"
-            ? "completed (steered)"
-            : "completed";
-
-        // Line 1: icon + agent description + status
-        let line = `${icon} ${theme.bold(d.description)} ${theme.fg("dim", statusText)}`;
-
-        // Line 2: stats
-        const parts: string[] = [];
-        if (d.turnCount > 0) parts.push(formatTurns(d.turnCount, d.maxTurns));
-        if (d.toolUses > 0) parts.push(`${d.toolUses} tool use${d.toolUses === 1 ? "" : "s"}`);
-        if (d.totalTokens > 0) parts.push(formatTokens(d.totalTokens));
-        if (d.durationMs > 0) parts.push(formatMs(d.durationMs));
-        if (parts.length) {
-          line +=
-            "\n  " + parts.map((p) => theme.fg("dim", p)).join(" " + theme.fg("dim", "·") + " ");
-        }
-
-        // Line 3: result preview (collapsed) or full (expanded)
-        if (expanded) {
-          const lines = d.resultPreview.split("\n").slice(0, 30);
-          for (const l of lines) line += "\n" + theme.fg("dim", `  ${l}`);
-        } else {
-          const preview = d.resultPreview.split("\n")[0]?.slice(0, 80) ?? "";
-          line += "\n  " + theme.fg("dim", `⎿  ${preview}`);
-        }
-
-        // Line 4: output file link (if present)
-        if (d.outputFile) {
-          line += "\n  " + theme.fg("muted", `transcript: ${d.outputFile}`);
-        }
-
-        return line;
-      }
-
-      const all = [d, ...(d.others ?? [])];
-      return new Text(all.map(renderOne).join("\n"), 0, 0);
+      const details = message.details;
+      if (!details) return undefined;
+      return new Text(renderSubagentNotification(details, { expanded }, theme), 0, 0);
     },
   );
 
