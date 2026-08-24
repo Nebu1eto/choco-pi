@@ -77,7 +77,7 @@ this extension out must stay completely silent.
 | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `ui/agent-widget.ts`                                            | The `aboveEditor` widget and the `subagents` status-bar key. `WidgetMode` (`all`/`background`/`off`) is read live at render.              |
 | `ui/fleet-list.ts`                                              | The `belowEditor` FleetView. All key handling goes through `ui.onTerminalInput`, gated on pi's prompt editor being the focused component. |
-| `ui/conversation-viewer.ts`                                     | The live conversation overlay: scroll, stop (two-press), inline steering/reply composer, and focus handoff.                               |
+| `ui/conversation-viewer.ts`                                     | The live conversation overlay: scroll, stop (two-press), inline steering/reply composer, focus handoff. Messages render through the main transcript's message components (user/assistant/tool/bash), shared with zentui.                               |
 | `ui/side-conversation.ts`                                       | BTW launch defaults, dismissible overlay ownership, continuation, and notice-only completion delivery.                                    |
 | `ui/schedule-menu.ts`, `ui/select-item.ts`, `ui/viewer-keys.ts` | Scheduled-job menu, list row formatting, keybinding resolution through `tui.select.*`.                                                    |
 

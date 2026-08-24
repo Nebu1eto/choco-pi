@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { AgentSession, AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { AgentRecord } from "../src/types.ts";
 import { continueRunningAgentNavigation, FocusedAgentController } from "../src/ui/focus-mode.ts";
 import { installMethodPatch } from "../src/ui/method-patch-registry.ts";
+
+initTheme("dark", false);
 
 const theme = {
   fg: (_color: string, text: string) => text,
