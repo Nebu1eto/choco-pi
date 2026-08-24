@@ -15,6 +15,7 @@ export const WAIT_DESCRIPTION = "Resume or terminate a yielded exec cell";
 const BUNDLED_TOOLS_HEADING = "Tools available in exec:";
 const CUSTOM_TOOLS_HEADING = "Configured custom tools:";
 const DEFERRED_CUSTOM_TOOLS_GUIDANCE = "Deferred custom tools: find by name in ALL_TOOLS";
+const BRIDGED_TOOLS_HEADING = "Pi tools callable in exec";
 const CUSTOM_TOOL_DOCUMENTATION_MARKER = "To create or edit a custom tool, read";
 const CUSTOM_TOOLS_GUIDANCE = "Prefer custom tools for command-backed capabilities";
 const CODE_MODE_COMPOSITION_MARKER = "one exec block per step, not one per tools.* call";
@@ -73,6 +74,19 @@ function buildUsageSection(
     .join("\n")}`;
 }
 
+export function buildBridgedToolsLine(tools: CodeModeToolDefinition[]): string {
+  const names = tools
+    .filter((tool) => !isConfiguredCustomTool(tool) && tool.deferLoading)
+    .map((tool) => tool.name)
+    .sort((left, right) => left.localeCompare(right));
+  if (names.length === 0) return "";
+  return (
+    BRIDGED_TOOLS_HEADING +
+    " (deferred; call as tools.<name>(args), schemas in ALL_TOOLS): " +
+    names.join(", ")
+  );
+}
+
 export function buildCodeModeToolsPrompt(
   tools: CodeModeToolDefinition[],
   documentationPath?: string,
@@ -81,6 +95,9 @@ export function buildCodeModeToolsPrompt(
   const bundled = tools.filter((tool) => !isConfiguredCustomTool(tool) && !tool.deferLoading);
   const custom = tools.filter(isConfiguredCustomTool);
   const promotedCustom = custom.filter((tool) => !tool.deferLoading);
+  const bridgedLine = existingPrompt.includes(BRIDGED_TOOLS_HEADING)
+    ? ""
+    : buildBridgedToolsLine(tools);
   const sections = [
     existingPrompt.includes(BUNDLED_TOOLS_HEADING)
       ? undefined
@@ -88,6 +105,7 @@ export function buildCodeModeToolsPrompt(
     bundled.length > 0 && !existingPrompt.includes(CODE_MODE_COMPOSITION_MARKER)
       ? CODE_MODE_COMPOSITION_GUIDANCE
       : undefined,
+    bridgedLine || undefined,
     existingPrompt.includes(CUSTOM_TOOLS_HEADING)
       ? undefined
       : buildUsageSection(CUSTOM_TOOLS_HEADING, promotedCustom),

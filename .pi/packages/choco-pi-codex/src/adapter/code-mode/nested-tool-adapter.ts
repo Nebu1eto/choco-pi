@@ -22,6 +22,8 @@ interface NestedToolLifecycle {
 
 interface NestedToolContract<TDetails> {
   kind?: "function" | "freeform";
+  /** Deferred tools stay out of the prompt and are discovered through ALL_TOOLS. */
+  deferLoading?: boolean;
   toolName?: CodeModeToolIdentity;
   yieldTimeMs?: number;
   prepareInput?(input: BoundaryValue): BoundaryValue;
@@ -43,7 +45,7 @@ export function toNestedTool<TParams extends TSchema, TDetails, TState>(
     label: tool.label,
     usage,
     description: tool.description,
-    deferLoading: false,
+    deferLoading: contract.deferLoading === true,
     kind,
     ...conditionalProperties(Boolean(contract.toolName), { toolName: contract.toolName }),
     ...conditionalProperties(contract.yieldTimeMs !== undefined, {
