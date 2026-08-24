@@ -1,4 +1,6 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { type Static, Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import { renderAgentName } from "../agent-color.ts";
 import type { NotificationDetails } from "../types.ts";
 import {
@@ -19,6 +21,33 @@ interface StatusPresentation {
   iconColor: "dim" | "error" | "success" | "warning";
   outputColor: "error" | "toolOutput" | "warning";
   title: string;
+}
+
+const SubagentMessageNotificationSchema = Type.Object({
+  from: Type.String(),
+  to: Type.String(),
+  type: Type.Union([Type.Literal("MESSAGE"), Type.Literal("TASK"), Type.Literal("FINAL")]),
+  queued: Type.Boolean(),
+});
+
+export type SubagentMessageNotification = Static<typeof SubagentMessageNotificationSchema>;
+type SubagentEventPayload = Parameters<Parameters<ExtensionAPI["events"]["on"]>[1]>[0];
+
+/** Parse the cross-extension event payload before it reaches UI code. */
+export function parseSubagentMessageNotification(
+  payload: SubagentEventPayload,
+): SubagentMessageNotification | undefined {
+  return Value.Check(SubagentMessageNotificationSchema, payload) ? payload : undefined;
+}
+
+/** Compact notification for agent_message traffic (never steer events). */
+export function renderAgentMessageNotification(
+  message: SubagentMessageNotification,
+  theme: Theme,
+): string {
+  const route = `${message.from} → ${message.to}`;
+  const queued = message.queued ? " (queued)" : "";
+  return `${theme.fg("accent", "✉")} ${theme.fg("toolTitle", route)} ${theme.fg("dim", `[${message.type}]${queued}`)}`;
 }
 
 function compact(value: string, maximum: number): string {

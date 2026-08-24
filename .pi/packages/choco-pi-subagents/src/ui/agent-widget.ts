@@ -6,16 +6,18 @@
  */
 
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { renderAgentName } from "../agent-color.ts";
+import { renderAgentName, type AgentNameStyle } from "../agent-color.ts";
 import type { AgentManager } from "../agent-manager.ts";
 import { getConfig } from "../agent-types.ts";
-import type { AgentInvocation, SubagentType, WidgetMode } from "../types.ts";
+import { formatConcurrencyCap } from "../limits.ts";
+import type { AgentInvocation, AgentRecord, SubagentType, WidgetMode } from "../types.ts";
 import {
   getLifetimeTotal,
   getSessionContextPercent,
   type LifetimeUsage,
   type SessionLike,
 } from "../usage.ts";
+import { buildAgentTree } from "./agent-tree.ts";
 
 // ---- Constants ----
 
@@ -56,6 +58,12 @@ export type UICtx = {
     options?: { placement?: "aboveEditor" | "belowEditor" },
   ): void;
 };
+
+export interface AgentTreeLabelStyle {
+  topLevel?: AgentNameStyle;
+  nestedAliasColor?: string;
+  nestedHandleColor?: string;
+}
 
 /** Per-agent live activity state. */
 export interface AgentActivity {
@@ -187,6 +195,27 @@ export function getDisplayName(type: SubagentType): string {
   return getConfig(type).displayName;
 }
 
+/** Render role and the agent's flat alias without repeating its fallback handle. */
+export function renderAgentTreeLabel(
+  agent: Pick<AgentRecord, "type" | "handle" | "alias">,
+  depth: number,
+  theme: Theme,
+  style: AgentTreeLabelStyle = {},
+): string {
+  const role = renderAgentName(agent.type, theme, style.topLevel);
+  if (depth === 0) {
+    return agent.alias ? `${role} ${theme.fg("dim", `@${agent.alias}`)}` : role;
+  }
+
+  const mention = agent.alias ?? agent.handle;
+  if (!mention) return role;
+  const mentionColor = agent.alias
+    ? (style.nestedAliasColor ?? "accent")
+    : (style.nestedHandleColor ?? "dim");
+  const mentionLabel = theme.fg(mentionColor, `@${mention}`);
+  return agent.alias ? `${mentionLabel} ${theme.fg("dim", agent.type)}` : mentionLabel;
+}
+
 /** Build the invocation metadata shown by Agent tool results and conversation views. */
 export function buildInvocationTags(invocation: AgentInvocation | undefined): InvocationTags {
   const tags: string[] = [];
@@ -290,12 +319,12 @@ export class AgentWidget {
    *   - `all`: every agent.
    */
   private widgetAgents() {
-    const all = this.manager.listAgents().filter((a) => !a.parentAgentId);
+    const all = buildAgentTree<AgentRecord>(this.manager.listAgents());
     switch (this.mode()) {
       case "off":
         return [];
       case "background":
-        return all.filter((a) => a.isBackground !== false);
+        return all.filter(({ record }) => record.isBackground !== false);
       default:
         return all;
     }
@@ -363,6 +392,8 @@ export class AgentWidget {
     a: {
       id: string;
       type: SubagentType;
+      handle?: string;
+      alias?: string;
       status: string;
       description: string;
       toolUses: number;
@@ -371,6 +402,7 @@ export class AgentWidget {
       error?: string;
     },
     theme: Theme,
+    depth = 0,
   ): string {
     const duration = formatMs((a.completedAt ?? Date.now()) - a.startedAt);
 
@@ -401,7 +433,12 @@ export class AgentWidget {
     if (a.toolUses > 0) parts.push(`${a.toolUses} tool use${a.toolUses === 1 ? "" : "s"}`);
     parts.push(duration);
 
-    return `${icon} ${renderAgentName(a.type, theme, { fallbackColor: "dim" })}  ${theme.fg("dim", a.description)} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}${statusText}`;
+    const label = renderAgentTreeLabel(a, depth, theme, {
+      topLevel: { fallbackColor: "dim" },
+      nestedAliasColor: "accent",
+      nestedHandleColor: "dim",
+    });
+    return `${icon} ${label}  ${theme.fg("dim", a.description)} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}${statusText}`;
   }
 
   /**
@@ -410,14 +447,14 @@ export class AgentWidget {
    */
   private renderWidget(tui: any, theme: Theme): string[] {
     const allAgents = this.widgetAgents();
-    const running = allAgents.filter((a) => a.status === "running");
-    const queued = allAgents.filter((a) => a.status === "queued");
+    const running = allAgents.filter(({ record }) => record.status === "running");
+    const queued = allAgents.filter(({ record }) => record.status === "queued");
     const finished = allAgents.filter(
-      (a) =>
-        a.status !== "running" &&
-        a.status !== "queued" &&
-        a.completedAt &&
-        this.shouldShowFinished(a.id, a.status),
+      ({ record }) =>
+        record.status !== "running" &&
+        record.status !== "queued" &&
+        record.completedAt &&
+        this.shouldShowFinished(record.id, record.status),
     );
 
     const hasActive = running.length > 0 || queued.length > 0;
@@ -436,12 +473,15 @@ export class AgentWidget {
     // Each running agent = 2 lines (header + activity), finished = 1 line, queued = 1 line.
 
     const finishedLines: string[] = [];
-    for (const a of finished) {
-      finishedLines.push(truncate(theme.fg("dim", "├─") + " " + this.renderFinishedLine(a, theme)));
+    for (const { record: a, depth } of finished) {
+      const indent = "  ".repeat(depth);
+      finishedLines.push(
+        truncate(theme.fg("dim", "├─") + ` ${indent}` + this.renderFinishedLine(a, theme, depth)),
+      );
     }
 
     const runningLines: string[][] = []; // each entry is [header, activity]
-    for (const a of running) {
+    for (const { record: a, depth } of running) {
       const elapsed = formatMs(Date.now() - a.startedAt);
 
       const bg = this.agentActivity.get(a.id);
@@ -459,13 +499,19 @@ export class AgentWidget {
       const statsText = parts.join(" · ");
 
       const activity = bg ? describeActivity(bg.activeTools, bg.responseText) : "thinking…";
+      const indent = "  ".repeat(depth);
+      const label = renderAgentTreeLabel(a, depth, theme, {
+        topLevel: { bold: true },
+        nestedAliasColor: "accent",
+        nestedHandleColor: "accent",
+      });
 
       runningLines.push([
         truncate(
           theme.fg("dim", "├─") +
-            ` ${theme.fg("accent", frame)} ${renderAgentName(a.type, theme, { bold: true })}  ${theme.fg("muted", a.description)} ${theme.fg("dim", "·")} ${fgPreservingNestedStyles(theme, "dim", statsText)}`,
+            ` ${indent}${theme.fg("accent", frame)} ${label}  ${theme.fg("muted", a.description)} ${theme.fg("dim", "·")} ${fgPreservingNestedStyles(theme, "dim", statsText)}`,
         ),
-        truncate(theme.fg("dim", "│  ") + theme.fg("dim", `  ⎿  ${activity}`)),
+        truncate(theme.fg("dim", "│  ") + theme.fg("dim", `${indent}  ⎿  ${activity}`)),
       ]);
     }
 
@@ -574,7 +620,7 @@ export class AgentWidget {
     let runningCount = 0;
     let queuedCount = 0;
     let hasFinished = false;
-    for (const a of allAgents) {
+    for (const { record: a } of allAgents) {
       if (a.status === "running") {
         runningCount++;
       } else if (a.status === "queued") {
@@ -602,7 +648,7 @@ export class AgentWidget {
       }
       // Clean up stale entries
       for (const [id] of this.finishedTurnAge) {
-        if (!allAgents.some((a) => a.id === id)) this.finishedTurnAge.delete(id);
+        if (!allAgents.some(({ record }) => record.id === id)) this.finishedTurnAge.delete(id);
       }
       return;
     }
@@ -610,11 +656,11 @@ export class AgentWidget {
     // Status bar — only call setStatus when the text actually changes
     let newStatusText: string | undefined;
     if (hasActive) {
-      const statusParts: string[] = [];
-      if (runningCount > 0) statusParts.push(`${runningCount} running`);
-      if (queuedCount > 0) statusParts.push(`${queuedCount} queued`);
-      const total = runningCount + queuedCount;
-      newStatusText = `${statusParts.join(", ")} agent${total === 1 ? "" : "s"}`;
+      const scheduled = this.manager.getScheduledActiveCount();
+      const tree = this.manager.getActiveCount();
+      newStatusText =
+        `${scheduled} scheduled / cap ${formatConcurrencyCap(this.manager.getMaxConcurrent())}` +
+        (tree === scheduled ? "" : ` · ${tree} in tree`);
     }
     if (newStatusText !== this.lastStatusText) {
       this.uiCtx.setStatus("subagents", newStatusText);

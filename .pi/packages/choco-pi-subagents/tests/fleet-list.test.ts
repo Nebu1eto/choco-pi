@@ -25,7 +25,12 @@ function partialFixture<T extends object>(fixture: Partial<T>): T {
 }
 
 let started = 0;
-function makeRecord(id: string, description: string, sideConversation = false): AgentRecord {
+function makeRecord(
+  id: string,
+  description: string,
+  sideConversation = false,
+  parentAgentId?: string,
+): AgentRecord {
   started += 1;
   return partialFixture<AgentRecord>({
     id,
@@ -38,6 +43,7 @@ function makeRecord(id: string, description: string, sideConversation = false): 
     lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
     compactionCount: 0,
     sideConversation,
+    parentAgentId,
     session: partialFixture<AgentSession>({}),
   });
 }
@@ -186,6 +192,34 @@ test("a /btw row is never auto-focused and keeps its dismissible overlay", () =>
 
     assert.deepEqual(view.press("\r"), { consume: true });
     assert.deepEqual(view.opened, ["b1"]);
+  } finally {
+    view.fleet.dispose();
+  }
+});
+
+test("nested rows render handles/status and keep the ordinary focus path", () => {
+  const parent = makeRecord("planner", "plan work");
+  parent.alias = "alpha";
+  const child = makeRecord("scout", "inspect code", false, parent.id);
+  child.alias = "beta";
+  const grandchild = makeRecord("review", "check finding", false, child.id);
+  const view = mount([grandchild, parent, child]);
+  try {
+    const rendered = view.render();
+    assert.match(rendered, /Agent @alpha  plan work/);
+    assert.match(rendered, /└ @beta implementer  \[running\] inspect code/);
+    assert.doesNotMatch(rendered, /@scout/);
+    assert.match(rendered, /  └ @review  \[running\] check finding/);
+    assert.ok(rendered.indexOf("plan work") < rendered.indexOf("inspect code"));
+    assert.ok(rendered.indexOf("inspect code") < rendered.indexOf("check finding"));
+
+    view.press(KEY_DOWN);
+    view.press(KEY_DOWN);
+    assert.equal(view.focusedId(), parent.id);
+    view.press(KEY_DOWN);
+    assert.equal(view.focusedId(), child.id);
+    view.press(KEY_DOWN);
+    assert.equal(view.focusedId(), grandchild.id);
   } finally {
     view.fleet.dispose();
   }

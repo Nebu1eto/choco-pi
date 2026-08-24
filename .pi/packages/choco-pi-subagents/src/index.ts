@@ -6,6 +6,7 @@
  *   get_subagent_result  — LLM-callable: check background agent status/result
  *   steer_subagent       — LLM-callable: send a steering message to a running agent
  *   stop_subagent        — LLM-callable: stop a running or queued agent
+ *   agent_message        — LLM-callable: message any agent in the shared tree
  *
  * Commands:
  *   /agents                 — Interactive agent management menu
@@ -44,6 +45,7 @@ import {
   serializeAgentFile,
 } from "./agent-file-toggle.ts";
 import { AgentManager } from "./agent-manager.ts";
+import { createAgentMessageTool } from "./agent-message.ts";
 import {
   getAgentConversation,
   getDefaultMaxTurns,
@@ -80,6 +82,11 @@ import {
   resolveJoinMode,
 } from "./invocation-config.ts";
 import {
+  createSubagentLimitsTool,
+  formatConcurrencyCap,
+  registerSubagentReminder,
+} from "./limits.ts";
+import {
   describeMention,
   handleBase,
   isReservedHandle,
@@ -88,6 +95,7 @@ import {
   stripAgentPrefix,
 } from "./mention.ts";
 import { runMentionClone } from "./mention-clone.ts";
+import { formatSteerMessage, ROOT_AGENT_PATH } from "./messaging.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
 import { checkModelScope, isScopeModelsEnabled, setScopeModelsEnabled } from "./model-scope.ts";
 import { getMaxSubagentDepth, setMaxSubagentDepth } from "./nested-tools.ts";
@@ -139,7 +147,11 @@ import {
 } from "./ui/agent-widget.ts";
 import { FleetList, type FleetUICtx } from "./ui/fleet-list.ts";
 import { continueRunningAgentNavigation, FocusedAgentController } from "./ui/focus-mode.ts";
-import { renderSubagentNotification } from "./ui/notification-render.ts";
+import {
+  parseSubagentMessageNotification,
+  renderAgentMessageNotification,
+  renderSubagentNotification,
+} from "./ui/notification-render.ts";
 import { showSchedulesMenu } from "./ui/schedule-menu.ts";
 import { resolveBtwType, SideConversationController } from "./ui/side-conversation.ts";
 import { selectItem } from "./ui/select-item.ts";
@@ -691,6 +703,13 @@ export default function (pi: ExtensionAPI) {
     },
   );
 
+  registerSubagentReminder(pi, {
+    getActiveCount: () => manager.getActiveCount(),
+    getScheduledActiveCount: () => manager.getScheduledActiveCount(),
+    getMaxConcurrent: () => manager.getMaxConcurrent(),
+    getMaxSubagentDepth,
+  });
+
   // Expose manager via Symbol.for() global registry for cross-package access.
   // Standard Node.js pattern for cross-package singletons (used by OpenTelemetry, etc.).
   //
@@ -794,6 +813,7 @@ export default function (pi: ExtensionAPI) {
   // (currentCtx would stay undefined → spawn always "No active session"). Gating
   // here makes a filtered session behave like an absent one (#142).
   let rpcHandle: RpcHandle | undefined;
+  let messageNotificationUnsubscribe: (() => void) | undefined;
   /** Whether the `@handle` autocomplete wrapper has been stacked on pi's provider. */
   let mentionProviderRegistered = false;
 
@@ -828,6 +848,18 @@ export default function (pi: ExtensionAPI) {
       focus.setUICtx(ctx.ui);
       sideConversations.setUICtx(ctx.ui);
       fleet.setUICtx(ctx.ui);
+    }
+    if (!messageNotificationUnsubscribe) {
+      messageNotificationUnsubscribe = pi.events.on("subagents:message", (payload) => {
+        const message = parseSubagentMessageNotification(payload);
+        if (!message) return;
+        const notificationCtx = currentCtx;
+        if (!notificationCtx?.hasUI) return;
+        notificationCtx.ui.notify(
+          renderAgentMessageNotification(message, notificationCtx.ui.theme),
+          "info",
+        );
+      });
     }
     manager.clearCompleted(true);
     // Guard mirrors the `!scheduler.isActive()` pattern below: session_start
@@ -1121,6 +1153,8 @@ export default function (pi: ExtensionAPI) {
   // On shutdown, abort all agents immediately and clean up.
   // If the session is going down, there's nothing left to consume agent results.
   pi.on("session_shutdown", async () => {
+    messageNotificationUnsubscribe?.();
+    messageNotificationUnsubscribe = undefined;
     rpcHandle?.unsubSpawn();
     rpcHandle?.unsubStop();
     rpcHandle?.unsubPing();
@@ -1518,6 +1552,19 @@ export default function (pi: ExtensionAPI) {
     (event, payload) => pi.events.emit(event, payload),
   );
 
+  pi.registerTool(
+    createSubagentLimitsTool({
+      getActiveCount: () => manager.getActiveCount(),
+      getScheduledActiveCount: () => manager.getScheduledActiveCount(),
+      getMaxConcurrent: () => manager.getMaxConcurrent(),
+      setMaxConcurrent: (value) => manager.setMaxConcurrent(value),
+      getMaxSubagentDepth,
+      setMaxSubagentDepth,
+    }),
+  );
+
+  pi.registerTool(createAgentMessageTool({ manager, pi }));
+
   // ---- Agent tool ----
 
   // Schedule param + its guideline are gated on `schedulingEnabled` (read once
@@ -1697,7 +1744,7 @@ Terse command-style prompts produce shallow, generic work.
       name: Type.Optional(
         Type.String({
           description:
-            'Optional memorable name for this agent, e.g. "auth-audit", so it can be addressed as `@name` at the prompt and by steer_subagent / get_subagent_result. Letters, digits, `_` and `-`. Worth setting when several agents of the same type run at once; omit for one-off work. The agent stays reachable by its type either way.',
+            "Callers SHOULD name every spawn with a short kebab-case goal label: one to three dash-joined words prefixed by role or purpose, e.g. `implementer-limits-core`, `explorer-guidance`, `reviewer-code`, `reviewer-e2e-validation`. The name becomes the agent's alias, agent_message/steering address, and fleet label. Collisions are globally auto-numbered; choose distinct names so addresses stay meaningful. Letters, digits, `_`, and `-`.",
         }),
       ),
       subagent_type: Type.String({
@@ -2092,7 +2139,7 @@ Terse command-style prompts produce shallow, generic work.
               `Type: ${existing.type}\n` +
               (record.outputFile ? `Output file: ${record.outputFile}\n` : "") +
               (isQueued
-                ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n`
+                ? `Position: queued (cap ${formatConcurrencyCap(manager.getMaxConcurrent())})\n`
                 : "") +
               `\nYou will be notified when this agent completes.\n` +
               `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.`,
@@ -2201,7 +2248,9 @@ Terse command-style prompts produce shallow, generic work.
             `Type: ${displayName}\n` +
             `Description: ${params.description}\n` +
             (record?.outputFile ? `Output file: ${record.outputFile}\n` : "") +
-            (isQueued ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n` : "") +
+            (isQueued
+              ? `Position: queued (cap ${formatConcurrencyCap(manager.getMaxConcurrent())})\n`
+              : "") +
             `\nYou will be notified when this agent completes.\n` +
             `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n` +
             `Do not duplicate this agent's work.`,
@@ -2493,7 +2542,7 @@ Terse command-style prompts produce shallow, generic work.
             params,
             resolveWorkflowType,
             createWorkflowRunner(ctx),
-            manager.getMaxConcurrent(),
+            manager.getSchedulingMaxConcurrent(),
           );
           pi.events.emit("subagents:workflow_created", result);
           return textResult(
@@ -2695,8 +2744,7 @@ Terse command-style prompts produce shallow, generic work.
       name: SUBAGENT_TOOL_NAMES.STEER,
       label: "Steer Agent",
       description:
-        "Send a steering message to a running agent. The message will interrupt the agent after its current tool execution " +
-        "and be injected into its conversation, allowing you to redirect its work mid-run. Only works on running agents.",
+        "Send an agent-authored MESSAGE envelope from /root to a running or queued agent. It interrupts the agent after its current tool execution and only works while the agent is running or queued.",
       promptSnippet: "Send a steering message to redirect a running background agent",
       parameters: Type.Object({
         agent_id: Type.String({
@@ -2705,7 +2753,7 @@ Terse command-style prompts produce shallow, generic work.
         }),
         message: Type.String({
           description:
-            "The steering message to send. This will appear as a user message in the agent's conversation.",
+            "Agent-authored guidance wrapped as a MESSAGE envelope in the recipient's conversation.",
         }),
       }),
       execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
@@ -2718,11 +2766,12 @@ Terse command-style prompts produce shallow, generic work.
             `Agent "${params.agent_id}" is not running (status: ${record.status}). Cannot steer a non-running agent.`,
           );
         }
+        const envelope = formatSteerMessage(ROOT_AGENT_PATH, params.message);
         if (!record.session) {
           // Session not ready yet — queue the steer for delivery once initialized
           if (!record.pendingSteers) record.pendingSteers = [];
-          record.pendingSteers.push(params.message);
-          pi.events.emit("subagents:steered", { id: record.id, message: params.message });
+          record.pendingSteers.push(envelope);
+          pi.events.emit("subagents:steered", { id: record.id, message: envelope });
           return textResult(
             `Steering message queued for agent ${record.id}. It will be delivered once the session initializes.`,
           );
@@ -2730,10 +2779,10 @@ Terse command-style prompts produce shallow, generic work.
 
         // UI steering (overlay composer, prompt mentions and fullscreen focus)
         // converges on this same manager path, including pre-session queueing.
-        if (!manager.steer(record.id, params.message)) {
+        if (!manager.steer(record.id, envelope)) {
           return textResult(`Failed to steer agent ${record.id}. It is no longer running.`);
         }
-        pi.events.emit("subagents:steered", { id: record.id, message: params.message });
+        pi.events.emit("subagents:steered", { id: record.id, message: envelope });
         const tokens = formatLifetimeTokens(record);
         const contextPercent = getSessionContextPercent(record.session);
         const stateParts: string[] = [];
@@ -3496,8 +3545,8 @@ Write the file using the write tool. Only write the file, nothing else.`;
         {
           id: "maxConcurrent",
           label: "Max concurrency",
-          description: "Max concurrent background agents (Enter to type)",
-          currentValue: String(mc),
+          description: "Max concurrent background agents (0 = unlimited, Enter to type)",
+          currentValue: formatConcurrencyCap(mc),
           values: [String(mc)],
         },
         {
@@ -3629,9 +3678,12 @@ Write the file using the write tool. Only write the file, nothing else.`;
     function applyValue(id: string, value: string) {
       if (id === "maxConcurrent") {
         const n = parseInt(value, 10);
-        if (n >= 1) {
+        if (n >= 0) {
           manager.setMaxConcurrent(n);
-          notifyApplied(ctx, `Max concurrency set to ${n}`);
+          notifyApplied(
+            ctx,
+            n === 0 ? "Max concurrency set to unlimited" : `Max concurrency set to ${n}`,
+          );
         }
       } else if (id === "defaultMaxTurns") {
         const n = parseInt(value, 10);
@@ -3804,7 +3856,7 @@ Write the file using the write tool. Only write the file, nothing else.`;
 
       const label =
         result === "maxConcurrent"
-          ? "Max concurrency (1+)"
+          ? "Max concurrency (0 = unlimited)"
           : result === "defaultMaxTurns"
             ? "Default max turns (0 = unlimited)"
             : result === "maxSubagentDepth"
