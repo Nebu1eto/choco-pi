@@ -39,6 +39,7 @@ import {
 } from "./code-mode/nested-tool-adapter.ts";
 import {
   activeRegisteredSessionToolNames,
+  codeModeExecutionKindForPermissions,
   scopeCodeModeToolsToSessionPermissions,
 } from "./code-mode/session-tool-permissions.ts";
 
@@ -68,9 +69,12 @@ export async function registerCodexCodeMode(
     isActive,
     executionKind: (ctx) =>
       // SAFETY: registerCodeModeTools invokes executionKind with Pi's current ExtensionContext.
-      resolveCodexRuntimePlanForState(ctx as ExtensionContext, runtime.state).kind === "notebook"
-        ? "notebook"
-        : "code",
+      codeModeExecutionKindForPermissions(
+        resolveCodexRuntimePlanForState(ctx as ExtensionContext, runtime.state).kind === "notebook"
+          ? "notebook"
+          : "code",
+        activeRegisteredSessionToolNames(pi, runtime.state.previousToolNames),
+      ),
     notebookOptions: () => ({
       maxHeapMiB: runtime.state.config.notebook.maxHeapMiB,
       agentDir: getAgentDir(),
