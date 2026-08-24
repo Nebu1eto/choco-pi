@@ -287,10 +287,14 @@ Component render() of cached messages stays out of the steady-state frame path.
 
 ### Zentui-aligned subagent completion notifications
 
-The fork adds a pure completion-notification formatter whose status glyphs match
-the Agent tool and whose title, continuation, detail, result and bounded transcript
-path follow the main transcript's zentui conventions. Grouped notifications share
-the same layout without requiring zentui to be loaded.
+The fork adds a pure completion-notification formatter that mirrors zentui's
+settled tool rows: a status-aware background band, the dim bullet and bold
+`Delegation` label, zentui's continuation and four-column result indentation, a
+bounded `…/` transcript path, and a markdown-free prose preview instead of the
+result's raw first line. Role badges and terminal status glyphs are kept because
+they carry information a fixed tool label cannot. Grouped notifications share the
+layout, and a theme without `getBgAnsi` degrades to unbanded text, so zentui
+never has to be loaded.
 
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 

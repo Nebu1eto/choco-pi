@@ -1,9 +1,15 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { renderAgentName } from "../agent-color.ts";
 import type { NotificationDetails } from "../types.ts";
-import { fgPreservingNestedStyles, formatMs, formatTokens, formatTurns } from "./agent-widget.ts";
+import {
+  fgPreservingNestedStyles,
+  formatMs,
+  formatTokens,
+  formatTurns,
+  getDisplayName,
+} from "./agent-widget.ts";
 
-const MAX_DETAIL_CELLS = 120;
+const MAX_DETAIL_CELLS = 118;
 const MAX_RESULT_CELLS = 116;
 const MAX_TRANSCRIPT_PATH_CELLS = 96;
 const MAX_EXPANDED_LINES = 30;
@@ -24,15 +30,15 @@ function compact(value: string, maximum: number): string {
 function statusPresentation(status: string): StatusPresentation {
   switch (status) {
     case "completed":
-      return { icon: "✓", iconColor: "success", outputColor: "toolOutput", title: "completed" };
+      return { icon: "✓", iconColor: "success", outputColor: "toolOutput", title: "Completed" };
     case "steered":
-      return { icon: "✓", iconColor: "warning", outputColor: "toolOutput", title: "wrapped up" };
+      return { icon: "✓", iconColor: "warning", outputColor: "toolOutput", title: "Wrapped up" };
     case "stopped":
-      return { icon: "■", iconColor: "dim", outputColor: "toolOutput", title: "stopped" };
+      return { icon: "■", iconColor: "dim", outputColor: "toolOutput", title: "Stopped" };
     case "aborted":
-      return { icon: "✗", iconColor: "error", outputColor: "warning", title: "aborted" };
+      return { icon: "✗", iconColor: "error", outputColor: "warning", title: "Aborted" };
     case "error":
-      return { icon: "✗", iconColor: "error", outputColor: "error", title: "failed" };
+      return { icon: "✗", iconColor: "error", outputColor: "error", title: "Failed" };
     default:
       return {
         icon: "•",
@@ -54,15 +60,20 @@ function statsParts(details: NotificationDetails): string[] {
   return parts;
 }
 
-function renderDetail(details: NotificationDetails, theme: Theme): string {
+function renderDetail(
+  details: NotificationDetails,
+  agent: string,
+  agentWidth: number,
+  theme: Theme,
+): string {
   const stats = statsParts(details);
   const statsText = stats.join(" · ");
   const statsWidth = statsText ? statsText.length + 3 : 0;
-  const descriptionWidth = Math.max(24, MAX_DETAIL_CELLS - statsWidth);
+  const descriptionWidth = Math.max(24, MAX_DETAIL_CELLS - statsWidth - agentWidth - 3);
   const description = theme.fg("accent", compact(details.description, descriptionWidth));
   const separator = ` ${theme.fg("dim", "·")} `;
   const renderedStats = stats.map((part) => fgPreservingNestedStyles(theme, "dim", part));
-  return theme.fg("dim", "  └ ") + [description, ...renderedStats].join(separator);
+  return theme.fg("dim", "    └ ") + [agent, description, ...renderedStats].join(separator);
 }
 
 function transcriptPath(outputFile: string): string {
@@ -73,44 +84,80 @@ function transcriptPath(outputFile: string): string {
   return compact(display, MAX_TRANSCRIPT_PATH_CELLS);
 }
 
+function normalizeResultLine(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("```") || /^#{1,6}(?:\s+|$)/.test(trimmed)) return "";
+  if (/^[-*_]{3,}$/.test(trimmed)) return "";
+
+  return (
+    trimmed
+      .replace(/^>\s*/, "")
+      .replace(/^(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)/, "")
+      // Inline emphasis survives the block-level strip above and still reads as
+      // raw markup in a one-line summary; backticks stay, since an identifier
+      // like `subagent_type` reads better quoted.
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/__(.+?)__/g, "$1")
+      .replace(/(^|\s)[*_](\S(?:.*?\S)?)[*_](?=\s|$)/g, "$1$2")
+      .trim()
+  );
+}
+
 function resultLines(details: NotificationDetails, expanded: boolean): string[] {
-  const sourceLines = details.resultPreview.split("\n");
-  if (!expanded) return [compact(sourceLines[0] ?? "", MAX_RESULT_CELLS)];
+  const sourceLines = details.resultPreview
+    .split("\n")
+    .map(normalizeResultLine)
+    .filter((line) => line.length > 0);
+  if (!expanded) return [compact(sourceLines[0] ?? "Completed", MAX_RESULT_CELLS)];
 
   const rendered = sourceLines
     .slice(0, MAX_EXPANDED_LINES)
     .map((line) => compact(line, MAX_RESULT_CELLS));
   if (sourceLines.length > MAX_EXPANDED_LINES) rendered.push("... (truncated)");
-  return rendered;
+  return rendered.length > 0 ? rendered : ["Completed"];
+}
+
+function notificationBackground(status: string, theme: Theme): string {
+  const color = status === "error" || status === "aborted" ? "toolErrorBg" : "toolSuccessBg";
+  // Lightweight host themes may provide only foreground styling.
+  return theme.getBgAnsi?.(color) ?? "";
 }
 
 function renderOne(details: NotificationDetails, expanded: boolean, theme: Theme): string {
   const status = statusPresentation(details.status);
+  const background = notificationBackground(details.status, theme);
   const icon = theme.fg(status.iconColor, status.icon);
-  // The role badge matches the launch row (`▸ implementer  …`), so a completion
-  // notice is attributable to its agent at a glance instead of reading "Agent".
-  const agent = renderAgentName(details.type, theme, { fallbackColor: "toolTitle", bold: true });
-  const title = theme.fg("toolTitle", theme.bold(status.title));
-  const lines = [`${icon} ${agent} ${title}`, renderDetail(details, theme)];
+  const toolLabel = theme.fg("toolTitle", theme.bold(`Delegation: ${status.title}`));
+  const agentLabel = details.type ? getDisplayName(details.type) : "Agent";
+  const agent = renderAgentName(details.type, theme, {
+    fallbackColor: "toolTitle",
+    restoreBackground: background,
+    bold: true,
+  });
+  const lines = [
+    ` ${theme.fg("dim", "•")} ${icon} ${toolLabel}`,
+    renderDetail(details, agent, agentLabel.length, theme),
+  ];
 
   if (details.status === "error") {
     lines.push(
-      theme.fg("error", `    Error: ${compact(details.error ?? "unknown", MAX_RESULT_CELLS)}`),
+      theme.fg("error", `      Error: ${compact(details.error ?? "unknown", MAX_RESULT_CELLS)}`),
     );
   }
   for (const line of resultLines(details, expanded)) {
-    lines.push(theme.fg(status.outputColor, `    ${line}`));
+    lines.push(theme.fg(status.outputColor, `      ${line}`));
   }
 
   if (details.outputFile) {
     lines.push(
-      `    ${theme.fg("muted", "Transcript")}${theme.fg("dim", " · ")}${theme.fg(
+      `      ${theme.fg("muted", "Transcript")}${theme.fg("dim", " · ")}${theme.fg(
         "accent",
         transcriptPath(details.outputFile),
       )}`,
     );
   }
-  return lines.join("\n");
+  // Leave the band open: the host Text component pads each row to its render width.
+  return lines.map((line) => background + line).join("\n");
 }
 
 /** Render one notification and any grouped completions without host or TUI side effects. */
