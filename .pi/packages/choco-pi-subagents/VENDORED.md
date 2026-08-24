@@ -296,6 +296,17 @@ they carry information a fixed tool label cannot. Grouped notifications share th
 layout, and a theme without `getBgAnsi` degrades to unbanded text, so zentui
 never has to be loaded.
 
+### Focused prompt metadata
+
+Focusing an agent publishes the child session's live model, provider and thinking
+level on an optional `Symbol.for` slot, which editor chrome reads on every render
+and which is cleared on unfocus, session switch and disposal. The prompt's
+metadata therefore describes the runtime that will actually answer, and neither
+package imports the other: without the publisher the editor renders the main
+session unchanged, and without a consumer publishing is inert. Fast-mode status
+is not part of the slot; it is owned by a separate root extension keyed to the
+main session's model id.
+
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 
 The repository previously ran `npm:@tintinweb/pi-subagents@0.16.1`. Two entries
