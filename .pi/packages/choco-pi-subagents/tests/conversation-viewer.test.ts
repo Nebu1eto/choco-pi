@@ -11,7 +11,6 @@ import test from "node:test";
 import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import {
   type AgentSession,
-  type AgentSessionEvent,
   type AgentSessionEventListener,
   initTheme,
 } from "@earendil-works/pi-coding-agent";
@@ -38,12 +37,14 @@ function makeTui(): TUI {
   });
 }
 
-function makeSession(messages: unknown[]): { session: AgentSession; fire: () => void } {
+function makeSession(messages: unknown[]) {
   const listeners: Array<() => void> = [];
   const session = partialFixture<AgentSession>({
+    // SAFETY: each fixture builds pi-ai UserMessage / AssistantMessage /
+    // ToolResultMessage values, all members of the session message union.
     messages: messages as AgentSession["messages"],
     subscribe: (listener: AgentSessionEventListener) => {
-      listeners.push(() => listener({ type: "custom", data: {} } as unknown as AgentSessionEvent));
+      listeners.push(() => listener({ type: "agent_settled" }));
       return () => {};
     },
     getToolDefinition: () => undefined,
@@ -54,9 +55,13 @@ function makeSession(messages: unknown[]): { session: AgentSession; fire: () => 
   return { session, fire: () => listeners.forEach((listener) => listener()) };
 }
 
-function makeRecord(session: AgentSession, status: AgentRecord["status"] = "completed"): AgentRecord {
+function makeRecord(
+  session: AgentSession,
+  status: AgentRecord["status"] = "completed",
+): AgentRecord {
   return partialFixture<AgentRecord>({
     id: "agent-1",
+    // SAFETY: general is a registered default agent type.
     type: "general" as SubagentType,
     description: "test agent",
     status,
@@ -105,10 +110,7 @@ function makeToolResult(toolCallId: string, text: string): ToolResultMessage {
   };
 }
 
-function makeViewer(
-  session: AgentSession,
-  record?: AgentRecord,
-): { viewer: ConversationViewer; rendered: () => string } {
+function makeViewer(session: AgentSession, record?: AgentRecord) {
   const viewer = new ConversationViewer(
     makeTui(),
     session,
@@ -119,7 +121,11 @@ function makeViewer(
   );
   return {
     viewer,
-    rendered: () => viewer.render(120).map((line) => stripTerminalSequences(line)).join("\n"),
+    rendered: () =>
+      viewer
+        .render(120)
+        .map((line) => stripTerminalSequences(line))
+        .join("\n"),
   };
 }
 
@@ -202,7 +208,10 @@ test("a running agent streams: deltas reach frames within the throttle window", 
   // Streaming mutates the tail message in place, as pi-ai delivers deltas,
   // and every mutation arrives with a session event. Within the throttle
   // window a frame may keep the previous lines...
+  // SAFETY: messages[1] is the assistant fixture created just above, with
+  // exactly one text part.
   const tail = messages[1] as AssistantMessage;
+  // SAFETY: see the narrowed tail above.
   (tail.content[0] as { text: string }).text = "Starting... now halfway through";
   fire();
   const withinWindow = rendered();
@@ -234,7 +243,10 @@ test("settling flushes the throttled tail into its final render immediately", ()
 
   // The final delta lands together with the status flip, inside the throttle
   // window: the settle must bypass the window, not wait 100ms.
+  // SAFETY: messages[1] is the assistant fixture created just above, with
+  // exactly one text part.
   const tail = messages[1] as AssistantMessage;
+  // SAFETY: see the narrowed tail above.
   (tail.content[0] as { text: string }).text = "Half — the full answer.";
   record.status = "completed";
   record.completedAt = Date.now();
@@ -254,6 +266,37 @@ test("a settled transcript catches tool results that landed before viewing", () 
   ]);
   const { viewer, rendered } = makeViewer(session);
   assert.ok(rendered().includes("needle found at line 3"), "result visible on first open");
+  viewer.dispose();
+});
+
+test("focus profile renders the frameless main-transcript look", () => {
+  const session_msgs: unknown[] = [
+    makeUserMessage("Focused question"),
+    makeAssistantMessage([{ type: "text", text: "Focused **answer** with detail." }]),
+  ];
+  const { session } = makeSession(session_msgs);
+  const viewer = new ConversationViewer(
+    makeTui(),
+    session,
+    makeRecord(session),
+    undefined,
+    theme,
+    () => {},
+    undefined,
+    undefined,
+    undefined,
+    { profile: "focus" },
+  );
+  const lines = viewer.render(120).map((line) => stripTerminalSequences(line));
+  const text = lines.join("\n");
+  assert.ok(text.includes("Focused question"), "user message renders");
+  assert.ok(text.includes("Focused answer with detail."), "assistant message renders");
+  assert.ok(
+    !text.includes("╭") && !text.includes("╰") && !text.includes("│"),
+    "no overlay box borders in focus",
+  );
+  assert.ok(!text.includes("Esc close"), "no overlay footer hints in focus");
+  assert.ok(!text.includes("lines ·"), "no scroll readout in focus");
   viewer.dispose();
 });
 
