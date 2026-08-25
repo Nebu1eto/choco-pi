@@ -189,16 +189,60 @@ test("invalidate near linger expiry still unregisters the widget", async () => {
     now: () => now,
   });
   widget.setUICtx(ui);
-  manager.emit({ type: "end", shell: shell({ state: "exited", endedAt: 0 }) });
+  manager.emit({ type: "start", shell: shell() });
   const registration = ui.calls.findLast((call) => call.content !== undefined);
   assert.ok(registration?.content);
   const component = registration.content({ requestRender: () => ui.renders++ }, theme);
 
   component.invalidate();
-  now = 25;
+  now = 5;
+  manager.emit({ type: "end", shell: shell({ state: "exited", endedAt: 5 }) });
+  assert.equal(ui.renders, 1);
+  assert.equal(ui.calls.filter((call) => call.content !== undefined).length, 1);
+
+  now = 30;
   await wait(15);
 
   assert.equal(ui.calls.at(-1)?.key, "shells");
   assert.equal(ui.calls.at(-1)?.content, undefined);
+  widget.dispose();
+});
+
+test("sanitizes and bounds shell-controlled widget metadata", () => {
+  const manager = new ManagerFixture();
+  const ui = new UIFixture();
+  const widget = new ShellsWidget(manager, "root");
+  widget.setUICtx(ui);
+  manager.emit({
+    type: "start",
+    shell: shell({
+      shellId: "named",
+      name: `name\x1b[31m-red\x1b[0m\nnext\x07${"n".repeat(100)}`,
+      ownerId: `nested\x1b[2J\nowner\x07${"o".repeat(100)}`,
+    }),
+  });
+  manager.emit({
+    type: "start",
+    shell: shell({
+      shellId: "commanded",
+      name: undefined,
+      command: `printf\x1b[31m red\x1b[0m\nnext\x07 ${"c".repeat(100)}`,
+    }),
+  });
+
+  const lines = ui.lines();
+  assert.ok(
+    lines.every((line) =>
+      Array.from(line).every((character) => {
+        const code = character.codePointAt(0) ?? 0;
+        return code >= 0x20 && !(code >= 0x7f && code <= 0x9f);
+      }),
+    ),
+  );
+  assert.ok(lines.every((line) => line.length < 140));
+  assert.match(lines.join("\n"), /name-rednext/);
+  assert.match(lines.join("\n"), /printf rednext/);
+  assert.equal(lines.join("\n").includes("\x1b"), false);
+  assert.equal(lines.join("\n").includes("\x07"), false);
   widget.dispose();
 });
