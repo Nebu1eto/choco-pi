@@ -24,6 +24,10 @@ test(
 
     assert.equal(resolve("apply_patch"), "File: Patching");
     assert.equal(resolve("exec_command"), "Shell: Running");
+    assert.equal(resolve("shell_start"), "Shell: Starting");
+    assert.equal(resolve("shell_read"), "Shell: Reading");
+    assert.equal(resolve("shell_stop"), "Shell: Stopping");
+    assert.equal(resolve("shell_list"), "Shell: Listing");
     assert.equal(resolve("read"), "File: Reading");
     assert.equal(resolve("symbol_search"), "LSP: Searching Symbols");
     assert.equal(resolve("module_report"), "LSP: Analysing Module");
@@ -51,6 +55,10 @@ test("a settled tool call reads in the past tense", { skip: SKIP_WITHOUT_ZENTUI 
   ) => string;
 
   assert.equal(resolve("exec_command"), "Shell: Ran");
+  assert.equal(resolve("shell_start"), "Shell: Started");
+  assert.equal(resolve("shell_read"), "Shell: Read");
+  assert.equal(resolve("shell_stop"), "Shell: Stopped");
+  assert.equal(resolve("shell_list"), "Shell: Listed");
   assert.equal(resolve("apply_patch"), "File: Patched");
   assert.equal(resolve("steer_subagent"), "Delegation: Steered");
   assert.equal(resolve("get_subagent_result"), "Delegation: Retrieved");

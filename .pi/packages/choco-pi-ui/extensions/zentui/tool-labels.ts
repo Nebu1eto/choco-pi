@@ -32,6 +32,10 @@ export const DEFAULT_TOOL_LABELS = {
   bash: "Shell: Running",
   exec: "Shell: Running",
   exec_command: "Shell: Running",
+  shell_start: "Shell: Starting",
+  shell_read: "Shell: Reading",
+  shell_stop: "Shell: Stopping",
+  shell_list: "Shell: Listing",
   wait: "Shell: Waiting",
   write_stdin: "Shell: Sending Input",
 
@@ -111,6 +115,10 @@ export const DEFAULT_FINISHED_TOOL_LABELS = {
   bash: "Shell: Ran",
   exec: "Shell: Ran",
   exec_command: "Shell: Ran",
+  shell_start: "Shell: Started",
+  shell_read: "Shell: Read",
+  shell_stop: "Shell: Stopped",
+  shell_list: "Shell: Listed",
   wait: "Shell: Waited",
   write_stdin: "Shell: Sent Input",
 
