@@ -15,6 +15,7 @@ import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-wor
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { resumeAgent, runAgent, type MainSessionFork, type ToolActivity } from "./agent-runner.ts";
+import { cleanupChildSessionOwner } from "./child-session-cleanup.ts";
 import { normalizeMaxConcurrent, schedulingMaxConcurrent } from "./limits.ts";
 import { assignHandle, handleBase } from "./mention.ts";
 import type {
@@ -1023,7 +1024,10 @@ export class AgentManager {
   /** Dispose a record's session and remove it from the map. */
   private removeRecord(id: string, record: AgentRecord): void {
     this.tombstone(record);
-    record.session?.dispose?.();
+    if (record.session) {
+      cleanupChildSessionOwner(record.session);
+      record.session.dispose?.();
+    }
     record.session = undefined;
     this.agents.delete(id);
   }
@@ -1135,7 +1139,10 @@ export class AgentManager {
     // Clear queue
     this.queue = [];
     for (const record of this.agents.values()) {
-      record.session?.dispose();
+      if (record.session) {
+        cleanupChildSessionOwner(record.session);
+        record.session.dispose();
+      }
     }
     this.agents.clear();
     // Prune any orphaned git worktrees (crash recovery)

@@ -64,6 +64,7 @@ interface CommandDefinition {
 
 interface ShutdownEventFixture {
   type?: "session_shutdown";
+  reason: "quit" | "reload" | "new" | "resume" | "fork";
 }
 
 type ShutdownHandler = (event: ShutdownEventFixture, ctx: TestContext) => Promise<void>;
@@ -202,7 +203,7 @@ test("extension registers documented portable tool schemas and the /shells comma
     ]);
   } finally {
     assert.ok(root.shutdown);
-    await root.shutdown({}, context("root"));
+    await root.shutdown({ reason: "quit" }, context("root"));
     assert.equal(registry()[managerKey], undefined);
   }
 });
@@ -227,9 +228,32 @@ test("child shell_start resolves relative cwd from its tool context", async () =
     assert.equal(started.state, "running");
   } finally {
     assert.ok(child.shutdown);
-    await child.shutdown({}, context("child-relative-cwd"));
+    await child.shutdown({ reason: "quit" }, context("child-relative-cwd"));
     assert.ok(root.shutdown);
-    await root.shutdown({}, context("root"));
+    await root.shutdown({ reason: "quit" }, context("root"));
+  }
+});
+
+test("shell_start reports an invalid cwd as an error without retaining a running shell", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  try {
+    const result = details<{ error: string }>(
+      await execute(
+        root,
+        "shell_start",
+        { command: "while :; do sleep 1; done", cwd: "missing-directory" },
+        "root-session",
+      ),
+    );
+    assert.match(result.error, /cwd is not an existing directory/);
+    assert.deepEqual(
+      details<{ shells: object[] }>(await execute(root, "shell_list", {}, "root-session")).shells,
+      [],
+    );
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
   }
 });
 
@@ -294,7 +318,7 @@ test("tool and command handlers preserve child ownership, root access, and shutd
     assert.match(commandNotices[1]?.message ?? "", new RegExp(childStarted.shellId));
 
     assert.ok(child.shutdown);
-    await child.shutdown({}, context("child-session"));
+    await child.shutdown({ reason: "quit" }, context("child-session"));
     const afterChildShutdown = details<{ shells: Array<{ shellId: string; state: string }> }>(
       await execute(root, "shell_list", {}, "root-session"),
     );
@@ -311,9 +335,46 @@ test("tool and command handlers preserve child ownership, root access, and shutd
     assert.equal(commandNotices[2]?.level, "info");
     assert.match(commandNotices[2]?.message ?? "", /"state": "stopped"/);
   } finally {
-    if (child?.shutdown) await child.shutdown({}, context("child-session"));
+    if (child?.shutdown) await child.shutdown({ reason: "quit" }, context("child-session"));
     assert.ok(root.shutdown);
-    await root.shutdown({}, context("root-session"));
+    await root.shutdown({ reason: "quit" }, context("root-session"));
     assert.equal(registry()[managerKey], undefined);
+  }
+});
+
+test("root session replacement preserves the process manager and quit removes an adopted manager", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  let current = await activate(false);
+  const originalManager = registry()[managerKey];
+  assert.ok(originalManager);
+  const started = details<{ shellId: string; state: string }>(
+    await execute(current, "shell_start", { command: "while :; do sleep 1; done" }, "root-session"),
+  );
+
+  try {
+    for (const reason of ["reload", "new", "resume", "fork"] as const) {
+      assert.ok(current.shutdown);
+      await current.shutdown({ reason }, context("root-session"));
+      assert.strictEqual(registry()[managerKey], originalManager);
+
+      const successor = await activate(false);
+      const listed = details<{ shells: Array<{ shellId: string; state: string }> }>(
+        await execute(successor, "shell_list", {}, "successor-session"),
+      );
+      assert.equal(
+        listed.shells.find((shell) => shell.shellId === started.shellId)?.state,
+        "running",
+      );
+      current = successor;
+    }
+
+    assert.ok(current.shutdown);
+    await current.shutdown({ reason: "quit" }, context("successor-session"));
+    assert.equal(registry()[managerKey], undefined);
+  } finally {
+    if (registry()[managerKey]) {
+      assert.ok(current.shutdown);
+      await current.shutdown({ reason: "quit" }, context("successor-session"));
+    }
   }
 });

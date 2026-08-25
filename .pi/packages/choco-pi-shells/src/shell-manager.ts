@@ -1,11 +1,15 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
 const DEFAULT_BUFFER_BYTES = 1024 * 1024;
 const DEFAULT_READ_BYTES = 64 * 1024;
 const MAX_READ_BYTES = 256 * 1024;
 const DEFAULT_STOP_GRACE_MS = 2_000;
+const DEFAULT_OUTPUT_DRAIN_MS = 250;
+const DEFAULT_KILL_FINALIZE_MS = 250;
+const DEFAULT_COMPLETED_RECORD_CAP = 64;
 
 export type ShellState = "running" | "exited" | "stopped" | "failed";
 
@@ -14,6 +18,9 @@ export interface ShellManagerOptions {
   shellArgs?: readonly string[];
   bufferBytes?: number;
   stopGraceMs?: number;
+  outputDrainMs?: number;
+  killFinalizeMs?: number;
+  completedRecordCap?: number;
 }
 
 export interface StartShellInput {
@@ -106,6 +113,8 @@ interface ShellRecord {
   stderr: StreamBuffer;
   stopRequested: boolean;
   killTimer?: ReturnType<typeof setTimeout>;
+  drainTimer?: ReturnType<typeof setTimeout>;
+  forceFinalizeTimer?: ReturnType<typeof setTimeout>;
   terminal: Promise<void>;
   resolveTerminal: () => void;
   finalized: boolean;
@@ -117,6 +126,10 @@ export class ShellManager {
   private readonly shellArgs: readonly string[];
   private readonly bufferBytes: number;
   private readonly stopGraceMs: number;
+  private readonly outputDrainMs: number;
+  private readonly killFinalizeMs: number;
+  private readonly completedRecordCap: number;
+  private readonly completedRecordIds: string[] = [];
   private disposed = false;
   private disposePromise?: Promise<void>;
 
@@ -136,6 +149,24 @@ export class ShellManager {
       0,
       60_000,
     );
+    this.outputDrainMs = boundedInteger(
+      options.outputDrainMs ?? DEFAULT_OUTPUT_DRAIN_MS,
+      "outputDrainMs",
+      0,
+      60_000,
+    );
+    this.killFinalizeMs = boundedInteger(
+      options.killFinalizeMs ?? DEFAULT_KILL_FINALIZE_MS,
+      "killFinalizeMs",
+      0,
+      60_000,
+    );
+    this.completedRecordCap = boundedInteger(
+      options.completedRecordCap ?? DEFAULT_COMPLETED_RECORD_CAP,
+      "completedRecordCap",
+      0,
+      10_000,
+    );
   }
 
   start(input: StartShellInput): StartShellResult {
@@ -144,6 +175,13 @@ export class ShellManager {
     const command = requireNonEmpty(input.command, "command");
     const cwd = requireNonEmpty(input.cwd, "cwd");
     const name = input.name === undefined ? undefined : requireNonEmpty(input.name, "name");
+    let cwdStat: ReturnType<typeof statSync>;
+    try {
+      cwdStat = statSync(cwd);
+    } catch (error) {
+      throw new Error(`cwd is not an existing directory: ${cwd}`, { cause: error });
+    }
+    if (!cwdStat.isDirectory()) throw new Error(`cwd is not an existing directory: ${cwd}`);
 
     let shellId = randomUUID();
     while (this.records.has(shellId)) shellId = randomUUID();
@@ -191,6 +229,7 @@ export class ShellManager {
       child.once("exit", (code, signal) => {
         if (code !== null) record.exitCode = code;
         if (signal !== null) record.signal = signal;
+        this.beginOutputDrain(record);
       });
       child.once("close", (code, signal) => {
         if (code !== null) record.exitCode = code;
@@ -301,6 +340,8 @@ export class ShellManager {
     if (record.finalized) return;
     record.finalized = true;
     if (record.killTimer) clearTimeout(record.killTimer);
+    if (record.drainTimer) clearTimeout(record.drainTimer);
+    if (record.forceFinalizeTimer) clearTimeout(record.forceFinalizeTimer);
     this.flushDecoder(record.stdout);
     this.flushDecoder(record.stderr);
     record.endedAt = Date.now();
@@ -314,6 +355,28 @@ export class ShellManager {
     child?.removeAllListeners();
     record.child = undefined;
     record.resolveTerminal();
+    this.completedRecordIds.push(record.shellId);
+    this.evictCompletedRecords();
+  }
+
+  private beginOutputDrain(record: ShellRecord): void {
+    if (record.finalized || record.drainTimer) return;
+    record.drainTimer = setTimeout(() => this.forceFinalize(record), this.outputDrainMs);
+    record.drainTimer.unref();
+  }
+
+  private forceFinalize(record: ShellRecord): void {
+    if (record.finalized) return;
+    record.child?.stdout?.destroy();
+    record.child?.stderr?.destroy();
+    this.finalize(record);
+  }
+
+  private evictCompletedRecords(): void {
+    while (this.completedRecordIds.length > this.completedRecordCap) {
+      const shellId = this.completedRecordIds.shift();
+      if (shellId !== undefined) this.records.delete(shellId);
+    }
   }
 
   private async stopRecord(record: ShellRecord): Promise<void> {
@@ -323,7 +386,13 @@ export class ShellManager {
       this.signalRecord(record, "SIGTERM");
       if (!record.finalized) {
         record.killTimer = setTimeout(() => {
-          if (!record.finalized) this.signalRecord(record, "SIGKILL");
+          if (record.finalized) return;
+          this.signalRecord(record, "SIGKILL");
+          record.forceFinalizeTimer = setTimeout(
+            () => this.forceFinalize(record),
+            this.killFinalizeMs,
+          );
+          record.forceFinalizeTimer.unref();
         }, this.stopGraceMs);
         record.killTimer.unref();
       }

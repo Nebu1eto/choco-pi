@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { ShellManager, type ShellResult } from "../src/shell-manager.ts";
@@ -29,6 +32,29 @@ function isTerminal(shell: ShellResult): boolean {
   return shell.state !== "running";
 }
 
+function escapedDescendantCommand(parentKeepsRunning: boolean): string {
+  const descendant = "setInterval(() => {}, 1000)";
+  return [
+    'const { spawn } = require("node:child_process")',
+    `const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { detached: true, stdio: ["ignore", 1, 2] })`,
+    'process.stdout.write(String(child.pid) + "\\n")',
+    "child.unref()",
+    ...(parentKeepsRunning
+      ? ['process.on("SIGTERM", () => {})', "setInterval(() => {}, 1000)"]
+      : []),
+  ].join(";");
+}
+
+function killFixture(pid: number | undefined): void {
+  if (pid === undefined) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    assert.ok(error instanceof Error);
+    assert.equal("code" in error ? error.code : undefined, "ESRCH");
+  }
+}
+
 test("start returns before completion, keeps streams separate, and later reports exit state", async () => {
   const manager = new ShellManager({ shell: process.execPath, shellArgs: ["-e"] });
   try {
@@ -57,6 +83,115 @@ test("start returns before completion, keeps streams separate, and later reports
     await manager.dispose();
   }
 });
+
+test(
+  "an escaped descendant holding inherited pipes cannot block natural completion or disposal",
+  { skip: process.platform === "win32" },
+  async () => {
+    const manager = new ShellManager({
+      shell: process.execPath,
+      shellArgs: ["-e"],
+      outputDrainMs: 100,
+      killFinalizeMs: 100,
+      stopGraceMs: 100,
+    });
+    const escapedPids: number[] = [];
+    try {
+      const startedAt = performance.now();
+      const started = manager.start({
+        ownerId: "owner",
+        cwd,
+        command: escapedDescendantCommand(false),
+      });
+      const withPid = await waitFor(
+        () => readShell(manager, started.shellId),
+        (result) => /^\d+\n$/.test(result.stdout.data),
+      );
+      escapedPids.push(Number.parseInt(withPid.stdout.data, 10));
+
+      const completed = await waitFor(
+        () => readShell(manager, started.shellId),
+        (result) => isTerminal(result.shell),
+        2_000,
+      );
+      assert.equal(completed.shell.state, "exited");
+      assert.equal(completed.shell.exitCode, 0);
+      assert.ok(performance.now() - startedAt < 1_500);
+
+      const stopStartedAt = performance.now();
+      assert.equal(
+        (await manager.stop({ requesterId: "owner", isAdmin: false, shellId: started.shellId }))
+          .state,
+        "exited",
+      );
+      assert.ok(performance.now() - stopStartedAt < 250);
+
+      const disposingShell = manager.start({
+        ownerId: "owner",
+        cwd,
+        command: escapedDescendantCommand(false),
+      });
+      const disposingWithPid = await waitFor(
+        () => readShell(manager, disposingShell.shellId),
+        (result) => /^\d+\n$/.test(result.stdout.data),
+      );
+      escapedPids.push(Number.parseInt(disposingWithPid.stdout.data, 10));
+      const disposeStartedAt = performance.now();
+      await manager.dispose();
+      assert.ok(performance.now() - disposeStartedAt < 1_000);
+      assert.notEqual(readShell(manager, disposingShell.shellId).shell.state, "running");
+    } finally {
+      await manager.dispose();
+      for (const pid of escapedPids) killFixture(pid);
+    }
+  },
+);
+
+test(
+  "SIGKILL escalation force-finalizes once when an escaped descendant prevents close",
+  { skip: process.platform === "win32" },
+  async () => {
+    const manager = new ShellManager({
+      shell: process.execPath,
+      shellArgs: ["-e"],
+      stopGraceMs: 75,
+      killFinalizeMs: 75,
+      outputDrainMs: 5_000,
+    });
+    let escapedPid: number | undefined;
+    try {
+      const started = manager.start({
+        ownerId: "owner",
+        cwd,
+        command: escapedDescendantCommand(true),
+      });
+      const withPid = await waitFor(
+        () => readShell(manager, started.shellId),
+        (result) => /^\d+\n$/.test(result.stdout.data),
+      );
+      escapedPid = Number.parseInt(withPid.stdout.data, 10);
+
+      const stopStartedAt = performance.now();
+      const stopped = await manager.stop({
+        requesterId: "owner",
+        isAdmin: false,
+        shellId: started.shellId,
+      });
+      assert.equal(stopped.state, "stopped");
+      assert.equal(stopped.signal, "SIGKILL");
+      assert.ok(performance.now() - stopStartedAt < 1_000);
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const afterLateEvents = readShell(manager, started.shellId);
+      assert.equal(afterLateEvents.shell.endedAt, stopped.endedAt);
+      assert.equal(afterLateEvents.shell.state, "stopped");
+      assert.equal(afterLateEvents.stdout.data, `${escapedPid}\n`);
+    } finally {
+      await manager.dispose();
+      killFixture(escapedPid);
+    }
+  },
+);
 
 test("cursor reads are incremental and bounded buffers report dropped absolute UTF-8 offsets", async () => {
   const manager = new ShellManager({
@@ -257,5 +392,69 @@ test("cleanupOwner stops only that owner's shells and dispose stops the rest onc
     );
   } finally {
     await manager.dispose();
+  }
+});
+
+test("completed record retention evicts oldest terminal records but never running records", async () => {
+  const manager = new ShellManager({
+    shell: process.execPath,
+    shellArgs: ["-e"],
+    completedRecordCap: 2,
+  });
+  try {
+    const running = manager.start({
+      ownerId: "owner",
+      cwd,
+      command: "setInterval(() => {}, 1000)",
+    });
+    const completedIds: string[] = [];
+    for (const output of ["first", "second", "third"]) {
+      const started = manager.start({
+        ownerId: "owner",
+        cwd,
+        command: `process.stdout.write(${JSON.stringify(output)})`,
+      });
+      completedIds.push(started.shellId);
+      await waitFor(
+        () => readShell(manager, started.shellId),
+        (result) => isTerminal(result.shell),
+      );
+    }
+
+    assert.throws(() => readShell(manager, completedIds[0] ?? ""), /Shell not found/);
+    assert.equal(readShell(manager, completedIds[1] ?? "").stdout.data, "second");
+    assert.equal(readShell(manager, completedIds[2] ?? "").stdout.data, "third");
+    assert.equal(readShell(manager, running.shellId).shell.state, "running");
+    assert.deepEqual(
+      manager.list({ requesterId: "owner", isAdmin: false }).shells.map((shell) => shell.shellId),
+      [running.shellId, completedIds[1], completedIds[2]],
+    );
+  } finally {
+    await manager.dispose();
+  }
+});
+
+test("start rejects missing and non-directory cwd before retaining a shell record", async () => {
+  const manager = new ShellManager({ shell: process.execPath, shellArgs: ["-e"] });
+  const fixtureDirectory = mkdtempSync(join(tmpdir(), "choco-pi-shells-cwd-"));
+  const fixtureFile = join(fixtureDirectory, "file");
+  const missingDirectory = join(fixtureDirectory, "missing");
+  writeFileSync(fixtureFile, "fixture");
+  try {
+    for (const invalidCwd of [missingDirectory, fixtureFile]) {
+      assert.throws(
+        () =>
+          manager.start({
+            ownerId: "owner",
+            cwd: invalidCwd,
+            command: "process.exit()",
+          }),
+        /cwd is not an existing directory/,
+      );
+    }
+    assert.deepEqual(manager.list({ requesterId: "owner", isAdmin: false }).shells, []);
+  } finally {
+    await manager.dispose();
+    rmSync(fixtureDirectory, { recursive: true, force: true });
   }
 });
