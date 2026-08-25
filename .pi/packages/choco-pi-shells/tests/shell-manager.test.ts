@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { ShellManager, type ShellResult } from "../src/shell-manager.ts";
+import { ShellManager, type ShellChangeEvent, type ShellResult } from "../src/shell-manager.ts";
 
 const cwd = process.cwd();
 
@@ -93,6 +93,100 @@ test("start returns before completion, keeps streams separate, and later reports
   } finally {
     await manager.dispose();
   }
+});
+
+test("change events report ordered start, stop update, and final snapshots", async () => {
+  const manager = new ShellManager({ shell: process.execPath, shellArgs: ["-e"] });
+  const events: ShellChangeEvent[] = [];
+  manager.onChange((event) => events.push(event));
+  try {
+    const started = manager.start({
+      ownerId: "owner",
+      cwd,
+      command:
+        'process.stdout.write("first"); setTimeout(() => process.stdout.write("second"), 25); setInterval(() => {}, 1000)',
+    });
+    const stopped = await manager.stop({
+      requesterId: "owner",
+      isAdmin: false,
+      shellId: started.shellId,
+    });
+
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ["start", "update", "end"],
+    );
+    assert.equal(events[0]?.shell.state, "running");
+    assert.equal(events[0]?.shell.endedAt, undefined);
+    assert.equal(events[1]?.shell.state, "running");
+    assert.equal(events[1]?.shell.endedAt, undefined);
+    assert.equal(events[2]?.shell.state, "stopped");
+    assert.equal(events[2]?.shell.endedAt, stopped.endedAt);
+    assert.ok(events.every((event) => event.shell.shellId === started.shellId));
+  } finally {
+    await manager.dispose();
+  }
+});
+
+test("change listener unsubscribe is idempotent", async () => {
+  const manager = new ShellManager({ shell: process.execPath, shellArgs: ["-e"] });
+  const eventTypes: ShellChangeEvent["type"][] = [];
+  const unsubscribe = manager.onChange((event) => eventTypes.push(event.type));
+  try {
+    const started = manager.start({
+      ownerId: "owner",
+      cwd,
+      command: "setInterval(() => {}, 1000)",
+    });
+    unsubscribe();
+    unsubscribe();
+    await manager.stop({ requesterId: "owner", isAdmin: false, shellId: started.shellId });
+
+    assert.deepEqual(eventTypes, ["start"]);
+  } finally {
+    await manager.dispose();
+  }
+});
+
+test("change listener exceptions do not interrupt other listeners or shell lifecycle", async () => {
+  const manager = new ShellManager({ shell: process.execPath, shellArgs: ["-e"] });
+  const eventTypes: ShellChangeEvent["type"][] = [];
+  manager.onChange(() => {
+    throw new Error("listener failure");
+  });
+  manager.onChange((event) => eventTypes.push(event.type));
+  try {
+    const started = manager.start({
+      ownerId: "owner",
+      cwd,
+      command: "setInterval(() => {}, 1000)",
+    });
+    const stopped = await manager.stop({
+      requesterId: "owner",
+      isAdmin: false,
+      shellId: started.shellId,
+    });
+
+    assert.equal(stopped.state, "stopped");
+    assert.deepEqual(eventTypes, ["start", "update", "end"]);
+  } finally {
+    await manager.dispose();
+  }
+});
+
+test("dispose delivers final change events before clearing listeners", async () => {
+  const manager = new ShellManager({ shell: process.execPath, shellArgs: ["-e"] });
+  const eventTypes: ShellChangeEvent["type"][] = [];
+  manager.onChange((event) => eventTypes.push(event.type));
+  manager.start({
+    ownerId: "owner",
+    cwd,
+    command: "setInterval(() => {}, 1000)",
+  });
+
+  await manager.dispose();
+
+  assert.deepEqual(eventTypes, ["start", "update", "end"]);
 });
 
 test(
