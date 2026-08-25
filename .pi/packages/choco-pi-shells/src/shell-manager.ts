@@ -339,6 +339,7 @@ export class ShellManager {
   private finalize(record: ShellRecord): void {
     if (record.finalized) return;
     record.finalized = true;
+    this.signalRecord(record, "SIGKILL");
     if (record.killTimer) clearTimeout(record.killTimer);
     if (record.drainTimer) clearTimeout(record.drainTimer);
     if (record.forceFinalizeTimer) clearTimeout(record.forceFinalizeTimer);
@@ -367,7 +368,6 @@ export class ShellManager {
 
   private forceFinalize(record: ShellRecord): void {
     if (record.finalized) return;
-    this.signalRecord(record, "SIGKILL");
     record.child?.stdout?.destroy();
     record.child?.stderr?.destroy();
     this.finalize(record);
