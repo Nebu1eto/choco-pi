@@ -100,7 +100,8 @@ export class ShellOutputViewer implements Component {
   private stopArmed = false;
   private closed = false;
   private evicted = false;
-  private notice: string | undefined;
+  private readNotice: string | undefined;
+  private actionNotice: string | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private polling = false;
   private viewportRows = 3;
@@ -154,10 +155,10 @@ export class ShellOutputViewer implements Component {
         .stop({ requesterId: this.requesterId, isAdmin: true, shellId: this.shell.shellId })
         .then((shell) => {
           this.shell = shell;
-          this.notice = undefined;
+          this.actionNotice = undefined;
         })
         .catch((error) => {
-          this.notice = `Stop failed: ${error instanceof Error ? error.message : String(error)}`;
+          this.actionNotice = `Stop failed: ${error instanceof Error ? error.message : String(error)}`;
         })
         .finally(() => this.tui.requestRender());
       return;
@@ -201,9 +202,10 @@ export class ShellOutputViewer implements Component {
     const inner = width - 4;
     const state = this.streams[this.stream];
     const content = this.contentLines(state);
+    const notice = this.actionNotice ?? this.readNotice;
     this.viewportRows = Math.max(
       3,
-      Math.floor((this.tui.terminal.rows * 70) / 100) - (this.notice || this.evicted ? 7 : 6),
+      Math.floor((this.tui.terminal.rows * 70) / 100) - (notice || this.evicted ? 8 : 7),
     );
     const maxScroll = Math.max(0, content.length - this.viewportRows);
     if (state.follow) state.scroll = maxScroll;
@@ -228,7 +230,7 @@ export class ShellOutputViewer implements Component {
     }
     if (this.evicted)
       lines.push(this.row(this.theme.fg("warning", "Shell record evicted; output frozen."), inner));
-    else if (this.notice) lines.push(this.row(this.theme.fg("error", this.notice), inner));
+    else if (notice) lines.push(this.row(this.theme.fg("error", notice), inner));
     lines.push(this.row(this.theme.fg("dim", "─".repeat(inner)), inner));
     let stop = "";
     if (this.shell.state === "running") {
@@ -275,14 +277,14 @@ export class ShellOutputViewer implements Component {
       this.shell = result.shell;
       this.append("stdout", result.stdout);
       this.append("stderr", result.stderr);
-      this.notice = undefined;
+      this.readNotice = undefined;
       this.tui.requestRender();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       if (/not found|unknown shell|missing/i.test(message)) {
         this.evicted = true;
       } else {
-        this.notice = `Read failed: ${message}`;
+        this.readNotice = `Read failed: ${message}`;
       }
       this.tui.requestRender();
     } finally {
