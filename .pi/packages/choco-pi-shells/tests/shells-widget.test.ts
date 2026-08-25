@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ShellChangeEvent, ShellResult } from "../src/shell-manager.ts";
+import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+
+import type { ShellChangeEvent, ShellResult, StopShellInput } from "../src/shell-manager.ts";
 import {
   ShellsWidget,
   type ShellsWidgetComponent,
@@ -18,6 +20,9 @@ const theme: ShellsWidgetTheme = {
 
 class ManagerFixture implements ShellsWidgetManager {
   readonly listeners = new Set<(event: ShellChangeEvent) => void>();
+  readonly stopCalls: StopShellInput[] = [];
+  stopResult: (input: StopShellInput) => Promise<ShellResult> = async (input) =>
+    shell({ shellId: input.shellId, state: "stopped", endedAt: Date.now() });
 
   onChange(listener: (event: ShellChangeEvent) => void): () => void {
     this.listeners.add(listener);
@@ -26,6 +31,11 @@ class ManagerFixture implements ShellsWidgetManager {
 
   emit(event: ShellChangeEvent): void {
     for (const listener of this.listeners) listener(event);
+  }
+
+  stop(input: StopShellInput): Promise<ShellResult> {
+    this.stopCalls.push(input);
+    return this.stopResult(input);
   }
 }
 
@@ -37,7 +47,13 @@ interface WidgetCall {
 
 class UIFixture implements ShellsWidgetUICtx {
   readonly calls: WidgetCall[] = [];
+  readonly notices: Array<{ message: string; type?: string }> = [];
+  readonly inputHandlers = new Set<
+    (data: string) => { consume?: boolean; data?: string } | undefined
+  >();
   renders = 0;
+  editorText = "";
+  focusedComponent: unknown;
 
   setWidget(
     key: string,
@@ -49,11 +65,35 @@ class UIFixture implements ShellsWidgetUICtx {
     this.calls.push({ key, content, placement: options?.placement });
   }
 
-  lines(): string[] {
+  onTerminalInput(
+    handler: (data: string) => { consume?: boolean; data?: string } | undefined,
+  ): () => void {
+    this.inputHandlers.add(handler);
+    return () => this.inputHandlers.delete(handler);
+  }
+
+  getEditorText(): string {
+    return this.editorText;
+  }
+
+  notify(message: string, type?: "info" | "warning" | "error"): void {
+    this.notices.push({ message, type });
+  }
+
+  send(data: string): { consume?: boolean; data?: string } | undefined {
+    assert.equal(this.inputHandlers.size, 1);
+    const [handler] = this.inputHandlers;
+    return handler?.(data);
+  }
+
+  lines(width = 120): string[] {
     const registration = this.calls.findLast((call) => call.content !== undefined);
     assert.ok(registration?.content);
-    const component = registration.content({ requestRender: () => this.renders++ }, theme);
-    return component.render();
+    const component = registration.content(
+      { requestRender: () => this.renders++, focusedComponent: this.focusedComponent },
+      theme,
+    );
+    return component.render(width);
   }
 }
 
@@ -72,6 +112,22 @@ function shell(overrides: Partial<ShellResult> = {}): ShellResult {
 
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+  reject(error: Error): void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolvePromise!: (value: T) => void;
+  let rejectPromise!: (error: Error) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  return { promise, resolve: resolvePromise, reject: rejectPromise };
 }
 
 test("registers automatically for a non-root owner's start event", () => {
@@ -245,4 +301,167 @@ test("sanitizes and bounds shell-controlled widget metadata", () => {
   assert.equal(lines.join("\n").includes("\x1b"), false);
   assert.equal(lines.join("\n").includes("\x07"), false);
   widget.dispose();
+});
+
+test("activates only from an empty focused prompt with visible rows", () => {
+  const manager = new ManagerFixture();
+  const ui = new UIFixture();
+  const widget = new ShellsWidget(manager, "root");
+  widget.setUICtx(ui);
+
+  assert.equal(ui.send("\x1b[B"), undefined);
+  manager.emit({ type: "start", shell: shell() });
+  ui.editorText = "draft";
+  assert.equal(ui.send("\x1b[B"), undefined);
+  ui.editorText = "";
+  ui.focusedComponent = {};
+  ui.lines();
+  assert.equal(ui.send("\x1b[B"), undefined);
+  assert.doesNotMatch(ui.lines().join("\n"), /›/);
+
+  ui.focusedComponent = undefined;
+  ui.lines();
+  assert.deepEqual(ui.send("\x1b[B"), { consume: true });
+  assert.match(ui.lines().join("\n"), /›.*printf hello/);
+  assert.match(ui.lines().join("\n"), /Status: running · Runtime:/);
+  assert.match(ui.lines().join("\n"), /Command: printf hello/);
+  assert.match(ui.lines().join("\n"), /Cwd: \/tmp/);
+  assert.match(ui.lines().join("\n"), /x stop · Esc back/);
+  widget.dispose();
+});
+
+test("navigates by shell id, ignores key releases, and exits on Esc or pass-through", () => {
+  const manager = new ManagerFixture();
+  const ui = new UIFixture();
+  const widget = new ShellsWidget(manager, "root");
+  widget.setUICtx(ui);
+  manager.emit({ type: "start", shell: shell({ shellId: "first", name: "first" }) });
+  manager.emit({ type: "start", shell: shell({ shellId: "second", name: "second" }) });
+
+  assert.deepEqual(ui.send("\x1b[B"), { consume: true });
+  assert.equal(ui.send("\x1b[1;1:3B"), undefined);
+  assert.match(ui.lines().join("\n"), /›.*first/);
+  assert.deepEqual(ui.send("\x1b[B"), { consume: true });
+  assert.match(ui.lines().join("\n"), /›.*second/);
+  assert.deepEqual(ui.send("\x1b[A"), { consume: true });
+  assert.match(ui.lines().join("\n"), /›.*first/);
+
+  assert.deepEqual(ui.send("\x1b"), { consume: true });
+  assert.doesNotMatch(ui.lines().join("\n"), /›/);
+  assert.deepEqual(ui.send("\x1b[B"), { consume: true });
+  assert.equal(ui.send("a"), undefined);
+  assert.doesNotMatch(ui.lines().join("\n"), /›/);
+  widget.dispose();
+});
+
+test("stops a selected nested-owned shell immediately with root admin authority", async () => {
+  const manager = new ManagerFixture();
+  const pending = deferred<ShellResult>();
+  manager.stopResult = () => pending.promise;
+  const ui = new UIFixture();
+  const widget = new ShellsWidget(manager, "root-session");
+  widget.setUICtx(ui);
+  manager.emit({
+    type: "start",
+    shell: shell({ shellId: "nested-shell", ownerId: "nested-session" }),
+  });
+  ui.send("\x1b[B");
+
+  assert.deepEqual(ui.send("x"), { consume: true });
+  assert.deepEqual(manager.stopCalls, [
+    { requesterId: "root-session", isAdmin: true, shellId: "nested-shell" },
+  ]);
+  assert.match(ui.lines().join("\n"), /stopping…/);
+  ui.send("x");
+  assert.equal(manager.stopCalls.length, 1);
+
+  pending.resolve(shell({ shellId: "nested-shell", state: "stopped", endedAt: Date.now() }));
+  await pending.promise;
+  await Promise.resolve();
+  assert.doesNotMatch(ui.lines().join("\n"), /stopping…/);
+  widget.dispose();
+});
+
+test("contains stop rejection and renders a sanitized bounded error", async () => {
+  const manager = new ManagerFixture();
+  const pending = deferred<ShellResult>();
+  manager.stopResult = () => pending.promise;
+  const ui = new UIFixture();
+  const widget = new ShellsWidget(manager, "root");
+  widget.setUICtx(ui);
+  manager.emit({
+    type: "start",
+    shell: shell({
+      shellId: `id\x1b[2J\n${"i".repeat(100)}`,
+      cwd: `/tmp\x07\n${"d".repeat(100)}`,
+      command: `run\x1b[31m\n${"c".repeat(100)}`,
+    }),
+  });
+  ui.send("\x1b[B");
+  ui.send("x");
+  pending.reject(new Error(`denied\x1b[31m\n${"e".repeat(100)}`));
+  await pending.promise.catch(() => undefined);
+  await Promise.resolve();
+
+  const lines = ui.lines(44);
+  const text = lines.map((line) => stripTerminalSequences(line)).join("\n");
+  assert.ok(lines.every((line) => visibleWidth(line) <= 44));
+  assert.equal(text.includes("\x1b"), false);
+  assert.equal(text.includes("\x07"), false);
+  assert.match(text, /stop failed: denied/);
+  widget.dispose();
+});
+
+test("keeps keyed selection across starts and clamps it after selected expiry", async () => {
+  const manager = new ManagerFixture();
+  const ui = new UIFixture();
+  let now = 0;
+  const widget = new ShellsWidget(manager, "root", {
+    lingerMs: 10,
+    refreshMs: 5,
+    now: () => now,
+  });
+  widget.setUICtx(ui);
+  manager.emit({ type: "start", shell: shell({ shellId: "first", name: "first" }) });
+  manager.emit({ type: "start", shell: shell({ shellId: "second", name: "second" }) });
+  ui.send("\x1b[B");
+  ui.send("\x1b[B");
+  manager.emit({ type: "start", shell: shell({ shellId: "third", name: "third" }) });
+  assert.match(ui.lines().join("\n"), /›.*second/);
+
+  manager.emit({
+    type: "end",
+    shell: shell({ shellId: "second", name: "second", state: "exited", endedAt: 0 }),
+  });
+  now = 11;
+  await wait(15);
+  const text = ui.lines().join("\n");
+  assert.doesNotMatch(text, /second/);
+  assert.match(text, /›.*third/);
+  widget.dispose();
+});
+
+test("settled x is non-destructive and input listeners rebind and dispose", () => {
+  const manager = new ManagerFixture();
+  const first = new UIFixture();
+  const second = new UIFixture();
+  const widget = new ShellsWidget(manager, "root");
+  widget.setUICtx(first);
+  manager.emit({
+    type: "end",
+    shell: shell({ shellId: "done", state: "exited", endedAt: Date.now() }),
+  });
+  first.lines();
+  first.send("\x1b[B");
+  first.send("x");
+  assert.equal(manager.stopCalls.length, 0);
+  assert.deepEqual(first.notices, [
+    { message: "Shell already settled; nothing to stop.", type: "info" },
+  ]);
+
+  widget.setUICtx(second);
+  assert.equal(first.inputHandlers.size, 0);
+  assert.equal(second.inputHandlers.size, 1);
+  widget.dispose();
+  assert.equal(second.inputHandlers.size, 0);
 });

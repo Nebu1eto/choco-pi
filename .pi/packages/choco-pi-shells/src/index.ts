@@ -108,6 +108,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
           }
           return unsubscribe;
         },
+        stop: manager.stop.bind(manager),
       };
       widget = new ShellsWidget(widgetManager, sessionId);
     }
