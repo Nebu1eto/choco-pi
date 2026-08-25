@@ -55,6 +55,17 @@ function killFixture(pid: number | undefined): void {
   }
 }
 
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    assert.ok(error instanceof Error);
+    if (("code" in error ? error.code : undefined) === "ESRCH") return false;
+    throw error;
+  }
+}
+
 test("start returns before completion, keeps streams separate, and later reports exit state", async () => {
   const manager = new ShellManager({ shell: process.execPath, shellArgs: ["-e"] });
   try {
@@ -143,6 +154,49 @@ test(
     } finally {
       await manager.dispose();
       for (const pid of escapedPids) killFixture(pid);
+    }
+  },
+);
+
+test(
+  "natural drain finalization kills a same-group background job before reporting terminal state",
+  { skip: process.platform === "win32" },
+  async () => {
+    const manager = new ShellManager({
+      shell: "/bin/sh",
+      shellArgs: ["-c"],
+      outputDrainMs: 100,
+    });
+    let backgroundPid: number | undefined;
+    try {
+      const started = manager.start({
+        ownerId: "owner",
+        cwd,
+        command: "sleep 30 & echo $!",
+      });
+      const withPid = await waitFor(
+        () => readShell(manager, started.shellId),
+        (result) => /^\d+\n$/.test(result.stdout.data),
+      );
+      const pid = Number.parseInt(withPid.stdout.data, 10);
+      backgroundPid = pid;
+      assert.equal(processExists(pid), true);
+
+      const completed = await waitFor(
+        () => readShell(manager, started.shellId),
+        (result) => isTerminal(result.shell),
+        2_000,
+      );
+      assert.equal(completed.shell.state, "exited");
+      assert.equal(completed.shell.exitCode, 0);
+      await waitFor(
+        () => processExists(pid),
+        (exists) => !exists,
+        2_000,
+      );
+    } finally {
+      await manager.dispose();
+      killFixture(backgroundPid);
     }
   },
 );

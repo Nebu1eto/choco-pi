@@ -257,7 +257,7 @@ test("shell_start reports an invalid cwd as an error without retaining a running
   }
 });
 
-test("tool and command handlers preserve child ownership, root access, and shutdown isolation", async () => {
+test("tool and command handlers preserve ownership and defensively handle direct child shutdown", async () => {
   assert.equal(registry()[managerKey], undefined);
   const root = await activate(false);
   let child: Activation | undefined;
@@ -317,6 +317,8 @@ test("tool and command handlers preserve child ownership, root access, and shutd
     assert.match(commandNotices[0]?.message ?? "", new RegExp(rootStarted.shellId));
     assert.match(commandNotices[1]?.message ?? "", new RegExp(childStarted.shellId));
 
+    // Direct child session_shutdown coverage is defensive; the subagents cleanup bridge is the
+    // production path that disposes child-owned shells.
     assert.ok(child.shutdown);
     await child.shutdown({ reason: "quit" }, context("child-session"));
     const afterChildShutdown = details<{ shells: Array<{ shellId: string; state: string }> }>(

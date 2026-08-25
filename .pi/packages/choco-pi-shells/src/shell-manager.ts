@@ -367,6 +367,7 @@ export class ShellManager {
 
   private forceFinalize(record: ShellRecord): void {
     if (record.finalized) return;
+    this.signalRecord(record, "SIGKILL");
     record.child?.stdout?.destroy();
     record.child?.stderr?.destroy();
     this.finalize(record);
