@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import toolSearch, { ALWAYS_ACTIVE_TOOL_NAMES } from "../.pi/extensions/tool-search.ts";
+import toolSearch, {
+  ALWAYS_ACTIVE_TOOL_NAMES,
+  LEAN_SURFACE_SYMBOL,
+  type LeanSurfacePolicy,
+} from "../.pi/extensions/tool-search.ts";
 
 type McpStatusPayload = { servers: never[] };
 
@@ -58,6 +62,72 @@ test("keeps Agent and core execution gateways always active", async () => {
   assert.ok(active.includes("read"));
   assert.ok(active.includes("tool_search"));
   assert.ok(!active.includes("deferred_probe"));
+});
+
+test("publishes background shells and keeps them active through lean filtering", async () => {
+  const shellTools = ["shell_start", "shell_read", "shell_stop", "shell_list"];
+  let active = [...shellTools, "deferred_probe"];
+  let searchTool: any;
+  let sessionStart: (() => void) | undefined;
+  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
+  const tools = [
+    ...shellTools.map((name) => ({
+      name,
+      description: `Manage a background shell (${name})`,
+      parameters: {},
+      sourceInfo: { source: "extension", path: "choco-pi-shells" },
+    })),
+    {
+      name: "deferred_probe",
+      description: "Deferred probe",
+      parameters: {},
+      sourceInfo: { source: "extension", path: "probe" },
+    },
+  ];
+  // SAFETY: The fixture supplies every host member exercised by this test.
+  toolSearch({
+    registerTool: (tool: any) => {
+      searchTool = tool;
+    },
+    getAllTools: () => [
+      ...tools,
+      { ...searchTool, sourceInfo: { source: "extension", path: "tool-search" } },
+    ],
+    getActiveTools: () => active,
+    setActiveTools: (names: string[]) => {
+      active = names;
+    },
+    events: {
+      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
+        mcpStatus = handler;
+      },
+    },
+    on: (name: string, handler: () => void) => {
+      if (name === "session_start") sessionStart = handler;
+    },
+  } as any);
+
+  // SAFETY: toolSearch synchronously publishes this typed policy before registering tools.
+  const policy = Object.getOwnPropertyDescriptor(globalThis, LEAN_SURFACE_SYMBOL)
+    ?.value as LeanSurfacePolicy;
+  for (const name of shellTools) {
+    assert.ok(policy.alwaysActive().includes(name), `${name} must be published`);
+  }
+
+  sessionStart?.();
+  mcpStatus?.({ servers: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  for (const name of shellTools) {
+    assert.ok(active.includes(name), `${name} must remain active`);
+  }
+  assert.ok(!active.includes("deferred_probe"));
+
+  const result = await searchTool.execute("call", {
+    query: "manage background shell",
+    limit: 5,
+  });
+  for (const name of shellTools) assert.ok(!result.details.matches.includes(name));
 });
 
 test("keeps the subagent orchestration trio active and out of search results", async () => {
