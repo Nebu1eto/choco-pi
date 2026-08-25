@@ -15,6 +15,11 @@ const theme: Theme = {
   bold: (text: string) => text,
 };
 
+const styledTheme: Theme = {
+  fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+  bold: (text: string) => `<bold>${text}</bold>`,
+};
+
 const KEY_DOWN = "\x1b[B";
 const KEY_UP = "\x1b[A";
 const KEY_ESC = "\x1b";
@@ -48,7 +53,7 @@ function makeRecord(
   });
 }
 
-function mount(records: AgentRecord[]) {
+function mount(records: AgentRecord[], renderTheme = theme, renderWidth = 90) {
   let focusedId: string | undefined;
   const focusCalls: string[] = [];
   let unfocusCalls = 0;
@@ -80,7 +85,7 @@ function mount(records: AgentRecord[]) {
   let overlayCount = 0;
   const ui = partialFixture<FleetUICtx>({
     setWidget(_key, content) {
-      widget = content ? content(tui, theme) : undefined;
+      widget = content ? content(tui, renderTheme) : undefined;
     },
     onTerminalInput(h) {
       handler = h;
@@ -101,7 +106,7 @@ function mount(records: AgentRecord[]) {
   return {
     fleet,
     press: (data: string) => handler?.(data),
-    render: () => (widget?.render(90) ?? []).join("\n"),
+    render: () => (widget?.render(renderWidth) ?? []).join("\n"),
     focusCalls,
     opened,
     focusedId: () => focusedId,
@@ -197,19 +202,20 @@ test("a /btw row is never auto-focused and keeps its dismissible overlay", () =>
   }
 });
 
-test("nested rows render handles/status and keep the ordinary focus path", () => {
+test("rows render alias-only labels and preserve unnamed role labels", () => {
   const parent = makeRecord("planner", "plan work");
   parent.alias = "alpha";
   const child = makeRecord("scout", "inspect code", false, parent.id);
   child.alias = "beta";
   const grandchild = makeRecord("review", "check finding", false, child.id);
-  const view = mount([grandchild, parent, child]);
+  const view = mount([grandchild, parent, child], styledTheme, 400);
   try {
     const rendered = view.render();
-    assert.match(rendered, /Agent @alpha  plan work/);
-    assert.match(rendered, /└ @beta implementer  \[running\] inspect code/);
-    assert.doesNotMatch(rendered, /@scout/);
-    assert.match(rendered, /  └ @review  \[running\] check finding/);
+    assert.match(rendered, /<muted><bold>@alpha<\/bold><\/muted>  plan work/);
+    assert.match(rendered, /└ <muted><bold>@beta<\/bold><\/muted>/);
+    assert.doesNotMatch(rendered, /implementer.*@alpha|@alpha.*implementer/);
+    assert.match(rendered, /<muted>Agent<\/muted>/);
+    assert.doesNotMatch(rendered, /\b(?:token|tokens)\b|↻/);
     assert.ok(rendered.indexOf("plan work") < rendered.indexOf("inspect code"));
     assert.ok(rendered.indexOf("inspect code") < rendered.indexOf("check finding"));
 

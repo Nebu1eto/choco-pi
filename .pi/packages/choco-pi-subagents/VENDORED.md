@@ -260,9 +260,9 @@ whole-tree active count when it differs.
 visibility; the existing FleetView/focus tests continue to exercise the shared
 row actions.
 
-Named rows now retain both identity layers: nested rows render the alias first
-with the agent role beside it, while top-level rows keep their type-name rendering
-and add a dim `@alias`. Unnamed nested rows keep the existing `@handle` fallback.
+Named FleetView and agent-widget rows render only the bold, role-styled `@alias`;
+unnamed rows retain the role label. Their compact stats omit turn counts and the
+redundant `token` word, while completion notifications keep both.
 
 ### Role model and effort defaults
 

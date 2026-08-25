@@ -35,8 +35,8 @@ test("keeps an orphaned active record visible as a top-level row", () => {
   ]);
 });
 
-test("renders aliases with roles and keeps the nested handle fallback", () => {
-  const style = { nestedAliasColor: "accent", nestedHandleColor: "muted" };
+test("renders alias-only labels with role styling and preserves unnamed roles", () => {
+  const style = { topLevel: { fallbackColor: "text", bold: true } };
   assert.equal(
     renderAgentTreeLabel(
       { type: "general-purpose", handle: "general-purpose", alias: "beta" },
@@ -44,7 +44,7 @@ test("renders aliases with roles and keeps the nested handle fallback", () => {
       labelTheme,
       style,
     ),
-    "<accent>@beta</accent> <dim>general-purpose</dim>",
+    "<text><bold>@beta</bold></text>",
   );
   assert.equal(
     renderAgentTreeLabel(
@@ -53,14 +53,14 @@ test("renders aliases with roles and keeps the nested handle fallback", () => {
       labelTheme,
       style,
     ),
-    "<muted>@general-purpose</muted>",
+    "<text><bold>Agent</bold></text>",
   );
-  assert.match(
+  assert.equal(
     renderAgentTreeLabel(
       { type: "general-purpose", handle: "general-purpose", alias: "alpha" },
       0,
       labelTheme,
     ),
-    /<dim>@alpha<\/dim>$/,
+    "<bold>@alpha</bold>",
   );
 });
