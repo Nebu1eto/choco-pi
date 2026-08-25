@@ -320,6 +320,50 @@ test("ShellOutputViewer preserves UTF-8 multiline tails and strips terminal cont
   component.dispose();
 });
 
+test("ShellOutputViewer keeps rendered lines within the 70% viewport budget", () => {
+  for (const rows of [20, 30, 41]) {
+    for (const withNotice of [false, true]) {
+      const exited = shell("1", "exited");
+      const manager = managerFixture([exited]);
+      manager.read = () => {
+        if (withNotice) throw new Error("temporary read failure");
+        return { shell: exited, stdout: chunk("output"), stderr: chunk("") };
+      };
+      const component = new ShellOutputViewer(tui(rows), manager, "admin", exited, theme, () => {});
+
+      const lines = component.render(80);
+      assert.ok(lines.length <= Math.floor(rows * 0.7), `${rows} rows, notice=${withNotice}`);
+      assert.match(stripTerminalSequences(lines.at(-1) ?? ""), /^╰─+╯$/);
+      if (withNotice) assert.match(lines.join("\n"), /Read failed: temporary read failure/);
+      component.dispose();
+    }
+  }
+});
+
+test("ShellOutputViewer keeps a rejected stop visible across a successful poll", async () => {
+  const running = shell("1");
+  let reads = 0;
+  const manager = managerFixture([running]);
+  manager.read = () => {
+    reads += 1;
+    return { shell: running, stdout: chunk(""), stderr: chunk("") };
+  };
+  manager.stop = async () => {
+    throw new Error("permission denied");
+  };
+  const component = new ShellOutputViewer(tui(), manager, "admin", running, theme, () => {});
+
+  component.handleInput("x");
+  component.handleInput("x");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(rendered(component), /Stop failed: permission denied/);
+
+  await new Promise((resolve) => setTimeout(resolve, 230));
+  assert.ok(reads >= 2);
+  assert.match(rendered(component), /Stop failed: permission denied/);
+  component.dispose();
+});
+
 test("ShellsOverlay keeps a rejected stop visible across successful list refreshes", async () => {
   const manager = managerFixture([shell("1")]);
   manager.stop = async () => {
