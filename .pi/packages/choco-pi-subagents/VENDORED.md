@@ -398,6 +398,19 @@ session unchanged, and without a consumer publishing is inert. Fast-mode status
 is not part of the slot; it is owned by a separate root extension keyed to the
 main session's model id.
 
+### Shared `/preferences` settings section
+
+The fork publishes its complete `/agents` settings row set through the private
+`Symbol.for("choco-pi.subagents-preferences-provider")` registry consumed by the
+choco-pi profile's `/preferences` panel. `src/preferences-section.ts` owns the
+row labels, accepted numeric ranges and live appliers; both panels call that
+same definition list, and every successful mutation still persists through
+`saveAndEmitChanged` to `.pi/subagents.json` and emits the existing
+`subagents:settings_changed` event. The root activation claims the provider on
+its first bound `session_start` and removes only its own registration on
+`session_shutdown`, so child activations cannot replace or tear down the root
+settings surface.
+
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 
 The repository previously ran `npm:@tintinweb/pi-subagents@0.16.1`. Two entries

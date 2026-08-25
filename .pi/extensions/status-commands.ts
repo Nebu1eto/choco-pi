@@ -24,6 +24,7 @@ import {
   CODEX_OUTCOME_PREFIX,
   getCodexPreferencesProvider,
 } from "./lib/codex-preferences.ts";
+import { buildSubagentPreferencesSections } from "./lib/subagent-preferences.ts";
 import {
   buildNativeSettingsSections,
   createHostCommandContext,
@@ -268,6 +269,7 @@ function buildPreferencesExtraSections(ctx: ExtensionCommandContext): Preference
     ...buildNativeSettingsSections(),
     buildContextCapSection(ctx),
     ...buildCodexPreferencesSections(ctx),
+    ...buildSubagentPreferencesSections(ctx),
     buildAgentPreferencesSection(ctx),
   ];
 }
