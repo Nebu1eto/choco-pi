@@ -3,7 +3,11 @@ import test from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 
-import { ShellOutputViewer } from "../src/ui/shell-viewer.ts";
+import {
+  ShellOutputViewer,
+  SHELL_VIEWER_MAX_CHARS,
+  SHELL_VIEWER_MAX_LINES,
+} from "../src/ui/shell-viewer.ts";
 import {
   openShellsOverlay,
   type ShellStreamChunk,
@@ -214,5 +218,84 @@ test("ShellOutputViewer close and dispose cancel polling", async () => {
   await new Promise((resolve) => setTimeout(resolve, 230));
   assert.equal(closed, 1);
   assert.equal(manager.readCalls.length, 1);
+  component.dispose();
+});
+
+test("ShellOutputViewer retains bounded incremental state under noisy output", () => {
+  const exited = shell("1", "exited");
+  const manager = managerFixture([exited]);
+  const noisy =
+    "oldest-marker\n" +
+    Array.from({ length: SHELL_VIEWER_MAX_LINES + 100 }, (_, index) => `line-${index}\n`).join("") +
+    "newest-tail";
+  manager.read = () => ({ shell: exited, stdout: chunk(noisy), stderr: chunk("") });
+
+  const component = new ShellOutputViewer(tui(3_000), manager, "admin", exited, theme, () => {});
+  const output = rendered(component);
+  assert.ok((output.match(/line-\d+/g) ?? []).length <= SHELL_VIEWER_MAX_LINES);
+  assert.doesNotMatch(output, /oldest-marker/);
+  assert.match(output, /newest-tail/);
+  assert.match(output, /earlier output omitted from viewer/);
+  component.dispose();
+
+  const longLineManager = managerFixture([exited]);
+  longLineManager.read = () => ({
+    shell: exited,
+    stdout: chunk(`oldest-marker${"x".repeat(SHELL_VIEWER_MAX_CHARS)}\nnewest-tail`),
+    stderr: chunk(""),
+  });
+  const longLineComponent = new ShellOutputViewer(
+    tui(),
+    longLineManager,
+    "admin",
+    exited,
+    theme,
+    () => {},
+  );
+  const longLineOutput = rendered(longLineComponent);
+  assert.doesNotMatch(longLineOutput, /oldest-marker/);
+  assert.match(longLineOutput, /newest-tail/);
+  assert.match(longLineOutput, /earlier output omitted from viewer/);
+  longLineComponent.dispose();
+});
+
+test("ShellOutputViewer preserves UTF-8 multiline tails and strips terminal controls", () => {
+  const exited = shell("1", "exited");
+  const manager = managerFixture([exited]);
+  manager.read = () => ({
+    shell: exited,
+    stdout: chunk("安全\x1b[2Jvisible\x07\x01\x1b[?1049h\n色\x1b[31mred\x1b[0m\n最終行🙂"),
+    stderr: chunk(""),
+  });
+
+  const component = new ShellOutputViewer(tui(), manager, "admin", exited, theme, () => {});
+  const output = rendered(component, 120);
+
+  assert.match(output, /安全visible/);
+  assert.match(output, /色red/);
+  assert.match(output, /最終行🙂/);
+  assert.ok(
+    [...output].every((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code === 0x0a || (code >= 0x20 && !(code >= 0x7f && code <= 0x9f));
+    }),
+  );
+  assert.doesNotMatch(output, /\[\?1049h/);
+  component.dispose();
+});
+
+test("ShellsOverlay keeps a rejected stop visible across successful list refreshes", async () => {
+  const manager = managerFixture([shell("1")]);
+  manager.stop = async () => {
+    throw new Error("permission denied");
+  };
+  const component = new ShellsOverlay(tui(), manager, "admin", theme, () => {});
+
+  component.handleInput("x");
+  component.handleInput("x");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.match(rendered(component), /Stop failed: permission denied/);
+  assert.match(rendered(component), /Stop failed: permission denied/);
   component.dispose();
 });

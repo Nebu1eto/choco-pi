@@ -188,7 +188,6 @@ export class ShellsWidget {
           return {
             render: () => this.render(theme),
             invalidate: () => {
-              this.widgetRegistered = false;
               this.tui = undefined;
             },
           };
