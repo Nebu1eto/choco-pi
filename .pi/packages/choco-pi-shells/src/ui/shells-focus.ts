@@ -1,5 +1,34 @@
 import { Editor, isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
 
+const SUBAGENT_MANAGER_KEY = Symbol.for("pi-subagents:manager");
+
+interface AgentFleetCapabilities {
+  hasFleetRows?: () => boolean;
+  isFleetActive?: () => boolean;
+}
+
+interface AgentFleetRegistry {
+  [key: symbol]: AgentFleetCapabilities | undefined;
+}
+
+interface AgentFleetState {
+  hasRows: boolean;
+  active: boolean;
+}
+
+function agentFleetState(): AgentFleetState {
+  // SAFETY: The optional process-global entry is a structural cross-extension seam.
+  const entry = (globalThis as typeof globalThis & AgentFleetRegistry)[SUBAGENT_MANAGER_KEY];
+  try {
+    return {
+      hasRows: entry?.hasFleetRows?.() === true,
+      active: entry?.isFleetActive?.() === true,
+    };
+  } catch {
+    return { hasRows: false, active: false };
+  }
+}
+
 import type { ShellResult } from "../shell-manager.ts";
 import type { ShellsWidgetManager, ShellsWidgetTUI, ShellsWidgetUICtx } from "./shells-widget.ts";
 import { sanitizeShellText } from "./shell-viewer.ts";
@@ -40,6 +69,10 @@ export class ShellsFocus {
     return rows.find((shell) => shell.shellId === this.selectedShellId);
   }
 
+  activationHint(): string {
+    return agentFleetState().hasRows ? "→ manage" : "↓ manage";
+  }
+
   shellChanged(shellId: string, removed: boolean): void {
     this.pendingShellIds.delete(shellId);
     if (removed) this.stopErrors.delete(shellId);
@@ -68,9 +101,16 @@ export class ShellsFocus {
     tui: ShellsWidgetTUI | undefined,
   ): { consume?: boolean; data?: string } | undefined {
     if (isKeyRelease(data)) return undefined;
+    const agentFleet = agentFleetState();
+    if (agentFleet.active) {
+      this.deactivate();
+      return undefined;
+    }
     const focused = tui?.focusedComponent;
     if (
-      (focused != null && !(focused instanceof Editor)) ||
+      tui === undefined ||
+      !(focused instanceof Editor) ||
+      tui.hasOverlay?.() === true ||
       uiCtx.getEditorText() !== "" ||
       rows.length === 0
     ) {
@@ -78,7 +118,8 @@ export class ShellsFocus {
       return undefined;
     }
     if (!this.active) {
-      if (!matchesKey(data, "down")) return undefined;
+      const activates = agentFleet.hasRows ? matchesKey(data, "right") : matchesKey(data, "down");
+      if (!activates) return undefined;
       this.active = true;
       this.clamp(rows);
       this.requestUpdate();

@@ -112,6 +112,7 @@ function mount(records: AgentRecord[], renderTheme = theme, renderWidth = 90) {
     focusedId: () => focusedId,
     unfocusCalls: () => unfocusCalls,
     showingRows: () => fleet.isShowingRows(),
+    active: () => fleet.isActive(),
     overlayCount: () => overlayCount,
   };
 }
@@ -121,6 +122,7 @@ test("arrow navigation switches fullscreen focus, and main restores the orchestr
   try {
     // The first press only activates the list, with the cursor on the main row.
     assert.deepEqual(view.press(KEY_DOWN), { consume: true });
+    assert.equal(view.active(), true);
     assert.equal(view.focusedId(), undefined);
 
     view.press(KEY_DOWN);
@@ -137,6 +139,7 @@ test("arrow navigation switches fullscreen focus, and main restores the orchestr
 
     // Esc leaves list navigation only; it never unfocuses.
     assert.deepEqual(view.press(KEY_ESC), { consume: true });
+    assert.equal(view.active(), false);
     assert.equal(view.focusedId(), "a2");
     assert.match(view.render(), /switch agents/);
 

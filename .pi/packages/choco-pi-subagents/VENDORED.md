@@ -275,6 +275,19 @@ Named FleetView and agent-widget rows render only the bold, role-styled `@alias`
 unnamed rows retain the role label. Their compact stats omit turn counts and the
 redundant `token` word, while completion notifications keep both.
 
+### Cooperative shell and agent fleet navigation
+
+The fork structurally extends the existing
+`Symbol.for("pi-subagents:manager")` entry with two bounded read-only UI probes:
+`hasFleetRows()` and `isFleetActive()`. They are backed by the root `FleetList`
+and let the separately loaded shell extension choose a navigation activator
+without importing this package or a runtime instance. FleetView retains Down
+whenever it has visible rows; shells use Right in that shared state and Down
+when no agent rows exist. An active FleetView remains the sole owner of its
+navigation/action keys. The first activation still exclusively owns the
+registry slot, and child activations neither replace nor clear these peer-state
+capabilities.
+
 ### Role model and effort defaults
 
 The fork parses `default_model:` and `default_thinking:` from agent frontmatter

@@ -180,6 +180,11 @@ export class FleetList {
     return this.enabled && this.agentRows().length > 0;
   }
 
+  /** Whether this list currently owns navigation keys. */
+  isActive(): boolean {
+    return this.active;
+  }
+
   /**
    * Called when an agent finishes. The viewer (if open on it) stays open so the
    * final output remains readable, and the row lingers in the list — just refresh.

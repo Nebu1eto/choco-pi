@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import { Editor, type Component, type TUI } from "@earendil-works/pi-tui";
 
 import { runInChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
 import shellsExtension from "../src/index.ts";
@@ -221,7 +221,12 @@ function widgetText(ui: TestUI): string {
   const registration = ui.widgetCalls.findLast((call) => call.content !== undefined);
   assert.ok(registration?.content);
   const component = registration.content(
-    { requestRender() {} },
+    {
+      requestRender() {},
+      // SAFETY: The fixture needs only Editor's prototype identity for the focused-component check.
+      focusedComponent: Object.create(Editor.prototype) as Editor,
+      hasOverlay: () => false,
+    },
     { fg: (_color, text) => text, bold: (text) => text },
   );
   return component.render().join("\n");
