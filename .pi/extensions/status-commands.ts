@@ -256,9 +256,10 @@ const PREFERENCES_USAGE =
 /**
  * Every section the Preferences tab hosts on top of the panel's own choco-ui
  * sections. Most contribute rows to an existing section; the ones that own a
- * tab appear in this order, after the choco-ui tabs: Terminal, Session, Model,
- * Tools, Agent. The agent section goes last so the Codex adapter rows that
- * merge into it sit at the end of the strip.
+ * tab follow PREFERENCES_SECTION_ORDER: Model, Agent, Session, Terminal,
+ * Tools. The agent section goes last in the extra list because merged blocks
+ * append after its own rows: the Codex adapter rows, then the Subagents
+ * settings folded in by PREFERENCES_SECTION_MERGES.
  *
  * Pi's rows come before the Codex ones in every shared section: they read as
  * the section's own settings, which leaves the Codex heading as the only
@@ -275,12 +276,13 @@ function buildPreferencesExtraSections(ctx: ExtensionCommandContext): Preference
 }
 
 /**
- * Sections rendered inside another one, source to target. User messages and the
- * footer describe the same screen furniture as Appearance, and the segment and
- * git rows only configure that footer, so all four read better as headed blocks
- * of one tab than as four tabs.
+ * Sections rendered inside another one, source to target. Subagent settings
+ * are Agent settings with a separate dial, and user messages and the footer
+ * describe the same screen furniture as Appearance, so all of them read
+ * better as headed blocks of one tab than as their own tabs.
  */
 const PREFERENCES_SECTION_MERGES = {
+  subagents: "agent",
   userMessages: "appearance",
   footer: "appearance",
   extensions: "appearance",
