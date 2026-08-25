@@ -6,7 +6,7 @@
  */
 
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { renderAgentName, type AgentNameStyle } from "../agent-color.ts";
+import { renderAgentName, renderAgentNameLabel, type AgentNameStyle } from "../agent-color.ts";
 import type { AgentManager } from "../agent-manager.ts";
 import { getConfig } from "../agent-types.ts";
 import { formatConcurrencyCap } from "../limits.ts";
@@ -61,8 +61,6 @@ export type UICtx = {
 
 export interface AgentTreeLabelStyle {
   topLevel?: AgentNameStyle;
-  nestedAliasColor?: string;
-  nestedHandleColor?: string;
 }
 
 /** Per-agent live activity state. */
@@ -145,6 +143,33 @@ export function formatTokens(count: number): string {
   return `${count} token`;
 }
 
+/** Format a token count compactly for agent rows, without a redundant unit label. */
+export function formatRowTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
+  return `${count}`;
+}
+
+function formatAnnotatedTokens(
+  tokenStr: string,
+  percent: number | null,
+  theme: Theme,
+  compactions: number,
+): string {
+  const annot: string[] = [];
+  if (percent !== null) {
+    let color = "dim";
+    if (percent >= 85) color = "error";
+    else if (percent >= 70) color = "warning";
+    annot.push(theme.fg(color, `${Math.round(percent)}%`));
+  }
+  if (compactions > 0) {
+    annot.push(theme.fg("dim", `⇊${compactions}`));
+  }
+  if (annot.length === 0) return tokenStr;
+  return `${tokenStr} (${annot.join(" · ")})`;
+}
+
 /**
  * Token count with optional context-fill % and compaction-count annotations.
  * Thresholds for percent: <70% dim, 70–85% warning, ≥85% error.
@@ -161,17 +186,17 @@ export function formatSessionTokens(
   theme: Theme,
   compactions = 0,
 ): string {
-  const tokenStr = formatTokens(tokens);
-  const annot: string[] = [];
-  if (percent !== null) {
-    const color = percent >= 85 ? "error" : percent >= 70 ? "warning" : "dim";
-    annot.push(theme.fg(color, `${Math.round(percent)}%`));
-  }
-  if (compactions > 0) {
-    annot.push(theme.fg("dim", `⇊${compactions}`));
-  }
-  if (annot.length === 0) return tokenStr;
-  return `${tokenStr} (${annot.join(" · ")})`;
+  return formatAnnotatedTokens(formatTokens(tokens), percent, theme, compactions);
+}
+
+/** Row-only session token stat; completion notifications retain their unit wording. */
+export function formatRowSessionTokens(
+  tokens: number,
+  percent: number | null,
+  theme: Theme,
+  compactions = 0,
+): string {
+  return formatAnnotatedTokens(formatRowTokens(tokens), percent, theme, compactions);
 }
 
 /** Format turn count with optional max limit: "↻5≤30" or "↻5". */
@@ -195,25 +220,19 @@ export function getDisplayName(type: SubagentType): string {
   return getConfig(type).displayName;
 }
 
-/** Render role and the agent's flat alias without repeating its fallback handle. */
+/** Render an alias in place of the role, using the role's exact row styling. */
 export function renderAgentTreeLabel(
   agent: Pick<AgentRecord, "type" | "handle" | "alias">,
   depth: number,
   theme: Theme,
   style: AgentTreeLabelStyle = {},
 ): string {
-  const role = renderAgentName(agent.type, theme, style.topLevel);
-  if (depth === 0) {
-    return agent.alias ? `${role} ${theme.fg("dim", `@${agent.alias}`)}` : role;
-  }
-
-  const mention = agent.alias ?? agent.handle;
-  if (!mention) return role;
-  const mentionColor = agent.alias
-    ? (style.nestedAliasColor ?? "accent")
-    : (style.nestedHandleColor ?? "dim");
-  const mentionLabel = theme.fg(mentionColor, `@${mention}`);
-  return agent.alias ? `${mentionLabel} ${theme.fg("dim", agent.type)}` : mentionLabel;
+  void depth;
+  if (!agent.alias) return renderAgentName(agent.type, theme, style.topLevel);
+  return renderAgentNameLabel(`@${agent.alias}`, getConfig(agent.type).color, theme, {
+    ...style.topLevel,
+    bold: true,
+  });
 }
 
 /** Build the invocation metadata shown by Agent tool results and conversation views. */
@@ -428,15 +447,11 @@ export class AgentWidget {
     }
 
     const parts: string[] = [];
-    const activity = this.agentActivity.get(a.id);
-    if (activity) parts.push(formatTurns(activity.turnCount, activity.maxTurns));
     if (a.toolUses > 0) parts.push(`${a.toolUses} tool use${a.toolUses === 1 ? "" : "s"}`);
     parts.push(duration);
 
     const label = renderAgentTreeLabel(a, depth, theme, {
       topLevel: { fallbackColor: "dim" },
-      nestedAliasColor: "accent",
-      nestedHandleColor: "dim",
     });
     return `${icon} ${label}  ${theme.fg("dim", a.description)} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}${statusText}`;
   }
@@ -489,10 +504,9 @@ export class AgentWidget {
       const tokens = getLifetimeTotal(bg?.lifetimeUsage);
       const contextPercent = getSessionContextPercent(bg?.session);
       const tokenText =
-        tokens > 0 ? formatSessionTokens(tokens, contextPercent, theme, a.compactionCount) : "";
+        tokens > 0 ? formatRowSessionTokens(tokens, contextPercent, theme, a.compactionCount) : "";
 
       const parts: string[] = [];
-      if (bg) parts.push(formatTurns(bg.turnCount, bg.maxTurns));
       if (toolUses > 0) parts.push(`${toolUses} tool use${toolUses === 1 ? "" : "s"}`);
       if (tokenText) parts.push(tokenText);
       parts.push(elapsed);
@@ -502,8 +516,6 @@ export class AgentWidget {
       const indent = "  ".repeat(depth);
       const label = renderAgentTreeLabel(a, depth, theme, {
         topLevel: { bold: true },
-        nestedAliasColor: "accent",
-        nestedHandleColor: "accent",
       });
 
       runningLines.push([
