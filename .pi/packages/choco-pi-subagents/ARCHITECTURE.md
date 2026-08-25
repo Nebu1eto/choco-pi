@@ -88,6 +88,7 @@ queued }`; paths are canonical tree identities and `toId` is undefined for
 | `ui/conversation-viewer.ts`                                     | The live conversation overlay: scroll, stop, steering/reply and focus handoff. Ordinary messages use the main transcript components; agent-message envelopes render as a sender/type header plus body. |
 | `ui/notification-render.ts`                                     | Pure completion and compact `subagents:message` notification formatters, independent of host/TUI side effects.                                                                                         |
 | `ui/side-conversation.ts`                                       | BTW launch defaults, dismissible overlay ownership, continuation, and notice-only completion delivery.                                                                                                 |
+| `preferences-section.ts`                                        | Shared `/agents` and `/preferences` setting rows, numeric ranges, live appliers, and the private root-owned preferences provider.                                                                      |
 | `ui/schedule-menu.ts`, `ui/select-item.ts`, `ui/viewer-keys.ts` | Scheduled-job menu, list row formatting, keybinding resolution through `tui.select.*`.                                                                                                                 |
 
 ## The choco-pi role convention is not an upstream feature
