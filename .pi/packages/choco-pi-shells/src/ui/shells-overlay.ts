@@ -110,7 +110,8 @@ export class ShellsOverlay implements Component {
   private selectedIndex = 0;
   private stopArmed = false;
   private closed = false;
-  private error: string | undefined;
+  private listError: string | undefined;
+  private actionError: string | undefined;
   private unsubscribe: (() => void) | undefined;
   private lastHeight = 8;
 
@@ -163,8 +164,11 @@ export class ShellsOverlay implements Component {
       this.stopArmed = false;
       void this.manager
         .stop({ requesterId: this.requesterId, isAdmin: true, shellId: selected.shellId })
+        .then(() => {
+          this.actionError = undefined;
+        })
         .catch((error) => {
-          this.error = error instanceof Error ? error.message : String(error);
+          this.actionError = `Stop failed: ${error instanceof Error ? error.message : String(error)}`;
         })
         .finally(() => this.tui.requestRender());
       return;
@@ -247,7 +251,8 @@ export class ShellsOverlay implements Component {
     if (selected?.state === "running") {
       action = this.stopArmed ? this.theme.fg("error", "x again to STOP") : "x stop";
     }
-    const error = this.error ? this.theme.fg("error", this.error) : "";
+    const errorText = this.actionError ?? this.listError;
+    const error = errorText ? this.theme.fg("error", errorText) : "";
     lines.push(
       this.row(
         [error || action, "↑↓/kj move · PgUp/PgDn · Enter view · Esc/q close"]
@@ -270,10 +275,11 @@ export class ShellsOverlay implements Component {
 
   private shells(): ShellSummary[] {
     try {
-      this.error = undefined;
-      return this.manager.list({ requesterId: this.requesterId, isAdmin: true }).shells;
+      const shells = this.manager.list({ requesterId: this.requesterId, isAdmin: true }).shells;
+      this.listError = undefined;
+      return shells;
     } catch (error: unknown) {
-      this.error = error instanceof Error ? error.message : String(error);
+      this.listError = error instanceof Error ? error.message : String(error);
       return [];
     }
   }

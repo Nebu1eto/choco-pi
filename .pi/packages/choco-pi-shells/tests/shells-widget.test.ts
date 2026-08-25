@@ -178,3 +178,27 @@ test("dispose removes its listener, timer, and registered widget", async () => {
   assert.equal(ui.calls.length, callsAfterDispose);
   assert.equal(ui.renders, rendersAfterDispose);
 });
+
+test("invalidate near linger expiry still unregisters the widget", async () => {
+  const manager = new ManagerFixture();
+  const ui = new UIFixture();
+  let now = 0;
+  const widget = new ShellsWidget(manager, "root", {
+    lingerMs: 25,
+    refreshMs: 5,
+    now: () => now,
+  });
+  widget.setUICtx(ui);
+  manager.emit({ type: "end", shell: shell({ state: "exited", endedAt: 0 }) });
+  const registration = ui.calls.findLast((call) => call.content !== undefined);
+  assert.ok(registration?.content);
+  const component = registration.content({ requestRender: () => ui.renders++ }, theme);
+
+  component.invalidate();
+  now = 25;
+  await wait(15);
+
+  assert.equal(ui.calls.at(-1)?.key, "shells");
+  assert.equal(ui.calls.at(-1)?.content, undefined);
+  widget.dispose();
+});

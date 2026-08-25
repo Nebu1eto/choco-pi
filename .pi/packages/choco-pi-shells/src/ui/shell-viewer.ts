@@ -2,6 +2,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
   matchesKey,
+  stripTerminalSequences,
   type TUI,
   truncateToWidth,
   visibleWidth,
@@ -16,11 +17,21 @@ import type {
 
 const POLL_MS = 200;
 const READ_BYTES = 262_144;
+export const SHELL_VIEWER_MAX_LINES = 2_000;
+export const SHELL_VIEWER_MAX_CHARS = 262_144;
+const TERMINAL_ESCAPE_PATTERN = new RegExp(
+  String.raw`\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*?(?:\u0007|\u001B\\)|[PX^_][\s\S]*?\u001B\\|[@-_])`,
+  "g",
+);
 
 type StreamName = "stdout" | "stderr";
 
 interface StreamState {
-  text: string;
+  lines: string[];
+  partial: string;
+  retainedChars: number;
+  hasOutput: boolean;
+  truncated: boolean;
   cursor: number | undefined;
   dropped: boolean;
   scroll: number;
@@ -45,11 +56,41 @@ function duration(shell: ShellSummary): string {
   return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
 }
 
+function sanitizeOutputLine(line: string): string {
+  const stripped = stripTerminalSequences(line).replace(TERMINAL_ESCAPE_PATTERN, "");
+  let visible = "";
+  for (const character of stripped) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code >= 0x20 && !(code >= 0x7f && code <= 0x9f)) visible += character;
+  }
+  return visible;
+}
+
 export class ShellOutputViewer implements Component {
   private stream: StreamName = "stdout";
   private streams: ViewerStreams = {
-    stdout: { text: "", cursor: undefined, dropped: false, scroll: 0, follow: true },
-    stderr: { text: "", cursor: undefined, dropped: false, scroll: 0, follow: true },
+    stdout: {
+      lines: [],
+      partial: "",
+      retainedChars: 0,
+      hasOutput: false,
+      truncated: false,
+      cursor: undefined,
+      dropped: false,
+      scroll: 0,
+      follow: true,
+    },
+    stderr: {
+      lines: [],
+      partial: "",
+      retainedChars: 0,
+      hasOutput: false,
+      truncated: false,
+      cursor: undefined,
+      dropped: false,
+      scroll: 0,
+      follow: true,
+    },
   };
   private shell: ShellSummary;
   private stopArmed = false;
@@ -252,16 +293,63 @@ export class ShellOutputViewer implements Component {
   private append(stream: StreamName, chunk: ShellStreamChunk): void {
     const state = this.streams[stream];
     if (chunk.dropped) state.dropped = true;
-    state.text += chunk.data;
     state.cursor = chunk.nextOffset;
+    if (chunk.data.length === 0) return;
+
+    state.hasOutput = true;
+    const text = state.partial + chunk.data;
+    state.retainedChars -= state.partial.length;
+    state.partial = "";
+
+    let start = 0;
+    for (;;) {
+      const newline = text.indexOf("\n", start);
+      if (newline < 0) break;
+      this.retainLine(state, sanitizeOutputLine(text.slice(start, newline)));
+      start = newline + 1;
+    }
+    state.partial = text.slice(start);
+    if (state.partial.length > SHELL_VIEWER_MAX_CHARS) {
+      state.partial = state.partial.slice(-SHELL_VIEWER_MAX_CHARS);
+      state.truncated = true;
+    }
+    state.retainedChars += state.partial.length;
+    this.trimRetained(state);
   }
 
   private contentLines(state: StreamState): string[] {
-    const lines =
-      state.text.length === 0 ? [this.theme.fg("dim", "(no output)")] : state.text.split("\n");
+    const lines = state.hasOutput
+      ? [...state.lines, sanitizeOutputLine(state.partial)]
+      : [this.theme.fg("dim", "(no output)")];
+    if (state.truncated)
+      lines.unshift(this.theme.fg("warning", "[earlier output omitted from viewer]"));
     if (state.dropped)
-      return [this.theme.fg("warning", "[earlier output dropped from buffer]"), ...lines];
+      lines.unshift(this.theme.fg("warning", "[earlier output dropped from buffer]"));
     return lines;
+  }
+
+  private retainLine(state: StreamState, line: string): void {
+    const retained =
+      line.length > SHELL_VIEWER_MAX_CHARS ? line.slice(-SHELL_VIEWER_MAX_CHARS) : line;
+    if (retained.length !== line.length) state.truncated = true;
+    state.lines.push(retained);
+    state.retainedChars += retained.length;
+  }
+
+  private trimRetained(state: StreamState): void {
+    let remove = 0;
+    while (
+      remove < state.lines.length &&
+      (state.lines.length - remove > SHELL_VIEWER_MAX_LINES ||
+        state.retainedChars > SHELL_VIEWER_MAX_CHARS)
+    ) {
+      state.retainedChars -= state.lines[remove]?.length ?? 0;
+      remove += 1;
+    }
+    if (remove === 0) return;
+    state.lines.splice(0, remove);
+    state.scroll = Math.max(0, state.scroll - remove);
+    state.truncated = true;
   }
 
   private key(
