@@ -117,12 +117,16 @@ class TestUI {
   readonly notices: Notice[];
   readonly widgetCalls: WidgetCall[] = [];
   readonly customOptions: (ShellCustomOptions | undefined)[] = [];
+  readonly inputHandlers = new Set<
+    (data: string) => { consume?: boolean; data?: string } | undefined
+  >();
+  editorText = "";
 
   constructor(notices: Notice[] = []) {
     this.notices = notices;
   }
 
-  notify(message: string, level: string): void {
+  notify(message: string, level = "info"): void {
     this.notices.push({ message, level });
   }
 
@@ -134,6 +138,23 @@ class TestUI {
     options?: { placement?: "aboveEditor" | "belowEditor" },
   ): void {
     this.widgetCalls.push({ key, content, placement: options?.placement });
+  }
+
+  onTerminalInput(
+    handler: (data: string) => { consume?: boolean; data?: string } | undefined,
+  ): () => void {
+    this.inputHandlers.add(handler);
+    return () => this.inputHandlers.delete(handler);
+  }
+
+  getEditorText(): string {
+    return this.editorText;
+  }
+
+  send(data: string): { consume?: boolean; data?: string } | undefined {
+    assert.equal(this.inputHandlers.size, 1);
+    const [handler] = this.inputHandlers;
+    return handler?.(data);
   }
 
   async custom<T>(
@@ -314,9 +335,20 @@ test("only root activation wires UI and a child-owned start automatically regist
     await child.command.handler("list", context("nested-session", [], packageCwd, childUI));
     assert.equal(childUI.customOptions.length, 0);
     assert.equal(childUI.notices.length, 1);
+    assert.equal(childUI.inputHandlers.size, 0);
+
+    const manager = registry()[managerKey];
+    assert.ok(manager);
+    const stopInputs: Array<{ requesterId: string; isAdmin: boolean; shellId: string }> = [];
+    const originalStop = manager.stop.bind(manager);
+    manager.stop = (input) => {
+      stopInputs.push(input);
+      return originalStop(input);
+    };
 
     await root.sessionStart({}, context("root-session", [], packageCwd, rootUI));
     assert.equal(rootUI.widgetCalls.length, 0);
+    assert.equal(rootUI.inputHandlers.size, 1);
     const started = details<{ shellId: string; ownerId: string }>(
       await execute(
         child,
@@ -333,10 +365,18 @@ test("only root activation wires UI and a child-owned start automatically regist
     assert.match(text, /nested shell/);
     assert.match(text, /owner:nested-session/);
 
+    assert.deepEqual(rootUI.send("\x1b[B"), { consume: true });
+    assert.deepEqual(rootUI.send("x"), { consume: true });
+    assert.deepEqual(stopInputs, [
+      { requesterId: "root-session", isAdmin: true, shellId: started.shellId },
+    ]);
+
     const refreshedUI = new TestUI();
     await root.toolExecutionStart({}, context("root-session", [], packageCwd, refreshedUI));
     activeRootUI = refreshedUI;
     assert.equal(rootUI.widgetCalls.at(-1)?.content, undefined);
+    assert.equal(rootUI.inputHandlers.size, 0);
+    assert.equal(refreshedUI.inputHandlers.size, 1);
     assert.match(widgetText(refreshedUI), /nested shell/);
   } finally {
     assert.ok(child.shutdown);
@@ -344,6 +384,7 @@ test("only root activation wires UI and a child-owned start automatically regist
     assert.ok(root.shutdown);
     await root.shutdown({ reason: "quit" }, context("root-session", [], packageCwd, activeRootUI));
     assert.equal(activeRootUI.widgetCalls.at(-1)?.content, undefined);
+    assert.equal(activeRootUI.inputHandlers.size, 0);
   }
 });
 
