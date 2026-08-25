@@ -79,7 +79,6 @@ export default function shellsExtension(pi: ExtensionAPI): void {
   const registry = globalThis as typeof globalThis & ProcessRegistry;
 
   let manager = registry[MANAGER_KEY];
-  const ownsManager = manager === undefined;
   if (!manager) {
     manager = new ShellManager();
     registry[MANAGER_KEY] = manager;
@@ -217,7 +216,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
   });
 
   let shutdownHandled = false;
-  pi.on("session_shutdown", async (_event, ctx) => {
+  pi.on("session_shutdown", async (event, ctx) => {
     if (shutdownHandled) return;
     shutdownHandled = true;
 
@@ -226,8 +225,9 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       return;
     }
 
+    if (event.reason !== "quit") return;
     await manager.dispose();
-    if (ownsManager && registry[MANAGER_KEY] === manager) {
+    if (registry[MANAGER_KEY] === manager) {
       delete registry[MANAGER_KEY];
     }
   });

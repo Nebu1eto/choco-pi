@@ -104,6 +104,17 @@ defaults that TypeScript would have emitted. `ConversationViewer` keeps
 Every source file is now erasable-syntax-only, which is what lets the repository
 test suite import the fork directly.
 
+### Child-session disposal cleanup bridge
+
+The fork adds `src/child-session-cleanup.ts`, an optional cross-extension bridge
+used immediately before `AgentManager` disposes an owned child session. It
+resolves `Symbol.for("choco-pi-shells:manager")` without importing the shell
+package and, when the registered value exposes `cleanupOwner`, starts cleanup
+for the child session's stable `sessionManager.getSessionId()`. Cleanup remains
+fire-and-observe so session disposal stays synchronous, and promise rejection,
+missing registrations and malformed registrations are contained. Both record
+eviction and whole-manager disposal use the same seam.
+
 ### Focused-subagent fullscreen mode
 
 The fork adds `src/ui/focus-mode.ts` and `src/ui/method-patch-registry.ts` and
