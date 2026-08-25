@@ -7,7 +7,7 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 
-import { ShellOutputViewer } from "./shell-viewer.ts";
+import { sanitizeShellText, ShellOutputViewer } from "./shell-viewer.ts";
 
 export const SHELLS_OVERLAY_HEIGHT_PCT = 70;
 
@@ -236,7 +236,7 @@ export class ShellsOverlay implements Component {
       if (!shell) continue;
       const selected = start + index === this.selectedIndex;
       const bullet = selected ? this.theme.fg("accent", "●") : " ";
-      const label = shell.name ?? shell.command;
+      const label = sanitizeShellText(shell.name ?? shell.command).trim();
       const pid = shell.pid === undefined ? "" : ` pid ${shell.pid}`;
       lines.push(
         this.row(

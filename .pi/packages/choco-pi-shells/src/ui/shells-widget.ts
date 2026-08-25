@@ -1,9 +1,11 @@
 import type { ShellChangeEvent, ShellResult } from "../shell-manager.ts";
+import { sanitizeShellText } from "./shell-viewer.ts";
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 const DEFAULT_LINGER_MS = 4_000;
 const DEFAULT_REFRESH_MS = 100;
 const MAX_COMMAND_LENGTH = 52;
+const MAX_OWNER_LENGTH = 32;
 
 export interface ShellsWidgetManager {
   onChange(listener: (event: ShellChangeEvent) => void): () => void;
@@ -145,9 +147,12 @@ export class ShellsWidget {
   }
 
   private renderLabel(shell: ShellResult, theme: ShellsWidgetTheme): string {
-    const label = shell.name ?? truncateCommand(shell.command);
+    const label = shell.name
+      ? truncateText(sanitizeShellText(shell.name).trim(), MAX_COMMAND_LENGTH)
+      : truncateCommand(shell.command);
+    const ownerId = truncateText(sanitizeShellText(shell.ownerId).trim(), MAX_OWNER_LENGTH);
     const ownerTag =
-      shell.ownerId === this.rootSessionId ? "" : theme.fg("muted", ` [owner:${shell.ownerId}]`);
+      shell.ownerId === this.rootSessionId ? "" : theme.fg("muted", ` [owner:${ownerId}]`);
     return theme.bold(label) + ownerTag;
   }
 
@@ -187,9 +192,7 @@ export class ShellsWidget {
           this.tui = tui;
           return {
             render: () => this.render(theme),
-            invalidate: () => {
-              this.tui = undefined;
-            },
+            invalidate: () => {},
           };
         },
         { placement: "aboveEditor" },
@@ -214,7 +217,7 @@ export class ShellsWidget {
 }
 
 function truncateCommand(command: string): string {
-  return truncateText(command.replace(/\s+/g, " ").trim(), MAX_COMMAND_LENGTH);
+  return truncateText(sanitizeShellText(command).replace(/\s+/g, " ").trim(), MAX_COMMAND_LENGTH);
 }
 
 function truncateText(text: string, length: number): string {

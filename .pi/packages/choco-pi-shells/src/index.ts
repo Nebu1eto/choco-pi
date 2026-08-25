@@ -121,6 +121,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     });
 
     pi.on("tool_execution_start", async (_event, ctx) => {
+      if (!ctx.hasUI) return;
       bindRootUI(ctx.ui, ctx.sessionManager.getSessionId());
     });
   }
@@ -224,7 +225,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
 
       try {
         if (!action || action === "list") {
-          if (!isChildActivation) {
+          if (!isChildActivation && ctx.mode === "tui") {
             bindRootUI(ctx.ui, requesterId);
             await openShellsOverlay(rootUI ?? ctx.ui, manager, requesterId);
             return;

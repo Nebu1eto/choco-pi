@@ -16,6 +16,7 @@ import type {
 } from "./shells-overlay.ts";
 
 const POLL_MS = 200;
+const DRAIN_POLL_MS = 10;
 const READ_BYTES = 262_144;
 export const SHELL_VIEWER_MAX_LINES = 2_000;
 export const SHELL_VIEWER_MAX_CHARS = 262_144;
@@ -33,6 +34,7 @@ interface StreamState {
   hasOutput: boolean;
   truncated: boolean;
   cursor: number | undefined;
+  endOffset: number;
   dropped: boolean;
   scroll: number;
   follow: boolean;
@@ -56,7 +58,7 @@ function duration(shell: ShellSummary): string {
   return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
 }
 
-function sanitizeOutputLine(line: string): string {
+export function sanitizeShellText(line: string): string {
   const stripped = stripTerminalSequences(line).replace(TERMINAL_ESCAPE_PATTERN, "");
   let visible = "";
   for (const character of stripped) {
@@ -76,6 +78,7 @@ export class ShellOutputViewer implements Component {
       hasOutput: false,
       truncated: false,
       cursor: undefined,
+      endOffset: 0,
       dropped: false,
       scroll: 0,
       follow: true,
@@ -87,6 +90,7 @@ export class ShellOutputViewer implements Component {
       hasOutput: false,
       truncated: false,
       cursor: undefined,
+      endOffset: 0,
       dropped: false,
       scroll: 0,
       follow: true,
@@ -206,7 +210,7 @@ export class ShellOutputViewer implements Component {
     state.scroll = Math.min(state.scroll, maxScroll);
 
     const lines = [this.theme.fg("border", `╭${"─".repeat(width - 2)}╮`)];
-    const name = this.shell.name ?? this.shell.shellId;
+    const name = sanitizeShellText(this.shell.name ?? this.shell.shellId);
     const pid = this.shell.pid === undefined ? "pid —" : `pid ${this.shell.pid}`;
     const exit = this.shell.exitCode === undefined ? "" : ` · exit ${this.shell.exitCode}`;
     lines.push(
@@ -256,6 +260,8 @@ export class ShellOutputViewer implements Component {
 
   private poll(): void {
     if (this.closed || this.evicted || this.polling) return;
+    const previousStdoutCursor = this.streams.stdout.cursor;
+    const previousStderrCursor = this.streams.stderr.cursor;
     this.polling = true;
     try {
       const result = this.manager.read({
@@ -282,11 +288,20 @@ export class ShellOutputViewer implements Component {
     } finally {
       this.polling = false;
     }
-    if (!this.closed && !this.evicted && this.shell.state === "running") {
-      this.timer = detachedTimeout(() => {
-        this.timer = undefined;
-        this.poll();
-      }, POLL_MS);
+    const hasUnread = Object.values(this.streams).some(
+      (state) => state.cursor !== undefined && state.cursor < state.endOffset,
+    );
+    const madeProgress =
+      this.streams.stdout.cursor !== previousStdoutCursor ||
+      this.streams.stderr.cursor !== previousStderrCursor;
+    if (!this.closed && !this.evicted && (hasUnread || this.shell.state === "running")) {
+      this.timer = detachedTimeout(
+        () => {
+          this.timer = undefined;
+          this.poll();
+        },
+        hasUnread && madeProgress ? DRAIN_POLL_MS : POLL_MS,
+      );
     }
   }
 
@@ -294,6 +309,7 @@ export class ShellOutputViewer implements Component {
     const state = this.streams[stream];
     if (chunk.dropped) state.dropped = true;
     state.cursor = chunk.nextOffset;
+    state.endOffset = chunk.endOffset;
     if (chunk.data.length === 0) return;
 
     state.hasOutput = true;
@@ -305,7 +321,7 @@ export class ShellOutputViewer implements Component {
     for (;;) {
       const newline = text.indexOf("\n", start);
       if (newline < 0) break;
-      this.retainLine(state, sanitizeOutputLine(text.slice(start, newline)));
+      this.retainLine(state, sanitizeShellText(text.slice(start, newline)));
       start = newline + 1;
     }
     state.partial = text.slice(start);
@@ -319,7 +335,7 @@ export class ShellOutputViewer implements Component {
 
   private contentLines(state: StreamState): string[] {
     const lines = state.hasOutput
-      ? [...state.lines, sanitizeOutputLine(state.partial)]
+      ? [...state.lines, sanitizeShellText(state.partial)]
       : [this.theme.fg("dim", "(no output)")];
     if (state.truncated)
       lines.unshift(this.theme.fg("warning", "[earlier output omitted from viewer]"));
