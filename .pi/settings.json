@@ -2,6 +2,7 @@
   "packages": [
     "./packages/choco-pi-provider-synthetic",
     "./packages/choco-pi-ui",
+    "./packages/choco-pi-shells",
     "./packages/choco-pi-subagents",
     "./packages/choco-pi-goal",
     "./packages/choco-pi-mcp",

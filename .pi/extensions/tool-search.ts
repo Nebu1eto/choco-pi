@@ -26,6 +26,13 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
   "apply_patch",
   "exec_command",
   "write_stdin",
+  // Background shells are one execution lifecycle: start a command, read its
+  // output, list running sessions, and stop it. Keep the whole path available
+  // to parent and nested agents without a mid-command tool search.
+  "shell_start",
+  "shell_read",
+  "shell_stop",
+  "shell_list",
   // Pi's own path discovery. A session that reads or edits anything reaches
   // these before it reaches the file, so deferring them buys a prompt-cache
   // rewrite at the start of nearly every task.
