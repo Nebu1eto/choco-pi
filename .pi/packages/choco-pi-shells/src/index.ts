@@ -4,6 +4,12 @@ import { Type } from "typebox";
 
 import { inChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
 import { ShellManager } from "./shell-manager.ts";
+import { openShellsOverlay, type ShellsUICtx } from "./ui/shells-overlay.ts";
+import {
+  ShellsWidget,
+  type ShellsWidgetManager,
+  type ShellsWidgetUICtx,
+} from "./ui/shells-widget.ts";
 
 const MANAGER_KEY = Symbol.for("choco-pi-shells:manager");
 
@@ -82,6 +88,41 @@ export default function shellsExtension(pi: ExtensionAPI): void {
   if (!manager) {
     manager = new ShellManager();
     registry[MANAGER_KEY] = manager;
+  }
+
+  let widget: ShellsWidget | undefined;
+  let rootSessionId: string | undefined;
+  let rootUI: (ShellsUICtx & ShellsWidgetUICtx) | undefined;
+
+  const bindRootUI = (ui: ShellsUICtx & ShellsWidgetUICtx, sessionId: string): void => {
+    if (isChildActivation) return;
+    rootUI = ui;
+    if (!widget || rootSessionId !== sessionId) {
+      widget?.dispose();
+      rootSessionId = sessionId;
+      const widgetManager: ShellsWidgetManager = {
+        onChange(listener) {
+          const unsubscribe = manager.onChange(listener);
+          for (const shell of manager.list({ requesterId: sessionId, isAdmin: true }).shells) {
+            if (shell.state === "running") listener({ type: "start", shell });
+          }
+          return unsubscribe;
+        },
+      };
+      widget = new ShellsWidget(widgetManager, sessionId);
+    }
+    widget.setUICtx(ui);
+  };
+
+  if (!isChildActivation) {
+    pi.on("session_start", async (_event, ctx) => {
+      if (!ctx.hasUI) return;
+      bindRootUI(ctx.ui, ctx.sessionManager.getSessionId());
+    });
+
+    pi.on("tool_execution_start", async (_event, ctx) => {
+      bindRootUI(ctx.ui, ctx.sessionManager.getSessionId());
+    });
   }
 
   pi.registerTool(
@@ -183,6 +224,11 @@ export default function shellsExtension(pi: ExtensionAPI): void {
 
       try {
         if (!action || action === "list") {
+          if (!isChildActivation) {
+            bindRootUI(ctx.ui, requesterId);
+            await openShellsOverlay(rootUI ?? ctx.ui, manager, requesterId);
+            return;
+          }
           const result = manager.list({ requesterId, isAdmin });
           ctx.ui.notify(JSON.stringify(result, null, 2) ?? "null", "info");
           return;
@@ -224,6 +270,11 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       await manager.cleanupOwner(ctx.sessionManager.getSessionId());
       return;
     }
+
+    widget?.dispose();
+    widget = undefined;
+    rootUI = undefined;
+    rootSessionId = undefined;
 
     if (event.reason !== "quit") return;
     await manager.dispose();

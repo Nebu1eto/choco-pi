@@ -45,6 +45,11 @@ export interface ShellResult {
   endedAt?: number;
 }
 
+export interface ShellChangeEvent {
+  type: "start" | "update" | "end";
+  shell: ShellResult;
+}
+
 export type StartShellResult = ShellResult;
 
 export interface ReadShellInput {
@@ -122,6 +127,7 @@ interface ShellRecord {
 
 export class ShellManager {
   private readonly records = new Map<string, ShellRecord>();
+  private readonly changeListeners = new Set<(event: ShellChangeEvent) => void>();
   private readonly shell: string;
   private readonly shellArgs: readonly string[];
   private readonly bufferBytes: number;
@@ -167,6 +173,16 @@ export class ShellManager {
       0,
       10_000,
     );
+  }
+
+  onChange(listener: (event: ShellChangeEvent) => void): () => void {
+    this.changeListeners.add(listener);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.changeListeners.delete(listener);
+    };
   }
 
   start(input: StartShellInput): StartShellResult {
@@ -236,8 +252,10 @@ export class ShellManager {
         if (signal !== null) record.signal = signal;
         this.finalize(record);
       });
+      this.emitChange("start", record);
     } catch (error) {
       record.error = String(error);
+      this.emitChange("start", record);
       this.finalize(record);
     }
 
@@ -289,7 +307,9 @@ export class ShellManager {
     this.disposed = true;
     this.disposePromise = Promise.all(
       [...this.records.values()].map((record) => this.stopRecord(record)),
-    ).then(() => undefined);
+    ).then(() => {
+      this.changeListeners.clear();
+    });
     return this.disposePromise;
   }
 
@@ -355,6 +375,7 @@ export class ShellManager {
     child?.stderr?.removeAllListeners();
     child?.removeAllListeners();
     record.child = undefined;
+    this.emitChange("end", record);
     record.resolveTerminal();
     this.completedRecordIds.push(record.shellId);
     this.evictCompletedRecords();
@@ -384,6 +405,7 @@ export class ShellManager {
     if (record.finalized) return;
     if (!record.stopRequested) {
       record.stopRequested = true;
+      this.emitChange("update", record);
       this.signalRecord(record, "SIGTERM");
       if (!record.finalized) {
         record.killTimer = setTimeout(() => {
@@ -416,6 +438,19 @@ export class ShellManager {
       if (failure.code !== "ESRCH") {
         record.error ??= `Failed to send ${signal}: ${failure.message ?? String(error)}`;
         record.child?.kill(signal);
+      }
+    }
+  }
+
+  private emitChange(type: ShellChangeEvent["type"], record: ShellRecord): void {
+    const event: ShellChangeEvent = { type, shell: snapshot(record) };
+    const listeners: ((event: ShellChangeEvent) => void)[] = [];
+    for (const listener of this.changeListeners) listeners.push(listener);
+    for (const listener of listeners) {
+      try {
+        listener(event);
+      } catch {
+        // Listener failures must not interrupt shell lifecycle management.
       }
     }
   }

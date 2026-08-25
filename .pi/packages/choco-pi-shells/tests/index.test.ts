@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import test from "node:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import type { Component, TUI } from "@earendil-works/pi-tui";
 
 import { runInChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
 import shellsExtension from "../src/index.ts";
 import type { ShellManager } from "../src/shell-manager.ts";
+import type { ShellCustomOptions, ShellViewerKeybindings } from "../src/ui/shells-overlay.ts";
+import type {
+  ShellsWidgetComponent,
+  ShellsWidgetTheme,
+  ShellsWidgetTUI,
+} from "../src/ui/shells-widget.ts";
 
 const managerKey = Symbol.for("choco-pi-shells:manager");
 const packageCwd = resolve(import.meta.dirname, "..");
@@ -41,8 +48,9 @@ interface ShellToolParams {
 
 interface TestContext {
   cwd: string;
+  hasUI: boolean;
   sessionManager: { getSessionId(): string };
-  ui: { notify(message: string, level: string): void };
+  ui: TestUI;
 }
 
 interface ToolDefinition {
@@ -67,7 +75,13 @@ interface ShutdownEventFixture {
   reason: "quit" | "reload" | "new" | "resume" | "fork";
 }
 
-type ShutdownHandler = (event: ShutdownEventFixture, ctx: TestContext) => Promise<void>;
+interface SessionEventFixture {
+  type?: "session_start" | "tool_execution_start";
+}
+type LifecycleHandler = (
+  event: SessionEventFixture | ShutdownEventFixture,
+  ctx: TestContext,
+) => Promise<void>;
 
 interface Notice {
   message: string;
@@ -77,16 +91,73 @@ interface Notice {
 interface Activation {
   tools: Map<string, ToolDefinition>;
   command?: CommandDefinition;
-  shutdown?: ShutdownHandler;
+  sessionStart?: LifecycleHandler;
+  toolExecutionStart?: LifecycleHandler;
+  shutdown?: LifecycleHandler;
 }
 
 interface GlobalFixtureRegistry {
   [managerKey]?: ShellManager;
 }
 
+interface ExtensionFixture {
+  registerTool(tool: ToolDefinition): void;
+  registerCommand(name: string, command: CommandDefinition): void;
+  on(event: string, handler: LifecycleHandler): void;
+}
+
+interface WidgetCall {
+  key: string;
+  content: undefined | ((tui: ShellsWidgetTUI, theme: ShellsWidgetTheme) => ShellsWidgetComponent);
+  placement?: "aboveEditor" | "belowEditor";
+}
+
+class TestUI {
+  readonly notices: Notice[];
+  readonly widgetCalls: WidgetCall[] = [];
+  readonly customOptions: (ShellCustomOptions | undefined)[] = [];
+
+  constructor(notices: Notice[] = []) {
+    this.notices = notices;
+  }
+
+  notify(message: string, level: string): void {
+    this.notices.push({ message, level });
+  }
+
+  setWidget(
+    key: string,
+    content:
+      | undefined
+      | ((tui: ShellsWidgetTUI, theme: ShellsWidgetTheme) => ShellsWidgetComponent),
+    options?: { placement?: "aboveEditor" | "belowEditor" },
+  ): void {
+    this.widgetCalls.push({ key, content, placement: options?.placement });
+  }
+
+  async custom<T>(
+    _factory: (
+      tui: TUI,
+      theme: Theme,
+      keybindings: ShellViewerKeybindings | undefined,
+      done: (result: T) => void,
+    ) => Component,
+    options?: ShellCustomOptions,
+  ): Promise<T> {
+    this.customOptions.push(options);
+    // SAFETY: The overlay treats undefined as cancellation for every custom result used here.
+    return undefined as T;
+  }
+}
+
+function asExtensionAPI(fixture: ExtensionFixture): ExtensionAPI {
+  // @ts-expect-error -- SAFETY: The fixture implements every API method exercised by this extension.
+  return fixture as ExtensionAPI;
+}
+
 function activate(child: boolean): Promise<Activation> {
   const activation: Activation = { tools: new Map() };
-  const fixture = {
+  const fixture: ExtensionFixture = {
     registerTool(tool: ToolDefinition) {
       activation.tools.set(tool.name, tool);
     },
@@ -94,27 +165,41 @@ function activate(child: boolean): Promise<Activation> {
       assert.equal(name, "shells");
       activation.command = command;
     },
-    on(event: string, handler: ShutdownHandler) {
-      assert.equal(event, "session_shutdown");
-      activation.shutdown = handler;
+    on(event: string, handler: LifecycleHandler) {
+      if (event === "session_start") activation.sessionStart = handler;
+      else if (event === "tool_execution_start") {
+        activation.toolExecutionStart = handler;
+      } else if (event === "session_shutdown") activation.shutdown = handler;
+      else assert.fail(`unexpected event ${event}`);
     },
   };
-  // SAFETY: This fixture implements every ExtensionAPI method exercised during shell activation.
-  const extensionFixture = fixture as ExtensionAPI;
+  const extensionFixture = asExtensionAPI(fixture);
   const register = async () => shellsExtension(extensionFixture);
   return (child ? runInChildSessionContext(register) : register()).then(() => activation);
 }
 
-function context(sessionId: string, notices: Notice[] = [], cwd = packageCwd): TestContext {
+function context(
+  sessionId: string,
+  notices: Notice[] = [],
+  cwd = packageCwd,
+  ui = new TestUI(notices),
+): TestContext {
   return {
     cwd,
+    hasUI: true,
     sessionManager: { getSessionId: () => sessionId },
-    ui: {
-      notify(message: string, level: string) {
-        notices.push({ message, level });
-      },
-    },
+    ui,
   };
+}
+
+function widgetText(ui: TestUI): string {
+  const registration = ui.widgetCalls.findLast((call) => call.content !== undefined);
+  assert.ok(registration?.content);
+  const component = registration.content(
+    { requestRender() {} },
+    { fg: (_color, text) => text, bold: (text) => text },
+  );
+  return component.render().join("\n");
 }
 
 function tool(activation: Activation, name: string): ToolDefinition {
@@ -205,6 +290,56 @@ test("extension registers documented portable tool schemas and the /shells comma
     assert.ok(root.shutdown);
     await root.shutdown({ reason: "quit" }, context("root"));
     assert.equal(registry()[managerKey], undefined);
+  }
+});
+
+test("only root activation wires UI and a child-owned start automatically registers the widget", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  const child = await activate(true);
+  const rootUI = new TestUI();
+  let activeRootUI = rootUI;
+  try {
+    assert.ok(root.sessionStart);
+    assert.ok(root.toolExecutionStart);
+    assert.equal(child.sessionStart, undefined);
+    assert.equal(child.toolExecutionStart, undefined);
+
+    const childUI = new TestUI();
+    assert.ok(child.command);
+    await child.command.handler("list", context("nested-session", [], packageCwd, childUI));
+    assert.equal(childUI.customOptions.length, 0);
+    assert.equal(childUI.notices.length, 1);
+
+    await root.sessionStart({}, context("root-session", [], packageCwd, rootUI));
+    assert.equal(rootUI.widgetCalls.length, 0);
+    const started = details<{ shellId: string; ownerId: string }>(
+      await execute(
+        child,
+        "shell_start",
+        { command: "while :; do sleep 1; done", name: "nested shell" },
+        "nested-session",
+      ),
+    );
+
+    assert.equal(started.ownerId, "nested-session");
+    assert.equal(rootUI.widgetCalls.length, 1);
+    assert.equal(rootUI.widgetCalls[0]?.placement, "aboveEditor");
+    const text = widgetText(rootUI);
+    assert.match(text, /nested shell/);
+    assert.match(text, /owner:nested-session/);
+
+    const refreshedUI = new TestUI();
+    await root.toolExecutionStart({}, context("root-session", [], packageCwd, refreshedUI));
+    activeRootUI = refreshedUI;
+    assert.equal(rootUI.widgetCalls.at(-1)?.content, undefined);
+    assert.match(widgetText(refreshedUI), /nested shell/);
+  } finally {
+    assert.ok(child.shutdown);
+    await child.shutdown({ reason: "quit" }, context("nested-session"));
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session", [], packageCwd, activeRootUI));
+    assert.equal(activeRootUI.widgetCalls.at(-1)?.content, undefined);
   }
 });
 
@@ -305,17 +440,17 @@ test("tool and command handlers preserve ownership and defensively handle direct
     assert.equal(rootRead.shell.ownerId, "child-session");
 
     const commandNotices: Notice[] = [];
-    const commandContext = context("root-session", commandNotices);
+    const commandUI = new TestUI(commandNotices);
+    const commandContext = context("root-session", commandNotices, packageCwd, commandUI);
     assert.ok(root.command);
+    await root.command.handler("", commandContext);
     await root.command.handler("list", commandContext);
     await root.command.handler(`read ${childStarted.shellId}`, commandContext);
-    assert.equal(commandNotices.length, 2);
-    assert.deepEqual(
-      commandNotices.map((notice) => notice.level),
-      ["info", "info"],
-    );
-    assert.match(commandNotices[0]?.message ?? "", new RegExp(rootStarted.shellId));
-    assert.match(commandNotices[1]?.message ?? "", new RegExp(childStarted.shellId));
+    assert.equal(commandUI.customOptions.length, 2);
+    assert.ok(commandUI.customOptions.every((options) => options?.overlay === true));
+    assert.equal(commandNotices.length, 1);
+    assert.equal(commandNotices[0]?.level, "info");
+    assert.match(commandNotices[0]?.message ?? "", new RegExp(childStarted.shellId));
 
     // Direct child session_shutdown coverage is defensive; the subagents cleanup bridge is the
     // production path that disposes child-owned shells.
@@ -334,8 +469,8 @@ test("tool and command handlers preserve ownership and defensively handle direct
     );
 
     await root.command.handler(`stop ${rootStarted.shellId}`, commandContext);
-    assert.equal(commandNotices[2]?.level, "info");
-    assert.match(commandNotices[2]?.message ?? "", /"state": "stopped"/);
+    assert.equal(commandNotices[1]?.level, "info");
+    assert.match(commandNotices[1]?.message ?? "", /"state": "stopped"/);
   } finally {
     if (child?.shutdown) await child.shutdown({ reason: "quit" }, context("child-session"));
     assert.ok(root.shutdown);
@@ -347,19 +482,33 @@ test("tool and command handlers preserve ownership and defensively handle direct
 test("root session replacement preserves the process manager and quit removes an adopted manager", async () => {
   assert.equal(registry()[managerKey], undefined);
   let current = await activate(false);
+  let currentUI = new TestUI();
+  assert.ok(current.sessionStart);
+  await current.sessionStart({}, context("root-session", [], packageCwd, currentUI));
   const originalManager = registry()[managerKey];
   assert.ok(originalManager);
   const started = details<{ shellId: string; state: string }>(
-    await execute(current, "shell_start", { command: "while :; do sleep 1; done" }, "root-session"),
+    await execute(
+      current,
+      "shell_start",
+      { command: "while :; do sleep 1; done", name: "surviving shell" },
+      "root-session",
+    ),
   );
+  assert.match(widgetText(currentUI), /surviving shell/);
 
   try {
     for (const reason of ["reload", "new", "resume", "fork"] as const) {
       assert.ok(current.shutdown);
       await current.shutdown({ reason }, context("root-session"));
       assert.strictEqual(registry()[managerKey], originalManager);
+      assert.equal(currentUI.widgetCalls.at(-1)?.content, undefined);
 
       const successor = await activate(false);
+      const successorUI = new TestUI();
+      assert.ok(successor.sessionStart);
+      await successor.sessionStart({}, context("successor-session", [], packageCwd, successorUI));
+      assert.match(widgetText(successorUI), /surviving shell/);
       const listed = details<{ shells: Array<{ shellId: string; state: string }> }>(
         await execute(successor, "shell_list", {}, "successor-session"),
       );
@@ -368,10 +517,12 @@ test("root session replacement preserves the process manager and quit removes an
         "running",
       );
       current = successor;
+      currentUI = successorUI;
     }
 
     assert.ok(current.shutdown);
     await current.shutdown({ reason: "quit" }, context("successor-session"));
+    assert.equal(currentUI.widgetCalls.at(-1)?.content, undefined);
     assert.equal(registry()[managerKey], undefined);
   } finally {
     if (registry()[managerKey]) {
