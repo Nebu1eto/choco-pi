@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import {
+  type Component,
+  stripTerminalSequences,
+  type TUI,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 
 import {
   ShellOutputViewer,
@@ -259,6 +264,37 @@ test("ShellOutputViewer retains bounded incremental state under noisy output", (
   longLineComponent.dispose();
 });
 
+test("ShellOutputViewer drains retained output after a terminal shell", async () => {
+  const exited = shell("1", "exited");
+  const manager = managerFixture([exited]);
+  const noisy = `oldest-marker\n${"x".repeat(SHELL_VIEWER_MAX_CHARS + 100)}\nnewest-tail`;
+  manager.read = (input) => {
+    manager.readCalls.push({ stdoutOffset: input.stdoutOffset, stderrOffset: input.stderrOffset });
+    const startOffset = input.stdoutOffset ?? 0;
+    const data = noisy.slice(startOffset, startOffset + (input.maxBytes ?? noisy.length));
+    return {
+      shell: exited,
+      stdout: {
+        data,
+        startOffset,
+        nextOffset: startOffset + data.length,
+        endOffset: noisy.length,
+        dropped: false,
+      },
+      stderr: chunk(""),
+    };
+  };
+
+  const component = new ShellOutputViewer(tui(3_000), manager, "admin", exited, theme, () => {});
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const output = rendered(component, 120);
+  assert.ok(manager.readCalls.length >= 2);
+  assert.doesNotMatch(output, /oldest-marker/);
+  assert.match(output, /newest-tail/);
+  assert.match(output, /earlier output omitted from viewer/);
+  component.dispose();
+});
+
 test("ShellOutputViewer preserves UTF-8 multiline tails and strips terminal controls", () => {
   const exited = shell("1", "exited");
   const manager = managerFixture([exited]);
@@ -297,5 +333,39 @@ test("ShellsOverlay keeps a rejected stop visible across successful list refresh
 
   assert.match(rendered(component), /Stop failed: permission denied/);
   assert.match(rendered(component), /Stop failed: permission denied/);
+  component.dispose();
+});
+
+test("ShellsOverlay sanitizes and one-line bounds shell metadata", () => {
+  const named = shell("1");
+  named.name = `named\x1b[31m-red\x1b[0m\nnext\x07${"n".repeat(100)}`;
+  named.ownerId = `owner\x1b[2J\nnext\x07${"o".repeat(100)}`;
+  const commanded = shell("2");
+  commanded.name = undefined;
+  commanded.command = `command\x1b[31m-red\x1b[0m\nnext\x07${"c".repeat(100)}`;
+  const component = new ShellsOverlay(
+    tui(),
+    managerFixture([named, commanded]),
+    "admin",
+    theme,
+    () => {},
+  );
+
+  const lines = component.render(64);
+  const sanitizedLines = lines.map((line) => stripTerminalSequences(line));
+  assert.ok(
+    sanitizedLines.every((line) =>
+      Array.from(line).every((character) => {
+        const code = character.codePointAt(0) ?? 0;
+        return code >= 0x20 && !(code >= 0x7f && code <= 0x9f);
+      }),
+    ),
+  );
+  assert.ok(lines.every((line) => visibleWidth(line) <= 64));
+  const output = sanitizedLines.join("\n");
+  assert.match(output, /named-rednext/);
+  assert.match(output, /command-rednext/);
+  assert.equal(output.includes("\x1b"), false);
+  assert.equal(output.includes("\x07"), false);
   component.dispose();
 });

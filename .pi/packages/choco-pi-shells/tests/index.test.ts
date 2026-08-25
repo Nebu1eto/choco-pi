@@ -49,6 +49,7 @@ interface ShellToolParams {
 interface TestContext {
   cwd: string;
   hasUI: boolean;
+  mode: "tui" | "print" | "json" | "rpc";
   sessionManager: { getSessionId(): string };
   ui: TestUI;
 }
@@ -183,10 +184,13 @@ function context(
   notices: Notice[] = [],
   cwd = packageCwd,
   ui = new TestUI(notices),
+  mode: TestContext["mode"] = "tui",
+  hasUI = true,
 ): TestContext {
   return {
     cwd,
-    hasUI: true,
+    hasUI,
+    mode,
     sessionManager: { getSessionId: () => sessionId },
     ui,
   };
@@ -340,6 +344,54 @@ test("only root activation wires UI and a child-owned start automatically regist
     assert.ok(root.shutdown);
     await root.shutdown({ reason: "quit" }, context("root-session", [], packageCwd, activeRootUI));
     assert.equal(activeRootUI.widgetCalls.at(-1)?.content, undefined);
+  }
+});
+
+test("tool execution without UI does not wire a shell widget", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  const noUI = new TestUI();
+  try {
+    assert.ok(root.toolExecutionStart);
+    await root.toolExecutionStart(
+      {},
+      context("root-session", [], packageCwd, noUI, "print", false),
+    );
+    await execute(
+      root,
+      "shell_start",
+      { command: "while :; do sleep 1; done", name: "headless shell" },
+      "root-session",
+    );
+    assert.equal(noUI.widgetCalls.length, 0);
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
+  }
+});
+
+test("root /shells opens an overlay only in TUI mode and notifies in print and rpc modes", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  try {
+    assert.ok(root.command);
+
+    const tuiUI = new TestUI();
+    await root.command.handler("", context("root", [], packageCwd, tuiUI, "tui"));
+    assert.equal(tuiUI.customOptions.length, 1);
+    assert.equal(tuiUI.notices.length, 0);
+
+    for (const mode of ["print", "rpc"] as const) {
+      const ui = new TestUI();
+      await root.command.handler("list", context("root", [], packageCwd, ui, mode));
+      assert.equal(ui.customOptions.length, 0);
+      assert.equal(ui.notices.length, 1);
+      assert.deepEqual(JSON.parse(ui.notices[0]?.message ?? ""), { shells: [] });
+      assert.equal(ui.notices[0]?.level, "info");
+    }
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root"));
   }
 });
 
