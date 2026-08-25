@@ -92,13 +92,13 @@ export function formatFleetElapsed(ms: number): string {
   return `${Math.max(0, Math.round(ms / 1000))}s`;
 }
 
-/** `↓ 13.1k tokens` — down-arrow prefix, compact magnitude, plural "tokens". */
+/** `↓ 13.1k` — down-arrow prefix and compact magnitude. */
 export function formatFleetTokens(count: number): string {
   let compact: string;
   if (count >= 1_000_000) compact = `${(count / 1_000_000).toFixed(1)}M`;
   else if (count >= 1_000) compact = `${(count / 1_000).toFixed(1)}k`;
   else compact = `${count}`;
-  return `↓ ${compact} tokens`;
+  return `↓ ${compact}`;
 }
 
 /**
@@ -635,8 +635,6 @@ export class FleetList {
       topLevel: selected
         ? { fallbackColor: "text", bold: hasAgentBadge(record.type) }
         : { fallbackColor: "muted" },
-      nestedAliasColor: selected ? "text" : "accent",
-      nestedHandleColor: selected ? "text" : "muted",
     });
     const sideTag = record.sideConversation ? theme.fg("accent", "[btw] ") : "";
     const workflowTag = record.workflowStepId
