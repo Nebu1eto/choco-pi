@@ -368,6 +368,24 @@ once sealed and settled. Settled aggregate records remain available for repeat
 result reads for 10 minutes; a 60-second cleanup timer then removes the workflow
 and its consumed marker together.
 
+## Seam D — cooperative fleet navigation
+
+FleetView and the shell widget install independent terminal-input listeners, and
+the shells package normally loads first. They coordinate only through optional
+read-only methods on the existing process-global
+`Symbol.for("pi-subagents:manager")` entry. The root entry exposes
+`hasFleetRows()` and `isFleetActive()` through a runtime FleetList source; before
+FleetList construction both safely report false. No package imports the other's
+runtime implementation.
+
+Each shell keypress probes those methods again. Visible agent rows keep Down and
+Left activation; Right activates shell navigation and is shown in the shell
+widget hint. With no agent rows, shells retain Down activation. If FleetView is
+already active, the earlier shell listener deactivates itself and yields every
+navigation/action key, leaving a single active list. Root-first registry
+ownership and identity-checked cleanup remain unchanged, so a child activation
+cannot replace, mutate, or clear the root peer-state source.
+
 ## Invariants a later phase should not casually break
 
 - The factory registers nothing; first bound `session_start` does. A subagent

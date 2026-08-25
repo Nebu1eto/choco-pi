@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import { Editor, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 
 import type { ShellChangeEvent, ShellResult, StopShellInput } from "../src/shell-manager.ts";
 import {
@@ -53,7 +53,10 @@ class UIFixture implements ShellsWidgetUICtx {
   >();
   renders = 0;
   editorText = "";
-  focusedComponent: unknown;
+  // SAFETY: Editor identity is the only tested invariant; no Editor methods are invoked.
+  readonly editor = Object.create(Editor.prototype) as Editor;
+  focusedComponent: unknown = this.editor;
+  overlayVisible = false;
 
   setWidget(
     key: string,
@@ -90,7 +93,11 @@ class UIFixture implements ShellsWidgetUICtx {
     const registration = this.calls.findLast((call) => call.content !== undefined);
     assert.ok(registration?.content);
     const component = registration.content(
-      { requestRender: () => this.renders++, focusedComponent: this.focusedComponent },
+      {
+        requestRender: () => this.renders++,
+        focusedComponent: this.focusedComponent,
+        hasOverlay: () => this.overlayVisible,
+      },
       theme,
     );
     return component.render(width);
@@ -253,8 +260,9 @@ test("invalidate near linger expiry still unregisters the widget", async () => {
   component.invalidate();
   now = 5;
   manager.emit({ type: "end", shell: shell({ state: "exited", endedAt: 5 }) });
-  assert.equal(ui.renders, 1);
-  assert.equal(ui.calls.filter((call) => call.content !== undefined).length, 1);
+  assert.equal(ui.renders, 0, "the stale TUI is not asked to render");
+  assert.equal(ui.calls.filter((call) => call.content !== undefined).length, 2);
+  assert.match(ui.lines().join("\n"), /✓ exited/);
 
   now = 30;
   await wait(15);
@@ -319,7 +327,7 @@ test("activates only from an empty focused prompt with visible rows", () => {
   assert.equal(ui.send("\x1b[B"), undefined);
   assert.doesNotMatch(ui.lines().join("\n"), /›/);
 
-  ui.focusedComponent = undefined;
+  ui.focusedComponent = ui.editor;
   ui.lines();
   assert.deepEqual(ui.send("\x1b[B"), { consume: true });
   assert.match(ui.lines().join("\n"), /›.*printf hello/);
@@ -330,6 +338,87 @@ test("activates only from an empty focused prompt with visible rows", () => {
   widget.dispose();
 });
 
+test("requires a live editor-owned TUI and yields during visible overlays", () => {
+  const manager = new ManagerFixture();
+  const ui = new UIFixture();
+  const widget = new ShellsWidget(manager, "root");
+  widget.setUICtx(ui);
+  manager.emit({ type: "start", shell: shell() });
+
+  assert.equal(ui.send("\x1b[B"), undefined, "registration alone has no live TUI");
+  ui.lines();
+  ui.overlayVisible = true;
+  assert.equal(ui.send("\x1b[B"), undefined);
+  ui.overlayVisible = false;
+  ui.focusedComponent = {};
+  ui.lines();
+  assert.equal(ui.send("\x1b[B"), undefined, "dialogs are not editors");
+
+  ui.focusedComponent = ui.editor;
+  ui.lines();
+  assert.deepEqual(ui.send("\x1b[B"), { consume: true });
+  ui.overlayVisible = true;
+  assert.equal(ui.send("x"), undefined, "an overlay takes action-key ownership");
+  assert.equal(manager.stopCalls.length, 0);
+  assert.doesNotMatch(ui.lines().join("\n"), /›/);
+  widget.dispose();
+});
+
+test("coordinates shell and agent fleet ownership through the optional registry", () => {
+  const key = Symbol.for("pi-subagents:manager");
+  // SAFETY: This test owns and restores the exact symbol-keyed registry entry in finally.
+  const processRegistry = globalThis as typeof globalThis & {
+    [registryKey: symbol]: { hasFleetRows(): boolean; isFleetActive(): boolean } | undefined;
+  };
+  const previous = processRegistry[key];
+  let fleetRows = true;
+  let fleetActive = false;
+  const agentKeys: string[] = [];
+  processRegistry[key] = {
+    hasFleetRows: () => fleetRows,
+    isFleetActive: () => fleetActive,
+  };
+
+  const manager = new ManagerFixture();
+  const ui = new UIFixture();
+  const widget = new ShellsWidget(manager, "root");
+  const dispatch = (data: string): "shell" | "agent" | undefined => {
+    const shellResult = ui.send(data);
+    if (shellResult?.consume) return "shell";
+    const activatesAgent = data === "\x1b[B" || data === "\x1b[D";
+    if (!fleetActive && activatesAgent) fleetActive = true;
+    if (!fleetActive) return undefined;
+    agentKeys.push(data);
+    if (data === "\x1b") fleetActive = false;
+    return "agent";
+  };
+
+  try {
+    widget.setUICtx(ui);
+    manager.emit({ type: "start", shell: shell() });
+    assert.match(ui.lines().join("\n"), /→ manage/);
+
+    assert.equal(dispatch("\x1b[B"), "agent", "visible agents retain Down activation");
+    assert.equal(dispatch("\x1b"), "agent");
+    assert.equal(dispatch("\x1b[C"), "shell", "Right activates shell navigation");
+    assert.match(ui.lines().join("\n"), /›.*printf hello/);
+
+    assert.equal(dispatch("\x1b[D"), "agent", "Left transfers ownership to agents");
+    assert.doesNotMatch(ui.lines().join("\n"), /›/);
+    assert.equal(dispatch("x"), "agent", "agent-active x bypasses shell actions");
+    assert.equal(dispatch("\x1b"), "agent", "agent-active Esc bypasses shell navigation");
+    assert.equal(manager.stopCalls.length, 0);
+    assert.deepEqual(agentKeys, ["\x1b[B", "\x1b", "\x1b[D", "x", "\x1b"]);
+
+    fleetRows = false;
+    assert.equal(dispatch("\x1b[B"), "shell", "shell-only Down still activates shells");
+  } finally {
+    widget.dispose();
+    if (previous === undefined) delete processRegistry[key];
+    else processRegistry[key] = previous;
+  }
+});
+
 test("navigates by shell id, ignores key releases, and exits on Esc or pass-through", () => {
   const manager = new ManagerFixture();
   const ui = new UIFixture();
@@ -337,6 +426,7 @@ test("navigates by shell id, ignores key releases, and exits on Esc or pass-thro
   widget.setUICtx(ui);
   manager.emit({ type: "start", shell: shell({ shellId: "first", name: "first" }) });
   manager.emit({ type: "start", shell: shell({ shellId: "second", name: "second" }) });
+  ui.lines();
 
   assert.deepEqual(ui.send("\x1b[B"), { consume: true });
   assert.equal(ui.send("\x1b[1;1:3B"), undefined);
@@ -365,6 +455,7 @@ test("stops a selected nested-owned shell immediately with root admin authority"
     type: "start",
     shell: shell({ shellId: "nested-shell", ownerId: "nested-session" }),
   });
+  ui.lines();
   ui.send("\x1b[B");
 
   assert.deepEqual(ui.send("x"), { consume: true });
@@ -397,6 +488,7 @@ test("contains stop rejection and renders a sanitized bounded error", async () =
       command: `run\x1b[31m\n${"c".repeat(100)}`,
     }),
   });
+  ui.lines();
   ui.send("\x1b[B");
   ui.send("x");
   pending.reject(new Error(`denied\x1b[31m\n${"e".repeat(100)}`));
@@ -424,6 +516,7 @@ test("keeps keyed selection across starts and clamps it after selected expiry", 
   widget.setUICtx(ui);
   manager.emit({ type: "start", shell: shell({ shellId: "first", name: "first" }) });
   manager.emit({ type: "start", shell: shell({ shellId: "second", name: "second" }) });
+  ui.lines();
   ui.send("\x1b[B");
   ui.send("\x1b[B");
   manager.emit({ type: "start", shell: shell({ shellId: "third", name: "third" }) });

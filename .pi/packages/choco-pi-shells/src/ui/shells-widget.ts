@@ -29,6 +29,7 @@ export interface ShellsWidgetTheme {
 export interface ShellsWidgetTUI {
   requestRender?(): void;
   focusedComponent?: unknown;
+  hasOverlay?(): boolean;
 }
 
 export interface ShellsWidgetComponent {
@@ -147,7 +148,12 @@ export class ShellsWidget {
     const now = this.now();
     const hasRunning = [...this.shells.values()].some(({ shell }) => shell.state === "running");
     const headingColor = hasRunning ? "accent" : "dim";
-    const lines = [theme.fg(headingColor, "●") + " " + theme.fg(headingColor, "Shells")];
+    const lines = [
+      theme.fg(headingColor, "●") +
+        " " +
+        theme.fg(headingColor, "Shells") +
+        theme.fg("dim", ` · ${this.focus.activationHint()}`),
+    ];
     const rows = [...this.shells.values()];
 
     for (const [index, display] of rows.entries()) {
@@ -197,7 +203,10 @@ export class ShellsWidget {
           this.tui = tui;
           return {
             render: (width) => this.render(theme, width),
-            invalidate: () => {},
+            invalidate: () => {
+              this.widgetRegistered = false;
+              this.tui = undefined;
+            },
           };
         },
         { placement: "aboveEditor" },

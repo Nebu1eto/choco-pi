@@ -453,6 +453,10 @@ export default function (pi: ExtensionAPI) {
 
   // ---- Agent activity tracking + widget ----
   const agentActivity = new Map<string, AgentActivity>();
+  // The process-global registry is initialized before FleetList construction.
+  // Keep its optional UI capability behind a non-TDZ source that becomes live
+  // only after the root FleetList exists.
+  let fleetSource: FleetList | undefined;
 
   // ---- Cancellable pending notifications ----
   // Holds notifications briefly so get_subagent_result can cancel them
@@ -795,6 +799,8 @@ export default function (pi: ExtensionAPI) {
   const registryEntry = {
     waitForAll: () => manager.waitForAll(),
     hasRunning: () => manager.hasRunning(),
+    hasFleetRows: () => fleetSource?.isShowingRows() === true,
+    isFleetActive: () => fleetSource?.isActive() === true,
     spawn: spawnTopLevel,
     getRecord: (id: string) => {
       const record = manager.getRecord(id);
@@ -1233,6 +1239,7 @@ export default function (pi: ExtensionAPI) {
     unfocusAgent: () => focus.unfocus(),
     openSideConversation: (record) => sideConversations.open(record),
   });
+  fleetSource = fleet;
   let fleetViewEnabled = true;
   function isFleetViewEnabled(): boolean {
     return fleetViewEnabled;
