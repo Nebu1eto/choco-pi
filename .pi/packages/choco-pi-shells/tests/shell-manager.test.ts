@@ -202,6 +202,48 @@ test(
 );
 
 test(
+  "redirected stdio finalization kills a same-group background job before disposal",
+  { skip: process.platform === "win32" },
+  async () => {
+    const manager = new ShellManager({ shell: "/bin/sh", shellArgs: ["-c"] });
+    let backgroundPid: number | undefined;
+    try {
+      const started = manager.start({
+        ownerId: "owner",
+        cwd,
+        command: "sleep 30 >/dev/null 2>&1 & echo $!",
+      });
+      const withPid = await waitFor(
+        () => readShell(manager, started.shellId),
+        (result) => /^\d+\n$/.test(result.stdout.data),
+      );
+      const pid = Number.parseInt(withPid.stdout.data, 10);
+      backgroundPid = pid;
+
+      const completed = await waitFor(
+        () => readShell(manager, started.shellId),
+        (result) => isTerminal(result.shell),
+        2_000,
+      );
+      assert.equal(completed.shell.state, "exited");
+      assert.equal(completed.shell.exitCode, 0);
+      await waitFor(
+        () => processExists(pid),
+        (exists) => !exists,
+        2_000,
+      );
+      assert.equal(processExists(pid), false);
+
+      await manager.dispose();
+      assert.equal(processExists(pid), false);
+    } finally {
+      await manager.dispose();
+      killFixture(backgroundPid);
+    }
+  },
+);
+
+test(
   "SIGKILL escalation force-finalizes once when an escaped descendant prevents close",
   { skip: process.platform === "win32" },
   async () => {
