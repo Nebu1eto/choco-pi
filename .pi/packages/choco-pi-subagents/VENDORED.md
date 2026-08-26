@@ -3,8 +3,8 @@
 This directory is a **vendored, renamed fork** of the upstream open-source
 package **@tintinweb/pi-subagents**. This is not the original source repository.
 
-- Original source code: https://github.com/tintinweb/pi-subagents
-- Package on npm: https://www.npmjs.com/package/@tintinweb/pi-subagents
+- Original source code: <https://github.com/tintinweb/pi-subagents>
+- Package on npm: <https://www.npmjs.com/package/@tintinweb/pi-subagents>
 - Base version: `0.17.1`
 - Base artifact: `tintinweb-pi-subagents-0.17.1.tgz`, `dist.shasum`
   `ff11f1edb8741309bad25e4452010351d432c5e1` (registry value, confirmed against
