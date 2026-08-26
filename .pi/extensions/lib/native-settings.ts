@@ -95,7 +95,14 @@ const PI_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[] }>
   },
   {
     section: MODEL_SECTION_ID,
-    rows: [MODEL_ROW_ID, SCOPED_MODELS_ROW_ID, "thinking", "transport", "http-idle-timeout"],
+    rows: [
+      MODEL_ROW_ID,
+      SCOPED_MODELS_ROW_ID,
+      "thinking",
+      "model-thinking",
+      "transport",
+      "http-idle-timeout",
+    ],
   },
   { section: TOOLS_SECTION_ID, rows: ["skill-commands"] },
 ];
@@ -332,6 +339,12 @@ function currentModelId(host: NativeSettingsHost): string | undefined {
   return isString(id) ? id : undefined;
 }
 
+function currentThinkingLevel(host: NativeSettingsHost): string | undefined {
+  const session = propertyOf(host, "session");
+  const level = propertyOf(session, "thinkingLevel");
+  return isString(level) ? level : undefined;
+}
+
 /** Shown in place of the picker when Pi's model selector cannot be collected. */
 function unavailablePicker(done: (value?: string) => void): Component {
   return {
@@ -425,6 +438,18 @@ function modelRow(host: NativeSettingsHost): SettingItem {
   };
 }
 
+/** Restores the session reasoning picker that Pi no longer includes in its settings rows. */
+function thinkingRow(host: NativeSettingsHost): SettingItem {
+  return {
+    id: THINKING_ROW_ID,
+    label: "Reasoning effort",
+    description: "Reasoning effort for this session; the picker can also save the global default.",
+    currentValue: currentThinkingLevel(host) ?? "select…",
+    submenu: (_currentValue, done) =>
+      embeddedHostPicker(host, "showThinkingSelector", done, () => currentThinkingLevel(host)),
+  };
+}
+
 /**
  * The row that scopes the Ctrl+P cycle, carrying what `/scoped-models` opened.
  */
@@ -497,11 +522,20 @@ export function buildNativeSettingsSections(): PreferencesExtraSection[] {
   const readRows = (): SettingItem[] => {
     const rows = captureNativeSettingsRows(host);
     onChange = rows?.onChange;
-    return rows ? [modelRow(host), scopedModelsRow(host), ...rows.items] : [];
+    if (!rows) return [];
+    const nativeThinkingRow = rows.items.some((row) => row.id === THINKING_ROW_ID);
+    return [
+      modelRow(host),
+      scopedModelsRow(host),
+      ...(nativeThinkingRow ? [] : [thinkingRow(host)]),
+      ...rows.items,
+    ];
   };
   const handleChange = (id: string, newValue: string): PreferencesSectionChange => {
     // These pickers already applied their change; the row only has to redraw.
-    if (id === MODEL_ROW_ID || id === SCOPED_MODELS_ROW_ID) return { kind: "update" };
+    if (id === MODEL_ROW_ID || id === SCOPED_MODELS_ROW_ID || id === THINKING_ROW_ID) {
+      return { kind: "update" };
+    }
     if (!onChange) return { kind: "update" };
     onChange(id, newValue);
     // A refused TUI mode switch only updates Pi's own detached list, so the
