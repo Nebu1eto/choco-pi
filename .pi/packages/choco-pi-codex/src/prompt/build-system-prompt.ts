@@ -60,7 +60,7 @@ const CODE_MODE_GUIDELINES = [
   "Keep long exec_command calls awaited in exec; resume yielded cells with wait near completion; never short-yield then poll exec_command via write_stdin",
   "Use tty=true only for input/persistent processes",
   "Use tools.apply_patch(patch) for edits; split large patches; shell/Python only for formatting/bulk work",
-  "Batch independent tools.* calls in one exec block with Promise.all and await dependent chains; never spread one step across several exec toolCalls",
+  "Use code mode's JavaScript/TypeScript workflow for multi-command or multi-tool work: batch independent tools.* calls concurrently in one exec block with Promise.all, await dependent chains, and never spread one step across several exec toolCalls",
   "Filter and shape results inside the block; use text() only for a concise digest, not raw envelopes",
 ];
 
