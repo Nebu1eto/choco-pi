@@ -57,6 +57,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { mkdtempSync } from "node:fs";
 import { resolveOpengrepConfig } from "./opengrep-config.ts";
+import { buildOpengrepScanArgs } from "./opengrep-runtime.ts";
 import { getScratchTreeDirNames } from "./scratch-tree-policy.ts";
 import { safeSpawnAsync } from "./safe-spawn.ts";
 import { SecurityScanClient } from "./security-scan-client.ts";
@@ -161,28 +162,12 @@ export class OpengrepClient extends SecurityScanClient<OpengrepResult> {
     try {
       const result = await safeSpawnAsync(
         bin,
-        [
-          "scan",
-          "--config",
-          resolved.configArg ?? "auto",
-          "--json",
-          "--json-output",
+        buildOpengrepScanArgs({
+          configArg: resolved.configArg ?? "auto",
           reportPath,
-          // Never fail the scan on findings — this is a read, not a gate
-          // (matches gitleaks's `--exit-code 0` intent).
-          "--no-error",
-          "--quiet",
-          "--disable-version-check",
-          // #1562 class fix: opengrep's own `.gitignore` respect covers the
-          // common case (scratch trees are usually gitignored), but not a
-          // scratch/cache tree that ISN'T (e.g. an un-gitignored worktree
-          // cache) — `--exclude` is semgrep-compatible, so a slash-free
-          // pattern matches that directory name anywhere in the tree,
-          // independent of gitignore. Same `EXCLUDED_DIRS`-derived list
-          // gitleaks/trivy use, so the three scanners can't drift apart.
-          ...getScratchTreeDirNames().flatMap((name) => ["--exclude", name]),
           cwd,
-        ],
+          excludeNames: getScratchTreeDirNames(),
+        }),
         { cwd, timeout: SCAN_TIMEOUT_MS },
       );
 

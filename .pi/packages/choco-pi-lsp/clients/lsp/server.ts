@@ -33,6 +33,7 @@ import {
 } from "../path-utils.ts";
 import { ensureTool, getToolEnvironment, getToolPath } from "../installer/index.ts";
 import { resolveOpengrepConfig } from "../opengrep-config.ts";
+import { buildOpengrepInitialization } from "../opengrep-runtime.ts";
 import { isZizmorAuditTarget, resolveZizmorGitHubToken } from "../zizmor-config.ts";
 import { logLatency } from "../latency-logger.ts";
 import { logSessionStart } from "../sessionstart-logger.ts";
@@ -3110,15 +3111,7 @@ function opengrepInitialization(root: string): InitializationConfig {
   // registered); resolveOpengrepConfig here only chooses WHICH rules — a local
   // rule file if present, otherwise `auto`.
   const resolved = resolveOpengrepConfig(root, { enabled: true });
-  return {
-    scan: {
-      configuration: [resolved.configArg ?? "auto"],
-      onlyGitDirty: false,
-      jobs: 16,
-    },
-    metrics: { enabled: false },
-    doHover: false,
-  };
+  return buildOpengrepInitialization(resolved.configArg ?? "auto");
 }
 
 export const OpengrepServer: LSPServerInfo = {
