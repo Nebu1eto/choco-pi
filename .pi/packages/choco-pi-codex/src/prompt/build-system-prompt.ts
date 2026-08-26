@@ -60,8 +60,7 @@ const CODE_MODE_GUIDELINES = [
   "Keep long exec_command calls awaited in exec; resume yielded cells with wait near completion; never short-yield then poll exec_command via write_stdin",
   "Use tty=true only for input/persistent processes",
   "Use tools.apply_patch(patch) for edits; split large patches; shell/Python only for formatting/bulk work",
-  "Use code mode's JavaScript/TypeScript workflow for multi-command or multi-tool work: batch independent tools.* calls concurrently in one exec block with Promise.all, await dependent chains, and never spread one step across several exec toolCalls",
-  "Filter and shape results inside the block; use text() only for a concise digest, not raw envelopes",
+  "Use code mode only for bounded multi-call stages where JavaScript/TypeScript can reduce intermediate output; use direct calls when one call suffices, each result changes the next decision, approval is required, or native artifacts or citations must be preserved",
 ];
 
 const NOTEBOOK_MODE_GUIDELINES = [
@@ -87,6 +86,7 @@ const CODE_MODE_REPLACED_GUIDELINES = new Set([
 
 const REMOVED_GUIDELINES = new Set([
   "Prefer the apply_patch tool; use shell apply_patch only when chaining edits with other shell steps",
+  "Use text() only for concise final output",
 ]);
 
 const ALL_STATIC_CODEX_GUIDELINES = [
@@ -120,7 +120,6 @@ const STATIC_CODEX_GUIDELINES_BY_KEY = new Map([
     CODE_MODE_GUIDELINES[4]!,
   ],
   ["Await dependencies; use Promise.all for independent calls", CODE_MODE_GUIDELINES[5]!],
-  ["Use text() only for concise final output", CODE_MODE_GUIDELINES[6]!],
 ]);
 
 function canonicalizeGuidelineLine(line: string): string {
