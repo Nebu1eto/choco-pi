@@ -380,7 +380,9 @@ async function showTabOnce(
         "dim",
         panel?.hasOpenSubmenu?.()
           ? "Esc goes back"
-          : `Tab switches tabs · ${digitHint} jumps · Esc closes`,
+          : panel?.hasActiveSearch?.()
+            ? "Type to filter · Enter/Space changes · Esc stops search"
+            : `Tab switches tabs · ${digitHint} jumps · Esc closes`,
       );
 
     const paint = (body: string, view: { preserveScroll: boolean }): void => {
@@ -502,8 +504,9 @@ async function showTabOnce(
       },
       handleInput: (data: string) => {
         // A panel submenu, such as the model picker, needs every key it can
-        // get: no tab switching or digit jumps while one is open.
-        if (active === "preferences" && panel?.hasOpenSubmenu?.()) {
+        // get: no tab switching or digit jumps while one is open. The same is
+        // true of the panel's search field.
+        if (active === "preferences" && (panel?.hasOpenSubmenu?.() || panel?.hasActiveSearch?.())) {
           panel.handleInput(data);
           return;
         }

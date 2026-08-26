@@ -246,6 +246,12 @@ export interface PreferencesPanelHandle {
   getActiveSection: () => string;
   /** True while a row's submenu owns the panel and needs every key. */
   hasOpenSubmenu?: () => boolean;
+  /**
+   * True while the panel's full-text search owns the filter field. Like an
+   * open submenu, the filter needs every key: digits and Tab type into the
+   * query instead of switching tabs.
+   */
+  hasActiveSearch?: () => boolean;
 }
 
 export interface PreferencesOutcomeFocus {

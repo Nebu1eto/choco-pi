@@ -244,6 +244,12 @@ export interface ZentuiPreferencesPanelHandle {
    * plain characters for its own search and filters.
    */
   hasOpenSubmenu: () => boolean;
+  /**
+   * True while the panel's full-text search owns the filter field. The host
+   * must hand every key to the panel then, including digits and Tab, because
+   * they type into the filter instead of switching tabs.
+   */
+  hasActiveSearch: () => boolean;
   getActiveSection: () => string;
 }
 
@@ -1196,14 +1202,20 @@ function formatSectionTabs(
   if (visibleWidth(full) <= width) return full;
   return `  ${theme.bold(sectionLabel(active, extras))} (${order.indexOf(active) + 1}/${order.length})`;
 }
-function withSectionFooter(lines: string[], theme: ExtensionContext["ui"]["theme"]): string[] {
+function withSectionFooter(
+  lines: string[],
+  theme: ExtensionContext["ui"]["theme"],
+  mode: "section" | "search" = "section",
+): string[] {
   const copy = [...lines];
   for (let index = copy.length - 1; index >= 0; index -= 1) {
     if (copy[index]?.includes("Enter/Space")) {
       copy[index] = safeThemeFg(
         theme,
         "muted",
-        "  Enter/Space to change · ←/→ to switch sections · Esc to close",
+        mode === "search"
+          ? "  Type to filter · Enter/Space to change · Esc to stop searching"
+          : "  Enter/Space to change · ←/→ to switch sections · / to search · Esc to close",
       );
       break;
     }
@@ -1415,6 +1427,10 @@ export function createZentuiPreferencesComponent(
   // A submenu owns every key while it is open, so the panel's own section
   // shortcuts and the host's tab shortcuts have to stand down.
   let submenuOpen = false;
+  // While the query is defined the panel lists matching rows from every
+  // section and the typed keys go to its filter field instead of the section
+  // shortcuts.
+  let searchQuery: string | undefined;
   let settingsList: SettingsList;
   let preview: WorkingLineFrames | undefined;
   let previewFrameIndex = 0;
@@ -1500,15 +1516,18 @@ export function createZentuiPreferencesComponent(
     if (previewChanged) startPreview();
     tui.requestRender();
   };
-  const makeSettingsList = (focusId?: string): SettingsList => {
-    const { items, owners } = collectSectionItems(
-      activeSection,
-      deps.getConfig(),
-      deps.getActiveExtensionStatuses(),
-      extraSections,
-      sectionMerges,
-      theme,
-    );
+  /**
+   * Builds the row list the panel currently shows: one section's rows with an
+   * Esc that closes the panel, or every section's matching rows with a search
+   * field and an Esc that only leaves the search.
+   */
+  const makeListForItems = (
+    items: SettingItem[],
+    owners: Map<string, PreferencesExtraSection>,
+    focusId: string | undefined,
+    onCancel: () => void,
+    enableSearch: boolean,
+  ): SettingsList => {
     const list = new SettingsList(
       items.map((item) =>
         item.submenu === undefined
@@ -1539,7 +1558,7 @@ export function createZentuiPreferencesComponent(
               finishSettings(change.outcome);
               return;
             }
-            if (change.kind === "rebuild") settingsList = makeSettingsList(id);
+            if (change.kind === "rebuild") settingsList = rebuildCurrentList(id);
             else settingsList.updateValue(id, newValue);
             tui.requestRender();
             return;
@@ -1567,7 +1586,7 @@ export function createZentuiPreferencesComponent(
           const selectedEditorStyle = id === "editorStyle" ? editorStyleId(newValue) : undefined;
           if (selectedEditorStyle) {
             setEditor({ style: selectedEditorStyle }, ctx);
-            settingsList = makeSettingsList("editorStyle");
+            settingsList = rebuildCurrentList("editorStyle");
             notifyChange("Editor style", newValue);
             return;
           }
@@ -1653,7 +1672,7 @@ export function createZentuiPreferencesComponent(
             id === "userMessagesStyle" ? userMessageStyleId(newValue) : undefined;
           if (selectedMessageStyle) {
             setMessages({ style: selectedMessageStyle }, ctx);
-            settingsList = makeSettingsList("userMessagesStyle");
+            settingsList = rebuildCurrentList("userMessagesStyle");
             notifyChange("Message style", newValue);
             return;
           }
@@ -1802,7 +1821,7 @@ export function createZentuiPreferencesComponent(
           const selectedFooterStyle = id === "footerStyle" ? footerStyleId(newValue) : undefined;
           if (selectedFooterStyle) {
             setFooter({ style: selectedFooterStyle }, ctx);
-            settingsList = makeSettingsList("footerStyle");
+            settingsList = rebuildCurrentList("footerStyle");
             notifyChange("Footer style", newValue);
             return;
           }
@@ -1915,7 +1934,7 @@ export function createZentuiPreferencesComponent(
 
           if (id === "extensionStatusDefaultPlacement" && isExtensionStatusPlacement(newValue)) {
             deps.setExtensionStatusDefaultPlacement(newValue);
-            settingsList = makeSettingsList("extensionStatusDefaultPlacement");
+            settingsList = rebuildCurrentList("extensionStatusDefaultPlacement");
             notifyChange("Default extension status placement", newValue);
             return;
           }
@@ -1925,7 +1944,7 @@ export function createZentuiPreferencesComponent(
             else deps.setExtensionStatusPlacement(thirdParty.key, "off");
             // Hiding a status drops its placement and color rows, so the list
             // is rebuilt rather than repainted.
-            settingsList = makeSettingsList(id);
+            settingsList = rebuildCurrentList(id);
             notifyChange(`Status ${extensionStatusLabel(thirdParty.key)}`, newValue);
             return;
           }
@@ -1943,7 +1962,7 @@ export function createZentuiPreferencesComponent(
           }
         } catch (error) {
           stopPreview();
-          settingsList = makeSettingsList(id);
+          settingsList = rebuildCurrentList(id);
           tui.requestRender();
           ctx.ui.notify(
             `Could not update choco-ui settings: ${error instanceof Error ? error.message : String(error)}`,
@@ -1951,7 +1970,8 @@ export function createZentuiPreferencesComponent(
           );
         }
       },
-      () => finishSettings("close"),
+      onCancel,
+      enableSearch ? { enableSearch: true } : undefined,
     );
     if (focusId) {
       const target = items.findIndex((item) => item.id === focusId);
@@ -1959,6 +1979,103 @@ export function createZentuiPreferencesComponent(
     }
     return list;
   };
+  const makeSettingsList = (focusId?: string): SettingsList => {
+    const { items, owners } = collectSectionItems(
+      activeSection,
+      deps.getConfig(),
+      deps.getActiveExtensionStatuses(),
+      extraSections,
+      sectionMerges,
+      theme,
+    );
+    return makeListForItems(items, owners, focusId, () => finishSettings("close"), false);
+  };
+
+  /** The search field SettingsList keeps private, read to preserve an active query. */
+  interface SettingsListSearchInternals {
+    searchInput?: {
+      focused: boolean;
+      getValue(): string;
+      setValue(value: string): void;
+    };
+    applyFilter(query: string): void;
+  }
+
+  const searchInternals = (list: SettingsList): SettingsListSearchInternals => {
+    // SAFETY: the panel constructs this list with enableSearch, so these members are present.
+    return list as SettingsList & SettingsListSearchInternals;
+  };
+
+  /** Rows of every section, plus the host section each contributed row belongs to. */
+  interface SearchItems {
+    items: SettingItem[];
+    owners: Map<string, PreferencesExtraSection>;
+  }
+
+  /**
+   * Every changeable row from every visible section, labeled with the section
+   * it lives on, so a search result named like another tab's row still says
+   * where it lives. Display-only rows such as source headers cannot be
+   * changed, so they cannot be found either.
+   */
+  const collectSearchItems = (): SearchItems => {
+    const items: SettingItem[] = [];
+    const owners = new Map<string, PreferencesExtraSection>();
+    for (const section of visibleSections) {
+      const { items: sectionItems, owners: sectionOwners } = collectSectionItems(
+        section,
+        deps.getConfig(),
+        deps.getActiveExtensionStatuses(),
+        extraSections,
+        sectionMerges,
+        theme,
+      );
+      for (const item of sectionItems) {
+        if (item.values === undefined && item.submenu === undefined) continue;
+        const owner = sectionOwners.get(item.id);
+        if (owner !== undefined) owners.set(item.id, owner);
+        items.push({ ...item, label: `${sectionLabel(section, extraSections)}: ${item.label}` });
+      }
+    }
+    return { items, owners };
+  };
+
+  const exitSearch = (): void => {
+    searchQuery = undefined;
+    settingsList = makeSettingsList();
+    startPreview();
+    tui.requestRender();
+  };
+
+  const makeSearchList = (focusId?: string): SettingsList => {
+    const { items, owners } = collectSearchItems();
+    // SAFETY: searchQuery is defined whenever a search list is built.
+    const query = searchQuery ?? "";
+    const list = makeListForItems(items, owners, focusId, exitSearch, true);
+    const internals = searchInternals(list);
+    // Restores the query after a change rebuilt the list and lights the
+    // cursor, which the field only draws while it believes it holds focus.
+    if (internals.searchInput !== undefined) {
+      internals.searchInput.focused = true;
+      internals.searchInput.setValue(query);
+      internals.applyFilter(query);
+    }
+    return list;
+  };
+
+  const enterSearch = (): void => {
+    stopPreview();
+    searchQuery = "";
+    settingsList = makeSearchList();
+    tui.requestRender();
+  };
+
+  /** Rebuilds the shown list after a change, keeping the active search's filter and section. */
+  const rebuildCurrentList = (focusId?: string): SettingsList => {
+    settingsList = searchQuery !== undefined ? makeSearchList(focusId) : makeSettingsList(focusId);
+    return settingsList;
+  };
+
   settingsList = makeSettingsList(options.initialFocusId);
   if (options.initialFocusId !== undefined && options.openInitialSubmenu) {
     // Activating the focused row is what opens its submenu; the list owns that
@@ -1990,6 +2107,23 @@ export function createZentuiPreferencesComponent(
         EDITOR_BORDER_STYLE,
         "─".repeat(Math.max(0, width)),
       );
+      if (searchQuery !== undefined) {
+        // The search shows no section preview; its live rows are the result list.
+        const searchRows = withSectionFooter(settingsList.render(width), theme, "search").map(
+          (line) => truncateToWidth(line, width, ""),
+        );
+        return [
+          truncateToWidth(border, width, ""),
+          truncateToWidth(
+            formatSectionTabs(activeSection, extraSections, theme, width, visibleSections),
+            width,
+            "",
+          ),
+          truncateToWidth(border, width, ""),
+          ...searchRows,
+          truncateToWidth(border, width, ""),
+        ];
+      }
       const settingsRows = withSectionFooter(settingsList.render(width), theme).map((line) =>
         truncateToWidth(line, width, ""),
       );
@@ -2018,6 +2152,22 @@ export function createZentuiPreferencesComponent(
       settingsList.invalidate();
     },
     handleInput(data: string) {
+      // While the search is up, every key types into the filter field or acts
+      // on the result list; Esc only leaves the search, it never closes.
+      if (searchQuery !== undefined && !submenuOpen) {
+        if (matchesKey(data, "escape")) {
+          exitSearch();
+          return;
+        }
+        settingsList.handleInput(data);
+        searchQuery = searchInternals(settingsList).searchInput?.getValue() ?? searchQuery;
+        tui.requestRender();
+        return;
+      }
+      if (!submenuOpen && data === "/") {
+        enterSearch();
+        return;
+      }
       if (!submenuOpen && matchesKey(data, "right")) {
         stopPreview();
         activeSection = nextSection(activeSection, visibleSections);
@@ -2044,6 +2194,9 @@ export function createZentuiPreferencesComponent(
     },
     hasOpenSubmenu() {
       return submenuOpen;
+    },
+    hasActiveSearch() {
+      return searchQuery !== undefined;
     },
   };
 }
