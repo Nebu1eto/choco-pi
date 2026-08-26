@@ -153,6 +153,147 @@ const SUBCOMMAND_TOOLS = new Set([
   "yarn",
 ]);
 
+const MISE_SIMPLE_SUBCOMMANDS = new Map([
+  ["config", "config"],
+  ["cfg", "config"],
+  ["toml", "config"],
+  ["install", "install"],
+  ["i", "install"],
+  ["lock", "lock"],
+  ["settings", "settings"],
+  ["tasks", "tasks"],
+  ["t", "tasks"],
+  ["task", "tasks"],
+  ["use", "use"],
+  ["u", "use"],
+  ["ls", "ls"],
+  ["list", "ls"],
+  ["env", "env"],
+  ["e", "env"],
+  ["trust", "trust"],
+  ["upgrade", "upgrade"],
+  ["up", "upgrade"],
+  ["watch", "watch"],
+  ["w", "watch"],
+  ["outdated", "outdated"],
+  ["which", "which"],
+  ["doctor", "doctor"],
+  ["dr", "doctor"],
+  ["generate", "generate"],
+  ["gen", "generate"],
+  ["g", "generate"],
+]);
+
+type ExplicitOptions = {
+  booleans: ReadonlySet<string>;
+  values: ReadonlySet<string>;
+};
+
+type ExplicitOptionResult =
+  | { kind: "none" }
+  | { kind: "invalid" }
+  | { kind: "matched"; nextIndex: number; option: string; value?: string };
+
+const MISE_GLOBAL_OPTIONS: ExplicitOptions = {
+  values: new Set(["-C", "--cd", "-E", "--env", "-j", "--jobs", "--output"]),
+  booleans: new Set([
+    "-q",
+    "--quiet",
+    "-v",
+    "--verbose",
+    "-y",
+    "--yes",
+    "--raw",
+    "--silent",
+    "--no-config",
+    "--no-env",
+    "--no-hooks",
+    "--locked",
+  ]),
+};
+
+const MISE_RUN_OPTIONS: ExplicitOptions = {
+  values: new Set([
+    ...MISE_GLOBAL_OPTIONS.values,
+    "-o",
+    "-s",
+    "--shell",
+    "-t",
+    "--tool",
+    "--affected-base",
+    "--affected-head",
+    "--allow-env",
+    "--allow-net",
+    "--allow-read",
+    "--allow-write",
+    "--task-cache",
+    "--timeout",
+  ]),
+  booleans: new Set([
+    ...[...MISE_GLOBAL_OPTIONS.booleans].filter(
+      (option) => option !== "--no-env" && option !== "--no-hooks",
+    ),
+    "-f",
+    "--force",
+    "-n",
+    "--dry-run",
+    "-c",
+    "--continue-on-error",
+    "-r",
+    "-S",
+    "--all",
+    "--affected",
+    "--affected-explain",
+    "--affected-json",
+    "--deny-all",
+    "--deny-env",
+    "--deny-net",
+    "--deny-read",
+    "--deny-write",
+    "--fresh-env",
+    "--no-cache",
+    "--no-deps",
+    "--no-timings",
+    "--skip-deps",
+    "--skip-tools",
+    "--task-cache-explain",
+    "--task-cache-explain-json",
+    "--task-cache-stats",
+  ]),
+};
+
+const MISE_EXEC_OPTIONS: ExplicitOptions = {
+  values: new Set([
+    "-C",
+    "--cd",
+    "-E",
+    "--env",
+    "-c",
+    "--command",
+    "--allow-env",
+    "--allow-net",
+    "--allow-read",
+    "--allow-write",
+  ]),
+  booleans: new Set([
+    "-q",
+    "--quiet",
+    "-v",
+    "--verbose",
+    "-y",
+    "--yes",
+    "--locked",
+    "--silent",
+    "--deny-all",
+    "--deny-env",
+    "--deny-net",
+    "--deny-read",
+    "--deny-write",
+    "--fresh-env",
+    "--no-deps",
+  ]),
+};
+
 function shortExecCommandName(trace: RuntimeToolTrace): string | undefined {
   if (trace.name !== "exec_command" || !isObjectValue(trace.input)) return undefined;
   const command = trace.input["cmd"];
@@ -164,6 +305,8 @@ function shortExecCommandName(trace: RuntimeToolTrace): string | undefined {
 }
 
 function shortCommandName(tokens: string[]): string | undefined {
+  const mise = shortMiseCommandName(tokens);
+  if (mise) return mise;
   const executable = safeCommandToken(tokens[0]);
   if (!executable) return undefined;
   if (!SUBCOMMAND_TOOLS.has(executable)) return executable;
@@ -182,6 +325,133 @@ function shortCommandName(tokens: string[]): string | undefined {
     if (script) parts.push(script);
   }
   return parts.join(" ");
+}
+
+function shortMiseCommandName(tokens: string[]): string | undefined {
+  let executableIndex = 0;
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[executableIndex] ?? "")) {
+    executableIndex += 1;
+  }
+  if (safeCommandToken(tokens[executableIndex]) !== "mise") return undefined;
+
+  const subcommandIndex = skipExplicitLeadingOptions(
+    tokens,
+    executableIndex + 1,
+    MISE_GLOBAL_OPTIONS,
+  );
+  if (subcommandIndex === undefined) return "mise";
+  const subcommand = tokens[subcommandIndex];
+  if (subcommand === "run" || subcommand === "r") {
+    return shortMiseRunName(tokens.slice(subcommandIndex + 1));
+  }
+  if (subcommand === "exec" || subcommand === "x") {
+    return shortMiseExecName(tokens, subcommandIndex + 1);
+  }
+  const simpleSubcommand = subcommand && MISE_SIMPLE_SUBCOMMANDS.get(subcommand);
+  return simpleSubcommand ? `mise ${simpleSubcommand}` : "mise";
+}
+
+function shortMiseRunName(tokens: string[]): string {
+  const taskGroups: string[][] = [[]];
+  for (const token of tokens) {
+    if (token === ":::") taskGroups.push([]);
+    else taskGroups.at(-1)?.push(token);
+  }
+  const tasks: string[] = [];
+  for (const [groupIndex, group] of taskGroups.entries()) {
+    const taskIndex = groupIndex === 0 ? skipExplicitLeadingOptions(group, 0, MISE_RUN_OPTIONS) : 0;
+    if (taskIndex === undefined) return "mise";
+    const task = safeMiseTaskName(group[taskIndex]);
+    if (!task) return "mise";
+    tasks.push(task);
+  }
+  return tasks.map((task) => `mise run ${task}`).join(", ");
+}
+
+function shortMiseExecName(tokens: string[], startIndex: number): string {
+  for (let index = startIndex; index < tokens.length;) {
+    if (tokens[index] === "--") {
+      const command = firstExecutableName(tokens.slice(index + 1));
+      return command ? `mise exec ${command}` : "mise";
+    }
+
+    const option = explicitOptionAt(tokens, index, MISE_EXEC_OPTIONS);
+    if (option.kind === "invalid") return "mise";
+    if (option.kind === "matched") {
+      if (option.option === "-c" || option.option === "--command") {
+        const commandTokens = splitOnConnectors(shellSplit(option.value ?? ""))[0] ?? [];
+        const command = firstExecutableName(commandTokens);
+        return command ? `mise exec ${command}` : "mise";
+      }
+      index = option.nextIndex;
+      continue;
+    }
+    index += 1;
+  }
+  return "mise";
+}
+
+function skipExplicitLeadingOptions(
+  tokens: string[],
+  startIndex: number,
+  options: ExplicitOptions,
+): number | undefined {
+  let index = startIndex;
+  for (;;) {
+    if (index >= tokens.length) return index;
+    const option = explicitOptionAt(tokens, index, options);
+    if (option.kind === "invalid") return undefined;
+    if (option.kind === "none") return index;
+    index = option.nextIndex;
+  }
+}
+
+function explicitOptionAt(
+  tokens: string[],
+  index: number,
+  options: ExplicitOptions,
+): ExplicitOptionResult {
+  const token = tokens[index];
+  if (!token || token[0] !== "-") return { kind: "none" };
+  if (options.booleans.has(token)) {
+    return { kind: "matched", nextIndex: index + 1, option: token };
+  }
+  if (options.values.has(token)) {
+    const value = tokens[index + 1];
+    if (!value || value[0] === "-" || value === ":::") return { kind: "invalid" };
+    return { kind: "matched", nextIndex: index + 2, option: token, value };
+  }
+  const attached = explicitAttachedOption(token, options.values);
+  if (attached) {
+    return { kind: "matched", nextIndex: index + 1, ...attached };
+  }
+  return { kind: "invalid" };
+}
+
+function explicitAttachedOption(
+  token: string,
+  valueOptions: ReadonlySet<string>,
+): { option: string; value: string } | undefined {
+  const shortOption = token.length > 2 && token[1] !== "-";
+  const equalsIndex = token.indexOf("=");
+  if (!shortOption && equalsIndex <= 2) return undefined;
+
+  const option = shortOption ? token.slice(0, 2) : token.slice(0, equalsIndex);
+  const attached = token.slice(shortOption ? 2 : equalsIndex + 1);
+  const value = shortOption && attached[0] === "=" ? attached.slice(1) : attached;
+  return valueOptions.has(option) && value ? { option, value } : undefined;
+}
+
+function firstExecutableName(tokens: string[]): string | undefined {
+  let executableIndex = 0;
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[executableIndex] ?? "")) {
+    executableIndex += 1;
+  }
+  return safeCommandToken(tokens[executableIndex]);
+}
+
+function safeMiseTaskName(token: string | undefined): string | undefined {
+  return token && /^[A-Za-z0-9][A-Za-z0-9._:+-]*$/.test(token) ? token : undefined;
 }
 
 function safeCommandToken(token: string | undefined): string | undefined {
