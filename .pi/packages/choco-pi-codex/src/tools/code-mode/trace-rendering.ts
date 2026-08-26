@@ -294,25 +294,128 @@ const MISE_EXEC_OPTIONS: ExplicitOptions = {
   ]),
 };
 
+/**
+ * Shell setup commands that carry no information about the work a command did.
+ * They are dropped from the collapsed summary so the real commands stay visible.
+ */
+const HIDDEN_SHELL_SETUP_COMMANDS = new Set([".", "export", "set"]);
+
 function shortExecCommandName(trace: RuntimeToolTrace): string | undefined {
   if (trace.name !== "exec_command" || !isObjectValue(trace.input)) return undefined;
   const command = trace.input["cmd"];
   if (!isStringValue(command)) return undefined;
-  const inlineNode = inlineNodeCommandName(command);
-  if (inlineNode) return inlineNode;
-  const summaries = splitOnConnectors(shellSplit(command))
+  const summaries = splitOnConnectors(shellSplit(withoutHeredocBodies(command)))
     .map(shortCommandName)
-    .filter((summary): summary is string => summary !== undefined);
+    .filter(
+      (summary): summary is string =>
+        summary !== undefined && !HIDDEN_SHELL_SETUP_COMMANDS.has(summary),
+    );
   return summaries.length > 0 ? summaries.join(", ") : undefined;
 }
 
-function inlineNodeCommandName(command: string): string | undefined {
-  const firstLine = command.split(/\r?\n/, 1)[0];
-  if (!firstLine) return undefined;
-  const tokens = shellSplit(firstLine);
-  const executable = safeCommandToken(tokens[0]);
-  if (executable !== "node" || !tokens.some((token) => token.startsWith("<<"))) return undefined;
-  return executable;
+type HeredocOpening = { delimiter: string; stripTabs: boolean };
+type ParsedHeredocOpening = HeredocOpening & { nextIndex: number };
+type ParsedHeredocDelimiter = { delimiter: string; nextIndex: number };
+
+/** Removes line-delimited heredoc content while preserving the surrounding shell command text. */
+function withoutHeredocBodies(command: string): string {
+  const shellLines: string[] = [];
+  const pending: HeredocOpening[] = [];
+
+  for (const line of command.split(/\r?\n/)) {
+    const heredoc = pending[0];
+    if (heredoc) {
+      const terminator = heredoc.stripTabs ? line.replace(/^\t+/, "") : line;
+      if (terminator.trim() === heredoc.delimiter) pending.shift();
+      continue;
+    }
+
+    shellLines.push(line);
+    pending.push(...heredocOpenings(line));
+  }
+
+  return shellLines.join("\n");
+}
+
+/** Finds unquoted heredoc operators and their delimiters on one shell input line. */
+function heredocOpenings(line: string): HeredocOpening[] {
+  const openings: HeredocOpening[] = [];
+  let quote: "'" | '"' | undefined;
+
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (char === "\\" && quote !== "'") {
+      index += 1;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = undefined;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+
+    const opening = heredocOpeningAt(line, index);
+    if (!opening) continue;
+    openings.push(opening);
+    index = opening.nextIndex - 1;
+  }
+
+  return openings;
+}
+
+function heredocOpeningAt(line: string, index: number): ParsedHeredocOpening | undefined {
+  if (
+    line[index] !== "<" ||
+    line[index + 1] !== "<" ||
+    line[index - 1] === "<" ||
+    line[index + 2] === "<"
+  ) {
+    return undefined;
+  }
+
+  let delimiterIndex = index + 2;
+  const stripTabs = line[delimiterIndex] === "-";
+  if (stripTabs) delimiterIndex += 1;
+  const delimiterOffset = line.slice(delimiterIndex).search(/[^ \t]/);
+  if (delimiterOffset < 0) return undefined;
+  delimiterIndex += delimiterOffset;
+
+  const parsed = heredocDelimiterAt(line, delimiterIndex);
+  if (!parsed || parsed.delimiter.length === 0) return undefined;
+  return { ...parsed, stripTabs };
+}
+
+function heredocDelimiterAt(line: string, index: number): ParsedHeredocDelimiter | undefined {
+  const quote = line[index];
+  if (quote === "'" || quote === '"') return quotedHeredocDelimiterAt(line, index + 1, quote);
+
+  let delimiter = "";
+  let nextIndex = index;
+  while (nextIndex < line.length) {
+    const char = line[nextIndex];
+    if (!char || /[\s;&|<>]/.test(char)) break;
+    delimiter += char;
+    nextIndex += 1;
+  }
+  return { delimiter, nextIndex };
+}
+
+function quotedHeredocDelimiterAt(
+  line: string,
+  index: number,
+  quote: "'" | '"',
+): ParsedHeredocDelimiter | undefined {
+  let delimiter = "";
+  let nextIndex = index;
+  while (nextIndex < line.length && line[nextIndex] !== quote) {
+    delimiter += line[nextIndex];
+    nextIndex += 1;
+  }
+  if (line[nextIndex] !== quote) return undefined;
+  return { delimiter, nextIndex: nextIndex + 1 };
 }
 
 function shortCommandName(tokens: string[]): string | undefined {

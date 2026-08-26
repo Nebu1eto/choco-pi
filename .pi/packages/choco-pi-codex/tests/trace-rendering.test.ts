@@ -211,6 +211,64 @@ EOF`;
   assert.match(renderCommand(command), /Ran Exec command · node$/);
 });
 
+test("collapsed command summaries omit SQL heredoc bodies", () => {
+  const command = `cat <<'SQLEOF' > /tmp/q.sql
+\\pset pager off
+-- top clients
+WITH totals AS (SELECT client_id FROM widgets WHERE active GROUP BY client_id)
+SELECT w.name_en FROM widgets w WHERE w.id IN (SELECT client_id FROM totals) GROUP BY w.name_en;
+SQLEOF
+set -a
+. ./.env
+set +a
+export PGPASSWORD="$DB_PASS"
+psql "$DATABASE_URL" -f /tmp/q.sql`;
+
+  const summary = renderCommand(command);
+  assert.match(summary, /Ran Exec command · cat, psql$/);
+  for (const leakedToken of ["select", "from", "where", "group", "with", "--", "pset", "sqleof"]) {
+    assert.doesNotMatch(summary.toLowerCase(), new RegExp(leakedToken));
+  }
+});
+
+test("collapsed command summaries support quoted and bare heredoc delimiters", () => {
+  for (const opening of ["<<EOF", "<<'EOF'", '<<"EOF"']) {
+    assert.match(
+      renderCommand(`cat ${opening}\nbody command\nEOF\necho done`),
+      /Ran Exec command · cat, echo$/,
+    );
+  }
+
+  assert.match(
+    renderCommand("cat <<-'EOF'\n\tbody command\n\tEOF\necho done"),
+    /Ran Exec command · cat, echo$/,
+  );
+});
+
+test("collapsed command summaries omit later and multiple heredoc bodies", () => {
+  assert.match(
+    renderCommand(`set -e && psql "$URL" <<'SQL'\nSELECT 1;\nSQL\necho done`),
+    /Ran Exec command · psql, echo$/,
+  );
+  assert.match(
+    renderCommand("cmd <<A <<B\nfirst body\nA\nsecond body\nB\necho done"),
+    /Ran Exec command · cmd, echo$/,
+  );
+});
+
+test("collapsed command summaries omit unterminated heredocs", () => {
+  assert.match(
+    renderCommand("cat <<EOF\nSELECT value FROM leaked_body\nwhere false"),
+    /Ran Exec command · cat$/,
+  );
+});
+
+test("collapsed command summaries distinguish heredocs from similar shell text", () => {
+  assert.match(renderCommand('grep foo <<< "$var"'), /Ran Exec command · grep$/);
+  assert.match(renderCommand('echo "a << b"'), /Ran Exec command · echo$/);
+  assert.match(renderCommand("echo 'x <<EOF y'"), /Ran Exec command · echo$/);
+});
+
 test("mise failures stay visible and expanded rendering keeps the full command and error", () => {
   const cmd = "mise run check -- --fix";
   const collapsed = renderCommand(cmd, { status: "error", error: "task failed" });
