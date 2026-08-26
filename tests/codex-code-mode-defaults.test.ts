@@ -27,12 +27,8 @@ test("Code Mode is the append-style default for every OpenAI Codex model", () =>
   const prompt = buildCodexSystemPrompt("BASE PROMPT", { mode: "code" });
   assert.match(prompt, /^BASE PROMPT/);
   assert.match(prompt, /Use tools\.exec_command for shell commands/);
-  assert.match(prompt, /Batch independent tools\.\* calls in one exec block with Promise\.all/);
-  assert.match(prompt, /never spread one step across several exec toolCalls/);
-  assert.match(
-    prompt,
-    /Filter and shape results inside the block; use text\(\) only for a concise digest/,
-  );
+  assert.match(prompt, /Use code mode only for bounded multi-call stages/);
+  assert.match(prompt, /use direct calls when one call suffices/);
 });
 
 test("Code Mode guidance canonicalizes legacy rules without losing execution semantics", () => {
@@ -54,7 +50,7 @@ test("Code Mode guidance canonicalizes legacy rules without losing execution sem
   assert.match(prompt, /tools\.apply_patch\(patch\) for edits/);
 });
 
-test("Code Mode canonicalizes legacy single-call guidance into the batching rules", () => {
+test("Code Mode canonicalizes legacy composition guidance into bounded routing rules", () => {
   const legacy = [
     "Await dependencies; use Promise.all for independent calls",
     "Use text() only for concise final output",
@@ -65,8 +61,7 @@ test("Code Mode canonicalizes legacy single-call guidance into the batching rule
   );
 
   for (const line of legacy) assert.ok(!prompt.includes(line));
-  assert.equal(prompt.match(/Batch independent tools\.\*/g)?.length, 1);
-  assert.equal(prompt.match(/Filter and shape results inside the block/g)?.length, 1);
+  assert.equal(prompt.match(/Use code mode only for bounded multi-call stages/g)?.length, 1);
 });
 
 test("Code Mode tool guidance is compact and retains callable patch, web, and custom-tool guidance", () => {
@@ -142,7 +137,7 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
   );
   assert.match(
     guidance,
-    /Composition: one exec block per step, not one per tools\.\* call — batch independent calls with Promise\.all/,
+    /Composition: one exec block per step, not one per tools\.\* call — for a bounded processing step, batch independent calls with Promise\.all/,
   );
   assert.match(
     guidance,
@@ -153,8 +148,8 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
     /To create or edit a custom tool, read .* only when creating or editing a custom tool; never for discovering or calling tools; do not read Pi docs/,
   );
   assert.match(EXEC_DESCRIPTION, /JavaScript source only; no JSON\/fences/);
-  assert.match(EXEC_DESCRIPTION, /Batch several tools\.\* calls per block/);
-  assert.match(EXEC_DESCRIPTION, /do not emit one exec toolCall per wrapped call/);
+  assert.match(EXEC_DESCRIPTION, /bounded multi-call workflows that filter or aggregate results/);
+  assert.match(EXEC_DESCRIPTION, /prefer direct calls when one call suffices/);
   assert.match(EXEC_DESCRIPTION, /Code: fresh restricted JS/);
   assert.match(EXEC_DESCRIPTION, /Notebook: persistent shared Deno TypeScript globals/);
   // text()/notify() emit and return undefined; the description must not imply

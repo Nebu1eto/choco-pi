@@ -14,7 +14,7 @@ Before drafting, identify purpose, audience, evidence boundary, claim type, outp
 
 ## Language and style
 
-- Unless asked otherwise, be extremely concise: outcome, decisive evidence, caveats, next action. Omit unasked work, process narration, and restated claims.
+- Preserve the outcome, decisive evidence, material caveats, and next action. Follow the configured response style; trim unasked work, routine process narration, and restated claims first.
 - Use concrete facts, simple words, direct verbs, and natural paragraph flow. Write idiomatically; do not carry over another language's word order. Use established domain terms.
 - Strip generic AI phrasing, inflated significance, decorative abstraction, and repeated summaries. Avoid theatrical negation and false suspense.
 
