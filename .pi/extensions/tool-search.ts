@@ -547,7 +547,11 @@ export default function toolSearch(pi: ExtensionAPI): void {
     ];
     const active = pi.getActiveTools();
     const leanSurface = active.filter((name) => ALWAYS_ACTIVE.has(name) || loadedNames.has(name));
-    pi.setActiveTools([...new Set([...leanSurface, "tool_search"])]);
+    // Restore registered eager tools that fell out of the active set during a model-switch
+    // adapter reactivation; otherwise Code Mode can silently lose exec_command/apply_patch
+    // for the rest of the session.
+    const alwaysActive = ALWAYS_ACTIVE_TOOL_NAMES.filter((name) => allNames.has(name));
+    pi.setActiveTools([...new Set([...leanSurface, ...alwaysActive, "tool_search"])]);
     if (!mcpCatalogReady && attempt < 4) {
       initializationScheduled = true;
       setTimeout(() => applyLeanSurface(attempt + 1), 25 * (attempt + 1));

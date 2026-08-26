@@ -64,6 +64,86 @@ test("keeps Agent and core execution gateways always active", async () => {
   assert.ok(!active.includes("deferred_probe"));
 });
 
+test("restores registered always-active tools after model selection without widening", async () => {
+  let active = ["previously_loaded"];
+  let searchTool: any;
+  let sessionStart: (() => void) | undefined;
+  let modelSelect: (() => void) | undefined;
+  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
+  const tools = [
+    ...["bash", "edit", "write"].map((name) => ({
+      name,
+      description: `Core execution gateway (${name})`,
+      parameters: {},
+      sourceInfo: { source: "builtin", path: "builtin" },
+    })),
+    {
+      name: "previously_loaded",
+      description: "Previously loaded probe",
+      parameters: {},
+      sourceInfo: { source: "extension", path: "loaded-probe" },
+    },
+    {
+      name: "still_deferred",
+      description: "Still deferred probe",
+      parameters: {},
+      sourceInfo: { source: "extension", path: "deferred-probe" },
+    },
+  ];
+  // SAFETY: The fixture supplies every host member exercised by this test.
+  toolSearch({
+    registerTool: (tool: any) => {
+      searchTool = tool;
+    },
+    getAllTools: () => [
+      ...tools,
+      { ...searchTool, sourceInfo: { source: "extension", path: "tool-search" } },
+    ],
+    getActiveTools: () => active,
+    setActiveTools: (names: string[]) => {
+      active = names;
+    },
+    events: {
+      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
+        mcpStatus = handler;
+      },
+    },
+    on: (name: string, handler: () => void) => {
+      if (name === "session_start") sessionStart = handler;
+      if (name === "model_select") modelSelect = handler;
+    },
+  } as any);
+
+  sessionStart?.();
+  mcpStatus?.({ servers: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  for (const name of ["bash", "edit", "write", "tool_search"]) {
+    assert.ok(active.includes(name), `${name} must be restored`);
+  }
+  assert.ok(!active.includes("still_deferred"));
+  assert.ok(!active.includes("exec_command"), "unregistered eager tools must not be added");
+
+  const result = await searchTool.execute("call", { query: "previously loaded probe", limit: 1 });
+  assert.deepEqual(result.details.added, ["previously_loaded"]);
+  assert.ok(active.includes("previously_loaded"));
+
+  active = active.filter((name) => !["bash", "edit", "write"].includes(name));
+  modelSelect?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  const afterModelSelect = [...active];
+
+  for (const name of ["bash", "edit", "write", "tool_search", "previously_loaded"]) {
+    assert.ok(active.includes(name), `${name} must survive model selection`);
+  }
+  assert.ok(!active.includes("still_deferred"));
+  assert.ok(!active.includes("exec_command"));
+
+  modelSelect?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(active, afterModelSelect);
+});
+
 test("publishes background shells and keeps them active through lean filtering", async () => {
   const shellTools = ["shell_start", "shell_read", "shell_stop", "shell_list"];
   let active = [...shellTools, "deferred_probe"];
