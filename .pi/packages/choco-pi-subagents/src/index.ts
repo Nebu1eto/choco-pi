@@ -84,7 +84,7 @@ import {
 import {
   createSubagentLimitsTool,
   formatConcurrencyCap,
-  registerSubagentReminder,
+  registerSubagentStatusMessage,
 } from "./limits.ts";
 import {
   describeMention,
@@ -715,7 +715,7 @@ export default function (pi: ExtensionAPI) {
     },
   );
 
-  registerSubagentReminder(pi, {
+  registerSubagentStatusMessage(pi, {
     getActiveCount: () => manager.getActiveCount(),
     getScheduledActiveCount: () => manager.getScheduledActiveCount(),
     getMaxConcurrent: () => manager.getMaxConcurrent(),

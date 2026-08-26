@@ -41,7 +41,7 @@ this extension out must stay completely silent.
 | `agent-runner.ts`          | Builds and drives the child `AgentSession`: tool allow/denylists, always-on child messaging, `ext:` narrowing, extension filtering, model runtime inheritance, turn limits, final-status classification.                                                                                                                                         |
 | `agent-types.ts`           | The registry of spawnable types: defaults overlaid by user agents, `enabled` filtering, `resolveType`/`resolveSpawnType`, fallback policy.                                                                                                                                                                                                       |
 | `nested-tools.ts`          | The scoped `Agent`/`get_subagent_result`/`steer_subagent`/`stop_subagent` a subagent receives when its frontmatter sets `allowed_subagents`, plus the depth cap.                                                                                                                                                                                 |
-| `limits.ts`                | Pure runtime-limit normalization and formatting, the root-only `subagent_limits` tool, and root/nested per-context concurrency reminders.                                                                                                                                                                                                        |
+| `limits.ts`                | Pure runtime-limit and turn-start reminder formatting, root/nested persisted status registration, plus the root-only `subagent_limits` tool.                                                                                                                                                                                                     |
 | `messaging.ts`             | Pure tree-path computation, whole-tree recipient resolution, agent-message envelope formatting/parsing and delivery classification.                                                                                                                                                                                                              |
 | `agent-message.ts`         | Root/nested `agent_message` tool delivery through child sessions, `pendingSteers`, or the root follow-up queue; emits `subagents:message`.                                                                                                                                                                                                       |
 | `cross-extension-rpc.ts`   | `subagents:rpc:ping` / `:spawn` / `:stop` over the `pi.events` bus, with scoped reply channels.                                                                                                                                                                                                                                                  |
@@ -77,6 +77,16 @@ only to contain rejection and never extends the synchronous disposal path.
 | `group-join.ts`                                                                                        | Holds a group of background agents and delivers one consolidated notification.                                                             |
 | `output-file.ts`                                                                                       | Per-agent `.output` JSON-lines transcript under `<tmpdir>/choco-pi-subagents-<uid>/`, compaction-safe streaming.                           |
 | `abortable.ts`, `child-context.ts`, `context.ts`, `env.ts`, `usage.ts`, `status-note.ts`, `prompts.ts` | Cancellation, child-session detection, message extraction, environment block, token accounting, result status notes, prompt assembly.      |
+
+Root and nested sessions add a hidden `subagent-status` custom message from
+`before_agent_start` only while the shared ownership tree is active. Pi persists
+that message before sending it to the model after the user prompt, so the next
+reconstructed request retains the exact prior request followed by its assistant
+response; the next turn's status message appends after that prefix. Each message
+labels itself as a turn-start snapshot that becomes historical after its turn,
+reports scheduled/cap and whole-tree counts, and carries the inherited depth
+ceiling plus a nested session's current depth. No `context` handler is registered,
+so provider/tool loops cannot duplicate reminders inside one agent-run start.
 
 ### Prompt mentions (`@handle`)
 

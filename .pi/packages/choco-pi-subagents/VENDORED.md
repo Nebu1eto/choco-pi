@@ -189,7 +189,7 @@ workflow runner observes the manager's terminal record and settles the step as
 an error, preserving scheduler state and failure policy. `src/stop-subagent.ts`
 holds the pure decision logic; `tests/stop-subagent.test.ts` pins every outcome.
 
-### Runtime-adjustable subagent limits and reminders
+### Runtime-adjustable subagent limits and cache-stable status reporting
 
 - `maxConcurrent: 0` now means unlimited concurrency while the scheduler still
   enforces a 1024-agent machine-safety cap. Persisted settings accept 0, runtime
@@ -198,14 +198,27 @@ holds the pure decision logic; `tests/stop-subagent.test.ts` pins every outcome.
 - The root session gains the runtime-only `subagent_limits` tool. It reads or
   updates concurrency and depth without writing `.pi/subagents.json`; nested
   sessions do not receive the tool.
-- Root and nested model contexts receive one fresh, hidden `<system-reminder>`
-  line while any running or queued record exists. It compares the active
-  top-level background records governed by `maxConcurrent` with that cap and
-  separately reports the whole ownership-tree total. Nested reminders also
-  carry the current agent depth and inherited depth ceiling. The root-only
-  limits tool reports the same scheduled and whole-tree counts.
-  `tests/limits.test.ts` pins parsing, capped unlimited scheduling, tool output,
-  reminder suppression/formatting and non-accumulating context injection.
+- Root and nested sessions persist one hidden `subagent-status` custom message
+  from `before_agent_start` whenever the shared ownership tree is active. It is
+  appended once per agent-run start, after the user prompt, rather than rebuilt
+  in a `context` handler on every provider/tool loop. The concise turn-start
+  snapshot reports scheduled/cap and whole-tree counts; nested snapshots add
+  current depth while every snapshot carries the inherited depth ceiling.
+  `tests/registry.test.ts` activates the real root extension and observes its
+  manager-backed handler. `tests/runner-status-wiring.test.ts` drives `runAgent`
+  to the `DefaultResourceLoader` options boundary, invokes the supplied inline
+  factory, and pins its survival through allowlists and excludes. For that
+  probe, `RunOptions.createResourceLoader` is a narrow test-only construction
+  seam; production calls omit it and still construct
+  `new DefaultResourceLoader(loaderOptions)`. `agent-runner.ts` also exports the
+  pure `shouldKeepExtension` predicate used by those filters so inline-resource
+  preservation and configured extension inclusion can be tested directly.
+- Persistence keeps the provider cache prefix append-only: request N's status
+  message is reconstructed before its assistant response, and request N+1 adds
+  its fresh status only after both. `tests/limits.test.ts` blocks all source
+  `context` registrations and uses Pi's `SessionManager`/`buildSessionContext`
+  path to pin hidden-message ingestion and repeated-turn prefix ordering,
+  alongside reminder formatting, limit, scheduler, and widget coverage.
 
 ### Tree-wide agent messaging
 
