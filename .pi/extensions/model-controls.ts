@@ -1,4 +1,9 @@
-import { isBoolean, isObject, type RuntimeValue } from "./lib/runtime-values.ts";
+import {
+  isBoolean,
+  isObject,
+  reinterpretHostValue,
+  type RuntimeValue,
+} from "./lib/runtime-values.ts";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -21,6 +26,7 @@ const THINKING_LEVELS: ThinkingLevel[] = [
   "max",
 ];
 const FAST_MODE_ENTRY = "choco-pi-fast-mode";
+const CODEX_FAST_MODE_SYMBOL = Symbol.for("choco-pi.codex-fast-mode");
 const FAST_EDITOR_FACTORY = Symbol.for("choco-pi.model-controls.fast-editor-factory");
 const ZENTUI_EDITOR_FACTORY = Symbol.for("pi-zentui.editor-factory");
 const ZENTUI_EDITOR_SYMBOLS = [
@@ -69,6 +75,16 @@ function isCodexModel(model: Model<Api> | undefined): boolean {
 
 function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
   return isObject(value) && value !== null && !Array.isArray(value);
+}
+
+function codexFastModeEnabled(): boolean {
+  const candidate =
+    reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(globalThis)[CODEX_FAST_MODE_SYMBOL];
+  return isRecord(candidate) && isBoolean(candidate.enabled) && candidate.enabled;
+}
+
+export function isEffectiveFastModeEnabled(sessionEnabled: boolean): boolean {
+  return sessionEnabled || codexFastModeEnabled();
 }
 
 export function restoreFastMode(entries: readonly SessionEntry[]): boolean {
@@ -211,7 +227,7 @@ export default function modelControls(pi: ExtensionAPI): void {
       ctx.ui,
       {
         getModel: () => activeModel,
-        isEnabled: () => fastEnabled,
+        isEnabled: () => isEffectiveFastModeEnabled(fastEnabled),
         style: (text) => ctx.ui.theme.fg("muted", text),
       },
       () => generation === editorInstallGeneration,
@@ -275,7 +291,10 @@ export default function modelControls(pi: ExtensionAPI): void {
 
       const action = args.trim().toLowerCase();
       if (action === "status") {
-        ctx.ui.notify(`Fast mode: ${fastEnabled ? "on" : "off"}`, "info");
+        ctx.ui.notify(
+          `Fast mode: ${isEffectiveFastModeEnabled(fastEnabled) ? "on" : "off"}`,
+          "info",
+        );
         return;
       }
       if (action && action !== "on" && action !== "off") {
@@ -285,6 +304,9 @@ export default function modelControls(pi: ExtensionAPI): void {
 
       fastEnabled = action === "on" || (action === "" && !fastEnabled);
       pi.appendEntry(FAST_MODE_ENTRY, { enabled: fastEnabled });
+      if (!fastEnabled && isEffectiveFastModeEnabled(fastEnabled)) {
+        ctx.ui.notify("Fast mode remains on through Codex preferences.", "info");
+      }
       // The editor indicator is the confirmation. Avoid appending a status row:
       // repeated height changes corrupt regular scrollback in Ghostty + Zellij.
       ctx.ui.setStatus("fast-mode-refresh", undefined);
