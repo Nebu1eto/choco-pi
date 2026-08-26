@@ -27,6 +27,7 @@ import {
   logAvailabilityDecision,
   startHostStallSampler,
 } from "./dispatch/runners/utils/availability-policy.ts";
+import { dedupeInFlight } from "./in-flight-dedup.ts";
 
 type GetAvailabilityVerdictResultContract = {
   outcome: AvailabilityOutcome | null;
@@ -345,13 +346,8 @@ export abstract class SecurityScanClient<TResult> {
    * process. The entry is cleared when the run settles.
    */
   protected dedupeScan(key: string, run: () => Promise<TResult>): Promise<TResult> {
-    const existing = this.inFlight.get(key);
-    if (existing) {
-      this.log(`Scan already in flight for ${key}; sharing result`);
-      return existing;
-    }
-    const promise = run().finally(() => this.inFlight.delete(key));
-    this.inFlight.set(key, promise);
-    return promise;
+    return dedupeInFlight(this.inFlight, key, run, () =>
+      this.log(`Scan already in flight for ${key}; sharing result`),
+    );
   }
 }
