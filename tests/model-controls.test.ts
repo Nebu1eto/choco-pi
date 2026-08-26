@@ -9,6 +9,7 @@ import {
   appendFastModeToEditorMetadata,
   default as modelControls,
   installFastModeEditorWhenReady,
+  isEffectiveFastModeEnabled,
   restoreFastMode,
   wrapFastModeEditorFactory,
 } from "../.pi/extensions/model-controls.ts";
@@ -126,6 +127,68 @@ test("Fast mode state restores from the latest session entry", () => {
   ];
   // SAFETY: The fixture supplies every host member exercised by this test.
   assert.equal(restoreFastMode(entries as never), false);
+});
+
+test("effective Fast mode combines the session flag with the Codex registry", () => {
+  const symbol = Symbol.for("choco-pi.codex-fast-mode");
+  const store = reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(globalThis);
+  const previous = store[symbol];
+  try {
+    delete store[symbol];
+    assert.equal(isEffectiveFastModeEnabled(false), false);
+    assert.equal(isEffectiveFastModeEnabled(true), true);
+
+    store[symbol] = { enabled: true };
+    assert.equal(isEffectiveFastModeEnabled(false), true);
+
+    store[symbol] = { enabled: false };
+    assert.equal(isEffectiveFastModeEnabled(true), true);
+
+    store[symbol] = { enabled: "invalid" };
+    assert.equal(isEffectiveFastModeEnabled(false), false);
+  } finally {
+    if (previous === undefined) delete store[symbol];
+    else store[symbol] = previous;
+  }
+});
+
+test("fast status and off stay truthful when Codex preferences enable Fast mode", async () => {
+  const symbol = Symbol.for("choco-pi.codex-fast-mode");
+  const store = reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(globalThis);
+  const previous = store[symbol];
+  let fastHandler: ((args: string, ctx: RuntimeValue) => Promise<void>) | undefined;
+  const notifications: string[] = [];
+  const pi = reinterpretHostValue<import("@earendil-works/pi-coding-agent").ExtensionAPI>({
+    on: () => {},
+    registerCommand: (
+      name: string,
+      options: { handler: (args: string, ctx: RuntimeValue) => Promise<void> },
+    ) => {
+      if (name === "fast") fastHandler = options.handler;
+    },
+    appendEntry: () => {},
+  });
+  const ctx = {
+    model: model("openai-codex"),
+    ui: {
+      notify: (message: string) => notifications.push(message),
+      setStatus: () => {},
+    },
+  };
+
+  try {
+    store[symbol] = { enabled: true };
+    modelControls(pi);
+    await fastHandler?.("status", ctx);
+    await fastHandler?.("off", ctx);
+    assert.deepEqual(notifications, [
+      "Fast mode: on",
+      "Fast mode remains on through Codex preferences.",
+    ]);
+  } finally {
+    if (previous === undefined) delete store[symbol];
+    else store[symbol] = previous;
+  }
 });
 
 test("non-OpenAI-Codex editor metadata is unchanged", () => {
