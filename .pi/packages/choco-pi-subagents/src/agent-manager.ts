@@ -423,7 +423,7 @@ export class AgentManager {
       // behavior (agent at the copy's root) — moving them to workPath would
       // also move .pi config discovery when the parent session sits in a repo
       // subdirectory, silently dropping extensions/skills.
-      worktreeCwd = customCwd !== undefined ? wt.workPath : wt.path;
+      worktreeCwd = customCwd === undefined ? wt.path : wt.workPath;
       this.worktreeRepos.add(baseCwd);
     }
 
@@ -465,7 +465,7 @@ export class AgentManager {
       // Set iff a worktree was created (see above) — names the directory the
       // copy came from, so the prompt can tell the agent not to work there.
       worktreeBase: worktreeCwd ? baseCwd : undefined,
-      configCwd: options.configCwd ?? (customCwd !== undefined ? ctx.cwd : undefined),
+      configCwd: options.configCwd ?? (customCwd === undefined ? undefined : ctx.cwd),
       signal: record.abortController!.signal,
       onToolActivity: (activity) => {
         if (activity.type === "end") record.toolUses++;
@@ -547,10 +547,10 @@ export class AgentManager {
           if (wtResult.hasChanges && wtResult.branch) {
             // With a caller-supplied cwd the branch lives in THAT repo, not the
             // parent session's — say so, or the orchestrator merges in the wrong repo.
-            const repoNote = customCwd !== undefined ? ` in \`${baseCwd}\`` : "";
+            const repoNote = customCwd === undefined ? "" : ` in \`${baseCwd}\``;
             record.result =
               (record.result ?? "") +
-              `\n\n---\nChanges saved to branch \`${wtResult.branch}\`${repoNote}. Merge with: \`git merge ${wtResult.branch}\`${customCwd !== undefined ? ` (run in \`${baseCwd}\`)` : ""}`;
+              `\n\n---\nChanges saved to branch \`${wtResult.branch}\`${repoNote}. Merge with: \`git merge ${wtResult.branch}\`${customCwd === undefined ? "" : ` (run in \`${baseCwd}\`)`}`;
           }
         }
 
@@ -558,14 +558,7 @@ export class AgentManager {
 
         // Fire onComplete for foreground agents too — lifecycle symmetry.
         // Mark resultConsumed so the callback skips notifications (result returned inline).
-        if (!options.isBackground) {
-          record.resultConsumed = true;
-          try {
-            this.onComplete?.(record);
-          } catch {
-            /* ignore completion side-effect errors */
-          }
-        } else {
+        if (options.isBackground) {
           if (occupiesPoolSlot(record)) this.runningBackground--;
           try {
             this.onComplete?.(record);
@@ -573,6 +566,13 @@ export class AgentManager {
             /* ignore completion side-effect errors */
           }
           this.drainQueue();
+        } else {
+          record.resultConsumed = true;
+          try {
+            this.onComplete?.(record);
+          } catch {
+            /* ignore completion side-effect errors */
+          }
         }
         return responseText;
       })
@@ -610,13 +610,13 @@ export class AgentManager {
 
         // Fire onComplete for foreground agents too — lifecycle symmetry.
         // Mark resultConsumed so the callback skips notifications (result returned inline).
-        if (!options.isBackground) {
-          record.resultConsumed = true;
-          this.onComplete?.(record);
-        } else {
+        if (options.isBackground) {
           if (occupiesPoolSlot(record)) this.runningBackground--;
           this.onComplete?.(record);
           this.drainQueue();
+        } else {
+          record.resultConsumed = true;
+          this.onComplete?.(record);
         }
         return "";
       });
