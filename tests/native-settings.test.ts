@@ -70,6 +70,7 @@ const ROWS: SettingItem[] = [
   { id: "tui-mode", label: "TUI mode", currentValue: "regular", values: ["regular", "fullscreen"] },
   { id: "autocompact", label: "Auto-compact", currentValue: "true", values: ["true", "false"] },
   { id: "thinking", label: "Thinking level", currentValue: "high" },
+  { id: "model-thinking", label: "Default thinking level per model", currentValue: "9 configured" },
   {
     id: "skill-commands",
     label: "Skill commands",
@@ -137,7 +138,12 @@ test(
     // A section Pi owns needs no source header: its rows come first.
     assert.deepEqual(sectionRowIds(sections, "terminal"), ["tui-mode"]);
     assert.deepEqual(sectionRowIds(sections, "session"), ["autocompact"]);
-    assert.deepEqual(sectionRowIds(sections, "model"), ["piModel", "piScopedModels", "thinking"]);
+    assert.deepEqual(sectionRowIds(sections, "model"), [
+      "piModel",
+      "piScopedModels",
+      "thinking",
+      "model-thinking",
+    ]);
     assert.deepEqual(sectionRowIds(sections, "tools"), ["skill-commands"]);
     // A row no layout entry claims must stay reachable.
     assert.deepEqual(sectionRowIds(sections, "pi"), ["future-row"]);
@@ -250,5 +256,34 @@ test(
     assert.equal(row?.currentValue, "gpt-5.6-luna");
     const submenu = row?.submenu?.("gpt-5.6-luna", () => {});
     assert.deepEqual(submenu?.render(40), ["", "Scope: all | scoped", "> "]);
+  }),
+);
+
+test(
+  "a missing native reasoning row is restored in the Model section",
+  withPatchedPrototype(fakeNativeSettings(ROWS.filter((row) => row.id !== "thinking"), []), () => {
+    installNativeSettingsBridge(() => {});
+    const picker = {
+      render: () => [RULE, "Reasoning effort", "> high", RULE],
+      invalidate: () => {},
+      handleInput: () => {},
+    };
+    const host = reinterpretHostValue<NativeSettingsHost>({
+      session: { thinkingLevel: "high" },
+      showThinkingSelector(this: NativeSettingsHost) {
+        this.showSelector(() => ({ component: picker, focus: picker }));
+      },
+    });
+    reinterpretHostValue<(this: NativeSettingsHost) => void>(
+      prototypeRecord()["showSettingsSelector"],
+    ).call(host);
+
+    const row = buildNativeSettingsSections()
+      .find((section) => section.id === "model")
+      ?.buildItems()
+      .find((item) => item.id === "thinking");
+    assert.equal(row?.label, "Reasoning effort");
+    assert.equal(row?.currentValue, "high");
+    assert.deepEqual(row?.submenu?.("high", () => {}).render(40), ["Reasoning effort", "> high"]);
   }),
 );
