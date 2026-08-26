@@ -1,8 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Api, AssistantMessage, Model, UserMessage } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AssistantMessage,
+  Model,
+  ToolResultMessage,
+  UserMessage,
+} from "@earendil-works/pi-ai";
 import type { AgentSession, AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
 import { initTheme } from "@earendil-works/pi-coding-agent";
+import {
+  getKeybindings,
+  KeybindingsManager,
+  setKeybindings,
+  stripTerminalSequences,
+  TUI_KEYBINDINGS,
+} from "@earendil-works/pi-tui";
 import type { AgentRecord } from "../src/types.ts";
 import { continueRunningAgentNavigation, FocusedAgentController } from "../src/ui/focus-mode.ts";
 import {
@@ -55,6 +68,24 @@ function makeAssistantMessage(text: string): AssistantMessage {
     stopReason: "stop",
     timestamp: Date.now(),
   };
+}
+
+function makeToolMessage(id: string, output: string): [AssistantMessage, ToolResultMessage] {
+  return [
+    {
+      ...makeAssistantMessage(""),
+      content: [{ type: "toolCall", id, name: "read", arguments: { path: `${id}.ts` } }],
+      stopReason: "toolUse",
+    },
+    {
+      role: "toolResult",
+      toolCallId: id,
+      toolName: "read",
+      content: [{ type: "text", text: output }],
+      isError: false,
+      timestamp: Date.now(),
+    },
+  ];
 }
 
 test("focus survives Esc and restores exact predecessors on exit", async (t) => {
@@ -338,6 +369,213 @@ test("/exit at a focused prompt stops the agent instead of quitting pi", () => {
   assert.deepEqual(controller.getState(), { kind: "orchestrator" }, "and leaves focus");
   assert.equal(orchestratorInputs.includes("\r"), false, "pi never sees the command");
   assert.match(notifications.at(-1) ?? "", /Stopped @implementer/);
+});
+
+test("focus switch isolates expansion, dequeue, pending UI, subscriptions, and input ownership", (t) => {
+  const originalKeybindings = getKeybindings();
+  const focusedKey = "\x05"; // ctrl+e, configured below instead of relying on Ctrl+O.
+  const dequeueKey = "\x04"; // ctrl+d, configured below instead of relying on the host default.
+  setKeybindings(
+    new KeybindingsManager(
+      {
+        ...TUI_KEYBINDINGS,
+        "app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
+        "app.message.dequeue": { defaultKeys: "alt+down", description: "Dequeue message" },
+      },
+      { "app.tools.expand": "ctrl+e", "app.message.dequeue": "ctrl+d" },
+    ),
+  );
+  t.after(() => setKeybindings(originalKeybindings));
+
+  const longOutput = (prefix: string) =>
+    Array.from(
+      { length: 30 },
+      (_, index) => `${prefix}-${String(index + 1).padStart(2, "0")}`,
+    ).join("\n");
+  const makeFocusedSession = (id: string) => {
+    const listeners = new Set<AgentSessionEventListener>();
+    const steering = [`${id} steering`];
+    const followUp = [`${id} follow-up`];
+    const messages: AgentSession["messages"] = [
+      makeUserMessage(`${id} task`),
+      ...makeToolMessage(`${id}-tool`, longOutput(`${id}-tool`)),
+    ];
+    const session = partialFixture<AgentSession>({
+      thinkingLevel: "medium",
+      messages,
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSteeringMessages: () => steering,
+      getFollowUpMessages: () => followUp,
+      getToolDefinition: () => undefined,
+      sessionManager: partialFixture<AgentSession["sessionManager"]>({
+        getCwd: () => "/project",
+      }),
+    });
+    return {
+      session,
+      listeners,
+      fire: () => {
+        for (const listener of listeners) listener({ type: "agent_settled" });
+      },
+    };
+  };
+
+  const a = makeFocusedSession("A");
+  const b = makeFocusedSession("B");
+  const makeRecord = (id: string, session: AgentSession) =>
+    partialFixture<AgentRecord>({
+      id,
+      type: "implementer",
+      handle: id.toLowerCase(),
+      description: `${id} focused work`,
+      status: "running",
+      toolUses: 1,
+      startedAt: Date.now(),
+      lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+      compactionCount: 0,
+      session,
+    });
+  const recordA = makeRecord("A", a.session);
+  const recordB = makeRecord("B", b.session);
+  const records = new Map([
+    [recordA.id, recordA],
+    [recordB.id, recordB],
+  ]);
+
+  const orchestratorRender = (_width: number) => ["MAIN TRANSCRIPT"];
+  const document = { render: orchestratorRender };
+  const orchestratorPendingRender = (_width: number) => ["MAIN STEERING"];
+  const pendingMessages = { render: orchestratorPendingRender };
+  const mainSubmits: string[] = [];
+  const focusedSteers: Array<{ id: string; message: string }> = [];
+  const mainPendingQueue = ["MAIN QUEUED"];
+  let mainExpanded = false;
+  let mainExpandActions = 0;
+  let mainDequeueActions = 0;
+  const editor = {
+    text: "main draft",
+    onSubmit(text: string) {
+      mainSubmits.push(text);
+    },
+    getText() {
+      return this.text;
+    },
+    setText(text: string) {
+      this.text = text;
+    },
+    addToHistory(_text: string) {},
+    handleInput(data: string) {
+      if (data === focusedKey) {
+        mainExpanded = !mainExpanded;
+        mainExpandActions += 1;
+      }
+      if (data === dequeueKey) {
+        mainDequeueActions += 1;
+        this.text = mainPendingQueue.shift() ?? this.text;
+      }
+      if (data === "\r") this.onSubmit?.(this.text);
+    },
+  };
+  const orchestratorInput = editor.handleInput;
+  const editorContainer = { children: [editor], render: (): string[] => [] };
+  const tui = {
+    children: [document, pendingMessages, editorContainer],
+    terminal: { columns: 120, rows: 40 },
+    getFocusedComponent: () => editor,
+    requestRender() {},
+  };
+  const controller = new FocusedAgentController(
+    {
+      steer(id, message) {
+        focusedSteers.push({ id, message });
+        return records.get(id)?.status === "running";
+      },
+      abort: () => true,
+      async resume() {
+        return undefined;
+      },
+    },
+    { hasSwitcher: () => true },
+  );
+  t.after(() => controller.dispose());
+  controller.setUICtx({ setWidget() {}, notify() {} });
+  const renderDocument = () =>
+    document
+      .render(120)
+      .map((line) => stripTerminalSequences(line))
+      .join("\n");
+  const renderPending = () =>
+    pendingMessages
+      .render(120)
+      .map((line) => stripTerminalSequences(line))
+      .join("\n");
+
+  // SAFETY: The focus controller uses only TUI/theme members implemented by these fixtures.
+  assert.equal(controller.focus(recordA, tui as never, theme as never), true);
+  assert.equal(a.listeners.size, 1);
+  assert.equal(renderPending().includes("MAIN STEERING"), false);
+  assert.match(renderPending(), /A steering/);
+  assert.match(renderPending(), /A follow-up/);
+  assert.doesNotMatch(renderPending(), /B steering/);
+  assert.doesNotMatch(renderDocument(), /A-tool-30/);
+
+  editor.handleInput(focusedKey);
+  assert.equal(mainExpandActions, 0, "focused expand never invokes the main action");
+  assert.equal(mainExpanded, false, "focused expand never mutates main state");
+  assert.match(renderDocument(), /A-tool-30/);
+
+  editor.handleInput(dequeueKey);
+  assert.equal(mainDequeueActions, 0, "focused dequeue never invokes the main action");
+  assert.deepEqual(mainPendingQueue, ["MAIN QUEUED"], "hidden main queue stays unchanged");
+  assert.equal(editor.getText(), "", "hidden main message never enters the focused editor");
+
+  // SAFETY: The focus controller uses only TUI/theme members implemented by these fixtures.
+  assert.equal(controller.focus(recordB, tui as never, theme as never), true);
+  assert.equal(a.listeners.size, 0, "A subscription is synchronously disposed");
+  assert.equal(b.listeners.size, 1);
+  assert.match(renderDocument(), /B task/);
+  assert.doesNotMatch(renderDocument(), /A task/);
+  assert.doesNotMatch(renderDocument(), /B-tool-30/, "B starts independently collapsed");
+  assert.match(renderPending(), /B steering/);
+  assert.doesNotMatch(renderPending(), /A steering|MAIN STEERING/);
+
+  editor.setText("message after switch");
+  editor.handleInput("\r");
+  assert.deepEqual(focusedSteers, [{ id: "B", message: "message after switch" }]);
+  assert.deepEqual(mainSubmits, []);
+
+  // SAFETY: The focus controller uses only TUI/theme members implemented by these fixtures.
+  assert.equal(controller.focus(recordA, tui as never, theme as never), true);
+  assert.equal(b.listeners.size, 0, "B subscription is synchronously disposed");
+  assert.equal(a.listeners.size, 1);
+  assert.match(renderDocument(), /A-tool-30/, "returning to A restores A expansion");
+  const [newToolCall, newToolResult] = makeToolMessage("A-new-tool", longOutput("A-new"));
+  a.session.messages.push(newToolCall, newToolResult);
+  a.fire();
+  assert.match(renderDocument(), /A-new-30/, "new tool output honors A expansion state");
+
+  controller.unfocus();
+  assert.equal(a.listeners.size, 0);
+  assert.equal(document.render, orchestratorRender);
+  assert.equal(pendingMessages.render, orchestratorPendingRender);
+  assert.equal(editor.handleInput, orchestratorInput);
+  assert.deepEqual(document.render(120), ["MAIN TRANSCRIPT"]);
+  assert.deepEqual(pendingMessages.render(120), ["MAIN STEERING"]);
+  assert.equal(editor.getText(), "main draft");
+
+  editor.handleInput(focusedKey);
+  assert.equal(mainExpandActions, 1, "the next expand action belongs to main again");
+  assert.equal(mainExpanded, true);
+  editor.handleInput(dequeueKey);
+  assert.equal(mainDequeueActions, 1, "the next dequeue action belongs to main again");
+  assert.deepEqual(mainPendingQueue, []);
+  assert.equal(editor.getText(), "MAIN QUEUED");
+  editor.setText("main submit restored");
+  editor.handleInput("\r");
+  assert.deepEqual(mainSubmits, ["main submit restored"]);
 });
 
 test("focused running-agent navigation does not reopen a key-consuming selector", async () => {

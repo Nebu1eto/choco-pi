@@ -1,4 +1,4 @@
-import { Key, matchesKey, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
+import { getKeybindings, Key, matchesKey, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { AgentRecord } from "../types.ts";
@@ -70,6 +70,7 @@ type ActiveFocus = {
   tui: TUI;
   viewer: ConversationViewer;
   document: RenderTarget;
+  pendingMessages: RenderTarget | undefined;
 };
 
 /**
@@ -149,6 +150,18 @@ function findDocument(tui: TUI): RenderTarget | undefined {
   return isRenderTarget(candidate) ? candidate : undefined;
 }
 
+/** Pi mounts pending messages immediately after the transcript document. */
+function findPendingMessages(tui: TUI, document: RenderTarget): RenderTarget | undefined {
+  // SAFETY: findDocument returns this value directly from tui.children after checking render().
+  const documentIndex = tui.children.indexOf(document as TUI["children"][number]);
+  const candidate = documentIndex < 0 ? undefined : tui.children[documentIndex + 1];
+  if (!isRenderTarget(candidate)) return undefined;
+  // Small host fixtures and alternate renderers may put the editor directly
+  // after the document. Never replace a root that owns prompt input.
+  if (isEditorLike(candidate) || childrenOf(candidate).some(isEditorLike)) return undefined;
+  return candidate;
+}
+
 function findEditor(tui: TUI): EditorLike | undefined {
   // SAFETY: Pi's TUI may expose this optional private accessor; its result is parsed by isEditorLike.
   const getFocused = (tui as TUIWithFocusedComponent).getFocusedComponent;
@@ -181,11 +194,13 @@ export class FocusedAgentController {
   private ui: FocusUICtx | undefined;
   private active: ActiveFocus | undefined;
   private restoreDocument: (() => void) | undefined;
+  private restorePendingMessages: (() => void) | undefined;
   private restoreEditor: (() => void) | undefined;
   private clearFocusedRuntime: (() => void) | undefined;
   private patchedEditor: EditorLike | undefined;
   /** Main prompt draft held outside the focused editor and restored on exit. */
   private orchestratorEditorText: string | undefined;
+  private toolOutputExpandedByAgent = new Map<string, boolean>();
   private manager: FocusManager;
   private options: FocusControllerOptions;
 
@@ -225,6 +240,7 @@ export class FocusedAgentController {
       this.ui?.notify("Could not locate Pi's conversation area for agent focus.", "warning");
       return false;
     }
+    const pendingMessages = findPendingMessages(tui, document);
 
     this.restoreOrchestrator("silent");
     const viewer = new ConversationViewer(
@@ -237,9 +253,12 @@ export class FocusedAgentController {
       undefined,
       undefined,
       undefined,
-      { profile: "focus" },
+      {
+        profile: "focus",
+        toolOutputExpanded: this.toolOutputExpandedByAgent.get(record.id) ?? false,
+      },
     );
-    this.active = { record, tui, viewer, document };
+    this.active = { record, tui, viewer, document, pendingMessages };
 
     this.restoreDocument = installMethodPatch(
       document,
@@ -251,6 +270,17 @@ export class FocusedAgentController {
         return viewer.render(width);
       },
     );
+    if (pendingMessages) {
+      this.restorePendingMessages = installMethodPatch(
+        pendingMessages,
+        "render",
+        "focused-conversation-render",
+        ({ args }) => {
+          const width = hostNumber(args[0]) ?? tui.terminal.columns;
+          return viewer.renderPendingMessages(width);
+        },
+      );
+    }
     this.ensureEditorPatch();
     this.installIndicator(record);
     this.clearFocusedRuntime = publishFocusedAgentRuntime(() =>
@@ -285,6 +315,9 @@ export class FocusedAgentController {
       editor.setText(this.orchestratorEditorText);
     }
     this.orchestratorEditorText = undefined;
+    this.toolOutputExpandedByAgent.set(previous.record.id, previous.viewer.getToolOutputExpanded());
+    this.restorePendingMessages?.();
+    this.restorePendingMessages = undefined;
     this.restoreDocument?.();
     this.restoreDocument = undefined;
     previous.viewer.dispose();
@@ -294,6 +327,7 @@ export class FocusedAgentController {
 
   dispose(): void {
     this.restoreOrchestrator("silent");
+    this.toolOutputExpandedByAgent.clear();
     this.ui = undefined;
   }
 
@@ -319,6 +353,22 @@ export class FocusedAgentController {
         const data = hostString(args[0]) ?? "";
         // SAFETY: This adapter is installed only on the EditorLike value found above.
         const submitTarget = receiver as EditorLike;
+        const keybindings = getKeybindings();
+        // Pi's root dequeue action moves a pending main-session message into the
+        // editor. While that pending renderer is replaced, claim its configured
+        // key too so hidden orchestrator state cannot enter the focused prompt.
+        if (
+          this.active.pendingMessages !== undefined &&
+          keybindings.matches(data, "app.message.dequeue")
+        ) {
+          return undefined;
+        }
+        // The predecessor owns Pi's main toolOutputExpanded action. Claim the
+        // configured action first so fullscreen focus toggles only its viewer.
+        if (keybindings.matches(data, "app.tools.expand")) {
+          this.active.viewer.toggleToolOutputExpanded();
+          return undefined;
+        }
         // `/exit` addressed to a focused agent means "end this agent", not "quit
         // pi" — the prompt belongs to the subagent while focus is active. Claim
         // it before the predecessor so Pi's own command dispatch never sees it.

@@ -330,6 +330,107 @@ test("focus profile renders the frameless main-transcript look", () => {
   viewer.dispose();
 });
 
+test("focused pending messages render only their first terminal line", () => {
+  const { session } = makeSession([]);
+  Object.assign(session, {
+    getSteeringMessages: () => ["steer first\nsteer hidden"],
+    getFollowUpMessages: () => ["follow first\nfollow hidden"],
+  });
+  const viewer = new ConversationViewer(
+    makeTui(),
+    session,
+    makeRecord(session, "running"),
+    undefined,
+    theme,
+    () => {},
+    undefined,
+    undefined,
+    undefined,
+    { profile: "focus" },
+  );
+
+  assert.deepEqual(viewer.renderPendingMessages(120).map(stripTerminalSequences), [
+    "",
+    " Steering: steer first",
+    " Follow-up: follow first",
+  ]);
+  viewer.dispose();
+});
+
+test("viewer expansion applies to existing and newly arriving tool and bash rows", () => {
+  const longOutput = (prefix: string) =>
+    Array.from(
+      { length: 30 },
+      (_, index) => `${prefix}-${String(index + 1).padStart(2, "0")}`,
+    ).join("\n");
+  const messages: unknown[] = [
+    makeAssistantMessage(
+      [{ type: "toolCall", id: "initial-tool", name: "read", arguments: { path: "file.ts" } }],
+      "toolUse",
+    ),
+    makeToolResult("initial-tool", longOutput("initial-tool")),
+    {
+      role: "bashExecution",
+      command: "initial bash",
+      output: longOutput("initial-bash"),
+      exitCode: 0,
+      cancelled: false,
+      truncated: false,
+    },
+  ];
+  const { session, fire } = makeSession(messages);
+  const viewer = new ConversationViewer(
+    makeTui(),
+    session,
+    makeRecord(session),
+    undefined,
+    theme,
+    () => {},
+    undefined,
+    undefined,
+    undefined,
+    { profile: "focus" },
+  );
+  const rendered = () =>
+    viewer
+      .render(120)
+      .map((line) => stripTerminalSequences(line))
+      .join("\n");
+
+  assert.doesNotMatch(rendered(), /initial-tool-30/);
+  assert.doesNotMatch(rendered(), /initial-bash-01/);
+
+  viewer.setToolOutputExpanded(true);
+  assert.equal(viewer.getToolOutputExpanded(), true);
+  assert.match(rendered(), /initial-tool-30/);
+  assert.match(rendered(), /initial-bash-01/);
+
+  messages.push(
+    makeAssistantMessage(
+      [{ type: "toolCall", id: "new-tool", name: "read", arguments: { path: "new.ts" } }],
+      "toolUse",
+    ),
+    makeToolResult("new-tool", longOutput("new-tool")),
+    {
+      role: "bashExecution",
+      command: "new bash",
+      output: longOutput("new-bash"),
+      exitCode: 0,
+      cancelled: false,
+      truncated: false,
+    },
+  );
+  fire();
+  assert.match(rendered(), /new-tool-30/, "new tool inherits expanded state");
+  assert.match(rendered(), /new-bash-01/, "new bash row inherits expanded state");
+
+  viewer.toggleToolOutputExpanded();
+  assert.equal(viewer.getToolOutputExpanded(), false);
+  assert.doesNotMatch(rendered(), /new-tool-30/);
+  assert.doesNotMatch(rendered(), /new-bash-01/);
+  viewer.dispose();
+});
+
 test("invalidate drops the caches and re-renders identically", () => {
   const { session } = makeSession([
     makeUserMessage("Hello **there**."),

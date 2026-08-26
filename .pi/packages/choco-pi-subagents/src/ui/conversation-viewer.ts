@@ -75,6 +75,12 @@ function parseHostString(value: any): string | undefined {
   return Value.Check(HostStringSchema, value) ? value : undefined;
 }
 
+/** Match pi-tui TruncatedText: a pending entry is always one terminal row. */
+function firstTerminalLine(text: string): string {
+  const newlineIndex = text.indexOf("\n");
+  return newlineIndex === -1 ? text : text.slice(0, newlineIndex);
+}
+
 interface BashExecutionTrace {
   command: string;
   output?: string;
@@ -111,6 +117,8 @@ export type ConversationViewerOptions = {
   allowReplyWhenFinished?: boolean;
   /** User-facing verb for the composer affordance. */
   replyLabel?: "steer" | "reply";
+  /** Initial tool/bash expansion state, retained by fullscreen focus per agent. */
+  toolOutputExpanded?: boolean;
 };
 
 export class ConversationViewer implements Component {
@@ -136,6 +144,9 @@ export class ConversationViewer implements Component {
   /** Rendered lines per message + width; dropped when a tool result lands. */
   private messageLineCache = new Map<object, { width: number; lines: string[] }>();
   private toolComponents = new Map<string, ToolExecutionComponent>();
+  /** Tool and bash rows that follow this viewer's expansion state. */
+  private expandableComponents = new Set<ToolExecutionComponent | BashExecutionComponent>();
+  private toolOutputExpanded: boolean;
   /** Tool calls whose result (real or synthesized error) has been applied. */
   private settledTools = new Set<string>();
   /** toolCallId -> owning assistant message, for line-cache invalidation. */
@@ -206,6 +217,7 @@ export class ConversationViewer implements Component {
     this.onFocus = options.onFocus;
     this.allowReplyWhenFinished = options.allowReplyWhenFinished === true;
     this.replyLabel = options.replyLabel ?? "steer";
+    this.toolOutputExpanded = options.toolOutputExpanded === true;
 
     this.wasRunning = this.record.status === "running";
     this.keys = createViewerKeys(keybindings);
@@ -297,6 +309,42 @@ export class ConversationViewer implements Component {
       return this.buildContentLines(width);
     }
     return this.renderOverlay(width);
+  }
+
+  /** Toggle only this conversation's tool and bash rows. */
+  toggleToolOutputExpanded(): void {
+    this.setToolOutputExpanded(!this.toolOutputExpanded);
+  }
+
+  setToolOutputExpanded(expanded: boolean): void {
+    this.toolOutputExpanded = expanded;
+    for (const component of this.expandableComponents) component.setExpanded(expanded);
+    this.messageLineCache.clear();
+    this.contentCache = undefined;
+    this.contentDirty = true;
+    this.tui.requestRender();
+  }
+
+  getToolOutputExpanded(): boolean {
+    return this.toolOutputExpanded;
+  }
+
+  /** Focus-mode replacement for Pi's root pending-message sibling. */
+  renderPendingMessages(width: number): string[] {
+    const steeringMessages = this.session.getSteeringMessages();
+    const followUpMessages = this.session.getFollowUpMessages();
+    if (steeringMessages.length === 0 && followUpMessages.length === 0) return [];
+
+    const lines = [""];
+    for (const message of steeringMessages) {
+      const line = firstTerminalLine(message);
+      lines.push(truncateToWidth(` ${this.theme.fg("dim", `Steering: ${line}`)}`, width));
+    }
+    for (const message of followUpMessages) {
+      const line = firstTerminalLine(message);
+      lines.push(truncateToWidth(` ${this.theme.fg("dim", `Follow-up: ${line}`)}`, width));
+    }
+    return lines;
   }
 
   private renderOverlay(width: number): string[] {
@@ -454,6 +502,7 @@ export class ConversationViewer implements Component {
     this.messageComponents.clear();
     this.messageLineCache.clear();
     this.toolComponents.clear();
+    this.expandableComponents.clear();
     this.settledTools.clear();
     this.toolOwners.clear();
     this.lastTailRenderAt = 0;
@@ -641,7 +690,9 @@ export class ConversationViewer implements Component {
               );
               tool.setArgsComplete();
               tool.markExecutionStarted();
+              tool.setExpanded(this.toolOutputExpanded);
               this.toolComponents.set(content.id, tool);
+              this.expandableComponents.add(tool);
               this.toolOwners.set(content.id, msg);
             }
             components.push(tool);
@@ -696,6 +747,10 @@ export class ConversationViewer implements Component {
       // A streaming bash message keeps mutating in place; rebuild it each
       // budget tick. Settled ones keep their component (and its cache).
       if (!this.messageComponents.has(msg) || (isTail && renderTail)) {
+        const previous = this.messageComponents.get(msg)?.[0];
+        if (previous instanceof BashExecutionComponent) {
+          this.expandableComponents.delete(previous);
+        }
         const component = new BashExecutionComponent(
           bash.command,
           this.tui,
@@ -708,7 +763,9 @@ export class ConversationViewer implements Component {
           ? ({ truncated: true } as Parameters<BashExecutionComponent["setComplete"]>[2])
           : undefined;
         component.setComplete(bash.exitCode, bash.cancelled, truncation, bash.fullOutputPath);
+        component.setExpanded(this.toolOutputExpanded);
         this.messageComponents.set(msg, [component]);
+        this.expandableComponents.add(component);
         this.messageLineCache.delete(msg);
       }
     }
