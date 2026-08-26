@@ -104,7 +104,12 @@ export interface NestedAgentManager {
   getScheduledActiveCount(): number;
   getMaxConcurrent(): number;
   abort(id: string): boolean;
-  resume(id: string, prompt: string, signal?: AbortSignal): Promise<AgentRecord | undefined>;
+  resume(
+    id: string,
+    prompt: string,
+    signal?: AbortSignal,
+    options?: { name?: string },
+  ): Promise<AgentRecord | undefined>;
 }
 
 export interface NestedToolContext {
@@ -185,7 +190,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       name: Type.Optional(
         Type.String({
           description:
-            "Callers SHOULD name every spawn with a distinct short kebab-case goal label: `role-goal`, one to three dash-joined words (e.g. `implementer-limits-core` or `reviewer-e2e-validation`). It becomes the alias, agent_message/steering address, and fleet label; collisions are globally auto-numbered, and allowed characters are letters, digits, `_`, and `-`.",
+            "Callers SHOULD name every spawn with a distinct short kebab-case goal label: `role-goal`, one to three dash-joined words (e.g. `implementer-limits-core` or `reviewer-e2e-validation`). It becomes the alias, agent_message/steering address, and fleet label. With `resume`, supplying `name` explicitly renames that existing alias; omitting `name` preserves it. Collisions are globally auto-numbered, and allowed characters are letters, digits, `_`, and `-`.",
         }),
       ),
       subagent_type: Type.String({
@@ -196,7 +201,10 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       max_turns: Type.Optional(Type.Number({ minimum: 1 })),
       run_in_background: Type.Optional(Type.Boolean()),
       resume: Type.Optional(
-        Type.String({ description: "Resume a nested agent owned by this parent." }),
+        Type.String({
+          description:
+            "Resume a nested agent owned by this parent. Supplying `name` explicitly renames its alias; omitting `name` preserves it.",
+        }),
       ),
       isolated: Type.Optional(Type.Boolean()),
       inherit_context: Type.Optional(Type.Boolean()),
@@ -211,10 +219,22 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
             true,
           );
         }
-        const resumed = await context.manager.resume(params.resume, params.prompt, signal);
-        return resumed
-          ? textResult(formatRecord(resumed, "inline"), resumed.status === "error")
-          : textResult(`Failed to resume nested agent "${params.resume}".`, true);
+        if (existing.status === "running" || existing.status === "queued") {
+          return textResult(
+            `Nested agent "${params.resume}" is still ${existing.status} — it can only be resumed once its current run finishes.\n` +
+              `Use get_subagent_result with wait: true to wait, or steer_subagent to send it a message mid-run.`,
+            true,
+          );
+        }
+        const resumed = await context.manager.resume(params.resume, params.prompt, signal, {
+          name: params.name,
+        });
+        if (!resumed) return textResult(`Failed to resume nested agent "${params.resume}".`, true);
+        const address = resumed.alias ?? resumed.handle ?? resumed.id;
+        return textResult(
+          `Agent alias: @${address}\n\n${formatRecord(resumed, "inline")}`,
+          resumed.status === "error",
+        );
       }
 
       if (context.depth >= context.maxSubagentDepth) {

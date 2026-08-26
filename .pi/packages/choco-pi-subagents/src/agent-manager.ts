@@ -192,6 +192,8 @@ interface SpawnOptions {
 }
 
 interface ResumeOptions {
+  /** Rebind the accepted record's alias for this resumed run. */
+  name?: string;
   /**
    * Run the resumed turn detached in the background: return immediately with
    * the record still "running" (or "queued" at the concurrency limit) and
@@ -327,7 +329,23 @@ export class AgentManager {
       maxSubagentDepth: options.maxSubagentDepth,
       rootSessionId: options.rootSessionId,
     };
+    const reclaimedTombstone =
+      options.parentAgentId === undefined && options.reclaim !== undefined
+        ? this.tombstones.get(options.reclaim.handle)
+        : undefined;
+    let previousTombstoneId: string | undefined;
     this.agents.set(id, record);
+    // The retained tombstone now describes this live incarnation. Besides
+    // proving ownership for later alias rebinding, moving its id prevents the
+    // evicted id from reopening a duplicate while this reclaimed record exists.
+    if (
+      reclaimedTombstone !== undefined &&
+      reclaimedTombstone.handle === record.handle &&
+      reclaimedTombstone.alias === record.alias
+    ) {
+      previousTombstoneId = reclaimedTombstone.id;
+      reclaimedTombstone.id = id;
+    }
     // After the insert, so `takenHandles()` already counts this record's own
     // handle — a spawn named after its own type gets `explore-2`, not a
     // duplicate `explore` that would make resolution ambiguous.
@@ -356,6 +374,13 @@ export class AgentManager {
       this.startAgent(id, record, args);
     } catch (err) {
       this.agents.delete(id);
+      if (
+        previousTombstoneId !== undefined &&
+        reclaimedTombstone !== undefined &&
+        reclaimedTombstone.id === id
+      ) {
+        reclaimedTombstone.id = previousTombstoneId;
+      }
       throw err;
     }
     return id;
@@ -687,6 +712,28 @@ export class AgentManager {
     const record = this.agents.get(id);
     if (!record?.session) return undefined;
 
+    // A live run cannot be resumed safely in either mode: it owns the record's
+    // abort controller and session prompt. Refuse before changing its alias or
+    // any run state so a failed attempt leaves every address intact.
+    if (record.status === "running" || record.status === "queued") return undefined;
+
+    if (options?.name !== undefined) {
+      const previousAlias = record.alias;
+      const nextAlias = assignHandle(
+        handleBase(options.name),
+        this.takenHandles(record.parentAgentId, record),
+      );
+      const ownTombstone = record.handle ? this.tombstones.get(record.handle) : undefined;
+      if (
+        ownTombstone?.id === record.id &&
+        ownTombstone.handle === record.handle &&
+        ownTombstone.alias === previousAlias
+      ) {
+        ownTombstone.alias = nextAlias;
+      }
+      record.alias = nextAlias;
+    }
+
     // Background resume: settle asynchronously and notify on completion exactly
     // like a background spawn, returning immediately with the record still
     // "running" — or "queued" when at the concurrency limit. Previously
@@ -694,17 +741,6 @@ export class AgentManager {
     // returned before its background branch, and resume() only ever awaited
     // inline), so a resumed agent always blocked the caller until it finished.
     if (options?.isBackground) {
-      // Never re-enter a run that is still in flight. Detaching means the caller
-      // gets control back while the record stays "running", so nothing stops the
-      // model from resuming the same agent again. Starting a second run would
-      // overwrite record.abortController — orphaning the live run beyond the
-      // reach of `/agents` stop and abortAll() — double-count the pool slot, and
-      // then reject from session.prompt() with "Agent is already processing",
-      // whose settle path would abort the LIVE run's children and report a
-      // failure for a run that is still going. Refuse instead, leaving the
-      // record untouched; the caller decides whether to wait or steer.
-      if (record.status === "running" || record.status === "queued") return undefined;
-
       record.isBackground = true;
       record.resultConsumed = false;
       record.result = undefined;
@@ -900,11 +936,11 @@ export class AgentManager {
   }
 
   /** Handles and aliases already in use across the live tree. */
-  private takenHandles(parentAgentId: string | undefined): Set<string> {
+  private takenHandles(parentAgentId: string | undefined, aliasOwner?: AgentRecord): Set<string> {
     const taken = new Set<string>();
     for (const record of this.agents.values()) {
       if (record.handle) taken.add(record.handle);
-      if (record.alias) taken.add(record.alias);
+      if (record !== aliasOwner && record.alias) taken.add(record.alias);
     }
     // Tombstones hold their names too: an evicted `@explore` is still
     // resurrectable, so a later Explore must become `explore-2` rather than
@@ -912,7 +948,14 @@ export class AgentManager {
     if (parentAgentId === undefined) {
       for (const entry of this.tombstones.values()) {
         taken.add(entry.handle);
-        if (entry.alias) taken.add(entry.alias);
+        // A reclaimed live record and its retained tombstone describe the same
+        // conversation. Exclude that duplicate owner while still reserving all
+        // unrelated tombstone aliases for deterministic collision numbering.
+        const belongsToAliasOwner =
+          aliasOwner?.id === entry.id &&
+          aliasOwner.handle === entry.handle &&
+          aliasOwner.alias === entry.alias;
+        if (entry.alias && !belongsToAliasOwner) taken.add(entry.alias);
       }
     }
     return taken;

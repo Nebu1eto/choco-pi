@@ -1416,7 +1416,7 @@ export default function (pi: ExtensionAPI) {
     ctx: ExtensionContext,
     existing: AgentRecord,
     prompt: string,
-    opts: { outputTranscript: boolean; maxTurns?: number; toolCallId?: string },
+    opts: { outputTranscript: boolean; maxTurns?: number; toolCallId?: string; name?: string },
   ): Promise<AgentRecord | undefined> {
     const id = existing.id;
     const joinMode = resolveJoinMode(defaultJoinMode, true);
@@ -1449,6 +1449,7 @@ export default function (pi: ExtensionAPI) {
     // run_in_background in that same turn keep going.
     const record = await manager.resume(id, prompt, undefined, {
       isBackground: true,
+      name: opts.name,
       onToolActivity: bgCallbacks.onToolActivity,
       onAssistantUsage: bgCallbacks.onAssistantUsage,
       // Fires when the run actually starts — immediately, or on queue
@@ -1767,7 +1768,7 @@ Terse command-style prompts produce shallow, generic work.
       name: Type.Optional(
         Type.String({
           description:
-            "Callers SHOULD name every spawn with a short kebab-case goal label: one to three dash-joined words prefixed by role or purpose, e.g. `implementer-limits-core`, `explorer-guidance`, `reviewer-code`, `reviewer-e2e-validation`. The name becomes the agent's alias, agent_message/steering address, and fleet label. Collisions are globally auto-numbered; choose distinct names so addresses stay meaningful. Letters, digits, `_`, and `-`.",
+            "Callers SHOULD name every spawn with a short kebab-case goal label: one to three dash-joined words prefixed by role or purpose, e.g. `implementer-limits-core`, `explorer-guidance`, `reviewer-code`, `reviewer-e2e-validation`. The name becomes the agent's alias, agent_message/steering address, and fleet label. With `resume`, supplying `name` explicitly renames that existing alias; omitting `name` preserves it. Collisions are globally auto-numbered; choose distinct names so addresses stay meaningful. Letters, digits, `_`, and `-`.",
         }),
       ),
       subagent_type: Type.String({
@@ -1800,7 +1801,7 @@ Terse command-style prompts produce shallow, generic work.
       resume: Type.Optional(
         Type.String({
           description:
-            "Optional agent ID to resume from. Continues from previous context. Combine with run_in_background to resume detached and be notified on completion. An agent can only be resumed once its current run has finished — use steer_subagent to reach one mid-run.",
+            "Optional agent ID to resume from. Continues from previous context. Supplying `name` with `resume` explicitly renames the existing alias; omitting `name` preserves it. Combine with run_in_background to resume detached and be notified on completion. An agent can only be resumed once its current run has finished — use steer_subagent to reach one mid-run.",
         }),
       ),
       isolated: Type.Optional(
@@ -2122,10 +2123,19 @@ Terse command-style prompts produce shallow, generic work.
       if (params.resume) {
         const existing = manager.getRecord(params.resume);
         if (!existing || existing.parentAgentId) {
-          return textResult(`Agent not found: "${params.resume}". It may have been cleaned up.`);
+          return textResult(`Agent not found: "${params.resume}".`);
         }
         if (!existing.session) {
           return textResult(`Agent "${params.resume}" has no active session to resume.`);
+        }
+        // Keep this caller-facing check mode-independent. AgentManager.resume
+        // repeats the guard at the causal boundary so a concurrent state change
+        // still cannot re-enter the live record or rename it.
+        if (existing.status === "running" || existing.status === "queued") {
+          return textResult(
+            `Agent "${params.resume}" is still ${existing.status} — it can only be resumed once its current run finishes.\n` +
+              `Use get_subagent_result with wait: true to wait, or steer_subagent to send it a message mid-run.`,
+          );
         }
 
         // Background resume: detached run that notifies on completion, mirroring
@@ -2134,31 +2144,22 @@ Terse command-style prompts produce shallow, generic work.
         // so a resumed agent always blocked the main loop until it finished.
         if (runInBackground) {
           const id = existing.id;
-          // A detached resume hands control back while the record stays
-          // "running", so nothing stops the model from resuming the same agent
-          // again mid-run. manager.resume() refuses that (it would orphan the
-          // live run's abort controller); say why here, where the model can act
-          // on it, instead of letting it read as a generic failure.
-          if (existing.status === "running" || existing.status === "queued") {
-            return textResult(
-              `Agent "${params.resume}" is still ${existing.status} — it can only be resumed once its current run finishes.\n` +
-                `Use steer_subagent to send it a message mid-run, or get_subagent_result to wait for it.`,
-            );
-          }
-
           const record = await startBackgroundResume(ctx, existing, params.prompt, {
             outputTranscript,
             maxTurns: effectiveMaxTurns,
             toolCallId,
+            name: params.name,
           });
           if (!record) {
             return textResult(`Failed to resume agent "${params.resume}".`);
           }
 
           const isQueued = record.status === "queued";
+          const address = record.alias ?? record.handle ?? record.id;
           return textResult(
             `Agent ${isQueued ? "queued" : "resumed"} in background.\n` +
               `Agent ID: ${id}\n` +
+              `Alias: @${address}\n` +
               `Type: ${existing.type}\n` +
               (record.outputFile ? `Output file: ${record.outputFile}\n` : "") +
               (isQueued
@@ -2179,19 +2180,25 @@ Terse command-style prompts produce shallow, generic work.
           );
         }
 
-        const record = await manager.resume(params.resume, params.prompt, signal);
+        const record = await manager.resume(params.resume, params.prompt, signal, {
+          name: params.name,
+        });
         if (!record) {
           return textResult(`Failed to resume agent "${params.resume}".`);
         }
+        const address = record.alias ?? record.handle ?? record.id;
         // A failed resume surfaces the error, plus any partial output THIS
         // resume produced (never the previous turn's answer, #144).
         if (record.status === "error") {
           return textResult(
-            `Agent failed: ${record.error}${partialOutputSuffix(record)}`,
+            `Agent alias: @${address}\nAgent failed: ${record.error}${partialOutputSuffix(record)}`,
             buildDetails(detailBase, record),
           );
         }
-        return textResult(record.result?.trim() || "No output.", buildDetails(detailBase, record));
+        return textResult(
+          `Agent alias: @${address}\n\n${record.result?.trim() || "No output."}`,
+          buildDetails(detailBase, record),
+        );
       }
 
       // Background execution

@@ -147,7 +147,10 @@ modal also exposes **f focus**. Focus mode uses the existing
 `ConversationViewer` with `profile: "focus"`, so message extraction, tool-call
 rows, nested `Agent` calls, activity text and `session.subscribe()` streaming
 stay on the same data flow. Pi's main transcript scroll view owns clipping and
-follow-end behavior in this profile instead of the modal's 70% viewport.
+follow-end behavior in this profile instead of the modal's 70% viewport. The
+viewer also owns its tool/bash expansion flag and renders the focused session's
+steering and follow-up queues in place of Pi's root pending-message area, with
+each pending value clipped to its first terminal line before width truncation.
 
 ### State machine
 
@@ -179,20 +182,35 @@ record id rather than a child tool call.
 
 ### Host patches held while focused
 
-`ui/focus-mode.ts::FocusedAgentController` holds two instance-scoped adapters:
+`ui/focus-mode.ts::FocusedAgentController` holds three instance-scoped adapters:
 
 1. `focused-conversation-render` wraps Pi's first TUI root, the stable main
    document container, and returns the focused `ConversationViewer` output.
    The orchestrator container and its streaming components remain mounted and
    continue receiving events behind the adapter; no conversation state is
    copied or cleared.
-2. `focused-editor-input` wraps the current editor instance's `handleInput`.
+2. A second instance-local render adapter wraps Pi's root pending-message
+   sibling. It ignores the mounted orchestrator queue while focused and renders
+   only the active child session's live `getSteeringMessages()` and
+   `getFollowUpMessages()` values. While this adapter hides the root queue, the
+   editor adapter also claims the configured `app.message.dequeue` action so Pi
+   cannot move an orchestrator message into the focused prompt. A focus switch
+   restores and disposes the old viewer/subscription before installing the new
+   renderer, so the old child and main queue cannot leak into the next focused
+   frame.
+3. `focused-editor-input` wraps the current editor instance's `handleInput`.
    It snapshots the orchestrator draft, presents an empty focused buffer, and
    temporarily substitutes `onSubmit` only for one predecessor invocation, so
    zentui's `Symbol.for("pi-zentui.*")` factory and the prompt-stash instance
-   wrapper remain in the chain. Esc exits focus. Submit calls the manager steer
-   path and clears the focused buffer only when accepted; exit restores the
-   orchestrator draft.
+   wrapper remain in the chain. Esc follows the switcher rule above. Submit
+   calls the manager steer path and clears the focused buffer only when
+   accepted. Before invoking that predecessor, it resolves
+   `app.message.dequeue` and `app.tools.expand` through pi-tui's live keybinding
+   manager; the former is swallowed while the root queue is hidden and the
+   latter toggles only the active viewer. The controller retains that flag per
+   agent, so switching A → B starts/restores
+   B independently and returning to A restores A. Exit restores the orchestrator
+   draft and leaves Pi's main queue, expansion flag, and actions untouched.
 
 `ui/method-patch-registry.ts` stores adapters under
 `Symbol.for("choco-pi-subagents.method-patch-registry")`. Each wrapper records
@@ -204,13 +222,14 @@ input adapter if another extension legitimately replaces the editor while focus
 is active.
 
 Restoration is ordered: set state to `orchestrator`; deactivate/restore editor
-input; deactivate/restore document render; unsubscribe and dispose the focused
-viewer; clear the `subagent-focus` indicator; request a forced render. This
-prevents a visible orchestrator transcript from briefly retaining subagent
-input ownership. The above-editor indicator renders nothing while FleetView is
-up — the switcher already names the focused agent and its keys — and speaks only
-when the switcher is off, where it is the sole signal focus is active and Esc is
-the exit. FleetView keeps rendering its
+input; retain the viewer's per-agent expansion flag; restore pending and
+document renderers; unsubscribe and dispose the focused viewer; clear the
+`subagent-focus` indicator; request a forced render. This prevents a visible
+orchestrator transcript or queue from briefly retaining subagent ownership. The
+above-editor indicator renders nothing while FleetView is up — the switcher
+already names the focused agent and its keys — and speaks only when the switcher
+is off, where it is the sole signal focus is active and Esc is the exit.
+FleetView keeps rendering its
 rows while focus is active — it is the switcher — and keeps claiming ↑/↓, Enter,
 `f` and Esc through `onTerminalInput` whenever list navigation is active, which
 focusing leaves on. Its cursor is clamped to the focused record's row on every

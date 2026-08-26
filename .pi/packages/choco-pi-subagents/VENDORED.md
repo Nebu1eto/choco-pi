@@ -127,6 +127,15 @@ input predecessor. FleetView therefore keeps rendering and keeps owning ↑/↓ 
 an agent is focused, and Esc neither exits focus nor reaches the main session —
 except with FleetView turned off, where Esc stays the only escape hatch and still
 exits.
+Focus also replaces Pi's root pending-message sibling with only the active
+child session's steering/follow-up queues, clips each entry to its first terminal
+line like Pi's `TruncatedText`, and restores the exact main renderer on exit. While
+that root queue is hidden, the configured `app.message.dequeue` action is claimed
+before the editor so a main-session message cannot move into the focused prompt.
+The configured `app.tools.expand` action is likewise claimed and toggles
+viewer-owned tool/bash rows only. Expansion is retained per agent across A → B →
+A switches; newly created rows inherit it, while Pi's main queue, expansion state,
+and actions are never invoked or mutated.
 The above-editor focus indicator follows the same rule: silent while the switcher
 is up, since it would only repeat it.
 `/exit` (and `/quit`) typed at a focused prompt stops that agent and returns to
@@ -395,12 +404,15 @@ same way, and tool results render inline under their call. Components are
 created incrementally per message identity, tool results patch their pending
 component (real result, or a synthesized error when the run died mid-call), and
 the streaming tail re-renders every frame while a dead run's transcript stays
-cached. `tests/conversation-viewer.test.ts` pins label-free rendering, consumed
-markdown markers, inline tool results, bash blocks, streaming-tail updates,
+cached. Each viewer owns one expansion flag, applies it to existing and newly
+created tool/bash components, and exposes focused pending-queue rendering
+without sharing Pi's main state. `tests/conversation-viewer.test.ts` pins
+label-free rendering, consumed markdown markers, inline tool results, bash
+blocks, streaming-tail updates,
 first-open history hydration and invalidate idempotence;
 `tests/side-conversation.test.ts` and `tests/focus-mode.test.ts` initialize the
 theme because the transcript components read it.
-theme because the transcript components read it. Streaming stays interactive
+Streaming stays interactive
 under pi-tui's ~60 fps paint cadence through three levers: the tail re-renders
 at most every 100 ms (TAIL_RENDER_INTERVAL_MS) and reuses its lines between
 budget ticks; the tail's markdown theme drops syntax highlighting while it
@@ -499,3 +511,17 @@ tree, and re-apply the three mechanical transforms above (identity rename,
 `.js` → `.ts` specifiers, parameter-property desugaring) plus whatever choco-pi
 features have since been added on top. Record the new base version, shasum and
 date here.
+
+### Resume-time alias rebinding
+
+The root and nested `Agent` tools forward `name` when resuming by record id. Once
+the manager accepts that resume, it atomically replaces the record alias with the
+normalized requested name, numbered against other live identities and retained
+tombstones. A reclaimed record also takes ownership of its retained tombstone id;
+subsequent renames update that tombstone only when id, handle, and prior alias all
+match. The type-derived handle remains stable, the prior alias stops resolving,
+and A → B → A reuses unsuffixed A. Omitting `name` preserves the alias, and
+refused or sessionless resume attempts leave it unchanged. Both root resume modes
+and nested inline resumes return the resulting alias; live root/nested records
+instead return the same actionable wait/steer guidance before reaching the
+manager's causal re-entry guard.
