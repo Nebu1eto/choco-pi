@@ -83,35 +83,36 @@ export function applySubagentLimits(
   return formatSubagentLimits(controller);
 }
 
-/** One-line hidden reminder; no active agents means no injected content. */
+/** One-line turn-start snapshot; no active agents means no persisted message. */
 export function buildSubagentReminder(source: SubagentReminderSource): string | undefined {
   const tree = source.getActiveCount();
   if (tree === 0) return undefined;
   const maxDepth = source.getMaxSubagentDepth();
   const position =
-    source.depth === undefined ? "" : `; you are at depth ${source.depth} of ${maxDepth}`;
+    source.depth === undefined ? "" : `; current depth ${source.depth} of ${maxDepth}`;
   return (
-    `<system-reminder>subagents: ${formatActivityCounts(
+    `<system-reminder>Turn-start subagent snapshot (historical after this turn): ${formatActivityCounts(
       source.getScheduledActiveCount(),
       tree,
       source.getMaxConcurrent(),
-    )}; nesting depth limit ${maxDepth}` + `${position}</system-reminder>`
+    )}; inherited depth ceiling ${maxDepth}` + `${position}</system-reminder>`
   );
 }
 
-/** Register a fresh, transcript-free reminder on every model context build. */
-export function registerSubagentReminder(
+/** Persist one hidden status message at each active agent-run start. */
+export function registerSubagentStatusMessage(
   pi: Pick<ExtensionAPI, "on">,
   source: SubagentReminderSource,
 ): void {
-  pi.on("context", (event) => {
+  pi.on("before_agent_start", () => {
     const reminder = buildSubagentReminder(source);
     if (reminder === undefined) return undefined;
     return {
-      messages: [
-        ...event.messages,
-        { role: "user" as const, content: reminder, timestamp: Date.now() },
-      ],
+      message: {
+        customType: "subagent-status",
+        content: reminder,
+        display: false,
+      },
     };
   });
 }

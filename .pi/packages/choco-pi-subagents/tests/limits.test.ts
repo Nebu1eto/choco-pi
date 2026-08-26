@@ -1,13 +1,22 @@
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { isDeepStrictEqual } from "node:util";
+import type { AssistantMessage, UserMessage } from "@earendil-works/pi-ai";
+import {
+  buildSessionContext,
+  SessionManager,
+  type BeforeAgentStartEventResult,
+} from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../src/agent-manager.ts";
 import {
   applySubagentLimits,
   buildSubagentReminder,
   createSubagentLimitsTool,
   MAX_CONCURRENT_SANITY_CAP,
-  registerSubagentReminder,
+  registerSubagentStatusMessage,
   type SubagentLimitController,
+  type SubagentReminderSource,
 } from "../src/limits.ts";
 import { sanitizeSettings } from "../src/settings.ts";
 import type { AgentRecord } from "../src/types.ts";
@@ -33,6 +42,115 @@ function limitController(treeActive = 0, scheduledActive = treeActive): Subagent
     getActiveCount: () => treeActive,
     getScheduledActiveCount: () => scheduledActive,
   };
+}
+
+interface BeforeAgentStartFixture {
+  prompt: string;
+  systemPrompt: string;
+}
+
+type BeforeAgentStartHandler = (
+  event: BeforeAgentStartFixture,
+) => BeforeAgentStartEventResult | undefined;
+
+interface CapturedStatusHandler {
+  registeredEvent: string | undefined;
+  handler: BeforeAgentStartHandler;
+}
+
+function captureSubagentStatusHandler(source: SubagentReminderSource): CapturedStatusHandler {
+  let registeredEvent: string | undefined;
+  let handler: BeforeAgentStartHandler | undefined;
+  // SAFETY: This fake implements the only ExtensionAPI member the registration accesses.
+  registerSubagentStatusMessage(
+    {
+      on(event: string, candidate: BeforeAgentStartHandler) {
+        registeredEvent = event;
+        handler = candidate;
+      },
+    } as never,
+    source,
+  );
+  if (handler === undefined) throw new Error("subagent status handler was not registered");
+  return { registeredEvent, handler };
+}
+
+function assistantMessage(text: string): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: "openai-responses",
+    provider: "openai",
+    model: "test-model",
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+}
+
+function isStrictPrefix<T>(prefix: T[], sequence: T[]): boolean {
+  return (
+    prefix.length < sequence.length &&
+    prefix.every((value, index) => isDeepStrictEqual(value, sequence[index]))
+  );
+}
+
+function assertCacheStablePrefix<T>(requestNWithAssistant: T[], requestNPlusOne: T[]): void {
+  assert.ok(
+    isStrictPrefix(requestNWithAssistant, requestNPlusOne),
+    "request N plus assistant A must strictly prefix the reconstructed request N+1",
+  );
+}
+
+/** Minimal Pi host: hook messages enter through the same persisted channel as agent events. */
+class PersistingSessionHost {
+  private readonly sessionManager = SessionManager.inMemory("/tmp/subagent-status-prefix");
+  private readonly handler: BeforeAgentStartHandler;
+  private readonly persistStatus: boolean;
+
+  constructor(handler: BeforeAgentStartHandler, persistStatus = true) {
+    this.handler = handler;
+    this.persistStatus = persistStatus;
+  }
+
+  startTurn(prompt: string) {
+    const user: UserMessage = { role: "user", content: prompt, timestamp: Date.now() };
+    this.sessionManager.appendMessage(user);
+    const result = this.handler({ prompt, systemPrompt: "system" });
+    if (result?.message) {
+      const { customType, content, display, details } = result.message;
+      if (this.persistStatus) {
+        this.sessionManager.appendCustomMessageEntry(customType, content, display, details);
+      } else {
+        const transient = {
+          role: "custom" as const,
+          customType,
+          content,
+          display,
+          details,
+          timestamp: Date.now(),
+        };
+        return [...this.reconstructOutbound(), transient];
+      }
+    }
+    return this.reconstructOutbound();
+  }
+
+  recordAssistant(message: AssistantMessage) {
+    this.sessionManager.appendMessage(message);
+  }
+
+  private reconstructOutbound() {
+    return buildSessionContext(this.sessionManager.getEntries(), this.sessionManager.getLeafId())
+      .messages;
+  }
 }
 
 test("settings accept maxConcurrent 0 and reject negatives", () => {
@@ -133,7 +251,7 @@ test("subagent_limits gets and sets runtime values with scheduled and tree count
   assert.match(tool.description, /0 means unlimited concurrency/);
 });
 
-test("reminder suppresses zero activity and renders root and nested positions", () => {
+test("reminder suppresses zero activity and renders root and nested turn-start snapshots", () => {
   const base = {
     getMaxConcurrent: () => 0,
     getMaxSubagentDepth: () => 4,
@@ -146,46 +264,115 @@ test("reminder suppresses zero activity and renders root and nested positions", 
       getActiveCount: () => 1,
       getScheduledActiveCount: () => 1,
     }),
-    "<system-reminder>subagents: 1 scheduled / cap unlimited; 1 in tree; nesting depth limit 4</system-reminder>",
+    "<system-reminder>Turn-start subagent snapshot (historical after this turn): 1 scheduled / cap unlimited; 1 in tree; inherited depth ceiling 4</system-reminder>",
   );
   assert.equal(
     buildSubagentReminder({ ...base, getActiveCount: () => 2, depth: 2 }),
-    "<system-reminder>subagents: 0 scheduled / cap unlimited; 2 in tree; nesting depth limit 4; you are at depth 2 of 4</system-reminder>",
+    "<system-reminder>Turn-start subagent snapshot (historical after this turn): 0 scheduled / cap unlimited; 2 in tree; inherited depth ceiling 4; current depth 2 of 4</system-reminder>",
   );
 });
 
-test("reminder registration injects a fresh hidden message on each active context", () => {
-  interface ContextFixture {
-    messages: Array<{ role: string; content: string; timestamp: number }>;
+test("subagents runtime forbids transient context injectors package-wide", () => {
+  const pending = [new URL("../src/", import.meta.url)];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    assert.ok(directory);
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const source = new URL(`${entry.name}${entry.isDirectory() ? "/" : ""}`, directory);
+      if (entry.isDirectory()) {
+        pending.push(source);
+      } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+        assert.doesNotMatch(
+          readFileSync(source, "utf8"),
+          /\.on\s*\(\s*["']context["']/,
+          `${source.pathname} must not register a context handler`,
+        );
+      }
+    }
   }
-  type ContextHandler = (event: ContextFixture) => { messages: ContextFixture["messages"] } | void;
-  let active = 0;
-  let contextHandler: ContextHandler | undefined;
-  // SAFETY: This fake implements the only ExtensionAPI member registerSubagentReminder accesses.
-  registerSubagentReminder(
-    {
-      on(event: string, handler: ContextHandler) {
-        assert.equal(event, "context");
-        contextHandler = handler;
-      },
-    } as never,
-    {
-      getActiveCount: () => active,
-      getScheduledActiveCount: () => active,
-      getMaxConcurrent: () => 4,
-      getMaxSubagentDepth: () => 2,
-    },
-  );
-  assert.ok(contextHandler);
+});
 
-  const baseline = { messages: [{ role: "user", content: "work", timestamp: 1 }] };
-  assert.equal(contextHandler(baseline), undefined);
+test("status registration persists one hidden custom message per active agent-run start", () => {
+  let active = 0;
+  const { registeredEvent, handler } = captureSubagentStatusHandler({
+    getActiveCount: () => active,
+    getScheduledActiveCount: () => active,
+    getMaxConcurrent: () => 4,
+    getMaxSubagentDepth: () => 2,
+  });
+  assert.equal(registeredEvent, "before_agent_start");
+
+  const event = { prompt: "work", systemPrompt: "system" };
+  const originalEvent = { ...event };
+  assert.equal(handler(event), undefined);
+
   active = 1;
-  const first = contextHandler(baseline);
-  const second = contextHandler(baseline);
-  assert.ok(first && second);
-  assert.equal(first.messages.length, 2);
-  assert.equal(second.messages.length, 2, "the prior injection is not accumulated");
+  const first = handler(event);
+  const second = handler(event);
+  const expected = {
+    message: {
+      customType: "subagent-status",
+      content:
+        "<system-reminder>Turn-start subagent snapshot (historical after this turn): 1 scheduled / cap 4; 1 in tree; inherited depth ceiling 2</system-reminder>",
+      display: false,
+    },
+  };
+  assert.deepEqual(first, expected);
+  assert.deepEqual(second, expected);
+  assert.notStrictEqual(first, second, "each agent-run start returns exactly one fresh message");
+  assert.deepEqual(event, originalEvent, "the hook does not mutate event context");
+});
+
+test("persisted handler messages keep reconstructed requests cache-prefix stable", () => {
+  let scheduled = 1;
+  let tree = 1;
+  const { registeredEvent, handler } = captureSubagentStatusHandler({
+    getActiveCount: () => tree,
+    getScheduledActiveCount: () => scheduled,
+    getMaxConcurrent: () => 4,
+    getMaxSubagentDepth: () => 3,
+  });
+  assert.equal(registeredEvent, "before_agent_start");
+  const host = new PersistingSessionHost(handler);
+  const requestN = host.startTurn("P");
+  assert.equal(
+    requestN.some(
+      (message) => message.role === "custom" && message.customType === "subagent-status",
+    ),
+    true,
+    "the outbound reminder must come from a persisted custom-message entry",
+  );
+  const assistant = assistantMessage("A");
+  const requestNWithAssistant = [...requestN, assistant];
+  host.recordAssistant(assistant);
+
+  scheduled = 2;
+  tree = 2;
+  const requestNPlusOne = host.startTurn("P2");
+
+  assertCacheStablePrefix(requestNWithAssistant, requestNPlusOne);
+});
+
+test("cache-prefix proof rejects an outbound-only transient status message", () => {
+  const { handler } = captureSubagentStatusHandler({
+    getActiveCount: () => 1,
+    getScheduledActiveCount: () => 1,
+    getMaxConcurrent: () => 4,
+    getMaxSubagentDepth: () => 3,
+  });
+  const host = new PersistingSessionHost(handler, false);
+  const requestN = host.startTurn("P");
+  const assistant = assistantMessage("A");
+  const requestNWithAssistant = [...requestN, assistant];
+  host.recordAssistant(assistant);
+
+  const requestNPlusOne = host.startTurn("P2");
+
+  assert.throws(
+    () => assertCacheStablePrefix(requestNWithAssistant, requestNPlusOne),
+    /request N plus assistant A must strictly prefix the reconstructed request N\+1/,
+    "the same prefix assertion must fail when provider-visible status is not persisted",
+  );
 });
 
 test("agent widget status compares scheduled and whole-tree active counts", () => {

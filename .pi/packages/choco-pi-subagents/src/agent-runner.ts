@@ -32,7 +32,7 @@ import { runInChildSessionContext } from "./child-context.ts";
 import { buildParentContext, extractText } from "./context.ts";
 import { DEFAULT_AGENTS } from "./default-agents.ts";
 import { detectEnv } from "./env.ts";
-import { registerSubagentReminder } from "./limits.ts";
+import { registerSubagentStatusMessage } from "./limits.ts";
 import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.ts";
 import {
   createNestedSubagentTools,
@@ -272,6 +272,21 @@ export function extensionCanonicalNames(extPath: string): string[] {
   const canonical = extensionCanonicalName(extPath);
   const pkg = extensionPackageName(extPath);
   return pkg && pkg !== canonical ? [canonical, pkg] : [canonical];
+}
+
+/** Preserve loader-owned inline resources while filtering configured extensions by name. */
+export function shouldKeepExtension(
+  extPath: string,
+  filter: {
+    loadAll: boolean;
+    keepNames: ReadonlySet<string>;
+    excludeNames: ReadonlySet<string>;
+  },
+): boolean {
+  if (extPath.startsWith("<inline:")) return true;
+  const canons = extensionCanonicalNames(extPath);
+  if (canons.some((name) => filter.excludeNames.has(name))) return false;
+  return filter.loadAll || canons.some((name) => filter.keepNames.has(name));
 }
 
 /**
@@ -689,6 +704,10 @@ export function buildEffectivePrompt(
 export interface RunOptions {
   /** ExtensionAPI instance — used for pi.exec() instead of execSync. */
   pi: ExtensionAPI;
+  /** Narrow loader-construction seam used by wiring probes before a child session is created. */
+  createResourceLoader?: (
+    loaderOptions: ConstructorParameters<typeof DefaultResourceLoader>[0],
+  ) => DefaultResourceLoader;
   /** Manager-assigned id; suffixes session name to disambiguate parallel spawns (e.g. `Explore#a1b2c3d4`). */
   agentId?: string;
   model?: Model<any>;
@@ -890,14 +909,15 @@ export async function runAgent(
   // Filesystem work happens in effectiveCwd; config discovery in configCwd.
   // They differ only for SpawnOptions.cwd spawns (config stays with the parent).
   const configCwd = options.configCwd ?? effectiveCwd;
-  const effectiveMaxDepth = options.nestedRuntime?.maxSubagentDepth ?? getMaxSubagentDepth();
-  const subagentReminder = options.nestedRuntime
+  const statusRuntime = options.nestedRuntime;
+  const effectiveMaxDepth = statusRuntime?.maxSubagentDepth ?? getMaxSubagentDepth();
+  const subagentStatusSource = statusRuntime
     ? {
-        getActiveCount: () => options.nestedRuntime!.manager.getActiveCount(),
-        getScheduledActiveCount: () => options.nestedRuntime!.manager.getScheduledActiveCount(),
-        getMaxConcurrent: () => options.nestedRuntime!.manager.getMaxConcurrent(),
+        getActiveCount: () => statusRuntime.manager.getActiveCount(),
+        getScheduledActiveCount: () => statusRuntime.manager.getScheduledActiveCount(),
+        getMaxConcurrent: () => statusRuntime.manager.getMaxConcurrent(),
         getMaxSubagentDepth: () => effectiveMaxDepth,
-        depth: options.nestedRuntime.depth,
+        depth: statusRuntime.depth,
       }
     : undefined;
 
@@ -1039,26 +1059,24 @@ export async function runAgent(
           );
           return {
             ...base,
-            extensions: base.extensions.filter((e) => {
-              const canons = extensionCanonicalNames(e.path);
-              if (canons.some((n) => excludeNames.has(n))) return false; // exclude wins
-              return loadAll || canons.some((n) => keepNames.has(n));
-            }),
+            extensions: base.extensions.filter((extension) =>
+              shouldKeepExtension(extension.path, { loadAll, keepNames, excludeNames }),
+            ),
           };
         };
 
-  const loader = new DefaultResourceLoader({
+  const loaderOptions: ConstructorParameters<typeof DefaultResourceLoader>[0] = {
     cwd: configCwd,
     agentDir,
     noExtensions,
     additionalExtensionPaths,
     extensionsOverride,
-    extensionFactories: subagentReminder
+    extensionFactories: subagentStatusSource
       ? [
           {
-            name: "subagent-concurrency-reminder",
+            name: "subagent-status",
             hidden: true,
-            factory: (childPi) => registerSubagentReminder(childPi, subagentReminder),
+            factory: (childPi) => registerSubagentStatusMessage(childPi, subagentStatusSource),
           },
         ]
       : undefined,
@@ -1068,7 +1086,10 @@ export async function runAgent(
     noContextFiles: true,
     systemPromptOverride: () => systemPrompt,
     appendSystemPromptOverride: () => [],
-  });
+  };
+  const loader = options.createResourceLoader
+    ? options.createResourceLoader(loaderOptions)
+    : new DefaultResourceLoader(loaderOptions);
   await runInChildSessionContext(() => loader.reload());
 
   // Plain entries in `tools:` are expected to be built-in names (extension tools
