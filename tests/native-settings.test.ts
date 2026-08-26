@@ -69,6 +69,12 @@ const ROWS: SettingItem[] = [
   { id: "output-padding", label: "Output padding", currentValue: "1", values: ["0", "1"] },
   { id: "tui-mode", label: "TUI mode", currentValue: "regular", values: ["regular", "fullscreen"] },
   { id: "autocompact", label: "Auto-compact", currentValue: "true", values: ["true", "false"] },
+  {
+    id: "cache-miss-notices",
+    label: "Cache miss notices",
+    currentValue: "false",
+    values: ["true", "false"],
+  },
   { id: "thinking", label: "Thinking level", currentValue: "high" },
   { id: "model-thinking", label: "Default thinking level per model", currentValue: "9 configured" },
   {
@@ -137,7 +143,8 @@ test(
     assert.deepEqual(sectionRowIds(sections, "pi:editor"), ["editor-padding"]);
     // A section Pi owns needs no source header: its rows come first.
     assert.deepEqual(sectionRowIds(sections, "terminal"), ["tui-mode"]);
-    assert.deepEqual(sectionRowIds(sections, "session"), ["autocompact"]);
+    // The cache hit/miss warning lives with the session behavior settings.
+    assert.deepEqual(sectionRowIds(sections, "session"), ["autocompact", "cache-miss-notices"]);
     assert.deepEqual(sectionRowIds(sections, "model"), [
       "piModel",
       "piScopedModels",

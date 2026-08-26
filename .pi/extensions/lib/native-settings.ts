@@ -56,7 +56,6 @@ const PI_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[] }>
       "theme",
       "mermaid-rendering",
       "hide-thinking",
-      "cache-miss-notices",
       "show-images",
       "image-width-cells",
       "auto-resize-images",
@@ -82,6 +81,7 @@ const PI_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[] }>
     section: SESSION_SECTION_ID,
     rows: [
       "autocompact",
+      "cache-miss-notices",
       "steering-mode",
       "follow-up-mode",
       "tree-filter-mode",
