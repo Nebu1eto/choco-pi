@@ -15,6 +15,17 @@
   ],
   "theme": "nord-dark",
   "tuiMode": "fullscreen",
+  "modelThinkingLevels": {
+    "anthropic/claude-fable-5": "high",
+    "anthropic/claude-opus-5": "medium",
+    "anthropic/claude-opus-4-6": "high",
+    "anthropic/claude-sonnet-5": "xhigh",
+    "openai-codex/gpt-5.6-sol": "low",
+    "openai-codex/gpt-daybreak-blue-latest": "high",
+    "openai-codex/gpt-5.6-terra": "high",
+    "openai-codex/gpt-5.6-luna": "xhigh",
+    "synthetic/hf:moonshotai/Kimi-K3": "high"
+  },
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
