@@ -102,6 +102,17 @@ test("profile installer links tracked config and is idempotent", async (context)
     ].map((name) => path.resolve(".pi/packages", name)),
   );
   assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions")]);
+  assert.deepEqual(settings.modelThinkingLevels, {
+    "anthropic/claude-fable-5": "high",
+    "anthropic/claude-opus-5": "medium",
+    "anthropic/claude-opus-4-6": "high",
+    "anthropic/claude-sonnet-5": "xhigh",
+    "openai-codex/gpt-5.6-sol": "low",
+    "openai-codex/gpt-daybreak-blue-latest": "high",
+    "openai-codex/gpt-5.6-terra": "high",
+    "openai-codex/gpt-5.6-luna": "xhigh",
+    "synthetic/hf:moonshotai/Kimi-K3": "high",
+  });
 });
 
 test("profile installer preserves a conflicting file unless backup is explicit", async (context) => {
