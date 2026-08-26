@@ -31,7 +31,10 @@ function jsonResult<Result>(value: Result) {
 
 const StartSchema = Type.Object(
   {
-    command: Type.String({ minLength: 1, description: "Shell command to run in the background." }),
+    command: Type.String({
+      minLength: 1,
+      description: "Long-running shell command to run in the background.",
+    }),
     cwd: Type.Optional(
       Type.String({
         minLength: 1,
@@ -131,7 +134,8 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     defineTool({
       name: "shell_start",
       label: "Start Shell",
-      description: "Start a managed background shell process and return immediately.",
+      description:
+        "Start a managed long-running background shell process and return immediately. Use bash for ordinary commands, or code mode with JavaScript/TypeScript and Promise.all to run multiple independent commands concurrently.",
       parameters: StartSchema,
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
