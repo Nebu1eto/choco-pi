@@ -5,7 +5,7 @@ import type {
 } from "./types.ts";
 
 export const EXEC_DESCRIPTION = `Run JavaScript source only; no JSON/fences
-Batch several tools.* calls per block: Promise.all for independent ones, in-code filtering/aggregation; do not emit one exec toolCall per wrapped call
+Use for bounded multi-call workflows that filter or aggregate results; prefer direct calls when one call suffices or each result changes the next decision
 Code: fresh restricted JS with no console, imports, Node, or browser APIs. Notebook: persistent shared Deno TypeScript globals with console, imports/npm, Deno, and Web APIs
 Optional // @exec: {"yield_time_ms":10000,"max_output_tokens":1000}; defaults 30000 ms/10000 tokens
 Await work; bare values are discarded. Globals: tools, image, generatedImage, store, load, exit, setTimeout, clearTimeout, ALL_TOOLS; text(value) and notify(value) EMIT output and return nothing — never nest them in an expression, use String()/JSON.stringify() to build one; yield_control() yields`;
@@ -19,7 +19,7 @@ const BRIDGED_TOOLS_HEADING = "Pi tools callable in exec";
 const CUSTOM_TOOL_DOCUMENTATION_MARKER = "To create or edit a custom tool, read";
 const CUSTOM_TOOLS_GUIDANCE = "Prefer custom tools for command-backed capabilities";
 const CODE_MODE_COMPOSITION_MARKER = "one exec block per step, not one per tools.* call";
-const CODE_MODE_COMPOSITION_GUIDANCE = `Composition: ${CODE_MODE_COMPOSITION_MARKER} — batch independent calls with Promise.all, chain dependent ones with await, then filter/aggregate results in code and text() only the digest the next step needs
+const CODE_MODE_COMPOSITION_GUIDANCE = `Composition: ${CODE_MODE_COMPOSITION_MARKER} — for a bounded processing step, batch independent calls with Promise.all, chain dependent ones with await, then filter/aggregate results in code and text() only the digest the next step needs
 Pattern: const [a, b] = await Promise.all([tools.exec_command({cmd: "rg --files src"}), tools.exec_command({cmd: "rg -n TODO src"})]); text(a.output + b.output)`;
 
 const COMPACT_BUNDLED_TOOL_USAGE = new Map([

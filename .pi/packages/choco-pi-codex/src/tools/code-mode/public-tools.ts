@@ -3,7 +3,6 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { Type } from "typebox";
 import { getExperimentalToolSampling } from "../tool-sampling.ts";
 import { DEFAULT_CODE_MODE_OUTPUT_TOKENS, MAX_CODE_MODE_OUTPUT_TOKENS } from "./host-protocol.ts";
-import { createBatchingAdvice, type BatchingAdvice } from "./batching-advice.ts";
 import { EXEC_DESCRIPTION, WAIT_DESCRIPTION } from "./custom-tool-prompt.ts";
 import { createCodeModeRenderTracker } from "./render-tracker.ts";
 import { renderExecCall, renderWaitCall } from "./call-rendering.ts";
@@ -55,8 +54,7 @@ export function registerPublicCodeModeTools(
   const waitAttempts = new Map<string, number>();
   const renderResult = createResultRenderer(runtime, tracker);
   const preflight = registerCodeModePreflightBroker(pi).run;
-  const batchingAdvice = createBatchingAdvice();
-  pi.registerTool(createExecTool(runtime, tracker, renderResult, preflight, batchingAdvice));
+  pi.registerTool(createExecTool(runtime, tracker, renderResult, preflight));
   pi.registerTool(createWaitTool(runtime, tracker, renderResult, waitAttempts, preflight));
 }
 
@@ -65,7 +63,6 @@ function createExecTool(
   tracker: RenderTracker,
   renderResult: ReturnType<typeof createResultRenderer>,
   preflight: NonNullable<ToolExecutionContext["preflight"]>,
-  batchingAdvice?: BatchingAdvice | undefined,
 ): ToolDefinition<typeof EXEC_PARAMETERS> {
   // SAFETY: renderExecCall and createResultRenderer implement this registered tool's renderer callback shapes; assertions bridge SDK generic variance only.
   return {
@@ -87,10 +84,7 @@ function createExecTool(
           runtime.collectTools(ctx),
         );
         tracker.finish(id, response.kind === "yielded" ? "yielded" : "done");
-        const result = toCodeModeToolResult(response);
-        const advice = batchingAdvice?.record(params.code);
-        if (advice) result.content.unshift({ type: "text", text: advice });
-        return result;
+        return toCodeModeToolResult(response);
       } catch (error) {
         tracker.finish(id);
         throw error;

@@ -135,7 +135,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       name: "shell_start",
       label: "Start Shell",
       description:
-        "Start a managed long-running background shell process and return immediately. Use bash for ordinary commands, or code mode with JavaScript/TypeScript and Promise.all to run multiple independent commands concurrently.",
+        "Start a managed long-running background process. Use bash for ordinary commands; use code mode for bounded multi-call processing, with Promise.all for independent calls.",
       parameters: StartSchema,
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
