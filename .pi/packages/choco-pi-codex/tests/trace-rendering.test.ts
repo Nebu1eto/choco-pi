@@ -199,6 +199,18 @@ test("non-mise command summaries retain the generic fallback", () => {
   );
 });
 
+test("collapsed inline Node.js summaries omit heredoc source", () => {
+  const command = `node --input-type=module <<'EOF'
+import fs from "node:fs";
+const files = [];
+for (const file of files) {
+  if (fs.existsSync(file)) console.log(file);
+}
+EOF`;
+
+  assert.match(renderCommand(command), /Ran Exec command · node$/);
+});
+
 test("mise failures stay visible and expanded rendering keeps the full command and error", () => {
   const cmd = "mise run check -- --fix";
   const collapsed = renderCommand(cmd, { status: "error", error: "task failed" });

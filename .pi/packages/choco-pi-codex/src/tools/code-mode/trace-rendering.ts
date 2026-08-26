@@ -298,10 +298,21 @@ function shortExecCommandName(trace: RuntimeToolTrace): string | undefined {
   if (trace.name !== "exec_command" || !isObjectValue(trace.input)) return undefined;
   const command = trace.input["cmd"];
   if (!isStringValue(command)) return undefined;
+  const inlineNode = inlineNodeCommandName(command);
+  if (inlineNode) return inlineNode;
   const summaries = splitOnConnectors(shellSplit(command))
     .map(shortCommandName)
     .filter((summary): summary is string => summary !== undefined);
   return summaries.length > 0 ? summaries.join(", ") : undefined;
+}
+
+function inlineNodeCommandName(command: string): string | undefined {
+  const firstLine = command.split(/\r?\n/, 1)[0];
+  if (!firstLine) return undefined;
+  const tokens = shellSplit(firstLine);
+  const executable = safeCommandToken(tokens[0]);
+  if (executable !== "node" || !tokens.some((token) => token.startsWith("<<"))) return undefined;
+  return executable;
 }
 
 function shortCommandName(tokens: string[]): string | undefined {
