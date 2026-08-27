@@ -140,6 +140,19 @@ own entry points and the natively wrapped Codex tools stay excluded.
 tests/codex-code-mode-bridge.test.ts pins exclusions, usage lines, deferral,
 the ALL_TOOLS scope and the prompt line.
 
+## Transport cleanup bridge (choco-pi addition)
+
+`src/extension/transport-cleanup.ts` publishes the stateless candidate
+`{ cleanupOwner }` at
+`Symbol.for("choco-pi-codex:transport-cleanup")`. Session owners such as the
+subagents package can reclaim transport state without importing this package or
+capturing an extension runtime. The implementation in
+`src/providers/openai-codex/transport-cleanup.ts` closes both the bare session
+lane and its `:cache-keepalive` lane, including their canonical continuation and
+SSE-fallback state. Its separate reset helper clears websocket and canonical
+state for both lanes while retaining SSE fallback for mid-session resets.
+Empty owner ids are inert rather than process-global cleanup requests.
+
 ## Runtime batching advice (choco-pi addition)
 
 tools/code-mode/batching-advice.ts counts consecutive exec blocks that made at

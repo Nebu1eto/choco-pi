@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../src/agent-manager.ts";
-import { cleanupChildSessionOwner, SHELL_MANAGER_SYMBOL } from "../src/child-session-cleanup.ts";
+import {
+  cleanupChildSessionOwner,
+  CODEX_TRANSPORT_CLEANUP_SYMBOL,
+  SHELL_MANAGER_SYMBOL,
+} from "../src/child-session-cleanup.ts";
 import type { AgentRecord } from "../src/types.ts";
 
 function sessionFixture(sessionId: string, dispose: () => void = () => {}): AgentSession {
@@ -13,19 +17,23 @@ function sessionFixture(sessionId: string, dispose: () => void = () => {}): Agen
   } as AgentSession;
 }
 
-type ShellManagerFixture =
+type CleanupFixture =
   | { cleanupOwner?: string | ((ownerId: string) => Promise<void>) }
   | null
   | undefined;
 
-function setShellManager(value: ShellManagerFixture): () => void {
-  const prior = Reflect.getOwnPropertyDescriptor(globalThis, SHELL_MANAGER_SYMBOL);
-  Reflect.set(globalThis, SHELL_MANAGER_SYMBOL, value);
+function setCleanupCandidate(symbol: symbol, value: CleanupFixture): () => void {
+  const prior = Reflect.getOwnPropertyDescriptor(globalThis, symbol);
+  Reflect.set(globalThis, symbol, value);
   return () => {
-    if (prior) Reflect.defineProperty(globalThis, SHELL_MANAGER_SYMBOL, prior);
-    else Reflect.deleteProperty(globalThis, SHELL_MANAGER_SYMBOL);
+    if (prior) Reflect.defineProperty(globalThis, symbol, prior);
+    else Reflect.deleteProperty(globalThis, symbol);
   };
 }
+
+const setShellManager = (value: CleanupFixture) => setCleanupCandidate(SHELL_MANAGER_SYMBOL, value);
+const setCodexCleanup = (value: CleanupFixture) =>
+  setCleanupCandidate(CODEX_TRANSPORT_CLEANUP_SYMBOL, value);
 
 function addCompletedRecord(manager: AgentManager, session: AgentSession): void {
   Object.defineProperty(manager, "startAgent", {
@@ -43,7 +51,8 @@ function addCompletedRecord(manager: AgentManager, session: AgentSession): void 
 }
 
 test("cleanup bridge ignores missing and malformed registries", () => {
-  const restore = setShellManager(undefined);
+  const restoreShell = setShellManager(undefined);
+  const restoreCodex = setCodexCleanup(undefined);
   let sessionIdReads = 0;
   const session = {
     sessionManager: {
@@ -57,31 +66,48 @@ test("cleanup bridge ignores missing and malformed registries", () => {
     assert.doesNotThrow(() => cleanupChildSessionOwner(session));
     for (const malformed of [null, {}, { cleanupOwner: "not callable" }]) {
       Reflect.set(globalThis, SHELL_MANAGER_SYMBOL, malformed);
+      Reflect.set(globalThis, CODEX_TRANSPORT_CLEANUP_SYMBOL, malformed);
       assert.doesNotThrow(() => cleanupChildSessionOwner(session));
     }
     assert.equal(sessionIdReads, 0);
   } finally {
-    restore();
+    restoreCodex();
+    restoreShell();
   }
 });
 
-test("cleanup bridge contains rejected cleanup promises", async () => {
-  const restore = setShellManager({
+test("cleanup bridge contains one rejection and still calls the other candidate", async () => {
+  const calls: string[] = [];
+  const restoreShell = setShellManager({
     cleanupOwner: () => Promise.reject(new Error("cleanup failed")),
+  });
+  const restoreCodex = setCodexCleanup({
+    cleanupOwner: (ownerId: string) => {
+      calls.push(ownerId);
+      return Promise.resolve();
+    },
   });
   try {
     cleanupChildSessionOwner(sessionFixture("child-rejection"));
+    assert.deepEqual(calls, ["child-rejection"]);
     await new Promise<void>((resolve) => setImmediate(resolve));
   } finally {
-    restore();
+    restoreCodex();
+    restoreShell();
   }
 });
 
-test("removeRecord eviction cleans the child owner before disposing", () => {
+test("removeRecord eviction starts both child cleanups before disposing without waiting", () => {
   const events: string[] = [];
-  const restore = setShellManager({
+  const restoreShell = setShellManager({
     cleanupOwner: (ownerId: string) => {
-      events.push(`cleanup:${ownerId}`);
+      events.push(`shell:${ownerId}`);
+      return new Promise<void>(() => {});
+    },
+  });
+  const restoreCodex = setCodexCleanup({
+    cleanupOwner: (ownerId: string) => {
+      events.push(`codex:${ownerId}`);
       return Promise.resolve();
     },
   });
@@ -92,18 +118,20 @@ test("removeRecord eviction cleans the child owner before disposing", () => {
       sessionFixture("child-evicted", () => events.push("dispose")),
     );
     manager.clearCompleted();
-    assert.deepEqual(events, ["cleanup:child-evicted", "dispose"]);
+    assert.deepEqual(events, ["shell:child-evicted", "codex:child-evicted", "dispose"]);
   } finally {
     manager.dispose();
-    restore();
+    restoreCodex();
+    restoreShell();
   }
 });
 
-test("whole-manager disposal cleans the child owner before disposing", () => {
+test("whole-manager disposal still invokes Codex cleanup when the shell registry is malformed", () => {
   const events: string[] = [];
-  const restore = setShellManager({
+  const restoreShell = setShellManager({ cleanupOwner: "malformed" });
+  const restoreCodex = setCodexCleanup({
     cleanupOwner: (ownerId: string) => {
-      events.push(`cleanup:${ownerId}`);
+      events.push(`codex:${ownerId}`);
       return Promise.resolve();
     },
   });
@@ -114,8 +142,9 @@ test("whole-manager disposal cleans the child owner before disposing", () => {
       sessionFixture("child-manager", () => events.push("dispose")),
     );
     manager.dispose();
-    assert.deepEqual(events, ["cleanup:child-manager", "dispose"]);
+    assert.deepEqual(events, ["codex:child-manager", "dispose"]);
   } finally {
-    restore();
+    restoreCodex();
+    restoreShell();
   }
 });
