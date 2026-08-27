@@ -47,7 +47,8 @@ A follow-up continues the active workflow; an added constraint never restarts it
 
 - Inspect real files, diffs, configuration, and runtime behavior before concluding; evidence beats memory, comments, and worker summaries.
 - Derive paths from `rg --files`, `find`, or repository metadata rather than repeating a failed guess.
-- With choco-pi-lsp active, funnel unfamiliar source through `symbol_search`, `module_report`, then `read_symbol` or `read_enclosing` before editing, and use `lsp_navigation` for definitions, references, implementations, and call hierarchy.
+- Pi's built-in `grep` is disabled. For code discovery with choco-pi-lsp active, funnel unfamiliar source through `symbol_search`, `module_report`, then `read_symbol` or `read_enclosing`, and use `lsp_navigation` for definitions, references, implementations, and call hierarchy, directly or through code mode; prefer code mode for bounded multi-call searches.
+- Use `ast_grep_search` for structural code patterns. Use `rg` through `exec`, `bash`, or code mode for logs, prose, configuration, generated text, or code queries that LSP and ast-grep cannot cover.
 - Resume an exec cell with `wait` and a command session with `write_stdin`; never send Ctrl+C to a non-TTY session.
 - Re-read a target immediately before editing when an agent, formatter, generator, or failed edit may have changed it, and inspect the diff after a partial failure.
 - Preserve the dirty working tree: never discard, overwrite, stage, or commit unrelated user changes.

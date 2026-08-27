@@ -115,6 +115,9 @@ export const SUBAGENT_TOOL_NAMES = {
 /** Names of tools registered by this extension that subagents must NOT inherit. */
 const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
 
+/** Pi built-ins intentionally unavailable in every choco-pi child session. */
+const DISABLED_BUILTIN_TOOL_NAMES = new Set(["grep"]);
+
 export function computeChildToolGate({
   noExtensions,
   toolNames,
@@ -132,10 +135,15 @@ export function computeChildToolGate({
     return {
       sessionTools: [
         ...toolNames.filter(
-          (name) => !EXCLUDED_TOOL_NAMES.includes(name) && !disallowedSet?.has(name),
+          (name) =>
+            !EXCLUDED_TOOL_NAMES.includes(name) &&
+            !DISABLED_BUILTIN_TOOL_NAMES.has(name) &&
+            !disallowedSet?.has(name),
         ),
-        ...alwaysToolNames,
-        ...[...nestedToolNames].filter((name) => !disallowedSet?.has(name)),
+        ...[...alwaysToolNames].filter((name) => !DISABLED_BUILTIN_TOOL_NAMES.has(name)),
+        ...[...nestedToolNames].filter(
+          (name) => !DISABLED_BUILTIN_TOOL_NAMES.has(name) && !disallowedSet?.has(name),
+        ),
       ],
     };
   }
@@ -152,6 +160,7 @@ export function computeChildToolGate({
       if (!alwaysToolNames.has(name)) denyTools.add(name);
     }
   }
+  for (const name of DISABLED_BUILTIN_TOOL_NAMES) denyTools.add(name);
   return { sessionExcludeTools: [...denyTools] };
 }
 
@@ -188,7 +197,7 @@ function leanSurfaceNames(): Set<string> | undefined {
 }
 
 /** Built-ins available to read-only side conversations. No shell or write path. */
-const READ_ONLY_TOOL_NAMES = new Set(["read", "grep", "find", "ls"]);
+const READ_ONLY_TOOL_NAMES = new Set(["read", "find", "ls"]);
 
 /**
  * Canonical name of an extension for `extensions: [...]` allowlist matching.
@@ -461,6 +470,7 @@ export function installExtensionToolScope(
       if (!disallowedSet?.has(name)) keep.add(name);
     }
     for (const name of alwaysToolNames) keep.add(name);
+    for (const name of DISABLED_BUILTIN_TOOL_NAMES) keep.delete(name);
     return keep;
   };
 
@@ -718,7 +728,7 @@ export interface RunOptions {
   thinkingLevel?: ThinkingLevel;
   /** Genuine, non-persisted main-session fork used only by /btw. */
   mainSessionFork?: MainSessionFork;
-  /** Use only read/grep/find/ls, load no extensions, and disable delegation. */
+  /** Use only read/find/ls, load no extensions, and disable delegation. */
   readOnly?: boolean;
   /**
    * Reopen this pi session file rather than starting an empty conversation.
