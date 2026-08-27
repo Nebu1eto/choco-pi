@@ -366,6 +366,16 @@ Use `openai-completions` unless Apex has been confirmed to support the Responses
 
 ## MCP, goals, web search, and side conversations
 
+### Hook configuration locations
+
+Configure hooks in Pi settings whenever possible. choco-pi reads these groups from lowest to highest precedence, so later files override scalar hook settings while hook lists merge:
+
+1. Claude fallback: `~/.claude/settings.json`, `<project>/.claude/settings.json`, `<project>/.claude/settings.local.json`
+2. Agent-shared: `~/.agents/settings.json`, `<project>/.agents/settings.json`, `<project>/.agents/settings.local.json`
+3. Pi preferred: `$PI_CODING_AGENT_DIR/settings.json` (normally `~/.pi/agent/settings.json`), `<project>/.pi/settings.json`, `<project>/.pi/settings.local.json`
+
+Use `<project>/.pi/settings.json` for shared project hooks, `<project>/.pi/settings.local.json` for uncommitted machine-local hooks, and `~/.pi/agent/settings.json` for global hooks. `/hooks` shows each effective handler and its source. The `hooks` object uses the Claude Code event, matcher, and handler schema documented by [`choco-pi-hooks`](.pi/packages/choco-pi-hooks).
+
 - Copy [`.pi/mcp.example.json`](.pi/mcp.example.json) to `~/.pi/agent/mcp.json` and add any local OAuth client settings there. Keep it outside this checkout. Pi reads `~/.pi/agent/mcp.json` and a project `.pi/mcp.json` as separate sources, so a copy inside choco-pi registers every server twice whenever Pi runs from this directory, and a checkout that lacks the ignored file silently starts with no servers at all. `/mcp` shows configuration and runtime state.
 - A server whose authorization server does not support dynamic client registration needs a pre-registered client. Add `oauth.clientId` and `oauth.clientSecret` to that server's entry; a `clientSecret` beginning with `!` runs the rest as a shell command, which keeps the secret out of the file. Register `http://localhost:19876/callback` as the redirect URL with the provider.
 - `/goal <objective>` drafts a persistent goal from the task and creates it. Omitted token budgets remain unbounded, explicit budgets stay cumulative, and active goals continue after context compaction. A bare `/goal` shows state and usage; `/goal pause|resume|clear|copy` manages it.
