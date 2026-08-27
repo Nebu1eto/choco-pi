@@ -124,8 +124,8 @@ export function createTabController(options: {
   const viewKey = (id: TextTabId, expanded: boolean): string => `${id}:${expanded ? "all" : ""}`;
   const query = (id: TextTabId, expanded: boolean, background: boolean): void => {
     const current = ++token;
-    options
-      .load(id, expanded)
+    Promise.resolve()
+      .then(() => options.load(id, expanded))
       .then((body) => {
         cache.set(viewKey(id, expanded), body);
         if (current === token && active === id && activeExpanded === expanded)
@@ -375,15 +375,13 @@ async function showTabOnce(
       return theme.fg("dim", parts.join(" · "));
     };
     // An open submenu holds Tab and the digits, so the hint must not promise them.
-    const panelHint = (): string =>
-      theme.fg(
-        "dim",
-        panel?.hasOpenSubmenu?.()
-          ? "Esc goes back"
-          : panel?.hasActiveSearch?.()
-            ? "Type to filter · Enter/Space changes · Esc stops search"
-            : `Tab switches tabs · ${digitHint} jumps · Esc closes`,
-      );
+    const panelHint = (): string => {
+      let hint = `Tab switches tabs · ${digitHint} jumps · Esc closes`;
+      if (panel?.hasOpenSubmenu?.()) hint = "Esc goes back";
+      else if (panel?.hasActiveSearch?.())
+        hint = "Type to filter · Enter/Space changes · Esc stops search";
+      return theme.fg("dim", hint);
+    };
 
     const paint = (body: string, view: { preserveScroll: boolean }): void => {
       text.setText(`${header()}\n\n${body}\n\n${textHint()}`);
@@ -595,6 +593,7 @@ async function showTab(
 
 export default function statusCommands(pi: ExtensionAPI): void {
   setToolInventory(pi);
+  pi.on("session_start", closeOpenDialogs);
   pi.on("session_shutdown", closeOpenDialogs);
   pi.registerCommand("status", {
     description:
