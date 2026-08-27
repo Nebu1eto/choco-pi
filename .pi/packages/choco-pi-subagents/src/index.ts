@@ -1221,6 +1221,11 @@ export default function (pi: ExtensionAPI) {
     // FleetView is the focus switcher; when it is turned off, focus mode keeps
     // its own Esc exit so the prompt can always return to main.
     hasSwitcher: () => isFleetViewEnabled() && fleet.isShowingRows(),
+    resolveModel: (query) => {
+      if (!currentCtx) return undefined;
+      const resolution = resolveModel(query, currentCtx.modelRegistry);
+      return resolution.tag === "resolved" ? resolution.model : undefined;
+    },
   });
 
   // BTW side conversations are root records backed by non-persisted forks of

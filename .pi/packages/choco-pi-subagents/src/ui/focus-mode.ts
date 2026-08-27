@@ -1,3 +1,4 @@
+import type { AgentSession, MarkdownTransformer } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, Key, matchesKey, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -8,6 +9,8 @@ import { focusedAgentRuntime, publishFocusedAgentRuntime } from "./focused-runti
 import { installMethodPatch } from "./method-patch-registry.ts";
 
 const FOCUS_WIDGET_KEY = "subagent-focus";
+const FOCUSED_MODEL_CONTROLS_SYMBOL = Symbol.for("choco-pi.model-controls.focused-sessions");
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 type EditorLike = {
   handleInput(data: string): void;
@@ -55,6 +58,7 @@ export type FocusControllerOptions = {
    * switcher Esc stays the escape hatch and must not strand the prompt.
    */
   hasSwitcher?: () => boolean;
+  resolveModel?: (query: string) => AgentSession["model"] | undefined;
 };
 
 /** Preserve fullscreen focus while unwinding nested `/agents` menus. */
@@ -72,6 +76,14 @@ type ActiveFocus = {
   document: RenderTarget;
   pendingMessages: RenderTarget | undefined;
 };
+
+type FocusedModelControlsRegistry = Map<string, { setFast(action: string): string }>;
+
+function focusedModelControlsRegistry(): FocusedModelControlsRegistry | undefined {
+  return (globalThis as typeof globalThis & {
+    [FOCUSED_MODEL_CONTROLS_SYMBOL]?: FocusedModelControlsRegistry;
+  })[FOCUSED_MODEL_CONTROLS_SYMBOL];
+}
 
 /**
  * A value that crossed Pi's host boundary — a TUI child, the focused component,
@@ -92,6 +104,7 @@ interface HostProbe {
   setText?: HostBoundaryValue;
   render?: HostBoundaryValue;
   children?: HostBoundaryValue;
+  markdownTransformers?: HostBoundaryValue;
 }
 
 type TUIWithFocusedComponent = TUI & { getFocusedComponent?: () => HostBoundaryValue };
@@ -179,6 +192,29 @@ function findEditor(tui: TUI): EditorLike | undefined {
   return undefined;
 }
 
+/** Recover Pi's first, built-in Mermaid renderer from a mounted transcript component. */
+function findHostMarkdownTransformers(root: HostBoundaryValue): readonly MarkdownTransformer[] {
+  const seen = new Set<object>();
+  const visit = (value: HostBoundaryValue): readonly MarkdownTransformer[] | undefined => {
+    const object = hostObject(value);
+    if (!object || seen.has(object)) return undefined;
+    seen.add(object);
+    const transformers = object.markdownTransformers;
+    if (Array.isArray(transformers) && transformers.every((item) => item instanceof Function)) {
+      // InteractiveMode prepends Mermaid before extension transformers. Carry
+      // only that host transformer; the child runner supplies its own extension
+      // transformers below, without duplicating the orchestrator's instances.
+      return (transformers as MarkdownTransformer[]).slice(0, 1);
+    }
+    for (const child of childrenOf(object)) {
+      const found = visit(child);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return visit(root) ?? [];
+}
+
 function focusLabel(record: AgentRecord): string {
   return `@${record.alias ?? record.handle ?? record.type}`;
 }
@@ -241,6 +277,7 @@ export class FocusedAgentController {
       return false;
     }
     const pendingMessages = findPendingMessages(tui, document);
+    const hostMarkdownTransformers = findHostMarkdownTransformers(document);
 
     this.restoreOrchestrator("silent");
     const viewer = new ConversationViewer(
@@ -256,6 +293,7 @@ export class FocusedAgentController {
       {
         profile: "focus",
         toolOutputExpanded: this.toolOutputExpandedByAgent.get(record.id) ?? false,
+        hostMarkdownTransformers,
       },
     );
     this.active = { record, tui, viewer, document, pendingMessages };
@@ -376,6 +414,9 @@ export class FocusedAgentController {
           this.stopFocused(submitTarget);
           return undefined;
         }
+        if (matchesKey(data, Key.enter) && this.submitFocusedCommand(submitTarget)) {
+          return undefined;
+        }
         // Esc does NOT leave focus while the switcher is up: focus is switched
         // there (↑↓, with `main` restoring the orchestrator), exactly like
         // selecting any other agent. Swallowing it also keeps a prompt addressed
@@ -398,6 +439,51 @@ export class FocusedAgentController {
         }
       },
     );
+  }
+
+  private submitFocusedCommand(editor: EditorLike): boolean {
+    const active = this.active;
+    if (!active) return false;
+    const text = editor.getText().trim();
+    const match = /^\/(model|effort|fast)(?:\s+(.*))?$/i.exec(text);
+    if (!match) return false;
+
+    editor.addToHistory?.(text);
+    editor.setText("");
+    const command = match[1].toLowerCase();
+    const argument = match[2]?.trim() ?? "";
+    const session = active.record.session;
+    if (!session) return true;
+
+    const run = async (): Promise<void> => {
+      if (command === "model") {
+        if (!argument) {
+          await session.cycleModel("forward", { persist: false });
+        } else {
+          const model = this.options.resolveModel?.(argument);
+          if (!model) throw new Error(`Model not found: ${argument}`);
+          await session.setModel(model, { persist: false });
+        }
+      } else if (command === "effort") {
+        if (!THINKING_LEVELS.has(argument)) {
+          throw new Error(`Unsupported reasoning effort: ${argument || "(empty)"}`);
+        }
+        session.setThinkingLevel(argument as Parameters<AgentSession["setThinkingLevel"]>[0], {
+          persist: false,
+        });
+      } else {
+        const controls = focusedModelControlsRegistry()?.get(session.sessionId);
+        if (!controls) throw new Error("Focused Fast mode controls are unavailable.");
+        const status = controls.setFast(argument);
+        if (argument.toLowerCase() === "status") this.ui?.notify(status, "info");
+      }
+      active.viewer.invalidate();
+      active.tui.requestRender(true);
+    };
+    void run().catch((error: unknown) => {
+      this.ui?.notify(error instanceof Error ? error.message : String(error), "warning");
+    });
+    return true;
   }
 
   /**

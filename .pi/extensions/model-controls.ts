@@ -28,6 +28,7 @@ const THINKING_LEVELS: ThinkingLevel[] = [
 const FAST_MODE_ENTRY = "choco-pi-fast-mode";
 const CODEX_FAST_MODE_SYMBOL = Symbol.for("choco-pi.codex-fast-mode");
 const FAST_EDITOR_FACTORY = Symbol.for("choco-pi.model-controls.fast-editor-factory");
+const FOCUSED_MODEL_CONTROLS_SYMBOL = Symbol.for("choco-pi.model-controls.focused-sessions");
 const ZENTUI_EDITOR_FACTORY = Symbol.for("pi-zentui.editor-factory");
 const ZENTUI_EDITOR_SYMBOLS = [
   ZENTUI_EDITOR_FACTORY,
@@ -42,6 +43,15 @@ type FastEditorState = {
   isEnabled: () => boolean;
   style: (text: string) => string;
 };
+
+type FocusedModelControlsRegistry = Map<string, { setFast(action: string): string }>;
+
+function focusedModelControlsRegistry(): FocusedModelControlsRegistry {
+  const host = globalThis as typeof globalThis & {
+    [FOCUSED_MODEL_CONTROLS_SYMBOL]?: FocusedModelControlsRegistry;
+  };
+  return (host[FOCUSED_MODEL_CONTROLS_SYMBOL] ??= new Map());
+}
 
 type FastEditorFactory = EditorFactory & {
   [FAST_EDITOR_FACTORY]?: FastEditorState;
@@ -210,15 +220,32 @@ export default function modelControls(pi: ExtensionAPI): void {
   let effortCompletions: ThinkingLevel[] = ["off"];
   let activeModel: Model<Api> | undefined;
   let editorInstallGeneration = 0;
+  let registeredSessionId: string | undefined;
 
   const updateModel = (model: Model<Api> | undefined): void => {
     activeModel = model;
     effortCompletions = model ? supportedThinkingLevels(model) : ["off"];
   };
 
+  const setFast = (actionInput: string): string => {
+    if (!isCodexModel(activeModel)) throw new Error("/fast is available only for OpenAI Codex models.");
+    const action = actionInput.trim().toLowerCase();
+    if (action === "status") {
+      return `Fast mode: ${isEffectiveFastModeEnabled(fastEnabled) ? "on" : "off"}`;
+    }
+    if (action && action !== "on" && action !== "off") {
+      throw new Error("Usage: /fast [on|off|status]");
+    }
+    fastEnabled = action === "on" || (action === "" && !fastEnabled);
+    pi.appendEntry(FAST_MODE_ENTRY, { enabled: fastEnabled });
+    return `Fast mode: ${isEffectiveFastModeEnabled(fastEnabled) ? "on" : "off"}`;
+  };
+
   pi.on("session_start", (_event, ctx) => {
     updateModel(ctx.model);
     fastEnabled = restoreFastMode(ctx.sessionManager.getBranch());
+    registeredSessionId = ctx.sessionManager.getSessionId();
+    focusedModelControlsRegistry().set(registeredSessionId, { setFast });
     const generation = ++editorInstallGeneration;
     if (ctx.mode !== "tui") return;
     // Local editors load before package editors. Retry for up to five seconds so
@@ -235,6 +262,8 @@ export default function modelControls(pi: ExtensionAPI): void {
   });
   pi.on("session_shutdown", () => {
     editorInstallGeneration++;
+    if (registeredSessionId) focusedModelControlsRegistry().delete(registeredSessionId);
+    registeredSessionId = undefined;
   });
   pi.on("model_select", (_event, ctx) => updateModel(ctx.model));
 
@@ -284,28 +313,16 @@ export default function modelControls(pi: ExtensionAPI): void {
   pi.registerCommand("fast", {
     description: "Control OpenAI Codex Fast mode: /fast [on|off|status]",
     handler: async (args, ctx) => {
-      if (!isCodexModel(ctx.model)) {
-        ctx.ui.notify("/fast is available only for OpenAI Codex models.", "warning");
+      try {
+        updateModel(ctx.model);
+        const status = setFast(args);
+        if (args.trim().toLowerCase() === "status") ctx.ui.notify(status, "info");
+        if (args.trim().toLowerCase() === "off" && isEffectiveFastModeEnabled(fastEnabled)) {
+          ctx.ui.notify("Fast mode remains on through Codex preferences.", "info");
+        }
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
         return;
-      }
-
-      const action = args.trim().toLowerCase();
-      if (action === "status") {
-        ctx.ui.notify(
-          `Fast mode: ${isEffectiveFastModeEnabled(fastEnabled) ? "on" : "off"}`,
-          "info",
-        );
-        return;
-      }
-      if (action && action !== "on" && action !== "off") {
-        ctx.ui.notify("Usage: /fast [on|off|status]", "warning");
-        return;
-      }
-
-      fastEnabled = action === "on" || (action === "" && !fastEnabled);
-      pi.appendEntry(FAST_MODE_ENTRY, { enabled: fastEnabled });
-      if (!fastEnabled && isEffectiveFastModeEnabled(fastEnabled)) {
-        ctx.ui.notify("Fast mode remains on through Codex preferences.", "info");
       }
       // The editor indicator is the confirmation. Avoid appending a status row:
       // repeated height changes corrupt regular scrollback in Ghostty + Zellij.

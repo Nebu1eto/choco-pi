@@ -91,7 +91,11 @@ function makeToolMessage(id: string, output: string): [AssistantMessage, ToolRes
 test("focus survives Esc and restores exact predecessors on exit", async (t) => {
   const renderRequests: boolean[] = [];
   const listeners = new Set<AgentSessionEventListener>();
+  const childEfforts: string[] = [];
+  const childFastActions: string[] = [];
+  const selectedModels: Model<Api>[] = [];
   const session = partialFixture<AgentSession>({
+    sessionId: "focused-session",
     model: partialFixture<Model<Api>>({
       id: "gpt-5.6-terra",
       name: "GPT-5.6 Terra",
@@ -108,7 +112,29 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
         listeners.delete(listener);
       };
     },
+    async setModel(model: Model<Api>) {
+      selectedModels.push(model);
+    },
+    setThinkingLevel(level) {
+      childEfforts.push(level);
+    },
   });
+  const controlsSymbol = Symbol.for("choco-pi.model-controls.focused-sessions");
+  const controlsHost = globalThis as typeof globalThis & {
+    [controlsSymbol]?: Map<string, { setFast(action: string): string }>;
+  };
+  controlsHost[controlsSymbol] = new Map([
+    [
+      session.sessionId,
+      {
+        setFast(action) {
+          childFastActions.push(action);
+          return `Fast mode: ${action}`;
+        },
+      },
+    ],
+  ]);
+  t.after(() => delete controlsHost[controlsSymbol]);
   const record = partialFixture<AgentRecord>({
     id: "agent-7",
     type: "implementer",
@@ -123,7 +149,11 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   });
 
   const orchestratorRender = (_width: number) => ["ORCHESTRATOR CONVERSATION"];
-  const document = { render: orchestratorRender };
+  const mermaidTransformer = (markdown: string) => markdown.replace("focused agent answer", "MERMAID RENDERED");
+  const document = {
+    render: orchestratorRender,
+    children: [{ markdownTransformers: [mermaidTransformer] }],
+  };
   const orchestratorSubmits: string[] = [];
   const orchestratorInputs: string[] = [];
   const editor = {
@@ -180,6 +210,12 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
     {
       onSteered: (id, message) => events.push({ id, message }),
       hasSwitcher: () => switcherUp,
+      resolveModel: () =>
+        partialFixture<Model<Api>>({
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6 Luna",
+          provider: "openai-codex",
+        }),
     },
   );
   t.after(() => controller.dispose());
@@ -218,7 +254,7 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   record.session = session;
   assert.deepEqual(controller.getState(), { kind: "agent", agentId: "agent-7" });
   const focusedRender = document.render(100).join("\n");
-  assert.match(focusedRender, /focused agent answer/);
+  assert.match(focusedRender, /MERMAID RENDERED/);
   assert.doesNotMatch(focusedRender, /ORCHESTRATOR CONVERSATION/);
   assert.equal(widgets.has("subagent-focus"), true);
   // With the FleetView switcher up, the above-editor indicator stays silent —
@@ -232,6 +268,17 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   };
   assert.deepEqual(renderIndicator(), []);
   assert.equal(editor.getText(), "");
+
+  for (const command of ["/model openai-codex/gpt-5.6-luna", "/effort high", "/fast on"]) {
+    editor.setText(command);
+    editor.handleInput("\r");
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(selectedModels[0]?.id, "gpt-5.6-luna");
+  assert.deepEqual(childEfforts, ["high"]);
+  assert.deepEqual(childFastActions, ["on"]);
+  assert.deepEqual(orchestratorSubmits, [], "focused commands never reach the main command router");
+  assert.deepEqual(steerCalls, [], "focused commands are not sent to the model as steering text");
 
   session.messages.push(makeAssistantMessage("streamed progress"));
   for (const listener of listeners) listener({ type: "agent_settled" });
