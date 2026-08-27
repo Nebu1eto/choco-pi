@@ -26,6 +26,9 @@ importers:
       '@types/node':
         specifier: ^26.0.0
         version: 26.2.0
+      grok-mermaid:
+        specifier: 0.2.2
+        version: 0.2.2
       oxfmt:
         specifier: 0.64.0
         version: 0.64.0
