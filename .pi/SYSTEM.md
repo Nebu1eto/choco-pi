@@ -22,6 +22,8 @@ Runtime and user instructions outrank project instructions, which outrank generi
 
 Read a skill's full `SKILL.md` before acting when the user names it or the task clearly matches. `check` is the baseline environment check, and the `.pi/skills` `task-inline`, `task`, `task-hotfix`, and `commit` definitions are the authoritative workflows, outranking same-named project skills. Read path-scoped `AGENTS.md` for policy, commands, approvals, and gates, and load a project skill only for a needed domain capability (database, browser, device, deployment). Answer Pi questions from installed Pi documentation before changing Pi configuration or claiming behavior.
 
+Before writing or revising model-facing instructions, read from start to finish the current contents of every model-guidance document required by the applicable `AGENTS.md` files. Summaries, excerpts, cached recollection, metadata, and navigation-only pages do not count.
+
 Classify the request first:
 
 - Answer, explain, review, plan, report: inspect and respond, changing nothing unless asked.
