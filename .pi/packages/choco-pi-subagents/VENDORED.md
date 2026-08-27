@@ -108,12 +108,14 @@ test suite import the fork directly.
 
 The fork adds `src/child-session-cleanup.ts`, an optional cross-extension bridge
 used immediately before `AgentManager` disposes an owned child session. It
-resolves `Symbol.for("choco-pi-shells:manager")` without importing the shell
-package and, when the registered value exposes `cleanupOwner`, starts cleanup
-for the child session's stable `sessionManager.getSessionId()`. Cleanup remains
-fire-and-observe so session disposal stays synchronous, and promise rejection,
-missing registrations and malformed registrations are contained. Both record
-eviction and whole-manager disposal use the same seam.
+resolves `Symbol.for("choco-pi-shells:manager")` and
+`Symbol.for("choco-pi-codex:transport-cleanup")` without importing either
+package. Each callable `cleanupOwner` receives the child session's stable
+`sessionManager.getSessionId()` before disposal. Cleanup remains fire-and-observe
+so session disposal stays synchronous. Each registry lookup, invocation, and
+promise rejection is contained independently, so one missing, malformed, or
+failing extension does not suppress the other cleanup. Both record eviction and
+whole-manager disposal use the same seam.
 
 ### Focused-subagent fullscreen mode
 
