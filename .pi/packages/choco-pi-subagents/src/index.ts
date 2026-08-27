@@ -126,6 +126,7 @@ import {
 } from "./settings.ts";
 import { getForegroundOutcomeNote, getStatusNote, partialOutputSuffix } from "./status-note.ts";
 import { resolveStopOutcome } from "./stop-subagent.ts";
+import { formatResultReadTimeout, waitForSubagentResult } from "./result-read.ts";
 import {
   type AgentConfig,
   type AgentInvocation,
@@ -2747,7 +2748,8 @@ Terse command-style prompts produce shallow, generic work.
       name: SUBAGENT_TOOL_NAMES.GET_RESULT,
       label: "Get Agent Result",
       description:
-        "Check status and retrieve results from a background agent. Use the agent ID returned by Agent with run_in_background.",
+        "Retrieve a background agent result only after the agent reaches any terminal status. " +
+        "Use the agent ID returned by Agent with run_in_background. wait: true gives an active agent one optimistic 5-second grace period, then returns its current status without consuming the result.",
       promptSnippet: "Check status and retrieve results from a background agent",
       parameters: Type.Object({
         agent_id: Type.String({
@@ -2757,7 +2759,7 @@ Terse command-style prompts produce shallow, generic work.
         wait: Type.Optional(
           Type.Boolean({
             description:
-              "If true, wait for the agent to complete before returning. Default: false.",
+              "If true, wait up to 5 seconds for any terminal status. On timeout the agent keeps running and the result stays unconsumed. Default: false.",
           }),
         ),
         verbose: Type.Optional(
@@ -2778,15 +2780,10 @@ Terse command-style prompts produce shallow, generic work.
         // completion notification can still be delivered.
         // Queued agents have no promise yet (it's created when the queue starts
         // them), so poll until they leave the queue, then await like a running one.
-        if (params.wait && (record.status === "running" || record.status === "queued")) {
-          while (record.status === "queued") {
-            await abortable(
-              new Promise<void>((resolve) => setTimeout(resolve, QUEUE_WAIT_POLL_MS)),
-              signal,
-            );
-          }
-          if (record.promise) await abortable(record.promise, signal);
-        }
+        const waitOutcome =
+          params.wait && (record.status === "running" || record.status === "queued")
+            ? await waitForSubagentResult(record, signal)
+            : "settled";
 
         const displayName = getDisplayName(record.type);
         const duration = formatDuration(record.startedAt, record.completedAt);
@@ -2803,8 +2800,11 @@ Terse command-style prompts produce shallow, generic work.
           `Type: ${displayName} | Status: ${record.status}${getStatusNote(record.status)} | ${statsParts.join(" | ")}\n` +
           `Description: ${record.description}\n\n`;
 
-        if (record.status === "running") {
-          output += "Agent is still running. Use wait: true or check back later.";
+        if (record.status === "running" || record.status === "queued") {
+          output +=
+            waitOutcome === "timed-out"
+              ? formatResultReadTimeout(record.id, record.status)
+              : `Agent is still ${record.status}. Retrieve the result only after its completion notification.`;
         } else if (record.status === "error") {
           output += `Error: ${record.error}${partialOutputSuffix(record)}`;
         } else {
