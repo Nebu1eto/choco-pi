@@ -49,11 +49,11 @@ The installed peer closure also contains `@modelcontextprotocol/sdk@1.30.0`, req
 ### Command lifecycle ownership (`index.ts`, `prompts.ts`)
 
 The fork fences slash-command continuations against Pi session replacement and
-reload. `/mcp` and `/mcp-auth` snapshot the current runtime owner and lifecycle
-generation before their deferred command-module import, then stop if either is
-stale before reading the command context. Later command awaits are checked
-again before raw context actions such as `reload`, and command UI is owned by
-the same runtime snapshot.
+reload. `/mcp`, `/mcp-auth`, and cached MCP prompt commands snapshot the current
+runtime owner and lifecycle generation before their deferred command-module
+imports, then stop if either is stale before reading the command context. Later
+command awaits are checked again before raw context actions such as `reload`,
+and command UI is owned by the same runtime snapshot.
 
 Cached MCP prompt commands likewise snapshot the command-context signal and
 state owner before the first await. Lazy connection and prompt retrieval each
