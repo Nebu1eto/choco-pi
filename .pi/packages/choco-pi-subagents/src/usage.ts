@@ -1,5 +1,8 @@
 /** usage.ts — Token usage: shapes, accumulator operators, session-stats readers. */
 
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
+
 /**
  * Lifetime usage components, accumulated via `message_end` events. Survives
  * compaction (which replaces session.state.messages and would reset any
@@ -23,10 +26,77 @@ export function addUsage(into: LifetimeUsage, delta: LifetimeUsage): void {
 
 /** Minimal shape we read from upstream `getSessionStats()`. */
 export type SessionStatsLike = {
+  sessionId?: string;
   tokens: { input: number; output: number; cacheWrite: number };
-  contextUsage?: { percent: number | null };
+  cost?: number;
+  contextUsage?: { percent: number | null; contextWindow?: number };
 };
 export type SessionLike = { getSessionStats(): SessionStatsLike };
+
+export interface SessionCostBaseline {
+  sessionId: string;
+  cost: number;
+}
+
+export interface SessionContextUsage {
+  percent: number | null;
+  contextWindow: number | null;
+}
+
+const FINITE_NUMBER_SCHEMA = Type.Number();
+const SESSION_ID_SCHEMA = Type.String({ minLength: 1 });
+
+function finiteNumber(value: number | null | undefined): number | null {
+  return Value.Check(FINITE_NUMBER_SCHEMA, value) && Number.isFinite(value) ? value : null;
+}
+
+/** Settled session cost paired with the stats identity that produced it. */
+export function getSessionCostBaseline(
+  session: SessionLike | undefined,
+): SessionCostBaseline | null {
+  if (!session) return null;
+  try {
+    const stats = session.getSessionStats();
+    const cost = finiteNumber(stats.cost);
+    return Value.Check(SESSION_ID_SCHEMA, stats.sessionId) && cost !== null && cost >= 0
+      ? { sessionId: stats.sessionId, cost }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Session cost, optionally reduced by a baseline from the same session. */
+export function getSessionCost(
+  session: SessionLike | undefined,
+  baseline?: SessionCostBaseline,
+): number | null {
+  const current = getSessionCostBaseline(session);
+  if (!current) return null;
+  if (!baseline || baseline.sessionId !== current.sessionId) return current.cost;
+  return Math.max(0, current.cost - baseline.cost);
+}
+
+/** Live context utilization; percent and window are validated independently. */
+export function getSessionContextUsage(
+  session: SessionLike | undefined,
+  fallbackContextWindow?: number,
+): SessionContextUsage {
+  const fallback = finiteNumber(fallbackContextWindow);
+  const validFallback = fallback !== null && fallback > 0 ? fallback : null;
+  if (!session) return { percent: null, contextWindow: validFallback };
+  try {
+    const usage = session.getSessionStats().contextUsage;
+    const percent = finiteNumber(usage?.percent);
+    const contextWindow = finiteNumber(usage?.contextWindow);
+    return {
+      percent,
+      contextWindow: contextWindow !== null && contextWindow > 0 ? contextWindow : validFallback,
+    };
+  } catch {
+    return { percent: null, contextWindow: validFallback };
+  }
+}
 
 /**
  * Session-scoped token count: input + output + cacheWrite as reported by
@@ -56,10 +126,5 @@ export function getSessionTokens(session: SessionLike | undefined): number {
  * (no model contextWindow, or post-compaction before the next response).
  */
 export function getSessionContextPercent(session: SessionLike | undefined): number | null {
-  if (!session) return null;
-  try {
-    return session.getSessionStats().contextUsage?.percent ?? null;
-  } catch {
-    return null;
-  }
+  return getSessionContextUsage(session).percent;
 }

@@ -313,7 +313,7 @@ export function buildTokenLabel(totals: UsageTotals, cacheHitIcon = "󰆼"): str
   return parts.length > 0 ? parts.join(" ") : "↑0 ↓0";
 }
 
-export function buildCostLabel(totals: UsageTotals): string {
+export function buildCostLabel(totals: Pick<UsageTotals, "cost">): string {
   return `$${totals.cost.toFixed(3)}`;
 }
 

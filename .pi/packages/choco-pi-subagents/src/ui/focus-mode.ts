@@ -80,9 +80,12 @@ type ActiveFocus = {
 type FocusedModelControlsRegistry = Map<string, { setFast(action: string): string }>;
 
 function focusedModelControlsRegistry(): FocusedModelControlsRegistry | undefined {
-  return (globalThis as typeof globalThis & {
-    [FOCUSED_MODEL_CONTROLS_SYMBOL]?: FocusedModelControlsRegistry;
-  })[FOCUSED_MODEL_CONTROLS_SYMBOL];
+  // SAFETY: Both extensions share this private Symbol.for slot and independently declare its map shape.
+  return (
+    globalThis as typeof globalThis & {
+      [FOCUSED_MODEL_CONTROLS_SYMBOL]?: FocusedModelControlsRegistry;
+    }
+  )[FOCUSED_MODEL_CONTROLS_SYMBOL];
 }
 
 /**
@@ -204,6 +207,7 @@ function findHostMarkdownTransformers(root: HostBoundaryValue): readonly Markdow
       // InteractiveMode prepends Mermaid before extension transformers. Carry
       // only that host transformer; the child runner supplies its own extension
       // transformers below, without duplicating the orchestrator's instances.
+      // SAFETY: every array entry was checked callable immediately above.
       return (transformers as MarkdownTransformer[]).slice(0, 1);
     }
     for (const child of childrenOf(object)) {
@@ -321,9 +325,7 @@ export class FocusedAgentController {
     }
     this.ensureEditorPatch();
     this.installIndicator(record);
-    this.clearFocusedRuntime = publishFocusedAgentRuntime(() =>
-      focusedAgentRuntime(record.session ?? session),
-    );
+    this.clearFocusedRuntime = publishFocusedAgentRuntime(() => focusedAgentRuntime(record));
     tui.requestRender(true);
     return true;
   }
@@ -468,6 +470,7 @@ export class FocusedAgentController {
         if (!THINKING_LEVELS.has(argument)) {
           throw new Error(`Unsupported reasoning effort: ${argument || "(empty)"}`);
         }
+        // SAFETY: THINKING_LEVELS enumerates every AgentSession thinking-level value.
         session.setThinkingLevel(argument as Parameters<AgentSession["setThinkingLevel"]>[0], {
           persist: false,
         });
@@ -480,7 +483,7 @@ export class FocusedAgentController {
       active.viewer.invalidate();
       active.tui.requestRender(true);
     };
-    void run().catch((error: unknown) => {
+    void run().catch((error) => {
       this.ui?.notify(error instanceof Error ? error.message : String(error), "warning");
     });
     return true;
