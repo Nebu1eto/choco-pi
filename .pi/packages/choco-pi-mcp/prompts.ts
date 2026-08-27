@@ -12,7 +12,7 @@ import {
 import { logger } from "./logger.ts";
 import { truncateAtWord } from "./utils.ts";
 import { isObjectValue, isStringValue } from "./protocol-values.ts";
-import { createOwnedUi } from "./runtime-owner.ts";
+import { combineAbortSignals, createOwnedUi } from "./runtime-owner.ts";
 
 /**
  * Resolve prompt metadata for slash-command registration at extension load
@@ -255,7 +255,8 @@ export function createPromptCommand(
 
       const commandOwner = state.owner;
       if (commandOwner && !commandOwner.isActive()) return;
-      const commandSignal = commandOwner?.signal ?? ctx.signal;
+      const capturedCommandSignal = ctx.signal;
+      const commandSignal = combineAbortSignals(commandOwner?.signal, capturedCommandSignal);
       const commandHasUI = ctx.hasUI;
       const commandUi = commandHasUI
         ? commandOwner
@@ -302,12 +303,18 @@ export function createPromptCommand(
 
       const connectionOwner = state.owner;
       if (connectionOwner && !connectionOwner.isActive()) return;
-      const connectionSignal = connectionOwner?.signal ?? commandSignal;
+      const connectionSignal = combineAbortSignals(connectionOwner?.signal, commandSignal);
       let connected: boolean;
       try {
         connected = await lazyConnect(state, metadata.serverName, connectionSignal);
       } catch (error) {
-        if (!isCommandActive() || (connectionOwner && !connectionOwner.isActive())) return;
+        if (
+          connectionSignal?.aborted ||
+          !isCommandActive() ||
+          (connectionOwner && !connectionOwner.isActive())
+        ) {
+          return;
+        }
         throw error;
       }
       if (!isCommandActive() || (connectionOwner && !connectionOwner.isActive())) return;
@@ -337,7 +344,7 @@ export function createPromptCommand(
       const dispatchMetadata = refreshed ?? live;
       const promptOwner = state.owner;
       if (promptOwner && !promptOwner.isActive()) return;
-      const promptSignal = promptOwner?.signal ?? commandSignal;
+      const promptSignal = combineAbortSignals(promptOwner?.signal, commandSignal);
       let result: GetPromptResult;
       try {
         result = await state.manager.getPrompt(
@@ -347,7 +354,13 @@ export function createPromptCommand(
           promptSignal,
         );
       } catch (error) {
-        if (!isCommandActive() || (promptOwner && !promptOwner.isActive())) return;
+        if (
+          promptSignal?.aborted ||
+          !isCommandActive() ||
+          (promptOwner && !promptOwner.isActive())
+        ) {
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         logger.debug(
           `MCP prompt "${live.originalName}" on ${metadata.serverName} failed: ${message}`,

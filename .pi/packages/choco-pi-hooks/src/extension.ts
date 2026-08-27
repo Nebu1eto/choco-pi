@@ -248,18 +248,19 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     reload(ctx);
     lastCwd = ctx.cwd;
     supplemental.setContext(ctx);
+    const generationToken = supplemental.captureGeneration();
     let setupTrigger: "maintenance" | "init" | undefined;
     if (pi.getFlag("maintenance")) setupTrigger = "maintenance";
     else if (pi.getFlag("init-only") || pi.getFlag("init")) setupTrigger = "init";
     if (setupTrigger) {
       await dispatch("Setup", ctx, { trigger: setupTrigger });
-      if (supplemental.getContext() !== ctx) return;
+      if (!supplemental.isCurrentGeneration(generationToken)) return;
     }
     const result = await dispatch("SessionStart", ctx, {
       source: sourceForStart(event.reason),
       model: ctx.model?.id,
     });
-    if (supplemental.getContext() !== ctx) return;
+    if (!supplemental.isCurrentGeneration(generationToken)) return;
     notify(ctx, result.systemMessages);
     watchers = createHookWatchers({
       cwd: ctx.cwd,

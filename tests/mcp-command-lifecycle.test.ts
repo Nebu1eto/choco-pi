@@ -8,7 +8,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "../.pi/packages/choco-pi-mcp/state.ts";
-import type { PromptMetadata } from "../.pi/packages/choco-pi-mcp/types.ts";
+import type { PromptMetadata, ServerEntry } from "../.pi/packages/choco-pi-mcp/types.ts";
 
 const STALE_CONTEXT_MESSAGE = "This extension ctx is stale after session replacement or reload.";
 const COMMANDS_URL_SUFFIX = "/.pi/packages/choco-pi-mcp/commands.ts";
@@ -25,6 +25,18 @@ function deferred<T>(): Deferred<T> {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+function waitForAbort<T>(signal: AbortSignal | undefined, onAbort: () => void): Promise<T> {
+  assert.ok(signal);
+  return new Promise<T>((_resolve, reject) => {
+    const abort = () => {
+      onAbort();
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 const commandLoadGate = deferred<void>();
@@ -120,7 +132,7 @@ function createExtensionApi() {
   };
 }
 
-function createContext(hasUI = false) {
+function createContext(hasUI = false, signal?: AbortSignal) {
   let stale = false;
   let accesses = 0;
   const notifications: Array<[string, string | undefined]> = [];
@@ -154,7 +166,7 @@ function createContext(hasUI = false) {
       return read(undefined);
     },
     get signal() {
-      return read(undefined);
+      return read(signal);
     },
     get ui() {
       return read(ui);
@@ -180,6 +192,31 @@ function createContext(hasUI = false) {
   };
 }
 
+function createPromptApi() {
+  let stale = false;
+  let accesses = 0;
+  const sent: string[] = [];
+  // SAFETY: The proxy supplies the only ExtensionAPI member exercised by prompt commands.
+  const pi = new Proxy(Object.create(null) as ExtensionAPI, {
+    get(_target, property) {
+      accesses += 1;
+      if (stale) throw new Error("This extension pi is stale after session replacement or reload.");
+      if (property === "sendUserMessage") {
+        return (text: string) => sent.push(text);
+      }
+      return undefined;
+    },
+  });
+  return {
+    pi,
+    sent,
+    markStale() {
+      stale = true;
+    },
+    accessCount: () => accesses,
+  };
+}
+
 const promptMetadata: PromptMetadata = {
   serverName: "demo",
   originalName: "brief",
@@ -190,13 +227,13 @@ const promptMetadata: PromptMetadata = {
 
 function createPromptState(options: {
   owner: ReturnType<typeof createMcpRuntimeOwner>;
-  connect?: () => Promise<{
+  connect?: (signal?: AbortSignal) => Promise<{
     status: "needs-auth";
     tools: [];
     resources: [];
     prompts: [];
   }>;
-  getPrompt?: () => Promise<{
+  getPrompt?: (signal?: AbortSignal) => Promise<{
     messages: Array<{ role: "user"; content: { type: "text"; text: string } }>;
   }>;
   connected?: boolean;
@@ -211,13 +248,20 @@ function createPromptState(options: {
     manager: {
       getConnection: () => connection,
       connect: options.connect
-        ? async () => {
-            const result = await options.connect?.();
+        ? async (_serverName: string, _definition: ServerEntry, signal?: AbortSignal) => {
+            const result = await options.connect?.(signal);
             connection = result;
             return result;
           }
         : undefined,
-      getPrompt: options.getPrompt,
+      getPrompt: options.getPrompt
+        ? async (
+            _serverName: string,
+            _promptName: string,
+            _args: Record<string, string> | undefined,
+            signal?: AbortSignal,
+          ) => options.getPrompt?.(signal)
+        : undefined,
     },
     lifecycle: { markKeepAlive() {} },
     promptMetadata: new Map([["demo", [promptMetadata]]]),
@@ -258,33 +302,31 @@ test("deferred /mcp command imports ignore stale contexts and serve the current 
 });
 
 test("prompt commands stop after an invalidated deferred connection", async () => {
-  const connectGate = deferred<{
-    status: "needs-auth";
-    tools: [];
-    resources: [];
-    prompts: [];
-  }>();
+  let connectionAborted = false;
   const owner = createMcpRuntimeOwner();
-  const state = createPromptState({ owner, connect: () => connectGate.promise });
-  const context = createContext(true);
-  const sent: string[] = [];
-  // SAFETY: Prompt commands only use sendUserMessage on this ExtensionAPI fixture.
-  const pi = Object.assign(Object.create(null) as ExtensionAPI, {
-    sendUserMessage(text: string) {
-      sent.push(text);
-    },
+  const state = createPromptState({
+    owner,
+    connect: (signal) =>
+      waitForAbort(signal, () => {
+        connectionAborted = true;
+      }),
   });
-  const pending = createPromptCommand(pi, () => state, promptMetadata).handler("", context.ctx);
+  const context = createContext(true);
+  const api = createPromptApi();
+  const pending = createPromptCommand(api.pi, () => state, promptMetadata).handler("", context.ctx);
 
   await owner.stop("test owner invalidated");
   context.markStale();
-  const accesses = context.accessCount();
-  connectGate.resolve({ status: "needs-auth", tools: [], resources: [], prompts: [] });
+  api.markStale();
+  const contextAccesses = context.accessCount();
+  const piAccesses = api.accessCount();
 
   await assert.doesNotReject(() => pending);
-  assert.equal(context.accessCount(), accesses);
+  assert.equal(connectionAborted, true);
+  assert.equal(context.accessCount(), contextAccesses);
+  assert.equal(api.accessCount(), piAccesses);
   assert.deepEqual(context.notifications, []);
-  assert.deepEqual(sent, []);
+  assert.deepEqual(api.sent, []);
 
   const currentConnectGate = deferred<{
     status: "needs-auth";
@@ -298,40 +340,48 @@ test("prompt commands stop after an invalidated deferred connection", async () =
     connect: () => currentConnectGate.promise,
   });
   const currentContext = createContext(true);
-  const currentPending = createPromptCommand(pi, () => currentState, promptMetadata).handler(
-    "",
-    currentContext.ctx,
-  );
+  const currentApi = createPromptApi();
+  const currentPending = createPromptCommand(
+    currentApi.pi,
+    () => currentState,
+    promptMetadata,
+  ).handler("", currentContext.ctx);
   currentConnectGate.resolve({ status: "needs-auth", tools: [], resources: [], prompts: [] });
   await currentPending;
   assert.match(currentContext.notifications.at(-1)?.[0] ?? "", /needs authentication/);
 });
 
 test("prompt commands stop after an invalidated deferred prompt and send for the current owner", async () => {
-  const promptGate = deferred<{
-    messages: Array<{ role: "user"; content: { type: "text"; text: string } }>;
-  }>();
+  let promptAborted = false;
+  const promptStarted = deferred<void>();
   const owner = createMcpRuntimeOwner();
-  const state = createPromptState({ owner, connected: true, getPrompt: () => promptGate.promise });
-  const context = createContext(true);
-  const sent: string[] = [];
-  // SAFETY: Prompt commands only use sendUserMessage on this ExtensionAPI fixture.
-  const pi = Object.assign(Object.create(null) as ExtensionAPI, {
-    sendUserMessage(text: string) {
-      sent.push(text);
+  const state = createPromptState({
+    owner,
+    connected: true,
+    getPrompt: (signal) => {
+      promptStarted.resolve();
+      return waitForAbort(signal, () => {
+        promptAborted = true;
+      });
     },
   });
-  const pending = createPromptCommand(pi, () => state, promptMetadata).handler("", context.ctx);
+  const context = createContext(true);
+  const api = createPromptApi();
+  const pending = createPromptCommand(api.pi, () => state, promptMetadata).handler("", context.ctx);
 
+  await promptStarted.promise;
   await owner.stop("test owner invalidated");
   context.markStale();
-  const accesses = context.accessCount();
-  promptGate.resolve({ messages: [{ role: "user", content: { type: "text", text: "stale" } }] });
+  api.markStale();
+  const contextAccesses = context.accessCount();
+  const piAccesses = api.accessCount();
 
   await assert.doesNotReject(() => pending);
-  assert.equal(context.accessCount(), accesses);
+  assert.equal(promptAborted, true);
+  assert.equal(context.accessCount(), contextAccesses);
+  assert.equal(api.accessCount(), piAccesses);
   assert.deepEqual(context.notifications, []);
-  assert.deepEqual(sent, []);
+  assert.deepEqual(api.sent, []);
 
   const currentOwner = createMcpRuntimeOwner();
   const currentState = createPromptState({
@@ -341,9 +391,71 @@ test("prompt commands stop after an invalidated deferred prompt and send for the
       messages: [{ role: "user", content: { type: "text", text: "current" } }],
     }),
   });
-  await createPromptCommand(pi, () => currentState, promptMetadata).handler(
+  const currentApi = createPromptApi();
+  await createPromptCommand(currentApi.pi, () => currentState, promptMetadata).handler(
     "",
     createContext(true).ctx,
   );
-  assert.deepEqual(sent, ["current"]);
+  assert.deepEqual(currentApi.sent, ["current"]);
+});
+
+test("prompt command signal abort cancels a deferred connection without stale access", async () => {
+  let connectionAborted = false;
+  const controller = new AbortController();
+  const owner = createMcpRuntimeOwner();
+  const state = createPromptState({
+    owner,
+    connect: (signal) =>
+      waitForAbort(signal, () => {
+        connectionAborted = true;
+      }),
+  });
+  const context = createContext(true, controller.signal);
+  const api = createPromptApi();
+  const pending = createPromptCommand(api.pi, () => state, promptMetadata).handler("", context.ctx);
+
+  context.markStale();
+  api.markStale();
+  const contextAccesses = context.accessCount();
+  const piAccesses = api.accessCount();
+  controller.abort(new DOMException("Command cancelled", "AbortError"));
+
+  await assert.doesNotReject(() => pending);
+  assert.equal(connectionAborted, true);
+  assert.equal(context.accessCount(), contextAccesses);
+  assert.equal(api.accessCount(), piAccesses);
+  assert.deepEqual(context.notifications, []);
+  assert.deepEqual(api.sent, []);
+  await owner.stop("test complete");
+});
+
+test("prompt command signal abort cancels deferred prompt retrieval without stale access", async () => {
+  let promptAborted = false;
+  const controller = new AbortController();
+  const owner = createMcpRuntimeOwner();
+  const state = createPromptState({
+    owner,
+    connected: true,
+    getPrompt: (signal) =>
+      waitForAbort(signal, () => {
+        promptAborted = true;
+      }),
+  });
+  const context = createContext(true, controller.signal);
+  const api = createPromptApi();
+  const pending = createPromptCommand(api.pi, () => state, promptMetadata).handler("", context.ctx);
+
+  context.markStale();
+  api.markStale();
+  const contextAccesses = context.accessCount();
+  const piAccesses = api.accessCount();
+  controller.abort(new DOMException("Command cancelled", "AbortError"));
+
+  await assert.doesNotReject(() => pending);
+  assert.equal(promptAborted, true);
+  assert.equal(context.accessCount(), contextAccesses);
+  assert.equal(api.accessCount(), piAccesses);
+  assert.deepEqual(context.notifications, []);
+  assert.deepEqual(api.sent, []);
+  await owner.stop("test complete");
 });
