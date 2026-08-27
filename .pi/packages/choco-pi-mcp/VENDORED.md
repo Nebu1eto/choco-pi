@@ -55,10 +55,13 @@ stale before reading the command context. Later command awaits are checked
 again before raw context actions such as `reload`, and command UI is owned by
 the same runtime snapshot.
 
-Cached MCP prompt commands likewise snapshot their state owner and signal
-before lazy connection and prompt retrieval. An invalidated owner suppresses
-all later context, UI, and `sendUserMessage` access while failures unrelated to
-owner invalidation retain the existing notification behavior.
+Cached MCP prompt commands likewise snapshot the command-context signal and
+state owner before the first await. Lazy connection and prompt retrieval each
+receive a signal combining that command signal with the relevant runtime owner,
+so either command cancellation or owner replacement aborts the request. An
+invalidated owner suppresses all later context, UI, and `sendUserMessage`
+access, while failures unrelated to cancellation retain the existing
+notification behavior.
 
 ### Owned-UI fence (`owned-ui.ts`, `runtime-owner.ts`)
 

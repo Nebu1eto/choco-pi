@@ -460,6 +460,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
 
         ctx.ui.notify("Usage: /shells [list | read <id> | stop <id>]", "warning");
       } catch (error) {
+        if (shuttingDown) return;
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
     },

@@ -10,7 +10,7 @@ import shellsExtension, {
   type ShellNotificationTheme,
   renderShellCompletion,
 } from "../src/index.ts";
-import type { ShellManager, ShellResult } from "../src/shell-manager.ts";
+import type { ShellManager } from "../src/shell-manager.ts";
 import type { ShellCustomOptions, ShellViewerKeybindings } from "../src/ui/shells-overlay.ts";
 import type {
   ShellsWidgetComponent,
@@ -557,29 +557,18 @@ test("/shells stop notifies only while its activation remains current", async ()
   assert.ok(manager);
   assert.ok(root.command);
 
-  let resolveStop: ((result: ShellResult) => void) | undefined;
+  let rejectStop: ((error: Error) => void) | undefined;
   manager.stop = () =>
-    new Promise<ShellResult>((resolveStopPromise) => {
-      resolveStop = resolveStopPromise;
+    new Promise<never>((_resolve, rejectStopPromise) => {
+      rejectStop = rejectStopPromise;
     });
-  const stopped: ShellResult = {
-    shellId: "deferred-shell",
-    ownerId: "root",
-    command: "sleep 1",
-    cwd: packageCwd,
-    state: "stopped",
-    startedAt: 1,
-    endedAt: 2,
-  };
 
   const currentNotices: Notice[] = [];
   const currentStop = root.command.handler("stop deferred-shell", context("root", currentNotices));
-  assert.ok(resolveStop);
-  resolveStop(stopped);
+  assert.ok(rejectStop);
+  rejectStop(new Error("manager stop failed"));
   await currentStop;
-  assert.equal(currentNotices.length, 1);
-  assert.equal(currentNotices[0]?.level, "info");
-  assert.deepEqual(JSON.parse(currentNotices[0]?.message ?? ""), stopped);
+  assert.deepEqual(currentNotices, [{ message: "manager stop failed", level: "error" }]);
 
   let contextIsCurrent = true;
   const staleContext = new Proxy(context("root"), {
@@ -592,12 +581,12 @@ test("/shells stop notifies only while its activation remains current", async ()
     },
   });
   const staleStop = root.command.handler("stop deferred-shell", staleContext);
-  assert.ok(resolveStop);
+  assert.ok(rejectStop);
 
   assert.ok(root.shutdown);
   await root.shutdown({ reason: "quit" }, context("root"));
   contextIsCurrent = false;
-  resolveStop(stopped);
+  rejectStop(new Error("manager stop failed after shutdown"));
   await assert.doesNotReject(staleStop);
   assert.equal(registry()[managerKey], undefined);
 });
