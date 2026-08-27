@@ -189,6 +189,7 @@ export async function initializeMcp(
     manager.setElicitationConfig({
       ui,
       allowUrl: mode === "tui",
+      events: pi.events,
     });
   }
   const lifecycle = new McpLifecycleManager(manager, (serverName) =>

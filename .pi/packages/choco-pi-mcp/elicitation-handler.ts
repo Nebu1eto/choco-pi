@@ -1,5 +1,6 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { Client } from "@modelcontextprotocol/client";
+import type { EventBus } from "@earendil-works/pi-coding-agent";
 import {
   ProtocolError,
   ProtocolErrorCode,
@@ -31,6 +32,7 @@ export interface ElicitationHandlerOptions {
   ui: ElicitationUIContext;
   allowUrl: boolean;
   onUrlAccepted?: (elicitationId: string) => void;
+  events?: EventBus;
 }
 
 export type ServerElicitationConfig = Omit<
@@ -51,9 +53,40 @@ export async function handleElicitationRequest(
   options: ElicitationHandlerOptions,
   request: ElicitRequest,
 ): Promise<ElicitResult> {
-  return request.params.mode === "url"
+  const hookResult = await requestHookDecision(options, "Elicitation", request.params);
+  if (hookResult) return hookResult;
+  const result = await (request.params.mode === "url"
     ? handleUrlElicitation(options, request.params)
-    : handleFormElicitation(options, request.params);
+    : handleFormElicitation(options, request.params));
+  return (
+    (await requestHookDecision(options, "ElicitationResult", request.params, result)) ?? result
+  );
+}
+
+async function requestHookDecision(
+  options: ElicitationHandlerOptions,
+  event: "Elicitation" | "ElicitationResult",
+  params: ElicitRequest["params"],
+  current?: ElicitResult,
+): Promise<ElicitResult | undefined> {
+  if (!options.events) return undefined;
+  let claimed = false;
+  let resolveDecision: (result: ElicitResult | undefined) => void = () => undefined;
+  const decision = new Promise<ElicitResult | undefined>((resolve) => {
+    resolveDecision = resolve;
+  });
+  options.events.emit("choco-pi-hooks:elicitation", {
+    event,
+    serverName: options.serverName,
+    params,
+    current,
+    claim: () => {
+      claimed = true;
+    },
+    resolve: resolveDecision,
+  });
+  await Promise.resolve();
+  return claimed ? decision : undefined;
 }
 
 export async function handleFormElicitation(

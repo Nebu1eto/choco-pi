@@ -194,6 +194,14 @@ export function registerAgentsMdAutoload(pi: ExtensionAPI): void {
 
     if (!appendixFiles.length) return undefined;
 
+    for (const file of appendixFiles) {
+      pi.events?.emit("choco-pi-hooks:instructions-loaded", {
+        filePath: resolvePath(file.path, currentCwd),
+        memoryType: "Project",
+        loadReason: "nested_traversal",
+      });
+    }
+
     return { content: appendAgentsContext(event.content, appendixFiles) };
   });
 }

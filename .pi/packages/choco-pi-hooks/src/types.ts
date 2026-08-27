@@ -101,12 +101,16 @@ export type HooksConfiguration = Partial<Record<HookEventName, HookGroup[]>>;
 export interface SettingsWithHooks {
   hooks?: HooksConfiguration;
   disableAllHooks?: boolean;
+  allowedHttpHookUrls?: string[];
+  httpHookAllowedEnvVars?: string[];
 }
 
 export interface HookSource {
   id: string;
   kind: "managed" | "user" | "project" | "local" | "plugin" | "skill" | "agent" | "session";
   hooks: HooksConfiguration;
+  allowedHttpHookUrls?: string[];
+  httpHookAllowedEnvVars?: string[];
 }
 export interface HookInvocationResult {
   source: HookSource;
@@ -117,6 +121,7 @@ export interface HookInvocationResult {
   plainText?: string;
   stderr?: string;
   error?: string;
+  completionOrder?: number;
 }
 export interface MergedHookResult {
   invocations: HookInvocationResult[];
@@ -124,8 +129,10 @@ export interface MergedHookResult {
   continue: boolean;
   reason?: string;
   systemMessages: string[];
+  terminalSequences: string[];
   additionalContext: string[];
   permissionDecision?: "deny" | "defer" | "ask" | "allow";
+  permissionRequestDecision?: "allow" | "deny";
   updatedInput?: JsonObject;
   updatedToolOutput?: JsonValue;
   displayContent?: string;

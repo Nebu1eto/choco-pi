@@ -1,4 +1,3 @@
-/* oxlint-disable anti-slop/no-runtime-typeof -- The assertion narrows Node's documented union return from server.address(). */
 import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
@@ -37,6 +36,31 @@ test("exec and shell command forms receive hook JSON on stdin", async () => {
   assert.equal(JSON.parse(shellResult.stdout).hook_event_name, "PreToolUse");
 });
 
+test("command hooks receive CLAUDE_ENV_FILE when the adapter supplies it", async () => {
+  const result = await executeHandler(
+    {
+      type: "command",
+      command: process.execPath,
+      args: ["-e", "process.stdout.write(process.env.CLAUDE_ENV_FILE || '')"],
+    },
+    { ...input, _claude_env_file: "/tmp/session.env" },
+  );
+  assert.equal(result.stdout, "/tmp/session.env");
+});
+
+test("timed-out command hooks are cancelled and reported as timeouts", async () => {
+  const result = await executeHandler(
+    {
+      type: "command",
+      command: process.execPath,
+      args: ["-e", "setTimeout(() => {}, 1000)"],
+      timeout: 0.01,
+    },
+    input,
+  );
+  assert.equal(result.timedOut, true);
+});
+
 test("HTTP hooks POST JSON and interpolate only allowlisted header variables", async (t) => {
   process.env.CHOCO_HOOK_TEST_TOKEN = "secret";
   const server = http.createServer((request, response) => {
@@ -50,7 +74,7 @@ test("HTTP hooks POST JSON and interpolate only allowlisted header variables", a
     delete process.env.CHOCO_HOOK_TEST_TOKEN;
   });
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("missing address");
+  if (!(address instanceof Object)) throw new Error("missing address");
   const result = await executeHandler(
     {
       type: "http",
