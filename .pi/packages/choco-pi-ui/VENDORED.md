@@ -118,9 +118,11 @@ The editor and Starship footer defensively read the optional
 `Symbol.for("choco-pi.subagents.focused-agent-runtime")` bridge on every render.
 When a valid child model owns focus, footer and minimalist-editor cost/context
 surfaces use only the child's published totals, context percentage, and context
-window. Missing or invalid child usage stays unknown instead of falling back to
-the main session; removing the bridge restores the existing cumulative main
-session and live-context displays immediately. The shared boundary reader lives
+window. Footer token and cache labels are hidden because the bridge does not
+publish child token totals; main-session labels never appear beside child cost.
+Missing or invalid child usage stays unknown instead of falling back to the main
+session; removing the bridge restores the existing cumulative main session and
+live-context displays immediately. The shared boundary reader lives
 in `extensions/zentui/focused-runtime.ts` so the render paths apply one parser.
 
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
