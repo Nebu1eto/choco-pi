@@ -449,6 +449,14 @@ session unchanged, and without a consumer publishing is inert. Fast-mode status
 is not part of the slot; it is owned by a separate root extension keyed to the
 main session's model id.
 
+Focused transcript rendering now carries Pi's host-owned Markdown transformers
+into the subagent viewer, because the child extension runner contains extension
+transformers but not Pi's built-in Mermaid transformer. Focused `/model`,
+`/effort`, and `/fast` submissions are also intercepted before the main editor
+dispatches them: model mutations target the child session without persisting
+global defaults, while extension commands execute through that child session's
+session-specific control bridge.
+
 ### Shared `/preferences` settings section
 
 The fork publishes its complete `/agents` settings row set through the private
