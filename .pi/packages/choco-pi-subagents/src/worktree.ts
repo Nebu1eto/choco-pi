@@ -26,6 +26,34 @@ export interface WorktreeInfo {
    * monorepo package), so the requested scoping survives isolation.
    */
   workPath: string;
+  /** Worktree path supplied by a Claude-compatible WorktreeCreate hook. */
+  hookManaged?: boolean;
+}
+
+export function adoptHookWorktree(
+  cwd: string,
+  worktreePath: string,
+  agentId: string,
+): WorktreeInfo | undefined {
+  try {
+    if (!existsSync(worktreePath)) return undefined;
+    const baseSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd,
+      stdio: "pipe",
+      timeout: 5000,
+    })
+      .toString()
+      .trim();
+    return {
+      path: realpathSync(worktreePath),
+      workPath: realpathSync(worktreePath),
+      branch: `pi-agent-${agentId}`,
+      baseSha,
+      hookManaged: true,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 /**

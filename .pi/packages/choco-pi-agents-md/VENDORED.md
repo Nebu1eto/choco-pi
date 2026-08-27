@@ -77,6 +77,14 @@ Reproduced faithfully:
   Matches the reference: it also does not treat `write`/`edit` as
   AGENTS.md-triggering events, only `read`/`grep`/`find`/`ls`/shell.
 
+## Hook lifecycle bridge
+
+After a nested `AGENTS.md` file is successfully selected for injection, the
+package emits `choco-pi-hooks:instructions-loaded` with its absolute path and
+the `nested_traversal` reason. This lets `choco-pi-hooks` fire Claude-compatible
+`InstructionsLoaded` handlers at the actual lazy-load boundary without parsing
+the rendered XML appendix back out of the tool result.
+
 ## What was read but not reused
 
 `dist/src/hooks/before-agent-start.js` (workflow-prompt system-prompt suffix)

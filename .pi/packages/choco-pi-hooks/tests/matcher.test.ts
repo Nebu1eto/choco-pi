@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HOOK_EVENTS, matcherValue, matches, matchesIf } from "../src/index.ts";
+import {
+  HOOK_EVENTS,
+  LIVE_EVENT_BINDINGS,
+  matcherValue,
+  matches,
+  matchesIf,
+} from "../src/index.ts";
 import type { HookInput } from "../src/types.ts";
 
 const base = (event: HookInput["hook_event_name"], extra = {}): HookInput => ({
@@ -21,6 +27,11 @@ test("exports every documented Claude Code hook event", () => {
     "PreToolUse",
   ]);
   assert.equal(HOOK_EVENTS.at(-1), "SessionEnd");
+});
+
+test("every documented event has a live binding or explicit host exclusion", () => {
+  assert.deepEqual(Object.keys(LIVE_EVENT_BINDINGS), [...HOOK_EVENTS]);
+  for (const event of HOOK_EVENTS) assert.ok(LIVE_EVENT_BINDINGS[event].length > 0, event);
 });
 
 test("exact, comma, pipe, regex, wildcard, and unsupported matcher behavior", () => {

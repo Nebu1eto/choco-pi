@@ -535,3 +535,22 @@ refused or sessionless resume attempts leave it unchanged. Both root resume mode
 and nested inline resumes return the resulting alias; live root/nested records
 instead return the same actionable wait/steer guidance before reaching the
 manager's causal re-entry guard.
+
+### Claude-compatible stop-hook continuation
+
+The root extension listens for the private
+`choco-pi-hooks:subagent-continue` event. When a `SubagentStop`,
+`TeammateIdle`, or workflow `TaskCompleted` hook blocks completion,
+`choco-pi-hooks` sends the settled record id and feedback through this channel.
+The package resumes that existing session through the same detached resume path
+used by the Agent tool, preserving transcript, activity, scheduling, and output
+bookkeeping rather than spawning a replacement agent.
+
+### Claude-compatible worktree hooks
+
+An Agent `PreToolUse` handler can attach the private
+`__choco_hook_worktree_path` returned by a `WorktreeCreate` hook. The manager
+adopts that validated directory instead of creating its normal Git worktree and
+marks it hook-managed. At settlement it emits `subagents:worktree-remove` and
+waits for the matching `WorktreeRemove` hook, rather than applying the package's
+Git commit/branch/removal behavior to a worktree owned by another system.
