@@ -119,6 +119,8 @@ export type ConversationViewerOptions = {
   replyLabel?: "steer" | "reply";
   /** Initial tool/bash expansion state, retained by fullscreen focus per agent. */
   toolOutputExpanded?: boolean;
+  /** Host-owned transformers (notably Pi's built-in Mermaid renderer). */
+  hostMarkdownTransformers?: readonly MarkdownTransformer[];
 };
 
 export class ConversationViewer implements Component {
@@ -147,6 +149,7 @@ export class ConversationViewer implements Component {
   /** Tool and bash rows that follow this viewer's expansion state. */
   private expandableComponents = new Set<ToolExecutionComponent | BashExecutionComponent>();
   private toolOutputExpanded: boolean;
+  private hostMarkdownTransformers: readonly MarkdownTransformer[];
   /** Tool calls whose result (real or synthesized error) has been applied. */
   private settledTools = new Set<string>();
   /** toolCallId -> owning assistant message, for line-cache invalidation. */
@@ -218,6 +221,7 @@ export class ConversationViewer implements Component {
     this.allowReplyWhenFinished = options.allowReplyWhenFinished === true;
     this.replyLabel = options.replyLabel ?? "steer";
     this.toolOutputExpanded = options.toolOutputExpanded === true;
+    this.hostMarkdownTransformers = options.hostMarkdownTransformers ?? [];
 
     this.wasRunning = this.record.status === "running";
     this.keys = createViewerKeys(keybindings);
@@ -822,9 +826,10 @@ export class ConversationViewer implements Component {
         | { getMarkdownTransformers?: () => MarkdownTransformer[] }
         | undefined;
       const transformers = runner?.getMarkdownTransformers?.();
-      return Array.isArray(transformers) ? transformers : [];
+      const extensionTransformers = Array.isArray(transformers) ? transformers : [];
+      return [...this.hostMarkdownTransformers, ...extensionTransformers];
     } catch {
-      return [];
+      return this.hostMarkdownTransformers;
     }
   }
 }
