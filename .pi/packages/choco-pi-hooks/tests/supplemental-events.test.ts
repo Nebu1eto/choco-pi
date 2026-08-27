@@ -121,6 +121,36 @@ test("in-flight supplemental event stops without touching a disposed context", a
   assert.equal(supplemental.getContext(), undefined);
 });
 
+test("in-flight subagent completion survives an ordinary fresh context update", async () => {
+  const { api, eventHandlers, emitted } = supplementalTestApi();
+  let resolveIdle!: (result: MergedHookResult) => void;
+  const idle = new Promise<MergedHookResult>((resolve) => {
+    resolveIdle = resolve;
+  });
+  const dispatched: string[] = [];
+  const supplemental = registerSupplementalEvents(api, (event) => {
+    dispatched.push(event);
+    return event === "TeammateIdle" ? idle : Promise.resolve(emptyResult());
+  });
+  supplemental.setContext(extensionContext({}));
+
+  const stopped = eventHandlers.get("subagents:completed")?.[0];
+  assert.ok(stopped);
+  stopped({ id: "agent-1", workflowId: "flow-1", workflowStepId: "step-1" });
+  assert.deepEqual(dispatched, ["TeammateIdle"]);
+
+  supplemental.setContext(extensionContext({}));
+  const blocked = emptyResult();
+  blocked.blocked = true;
+  blocked.reason = "continue working";
+  resolveIdle(blocked);
+  await idle;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(dispatched, ["TeammateIdle", "TaskCompleted", "SubagentStop"]);
+  assert.deepEqual(emitted, ["choco-pi-hooks:subagent-continue"]);
+});
+
 test("in-flight instruction loading stops before dispatching again with a disposed context", async () => {
   const { api, extensionHandlers } = supplementalTestApi();
   let resolveFirst!: (result: MergedHookResult) => void;
@@ -197,7 +227,7 @@ test("elicitation resolves a successful hook response exactly once", async () =>
   assert.deepEqual(resolutions, [{ action: "accept", content: { answer: "yes" } }]);
 });
 
-test("elicitation resolves undefined once when its context changes or is disposed", async () => {
+test("elicitation survives context updates and resolves undefined once when disposed", async () => {
   for (const cancellation of ["context", "dispose"] as const) {
     const { api, eventHandlers } = supplementalTestApi();
     let finishDispatch!: (result: MergedHookResult) => void;
@@ -221,11 +251,17 @@ test("elicitation resolves undefined once when its context changes or is dispose
 
     if (cancellation === "context") supplemental.setContext(extensionContext({}));
     else supplemental.dispose();
-    finishDispatch(emptyResult());
+    const result = emptyResult();
+    result.elicitationAction = "accept";
+    finishDispatch(result);
     await completion;
 
     assert.equal(claims, 1, cancellation);
-    assert.deepEqual(resolutions, [undefined], cancellation);
+    assert.deepEqual(
+      resolutions,
+      cancellation === "context" ? [{ action: "accept" }] : [undefined],
+      cancellation,
+    );
   }
 });
 

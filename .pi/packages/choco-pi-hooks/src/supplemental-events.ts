@@ -17,6 +17,8 @@ export type HookDispatch = (
 interface SupplementalLifecycle {
   setContext(ctx: ExtensionContext): void;
   getContext(): ExtensionContext | undefined;
+  captureGeneration(): number;
+  isCurrentGeneration(token: number): boolean;
   getBackgroundTasks(): JsonObject[];
   dispose(): void;
 }
@@ -48,8 +50,9 @@ export function registerSupplementalEvents(
   let displayIndex = 0;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
+  let generation = 0;
 
-  const isCurrent = (ctx: ExtensionContext): boolean => !disposed && context === ctx;
+  const isGenerationCurrent = (token: number): boolean => !disposed && generation === token;
   const runDetached = (promise: Promise<unknown>): void => {
     void promise.catch(rethrowUnlessStaleContext);
   };
@@ -57,9 +60,10 @@ export function registerSupplementalEvents(
   pi.on("agent_settled", (_event, ctx) => {
     if (disposed) return;
     context = ctx;
+    const generationToken = generation;
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      if (!isCurrent(ctx)) return;
+      if (!isGenerationCurrent(generationToken)) return;
       runDetached(
         dispatch("Notification", ctx, {
           notification_type: "idle_prompt",
@@ -102,6 +106,7 @@ export function registerSupplementalEvents(
   pi.on("before_agent_start", async (event, ctx) => {
     if (disposed) return;
     context = ctx;
+    const generationToken = generation;
     for (const file of event.systemPromptOptions.contextFiles ?? []) {
       if (loadedInstructions.has(file.path)) continue;
       loadedInstructions.add(file.path);
@@ -110,13 +115,14 @@ export function registerSupplementalEvents(
         memory_type: file.path.includes("/.claude/") ? "Project" : "User",
         load_reason: "session_start",
       });
-      if (!isCurrent(ctx)) return;
+      if (!isGenerationCurrent(generationToken)) return;
     }
   });
 
   pi.on("message_update", async (event, ctx) => {
     if (disposed) return;
     context = ctx;
+    const generationToken = generation;
     const streamEvent = parseRuntimeRecord(event.assistantMessageEvent);
     const delta = isStringValue(streamEvent?.delta) ? streamEvent.delta : undefined;
     if (!delta) return;
@@ -127,7 +133,7 @@ export function registerSupplementalEvents(
       final: false,
       delta,
     });
-    if (!isCurrent(ctx)) return;
+    if (!isGenerationCurrent(generationToken)) return;
     displayOriginal += delta;
     displayRendered += result.displayContent ?? delta;
   });
@@ -136,6 +142,7 @@ export function registerSupplementalEvents(
     if (disposed) return;
     if (event.message.role !== "assistant") return;
     context = ctx;
+    const generationToken = generation;
     const result = await dispatch("MessageDisplay", ctx, {
       turn_id: String(event.message.timestamp),
       message_id: String(event.message.timestamp),
@@ -143,7 +150,7 @@ export function registerSupplementalEvents(
       final: true,
       delta: "",
     });
-    if (!isCurrent(ctx)) return;
+    if (!isGenerationCurrent(generationToken)) return;
     if (result.displayContent) displayRendered += result.displayContent;
   });
 
@@ -169,6 +176,7 @@ export function registerSupplementalEvents(
   };
   const onSubagentStopped = <Value>(payload: Value): void => {
     const ctx = context;
+    const generationToken = generation;
     const data = parseRuntimeRecord(payload);
     if (!ctx || !data) return;
     const agentId = isStringValue(data.id) ? data.id : undefined;
@@ -183,7 +191,7 @@ export function registerSupplementalEvents(
           teammate_name: agentId,
           team_name: isStringValue(data.workflowId) ? data.workflowId : undefined,
         });
-        if (!isCurrent(ctx)) return;
+        if (!isGenerationCurrent(generationToken)) return;
         let completion: MergedHookResult | undefined;
         const workflowStep = isStringValue(data.workflowStepId) ? data.workflowStepId : undefined;
         if (workflowStep)
@@ -193,7 +201,7 @@ export function registerSupplementalEvents(
             teammate_name: agentId,
             team_name: isStringValue(data.workflowId) ? data.workflowId : undefined,
           });
-        if (!isCurrent(ctx)) return;
+        if (!isGenerationCurrent(generationToken)) return;
         const stopped = await dispatch("SubagentStop", ctx, {
           stop_hook_active: false,
           agent_id: agentId,
@@ -205,7 +213,7 @@ export function registerSupplementalEvents(
           background_tasks: [...backgroundTasks.values()],
           session_crons: [],
         });
-        if (!isCurrent(ctx)) return;
+        if (!isGenerationCurrent(generationToken)) return;
         const blocked = [idle, completion, stopped].find((result) => result?.blocked);
         if (blocked?.reason && agentId)
           pi.events.emit("choco-pi-hooks:subagent-continue", {
@@ -232,6 +240,7 @@ export function registerSupplementalEvents(
   };
   const onElicitation = async <Value>(payload: Value): Promise<void> => {
     const ctx = context;
+    const generationToken = generation;
     const data = parseRuntimeRecord(payload);
     const claim = data?.claim;
     const resolve = data?.resolve;
@@ -271,7 +280,7 @@ export function registerSupplementalEvents(
     }
     try {
       const result = await dispatch(event, ctx, extra);
-      if (!isCurrent(ctx)) {
+      if (!isGenerationCurrent(generationToken)) {
         resolveOnce(undefined);
         return;
       }
@@ -322,11 +331,18 @@ export function registerSupplementalEvents(
     getContext() {
       return context;
     },
+    captureGeneration() {
+      return generation;
+    },
+    isCurrentGeneration(token) {
+      return !disposed && generation === token;
+    },
     getBackgroundTasks() {
       return [...backgroundTasks.values()];
     },
     dispose() {
       if (disposed) return;
+      generation += 1;
       disposed = true;
       context = undefined;
       clearTimeout(idleTimer);
