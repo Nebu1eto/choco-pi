@@ -21,11 +21,31 @@ function watchedNames(sources: HookSource[]): Set<string> {
 
 function configSource(cwd: string, file: string): string | undefined {
   const normalized = path.resolve(file);
-  if (normalized === path.join(os.homedir(), ".claude", "settings.json")) return "user_settings";
-  if (normalized === path.join(cwd, ".claude", "settings.json")) return "project_settings";
-  if (normalized === path.join(cwd, ".claude", "settings.local.json")) return "local_settings";
+  const home = os.homedir();
+  const piAgentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(home, ".pi", "agent");
+  if (
+    [
+      path.join(home, ".claude", "settings.json"),
+      path.join(home, ".agents", "settings.json"),
+      path.join(piAgentDir, "settings.json"),
+    ].includes(normalized)
+  )
+    return "user_settings";
+  if (
+    [".claude", ".agents", ".pi"].some(
+      (directory) => normalized === path.join(cwd, directory, "settings.json"),
+    )
+  )
+    return "project_settings";
+  if (
+    [".claude", ".agents", ".pi"].some(
+      (directory) => normalized === path.join(cwd, directory, "settings.local.json"),
+    )
+  )
+    return "local_settings";
   if (
     normalized.includes(`${path.sep}.claude${path.sep}skills${path.sep}`) ||
+    normalized.includes(`${path.sep}.agents${path.sep}skills${path.sep}`) ||
     normalized.includes(`${path.sep}.pi${path.sep}skills${path.sep}`)
   )
     return "skills";
@@ -52,7 +72,8 @@ export function createHookWatchers(
       });
     }
     if (!names.has(path.basename(absolute)) && !dynamicPaths.has(absolute)) return;
-    const event = eventType === "rename" ? (fs.existsSync(absolute) ? "add" : "unlink") : "change";
+    let event = "change";
+    if (eventType === "rename") event = fs.existsSync(absolute) ? "add" : "unlink";
     void dispatch("FileChanged", ctx, { file_path: absolute, event }).then((result) => {
       if (ctx.hasUI) for (const message of result.systemMessages) ctx.ui.notify(message, "warning");
       if (result.watchPaths)
@@ -62,12 +83,17 @@ export function createHookWatchers(
   const watchers = [
     fs.watch(cwd, { recursive: true }, (event, file) => onChange(cwd, event, file)),
   ];
-  const userClaude = path.join(os.homedir(), ".claude");
-  if (fs.existsSync(userClaude))
-    watchers.push(
-      fs.watch(userClaude, { recursive: true }, (event, file) => onChange(userClaude, event, file)),
-    );
-  const watchedRoots = new Set([path.resolve(cwd), path.resolve(userClaude)]);
+  const userRoots = [
+    path.join(os.homedir(), ".claude"),
+    path.join(os.homedir(), ".agents"),
+    process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent"),
+  ];
+  for (const root of userRoots)
+    if (fs.existsSync(root))
+      watchers.push(
+        fs.watch(root, { recursive: true }, (event, file) => onChange(root, event, file)),
+      );
+  const watchedRoots = new Set([path.resolve(cwd), ...userRoots.map((root) => path.resolve(root))]);
   for (const source of sources) {
     if (source.kind !== "managed") continue;
     const directory = path.dirname(source.id);

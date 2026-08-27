@@ -418,6 +418,16 @@ Apex가 Responses API를 지원한다고 확인하기 전에는 `openai-completi
 
 ## MCP, goal, 웹과 사이드 대화
 
+### Hook 설정 위치
+
+가능하면 Pi settings에 hook을 설정합니다. choco-pi는 다음 그룹을 낮은 우선순위부터 읽습니다. 뒤에 있는 파일이 scalar hook 설정을 덮어쓰고 hook 목록은 합칩니다.
+
+1. Claude fallback: `~/.claude/settings.json`, `<project>/.claude/settings.json`, `<project>/.claude/settings.local.json`
+2. Agent 공용: `~/.agents/settings.json`, `<project>/.agents/settings.json`, `<project>/.agents/settings.local.json`
+3. Pi 우선: `$PI_CODING_AGENT_DIR/settings.json`(기본값 `~/.pi/agent/settings.json`), `<project>/.pi/settings.json`, `<project>/.pi/settings.local.json`
+
+공유할 프로젝트 hook은 `<project>/.pi/settings.json`, Git에 넣지 않을 machine-local hook은 `<project>/.pi/settings.local.json`, 전역 hook은 `~/.pi/agent/settings.json`에 둡니다. `/hooks`는 적용 중인 handler와 설정 출처를 표시합니다. `hooks` object는 [`choco-pi-hooks`](.pi/packages/choco-pi-hooks)가 지원하는 Claude Code event, matcher, handler schema를 사용합니다.
+
 - [`.pi/mcp.example.json`](.pi/mcp.example.json)을 `~/.pi/agent/mcp.json`으로 복사하고 로컬 OAuth client 설정을 추가합니다. 이 checkout 안에는 두지 않습니다. Pi는 `~/.pi/agent/mcp.json`과 프로젝트의 `.pi/mcp.json`을 서로 다른 소스로 읽으므로, choco-pi 안에 사본을 두면 이 디렉터리에서 Pi를 실행할 때 모든 서버가 두 번 등록됩니다. 반대로 Git에서 제외된 그 파일이 사라지면 서버가 하나도 없는 상태로 조용히 시작합니다. `/mcp`에서 설정과 실행 상태를 확인합니다.
 - 인증 서버가 dynamic client registration을 지원하지 않으면 사전 등록한 client가 필요합니다. 해당 서버 항목에 `oauth.clientId`와 `oauth.clientSecret`을 넣습니다. `clientSecret` 값이 `!`로 시작하면 나머지를 셸 명령으로 실행하므로 비밀값을 파일에 남기지 않을 수 있습니다. 공급자에는 redirect URL로 `http://localhost:19876/callback`을 등록합니다.
 - `/goal <목표>`는 작업을 지속형 goal로 작성해 생성합니다. Token budget을 생략하면 제한 없이 유지하고, 명시한 budget만 누적 상한으로 적용합니다. 활성 goal은 context compaction 뒤에도 이어집니다. 인자 없는 `/goal`은 상태와 사용량을 보여주고, `/goal pause|resume|clear|copy`로 관리합니다.
