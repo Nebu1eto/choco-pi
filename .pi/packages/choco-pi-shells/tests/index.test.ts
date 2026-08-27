@@ -10,7 +10,7 @@ import shellsExtension, {
   type ShellNotificationTheme,
   renderShellCompletion,
 } from "../src/index.ts";
-import type { ShellManager } from "../src/shell-manager.ts";
+import type { ShellManager, ShellResult } from "../src/shell-manager.ts";
 import type { ShellCustomOptions, ShellViewerKeybindings } from "../src/ui/shells-overlay.ts";
 import type {
   ShellsWidgetComponent,
@@ -548,6 +548,58 @@ test("root /shells opens an overlay only in TUI mode and notifies in print and r
     assert.ok(root.shutdown);
     await root.shutdown({ reason: "quit" }, context("root"));
   }
+});
+
+test("/shells stop notifies only while its activation remains current", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  const manager = registry()[managerKey];
+  assert.ok(manager);
+  assert.ok(root.command);
+
+  let resolveStop: ((result: ShellResult) => void) | undefined;
+  manager.stop = () =>
+    new Promise<ShellResult>((resolveStopPromise) => {
+      resolveStop = resolveStopPromise;
+    });
+  const stopped: ShellResult = {
+    shellId: "deferred-shell",
+    ownerId: "root",
+    command: "sleep 1",
+    cwd: packageCwd,
+    state: "stopped",
+    startedAt: 1,
+    endedAt: 2,
+  };
+
+  const currentNotices: Notice[] = [];
+  const currentStop = root.command.handler("stop deferred-shell", context("root", currentNotices));
+  assert.ok(resolveStop);
+  resolveStop(stopped);
+  await currentStop;
+  assert.equal(currentNotices.length, 1);
+  assert.equal(currentNotices[0]?.level, "info");
+  assert.deepEqual(JSON.parse(currentNotices[0]?.message ?? ""), stopped);
+
+  let contextIsCurrent = true;
+  const staleContext = new Proxy(context("root"), {
+    get(target, property, _receiver) {
+      if (!contextIsCurrent) {
+        throw new Error("Context is no longer valid after session shutdown");
+      }
+      // SAFETY: TestContext is a plain fixture object, and proxy reads use only its declared keys.
+      return target[property as keyof TestContext];
+    },
+  });
+  const staleStop = root.command.handler("stop deferred-shell", staleContext);
+  assert.ok(resolveStop);
+
+  assert.ok(root.shutdown);
+  await root.shutdown({ reason: "quit" }, context("root"));
+  contextIsCurrent = false;
+  resolveStop(stopped);
+  await assert.doesNotReject(staleStop);
+  assert.equal(registry()[managerKey], undefined);
 });
 
 test("child shell_start resolves relative cwd from its tool context", async () => {

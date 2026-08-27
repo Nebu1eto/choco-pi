@@ -327,3 +327,127 @@ test("curator state replay keeps all-provider entries that share one slot", asyn
     handle.close();
   }
 });
+
+test("curator keeps simultaneous rewrite requests independent while open", async () => {
+  const { startCuratorServer } = await loadServer();
+  const callbacks = baseCallbacks(() => {});
+  const pending = new Map();
+  let resolveStarted;
+  const started = new Promise((resolve) => {
+    resolveStarted = resolve;
+  });
+  callbacks.onRewriteQuery = (query, signal) =>
+    new Promise((resolve) => {
+      pending.set(query, { resolve, signal });
+      if (pending.size === 2) resolveStarted();
+    });
+
+  const handle = await startCuratorServer(baseOptions(20), callbacks);
+  try {
+    const responses = ["first", "second"].map((query) =>
+      fetch(new URL("/rewrite", handle.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: "test-token", query }),
+      }),
+    );
+    await withTimeout(started, "simultaneous rewrites");
+    assert.equal(pending.get("first").signal.aborted, false);
+    assert.equal(pending.get("second").signal.aborted, false);
+    pending.get("first").resolve("rewritten first");
+    pending.get("second").resolve("rewritten second");
+
+    const resolved = await Promise.all(responses);
+    assert.deepEqual(
+      resolved.map((response) => response.status),
+      [200, 200],
+    );
+    assert.deepEqual(await Promise.all(resolved.map((response) => response.json())), [
+      { ok: true, query: "rewritten first" },
+      { ok: true, query: "rewritten second" },
+    ]);
+  } finally {
+    handle.close();
+  }
+});
+
+test("curator close aborts a rewrite and rejects its late success", async () => {
+  const { startCuratorServer } = await loadServer();
+  const callbacks = baseCallbacks(() => {});
+  let rewriteSignal;
+  let resolveRewrite;
+  let resolveStarted;
+  const started = new Promise((resolve) => {
+    resolveStarted = resolve;
+  });
+  callbacks.onRewriteQuery = (_query, signal) => {
+    rewriteSignal = signal;
+    resolveStarted();
+    return new Promise((resolve) => {
+      resolveRewrite = resolve;
+    });
+  };
+
+  const handle = await startCuratorServer(baseOptions(20), callbacks);
+  const responsePromise = fetch(new URL("/rewrite", handle.url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: "test-token", query: "original" }),
+  });
+  try {
+    await withTimeout(started, "rewrite start");
+    handle.close();
+    assert.equal(rewriteSignal.aborted, true);
+    resolveRewrite("late rewrite");
+
+    const response = await withTimeout(responsePromise, "cancelled rewrite response");
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      error: "Rewrite request cancelled",
+    });
+  } finally {
+    handle.close();
+  }
+});
+
+test("curator reports an aborted stale rewrite as cancellation", async () => {
+  const { startCuratorServer } = await loadServer();
+  const callbacks = baseCallbacks(() => {});
+  let rewriteSignal;
+  let resolveStarted;
+  const started = new Promise((resolve) => {
+    resolveStarted = resolve;
+  });
+  const staleContextMessage =
+    "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().";
+  callbacks.onRewriteQuery = (_query, signal) => {
+    rewriteSignal = signal;
+    resolveStarted();
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error(staleContextMessage)), {
+        once: true,
+      });
+    });
+  };
+
+  const handle = await startCuratorServer(baseOptions(20), callbacks);
+  const responsePromise = fetch(new URL("/rewrite", handle.url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: "test-token", query: "original" }),
+  });
+  try {
+    await withTimeout(started, "stale rewrite start");
+    handle.close();
+    assert.equal(rewriteSignal.aborted, true);
+
+    const response = await withTimeout(responsePromise, "stale rewrite response");
+    assert.equal(response.status, 409);
+    const body = await response.json();
+    assert.deepEqual(body, { ok: false, error: "Rewrite request cancelled" });
+    assert.doesNotMatch(body.error, /extension ctx is stale/);
+  } finally {
+    handle.close();
+  }
+});

@@ -250,6 +250,7 @@ export function startCuratorServer(
   let nextQueryIndex = queries.length;
   let summarizeAbortController: AbortController | null = null;
   let summarizeRequestSeq = 0;
+  const rewriteAbortControllers = new Set<AbortController>();
 
   let sseKeepalive: NodeJS.Timeout | null = null;
 
@@ -257,6 +258,10 @@ export function startCuratorServer(
     if (!summarizeAbortController) return;
     summarizeAbortController.abort();
     summarizeAbortController = null;
+  };
+
+  const abortInFlightRewrites = (): void => {
+    for (const controller of rewriteAbortControllers) controller.abort();
   };
 
   const markCompleted = (): boolean => {
@@ -273,6 +278,7 @@ export function startCuratorServer(
       sseKeepalive = null;
     }
     abortInFlightSummarize();
+    abortInFlightRewrites();
     if (sseResponse) {
       try {
         sseResponse.end();
@@ -607,15 +613,38 @@ export function startCuratorServer(
           return;
         }
         const controller = new AbortController();
-        req.on("close", () => controller.abort());
+        req.on("close", () => {
+          if (!req.complete) controller.abort();
+        });
+        res.on("close", () => {
+          if (!res.writableEnded) controller.abort();
+        });
+        const responseIsWritable = (): boolean =>
+          !res.writableEnded && !res.destroyed && !res.socket?.destroyed;
+        rewriteAbortControllers.add(controller);
         touchHeartbeat();
         try {
           const rewritten = await callbacks.onRewriteQuery(query.trim(), controller.signal);
+          if (controller.signal.aborted || completed || !req.complete || !responseIsWritable()) {
+            if (responseIsWritable()) {
+              sendJson(res, 409, { ok: false, error: "Rewrite request cancelled" });
+            }
+            return;
+          }
           sendJson(res, 200, { ok: true, query: rewritten });
         } catch (err) {
+          if (controller.signal.aborted || completed || !req.complete || !responseIsWritable()) {
+            if (responseIsWritable()) {
+              sendJson(res, 409, { ok: false, error: "Rewrite request cancelled" });
+            }
+            return;
+          }
           const message = err instanceof Error ? err.message : "Rewrite failed";
-          const status = controller.signal.aborted ? 409 : 500;
-          sendJson(res, status, { ok: false, error: message });
+          if (responseIsWritable()) {
+            sendJson(res, 500, { ok: false, error: message });
+          }
+        } finally {
+          rewriteAbortControllers.delete(controller);
         }
         return;
       }

@@ -145,6 +145,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let currentOAuthRuntime: McpOAuthRuntime | null = null;
   let lifecycleGeneration = 0;
 
+  const isCurrentCommandOwner = (owner: McpRuntimeOwner | null, generation: number): boolean =>
+    owner !== null &&
+    owner === currentOwner &&
+    generation === lifecycleGeneration &&
+    owner.isActive();
+
   const removeHookMcpListener = pi.events.on("choco-pi-hooks:mcp-call", async (payload) => {
     if (!isObjectValue(payload)) return;
     // SAFETY: Members are validated individually below before use; the event payload intentionally carries a callback and is not JSON.
@@ -710,6 +716,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       return servers.length > 0 ? servers : null;
     },
     handler: async (args, ctx) => {
+      const commandGeneration = lifecycleGeneration;
+      const commandOwner = currentOwner;
       const {
         logoutServer,
         openMcpPanel,
@@ -719,7 +727,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         showStatus,
         showTools,
       } = await loadCommands();
-      const commandOwner = currentOwner;
+      if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
+
       const commandReload = isFunctionValue(ctx.reload) ? ctx.reload.bind(ctx) : async () => {};
       const commandHasUI = ctx.hasUI;
 
@@ -738,9 +747,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       if (!state && initPromise) {
         try {
           const initialized = await initPromise;
-          commandOwner?.throwIfInactive();
+          if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
           state = initialized;
         } catch (error) {
+          if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
           const message = error instanceof Error ? error.message : String(error);
           if (commandCtx.hasUI)
             commandCtx.ui?.notify(`MCP initialization failed: ${message}`, "error");
@@ -759,8 +769,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
       switch (subcommand) {
         case "reconnect":
-          commandOwner?.throwIfInactive();
+          if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
           await reconnectServers(state, commandCtx, targetServer);
+          if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
           if (directToolsFrozen) syncToolSurface(commandCtx);
           break;
         case "tools":
@@ -770,7 +781,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           await showPrompts(state, commandCtx);
           break;
         case "setup": {
-          commandOwner?.throwIfInactive();
+          if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
           if (programmaticConfig) {
             commandCtx.ui?.notify(
               "MCP setup is unavailable when config is supplied by createMcpAdapter().",
@@ -779,8 +790,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             break;
           }
           const result = await openMcpSetup(state, pi, commandCtx, earlyConfigPath, "setup");
+          if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
           if (result?.configChanged) {
-            commandOwner?.throwIfInactive();
             await commandReload();
             return;
           }
@@ -792,7 +803,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             if (commandCtx.hasUI) commandCtx.ui?.notify("Usage: /mcp logout <server>", "error");
             return;
           }
-          commandOwner?.throwIfInactive();
+          if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
           await logoutServer(serverName, state, commandCtx);
           break;
         }
@@ -814,7 +825,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             commandCtx.ui?.notify(`Server "${serverName}" not found in effective config`, "error");
             break;
           }
-          commandOwner?.throwIfInactive();
+          if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
           const result = writeProjectServerDisabledOverride(
             earlyConfigPath,
             commandCtx.cwd,
@@ -838,7 +849,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         case "":
         default:
           if (commandCtx.hasUI) {
-            commandOwner?.throwIfInactive();
+            if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
             if (programmaticConfig) {
               commandCtx.ui?.notify(
                 "MCP status is shown from the in-memory SDK config; configuration discovery is unavailable.",
@@ -851,8 +862,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
               applyDirectToolConfigChanges(changes);
               syncToolSurface(commandCtx);
             });
+            if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
             if (result?.configChanged) {
-              commandOwner?.throwIfInactive();
               await commandReload();
               return;
             }
@@ -867,8 +878,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   pi.registerCommand("mcp-auth", {
     description: "Authenticate with an MCP server (OAuth)",
     handler: async (args, ctx) => {
-      const { authenticateServer, openMcpAuthPanel, reconnectServer } = await loadCommands();
+      const commandGeneration = lifecycleGeneration;
       const commandOwner = currentOwner;
+      const { authenticateServer, openMcpAuthPanel, reconnectServer } = await loadCommands();
+      if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
+
       const commandHasUI = ctx.hasUI;
 
       const commandCtx =
@@ -891,9 +905,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       if (!state && initPromise) {
         try {
           const initialized = await initPromise;
-          commandOwner?.throwIfInactive();
+          if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
           state = initialized;
         } catch (error) {
+          if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
           const message = error instanceof Error ? error.message : String(error);
           if (commandCtx.hasUI)
             commandCtx.ui?.notify(`MCP initialization failed: ${message}`, "error");
@@ -924,8 +939,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         commandCtx.signal,
         state.oauthRuntime,
       );
+      if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
       if (result.ok) {
-        commandOwner?.throwIfInactive();
         await reconnectServer(state, commandCtx, serverName);
       }
     },

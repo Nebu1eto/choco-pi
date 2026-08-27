@@ -46,6 +46,20 @@ The installed peer closure also contains `@modelcontextprotocol/sdk@1.30.0`, req
 
 ## Source changes relative to upstream 2.26.1
 
+### Command lifecycle ownership (`index.ts`, `prompts.ts`)
+
+The fork fences slash-command continuations against Pi session replacement and
+reload. `/mcp` and `/mcp-auth` snapshot the current runtime owner and lifecycle
+generation before their deferred command-module import, then stop if either is
+stale before reading the command context. Later command awaits are checked
+again before raw context actions such as `reload`, and command UI is owned by
+the same runtime snapshot.
+
+Cached MCP prompt commands likewise snapshot their state owner and signal
+before lazy connection and prompt retrieval. An invalidated owner suppresses
+all later context, UI, and `sendUserMessage` access while failures unrelated to
+owner invalidation retain the existing notification behavior.
+
 ### Owned-UI fence (`owned-ui.ts`, `runtime-owner.ts`)
 
 Upstream keeps the fence in `runtime-owner.ts` and resolves each member with
