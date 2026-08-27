@@ -5,7 +5,11 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Editor, type Component, type TUI } from "@earendil-works/pi-tui";
 
 import { runInChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
-import shellsExtension from "../src/index.ts";
+import shellsExtension, {
+  type ShellCompletionDetails,
+  type ShellNotificationTheme,
+  renderShellCompletion,
+} from "../src/index.ts";
 import type { ShellManager } from "../src/shell-manager.ts";
 import type { ShellCustomOptions, ShellViewerKeybindings } from "../src/ui/shells-overlay.ts";
 import type {
@@ -92,6 +96,23 @@ interface Notice {
 
 interface Activation {
   tools: Map<string, ToolDefinition>;
+  messages: Array<{
+    message: {
+      customType: string;
+      content: string;
+      display: boolean;
+      details: ShellCompletionDetails;
+    };
+    options?: { triggerTurn?: boolean; deliverAs?: string };
+  }>;
+  renderers: Map<
+    string,
+    (
+      message: { details?: ShellCompletionDetails },
+      options: MessageRenderOptionsFixture,
+      theme: Theme,
+    ) => Component | undefined
+  >;
   command?: CommandDefinition;
   sessionStart?: LifecycleHandler;
   toolExecutionStart?: LifecycleHandler;
@@ -102,10 +123,31 @@ interface GlobalFixtureRegistry {
   [managerKey]?: ShellManager;
 }
 
+interface MessageRenderOptionsFixture {
+  expanded?: boolean;
+}
+
 interface ExtensionFixture {
   registerTool(tool: ToolDefinition): void;
   registerCommand(name: string, command: CommandDefinition): void;
   on(event: string, handler: LifecycleHandler): void;
+  sendMessage(
+    message: {
+      customType: string;
+      content: string;
+      display: boolean;
+      details: ShellCompletionDetails;
+    },
+    options?: { triggerTurn?: boolean; deliverAs?: string },
+  ): void;
+  registerMessageRenderer(
+    type: string,
+    renderer: (
+      message: { details?: ShellCompletionDetails },
+      options: MessageRenderOptionsFixture,
+      theme: Theme,
+    ) => Component | undefined,
+  ): void;
 }
 
 interface WidgetCall {
@@ -179,7 +221,7 @@ function asExtensionAPI(fixture: ExtensionFixture): ExtensionAPI {
 }
 
 function activate(child: boolean): Promise<Activation> {
-  const activation: Activation = { tools: new Map() };
+  const activation: Activation = { tools: new Map(), messages: [], renderers: new Map() };
   const fixture: ExtensionFixture = {
     registerTool(tool: ToolDefinition) {
       activation.tools.set(tool.name, tool);
@@ -194,6 +236,12 @@ function activate(child: boolean): Promise<Activation> {
         activation.toolExecutionStart = handler;
       } else if (event === "session_shutdown") activation.shutdown = handler;
       else assert.fail(`unexpected event ${event}`);
+    },
+    sendMessage(message, options) {
+      activation.messages.push({ message, options });
+    },
+    registerMessageRenderer(type, renderer) {
+      activation.renderers.set(type, renderer);
     },
   };
   const extensionFixture = asExtensionAPI(fixture);
@@ -337,7 +385,7 @@ test("only root activation wires UI and a child-owned start automatically regist
   try {
     assert.ok(root.sessionStart);
     assert.ok(root.toolExecutionStart);
-    assert.equal(child.sessionStart, undefined);
+    assert.ok(child.sessionStart);
     assert.equal(child.toolExecutionStart, undefined);
 
     const childUI = new TestUI();
@@ -395,6 +443,62 @@ test("only root activation wires UI and a child-owned start automatically regist
     await root.shutdown({ reason: "quit" }, context("root-session", [], packageCwd, activeRootUI));
     assert.equal(activeRootUI.widgetCalls.at(-1)?.content, undefined);
     assert.equal(activeRootUI.inputHandlers.size, 0);
+  }
+});
+
+test("terminal shells steer a compact grouped completion callback to their owner", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  try {
+    assert.ok(root.sessionStart);
+    await root.sessionStart(
+      {},
+      context("root-session", [], packageCwd, new TestUI(), "print", false),
+    );
+    await Promise.all([
+      execute(
+        root,
+        "shell_start",
+        { command: "printf 'stdout-tail'; printf 'stderr-tail' >&2" },
+        "root-session",
+      ),
+      execute(root, "shell_start", { command: "exit 7" }, "root-session"),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    assert.equal(root.messages.length, 1);
+    const completion = root.messages[0];
+    assert.deepEqual(completion?.options, { deliverAs: "steer", triggerTurn: true });
+    assert.equal(completion?.message.customType, "shell-completion-notification");
+    assert.equal(completion?.message.display, true);
+    assert.ok(completion);
+    const notification = completion.message.details;
+    assert.equal(notification.shells.length, 2);
+    assert.ok(notification.shells.some((shell) => shell.exitCode === 7));
+    assert.ok(
+      notification.shells.reduce(
+        (length, shell) => length + Array.from(shell.stdout.tail + shell.stderr.tail).length,
+        0,
+      ) < 500,
+    );
+    const tailed = notification.shells.find((shell) => shell.stdout.tail.length > 0);
+    assert.match(tailed?.stdout.tail ?? "", /stdout-tail/);
+    assert.match(tailed?.stderr.tail ?? "", /stderr-tail/);
+    assert.equal(tailed?.stdout.nextOffset, tailed?.stdout.endOffset);
+    assert.equal(tailed?.stderr.nextOffset, tailed?.stderr.endOffset);
+    assert.match(completion?.message.content ?? "", /Use shell_read/);
+
+    const notificationTheme: ShellNotificationTheme = {
+      fg: (_color, text) => text,
+      bold: (text) => text,
+      getBgAnsi: () => "",
+    };
+    const rendered = renderShellCompletion(notification, notificationTheme);
+    assert.match(rendered, /Shell: Completed/);
+    assert.match(rendered, /stdout-tail/);
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
   }
 });
 
