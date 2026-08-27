@@ -3,6 +3,7 @@ import test from "node:test";
 import { AgentManager } from "../src/agent-manager.ts";
 import { createAgentMessageTool } from "../src/agent-message.ts";
 import { computeChildToolGate, SUBAGENT_TOOL_NAMES } from "../src/agent-runner.ts";
+import { DEFAULT_AGENTS } from "../src/default-agents.ts";
 import {
   classifyMessageDelivery,
   formatAgentMessage,
@@ -16,10 +17,10 @@ import {
 import type { AgentRecord } from "../src/types.ts";
 
 test("child tool gates always admit messaging and deny root-only orchestration", () => {
-  const alwaysToolNames = new Set([SUBAGENT_TOOL_NAMES.MESSAGE]);
+  const alwaysToolNames = new Set([SUBAGENT_TOOL_NAMES.MESSAGE, "grep"]);
   const extensionGate = computeChildToolGate({
     noExtensions: false,
-    toolNames: ["read"],
+    toolNames: ["read", "grep"],
     disallowedSet: new Set([SUBAGENT_TOOL_NAMES.MESSAGE]),
     nestedToolNames: new Set(),
     alwaysToolNames,
@@ -27,6 +28,7 @@ test("child tool gates always admit messaging and deny root-only orchestration",
   const denied = new Set(extensionGate.sessionExcludeTools);
 
   assert.equal(denied.has(SUBAGENT_TOOL_NAMES.MESSAGE), false);
+  assert.equal(denied.has("grep"), true);
   assert.equal(denied.has(SUBAGENT_TOOL_NAMES.LIMITS), true);
   for (const name of [
     SUBAGENT_TOOL_NAMES.AGENT,
@@ -48,12 +50,23 @@ test("child tool gates always admit messaging and deny root-only orchestration",
 
   const noExtensionGate = computeChildToolGate({
     noExtensions: true,
-    toolNames: ["read", SUBAGENT_TOOL_NAMES.MESSAGE, SUBAGENT_TOOL_NAMES.LIMITS],
+    toolNames: ["read", "grep", SUBAGENT_TOOL_NAMES.MESSAGE, SUBAGENT_TOOL_NAMES.LIMITS],
     disallowedSet: new Set([SUBAGENT_TOOL_NAMES.MESSAGE]),
     nestedToolNames: new Set(),
     alwaysToolNames,
   });
   assert.deepEqual(noExtensionGate.sessionTools, ["read", SUBAGENT_TOOL_NAMES.MESSAGE]);
+});
+
+test("embedded read-only agents use choco-pi discovery tools without builtin grep", () => {
+  for (const name of ["Explore", "Plan"]) {
+    const agent = DEFAULT_AGENTS.get(name);
+    assert.ok(agent);
+    assert.equal(agent.builtinToolNames?.includes("grep"), false);
+    assert.doesNotMatch(agent.systemPrompt ?? "", /(?:the|direct) grep tool/i);
+    assert.match(agent.systemPrompt ?? "", /choco-pi-lsp/);
+    assert.match(agent.systemPrompt ?? "", /ast_grep_search/);
+  }
 });
 
 const records: MessagingRecord[] = [

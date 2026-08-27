@@ -279,6 +279,14 @@ The same centralized exclusion list now includes the root-only
 `subagent_limits` tool, preventing standalone child sessions from inheriting
 process-wide limit mutation when no lean-surface registry is present.
 
+choco-pi also disables Pi's built-in `grep` in every child profile. Extension-
+enabled gates deny it even when the parent configuration, lean-surface registry,
+or always-on set names it; no-extension gates omit it from their static
+allowlist. Read-only side conversations and the embedded Explore/Plan agents no
+longer request it. Their search guidance prefers registered choco-pi-lsp tools,
+uses ast-grep for structural patterns, and reserves read-only Bash `rg` for
+non-code text or queries those tools cannot cover.
+
 ### Whole-tree agent UI
 
 Upstream's FleetView and persistent agent widget filtered out every record with

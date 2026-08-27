@@ -144,6 +144,77 @@ test("restores registered always-active tools after model selection without wide
   assert.deepEqual(active, afterModelSelect);
 });
 
+test("removes disabled grep from initialization, model selection, and tool search", async () => {
+  let active = ["grep", "deferred_probe"];
+  let searchTool: any;
+  let sessionStart: (() => void) | undefined;
+  let modelSelect: (() => void) | undefined;
+  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
+  const tools = [
+    {
+      name: "grep",
+      description: "Search file contents for a pattern",
+      parameters: {},
+      sourceInfo: { source: "builtin", path: "builtin" },
+    },
+    {
+      name: "deferred_probe",
+      description: "Normal deferred probe",
+      parameters: {},
+      sourceInfo: { source: "extension", path: "probe" },
+    },
+  ];
+  // SAFETY: The fixture supplies every host member exercised by this test.
+  toolSearch({
+    registerTool: (tool: any) => {
+      searchTool = tool;
+    },
+    getAllTools: () => [
+      ...tools,
+      { ...searchTool, sourceInfo: { source: "extension", path: "tool-search" } },
+    ],
+    getActiveTools: () => active,
+    setActiveTools: (names: string[]) => {
+      active = names;
+    },
+    events: {
+      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
+        mcpStatus = handler;
+      },
+    },
+    on: (name: string, handler: () => void) => {
+      if (name === "session_start") sessionStart = handler;
+      if (name === "model_select") modelSelect = handler;
+    },
+  } as any);
+
+  sessionStart?.();
+  mcpStatus?.({ servers: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.ok(!active.includes("grep"));
+  assert.ok(!active.includes("deferred_probe"));
+
+  const grepResult = await searchTool.execute("call", { query: "grep", limit: 5 });
+  assert.ok(!grepResult.details.matches.includes("grep"));
+  assert.ok(!grepResult.details.added.includes("grep"));
+  assert.ok(!active.includes("grep"));
+
+  const probeResult = await searchTool.execute("call", {
+    query: "normal deferred probe",
+    limit: 1,
+  });
+  assert.deepEqual(probeResult.details.matches, ["deferred_probe"]);
+  assert.deepEqual(probeResult.details.added, ["deferred_probe"]);
+  assert.ok(active.includes("deferred_probe"));
+
+  active = [...active, "grep"];
+  modelSelect?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(!active.includes("grep"));
+  assert.ok(active.includes("deferred_probe"));
+});
+
 test("publishes background shells and keeps them active through lean filtering", async () => {
   const shellTools = ["shell_start", "shell_read", "shell_stop", "shell_list"];
   let active = [...shellTools, "deferred_probe"];
@@ -569,7 +640,6 @@ test("the eager surface covers discovery, delegation, goals, research, and the c
     "bash",
     "edit",
     "write",
-    "grep",
     "find",
     "ls",
     "exec",
