@@ -106,7 +106,7 @@ if (piVersionResult.status !== 0) {
   add("pi", "fail", "pi executable is unavailable");
 } else {
   const piVersion = piVersionResult.stdout.trim();
-  add("pi", atLeast(piVersion, "0.84.1") ? "pass" : "fail", `${piVersion}; required >=0.84.1`);
+  add("pi", atLeast(piVersion, "0.84.2") ? "pass" : "fail", `${piVersion}; required >=0.84.2`);
 }
 
 let settings: Settings | undefined;
