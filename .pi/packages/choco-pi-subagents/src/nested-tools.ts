@@ -7,7 +7,6 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { abortable } from "./abortable.ts";
 import {
   buildAgentRegistry,
   getAgentConfigIn,
@@ -28,6 +27,7 @@ import {
   writeInitialEntry,
 } from "./output-file.ts";
 import { getForegroundOutcomeNote, getStatusNote, partialOutputSuffix } from "./status-note.ts";
+import { formatResultReadTimeout, waitForSubagentResult } from "./result-read.ts";
 import type {
   AgentConfig,
   AgentInvocation,
@@ -416,7 +416,9 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
   const resultTool = defineTool({
     name: NESTED_TOOL_NAMES[1],
     label: "Get Nested Agent Result",
-    description: "Check or wait for a background nested agent owned by this parent.",
+    description:
+      "Retrieve an owned background nested-agent result only after any terminal status. " +
+      "wait: true gives an active child one optimistic 5-second grace period, then returns its current status without consuming the result.",
     parameters: Type.Object({
       agent_id: Type.String(),
       wait: Type.Optional(Type.Boolean()),
@@ -434,10 +436,13 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       // stays unconsumed. Queued records have no promise until the manager starts
       // them, so poll — abortably — until they leave the queue, then await.
       if (params.wait && (record.status === "queued" || record.status === "running")) {
-        while (record.status === "queued") {
-          await abortable(new Promise<void>((resolve) => setTimeout(resolve, 250)), signal);
+        const outcome = await waitForSubagentResult(record, signal);
+        if (
+          outcome === "timed-out" &&
+          (record.status === "queued" || record.status === "running")
+        ) {
+          return textResult(formatResultReadTimeout(record.id, record.status));
         }
-        if (record.promise) await abortable(record.promise, signal);
       }
       return textResult(formatRecord(record, "fetched"), record.status === "error");
     },

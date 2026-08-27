@@ -200,6 +200,15 @@ workflow runner observes the manager's terminal record and settles the step as
 an error, preserving scheduler state and failure policy. `src/stop-subagent.ts`
 holds the pure decision logic; `tests/stop-subagent.test.ts` pins every outcome.
 
+### Bounded background-result reads
+
+Root and nested `get_subagent_result` calls now give `wait: true` one shared
+five-second deadline across queued and running phases. A timeout returns the
+current active status, leaves the agent running and the result unconsumed, and
+directs the caller to retrieve only after a completion notification reports any
+terminal status. Cancellation still ends only the read. The default non-waiting
+status check and every terminal result remain unchanged.
+
 ### Runtime-adjustable subagent limits and cache-stable status reporting
 
 - `maxConcurrent: 0` now means unlimited concurrency while the scheduler still
