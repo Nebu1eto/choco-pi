@@ -1,4 +1,3 @@
-/* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-known-value-widening -- Settings JSON is untyped external input and this module is its validation boundary. */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,10 +11,26 @@ export interface LoadHooksOptions {
   runtimeDisableAllHooks?: boolean;
 }
 
+export interface LoadedHookSources {
+  sources: HookSource[];
+  disabled: boolean;
+}
+
+function defaultManagedSettingsPaths(): string[] {
+  if (process.platform === "darwin")
+    return ["/Library/Application Support/ClaudeCode/managed-settings.json"];
+  if (process.platform === "win32") {
+    const programData = process.env.ProgramData;
+    return programData ? [path.join(programData, "ClaudeCode", "managed-settings.json")] : [];
+  }
+  return ["/etc/claude-code/managed-settings.json"];
+}
+
 function readSettings(file: string): SettingsWithHooks | undefined {
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
     if (!(parsed instanceof Object) || Array.isArray(parsed)) return undefined;
+    // SAFETY: JSON parsing and the non-array object check establish the settings property bag boundary.
     return parsed as SettingsWithHooks;
   } catch {
     return undefined;
@@ -27,28 +42,42 @@ function source(
   kind: HookSource["kind"],
   settings: SettingsWithHooks | undefined,
 ): HookSource | undefined {
-  if (!settings?.hooks) return undefined;
-  return { id, kind, hooks: settings.hooks };
+  if (
+    !settings ||
+    (!settings.hooks &&
+      settings.allowedHttpHookUrls === undefined &&
+      settings.httpHookAllowedEnvVars === undefined)
+  )
+    return undefined;
+  return {
+    id,
+    kind,
+    hooks: settings.hooks ?? {},
+    allowedHttpHookUrls: settings.allowedHttpHookUrls,
+    httpHookAllowedEnvVars: settings.httpHookAllowedEnvVars,
+  };
 }
 
-export function loadHookSources(options: LoadHooksOptions): {
-  sources: HookSource[];
-  disabled: boolean;
-} {
+export function loadHookSources(options: LoadHooksOptions): LoadedHookSources {
   const userPath = options.userSettingsPath ?? path.join(os.homedir(), ".claude", "settings.json");
   const projectPath = path.join(options.cwd, ".claude", "settings.json");
   const localPath = path.join(options.cwd, ".claude", "settings.local.json");
-  const managed = (options.managedSettingsPaths ?? []).map((file) => ({
+  const managed = (options.managedSettingsPaths ?? defaultManagedSettingsPaths()).map((file) => ({
     file,
     settings: readSettings(file),
   }));
   const user = readSettings(userPath);
   const project = readSettings(projectPath);
   const local = readSettings(localPath);
-  const settingsChain = [...managed.map((item) => item.settings), user, project, local];
-  const disabled =
-    options.runtimeDisableAllHooks ??
-    settingsChain.reduce<boolean>((value, item) => item?.disableAllHooks ?? value, false);
+  const ordinaryDisabled = [user, project, local].reduce<boolean>(
+    (value, item) => item?.disableAllHooks ?? value,
+    false,
+  );
+  const managedDisabled = managed.reduce<boolean | undefined>(
+    (value, item) => item.settings?.disableAllHooks ?? value,
+    undefined,
+  );
+  const disabled = options.runtimeDisableAllHooks ?? managedDisabled ?? ordinaryDisabled;
   const managedSources = managed
     .map((item) => source(item.file, "managed", item.settings))
     .filter((item): item is HookSource => item !== undefined);
@@ -67,6 +96,7 @@ export function mergeHooks(sources: HookSource[]): HooksConfiguration {
   const merged: HooksConfiguration = {};
   for (const sourceItem of sources) {
     for (const [event, groups] of Object.entries(sourceItem.hooks)) {
+      // SAFETY: Every source hook key originates from a HooksConfiguration settings object.
       const key = event as keyof HooksConfiguration;
       merged[key] = [...(merged[key] ?? []), ...(groups ?? [])];
     }

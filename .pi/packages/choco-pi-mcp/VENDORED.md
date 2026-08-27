@@ -128,3 +128,13 @@ callers.
 6. `<project>/.pi/mcp.json`
 
 `agent-dir.ts:6-31` applies host `piConfig.name`, `piConfig.configDir`, and `<APP_NAME>_CODING_AGENT_DIR` overrides to the Pi-owned paths. `config.ts:64-82,526-617` conditionally reads host-specific files selected through `imports` or enabled fallback discovery. `agent-plugin-loader.ts:34-103` conditionally reads `plugin.json` and `mcp.json` under each configured Agent Plugin path. The package README lists the conditional host paths.
+
+## Hook MCP-tool bridge (`index.ts`)
+
+The choco-pi fork listens on the shared `choco-pi-hooks:mcp-call` event bus
+channel. `choco-pi-hooks` uses this private cross-extension bridge to execute
+Claude-compatible `type: "mcp_tool"` hook handlers through the adapter's
+already-connected MCP clients. The bridge waits for initialization, converges
+the requested server, forwards cancellation, and returns only text content in
+the command-hook stdout shape. It never starts a separate OAuth or connection
+flow, matching Claude Code's MCP hook behavior.

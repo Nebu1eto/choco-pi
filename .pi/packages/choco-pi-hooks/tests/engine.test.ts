@@ -96,11 +96,29 @@ test("additional context from every matching hook is retained", async () => {
   assert.deepEqual(result.additionalContext.sort(), ["a", "b"]);
 });
 
-test("same handler is deduplicated per source kind and once handlers run once", async () => {
+test("same handler is deduplicated per source kind and settings ignore once", async () => {
   let calls = 0;
   const handler = { type: "command" as const, command: "x", once: true };
   const engine = new HookEngine([source({ Stop: [{ hooks: [handler, handler] }] })], {
     command: async (..._args) => {
+      calls++;
+      return command();
+    },
+  });
+  await engine.run(input("Stop"));
+  await engine.run(input("Stop"));
+  assert.equal(calls, 2);
+});
+
+test("skill-frontmatter once handlers run once per session", async () => {
+  let calls = 0;
+  const skillSource: HookSource = {
+    id: "skill",
+    kind: "skill",
+    hooks: { Stop: [{ hooks: [{ type: "command", command: "x", once: true }] }] },
+  };
+  const engine = new HookEngine([skillSource], {
+    command: async () => {
       calls++;
       return command();
     },
@@ -147,7 +165,31 @@ test("async command hooks do not block and can be awaited for cleanup", async ()
   assert.equal(finished, true);
 });
 
-test("supports PermissionRequest, PermissionDenied, elicitation, and worktree outputs", async () => {
+test("asyncRewake delivers the completed hook decision after the foreground continues", async () => {
+  let delivered = false;
+  let rewake = false;
+  const engine = new HookEngine(
+    [
+      source({
+        PostToolUse: [{ hooks: [{ type: "command", command: "x", asyncRewake: true }] }],
+      }),
+    ],
+    {
+      command: async () => ({ exitCode: 2, stdout: "", stderr: "wake" }),
+      onAsyncResult: (_input, result, shouldRewake) => {
+        delivered = result.blocked;
+        rewake = shouldRewake;
+      },
+    },
+  );
+  const foreground = await engine.run(input("PostToolUse"));
+  assert.equal(foreground.blocked, false);
+  await engine.waitForBackground();
+  assert.equal(delivered, false);
+  assert.equal(rewake, true);
+});
+
+test("ignores permission hooks while supporting elicitation and worktree outputs", async () => {
   const engine = new HookEngine(
     [
       source({
@@ -197,11 +239,51 @@ test("supports PermissionRequest, PermissionDenied, elicitation, and worktree ou
     },
   );
   const permission = await engine.run(input("PermissionRequest", { tool_name: "Bash" }));
-  assert.equal(permission.blocked, true);
-  assert.equal(permission.reason, "policy");
-  assert.equal((await engine.run(input("PermissionDenied", { tool_name: "Bash" }))).retry, true);
+  assert.equal(permission.blocked, false);
+  assert.equal(permission.invocations.length, 0);
+  const denied = await engine.run(input("PermissionDenied", { tool_name: "Bash" }));
+  assert.equal(denied.invocations.length, 0);
   const elicitation = await engine.run(input("Elicitation", { mcp_server_name: "server" }));
   assert.equal(elicitation.elicitationAction, "accept");
   assert.deepEqual(elicitation.elicitationContent, { answer: "yes" });
   assert.equal((await engine.run(input("WorktreeCreate"))).worktreePath, "/tmp/worktree");
+});
+
+test("global HTTP URL and environment allowlists constrain every source", async () => {
+  let calls = 0;
+  const policy: HookSource = {
+    id: "policy",
+    kind: "managed",
+    hooks: {},
+    allowedHttpHookUrls: ["https://allowed.example/hooks/"],
+    httpHookAllowedEnvVars: ["TOKEN"],
+  };
+  const project = source({
+    Stop: [
+      {
+        hooks: [
+          {
+            type: "http",
+            url: "https://blocked.example/hook",
+            headers: { authorization: "$TOKEN" },
+            allowedEnvVars: ["TOKEN", "SECRET"],
+          },
+          {
+            type: "http",
+            url: "https://allowed.example/hooks/check",
+            allowedEnvVars: ["TOKEN", "SECRET"],
+          },
+        ],
+      },
+    ],
+  });
+  const engine = new HookEngine([policy, project], {
+    http: async (hook) => {
+      calls++;
+      assert.deepEqual(hook.allowedEnvVars, ["TOKEN"]);
+      return { exitCode: 0, stdout: "{}", stderr: "" };
+    },
+  });
+  await engine.run(input("Stop"));
+  assert.equal(calls, 1);
 });

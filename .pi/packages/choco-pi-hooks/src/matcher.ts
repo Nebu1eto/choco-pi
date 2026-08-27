@@ -1,5 +1,4 @@
-/* oxlint-disable anti-slop/no-unsafe-dictionary-type -- Matcher inputs intentionally accept event-specific external fields before selecting the documented discriminator. */
-import type { HookEventName } from "./types.ts";
+import type { HookEventName, JsonObject } from "./types.ts";
 
 const NARROW_EXACT = new Set<HookEventName>(["FileChanged", "StopFailure"]);
 const NO_MATCHER = new Set<HookEventName>([
@@ -15,7 +14,7 @@ const NO_MATCHER = new Set<HookEventName>([
   "MessageDisplay",
 ]);
 
-export function matcherValue(event: HookEventName, input: Record<string, unknown>): string {
+export function matcherValue(event: HookEventName, input: JsonObject): string {
   if (
     [
       "PreToolUse",
@@ -52,7 +51,7 @@ export function matcherValue(event: HookEventName, input: Record<string, unknown
 export function matches(
   event: HookEventName,
   matcher: string | undefined,
-  input: Record<string, unknown>,
+  input: JsonObject,
 ): boolean {
   if (NO_MATCHER.has(event)) return true;
   if (matcher === undefined || matcher === "" || matcher === "*") return true;
@@ -63,7 +62,6 @@ export function matches(
     return matcher.split(separator).some((part) => part.trim() === value);
   }
   try {
-    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- User-authored JavaScript regex matchers are required for Claude compatibility.
     return new RegExp(matcher).test(value);
   } catch {
     return false;

@@ -1,4 +1,3 @@
-/* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion -- Hook stdin/stdout and substituted MCP payloads are external JSON boundaries validated here. */
 import { spawn } from "node:child_process";
 import type {
   CommandHook,
@@ -10,7 +9,20 @@ import type {
   JsonValue,
   McpToolHook,
   ModelHook,
+  MergedHookResult,
 } from "./types.ts";
+import {
+  isBooleanValue,
+  isStringValue,
+  parseRuntimeRecord,
+  type RuntimeValue,
+} from "./validation.ts";
+
+export interface ParsedHookOutput {
+  output?: HookOutput;
+  plainText?: string;
+  validationError?: string;
+}
 
 export interface RawExecution {
   exitCode: number;
@@ -23,6 +35,11 @@ export interface HookBackends {
   http?: (hook: HttpHook, input: HookInput, signal: AbortSignal) => Promise<RawExecution>;
   mcpTool?: (hook: McpToolHook, input: HookInput, signal: AbortSignal) => Promise<RawExecution>;
   model?: (hook: ModelHook, input: HookInput, signal: AbortSignal) => Promise<RawExecution>;
+  onAsyncResult?: (
+    input: HookInput,
+    result: MergedHookResult,
+    rewake: boolean,
+  ) => Promise<void> | void;
 }
 
 function timeoutFor(handler: HookHandler, event: HookInput["hook_event_name"]): number {
@@ -36,21 +53,21 @@ function timeoutFor(handler: HookHandler, event: HookInput["hook_event_name"]): 
 }
 
 export function substitute(value: JsonValue, input: JsonObject): JsonValue {
-  if (typeof value === "string")
+  if (isStringValue(value))
     return value.replace(/\$\{([^}]+)\}/g, (_whole, path: string) => {
       let cursor: JsonValue | undefined = input;
       for (const segment of path.split(".")) {
         if (segment === "__proto__" || segment === "prototype" || segment === "constructor")
           return "";
-        if (cursor === null || typeof cursor !== "object" || Array.isArray(cursor)) return "";
+        if (!(cursor instanceof Object) || Array.isArray(cursor)) return "";
         cursor = cursor[segment];
       }
-      return cursor === undefined || (typeof cursor === "object" && cursor !== null)
+      return cursor === undefined || cursor instanceof Object
         ? JSON.stringify(cursor ?? "")
         : String(cursor);
     });
   if (Array.isArray(value)) return value.map((item) => substitute(item, input));
-  if (value !== null && typeof value === "object")
+  if (value instanceof Object)
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
         key,
@@ -66,7 +83,8 @@ function runCommand(
   signal: AbortSignal,
 ): Promise<RawExecution> {
   return new Promise((resolve) => {
-    const env = { ...process.env, CLAUDE_PROJECT_DIR: input.cwd };
+    const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_PROJECT_DIR: input.cwd };
+    if (isStringValue(input._claude_env_file)) env.CLAUDE_ENV_FILE = input._claude_env_file;
     const execForm = hook.args !== undefined;
     let command = hook.command.replaceAll("${CLAUDE_PROJECT_DIR}", input.cwd);
     let args = hook.args?.map((arg) => arg.replaceAll("${CLAUDE_PROJECT_DIR}", input.cwd));
@@ -127,18 +145,35 @@ async function runHttp(
   };
 }
 
-export function parseOutput(stdout: string): {
-  output?: HookOutput;
-  plainText?: string;
-  validationError?: string;
-} {
+export function parseOutput(stdout: string): ParsedHookOutput {
   const trimmed = stdout.trimStart();
   if (!trimmed.startsWith("{")) return { plainText: stdout };
   try {
-    const value: unknown = JSON.parse(trimmed);
-    if (typeof value !== "object" || value === null || Array.isArray(value))
-      return { validationError: "hook output must be a JSON object" };
-    return { output: value as HookOutput };
+    const value: RuntimeValue = JSON.parse(trimmed);
+    if (!parseRuntimeRecord(value)) return { validationError: "hook output must be a JSON object" };
+    // SAFETY: JSON parsing plus parseRuntimeRecord establishes the HookOutput property-bag representation.
+    const output = value as HookOutput;
+    const booleanFields = [
+      [output.continue, "continue"],
+      [output.suppressOutput, "suppressOutput"],
+    ] as const;
+    for (const [field, name] of booleanFields)
+      if (field !== undefined && !isBooleanValue(field))
+        return { validationError: `${name} must be boolean` };
+    const stringFields = [
+      [output.stopReason, "stopReason"],
+      [output.systemMessage, "systemMessage"],
+      [output.terminalSequence, "terminalSequence"],
+      [output.reason, "reason"],
+    ] as const;
+    for (const [field, name] of stringFields)
+      if (field !== undefined && !isStringValue(field))
+        return { validationError: `${name} must be string` };
+    if (output.decision !== undefined && output.decision !== "block")
+      return { validationError: 'decision must be "block"' };
+    if (output.hookSpecificOutput !== undefined && !parseRuntimeRecord(output.hookSpecificOutput))
+      return { validationError: "hookSpecificOutput must be an object" };
+    return { output };
   } catch {
     return { plainText: stdout };
   }
@@ -152,25 +187,34 @@ export async function executeHandler(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutFor(handler, input.hook_event_name));
   try {
+    let result: RawExecution;
     if (handler.type === "command")
-      return await (backends.command ?? runCommand)(handler, input, controller.signal);
-    if (handler.type === "http")
-      return await (backends.http ?? runHttp)(handler, input, controller.signal);
-    if (handler.type === "mcp_tool") {
+      result = await (backends.command ?? runCommand)(handler, input, controller.signal);
+    else if (handler.type === "http")
+      result = await (backends.http ?? runHttp)(handler, input, controller.signal);
+    else if (handler.type === "mcp_tool") {
       if (!backends.mcpTool)
         return { exitCode: 1, stdout: "", stderr: "MCP hook backend is not connected" };
-      return await backends.mcpTool(
-        { ...handler, input: substitute(handler.input ?? {}, input) as JsonObject },
+      const substituted = substitute(handler.input ?? {}, input);
+      // SAFETY: An MCP handler input starts as a JsonObject and recursive substitution preserves that container.
+      result = await backends.mcpTool(
+        { ...handler, input: substituted as JsonObject },
         input,
         controller.signal,
       );
+    } else {
+      if (!backends.model)
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: `${handler.type} hook backend is not configured`,
+        };
+      const prompt = handler.prompt.includes("$ARGUMENTS")
+        ? handler.prompt.replaceAll("$ARGUMENTS", JSON.stringify(input))
+        : `${handler.prompt}\n${JSON.stringify(input)}`;
+      result = await backends.model({ ...handler, prompt }, input, controller.signal);
     }
-    if (!backends.model)
-      return { exitCode: 1, stdout: "", stderr: `${handler.type} hook backend is not configured` };
-    const prompt = handler.prompt.includes("$ARGUMENTS")
-      ? handler.prompt.replaceAll("$ARGUMENTS", JSON.stringify(input))
-      : `${handler.prompt}\n${JSON.stringify(input)}`;
-    return await backends.model({ ...handler, prompt }, input, controller.signal);
+    return controller.signal.aborted ? { ...result, timedOut: true } : result;
   } catch (error) {
     if (controller.signal.aborted)
       return { exitCode: 1, stdout: "", stderr: "Hook timed out", timedOut: true };

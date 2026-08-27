@@ -52,6 +52,7 @@ import {
   isObjectValue,
   isStringValue,
   mergeObjectParts,
+  parseMcpObject,
   runtimeTypeOf,
   type McpObject,
 } from "./protocol-values.ts";
@@ -143,6 +144,60 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let currentOwner: McpRuntimeOwner | null = null;
   let currentOAuthRuntime: McpOAuthRuntime | null = null;
   let lifecycleGeneration = 0;
+
+  const removeHookMcpListener = pi.events.on("choco-pi-hooks:mcp-call", async (payload) => {
+    if (!isObjectValue(payload)) return;
+    // SAFETY: Members are validated individually below before use; the event payload intentionally carries a callback and is not JSON.
+    const request = payload as {
+      server?: unknown;
+      tool?: unknown;
+      input?: unknown;
+      signal?: unknown;
+      resolve?: unknown;
+    };
+    const server = request.server;
+    const tool = request.tool;
+    const resolve = request.resolve;
+    const signal = request.signal;
+    if (!isStringValue(server) || !isStringValue(tool) || !isFunctionValue(resolve)) return;
+    const finish = (exitCode: number, stdout: string, stderr: string): void => {
+      resolve({ exitCode, stdout, stderr });
+    };
+    try {
+      if (!state && initPromise) {
+        const initialized = await awaitWithTimeout(initPromise, INIT_WAIT_TIMEOUT_MS);
+        if (initialized !== INIT_WAIT_TIMED_OUT) state = initialized;
+      }
+      const hookState = state;
+      if (!hookState) {
+        finish(1, "", "MCP hook backend is not initialized");
+        return;
+      }
+      const ownerSignal = signal instanceof AbortSignal ? signal : hookState.owner?.signal;
+      await hookState.lifecycle.ensureConverged(ownerSignal);
+      const connection = hookState.manager.getConnection(server);
+      if (!connection) {
+        finish(1, "", `MCP server is not connected: ${server}`);
+        return;
+      }
+      const args = isObjectValue(request.input) ? parseMcpObject(request.input) : {};
+      const result = await connection.client.callTool(
+        { name: tool, arguments: args },
+        ownerSignal ? { signal: ownerSignal } : undefined,
+      );
+      const text = (result.content ?? [])
+        .flatMap((item) =>
+          isObjectValue(item) && item.type === "text" && isStringValue(item.text)
+            ? [item.text]
+            : [],
+        )
+        .join("\n");
+      if (result.isError) finish(1, "", text || "MCP tool returned an error");
+      else finish(0, text, "");
+    } catch (error) {
+      finish(1, "", formatTerminalError(error));
+    }
+  });
 
   async function shutdownState(
     currentState: McpExtensionState | null,
@@ -593,6 +648,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   });
 
   pi.on("session_shutdown", async () => {
+    removeHookMcpListener();
     ++lifecycleGeneration;
     const currentState = state;
     const owner = currentOwner;

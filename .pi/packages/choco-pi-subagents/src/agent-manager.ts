@@ -29,6 +29,7 @@ import type {
 } from "./types.ts";
 import { addUsage } from "./usage.ts";
 import {
+  adoptHookWorktree,
   cleanupWorktree,
   createWorktree,
   isWorktreeIsolationEnabled,
@@ -39,6 +40,23 @@ export type OnAgentComplete = (record: AgentRecord) => void;
 export type OnAgentStart = (record: AgentRecord) => void;
 export type OnAgentCompact = (record: AgentRecord, info: CompactionInfo) => void;
 export type CompactionInfo = { reason: "manual" | "threshold" | "overflow"; tokensBefore: number };
+
+async function removeHookWorktree(pi: ExtensionAPI, path: string): Promise<void> {
+  let claimed = false;
+  let finish: () => void = () => undefined;
+  const completion = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  pi.events.emit("subagents:worktree-remove", {
+    path,
+    claim: () => {
+      claimed = true;
+    },
+    done: finish,
+  });
+  await Promise.resolve();
+  if (claimed) await completion;
+}
 
 /** Default max concurrent background agents. */
 const DEFAULT_MAX_CONCURRENT = 4;
@@ -154,6 +172,8 @@ interface SpawnOptions {
   bypassQueue?: boolean;
   /** Isolation mode — "worktree" creates a temp git worktree for the agent. */
   isolation?: IsolationMode;
+  /** Internal path returned by a Claude-compatible WorktreeCreate hook. */
+  hookWorktreePath?: string;
   /**
    * Working directory for the agent (absolute path). Default: parent session
    * cwd. The agent's tools operate here, but .pi config (extensions, skills,
@@ -409,7 +429,9 @@ export class AgentManager {
     // that omits the field can't stop a caller that never saw the schema.
     let worktreeCwd: string | undefined;
     if (options.isolation === "worktree" && isWorktreeIsolationEnabled()) {
-      const wt = createWorktree(baseCwd, id);
+      const wt = options.hookWorktreePath
+        ? adoptHookWorktree(baseCwd, options.hookWorktreePath, id)
+        : createWorktree(baseCwd, id);
       if (!wt) {
         throw new Error(
           'Cannot run with isolation: "worktree" — not a git repo, no commits yet, or `git worktree add` failed. ' +
@@ -509,7 +531,7 @@ export class AgentManager {
         options.onSessionCreated?.(session);
       },
     })
-      .then(({ responseText, session, aborted, steered, failure }) => {
+      .then(async ({ responseText, session, aborted, steered, failure }) => {
         // Don't overwrite status if externally stopped via abort()
         if (record.status !== "stopped") {
           // Precedence: a hard abort keeps "aborted"; then a failed final turn
@@ -542,7 +564,9 @@ export class AgentManager {
 
         // Clean up worktree if used
         if (record.worktree) {
-          const wtResult = cleanupWorktree(baseCwd, record.worktree, options.description);
+          const wtResult = record.worktree.hookManaged
+            ? (await removeHookWorktree(pi, record.worktree.path), { hasChanges: false })
+            : cleanupWorktree(baseCwd, record.worktree, options.description);
           record.worktreeResult = wtResult;
           if (wtResult.hasChanges && wtResult.branch) {
             // With a caller-supplied cwd the branch lives in THAT repo, not the
@@ -576,7 +600,7 @@ export class AgentManager {
         }
         return responseText;
       })
-      .catch((err) => {
+      .catch(async (err) => {
         // Don't overwrite status if externally stopped via abort()
         if (record.status !== "stopped") {
           record.status = "error";
@@ -599,7 +623,9 @@ export class AgentManager {
         // Best-effort worktree cleanup on error
         if (record.worktree) {
           try {
-            const wtResult = cleanupWorktree(baseCwd, record.worktree, options.description);
+            const wtResult = record.worktree.hookManaged
+              ? (await removeHookWorktree(pi, record.worktree.path), { hasChanges: false })
+              : cleanupWorktree(baseCwd, record.worktree, options.description);
             record.worktreeResult = wtResult;
           } catch {
             /* ignore cleanup errors */

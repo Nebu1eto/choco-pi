@@ -70,6 +70,7 @@ interface NestedSpawnOptions {
   thinkingLevel?: ThinkingLevel;
   isBackground?: boolean;
   isolation?: IsolationMode;
+  hookWorktreePath?: string;
   invocation?: AgentInvocation;
   signal?: AbortSignal;
   onAssistantUsage?: (usage: { input: number; output: number; cacheWrite: number }) => void;
@@ -270,6 +271,12 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       const invocation = resolveAgentInvocationConfig(config, params, {
         worktreeAllowed: isWorktreeIsolationEnabled(),
       });
+      // SAFETY: choco-pi-hooks adds this internal member in PreToolUse only after a successful WorktreeCreate hook.
+      const hookWorktreePath = (
+        params as typeof params & {
+          __choco_hook_worktree_path?: string;
+        }
+      ).__choco_hook_worktree_path;
       let model = ctx.model;
       if (invocation.modelInput) {
         const resolution = resolveModel(invocation.modelInput, ctx.modelRegistry);
@@ -309,6 +316,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         inheritContext: invocation.inheritContext,
         thinkingLevel: invocation.thinking,
         isolation: invocation.isolation,
+        hookWorktreePath,
         invocation: {
           thinking: invocation.thinking,
           maxTurns: invocation.maxTurns,

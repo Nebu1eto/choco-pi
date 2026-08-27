@@ -579,6 +579,7 @@ export default function (pi: ExtensionAPI) {
       toolUses: record.toolUses,
       durationMs,
       tokens,
+      agentTranscriptPath: record.outputFile ?? record.sessionFile,
       ...(record.sideConversation && { sideConversation: true }),
       ...(record.workflowId && {
         workflowId: record.workflowId,
@@ -1173,6 +1174,7 @@ export default function (pi: ExtensionAPI) {
   // On shutdown, abort all agents immediately and clean up.
   // If the session is going down, there's nothing left to consume agent results.
   pi.on("session_shutdown", async () => {
+    removeHookContinuationListener();
     unregisterPreferencesProvider?.();
     unregisterPreferencesProvider = undefined;
     messageNotificationUnsubscribe?.();
@@ -1505,6 +1507,34 @@ export default function (pi: ExtensionAPI) {
 
     return record;
   }
+
+  const removeHookContinuationListener = pi.events.on(
+    "choco-pi-hooks:subagent-continue",
+    (payload) => {
+      if (!(payload instanceof Object) || Array.isArray(payload)) return;
+      // SAFETY: The private event-bus producer validates these two string members before emission.
+      const request = payload as { id?: unknown; reason?: unknown };
+      if (
+        Object.prototype.toString.call(request.id) !== "[object String]" ||
+        Object.prototype.toString.call(request.reason) !== "[object String]"
+      )
+        return;
+      const id = String(request.id);
+      const reason = String(request.reason);
+      const ctx = currentCtx;
+      const existing = manager.getRecord(id);
+      if (
+        !ctx ||
+        !existing?.session ||
+        existing.status === "running" ||
+        existing.status === "queued"
+      )
+        return;
+      void startBackgroundResume(ctx, existing, reason, {
+        outputTranscript: getOutputTranscriptDefault(),
+      });
+    },
+  );
 
   // Grab UI context from first tool execution + clear lingering widget on new turn
   pi.on("tool_execution_start", async (_event, ctx) => {
@@ -1996,6 +2026,12 @@ Terse command-style prompts produce shallow, generic work.
       const resolvedConfig = resolveAgentInvocationConfig(customConfig, params, {
         worktreeAllowed: isWorktreeIsolationEnabled(),
       });
+      // SAFETY: choco-pi-hooks adds this internal member in PreToolUse only after a successful WorktreeCreate hook.
+      const hookWorktreePath = (
+        params as typeof params & {
+          __choco_hook_worktree_path?: string;
+        }
+      ).__choco_hook_worktree_path;
 
       // Resolve model from agent config first; tool-call params only fill gaps.
       let model = ctx.model;
@@ -2236,6 +2272,7 @@ Terse command-style prompts produce shallow, generic work.
           thinkingLevel: thinking,
           isBackground: true,
           isolation,
+          hookWorktreePath,
           invocation: agentInvocation,
           rootSessionId: ctx.sessionManager.getSessionId(),
           ...bgCallbacks,
@@ -2377,6 +2414,7 @@ Terse command-style prompts produce shallow, generic work.
             inheritContext,
             thinkingLevel: thinking,
             isolation,
+            hookWorktreePath,
             invocation: agentInvocation,
             signal,
             rootSessionId: ctx.sessionManager.getSessionId(),
