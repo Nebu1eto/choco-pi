@@ -11,7 +11,10 @@ import type { McpExtensionState } from "../.pi/packages/choco-pi-mcp/state.ts";
 import type { PromptMetadata, ServerEntry } from "../.pi/packages/choco-pi-mcp/types.ts";
 
 const STALE_CONTEXT_MESSAGE = "This extension ctx is stale after session replacement or reload.";
+const STALE_PI_MESSAGE = "This extension pi is stale after session replacement or reload.";
 const COMMANDS_URL_SUFFIX = "/.pi/packages/choco-pi-mcp/commands.ts";
+const INIT_URL_SUFFIX = "/.pi/packages/choco-pi-mcp/init.ts";
+const PROMPTS_URL_SUFFIX = "/.pi/packages/choco-pi-mcp/prompts.ts";
 const MCP_PACKAGE_PATH = "/.pi/packages/choco-pi-mcp/";
 
 interface Deferred<T> {
@@ -40,8 +43,23 @@ function waitForAbort<T>(signal: AbortSignal | undefined, onAbort: () => void): 
 }
 
 const commandLoadGate = deferred<void>();
+const promptLoadGate = deferred<void>();
+const promptLoadStarted = deferred<void>();
 const commandActions: string[] = [];
-const commandHooks = { commandLoadGate, commandActions };
+const commandHooks = {
+  commandLoadGate,
+  promptLoadGate,
+  promptLoadStarted,
+  commandActions,
+  createPromptState: (owner: ReturnType<typeof createMcpRuntimeOwner>) =>
+    createPromptState({
+      owner,
+      connected: true,
+      getPrompt: async () => ({
+        messages: [{ role: "user", content: { type: "text", text: "current prompt" } }],
+      }),
+    }),
+};
 // SAFETY: The test owns this process-local loader hook key and assigns the declared fixture shape.
 (
   globalThis as typeof globalThis & {
@@ -71,13 +89,37 @@ export async function reconnectServer() {}
 `,
       };
     }
+    if (url.endsWith(INIT_URL_SUFFIX)) {
+      return {
+        format: "module",
+        shortCircuit: true,
+        source: `
+const hooks = globalThis.__mcpCommandLifecycleHooks;
+export async function initializeMcp(_pi, _ctx, owner) { return hooks.createPromptState(owner); }
+export function updateStatusBar() {}
+export function flushMetadataCache() {}
+export async function lazyConnect(state, serverName, signal) {
+  const existing = state.manager.getConnection(serverName);
+  if (existing?.status === "connected") return true;
+  if (existing?.status === "needs-auth") return false;
+  const definition = state.config.mcpServers[serverName];
+  if (!definition || definition.disabled === true) return false;
+  const connection = await state.manager.connect(serverName, definition, signal);
+  return connection.status === "connected";
+}
+`,
+      };
+    }
     const loaded = nextLoad(url, context);
     if (url.includes(MCP_PACKAGE_PATH) && url.endsWith(".ts") && loaded.source !== undefined) {
+      const source = ts.transpileModule(String(loaded.source), {
+        compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      }).outputText;
       return {
         ...loaded,
-        source: ts.transpileModule(String(loaded.source), {
-          compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-        }).outputText,
+        source: url.endsWith(PROMPTS_URL_SUFFIX)
+          ? `const promptHooks = globalThis.__mcpCommandLifecycleHooks;\npromptHooks.promptLoadStarted.resolve();\nawait promptHooks.promptLoadGate.promise;\n${source}`
+          : source,
       };
     }
     return loaded;
@@ -85,8 +127,11 @@ export async function reconnectServer() {}
 });
 
 const { createMcpAdapter } = await import("../.pi/packages/choco-pi-mcp/index.ts");
-const { createPromptCommand } = await import("../.pi/packages/choco-pi-mcp/prompts.ts");
 const { createMcpRuntimeOwner } = await import("../.pi/packages/choco-pi-mcp/runtime-owner.ts");
+
+async function loadCreatePromptCommand() {
+  return (await import("../.pi/packages/choco-pi-mcp/prompts.ts")).createPromptCommand;
+}
 
 type LifecycleHandler = (
   event: Record<string, never>,
@@ -97,8 +142,11 @@ type CommandHandler = (args: string, ctx: ExtensionCommandContext) => void | Pro
 function createExtensionApi() {
   const lifecycleHandlers = new Map<string, LifecycleHandler>();
   const commandHandlers = new Map<string, CommandHandler>();
+  let stale = false;
+  let accesses = 0;
+  const sent: string[] = [];
   // SAFETY: The adapter only uses the ExtensionAPI members supplied by this focused fixture.
-  const pi = Object.assign(Object.create(null) as ExtensionAPI, {
+  const target = Object.assign(Object.create(null) as ExtensionAPI, {
     on(event: string, handler: LifecycleHandler) {
       lifecycleHandlers.set(event, handler);
     },
@@ -117,10 +165,22 @@ function createExtensionApi() {
     getActiveTools: () => [],
     setActiveTools() {},
     getFlag: () => undefined,
+    sendUserMessage(text: string) {
+      sent.push(text);
+    },
+  });
+  const pi = new Proxy(target, {
+    get(proxyTarget, property) {
+      accesses += 1;
+      if (stale) throw new Error(STALE_PI_MESSAGE);
+      // SAFETY: The proxy target is an ExtensionAPI, so its runtime property keys index that interface.
+      return proxyTarget[property as keyof ExtensionAPI];
+    },
   });
 
   return {
     pi,
+    sent,
     invoke(event: string, ctx: ExtensionContext) {
       return lifecycleHandlers.get(event)?.({}, ctx);
     },
@@ -129,6 +189,10 @@ function createExtensionApi() {
       assert.ok(handler, `/${name} was registered`);
       return handler;
     },
+    markStale() {
+      stale = true;
+    },
+    accessCount: () => accesses,
   };
 }
 
@@ -301,7 +365,39 @@ test("deferred /mcp command imports ignore stale contexts and serve the current 
   assert.deepEqual(commandActions.sort(), ["authenticate", "tools"]);
 });
 
+test("deferred prompt imports ignore stale contexts and pi while serving the current owner", async () => {
+  const oldApi = createExtensionApi();
+  createMcpAdapter({ config: { mcpServers: {} } })(oldApi.pi);
+  const oldContext = createContext(true);
+
+  await oldApi.invoke("session_start", oldContext.ctx);
+  await oldApi.invoke("input", oldContext.ctx);
+  const oldPending = oldApi.command(promptMetadata.commandName)("", oldContext.ctx);
+  await promptLoadStarted.promise;
+
+  await oldApi.invoke("session_shutdown", createContext().ctx);
+  oldContext.markStale();
+  oldApi.markStale();
+  const oldContextAccesses = oldContext.accessCount();
+  const oldPiAccesses = oldApi.accessCount();
+
+  const currentApi = createExtensionApi();
+  createMcpAdapter({ config: { mcpServers: {} } })(currentApi.pi);
+  const currentContext = createContext(true);
+  await currentApi.invoke("session_start", currentContext.ctx);
+  await currentApi.invoke("input", currentContext.ctx);
+  const currentPending = currentApi.command(promptMetadata.commandName)("", currentContext.ctx);
+
+  promptLoadGate.resolve();
+  await assert.doesNotReject(() => Promise.all([oldPending, currentPending]));
+
+  assert.equal(oldContext.accessCount(), oldContextAccesses);
+  assert.equal(oldApi.accessCount(), oldPiAccesses);
+  assert.deepEqual(currentApi.sent, ["current prompt"]);
+});
+
 test("prompt commands stop after an invalidated deferred connection", async () => {
+  const createPromptCommand = await loadCreatePromptCommand();
   let connectionAborted = false;
   const owner = createMcpRuntimeOwner();
   const state = createPromptState({
@@ -352,6 +448,7 @@ test("prompt commands stop after an invalidated deferred connection", async () =
 });
 
 test("prompt commands stop after an invalidated deferred prompt and send for the current owner", async () => {
+  const createPromptCommand = await loadCreatePromptCommand();
   let promptAborted = false;
   const promptStarted = deferred<void>();
   const owner = createMcpRuntimeOwner();
@@ -400,6 +497,7 @@ test("prompt commands stop after an invalidated deferred prompt and send for the
 });
 
 test("prompt command signal abort cancels a deferred connection without stale access", async () => {
+  const createPromptCommand = await loadCreatePromptCommand();
   let connectionAborted = false;
   const controller = new AbortController();
   const owner = createMcpRuntimeOwner();
@@ -430,6 +528,7 @@ test("prompt command signal abort cancels a deferred connection without stale ac
 });
 
 test("prompt command signal abort cancels deferred prompt retrieval without stale access", async () => {
+  const createPromptCommand = await loadCreatePromptCommand();
   let promptAborted = false;
   const controller = new AbortController();
   const owner = createMcpRuntimeOwner();
