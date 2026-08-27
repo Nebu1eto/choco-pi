@@ -470,6 +470,20 @@ its first bound `session_start` and removes only its own registration on
 `session_shutdown`, so child activations cannot replace or tear down the root
 settings surface.
 
+### Detached mention-clone lifecycle guard
+
+The model-backed `@agent` mention path still falls back to a direct background
+spawn when its off-screen conversation clone cannot run, but the detached
+completion now captures a scalar generation established by `session_start` and
+requires that generation to remain active. A replacement increments it, while
+`session_shutdown` invalidates it synchronously before clearing the current
+context or awaiting cleanup. The guard never dereferences or compares
+`ExtensionContext` wrappers because Pi creates a fresh wrapper for every event;
+fresh wrappers in the same live session therefore retain the upstream direct
+fallback, while shutdown and replacement discard stale completions. The pure
+generation decision is exported from `src/mention-clone.ts` and pinned by
+`tests/mention-clone.test.ts`.
+
 ## Upstream delta absorbed: 0.16.1 → 0.17.1
 
 The repository previously ran `npm:@tintinweb/pi-subagents@0.16.1`. Two entries

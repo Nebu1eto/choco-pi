@@ -14,7 +14,8 @@ import { registerSupplementalEvents } from "./supplemental-events.ts";
 import { createHookWatchers, type HookWatchers } from "./watchers.ts";
 import { applyHookEnvironment, hookEnvironmentFile, removeHookEnvironment } from "./environment.ts";
 import { registerClaudeTaskTools } from "./tasks.ts";
-import { isStringValue } from "./validation.ts";
+import { isStringValue, type RuntimeValue } from "./validation.ts";
+import { isStaleContextError, rethrowUnlessStaleContext } from "./lifecycle.ts";
 
 const TOOL_NAMES = new Map([
   ["bash", "Bash"],
@@ -109,8 +110,10 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     Object.assign(target, replacement);
   }
   const dispatch = async (event: HookEventName, ctx: ExtensionContext, extra: JsonObject = {}) => {
-    const result = await engine.run(input(event, ctx, extra));
-    if (ctx.mode === "tui")
+    const hookInput = input(event, ctx, extra);
+    const mode = ctx.mode;
+    const result = await engine.run(hookInput);
+    if (mode === "tui")
       for (const sequence of result.terminalSequences) process.stdout.write(sequence);
     if (event === "SessionStart" || event === "CwdChanged" || event === "FileChanged")
       applyHookEnvironment(envFile);
@@ -166,22 +169,36 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   });
   const removeDirectoryAddedListener = pi.events.on(
     "choco-pi-hooks:register-repo-root",
-    (payload) => {
+    async (payload) => {
       if (!(payload instanceof Object) || Array.isArray(payload)) return;
       // SAFETY: The SDK bridge supplies a directory string and optional callback; each is checked below.
       const request = payload as { directory?: unknown; done?: unknown };
       if (Object.prototype.toString.call(request.directory) !== "[object String]") return;
-      const ctx = supplemental.getContext();
-      if (!ctx) return;
-      void dispatch("DirectoryAdded", ctx, {
-        directory: String(request.directory),
-        source: "register_repo_root",
-      }).then(() => {
+      let completed = false;
+      const complete = (): void => {
+        if (completed) return;
+        completed = true;
         if (request.done instanceof Function) request.done();
-      });
+      };
+      const ctx = supplemental.getContext();
+      if (!ctx) {
+        complete();
+        return;
+      }
+      try {
+        await dispatch("DirectoryAdded", ctx, {
+          directory: String(request.directory),
+          source: "register_repo_root",
+        });
+      } catch (error: unknown) {
+        // SAFETY: Caught JavaScript values are valid RuntimeValue inputs for lifecycle classification.
+        rethrowUnlessStaleContext(error as RuntimeValue);
+      } finally {
+        complete();
+      }
     },
   );
-  const removeWorktreeListener = pi.events.on("subagents:worktree-remove", (payload) => {
+  const removeWorktreeListener = pi.events.on("subagents:worktree-remove", async (payload) => {
     if (!(payload instanceof Object) || Array.isArray(payload)) return;
     // SAFETY: The subagent bridge supplies a path and lifecycle callbacks; members are checked before use.
     const request = payload as { path?: unknown; claim?: unknown; done?: unknown };
@@ -193,29 +210,64 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
       return;
     const ctx = supplemental.getContext();
     if (!ctx) return;
-    request.claim();
-    void dispatch("WorktreeRemove", ctx, { worktree_path: String(request.path) }).finally(() =>
-      request.done instanceof Function ? request.done() : undefined,
-    );
+    // SAFETY: The preceding instanceof Function check validates this lifecycle callback.
+    const claim = request.claim as () => void;
+    // SAFETY: The preceding instanceof Function check validates this lifecycle callback.
+    const done = request.done as () => void;
+    claim();
+    let completed = false;
+    const complete = (): void => {
+      if (completed) return;
+      completed = true;
+      done();
+    };
+    try {
+      await dispatch("WorktreeRemove", ctx, { worktree_path: String(request.path) });
+    } catch (error: unknown) {
+      // SAFETY: Caught JavaScript values are valid RuntimeValue inputs for lifecycle classification.
+      if (!isStaleContextError(error as RuntimeValue)) throw error;
+    } finally {
+      complete();
+    }
   });
+  let externalProducersDisposed = false;
+
+  const disposeExternalProducers = (): void => {
+    if (externalProducersDisposed) return;
+    externalProducersDisposed = true;
+    watchers?.dispose();
+    watchers = undefined;
+    supplemental.dispose();
+    removeDirectoryAddedListener();
+    removeWorktreeListener();
+  };
 
   pi.on("session_start", async (event, ctx) => {
+    watchers?.dispose();
+    watchers = undefined;
     reload(ctx);
     lastCwd = ctx.cwd;
     supplemental.setContext(ctx);
-    const setupTrigger = pi.getFlag("maintenance")
-      ? "maintenance"
-      : pi.getFlag("init-only") || pi.getFlag("init")
-        ? "init"
-        : undefined;
-    if (setupTrigger) await dispatch("Setup", ctx, { trigger: setupTrigger });
+    let setupTrigger: "maintenance" | "init" | undefined;
+    if (pi.getFlag("maintenance")) setupTrigger = "maintenance";
+    else if (pi.getFlag("init-only") || pi.getFlag("init")) setupTrigger = "init";
+    if (setupTrigger) {
+      await dispatch("Setup", ctx, { trigger: setupTrigger });
+      if (supplemental.getContext() !== ctx) return;
+    }
     const result = await dispatch("SessionStart", ctx, {
       source: sourceForStart(event.reason),
       model: ctx.model?.id,
     });
+    if (supplemental.getContext() !== ctx) return;
     notify(ctx, result.systemMessages);
-    watchers?.dispose();
-    watchers = createHookWatchers(ctx.cwd, ctx, currentSources, dispatch, () => reload(ctx));
+    watchers = createHookWatchers({
+      cwd: ctx.cwd,
+      ctx,
+      sources: currentSources,
+      dispatch,
+      onAllowedConfigChange: () => reload(ctx),
+    });
     if (result.watchPaths) watchers.replaceDynamicPaths(result.watchPaths);
     if (result.sessionTitle) pi.setSessionName(result.sessionTitle);
     if (result.initialUserMessage) pi.sendUserMessage(result.initialUserMessage);
@@ -383,12 +435,9 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     }
   });
   pi.on("session_shutdown", async (event, ctx) => {
+    disposeExternalProducers();
     await dispatch("SessionEnd", ctx, { reason: endReason(event.reason) });
     await engine.waitForBackground();
-    supplemental.dispose();
-    removeDirectoryAddedListener();
-    removeWorktreeListener();
-    watchers?.dispose();
     removeHookEnvironment(envFile);
   });
 }

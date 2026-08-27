@@ -17,11 +17,50 @@ import {
 import { buildProjectionHints } from "../../src/utils/quotas-projection.ts";
 import { readQuotas, requestQuotas } from "../_shared/quota-events.ts";
 
-export default async function (pi: ExtensionAPI): Promise<void> {
-  let enabled = (await ensureSyntheticConfig()).quotaWarnings;
+export interface QuotaWarningsDependencies {
+  ensureConfig: typeof ensureSyntheticConfig;
+  publishConfig: typeof publishSyntheticConfig;
+  createHistory: () => Pick<QuotaHistory, "initialize" | "record" | "getSnapshots" | "flush">;
+  createNotifier: () => Pick<QuotaWarningNotifier, "evaluate" | "clearAlertState">;
+  buildProjections: typeof buildProjectionHints;
+  read: typeof readQuotas;
+  request: typeof requestQuotas;
+}
 
-  const notifier = new QuotaWarningNotifier();
-  const history = new QuotaHistory();
+const DEFAULT_DEPENDENCIES: QuotaWarningsDependencies = {
+  ensureConfig: ensureSyntheticConfig,
+  publishConfig: publishSyntheticConfig,
+  createHistory: () => new QuotaHistory(),
+  createNotifier: () => new QuotaWarningNotifier(),
+  buildProjections: buildProjectionHints,
+  read: readQuotas,
+  request: requestQuotas,
+};
+
+export async function activateQuotaWarnings(
+  pi: ExtensionAPI,
+  dependencies: QuotaWarningsDependencies = DEFAULT_DEPENDENCIES,
+): Promise<void> {
+  let enabled = (await dependencies.ensureConfig()).quotaWarnings;
+  let generation = 0;
+  let activeGeneration: number | undefined;
+
+  function startSession(): number {
+    activeGeneration = ++generation;
+    return activeGeneration;
+  }
+
+  function invalidateSession(): void {
+    generation += 1;
+    activeGeneration = undefined;
+  }
+
+  function isCurrent(capturedGeneration: number): boolean {
+    return activeGeneration === capturedGeneration;
+  }
+
+  const notifier = dependencies.createNotifier();
+  const history = dependencies.createHistory();
   let historyReady = Promise.resolve();
   if (enabled) {
     historyReady = history.initialize();
@@ -31,15 +70,18 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   async function evaluateSnapshot(
     snapshot: SyntheticQuotasSnapshotPayload,
     ctx: ExtensionContext,
+    capturedGeneration: number,
   ): Promise<void> {
     await historyReady;
+    if (!isCurrent(capturedGeneration)) return;
     if (!enabled || ctx.model?.provider !== "synthetic") return;
 
     history.record(snapshot);
-    const projections = buildProjectionHints(history.getSnapshots());
+    const projections = dependencies.buildProjections(history.getSnapshots());
     notifier.evaluate(
       snapshot.quotas,
       (message, level) => {
+        if (!isCurrent(capturedGeneration)) return;
         ctx.ui.notify(message, level);
       },
       projections,
@@ -47,14 +89,18 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   }
 
   function evaluateFromStoreOrRefresh(ctx: ExtensionContext): void {
+    const capturedGeneration = activeGeneration;
+    if (capturedGeneration === undefined || !isCurrent(capturedGeneration)) return;
     if (!enabled || ctx.model?.provider !== "synthetic") return;
-    readQuotas(pi, (snapshot) => {
+    dependencies.read(pi, (snapshot) => {
+      if (!isCurrent(capturedGeneration)) return;
       if (snapshot) {
-        evaluateSnapshot(snapshot, ctx).catch(() => undefined);
+        evaluateSnapshot(snapshot, ctx, capturedGeneration).catch(() => undefined);
       } else {
-        requestQuotas(pi, (refreshed) => {
+        dependencies.request(pi, (refreshed) => {
+          if (!isCurrent(capturedGeneration)) return;
           if (!refreshed) return;
-          evaluateSnapshot(refreshed, ctx).catch(() => undefined);
+          evaluateSnapshot(refreshed, ctx, capturedGeneration).catch(() => undefined);
         });
       }
     });
@@ -74,7 +120,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
     const wasEnabled = enabled;
     enabled = data.config.quotaWarnings;
-    publishSyntheticConfig(data.config);
+    dependencies.publishConfig(data.config);
 
     // Only reset alert state when the feature itself is toggled, so unrelated
     // config changes do not re-trigger one-time warnings.
@@ -87,6 +133,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // Alert transitions and quota history are account-wide, so neither is reset
   // on session/model changes. The user can toggle warnings to reset alerts.
   pi.on("session_start", (_event, ctx) => {
+    startSession();
     evaluateFromStoreOrRefresh(ctx);
   });
 
@@ -107,6 +154,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   });
 
   pi.on("session_shutdown", async () => {
+    invalidateSession();
     await history.flush();
   });
 
@@ -116,3 +164,5 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     });
   });
 }
+
+export default activateQuotaWarnings;

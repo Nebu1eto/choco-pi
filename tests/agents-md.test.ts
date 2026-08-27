@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 // so these load straight from `src/` under Node's type stripping instead of
 // from a built `dist/`. Mirrors tests/subagent-config.test.ts.
 const packageRoot = resolve(".pi/packages/choco-pi-agents-md/src");
+const STALE_CONTEXT_MESSAGE = "This extension ctx is stale after session replacement or reload.";
 
 async function loadSubdir() {
   return import(pathToFileURL(resolve(packageRoot, "subdir.ts")).href);
@@ -70,10 +71,13 @@ function readToolResultEvent(filePath: string) {
   };
 }
 
-async function setup(root: string) {
+async function setup(
+  root: string,
+  dependencies?: { readFile?: (filePath: string) => Promise<string> },
+) {
   const { registerAgentsMdAutoload } = await loadSubdir();
   const pi = createStubPi();
-  registerAgentsMdAutoload(pi);
+  registerAgentsMdAutoload(pi, dependencies);
   const ui = createStubUi();
   const baseCtx = { cwd: root, hasUI: true, ui };
   // session_start and session_tree share the same handler.
@@ -163,6 +167,152 @@ test("dedups: an already-injected AGENTS.md is not injected again for a later to
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("session shutdown invalidates a pending AGENTS.md read before extension replacement", async () => {
+  const parent = makeTmpTree();
+  try {
+    const root = path.join(parent, "project");
+    const nested = path.join(root, "a");
+    writeAgents(root, "project guidance");
+    writeAgents(nested, "nested guidance");
+    const leaf = path.join(nested, "leaf.txt");
+    fs.writeFileSync(leaf, "leaf");
+
+    const nestedAgentsPath = fs.realpathSync(path.join(nested, "AGENTS.md"));
+    let resolveDeferredRead: ((content: string) => void) | undefined;
+    const deferredRead = new Promise<string>((resolveRead) => {
+      resolveDeferredRead = resolveRead;
+    });
+    let deferred = false;
+    const { pi, baseCtx } = await setup(root, {
+      readFile: async (filePath) => {
+        if (filePath === nestedAgentsPath && !deferred) {
+          deferred = true;
+          return deferredRead;
+        }
+        return fs.promises.readFile(filePath, "utf-8");
+      },
+    });
+
+    let oldWrapperIsStale = false;
+    let staleContextAccesses = 0;
+    const oldCtx = {
+      get cwd() {
+        if (oldWrapperIsStale) {
+          staleContextAccesses += 1;
+          throw new Error(STALE_CONTEXT_MESSAGE);
+        }
+        return baseCtx.cwd;
+      },
+      get hasUI() {
+        if (oldWrapperIsStale) {
+          staleContextAccesses += 1;
+          throw new Error(STALE_CONTEXT_MESSAGE);
+        }
+        return true;
+      },
+      get ui() {
+        if (oldWrapperIsStale) {
+          staleContextAccesses += 1;
+          throw new Error(STALE_CONTEXT_MESSAGE);
+        }
+        return baseCtx.ui;
+      },
+    };
+    let stalePiAccesses = 0;
+    let emissions = 0;
+    Object.defineProperty(pi, "events", {
+      configurable: true,
+      get() {
+        if (oldWrapperIsStale) {
+          stalePiAccesses += 1;
+          throw new Error(STALE_CONTEXT_MESSAGE);
+        }
+        return { emit: () => emissions++ };
+      },
+    });
+
+    const oldResultPromise = pi.handlers
+      .get("tool_result")
+      ?.call(undefined, readToolResultEvent(leaf), oldCtx);
+    assert.ok(oldResultPromise instanceof Promise);
+    assert.equal(deferred, true, "the old handler must be paused in the injected read seam");
+
+    pi.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "reload" }, baseCtx);
+    oldWrapperIsStale = true;
+    resolveDeferredRead?.("nested guidance");
+
+    assert.equal(await oldResultPromise, undefined);
+    assert.equal(staleContextAccesses, 0, "stale ctx must not be accessed after the read");
+    assert.equal(stalePiAccesses, 0, "stale pi must not be accessed after the read");
+    assert.equal(emissions, 0, "the stale handler must not emit lifecycle events");
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+for (const sessionEvent of ["session_start", "session_tree"] as const) {
+  test(`${sessionEvent} resets dedup without stale-read contamination`, async () => {
+    const parent = makeTmpTree();
+    try {
+      const root = path.join(parent, "project");
+      const nested = path.join(root, "a");
+      writeAgents(root, "project guidance");
+      writeAgents(nested, "nested guidance");
+      const leaf = path.join(nested, "leaf.txt");
+      fs.writeFileSync(leaf, "leaf");
+
+      const nestedAgentsPath = fs.realpathSync(path.join(nested, "AGENTS.md"));
+      let resolveDeferredRead: ((content: string) => void) | undefined;
+      const deferredRead = new Promise<string>((resolveRead) => {
+        resolveDeferredRead = resolveRead;
+      });
+      let deferred = false;
+      let emissions = 0;
+      const { pi, baseCtx } = await setup(root, {
+        readFile: async (filePath) => {
+          if (filePath === nestedAgentsPath && !deferred) {
+            deferred = true;
+            return deferredRead;
+          }
+          return fs.promises.readFile(filePath, "utf-8");
+        },
+      });
+      Object.defineProperty(pi, "events", {
+        configurable: true,
+        value: { emit: () => emissions++ },
+      });
+
+      const staleResultPromise = pi.handlers
+        .get("tool_result")
+        ?.call(undefined, readToolResultEvent(leaf), baseCtx);
+      assert.ok(staleResultPromise instanceof Promise);
+      assert.equal(deferred, true, "the stale read must pause at the injected seam");
+
+      const currentCtx = { cwd: parent, hasUI: true, ui: createStubUi() };
+      pi.handlers.get(sessionEvent)?.({ type: sessionEvent, reason: "new" }, currentCtx);
+      resolveDeferredRead?.("nested guidance");
+      assert.equal(await staleResultPromise, undefined);
+      assert.equal(emissions, 0, "the stale read must not emit lifecycle events");
+
+      // SAFETY: The fixture supplies every host member exercised by this test.
+      const currentResult = (await pi.handlers
+        .get("tool_result")
+        ?.call(undefined, readToolResultEvent(leaf), currentCtx)) as
+        | { content: { type: string; text?: string }[] }
+        | undefined;
+      const currentText = appendixText(currentResult);
+      assert.ok(currentText?.includes("project guidance"));
+      assert.ok(
+        currentText?.includes("nested guidance"),
+        "the stale read must not contaminate current-session dedup state",
+      );
+      assert.equal(emissions, 2, "the current handler must emit for both injected files");
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+}
 
 test("caps total injected appendix size, dropping the root-most files first", async () => {
   const { MAX_FILE_CHARS, MAX_TOTAL_APPENDIX_CHARS } = await loadAppendixConstants();

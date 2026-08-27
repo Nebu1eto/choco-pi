@@ -23,8 +23,9 @@ export interface CommandHost {
 const COMMANDS = ["pause", "resume", "resume cancel", "clear", "copy"] as const;
 
 type CopyText = (text: string) => Promise<ClipboardCopyResult>;
+type IsCurrentGeneration = () => boolean;
 
-export type GoalCommandPi = Pick<ExtensionAPI, "registerCommand" | "sendUserMessage">;
+export type GoalCommandPi = Pick<ExtensionAPI, "on" | "registerCommand" | "sendUserMessage">;
 
 export interface GoalCommandContext {
   ui: Pick<ExtensionCommandContext["ui"], "confirm" | "notify" | "setStatus">;
@@ -57,6 +58,7 @@ export async function handleGoalCommand(
   args: string,
   ctx: GoalCommandContext,
   copyText: CopyText = copyTextToClipboard,
+  isCurrentGeneration: IsCurrentGeneration = () => true,
 ): Promise<void> {
   const trimmed = args.trim();
   if (trimmed.length === 0) {
@@ -82,6 +84,7 @@ export async function handleGoalCommand(
       return;
     }
     const result = await copyText(goal.objective);
+    if (!isCurrentGeneration()) return;
     if (!result.ok) {
       ctx.ui.notify(
         result.message
@@ -137,7 +140,21 @@ export async function handleGoalCommand(
   queueGoalDrafting(pi, trimmed);
 }
 
-export function registerGoalCommand(pi: GoalCommandPi, host: CommandHost): void {
+export function registerGoalCommand(
+  pi: GoalCommandPi,
+  host: CommandHost,
+  copyText: CopyText = copyTextToClipboard,
+): void {
+  let generation = 0;
+  let activeGeneration: number | undefined;
+
+  pi.on("session_start", () => {
+    activeGeneration = ++generation;
+  });
+  pi.on("session_shutdown", () => {
+    activeGeneration = undefined;
+  });
+
   pi.registerCommand("goal", {
     description:
       "Show or manage the current choco-pi goal; /goal <objective> drafts and creates one.",
@@ -145,7 +162,10 @@ export function registerGoalCommand(pi: GoalCommandPi, host: CommandHost): void 
       return completions(argumentPrefix.trim());
     },
     async handler(args: string, ctx: ExtensionCommandContext) {
-      await handleGoalCommand(pi, host, args, ctx);
+      const commandGeneration = activeGeneration;
+      await handleGoalCommand(pi, host, args, ctx, copyText, () => {
+        return commandGeneration !== undefined && commandGeneration === activeGeneration;
+      });
     },
   });
 }

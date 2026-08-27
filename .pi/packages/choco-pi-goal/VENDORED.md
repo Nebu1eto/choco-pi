@@ -39,7 +39,8 @@ Full parity with `0.2.0` is intended and preserved:
   auto-resume and host-overflow recovery), goal accounting, and the
   stale-queued-work guard.
 
-Setting a goal is the one deliberate divergence; see change 4 below.
+Setting a goal and guarding asynchronous command completion across session
+replacement are deliberate divergences; see changes 4 and 5 below.
 
 ## choco-pi changes on top of `0.2.0`
 
@@ -61,6 +62,10 @@ Setting a goal is the one deliberate divergence; see change 4 below.
    expands a template of the same name. The prompt keeps the choco-pi wording
    and the added paragraph requiring the agent to draft the objective and call
    the tool in the same turn without asking for confirmation.
+5. `src/commands.ts` owns an activation/session generation for the `/goal`
+   command. A clipboard copy that finishes after `session_shutdown` or a newer
+   `session_start` returns without reading the obsolete command context; copy
+   success and failure notifications are unchanged in the current session.
 
 Deliberately **not** renamed, because they are internal identifiers rather than
 user-visible branding, and changing them would break behavior parity:
@@ -92,4 +97,4 @@ the former `npm:pi-codex-goal@0.2.0` entry.
 
 Re-run `npm pack pi-codex-goal@<version>` and diff `src/` against this copy;
 upstream `prompts/create-goal.md` diffs against `goalObjectivePrompt` in
-`src/prompts.ts`. Re-apply the four changes listed above.
+`src/prompts.ts`. Re-apply the five changes listed above.

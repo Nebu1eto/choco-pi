@@ -12,6 +12,7 @@ import {
 import { logger } from "./logger.ts";
 import { truncateAtWord } from "./utils.ts";
 import { isObjectValue, isStringValue } from "./protocol-values.ts";
+import { createOwnedUi } from "./runtime-owner.ts";
 
 /**
  * Resolve prompt metadata for slash-command registration at extension load
@@ -252,14 +253,26 @@ export function createPromptCommand(
         return;
       }
 
+      const commandOwner = state.owner;
+      if (commandOwner && !commandOwner.isActive()) return;
+      const commandSignal = commandOwner?.signal ?? ctx.signal;
+      const commandHasUI = ctx.hasUI;
+      const commandUi = commandHasUI
+        ? commandOwner
+          ? createOwnedUi(ctx.ui, commandOwner)
+          : ctx.ui
+        : undefined;
+      const isCommandActive = () => !commandOwner || commandOwner.isActive();
+
       const liveMetadata = findLivePromptMetadata(
         state,
         metadata.serverName,
         metadata.originalName,
       );
       if (state.promptMetadataLive?.has(metadata.serverName) && !liveMetadata) {
-        if (ctx.hasUI) {
-          ctx.ui.notify(
+        if (!isCommandActive()) return;
+        if (commandHasUI) {
+          commandUi?.notify(
             `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp reconnect to refresh.`,
             "error",
           );
@@ -270,14 +283,16 @@ export function createPromptCommand(
       const parsed = parsePromptArgs(args ?? "");
       const resolved = resolvePromptArgs(live, parsed);
       if (!resolved.ok) {
-        if (ctx.hasUI) ctx.ui.notify(resolved.error ?? "Invalid prompt arguments", "error");
+        if (!isCommandActive()) return;
+        if (commandHasUI) commandUi?.notify(resolved.error ?? "Invalid prompt arguments", "error");
         return;
       }
       const promptArgs = resolved.args ?? {};
 
       if (!state.config.mcpServers[metadata.serverName]) {
-        if (ctx.hasUI) {
-          ctx.ui.notify(
+        if (!isCommandActive()) return;
+        if (commandHasUI) {
+          commandUi?.notify(
             `MCP prompt "${live.originalName}" is no longer configured. Run /mcp reconnect to refresh.`,
             "error",
           );
@@ -285,23 +300,34 @@ export function createPromptCommand(
         return;
       }
 
-      const connected = await lazyConnect(state, metadata.serverName, ctx.signal);
+      const connectionOwner = state.owner;
+      if (connectionOwner && !connectionOwner.isActive()) return;
+      const connectionSignal = connectionOwner?.signal ?? commandSignal;
+      let connected: boolean;
+      try {
+        connected = await lazyConnect(state, metadata.serverName, connectionSignal);
+      } catch (error) {
+        if (!isCommandActive() || (connectionOwner && !connectionOwner.isActive())) return;
+        throw error;
+      }
+      if (!isCommandActive() || (connectionOwner && !connectionOwner.isActive())) return;
       if (!connected) {
-        if (ctx.hasUI) {
+        if (commandHasUI) {
           const conn = state.manager.getConnection(metadata.serverName);
           const message =
             conn?.status === "needs-auth"
               ? `MCP server "${metadata.serverName}" needs authentication. Run /mcp-auth ${metadata.serverName}.`
               : `MCP server "${metadata.serverName}" is not available. Run /mcp reconnect ${metadata.serverName}.`;
-          ctx.ui.notify(message, "error");
+          commandUi?.notify(message, "error");
         }
         return;
       }
 
       const refreshed = findLivePromptMetadata(state, metadata.serverName, metadata.originalName);
       if (state.promptMetadataLive?.has(metadata.serverName) && !refreshed) {
-        if (ctx.hasUI) {
-          ctx.ui.notify(
+        if (!isCommandActive()) return;
+        if (commandHasUI) {
+          commandUi?.notify(
             `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp reconnect to refresh.`,
             "error",
           );
@@ -309,33 +335,42 @@ export function createPromptCommand(
         return;
       }
       const dispatchMetadata = refreshed ?? live;
+      const promptOwner = state.owner;
+      if (promptOwner && !promptOwner.isActive()) return;
+      const promptSignal = promptOwner?.signal ?? commandSignal;
       let result: GetPromptResult;
       try {
         result = await state.manager.getPrompt(
           metadata.serverName,
           dispatchMetadata.originalName,
           Object.keys(promptArgs).length > 0 ? promptArgs : undefined,
-          ctx.signal,
+          promptSignal,
         );
       } catch (error) {
+        if (!isCommandActive() || (promptOwner && !promptOwner.isActive())) return;
         const message = error instanceof Error ? error.message : String(error);
         logger.debug(
           `MCP prompt "${live.originalName}" on ${metadata.serverName} failed: ${message}`,
         );
-        if (ctx.hasUI) {
-          ctx.ui.notify(`MCP prompt "${live.originalName}" failed: ${message}`, "error");
+        if (commandHasUI) {
+          commandUi?.notify(`MCP prompt "${live.originalName}" failed: ${message}`, "error");
         }
         return;
       }
 
+      if (!isCommandActive() || (promptOwner && !promptOwner.isActive())) return;
       const text = formatPromptResult(result);
       if (!text) {
-        if (ctx.hasUI) {
-          ctx.ui.notify(`MCP prompt "${live.originalName}" returned no text content.`, "warning");
+        if (commandHasUI) {
+          commandUi?.notify(
+            `MCP prompt "${live.originalName}" returned no text content.`,
+            "warning",
+          );
         }
         return;
       }
 
+      if (!isCommandActive()) return;
       pi.sendUserMessage(text);
     },
   };

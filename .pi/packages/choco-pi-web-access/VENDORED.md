@@ -61,6 +61,10 @@ Deleted these search-provider modules and all imports, routing branches, availab
 - Dropped upstream `test/` after porting the retained subset to `tests/`.
 - Dropped `evidence/`, `banner.png`, `pi-web-fetch-demo.mp4`, `package-lock.json`, `.gitignore`, `README.md`, `CHANGELOG.md`, and `SECURITY.md` as upstream project, media, lock, or publication scaffolding.
 
+### Curator lifecycle hardening
+
+- The curator server now owns every in-flight query-rewrite abort controller until its callback settles. Completing or closing the curator synchronously aborts all rewrites; aborted or otherwise late callbacks can return only a bounded cancellation response while the HTTP response remains writable. Independent rewrites remain concurrent while the curator is open.
+
 ### Anti-slop type hardening
 
 - Brought the vendored TypeScript to the harness standard of zero `oxlint` findings at any severity, without a single suppression: 616 anti-slop errors plus the residual `eslint`/`unicorn` warnings. No `oxlint-disable` comment, ignore pattern, or `any` was introduced, and no test assertion was relaxed. The work was split across three disjoint file partitions (search core, curator/storage/summary, fetch/extract/security) plus a warning sweep.

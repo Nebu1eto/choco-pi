@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { rethrowUnlessStaleContext } from "./lifecycle.ts";
 import type { HookSource } from "./types.ts";
 import type { HookDispatch } from "./supplemental-events.ts";
 
@@ -9,6 +10,14 @@ interface HookWatchers {
   replaceSources(sources: HookSource[]): void;
   replaceDynamicPaths(paths: string[]): void;
   dispose(): void;
+}
+
+interface HookWatcherOptions {
+  cwd: string;
+  ctx: ExtensionContext;
+  sources: HookSource[];
+  dispatch: HookDispatch;
+  onAllowedConfigChange(): void;
 }
 
 function watchedNames(sources: HookSource[]): Set<string> {
@@ -52,33 +61,31 @@ function configSource(cwd: string, file: string): string | undefined {
   return undefined;
 }
 
-export function createHookWatchers(
-  cwd: string,
-  ctx: ExtensionContext,
-  sources: HookSource[],
-  dispatch: HookDispatch,
-  onAllowedConfigChange: () => void,
-): HookWatchers {
+export function createHookWatchers(options: HookWatcherOptions): HookWatchers {
+  const { cwd, ctx, sources, dispatch, onAllowedConfigChange } = options;
+  let disposed = false;
   let names = watchedNames(sources);
   let dynamicPaths = new Set<string>();
   const dynamicWatchers = new Map<string, fs.FSWatcher>();
   const onChange = (base: string, eventType: string, relativeName: string | Buffer | null) => {
-    if (!relativeName) return;
+    if (disposed || !relativeName) return;
     const absolute = path.resolve(base, String(relativeName));
     const source = configSource(cwd, absolute);
     if (source) {
       void dispatch("ConfigChange", ctx, { source, file_path: absolute }).then((result) => {
+        if (disposed) return;
         if (!result.blocked) onAllowedConfigChange();
-      });
+      }, rethrowUnlessStaleContext);
     }
     if (!names.has(path.basename(absolute)) && !dynamicPaths.has(absolute)) return;
     let event = "change";
     if (eventType === "rename") event = fs.existsSync(absolute) ? "add" : "unlink";
     void dispatch("FileChanged", ctx, { file_path: absolute, event }).then((result) => {
+      if (disposed) return;
       if (ctx.hasUI) for (const message of result.systemMessages) ctx.ui.notify(message, "warning");
       if (result.watchPaths)
         dynamicPaths = new Set(result.watchPaths.map((file) => path.resolve(file)));
-    });
+    }, rethrowUnlessStaleContext);
   };
   const watchers = [
     fs.watch(cwd, { recursive: true }, (event, file) => onChange(cwd, event, file)),
@@ -106,6 +113,7 @@ export function createHookWatchers(
     );
   }
   const replaceDynamicPaths = (paths: string[]): void => {
+    if (disposed) return;
     const next = new Set(paths.map((file) => path.resolve(file)));
     for (const [file, watcher] of dynamicWatchers) {
       if (next.has(file)) continue;
@@ -128,14 +136,18 @@ export function createHookWatchers(
   };
   return {
     replaceSources(nextSources) {
+      if (disposed) return;
       names = watchedNames(nextSources);
     },
     replaceDynamicPaths(paths) {
       replaceDynamicPaths(paths);
     },
     dispose() {
+      if (disposed) return;
+      disposed = true;
       for (const watcher of watchers) watcher.close();
       for (const watcher of dynamicWatchers.values()) watcher.close();
+      dynamicWatchers.clear();
     },
   };
 }

@@ -453,6 +453,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
             return;
           }
           const result = await manager.stop({ requesterId, isAdmin, shellId: id });
+          if (shuttingDown) return;
           ctx.ui.notify(JSON.stringify(result, null, 2) ?? "null", "info");
           return;
         }
