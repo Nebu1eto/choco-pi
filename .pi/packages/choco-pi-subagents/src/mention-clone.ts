@@ -105,6 +105,18 @@ export interface MentionCloneResult {
 }
 
 /**
+ * A detached clone completion may use its captured session objects only while
+ * the activation generation that started it is still active. ExtensionContext
+ * wrappers are deliberately absent: Pi creates a fresh one for every event.
+ */
+export function shouldHandleMentionCloneCompletion(
+  originatingGeneration: number | undefined,
+  currentGeneration: number | undefined,
+): boolean {
+  return originatingGeneration !== undefined && currentGeneration === originatingGeneration;
+}
+
+/**
  * Fork the conversation, let the copy make the tool call, throw the copy away.
  * Never rejects: a clone that cannot run is reported so the caller can fall
  * back to starting the agent directly.

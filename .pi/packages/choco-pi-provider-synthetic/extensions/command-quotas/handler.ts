@@ -5,6 +5,7 @@ import {
   type SyntheticUtilityApiConfig,
 } from "../../src/client/index.ts";
 import { ensureSyntheticConfig } from "../../src/config-state.ts";
+import type { QuotasResult } from "../../src/types/quotas.ts";
 import { QuotasComponent } from "./components/quotas-display.ts";
 
 const MISSING_AUTH_MESSAGE =
@@ -20,12 +21,34 @@ async function buildQuotasClient(
   return new SyntheticClient(options);
 }
 
+interface QuotasClient {
+  quotas(options?: { signal?: AbortSignal }): Promise<QuotasResult>;
+}
+
+export interface QuotasCommandDependencies {
+  ensureConfig: typeof ensureSyntheticConfig;
+  buildClient: (
+    config: SyntheticUtilityApiConfig,
+    getApiKey: () => Promise<string | undefined>,
+  ) => Promise<QuotasClient | undefined>;
+}
+
+const DEFAULT_DEPENDENCIES: QuotasCommandDependencies = {
+  ensureConfig: ensureSyntheticConfig,
+  buildClient: buildQuotasClient,
+};
+
 export async function handleQuotasCommand(
   _args: string,
   ctx: ExtensionCommandContext,
+  isCurrent: () => boolean,
+  dependencies: QuotasCommandDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<void> {
-  const config = await ensureSyntheticConfig();
+  if (!isCurrent()) return;
+  const config = await dependencies.ensureConfig();
+  if (!isCurrent()) return;
   if (!config.quotasCommand) {
+    if (!isCurrent()) return;
     ctx.ui.notify(
       "Synthetic quotas command is disabled. Restart Pi to unload the command after re-enabling or disabling it.",
       "warning",
@@ -33,16 +56,22 @@ export async function handleQuotasCommand(
     return;
   }
 
-  const client = await buildQuotasClient(config, () =>
-    ctx.modelRegistry.getApiKeyForProvider("synthetic"),
-  );
+  const client = await dependencies.buildClient(config, async () => {
+    if (!isCurrent()) return undefined;
+    return ctx.modelRegistry.getApiKeyForProvider("synthetic");
+  });
+  if (!isCurrent()) return;
   if (!client) {
+    if (!isCurrent()) return;
     ctx.ui.notify(MISSING_AUTH_MESSAGE, "warning");
     return;
   }
   const quotasClient = client;
 
-  const result = await ctx.ui.custom<null>((tui, theme, _kb, done) => {
+  if (!isCurrent()) return;
+  const ui = ctx.ui;
+  const custom = ui.custom.bind(ui);
+  const result = await custom<null>((tui, theme, _kb, done) => {
     const controller = new AbortController();
     const component = new QuotasComponent(
       theme,
@@ -62,7 +91,7 @@ export async function handleQuotasCommand(
       const fetchResult = await quotasClient.quotas({
         signal: controller.signal,
       });
-      if (controller.signal.aborted) return;
+      if (!isCurrent() || controller.signal.aborted) return;
       if (fetchResult.success) {
         component.setState({
           type: "loaded",
@@ -89,14 +118,18 @@ export async function handleQuotasCommand(
       },
     };
   });
+  if (!isCurrent()) return;
 
   // Non-interactive fallback (RPC, print, JSON modes)
   if (result === undefined) {
     const fetchResult = await quotasClient.quotas();
+    if (!isCurrent()) return;
     if (!fetchResult.success) {
+      if (!isCurrent()) return;
       ctx.ui.notify(JSON.stringify({ error: fetchResult.error.message }), "error");
       return;
     }
+    if (!isCurrent()) return;
     ctx.ui.notify(JSON.stringify(fetchResult.data.quotas), "info");
   }
 }

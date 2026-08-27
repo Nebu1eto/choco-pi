@@ -45,6 +45,9 @@ Reproduced faithfully:
   this session is not injected again on a later matching tool call.
 - `session_start` / `session_tree` reset the dedup state (new session, or
   navigating the session tree, gets a fresh injection pass).
+- `session_shutdown` synchronously invalidates pending asynchronous reads and
+  clears session state, so a replaced extension instance cannot access its
+  stale host context or emit lifecycle events after a read resolves.
 
 ## Deliberate deviations
 

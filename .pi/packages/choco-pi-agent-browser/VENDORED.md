@@ -65,6 +65,11 @@ The fork lets choco-pi customize the extension in-tree and load its TypeScript s
 - Kept schema-only limits in small constant modules so registering `agent_browser` no longer imports the script runner or Electron discovery implementation. The optional web-search tool likewise registers from a lightweight schema/metadata module and memoizes its existing implementation on first execution.
 - This is a load-time-only divergence. External CLI argv construction, result details, lifecycle handling, TypeBox imports, and the retained `.mjs` target-version edge are unchanged.
 
+### Session-tree restoration ownership
+
+- Reserve a branch restoration generation when `session_start` or `session_tree` takes ownership. A queued tree restoration checks that generation after waiting for active scripts and at both serialized queue boundaries, so shutdown or a newer tree event can supersede it before it reads an obsolete extension context.
+- Snapshot the restored branch and working directory before asynchronous script-lease recovery. Recovery stops after a lease close when its generation loses ownership, while the current generation retains the existing restore and cleanup behavior.
+
 ## Updating
 
 Diff a new upstream revision against the base commit, copy the same runtime subset, and reapply every divergence above. Run the target-checking specifier codemod rather than a blind replacement, then update the base revision, version, fork date, rewrite counts, and divergence log here.

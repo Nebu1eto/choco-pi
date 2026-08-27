@@ -94,7 +94,7 @@ import {
   resolveHandleToType,
   stripAgentPrefix,
 } from "./mention.ts";
-import { runMentionClone } from "./mention-clone.ts";
+import { runMentionClone, shouldHandleMentionCloneCompletion } from "./mention-clone.ts";
 import { formatSteerMessage, ROOT_AGENT_PATH } from "./messaging.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
 import { checkModelScope, isScopeModelsEnabled, setScopeModelsEnabled } from "./model-scope.ts";
@@ -820,6 +820,8 @@ export default function (pi: ExtensionAPI) {
 
   // --- Cross-extension RPC via pi.events ---
   let currentCtx: ExtensionContext | undefined;
+  let nextMentionCloneGeneration = 0;
+  let activeMentionCloneGeneration: number | undefined;
   // RPC handlers + the `subagents:ready` broadcast are wired on `session_start`
   // (a bound lifecycle event), not at factory time. pi runs every extension
   // factory before the `extensions:` filter and only fires lifecycle events for
@@ -858,6 +860,7 @@ export default function (pi: ExtensionAPI) {
   // This also wires the RPC handlers and broadcasts readiness — on the first
   // bound session_start, so a filtered-out activation never advertises (#142).
   pi.on("session_start", async (_event, ctx) => {
+    activeMentionCloneGeneration = ++nextMentionCloneGeneration;
     currentCtx = ctx;
     if (ctx.hasUI) {
       widget.setUICtx(ctx.ui);
@@ -1123,8 +1126,22 @@ export default function (pi: ExtensionAPI) {
       // Not awaited: the clone runs a full model turn, and prompt() is blocked
       // until this hook returns. The user gets their prompt back immediately
       // and the agent appears in the widget when it starts.
+      const mentionCloneGeneration = activeMentionCloneGeneration;
       void runMentionClone({ ctx, type, message: mention.message, agentTool }).then((result) => {
-        if (result.spawned) return;
+        // The clone is detached. A shutdown or replacement invalidates the
+        // captured pi/ctx pair, so decide by activation generation before
+        // touching either session-bound object. Pi creates a fresh context
+        // wrapper for every event, so object identity cannot represent a
+        // session. This continuation is synchronous after the check, so
+        // lifecycle handlers cannot interleave with the fallback.
+        if (
+          !shouldHandleMentionCloneCompletion(
+            mentionCloneGeneration,
+            activeMentionCloneGeneration,
+          ) ||
+          result.spawned
+        )
+          return;
         // A clone that could not run must not swallow the mention: start the
         // agent the direct way rather than leaving the user with a toast and
         // nothing running.
@@ -1174,6 +1191,9 @@ export default function (pi: ExtensionAPI) {
   // On shutdown, abort all agents immediately and clean up.
   // If the session is going down, there's nothing left to consume agent results.
   pi.on("session_shutdown", async () => {
+    // Invalidate detached clone continuations before clearing their captured
+    // context and before any future cleanup step can introduce an await.
+    activeMentionCloneGeneration = undefined;
     removeHookContinuationListener();
     unregisterPreferencesProvider?.();
     unregisterPreferencesProvider = undefined;

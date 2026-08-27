@@ -19,6 +19,20 @@ import { readQuotas, requestQuotas } from "../_shared/quota-events.ts";
 
 const EXTENSION_ID = "synthetic-usage";
 
+export interface UsageStatusDependencies {
+  ensureConfig: typeof ensureSyntheticConfig;
+  publishConfig: typeof publishSyntheticConfig;
+  read: typeof readQuotas;
+  request: typeof requestQuotas;
+}
+
+const DEFAULT_DEPENDENCIES: UsageStatusDependencies = {
+  ensureConfig: ensureSyntheticConfig,
+  publishConfig: publishSyntheticConfig,
+  read: readQuotas,
+  request: requestQuotas,
+};
+
 type WindowStatus = {
   label: string;
   usedPercent: number;
@@ -65,8 +79,27 @@ function formatStatus(ctx: ExtensionContext, windows: WindowStatus[]): string {
   return parts.join(" ");
 }
 
-export default async function (pi: ExtensionAPI): Promise<void> {
-  let enabled = (await ensureSyntheticConfig()).usageStatus;
+export async function activateUsageStatus(
+  pi: ExtensionAPI,
+  dependencies: UsageStatusDependencies = DEFAULT_DEPENDENCIES,
+): Promise<void> {
+  let enabled = (await dependencies.ensureConfig()).usageStatus;
+  let generation = 0;
+  let activeGeneration: number | undefined;
+
+  function startSession(): number {
+    activeGeneration = ++generation;
+    return activeGeneration;
+  }
+
+  function invalidateSession(): void {
+    generation += 1;
+    activeGeneration = undefined;
+  }
+
+  function isCurrent(capturedGeneration: number): boolean {
+    return activeGeneration === capturedGeneration;
+  }
 
   function renderSnapshot(
     ctx: ExtensionContext,
@@ -92,17 +125,22 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     ctx.ui.setStatus(EXTENSION_ID, undefined);
   }
 
-  function renderFromStoreOrRefresh(ctx: ExtensionContext): void {
+  function renderFromStoreOrRefresh(ctx: ExtensionContext, capturedGeneration: number): void {
+    if (!isCurrent(capturedGeneration)) return;
     if (!enabled || ctx.model?.provider !== "synthetic") {
       clearStatus(ctx);
       return;
     }
-    readQuotas(pi, (snapshot) => {
+    dependencies.read(pi, (snapshot) => {
+      if (!isCurrent(capturedGeneration)) return;
       if (snapshot) {
         renderSnapshot(ctx, snapshot);
       } else {
         renderSnapshot(ctx, undefined); // show loading
-        requestQuotas(pi, (refreshed) => renderSnapshot(ctx, refreshed));
+        dependencies.request(pi, (refreshed) => {
+          if (!isCurrent(capturedGeneration)) return;
+          renderSnapshot(ctx, refreshed);
+        });
       }
     });
   }
@@ -110,23 +148,23 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
     if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
     enabled = data.config.usageStatus;
-    publishSyntheticConfig(data.config);
+    dependencies.publishConfig(data.config);
   });
 
   pi.on("session_start", (_event, ctx) => {
-    renderFromStoreOrRefresh(ctx);
+    renderFromStoreOrRefresh(ctx, startSession());
   });
 
   pi.on("model_select", (_event, ctx) => {
-    renderFromStoreOrRefresh(ctx);
+    if (activeGeneration !== undefined) renderFromStoreOrRefresh(ctx, activeGeneration);
   });
 
   pi.on("agent_end", (_event, ctx) => {
-    renderFromStoreOrRefresh(ctx);
+    if (activeGeneration !== undefined) renderFromStoreOrRefresh(ctx, activeGeneration);
   });
 
   pi.on("turn_end", (_event, ctx) => {
-    renderFromStoreOrRefresh(ctx);
+    if (activeGeneration !== undefined) renderFromStoreOrRefresh(ctx, activeGeneration);
   });
 
   pi.on("session_before_switch", (_event, ctx) => {
@@ -134,6 +172,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
+    invalidateSession();
     clearStatus(ctx);
   });
 
@@ -143,3 +182,5 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     });
   });
 }
+
+export default activateUsageStatus;

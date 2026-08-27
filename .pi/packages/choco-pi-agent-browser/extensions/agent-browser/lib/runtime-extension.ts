@@ -1361,6 +1361,37 @@ class AsyncExecutionQueue {
   }
 }
 
+interface BranchRestoreQueue {
+  run<T>(work: () => Promise<T>): Promise<T>;
+}
+
+interface RestoredBranchSnapshot {
+  branch: unknown[];
+  cwd: string;
+}
+
+export async function runBranchRestoreForGeneration<T>(options: {
+  artifactQueue: BranchRestoreQueue;
+  generation: number;
+  isCurrent: (generation: number) => boolean;
+  managedSessionQueue: BranchRestoreQueue;
+  recover: (restored: T, isCurrent: () => boolean) => Promise<void>;
+  restore: () => T;
+  waitForActiveScripts: () => Promise<void>;
+}): Promise<void> {
+  await options.waitForActiveScripts();
+  if (!options.isCurrent(options.generation)) return;
+  await options.artifactQueue.run(async () => {
+    if (!options.isCurrent(options.generation)) return;
+    await options.managedSessionQueue.run(async () => {
+      if (!options.isCurrent(options.generation)) return;
+      const restored = options.restore();
+      if (!options.isCurrent(options.generation)) return;
+      await options.recover(restored, () => options.isCurrent(options.generation));
+    });
+  });
+}
+
 export class KeyedAsyncExecutionQueue {
   private readonly barriers = new Map<string, Promise<void>>();
   private readonly entries = new Map<string, { queue: AsyncExecutionQueue; users: number }>();
@@ -1808,30 +1839,34 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
     return undefined;
   };
 
-  const recoverScriptSessionLeasesWithinQueue = async (ctx: ExtensionContext): Promise<void> => {
+  const recoverScriptSessionLeasesWithinQueue = async (
+    branch: unknown[],
+    cwd: string,
+    isCurrent: () => boolean = () => true,
+  ): Promise<void> => {
     const pendingSessionNames = new Set(
       [...ownedManagedSessions.values()]
         .map((session) => session.sessionName)
         .filter(isAgentBrowserScriptSessionName),
     );
-    for (const lease of getScriptSessionLeasesFromBranch(ctx.sessionManager.getBranch()).values()) {
+    for (const lease of getScriptSessionLeasesFromBranch(branch).values()) {
       if (lease.cleanup !== "closed") pendingSessionNames.add(lease.sessionName);
     }
     for (const sessionName of pendingSessionNames) {
-      trackOwnedManagedSession(ownedManagedSessions, sessionName, ctx.cwd, {
+      if (!isCurrent()) return;
+      trackOwnedManagedSession(ownedManagedSessions, sessionName, cwd, {
         branchOwned: true,
         namespace: AGENT_BROWSER_SCRIPT_NAMESPACE,
       });
       managedSessionRestoreState.disable(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
-      await closeScriptSessionLeaseWithinQueue(sessionName, ctx.cwd);
+      await closeScriptSessionLeaseWithinQueue(sessionName, cwd);
     }
   };
 
   const restoreBranchBackedState = (
     ctx: ExtensionContext,
     options: { resetRuntimeOwnership: boolean },
-  ): void => {
-    branchRestoreGeneration += 1;
+  ): RestoredBranchSnapshot => {
     branchStateGeneration += 1;
     const previousManagedSessionActive = managedSessionActive;
     const previousManagedSessionName = managedSessionName;
@@ -2021,6 +2056,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
           attachedSessionKeys.add(sessionKey);
       }
     }
+    return { branch, cwd: ctx.cwd };
   };
 
   const registerWebSearchToolIfAvailable = (configState: typeof agentBrowserConfig) => {
@@ -2039,7 +2075,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", async (_event, ctx) => {
-    restoreBranchBackedState(ctx, { resetRuntimeOwnership: true });
+    branchRestoreGeneration += 1;
+    const restoreGeneration = branchRestoreGeneration;
+    const restored = restoreBranchBackedState(ctx, { resetRuntimeOwnership: true });
     electronChildProcesses = new Map<string, ChildProcess>();
     registerWebSearchToolIfAvailable(
       loadAgentBrowserConfigSync({
@@ -2048,19 +2086,34 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
       }),
     );
     await artifactExecutionQueue.run(() =>
-      managedSessionExecutionQueue.run(() => recoverScriptSessionLeasesWithinQueue(ctx)),
+      managedSessionExecutionQueue.run(() =>
+        restoreGeneration === branchRestoreGeneration
+          ? recoverScriptSessionLeasesWithinQueue(
+              restored.branch,
+              restored.cwd,
+              () => restoreGeneration === branchRestoreGeneration,
+            )
+          : Promise.resolve(),
+      ),
     );
   });
 
   pi.on("session_tree", async (_event, ctx) => {
+    branchRestoreGeneration += 1;
+    const restoreGeneration = branchRestoreGeneration;
     for (const controller of activeScriptControllers) controller.abort();
-    await Promise.allSettled(Array.from(activeScriptExecutions));
-    await artifactExecutionQueue.run(() =>
-      managedSessionExecutionQueue.run(async () => {
-        restoreBranchBackedState(ctx, { resetRuntimeOwnership: false });
-        await recoverScriptSessionLeasesWithinQueue(ctx);
-      }),
-    );
+    await runBranchRestoreForGeneration({
+      artifactQueue: artifactExecutionQueue,
+      generation: restoreGeneration,
+      isCurrent: (generation) => generation === branchRestoreGeneration,
+      managedSessionQueue: managedSessionExecutionQueue,
+      recover: (restored, isCurrent) =>
+        recoverScriptSessionLeasesWithinQueue(restored.branch, restored.cwd, isCurrent),
+      restore: () => restoreBranchBackedState(ctx, { resetRuntimeOwnership: false }),
+      waitForActiveScripts: async () => {
+        await Promise.allSettled(Array.from(activeScriptExecutions));
+      },
+    });
   });
 
   pi.on("session_shutdown", async (event, ctx) => {

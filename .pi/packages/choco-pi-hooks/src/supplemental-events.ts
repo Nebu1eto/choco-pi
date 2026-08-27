@@ -1,6 +1,12 @@
 import type { ExtensionAPI, ExtensionContext, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { HookEventName, JsonObject, MergedHookResult } from "./types.ts";
-import { isFunctionValue, isStringValue, parseRuntimeRecord } from "./validation.ts";
+import {
+  isFunctionValue,
+  isStringValue,
+  parseRuntimeRecord,
+  type RuntimeValue,
+} from "./validation.ts";
+import { rethrowUnlessStaleContext } from "./lifecycle.ts";
 
 export type HookDispatch = (
   event: HookEventName,
@@ -41,19 +47,30 @@ export function registerSupplementalEvents(
   let displayRendered = "";
   let displayIndex = 0;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+
+  const isCurrent = (ctx: ExtensionContext): boolean => !disposed && context === ctx;
+  const runDetached = (promise: Promise<unknown>): void => {
+    void promise.catch(rethrowUnlessStaleContext);
+  };
 
   pi.on("agent_settled", (_event, ctx) => {
+    if (disposed) return;
     context = ctx;
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      void dispatch("Notification", ctx, {
-        notification_type: "idle_prompt",
-        message: "Claude is waiting for your input",
-      });
+      if (!isCurrent(ctx)) return;
+      runDetached(
+        dispatch("Notification", ctx, {
+          notification_type: "idle_prompt",
+          message: "Claude is waiting for your input",
+        }),
+      );
     }, 60_000);
     idleTimer.unref?.();
   });
   pi.on("input", () => {
+    if (disposed) return;
     clearTimeout(idleTimer);
     idleTimer = undefined;
   });
@@ -69,6 +86,7 @@ export function registerSupplementalEvents(
   });
 
   pi.on("message_start", (event) => {
+    if (disposed) return;
     if (event.message.role !== "assistant") return;
     displayOriginal = "";
     displayRendered = "";
@@ -76,11 +94,13 @@ export function registerSupplementalEvents(
   });
 
   pi.on("turn_end", async (event, ctx) => {
+    if (disposed) return;
     context = ctx;
     await dispatch("PostToolBatch", ctx, { tool_calls: toolCalls(event) });
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
+    if (disposed) return;
     context = ctx;
     for (const file of event.systemPromptOptions.contextFiles ?? []) {
       if (loadedInstructions.has(file.path)) continue;
@@ -90,10 +110,12 @@ export function registerSupplementalEvents(
         memory_type: file.path.includes("/.claude/") ? "Project" : "User",
         load_reason: "session_start",
       });
+      if (!isCurrent(ctx)) return;
     }
   });
 
   pi.on("message_update", async (event, ctx) => {
+    if (disposed) return;
     context = ctx;
     const streamEvent = parseRuntimeRecord(event.assistantMessageEvent);
     const delta = isStringValue(streamEvent?.delta) ? streamEvent.delta : undefined;
@@ -105,11 +127,13 @@ export function registerSupplementalEvents(
       final: false,
       delta,
     });
+    if (!isCurrent(ctx)) return;
     displayOriginal += delta;
     displayRendered += result.displayContent ?? delta;
   });
 
   pi.on("message_end", async (event, ctx) => {
+    if (disposed) return;
     if (event.message.role !== "assistant") return;
     context = ctx;
     const result = await dispatch("MessageDisplay", ctx, {
@@ -119,6 +143,7 @@ export function registerSupplementalEvents(
       final: true,
       delta: "",
     });
+    if (!isCurrent(ctx)) return;
     if (result.displayContent) displayRendered += result.displayContent;
   });
 
@@ -135,10 +160,12 @@ export function registerSupplementalEvents(
         description: isStringValue(data.description) ? data.description : "",
         agent_type: isStringValue(data.type) ? data.type : undefined,
       });
-    void dispatch("SubagentStart", ctx, {
-      agent_id: isStringValue(data.id) ? data.id : undefined,
-      agent_type: isStringValue(data.type) ? data.type : undefined,
-    });
+    runDetached(
+      dispatch("SubagentStart", ctx, {
+        agent_id: isStringValue(data.id) ? data.id : undefined,
+        agent_type: isStringValue(data.type) ? data.type : undefined,
+      }),
+    );
   };
   const onSubagentStopped = <Value>(payload: Value): void => {
     const ctx = context;
@@ -146,59 +173,64 @@ export function registerSupplementalEvents(
     if (!ctx || !data) return;
     const agentId = isStringValue(data.id) ? data.id : undefined;
     const agentType = isStringValue(data.type) ? data.type : undefined;
+    let lastAssistantMessage = "";
+    if (isStringValue(data.result)) lastAssistantMessage = data.result;
+    else if (isStringValue(data.error)) lastAssistantMessage = data.error;
     if (agentId) backgroundTasks.delete(agentId);
-    void (async () => {
-      const idle = await dispatch("TeammateIdle", ctx, {
-        teammate_name: agentId,
-        team_name: isStringValue(data.workflowId) ? data.workflowId : undefined,
-      });
-      let completion: MergedHookResult | undefined;
-      const workflowStep = isStringValue(data.workflowStepId) ? data.workflowStepId : undefined;
-      if (workflowStep)
-        completion = await dispatch("TaskCompleted", ctx, {
-          task_id: workflowStep,
-          task_subject: isStringValue(data.description) ? data.description : workflowStep,
+    runDetached(
+      (async () => {
+        const idle = await dispatch("TeammateIdle", ctx, {
           teammate_name: agentId,
           team_name: isStringValue(data.workflowId) ? data.workflowId : undefined,
         });
-      const stopped = await dispatch("SubagentStop", ctx, {
-        stop_hook_active: false,
-        agent_id: agentId,
-        agent_type: agentType,
-        agent_transcript_path: isStringValue(data.agentTranscriptPath)
-          ? data.agentTranscriptPath
-          : "",
-        last_assistant_message: isStringValue(data.result)
-          ? data.result
-          : isStringValue(data.error)
-            ? data.error
+        if (!isCurrent(ctx)) return;
+        let completion: MergedHookResult | undefined;
+        const workflowStep = isStringValue(data.workflowStepId) ? data.workflowStepId : undefined;
+        if (workflowStep)
+          completion = await dispatch("TaskCompleted", ctx, {
+            task_id: workflowStep,
+            task_subject: isStringValue(data.description) ? data.description : workflowStep,
+            teammate_name: agentId,
+            team_name: isStringValue(data.workflowId) ? data.workflowId : undefined,
+          });
+        if (!isCurrent(ctx)) return;
+        const stopped = await dispatch("SubagentStop", ctx, {
+          stop_hook_active: false,
+          agent_id: agentId,
+          agent_type: agentType,
+          agent_transcript_path: isStringValue(data.agentTranscriptPath)
+            ? data.agentTranscriptPath
             : "",
-        background_tasks: [...backgroundTasks.values()],
-        session_crons: [],
-      });
-      const blocked = [idle, completion, stopped].find((result) => result?.blocked);
-      if (blocked?.reason && agentId)
-        pi.events.emit("choco-pi-hooks:subagent-continue", {
-          id: agentId,
-          reason: blocked.reason,
+          last_assistant_message: lastAssistantMessage,
+          background_tasks: [...backgroundTasks.values()],
+          session_crons: [],
         });
-    })();
+        if (!isCurrent(ctx)) return;
+        const blocked = [idle, completion, stopped].find((result) => result?.blocked);
+        if (blocked?.reason && agentId)
+          pi.events.emit("choco-pi-hooks:subagent-continue", {
+            id: agentId,
+            reason: blocked.reason,
+          });
+      })(),
+    );
   };
   const onSubagentNotification = <Value>(payload: Value): void => {
     const ctx = context;
     const data = parseRuntimeRecord(payload);
     if (!ctx || !data) return;
-    void dispatch("Notification", ctx, {
-      notification_type: "agent_completed",
-      message: isStringValue(data.result)
-        ? data.result
-        : isStringValue(data.error)
-          ? data.error
-          : "Subagent completed",
-      title: isStringValue(data.description) ? data.description : undefined,
-    });
+    let message = "Subagent completed";
+    if (isStringValue(data.result)) message = data.result;
+    else if (isStringValue(data.error)) message = data.error;
+    runDetached(
+      dispatch("Notification", ctx, {
+        notification_type: "agent_completed",
+        message,
+        title: isStringValue(data.description) ? data.description : undefined,
+      }),
+    );
   };
-  const onElicitation = <Value>(payload: Value): void => {
+  const onElicitation = async <Value>(payload: Value): Promise<void> => {
     const ctx = context;
     const data = parseRuntimeRecord(payload);
     const claim = data?.claim;
@@ -211,6 +243,12 @@ export function registerSupplementalEvents(
     // SAFETY: isFunctionValue established the elicitation result callback supplied by the MCP bridge.
     const resolveRequest = resolve as (value: ElicitationResponse | undefined) => void;
     claimRequest();
+    let resolved = false;
+    const resolveOnce = (value: ElicitationResponse | undefined): void => {
+      if (resolved) return;
+      resolved = true;
+      resolveRequest(value);
+    };
     const params = parseRuntimeRecord(data.params) ?? {};
     const current = parseRuntimeRecord(data.current);
     // SAFETY: MCP elicitation schemas and result content are JSON protocol property bags.
@@ -231,17 +269,26 @@ export function registerSupplementalEvents(
         extra.content = content as JsonObject;
       }
     }
-    void dispatch(event, ctx, extra).then((result) => {
+    try {
+      const result = await dispatch(event, ctx, extra);
+      if (!isCurrent(ctx)) {
+        resolveOnce(undefined);
+        return;
+      }
       if (!result.elicitationAction) {
-        resolveRequest(undefined);
+        resolveOnce(undefined);
         return;
       }
       const response: ElicitationResponse = {
         action: result.elicitationAction,
       };
       if (result.elicitationContent) response.content = result.elicitationContent;
-      resolveRequest(response);
-    });
+      resolveOnce(response);
+    } catch (error: unknown) {
+      resolveOnce(undefined);
+      // SAFETY: The caught value is only passed to the runtime-value stale-error discriminator.
+      rethrowUnlessStaleContext(error as RuntimeValue);
+    }
   };
   const onInstructionsLoaded = <Value>(payload: Value): void => {
     const ctx = context;
@@ -249,13 +296,15 @@ export function registerSupplementalEvents(
     const filePath = isStringValue(data?.filePath) ? data.filePath : undefined;
     if (!ctx || !data || !filePath || loadedInstructions.has(filePath)) return;
     loadedInstructions.add(filePath);
-    void dispatch("InstructionsLoaded", ctx, {
-      file_path: filePath,
-      memory_type: isStringValue(data.memoryType) ? data.memoryType : "Project",
-      load_reason: isStringValue(data.loadReason) ? data.loadReason : "nested_traversal",
-      trigger_file_path: isStringValue(data.triggerFilePath) ? data.triggerFilePath : undefined,
-      parent_file_path: isStringValue(data.parentFilePath) ? data.parentFilePath : undefined,
-    });
+    runDetached(
+      dispatch("InstructionsLoaded", ctx, {
+        file_path: filePath,
+        memory_type: isStringValue(data.memoryType) ? data.memoryType : "Project",
+        load_reason: isStringValue(data.loadReason) ? data.loadReason : "nested_traversal",
+        trigger_file_path: isStringValue(data.triggerFilePath) ? data.triggerFilePath : undefined,
+        parent_file_path: isStringValue(data.parentFilePath) ? data.parentFilePath : undefined,
+      }),
+    );
   };
   unsubscribers.push(pi.events.on("subagents:started", onSubagentStarted));
   unsubscribers.push(pi.events.on("subagents:completed", onSubagentStopped));
@@ -267,6 +316,7 @@ export function registerSupplementalEvents(
 
   return {
     setContext(ctx) {
+      if (disposed) return;
       context = ctx;
     },
     getContext() {
@@ -276,7 +326,11 @@ export function registerSupplementalEvents(
       return [...backgroundTasks.values()];
     },
     dispose() {
+      if (disposed) return;
+      disposed = true;
+      context = undefined;
       clearTimeout(idleTimer);
+      idleTimer = undefined;
       for (const unsubscribe of unsubscribers) unsubscribe();
     },
   };
