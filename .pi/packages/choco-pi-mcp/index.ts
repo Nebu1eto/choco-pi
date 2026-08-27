@@ -436,7 +436,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       pi.registerCommand(spec.commandName, {
         description,
         handler: async (args, ctx) => {
+          const commandGeneration = lifecycleGeneration;
+          const commandOwner = currentOwner;
           const { createPromptCommand } = await loadPrompts();
+          if (!isCurrentCommandOwner(commandOwner, commandGeneration)) return;
+
           return createPromptCommand(pi, () => state, spec).handler(args, ctx);
         },
       });
