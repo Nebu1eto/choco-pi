@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { padsBottom, padsTop, type EditorStyle, type ZentuiConfig } from "./config";
 import { renderEditorMetadataFormat } from "./editor-metadata-format";
+import { readFocusedAgentRuntime, selectFocusScopedUsage } from "./focused-runtime";
 import { type MinimalistEditorMetadata, renderMinimalistFrame } from "./minimalist-editor";
 import {
   type BoundaryValue,
@@ -93,42 +94,6 @@ export type EditorMeta = {
   sessionName?: string;
 };
 
-const FOCUSED_AGENT_RUNTIME_SYMBOL = Symbol.for("choco-pi.subagents.focused-agent-runtime");
-
-type FocusedAgentRuntime = {
-  modelId: string;
-  modelName: string;
-  provider: string;
-  thinking: string;
-};
-
-interface FocusedAgentRuntimeRegistry {
-  [FOCUSED_AGENT_RUNTIME_SYMBOL]?: BoundaryValue;
-}
-
-/** Defensively consume the optional subagent publisher without coupling either package. */
-function readFocusedAgentRuntime(): FocusedAgentRuntime | undefined {
-  try {
-    // SAFETY: The slot is optional and remains a BoundaryValue until every
-    // property used below has passed the existing host-boundary guards.
-    const registry = globalThis as typeof globalThis & FocusedAgentRuntimeRegistry;
-    const source = registry[FOCUSED_AGENT_RUNTIME_SYMBOL];
-    if (!isBoundaryRecord(source) || !isCallable(source["current"])) return undefined;
-    const value = source["current"]();
-    if (!isBoundaryRecord(value)) return undefined;
-    const modelId = value["modelId"];
-    const modelName = value["modelName"];
-    const provider = value["provider"];
-    const thinking = value["thinking"];
-    if (!isString(modelId) || !isString(modelName) || !isString(provider) || !isString(thinking)) {
-      return undefined;
-    }
-    return { modelId, modelName, provider, thinking };
-  } catch {
-    return undefined;
-  }
-}
-
 function focusedProviderLabel(provider: string): string {
   if (!provider) return "Unknown";
   if (provider === "anthropic") return "Anthropic";
@@ -136,6 +101,18 @@ function focusedProviderLabel(provider: string): string {
   if (provider === "ollama") return "Ollama";
   if (provider === "openai" || provider === "openai-codex") return "OpenAI";
   return provider.replace(/[-_]/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function focusScopedMinimalistMetadata(
+  metadata: MinimalistEditorMetadata,
+): MinimalistEditorMetadata {
+  const usage = selectFocusScopedUsage(metadata);
+  return {
+    ...metadata,
+    ...usage,
+    contextPercent: usage.contextPercent ?? undefined,
+    contextWindow: usage.contextWindow ?? undefined,
+  };
 }
 
 export type PolishedEditorFrameOptions = {
@@ -846,7 +823,7 @@ export class PolishedEditor extends CustomEditor {
           uiTheme: this.uiTheme,
           config,
           inputText: this.getText(),
-          metadata: this.getMinimalistMetadata(),
+          metadata: focusScopedMinimalistMetadata(this.getMinimalistMetadata()),
           trustedBaseFrame: true,
           borderColor: this.borderColor,
         });
@@ -1040,7 +1017,7 @@ export class WrappedPolishedEditor implements EditorComponent {
             uiTheme: this.uiTheme,
             config,
             inputText: this.base.getText(),
-            metadata: this.getMinimalistMetadata(),
+            metadata: focusScopedMinimalistMetadata(this.getMinimalistMetadata()),
             ownedFrame: provenance.ownedFrame,
             borderColor: this.borderColor,
           });

@@ -18,6 +18,7 @@ import { resumeAgent, runAgent, type MainSessionFork, type ToolActivity } from "
 import { cleanupChildSessionOwner } from "./child-session-cleanup.ts";
 import { normalizeMaxConcurrent, schedulingMaxConcurrent } from "./limits.ts";
 import { assignHandle, handleBase } from "./mention.ts";
+import { getSessionCostBaseline } from "./usage.ts";
 import type {
   AgentInvocation,
   AgentRecord,
@@ -512,6 +513,9 @@ export class AgentManager {
       },
       onSessionCreated: (session) => {
         record.session = session;
+        if (options.mainSessionFork) {
+          record.sessionCostBaseline = getSessionCostBaseline(session) ?? undefined;
+        }
         // Capture now, while the session object exists: after eviction this
         // path is the only thing that can reopen the conversation, and an
         // in-memory session reports undefined, which correctly means

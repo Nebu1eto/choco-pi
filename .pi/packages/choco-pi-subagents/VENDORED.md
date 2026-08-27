@@ -448,9 +448,17 @@ never has to be loaded.
 
 ### Focused prompt metadata
 
-Focusing an agent publishes the child session's live model, provider and thinking
-level on an optional `Symbol.for` slot, which editor chrome reads on every render
-and which is cleared on unfocus, session switch and disposal. The prompt's
+Focusing an agent publishes the child session's live model, provider, thinking
+level, settled session cost and context usage/window on an optional `Symbol.for`
+slot, which editor chrome reads on every render and which is cleared on unfocus,
+session switch and disposal. The getter resolves `record.session` on every read
+and disappears with it, so session replacement cannot retain stale runtime data.
+Ordinary cost is scoped to the focused session and excludes descendants. A
+`/btw` record captures its cloned session's initial stats cost and session id
+before prompting; only the same session subtracts that baseline, clamped at zero.
+Context percent remains nullable after compaction without discarding a valid
+stats window or the current child model's window fallback. Malformed or
+unavailable stats degrade cost and percent to null. The prompt's
 metadata therefore describes the runtime that will actually answer, and neither
 package imports the other: without the publisher the editor renders the main
 session unchanged, and without a consumer publishing is inert. Fast-mode status

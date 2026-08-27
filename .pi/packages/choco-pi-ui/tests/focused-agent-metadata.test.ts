@@ -11,6 +11,9 @@ type FocusedAgentRuntime = {
   modelName: string;
   provider: string;
   thinking: string;
+  costTotal?: number | null;
+  contextPercent?: number | null;
+  contextWindow?: number | null;
 };
 
 type FocusedAgentRuntimeSource = {
@@ -114,15 +117,23 @@ test("focused runtime overrides editor metadata and an empty seam preserves the 
     "an empty publisher leaves the main metadata byte-for-byte intact",
   );
 
-  registry[FOCUSED_AGENT_RUNTIME_SYMBOL] = {
-    current: () => ({
-      modelId: "gpt-5.6-terra",
-      modelName: "GPT-5.6 Terra",
-      provider: "openai-codex",
-      thinking: "medium",
-    }),
+  const child: FocusedAgentRuntime = {
+    modelId: "gpt-5.6-terra",
+    modelName: "GPT-5.6 Terra",
+    provider: "openai-codex",
+    thinking: "medium",
   };
+  registry[FOCUSED_AGENT_RUNTIME_SYMBOL] = { current: () => child };
   const focused = render();
   assert.match(focused, /gpt-5\.6-terra  OpenAI  medium/);
   assert.doesNotMatch(focused, /claude-opus-5|Anthropic|high/);
+
+  child.modelId = "claude-sonnet-5";
+  child.modelName = "Claude Sonnet 5";
+  child.provider = "anthropic";
+  child.thinking = "low";
+  assert.match(render(), /claude-sonnet-5  Anthropic  low/);
+
+  delete registry[FOCUSED_AGENT_RUNTIME_SYMBOL];
+  assert.equal(render(), absent, "removing the publisher immediately restores main metadata");
 });

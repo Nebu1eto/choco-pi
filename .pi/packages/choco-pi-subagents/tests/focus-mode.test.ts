@@ -31,6 +31,12 @@ const theme = {
   bold: (text: string) => text,
 };
 
+type TestContextUsage = {
+  percent: number | null;
+  contextWindow: number;
+  tokens: number | null;
+};
+
 function partialFixture<T extends object>(fixture: Partial<T>): T {
   // SAFETY: Each test supplies the named slice exercised by its subject.
   return fixture as T;
@@ -94,6 +100,12 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   const childEfforts: string[] = [];
   const childFastActions: string[] = [];
   const selectedModels: Model<Api>[] = [];
+  let sessionCost = 2.5;
+  let sessionContext: TestContextUsage = {
+    percent: 12.5,
+    contextWindow: 200_000,
+    tokens: null,
+  };
   const session = partialFixture<AgentSession>({
     sessionId: "focused-session",
     model: partialFixture<Model<Api>>({
@@ -102,6 +114,12 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
       provider: "openai-codex",
     }),
     thinkingLevel: "medium",
+    getSessionStats: () =>
+      partialFixture<ReturnType<AgentSession["getSessionStats"]>>({
+        sessionId: "focused-session",
+        cost: sessionCost,
+        contextUsage: sessionContext,
+      }),
     messages: [
       makeUserMessage("inspect the focused task"),
       makeAssistantMessage("focused agent answer"),
@@ -120,6 +138,7 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
     },
   });
   const controlsSymbol = Symbol.for("choco-pi.model-controls.focused-sessions");
+  // SAFETY: The fixture declares only the private Symbol.for slot consumed by focus mode.
   const controlsHost = globalThis as typeof globalThis & {
     [controlsSymbol]?: Map<string, { setFast(action: string): string }>;
   };
@@ -149,7 +168,8 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   });
 
   const orchestratorRender = (_width: number) => ["ORCHESTRATOR CONVERSATION"];
-  const mermaidTransformer = (markdown: string) => markdown.replace("focused agent answer", "MERMAID RENDERED");
+  const mermaidTransformer = (markdown: string) =>
+    markdown.replace("focused agent answer", "MERMAID RENDERED");
   const document = {
     render: orchestratorRender,
     children: [{ markdownTransformers: [mermaidTransformer] }],
@@ -236,6 +256,20 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
     modelName: "GPT-5.6 Terra",
     provider: "openai-codex",
     thinking: "medium",
+    costTotal: 2.5,
+    contextPercent: 12.5,
+    contextWindow: 200_000,
+  });
+  sessionCost = 3.75;
+  sessionContext = { percent: null, contextWindow: 200_000, tokens: null };
+  assert.deepEqual(currentFocusedRuntime(), {
+    modelId: "gpt-5.6-terra",
+    modelName: "GPT-5.6 Terra",
+    provider: "openai-codex",
+    thinking: "medium",
+    costTotal: 3.75,
+    contextPercent: null,
+    contextWindow: 200_000,
   });
   record.session = partialFixture<AgentSession>({
     model: partialFixture<Model<Api>>({
@@ -244,13 +278,49 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
       provider: "anthropic",
     }),
     thinkingLevel: "high",
+    getSessionStats: () =>
+      partialFixture<ReturnType<AgentSession["getSessionStats"]>>({
+        sessionId: "replacement-session",
+        cost: 0.75,
+        contextUsage: { percent: 1, contextWindow: 300_000, tokens: 3_000 },
+      }),
   });
   assert.deepEqual(currentFocusedRuntime(), {
     modelId: "claude-fable-5",
     modelName: "Claude Fable 5",
     provider: "anthropic",
     thinking: "high",
+    costTotal: 0.75,
+    contextPercent: 1,
+    contextWindow: 300_000,
   });
+  record.session = partialFixture<AgentSession>({
+    model: partialFixture<Model<Api>>({
+      id: "claude-opus-5",
+      name: "Claude Opus 5",
+      provider: "anthropic",
+      contextWindow: 524_288,
+    }),
+    thinkingLevel: "xhigh",
+    getSessionStats() {
+      throw new Error("stats unavailable");
+    },
+  });
+  assert.deepEqual(currentFocusedRuntime(), {
+    modelId: "claude-opus-5",
+    modelName: "Claude Opus 5",
+    provider: "anthropic",
+    thinking: "xhigh",
+    costTotal: null,
+    contextPercent: null,
+    contextWindow: 524_288,
+  });
+  record.session = undefined;
+  assert.equal(
+    currentFocusedRuntime(),
+    undefined,
+    "publisher never falls back to the initial session",
+  );
   record.session = session;
   assert.deepEqual(controller.getState(), { kind: "agent", agentId: "agent-7" });
   const focusedRender = document.render(100).join("\n");
