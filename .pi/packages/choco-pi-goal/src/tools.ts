@@ -19,7 +19,8 @@ const CreateGoalParams = Type.Object({
   }),
   token_budget: Type.Optional(
     Type.Integer({
-      description: "Optional positive integer token budget.",
+      description:
+        "Optional positive integer cumulative token cap. Omit unless the user explicitly supplied one.",
       minimum: 1,
     }),
   ),
@@ -78,7 +79,7 @@ export function registerGoalTools(pi: ExtensionAPI, host: ToolHost): void {
     label: "Create Goal",
     description: "Create a Codex-style long-running goal for this pi session.",
     promptSnippet:
-      "Create one goal with an objective and optional positive token budget. Fails when a non-complete goal already exists unless replace_existing is true; replaces a completed goal.",
+      "Create one goal with an objective. Omit token_budget unless the user explicitly supplied a cumulative cap. Fails when a non-complete goal already exists unless replace_existing is true; replaces a completed goal.",
     promptGuidelines: TOOL_PROMPT_GUIDELINES,
     parameters: CreateGoalParams,
     executionMode: "sequential",

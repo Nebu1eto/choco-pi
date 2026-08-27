@@ -167,6 +167,7 @@ export interface GoalRuntimeSessionHandlerContext extends StaleQueuedWorkEffectC
   >;
   continuation: Pick<
     GoalRuntimeContinuationPort,
+    | "clearContinuationStateFor"
     | "clearContinuationTimer"
     | "clearPostCompactContinuationFallback"
     | "clearPassthroughContinuationInput"
