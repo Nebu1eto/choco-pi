@@ -128,7 +128,7 @@ test("footer cost and context follow focus on every render without main fallback
     runtime: false,
     modelInfo: false,
     context: true,
-    tokens: false,
+    tokens: true,
     cost: true,
     sessionDuration: false,
     username: false,
@@ -139,6 +139,9 @@ test("footer cost and context follow focus on every render without main fallback
 
   const state: FooterState = createInitialState(emptyGitStatus());
   state.costLabel = "$9.999";
+  state.tokenLabel = "↑111 ↓222";
+  state.cacheReadLabel = "R333";
+  state.cacheWriteLabel = "W444";
   state.subscription = true;
   let footerFactory: FooterFactory | undefined;
   const context = {
@@ -168,7 +171,7 @@ test("footer cost and context follow focus on every render without main fallback
     onBranchChange: () => () => {},
     getExtensionStatuses: () => new Map(),
   });
-  const render = () => component.render(100).map(stripTerminalSequences).join("\n");
+  const render = () => component.render(200).map(stripTerminalSequences).join("\n");
   const seam = registry();
   t.after(() => {
     delete seam[FOCUSED_AGENT_RUNTIME_SYMBOL];
@@ -178,6 +181,9 @@ test("footer cost and context follow focus on every render without main fallback
   const main = render();
   assert.match(main, /warning\[.*80\.0%\/1\.0k.*\]/);
   assert.match(main, /\$9\.999/);
+  assert.match(main, /↑111 ↓222/);
+  assert.match(main, /R333/);
+  assert.match(main, /W444/);
   assert.match(main, /\(sub\)/);
 
   const child: FocusedRuntime = {
@@ -193,24 +199,27 @@ test("footer cost and context follow focus on every render without main fallback
   const focused = render();
   assert.match(focused, /success\[.*40\.0%\/2\.0k.*\]/);
   assert.match(focused, /\$1\.250/);
-  assert.doesNotMatch(focused, /80\.0%|\$9\.999|\(sub\)/);
+  assert.doesNotMatch(focused, /80\.0%|\$9\.999|↑111|R333|W444|\(sub\)/);
 
   child.costTotal = Number.NaN;
   child.contextPercent = null;
   child.contextWindow = 3_000;
   const mutated = render();
   assert.match(mutated, /\?\/3\.0k/);
-  assert.doesNotMatch(mutated, /\$1\.250|\$9\.999|80\.0%/);
+  assert.doesNotMatch(mutated, /\$1\.250|\$9\.999|80\.0%|↑111|R333|W444/);
 
-  starship.format = "$context :: $cost";
+  starship.format = "$context :: $tokens :: $cache_read :: $cache_write :: $cost";
   const custom = render();
   assert.match(custom, /\?\/3\.0k/);
-  assert.doesNotMatch(custom, /\$9\.999/);
+  assert.doesNotMatch(custom, /\$9\.999|↑111|R333|W444/);
 
   delete seam[FOCUSED_AGENT_RUNTIME_SYMBOL];
   const restored = render();
   assert.match(restored, /80\.0%\/1\.0k/);
   assert.match(restored, /\$9\.999/);
+  assert.match(restored, /↑111 ↓222/);
+  assert.match(restored, /R333/);
+  assert.match(restored, /W444/);
   assert.doesNotMatch(restored, /\?\/3\.0k|\$1\.250/);
 });
 
