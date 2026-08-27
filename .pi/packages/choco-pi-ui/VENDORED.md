@@ -7,8 +7,8 @@ MIT-licensed and keep their own copyright.
 
 ## 1. Extension sources — fork of `pi-zentui`
 
-- Original source code: https://github.com/lmilojevicc/pi-zentui
-- Package on npm: https://www.npmjs.com/package/pi-zentui
+- Original source code: <https://github.com/lmilojevicc/pi-zentui>
+- Package on npm: <https://www.npmjs.com/package/pi-zentui>
 - Base version: `0.20.1` (see `version` in `package.json`)
 - License: MIT — upstream copyright retained in `LICENSE`
 - Local history: pinned as a path package in `1bb734b2`, first vendored in
@@ -112,10 +112,21 @@ picker with a search field and a scope toggle, for instance — never sees them.
 submenu as the panel appears, by replaying the activation key on the freshly
 built list. A command can then hand the user straight to one picker.
 
+### choco-pi change: focus-scoped usage surfaces
+
+The editor and Starship footer defensively read the optional
+`Symbol.for("choco-pi.subagents.focused-agent-runtime")` bridge on every render.
+When a valid child model owns focus, footer and minimalist-editor cost/context
+surfaces use only the child's published totals, context percentage, and context
+window. Missing or invalid child usage stays unknown instead of falling back to
+the main session; removing the bridge restores the existing cumulative main
+session and live-context displays immediately. The shared boundary reader lives
+in `extensions/zentui/focused-runtime.ts` so the render paths apply one parser.
+
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
 
-- Original source code: https://github.com/maddeye/pi-nord
-- Package on npm: https://www.npmjs.com/package/@maddeye/pi-nord
+- Original source code: <https://github.com/maddeye/pi-nord>
+- Package on npm: <https://www.npmjs.com/package/@maddeye/pi-nord>
 - Vendored version: `1.0.0`
 - Tarball: `maddeye-pi-nord-1.0.0.tgz`, shasum
   `e73a83fabe3780bf0ae00afc26c352b4aadf85e4`, integrity

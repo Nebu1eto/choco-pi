@@ -167,6 +167,8 @@ export interface AgentRecord {
   startedAt: number;
   completedAt?: number;
   session?: AgentSession;
+  /** Initial cost of a cloned /btw session, tied to that session's stats identity. */
+  sessionCostBaseline?: { sessionId: string; cost: number };
   abortController?: AbortController;
   promise?: Promise<string>;
   groupId?: string;

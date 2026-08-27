@@ -22,6 +22,7 @@ import {
   packCompactChunks,
   reflowFullFooter,
 } from "./footer-layout";
+import { selectFocusScopedUsage } from "./focused-runtime";
 import {
   buildContextDisplayLabel,
   buildSessionDurationLabel,
@@ -290,14 +291,17 @@ export function installFooter(
         const contextPercent = useLiveContext
           ? (liveContext.tokens / contextWindow) * 100
           : contextUsage?.percent;
+        const mainUsage = { costLabel: state.costLabel, contextPercent, contextWindow };
+        const selectedUsage = selectFocusScopedUsage(mainUsage);
+        const focusedUsage = selectedUsage !== mainUsage;
         const contextLabel = buildContextDisplayLabel({
-          percent: contextPercent,
-          contextWindow,
+          percent: selectedUsage.contextPercent,
+          contextWindow: selectedUsage.contextWindow ?? undefined,
           style: config.components.footer.styles.starship.contextStyle,
           asciiGauge: iconMode === "ascii",
         });
         const tier = contextColorTier(
-          contextPercent,
+          selectedUsage.contextPercent,
           config.components.footer.styles.starship.contextThresholds,
         );
         const contextColor =
@@ -312,9 +316,10 @@ export function installFooter(
         const cacheWriteLabel = state.cacheWriteLabel
           ? renderStyleForSource(theme, colorSource, config.colors.tokens, state.cacheWriteLabel)
           : "";
-        const subscriptionLabel = state.subscription
-          ? renderStyleForSource(theme, colorSource, config.colors.cost, "(sub)")
-          : "";
+        const subscriptionLabel =
+          !focusedUsage && state.subscription
+            ? renderStyleForSource(theme, colorSource, config.colors.cost, "(sub)")
+            : "";
         const autoCompactionLabel = state.autoCompaction
           ? renderStyleForSource(theme, colorSource, contextColor, "(auto)")
           : "";
@@ -426,7 +431,12 @@ export function installFooter(
             case "cache_write":
               return cacheWriteLabel;
             case "cost":
-              return renderStyleForSource(theme, colorSource, config.colors.cost, state.costLabel);
+              return renderStyleForSource(
+                theme,
+                colorSource,
+                config.colors.cost,
+                selectedUsage.costLabel ?? "",
+              );
             case "subscription":
               return subscriptionLabel;
             case "auto_compaction":
@@ -644,7 +654,12 @@ export function installFooter(
           .filter(Boolean)
           .join(" ");
         const builtInCostLabel = [
-          renderStyleForSource(theme, colorSource, config.colors.cost, state.costLabel),
+          renderStyleForSource(
+            theme,
+            colorSource,
+            config.colors.cost,
+            selectedUsage.costLabel ?? "",
+          ),
           subscriptionLabel,
         ]
           .filter(Boolean)

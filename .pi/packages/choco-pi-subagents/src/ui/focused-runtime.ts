@@ -1,4 +1,6 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentRecord } from "../types.ts";
+import { getSessionContextUsage, getSessionCost } from "../usage.ts";
 
 /** Loose cross-package seam read by editor chrome while a subagent owns the prompt. */
 export const FOCUSED_AGENT_RUNTIME_SYMBOL = Symbol.for("choco-pi.subagents.focused-agent-runtime");
@@ -8,28 +10,39 @@ export interface FocusedAgentRuntime {
   modelName: string;
   provider: string;
   thinking: string;
+  costTotal: number | null;
+  contextPercent: number | null;
+  contextWindow: number | null;
 }
 
 export interface FocusedAgentRuntimeSource {
-  current: () => FocusedAgentRuntime;
+  current: () => FocusedAgentRuntime | undefined;
 }
 
 interface FocusedAgentRuntimeRegistry {
   [FOCUSED_AGENT_RUNTIME_SYMBOL]?: FocusedAgentRuntimeSource;
 }
 
-/** Read the child session itself so every spawn path and later runtime change is reflected. */
-export function focusedAgentRuntime(session: AgentSession): FocusedAgentRuntime {
+/** Read the record's current child session so replacements and removals are reflected. */
+export function focusedAgentRuntime(record: AgentRecord): FocusedAgentRuntime | undefined {
+  const session: AgentSession | undefined = record.session;
+  if (!session) return undefined;
+  const context = getSessionContextUsage(session, session.model?.contextWindow);
   return {
     modelId: session.model?.id ?? "",
     modelName: session.model?.name ?? "",
     provider: session.model?.provider ?? "",
     thinking: session.thinkingLevel,
+    costTotal: getSessionCost(session, record.sessionCostBaseline),
+    contextPercent: context.percent,
+    contextWindow: context.contextWindow,
   };
 }
 
 /** Publish a live getter and return an ownership-safe cleanup function. */
-export function publishFocusedAgentRuntime(current: () => FocusedAgentRuntime): () => void {
+export function publishFocusedAgentRuntime(
+  current: () => FocusedAgentRuntime | undefined,
+): () => void {
   const source: FocusedAgentRuntimeSource = { current };
   try {
     // SAFETY: Both packages independently declare the optional Symbol.for slot;
