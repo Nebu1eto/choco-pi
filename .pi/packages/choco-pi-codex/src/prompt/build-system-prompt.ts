@@ -44,7 +44,7 @@ const PI_DEFAULT_GUIDELINES = new Set([
 ]);
 
 const EXEC_SESSION_GUIDELINE =
-  "For unfinished exec_command sessions, use write_stdin with yield_time_ms near the command's expected remaining time and lengthen later waits";
+  "Use managed shell_start for persistent processes (servers, watchers, REPLs) and commands expected to run longer than about 30 seconds; return control immediately and rely on its steered completion notification instead of waiting";
 
 const NORMAL_CODEX_GUIDELINES = [
   "Use exec_command for shell commands, file inspection, builds, and tests; prefer rg / rg --files for discovery and focused commands over truncation",
@@ -57,7 +57,7 @@ const NORMAL_CODEX_GUIDELINES = [
 const CODE_MODE_GUIDELINES = [
   "Use tools.exec_command for shell commands; prefer rg / rg --files",
   "With exec_command cmd, use String.raw (no backticks/${}); avoid nested quotes; split independent commands",
-  "Keep long exec_command calls awaited in exec; resume yielded cells with wait near completion; never short-yield then poll exec_command via write_stdin",
+  "Keep exec code mode bounded; route persistent processes and commands expected to exceed about 30 seconds to shell_start, continue independent work, and inspect completion details with shell_read only when needed",
   "Use tty=true only for input/persistent processes",
   "Use tools.apply_patch(patch) for edits; split large patches; shell/Python only for formatting/bulk work",
   "Use code mode only for bounded multi-call stages where JavaScript/TypeScript can reduce intermediate output; use direct calls when one call suffices, each result changes the next decision, approval is required, or native artifacts or citations must be preserved",

@@ -27,7 +27,8 @@ test("Code Mode is the append-style default for every OpenAI Codex model", () =>
   const prompt = buildCodexSystemPrompt("BASE PROMPT", { mode: "code" });
   assert.match(prompt, /^BASE PROMPT/);
   assert.match(prompt, /Use tools\.exec_command for shell commands/);
-  assert.match(prompt, /Use code mode only for bounded multi-call stages/);
+  assert.match(prompt, /Keep exec code mode bounded/);
+  assert.match(prompt, /commands expected to exceed about 30 seconds to shell_start/);
   assert.match(prompt, /use direct calls when one call suffices/);
 });
 
@@ -46,7 +47,10 @@ test("Code Mode guidance canonicalizes legacy rules without losing execution sem
 
   for (const line of legacy) assert.ok(!prompt.includes(line));
   assert.match(prompt, /String\.raw \(no backticks\/\$\{\}\)/);
-  assert.match(prompt, /never short-yield then poll exec_command via write_stdin/);
+  assert.match(
+    prompt,
+    /route persistent processes and commands expected to exceed about 30 seconds to shell_start/,
+  );
   assert.match(prompt, /tools\.apply_patch\(patch\) for edits/);
 });
 
