@@ -59,8 +59,16 @@ export function createQueuedGoalWorkMessageIdResolver(
     );
 }
 
+export function safeContextWindow(contextWindow: number | null | undefined): number {
+  const candidate = contextWindow ?? 0;
+  if (!Number.isSafeInteger(candidate) || candidate <= 0) {
+    return 0;
+  }
+  return candidate;
+}
+
 export function getContextWindow(ctx: ExtensionContext): number {
-  return ctx.model?.contextWindow ?? 0;
+  return safeContextWindow(ctx.model?.contextWindow);
 }
 
 /** Hidden continuations that only call get_goal / *.__get_goal are blocked, not progressed. */

@@ -108,6 +108,10 @@ export function createSessionEventHandlers(deps: GoalRuntimeSessionHandlerContex
         return;
       }
 
+      const activeGoal = stateController.getGoal();
+      if (activeGoal?.status === "active") {
+        continuation.clearContinuationStateFor(activeGoal.goalId);
+      }
       stateController.flushGoalPersistence("runtime");
       const wasRecoveringFromHostOverflow = recoveryPhaseBlocksContinuation(
         runtimeState.recoveryState.phase,
