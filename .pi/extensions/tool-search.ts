@@ -13,6 +13,11 @@ import { Type } from "typebox";
 
 const MAX_QUERY_LENGTH = 500;
 const DEFAULT_LIMIT = 5;
+const DISABLED_TOOL_NAMES = new Set<string>(["grep"]);
+
+function withoutDisabledTools(names: readonly string[]): string[] {
+  return names.filter((name) => !DISABLED_TOOL_NAMES.has(name));
+}
 
 // Keep the minimum execution, orchestration, and discovery path available
 // without requiring a preliminary tool search.
@@ -36,7 +41,6 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
   // Pi's own path discovery. A session that reads or edits anything reaches
   // these before it reaches the file, so deferring them buys a prompt-cache
   // rewrite at the start of nearly every task.
-  "grep",
   "find",
   "ls",
   "Agent",
@@ -175,6 +179,7 @@ export function expandFamilyActivation(
   const familyByName = new Map<string, string>();
   for (const document of documents) {
     if (document.target.kind !== "pi") continue;
+    if (DISABLED_TOOL_NAMES.has(document.target.tool.name)) continue;
     const key = toolFamilyKey(document.target.tool);
     familyByName.set(document.target.tool.name, key);
     const members = families.get(key);
@@ -357,8 +362,10 @@ function makeDocument(target: SearchTarget, source: string): SearchDocument {
 }
 
 function buildPiDocuments(tools: ToolInfo[]): SearchDocument[] {
-  return tools.map((tool) =>
-    makeDocument({ kind: "pi", tool }, `${tool.sourceInfo.source} ${tool.sourceInfo.path}`),
+  return tools.flatMap((tool) =>
+    DISABLED_TOOL_NAMES.has(tool.name)
+      ? []
+      : [makeDocument({ kind: "pi", tool }, `${tool.sourceInfo.source} ${tool.sourceInfo.path}`)],
   );
 }
 
@@ -537,21 +544,26 @@ export default function toolSearch(pi: ExtensionAPI): void {
     initializationScheduled = false;
     const allTools = pi.getAllTools();
     const allNames = new Set(allTools.map((tool) => tool.name));
-    for (const name of pi.getActiveTools()) allowedNames.add(name);
+    for (const name of withoutDisabledTools(pi.getActiveTools())) allowedNames.add(name);
     searchableNames = new Set(
-      [...allNames].filter((name) => allowedNames.has(name) && !ALWAYS_ACTIVE.has(name)),
+      [...allNames].filter(
+        (name) =>
+          !DISABLED_TOOL_NAMES.has(name) && allowedNames.has(name) && !ALWAYS_ACTIVE.has(name),
+      ),
     );
     searchableDocuments = [
       ...buildPiDocuments(allTools.filter((tool) => searchableNames.has(tool.name))),
       ...loadMcpDocuments(enabledMcpServers),
     ];
-    const active = pi.getActiveTools();
+    const active = withoutDisabledTools(pi.getActiveTools());
     const leanSurface = active.filter((name) => ALWAYS_ACTIVE.has(name) || loadedNames.has(name));
     // Restore registered eager tools that fell out of the active set during a model-switch
     // adapter reactivation; otherwise Code Mode can silently lose exec_command/apply_patch
     // for the rest of the session.
     const alwaysActive = ALWAYS_ACTIVE_TOOL_NAMES.filter((name) => allNames.has(name));
-    pi.setActiveTools([...new Set([...leanSurface, ...alwaysActive, "tool_search"])]);
+    pi.setActiveTools(
+      withoutDisabledTools([...new Set([...leanSurface, ...alwaysActive, "tool_search"])]),
+    );
     if (!mcpCatalogReady && attempt < 4) {
       initializationScheduled = true;
       setTimeout(() => applyLeanSurface(attempt + 1), 25 * (attempt + 1));
@@ -589,7 +601,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
         };
       }
 
-      const active = pi.getActiveTools();
+      const active = withoutDisabledTools(pi.getActiveTools());
       const activeSet = new Set(active);
       const matches = rankTools(searchableDocuments, query).slice(0, params.limit ?? DEFAULT_LIMIT);
       const added = matches
@@ -597,10 +609,10 @@ export default function toolSearch(pi: ExtensionAPI): void {
         .map((target) => target.tool.name)
         .filter((name) => !activeSet.has(name));
       const siblings = expandFamilyActivation(added, searchableDocuments, activeSet);
-      const activated = [...added, ...siblings];
+      const activated = withoutDisabledTools([...added, ...siblings]);
       if (activated.length > 0) {
         for (const name of activated) loadedNames.add(name);
-        pi.setActiveTools([...new Set([...active, ...activated])]);
+        pi.setActiveTools(withoutDisabledTools([...new Set([...active, ...activated])]));
       }
 
       const lines = matches.map((target) =>
@@ -642,7 +654,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
     sessionStarted = true;
     mcpCatalogReady = false;
     loadedNames.clear();
-    allowedNames = new Set(pi.getActiveTools());
+    allowedNames = new Set(withoutDisabledTools(pi.getActiveTools()));
     scheduleLeanSurface();
   });
   pi.on("session_shutdown", () => {

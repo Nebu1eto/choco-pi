@@ -6,7 +6,7 @@
 
 import type { AgentConfig } from "./types.ts";
 
-const READ_ONLY_TOOLS = ["read", "bash", "grep", "find", "ls"];
+const READ_ONLY_TOOLS = ["read", "bash", "find", "ls"];
 
 export const DEFAULT_AGENTS: Map<string, AgentConfig> = new Map([
   [
@@ -32,7 +32,7 @@ export const DEFAULT_AGENTS: Map<string, AgentConfig> = new Map([
       name: "Explore",
       displayName: "Explore",
       description:
-        'Fast read-only search agent for locating code. Use it to find files by pattern (eg. "src/components/**/*.tsx"), grep for symbols or keywords (eg. "API endpoints"), or answer "where is X defined / which files reference Y." Do NOT use it for code review, design-doc auditing, cross-file consistency checks, or open-ended analysis — it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: "quick" for a single targeted lookup, "medium" for moderate exploration, or "very thorough" to search across multiple locations and naming conventions.',
+        'Fast read-only search agent for locating code with registered choco-pi-lsp tools and ast-grep. Use it to find definitions, references, files, structural patterns, or answer "where is X defined / which files reference Y." Do NOT use it for code review, design-doc auditing, cross-file consistency checks, or open-ended analysis — it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: "quick" for a single targeted lookup, "medium" for moderate exploration, or "very thorough" to search across multiple locations and naming conventions.',
       builtinToolNames: READ_ONLY_TOOLS,
       extensions: true,
       skills: true,
@@ -53,13 +53,16 @@ You are STRICTLY PROHIBITED from:
 - Using redirect operators (>, >>, |) or heredocs to write to files
 - Running ANY commands that change system state
 
-Use Bash ONLY for read-only operations: ls, git status, git log, git diff, find, cat, head, tail.
+Use Bash ONLY for read-only operations: rg, ls, git status, git log, git diff, find, cat, head, tail.
 
 # Tool Usage
-- Use the find tool for file pattern matching (NOT the bash find command)
-- Use the grep tool for content search (NOT bash grep/rg command)
+- For unfamiliar code, start with registered choco-pi-lsp tools: symbol_search, then module_report, then read_symbol or read_enclosing. Call them directly or through code mode.
+- Use lsp_navigation for definitions, references, implementations, and call hierarchy.
+- Use ast_grep_search for structural code patterns.
 - Use the read tool for reading files (NOT bash cat/head/tail)
-- Use Bash ONLY for read-only operations
+- Use the find tool only for file-name or glob lookups that code discovery tools do not cover.
+- Use read-only Bash rg only for non-code text or queries choco-pi-lsp and ast-grep cannot cover.
+- Use Bash ONLY for read-only operations.
 - Make independent tool calls in parallel for efficiency
 - Adapt search approach based on thoroughness level specified
 
@@ -109,10 +112,13 @@ You are STRICTLY PROHIBITED from:
 - Follow existing patterns where appropriate
 
 # Tool Usage
-- Use the find tool for file pattern matching (NOT the bash find command)
-- Use the grep tool for content search (NOT bash grep/rg command)
+- For unfamiliar code, start with registered choco-pi-lsp tools: symbol_search, then module_report, then read_symbol or read_enclosing. Call them directly or through code mode.
+- Use lsp_navigation for definitions, references, implementations, and call hierarchy.
+- Use ast_grep_search for structural code patterns.
 - Use the read tool for reading files (NOT bash cat/head/tail)
-- Use Bash ONLY for read-only operations
+- Use the find tool only for file-name or glob lookups that code discovery tools do not cover.
+- Use read-only Bash rg only for non-code text or queries choco-pi-lsp and ast-grep cannot cover.
+- Use Bash ONLY for read-only operations.
 
 # Output Format
 - Use absolute file paths
