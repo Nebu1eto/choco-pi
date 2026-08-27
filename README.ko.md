@@ -1,8 +1,8 @@
 # choco-pi
 
-[English](README.md)
+[English](./README.md)
 
-choco-pi는 [Pi 코딩 에이전트](https://pi.dev/)를 프로젝트 중심으로 운용하기 위한 개인화 설정 저장소입니다. 운용 규칙, 재사용 가능한 작업 절차, 모델·공급자 제어, 서브 에이전트, 독립 대화, 컴팩션, MCP, 웹 검색, 브라우저 자동화와 Nord 기반 터미널 UI를 한 설정으로 제공합니다.
+choco-pi는 [Pi 코딩 에이전트](https://pi.dev/)를 프로젝트 중심으로 운용하기 위한 개인화 설정 저장소입니다. 운용 규칙, 재사용 가능한 작업 절차, 모델·공급자 제어, 서브 에이전트, 독립 대화, 지속형 goal, Claude Code 호환 hook, 컴팩션, MCP, 웹·브라우저 접근, background shell, macOS 자동화와 Nord 기반 터미널 UI를 한 설정으로 제공합니다.
 
 Git에는 공유 가능한 설정만 저장합니다. OAuth 토큰과 API 키는 Pi의 사용자 전용 인증 저장소에 두며 저장소에 커밋하지 않습니다.
 
@@ -25,6 +25,12 @@ pi
 
 Pi는 [`.pi/settings.json`](.pi/settings.json)에 나열한 로컬 패키지를 불러옵니다. `.pi` 아래 파일을 바꾼 뒤에는 `/reload`를 실행합니다.
 
+## 현재 상태
+
+현재 profile은 Pi 0.84.x와 Node.js 24 이상을 대상으로 합니다. 저장소 전체 테스트 941개와 package typecheck가 통과했으며, tmux에서 `openai-codex/gpt-5.6-luna`를 사용해 hook 실행과 main TUI의 Mermaid 렌더링을 확인했습니다.
+
+`choco-pi-hooks`는 Pi event와 task, sub-agent, worktree, MCP elicitation, 설정 변경, 파일 변경 bridge를 통해 Claude Code lifecycle을 연결합니다. choco-pi에는 permission subsystem이 없으므로 `PermissionRequest`와 `PermissionDenied` hook은 무시합니다. `PreToolUse`의 allow와 deny 결정은 지원합니다.
+
 ## 전역 profile
 
 현재 checkout은 이 컴퓨터의 `~/.pi/agent` 전역 Pi profile 원본으로도 사용합니다.
@@ -39,35 +45,41 @@ Git으로 추적하는 [`.pi/zentui.json`](.pi/zentui.json)은 입력창의 모�
 
 ## 제공 기능
 
-| 영역          | 동작                                                                                                            |
-| ------------- | --------------------------------------------------------------------------------------------------------------- |
-| 운용 규칙     | [`.pi/SYSTEM.md`](.pi/SYSTEM.md)로 Pi 기본 프롬프트를 교체하고 매 turn 실제 `provider/model`을 주입             |
-| 프로젝트 인식 | 시작 시 루트 지침을 읽고, 하위 경로에 접근할 때 해당 경로의 `AGENTS.md`를 추가 적용                             |
-| 글쓰기        | 별도 스킬 호출 없이 일반 답변과 작성 문서에 저장소 글쓰기 정책 적용                                             |
-| 작업 절차     | 직접 구현, 병렬 구현, 핫픽스, 리뷰, 환경 점검, 로컬 커밋 절차 제공                                              |
-| 에이전트      | 모델을 고정하지 않은 `general`, `planner`, `implementer`, `reviewer`, `handoff` 역할 제공                       |
-| 독립 대화     | Pi 대화를 생성·조회·대기하고 queue·steer로 상호 제어                                                            |
-| 문맥 관리     | 모델별 soft cap, 도구 지연 로딩, `/context` 사용량 분석과 OpenAI Responses 서버 컴팩션 지원                     |
-| 공급자        | OpenAI Codex OAuth, Anthropic OAuth, Synthetic, 자동 discovery 방식 Callstack Apex 지원                         |
-| 도구          | BM25 `tool_search`, MCP, Synthetic 웹 검색, LSP 진단, 전역 skill을 통한 브라우저 자동화, goal, 사이드 대화 추가 |
-| 인터페이스    | `nord-dark`, `choco-pi-ui`, 공급자 usage, effort 제어와 익숙한 세션 별칭 적용                                   |
+| 영역          | 동작                                                                                                        |
+| ------------- | ----------------------------------------------------------------------------------------------------------- |
+| 운용 규칙     | [`.pi/SYSTEM.md`](.pi/SYSTEM.md)로 Pi 기본 프롬프트를 교체하고 매 turn 실제 `provider/model`을 주입         |
+| 프로젝트 인식 | 시작 시 루트 지침을 읽고, 하위 경로에 접근할 때 해당 경로의 `AGENTS.md`를 추가 적용                         |
+| 글쓰기        | 별도 스킬 호출 없이 일반 답변과 작성 문서에 저장소 글쓰기 정책 적용                                         |
+| 작업 절차     | 직접 구현, 병렬 구현, 핫픽스, 리뷰, 환경 점검, 로컬 커밋 절차 제공                                          |
+| Hook          | Pi lifecycle에서 Claude Code 호환 command, HTTP, MCP, prompt, agent hook 실행                               |
+| 에이전트      | 모델을 고정하지 않은 `general`, `planner`, `implementer`, `reviewer`, `handoff` 역할 제공                   |
+| 독립 대화     | Pi 대화를 생성·조회·대기하고 queue·steer로 상호 제어                                                        |
+| 문맥 관리     | 모델별 soft cap, 도구 지연 로딩, `/context` 사용량 분석, 지속형 goal과 compaction 이후 연속 실행 지원       |
+| 공급자        | OpenAI Codex OAuth, Anthropic OAuth, Synthetic, 자동 discovery 방식 Callstack Apex 지원                     |
+| 도구          | BM25 `tool_search`, MCP, 웹 조사, LSP 진단, background shell, 브라우저·macOS 자동화, goal, 사이드 대화 추가 |
+| 인터페이스    | `nord-dark`, `choco-pi-ui`, 공급자 usage, effort 제어, 세션 별칭과 터미널 Mermaid diagram 적용              |
 
 ## 설치 패키지
 
 패키지 경로는 [`.pi/settings.json`](.pi/settings.json)에 나열하고 버전은 각 로컬 manifest에 기록합니다.
 
-| 패키지                                                                    |  버전 | 용도                                                                                               |
-| ------------------------------------------------------------------------- | ----: | -------------------------------------------------------------------------------------------------- |
-| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) | 0.1.0 | Synthetic 공급자, 인증, usage와 웹 검색                                                            |
-| [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 | 0.1.0 | 편집기, 메시지 프레임, 상태줄과 Nord 테마                                                          |
-| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   | 0.1.0 | `@tintinweb/pi-subagents@0.17.1`의 로컬 fork. 서브 에이전트, workflow, 사이드 대화와 fleet UI 제공 |
-| [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             | 0.1.0 | Codex 형태의 지속형 goal                                                                           |
-| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               | 0.1.0 | MCP 서버 지연 로딩                                                                                 |
-| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               | 0.1.0 | LSP, lint, AST와 semantic 진단                                                                     |
-| [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           | 0.1.0 | Codex 호환 도구와 OpenAI Responses 컴팩션                                                          |
-| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   | 0.1.0 | 하위 `AGENTS.md` 로딩                                                                              |
+| 패키지                                                                    |           버전 | 용도                                                                                               |
+| ------------------------------------------------------------------------- | -------------: | -------------------------------------------------------------------------------------------------- |
+| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic 공급자, 인증, usage와 웹 검색                                                            |
+| [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 |          0.1.0 | 편집기, 메시지 프레임, 상태줄과 Nord 테마                                                          |
+| [`choco-pi-shells`](.pi/packages/choco-pi-shells)                         |          0.1.0 | 세션별 background shell process와 output viewer                                                    |
+| [`choco-pi-hooks`](.pi/packages/choco-pi-hooks)                           |          0.1.0 | Claude Code 호환 lifecycle hook과 Pi integration bridge                                            |
+| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   |          0.1.0 | `@tintinweb/pi-subagents@0.17.1`의 로컬 fork. 서브 에이전트, workflow, 사이드 대화와 fleet UI 제공 |
+| [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |          0.1.0 | Compaction 이후에도 계속 실행하는 Codex 형태의 지속형 goal                                         |
+| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | MCP 서버 지연 로딩, Figma, hook tool call과 elicitation                                            |
+| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, AST와 semantic 진단                                                                     |
+| [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |          0.1.0 | Codex 호환 도구와 OpenAI Responses 컴팩션                                                          |
+| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   |          0.1.0 | 하위 `AGENTS.md` 로딩                                                                              |
+| [`choco-pi-web-access`](.pi/packages/choco-pi-web-access)                 | 0.24.1-choco.0 | 웹 검색, source check, 인증 fetch, PDF와 GitHub content                                            |
+| [`choco-pi-agent-browser`](.pi/packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | 네이티브 브라우저 자동화 도구                                                                      |
+| [`choco-pi-computer-use`](.pi/packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS desktop 확인과 조작                                                                          |
 
-Voice, notebook, background-shell 기능은 의도적으로 포함하지 않습니다.
+Voice와 notebook 기능은 의도적으로 포함하지 않습니다.
 
 ## 명령
 
@@ -84,8 +96,9 @@ Voice, notebook, background-shell 기능은 의도적으로 포함하지 않습�
 | `/context [all]`                                                                  | Context 탭 열기. prompt, active/deferred 도구, MCP, agent, context file, skill, message와 autocompact buffer 사용량 표시. `all`은 펼친 상태로 시작                                                         |
 | `/rewind`, `/fork`                                                                | checkpoint picker를 열어 선택한 턴에서 rewind, rollback, fork 중 하나를 실행                                                                                                                               |
 | `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | 로컬 human review 화면 열기. 인자가 없으면 대상 선택기 표시                                                                                                                                                |
-| `/usage`                                                                          | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시. 같은 탭 뷰의 Usage 탭으로 열림                                                                                                               |
+| `/usage`, `/quota`                                                                | Claude Code, OpenAI Codex, Synthetic 사용량을 한 화면에 표시. 같은 탭 뷰의 Usage 탭으로 열림                                                                                                               |
 | `/preferences [인자]`, `/pref`                                                    | 같은 탭 뷰의 Preferences 탭 열기. Agent 언어와 스타일, choco-ui 인터페이스 설정을 다룸. `agent`, `language <이름>`, `style <이름>`, choco-ui 직접 토글, `format <템플릿>` 인자 지원                        |
+| `/hooks`                                                                          | 적용 중인 Claude 호환 hook 설정과 설정 출처를 read-only 화면에서 확인                                                                                                                                      |
 | `/apex-refresh`                                                                   | Callstack Apex 모델을 즉시 다시 탐색                                                                                                                                                                       |
 
 Fast mode는 OpenAI Codex 요청에만 `service_tier: "priority"`를 추가합니다. Standard보다 사용량이나 API credit을 빠르게 소비할 수 있습니다. Pi에 숨겨진 llama.cpp 공급자는 유지하지만 `/llama` 명령은 choco-pi의 명령 목록과 실행 경로에서 제거합니다.
@@ -165,7 +178,7 @@ packages/api/src/AGENTS.md
 
 실행 중인 agent는 `steer_subagent`로 현재 tool 이후 방향을 바꾸고, background 결과는 `get_subagent_result`로 가져옵니다. 완료된 agent의 같은 작업 후속 처리는 `resume: <id>`를 포함한 `Agent` 호출을 사용합니다. 새 호출은 fresh conversation으로 시작하며 각 역할 지침은 현재 parent system prompt 뒤에 추가되고 skill을 상속합니다.
 
-모든 custom role은 ambient child extension을 끄므로 선언된 native tool이 모델 adapter에 대체되지 않습니다. 쓰기 역할은 기본적으로 현재 checkout을 사용하며, Orchestrator가 겹치지 않는 direct·indirect ownership 범위를 할당한 경우에만 병렬 실행합니다. `isolation: "worktree"`는 명시적으로 선택할 때만 사용합니다.
+모든 custom role은 main agent와 같은 extension을 불러오고 별도 `tools:` allowlist를 두지 않습니다. 따라서 child도 `exec`, choco-pi-lsp funnel과 지연 도구용 `tool_search`로 시작합니다. `allowed_subagents`를 설정하지 않은 child에서는 nested delegation 도구를 제거합니다. 쓰기 역할은 기본적으로 현재 checkout을 사용하며, orchestrator가 겹치지 않는 direct·indirect ownership 범위를 할당한 경우에만 병렬 실행합니다. `isolation: "worktree"`는 명시적으로 선택할 때만 사용합니다.
 
 ## Checkpoint, 리뷰와 Git 경계
 
@@ -407,7 +420,8 @@ Apex가 Responses API를 지원한다고 확인하기 전에는 `openai-completi
 
 - [`.pi/mcp.example.json`](.pi/mcp.example.json)을 `~/.pi/agent/mcp.json`으로 복사하고 로컬 OAuth client 설정을 추가합니다. 이 checkout 안에는 두지 않습니다. Pi는 `~/.pi/agent/mcp.json`과 프로젝트의 `.pi/mcp.json`을 서로 다른 소스로 읽으므로, choco-pi 안에 사본을 두면 이 디렉터리에서 Pi를 실행할 때 모든 서버가 두 번 등록됩니다. 반대로 Git에서 제외된 그 파일이 사라지면 서버가 하나도 없는 상태로 조용히 시작합니다. `/mcp`에서 설정과 실행 상태를 확인합니다.
 - 인증 서버가 dynamic client registration을 지원하지 않으면 사전 등록한 client가 필요합니다. 해당 서버 항목에 `oauth.clientId`와 `oauth.clientSecret`을 넣습니다. `clientSecret` 값이 `!`로 시작하면 나머지를 셸 명령으로 실행하므로 비밀값을 파일에 남기지 않을 수 있습니다. 공급자에는 redirect URL로 `http://localhost:19876/callback`을 등록합니다.
-- `/goal <목표>`는 작업을 지속형 goal 목표로 작성해 생성합니다. 인자 없는 `/goal`은 상태와 사용량을 보여주고, `/goal pause|resume|clear|copy`로 관리합니다.
+- `/goal <목표>`는 작업을 지속형 goal로 작성해 생성합니다. Token budget을 생략하면 제한 없이 유지하고, 명시한 budget만 누적 상한으로 적용합니다. 활성 goal은 context compaction 뒤에도 이어집니다. 인자 없는 `/goal`은 상태와 사용량을 보여주고, `/goal pause|resume|clear|copy`로 관리합니다.
+- `choco-pi-hooks`는 Claude Code hook 설정을 읽어 command, HTTP, MCP tool, prompt, agent handler를 실행하고 Pi의 task, sub-agent, worktree, elicitation, 설정, 파일, session event를 연결합니다. `/hooks`에서 적용 설정을 확인합니다. Pi에 permission subsystem이 없으므로 permission hook은 무시합니다.
 - `synthetic_web_search`는 Synthetic 패키지를 통해 웹을 검색합니다.
 - `/btw <질문>`은 메인 에이전트가 작업 중일 때 읽기 전용 사이드 대화를 시작합니다.
 - `/btw:model`, `/btw:thinking`은 사이드 대화의 모델과 effort를 지정합니다.
@@ -415,9 +429,9 @@ Apex가 Responses API를 지원한다고 확인하기 전에는 `openai-completi
 
 ## TUI와 브라우저 자동화
 
-기본 테마는 `nord-dark`입니다. `choco-pi-ui`가 편집기, 사용자 메시지 프레임, 상태줄과 테마를 제공하며 `/preferences`의 Preferences 탭에서 각 영역을 설정합니다. 사용자 설정은 `~/.pi/agent/choco-pi-ui.json`에 저장합니다. 패키지는 기존 `pi-choco-ui.json`과 `zentui.json`도 계속 읽습니다. `/preferences`는 이전 `/zentui` 명령을 대체하며, `/zentui`는 더 이상 제공하지 않습니다.
+기본 테마는 `nord-dark`입니다. `choco-pi-ui`가 편집기, 사용자 메시지 프레임, 상태줄과 테마를 제공하며 `/preferences`의 Preferences 탭에서 각 영역을 설정합니다. 사용자 설정은 `~/.pi/agent/choco-pi-ui.json`에 저장합니다. 패키지는 기존 `pi-choco-ui.json`과 `zentui.json`도 계속 읽습니다. `/preferences`는 이전 `/zentui` 명령을 대체하며, `/zentui`는 더 이상 제공하지 않습니다. Mermaid fence는 터미널 diagram으로 렌더링합니다. 가로 flowchart가 transcript 너비를 넘으면 세로 layout으로 다시 시도한 뒤, 그래도 맞지 않을 때만 source fence를 표시합니다.
 
-브라우저 자동화는 Pi plugin이 아니라 전역 `agent-browser` skill과 CLI를 사용합니다. 호환 버전을 별도로 설치합니다.
+브라우저 자동화는 bundled `choco-pi-agent-browser` package와 전역 `agent-browser` skill을 함께 지원합니다. Skill 기반 browser session에는 호환 CLI를 설치합니다.
 
 ```sh
 npm install --global --allow-scripts=agent-browser agent-browser@0.33.2
@@ -480,6 +494,7 @@ Claude Code와 OpenAI Codex는 Pi OAuth credential과 각 CLI가 사용하는 us
   agents/                   Project-aware leaf role
   extensions/               공급자, 세션, context, usage, UI 동작
   extensions/agent-preferences/styles/  기본 제공 agent 스타일
+  packages/                 Hook, agent, MCP, LSP, UI, web, 자동화 로컬 Pi package
   prompts/                  익숙한 slash command template
   skills/                   작업 절차 구현
   scripts/                  작업 절차 공통 utility

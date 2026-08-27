@@ -2,7 +2,7 @@
 
 [한국어](README.ko.md)
 
-choco-pi is an opinionated, project-aware profile for the [Pi coding agent](https://pi.dev/). It combines custom operating rules, reusable workflows, model and provider controls, sub-agents, independent conversations, compaction settings, MCP, web search, browser automation, and a Nord-based terminal interface.
+choco-pi is an opinionated, project-aware profile for the [Pi coding agent](https://pi.dev/). It combines custom operating rules, reusable workflows, model and provider controls, sub-agents, independent conversations, persistent goals, Claude Code-compatible hooks, compaction, MCP, web and browser access, background shells, macOS automation, and a Nord-based terminal interface.
 
 The repository tracks shareable configuration only. OAuth tokens and API keys remain in Pi's user-level credential store and must not be committed.
 
@@ -25,6 +25,12 @@ The installer keeps credentials and runtime state intact, generates `~/.pi/agent
 
 Pi loads the local packages listed in [`.pi/settings.json`](.pi/settings.json). Run `/reload` after changing files under `.pi`.
 
+## Current status
+
+The current profile targets Pi 0.84.x and Node.js 24 or later. The repository test suite passes 941 tests, package typechecks pass, and focused tmux runs verify hook execution with `openai-codex/gpt-5.6-luna` and Mermaid rendering in the main TUI.
+
+`choco-pi-hooks` covers the Claude Code lifecycle through Pi events and local bridges for tasks, sub-agents, worktrees, MCP elicitation, configuration changes, and file changes. `PermissionRequest` and `PermissionDenied` hooks are intentionally ignored because choco-pi has no permission subsystem. `PreToolUse` allow and deny decisions remain available.
+
 ## Global profile
 
 This checkout is also the source of the current machine's global Pi profile under `~/.pi/agent`:
@@ -39,35 +45,41 @@ The tracked [`.pi/zentui.json`](.pi/zentui.json) renders the editor model in bol
 
 ## What this profile provides
 
-| Area              | Behavior                                                                                                                                        |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Operating rules   | Replaces Pi's base prompt with [`.pi/SYSTEM.md`](.pi/SYSTEM.md) and injects the active `provider/model` on every turn                           |
-| Project awareness | Applies root context at startup and loads path-scoped descendant `AGENTS.md` files when work enters those paths                                 |
-| Writing           | Applies the repository writing policy to normal responses and persisted documents without a separate skill command                              |
-| Workflows         | Provides direct implementation, parallel implementation, hotfix, review, environment check, and local commit workflows                          |
-| Agents            | Provides configurable `general`, `planner`, `implementer`, `reviewer`, and `handoff` leaf roles                                                 |
-| Conversations     | Creates and coordinates independent Pi sessions with create, list, read, wait, queue, and steer operations                                      |
-| Context           | Applies model-specific soft caps, deferred tool loading, `/context` usage analysis, and OpenAI Responses server-side compaction                 |
-| Providers         | Configures OpenAI Codex OAuth, Anthropic OAuth, Synthetic, and discovery-based Callstack Apex support                                           |
-| Tools             | Adds BM25 `tool_search`, MCP, Synthetic web search, LSP diagnostics, browser automation through the global skill, goals, and side conversations |
-| Interface         | Uses `nord-dark`, `choco-pi-ui`, provider usage views, model effort controls, and familiar session aliases                                      |
+| Area              | Behavior                                                                                                                                    |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operating rules   | Replaces Pi's base prompt with [`.pi/SYSTEM.md`](.pi/SYSTEM.md) and injects the active `provider/model` on every turn                       |
+| Project awareness | Applies root context at startup and loads path-scoped descendant `AGENTS.md` files when work enters those paths                             |
+| Writing           | Applies the repository writing policy to normal responses and persisted documents without a separate skill command                          |
+| Workflows         | Provides direct implementation, parallel implementation, hotfix, review, environment check, and local commit workflows                      |
+| Hooks             | Runs Claude Code-compatible command, HTTP, MCP, prompt, and agent hooks across Pi lifecycle events                                          |
+| Agents            | Provides configurable `general`, `planner`, `implementer`, `reviewer`, and `handoff` leaf roles                                             |
+| Conversations     | Creates and coordinates independent Pi sessions with create, list, read, wait, queue, and steer operations                                  |
+| Context           | Applies model-specific soft caps, deferred tool loading, `/context` usage analysis, persistent goals, and compaction continuation           |
+| Providers         | Configures OpenAI Codex OAuth, Anthropic OAuth, Synthetic, and discovery-based Callstack Apex support                                       |
+| Tools             | Adds BM25 `tool_search`, MCP, web research, LSP diagnostics, background shells, browser and macOS automation, goals, and side conversations |
+| Interface         | Uses `nord-dark`, `choco-pi-ui`, provider usage views, model effort controls, session aliases, and terminal Mermaid diagrams                |
 
 ## Installed packages
 
 The package paths are listed in [`.pi/settings.json`](.pi/settings.json); each local manifest records its version.
 
-| Package                                                                   | Version | Purpose                                                                                                     |
-| ------------------------------------------------------------------------- | ------: | ----------------------------------------------------------------------------------------------------------- |
-| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) |   0.1.0 | Synthetic provider, authentication, usage, and web search                                                   |
-| [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 |   0.1.0 | Editor, message framing, status line, and Nord themes                                                       |
-| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   |   0.1.0 | Local fork of `@tintinweb/pi-subagents@0.17.1` with sub-agents, workflows, side conversations, and fleet UI |
-| [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |   0.1.0 | Persistent Codex-style goals                                                                                |
-| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |   0.1.0 | Lazy MCP server loading                                                                                     |
-| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |   0.1.0 | LSP, lint, AST, and semantic diagnostics                                                                    |
-| [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |   0.1.0 | Codex-compatible tools and OpenAI Responses compaction                                                      |
-| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   |   0.1.0 | Descendant `AGENTS.md` loading                                                                              |
+| Package                                                                   |        Version | Purpose                                                                                                     |
+| ------------------------------------------------------------------------- | -------------: | ----------------------------------------------------------------------------------------------------------- |
+| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic provider, authentication, usage, and web search                                                   |
+| [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 |          0.1.0 | Editor, message framing, status line, and Nord themes                                                       |
+| [`choco-pi-shells`](.pi/packages/choco-pi-shells)                         |          0.1.0 | Owner-scoped background shell processes and output viewers                                                  |
+| [`choco-pi-hooks`](.pi/packages/choco-pi-hooks)                           |          0.1.0 | Claude Code-compatible lifecycle hooks and Pi integration bridges                                           |
+| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   |          0.1.0 | Local fork of `@tintinweb/pi-subagents@0.17.1` with sub-agents, workflows, side conversations, and fleet UI |
+| [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |          0.1.0 | Persistent Codex-style goals that continue across compaction                                                |
+| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | Lazy MCP servers, Figma tools, hook tool calls, and elicitation                                             |
+| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, AST, and semantic diagnostics                                                                    |
+| [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |          0.1.0 | Codex-compatible tools and OpenAI Responses compaction                                                      |
+| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   |          0.1.0 | Descendant `AGENTS.md` loading                                                                              |
+| [`choco-pi-web-access`](.pi/packages/choco-pi-web-access)                 | 0.24.1-choco.0 | Web search, source checking, authenticated fetches, PDFs, and GitHub content                                |
+| [`choco-pi-agent-browser`](.pi/packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | Native browser automation tools                                                                             |
+| [`choco-pi-computer-use`](.pi/packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS desktop inspection and interaction                                                                    |
 
-Voice, notebook, and background-shell features are intentionally not included.
+Voice and notebook features are intentionally not included.
 
 ## Commands
 
@@ -86,6 +98,7 @@ Voice, notebook, and background-shell features are intentionally not included.
 | `/review [session [turn <n>] \| branch <base> [target] \| resume \| pr <number>]` | Open the local human review view; no argument opens the target picker                                                                                                                                                                              |
 | `/usage`, `/quota`                                                                | Show Claude Code, OpenAI Codex, and Synthetic usage in one view; opens the same tab view on its Usage tab                                                                                                                                          |
 | `/preferences [args]`, `/pref`                                                    | Open the Preferences tab of the same view: agent language, agent style, and every choco-ui interface section. Accepts `agent`, `language <name>`, `style <name>`, the choco-ui direct toggles, and `format <template>`                             |
+| `/hooks`                                                                          | Browse the effective Claude-compatible hook configuration and its source files in a read-only view                                                                                                                                                 |
 | `/apex-refresh`                                                                   | Rediscover Callstack Apex models immediately                                                                                                                                                                                                       |
 
 Fast mode adds `service_tier: "priority"` only to OpenAI Codex requests. It can consume usage or API credit faster than the standard tier. The hidden llama.cpp provider remains available, but choco-pi removes `/llama` from the visible command list and command path.
@@ -355,7 +368,8 @@ Use `openai-completions` unless Apex has been confirmed to support the Responses
 
 - Copy [`.pi/mcp.example.json`](.pi/mcp.example.json) to `~/.pi/agent/mcp.json` and add any local OAuth client settings there. Keep it outside this checkout. Pi reads `~/.pi/agent/mcp.json` and a project `.pi/mcp.json` as separate sources, so a copy inside choco-pi registers every server twice whenever Pi runs from this directory, and a checkout that lacks the ignored file silently starts with no servers at all. `/mcp` shows configuration and runtime state.
 - A server whose authorization server does not support dynamic client registration needs a pre-registered client. Add `oauth.clientId` and `oauth.clientSecret` to that server's entry; a `clientSecret` beginning with `!` runs the rest as a shell command, which keeps the secret out of the file. Register `http://localhost:19876/callback` as the redirect URL with the provider.
-- `/goal <objective>` drafts a persistent goal from the task and creates it. A bare `/goal` shows its state and usage, and `/goal pause|resume|clear|copy` manages it.
+- `/goal <objective>` drafts a persistent goal from the task and creates it. Omitted token budgets remain unbounded, explicit budgets stay cumulative, and active goals continue after context compaction. A bare `/goal` shows state and usage; `/goal pause|resume|clear|copy` manages it.
+- `choco-pi-hooks` reads Claude Code hook settings, runs command, HTTP, MCP-tool, prompt, and agent handlers, and bridges Pi task, sub-agent, worktree, elicitation, configuration, file, and session events. `/hooks` shows the effective configuration. Permission hooks are ignored because Pi has no permission subsystem.
 - `synthetic_web_search` provides web search through the Synthetic package.
 - `/btw <question>` starts a read-only side conversation while the main agent is working.
 - `/btw:model` and `/btw:thinking` select the side conversation model and effort.
@@ -363,9 +377,9 @@ Use `openai-completions` unless Apex has been confirmed to support the Responses
 
 ## TUI and browser automation
 
-The default theme is `nord-dark`. `choco-pi-ui` supplies the editor, framed user messages, status line, and themes; the Preferences tab of `/preferences` configures those regions and stores user preferences in `~/.pi/agent/choco-pi-ui.json`. The package still reads legacy `pi-choco-ui.json` and `zentui.json` files. `/preferences` replaces the former `/zentui` command, which no longer exists.
+The default theme is `nord-dark`. `choco-pi-ui` supplies the editor, framed user messages, status line, and themes; the Preferences tab of `/preferences` configures those regions and stores user preferences in `~/.pi/agent/choco-pi-ui.json`. The package still reads legacy `pi-choco-ui.json` and `zentui.json` files. `/preferences` replaces the former `/zentui` command, which no longer exists. Mermaid fences render as terminal diagrams; when a horizontal flowchart exceeds the transcript width, choco-pi retries it with a vertical layout before leaving the source fence visible.
 
-Browser automation uses the global `agent-browser` skill and CLI rather than a Pi plugin. Install the compatible executable separately:
+Browser automation is available through the bundled `choco-pi-agent-browser` package and the global `agent-browser` skill. Install the compatible CLI for skill-driven browser sessions:
 
 ```sh
 npm install --global --allow-scripts=agent-browser agent-browser@0.33.2
@@ -428,6 +442,7 @@ Claude Code and OpenAI Codex usage depend on Pi OAuth credentials and provider e
   agents/                   Project-aware leaf roles
   extensions/               Provider, session, context, usage, and UI behavior
   extensions/agent-preferences/styles/  Shipped agent styles
+  packages/                 Local Pi packages, including hooks, agents, MCP, LSP, UI, web, and automation
   prompts/                  Familiar slash-command templates
   skills/                   Workflow implementations
   scripts/                  Shared workflow utilities
