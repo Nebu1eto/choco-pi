@@ -56,3 +56,31 @@ test("disableAllHooks preserves only managed hooks", (t) => {
     ["managed"],
   );
 });
+
+test("project hook settings prefer .pi then .agents with .claude as fallback", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "choco-hooks-precedence-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const directory of [".claude", ".agents", ".pi"]) fs.mkdirSync(path.join(root, directory));
+  const settings = (command: string, disableAllHooks?: boolean) => ({
+    disableAllHooks,
+    hooks: { Stop: [{ hooks: [{ type: "command", command }] }] },
+  });
+  fs.writeFileSync(
+    path.join(root, ".claude", "settings.json"),
+    JSON.stringify(settings("claude", true)),
+  );
+  fs.writeFileSync(path.join(root, ".agents", "settings.json"), JSON.stringify(settings("agents")));
+  fs.writeFileSync(path.join(root, ".pi", "settings.json"), JSON.stringify(settings("pi", false)));
+
+  const loaded = loadHookSources({ cwd: root, managedSettingsPaths: [] });
+  const projectSources = loaded.sources.filter((item) => item.kind === "project");
+  assert.equal(loaded.disabled, false);
+  assert.deepEqual(
+    projectSources.flatMap((item) =>
+      (item.hooks.Stop ?? []).flatMap((group) =>
+        group.hooks.map((handler) => (handler.type === "command" ? handler.command : "")),
+      ),
+    ),
+    ["claude", "agents", "pi"],
+  );
+});

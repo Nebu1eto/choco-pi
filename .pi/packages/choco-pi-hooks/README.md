@@ -1,13 +1,13 @@
 # choco-pi-hooks
 
-`choco-pi-hooks` is a Claude Code hook compatibility engine and Pi extension. It reads the standard Claude Code hook blocks from:
+`choco-pi-hooks` is a Claude Code hook compatibility engine and Pi extension. It reads hook blocks in increasing precedence from:
 
-- `~/.claude/settings.json`
-- `<project>/.claude/settings.json`
-- `<project>/.claude/settings.local.json`
+- Claude fallback: `~/.claude/settings.json`, `<project>/.claude/settings.json`, `<project>/.claude/settings.local.json`
+- Agent-shared: `~/.agents/settings.json`, `<project>/.agents/settings.json`, `<project>/.agents/settings.local.json`
+- Pi preferred: `$PI_CODING_AGENT_DIR/settings.json`, `<project>/.pi/settings.json`, `<project>/.pi/settings.local.json`
 - caller-provided managed, plugin, skill, agent, and session sources
 
-The engine exports all 31 documented hook event names and supports command, HTTP, MCP-tool, prompt, and agent handlers. MCP and model handlers use injected backends so host integrations can preserve the same decision semantics.
+The engine exports all 31 documented hook event names and supports command, HTTP, MCP-tool, prompt, and agent handlers. The Pi extension supplies MCP and model backends and bridges task, sub-agent, worktree, elicitation, configuration, file, and session events. `PermissionRequest` and `PermissionDenied` are ignored because Pi has no permission subsystem.
 
 ## Pi integration
 
@@ -21,7 +21,7 @@ The bundled extension maps Pi lifecycle events to their direct Claude Code equiv
 - `agent_end` → `Stop`
 - `session_shutdown` → `SessionEnd`
 
-Other documented events remain available through `HookEngine.run()` for Pi extensions or hosts that own those lifecycle signals.
+`COMPATIBILITY.md` records every live binding and explicit host exclusion.
 
 ## Public API
 

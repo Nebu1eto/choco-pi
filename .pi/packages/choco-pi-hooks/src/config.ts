@@ -16,6 +16,28 @@ export interface LoadedHookSources {
   disabled: boolean;
 }
 
+interface SettingsCandidate {
+  file: string;
+  kind: HookSource["kind"];
+  settings: SettingsWithHooks | undefined;
+}
+
+function defaultSettingsCandidates(cwd: string): Array<Omit<SettingsCandidate, "settings">> {
+  const home = os.homedir();
+  const piAgentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(home, ".pi", "agent");
+  return [
+    { file: path.join(home, ".claude", "settings.json"), kind: "user" },
+    { file: path.join(cwd, ".claude", "settings.json"), kind: "project" },
+    { file: path.join(cwd, ".claude", "settings.local.json"), kind: "local" },
+    { file: path.join(home, ".agents", "settings.json"), kind: "user" },
+    { file: path.join(cwd, ".agents", "settings.json"), kind: "project" },
+    { file: path.join(cwd, ".agents", "settings.local.json"), kind: "local" },
+    { file: path.join(piAgentDir, "settings.json"), kind: "user" },
+    { file: path.join(cwd, ".pi", "settings.json"), kind: "project" },
+    { file: path.join(cwd, ".pi", "settings.local.json"), kind: "local" },
+  ];
+}
+
 function defaultManagedSettingsPaths(): string[] {
   if (process.platform === "darwin")
     return ["/Library/Application Support/ClaudeCode/managed-settings.json"];
@@ -59,18 +81,24 @@ function source(
 }
 
 export function loadHookSources(options: LoadHooksOptions): LoadedHookSources {
-  const userPath = options.userSettingsPath ?? path.join(os.homedir(), ".claude", "settings.json");
-  const projectPath = path.join(options.cwd, ".claude", "settings.json");
-  const localPath = path.join(options.cwd, ".claude", "settings.local.json");
+  const candidates = (
+    options.userSettingsPath
+      ? [
+          { file: options.userSettingsPath, kind: "user" as const },
+          { file: path.join(options.cwd, ".claude", "settings.json"), kind: "project" as const },
+          {
+            file: path.join(options.cwd, ".claude", "settings.local.json"),
+            kind: "local" as const,
+          },
+        ]
+      : defaultSettingsCandidates(options.cwd)
+  ).map((candidate) => ({ ...candidate, settings: readSettings(candidate.file) }));
   const managed = (options.managedSettingsPaths ?? defaultManagedSettingsPaths()).map((file) => ({
     file,
     settings: readSettings(file),
   }));
-  const user = readSettings(userPath);
-  const project = readSettings(projectPath);
-  const local = readSettings(localPath);
-  const ordinaryDisabled = [user, project, local].reduce<boolean>(
-    (value, item) => item?.disableAllHooks ?? value,
+  const ordinaryDisabled = candidates.reduce<boolean>(
+    (value, item) => item.settings?.disableAllHooks ?? value,
     false,
   );
   const managedDisabled = managed.reduce<boolean | undefined>(
@@ -84,9 +112,7 @@ export function loadHookSources(options: LoadHooksOptions): LoadedHookSources {
   if (disabled) return { sources: managedSources, disabled: true };
   const sources = [
     ...managedSources,
-    source(userPath, "user", user),
-    source(projectPath, "project", project),
-    source(localPath, "local", local),
+    ...candidates.map((candidate) => source(candidate.file, candidate.kind, candidate.settings)),
     ...(options.extraSources ?? []),
   ].filter((item): item is HookSource => item !== undefined);
   return { sources, disabled: false };
