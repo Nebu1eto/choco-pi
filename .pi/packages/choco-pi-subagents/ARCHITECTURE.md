@@ -35,8 +35,8 @@ this extension out must stay completely silent.
 | Module                     | Role                                                                                                                                                                                                                                                                                                                                             |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `index.ts`                 | Extension factory: root tool registration (`Agent`, result/steer/stop, `agent_message`, workflows and limits), the `/agents` command tree, settings menus, the `input` mention hook, batch grouping, and lifecycle handlers.                                                                                                                     |
-| `agent-manager.ts`         | Record lifecycle: spawn, queue, concurrency, abort, steer, resume, completion callbacks, globally unique handle allocation and tombstones, `maxConcurrent` scheduling. Before disposing an owned child session it invokes the optional shell cleanup bridge. Workflow steps carry aggregate/step ids but otherwise use this lifecycle unchanged. |
-| `child-session-cleanup.ts` | Optional cross-extension disposal seam: resolves `Symbol.for("choco-pi-shells:manager")`, starts `cleanupOwner` for the child session id, and contains missing/malformed registries and cleanup rejection without delaying `AgentSession.dispose()`.                                                                                             |
+| `agent-manager.ts`         | Record lifecycle: spawn, queue, concurrency, abort, steer, resume, completion callbacks, globally unique handle allocation and tombstones, `maxConcurrent` scheduling. Before disposing an owned child session it invokes the optional owner cleanup bridge. Workflow steps carry aggregate/step ids but otherwise use this lifecycle unchanged. |
+| `child-session-cleanup.ts` | Optional cross-extension disposal seam: resolves shell and Codex cleanup registries, invokes each callable `cleanupOwner` with the child session id, and contains malformed registries and cleanup failures independently without delaying `AgentSession.dispose()`.                                                                             |
 | `workflow.ts`              | TypeBox workflow definition, graph/type/reference validation, bounded prompt rendering, mutable DAG scheduler, failure policy, cancellation and aggregate results. The runner interface keeps scheduling tests independent of live agents.                                                                                                       |
 | `agent-runner.ts`          | Builds and drives the child `AgentSession`: tool allow/denylists, always-on child messaging, `ext:` narrowing, extension filtering, model runtime inheritance, turn limits, final-status classification.                                                                                                                                         |
 | `agent-types.ts`           | The registry of spawnable types: defaults overlaid by user agents, `enabled` filtering, `resolveType`/`resolveSpawnType`, fallback policy.                                                                                                                                                                                                       |
@@ -51,11 +51,12 @@ queued }`; paths are canonical tree identities and `toId` is undefined for
 `/root`.
 
 The child-session cleanup bridge is deliberately one-way and optional. The
-subagents package imports no shell implementation; it looks up the shell
-manager's process-global registry only at AgentManager-owned disposal points.
-`cleanupOwner` is invoked before `AgentSession.dispose()` because shell cleanup
-starts process signals synchronously, while its returned promise is observed
-only to contain rejection and never extends the synchronous disposal path.
+subagents package imports neither cleanup implementation; it looks up the shell
+manager and Codex transport process-global registries only at AgentManager-owned
+disposal points. Each `cleanupOwner` starts before `AgentSession.dispose()`.
+Returned promises are observed only to contain rejection and never extend the
+synchronous disposal path. Independent lookup and invocation containment keeps
+one malformed or failing registry from blocking the other.
 
 ### Configuration
 

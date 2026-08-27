@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   handleCodexAgentSettled,
+  registerCodexEvents,
   registerSessionReplacementEvents,
 } from "../src/extension/events.ts";
 import { withLiveCtx } from "../src/extension/live-context.ts";
@@ -37,6 +38,60 @@ function extensionApiFixture(): ExtensionAPI {
 function contextFixture(isIdle: () => boolean, notify: () => void): ExtensionContext {
   return reinterpretHostValue<ExtensionContext>({ isIdle, ui: { notify } });
 }
+
+test("session_start resets only the transport lane for the starting session", async () => {
+  const handlers = new Map<string, RegisteredHandler>();
+  const registrationFixture = {
+    on(event: string, handler: RegisteredHandler) {
+      handlers.set(event, handler);
+    },
+    getActiveTools() {
+      return [];
+    },
+    setActiveTools() {},
+  };
+  // SAFETY: Event registration and adapter activation use only the fixture members above.
+  const pi = reinterpretHostValue<ExtensionAPI>(registrationFixture);
+  const runtime = createCodexExtensionRuntime(pi);
+  const resets: Array<string | undefined> = [];
+  runtime.resetTransport = (sessionId) => resets.push(sessionId);
+  runtime.configureDiagnostics = () => Promise.resolve();
+  runtime.execEnv = () => ({});
+  runtime.startPrewarm = () => undefined;
+  const tools = reinterpretHostValue<Parameters<typeof registerCodexEvents>[2]>({
+    ensureOptionalTools() {},
+  });
+  const ui = reinterpretHostValue<Parameters<typeof registerCodexEvents>[3]>({
+    invalidateUsageStatus() {},
+    refreshUsageStatus: () => Promise.resolve(),
+  });
+  const codeMode = reinterpretHostValue<Parameters<typeof registerCodexEvents>[4]>({
+    prepare: () => Promise.resolve(),
+    refreshPromptTools: (prompt: string) => prompt,
+  });
+  const proxyProvider = reinterpretHostValue<Parameters<typeof registerCodexEvents>[5]>({
+    applyConfig() {},
+  });
+  const startContext = (sessionId: string) =>
+    reinterpretHostValue<ExtensionContext>({
+      cwd: process.cwd(),
+      getSystemPrompt: () => "test system prompt",
+      hasUI: false,
+      isProjectTrusted: () => false,
+      model: undefined,
+      modelRegistry: {},
+      sessionManager: { getSessionId: () => sessionId },
+    });
+
+  registerCodexEvents(pi, runtime, tools, ui, codeMode, proxyProvider);
+  const sessionStart = handlers.get("session_start");
+  assert.ok(sessionStart);
+  await sessionStart({ reason: "resume" }, startContext("parent-session"));
+  await sessionStart({ reason: "resume" }, startContext("child-session"));
+
+  assert.deepEqual(resets, ["parent-session", "child-session"]);
+  assert.ok(resets.every((sessionId) => sessionId !== undefined));
+});
 
 test("a stale keepalive context exception is contained and does not re-arm", async () => {
   const runtime = createCodexExtensionRuntime(extensionApiFixture(), {

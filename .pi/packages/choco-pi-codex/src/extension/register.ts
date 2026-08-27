@@ -12,11 +12,13 @@ import {
 import { createCodexExtensionRuntime } from "./runtime.ts";
 import { registerCodexTools } from "./tools.ts";
 import { registerCodexUi } from "./ui.ts";
+import { registerCodexTransportCleanup } from "./transport-cleanup.ts";
 import { resolveCodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
 import { captureActiveProviderSystemPrompt } from "../adapter/provider-prompt-capture.ts";
 import { withLiveCtx } from "./live-context.ts";
 
 export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
+  registerCodexTransportCleanup();
   registerApplyPatchDisplayBroker(pi);
   const runtime = createCodexExtensionRuntime(pi);
   registerCanonicalAliasEndpointPreflight(pi, runtime);

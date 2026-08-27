@@ -29,9 +29,9 @@ import {
   type PiSystemPromptOptions,
 } from "../prompt/build-system-prompt.ts";
 import {
-  closeOpenAICodexWebSocketSessions,
-  resetOpenAICodexWebSocketSessions,
-} from "../providers/openai-codex/websocket-session-cache.ts";
+  cleanupOpenAICodexTransportSession,
+  resetOpenAICodexTransportSession,
+} from "../providers/openai-codex/transport-cleanup.ts";
 import { createCodexTurnState } from "../providers/openai-codex/turn-state.ts";
 import type {
   CodexPrewarmUsage,
@@ -76,7 +76,7 @@ export interface CodexExtensionRuntime {
   armCacheKeepalive(ctx: CodexContext): void;
   cancelCacheKeepalive(): void;
   captureCacheKeepaliveRequest(payload: ResponsesBody): void;
-  resetTransport(sessionId?: string): void;
+  resetTransport(sessionId: string): void;
   resetTransportAfterCompaction(sessionId: string): void;
   shutdownTransport(sessionId: string): void;
   waitForPrewarm(ctx: CodexContext, systemPrompt: string): Promise<CodexPrewarmResult> | undefined;
@@ -454,17 +454,14 @@ export function createCodexExtensionRuntime(
       prewarmedIdentity = undefined;
       cacheKeepaliveRequest = undefined;
       state.codexTurnState.reset();
-      if (sessionId) resetOpenAICodexWebSocketSessions(sessionId);
-      else closeOpenAICodexWebSocketSessions();
+      resetOpenAICodexTransportSession(sessionId);
     },
     resetTransportAfterCompaction(sessionId) {
       runtime.resetTransport(sessionId);
-      closeOpenAICodexWebSocketSessions(sessionId);
     },
     shutdownTransport(sessionId) {
-      cancelCacheKeepalive();
       runtime.resetTransport(sessionId);
-      closeOpenAICodexWebSocketSessions(sessionId);
+      cleanupOpenAICodexTransportSession(sessionId);
     },
     waitForPrewarm(ctx, systemPrompt) {
       return runtime.startPrewarm(ctx, systemPrompt, true);

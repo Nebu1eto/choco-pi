@@ -156,7 +156,7 @@ export function registerCodexEvents(
     const [{ initializeBashParser }, { extractPiPromptSkills }, { maybeWarnLocalCheckoutVersion }] =
       await Promise.all([loadBash(), loadPromptBuilder(), loadLocalVersionWarning()]);
     initializeBashParser();
-    runtime.resetTransport();
+    runtime.resetTransport(ctx.sessionManager.getSessionId());
     state.cwd = ctx.cwd;
     state.config = readEffectiveCodexConversionConfig({
       cwd: ctx.cwd,
