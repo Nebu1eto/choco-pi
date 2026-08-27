@@ -101,7 +101,7 @@ test("registers /quota as a white-text alias for /usage", async () => {
   assert.match(notifications[0]?.[0] ?? "", /^<text>Claude Code — not connected/);
 });
 
-test("closes an open status dialog before its session context becomes stale", async () => {
+test("closes an open status dialog when reload starts before its context becomes stale", async () => {
   type Command = { handler: (args: string, ctx: never) => Promise<void> };
   type DialogFactory = (
     tui: { requestRender: () => void },
@@ -111,10 +111,10 @@ test("closes an open status dialog before its session context becomes stale", as
   ) => RuntimeValue;
 
   const commands = new Map<string, Command>();
-  let shutdown: (() => void) | undefined;
+  let sessionStart: (() => void) | undefined;
   const api = {
     on: (event: string, handler: () => void) => {
-      if (event === "session_shutdown") shutdown = handler;
+      if (event === "session_start") sessionStart = handler;
     },
     registerCommand: (name: string, command: Command) => commands.set(name, command),
     getThinkingLevel: () => "medium",
@@ -146,9 +146,29 @@ test("closes an open status dialog before its session context becomes stale", as
   const command = commands.get("usage")?.handler("", ctx as never);
 
   assert.equal(dialogOpen, true);
-  shutdown?.();
+  sessionStart?.();
   await command;
   assert.equal(dialogOpen, false);
+});
+
+test("contains a synchronous stale-context failure while a tab is switching", async () => {
+  const paints: string[] = [];
+  const controller = createTabController({
+    load: () => {
+      throw new Error("This extension ctx is stale after session replacement or reload.");
+    },
+    paint: (body) => paints.push(body),
+    loading: "Loading",
+    failure: (_id, message) => `Failed: ${message}`,
+  });
+
+  assert.doesNotThrow(() => controller.activate("context"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(paints, [
+    "Loading",
+    "Failed: This extension ctx is stale after session replacement or reload.",
+  ]);
+  controller.dispose();
 });
 
 test("labels Claude plans from the live profile, with Team seats before the rate-limit tier", () => {
