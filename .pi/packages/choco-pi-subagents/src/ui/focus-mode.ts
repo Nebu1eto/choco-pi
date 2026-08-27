@@ -5,7 +5,11 @@ import { Value } from "@sinclair/typebox/value";
 import type { AgentRecord } from "../types.ts";
 import type { AgentActivity, Theme } from "./agent-widget.ts";
 import { ConversationViewer } from "./conversation-viewer.ts";
-import { focusedAgentRuntime, publishFocusedAgentRuntime } from "./focused-runtime.ts";
+import {
+  focusedAgentRuntime,
+  publishFocusedAgentRuntime,
+  type FocusedAgentRuntime,
+} from "./focused-runtime.ts";
 import { installMethodPatch } from "./method-patch-registry.ts";
 
 const FOCUS_WIDGET_KEY = "subagent-focus";
@@ -223,6 +227,18 @@ function focusLabel(record: AgentRecord): string {
   return `@${record.alias ?? record.handle ?? record.type}`;
 }
 
+function withoutFocusedUsage(runtime: FocusedAgentRuntime): FocusedAgentRuntime {
+  return {
+    modelId: runtime.modelId,
+    modelName: runtime.modelName,
+    provider: runtime.provider,
+    thinking: runtime.thinking,
+    costTotal: null,
+    contextPercent: null,
+    contextWindow: null,
+  };
+}
+
 /** `/exit` and its aliases, as typed at a prompt that a focused agent owns. */
 function isExitCommand(text: string): boolean {
   const command = text.trim().toLowerCase();
@@ -271,7 +287,8 @@ export class FocusedAgentController {
   /** Replace the main transcript renderer and bind the current prompt editor. */
   focus(record: AgentRecord, tui: TUI, theme: Theme): boolean {
     const session = record.session;
-    if (!session) {
+    const initialRuntime = focusedAgentRuntime(record);
+    if (!session || !initialRuntime) {
       this.ui?.notify(`Agent is ${record.status} — no session available.`, "info");
       return false;
     }
@@ -325,7 +342,13 @@ export class FocusedAgentController {
     }
     this.ensureEditorPatch();
     this.installIndicator(record);
-    this.clearFocusedRuntime = publishFocusedAgentRuntime(() => focusedAgentRuntime(record));
+    let unavailableRuntime = withoutFocusedUsage(initialRuntime);
+    this.clearFocusedRuntime = publishFocusedAgentRuntime(() => {
+      const currentRuntime = focusedAgentRuntime(record);
+      if (!currentRuntime) return unavailableRuntime;
+      unavailableRuntime = withoutFocusedUsage(currentRuntime);
+      return currentRuntime;
+    });
     tui.requestRender(true);
     return true;
   }

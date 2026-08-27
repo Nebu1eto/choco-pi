@@ -451,8 +451,11 @@ never has to be loaded.
 Focusing an agent publishes the child session's live model, provider, thinking
 level, settled session cost and context usage/window on an optional `Symbol.for`
 slot, which editor chrome reads on every render and which is cleared on unfocus,
-session switch and disposal. The getter resolves `record.session` on every read
-and disappears with it, so session replacement cannot retain stale runtime data.
+session switch and disposal. The getter resolves `record.session` on every read,
+so session replacement cannot retain stale runtime data. If retention cleanup
+evicts the session while its transcript remains focused, the publisher keeps
+only the last scalar model identity and reports usage as unknown until focus ends;
+it never exposes the main session's usage under child focus.
 Ordinary cost is scoped to the focused session and excludes descendants. A
 `/btw` record captures its cloned session's initial stats cost and session id
 before prompting; only the same session subtracts that baseline, clamped at zero.

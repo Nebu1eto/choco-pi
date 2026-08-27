@@ -316,10 +316,18 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
     contextWindow: 524_288,
   });
   record.session = undefined;
-  assert.equal(
+  assert.deepEqual(
     currentFocusedRuntime(),
-    undefined,
-    "publisher never falls back to the initial session",
+    {
+      modelId: "claude-opus-5",
+      modelName: "Claude Opus 5",
+      provider: "anthropic",
+      thinking: "xhigh",
+      costTotal: null,
+      contextPercent: null,
+      contextWindow: null,
+    },
+    "an evicted focused session keeps child identity but never exposes main usage",
   );
   record.session = session;
   assert.deepEqual(controller.getState(), { kind: "agent", agentId: "agent-7" });

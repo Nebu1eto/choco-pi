@@ -310,12 +310,18 @@ export function installFooter(
             : tier === "warning"
               ? config.colors.contextWarning
               : config.colors.contextNormal;
-        const cacheReadLabel = state.cacheReadLabel
-          ? renderStyleForSource(theme, colorSource, config.colors.tokens, state.cacheReadLabel)
-          : "";
-        const cacheWriteLabel = state.cacheWriteLabel
-          ? renderStyleForSource(theme, colorSource, config.colors.tokens, state.cacheWriteLabel)
-          : "";
+        const tokenLabel =
+          !focusedUsage && state.tokenLabel
+            ? renderStyleForSource(theme, colorSource, config.colors.tokens, state.tokenLabel)
+            : "";
+        const cacheReadLabel =
+          !focusedUsage && state.cacheReadLabel
+            ? renderStyleForSource(theme, colorSource, config.colors.tokens, state.cacheReadLabel)
+            : "";
+        const cacheWriteLabel =
+          !focusedUsage && state.cacheWriteLabel
+            ? renderStyleForSource(theme, colorSource, config.colors.tokens, state.cacheWriteLabel)
+            : "";
         const subscriptionLabel =
           !focusedUsage && state.subscription
             ? renderStyleForSource(theme, colorSource, config.colors.cost, "(sub)")
@@ -420,12 +426,7 @@ export function installFooter(
             case "context":
               return renderStyleForSource(theme, colorSource, contextColor, contextLabel);
             case "tokens":
-              return renderStyleForSource(
-                theme,
-                colorSource,
-                config.colors.tokens,
-                state.tokenLabel,
-              );
+              return tokenLabel;
             case "cache_read":
               return cacheReadLabel;
             case "cache_write":
@@ -646,11 +647,7 @@ export function installFooter(
         ]
           .filter(Boolean)
           .join(" ");
-        const builtInTokenLabel = [
-          renderStyleForSource(theme, colorSource, config.colors.tokens, state.tokenLabel),
-          cacheReadLabel,
-          cacheWriteLabel,
-        ]
+        const builtInTokenLabel = [tokenLabel, cacheReadLabel, cacheWriteLabel]
           .filter(Boolean)
           .join(" ");
         const builtInCostLabel = [
