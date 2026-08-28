@@ -17,10 +17,10 @@ interface ToolDefinition {
 const expectedTools = [
   ["find_roots", ["text", "app", "bundleId", "pid", "kind"], []],
   ["observe_ui", ["root", "mode"], []],
-  ["search_ui", ["text", "role", "capability", "stateId"], ["stateId"]],
-  ["expand_ui", ["ref", "depth", "stateId"], ["ref", "stateId"]],
-  ["inspect_ui", ["ref", "stateId"], ["ref", "stateId"]],
-  ["act_ui", ["stateId", "expect", "actions"], ["stateId", "actions"]],
+  ["search_ui", ["text", "role", "capability", "stateId"], []],
+  ["expand_ui", ["ref", "depth", "stateId"], ["ref"]],
+  ["inspect_ui", ["ref", "stateId"], ["ref"]],
+  ["act_ui", ["stateId", "expect", "actions"], ["actions"]],
   ["read_text", ["ref", "offset", "stateId"], ["ref"]],
   [
     "wait_for",

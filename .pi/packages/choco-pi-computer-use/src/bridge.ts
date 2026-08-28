@@ -118,7 +118,7 @@ import type {
   PlatformRoot as HelperWindow,
 } from "./platform/types.ts";
 import type { PermissionStatus } from "./permissions.ts";
-import { ResourceScheduler } from "./runtime.ts";
+import { ResourceScheduler, StaleResourceStateError, type StoredState } from "./runtime.ts";
 import { scoreWindow, shouldPreferForegroundModalWindow } from "./root-selection.ts";
 import {
   SavedStates,
@@ -157,6 +157,34 @@ type ExecutionVariant = "stealth" | "default";
 type ActionDelivery = "ax" | NativeInputDelivery;
 type DeliveryPolicy = "ax_only" | "background" | "default" | "foreground";
 type ActOutcome = "worked" | "didnt" | "unknown";
+type ObservationRefreshReason = "missing" | "stale";
+
+export interface ObservationRefreshRequirement {
+  code: "observation_refresh_required";
+  operation: string;
+  reason: ObservationRefreshReason;
+  stateId?: string;
+  refresh: {
+    tool: "observe_ui";
+    arguments: JsonObject;
+  };
+  staleness?: {
+    resourceKey: string;
+    observationEpoch: number;
+    currentEpoch: number;
+  };
+}
+
+export class ObservationRefreshRequiredError extends Error {
+  readonly code = "observation_refresh_required";
+  readonly requirement: ObservationRefreshRequirement;
+
+  constructor(requirement: ObservationRefreshRequirement) {
+    super(JSON.stringify(requirement));
+    this.name = "ObservationRefreshRequiredError";
+    this.requirement = requirement;
+  }
+}
 
 interface ExecutionTrace {
   strategy: "look" | "act" | "wait" | "browser_open_location" | "cdp_navigate";
@@ -423,6 +451,8 @@ const BROWSER_TRANSACTION_ACTIONS = new Set<UiAction["action"]>([
   "drag",
   "moveMouse",
 ]);
+const AUTO_OBSERVE_TOOLS = new Set(["search_ui", "expand_ui", "inspect_ui"]);
+const OBSERVATION_REQUIRED_MUTATIONS = new Set(["act_ui"]);
 
 const runtimeState: RuntimeState = {
   lastPermissionCheckAt: 0,
@@ -450,6 +480,47 @@ function persistOperation(state: OperationState): void {
   const resourceKey = state.resourceKey ?? desktopResourceKey(state.currentTarget);
   const epoch = state.epoch ?? resourceScheduler.epoch(resourceKey);
   savedStates.saveDesktop(state, resourceKey, epoch);
+}
+
+function refreshArguments(state: OperationState): JsonObject {
+  const root = state.currentTarget?.windowRef;
+  if (root) return { root, mode: "fused" };
+  const contextId = state.contextId;
+  if (isBrowserContextId(contextId)) return { root: storeBrowserRootRef(contextId), mode: "fused" };
+  return { mode: "fused" };
+}
+
+function observationRefreshRequired(
+  operation: string,
+  reason: ObservationRefreshReason,
+  state: OperationState,
+  stateId?: string,
+  stale?: Pick<StaleResourceStateError, "resourceKey" | "expectedEpoch" | "actualEpoch">,
+): ObservationRefreshRequiredError {
+  return new ObservationRefreshRequiredError({
+    code: "observation_refresh_required",
+    operation,
+    reason,
+    stateId,
+    refresh: { tool: "observe_ui", arguments: refreshArguments(state) },
+    staleness: stale
+      ? {
+          resourceKey: stale.resourceKey,
+          observationEpoch: stale.expectedEpoch,
+          currentEpoch: stale.actualEpoch,
+        }
+      : undefined,
+  });
+}
+
+function staleObservation(
+  record: StoredState<unknown> | undefined,
+): StaleResourceStateError | undefined {
+  if (!record) return undefined;
+  const currentEpoch = resourceScheduler.epoch(record.resourceKey);
+  return record.epoch === currentEpoch
+    ? undefined
+    : new StaleResourceStateError(record.resourceKey, record.epoch, currentEpoch);
 }
 
 /** Release handles and state owned by the current Pi session. */
@@ -3312,6 +3383,7 @@ interface StatefulToolParams {
 }
 
 async function executeTool<P, T>(
+  tool: string,
   ctx: ExtensionContext,
   params: P,
   signal: AbortSignal | undefined,
@@ -3325,15 +3397,39 @@ async function executeTool<P, T>(
   const requestedStateId = outputRef ? undefined : trimOrUndefined(stateParams.stateId);
   const stateRecord = requestedStateId ? savedStates.get(requestedStateId) : undefined;
   if (requestedStateId && !stateRecord) {
+    if (OBSERVATION_REQUIRED_MUTATIONS.has(tool)) {
+      throw observationRefreshRequired(tool, "missing", {}, requestedStateId);
+    }
     throw new Error(
       `State '${requestedStateId}' is unavailable or was evicted. Observe the root again.`,
     );
   }
   const operation = savedStates.hydrate(stateRecord);
+  if (OBSERVATION_REQUIRED_MUTATIONS.has(tool)) {
+    if (!operation.currentCapture) {
+      throw observationRefreshRequired(tool, "missing", operation, requestedStateId);
+    }
+    const stale = staleObservation(stateRecord);
+    if (stale) throw observationRefreshRequired(tool, "stale", operation, requestedStateId, stale);
+  }
   return await savedStates.operations.run(operation, async () => {
     await resourceScheduler.read("session-lifecycle", async () => await ensureReady(ctx, signal));
     throwIfAborted(signal);
-    const result = await run();
+    if (AUTO_OBSERVE_TOOLS.has(tool) && !operation.currentCapture) {
+      // Semantic observation only reads the accessibility tree: it disables OCR,
+      // image capture, focus changes, and every action delivery path.
+      await performObserve({ mode: "semantic" }, signal);
+      throwIfAborted(signal);
+    }
+    let result: T;
+    try {
+      result = await run();
+    } catch (error) {
+      if (OBSERVATION_REQUIRED_MUTATIONS.has(tool) && error instanceof StaleResourceStateError) {
+        throw observationRefreshRequired(tool, "stale", operation, requestedStateId, error);
+      }
+      throw error;
+    }
     persistOperation(operation);
     return result;
   });
@@ -3353,7 +3449,7 @@ function makeToolExecutor<P, D>(
     try {
       return applyOutputEnvelope(
         tool,
-        await executeTool(ctx, params, signal, () => perform(params, signal)),
+        await executeTool(tool, ctx, params, signal, () => perform(params, signal)),
       );
     } catch (error) {
       throw boundToolError(tool, error);

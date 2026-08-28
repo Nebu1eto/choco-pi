@@ -64,6 +64,9 @@ No enums, namespaces, decorators, or other constructor parameter properties rema
 ### Tests and documentation
 
 - Replaced the upstream source-text `scripts/check-tool-schemas.mjs` check with `tests/load.test.ts`, which imports the extension and bridge under Node strip-types and pins all 11 tool names plus their parameter-property and required-field shapes.
+- Made `stateId` optional for the read-only `search_ui`, `expand_ui`, and `inspect_ui` tools. On a fresh operation they now establish a semantic observation internally; this capture disables OCR and images and never delivers input. The `act_ui.stateId` schema is also optional so a missing state reaches its structured runtime refusal, but actions remain state-bound and never auto-observe.
+- Defined observation staleness using the existing per-resource scheduler epoch: an action state is stale when its saved epoch differs from the resource's current epoch after a write. Missing and stale action states now throw `ObservationRefreshRequiredError`, whose JSON message and typed `requirement` include `code`, `operation`, `reason`, the requested `stateId` when available, exact `observe_ui` refresh arguments, and both epochs for stale states.
+- Added a test-only platform-backend replacement hook so transition tests can exercise full bridge executors without installing or invoking native helpers.
 - Added this provenance record, package working rules, and fork-specific README.
 
 ## Updating
