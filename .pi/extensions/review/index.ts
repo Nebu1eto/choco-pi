@@ -1,4 +1,5 @@
 import { propertiesWhen } from "../lib/runtime-values.ts";
+import { createLifecycleOwner, rethrowUnlessStaleContext } from "../lib/lifecycle.ts";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -524,11 +525,17 @@ export function registerReviewExtension(
   const readConfig = dependencies.loadConfig ?? loadReviewConfig;
   const showView = dependencies.openView ?? openReviewView;
   const now = dependencies.now ?? (() => new Date().toISOString());
+  const lifecycle = createLifecycleOwner<ExtensionCommandContext | CompletionContext>();
   let completionContext: CompletionContext | undefined;
   let activeConfig: ResolvedReviewConfig | undefined;
 
   pi.on("session_start", (_event, ctx) => {
     completionContext = ctx;
+    lifecycle.replace(ctx);
+  });
+  pi.on("session_shutdown", () => {
+    completionContext = undefined;
+    lifecycle.invalidate();
   });
 
   // This patch changes rendering only. It neither changes tool execution nor
@@ -542,9 +549,14 @@ export function registerReviewExtension(
 
   pi.registerCommand("review", {
     description: "Review session, branch, or pull request changes without model context",
-    getArgumentCompletions: (prefix) =>
-      argumentCompletions(prefix, completionContext, store, runner),
+    getArgumentCompletions: async (prefix) => {
+      const lease = lifecycle.capture();
+      const result = await argumentCompletions(prefix, completionContext, store, runner);
+      return lease && lifecycle.isCurrent(lease) ? result : null;
+    },
     handler: async (args, ctx) => {
+      const lease = lifecycle.capture() ?? lifecycle.replace(ctx);
+      const isCurrent = () => lifecycle.isCurrent(lease);
       const parsed = parseReviewCommand(args, currentSessionId(ctx));
       if (!parsed.ok) {
         ctx.ui.notify(parsed.message, "warning");
@@ -554,17 +566,25 @@ export function registerReviewExtension(
         ctx.ui.notify("Interactive code review is available in Pi's TUI.", "warning");
         return;
       }
+      const cwd = ctx.cwd;
+      const chatModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+      const chatThinkingLevel = ctx.thinkingLevel;
 
       try {
         await ctx.waitForIdle();
-        const root = await repositoryRoot(ctx.cwd, runner);
+        if (!isCurrent()) return;
+        const root = await repositoryRoot(cwd, runner);
+        if (!isCurrent()) return;
         const repository = repoKey(root);
         const provider = checkpointProvider(pi, ctx);
         let preferred: ReviewRecord | undefined;
         let target: ReviewTarget | undefined;
-        if (parsed.action === "pick") target = await chooseTarget(ctx, provider, runner);
-        else if (parsed.action === "resume") {
+        if (parsed.action === "pick") {
+          target = await chooseTarget(ctx, provider, runner);
+          if (!isCurrent()) return;
+        } else if (parsed.action === "resume") {
           preferred = await pickReviewRecord(ctx.ui, store, repository);
+          if (!isCurrent()) return;
           if (!preferred) {
             ctx.ui.notify("No saved reviews are available for this repository.", "warning");
             return;
@@ -585,12 +605,14 @@ export function registerReviewExtension(
         }
 
         const config = await readConfig({ cwd: root });
+        if (!isCurrent()) return;
         activeConfig = config;
         // Preparing a pull request review fetches its diff and checks out
         // a worktree, which can take several seconds; show progress
         // instead of a frozen prompt. Optional because headless hosts
         // provide no widget surface.
         const preparingWidget = (text: string | undefined) => {
+          if (!isCurrent()) return;
           ctx.ui.setWidget?.("review-preparing", text === undefined ? undefined : [text]);
         };
         let pullRequest: PullRequestReview | undefined;
@@ -609,11 +631,14 @@ export function registerReviewExtension(
                   })),
                 })
               : undefined;
+          if (!isCurrent()) return;
           const model = pullRequest
             ? parseGitDiff(pullRequest.rawDiff, pullRequest.baseSha, pullRequest.headSha)
             : await readTargetDiff(root, target, provider, runner);
+          if (!isCurrent()) return;
           const assessments = assessDiff(model, config);
           const record = await loadOrCreateRecord(store, repository, target, model, now, preferred);
+          if (!isCurrent()) return;
           preparingWidget(undefined);
           const result = await showView({
             model,
@@ -624,17 +649,18 @@ export function registerReviewExtension(
             ...propertiesWhen(pullRequest, () => ({ pullRequest: pullRequest!.metadata })),
             // The side chat continues the user's own model choice: the
             // main session's current model, not Pi's default.
-            ...propertiesWhen(ctx.model, () => ({
-              chatModel: `${ctx.model!.provider}/${ctx.model!.id}`,
-            })),
-            ...propertiesWhen(ctx.thinkingLevel, () => ({ chatThinkingLevel: ctx.thinkingLevel })),
+            ...propertiesWhen(chatModel, () => ({ chatModel })),
+            ...propertiesWhen(chatThinkingLevel, () => ({ chatThinkingLevel })),
             listChatModels: async () =>
-              ctx.modelRegistry.getAvailable().map((entry) => `${entry.provider}/${entry.id}`),
+              isCurrent()
+                ? ctx.modelRegistry.getAvailable().map((entry) => `${entry.provider}/${entry.id}`)
+                : [],
             host: ctx.ui,
             store,
             styler: ctx.ui.theme,
             now,
           });
+          if (!isCurrent()) return;
           if (result && (target.kind === "session" || target.kind === "session-turn")) {
             provider.appendReviewState?.(result.record);
           }
@@ -652,6 +678,10 @@ export function registerReviewExtension(
           if (pullRequest) await disposePullRequestWorktree(pullRequest, runner);
         }
       } catch (error) {
+        if (!isCurrent()) {
+          rethrowUnlessStaleContext(error);
+          return;
+        }
         ctx.ui.notify(
           `Review failed: ${error instanceof Error ? error.message : String(error)}`,
           "error",
