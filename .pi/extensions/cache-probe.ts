@@ -147,27 +147,52 @@ function hasCacheBreakpoint(value: JsonValue): boolean {
 
 function normalizedTool(tool: JsonValue): JsonValue {
   if (!isJsonRecord(tool)) return tool;
+  const definition = isJsonRecord(tool.function)
+    ? tool.function
+    : isJsonRecord(tool.custom)
+      ? tool.custom
+      : tool;
   return {
-    name: tool.name,
-    description: tool.description,
-    schema: tool.input_schema ?? tool.parameters ?? tool.schema,
+    name: definition.name,
+    description: definition.description,
+    schema:
+      definition.input_schema ?? definition.parameters ?? definition.schema ?? definition.format,
   };
 }
 
 function namesForTools(tools: JsonValue[]): string[] {
-  return tools.flatMap((tool) => (isJsonRecord(tool) && isString(tool.name) ? [tool.name] : []));
+  return tools.flatMap((tool) => {
+    const normalized = normalizedTool(tool);
+    return isJsonRecord(normalized) && isString(normalized.name) ? [normalized.name] : [];
+  });
+}
+
+function textContent(value: JsonValue | undefined): string {
+  if (isString(value)) return value;
+  if (!Array.isArray(value)) return "";
+  return value
+    .map((block) => {
+      if (isString(block)) return block;
+      return isJsonRecord(block) && isString(block.text) ? block.text : "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n");
 }
 
 /** The composed system prompt as one string, however the provider carries it. */
 export function systemText(payload: JsonValue): string {
   const request = isJsonRecord(payload) ? payload : {};
   const system = request.system ?? request.instructions;
-  if (isString(system)) return system;
-  if (!Array.isArray(system)) return "";
-  return system
-    .map((block) => {
-      if (isString(block)) return block;
-      return isJsonRecord(block) && isString(block.text) ? block.text : "";
+  if (isString(system) || Array.isArray(system)) return textContent(system);
+
+  const messages = Array.isArray(request.messages) ? request.messages : [];
+  return messages
+    .flatMap((message) => {
+      if (!isJsonRecord(message) || (message.role !== "system" && message.role !== "developer")) {
+        return [];
+      }
+      const text = textContent(message.content);
+      return text.length > 0 ? [text] : [];
     })
     .join("\n");
 }
