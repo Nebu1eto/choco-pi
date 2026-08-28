@@ -28,6 +28,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { toNestedTool } from "../../adapter/code-mode/nested-tool-adapter.ts";
 import { withLiveCtx } from "../../extension/live-context.ts";
+import { enhanceCodeModeNestedToolError } from "./nested-tool-errors.ts";
 import type { ProgrammaticCodeModeToolDefinition } from "./types.ts";
 
 type BridgedRunnerPrototype = typeof ExtensionRunner.prototype & {
@@ -118,6 +119,17 @@ const ToolParametersSchema = Type.Object({
   required: Type.Optional(Type.Array(Type.String())),
 });
 
+/** All direct Pi tool names, including tools intentionally excluded from the bridge. */
+export function registeredToolNames(
+  runner: RegisteredToolSource | undefined = registeredToolRunner(),
+): string[] {
+  if (!runner) return [];
+  return runner
+    .getAllRegisteredTools()
+    .map(({ definition }) => definition.name)
+    .sort((left, right) => left.localeCompare(right));
+}
+
 /** One compact call line, e.g. await tools.symbol_search({query, limit?}). */
 export function bridgedToolUsage(definition: ToolDefinition): string {
   const parameters = Value.Check(ToolParametersSchema, definition.parameters)
@@ -143,9 +155,25 @@ export function collectBridgedTools(
   for (const registered of runner.getAllRegisteredTools()) {
     const definition = registered.definition;
     if (BRIDGE_EXCLUDED_TOOLS.has(definition.name)) continue;
-    bridged.push(
-      toNestedTool(definition, bridgedToolUsage(definition), {}, { deferLoading: true }),
+    const nested = toNestedTool(
+      definition,
+      bridgedToolUsage(definition),
+      {},
+      {
+        deferLoading: true,
+      },
     );
+    const toolName = definition.name;
+    bridged.push({
+      ...nested,
+      invoke(input, context, signal) {
+        const cwd = context.cwd;
+        return nested.invoke(input, context, signal).catch((error) => {
+          const parsedError = error instanceof Error ? error : new Error(String(error));
+          throw enhanceCodeModeNestedToolError(toolName, input, parsedError, cwd);
+        });
+      },
+    });
   }
   return bridged;
 }
