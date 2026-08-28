@@ -189,8 +189,13 @@ test("disposed watcher handles the canonical stale-context rejection", async (t)
     onAllowedConfigChange: () => undefined,
   });
   t.after(() => watcher.dispose());
-  fs.writeFileSync(path.join(cwd, ".env"), "A=1\n");
-  await waitFor(() => pending.some(({ event }) => event === "FileChanged"));
+  let revision = 0;
+  await waitFor(() => {
+    if (pending.some(({ event }) => event === "FileChanged")) return true;
+    revision += 1;
+    fs.writeFileSync(path.join(cwd, ".env"), `A=${revision}\n`);
+    return false;
+  });
   watcher.dispose();
 
   const unhandled: RuntimeValue[] = [];
