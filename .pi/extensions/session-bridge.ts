@@ -1,4 +1,9 @@
 import { isNumber, isObject, isString, type RuntimeValue } from "./lib/runtime-values.ts";
+import {
+  enqueueSessionDelivery,
+  limitSessionWait,
+  SESSION_WAIT_LIMIT_MS,
+} from "./lib/session-communication.ts";
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -35,8 +40,7 @@ const HEARTBEAT_STALE_MS = 6_000;
 const MAILBOX_FALLBACK_INTERVAL_MS = 5_000;
 const WAIT_POLL_INTERVAL_MS = 250;
 const MAILBOX_LOCK_STALE_MS = 10_000;
-const DEFAULT_WAIT_MS = 30_000;
-const MAX_WAIT_MS = 300_000;
+const MAILBOX_ACCEPT_TIMEOUT_MS = 30_000;
 const DEFAULT_READ_LIMIT = 50;
 const MAX_READ_LIMIT = 200;
 const THINKING_LEVELS = [
@@ -461,25 +465,23 @@ async function withNextMailboxSequence(
 async function sendSessionMessage(
   ctx: ExtensionContext,
   input: { sessionId: string; mode: DeliveryMode; message: string },
-): Promise<{ delivered: "direct" | "mailbox"; status: SessionStatus }> {
+): Promise<{ accepted: "direct" | "mailbox"; status: SessionStatus }> {
   const message = input.message.trim();
   if (!message) throw new Error("Message must not be empty.");
   if (input.sessionId === ctx.sessionManager.getSessionId()) {
     throw new Error("Use the current conversation directly instead of sending to itself.");
   }
+  const fromSessionId = ctx.sessionManager.getSessionId();
   const managed = bridgeState().runtimes.get(input.sessionId);
   if (managed?.session.sessionManager.getCwd() === ctx.cwd) {
-    const delivery = managed.deliveryChain.then(() =>
+    enqueueSessionDelivery(managed, () =>
       startManagedTask(managed, () =>
-        managed.session.sendUserMessage(
-          formatIncomingMessage(ctx.sessionManager.getSessionId(), message),
-          { deliverAs: input.mode === "queue" ? "followUp" : "steer" },
-        ),
+        managed.session.sendUserMessage(formatIncomingMessage(fromSessionId, message), {
+          deliverAs: input.mode === "queue" ? "followUp" : "steer",
+        }),
       ),
     );
-    managed.deliveryChain = delivery.catch(() => undefined);
-    await delivery;
-    return { delivered: "direct", status: managed.status };
+    return { accepted: "direct", status: managed.status };
   }
 
   const live = await readLiveState(input.sessionId);
@@ -494,13 +496,13 @@ async function sendSessionMessage(
   await queueMailboxMessage({
     version: BRIDGE_VERSION,
     id: randomUUID(),
-    fromSessionId: ctx.sessionManager.getSessionId(),
+    fromSessionId,
     targetSessionId: input.sessionId,
     mode: input.mode,
     message,
     createdAt: new Date().toISOString(),
   });
-  return { delivered: "mailbox", status: isFresh(live) ? live.status : "inactive" };
+  return { accepted: "mailbox", status: isFresh(live) ? live.status : "inactive" };
 }
 
 function messageMarker(messageId: string): string {
@@ -704,7 +706,7 @@ async function waitForSession(
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<{ changed: boolean; timedOut: boolean; session: SessionSnapshot }> {
-  const boundedTimeout = Math.max(0, Math.min(MAX_WAIT_MS, Math.floor(timeoutMs)));
+  const boundedTimeout = limitSessionWait(timeoutMs);
   const deadline = Date.now() + boundedTimeout;
   const readSnapshot = await sessionSnapshotReader(cwd, sessionId);
   let snapshot = await readSnapshot();
@@ -829,7 +831,10 @@ function installUserCommands(pi: ExtensionAPI): void {
           mode: mode as DeliveryMode,
           message,
         });
-        ctx.ui.notify(`Message sent via ${result.delivered}; target is ${result.status}.`, "info");
+        ctx.ui.notify(
+          `Message accepted via ${result.accepted}; target is ${result.status}.`,
+          "info",
+        );
       } catch (error) {
         commandError(ctx, error);
       }
@@ -859,9 +864,9 @@ function installUserCommands(pi: ExtensionAPI): void {
       try {
         const [sessionId, secondsValue, afterCursor] = args.trim().split(/\s+/, 3);
         if (!sessionId) throw new Error("Usage: /session-wait <id> [seconds] [after-cursor]");
-        const seconds = secondsValue ? Number(secondsValue) : DEFAULT_WAIT_MS / 1_000;
-        if (!Number.isFinite(seconds) || seconds < 0)
-          throw new Error("Seconds must be a non-negative number.");
+        const seconds = secondsValue ? Number(secondsValue) : SESSION_WAIT_LIMIT_MS / 1_000;
+        if (!Number.isFinite(seconds) || seconds < 0 || seconds > SESSION_WAIT_LIMIT_MS / 1_000)
+          throw new Error("Seconds must be between 0 and 5.");
         const result = await waitForSession(
           ctx.cwd,
           sessionId,
@@ -913,7 +918,7 @@ function installAgentTools(pi: ExtensionAPI): void {
     name: "session_send",
     label: "Send conversation message",
     description:
-      "Send a message to another choco-pi conversation in the current project. Use steer for an active conversation's next safe point, or queue for FIFO delivery after its current work. Queued messages persist while a target is inactive.",
+      "Asynchronously send a message to another choco-pi conversation in the current project without waiting for its next turn. Use steer for an active conversation's next safe point, or queue for FIFO delivery after its current work. Queued messages persist while a target is inactive.",
     promptSnippet: "Send queue or steer messages to another choco-pi conversation",
     parameters: Type.Object({
       session_id: Type.String({ description: "Target session ID" }),
@@ -973,7 +978,7 @@ function installAgentTools(pi: ExtensionAPI): void {
     name: "session_wait",
     label: "Wait for conversation",
     description:
-      "Wait until another choco-pi conversation becomes idle. With after_cursor, also require transcript progress. Returns on completion, timeout, or cancellation.",
+      "Give another choco-pi conversation one bounded wait of at most 5 seconds to become idle. With after_cursor, also require transcript progress. Continue other work after a timeout instead of polling.",
     promptSnippet: "Wait for another choco-pi conversation to make progress and become idle",
     parameters: Type.Object({
       session_id: Type.String({ description: "Session ID to wait for" }),
@@ -988,8 +993,8 @@ function installAgentTools(pi: ExtensionAPI): void {
       timeout_ms: Type.Optional(
         Type.Integer({
           minimum: 0,
-          maximum: MAX_WAIT_MS,
-          description: "Wait timeout in milliseconds; defaults to 30000",
+          maximum: SESSION_WAIT_LIMIT_MS,
+          description: "Wait timeout in milliseconds; defaults to 5000 and cannot exceed 5000",
         }),
       ),
     }),
@@ -1000,7 +1005,7 @@ function installAgentTools(pi: ExtensionAPI): void {
           ctx.cwd,
           params.session_id,
           params.after_cursor,
-          params.timeout_ms ?? DEFAULT_WAIT_MS,
+          params.timeout_ms ?? SESSION_WAIT_LIMIT_MS,
           signal,
         ),
       ),
@@ -1034,7 +1039,7 @@ function installLiveSessionBridge(pi: ExtensionAPI): void {
   };
 
   const waitForAcceptedMessage = async (messageId: string, signal?: AbortSignal): Promise<void> => {
-    const deadline = Date.now() + DEFAULT_WAIT_MS;
+    const deadline = Date.now() + MAILBOX_ACCEPT_TIMEOUT_MS;
     while (!transcriptHasMessage(messageId)) {
       if (Date.now() >= deadline && currentContext?.isIdle()) {
         throw new Error(`Target did not accept mailbox message ${messageId}.`);
