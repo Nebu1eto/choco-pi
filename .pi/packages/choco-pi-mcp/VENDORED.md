@@ -133,6 +133,14 @@ Anything still escaping `updateStatusBar` is a defect in this package and
 should stay loud rather than be demoted to a warning at one of nineteen
 callers.
 
+### Unix socket data typing (`unix-socket-transport.ts`)
+
+Upstream passes each Unix socket `data` event directly to the MCP client's
+`ReadBuffer`. The fork documents that this socket never calls `setEncoding`
+and narrows the event's `string | NonSharedBuffer` declaration to `Buffer`
+before the call. The assertion is erased at runtime, so transport behavior is
+unchanged.
+
 ## Configuration reads
 
 `config.ts:389-456` automatically merges these files in increasing precedence:

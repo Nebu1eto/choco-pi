@@ -150,39 +150,87 @@ test("summarizeMainUsage counts messages and attributes cost per response model"
   assert.equal(other?.tokens, 10, "tool and compaction usage share one bucket");
 });
 
-test("computeCacheWaste bills a repeated prompt and ignores breakpoint noise", () => {
+test("computeCacheWaste bills material full and partial cache collapse", () => {
   const prices = { find: () => ({ cost: { cacheRead: 0.3 } }) };
   const entries: SessionEntry[] = [
-    assistantEntry("anthropic", "claude-fable-5", { input: 10_000, cacheWrite: 10_000 }),
-    // The whole 20,000-token prompt was billed again instead of read from cache.
+    assistantEntry("anthropic", "claude-fable-5", { cacheWrite: 150_000 }),
+    // 60,000 tokens of the reusable prompt were billed at $3/M instead of read at $0.30/M.
     assistantEntry("anthropic", "claude-fable-5", {
-      input: 20_000,
-      costInput: 0.06,
+      input: 60_000,
+      costInput: 0.18,
+      cacheRead: 90_000,
+      costCacheRead: 0.027,
+    }),
+    // The next turn loses the cache entirely.
+    assistantEntry("anthropic", "claude-fable-5", {
+      input: 150_000,
+      costInput: 0.45,
       cacheRead: 0,
     }),
   ];
 
   const waste = computeCacheWaste(entries, prices);
-  assert.equal(waste.missCount, 1);
-  assert.equal(waste.missedTokens, 20_000);
-  // Paid $3/M against a $0.30/M cache read: 20,000 * $2.70/M.
-  assert.equal(waste.missedCost.toFixed(4), "0.0540");
+  assert.equal(waste.missCount, 2);
+  assert.equal(waste.missedTokens, 210_000);
+  assert.equal(waste.missedCost.toFixed(3), "0.567");
+});
+
+test("computeCacheWaste ignores absolute and proportional breakpoint noise", () => {
+  const prices = { find: () => ({ cost: { cacheRead: 0.3 } }) };
+  const previous = assistantEntry("anthropic", "claude-fable-5", { cacheWrite: 147_224 });
+  const stablePrefix = computeCacheWaste(
+    [
+      previous,
+      assistantEntry("anthropic", "claude-fable-5", {
+        input: 4_403,
+        cacheRead: 146_176,
+      }),
+    ],
+    prices,
+  );
+  assert.deepEqual(stablePrefix, { missedTokens: 0, missedCost: 0, missCount: 0 });
 
   const noisy = computeCacheWaste(
-    [entries[0], assistantEntry("anthropic", "claude-fable-5", { cacheRead: 19_500, input: 500 })],
+    [
+      assistantEntry("anthropic", "claude-fable-5", { cacheWrite: 20_000 }),
+      assistantEntry("anthropic", "claude-fable-5", { cacheRead: 19_500, input: 500 }),
+    ],
     prices,
   );
   assert.deepEqual(noisy, { missedTokens: 0, missedCost: 0, missCount: 0 });
 });
 
-test("computeCacheWaste restarts after compaction replaces the prompt", () => {
-  const entries: SessionEntry[] = [
-    assistantEntry("anthropic", "claude-fable-5", { input: 10_000, cacheWrite: 10_000 }),
-    simpleEntry("compaction"),
-    assistantEntry("anthropic", "claude-fable-5", { input: 20_000, costInput: 0.06 }),
-  ];
-  const waste = computeCacheWaste(entries, { find: () => undefined });
-  assert.equal(waste.missCount, 0, "post-compaction prompt is new content, not re-billed content");
+test("computeCacheWaste does not count a cold-start prompt", () => {
+  const waste = computeCacheWaste(
+    [assistantEntry("anthropic", "claude-fable-5", { input: 150_000, costInput: 0.45 })],
+    { find: () => ({ cost: { cacheRead: 0.3 } }) },
+  );
+  assert.deepEqual(waste, { missedTokens: 0, missedCost: 0, missCount: 0 });
+});
+
+test("computeCacheWaste restarts after compaction and branch summaries", () => {
+  for (const resetType of ["compaction", "branch_summary"]) {
+    const entries: SessionEntry[] = [
+      assistantEntry("anthropic", "claude-fable-5", { cacheWrite: 150_000 }),
+      simpleEntry(resetType),
+      assistantEntry("anthropic", "claude-fable-5", { input: 150_000, costInput: 0.45 }),
+    ];
+    const waste = computeCacheWaste(entries, { find: () => undefined });
+    assert.equal(waste.missCount, 0, `post-${resetType} prompt is new content`);
+  }
+});
+
+test("computeCacheWaste charges a material miss across a model switch", () => {
+  const waste = computeCacheWaste(
+    [
+      assistantEntry("anthropic", "claude-fable-5", { cacheWrite: 100_000 }),
+      assistantEntry("openai-codex", "gpt-5.6-sol", { input: 100_000, costInput: 0.2 }),
+    ],
+    { find: () => ({ cost: { cacheRead: 0.5 } }) },
+  );
+  assert.equal(waste.missCount, 1);
+  assert.equal(waste.missedTokens, 100_000);
+  assert.equal(waste.missedCost.toFixed(3), "0.150");
 });
 
 test("summarizeSubagentUsage totals every agent transcript under one root session", async (context) => {

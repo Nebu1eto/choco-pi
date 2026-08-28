@@ -15,8 +15,9 @@ import {
 
 const MAX_SEGMENTS = 2_000;
 const MAX_HASH_CHARS = 500_000;
-const MAX_TOOL_NAMES = 100;
 const MAX_ERRORS = 3;
+const MAX_IDENTIFIER_CHARS = 128;
+const MAX_CACHE_KEY_CHARS = 1_024;
 
 type SegmentKind = "system" | "tools" | "message";
 
@@ -39,6 +40,23 @@ type SegmentDiff = {
   divergedKind: SegmentKind | null;
   segmentsAdded: number;
   segmentsRemoved: number;
+};
+
+export type PrefixState = "initial" | "append" | "restart" | "unchanged";
+
+export type PrefixAttribution = SegmentDiff & {
+  state: PrefixState;
+  systemRegions: string[];
+  modelChanged: boolean;
+};
+
+export type CachePayloadMetadata = {
+  promptCacheKeyPresent: boolean;
+  promptCacheKeyHash?: string;
+  promptCacheKeyTruncated?: boolean;
+  promptCacheRetentionPresent: boolean;
+  promptCacheRetention?: "in-memory" | "24h";
+  promptCacheRetentionValid?: boolean;
 };
 
 export interface ProviderPrefixMetrics {
@@ -93,6 +111,17 @@ type ProbeRecord = {
   requestId?: number;
   provider: string;
   model: string;
+  lane?: string;
+  state?: PrefixState;
+  modelChanged?: boolean;
+  systemRegions?: string[];
+  toolCount?: number;
+  promptCacheKeyPresent?: boolean;
+  promptCacheKeyHash?: string;
+  promptCacheKeyTruncated?: boolean;
+  promptCacheRetentionPresent?: boolean;
+  promptCacheRetention?: "in-memory" | "24h";
+  promptCacheRetentionValid?: boolean;
   segmentCount?: number;
   firstDivergence?: number | null;
   divergedKind?: SegmentKind | null;
@@ -129,7 +158,7 @@ function hashSegment(kind: SegmentKind, value: JsonValue): CacheSegment {
   const hashInput = serialized.slice(0, MAX_HASH_CHARS);
   return {
     kind,
-    hash: createHash("sha256").update(hashInput).digest("hex"),
+    hash: createHash("sha256").update(kind).update("\0").update(hashInput).digest("hex"),
     chars: serialized.length,
     hashTruncated: serialized.length > MAX_HASH_CHARS,
   };
@@ -147,11 +176,9 @@ function hasCacheBreakpoint(value: JsonValue): boolean {
 
 function normalizedTool(tool: JsonValue): JsonValue {
   if (!isJsonRecord(tool)) return tool;
-  const definition = isJsonRecord(tool.function)
-    ? tool.function
-    : isJsonRecord(tool.custom)
-      ? tool.custom
-      : tool;
+  let definition = tool;
+  if (isJsonRecord(tool.function)) definition = tool.function;
+  else if (isJsonRecord(tool.custom)) definition = tool.custom;
   return {
     name: definition.name,
     description: definition.description,
@@ -165,6 +192,21 @@ function namesForTools(tools: JsonValue[]): string[] {
     const normalized = normalizedTool(tool);
     return isJsonRecord(normalized) && isString(normalized.name) ? [normalized.name] : [];
   });
+}
+
+function isOpenAiPayload(request: JsonRecord, provider: string | undefined): boolean {
+  const normalized = provider?.toLowerCase() ?? "";
+  return (
+    normalized.includes("openai") ||
+    normalized.includes("codex") ||
+    "instructions" in request ||
+    "input" in request ||
+    (Array.isArray(request.messages) &&
+      request.messages.some(
+        (message) =>
+          isJsonRecord(message) && (message.role === "system" || message.role === "developer"),
+      ))
+  );
 }
 
 function textContent(value: JsonValue | undefined): string {
@@ -244,10 +286,11 @@ export function changedSystemRegions(
     .sort((left, right) => left.localeCompare(right));
 }
 
-/** Extracts only the prefix that can participate in provider prompt caching. */
-export function cacheableSegments(payload: JsonValue): SegmentSnapshot {
+/** Extracts the provider's complete cacheable prompt prefix without retaining its raw text. */
+export function cacheableSegments(payload: JsonValue, provider?: string): SegmentSnapshot {
   const request: JsonRecord = isJsonRecord(payload) ? payload : {};
   const collected: Array<{ kind: SegmentKind; value: JsonValue }> = [];
+  const openAi = isOpenAiPayload(request, provider);
   const system = request.system ?? request.instructions;
   if (Array.isArray(system)) {
     for (const block of system) collected.push({ kind: "system", value: block });
@@ -256,23 +299,38 @@ export function cacheableSegments(payload: JsonValue): SegmentSnapshot {
   }
 
   const tools = Array.isArray(request.tools) ? request.tools : undefined;
-  if (tools) collected.push({ kind: "tools", value: tools.map(normalizedTool) });
-
-  const messages = Array.isArray(request.messages)
-    ? request.messages
-    : Array.isArray(request.input)
-      ? request.input
-      : [];
-  let lastBreakpoint = -1;
-  for (let index = 0; index < messages.length; index += 1) {
-    if (hasCacheBreakpoint(messages[index])) lastBreakpoint = index;
-  }
-  for (let index = 0; index <= lastBreakpoint; index += 1) {
-    collected.push({ kind: "message", value: messages[index] });
+  if (tools) {
+    for (const tool of tools) collected.push({ kind: "tools", value: tool });
   }
 
-  const capped = collected.length > MAX_SEGMENTS;
-  const segments = collected
+  let messages: JsonValue[] = [];
+  if (Array.isArray(request.messages)) messages = request.messages;
+  else if (Array.isArray(request.input)) messages = request.input;
+  else if (request.input !== undefined) messages = [request.input];
+  for (const message of messages) {
+    const kind =
+      openAi && isJsonRecord(message) && (message.role === "system" || message.role === "developer")
+        ? "system"
+        : "message";
+    collected.push({ kind, value: message });
+  }
+
+  let cacheable = collected;
+  if (!openAi) {
+    let lastBreakpoint = -1;
+    const rawSegments: JsonValue[] = [];
+    if (Array.isArray(system)) rawSegments.push(...system);
+    else if (system !== undefined) rawSegments.push(system);
+    if (tools) rawSegments.push(...tools);
+    rawSegments.push(...messages);
+    for (let index = 0; index < rawSegments.length; index += 1) {
+      if (hasCacheBreakpoint(rawSegments[index])) lastBreakpoint = index;
+    }
+    cacheable = collected.slice(0, lastBreakpoint + 1);
+  }
+
+  const capped = cacheable.length > MAX_SEGMENTS;
+  const segments = cacheable
     .slice(0, MAX_SEGMENTS)
     .map(({ kind, value }) => hashSegment(kind, value));
   return {
@@ -280,6 +338,90 @@ export function cacheableSegments(payload: JsonValue): SegmentSnapshot {
     capped,
     truncatedHashes: segments.filter((segment) => segment.hashTruncated).length,
     toolNames: tools ? namesForTools(tools) : [],
+  };
+}
+
+type PrefixAttributionInput = {
+  previous: readonly CacheSegment[] | undefined;
+  current: readonly CacheSegment[];
+  previousRegions: SystemRegionHashes | undefined;
+  currentRegions: SystemRegionHashes;
+  previousModel: string | undefined;
+  currentModel: string;
+};
+
+export function prefixAttribution(input: PrefixAttributionInput): PrefixAttribution {
+  const { previous, current, previousRegions, currentRegions, previousModel, currentModel } = input;
+  const diff = diffCacheableSegments(previous, current);
+  let state: PrefixState = "restart";
+  if (!previous && previousModel === undefined) state = "initial";
+  else if (previous && diff.firstDivergence === null) state = "unchanged";
+  else if (
+    previous &&
+    diff.firstDivergence === previous.length &&
+    current.length > previous.length
+  ) {
+    state = "append";
+  }
+  return {
+    ...diff,
+    state,
+    systemRegions: changedSystemRegions(previousRegions, currentRegions),
+    modelChanged: previousModel !== undefined && previousModel !== currentModel,
+  };
+}
+
+export function cachePayloadMetadata(payload: JsonValue): CachePayloadMetadata {
+  const request: JsonRecord = isJsonRecord(payload) ? payload : {};
+  const key = request.prompt_cache_key;
+  const retention = request.prompt_cache_retention;
+  const metadata: CachePayloadMetadata = {
+    promptCacheKeyPresent: key !== undefined,
+    promptCacheRetentionPresent: retention !== undefined,
+  };
+  if (isString(key)) {
+    const keyText = String(key);
+    const bounded = keyText.slice(0, MAX_CACHE_KEY_CHARS);
+    metadata.promptCacheKeyHash = createHash("sha256").update(bounded).digest("hex");
+    metadata.promptCacheKeyTruncated = keyText.length > MAX_CACHE_KEY_CHARS;
+  }
+  if (retention !== undefined) {
+    metadata.promptCacheRetentionValid = retention === "in-memory" || retention === "24h";
+    if (retention === "in-memory") metadata.promptCacheRetention = "in-memory";
+    else if (retention === "24h") metadata.promptCacheRetention = "24h";
+  }
+  return metadata;
+}
+
+type PendingRequests = { ids: number[]; ambiguous: boolean };
+type RequestLinkStart = { requestId: number; overlap: boolean };
+type RequestLinkFinish = { requestId?: number; note: string | null };
+
+/** Correlates usage only while at most one provider request is in flight per stream. */
+export function createRequestLinker() {
+  let nextRequestId = 1;
+  const pendingByStream = new Map<string, PendingRequests>();
+  return {
+    begin(stream: string): RequestLinkStart {
+      const requestId = nextRequestId;
+      nextRequestId += 1;
+      const pending = pendingByStream.get(stream);
+      if (!pending) {
+        pendingByStream.set(stream, { ids: [requestId], ambiguous: false });
+        return { requestId, overlap: false };
+      }
+      pending.ids.push(requestId);
+      pending.ambiguous = true;
+      return { requestId, overlap: true };
+    },
+    finish(stream: string): RequestLinkFinish {
+      const pending = pendingByStream.get(stream);
+      if (!pending) return { note: "unmatched-assistant-message" };
+      const requestId = pending.ids.shift();
+      if (pending.ids.length === 0) pendingByStream.delete(stream);
+      if (pending.ambiguous) return { note: "overlapping-requests-unlinked" };
+      return { requestId, note: requestId === undefined ? "unmatched-assistant-message" : null };
+    },
   };
 }
 
@@ -325,13 +467,26 @@ export function currentProviderPrefixMetrics(
 }
 
 function payloadProvider(payload: JsonValue, ctx: ExtensionContext): string {
-  if (isJsonRecord(payload) && isString(payload.provider)) return payload.provider;
-  return ctx.model?.provider ?? "unknown";
+  const value =
+    isJsonRecord(payload) && isString(payload.provider) ? payload.provider : ctx.model?.provider;
+  return safeIdentifier(value);
 }
 
 function payloadModel(payload: JsonValue, ctx: ExtensionContext): string {
-  if (isJsonRecord(payload) && isString(payload.model)) return payload.model;
-  return ctx.model?.id ?? "unknown";
+  const value = isJsonRecord(payload) && isString(payload.model) ? payload.model : ctx.model?.id;
+  return safeIdentifier(value);
+}
+
+function safeIdentifier(value: string | undefined): string {
+  if (
+    value === undefined ||
+    value.length === 0 ||
+    value.length > MAX_IDENTIFIER_CHARS ||
+    !/^[A-Za-z0-9._:/-]+$/.test(value)
+  ) {
+    return "unknown";
+  }
+  return value;
 }
 
 function datePath(now: Date): string {
@@ -350,22 +505,16 @@ function appendRecord(record: ProbeRecord): void {
   appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
 }
 
-function toolNote(names: string[]): string {
-  const shown = names.slice(0, MAX_TOOL_NAMES);
-  const suffix = names.length > shown.length ? `, … (+${names.length - shown.length})` : "";
-  return `tools=${shown.join(",") || "none"}${suffix}`;
-}
-
 function numberValue(value: JsonValue): number | undefined {
   return isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
 export default function cacheProbe(pi: ExtensionAPI): void {
   providerPrefixRegistry().clear();
-  const previousByStream = new Map<string, CacheSegment[]>();
-  const systemByStream = new Map<string, SystemRegionHashes>();
-  const requestByStream = new Map<string, number>();
-  let nextRequestId = 1;
+  const previousByLane = new Map<string, CacheSegment[]>();
+  const systemByLane = new Map<string, SystemRegionHashes>();
+  const modelByStream = new Map<string, string>();
+  const requestLinker = createRequestLinker();
   let errors = 0;
   let enabled = true;
 
@@ -384,39 +533,62 @@ export default function cacheProbe(pi: ExtensionAPI): void {
       // SAFETY: Pi supplies provider payloads as JSON request bodies at this host boundary.
       const payload = event.payload as JsonValue;
       const stream = streamId(ctx);
-      providerPrefixRegistry().set(stream, providerPrefixMetricsFromPayload(payload));
-      const snapshot = cacheableSegments(payload);
-      const previous = previousByStream.get(stream);
-      const diff = diffCacheableSegments(previous, snapshot.segments);
+      const provider = payloadProvider(payload, ctx);
+      const model = payloadModel(payload, ctx);
+      const lane = `${provider}/${model}`;
+      const laneKey = `${stream}\0${lane}`;
+      const metrics = providerPrefixMetricsFromPayload(payload);
+      providerPrefixRegistry().set(stream, metrics);
+      const snapshot = cacheableSegments(payload, provider);
+      const previous = previousByLane.get(laneKey);
       const regions = systemRegionHashes(systemText(payload));
-      const changedRegions = changedSystemRegions(systemByStream.get(stream), regions);
-      systemByStream.set(stream, regions);
+      const attribution = prefixAttribution({
+        previous,
+        current: snapshot.segments,
+        previousRegions: systemByLane.get(laneKey),
+        currentRegions: regions,
+        previousModel: modelByStream.get(stream),
+        currentModel: model,
+      });
+      systemByLane.set(laneKey, regions);
       const notes: string[] = [];
-      if (!previous) notes.push("initial");
-      if (diff.divergedKind === "tools") notes.push(toolNote(snapshot.toolNames));
-      if (changedRegions.length > 0) notes.push(`system-changed=${changedRegions.join(",")}`);
+      if (attribution.state === "initial" || attribution.state === "restart") {
+        notes.push(attribution.state);
+      }
+      if (attribution.modelChanged) notes.push("model-changed");
+      if (attribution.divergedKind !== null) notes.push(`${attribution.divergedKind}-changed`);
+      if (attribution.systemRegions.length > 0) {
+        notes.push(`system-changed=${attribution.systemRegions.join(",")}`);
+      }
       if (snapshot.capped) notes.push(`segments-capped:${MAX_SEGMENTS}`);
       if (snapshot.truncatedHashes > 0) notes.push(`hash-chars-capped:${snapshot.truncatedHashes}`);
-      const requestId = nextRequestId;
-      nextRequestId += 1;
+      const linkage = requestLinker.begin(stream);
+      if (linkage.overlap) notes.push("overlapping-request");
+      const cacheMetadata = cachePayloadMetadata(payload);
       appendRecord({
         ts: new Date().toISOString(),
         type: "prefix",
         stream,
-        requestId,
-        provider: payloadProvider(payload, ctx),
-        model: payloadModel(payload, ctx),
+        requestId: linkage.requestId,
+        provider,
+        model,
+        lane,
+        state: attribution.state,
+        modelChanged: attribution.modelChanged,
+        systemRegions: attribution.systemRegions,
+        toolCount: metrics.toolCount,
+        ...cacheMetadata,
         segmentCount: snapshot.segments.length,
-        firstDivergence: diff.firstDivergence,
-        divergedKind: diff.divergedKind,
+        firstDivergence: attribution.firstDivergence,
+        divergedKind: attribution.divergedKind,
         prevSegmentCount: previous?.length ?? 0,
-        segmentsAdded: diff.segmentsAdded,
-        segmentsRemoved: diff.segmentsRemoved,
+        segmentsAdded: attribution.segmentsAdded,
+        segmentsRemoved: attribution.segmentsRemoved,
         approxPrefixChars: snapshot.segments.reduce((total, segment) => total + segment.chars, 0),
         note: notes.join("; ") || null,
       });
-      previousByStream.set(stream, snapshot.segments);
-      requestByStream.set(stream, requestId);
+      previousByLane.set(laneKey, snapshot.segments);
+      modelByStream.set(stream, model);
     });
     // Intentionally return undefined: this extension is strictly observational.
   });
@@ -425,23 +597,22 @@ export default function cacheProbe(pi: ExtensionAPI): void {
     safely(() => {
       if (event.message.role !== "assistant") return;
       const usage = event.message.usage;
+      const stream = streamId(ctx);
       const cacheRead = numberValue(usage.cacheRead);
       const cacheWrite = numberValue(usage.cacheWrite);
       if (cacheRead === undefined && cacheWrite === undefined) return;
-      const stream = streamId(ctx);
-      const requestId = requestByStream.get(stream);
-      if (requestId !== undefined) requestByStream.delete(stream);
+      const linkage = requestLinker.finish(stream);
       appendRecord({
         ts: new Date().toISOString(),
         type: "usage",
         stream,
-        requestId,
-        provider: event.message.provider,
-        model: event.message.model,
+        requestId: linkage.requestId,
+        provider: safeIdentifier(event.message.provider),
+        model: safeIdentifier(event.message.model),
         cacheRead,
         cacheWrite,
         cacheWrite1h: numberValue(usage.cacheWrite1h),
-        note: requestId === undefined ? "unmatched-assistant-message" : null,
+        note: linkage.note,
       });
     });
   });
