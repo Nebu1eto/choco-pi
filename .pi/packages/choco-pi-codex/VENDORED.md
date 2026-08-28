@@ -166,6 +166,14 @@ wired as an optional parameter in tools/code-mode/public-tools.ts.
 tests/codex-code-mode-batching.test.ts pins detection, streak/interval policy
 and the advisory wording.
 
+## Codex request-body invariants (choco-pi addition)
+
+`tests/request-body-invariants.test.ts` pins the stable, Unicode-safe clamping
+of the session-derived `prompt_cache_key`, deterministic instruction and tool
+serialization for identical inputs, and omission of the unproven
+`prompt_cache_retention` field on the ChatGPT-backed Codex endpoint. The test
+documents existing upstream request behavior; no provider source was changed.
+
 ## Bundled native binaries (choco-pi addition)
 
 `src/tools/{apply-patch,exec,imagegen,view-image,web-run}/bin/darwin-arm64/`

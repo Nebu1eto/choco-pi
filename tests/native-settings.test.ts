@@ -268,29 +268,35 @@ test(
 
 test(
   "a missing native reasoning row is restored in the Model section",
-  withPatchedPrototype(fakeNativeSettings(ROWS.filter((row) => row.id !== "thinking"), []), () => {
-    installNativeSettingsBridge(() => {});
-    const picker = {
-      render: () => [RULE, "Reasoning effort", "> high", RULE],
-      invalidate: () => {},
-      handleInput: () => {},
-    };
-    const host = reinterpretHostValue<NativeSettingsHost>({
-      session: { thinkingLevel: "high" },
-      showThinkingSelector(this: NativeSettingsHost) {
-        this.showSelector(() => ({ component: picker, focus: picker }));
-      },
-    });
-    reinterpretHostValue<(this: NativeSettingsHost) => void>(
-      prototypeRecord()["showSettingsSelector"],
-    ).call(host);
+  withPatchedPrototype(
+    fakeNativeSettings(
+      ROWS.filter((row) => row.id !== "thinking"),
+      [],
+    ),
+    () => {
+      installNativeSettingsBridge(() => {});
+      const picker = {
+        render: () => [RULE, "Reasoning effort", "> high", RULE],
+        invalidate: () => {},
+        handleInput: () => {},
+      };
+      const host = reinterpretHostValue<NativeSettingsHost>({
+        session: { thinkingLevel: "high" },
+        showThinkingSelector(this: NativeSettingsHost) {
+          this.showSelector(() => ({ component: picker, focus: picker }));
+        },
+      });
+      reinterpretHostValue<(this: NativeSettingsHost) => void>(
+        prototypeRecord()["showSettingsSelector"],
+      ).call(host);
 
-    const row = buildNativeSettingsSections()
-      .find((section) => section.id === "model")
-      ?.buildItems()
-      .find((item) => item.id === "thinking");
-    assert.equal(row?.label, "Reasoning effort");
-    assert.equal(row?.currentValue, "high");
-    assert.deepEqual(row?.submenu?.("high", () => {}).render(40), ["Reasoning effort", "> high"]);
-  }),
+      const row = buildNativeSettingsSections()
+        .find((section) => section.id === "model")
+        ?.buildItems()
+        .find((item) => item.id === "thinking");
+      assert.equal(row?.label, "Reasoning effort");
+      assert.equal(row?.currentValue, "high");
+      assert.deepEqual(row?.submenu?.("high", () => {}).render(40), ["Reasoning effort", "> high"]);
+    },
+  ),
 );

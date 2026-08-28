@@ -154,6 +154,8 @@ export function summarizeMainUsage(entries: readonly SessionEntry[]): MainUsage 
 
 /** Per-turn misses at or below this are cache breakpoint granularity, not waste. */
 const CACHE_NOISE_FLOOR_TOKENS = 1024;
+/** Near-complete hits can vary slightly with prompt boundaries without a material cache collapse. */
+const CACHE_MISS_MATERIALITY_RATIO = 0.01;
 
 type PreviousRequest = { promptTokens: number; reportedCache: boolean };
 
@@ -185,8 +187,11 @@ export function computeCacheWaste(
     // A zero-cache turn only counts once caching was reported at least once:
     // on a provider that never caches it means nothing.
     if (previous && promptTokens > 0 && (cacheActivity > 0 || previous.reportedCache)) {
-      const missed = Math.min(previous.promptTokens, promptTokens) - usage.cacheRead;
-      if (missed > CACHE_NOISE_FLOOR_TOKENS) {
+      const reusableTokens = Math.min(previous.promptTokens, promptTokens);
+      const missed = reusableTokens - usage.cacheRead;
+      const isMaterialMiss =
+        missed > CACHE_NOISE_FLOOR_TOKENS && missed / reusableTokens > CACHE_MISS_MATERIALITY_RATIO;
+      if (isMaterialMiss) {
         // The missed tokens landed in the input or cacheWrite buckets, so this
         // message's own cost breakdown gives the rate that was actually paid.
         const paidTokens = usage.input + usage.cacheWrite;
