@@ -24,6 +24,7 @@ import {
   collectBridgedTools,
   installRegisteredToolCapture,
 } from "../tools/code-mode/registered-tool-bridge.ts";
+import { prepareCodeModeApplyPatchInput } from "../tools/apply-patch/code-mode-input.ts";
 import { createApplyPatchTool } from "../tools/apply-patch/tool.ts";
 import { createExecCommandTool } from "../tools/exec/command-tool.ts";
 import { createWriteStdinTool } from "../tools/exec/write-stdin-tool.ts";
@@ -126,11 +127,7 @@ function createNestedTools(
       {},
       {
         kind: "freeform",
-        prepareInput(input) {
-          if (!Value.Check(Type.String(), input))
-            throw new Error("apply_patch expects a patch string");
-          return { input };
-        },
+        prepareInput: prepareCodeModeApplyPatchInput,
         resultError(result) {
           if (Value.Check(PartialFailureDetailsSchema, result.details))
             return (
