@@ -111,6 +111,35 @@ test("Codex Responses instructions and tools contribute provider prefix metrics"
   );
 });
 
+test("OpenAI Chat system messages and nested tools contribute provider prefix metrics", () => {
+  const systemPrompt = "x".repeat(40);
+  const functionDefinition = {
+    name: "read",
+    description: "Read a file",
+    parameters: { type: "object", properties: { path: { type: "string" } } },
+  };
+  const payload = {
+    messages: [
+      { role: "developer", content: systemPrompt },
+      { role: "user", content: "hello" },
+      { role: "system", tools: [{ type: "function", function: functionDefinition }] },
+    ],
+    tools: [{ type: "function", function: functionDefinition }],
+  };
+
+  const metrics = providerPrefixMetricsFromPayload(payload);
+  const flatMetrics = providerPrefixMetricsFromPayload({
+    tools: [functionDefinition],
+  });
+  const snapshot = cacheableSegments(payload);
+
+  assert.equal(systemText(payload), systemPrompt);
+  assert.equal(metrics.systemTokens, 10);
+  assert.equal(metrics.toolCount, 1);
+  assert.equal(metrics.toolsTokens, flatMetrics.toolsTokens);
+  assert.deepEqual(snapshot.toolNames, ["read"]);
+});
+
 test("a system change names the region that moved, not just the block", () => {
   const before = systemRegionHashes(SYSTEM);
 
