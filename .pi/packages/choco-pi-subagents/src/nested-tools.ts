@@ -27,7 +27,12 @@ import {
   writeInitialEntry,
 } from "./output-file.ts";
 import { getForegroundOutcomeNote, getStatusNote, partialOutputSuffix } from "./status-note.ts";
-import { formatResultReadTimeout, waitForSubagentResult } from "./result-read.ts";
+import {
+  formatResultReadTimeout,
+  RESULT_WAIT_MECHANICS,
+  TERMINAL_RESULT_RETRIEVAL_GUIDANCE,
+  waitForSubagentResult,
+} from "./result-read.ts";
 import type {
   AgentConfig,
   AgentInvocation,
@@ -142,7 +147,8 @@ function ownsRecord(record: AgentRecord | undefined, parentAgentId: string): rec
  *     `get_subagent_result`, and hits "not owned by this parent" (#174, the same
  *     trap the top-level foreground path fell into).
  *   - "fetched": `get_subagent_result` on a background child. The parent holds a
- *     valid id and can poll again, so the background wording applies.
+ *     valid id and retrieved it after terminal notification, so the background
+ *     wording applies.
  */
 type ResultPosition = "inline" | "fetched";
 
@@ -223,7 +229,7 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         if (existing.status === "running" || existing.status === "queued") {
           return textResult(
             `Nested agent "${params.resume}" is still ${existing.status} — it can only be resumed once its current run finishes.\n` +
-              `Use get_subagent_result with wait: true to wait, or steer_subagent to send it a message mid-run.`,
+              `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it a message mid-run.`,
             true,
           );
         }
@@ -395,7 +401,10 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           // Synchronous, before the event loop yields — onSessionCreated fires
           // asynchronously inside runAgent, so the file is attached in time.
           attachTranscript(id);
-          return textResult(`Nested agent started in background. Agent ID: ${id}`);
+          return textResult(
+            `Nested agent started in background. Agent ID: ${id}\n` +
+              `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it a message mid-run.`,
+          );
         }
 
         const { record } = await context.manager.spawnAndWait(
@@ -418,10 +427,15 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
     label: "Get Nested Agent Result",
     description:
       "Retrieve an owned background nested-agent result only after any terminal status. " +
-      "wait: true gives an active child one optimistic 5-second grace period, then returns its current status without consuming the result.",
+      `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} ${RESULT_WAIT_MECHANICS}`,
     parameters: Type.Object({
       agent_id: Type.String(),
-      wait: Type.Optional(Type.Boolean()),
+      wait: Type.Optional(
+        Type.Boolean({
+          description:
+            "Bounded terminal-status check only. If true, allow up to 5 seconds for terminal status. On timeout the agent keeps running and the result stays unconsumed; continue other work until its terminal completion notification instead of repeating the check. Default: false.",
+        }),
+      ),
     }),
     execute: async (_toolCallId, params, signal) => {
       const record = context.manager.getRecord(params.agent_id);
