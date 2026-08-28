@@ -136,15 +136,15 @@ import {
   TERMINAL_RESULT_RETRIEVAL_GUIDANCE,
   waitForSubagentResult,
 } from "./result-read.ts";
-import {
-  type AgentConfig,
-  type AgentInvocation,
-  type AgentMentionMode,
-  type AgentRecord,
-  type JoinMode,
-  type NotificationDetails,
-  type SubagentType,
-  type WidgetMode,
+import type {
+  AgentConfig,
+  AgentInvocation,
+  AgentMentionMode,
+  AgentRecord,
+  JoinMode,
+  NotificationDetails,
+  SubagentType,
+  WidgetMode,
 } from "./types.ts";
 import { createMentionProvider, mentionRoster, type TypeInfo } from "./ui/agent-mention.ts";
 import {
@@ -305,9 +305,9 @@ function formatTaskNotification(record: AgentRecord, resultMaxLen: number): stri
   const totalTokens = getLifetimeTotal(record.lifetimeUsage);
   const contextPercent = getSessionContextPercent(record.session);
   const ctxXml =
-    contextPercent !== null
-      ? `<context_percent>${Math.round(contextPercent)}</context_percent>`
-      : "";
+    contextPercent === null
+      ? ""
+      : `<context_percent>${Math.round(contextPercent)}</context_percent>`;
   const compactXml = record.compactionCount
     ? `<compactions>${record.compactionCount}</compactions>`
     : "";
