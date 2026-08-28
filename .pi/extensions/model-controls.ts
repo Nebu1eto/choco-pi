@@ -47,9 +47,11 @@ type FastEditorState = {
 type FocusedModelControlsRegistry = Map<string, { setFast(action: string): string }>;
 
 function focusedModelControlsRegistry(): FocusedModelControlsRegistry {
-  const host = globalThis as typeof globalThis & {
-    [FOCUSED_MODEL_CONTROLS_SYMBOL]?: FocusedModelControlsRegistry;
-  };
+  const host = reinterpretHostValue<
+    typeof globalThis & {
+      [FOCUSED_MODEL_CONTROLS_SYMBOL]?: FocusedModelControlsRegistry;
+    }
+  >(globalThis);
   return (host[FOCUSED_MODEL_CONTROLS_SYMBOL] ??= new Map());
 }
 
@@ -228,7 +230,8 @@ export default function modelControls(pi: ExtensionAPI): void {
   };
 
   const setFast = (actionInput: string): string => {
-    if (!isCodexModel(activeModel)) throw new Error("/fast is available only for OpenAI Codex models.");
+    if (!isCodexModel(activeModel))
+      throw new Error("/fast is available only for OpenAI Codex models.");
     const action = actionInput.trim().toLowerCase();
     if (action === "status") {
       return `Fast mode: ${isEffectiveFastModeEnabled(fastEnabled) ? "on" : "off"}`;

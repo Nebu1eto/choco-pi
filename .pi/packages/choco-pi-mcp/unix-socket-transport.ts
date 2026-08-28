@@ -33,7 +33,8 @@ export class UnixSocketClientTransport implements Transport {
       });
       socket.on("data", (chunk) => {
         try {
-          this.readBuffer.append(chunk);
+          // SAFETY: This socket never sets an encoding, so Node emits Buffer chunks.
+          this.readBuffer.append(chunk as Buffer);
           while (true) {
             const message = this.readBuffer.readMessage();
             if (message === null) break;
