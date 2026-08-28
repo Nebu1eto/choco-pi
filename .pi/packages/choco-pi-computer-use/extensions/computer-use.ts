@@ -21,6 +21,16 @@ import { getLoadedComputerUseConfig, loadComputerUseConfig } from "../src/config
 const stateId = Type.String({
   description: "Required state id owning every @e ref used by this operation",
 });
+const optionalInspectionStateId = Type.Optional(
+  Type.String({
+    description: "Cached state id; omit to establish a read-only semantic observation first",
+  }),
+);
+const actionStateId = Type.Optional(
+  Type.String({
+    description: "Fresh state id owning every @e ref; omission returns an observe_ui requirement",
+  }),
+);
 const point = { x: Type.Number(), y: Type.Number() };
 const mouseButton = Type.Optional(
   Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]),
@@ -150,7 +160,7 @@ const searchUiTool = defineTool({
   name: "search_ui",
   label: "Search UI",
   description:
-    "Return a bounded, deterministically ranked search of the cached outline. At least one predicate is required.",
+    "Search the current outline, establishing a read-only semantic observation when stateId is omitted. At least one predicate is required.",
   promptSnippet:
     "Find targets not shown in the compact observe_ui output; refine broad searches instead of paging matches.",
   parameters: Type.Object({
@@ -163,7 +173,7 @@ const searchUiTool = defineTool({
     capability: Type.Optional(
       Type.String({ description: "Exact capability, e.g. press", maxLength: 128 }),
     ),
-    stateId,
+    stateId: optionalInspectionStateId,
   }),
   execute: executeSearchUi,
 });
@@ -171,14 +181,15 @@ const searchUiTool = defineTool({
 const expandUiTool = defineTool({
   name: "expand_ui",
   label: "Expand UI",
-  description: "Unfold bounded local outline context for one @e ref.",
+  description:
+    "Unfold bounded local outline context for one @e ref, establishing a read-only semantic observation when stateId is omitted.",
   promptSnippet: "Expand a specific ref instead of dumping unrelated UI.",
   parameters: Type.Object({
     ref: Type.String(),
     depth: Type.Optional(
       Type.Number({ minimum: 1, maximum: 8, description: "Subtree depth, default 3" }),
     ),
-    stateId,
+    stateId: optionalInspectionStateId,
   }),
   execute: executeExpandUi,
 });
@@ -187,9 +198,9 @@ const inspectUiTool = defineTool({
   name: "inspect_ui",
   label: "Inspect UI",
   description:
-    "Inspect one exact outline ref with fields, geometry, capabilities, and annotations.",
+    "Inspect one exact outline ref, establishing a read-only semantic observation when stateId is omitted.",
   promptSnippet: "Use when a target's evidence or provenance matters.",
-  parameters: Type.Object({ ref: Type.String(), stateId }),
+  parameters: Type.Object({ ref: Type.String(), stateId: optionalInspectionStateId }),
   execute: executeInspectUi,
 });
 
@@ -204,7 +215,7 @@ const actTool = defineTool({
     "After clicking an editable region, omit ref from typeText/keypress so input follows the established focus.",
   ],
   parameters: Type.Object({
-    stateId,
+    stateId: actionStateId,
     expect: Type.Optional(Type.Object(conditionProperties)),
     actions: Type.Array(uiAction, { minItems: 1, maxItems: 20 }),
   }),

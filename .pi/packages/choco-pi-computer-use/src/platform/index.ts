@@ -5,7 +5,12 @@ import {
   openBrowserLocationWithAppleScript,
 } from "./macos/browser.ts";
 import { ensureMacosReady } from "./macos/permissions.ts";
-import type { ComputerUsePlatformBackend, PlatformName } from "./types.ts";
+import type {
+  ComputerUsePlatformBackend,
+  HelperActResult,
+  PlatformActRequest,
+  PlatformName,
+} from "./types.ts";
 import { linuxBackend } from "./linux/backend.ts";
 import { windowsBackend } from "./windows/backend.ts";
 
@@ -86,4 +91,70 @@ export function platformBackendForRuntime(
   return new UnsupportedPlatformBackend(platform);
 }
 
-export const currentPlatformBackend = platformBackendForRuntime();
+let activePlatformBackend = platformBackendForRuntime();
+
+export const currentPlatformBackend: ComputerUsePlatformBackend = {
+  get name() {
+    return activePlatformBackend.name;
+  },
+  shutdown() {
+    return activePlatformBackend.shutdown?.();
+  },
+  ensureReady(ctx, state, signal) {
+    return activePlatformBackend.ensureReady(ctx, state, signal);
+  },
+  listApps(signal) {
+    return activePlatformBackend.listApps(signal);
+  },
+  listRoots(query, signal) {
+    return activePlatformBackend.listRoots(query, signal);
+  },
+  getFrontmost(signal) {
+    return activePlatformBackend.getFrontmost(signal);
+  },
+  focusWindow(target, signal) {
+    return activePlatformBackend.focusWindow(target, signal);
+  },
+  observe(request, options) {
+    return activePlatformBackend.observe(request, options);
+  },
+  act(request, options) {
+    return activePlatformBackend.act(request, options);
+  },
+  get actBatch() {
+    const actBatch = activePlatformBackend.actBatch;
+    return actBatch
+      ? (
+          requests: PlatformActRequest[],
+          options?: { timeoutMs?: number; signal?: AbortSignal },
+        ): Promise<HelperActResult> => actBatch.call(activePlatformBackend, requests, options)
+      : undefined;
+  },
+  readText(args, options) {
+    return activePlatformBackend.readText(args, options);
+  },
+  waitFor(args, options) {
+    return activePlatformBackend.waitFor(args, options);
+  },
+  isBrowserApp(appName, bundleId) {
+    return activePlatformBackend.isBrowserApp(appName, bundleId);
+  },
+  isChromeFamilyApp(appName, bundleId) {
+    return activePlatformBackend.isChromeFamilyApp(appName, bundleId);
+  },
+  openBrowserLocation(target, url, signal) {
+    return activePlatformBackend.openBrowserLocation(target, url, signal);
+  },
+};
+
+/** Test-only backend substitution for exercising bridge state transitions without native UI access. */
+export function replacePlatformBackendForTest(backend: ComputerUsePlatformBackend): () => void {
+  const previous = activePlatformBackend;
+  activePlatformBackend = backend;
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    activePlatformBackend = previous;
+  };
+}
