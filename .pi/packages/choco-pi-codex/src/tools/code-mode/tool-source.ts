@@ -1,3 +1,4 @@
+import { registeredToolNames } from "./registered-tool-bridge.ts";
 import { unavailableToolsGuardPreamble } from "./tools-namespace.ts";
 import type { CodeModeToolDefinition } from "./types.ts";
 
@@ -9,7 +10,10 @@ export function scopeAllToolsToDeferredCustom(
   // script discovers them: configured custom tools and the bridged Pi tools
   // (LSP, MCP, sub-agents, sessions) alike.
   const deferredNames = tools.filter((tool) => tool.deferLoading).map((tool) => tool.name);
-  const namespaceGuard = unavailableToolsGuardPreamble(tools.map((tool) => tool.name));
+  const namespaceGuard = unavailableToolsGuardPreamble(
+    tools.map((tool) => tool.name),
+    registeredToolNames(),
+  );
   return `globalThis.ALL_TOOLS=globalThis.ALL_TOOLS.filter(({name})=>${JSON.stringify(deferredNames)}.includes(name));${namespaceGuard}${source}`;
 }
 
@@ -43,7 +47,7 @@ function hasExecutableBracketReference(
   return false;
 }
 
-function maskJavaScriptCommentsAndStrings(code: string): string {
+export function maskJavaScriptCommentsAndStrings(code: string): string {
   const output = code.split("");
   let state: "code" | "line-comment" | "block-comment" | "string" | "regex" | "template" = "code";
   let quote = "";

@@ -4,6 +4,7 @@ import { resolvePatchPath } from "../../patch/paths.ts";
 import { ExecutePatchError, type ExecutePatchResult } from "../../patch/types.ts";
 import { isStringValue } from "../boundary.ts";
 import { recordApplyPatchDisplayOutcome } from "./display-broker.ts";
+import { enrichApplyPatchContextFailure } from "./context-preflight.ts";
 import { executePatchWithRust } from "./executor.ts";
 import { formatPatchTarget } from "./rendering.ts";
 import {
@@ -115,12 +116,14 @@ export async function executeApplyPatch(
       const rawMessage = failedTargetSummary
         ? `${prefix} while patching ${failedTargetSummary}: ${cause}`
         : `${prefix}: ${cause}`;
+      const contextGuidance = enrichApplyPatchContextFailure(error, cwd);
       if (partial) {
         const failedFiles = getFailedPaths(error);
         const appliedFiles = error.result.changedFiles.filter(
           (path) => !failedFiles.includes(path),
         );
         const lines = [rawMessage];
+        if (contextGuidance) lines.push(contextGuidance);
         if (failedFiles.length > 0) {
           lines.push(
             `Failed file${failedFiles.length === 1 ? "" : "s"}: ${failedFiles.join(", ")}`,
@@ -149,10 +152,15 @@ export async function executeApplyPatch(
         return { content: [{ type: "text" as const, text: recoveryMessage }], details };
       }
       const preview = expectedContextPreview(error.message);
-      const message =
+      const message = [
+        rawMessage,
+        contextGuidance,
         preview === undefined
-          ? rawMessage
-          : `${rawMessage}\nRecovery: MUST read ${failedTargets.join(", ") || "the failed file"} and retry only the failed edit against current contents`;
+          ? undefined
+          : `Recovery: MUST read ${failedTargets.join(", ") || "the failed file"} and retry only the failed edit against current contents`,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join("\n");
       markApplyPatchFailure(toolCallId, "failed", failedTargets);
       recordApplyPatchDisplayOutcome(toolCallId, { error: message, isError: true });
       throw new Error(message);

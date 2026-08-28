@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runInNewContext } from "node:vm";
+import { createContext, runInContext, runInNewContext } from "node:vm";
 
 import {
   activeRegisteredSessionToolNames,
@@ -106,11 +106,55 @@ test("the cell preamble explains unavailable tools namespace members", () => {
           write_stdin() {},
         },
       }),
-    {
-      message:
-        '"module_report" is not available in code mode. Available tools: apply_patch, exec_command, write_stdin. If it exists as a regular tool, call it directly as a tool call outside exec.',
+    (error: Error) => {
+      assert.match(error.message, /\[unavailable_tool\]/);
+      assert.match(error.message, /tools\.module_report is not available in this cell/);
+      assert.match(error.message, /Available tools: apply_patch, exec_command, write_stdin/);
+      assert.match(error.message, /Close matches:/);
+      assert.match(error.message, /Outside code mode: no/);
+      return true;
     },
   );
+});
+
+test("the runtime guard leaves unavailable tools in untaken branches untouched", () => {
+  let executed = false;
+  const source = `${unavailableToolsGuardPreamble([
+    "exec_command",
+  ])}if (false) { tools.module_report({ path: "a" }); } else { tools.exec_command({ cmd: "ls" }); }`;
+  runInNewContext(source, {
+    tools: {
+      exec_command() {
+        executed = true;
+      },
+    },
+  });
+  assert.equal(executed, true);
+});
+
+test("the runtime guard identifies real tools registered only outside code mode", () => {
+  const source = `${unavailableToolsGuardPreamble(
+    ["exec_command"],
+    ["get_subagent_result"],
+  )}tools.get_subagent_result({ agent_id: "a" });`;
+  assert.throws(
+    () => runInNewContext(source, { tools: { exec_command() {} } }),
+    (error: Error) => {
+      assert.match(error.message, /\[unavailable_tool\]/);
+      assert.match(error.message, /Outside code mode: yes/);
+      assert.match(error.message, /get_subagent_result is registered as a direct Pi tool/);
+      return true;
+    },
+  );
+});
+
+test("the namespace guard can be installed repeatedly in a persistent notebook context", () => {
+  const context = createContext({ tools: { exec_command() {} } });
+  const preamble = unavailableToolsGuardPreamble(["exec_command"]);
+  assert.doesNotThrow(() => {
+    runInContext(preamble, context);
+    runInContext(preamble, context);
+  });
 });
 
 test("a session without write or shell permissions cannot reach the notebook", () => {

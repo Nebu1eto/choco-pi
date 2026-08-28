@@ -71,8 +71,12 @@ For `skills`, keep general workflows in global `lazy-skills/` and repository SOP
 
 ## Execution
 
-Every custom tool accepts one string and resolves to one string. Use `JSON.stringify(...)` when a command expects structured input. Commands inherit Pi's working directory, environment, permissions, and cancellation signal; the V8 JavaScript cell itself has no Node, filesystem, network, or console access.
+Every custom tool accepts one string and resolves to one string. Use `JSON.stringify(...)` when a command expects structured input. Commands inherit Pi's working directory, environment, permissions, and cancellation signal; the restricted JavaScript cell itself has no Deno, Node, filesystem, network, browser, or console globals. Use `text()` or `notify()` for output. Notebook cells instead provide persistent Deno TypeScript, console, imports, npm packages, and Web APIs.
+
+Before a restricted cell starts, `exec` parses its JavaScript and scans executable tokens for unsupported globals. It rejects a `tools.<name>` reference only when the reference is unconditional at the cell's top level and Pi registers that name neither inside nor outside code mode. Guarded references and references to real direct Pi tools run to the namespace guard, which reports code-mode tools, close matches, and direct registration. String, comment, template-text, and regular-expression contents do not count as references. Notebook cells skip the restricted-global and JavaScript-only checks. The scan does not inspect command strings or reinterpret non-zero command exits.
 
 Successful commands return trimmed stdout, then stderr when stdout is empty, then `(no output)`. Non-zero exits include stderr. Combined output is capped at 50 KiB, and cancellation terminates the delegated process group where supported.
+
+Code-mode `apply_patch` accepts one patch string. The native applier remains authoritative for first-match, `@@` anchor, and fuzzy resolution. If it rejects a hunk, the failure adds current line counts, anchor-scoped candidate ranges, and exact re-read windows. Bridged `read` and `edit` failures provide the same focused recovery data. UI tools that require observation state identify `observe_ui` as the prerequisite instead of returning the raw host error.
 
 Prefer a custom tool over another Pi extension for occasional command-backed capabilities. Use an extension when the capability needs lifecycle events, custom UI, Pi session state, provider interception, or a directly exposed provider schema.

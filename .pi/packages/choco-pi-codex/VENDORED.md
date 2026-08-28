@@ -4,8 +4,8 @@ This directory is a **vendored, renamed, stripped fork** of the upstream
 open-source package **@howaboua/pi-codex-conversion**. This is not the original
 source repository.
 
-- Original source code: https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-codex-conversion
-- Package on npm: https://www.npmjs.com/package/@howaboua/pi-codex-conversion
+- Original source code: <https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-codex-conversion>
+- Package on npm: <https://www.npmjs.com/package/@howaboua/pi-codex-conversion>
 - Base version: `3.0.18`
 - Base artifact: `howaboua-pi-codex-conversion-3.0.18.tgz`, `dist.shasum`
   `a8443f5b6aec92ab9408f01f1622951db05644e9` (registry value, confirmed against
@@ -155,9 +155,9 @@ Empty owner ids are inert rather than process-global cleanup requests.
 
 ## Runtime batching advice (choco-pi addition)
 
-tools/code-mode/batching-advice.ts counts consecutive exec blocks that made at
-most one tools.* call and, on the fifth (then every tenth), prepends a
-<system-reminder> block to that call's tool result pointing back at the
+`tools/code-mode/batching-advice.ts` counts consecutive exec blocks that made at
+most one `tools.*` call and, on the fifth (then every tenth), prepends a
+`<system-reminder>` block to that call's tool result pointing back at the
 injected Composition pattern, tagged the way choco-pi marks its other
 out-of-band guidance. Blocks using Promise.all, loops, or several tools.* calls
 reset the streak, so only the degenerate single-call habit nudges; the tool
@@ -165,6 +165,12 @@ schema, results, and execution path are otherwise untouched, and the nudge is
 wired as an optional parameter in tools/code-mode/public-tools.ts.
 tests/codex-code-mode-batching.test.ts pins detection, streak/interval policy
 and the advisory wording.
+
+## Code Mode and edit preflight (choco-pi addition)
+
+`tools/code-mode/source-preflight.ts` parses restricted cells before host execution and scans executable source tokens for unsupported restricted globals. It hard-rejects a `tools.<name>` reference only when the reference is unconditional at the cell's top level and Pi registers the name neither inside nor outside code mode. Guarded references and real-but-unbridged tool names run to the namespace proxy. String, comment, template text, and regular expression contents are ignored. Notebook cells retain Deno TypeScript capabilities and skip restricted-global and JavaScript-only checks. Command strings and non-zero `exec_command` exits remain runtime data and are not reclassified.
+
+The tools namespace guard supplies close-match and direct-registration guidance at runtime. Bridged tools translate stale `read` offsets, exact-match ambiguity versus stale `edit` context, and missing UI observation state into focused recovery errors. `apply_patch` accepts only its documented freeform string in Code Mode; its native first-match, `@@` anchor, and fuzzy resolution remain authoritative. Context analysis runs only after the native applier rejects a hunk, when it reports current line counts, anchor-scoped candidate ranges, and exact re-read windows. `tests/code-mode-preflight.test.ts` pins each measured failure class and the false-positive boundaries.
 
 ## Codex request-body invariants (choco-pi addition)
 
