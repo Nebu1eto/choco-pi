@@ -639,3 +639,33 @@ adopts that validated directory instead of creating its normal Git worktree and
 marks it hook-managed. At settlement it emits `subagents:worktree-remove` and
 waits for the matching `WorktreeRemove` hook, rather than applying the package's
 Git commit/branch/removal behavior to a worktree owned by another system.
+
+### Per-run budgets and idle watchdog
+
+The fork adds optional `timeout_ms`, `max_tool_calls`, `max_tokens`, and
+`idle_timeout_ms` parameters to root and nested `Agent` spawns and resumes.
+`AgentManager` enforces each budget per execution generation from actual run
+start, including queued runs. Tool calls count on start and stop after the
+capped call completes; tokens are the reported input, output, and cache-write
+deltas for that run. Wall-clock and budget callbacks abort only the captured
+run controller, then let the existing generation-aware settlement path publish
+status, partial output, error text, and `terminalResultGeneration` together.
+Budget stops publish `budget_exceeded`; watchdog stops publish
+`watchdog_stopped`, so `get_subagent_result` can distinguish and claim either
+terminal generation exactly once.
+
+The watchdog resets on tool start and end. Its first idle interval sends one
+conclusion steering request; after that, tool activity may postpone but never
+repeat the request, and the next full idle interval stops the run. Every
+controller is disposed by normal, error, stale-generation, and manager-disposal
+paths. Manager disposal invalidates timer callbacks synchronously before child
+sessions are disposed, preventing post-shutdown steering or aborts. The runner's
+abort bridge also handles a signal already aborted before child-session setup,
+which makes a short wall-clock budget effective during asynchronous startup.
+
+`tests/agent-manager-budgets.test.ts` drives wall-clock, tool-call, token, and
+watchdog transitions through an injected runner and pins terminal publication,
+exact-once result claims, queue draining, slot release, single watchdog steering,
+and timer disposal. `tests/invocation-budgets.test.ts` pins spawn-parameter
+resolution and UI metadata plumbing; `tests/result-read.test.ts` includes both
+new statuses in the terminal-settlement matrix.

@@ -28,7 +28,14 @@ const MAX_WIDGET_LINES = 12;
 export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /** Statuses that indicate an error/non-success outcome (used for linger behavior and icon rendering). */
-export const ERROR_STATUSES = new Set(["error", "aborted", "steered", "stopped"]);
+export const ERROR_STATUSES = new Set([
+  "error",
+  "aborted",
+  "steered",
+  "stopped",
+  "budget_exceeded",
+  "watchdog_stopped",
+]);
 
 /** Tool name → human-readable action for activity descriptions. */
 const TOOL_DISPLAY = new Map(
@@ -97,6 +104,8 @@ export interface AgentDetails {
     | "steered"
     | "aborted"
     | "stopped"
+    | "budget_exceeded"
+    | "watchdog_stopped"
     | "error"
     | "background";
   /** Human-readable description of what the agent is currently doing. */
@@ -245,6 +254,10 @@ export function buildInvocationTags(invocation: AgentInvocation | undefined): In
   if (invocation.inheritContext) tags.push("inherit context");
   if (invocation.runInBackground) tags.push("background");
   if (invocation.maxTurns != null) tags.push(`max turns: ${invocation.maxTurns}`);
+  if (invocation.timeoutMs != null) tags.push(`timeout: ${invocation.timeoutMs}ms`);
+  if (invocation.maxToolCalls != null) tags.push(`max tools: ${invocation.maxToolCalls}`);
+  if (invocation.maxTokens != null) tags.push(`max tokens: ${invocation.maxTokens}`);
+  if (invocation.idleTimeoutMs != null) tags.push(`idle: ${invocation.idleTimeoutMs}ms`);
   return { modelName: invocation.modelName, tags };
 }
 
@@ -440,6 +453,12 @@ export class AgentWidget {
       icon = theme.fg("error", "✗");
       const errMsg = a.error ? `: ${a.error.slice(0, 60)}` : "";
       statusText = theme.fg("error", ` error${errMsg}`);
+    } else if (a.status === "budget_exceeded" || a.status === "watchdog_stopped") {
+      icon = theme.fg("warning", "■");
+      statusText = theme.fg(
+        "warning",
+        a.status === "budget_exceeded" ? " budget exceeded" : " watchdog stopped",
+      );
     } else {
       // aborted
       icon = theme.fg("error", "✗");

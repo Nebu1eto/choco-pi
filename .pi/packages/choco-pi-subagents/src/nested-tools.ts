@@ -74,6 +74,12 @@ interface NestedSpawnOptions {
   name?: string;
   model?: Model<any>;
   maxTurns?: number;
+  budgets?: {
+    timeoutMs?: number;
+    maxToolCalls?: number;
+    maxTokens?: number;
+    idleTimeoutMs?: number;
+  };
   isolated?: boolean;
   inheritContext?: boolean;
   thinkingLevel?: ThinkingLevel;
@@ -118,7 +124,7 @@ export interface NestedAgentManager {
     id: string,
     prompt: string,
     signal?: AbortSignal,
-    options?: { name?: string },
+    options?: { name?: string; budgets?: NestedSpawnOptions["budgets"] },
   ): Promise<AgentRecord | undefined>;
 }
 
@@ -210,6 +216,28 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
       model: Type.Optional(Type.String({ description: "Optional provider/model override." })),
       thinking: Type.Optional(Type.String({ description: "Optional thinking level." })),
       max_turns: Type.Optional(Type.Number({ minimum: 1 })),
+      timeout_ms: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description: "Per-run wall-clock budget in milliseconds.",
+        }),
+      ),
+      max_tool_calls: Type.Optional(
+        Type.Integer({ minimum: 1, description: "Per-run completed tool-call cap." }),
+      ),
+      max_tokens: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description: "Per-run input + output + cache-write token cap.",
+        }),
+      ),
+      idle_timeout_ms: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description:
+            "Tool-inactivity interval before one conclusion steering request, then watchdog stop.",
+        }),
+      ),
       run_in_background: Type.Optional(Type.Boolean()),
       resume: Type.Optional(
         Type.String({
@@ -239,6 +267,12 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         }
         const resumed = await context.manager.resume(params.resume, params.prompt, signal, {
           name: params.name,
+          budgets: {
+            timeoutMs: params.timeout_ms,
+            maxToolCalls: params.max_tool_calls,
+            maxTokens: params.max_tokens,
+            idleTimeoutMs: params.idle_timeout_ms,
+          },
         });
         if (!resumed) return textResult(`Failed to resume nested agent "${params.resume}".`, true);
         const address = resumed.alias ?? resumed.handle ?? resumed.id;
@@ -322,6 +356,12 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         name: params.name,
         model,
         maxTurns: invocation.maxTurns,
+        budgets: {
+          timeoutMs: invocation.timeoutMs,
+          maxToolCalls: invocation.maxToolCalls,
+          maxTokens: invocation.maxTokens,
+          idleTimeoutMs: invocation.idleTimeoutMs,
+        },
         isolated: invocation.isolated,
         inheritContext: invocation.inheritContext,
         thinkingLevel: invocation.thinking,
@@ -330,6 +370,10 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
         invocation: {
           thinking: invocation.thinking,
           maxTurns: invocation.maxTurns,
+          timeoutMs: invocation.timeoutMs,
+          maxToolCalls: invocation.maxToolCalls,
+          maxTokens: invocation.maxTokens,
+          idleTimeoutMs: invocation.idleTimeoutMs,
           isolated: invocation.isolated,
           inheritContext: invocation.inheritContext,
           runInBackground: invocation.runInBackground,

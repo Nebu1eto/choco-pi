@@ -100,7 +100,15 @@ test("stopped runs refuse reads until partial output is atomically published", (
 
 test("result reads settle immediately for every terminal status", async () => {
   assert.equal(SUBAGENT_RESULT_WAIT_TIMEOUT_MS, 5_000);
-  for (const status of ["completed", "steered", "aborted", "stopped", "error"] as const) {
+  for (const status of [
+    "completed",
+    "steered",
+    "aborted",
+    "stopped",
+    "budget_exceeded",
+    "watchdog_stopped",
+    "error",
+  ] as const) {
     assert.equal(await waitForSubagentResult({ status }, undefined, 10, 1), "settled");
   }
 });
