@@ -3,6 +3,12 @@ import type { AgentRecord } from "./types.ts";
 export const SUBAGENT_RESULT_WAIT_TIMEOUT_MS = 5_000;
 const QUEUED_RESULT_POLL_MS = 250;
 
+export const TERMINAL_RESULT_RETRIEVAL_GUIDANCE =
+  "Continue other work until the terminal completion notification arrives, then retrieve the result exactly once with get_subagent_result.";
+
+export const RESULT_WAIT_MECHANICS =
+  "wait: true is only a bounded terminal-status check: if invoked while the agent is active, it gives the agent one 5-second grace period, then returns its current status without consuming the result.";
+
 export type ResultWaitOutcome = "settled" | "timed-out";
 
 type ResultWaitRecord = Pick<AgentRecord, "status" | "promise">;
@@ -92,6 +98,6 @@ export function formatResultReadTimeout(id: string, status: "queued" | "running"
   return (
     `Optimistic result read timed out after 5 seconds: agent ${id} is still ${status}. ` +
     "It continues in the background and its result remains unconsumed. " +
-    "Wait for its completion notification, then retrieve the result after any terminal status; do not poll."
+    `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Do not poll.`
   );
 }

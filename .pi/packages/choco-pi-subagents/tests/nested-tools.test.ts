@@ -63,7 +63,12 @@ test("nested Agent exposes name and forwards it to the manager alias option", as
   );
 
   assert.deepEqual(result.content, [
-    { type: "text", text: "Nested agent started in background. Agent ID: child" },
+    {
+      type: "text",
+      text:
+        "Nested agent started in background. Agent ID: child\n" +
+        "Continue other work until the terminal completion notification arrives, then retrieve the result exactly once with get_subagent_result. Use steer_subagent to send it a message mid-run.",
+    },
   ]);
   assert.equal(capturedOptions?.name, "beta");
 });
@@ -164,6 +169,6 @@ test("nested resume forwards alias rename and refuses live records actionably", 
   assert.equal(resumeCalls, 1, "live pre-check never reaches the manager resume boundary");
   assert.match(
     refused.content[0]?.type === "text" ? refused.content[0].text : "",
-    /get_subagent_result with wait: true.*steer_subagent/s,
+    /continue other work.*terminal completion notification.*exactly once with get_subagent_result.*steer_subagent/is,
   );
 });

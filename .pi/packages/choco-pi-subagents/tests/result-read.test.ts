@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   formatResultReadTimeout,
+  RESULT_WAIT_MECHANICS,
   SUBAGENT_RESULT_WAIT_TIMEOUT_MS,
+  TERMINAL_RESULT_RETRIEVAL_GUIDANCE,
   waitForSubagentResult,
 } from "../src/result-read.ts";
 import type { AgentRecord } from "../src/types.ts";
@@ -43,7 +45,22 @@ test("an optimistic timeout leaves an active result unconsumed", async () => {
   assert.equal(record.status, "running");
   assert.match(
     formatResultReadTimeout("child-1", record.status),
-    /timed out after 5 seconds.*continues.*unconsumed.*terminal status.*do not poll/i,
+    /timed out after 5 seconds.*continues.*unconsumed.*continue other work.*terminal completion notification.*exactly once.*do not poll/i,
+  );
+});
+
+test("result guidance separates terminal retrieval from the bounded active-status check", () => {
+  assert.match(
+    TERMINAL_RESULT_RETRIEVAL_GUIDANCE,
+    /continue other work.*terminal completion notification.*exactly once with get_subagent_result/i,
+  );
+  assert.match(
+    RESULT_WAIT_MECHANICS,
+    /only a bounded terminal-status check.*5-second grace period.*without consuming the result/i,
+  );
+  assert.doesNotMatch(
+    RESULT_WAIT_MECHANICS,
+    /(?:recommended|use|call|invoke).*wait:\s*true|wait:\s*true.*(?:to wait|await)/i,
   );
 });
 

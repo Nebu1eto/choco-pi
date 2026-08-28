@@ -209,6 +209,17 @@ directs the caller to retrieve only after a completion notification reports any
 terminal status. Cancellation still ends only the read. The default non-waiting
 status check and every terminal result remain unchanged.
 
+The root and nested tool descriptions, active-resume refusals, spawn results,
+timeout guidance, and custom-description example no longer present that bounded
+check as a way to await an active agent. They consistently direct the caller to
+continue other work until the terminal completion notification, retrieve the
+result exactly once afterward, and use `steer_subagent` for mid-run messages.
+The descriptions still document the unchanged five-second `wait: true`
+mechanics as a bounded terminal-status check. `tests/result-guidance.test.ts`
+guards the model-facing source and custom example against reintroducing an
+active-result-read recommendation; the focused result and nested-tool tests pin
+the positive terminal-notification wording.
+
 ### Runtime-adjustable subagent limits and cache-stable status reporting
 
 - `maxConcurrent: 0` now means unlimited concurrency while the scheduler still
@@ -362,7 +373,8 @@ which exists to reproduce the full description for `toolDescriptionMode:
 "custom"` and would otherwise reintroduce the old advice for anyone who copied
 it. Each says to pass `run_in_background: true` by default, that omitting the
 parameter still runs foreground, and that a background result must be read back
-with `get_subagent_result` rather than polled for. The full description's
+exactly once with `get_subagent_result` after its terminal completion
+notification rather than polled for. The full description's
 bullets were reordered so the default-mode rule precedes the parallel-spawn
 rule that depends on it.
 

@@ -3,7 +3,7 @@
  *
  * Tools:
  *   Agent             — LLM-callable: spawn a sub-agent
- *   get_subagent_result  — LLM-callable: check background agent status/result
+ *   get_subagent_result  — LLM-callable: retrieve a terminal background-agent result
  *   steer_subagent       — LLM-callable: send a steering message to a running agent
  *   stop_subagent        — LLM-callable: stop a running or queued agent
  *   agent_message        — LLM-callable: message any agent in the shared tree
@@ -126,7 +126,12 @@ import {
 } from "./settings.ts";
 import { getForegroundOutcomeNote, getStatusNote, partialOutputSuffix } from "./status-note.ts";
 import { resolveStopOutcome } from "./stop-subagent.ts";
-import { formatResultReadTimeout, waitForSubagentResult } from "./result-read.ts";
+import {
+  formatResultReadTimeout,
+  RESULT_WAIT_MECHANICS,
+  TERMINAL_RESULT_RETRIEVAL_GUIDANCE,
+  waitForSubagentResult,
+} from "./result-read.ts";
 import {
   type AgentConfig,
   type AgentInvocation,
@@ -306,7 +311,7 @@ function formatTaskNotification(record: AgentRecord, resultMaxLen: number): stri
   const resultPreview = record.result
     ? record.result.length > resultMaxLen
       ? record.result.slice(0, resultMaxLen) +
-        "\n...(truncated, use get_subagent_result for full output)"
+        "\n...(truncated; after this terminal notification, retrieve the full result exactly once with get_subagent_result)"
       : record.result
     : "No output.";
 
@@ -548,7 +553,7 @@ export default function (pi: ExtensionAPI) {
       pi.sendMessage<NotificationDetails>(
         {
           customType: "subagent-notification",
-          content: `Background agent group completed: ${label}\n\n${notifications}\n\nUse get_subagent_result for full output.`,
+          content: `Background agent group completed: ${label}\n\n${notifications}\n\nRetrieve each full result exactly once with get_subagent_result.`,
           display: true,
           details,
         },
@@ -1697,7 +1702,7 @@ Custom agents: .pi/agents/<name>.md (project) or ${getAgentDir()}/agents/<name>.
 Notes:
 - description: 3-5 words (shown in UI). Prompts must be self-contained — the agent has not seen this conversation.
 - Default to run_in_background: true. Omitting it runs the agent in the foreground, which blocks this conversation until the agent finishes; keep a call in the foreground only when it is short and your next step cannot proceed without its result.
-- Parallel work: one message, multiple Agent calls, run_in_background: true on each. You are notified when background agents finish — never poll or sleep; get_subagent_result retrieves each result.
+- Parallel work: one message, multiple Agent calls, run_in_background: true on each. You are notified when background agents finish — never poll or sleep. Continue other work until each terminal completion notification, then retrieve each result exactly once with get_subagent_result.
 - The result is not shown to the user — summarize it for them. Verify an agent's claimed code changes before reporting work done.
 - resume continues a previous agent by ID; steer_subagent messages a running one.${isolationCompactGuideline}`;
 
@@ -1718,7 +1723,7 @@ If the target is already known, use a direct tool — \`read\` for a known path,
 
 - Always include a short (3-5 word) description summarizing what the agent will do (shown in UI).
 - Pass run_in_background: true by default. A foreground call holds this conversation until the agent finishes, so the user cannot steer you while it runs — and the parameter is false when omitted, so background is something you must ask for explicitly. Keep a call in the foreground only when it is short and your very next step genuinely cannot proceed without its result.
-- A background call returns an agent ID, and you are notified when it completes — do NOT poll or sleep waiting for it. Continue with other work or respond to the user, then read the result with get_subagent_result when the notification arrives. Backgrounding defers the result, not your responsibility for it.
+- A background call returns an agent ID, and you are notified when it completes — do NOT poll or sleep waiting for it. Continue with other work or respond to the user, then retrieve the result exactly once with get_subagent_result after the terminal completion notification arrives. Backgrounding defers the result, not your responsibility for it.
 - When you launch multiple agents for independent work, send them in a single message with multiple tool uses, with run_in_background: true on each, so they run concurrently. If the user specifies that they want agents run "in parallel", you MUST send a single message with multiple tool calls. Foreground calls run sequentially — only one executes at a time.
 - However you get it, an agent's answer comes back to you and not to the user — to show the user, send a text message with a concise summary.
 - Trust but verify: an agent's summary describes what it intended to do, not necessarily what it did. When an agent writes or edits code, check the actual changes before reporting work as done.
@@ -1851,7 +1856,7 @@ Terse command-style prompts produce shallow, generic work.
       run_in_background: Type.Optional(
         Type.Boolean({
           description:
-            "Prefer true. True runs the agent in the background: it returns an agent ID immediately, leaves this conversation steerable while the agent works, and notifies you on completion (read the result with get_subagent_result). Omitted or false runs the agent in the foreground, which blocks the conversation until it finishes and returns its output inline — reserve that for a short call whose result you need before you can do anything else.",
+            "Prefer true. True runs the agent in the background: it returns an agent ID immediately, leaves this conversation steerable while the agent works, and notifies you on terminal completion (continue other work until then, then retrieve the result exactly once with get_subagent_result). Omitted or false runs the agent in the foreground, which blocks the conversation until it finishes and returns its output inline — reserve that for a short call whose result you need before you can do anything else.",
         }),
       ),
       resume: Type.Optional(
@@ -2196,7 +2201,7 @@ Terse command-style prompts produce shallow, generic work.
         if (existing.status === "running" || existing.status === "queued") {
           return textResult(
             `Agent "${params.resume}" is still ${existing.status} — it can only be resumed once its current run finishes.\n` +
-              `Use get_subagent_result with wait: true to wait, or steer_subagent to send it a message mid-run.`,
+              `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it a message mid-run.`,
           );
         }
 
@@ -2228,7 +2233,7 @@ Terse command-style prompts produce shallow, generic work.
                 ? `Position: queued (cap ${formatConcurrencyCap(manager.getMaxConcurrent())})\n`
                 : "") +
               `\nYou will be notified when this agent completes.\n` +
-              `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.`,
+              `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it messages.`,
             {
               ...detailBase,
               subagentType: existing.type,
@@ -2345,7 +2350,7 @@ Terse command-style prompts produce shallow, generic work.
               ? `Position: queued (cap ${formatConcurrencyCap(manager.getMaxConcurrent())})\n`
               : "") +
             `\nYou will be notified when this agent completes.\n` +
-            `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n` +
+            `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it messages.\n` +
             `Do not duplicate this agent's work.`,
           {
             ...detailBase,
@@ -2749,17 +2754,17 @@ Terse command-style prompts produce shallow, generic work.
       label: "Get Agent Result",
       description:
         "Retrieve a background agent result only after the agent reaches any terminal status. " +
-        "Use the agent ID returned by Agent with run_in_background. wait: true gives an active agent one optimistic 5-second grace period, then returns its current status without consuming the result.",
-      promptSnippet: "Check status and retrieve results from a background agent",
+        `Use the agent ID returned by Agent with run_in_background. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} ${RESULT_WAIT_MECHANICS}`,
+      promptSnippet: "Retrieve a terminal background-agent result",
       parameters: Type.Object({
         agent_id: Type.String({
           description:
-            "The agent ID to check. The agent's handle also works — its `name` if you gave it one, otherwise its type (`explore`, `explore-2`).",
+            "The terminal agent ID to retrieve. The agent's handle also works — its `name` if you gave it one, otherwise its type (`explore`, `explore-2`).",
         }),
         wait: Type.Optional(
           Type.Boolean({
             description:
-              "If true, wait up to 5 seconds for any terminal status. On timeout the agent keeps running and the result stays unconsumed. Default: false.",
+              "Bounded terminal-status check only. If true, allow up to 5 seconds for terminal status. On timeout the agent keeps running and the result stays unconsumed; continue other work until its terminal completion notification instead of repeating the check. Default: false.",
           }),
         ),
         verbose: Type.Optional(
