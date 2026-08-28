@@ -28,6 +28,14 @@ flowchart TD
 
 Choose roles by unit semantics, using `.pi/model-guidance.md` resolved relative to the repository as the model and effort selection reference, and send every child a bounded task packet with objective, instructions, narrowed read/write scope, dependencies, done criteria, and verification. Name every spawned child by its goal (`role-goal`, one to three dashed words, unique among its siblings). Spawned children of a worker are that worker's responsibility; standard `Agent`, `steer_subagent`, `get_subagent_result`, and `stop_subagent` tools remain available.
 
+### Scoped reviewer grandchildren
+
+A scope-owning `implementer` or `general` worker may spawn one bounded `reviewer` child after its implementation unit reaches a reviewable state, but only when the root task packet explicitly authorizes that review and fresh context materially helps. Do not add reviewer grandchildren to trivial units or use them as routine verification.
+
+Give the reviewer the exact parent-owned diff, revision, or path-scoped patch plus a narrow risk question and bounded `max_turns`. The reviewer stays read-only, may not spawn another agent, and must ignore unrelated changes from parallel branches or the shared checkout.
+
+The worker forwards each finding and its evidence to the root orchestrator without applying it. Only the root orchestrator adjudicates the finding: it independently checks legitimacy, current-task scope, prevalence, and impact, then accepts, rejects, or defers it and sends any accepted correction back to the owning worker. One reviewer may not start a review loop.
+
 ## 3. Coordinate the tree
 
 Every agent must read the per-turn `<system-reminder>`, which compares the scheduled top-level background count with the concurrency cap and also shows the whole-tree total and nesting depth whenever at least one subagent is active. When the scheduled count reaches the cap, finish work sequentially instead of queueing spawns. The root-only `subagent_limits` tool reads or sets session-scoped limits: `maxConcurrent` is unlimited at `0` with sanity cap `1024`, and `maxSubagentDepth` accepts `0`–`16`; adjust either only when the user instructs it.
