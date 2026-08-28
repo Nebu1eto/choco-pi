@@ -58,6 +58,10 @@ interface AgentInvocationParams {
   model?: string;
   thinking?: string;
   max_turns?: number;
+  timeout_ms?: number;
+  max_tool_calls?: number;
+  max_tokens?: number;
+  idle_timeout_ms?: number;
   run_in_background?: boolean;
   inherit_context?: boolean;
   isolated?: boolean;
@@ -76,6 +80,10 @@ interface ResolvedAgentInvocationConfig {
   modelFromParams: boolean;
   thinking?: ThinkingLevel;
   maxTurns?: number;
+  timeoutMs?: number;
+  maxToolCalls?: number;
+  maxTokens?: number;
+  idleTimeoutMs?: number;
   inheritContext: boolean;
   runInBackground: boolean;
   isolated: boolean;
@@ -125,6 +133,10 @@ export function resolveAgentInvocationConfig(
     modelFromParams: agentConfig?.model == null && params.model != null,
     thinking,
     maxTurns: agentConfig?.maxTurns ?? params.max_turns,
+    timeoutMs: params.timeout_ms,
+    maxToolCalls: params.max_tool_calls,
+    maxTokens: params.max_tokens,
+    idleTimeoutMs: params.idle_timeout_ms,
     inheritContext: agentConfig?.inheritContext ?? params.inherit_context ?? false,
     runInBackground: agentConfig?.runInBackground ?? params.run_in_background ?? false,
     isolated: agentConfig?.isolated ?? params.isolated ?? false,

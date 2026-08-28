@@ -23,6 +23,11 @@ import {
   markResultGenerationConsumed,
   publishTerminalResult,
 } from "./result-read.ts";
+import {
+  RunBudgetController,
+  type ForcedTerminalStatus,
+  type RunBudgetLimits,
+} from "./run-budgets.ts";
 import { getSessionCostBaseline } from "./usage.ts";
 import type {
   AgentInvocation,
@@ -128,12 +133,22 @@ function occupiesPoolSlot(record: Pick<AgentRecord, "isBackground" | "parentAgen
   return !!record.isBackground && record.parentAgentId === undefined;
 }
 
+function isBudgetedToolActivity(activity: ToolActivity): boolean {
+  return activity.type === "start" || !activity.toolName.includes("-error:");
+}
+
 interface SpawnArgs {
   pi: ExtensionAPI;
   ctx: ExtensionContext;
   type: SubagentType;
   prompt: string;
   options: SpawnOptions;
+}
+
+interface RunBudgetState {
+  controller?: RunBudgetController;
+  forcedStatus?: ForcedTerminalStatus;
+  forcedReason?: string;
 }
 
 interface SpawnOptions {
@@ -165,6 +180,7 @@ interface SpawnOptions {
   reclaim?: { handle: string; alias?: string };
   model?: Model<any>;
   maxTurns?: number;
+  budgets?: RunBudgetLimits;
   isolated?: boolean;
   inheritContext?: boolean;
   thinkingLevel?: ThinkingLevel;
@@ -236,6 +252,7 @@ interface ResumeOptions {
    * record — the historical behavior.
    */
   isBackground?: boolean;
+  budgets?: RunBudgetLimits;
   /** Called on tool start/end with activity info (for streaming progress to UI). */
   onToolActivity?: (activity: ToolActivity) => void;
   /** Called once per assistant message_end with that message's usage delta. */
@@ -261,6 +278,8 @@ export class AgentManager {
   private onCompact?: OnAgentCompact;
   private maxConcurrent: number;
   private runner: AgentManagerRunner;
+  private disposed = false;
+  private activeRunBudgets = new Set<RunBudgetController>();
   /** Base repos worktrees were created from — so dispose() can prune them all,
    *  not just the parent repo (caller-supplied cwd can target other repos). */
   private worktreeRepos = new Set<string>();
@@ -309,6 +328,51 @@ export class AgentManager {
   /** Concrete scheduler bound; configured 0 remains displayable as unlimited. */
   getSchedulingMaxConcurrent(): number {
     return schedulingMaxConcurrent(this.maxConcurrent);
+  }
+
+  private armRunBudgets(
+    record: AgentRecord,
+    generation: number,
+    limits: RunBudgetLimits | undefined,
+    abortController: AbortController,
+  ): RunBudgetState {
+    const state: RunBudgetState = {};
+    if (
+      limits === undefined ||
+      (limits.timeoutMs === undefined &&
+        limits.maxToolCalls === undefined &&
+        limits.maxTokens === undefined &&
+        limits.idleTimeoutMs === undefined)
+    ) {
+      return state;
+    }
+
+    const controller = new RunBudgetController(limits, {
+      isActive: () =>
+        !this.disposed && record.resultGeneration === generation && record.status === "running",
+      steerConclusion: () => {
+        const message =
+          "The idle watchdog detected no tool activity. Conclude now with your current findings in the required output format.";
+        const session = record.session;
+        if (session) {
+          void session.steer(message).catch(() => undefined);
+        } else {
+          (record.pendingSteers ??= []).push(message);
+        }
+      },
+      stop: (status, reason) => {
+        if (state.forcedStatus !== undefined) return;
+        state.forcedStatus = status;
+        state.forcedReason = reason;
+        abortController.abort();
+      },
+      onDispose: (disposedController) => {
+        this.activeRunBudgets.delete(disposedController);
+      },
+    });
+    state.controller = controller;
+    this.activeRunBudgets.add(controller);
+    return state;
   }
 
   /**
@@ -496,11 +560,18 @@ export class AgentManager {
     const settleStaleRun = () => {
       if (staleRunSettled) return;
       staleRunSettled = true;
+      runBudget.controller?.dispose();
       detach();
       this.abortOwnedChildren(id);
       releaseRunPoolSlot();
       this.drainQueue();
     };
+    const runBudget = this.armRunBudgets(
+      record,
+      runGeneration,
+      options.budgets,
+      record.abortController!,
+    );
 
     const promise = this.runner
       .runAgent(ctx, type, prompt, {
@@ -527,12 +598,16 @@ export class AgentManager {
         configCwd: options.configCwd ?? (customCwd === undefined ? undefined : ctx.cwd),
         signal: record.abortController!.signal,
         onToolActivity: (activity) => {
+          if (isBudgetedToolActivity(activity)) {
+            runBudget.controller?.noteToolActivity(activity.type);
+          }
           if (activity.type === "end") record.toolUses++;
           options.onToolActivity?.(activity);
         },
         onTurnEnd: options.onTurnEnd,
         onTextDelta: options.onTextDelta,
         onAssistantUsage: (usage) => {
+          runBudget.controller?.noteUsage(usage);
           addUsage(record.lifetimeUsage, usage);
           options.onAssistantUsage?.(usage);
         },
@@ -573,6 +648,7 @@ export class AgentManager {
       })
       .then(async ({ responseText, session, aborted, steered, failure }) => {
         try {
+          runBudget.controller?.dispose();
           let finalResult = responseText;
           let terminalStatus: AgentRecord["status"];
           if (aborted) {
@@ -620,8 +696,11 @@ export class AgentManager {
           // Publish status, output and generation together. Keeping the record
           // active through asynchronous worktree cleanup prevents resume/result
           // reads from observing a terminal status with unfinished output.
-          if (record.status !== "stopped") record.status = terminalStatus;
-          if (failure) record.error = failure;
+          if (record.status !== "stopped") {
+            record.status = runBudget.forcedStatus ?? terminalStatus;
+          }
+          if (runBudget.forcedReason !== undefined) record.error = runBudget.forcedReason;
+          else if (failure) record.error = failure;
           record.result = finalResult;
           record.session = session;
           record.completedAt ??= Date.now();
@@ -656,6 +735,7 @@ export class AgentManager {
       })
       .catch(async (err) => {
         try {
+          runBudget.controller?.dispose();
           const error = err instanceof Error ? err.message : String(err);
           detach();
 
@@ -686,8 +766,10 @@ export class AgentManager {
           }
 
           if (record.resultGeneration !== runGeneration) return "";
-          if (record.status !== "stopped") record.status = "error";
-          record.error = error;
+          if (record.status !== "stopped") {
+            record.status = runBudget.forcedStatus ?? "error";
+          }
+          record.error = runBudget.forcedReason ?? error;
           record.completedAt ??= Date.now();
           publishTerminalResult(record);
 
@@ -856,15 +938,25 @@ export class AgentManager {
     record.completedAt = undefined;
     record.result = undefined;
     record.error = undefined;
+    const abortController = new AbortController();
+    record.abortController = abortController;
+    const onParentAbort = () => abortController.abort();
+    if (signal?.aborted) abortController.abort();
+    else signal?.addEventListener("abort", onParentAbort, { once: true });
+    const runBudget = this.armRunBudgets(record, runGeneration, options?.budgets, abortController);
 
     try {
       const session = record.session;
       const { text, failure } = await this.runner.resumeAgent(session, prompt, {
         onToolActivity: (activity) => {
+          if (isBudgetedToolActivity(activity)) {
+            runBudget.controller?.noteToolActivity(activity.type);
+          }
           if (activity.type === "end") record.toolUses++;
           options?.onToolActivity?.(activity);
         },
         onAssistantUsage: (usage) => {
+          runBudget.controller?.noteUsage(usage);
           addUsage(record.lifetimeUsage, usage);
           options?.onAssistantUsage?.(usage);
         },
@@ -873,22 +965,26 @@ export class AgentManager {
           this.onCompact?.(record, info);
           options?.onCompaction?.(info);
         },
-        signal,
+        signal: abortController.signal,
       });
       if (record.resultGeneration !== runGeneration) return record;
       // Same contract as the spawn path (#144): a failed final turn is an
       // error, not a completion — but the resumed text stays available.
-      record.status = failure ? "error" : "completed";
-      if (failure) record.error = failure;
+      record.status = runBudget.forcedStatus ?? (failure ? "error" : "completed");
+      if (runBudget.forcedReason !== undefined) record.error = runBudget.forcedReason;
+      else if (failure) record.error = failure;
       record.result = text;
       record.completedAt = Date.now();
       markResultGenerationConsumed(record);
     } catch (err) {
       if (record.resultGeneration !== runGeneration) return record;
-      record.status = "error";
-      record.error = err instanceof Error ? err.message : String(err);
+      record.status = runBudget.forcedStatus ?? "error";
+      record.error = runBudget.forcedReason ?? (err instanceof Error ? err.message : String(err));
       record.completedAt = Date.now();
       markResultGenerationConsumed(record);
+    } finally {
+      runBudget.controller?.dispose();
+      signal?.removeEventListener("abort", onParentAbort);
     }
 
     // Same contract as the spawn settle paths: children spawned during the
@@ -950,11 +1046,13 @@ export class AgentManager {
     const settleStaleRun = () => {
       if (staleRunSettled) return;
       staleRunSettled = true;
+      runBudget.controller?.dispose();
       detach();
       this.abortOwnedChildren(id);
       releaseRunPoolSlot();
       this.drainQueue();
     };
+    const runBudget = this.armRunBudgets(record, runGeneration, options.budgets, abortController);
 
     // Per-run side effects (output streaming) — see ResumeOptions.onStarted.
     // After the record is in its running shape, before the run is kicked off.
@@ -965,6 +1063,7 @@ export class AgentManager {
     }
 
     const settle = () => {
+      runBudget.controller?.dispose();
       detach();
       // Final flush of streaming output file
       if (record.outputCleanup) {
@@ -990,10 +1089,14 @@ export class AgentManager {
     const promise = this.runner
       .resumeAgent(record.session, prompt, {
         onToolActivity: (activity) => {
+          if (isBudgetedToolActivity(activity)) {
+            runBudget.controller?.noteToolActivity(activity.type);
+          }
           if (activity.type === "end") record.toolUses++;
           options.onToolActivity?.(activity);
         },
         onAssistantUsage: (usage) => {
+          runBudget.controller?.noteUsage(usage);
           addUsage(record.lifetimeUsage, usage);
           options.onAssistantUsage?.(usage);
         },
@@ -1006,13 +1109,20 @@ export class AgentManager {
       })
       .then(({ text, failure }) => {
         try {
+          runBudget.controller?.dispose();
           if (record.resultGeneration !== runGeneration) return text;
           // Don't overwrite status if externally stopped via abort().
           if (record.status !== "stopped") {
-            // Same contract as the spawn path (#144): a failed final turn is an
-            // error, not a completion — but the resumed text stays available.
-            record.status = failure ? "error" : "completed";
-            if (failure) record.error = failure;
+            const forcedStatus = runBudget.forcedStatus;
+            if (forcedStatus === undefined) {
+              // Same contract as the spawn path (#144): a failed final turn is an
+              // error, not a completion — but the resumed text stays available.
+              record.status = failure ? "error" : "completed";
+              if (failure) record.error = failure;
+            } else {
+              record.status = forcedStatus;
+              record.error = runBudget.forcedReason;
+            }
           }
           record.result = text;
           record.completedAt ??= Date.now();
@@ -1025,10 +1135,12 @@ export class AgentManager {
       })
       .catch((err) => {
         try {
+          runBudget.controller?.dispose();
           if (record.resultGeneration !== runGeneration) return "";
           if (record.status !== "stopped") {
-            record.status = "error";
-            record.error = err instanceof Error ? err.message : String(err);
+            record.status = runBudget.forcedStatus ?? "error";
+            record.error =
+              runBudget.forcedReason ?? (err instanceof Error ? err.message : String(err));
           }
           record.completedAt ??= Date.now();
           publishTerminalResult(record);
@@ -1311,7 +1423,10 @@ export class AgentManager {
   }
 
   dispose() {
+    this.disposed = true;
     clearInterval(this.cleanupInterval);
+    for (const controller of this.activeRunBudgets) controller.dispose();
+    this.activeRunBudgets.clear();
     // Clear queue
     this.queue = [];
     for (const record of this.agents.values()) {

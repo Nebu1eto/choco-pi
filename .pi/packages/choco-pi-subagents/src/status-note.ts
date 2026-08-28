@@ -27,6 +27,10 @@ export function getStatusNote(status: string): string {
       return " (aborted — hit the turn limit before completion; output may be incomplete)";
     case "steered":
       return " (wrapped up at the turn limit — output may be partial)";
+    case "budget_exceeded":
+      return " (budget exceeded before completion — output may be partial)";
+    case "watchdog_stopped":
+      return " (idle watchdog stopped the run after requesting a conclusion — output may be partial)";
     default:
       return "";
   }
@@ -74,6 +78,10 @@ export function getForegroundOutcomeNote(status: string): string {
       return " (aborted at the turn limit — everything the agent produced is above; the task is unfinished)";
     case "steered":
       return " (wrapped up at the turn limit — everything the agent produced is above; the task may be unfinished)";
+    case "budget_exceeded":
+      return " (budget exceeded — everything the agent produced is above; the task may be unfinished)";
+    case "watchdog_stopped":
+      return " (idle watchdog stopped the run — everything the agent produced is above; the task may be unfinished)";
     default:
       return "";
   }

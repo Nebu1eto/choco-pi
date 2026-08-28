@@ -637,7 +637,11 @@ export default function (pi: ExtensionAPI) {
 
       // Emit lifecycle event based on terminal status
       const isError =
-        record.status === "error" || record.status === "stopped" || record.status === "aborted";
+        record.status === "error" ||
+        record.status === "stopped" ||
+        record.status === "aborted" ||
+        record.status === "budget_exceeded" ||
+        record.status === "watchdog_stopped";
       const eventData = buildEventData(record);
       if (isError) {
         pi.events.emit("subagents:failed", eventData);
@@ -1479,7 +1483,18 @@ export default function (pi: ExtensionAPI) {
     ctx: ExtensionContext,
     existing: AgentRecord,
     prompt: string,
-    opts: { outputTranscript: boolean; maxTurns?: number; toolCallId?: string; name?: string },
+    opts: {
+      outputTranscript: boolean;
+      maxTurns?: number;
+      toolCallId?: string;
+      name?: string;
+      budgets?: {
+        timeoutMs?: number;
+        maxToolCalls?: number;
+        maxTokens?: number;
+        idleTimeoutMs?: number;
+      };
+    },
   ): Promise<AgentRecord | undefined> {
     const id = existing.id;
     const joinMode = resolveJoinMode(defaultJoinMode, true);
@@ -1513,6 +1528,7 @@ export default function (pi: ExtensionAPI) {
     const record = await manager.resume(id, prompt, undefined, {
       isBackground: true,
       name: opts.name,
+      budgets: opts.budgets,
       onToolActivity: bgCallbacks.onToolActivity,
       onAssistantUsage: bgCallbacks.onAssistantUsage,
       // Fires when the run actually starts — immediately, or on queue
@@ -1883,6 +1899,34 @@ Terse command-style prompts produce shallow, generic work.
           minimum: 1,
         }),
       ),
+      timeout_ms: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description:
+            "Wall-clock budget in milliseconds, measured from actual run start. Exceeding it publishes terminal status budget_exceeded.",
+        }),
+      ),
+      max_tool_calls: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description:
+            "Maximum completed tool calls for this run. Reaching the cap stops the run with terminal status budget_exceeded.",
+        }),
+      ),
+      max_tokens: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description:
+            "Maximum reported input + output + cache-write tokens for this run. Reaching the cap stops it with terminal status budget_exceeded.",
+        }),
+      ),
+      idle_timeout_ms: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description:
+            "Tool-inactivity interval in milliseconds. One idle interval steers the agent to conclude; a second idle interval stops it with terminal status watchdog_stopped.",
+        }),
+      ),
       run_in_background: Type.Optional(
         Type.Boolean({
           description:
@@ -2018,6 +2062,18 @@ Terse command-style prompts produce shallow, generic work.
         return new Text(line, 0, 0);
       }
 
+      if (details.status === "budget_exceeded" || details.status === "watchdog_stopped") {
+        const s = stats(details);
+        let line = theme.fg("warning", "■") + (s ? " " + s : "");
+        line +=
+          "\n" +
+          theme.fg(
+            "warning",
+            `  ⎿  ${details.status === "budget_exceeded" ? "Budget exceeded" : "Idle watchdog stopped"}: ${details.error ?? "unknown"}`,
+          );
+        return new Text(line, 0, 0);
+      }
+
       // Anything left ("queued", or a status added later) has no rendering of
       // its own — the turn-limit wording below must not be the catch-all.
       if (details.status !== "error" && details.status !== "aborted") {
@@ -2142,12 +2198,22 @@ Terse command-style prompts produce shallow, generic work.
           ? (model?.name ?? effectiveModelId).replace(/^Claude\s+/i, "").toLowerCase()
           : undefined;
       const effectiveMaxTurns = normalizeMaxTurns(resolvedConfig.maxTurns ?? getDefaultMaxTurns());
+      const budgets = {
+        timeoutMs: resolvedConfig.timeoutMs,
+        maxToolCalls: resolvedConfig.maxToolCalls,
+        maxTokens: resolvedConfig.maxTokens,
+        idleTimeoutMs: resolvedConfig.idleTimeoutMs,
+      };
       const agentInvocation: AgentInvocation = {
         modelName,
         thinking,
         // Explicit value only — the default fallback would just add noise.
         // Normalize so `0` (unlimited) doesn't surface as a misleading "max turns: 0".
         maxTurns: normalizeMaxTurns(resolvedConfig.maxTurns),
+        timeoutMs: resolvedConfig.timeoutMs,
+        maxToolCalls: resolvedConfig.maxToolCalls,
+        maxTokens: resolvedConfig.maxTokens,
+        idleTimeoutMs: resolvedConfig.idleTimeoutMs,
         isolated,
         inheritContext,
         runInBackground,
@@ -2202,6 +2268,10 @@ Terse command-style prompts produce shallow, generic work.
             model: params.model as string | undefined,
             thinking: thinking,
             max_turns: effectiveMaxTurns,
+            timeout_ms: resolvedConfig.timeoutMs,
+            max_tool_calls: resolvedConfig.maxToolCalls,
+            max_tokens: resolvedConfig.maxTokens,
+            idle_timeout_ms: resolvedConfig.idleTimeoutMs,
             isolated: isolated,
             isolation: isolation,
           });
@@ -2246,6 +2316,7 @@ Terse command-style prompts produce shallow, generic work.
             maxTurns: effectiveMaxTurns,
             toolCallId,
             name: params.name,
+            budgets,
           });
           if (!record) {
             return textResult(`Failed to resume agent "${params.resume}".`);
@@ -2279,6 +2350,7 @@ Terse command-style prompts produce shallow, generic work.
 
         const record = await manager.resume(params.resume, params.prompt, signal, {
           name: params.name,
+          budgets,
         });
         if (!record) {
           return textResult(`Failed to resume agent "${params.resume}".`);
@@ -2286,7 +2358,11 @@ Terse command-style prompts produce shallow, generic work.
         const address = record.alias ?? record.handle ?? record.id;
         // A failed resume surfaces the error, plus any partial output THIS
         // resume produced (never the previous turn's answer, #144).
-        if (record.status === "error") {
+        if (
+          record.status === "error" ||
+          record.status === "budget_exceeded" ||
+          record.status === "watchdog_stopped"
+        ) {
           return textResult(
             `Agent alias: @${address}\nAgent failed: ${record.error}${partialOutputSuffix(record)}`,
             buildDetails(detailBase, record),
@@ -2323,6 +2399,7 @@ Terse command-style prompts produce shallow, generic work.
           name: params.name,
           model,
           maxTurns: effectiveMaxTurns,
+          budgets,
           isolated,
           inheritContext,
           thinkingLevel: thinking,
@@ -2466,6 +2543,7 @@ Terse command-style prompts produce shallow, generic work.
             name: params.name,
             model,
             maxTurns: effectiveMaxTurns,
+            budgets,
             isolated,
             inheritContext,
             thinkingLevel: thinking,
@@ -2501,7 +2579,11 @@ Terse command-style prompts produce shallow, generic work.
 
       const details = buildDetails(detailBase, record, fgState, { tokens: tokenText });
 
-      if (record.status === "error") {
+      if (
+        record.status === "error" ||
+        record.status === "budget_exceeded" ||
+        record.status === "watchdog_stopped"
+      ) {
         // Error headline + any partial output the run produced before failing.
         return textResult(
           `${fallbackNote}Agent failed: ${record.error}${partialOutputSuffix(record)}`,

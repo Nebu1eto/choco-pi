@@ -160,7 +160,16 @@ export interface AgentRecord {
    */
   alias?: string;
   description: string;
-  status: "queued" | "running" | "completed" | "steered" | "aborted" | "stopped" | "error";
+  status:
+    | "queued"
+    | "running"
+    | "completed"
+    | "steered"
+    | "aborted"
+    | "stopped"
+    | "budget_exceeded"
+    | "watchdog_stopped"
+    | "error";
   result?: string;
   error?: string;
   toolUses: number;
@@ -267,6 +276,10 @@ export interface AgentInvocation {
   modelName?: string;
   thinking?: ThinkingLevel;
   maxTurns?: number;
+  timeoutMs?: number;
+  maxToolCalls?: number;
+  maxTokens?: number;
+  idleTimeoutMs?: number;
   isolated?: boolean;
   inheritContext?: boolean;
   runInBackground?: boolean;
@@ -321,6 +334,10 @@ export interface ScheduledSubagent {
   model?: string;
   thinking?: ThinkingLevel;
   max_turns?: number;
+  timeout_ms?: number;
+  max_tool_calls?: number;
+  max_tokens?: number;
+  idle_timeout_ms?: number;
   isolated?: boolean;
   isolation?: IsolationMode;
 
