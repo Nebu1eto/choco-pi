@@ -173,7 +173,24 @@ export interface AgentRecord {
   promise?: Promise<string>;
   groupId?: string;
   joinMode?: JoinMode;
-  /** Set when result was already consumed via get_subagent_result — suppresses completion notification. */
+  /**
+   * Current execution generation. The manager increments this before every
+   * spawn/resume run so read claims from an earlier run cannot affect a later
+   * one. Optional only for compatibility with cross-extension/test fixtures;
+   * production records initialize it synchronously at spawn.
+   */
+  resultGeneration?: number;
+  /** Current generation whose final status/output has been published atomically. */
+  terminalResultGeneration?: number;
+  /** Active generation for which one status read has already been returned. */
+  activeResultReadGeneration?: number;
+  /** Terminal generation whose result was returned by get_subagent_result. */
+  consumedResultGeneration?: number;
+  /**
+   * Suppresses completion notification after an inline result, explicit stop,
+   * workflow aggregation, or get_subagent_result consumption. Generation-aware
+   * read refusal uses consumedResultGeneration instead of this broader flag.
+   */
   resultConsumed?: boolean;
   /** Steering messages queued before the session was ready. */
   pendingSteers?: string[];

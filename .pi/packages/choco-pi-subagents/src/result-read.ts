@@ -7,13 +7,149 @@ export const TERMINAL_RESULT_RETRIEVAL_GUIDANCE =
   "Continue other work until the terminal completion notification arrives, then retrieve the result exactly once with get_subagent_result.";
 
 export const RESULT_WAIT_MECHANICS =
-  "wait: true is only a bounded terminal-status check: if invoked while the agent is active, it gives the agent one 5-second grace period, then returns its current status without consuming the result.";
+  "The first active read in a run returns current status immediately by default. wait: true may instead give that same one allowed active read a 5-second grace period. Further active reads in the same generation are refused until terminal completion.";
 
 export type ResultWaitOutcome = "settled" | "timed-out";
 
 type ResultWaitRecord = Pick<AgentRecord, "status" | "promise">;
+type ResultReadRecord = Pick<
+  AgentRecord,
+  | "id"
+  | "status"
+  | "resultGeneration"
+  | "terminalResultGeneration"
+  | "activeResultReadGeneration"
+  | "consumedResultGeneration"
+  | "resultConsumed"
+>;
+
+export type ResultReadClaim =
+  | { kind: "active"; generation: number; status: "queued" | "running" }
+  | { kind: "active-refused"; generation: number; status: "queued" | "running" }
+  | { kind: "terminal"; generation: number }
+  | { kind: "terminal-refused"; generation: number }
+  | { kind: "terminal-pending"; generation: number };
 /** A promise rejection crossing from the child run; it is propagated unchanged. */
 type ResultWaitRejection = {} | null | undefined;
+
+function currentGeneration(record: ResultReadRecord): number {
+  record.resultGeneration ??= 1;
+  return record.resultGeneration;
+}
+
+/** Start a new run before exposing its queued/running state. */
+export function beginResultGeneration(record: ResultReadRecord): number {
+  const generation = currentGeneration(record) + 1;
+  record.resultGeneration = generation;
+  record.resultConsumed = false;
+  return generation;
+}
+
+/** Publish a run's final data only after every asynchronous settle step finishes. */
+export function publishTerminalResult(record: ResultReadRecord): number {
+  const generation = currentGeneration(record);
+  record.terminalResultGeneration = generation;
+  return generation;
+}
+
+/** Record an inline terminal result without conflating it with notification suppression. */
+export function markResultGenerationConsumed(record: ResultReadRecord): number {
+  const generation = publishTerminalResult(record);
+  record.consumedResultGeneration = generation;
+  record.resultConsumed = true;
+  return generation;
+}
+
+/**
+ * Claim one result read synchronously. Active claims permit one status response
+ * per run; terminal claims permit one final-result response per published run.
+ */
+export function claimSubagentResultRead(
+  record: ResultReadRecord,
+  signal?: AbortSignal,
+): ResultReadClaim {
+  if (signal?.aborted) throw signal.reason;
+  const generation = currentGeneration(record);
+  if (record.status === "queued" || record.status === "running") {
+    if (record.activeResultReadGeneration === generation) {
+      return { kind: "active-refused", generation, status: record.status };
+    }
+    record.activeResultReadGeneration = generation;
+    return { kind: "active", generation, status: record.status };
+  }
+  if (record.terminalResultGeneration !== generation) {
+    return { kind: "terminal-pending", generation };
+  }
+  if (record.consumedResultGeneration === generation) {
+    return { kind: "terminal-refused", generation };
+  }
+  record.consumedResultGeneration = generation;
+  record.resultConsumed = true;
+  return { kind: "terminal", generation };
+}
+
+/** Roll back an interrupted active read without touching the child or terminal result. */
+export function releaseActiveResultRead(record: ResultReadRecord, generation: number): void {
+  if (
+    record.resultGeneration === generation &&
+    record.activeResultReadGeneration === generation &&
+    record.terminalResultGeneration !== generation
+  ) {
+    record.activeResultReadGeneration = undefined;
+  }
+}
+
+export function formatResultReadRefusal(
+  record: Pick<AgentRecord, "id" | "status">,
+  claim: Extract<
+    ResultReadClaim,
+    { kind: "active-refused" | "terminal-refused" | "terminal-pending" }
+  >,
+): string {
+  let reason: string;
+  if (claim.kind === "active-refused") {
+    reason = "active_generation_already_read";
+  } else if (claim.kind === "terminal-refused") {
+    reason = "terminal_generation_already_consumed";
+  } else {
+    reason = "terminal_result_not_published";
+  }
+  const action =
+    claim.kind === "terminal-refused"
+      ? "Do not call get_subagent_result again for this generation."
+      : "Wait for the terminal completion notification; do not poll get_subagent_result.";
+  return JSON.stringify(
+    {
+      kind: "subagent_result_read_refused",
+      agent_id: record.id,
+      status: record.status,
+      generation: claim.generation,
+      reason,
+      action,
+    },
+    null,
+    2,
+  );
+}
+
+export function formatResultReadGenerationChanged(
+  record: Pick<AgentRecord, "id" | "status" | "resultGeneration">,
+  generation: number,
+): string {
+  return JSON.stringify(
+    {
+      kind: "subagent_result_read_refused",
+      agent_id: record.id,
+      status: record.status,
+      generation,
+      reason: "generation_changed_during_read",
+      current_generation: record.resultGeneration,
+      action: "Wait for the current run's terminal completion notification before reading again.",
+    },
+    null,
+    2,
+  );
+}
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.reject(signal.reason);
