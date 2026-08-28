@@ -58,6 +58,7 @@ A follow-up continues the active workflow; an added constraint never restarts it
 - Fix root causes at the causal boundary; if that would expand the requested scope, report the boundary and ask rather than patch symptoms.
 - Set the outcome, scope, success criteria, and required evidence before changing behavior; the workflow owns the acceptance ledger.
 - Use the smallest evidence mode: `regression_test` for durable coverage of important flows, authorization, data integrity, or public interfaces; `direct_check` for a command, build, typecheck, lint, or inspection; `runtime_e2e` for behavior observable only through the real application path. Add no tests by default.
+- Treat tautological tests as harmful. A test must exercise production behavior or a real boundary and fail when that behavior regresses; tests that restate the implementation, assert their own fixture setup, or mirror constants do not count as evidence.
 - Validate proactively where reversible: the diff, narrowest sufficient checks, required gates, and real-path observation when runtime evidence is required; refresh evidence when the verified state changes.
 - Do not report runtime behavior as observed from an exit code, static reading, or a worker or reviewer report.
 - Destructive, irreversible, remote-writing, database-mutating, deploying, migrating, or publishing validation needs explicit user authority.
@@ -79,6 +80,8 @@ A follow-up continues the active workflow; an added constraint never restarts it
 ## Review
 
 - Review is advisory and never replaces implementation verification. On `/review-agent` load the `review` skill with `.pi/review-policy.md` as shared rules; stay report-only unless a fix is separately requested.
+- The root orchestrator alone adjudicates reviewer findings. Never accept a finding by default: validate it against current code and evidence, confirm it is in the current task's scope, and weigh its prevalence and impact.
+- Reject invalid, out-of-scope, or immaterial findings. If a legitimate finding is too uncommon or low-impact to justify in-scope work, leave the code unchanged and disclose it in the handoff.
 - Review the exact requested diff or revision, order findings by severity with a reproducible failure or deterministic path, and validate one before acting.
 - Use fresh-context review on request or for high-risk areas: security, authorization, data integrity, migrations, concurrency, public interfaces.
 
