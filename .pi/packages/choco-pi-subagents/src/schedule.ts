@@ -61,6 +61,10 @@ export interface NewJobInput {
   model?: string;
   thinking?: ThinkingLevel;
   max_turns?: number;
+  timeout_ms?: number;
+  max_tool_calls?: number;
+  max_tokens?: number;
+  idle_timeout_ms?: number;
   isolated?: boolean;
   isolation?: IsolationMode;
 }
@@ -129,6 +133,10 @@ export class SubagentScheduler {
       model: input.model,
       thinking: input.thinking,
       max_turns: input.max_turns,
+      timeout_ms: input.timeout_ms,
+      max_tool_calls: input.max_tool_calls,
+      max_tokens: input.max_tokens,
+      idle_timeout_ms: input.idle_timeout_ms,
       isolated: input.isolated,
       isolation: input.isolation,
       enabled: true,
@@ -291,6 +299,12 @@ export class SubagentScheduler {
         bypassQueue: true,
         model: resolvedModel,
         maxTurns: job.max_turns,
+        budgets: {
+          timeoutMs: job.timeout_ms,
+          maxToolCalls: job.max_tool_calls,
+          maxTokens: job.max_tokens,
+          idleTimeoutMs: job.idle_timeout_ms,
+        },
         isolated: job.isolated,
         thinkingLevel: job.thinking,
         isolation: job.isolation,
@@ -324,7 +338,11 @@ export class SubagentScheduler {
         .then(() => {
           const r = manager.getRecord(agentId);
           const failed =
-            r?.status === "error" || r?.status === "aborted" || r?.status === "stopped";
+            r?.status === "error" ||
+            r?.status === "aborted" ||
+            r?.status === "stopped" ||
+            r?.status === "budget_exceeded" ||
+            r?.status === "watchdog_stopped";
           finalize(failed ? "error" : "success");
         })
         .catch(() => finalize("error"));

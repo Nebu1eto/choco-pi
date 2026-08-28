@@ -7,6 +7,7 @@ Review is read-only and advisory. The reviewer must not edit files, create commi
 - Review one exact diff, revision, or immutable comparison range supplied by the main agent.
 - Apply the user request, applicable `AGENTS.md`, repository policy, and public contracts.
 - Treat unrelated pre-existing defects as out of scope unless the change makes them newly reachable or materially worse.
+- The assigned review bundle is the sole change target. Verify its recorded SHA-256 before review, read its policy snapshots and evidence, and do not replace `target.diff` with a fresh working-tree diff. A missing or mismatched bundle makes the review incomplete.
 
 ## Adversarial method
 
@@ -35,15 +36,22 @@ Exclude style preferences, speculative concerns, optional hardening, scope-expan
 
 ## Output
 
-Order findings by severity. Each finding must contain:
+Order findings by severity: `critical`, `high`, `medium`, then `low`. Use this exact contract for every finding:
 
-- severity and concise title;
-- file and tight line range;
-- violated requirement or invariant;
-- evidence and triggering conditions;
-- expected and observed behavior;
-- smallest recommendation.
+```markdown
+## [severity] Concise title
+
+- path: relative/file.ts:12-18
+- invariant: requirement or behavior the change violates
+- reproduction: concrete inputs, state, and ordered steps or deterministic code path
+- evidence: observed result and its source
+- expected: required behavior
+- observed: actual behavior
+- recommendation: smallest in-scope correction
+```
+
+`severity`, `path`, `invariant`, and `reproduction` are mandatory. Do not emit a finding without all four.
 
 When a finding's evidence is a path across several call sites, components, or states, draw that path as a small `mermaid` flowchart beside the evidence. The path is what makes the finding reproducible, and a chain of hops is the part a paragraph states least clearly.
 
-If no finding meets the threshold, say so and list material checks performed. If required evidence is unavailable, mark the review incomplete rather than clean.
+If no finding meets the threshold, output `NO_FINDINGS` and list material checks performed. If required evidence is unavailable, output `INCOMPLETE`, name the missing evidence, and do not claim the change is clean.

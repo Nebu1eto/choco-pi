@@ -66,6 +66,10 @@ function statusPresentation(status: string): StatusPresentation {
       return { icon: "■", iconColor: "dim", outputColor: "toolOutput", title: "Stopped" };
     case "aborted":
       return { icon: "✗", iconColor: "error", outputColor: "warning", title: "Aborted" };
+    case "budget_exceeded":
+      return { icon: "■", iconColor: "warning", outputColor: "warning", title: "Budget exceeded" };
+    case "watchdog_stopped":
+      return { icon: "■", iconColor: "warning", outputColor: "warning", title: "Watchdog stopped" };
     case "error":
       return { icon: "✗", iconColor: "error", outputColor: "error", title: "Failed" };
     default:
@@ -147,7 +151,13 @@ function resultLines(details: NotificationDetails, expanded: boolean): string[] 
 }
 
 function notificationBackground(status: string, theme: Theme): string {
-  const color = status === "error" || status === "aborted" ? "toolErrorBg" : "toolSuccessBg";
+  const color =
+    status === "error" ||
+    status === "aborted" ||
+    status === "budget_exceeded" ||
+    status === "watchdog_stopped"
+      ? "toolErrorBg"
+      : "toolSuccessBg";
   // Lightweight host themes may provide only foreground styling.
   return theme.getBgAnsi?.(color) ?? "";
 }
@@ -168,7 +178,11 @@ function renderOne(details: NotificationDetails, expanded: boolean, theme: Theme
     renderDetail(details, agent, agentLabel.length, theme),
   ];
 
-  if (details.status === "error") {
+  if (
+    details.status === "error" ||
+    details.status === "budget_exceeded" ||
+    details.status === "watchdog_stopped"
+  ) {
     lines.push(
       theme.fg("error", `      Error: ${compact(details.error ?? "unknown", MAX_RESULT_CELLS)}`),
     );
