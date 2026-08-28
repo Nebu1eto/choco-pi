@@ -28,6 +28,7 @@ import {
   messageContentLabel,
   RESTORE_ENTRY,
   sessionTurnsFromEntries,
+  turnCheckpointsFromEntries,
   type FileCheckpoint,
   type SessionTurn,
   type TurnTimelineItem,
@@ -60,6 +61,8 @@ type CaptureState = {
   sessionId: string;
   ref: string;
   previous?: GitSnapshot;
+  /** Agent turn that will own the next user message entry. */
+  activeTurn?: { index: number; timestamp: number };
   /** Set once the working tree can never produce checkpoints; stops retrying. */
   disabledReason?: string;
   lastFailure?: string;
@@ -79,22 +82,13 @@ type ForkSelectorHost = {
   __chocoPiCheckpointPickerApplied?: boolean;
 };
 
-function userMessageLabel(ctx: ExtensionContext): string {
-  const entries = ctx.sessionManager.getBranch();
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (entry?.type !== "message" || entry.message.role !== "user") continue;
-    return messageContentLabel(entry.message.content);
-  }
-  return "User turn";
-}
-
 function failureDetail(error: RuntimeValue): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 export default function fileCheckpoints(pi: ExtensionAPI): void {
   let state: CaptureState | undefined;
+  let generation = 0;
 
   function captureState(ctx: ExtensionContext): CaptureState {
     const sessionId = ctx.sessionManager.getSessionId();
@@ -126,23 +120,29 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
     ctx.ui.notify(`File checkpoint skipped for this turn: ${detail}`, "warning");
   }
 
-  /** Captures the live state, returning undefined with the reason on failure. */
+  /** Captures the live state, reporting whether Git reused the previous snapshot. */
   async function captureNow(
     ctx: ExtensionContext,
     current: CaptureState,
     message: string,
-  ): Promise<GitSnapshot | undefined> {
+    owner: number,
+  ): Promise<{ snapshot: GitSnapshot; reused: boolean } | undefined> {
     if (current.disabledReason) return undefined;
+    const cwd = ctx.cwd;
+    const ref = current.ref;
+    const previous = current.previous;
     try {
-      const snapshot = await captureGitSnapshot(ctx.cwd, {
-        ref: current.ref,
+      const snapshot = await captureGitSnapshot(cwd, {
+        ref,
         message,
-        ...propertiesWhen(current.previous, () => ({ previous: current.previous })),
+        ...propertiesWhen(previous, () => ({ previous })),
       });
+      if (owner !== generation) return undefined;
       current.previous = snapshot;
       current.lastFailure = undefined;
-      return snapshot;
+      return { snapshot, reused: snapshot === previous };
     } catch (error) {
+      if (owner !== generation) return undefined;
       recordFailure(ctx, current, error);
       return undefined;
     }
@@ -150,32 +150,58 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
 
   pi.on("session_start", (_event, ctx) => {
     const current = captureState(ctx);
+    const owner = generation;
+    const cwd = ctx.cwd;
+    const ref = current.ref;
+    const entries = ctx.sessionManager.getEntries();
+    current.previous = turnCheckpointsFromEntries(entries).at(-1)?.checkpoint;
     // Adopt before pruning: a fork's inherited checkpoints must be anchored
     // under this session's ref before the parent's ref can expire.
-    void adoptCheckpoints(ctx.cwd, {
-      ref: current.ref,
-      anchors: checkpointAnchorsFromEntries(ctx.sessionManager.getEntries()),
+    void adoptCheckpoints(cwd, {
+      ref,
+      anchors: checkpointAnchorsFromEntries(entries),
     })
       .catch(() => undefined)
-      .then(() =>
-        pruneCheckpointRefs(ctx.cwd, {
+      .then(() => {
+        if (owner !== generation) return undefined;
+        return pruneCheckpointRefs(cwd, {
           maxAgeMs: checkpointRetentionMs(),
-          keepRef: current.ref,
-        }).catch(() => undefined),
-      );
+          keepRef: ref,
+        }).catch(() => undefined);
+      });
   });
 
-  pi.on("turn_start", async (event, ctx) => {
+  pi.on("turn_start", (event, ctx) => {
     const current = captureState(ctx);
-    const snapshot = await captureNow(ctx, current, `choco-pi checkpoint turn ${event.turnIndex}`);
-    if (!snapshot) return;
+    current.activeTurn = { index: event.turnIndex, timestamp: event.timestamp };
+  });
+
+  pi.on("message_start", async (event, ctx) => {
+    if (event.message.role !== "user") return;
+    const current = captureState(ctx);
+    const turn = current.activeTurn;
+    if (!turn) return;
+    const label = messageContentLabel(event.message.content);
+    const owner = generation;
+    const captured = await captureNow(
+      ctx,
+      current,
+      `choco-pi checkpoint turn ${turn.index}`,
+      owner,
+    );
+    if (!captured || captured.reused || owner !== generation) return;
     pi.appendEntry<FileCheckpoint>(CHECKPOINT_ENTRY, {
       version: 2,
-      ...snapshot,
-      timestamp: new Date(event.timestamp).toISOString(),
-      turnIndex: event.turnIndex,
-      label: userMessageLabel(ctx),
+      ...captured.snapshot,
+      timestamp: new Date(turn.timestamp).toISOString(),
+      turnIndex: turn.index,
+      label,
     });
+  });
+
+  pi.on("session_shutdown", () => {
+    generation += 1;
+    state = undefined;
   });
 
   async function selectTurn(
@@ -342,7 +368,10 @@ export default function fileCheckpoints(pi: ExtensionAPI): void {
     }
 
     const current = captureState(ctx);
-    const live = await captureNow(ctx, current, "choco-pi checkpoint picker");
+    const owner = generation;
+    const captured = await captureNow(ctx, current, "choco-pi checkpoint picker", owner);
+    if (owner !== generation) return;
+    const live = captured?.snapshot;
     const unavailable = live
       ? undefined
       : (current.disabledReason ?? current.lastFailure ?? "File checkpoints are unavailable.");
