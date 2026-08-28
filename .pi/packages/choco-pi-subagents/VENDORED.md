@@ -200,25 +200,56 @@ workflow runner observes the manager's terminal record and settles the step as
 an error, preserving scheduler state and failure policy. `src/stop-subagent.ts`
 holds the pure decision logic; `tests/stop-subagent.test.ts` pins every outcome.
 
-### Bounded background-result reads
+### Generation-enforced background-result reads
 
-Root and nested `get_subagent_result` calls now give `wait: true` one shared
-five-second deadline across queued and running phases. A timeout returns the
-current active status, leaves the agent running and the result unconsumed, and
-directs the caller to retrieve only after a completion notification reports any
-terminal status. Cancellation still ends only the read. The default non-waiting
-status check and every terminal result remain unchanged.
+Root and nested `get_subagent_result` calls use the same per-record execution and
+terminal generations. A spawn starts generation 1; every resume increments it
+before exposing queued/running state. The first active read in one generation
+returns current status immediately by default, or may spend the existing shared
+five-second `wait: true` deadline across queued and running phases. Further
+active reads in that generation are refused as structured JSON until terminal
+publication. Cancellation rolls back only that active read claim, leaves the
+child running, and never marks a result consumed.
+
+Terminal status, final output and `terminalResultGeneration` publish together
+after asynchronous settlement cleanup. One terminal read claims only that
+published generation; a repeated read is refused, while a resume gets fresh read
+state because its generation differs. Stopped queued runs publish immediately;
+stopped running runs publish only after the runner has unwound and preserved its
+partial output. This also closes the prior race where a worktree-backed run could
+look terminal and be resumed or consumed before asynchronous hook cleanup added
+its final output.
+
+Each spawn/resume settlement also captures whether that run incremented the
+background pool. A generation mismatch reaches one idempotent stale-run helper
+from `finally`, including returns immediately after asynchronous worktree
+cleanup. The helper aborts that run's owned children, releases only its captured
+pool slot, and drains the queue without publishing stale output or calling
+`onComplete`. Normal settlement uses the same captured slot release instead of
+re-evaluating the now-reused record. `AgentManagerRunner` is a narrow test-only
+execution seam; production construction retains `runAgent` and `resumeAgent`.
+
+Nested background completions now enqueue the same generation-bearing terminal
+notification into their owning parent session. Notification delivery remains
+best effort and does not own the result: a failed or missed UI delivery leaves
+the manager record and its terminal generation retrievable. This local record
+cursor mirrors the durable-event principle used by the repository's
+`session-bridge.ts` without importing that repository-root extension or copying
+its filesystem claim queue. The manager already owns the authoritative child
+record for the package's retention window, so adding a second filesystem message
+store here would create two competing result owners rather than improve recovery.
 
 The root and nested tool descriptions, active-resume refusals, spawn results,
-timeout guidance, and custom-description example no longer present that bounded
-check as a way to await an active agent. They consistently direct the caller to
-continue other work until the terminal completion notification, retrieve the
+timeout guidance, and custom-description example continue to direct the caller
+to continue other work until the terminal completion notification, retrieve the
 result exactly once afterward, and use `steer_subagent` for mid-run messages.
-The descriptions still document the unchanged five-second `wait: true`
-mechanics as a bounded terminal-status check. `tests/result-guidance.test.ts`
-guards the model-facing source and custom example against reintroducing an
-active-result-read recommendation; the focused result and nested-tool tests pin
-the positive terminal-notification wording.
+Only the result-tool mechanics text changed: it now documents immediate first
+status reads, the optional one-time five-second grace, and generation refusal.
+`tests/result-guidance.test.ts` guards the reconciled wording;
+`tests/result-read.test.ts`, `tests/result-tool-generation.test.ts`, and
+`tests/nested-tools.test.ts` pin transitions and refusal behavior.
+`tests/agent-manager-generation.test.ts` reproduces stop, immediate resume,
+stale settlement, child abort, slot release, and queue draining.
 
 ### Runtime-adjustable subagent limits and cache-stable status reporting
 

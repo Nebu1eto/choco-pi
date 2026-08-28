@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createNestedSubagentTools, type NestedAgentManager } from "../src/nested-tools.ts";
+import { publishTerminalResult } from "../src/result-read.ts";
 import type { AgentRecord } from "../src/types.ts";
 
 test("nested Agent exposes name and forwards it to the manager alias option", async () => {
@@ -105,7 +106,11 @@ test("nested resume forwards alias rename and refuses live records actionably", 
   const manager: NestedAgentManager = {
     spawn: () => assert.fail("resume must not spawn"),
     spawnAndWait: () => assert.fail("resume must not spawn and wait"),
-    getRecord: (id: string) => (id === parent.id ? parent : id === child.id ? child : undefined),
+    getRecord(id: string) {
+      if (id === parent.id) return parent;
+      if (id === child.id) return child;
+      return undefined;
+    },
     listAgents: () => [parent, child],
     getActiveCount: () => 1,
     getScheduledActiveCount: () => 1,
@@ -122,6 +127,7 @@ test("nested resume forwards alias rename and refuses live records actionably", 
   const [agentTool] = createNestedSubagentTools({
     manager,
     // SAFETY: This path only forwards the ExtensionAPI value to the manager fixture above.
+    // SAFETY: Result reads never dereference the ExtensionAPI fixture.
     pi: {} as never,
     parentAgentId: parent.id,
     depth: 1,
@@ -171,4 +177,106 @@ test("nested resume forwards alias rename and refuses live records actionably", 
     refused.content[0]?.type === "text" ? refused.content[0].text : "",
     /continue other work.*terminal completion notification.*exactly once with get_subagent_result.*steer_subagent/is,
   );
+});
+
+test("nested result reads enforce one shared run generation", async () => {
+  const parent: AgentRecord = {
+    id: "parent-result",
+    type: "general-purpose",
+    description: "parent",
+    status: "running",
+    toolUses: 0,
+    startedAt: 1,
+    lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+    compactionCount: 0,
+    resultGeneration: 1,
+  };
+  const child: AgentRecord = {
+    id: "child-result",
+    type: "implementer",
+    description: "nested result",
+    status: "running",
+    toolUses: 0,
+    startedAt: 2,
+    lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+    compactionCount: 0,
+    resultGeneration: 1,
+    parentAgentId: parent.id,
+  };
+  const manager: NestedAgentManager = {
+    spawn: () => assert.fail("result read must not spawn"),
+    spawnAndWait: () => assert.fail("result read must not spawn and wait"),
+    getRecord(id: string) {
+      if (id === parent.id) return parent;
+      if (id === child.id) return child;
+      return undefined;
+    },
+    listAgents: () => [parent, child],
+    getActiveCount: () => 2,
+    getScheduledActiveCount: () => 1,
+    getMaxConcurrent: () => 4,
+    abort: () => false,
+    resume: async () => undefined,
+  };
+  // SAFETY: Result reads never dereference the ExtensionAPI fixture.
+  const tools = createNestedSubagentTools({
+    manager,
+    pi: {} as never,
+    parentAgentId: parent.id,
+    depth: 1,
+    maxSubagentDepth: 3,
+    allowedSubagents: "all",
+    configCwd: "/tmp/choco-pi-nested-result-test",
+  });
+  const resultTool = tools[1];
+  assert.ok(resultTool);
+  assert.equal(resultTool.name, "get_subagent_result");
+  // SAFETY: The nested result execute path does not inspect its ExtensionContext argument.
+  const hostContext = {} as never;
+
+  const first = await resultTool.execute(
+    "first",
+    { agent_id: child.id },
+    undefined,
+    undefined,
+    hostContext,
+  );
+  assert.match(first.content[0]?.type === "text" ? first.content[0].text : "", /is running/);
+
+  const repeated = await resultTool.execute(
+    "repeated",
+    { agent_id: child.id },
+    undefined,
+    undefined,
+    hostContext,
+  );
+  const repeatedText = repeated.content[0]?.type === "text" ? repeated.content[0].text : "";
+  assert.equal(JSON.parse(repeatedText).reason, "active_generation_already_read");
+
+  child.status = "completed";
+  child.result = "nested terminal output";
+  child.completedAt = 3;
+  publishTerminalResult(child);
+  const terminal = await resultTool.execute(
+    "terminal",
+    { agent_id: child.id },
+    undefined,
+    undefined,
+    hostContext,
+  );
+  assert.equal(
+    terminal.content[0]?.type === "text" ? terminal.content[0].text : "",
+    "nested terminal output",
+  );
+  assert.equal(child.consumedResultGeneration, 1);
+
+  const consumed = await resultTool.execute(
+    "consumed",
+    { agent_id: child.id },
+    undefined,
+    undefined,
+    hostContext,
+  );
+  const consumedText = consumed.content[0]?.type === "text" ? consumed.content[0].text : "";
+  assert.equal(JSON.parse(consumedText).reason, "terminal_generation_already_consumed");
 });

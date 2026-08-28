@@ -127,7 +127,11 @@ import {
 import { getForegroundOutcomeNote, getStatusNote, partialOutputSuffix } from "./status-note.ts";
 import { resolveStopOutcome } from "./stop-subagent.ts";
 import {
+  claimSubagentResultRead,
+  formatResultReadGenerationChanged,
+  formatResultReadRefusal,
   formatResultReadTimeout,
+  releaseActiveResultRead,
   RESULT_WAIT_MECHANICS,
   TERMINAL_RESULT_RETRIEVAL_GUIDANCE,
   waitForSubagentResult,
@@ -318,6 +322,7 @@ function formatTaskNotification(record: AgentRecord, resultMaxLen: number): stri
   return [
     `<task-notification>`,
     `<task-id>${record.id}</task-id>`,
+    `<generation>${record.terminalResultGeneration ?? record.resultGeneration ?? 1}</generation>`,
     record.toolCallId ? `<tool-use-id>${escapeXml(record.toolCallId)}</tool-use-id>` : null,
     record.outputFile ? `<output-file>${escapeXml(record.outputFile)}</output-file>` : null,
     `<status>${escapeXml(status)}</status>`,
@@ -602,8 +607,33 @@ export default function (pi: ExtensionAPI) {
   const manager = new AgentManager(
     (record) => {
       // Nested children report only through their owning parent's scoped tools.
-      // Keep them out of top-level lifecycle, transcript, notification, and UI channels.
-      if (record.parentAgentId) return;
+      // Deliver their completion to the owning child session, not the root
+      // lifecycle/UI channels. Delivery is best effort: the generation-pinned
+      // result remains on the manager record if this notification is missed.
+      if (record.parentAgentId) {
+        const parent = manager.getRecord(record.parentAgentId);
+        const parentSession = parent?.session;
+        const parentIsActive = parent?.status === "running" || parent?.status === "queued";
+        const generation = record.terminalResultGeneration;
+        if (parentSession && parentIsActive && generation !== undefined && !record.resultConsumed) {
+          const content =
+            formatTaskNotification(record, 500) + `\n\n${TERMINAL_RESULT_RETRIEVAL_GUIDANCE}`;
+          void parentSession
+            .sendCustomMessage(
+              {
+                customType: "subagent-notification",
+                content,
+                display: true,
+                details: buildNotificationDetails(record, 500),
+              },
+              { deliverAs: "followUp", triggerTurn: true },
+            )
+            .catch(() => {
+              /* missed delivery never consumes or removes the durable record */
+            });
+        }
+        return;
+      }
 
       // Emit lifecycle event based on terminal status
       const isError =
@@ -2753,7 +2783,7 @@ Terse command-style prompts produce shallow, generic work.
       name: SUBAGENT_TOOL_NAMES.GET_RESULT,
       label: "Get Agent Result",
       description:
-        "Retrieve a background agent result only after the agent reaches any terminal status. " +
+        "Retrieve a background agent result after terminal completion. The first active read returns current status; repeated active reads in that run are refused until completion. " +
         `Use the agent ID returned by Agent with run_in_background. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} ${RESULT_WAIT_MECHANICS}`,
       promptSnippet: "Retrieve a terminal background-agent result",
       parameters: Type.Object({
@@ -2764,7 +2794,7 @@ Terse command-style prompts produce shallow, generic work.
         wait: Type.Optional(
           Type.Boolean({
             description:
-              "Bounded terminal-status check only. If true, allow up to 5 seconds for terminal status. On timeout the agent keeps running and the result stays unconsumed; continue other work until its terminal completion notification instead of repeating the check. Default: false.",
+              "For the first active read in a run only, allow up to 5 seconds for terminal status instead of returning current status immediately. Cancellation or timeout leaves the child running and its result unconsumed. Further active reads in that generation are refused. Default: false.",
           }),
         ),
         verbose: Type.Optional(
@@ -2780,15 +2810,40 @@ Terse command-style prompts produce shallow, generic work.
           return textResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
         }
 
-        // Wait for completion if requested. Cancellation stops only this tool
-        // call; the background agent keeps running and remains unconsumed so its
-        // completion notification can still be delivered.
-        // Queued agents have no promise yet (it's created when the queue starts
-        // them), so poll until they leave the queue, then await like a running one.
-        const waitOutcome =
-          params.wait && (record.status === "running" || record.status === "queued")
-            ? await waitForSubagentResult(record, signal)
-            : "settled";
+        let claim = claimSubagentResultRead(record, signal);
+        if (
+          claim.kind === "active-refused" ||
+          claim.kind === "terminal-refused" ||
+          claim.kind === "terminal-pending"
+        ) {
+          return textResult(formatResultReadRefusal(record, claim));
+        }
+        let waitOutcome: "settled" | "timed-out" = "settled";
+        if (claim.kind === "active" && params.wait) {
+          const generation = claim.generation;
+          try {
+            waitOutcome = await waitForSubagentResult(record, signal);
+            if (record.resultGeneration !== generation) {
+              return textResult(formatResultReadGenerationChanged(record, generation));
+            }
+            if (
+              waitOutcome !== "timed-out" ||
+              (record.status !== "running" && record.status !== "queued")
+            ) {
+              claim = claimSubagentResultRead(record, signal);
+              if (
+                claim.kind === "active-refused" ||
+                claim.kind === "terminal-refused" ||
+                claim.kind === "terminal-pending"
+              ) {
+                return textResult(formatResultReadRefusal(record, claim));
+              }
+            }
+          } catch (error) {
+            releaseActiveResultRead(record, generation);
+            throw error;
+          }
+        }
 
         const displayName = getDisplayName(record.type);
         const duration = formatDuration(record.startedAt, record.completedAt);
@@ -2816,10 +2871,9 @@ Terse command-style prompts produce shallow, generic work.
           output += record.result?.trim() || "No output.";
         }
 
-        // Mark result as consumed — suppresses the completion notification
-        if (record.status !== "running" && record.status !== "queued") {
-          record.resultConsumed = true;
-          cancelNudge(params.agent_id);
+        // Terminal claim above already marked exactly this generation consumed.
+        if (claim.kind === "terminal") {
+          cancelNudge(record.id);
         }
 
         // Verbose: include full conversation

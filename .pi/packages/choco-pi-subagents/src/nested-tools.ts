@@ -28,7 +28,11 @@ import {
 } from "./output-file.ts";
 import { getForegroundOutcomeNote, getStatusNote, partialOutputSuffix } from "./status-note.ts";
 import {
+  claimSubagentResultRead,
+  formatResultReadGenerationChanged,
+  formatResultReadRefusal,
   formatResultReadTimeout,
+  releaseActiveResultRead,
   RESULT_WAIT_MECHANICS,
   TERMINAL_RESULT_RETRIEVAL_GUIDANCE,
   waitForSubagentResult,
@@ -426,14 +430,14 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
     name: NESTED_TOOL_NAMES[1],
     label: "Get Nested Agent Result",
     description:
-      "Retrieve an owned background nested-agent result only after any terminal status. " +
+      "Retrieve an owned background nested-agent result after terminal completion. The first active read returns current status; repeated active reads in that run are refused until completion. " +
       `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} ${RESULT_WAIT_MECHANICS}`,
     parameters: Type.Object({
       agent_id: Type.String(),
       wait: Type.Optional(
         Type.Boolean({
           description:
-            "Bounded terminal-status check only. If true, allow up to 5 seconds for terminal status. On timeout the agent keeps running and the result stays unconsumed; continue other work until its terminal completion notification instead of repeating the check. Default: false.",
+            "For the first active read in a run only, allow up to 5 seconds for terminal status instead of returning current status immediately. Cancellation or timeout leaves the child running and its result unconsumed. Further active reads in that generation are refused. Default: false.",
         }),
       ),
     }),
@@ -445,17 +449,38 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           true,
         );
       }
-      // Wait for completion if requested. Cancellation (e.g. the parent's tool
-      // call is aborted) stops only this wait; the nested child keeps running and
-      // stays unconsumed. Queued records have no promise until the manager starts
-      // them, so poll — abortably — until they leave the queue, then await.
-      if (params.wait && (record.status === "queued" || record.status === "running")) {
-        const outcome = await waitForSubagentResult(record, signal);
-        if (
-          outcome === "timed-out" &&
-          (record.status === "queued" || record.status === "running")
-        ) {
-          return textResult(formatResultReadTimeout(record.id, record.status));
+      let claim = claimSubagentResultRead(record, signal);
+      if (
+        claim.kind === "active-refused" ||
+        claim.kind === "terminal-refused" ||
+        claim.kind === "terminal-pending"
+      ) {
+        return textResult(formatResultReadRefusal(record, claim), true);
+      }
+      if (claim.kind === "active" && params.wait) {
+        const generation = claim.generation;
+        try {
+          const outcome = await waitForSubagentResult(record, signal);
+          if (record.resultGeneration !== generation) {
+            return textResult(formatResultReadGenerationChanged(record, generation), true);
+          }
+          if (
+            outcome === "timed-out" &&
+            (record.status === "queued" || record.status === "running")
+          ) {
+            return textResult(formatResultReadTimeout(record.id, record.status));
+          }
+          claim = claimSubagentResultRead(record, signal);
+          if (
+            claim.kind === "active-refused" ||
+            claim.kind === "terminal-refused" ||
+            claim.kind === "terminal-pending"
+          ) {
+            return textResult(formatResultReadRefusal(record, claim), true);
+          }
+        } catch (error) {
+          releaseActiveResultRead(record, generation);
+          throw error;
         }
       }
       return textResult(formatRecord(record, "fetched"), record.status === "error");
