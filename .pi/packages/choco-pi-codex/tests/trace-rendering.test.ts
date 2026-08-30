@@ -199,6 +199,22 @@ test("non-mise command summaries retain the generic fallback", () => {
   );
 });
 
+test("collapsed command summaries omit shell reserved words", () => {
+  const summary = renderCommand(`for i in {1..30}; do
+panes=$(zellij action list-clients)
+if [ "$panes" = ready ]; then
+  jq -r '.[]' panes.json
+elif [ "$panes" = waiting ]; then
+  sleep 0.2
+fi
+done`);
+
+  assert.match(summary, /Ran Exec command · jq, sleep$/);
+  for (const reservedWord of ["for", "do", "if", "then", "fi", "elif", "done"]) {
+    assert.doesNotMatch(summary.split(" · ").at(-1)!, new RegExp(`(?:^|, )${reservedWord}(?:,|$)`));
+  }
+});
+
 test("collapsed inline Node.js summaries omit heredoc source", () => {
   const command = `node --input-type=module <<'EOF'
 import fs from "node:fs";
