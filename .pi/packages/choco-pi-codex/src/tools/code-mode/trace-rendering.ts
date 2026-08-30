@@ -300,6 +300,28 @@ const MISE_EXEC_OPTIONS: ExplicitOptions = {
  */
 const HIDDEN_SHELL_SETUP_COMMANDS = new Set([".", "export", "set"]);
 
+/** Shell grammar words describe control flow; they are not executed commands. */
+const SHELL_RESERVED_WORDS = new Set([
+  "!",
+  "case",
+  "coproc",
+  "do",
+  "done",
+  "elif",
+  "else",
+  "esac",
+  "fi",
+  "for",
+  "function",
+  "if",
+  "in",
+  "select",
+  "then",
+  "time",
+  "until",
+  "while",
+]);
+
 function shortExecCommandName(trace: RuntimeToolTrace): string | undefined {
   if (trace.name !== "exec_command" || !isObjectValue(trace.input)) return undefined;
   const command = trace.input["cmd"];
@@ -308,7 +330,9 @@ function shortExecCommandName(trace: RuntimeToolTrace): string | undefined {
     .map(shortCommandName)
     .filter(
       (summary): summary is string =>
-        summary !== undefined && !HIDDEN_SHELL_SETUP_COMMANDS.has(summary),
+        summary !== undefined &&
+        !HIDDEN_SHELL_SETUP_COMMANDS.has(summary) &&
+        !SHELL_RESERVED_WORDS.has(summary),
     );
   return summaries.length > 0 ? summaries.join(", ") : undefined;
 }
