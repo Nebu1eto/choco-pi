@@ -166,6 +166,10 @@ wired as an optional parameter in tools/code-mode/public-tools.ts.
 tests/codex-code-mode-batching.test.ts pins detection, streak/interval policy
 and the advisory wording.
 
+Collapsed Code Mode `exec_command` summaries omit Bash reserved words used for
+control flow and retain only executable command names. The expanded trace still
+shows the complete command source.
+
 ## Code Mode and edit preflight (choco-pi addition)
 
 `tools/code-mode/source-preflight.ts` parses restricted cells before host execution and scans executable source tokens for unsupported restricted globals. It hard-rejects a `tools.<name>` reference only when the reference is unconditional at the cell's top level and Pi registers the name neither inside nor outside code mode. Guarded references and real-but-unbridged tool names run to the namespace proxy. String, comment, template text, and regular expression contents are ignored. Notebook cells retain Deno TypeScript capabilities and skip restricted-global and JavaScript-only checks. Command strings and non-zero `exec_command` exits remain runtime data and are not reclassified.
