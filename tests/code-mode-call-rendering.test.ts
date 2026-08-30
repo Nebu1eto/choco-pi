@@ -29,6 +29,57 @@ test("collapsed Code Mode calls show the description and tool labels without sou
   assert.doesNotMatch(rendered, /const result/);
 });
 
+test("collapsed Code Mode calls prefer an explicit concise description", () => {
+  const source = `// @description: Verify plugin width and geometry
+await tools.exec_command({ description: "Read pane geometry", cmd: "printf done" });`;
+  const tracker = createCodeModeRenderTracker();
+  tracker.finish("call-described");
+  const rendered = renderExecCall(
+    { code: source },
+    PLAIN_THEME,
+    { toolCallId: "call-described", isPartial: false },
+    tracker,
+  )
+    .render(200)
+    .join("\n");
+
+  assert.match(rendered, /Ran code · Verify plugin width and geometry\s*$/);
+  assert.doesNotMatch(rendered, /Compose tools|Calls Exec command|tools\.exec_command/);
+});
+
+test("collapsed Code Mode calls derive intent from the first command description", () => {
+  const tracker = createCodeModeRenderTracker();
+  tracker.finish("call-derived-description");
+  const rendered = renderExecCall(
+    {
+      code: `const result = await tools.exec_command({ description: "Read pane geometry", cmd: "printf done" });`,
+    },
+    PLAIN_THEME,
+    { toolCallId: "call-derived-description", isPartial: false },
+    tracker,
+  )
+    .render(200)
+    .join("\n");
+
+  assert.match(rendered, /Ran code · Read pane geometry\s*$/);
+  assert.doesNotMatch(rendered, /Compose tools|Calls Exec command/);
+});
+
+test("Code Mode descriptions must be the first source line", () => {
+  const tracker = createCodeModeRenderTracker();
+  tracker.finish("call-late-description");
+  const rendered = renderExecCall(
+    { code: `const ready = true;\n// @description: Misleading late description\ntext(ready);` },
+    PLAIN_THEME,
+    { toolCallId: "call-late-description", isPartial: false },
+    tracker,
+  )
+    .render(200)
+    .join("\n");
+
+  assert.match(rendered, /Ran code · Compose tools with JavaScript/);
+});
+
 test("Code Mode calls use the native tool title hierarchy after settling", () => {
   const tracker = createCodeModeRenderTracker();
   tracker.finish("call-2");

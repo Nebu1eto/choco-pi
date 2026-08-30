@@ -11,12 +11,17 @@ const PLAIN_THEME = {
 
 function renderCommand(
   cmd: string,
-  options: { expanded?: boolean; status?: RuntimeToolTrace["status"]; error?: string } = {},
+  options: {
+    description?: string;
+    expanded?: boolean;
+    status?: RuntimeToolTrace["status"];
+    error?: string;
+  } = {},
 ): string {
   const trace: RuntimeToolTrace = {
     id: "trace-1",
     name: "exec_command",
-    input: { cmd },
+    input: { cmd, description: options.description },
     status: options.status ?? "done",
     error: options.error,
   };
@@ -197,6 +202,24 @@ test("non-mise command summaries retain the generic fallback", () => {
     renderCommand("python3 scripts/check.py && git status --short"),
     /Ran Exec command · python3, git status$/,
   );
+});
+
+test("collapsed command summaries lead with a concise description", () => {
+  assert.match(
+    renderCommand("zellij action list-panes | jq -r '.[]'", {
+      description: "Read pane geometry",
+    }),
+    /Ran Exec command · Read pane geometry · zellij, jq$/,
+  );
+});
+
+test("collapsed command descriptions are sanitized and bounded", () => {
+  const rendered = renderCommand("printf done", {
+    description: `  Validate\nplugin\u001b geometry ${"x".repeat(80)}  `,
+  });
+  assert.match(rendered, /Ran Exec command · Validate plugin geometry x+… · printf$/);
+  assert.doesNotMatch(rendered, /\nplugin/);
+  assert.ok(!rendered.includes("\u001b"));
 });
 
 test("collapsed command summaries omit shell reserved words", () => {

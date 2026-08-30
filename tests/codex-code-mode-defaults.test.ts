@@ -52,6 +52,7 @@ test("Code Mode guidance canonicalizes legacy rules without losing execution sem
     /route persistent processes and commands expected to exceed about 30 seconds to shell_start/,
   );
   assert.match(prompt, /tools\.apply_patch\(patch\) for edits/);
+  assert.match(prompt, /Every tools\.exec_command requires a short 3-7 word description/);
 });
 
 test("Code Mode canonicalizes legacy composition guidance into bounded routing rules", () => {
@@ -127,7 +128,11 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
   assert.match(applyPatchGuidance, /hunks in file order/);
   assert.match(applyPatchGuidance, /@@ is context, not a line range/);
   assert.ok(applyPatchGuidance.length < longApplyPatchUsage.length);
-  assert.match(guidance, /await tools\.exec_command\(\{cmd, workdir\?, shell\?, tty\?/);
+  assert.match(
+    guidance,
+    /await tools\.exec_command\(\{description, cmd, workdir\?, shell\?, tty\?/,
+  );
+  assert.match(guidance, /description: required 3-7 word intent for collapsed display/);
   assert.match(
     webRunGuidance,
     /\{search_query\?: \[\{q, recency\?, domains\?\}\], image_query\?: \[\{q\}\], open\?: \[\{ref_id, lineno\?\}\], click\?: \[\{ref_id, id\}\], find\?: \[\{ref_id, pattern\}\], response_length\?\}/,
@@ -145,7 +150,7 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
   );
   assert.match(
     guidance,
-    /Pattern: const \[a, b\] = await Promise\.all\(\[tools\.exec_command\(\{cmd: "rg --files src"\}\), tools\.exec_command\(\{cmd: "rg -n TODO src"\}\)\]\); text\(a\.output \+ b\.output\)/,
+    /Pattern: const \[a, b\] = await Promise\.all\(\[tools\.exec_command\(\{description: "List source files", cmd: "rg --files src"\}\), tools\.exec_command\(\{description: "Find pending work", cmd: "rg -n TODO src"\}\)\]\); text\(a\.output \+ b\.output\)/,
   );
   assert.match(
     guidance,
@@ -153,6 +158,8 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
   );
   assert.match(EXEC_DESCRIPTION, /JavaScript source only; no JSON\/fences/);
   assert.match(EXEC_DESCRIPTION, /bounded multi-call workflows that filter or aggregate results/);
+  assert.match(EXEC_DESCRIPTION, /first-line \/\/ @description: short intent/);
+  assert.match(EXEC_DESCRIPTION, /first exec_command description labels it/);
   assert.match(EXEC_DESCRIPTION, /prefer direct calls when one call suffices/);
   assert.match(EXEC_DESCRIPTION, /Code: fresh restricted JS/);
   assert.match(EXEC_DESCRIPTION, /Notebook: persistent shared Deno TypeScript globals/);
