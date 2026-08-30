@@ -3,6 +3,7 @@ import { highlightCode } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { CodeModeRenderTracker } from "./render-tracker.ts";
 import { codeModeToolDisplayName } from "./tool-identity.ts";
+import { codeDisplayDescription } from "./display-description.ts";
 import type { CodeModeRenderContext, CodeModeRenderTheme } from "./types.ts";
 
 const EXEC_SUMMARY = "Compose tools with JavaScript";
@@ -18,10 +19,11 @@ export function renderExecCall(
   const status = tracker.status(context?.toolCallId);
   const verb = status === "running" ? "Running" : status === "yielded" ? "Started" : "Ran";
   let text = `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} code`))}`;
-  text += theme.fg("muted", ` · ${EXEC_SUMMARY}`);
+  const description = codeDisplayDescription(code);
+  text += theme.fg("muted", ` · ${description ?? EXEC_SUMMARY}`);
   const names = customToolNames(code);
   const orchestratesTools = /\btools\s*(?:\.|\[)/.test(code);
-  if (!context?.expanded && names.length > 0) {
+  if (!context?.expanded && !description && names.length > 0) {
     const labels = names.map((name) => codeModeToolDisplayName(name));
     text += `\n${theme.fg("dim", "  └ ")}${theme.fg("muted", "Calls ")}${theme.fg("accent", labels.join(" · "))}`;
   }
