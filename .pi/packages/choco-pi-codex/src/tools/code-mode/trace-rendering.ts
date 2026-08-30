@@ -6,6 +6,7 @@ import { shellSplit, splitOnConnectors } from "../../shell/tokenize.ts";
 import { type Component, Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { previewText, renderTextAndImages } from "./render-content.ts";
 import { codeModeToolDisplayName } from "./tool-identity.ts";
+import { conciseDisplayDescription } from "./display-description.ts";
 import type {
   CodeModeRenderContext,
   CodeModeRenderTheme,
@@ -124,13 +125,21 @@ function renderCollapsedTraceCall(
 ): Text {
   const verb = trace.status === "running" ? "Running" : trace.status === "error" ? "Failed" : "Ran";
   const label = codeModeToolDisplayName(trace.name, tool?.label);
+  const description = shortExecDescription(trace);
   const summary = shortTraceSummary(trace, context?.cwd);
-  const detail = summary ? theme.fg("muted", ` · ${summary}`) : "";
+  const detailText = [description, summary].filter(Boolean).join(" · ");
+  const detail = detailText ? theme.fg("muted", ` · ${detailText}`) : "";
   return new Text(
     `${theme.fg("dim", "•")} ${theme.fg("toolTitle", theme.bold(`${verb} ${label}`))}${detail}`,
     0,
     0,
   );
+}
+
+function shortExecDescription(trace: RuntimeToolTrace): string | undefined {
+  if (trace.name !== "exec_command" || !isObjectValue(trace.input)) return undefined;
+  const description = trace.input["description"];
+  return conciseDisplayDescription(isStringValue(description) ? description : undefined);
 }
 
 function shortTraceSummary(trace: RuntimeToolTrace, cwd = process.cwd()): string | undefined {

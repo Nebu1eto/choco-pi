@@ -9,6 +9,7 @@ Use for bounded multi-call workflows that filter or aggregate results; prefer di
 Code: fresh restricted JS in every cell with no Deno, console, imports, Node, filesystem/network, or browser globals. Notebook: persistent shared Deno TypeScript globals with console, imports/npm, Deno, and Web APIs
 Source preflight rejects malformed restricted JavaScript, unsupported restricted globals, and unconditional top-level tools.<name> typos absent from both code mode and direct Pi tools; guarded or real unbridged references run to the runtime guard; command strings and non-zero exec_command exits are not rewritten
 Optional // @exec: {"yield_time_ms":10000,"max_output_tokens":1000}; defaults 30000 ms/10000 tokens
+Optional first-line // @description: short intent for the collapsed code call; otherwise the first exec_command description labels it
 Await work; bare values are discarded. Restricted globals: tools, image, generatedImage, store, load, exit, setTimeout, clearTimeout, ALL_TOOLS; text(value) and notify(value) EMIT output and return nothing — never nest them in an expression, use String()/JSON.stringify() to build one; yield_control() yields`;
 
 export const WAIT_DESCRIPTION =
@@ -22,7 +23,7 @@ const CUSTOM_TOOL_DOCUMENTATION_MARKER = "To create or edit a custom tool, read"
 const CUSTOM_TOOLS_GUIDANCE = "Prefer custom tools for command-backed capabilities";
 const CODE_MODE_COMPOSITION_MARKER = "one exec block per step, not one per tools.* call";
 const CODE_MODE_COMPOSITION_GUIDANCE = `Composition: ${CODE_MODE_COMPOSITION_MARKER} — for a bounded processing step, batch independent calls with Promise.all, chain dependent ones with await, then filter/aggregate results in code and text() only the digest the next step needs
-Pattern: const [a, b] = await Promise.all([tools.exec_command({cmd: "rg --files src"}), tools.exec_command({cmd: "rg -n TODO src"})]); text(a.output + b.output)`;
+Pattern: const [a, b] = await Promise.all([tools.exec_command({description: "List source files", cmd: "rg --files src"}), tools.exec_command({description: "Find pending work", cmd: "rg -n TODO src"})]); text(a.output + b.output)`;
 
 const COMPACT_BUNDLED_TOOL_USAGE = new Map([
   [
@@ -31,7 +32,7 @@ const COMPACT_BUNDLED_TOOL_USAGE = new Map([
   ],
   [
     "exec_command",
-    "await tools.exec_command({cmd, workdir?, shell?, tty?, yield_time_ms?, max_output_tokens?, login?}) // returns output, session_id?, exit_code?",
+    "await tools.exec_command({description, cmd, workdir?, shell?, tty?, yield_time_ms?, max_output_tokens?, login?}) // description: required 3-7 word intent for collapsed display; returns output, session_id?, exit_code?",
   ],
   [
     "web__run",

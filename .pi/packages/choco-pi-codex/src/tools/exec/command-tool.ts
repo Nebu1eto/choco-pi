@@ -17,6 +17,11 @@ import type { ExecCommandInput, ExecSessionManager, UnifiedExecResult } from "./
 import { MAX_EXEC_YIELD_TIME_MS } from "./shell.ts";
 
 const EXEC_COMMAND_PARAMETERS = Type.Object({
+  description: Type.String({
+    minLength: 1,
+    maxLength: 60,
+    description: "Required 3-7 word imperative phrase describing intent for collapsed display",
+  }),
   cmd: Type.String({
     description:
       "Raw command string interpreted by the current shell; do not quote the entire command",
