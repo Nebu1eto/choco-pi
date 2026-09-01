@@ -152,7 +152,10 @@ and prompt-editor adapters remain composed. `tests/focus-mode.test.ts` pins
 transcript swapping, streaming refresh, steering ownership, focus propagation,
 Esc being swallowed, and restoration on exit; `tests/fleet-list.test.ts` pins
 selection-driven focus switching, the `main` return, Esc leaving navigation only,
-and the `/btw` exclusion.
+and the `/btw` exclusion. FleetView recognizes the focused prompt editor by its
+public editor methods rather than `instanceof Editor`, so custom editors loaded
+through a different package instance retain arrow navigation while selectors
+and other overlays still own their keys.
 
 ### BTW side conversations
 

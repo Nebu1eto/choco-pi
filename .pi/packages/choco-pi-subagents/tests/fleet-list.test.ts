@@ -23,6 +23,7 @@ const styledTheme: Theme = {
 const KEY_DOWN = "\x1b[B";
 const KEY_UP = "\x1b[A";
 const KEY_ESC = "\x1b";
+type FocusedComponentFixture = {} | null | undefined;
 
 function partialFixture<T extends object>(fixture: Partial<T>): T {
   // SAFETY: Each test supplies the named slice exercised by its subject.
@@ -53,7 +54,12 @@ function makeRecord(
   });
 }
 
-function mount(records: AgentRecord[], renderTheme = theme, renderWidth = 90) {
+function mount(
+  records: AgentRecord[],
+  renderTheme = theme,
+  renderWidth = 90,
+  focusedComponent?: FocusedComponentFixture,
+) {
   let focusedId: string | undefined;
   const focusCalls: string[] = [];
   let unfocusCalls = 0;
@@ -79,7 +85,10 @@ function mount(records: AgentRecord[], renderTheme = theme, renderWidth = 90) {
     },
   });
 
-  const tui = partialFixture<TUI>({ requestRender() {} });
+  const tui = partialFixture<TUI & { focusedComponent?: FocusedComponentFixture }>({
+    requestRender() {},
+    focusedComponent,
+  });
   let widget: { render(width: number): string[] } | undefined;
   let handler: ((data: string) => { consume?: boolean } | undefined) | undefined;
   let overlayCount = 0;
@@ -116,6 +125,32 @@ function mount(records: AgentRecord[], renderTheme = theme, renderWidth = 90) {
     overlayCount: () => overlayCount,
   };
 }
+
+test("cross-package custom editors retain FleetView arrow navigation", () => {
+  const customEditor = {
+    getText: () => "",
+    setText() {},
+    handleInput() {},
+  };
+  const view = mount([makeRecord("a1", "first")], theme, 90, customEditor);
+  try {
+    assert.deepEqual(view.press(KEY_DOWN), { consume: true });
+    view.press(KEY_DOWN);
+    assert.equal(view.focusedId(), "a1");
+  } finally {
+    view.fleet.dispose();
+  }
+});
+
+test("non-editor overlays keep ownership of arrow keys", () => {
+  const view = mount([makeRecord("a1", "first")], theme, 90, { handleInput() {} });
+  try {
+    assert.equal(view.press(KEY_DOWN), undefined);
+    assert.equal(view.active(), false);
+  } finally {
+    view.fleet.dispose();
+  }
+});
 
 test("arrow navigation switches fullscreen focus, and main restores the orchestrator", () => {
   const view = mount([makeRecord("a1", "first"), makeRecord("a2", "second")]);

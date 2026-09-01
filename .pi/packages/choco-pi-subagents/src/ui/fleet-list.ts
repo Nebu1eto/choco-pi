@@ -19,7 +19,6 @@
  */
 
 import {
-  Editor,
   isKeyRelease,
   Key,
   matchesKey,
@@ -86,6 +85,27 @@ export type FleetUICtx = {
 type MainEntry = { kind: "main" };
 type AgentEntry = { kind: "agent"; record: AgentRecord; depth: number };
 type FleetEntry = MainEntry | AgentEntry;
+type FocusedComponentBoundary = {} | null | undefined;
+
+interface FocusedEditorProbe {
+  getText?: FocusedComponentBoundary;
+  setText?: FocusedComponentBoundary;
+  handleInput?: FocusedComponentBoundary;
+}
+
+function focusedEditorProbe(value: FocusedComponentBoundary): FocusedEditorProbe | undefined {
+  if (
+    value === null ||
+    Object(value) !== value ||
+    Array.isArray(value) ||
+    value instanceof Function
+  ) {
+    return undefined;
+  }
+  // SAFETY: The guard admits only a non-array, non-callable host object;
+  // each probed method is independently checked before use.
+  return value as FocusedEditorProbe;
+}
 
 /** `11s` — integer seconds, no decimal/suffix (matches Claude Code, unlike formatMs). */
 export function formatFleetElapsed(ms: number): string {
@@ -418,8 +438,16 @@ export class FleetList {
    */
   private editorHasFocus(): boolean {
     // SAFETY: Pi's TUI instance owns this optional private field for focus routing.
-    const focused = (this.tui as { focusedComponent?: unknown } | undefined)?.focusedComponent;
-    return focused == null || focused instanceof Editor;
+    const focused = (this.tui as { focusedComponent?: FocusedComponentBoundary } | undefined)
+      ?.focusedComponent;
+    if (focused == null) return true;
+    const candidate = focusedEditorProbe(focused);
+    return (
+      candidate !== undefined &&
+      candidate.getText instanceof Function &&
+      candidate.setText instanceof Function &&
+      candidate.handleInput instanceof Function
+    );
   }
 
   private deactivate(): void {
