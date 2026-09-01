@@ -48,10 +48,14 @@ test(
     );
     writeAgentPreference("agentLanguage", "Korean", agent);
     writeAgentPreference("agentStyle", "concise", agent);
+    writeAgentPreference("sessionAutoName", false, agent);
+    writeAgentPreference("sessionAutoNameModel", "openai-codex/gpt-5.6-luna", agent);
 
     const preferences = readAgentPreferences(agent);
     assert.equal(preferences.language, "Korean");
     assert.equal(preferences.style, "concise");
+    assert.equal(preferences.sessionAutoName, false);
+    assert.equal(preferences.sessionAutoNameModel, "openai-codex/gpt-5.6-luna");
 
     const settings = JSON.parse(readFileSync(path.join(agent, "settings.json"), "utf8"));
     assert.equal(settings.theme, "nord-dark");

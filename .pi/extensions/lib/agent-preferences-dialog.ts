@@ -4,12 +4,17 @@ import {
   AGENT_LANGUAGE_CUSTOM_OUTCOME,
   AGENT_LANGUAGE_KEY,
   AGENT_STYLE_KEY,
+  DEFAULT_SESSION_AUTO_NAME_MODEL,
+  SESSION_AUTO_NAME_KEY,
+  SESSION_AUTO_NAME_MODEL_KEY,
+  SESSION_AUTO_NAME_FALLBACK_MODEL,
   discoverAgentStyles,
   readAgentPreferences,
   resolveAgentStyle,
   writeAgentPreference,
   type PreferencesExtraSection,
   type PreferencesOutcomeFocus,
+  type PreferencesSectionChange,
 } from "./agent-preferences.ts";
 
 export const AGENT_SECTION_ID = "agent";
@@ -18,6 +23,21 @@ const MATCH_USER_LABEL = "Match user";
 const CUSTOM_LANGUAGE_LABEL = "Custom…";
 const DEFAULT_STYLE_LABEL = "Default";
 const LANGUAGE_PRESETS = ["English", "Korean", "Japanese", "Chinese"];
+const ENABLED_LABEL = "Enabled";
+const DISABLED_LABEL = "Disabled";
+
+function modelValue(model: { provider: string; id: string }): string {
+  return `${model.provider}/${model.id}`;
+}
+
+function namingModelValues(ctx: ExtensionCommandContext, configured: string): string[] {
+  const scoped = new Set(ctx.scopedModels.map(({ model }) => modelValue(model)));
+  const available = ctx.modelRegistry
+    .getAvailable()
+    .map(modelValue)
+    .filter((value) => scoped.size === 0 || scoped.has(value));
+  return [...new Set([configured, ...available])].sort((left, right) => left.localeCompare(right));
+}
 
 function languageValues(current: string | undefined): string[] {
   const values = [MATCH_USER_LABEL, ...LANGUAGE_PRESETS, CUSTOM_LANGUAGE_LABEL];
@@ -59,6 +79,56 @@ function writeStyle(ctx: ExtensionCommandContext, value: string | undefined): vo
   }
 }
 
+function writeSessionAutoName(ctx: ExtensionCommandContext, enabled: boolean): void {
+  try {
+    writeAgentPreference(SESSION_AUTO_NAME_KEY, enabled);
+    ctx.ui.notify(`Automatic session naming ${enabled ? "enabled" : "disabled"}`, "info");
+  } catch (error) {
+    ctx.ui.notify(
+      `Could not update automatic session naming: ${error instanceof Error ? error.message : String(error)}`,
+      "error",
+    );
+  }
+}
+
+function writeSessionAutoNameModel(ctx: ExtensionCommandContext, model: string): void {
+  try {
+    writeAgentPreference(SESSION_AUTO_NAME_MODEL_KEY, model);
+    ctx.ui.notify(`Session naming model: ${model}`, "info");
+  } catch (error) {
+    ctx.ui.notify(
+      `Could not update the session naming model: ${error instanceof Error ? error.message : String(error)}`,
+      "error",
+    );
+  }
+}
+
+function handleAgentPreferenceChange(
+  ctx: ExtensionCommandContext,
+  id: string,
+  newValue: string,
+): PreferencesSectionChange {
+  if (id === "agentLanguage") {
+    if (newValue === CUSTOM_LANGUAGE_LABEL) {
+      return { kind: "outcome", outcome: AGENT_LANGUAGE_CUSTOM_OUTCOME };
+    }
+    writeLanguage(ctx, newValue === MATCH_USER_LABEL ? undefined : newValue);
+    return { kind: "update" };
+  }
+  if (id === "agentStyle") {
+    writeStyle(ctx, newValue === DEFAULT_STYLE_LABEL ? undefined : newValue);
+    return { kind: "update" };
+  }
+  if (id === SESSION_AUTO_NAME_KEY) {
+    writeSessionAutoName(ctx, newValue === ENABLED_LABEL);
+    return { kind: "update" };
+  }
+  if (id === SESSION_AUTO_NAME_MODEL_KEY) {
+    writeSessionAutoNameModel(ctx, newValue);
+  }
+  return { kind: "update" };
+}
+
 /**
  * Builds the Agent section of the preferences panel: the global agent
  * language and agent style rows backed by `~/.pi/agent/settings.json`.
@@ -83,6 +153,7 @@ export function buildAgentPreferencesSection(
         ? `"${preferences.style}" has no matching file under ~/.pi/agent/agent-styles and is ignored.`
         : (activeStyle?.description ??
           "Prompt style injected on every turn; add styles as .md files under ~/.pi/agent/agent-styles.");
+      const namingModel = preferences.sessionAutoNameModel ?? DEFAULT_SESSION_AUTO_NAME_MODEL;
       return [
         {
           id: "agentLanguage",
@@ -99,22 +170,24 @@ export function buildAgentPreferencesSection(
           currentValue: preferences.style ?? DEFAULT_STYLE_LABEL,
           values: styleValues,
         },
+        {
+          id: SESSION_AUTO_NAME_KEY,
+          label: "Auto-name sessions",
+          description:
+            "Generate a short display name after the first successful agent turn. An explicit /name always wins.",
+          currentValue: preferences.sessionAutoName === false ? DISABLED_LABEL : ENABLED_LABEL,
+          values: [ENABLED_LABEL, DISABLED_LABEL],
+        },
+        {
+          id: SESSION_AUTO_NAME_MODEL_KEY,
+          label: "Session naming model",
+          description: `Low-latency model used without reasoning. If unavailable or unsuccessful, ${SESSION_AUTO_NAME_FALLBACK_MODEL} is tried once.`,
+          currentValue: namingModel,
+          values: namingModelValues(ctx, namingModel),
+        },
       ];
     },
-    handleChange(id, newValue) {
-      if (id === "agentLanguage") {
-        if (newValue === CUSTOM_LANGUAGE_LABEL) {
-          return { kind: "outcome", outcome: AGENT_LANGUAGE_CUSTOM_OUTCOME };
-        }
-        writeLanguage(ctx, newValue === MATCH_USER_LABEL ? undefined : newValue);
-        return { kind: "update" };
-      }
-      if (id === "agentStyle") {
-        writeStyle(ctx, newValue === DEFAULT_STYLE_LABEL ? undefined : newValue);
-        return { kind: "update" };
-      }
-      return { kind: "update" };
-    },
+    handleChange: (id, newValue) => handleAgentPreferenceChange(ctx, id, newValue),
   };
 }
 
@@ -198,7 +271,9 @@ export function agentPreferencesCompletions(prefix: string): { value: string; la
       .filter((item) => item.value.startsWith(`style ${stylePrefix}`));
   }
   const candidates = ["agent", "language ", "style "];
-  return candidates
-    .filter((candidate) => candidate.startsWith(normalized.toLowerCase()))
-    .map((candidate) => ({ value: candidate, label: candidate.trimEnd() }));
+  return candidates.flatMap((candidate) =>
+    candidate.startsWith(normalized.toLowerCase())
+      ? [{ value: candidate, label: candidate.trimEnd() }]
+      : [],
+  );
 }
