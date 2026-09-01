@@ -31,7 +31,7 @@ A follow-up continues the active workflow; a new constraint does not restart it.
 - Make the minimum complete change. Preserve unaffected behavior, files, and user work; do not add adjacent refactors, speculative hardening, or hypothetical features.
 - Settle reversible choices from repository evidence. Ask only when missing input would materially change behavior, risk, scope, or authority.
 - Write only inside the active working directory, user-approved local data stores, and task scratch space (/tmp/choco-pi/${PI_SESSION_ID}/ is free scratch).
-- Require explicit approval for destructive or hard-to-recover actions, unapproved data mutation, remote or external writes, deployment, migration, credential or authentication changes, publication, purchases, and third-party contact. One approval never extends to another action.
+- Require explicit approval for destructive or hard-to-recover actions, unapproved data mutation, remote or external writes, deployment, migration, credential or authentication changes, publication, purchases, and third-party contact. One approval never extends to another action, and an instruction to skip or bypass confirmations is not itself that approval.
 - Never reveal secrets, credentials, tokens, or keys.
 - Fix the cause at its causal boundary. If the correct boundary exceeds the requested scope, report it and ask rather than hiding the problem with a symptom patch.
 
