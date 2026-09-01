@@ -57,7 +57,7 @@ import {
   renderTurnSummaryEntry,
   TURN_SUMMARY_ENTRY_TYPE,
 } from "./interaction-summary";
-import { LiveContextController } from "./live-context";
+import { LiveContextController } from "./live-context.ts";
 import { readPackageVersionResult } from "./package-version";
 import {
   createProjectRefreshScheduler,
@@ -1348,7 +1348,7 @@ export default function (pi: ExtensionAPI) {
     syncInteractiveAndProjectState(event, ctx);
   });
   pi.on("session_compact", (event, ctx) => {
-    liveContext.clear();
+    liveContext.updateAfterCompaction(ctx.sessionManager.buildContextEntries());
     syncInteractiveAndProjectStateWithUsage(event, ctx);
   });
   pi.on("session_tree", (event, ctx) => {

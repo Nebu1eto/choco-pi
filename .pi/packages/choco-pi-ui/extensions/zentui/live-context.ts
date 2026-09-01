@@ -1,6 +1,11 @@
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
-import type { SessionLifecycle } from "./session-lifecycle";
-import { type BoundaryValue, isNumber, isObjectValue } from "./runtime-values";
+import {
+  estimateTokens,
+  sessionEntryToContextMessages,
+  type SessionEntry,
+} from "@earendil-works/pi-coding-agent";
+import type { SessionLifecycle } from "./session-lifecycle.ts";
+import { type BoundaryValue, isNumber, isObjectValue } from "./runtime-values.ts";
 
 export type LiveContextOverride = {
   tokens: number;
@@ -32,12 +37,47 @@ export function liveContextFromMessage(message: BoundaryValue): LiveContextOverr
   return tokens === undefined ? undefined : { tokens };
 }
 
+export function estimateLiveContext(entries: SessionEntry[]): LiveContextOverride | undefined {
+  const tokens = entries
+    .flatMap(sessionEntryToContextMessages)
+    .reduce((total, message) => total + estimateTokens(message), 0);
+  return tokens > 0 ? { tokens } : undefined;
+}
+
+type LiveContextState = {
+  override?: LiveContextOverride;
+  cancelScheduledRender?: () => void;
+  scheduledGeneration?: number;
+};
+
+function setLiveContext(
+  state: LiveContextState,
+  lifecycle: SessionLifecycle,
+  requestRender: () => void,
+  next: LiveContextOverride,
+): boolean {
+  if (!lifecycle.isCurrent()) return false;
+  state.override = next;
+  const generation = lifecycle.currentGeneration();
+  if (state.cancelScheduledRender && state.scheduledGeneration !== generation) {
+    state.cancelScheduledRender = undefined;
+    state.scheduledGeneration = undefined;
+  }
+  if (!state.cancelScheduledRender) {
+    state.scheduledGeneration = generation;
+    state.cancelScheduledRender = lifecycle.defer(() => {
+      state.cancelScheduledRender = undefined;
+      state.scheduledGeneration = undefined;
+      if (state.override) requestRender();
+    }, 250);
+  }
+  return true;
+}
+
 export class LiveContextController {
   private readonly lifecycle: SessionLifecycle;
   private readonly requestRender: () => void;
-  private override: LiveContextOverride | undefined;
-  private cancelScheduledRender: (() => void) | undefined;
-  private scheduledGeneration: number | undefined;
+  private readonly state: LiveContextState = {};
 
   constructor(lifecycle: SessionLifecycle, requestRender: () => void) {
     this.lifecycle = lifecycle;
@@ -45,33 +85,27 @@ export class LiveContextController {
   }
 
   get(): LiveContextOverride | undefined {
-    return this.override;
+    return this.state.override;
   }
 
   update(message: BoundaryValue): boolean {
     const next = liveContextFromMessage(message);
-    if (!next || !this.lifecycle.isCurrent()) return false;
-    this.override = next;
-    const generation = this.lifecycle.currentGeneration();
-    if (this.cancelScheduledRender && this.scheduledGeneration !== generation) {
-      this.cancelScheduledRender = undefined;
-      this.scheduledGeneration = undefined;
-    }
-    if (!this.cancelScheduledRender) {
-      this.scheduledGeneration = generation;
-      this.cancelScheduledRender = this.lifecycle.defer(() => {
-        this.cancelScheduledRender = undefined;
-        this.scheduledGeneration = undefined;
-        if (this.override) this.requestRender();
-      }, 250);
-    }
-    return true;
+    return next ? this.set(next) : false;
+  }
+
+  updateAfterCompaction(entries: SessionEntry[]): boolean {
+    const next = estimateLiveContext(entries);
+    return next ? this.set(next) : false;
+  }
+
+  private set(next: LiveContextOverride): boolean {
+    return setLiveContext(this.state, this.lifecycle, this.requestRender, next);
   }
 
   clear(): void {
-    this.override = undefined;
-    this.cancelScheduledRender?.();
-    this.cancelScheduledRender = undefined;
-    this.scheduledGeneration = undefined;
+    this.state.override = undefined;
+    this.state.cancelScheduledRender?.();
+    this.state.cancelScheduledRender = undefined;
+    this.state.scheduledGeneration = undefined;
   }
 }

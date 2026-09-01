@@ -9,18 +9,18 @@ Work in the main agent. Do not spawn implementation agents. A fresh read-only re
 
 ## 1. Prepare
 
-1. Run `check`, plus repository gates required by applicable `AGENTS.md`.
-2. Read the full path-scoped instruction chain.
+1. Read `../task-core/SKILL.md`, then run `check` plus repository gates required by applicable `AGENTS.md`.
+2. Read the full path-scoped instruction chain and apply the shared investigation and evidence mechanics.
 3. Record the current `HEAD` as `review_base`, inspect the dirty tree, and preserve unrelated work.
 4. Resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill and run `node <resolved-script> acquire --cwd "$PWD"`. The script identifies the calling session itself and reclaims a lease only from a provably dead holder. Stop on any other conflicting owner and never clear the lease directory by hand.
-5. Define the objective, exclusions, affected paths, authority boundaries, and an acceptance ledger. Assign each behavior `regression_test`, `direct_check`, or `runtime_e2e` before editing.
+5. Define the acceptance ledger required by `task-core` before editing.
 
 ## 2. Implement and validate
 
 1. Inspect the closest implementation and validation surfaces.
 2. Make the smallest complete change directly.
 3. Add a persistent test only when the ledger justifies `regression_test`.
-4. Run affected project gates, focused checks, and every non-runtime acceptance item.
+4. Follow `task-core`'s diagnostics sequence, affected project gates, focused checks, and every non-runtime acceptance item.
 5. Inspect the actual diff for objective conformance, minimality, and unrelated edits. Do not commit with known failures.
 
 ## 3. Checkpoint

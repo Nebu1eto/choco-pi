@@ -1,5 +1,13 @@
-import type { RuntimeValue } from "./lib/runtime-values.ts";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { FuzzyMentionEditor } from "../packages/choco-pi-ui/extensions/fuzzy-mention/editor.ts";
+import { IgnoreAwareFileCache } from "../packages/choco-pi-ui/extensions/fuzzy-mention/file-cache.ts";
+import { isBoolean, isJsonRecord, type RuntimeValue } from "./lib/runtime-values.ts";
+import {
+  getAgentDir,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { matchesKey, type EditorComponent } from "@earendil-works/pi-tui";
 
 interface EditorState {
@@ -54,6 +62,7 @@ type EditorInstallOptions = {
 const factoryState = Symbol.for("choco-pi.prompt-editor.factory");
 const decoratedEditor = Symbol.for("choco-pi.prompt-editor.instance");
 const zentuiEditorFactory = Symbol.for("pi-zentui.editor-factory");
+export const FUZZY_FILE_MENTIONS_SETTING = "fuzzyFileMentions";
 
 type DecoratedEditor = EditorInternals & { [decoratedEditor]?: true };
 
@@ -192,27 +201,71 @@ export function installPromptEditorWhenReady(
   schedule(tryInstall, intervalMs);
 }
 
+function readFuzzyMentionsFlag(settingsPath: string): boolean | undefined {
+  if (!existsSync(settingsPath)) return undefined;
+  try {
+    const settings: RuntimeValue = JSON.parse(readFileSync(settingsPath, "utf8"));
+    if (!isJsonRecord(settings)) return undefined;
+    const enabled = settings[FUZZY_FILE_MENTIONS_SETTING];
+    return isBoolean(enabled) ? enabled : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Project settings win when the key is present there; otherwise the agent
+ * profile's value applies. The repository's `.pi/settings.json` carries the
+ * documented default (`false`).
+ */
+export function fuzzyFileMentionsEnabled(agentDir = getAgentDir(), projectDir?: string): boolean {
+  const project =
+    projectDir === undefined
+      ? undefined
+      : readFuzzyMentionsFlag(join(projectDir, ".pi", "settings.json"));
+  if (project !== undefined) return project;
+  return readFuzzyMentionsFlag(join(agentDir, "settings.json")) === true;
+}
+
 export default function promptEditor(pi: ExtensionAPI): void {
   let installGeneration = 0;
+  let activeFileCache: IgnoreAwareFileCache | undefined;
 
   pi.on("session_start", (_event, ctx) => {
+    activeFileCache?.invalidate();
+    activeFileCache = undefined;
     const generation = ++installGeneration;
     if (ctx.mode !== "tui") return;
+    const cwd = ctx.cwd;
+    const isCurrent = (): boolean => generation === installGeneration;
     const showStash = (stashed: boolean): void => {
+      if (!isCurrent()) return;
       ctx.ui.setWidget(
         "prompt-stash",
         stashed ? ["Prompt stashed - Ctrl+S to restore"] : undefined,
         { placement: "aboveEditor" },
       );
     };
-    installPromptEditorWhenReady(
-      ctx.ui,
-      { onStashChange: showStash },
-      () => generation === installGeneration,
-    );
+
+    if (fuzzyFileMentionsEnabled(getAgentDir(), cwd)) {
+      const cache = new IgnoreAwareFileCache(cwd);
+      activeFileCache = cache;
+      const factory: EditorFactory = (tui, theme, keybindings) =>
+        decoratePromptEditor(
+          new FuzzyMentionEditor(tui, theme, keybindings, { cwd, cache, isCurrent }),
+          showStash,
+          () => tui.requestRender(),
+        );
+      ctx.ui.setEditorComponent(factory);
+      return;
+    }
+
+    installPromptEditorWhenReady(ctx.ui, { onStashChange: showStash }, isCurrent);
   });
 
   pi.on("session_shutdown", () => {
     installGeneration++;
+    activeFileCache?.invalidate();
+    activeFileCache = undefined;
   });
 }

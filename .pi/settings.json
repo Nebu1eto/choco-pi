@@ -16,6 +16,7 @@
   ],
   "theme": "nord-dark",
   "tuiMode": "fullscreen",
+  "fuzzyFileMentions": false,
   "modelThinkingLevels": {
     "anthropic/claude-fable-5": "high",
     "anthropic/claude-opus-5": "medium",
