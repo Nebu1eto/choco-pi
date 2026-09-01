@@ -15,6 +15,10 @@ import { realZentuiLoader, SKIP_WITHOUT_ZENTUI, ZENTUI_BUILD } from "./zentui-bu
 type Notice = [string, string];
 
 function createCtx(notices: Notice[]): RuntimeValue {
+  const models = [
+    { provider: "synthetic", id: "hf:Qwen/Qwen3.8-27B" },
+    { provider: "openai-codex", id: "gpt-5.6-luna" },
+  ];
   return {
     hasUI: true,
     mode: "tui",
@@ -22,6 +26,8 @@ function createCtx(notices: Notice[]): RuntimeValue {
       notify: (message: string, level: string) => notices.push([message, level]),
       theme: { fg: (_color: string, value: string) => value, bold: (value: string) => value },
     },
+    modelRegistry: { getAvailable: () => models },
+    scopedModels: [],
   };
 }
 
@@ -56,17 +62,25 @@ test(
     const items = section.buildItems();
     assert.deepEqual(
       items.map((item) => item.id),
-      ["agentLanguage", "agentStyle"],
+      ["agentLanguage", "agentStyle", "sessionAutoName", "sessionAutoNameModel"],
     );
     assert.equal(items[0].currentValue, "Match user");
     assert.equal(items[1].currentValue, "Default");
     assert.ok(items[1].values?.includes("concise"), "shipped presets must be offered");
+    assert.equal(items[2].currentValue, "Enabled");
+    assert.equal(items[3].currentValue, "synthetic/hf:Qwen/Qwen3.8-27B");
 
     assert.deepEqual(section.handleChange("agentLanguage", "Korean"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentStyle", "concise"), { kind: "update" });
+    assert.deepEqual(section.handleChange("sessionAutoName", "Disabled"), { kind: "update" });
+    assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai-codex/gpt-5.6-luna"), {
+      kind: "update",
+    });
     const settings = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
     assert.equal(settings.agentLanguage, "Korean");
     assert.equal(settings.agentStyle, "concise");
+    assert.equal(settings.sessionAutoName, false);
+    assert.equal(settings.sessionAutoNameModel, "openai-codex/gpt-5.6-luna");
     assert.equal(settings.theme, "nord-dark", "unrelated settings must survive");
 
     assert.deepEqual(section.handleChange("agentLanguage", "Custom…"), {

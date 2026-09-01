@@ -12,6 +12,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
 import {
   isJsonRecord,
+  isBoolean,
   isString,
   reinterpretHostValue,
   runtimeTypeOf,
@@ -21,6 +22,10 @@ import {
 
 export const AGENT_LANGUAGE_KEY = "agentLanguage";
 export const AGENT_STYLE_KEY = "agentStyle";
+export const SESSION_AUTO_NAME_KEY = "sessionAutoName";
+export const SESSION_AUTO_NAME_MODEL_KEY = "sessionAutoNameModel";
+export const DEFAULT_SESSION_AUTO_NAME_MODEL = "synthetic/hf:Qwen/Qwen3.8-27B";
+export const SESSION_AUTO_NAME_FALLBACK_MODEL = "openai-codex/gpt-5.6-luna";
 export const AGENT_PREFERENCES_MARKER = "<choco_pi_agent_preferences>";
 export const AGENT_PREFERENCES_MARKER_END = "</choco_pi_agent_preferences>";
 export const USER_STYLES_DIR_NAME = "agent-styles";
@@ -31,6 +36,15 @@ const PRESET_STYLES_DIR = fileURLToPath(new URL("../agent-preferences/styles/", 
 export interface AgentPreferences {
   language?: string;
   style?: string;
+  sessionAutoName?: boolean;
+  sessionAutoNameModel?: string;
+}
+
+interface AgentPreferenceValues {
+  agentLanguage: string;
+  agentStyle: string;
+  sessionAutoName: boolean;
+  sessionAutoNameModel: string;
 }
 
 export interface AgentStyle {
@@ -48,7 +62,14 @@ function globalSettingsPath(agentDir: string): string {
 function readSettingsObject(agentDir: string): JsonRecord {
   const filePath = globalSettingsPath(agentDir);
   if (!existsSync(filePath)) return {};
-  const parsed: RuntimeValue = JSON.parse(readFileSync(filePath, "utf8"));
+  let parsed: RuntimeValue;
+  try {
+    parsed = JSON.parse(readFileSync(filePath, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `Could not parse ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   if (!isJsonRecord(parsed)) {
     throw new Error(`Expected a JSON object in ${filePath}`);
   }
@@ -66,6 +87,14 @@ export function readAgentPreferences(agentDir: string = getAgentDir()): AgentPre
   if (isString(style) && style !== "") {
     preferences.style = style;
   }
+  const sessionAutoName = settings[SESSION_AUTO_NAME_KEY];
+  if (isBoolean(sessionAutoName)) {
+    preferences.sessionAutoName = sessionAutoName;
+  }
+  const sessionAutoNameModel = settings[SESSION_AUTO_NAME_MODEL_KEY];
+  if (isString(sessionAutoNameModel) && sessionAutoNameModel !== "") {
+    preferences.sessionAutoNameModel = sessionAutoNameModel;
+  }
   return preferences;
 }
 
@@ -81,9 +110,9 @@ function writeSettingsObject(agentDir: string, settings: JsonRecord): void {
  * Sets one agent preference in the global settings file, preserving every
  * other key. `undefined` deletes the key.
  */
-export function writeAgentPreference(
-  key: typeof AGENT_LANGUAGE_KEY | typeof AGENT_STYLE_KEY,
-  value: string | undefined,
+export function writeAgentPreference<Key extends keyof AgentPreferenceValues>(
+  key: Key,
+  value: AgentPreferenceValues[Key] | undefined,
   agentDir: string = getAgentDir(),
 ): void {
   const settings = readSettingsObject(agentDir);
@@ -132,9 +161,9 @@ export function parseAgentStyleDocument(raw: string, fallbackName: string): Agen
 function listStyleFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   try {
-    return readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
-      .map((entry) => path.join(dir, entry.name));
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isFile() && entry.name.endsWith(".md") ? [path.join(dir, entry.name)] : [],
+    );
   } catch {
     return [];
   }
