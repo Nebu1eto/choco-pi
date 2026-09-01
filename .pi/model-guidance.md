@@ -2,6 +2,8 @@
 
 Selection reference for subagent spawning and planning. Role files' `default_model` and `default_thinking` remain the defaults; this document informs overrides and planner recommendations in the system-prompt priority order.
 
+This file is the sole owner of provider and model routing. Shared prompts and workflow semantics remain provider-neutral; operators update routing here without changing `.pi/SYSTEM.md`.
+
 | Tier        | Models                                                                                                                                 | Guidance                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Flagship    | `anthropic/claude-fable-5` (only member)                                                                                               | Use only for orchestration, initial planning, and review of complex output. It is very expensive. Higher reasoning effort yields materially better results on challenging tasks.                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -12,3 +14,13 @@ Selection reference for subagent spawning and planning. Role files' `default_mod
 
 - Before fixing a finding surfaced by Sol, the orchestrator or a delegate must confirm that it is legitimate and has in-scope impact; Sol surfaces edge cases outside the current scope.
 - Instruction detail must scale inversely with model tier: the smaller the model, the more explicit the task packet.
+
+## Failure routing
+
+- On an OpenAI capacity error, retry the same task and model three times with bounded backoff, then move to a comparable Anthropic model.
+- On a rate limit, move Fable to Opus because their quotas are separate, another Anthropic model to a comparable OpenAI model or Kimi K3, and an OpenAI model to a comparable Anthropic model or Kimi K3.
+- Use Kimi K3 only after the preferred providers are unavailable. Never route non-mobile work to Apex.
+
+## Provider capability boundary
+
+`splitDeferredTools` is implemented only by the `openai-codex` and `openai-responses` providers. Compact tool descriptions reduce prompt cost for every provider; deferred tool loading remains an OpenAI-only optimization and must not change shared tool semantics or workflow instructions.

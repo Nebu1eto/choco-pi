@@ -422,6 +422,16 @@ notification at all (the manager's `onComplete` returns early on
 it was never told to retrieve — through a parameter whose nested schema carries
 no description. Guidance moves; the mechanism does not.
 
+### Workflow-owned delegation briefing
+
+The fork removes the full Agent tool description's `Writing the prompt` section.
+That prose prescribed task-packet content, lookup versus investigation prompts,
+and parent-side synthesis, which are workflow policy rather than tool parameter
+semantics. The authoritative `task` skill now owns that guidance and the dynamic
+workflow reuses it. The compact description retains only load-bearing invocation
+and result-retrieval facts, and this profile selects it with
+`toolDescriptionMode: "compact"`.
+
 The `schedule` parameter description said it "Forces run_in_background", which
 upstream's own 0.15.2 changelog records as wrong: an explicit
 `run_in_background: false` alongside `schedule` is refused, not overridden. It
