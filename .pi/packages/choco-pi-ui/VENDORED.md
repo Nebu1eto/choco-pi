@@ -125,6 +125,18 @@ session; removing the bridge restores the existing cumulative main session and
 live-context displays immediately. The shared boundary reader lives
 in `extensions/zentui/focused-runtime.ts` so the render paths apply one parser.
 
+### choco-pi change: post-compaction live-context estimate
+
+Upstream clears the footer's live-context override on `session_compact`, so the
+context gauge keeps showing the stale pre-compaction measurement until the next
+assistant response. `extensions/zentui/index.ts` now calls the new
+`LiveContextController.updateAfterCompaction` with the freshly compacted
+`ctx.sessionManager.buildContextEntries()` instead of `clear()`.
+`extensions/zentui/live-context.ts` gained `estimateLiveContext`, which sums the
+host's `estimateTokens` over `sessionEntryToContextMessages` for every entry;
+`update` and `updateAfterCompaction` share one lifecycle-guarded `set` path, so
+the next measured assistant usage supersedes the estimate exactly as before.
+
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
 
 - Original source code: <https://github.com/maddeye/pi-nord>

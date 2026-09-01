@@ -77,6 +77,17 @@ function contextTabContext() {
   };
 }
 
+function usage(totalTokens: number) {
+  return {
+    input: totalTokens,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
 test("the Context tab is concise by default and expands its inventories on request", async () => {
   // SAFETY: The fixture supplies every host member the registration path touches.
   statusCommands({
@@ -156,6 +167,101 @@ test("base system prompt is not reduced by separately listed context files", () 
 
   assert.match(rendered, /System prompt: 4 tokens/);
   assert.match(rendered, /Context files: 4 tokens/);
+});
+
+test("a measured sample retained across compaction falls back to an estimated total", () => {
+  const ctx = {
+    ...contextTabContext(),
+    sessionManager: {
+      buildContextEntries: () => [
+        {
+          type: "compaction",
+          id: "compact",
+          parentId: "old-assistant",
+          timestamp: "2026-09-01T00:00:01.000Z",
+          summary: "Short compacted context",
+          firstKeptEntryId: "old-assistant",
+          tokensBefore: 50_000,
+        },
+        {
+          type: "message",
+          id: "old-assistant",
+          parentId: "old-user",
+          timestamp: "2026-09-01T00:00:00.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "retained answer" }],
+            api: "anthropic-messages",
+            provider: "anthropic",
+            model: "test-model",
+            usage: usage(50_000),
+            stopReason: "stop",
+            timestamp: 0,
+          },
+        },
+      ],
+    },
+  };
+
+  // SAFETY: the fixture supplies every host member exercised by renderContext.
+  const rendered = renderContext(
+    { getAllTools: () => TOOLS, getActiveTools: () => ["read"] } as never,
+    ctx as never,
+    false,
+    false,
+    { systemTokens: 100, toolsTokens: 60, toolCount: 1 },
+  );
+
+  assert.doesNotMatch(rendered, /50k\/200k tokens/);
+  assert.match(rendered, /\/200k tokens \([^\n]*; estimated\)/);
+});
+
+test("fresh measured usage after compaction removes the estimated label", () => {
+  const ctx = {
+    ...contextTabContext(),
+    getContextUsage: () => ({ tokens: 12_345, contextWindow: 200_000, percent: 6.2 }),
+    sessionManager: {
+      buildContextEntries: () => [
+        {
+          type: "compaction",
+          id: "compact",
+          parentId: "old-assistant",
+          timestamp: "2026-09-01T00:00:01.000Z",
+          summary: "Short compacted context",
+          firstKeptEntryId: "old-assistant",
+          tokensBefore: 50_000,
+        },
+        {
+          type: "message",
+          id: "fresh-assistant",
+          parentId: "compact",
+          timestamp: "2026-09-01T00:00:02.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "fresh answer" }],
+            api: "anthropic-messages",
+            provider: "anthropic",
+            model: "test-model",
+            usage: usage(12_345),
+            stopReason: "stop",
+            timestamp: 2,
+          },
+        },
+      ],
+    },
+  };
+
+  // SAFETY: the fixture supplies every host member exercised by renderContext.
+  const rendered = renderContext(
+    { getAllTools: () => TOOLS, getActiveTools: () => ["read"] } as never,
+    ctx as never,
+    false,
+    false,
+    { systemTokens: 100, toolsTokens: 60, toolCount: 1 },
+  );
+
+  assert.match(rendered, /12k\/200k tokens \(6\.2%\)/);
+  assert.doesNotMatch(rendered, /12k\/200k tokens \([^\n]*estimated/);
 });
 
 test("a reloaded status module refreshes the inventory used by an older handler", async () => {

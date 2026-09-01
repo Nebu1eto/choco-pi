@@ -3,11 +3,13 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import {
+  calculateContextTokens,
   formatSkillsForPrompt,
   sessionEntryToContextMessages,
   type BuildSystemPromptOptions,
   type ExtensionAPI,
   type ExtensionCommandContext,
+  type SessionEntry,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { currentProviderPrefixMetrics, type ProviderPrefixMetrics } from "../cache-probe.ts";
@@ -162,9 +164,36 @@ function mcpCatalog(cwd: string): McpCatalog {
   }
 }
 
-function messageTokens(ctx: ExtensionCommandContext): number {
-  const messages = ctx.sessionManager.buildContextEntries().flatMap(sessionEntryToContextMessages);
-  return estimate(messages);
+function contextEntries(ctx: ExtensionCommandContext): SessionEntry[] {
+  return ctx.sessionManager.buildContextEntries();
+}
+
+function messageTokens(entries: SessionEntry[]): number {
+  return estimate(entries.flatMap(sessionEntryToContextMessages));
+}
+
+function measuredUsagePredatesCompaction(entries: SessionEntry[]): boolean {
+  // buildContextEntries puts the latest compaction first, followed by retained
+  // ancestors and then its descendants. Parent links distinguish retained
+  // pre-compaction assistant samples from genuinely fresh responses.
+  const compaction = entries.find((entry) => entry.type === "compaction");
+  if (!compaction) return false;
+  const descendants = new Set([compaction.id]);
+  for (const entry of entries) {
+    if (entry.id === compaction.id || !entry.parentId || !descendants.has(entry.parentId)) continue;
+    descendants.add(entry.id);
+    if (
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      entry.message.stopReason !== "error" &&
+      entry.message.stopReason !== "aborted" &&
+      entry.message.usage &&
+      calculateContextTokens(entry.message.usage) > 0
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function allocateTokens(values: number[], total: number): number[] {
@@ -338,10 +367,14 @@ export function renderContext(
   const options = ctx.getSystemPromptOptions();
   const tools = pi.getAllTools();
   const activeNames = new Set(pi.getActiveTools());
-  const messagesEstimate = messageTokens(ctx);
+  const entries = contextEntries(ctx);
+  const messagesEstimate = messageTokens(entries);
   const matchingProviderMetrics =
     providerMetrics?.toolCount === activeNames.size ? providerMetrics : undefined;
-  const measuredTotal = usage?.tokens && usage.tokens > 0 ? usage.tokens : undefined;
+  const measuredTotal =
+    !measuredUsagePredatesCompaction(entries) && usage?.tokens && usage.tokens > 0
+      ? usage.tokens
+      : undefined;
   const reserve = Math.min(reserveTokens(ctx.cwd), window);
   const categories = categoryData(
     ctx,
@@ -364,7 +397,7 @@ export function renderContext(
   const sidebarWidth = MAX_REPORT_WIDTH - GRID_ROW_WIDTH - LEGEND_GAP;
   const legend = [
     truncateText(ctx.model?.id ?? "No model", sidebarWidth),
-    `${formatTokens(total)}/${formatTokens(window)} tokens (${percent(total, window)})`,
+    `${formatTokens(total)}/${formatTokens(window)} tokens (${percent(total, window)}${measuredTotal === undefined ? "; estimated" : ""})`,
     "",
     "Estimated usage by category",
     ...categories.map(

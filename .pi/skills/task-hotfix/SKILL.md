@@ -9,16 +9,16 @@ Keep implementation in the main agent. Do not spawn implementation agents. A fre
 
 ## 1. Triage
 
-1. Run `check`; do not wait for optional capabilities unrelated to the incident.
-2. Read the incident evidence and applicable instructions.
+1. Read `../task-core/SKILL.md`, then run `check`; do not wait for optional capabilities unrelated to the incident.
+2. Read the incident evidence and applicable instructions, applying the shared investigation and evidence mechanics.
 3. Record `review_base`, inspect the dirty tree, resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill, and run `node <resolved-script> acquire --cwd "$PWD"`. The script identifies the calling session itself; stop on a conflicting owner it does not report as dead.
 4. Reproduce the failure through the narrowest reliable path and identify the most likely root cause.
-5. Record success criteria, explicit exclusions, authority boundaries, and an acceptance ledger using `regression_test`, `direct_check`, or `runtime_e2e`.
+5. Record the incident acceptance ledger required by `task-core`.
 
 ## 2. Fix and validate
 
 1. Apply the smallest safe patch; do not fold adjacent cleanup or hardening into the incident.
-2. Run the original reproduction, justified regression tests, affected project gates, and direct checks.
+2. Run the original reproduction, justified regression tests, `task-core`'s diagnostics sequence, affected project gates, and direct checks.
 3. Inspect the final diff and update every acceptance row from observed results.
 4. Count each `edit → run → observed failure` cycle as one attempt. After three unresolved attempts, stop and report the evidence and next decision; do not silently broaden scope or delegate the fix unless the user authorizes it.
 

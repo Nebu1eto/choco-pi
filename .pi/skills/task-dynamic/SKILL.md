@@ -26,7 +26,7 @@ flowchart TD
   U2 --> W3[Nested worker B1]
 ```
 
-Choose roles by unit semantics, using `.pi/model-guidance.md` resolved relative to the repository as the model and effort selection reference, and send every child a bounded task packet with objective, instructions, narrowed read/write scope, dependencies, done criteria, and verification. Name every spawned child by its goal (`role-goal`, one to three dashed words, unique among its siblings). Spawned children of a worker are that worker's responsibility; standard `Agent`, `steer_subagent`, `get_subagent_result`, and `stop_subagent` tools remain available.
+Choose roles by unit semantics, using `.pi/model-guidance.md` resolved relative to the repository for justified overrides. Every parent uses the `task` skill's delegation packet, narrowed to the scope it owns. Name every spawned child by its goal (`role-goal`, one to three dashed words, unique among its siblings). Spawned children of a worker are that worker's responsibility; standard `Agent`, `steer_subagent`, `get_subagent_result`, and `stop_subagent` tools remain available.
 
 ### Scoped reviewer grandchildren
 
