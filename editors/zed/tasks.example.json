@@ -1,0 +1,115 @@
+[
+  {
+    "label": "Choco Pi: Sync Focused Context",
+    "description": "Requires a text editor with a selection focused before opening the Task picker.",
+    "command": "node",
+    "args": [
+      ".pi/packages/choco-pi-editor-context/src/cli.ts",
+      "publish",
+      "--cwd",
+      "$ZED_WORKTREE_ROOT",
+      "--path",
+      "$ZED_FILE",
+      "--line",
+      "$ZED_ROW",
+      "--column",
+      "$ZED_COLUMN",
+      "--language",
+      "$ZED_LANGUAGE",
+      "--symbol",
+      "$ZED_SYMBOL",
+      "--selection-env",
+      "CHOCO_PI_ZED_SELECTION"
+    ],
+    "env": {
+      "CHOCO_PI_ZED_SELECTION": "$ZED_SELECTED_TEXT"
+    },
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "save": "none",
+    "show_command": false,
+    "show_summary": false
+  },
+  {
+    "label": "Choco Pi: Sync Focused Context (No Selection)",
+    "description": "Requires a text editor focused before opening the Task picker; selection text is excluded.",
+    "command": "node",
+    "args": [
+      ".pi/packages/choco-pi-editor-context/src/cli.ts",
+      "publish",
+      "--cwd",
+      "$ZED_WORKTREE_ROOT",
+      "--path",
+      "$ZED_FILE",
+      "--line",
+      "$ZED_ROW",
+      "--column",
+      "$ZED_COLUMN",
+      "--language",
+      "$ZED_LANGUAGE",
+      "--symbol",
+      "$ZED_SYMBOL",
+      "--no-selection-text"
+    ],
+    "env": {},
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "save": "none",
+    "show_command": false,
+    "show_summary": false
+  },
+  {
+    "label": "Choco Pi: Sync Saved File Context",
+    "description": "Requires a text editor focused before opening the Task picker.",
+    "command": "node",
+    "args": [
+      ".pi/packages/choco-pi-editor-context/src/cli.ts",
+      "publish",
+      "--cwd",
+      "$ZED_WORKTREE_ROOT",
+      "--path",
+      "$ZED_FILE",
+      "--language",
+      "$ZED_LANGUAGE",
+      "--symbol",
+      "$ZED_SYMBOL"
+    ],
+    "env": {},
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "save": "current",
+    "reveal": "never",
+    "show_command": false,
+    "show_summary": false
+  },
+  {
+    "label": "Choco Pi: List Live Sessions",
+    "command": "node",
+    "args": [
+      ".pi/packages/choco-pi-editor-context/src/cli.ts",
+      "list",
+      "--cwd",
+      "$ZED_WORKTREE_ROOT"
+    ],
+    "env": {},
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "Choco Pi: Select Context Target",
+    "description": "Run Choco Pi: List Live Sessions, then run the printed select command in Zed's terminal.",
+    "command": "node",
+    "args": [
+      ".pi/packages/choco-pi-editor-context/src/cli.ts",
+      "list",
+      "--cwd",
+      "$ZED_WORKTREE_ROOT"
+    ],
+    "env": {},
+    "cwd": "$ZED_WORKTREE_ROOT"
+  },
+  {
+    "label": "Choco Pi: Open Terminal Thread",
+    "command": "pi",
+    "args": [],
+    "env": {},
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "save": "none"
+  }
+]

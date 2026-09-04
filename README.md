@@ -105,6 +105,16 @@ Pi's built-in `grep` tool is disabled. Source discovery follows the LSP and Code
 | `~/.pi/agent/mcp.json` from [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                                      | Untracked MCP server and OAuth configuration                  |
 | Package [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md) and [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) files | Package policy and recorded upstream differences              |
 
+## Use choco-pi in Zed
+
+`.pi/packages/choco-pi-acp` connects Zed to choco-pi over the Agent Client Protocol,
+and `.pi/packages/choco-pi-editor-context` syncs the focused file, cursor, and
+selection into the targeted Pi session through Zed Tasks. Start with the
+[Zed setup guide](docs/zed-setup.md); the
+[compatibility baseline](docs/zed-acp-compatibility.md),
+[command parity inventory](docs/zed-command-parity.md), and
+[runtime E2E evidence](docs/zed-e2e-evidence.md) record what was verified.
+
 ## Development verification
 
 Run the root verification gates:

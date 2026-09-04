@@ -19,6 +19,9 @@ matching model; runtime, user, and project instruction precedence remains author
 - Read the closest `AGENTS.md` and `VENDORED.md`; record every vendored-package divergence in `VENDORED.md` in the same change.
 - Use Node-erasable TypeScript and explicit `.ts` suffixes for relative TypeScript imports and exports.
 - Use host TypeBox aliases only where package policy allows; never override vendored `@sinclair/typebox`. Add no build output unless allowed.
+- `.pi/packages/choco-pi-acp` and `.pi/packages/choco-pi-editor-context` require Node 24 or newer. The Zed ACP adapter is executed
+  from TypeScript source through `bin/choco-pi-acp.ts` and ships no build output; it is not a Pi extension and has no manifest entry.
+- After adding a package to `.pi/settings.json`, re-run `pnpm install:profile`. Pi loads the package only after that run.
 
 ## Lifecycle and verification
 
@@ -27,6 +30,8 @@ matching model; runtime, user, and project instruction precedence remains author
 - Settle lifecycle callbacks exactly once. Contain only the canonical stale-context error; rethrow unrelated failures.
 - Root gates are `pnpm lint`, `pnpm fmt:check`, `pnpm typecheck`, and `pnpm test`.
 - Run extension-host and TUI checks through the real path in a fresh, separate Pi process.
+- Prefer subagents for delegated work; spawn a dedicated Pi session or process only when the user explicitly asks, and keep
+  real-Pi test suites opt-in.
 
 ## Post-task session audit
 
