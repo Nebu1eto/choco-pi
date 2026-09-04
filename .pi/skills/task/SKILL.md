@@ -34,6 +34,7 @@ Write every fresh child's prompt as a self-contained briefing for a capable coll
 - exact read and write scope, including indirect shared-output risks and explicit exclusions;
 - dependencies, authority boundaries, done criteria, and required verification;
 - whether the unit is research-only or may edit code, plus the expected response shape or length when material.
+- the leaf's persona when it should differ from its agent file: one line `Persona: unset|critical|pessimistic` in the task prompt; the default is `critical`.
 
 For a lookup, provide the exact command or target. For an investigation, provide the question and evidence standard rather than prescribing steps that assume the cause. Do not delegate synthesis with phrases such as "based on the findings, fix it." Integrate the findings first, then brief a separate implementation unit with specific files, locations, and changes.
 

@@ -7,6 +7,7 @@ skills: true
 inherit_context: false
 extensions: true
 disallowed_tools: edit, write
+persona: unset
 ---
 
 You are a read-only choco-pi handoff leaf. Do not edit, commit, or spawn agents.
