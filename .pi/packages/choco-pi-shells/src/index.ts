@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import { inChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
 import { ShellManager } from "./shell-manager.ts";
 import type { ReadShellResult, ShellChangeEvent, ShellResult } from "./shell-manager.ts";
+import { isStaleContextError, type RuntimeValue } from "./lifecycle.ts";
 import { openShellsOverlay, type ShellsUICtx } from "./ui/shells-overlay.ts";
 import {
   ShellsWidget,
@@ -261,15 +262,25 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     if (shells.length === 0) return;
     boundGroupedTails(shells);
     const details: ShellCompletionDetails = { shells };
-    pi.sendMessage<ShellCompletionDetails>(
-      {
-        customType: SHELL_NOTIFICATION_TYPE,
-        content: `<shell-completion>${JSON.stringify(details)}</shell-completion>\nUse shell_read with the reported cursors only when more output is needed.`,
-        display: true,
-        details,
-      },
-      { deliverAs: "steer", triggerTurn: true },
-    );
+    try {
+      pi.sendMessage<ShellCompletionDetails>(
+        {
+          customType: SHELL_NOTIFICATION_TYPE,
+          content: `<shell-completion>${JSON.stringify(details)}</shell-completion>\nUse shell_read with the reported cursors only when more output is needed.`,
+          display: true,
+          details,
+        },
+        { deliverAs: "steer", triggerTurn: true },
+      );
+    } catch (error) {
+      // Session replacement or reload can stale this ctx without session_shutdown
+      // firing before the debounced timer. Contain only the canonical stale-context
+      // error and stop scheduling flushes for the dead runtime; rethrow the rest.
+      // SAFETY: catch produces unknown; the helper narrows via instanceof before reading the message.
+      if (!isStaleContextError(error as RuntimeValue)) throw error;
+      shuttingDown = true;
+      pendingCompletions.length = 0;
+    }
   };
 
   const unsubscribeCompletions = manager.onChange((event: ShellChangeEvent) => {
