@@ -105,6 +105,14 @@ Pi의 내장 `grep` 도구는 비활성화되어 있습니다. 소스 탐색은 
 | `~/.pi/agent/mcp.json`과 그 예시인 [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                             | 추적하지 않는 MCP 서버 및 OAuth 설정              |
 | 패키지별 [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md)와 [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) 파일 | 패키지 정책과 기록된 업스트림 변경 사항           |
 
+## Zed에서 choco-pi 사용하기
+
+`.pi/packages/choco-pi-acp`는 Agent Client Protocol로 Zed와 choco-pi를 연결하고,
+`.pi/packages/choco-pi-editor-context`는 Zed Task를 통해 현재 파일, 커서, 선택 영역을
+대상 Pi 세션에 동기화합니다. [Zed 설정 안내](docs/zed-setup.md)부터 시작하세요.
+[호환성 기준](docs/zed-acp-compatibility.md), [명령 호환 목록](docs/zed-command-parity.md),
+[런타임 E2E 증거](docs/zed-e2e-evidence.md)에 검증된 내용이 기록되어 있습니다.
+
 ## 개발 검증
 
 루트 검증 절차를 실행하세요.
