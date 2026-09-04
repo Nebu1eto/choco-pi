@@ -1,0 +1,8 @@
+[
+  {
+    "context": "Workspace && !Terminal",
+    "bindings": {
+      "ctrl-alt-c": ["task::Spawn", { "task_name": "Choco Pi: Sync Focused Context" }]
+    }
+  }
+]

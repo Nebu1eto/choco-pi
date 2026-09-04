@@ -1,0 +1,12 @@
+{
+  "agent_servers": {
+    "choco-pi": {
+      "type": "custom",
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/choco-pi-acp.ts"],
+      "env": {
+        "PI_ACP_ENABLE_EMBEDDED_CONTEXT": "true"
+      }
+    }
+  }
+}
