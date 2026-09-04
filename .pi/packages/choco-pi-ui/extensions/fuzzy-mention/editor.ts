@@ -93,10 +93,13 @@ export class FuzzyFileMentionProvider implements AutocompleteProvider {
     }
     if (!this.isCurrent() || options.signal.aborted) return null;
 
+    // No description: pi-tui's SelectList clamps the primary column to a fixed
+    // 32 cells whenever a description is present (and the layout knob is
+    // private), which truncates paths regardless of terminal width. Without a
+    // description the path gets the full editor width.
     const items: FileMentionItem[] = rankFileMentions(mention.query, paths).map(({ path }) => ({
       value: mentionValue(path),
       label: path,
-      description: "file",
       [FILE_MENTION_ITEM]: true,
     }));
     // Mention contexts are shared with the base provider: merge its rows
