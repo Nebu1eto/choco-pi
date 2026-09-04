@@ -44,14 +44,9 @@ import type {
   ReviewTarget,
   SessionCheckpointProvider,
 } from "./core/types.ts";
+import { chooseReviewTarget, presentHeadlessReview } from "./headless.ts";
 import { openReviewView, type ReviewViewResult } from "./ui/review-view.ts";
-import {
-  describeReviewTarget,
-  pickReviewRecord,
-  pickReviewTarget,
-  pullRequestTargetChoice,
-  type ReviewTargetChoice,
-} from "./ui/target-picker.ts";
+import { describeReviewTarget, pickReviewRecord } from "./ui/target-picker.ts";
 import { installToolDiffRendering } from "./ui/tool-diff.ts";
 
 export const REVIEW_USAGE =
@@ -346,47 +341,6 @@ async function argumentCompletions(
   }
 }
 
-async function chooseTarget(
-  ctx: ExtensionCommandContext,
-  provider: SessionCheckpointProvider,
-  runner: ExecRunner,
-): Promise<ReviewTarget | undefined> {
-  const root = await repositoryRoot(ctx.cwd, runner);
-  let pullRequestWarning: string | undefined;
-  const [turns, branches, pullRequests] = await Promise.all([
-    provider.listTurns().catch(() => []),
-    listBranches(root, runner),
-    listPullRequests(root, runner).catch((error) => {
-      pullRequestWarning = error instanceof Error ? error.message : String(error);
-      return [];
-    }),
-  ]);
-  if (pullRequestWarning) {
-    ctx.ui.notify(`Pull request targets are unavailable: ${pullRequestWarning}`, "warning");
-  }
-  const candidates: ReviewTargetChoice[] = [];
-  if (turns.length > 0) {
-    candidates.push({
-      label: "Current session",
-      target: { kind: "session", sessionId: currentSessionId(ctx) },
-    });
-  }
-  for (const pullRequest of pullRequests) {
-    candidates.push(pullRequestTargetChoice(pullRequest.number, pullRequest.title));
-  }
-  for (const branch of branches) {
-    candidates.push({ label: `Branch base: ${branch}`, target: { kind: "branch", base: branch } });
-  }
-  if (candidates.length === 0) {
-    ctx.ui.notify(
-      "No review targets are available. Session review needs file checkpoints, no open pull requests were found, and no branches were found.",
-      "warning",
-    );
-    return undefined;
-  }
-  return pickReviewTarget(ctx.ui, candidates);
-}
-
 function pullRequestRef(review: PullRequestReview): PullRequestRef {
   let url: URL;
   try {
@@ -563,7 +517,25 @@ export function registerReviewExtension(
         return;
       }
       if (ctx.mode !== "tui") {
-        ctx.ui.notify("Interactive code review is available in Pi's TUI.", "warning");
+        const cwd = ctx.cwd;
+        const sessionId = currentSessionId(ctx);
+        const ui = ctx.ui;
+        const provider = checkpointProvider(pi, ctx);
+        await presentHeadlessReview({
+          request: parsed,
+          cwd,
+          sessionId,
+          ui,
+          dependencies: {
+            store,
+            runner,
+            loadConfig: readConfig,
+            now,
+            checkpointProvider: provider,
+            readTargetDiff,
+            isCurrent,
+          },
+        });
         return;
       }
       const cwd = ctx.cwd;
@@ -580,7 +552,12 @@ export function registerReviewExtension(
         let preferred: ReviewRecord | undefined;
         let target: ReviewTarget | undefined;
         if (parsed.action === "pick") {
-          target = await chooseTarget(ctx, provider, runner);
+          target = await chooseReviewTarget(
+            { cwd: ctx.cwd, sessionId: currentSessionId(ctx), ui: ctx.ui },
+            provider,
+            runner,
+            isCurrent,
+          );
           if (!isCurrent()) return;
         } else if (parsed.action === "resume") {
           preferred = await pickReviewRecord(ctx.ui, store, repository);
