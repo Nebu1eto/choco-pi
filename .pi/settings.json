@@ -12,7 +12,8 @@
     "./packages/choco-pi-agents-md",
     "./packages/choco-pi-web-access",
     "./packages/choco-pi-agent-browser",
-    "./packages/choco-pi-computer-use"
+    "./packages/choco-pi-computer-use",
+    "./packages/choco-pi-editor-context"
   ],
   "theme": "nord-dark",
   "tuiMode": "fullscreen",

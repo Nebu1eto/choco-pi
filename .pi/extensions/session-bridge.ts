@@ -5,24 +5,13 @@ import {
   SESSION_WAIT_LIMIT_MS,
 } from "./lib/session-communication.ts";
 import { randomUUID } from "node:crypto";
-import {
-  mkdir,
-  open,
-  readFile,
-  readdir,
-  rename,
-  stat,
-  unlink,
-  watch,
-  writeFile,
-} from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { mkdir, open, readdir, rename, stat, unlink, watch } from "node:fs/promises";
+import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import {
   AgentSession,
   createAgentSession,
-  getAgentDir,
   SessionManager,
   type ExtensionAPI,
   type ExtensionCommandContext,
@@ -30,13 +19,22 @@ import {
   type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import {
+  assertSessionId,
+  BRIDGE_DIRECTORY,
+  BRIDGE_VERSION,
+  HEARTBEAT_INTERVAL_MS,
+  isFresh,
+  type LiveSessionState,
+  listLiveStates,
+  publishLiveState,
+  readJson,
+  readLiveState,
+  removeOwnedLiveState,
+  writeJsonAtomic,
+} from "../packages/choco-pi-editor-context/src/live-session-client.ts";
 
-const BRIDGE_VERSION = 1 as const;
-const BRIDGE_DIRECTORY = join(getAgentDir(), "choco-pi", "session-bridge");
-const LIVE_DIRECTORY = join(BRIDGE_DIRECTORY, "live");
 const MAILBOX_DIRECTORY = join(BRIDGE_DIRECTORY, "mailboxes");
-const HEARTBEAT_INTERVAL_MS = 2_000;
-const HEARTBEAT_STALE_MS = 6_000;
 const MAILBOX_FALLBACK_INTERVAL_MS = 5_000;
 const WAIT_POLL_INTERVAL_MS = 250;
 const MAILBOX_LOCK_STALE_MS = 10_000;
@@ -59,19 +57,6 @@ function isThinkingLevel(value: RuntimeValue): value is ThinkingLevel {
 
 type DeliveryMode = "queue" | "steer";
 type SessionStatus = "busy" | "idle" | "inactive";
-
-type LiveSessionState = {
-  version: typeof BRIDGE_VERSION;
-  sessionId: string;
-  sessionFile: string;
-  cwd: string;
-  pid: number;
-  ownerId: string;
-  status: "busy" | "idle";
-  model?: string;
-  effort?: ThinkingLevel;
-  updatedAt: string;
-};
 
 type MailboxMessage = {
   version: typeof BRIDGE_VERSION;
@@ -121,8 +106,6 @@ const globalBridge = globalThis as typeof globalThis & {
   __chocoPiSessionBridge?: BridgeState;
 };
 
-let liveDirectoryReady: Promise<void> | undefined;
-
 function bridgeState(): BridgeState {
   globalBridge.__chocoPiSessionBridge ??= { runtimes: new Map() };
   return globalBridge.__chocoPiSessionBridge;
@@ -136,74 +119,9 @@ function errorMessage(error: RuntimeValue): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function assertSessionId(value: string): void {
-  if (!/^[A-Za-z0-9._-]{1,128}$/.test(value)) {
-    throw new Error("Session ID contains unsupported characters.");
-  }
-}
-
-function liveStatePath(sessionId: string, ownerId: string): string {
-  assertSessionId(sessionId);
-  if (!/^[A-Za-z0-9-]{1,128}$/.test(ownerId))
-    throw new Error("Live owner ID contains unsupported characters.");
-  return join(LIVE_DIRECTORY, `${sessionId}.${ownerId}.json`);
-}
-
 function mailboxPath(sessionId: string): string {
   assertSessionId(sessionId);
   return join(MAILBOX_DIRECTORY, sessionId);
-}
-
-async function writeJsonAtomic(path: string, value: RuntimeValue): Promise<void> {
-  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600 });
-  await rename(temporaryPath, path);
-}
-
-async function readJson(path: string): Promise<RuntimeValue | undefined> {
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
-function parseLiveState(value: RuntimeValue): LiveSessionState | undefined {
-  if (!isRecord(value) || value.version !== BRIDGE_VERSION) return undefined;
-  if (
-    !isString(value.sessionId) ||
-    !/^[A-Za-z0-9._-]{1,128}$/.test(value.sessionId) ||
-    !isString(value.sessionFile) ||
-    !isAbsolute(value.sessionFile) ||
-    !isString(value.cwd) ||
-    !isAbsolute(value.cwd) ||
-    !isNumber(value.pid) ||
-    !Number.isSafeInteger(value.pid) ||
-    value.pid <= 0 ||
-    !isString(value.ownerId) ||
-    !/^[A-Za-z0-9-]{1,128}$/.test(value.ownerId) ||
-    (value.status !== "busy" && value.status !== "idle") ||
-    !isString(value.updatedAt) ||
-    !Number.isFinite(Date.parse(value.updatedAt)) ||
-    (value.model !== undefined && !isString(value.model)) ||
-    (value.effort !== undefined && !isThinkingLevel(value.effort))
-  )
-    return undefined;
-  return {
-    version: BRIDGE_VERSION,
-    sessionId: value.sessionId,
-    sessionFile: value.sessionFile,
-    cwd: value.cwd,
-    pid: value.pid,
-    ownerId: value.ownerId,
-    status: value.status,
-    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-    model: value.model as string | undefined,
-    // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-    effort: value.effort as ThinkingLevel | undefined,
-    updatedAt: value.updatedAt,
-  };
 }
 
 function parseMailboxMessage(value: RuntimeValue): MailboxMessage | undefined {
@@ -233,83 +151,12 @@ function parseMailboxMessage(value: RuntimeValue): MailboxMessage | undefined {
   };
 }
 
-function isFresh(state: LiveSessionState | undefined): state is LiveSessionState {
-  if (!state) return false;
-  const updatedAt = Date.parse(state.updatedAt);
-  return Number.isFinite(updatedAt) && Date.now() - updatedAt <= HEARTBEAT_STALE_MS;
-}
-
-async function readLiveState(sessionId: string): Promise<LiveSessionState | undefined> {
-  assertSessionId(sessionId);
-  let files: string[];
-  try {
-    files = (await readdir(LIVE_DIRECTORY)).filter(
-      (file) =>
-        file === `${sessionId}.json` ||
-        (file.startsWith(`${sessionId}.`) && file.endsWith(".json")),
-    );
-  } catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") return undefined;
-    throw error;
-  }
-  const states = (
-    await Promise.all(
-      files.map(async (file) => parseLiveState(await readJson(join(LIVE_DIRECTORY, file)))),
-    )
-  )
-    .filter(isFresh)
-    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  return states[0];
-}
-
-async function publishLiveState(state: LiveSessionState): Promise<void> {
-  liveDirectoryReady ??= mkdir(LIVE_DIRECTORY, { recursive: true, mode: 0o700 })
-    .then(() => undefined)
-    .catch((error) => {
-      liveDirectoryReady = undefined;
-      throw error;
-    });
-  await liveDirectoryReady;
-  await writeJsonAtomic(liveStatePath(state.sessionId, state.ownerId), state);
-}
-
-async function removeOwnedLiveState(sessionId: string, ownerId: string): Promise<void> {
-  try {
-    await unlink(liveStatePath(sessionId, ownerId));
-  } catch (error) {
-    if (!isRecord(error) || error.code !== "ENOENT") throw error;
-  }
-}
-
 async function findProjectSession(cwd: string, sessionId: string): Promise<SessionInfo> {
   assertSessionId(sessionId);
   const sessions = await SessionManager.list(cwd);
   const session = sessions.find((candidate) => candidate.id === sessionId);
   if (!session) throw new Error(`Session ${sessionId} does not belong to the current project.`);
   return session;
-}
-
-async function listLiveStates(): Promise<LiveSessionState[]> {
-  let files: string[];
-  try {
-    files = (await readdir(LIVE_DIRECTORY)).filter((file) => file.endsWith(".json"));
-  } catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") return [];
-    throw error;
-  }
-  const states = (
-    await Promise.all(
-      files.map(async (file) => parseLiveState(await readJson(join(LIVE_DIRECTORY, file)))),
-    )
-  ).filter(isFresh);
-  const newestBySession = new Map<string, LiveSessionState>();
-  for (const state of states) {
-    const current = newestBySession.get(state.sessionId);
-    if (!current || Date.parse(state.updatedAt) > Date.parse(current.updatedAt)) {
-      newestBySession.set(state.sessionId, state);
-    }
-  }
-  return [...newestBySession.values()];
 }
 
 function resolveModel(ctx: ExtensionContext, requested?: string): Model<any> {

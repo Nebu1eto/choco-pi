@@ -1,0 +1,52 @@
+{
+  "name": "choco-pi-editor-context",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared editor-context protocol, validation, storage, and injection for choco-pi editor integrations.",
+  "keywords": [
+    "acp",
+    "editor-context",
+    "extension",
+    "pi",
+    "pi-extension",
+    "pi-package"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "chocoPi": {
+    "supersedes": []
+  },
+  "pi": {
+    "extensions": [
+      "./src/context-extension.ts"
+    ]
+  }
+}
