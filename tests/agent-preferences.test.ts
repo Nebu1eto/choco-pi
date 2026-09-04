@@ -4,13 +4,22 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  DEFAULT_PERSONA,
   AGENT_PREFERENCES_MARKER,
   AGENT_PREFERENCES_MARKER_END,
+  PERSONA_DEFINITIONS_BLOCK,
+  activeAgentName,
+  appendPersonaDefinitions,
   buildAgentPreferencesBlock,
   discoverAgentStyles,
   parseAgentStyleDocument,
+  parsePersona,
+  personaDirectiveFromPrompt,
   readAgentPreferences,
+  renderPersonaAnnouncement,
+  resolveAgentPersonaOverride,
   resolveAgentStyle,
+  resolvePersona,
   writeAgentPreference,
   type AgentStyle,
 } from "../.pi/extensions/lib/agent-preferences.ts";
@@ -27,6 +36,30 @@ function withTempDirs(run: (dirs: { agent: string; presets: string }) => void): 
 }
 
 function writeStyle(dir: string, file: string, content: string): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, file), content, "utf8");
+}
+
+function withAgentDir(
+  run: (dirs: { root: string; cwd: string; agentDir: string }) => void,
+): () => void {
+  return () => {
+    const root = mkdtempSync(path.join(tmpdir(), "agent-persona-"));
+    const cwd = path.join(root, "project");
+    const agentDir = path.join(root, "agent");
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    try {
+      run({ root, cwd, agentDir });
+    } finally {
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      rmSync(root, { recursive: true, force: true });
+    }
+  };
+}
+
+function writeAgent(dir: string, file: string, content: string): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, file), content, "utf8");
 }
@@ -54,6 +87,7 @@ test(
     const preferences = readAgentPreferences(agent);
     assert.equal(preferences.language, "Korean");
     assert.equal(preferences.style, "concise");
+    assert.equal(preferences.persona, DEFAULT_PERSONA);
     assert.equal(preferences.sessionAutoName, false);
     assert.equal(preferences.sessionAutoNameModel, "openai-codex/gpt-5.6-luna");
 
@@ -71,7 +105,7 @@ test(
 test(
   "store creates the settings file when missing and ignores invalid values",
   withTempDirs(({ agent }) => {
-    assert.deepEqual(readAgentPreferences(agent), {});
+    assert.deepEqual(readAgentPreferences(agent), { persona: "critical" });
     writeAgentPreference("agentStyle", "concise", agent);
     assert.equal(readAgentPreferences(agent).style, "concise");
 
@@ -79,7 +113,7 @@ test(
       path.join(agent, "settings.json"),
       JSON.stringify({ agentLanguage: "", agentStyle: 42 }),
     );
-    assert.deepEqual(readAgentPreferences(agent), {});
+    assert.deepEqual(readAgentPreferences(agent), { persona: "critical" });
   }),
 );
 
@@ -138,25 +172,31 @@ test("injection block covers each settings combination and wraps markers", () =>
   const resolver = (name: string) =>
     name === "concise" ? styleOf("concise", "Be brief.") : undefined;
 
-  assert.equal(buildAgentPreferencesBlock({}, resolver), undefined);
+  assert.equal(buildAgentPreferencesBlock({ persona: "critical" }, resolver), undefined);
   assert.equal(
-    buildAgentPreferencesBlock({ style: "missing" }, resolver),
+    buildAgentPreferencesBlock({ persona: "critical", style: "missing" }, resolver),
     undefined,
     "a configured but unresolved style must not produce a block",
   );
 
-  const languageOnly = buildAgentPreferencesBlock({ language: "Korean" }, resolver);
+  const languageOnly = buildAgentPreferencesBlock(
+    { persona: "critical", language: "Korean" },
+    resolver,
+  );
   assert.ok(languageOnly !== undefined);
   assert.ok(languageOnly?.includes("Preferred response language: Korean"));
   assert.ok(languageOnly?.includes(AGENT_PREFERENCES_MARKER));
   assert.ok(languageOnly?.endsWith(AGENT_PREFERENCES_MARKER_END));
   assert.ok(!languageOnly.includes("Agent style:"));
 
-  const both = buildAgentPreferencesBlock({ language: "Japanese", style: "concise" }, resolver);
+  const both = buildAgentPreferencesBlock(
+    { persona: "critical", language: "Japanese", style: "concise" },
+    resolver,
+  );
   assert.ok(both?.includes("Preferred response language: Japanese"));
   assert.ok(both?.includes("Agent style: concise\nBe brief."));
 
-  const styleOnly = buildAgentPreferencesBlock({ style: "concise" }, resolver);
+  const styleOnly = buildAgentPreferencesBlock({ persona: "critical", style: "concise" }, resolver);
   assert.ok(styleOnly?.includes(AGENT_PREFERENCES_MARKER));
   assert.ok(!styleOnly?.includes("Preferred response language"));
 });
@@ -168,9 +208,9 @@ test("every block yields to explicit requests and to path-scoped project instruc
   const projectRule = "path-scoped project instruction";
 
   for (const preferences of [
-    { language: "Korean" },
-    { style: "concise" },
-    { language: "Korean", style: "concise" },
+    { persona: "critical" as const, language: "Korean" },
+    { persona: "critical" as const, style: "concise" },
+    { persona: "critical" as const, language: "Korean", style: "concise" },
   ]) {
     const block = buildAgentPreferencesBlock(preferences, resolver);
     assert.ok(block?.includes(precedence), `${JSON.stringify(preferences)} must yield to requests`);
@@ -182,10 +222,173 @@ test("every block yields to explicit requests and to path-scoped project instruc
 });
 
 test("the language directive leaves commit messages to the repository", () => {
-  const block = buildAgentPreferencesBlock({ language: "Korean" }, () => undefined);
+  const block = buildAgentPreferencesBlock(
+    { persona: "critical", language: "Korean" },
+    () => undefined,
+  );
   assert.ok(
     block?.includes(
       "Commit messages follow the language established by the repository's own history and policy, not this setting.",
     ),
   );
+});
+
+test("persona parsing trims and normalizes only known string values", () => {
+  const cases = [
+    { label: "unset", value: "unset", expected: "unset" },
+    { label: "mixed case", value: "CrItIcAl", expected: "critical" },
+    { label: "whitespace", value: "  pessimistic\n", expected: "pessimistic" },
+    { label: "invalid string", value: "optimistic", expected: undefined },
+    { label: "number", value: 42, expected: undefined },
+    { label: "undefined", value: undefined, expected: undefined },
+  ] as const;
+
+  for (const { label, value, expected } of cases) {
+    assert.equal(parsePersona(value), expected, label);
+  }
+});
+
+test(
+  "persona settings default to critical and preserve explicit unset",
+  withTempDirs(({ agent }) => {
+    assert.equal(readAgentPreferences(agent).persona, "critical");
+
+    mkdirSync(agent, { recursive: true });
+    writeFileSync(path.join(agent, "settings.json"), JSON.stringify({ agentPersona: "wrong" }));
+    assert.equal(readAgentPreferences(agent).persona, "critical");
+
+    writeAgentPreference("agentPersona", "unset", agent);
+    assert.equal(readAgentPreferences(agent).persona, "unset");
+  }),
+);
+
+test(
+  "leaf persona precedence is directive then frontmatter then configured",
+  withAgentDir(({ cwd, agentDir }) => {
+    writeAgent(
+      path.join(agentDir, "agents"),
+      "implementer.md",
+      String.raw`---
+persona: pessimistic
+---
+Agent body.`,
+    );
+    writeAgent(
+      path.join(agentDir, "agents"),
+      "fallback.md",
+      String.raw`---
+persona: invalid
+---
+Agent body.`,
+    );
+
+    const leafPrompt = '<active_agent name="implementer"/>';
+    assert.equal(
+      resolvePersona({
+        configured: "critical",
+        systemPrompt: leafPrompt,
+        prompt: "Persona: unset",
+        cwd,
+      }),
+      "unset",
+    );
+    assert.equal(
+      resolvePersona({ configured: "critical", systemPrompt: leafPrompt, prompt: "work", cwd }),
+      "pessimistic",
+    );
+    assert.equal(
+      resolvePersona({
+        configured: "critical",
+        systemPrompt: '<active_agent name="fallback"/>',
+        prompt: "work",
+        cwd,
+      }),
+      "critical",
+    );
+  }),
+);
+
+test("root persona ignores prompt directives", () => {
+  assert.equal(
+    resolvePersona({
+      configured: "pessimistic",
+      systemPrompt: "root prompt",
+      prompt: "Persona: unset",
+      cwd: "/unused",
+    }),
+    "pessimistic",
+  );
+});
+
+test(
+  "persona override resolves declared and filename agent names",
+  withAgentDir(({ cwd, agentDir }) => {
+    const globalAgents = path.join(agentDir, "agents");
+    writeAgent(
+      globalAgents,
+      "different-file.md",
+      String.raw`---
+name: specialist
+persona: pessimistic
+---
+Agent body.`,
+    );
+    writeAgent(
+      globalAgents,
+      "implementer.md",
+      String.raw`---
+persona: unset
+---
+Agent body.`,
+    );
+
+    assert.equal(resolveAgentPersonaOverride("specialist", cwd), "pessimistic");
+    assert.equal(resolveAgentPersonaOverride("implementer", cwd), "unset");
+  }),
+);
+
+test(
+  "project persona override wins over the global agent directory",
+  withAgentDir(({ cwd, agentDir }) => {
+    writeAgent(
+      path.join(agentDir, "agents"),
+      "reviewer.md",
+      String.raw`---
+persona: pessimistic
+---
+Global body.`,
+    );
+    writeAgent(
+      path.join(cwd, ".pi", "agents"),
+      "reviewer.md",
+      String.raw`---
+persona: unset
+---
+Project body.`,
+    );
+
+    assert.equal(resolveAgentPersonaOverride("reviewer", cwd), "unset");
+  }),
+);
+
+test("persona prompt parsing finds the first active agent and an exact directive line", () => {
+  assert.equal(
+    activeAgentName('<active_agent name="reviewer"/>\n<active_agent name="planner"/>'),
+    "reviewer",
+  );
+  assert.equal(personaDirectiveFromPrompt("Do this\nPeRsOnA: CrItIcAl  \nnow"), "critical");
+  assert.equal(personaDirectiveFromPrompt("Persona: optimistic"), undefined);
+});
+
+test("persona definitions append once and remain synchronized with the system prompt", () => {
+  const appended = appendPersonaDefinitions("Base prompt");
+  assert.equal(appended, `Base prompt\n\n${PERSONA_DEFINITIONS_BLOCK}`);
+  assert.equal(appendPersonaDefinitions(appended), undefined);
+
+  const systemPrompt = readFileSync(new URL("../.pi/SYSTEM.md", import.meta.url), "utf8");
+  assert.ok(systemPrompt.includes(PERSONA_DEFINITIONS_BLOCK));
+});
+
+test("persona announcement uses the stable message text", () => {
+  assert.equal(renderPersonaAnnouncement("critical"), "Agent persona: critical");
 });

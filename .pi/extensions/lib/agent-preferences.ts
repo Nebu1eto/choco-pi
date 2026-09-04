@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
 import {
   isJsonRecord,
@@ -22,6 +22,9 @@ import {
 
 export const AGENT_LANGUAGE_KEY = "agentLanguage";
 export const AGENT_STYLE_KEY = "agentStyle";
+export const AGENT_PERSONA_KEY = "agentPersona";
+export const PERSONA_MESSAGE_TYPE = "choco-pi-agent-persona";
+export const PERSONA_DEFINITIONS_HEADING = "## Agent persona";
 export const SESSION_AUTO_NAME_KEY = "sessionAutoName";
 export const SESSION_AUTO_NAME_MODEL_KEY = "sessionAutoNameModel";
 export const DEFAULT_SESSION_AUTO_NAME_MODEL = "synthetic/hf:Qwen/Qwen3.8-27B";
@@ -31,9 +34,22 @@ export const AGENT_PREFERENCES_MARKER_END = "</choco_pi_agent_preferences>";
 export const USER_STYLES_DIR_NAME = "agent-styles";
 export const PREFERENCES_PROVIDER_SYMBOL = Symbol.for("choco-pi.preferences-provider");
 
+export type Persona = "unset" | "critical" | "pessimistic";
+
+export const PERSONA_VALUES: readonly Persona[] = ["unset", "critical", "pessimistic"];
+export const DEFAULT_PERSONA: Persona = "critical";
+export const PERSONA_DEFINITIONS_BLOCK = String.raw`## Agent persona
+
+A turn may announce "Agent persona: <name>"; no announcement means unset. A persona changes how hard claims and plans are interrogated, never scope, approval, or authority rules, and a direct user request always wins. A parent may set a leaf's persona for one task; the default is critical.
+
+- unset: nothing beyond the baseline above.
+- critical: ground every claim you make or accept in evidence, verifying directly when needed, and refute a wrong claim with the specific evidence. Verify as much as possible in priority order; ask another agent about its claim instead of re-verifying it, except in adversarial review. Judge issues raised by the user, reviewers, or other agents against the current scope; when fixing review findings, change only in-scope items and end by reporting what was scoped out and why.
+- pessimistic: everything in critical, plus assume the current state can fail: enumerate plausible failure cases, keep asking whether a better approach exists, and present proposals with the verification behind them. Aim this at the work, never at people; it exists to reach a better result together.`;
+
 const PRESET_STYLES_DIR = fileURLToPath(new URL("../agent-preferences/styles/", import.meta.url));
 
 export interface AgentPreferences {
+  persona: Persona;
   language?: string;
   style?: string;
   sessionAutoName?: boolean;
@@ -41,10 +57,17 @@ export interface AgentPreferences {
 }
 
 interface AgentPreferenceValues {
+  agentPersona: string;
   agentLanguage: string;
   agentStyle: string;
   sessionAutoName: boolean;
   sessionAutoNameModel: string;
+}
+
+interface AgentPersonaFrontmatter {
+  [key: string]: RuntimeValue;
+  name?: RuntimeValue;
+  persona?: RuntimeValue;
 }
 
 export interface AgentStyle {
@@ -78,7 +101,9 @@ function readSettingsObject(agentDir: string): JsonRecord {
 
 export function readAgentPreferences(agentDir: string = getAgentDir()): AgentPreferences {
   const settings = readSettingsObject(agentDir);
-  const preferences: AgentPreferences = {};
+  const preferences: AgentPreferences = {
+    persona: parsePersona(settings[AGENT_PERSONA_KEY]) ?? DEFAULT_PERSONA,
+  };
   const language = settings[AGENT_LANGUAGE_KEY];
   if (isString(language) && language !== "") {
     preferences.language = language;
@@ -96,6 +121,86 @@ export function readAgentPreferences(agentDir: string = getAgentDir()): AgentPre
     preferences.sessionAutoNameModel = sessionAutoNameModel;
   }
   return preferences;
+}
+
+export function parsePersona(value: RuntimeValue): Persona | undefined {
+  if (!isString(value)) return undefined;
+  switch (value.trim().toLowerCase()) {
+    case "unset":
+      return "unset";
+    case "critical":
+      return "critical";
+    case "pessimistic":
+      return "pessimistic";
+    default:
+      return undefined;
+  }
+}
+
+export function renderPersonaAnnouncement(persona: Persona): string {
+  return `Agent persona: ${persona}`;
+}
+
+export function activeAgentName(systemPrompt: string): string | undefined {
+  return systemPrompt.match(/<active_agent name="([^"]+)"\/>/)?.[1];
+}
+
+export function personaDirectiveFromPrompt(prompt: string): Persona | undefined {
+  const match = prompt.match(/^Persona:\s*(unset|critical|pessimistic)\s*$/im);
+  return match ? parsePersona(match[1]) : undefined;
+}
+
+export function resolveAgentPersonaOverride(
+  agentName: string,
+  cwd: string,
+  agentDir: string = getAgentDir(),
+): Persona | undefined {
+  const directories = [
+    path.join(cwd, ".pi", "agents"),
+    path.join(cwd, ".agents", "agents"),
+    path.join(agentDir, "agents"),
+  ];
+
+  for (const directory of directories) {
+    for (const filePath of listStyleFiles(directory)) {
+      const filename = path.basename(filePath, ".md");
+      let frontmatter: AgentPersonaFrontmatter;
+      try {
+        ({ frontmatter } = parseFrontmatter<AgentPersonaFrontmatter>(
+          readFileSync(filePath, "utf8"),
+        ));
+      } catch {
+        if (filename === agentName) return undefined;
+        continue;
+      }
+      const declaredName = isString(frontmatter.name) ? frontmatter.name.trim() : "";
+      if ((declaredName || filename) === agentName) {
+        return parsePersona(frontmatter.persona);
+      }
+    }
+  }
+  return undefined;
+}
+
+export function resolvePersona(input: {
+  configured: Persona;
+  systemPrompt: string;
+  prompt: string;
+  cwd: string;
+  agentDir?: string;
+}): Persona {
+  const agentName = activeAgentName(input.systemPrompt);
+  if (agentName === undefined) return input.configured;
+  return (
+    personaDirectiveFromPrompt(input.prompt) ??
+    resolveAgentPersonaOverride(agentName, input.cwd, input.agentDir) ??
+    input.configured
+  );
+}
+
+export function appendPersonaDefinitions(systemPrompt: string): string | undefined {
+  if (systemPrompt.includes(PERSONA_DEFINITIONS_HEADING)) return undefined;
+  return `${systemPrompt}\n\n${PERSONA_DEFINITIONS_BLOCK}`;
 }
 
 function writeSettingsObject(agentDir: string, settings: JsonRecord): void {

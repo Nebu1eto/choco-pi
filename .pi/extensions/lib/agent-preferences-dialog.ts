@@ -3,18 +3,22 @@ import type { SettingItem } from "@earendil-works/pi-tui";
 import {
   AGENT_LANGUAGE_CUSTOM_OUTCOME,
   AGENT_LANGUAGE_KEY,
+  AGENT_PERSONA_KEY,
   AGENT_STYLE_KEY,
   DEFAULT_SESSION_AUTO_NAME_MODEL,
   SESSION_AUTO_NAME_KEY,
   SESSION_AUTO_NAME_MODEL_KEY,
   SESSION_AUTO_NAME_FALLBACK_MODEL,
+  PERSONA_VALUES,
   discoverAgentStyles,
+  parsePersona,
   readAgentPreferences,
   resolveAgentStyle,
   writeAgentPreference,
   type PreferencesExtraSection,
   type PreferencesOutcomeFocus,
   type PreferencesSectionChange,
+  type Persona,
 } from "./agent-preferences.ts";
 
 export const AGENT_SECTION_ID = "agent";
@@ -79,6 +83,18 @@ function writeStyle(ctx: ExtensionCommandContext, value: string | undefined): vo
   }
 }
 
+function writePersona(ctx: ExtensionCommandContext, value: Persona | undefined): void {
+  try {
+    writeAgentPreference(AGENT_PERSONA_KEY, value);
+    ctx.ui.notify(`Agent persona: ${value} (applies from the next turn)`, "info");
+  } catch (error) {
+    ctx.ui.notify(
+      `Could not update agent persona: ${error instanceof Error ? error.message : String(error)}`,
+      "error",
+    );
+  }
+}
+
 function writeSessionAutoName(ctx: ExtensionCommandContext, enabled: boolean): void {
   try {
     writeAgentPreference(SESSION_AUTO_NAME_KEY, enabled);
@@ -119,6 +135,10 @@ function handleAgentPreferenceChange(
     writeStyle(ctx, newValue === DEFAULT_STYLE_LABEL ? undefined : newValue);
     return { kind: "update" };
   }
+  if (id === "agentPersona") {
+    writePersona(ctx, parsePersona(newValue));
+    return { kind: "update" };
+  }
   if (id === SESSION_AUTO_NAME_KEY) {
     writeSessionAutoName(ctx, newValue === ENABLED_LABEL);
     return { kind: "update" };
@@ -131,7 +151,8 @@ function handleAgentPreferenceChange(
 
 /**
  * Builds the Agent section of the preferences panel: the global agent
- * language and agent style rows backed by `~/.pi/agent/settings.json`.
+ * language, agent style, and agent persona rows backed by
+ * `~/.pi/agent/settings.json`.
  */
 export function buildAgentPreferencesSection(
   ctx: ExtensionCommandContext,
@@ -169,6 +190,14 @@ export function buildAgentPreferencesSection(
           description: styleDescription,
           currentValue: preferences.style ?? DEFAULT_STYLE_LABEL,
           values: styleValues,
+        },
+        {
+          id: "agentPersona",
+          label: "Agent persona",
+          description:
+            "Critical-thinking disposition announced on every turn: unset leaves it to the model, critical (default) demands evidence and scope judgment, pessimistic also assumes things can fail and looks for a better way. Sub-agents may override via their agent file.",
+          currentValue: preferences.persona,
+          values: [...PERSONA_VALUES],
         },
         {
           id: SESSION_AUTO_NAME_KEY,
@@ -225,9 +254,9 @@ export async function runAgentPreferencesOutcome(
 
 /**
  * Handles the agent-specific `/preferences` argument grammar
- * (`agent`, `language [name]`, `style [name]`). Returns the section/focus to
- * open, `{ open: false }` after handling a direct write, or `undefined` when
- * the arguments belong to the zentui grammar.
+ * (`agent`, `language [name]`, `style [name]`, `persona [value]`). Returns the
+ * section/focus to open, `{ open: false }` after handling a direct write, or
+ * `undefined` when the arguments belong to the zentui grammar.
  */
 export function resolveAgentPreferencesArgs(
   args: string,
@@ -259,6 +288,22 @@ export function resolveAgentPreferencesArgs(
     writeStyle(ctx, name);
     return { open: false };
   }
+  if (command === "persona") {
+    if (rest.length === 0) {
+      return { open: true, section: AGENT_SECTION_ID, focusId: "agentPersona" };
+    }
+    const value = rest.join(" ");
+    const persona = parsePersona(value);
+    if (!persona) {
+      ctx.ui.notify(
+        `Agent persona "${value}" is not one of unset, critical, pessimistic.`,
+        "warning",
+      );
+      return { open: false };
+    }
+    writePersona(ctx, persona);
+    return { open: false };
+  }
   return undefined;
 }
 
@@ -270,7 +315,14 @@ export function agentPreferencesCompletions(prefix: string): { value: string; la
       .map((style) => ({ value: `style ${style.name}`, label: `style ${style.name}` }))
       .filter((item) => item.value.startsWith(`style ${stylePrefix}`));
   }
-  const candidates = ["agent", "language ", "style "];
+  if (/^persona\s/i.test(normalized)) {
+    const personaPrefix = normalized.replace(/^persona\s+/i, "");
+    return PERSONA_VALUES.map((persona) => ({
+      value: `persona ${persona}`,
+      label: `persona ${persona}`,
+    })).filter((item) => item.value.startsWith(`persona ${personaPrefix}`));
+  }
+  const candidates = ["agent", "language ", "style ", "persona "];
   return candidates.flatMap((candidate) =>
     candidate.startsWith(normalized.toLowerCase())
       ? [{ value: candidate, label: candidate.trimEnd() }]
