@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import type { ExecRunner, ReviewTarget } from "./types.ts";
 
 const MAX_BUFFER = 256 * 1024 * 1024;
+const EXEC_TIMEOUT_MS = 30_000;
 const GIT_CONFIG = ["-c", "core.quotePath=false", "-c", "color.ui=false"];
 const DIFF_ARGS = ["--patch", "-M", "-C", "--no-color"];
 
@@ -21,6 +22,8 @@ export const defaultExecRunner: ExecRunner = (cmd, args, opts) =>
       {
         cwd: opts?.cwd,
         encoding: "utf8",
+        timeout: EXEC_TIMEOUT_MS,
+        killSignal: "SIGTERM",
         maxBuffer: MAX_BUFFER,
       },
       (error, stdout, stderr) => {
@@ -29,7 +32,14 @@ export const defaultExecRunner: ExecRunner = (cmd, args, opts) =>
           return;
         }
         // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-        const systemError = error as NodeJS.ErrnoException;
+        const systemError = error as NodeJS.ErrnoException & {
+          killed?: boolean;
+          signal?: NodeJS.Signals;
+        };
+        if (systemError.killed && systemError.signal === "SIGTERM") {
+          reject(new Error(`${cmd} timed out after ${EXEC_TIMEOUT_MS} ms.`));
+          return;
+        }
         if (isString(systemError.code) && systemError.syscall?.startsWith("spawn")) {
           // execFile reports failures such as ENOENT and EACCES before the child starts.
           reject(error);
