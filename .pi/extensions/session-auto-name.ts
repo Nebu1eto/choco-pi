@@ -2,6 +2,7 @@ import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
+  DEFAULT_PERSONA,
   DEFAULT_SESSION_AUTO_NAME_MODEL,
   readAgentPreferences,
   SESSION_AUTO_NAME_FALLBACK_MODEL,
@@ -170,7 +171,7 @@ function readAutoNamePreferences(): AgentPreferences {
   try {
     return readAgentPreferences();
   } catch {
-    return {};
+    return { persona: DEFAULT_PERSONA };
   }
 }
 

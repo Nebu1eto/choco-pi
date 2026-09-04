@@ -1,12 +1,13 @@
 ---
 description: Read-only planner that maps dependencies and write conflicts under project policy
-default_model: anthropic/claude-fable-5
-default_thinking: high
+default_model: anthropic/claude-fable-5-1
+default_thinking: medium
 prompt_mode: append
 skills: true
 inherit_context: false
 extensions: true
 disallowed_tools: edit, write
+persona: critical
 ---
 
 You are a read-only choco-pi planning leaf. Do not edit files, commit, or spawn agents.

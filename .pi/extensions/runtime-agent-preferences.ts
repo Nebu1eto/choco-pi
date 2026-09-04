@@ -1,9 +1,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   AGENT_PREFERENCES_MARKER,
+  DEFAULT_PERSONA,
+  PERSONA_MESSAGE_TYPE,
+  appendPersonaDefinitions,
   buildAgentPreferencesBlock,
   readAgentPreferences,
+  renderPersonaAnnouncement,
   resolveAgentStyle,
+  resolvePersona,
   type AgentPreferences,
 } from "./lib/agent-preferences.ts";
 
@@ -15,7 +20,7 @@ import {
  * no injection.
  */
 export default function runtimeAgentPreferences(pi: ExtensionAPI): void {
-  const readPreferences = (): AgentPreferences => {
+  const readPreferences = (): Partial<AgentPreferences> => {
     try {
       return readAgentPreferences();
     } catch {
@@ -35,11 +40,35 @@ export default function runtimeAgentPreferences(pi: ExtensionAPI): void {
     }
   });
 
-  pi.on("before_agent_start", (event) => {
-    if (event.systemPrompt.includes(AGENT_PREFERENCES_MARKER)) return;
+  pi.on("before_agent_start", (event, ctx) => {
     const preferences = readPreferences();
-    const block = buildAgentPreferencesBlock(preferences, (name) => resolveAgentStyle(name));
-    if (!block) return;
-    return { systemPrompt: `${event.systemPrompt}\n\n${block}` };
+    const configured = preferences.persona ?? DEFAULT_PERSONA;
+    const resolved = resolvePersona({
+      configured,
+      systemPrompt: event.systemPrompt,
+      prompt: event.prompt,
+      cwd: ctx.cwd,
+    });
+    let systemPrompt = event.systemPrompt;
+
+    if (!systemPrompt.includes(AGENT_PREFERENCES_MARKER)) {
+      const block = buildAgentPreferencesBlock({ ...preferences, persona: configured }, (name) =>
+        resolveAgentStyle(name),
+      );
+      if (block) systemPrompt = `${systemPrompt}\n\n${block}`;
+    }
+
+    systemPrompt = appendPersonaDefinitions(systemPrompt) ?? systemPrompt;
+
+    const message =
+      resolved === "unset"
+        ? undefined
+        : {
+            customType: PERSONA_MESSAGE_TYPE,
+            content: renderPersonaAnnouncement(resolved),
+            display: false,
+          };
+    if (systemPrompt === event.systemPrompt) return message ? { message } : undefined;
+    return message ? { systemPrompt, message } : { systemPrompt };
   });
 }

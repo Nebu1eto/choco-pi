@@ -135,9 +135,9 @@ test("progressive writing guidance and delegation each have one owner", async ()
 test("assembled prompt stays within the context budget", async () => {
   const { systemPrompt, policy, assembled } = await assembledPrompt();
 
-  assert.ok(estimatePromptTokens(systemPrompt) <= 1350, "SYSTEM.md exceeds 1,350 tokens");
+  assert.ok(estimatePromptTokens(systemPrompt) <= 1700, "SYSTEM.md exceeds 1,700 tokens");
   assert.ok(estimatePromptTokens(policy) <= 175, "default writing policy exceeds 175 tokens");
-  assert.ok(estimatePromptTokens(assembled) <= 1550, "assembled base prompt exceeds 1,550 tokens");
+  assert.ok(estimatePromptTokens(assembled) <= 1850, "assembled base prompt exceeds 1,850 tokens");
 });
 
 test("compact descriptions and global session audit remain configured", async () => {

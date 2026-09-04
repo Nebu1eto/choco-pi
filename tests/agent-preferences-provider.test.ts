@@ -5,10 +5,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import {
+  agentPreferencesCompletions,
   buildAgentPreferencesSection,
   resolveAgentPreferencesArgs,
 } from "../.pi/extensions/lib/agent-preferences-dialog.ts";
-import { getPreferencesProvider } from "../.pi/extensions/lib/agent-preferences.ts";
+import { getPreferencesProvider, PERSONA_VALUES } from "../.pi/extensions/lib/agent-preferences.ts";
 import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import { realZentuiLoader, SKIP_WITHOUT_ZENTUI, ZENTUI_BUILD } from "./zentui-build.ts";
 
@@ -62,16 +63,19 @@ test(
     const items = section.buildItems();
     assert.deepEqual(
       items.map((item) => item.id),
-      ["agentLanguage", "agentStyle", "sessionAutoName", "sessionAutoNameModel"],
+      ["agentLanguage", "agentStyle", "agentPersona", "sessionAutoName", "sessionAutoNameModel"],
     );
     assert.equal(items[0].currentValue, "Match user");
     assert.equal(items[1].currentValue, "Default");
     assert.ok(items[1].values?.includes("concise"), "shipped presets must be offered");
-    assert.equal(items[2].currentValue, "Enabled");
-    assert.equal(items[3].currentValue, "synthetic/hf:Qwen/Qwen3.8-27B");
+    assert.equal(items[2].currentValue, "critical");
+    assert.deepEqual(items[2].values, PERSONA_VALUES);
+    assert.equal(items[3].currentValue, "Enabled");
+    assert.equal(items[4].currentValue, "synthetic/hf:Qwen/Qwen3.8-27B");
 
     assert.deepEqual(section.handleChange("agentLanguage", "Korean"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentStyle", "concise"), { kind: "update" });
+    assert.deepEqual(section.handleChange("agentPersona", "pessimistic"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoName", "Disabled"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai-codex/gpt-5.6-luna"), {
       kind: "update",
@@ -79,9 +83,14 @@ test(
     const settings = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
     assert.equal(settings.agentLanguage, "Korean");
     assert.equal(settings.agentStyle, "concise");
+    assert.equal(settings.agentPersona, "pessimistic");
     assert.equal(settings.sessionAutoName, false);
     assert.equal(settings.sessionAutoNameModel, "openai-codex/gpt-5.6-luna");
     assert.equal(settings.theme, "nord-dark", "unrelated settings must survive");
+
+    section.handleChange("agentPersona", "unset");
+    const unset = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
+    assert.equal(unset.agentPersona, "unset");
 
     assert.deepEqual(section.handleChange("agentLanguage", "Custom…"), {
       kind: "outcome",
@@ -109,13 +118,32 @@ test(
       section: "agent",
       focusId: "agentLanguage",
     });
+    assert.deepEqual(resolveAgentPreferencesArgs("persona", ctx), {
+      open: true,
+      section: "agent",
+      focusId: "agentPersona",
+    });
     assert.equal(resolveAgentPreferencesArgs("editor enable", ctx), undefined);
 
     assert.deepEqual(resolveAgentPreferencesArgs("language Japanese", ctx), { open: false });
     assert.deepEqual(resolveAgentPreferencesArgs("style concise", ctx), { open: false });
+    assert.deepEqual(resolveAgentPreferencesArgs("persona pessimistic", ctx), { open: false });
     const settings = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
     assert.equal(settings.agentLanguage, "Japanese");
     assert.equal(settings.agentStyle, "concise");
+    assert.equal(settings.agentPersona, "pessimistic");
+
+    assert.deepEqual(resolveAgentPreferencesArgs("persona nope", ctx), { open: false });
+    const personaUnchanged = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
+    assert.equal(
+      personaUnchanged.agentPersona,
+      "pessimistic",
+      "an unknown persona must not be written",
+    );
+    assert.deepEqual(notices.at(-1), [
+      'Agent persona "nope" is not one of unset, critical, pessimistic.',
+      "warning",
+    ]);
 
     assert.deepEqual(resolveAgentPreferencesArgs("style nope", ctx), { open: false });
     const unchanged = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
@@ -123,6 +151,12 @@ test(
     assert.equal(notices.at(-1)?.[1], "warning");
   }),
 );
+
+test("agent persona completions filter persona values", () => {
+  assert.deepEqual(agentPreferencesCompletions("persona p"), [
+    { value: "persona pessimistic", label: "persona pessimistic" },
+  ]);
+});
 
 test(
   "choco-pi-ui publishes a provider the profile can consume",
