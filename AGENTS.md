@@ -9,7 +9,8 @@ model-facing instruction, read from start to finish the entire current contents 
 
 - <https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5>
 - <https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5>
-- <https://developers.openai.com/api/docs/guides/latest-model#prompting-best-practices>
+- <https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.6#prompting-best-practices>
+- <https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra#prompting-best-practices>
 
 Cached recollection, summaries, excerpts, metadata, and navigation-only pages do not count. Apply model-specific advice only to the
 matching model; runtime, user, and project instruction precedence remains authoritative.
