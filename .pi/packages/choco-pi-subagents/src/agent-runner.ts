@@ -616,80 +616,18 @@ export interface MainSessionFork {
 /**
  * Clone the main session's active branch into a non-persisted SessionManager.
  *
- * Pi 0.84.2 exposes native persisted forks (`createBranchedSession`,
- * `forkFrom`) but no non-mutating in-memory fork from a read-only manager.
- * Replaying the typed branch entries through SessionManager's append APIs keeps
- * message blocks, tool results, compactions, summaries, and ordering intact
- * without creating a side-session file or moving the main session's leaf.
+ * Pi 0.85 restores externally held entries into an in-memory manager. Passing
+ * the active branch directly preserves entry ids, so compaction references
+ * resolve without creating a side-session file or moving the main session's
+ * leaf.
  */
 export function captureMainSessionFork(ctx: ExtensionContext): MainSessionFork {
   const parent = ctx.sessionManager;
-  const fork = SessionManager.inMemory(ctx.cwd, { parentSession: parent.getSessionFile?.() });
-  const clonedIds = new Map<string, string>();
-
-  for (const entry of parent.getBranch()) {
-    let clonedId: string | undefined;
-    switch (entry.type) {
-      case "message":
-        // SAFETY: Branch message entries carry the same host Message union appendMessage accepts.
-        clonedId = fork.appendMessage(
-          entry.message as Parameters<SessionManager["appendMessage"]>[0],
-        );
-        break;
-      case "thinking_level_change":
-        clonedId = fork.appendThinkingLevelChange(entry.thinkingLevel);
-        break;
-      case "model_change":
-        clonedId = fork.appendModelChange(entry.provider, entry.modelId);
-        break;
-      case "compaction": {
-        const firstKeptEntryId = clonedIds.get(entry.firstKeptEntryId);
-        if (!firstKeptEntryId) {
-          throw new Error(
-            `Cannot fork main session: compaction entry ${entry.id} references a missing branch entry.`,
-          );
-        }
-        clonedId = fork.appendCompaction(
-          entry.summary,
-          firstKeptEntryId,
-          entry.tokensBefore,
-          entry.details,
-          entry.fromHook,
-          entry.usage,
-        );
-        break;
-      }
-      case "branch_summary":
-        clonedId = fork.branchWithSummary(
-          fork.getLeafId(),
-          entry.summary,
-          entry.details,
-          entry.fromHook,
-          entry.usage,
-        );
-        break;
-      case "custom":
-        clonedId = fork.appendCustomEntry(entry.customType, entry.data);
-        break;
-      case "custom_message":
-        clonedId = fork.appendCustomMessageEntry(
-          entry.customType,
-          entry.content,
-          entry.display,
-          entry.details,
-        );
-        break;
-      case "session_info":
-        if (entry.name !== undefined) clonedId = fork.appendSessionInfo(entry.name);
-        break;
-      case "label":
-        // Labels do not enter model context. Map them to the current leaf so a
-        // defensive compaction reference can still resolve without adding text.
-        clonedId = fork.getLeafId() ?? undefined;
-        break;
-    }
-    if (clonedId) clonedIds.set(entry.id, clonedId);
-  }
+  const fork = SessionManager.inMemory(
+    ctx.cwd,
+    { parentSession: parent.getSessionFile?.() },
+    parent.getBranch(),
+  );
 
   return {
     sessionManager: fork,

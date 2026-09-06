@@ -9,6 +9,14 @@ import {
   type AgentSession,
   AssistantMessageComponent,
   BashExecutionComponent,
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  createLsToolDefinition,
+  createPowerShellToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
   getMarkdownTheme,
   type MarkdownTransformer,
   ToolExecutionComponent,
@@ -146,6 +154,10 @@ export class ConversationViewer implements Component {
   /** Rendered lines per message + width; dropped when a tool result lands. */
   private messageLineCache = new Map<object, { width: number; lines: string[] }>();
   private toolComponents = new Map<string, ToolExecutionComponent>();
+  private builtInToolDefinitions = new Map<
+    string,
+    ConstructorParameters<typeof ToolExecutionComponent>[4]
+  >();
   /** Tool and bash rows that follow this viewer's expansion state. */
   private expandableComponents = new Set<ToolExecutionComponent | BashExecutionComponent>();
   private toolOutputExpanded: boolean;
@@ -787,11 +799,65 @@ export class ConversationViewer implements Component {
 
   /** Registered tool renderers, exactly what the main transcript passes. */
   private toolDefinition(name: string): ConstructorParameters<typeof ToolExecutionComponent>[4] {
+    let definition: ConstructorParameters<typeof ToolExecutionComponent>[4];
     try {
-      return this.session.getToolDefinition(name);
+      definition = this.session.getToolDefinition(name);
     } catch {
-      return undefined;
+      definition = undefined;
     }
+
+    // pi 0.85 moved the built-in renderer fallback from the component to callers.
+    const builtIn = this.builtInToolDefinition(name);
+    if (!definition) return builtIn;
+    if (!builtIn) return definition;
+    return {
+      ...definition,
+      renderCall: definition.renderCall ?? builtIn.renderCall,
+      renderResult: definition.renderResult ?? builtIn.renderResult,
+    };
+  }
+
+  private builtInToolDefinition(
+    name: string,
+  ): ConstructorParameters<typeof ToolExecutionComponent>[4] {
+    if (this.builtInToolDefinitions.has(name)) return this.builtInToolDefinitions.get(name);
+
+    let definition: ConstructorParameters<typeof ToolExecutionComponent>[4];
+    try {
+      const cwd = this.cwd();
+      switch (name) {
+        case "read":
+          definition = createReadToolDefinition(cwd);
+          break;
+        case "bash":
+          definition = createBashToolDefinition(cwd);
+          break;
+        case "powershell":
+          definition = createPowerShellToolDefinition(cwd);
+          break;
+        case "edit":
+          definition = createEditToolDefinition(cwd);
+          break;
+        case "write":
+          definition = createWriteToolDefinition(cwd);
+          break;
+        case "grep":
+          definition = createGrepToolDefinition(cwd);
+          break;
+        case "find":
+          definition = createFindToolDefinition(cwd);
+          break;
+        case "ls":
+          definition = createLsToolDefinition(cwd);
+          break;
+        default:
+          definition = undefined;
+      }
+    } catch {
+      definition = undefined;
+    }
+    this.builtInToolDefinitions.set(name, definition);
+    return definition;
   }
 
   /**

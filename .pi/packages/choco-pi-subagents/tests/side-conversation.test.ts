@@ -211,10 +211,17 @@ test("side launch forks the main session state without a context preamble", () =
 
 test("capturing a main-session fork does not move or append to the main branch", () => {
   const ctx = makeMainContext();
+  const firstKeptEntryId = ctx.sessionManager
+    .getBranch()
+    .find((entry) => entry.type === "message")?.id;
+  assert.ok(firstKeptEntryId);
+  ctx.sessionManager.appendCompaction("Earlier context summary", firstKeptEntryId, 42);
   const parentBranch = ctx.sessionManager.getBranch();
   const parentLeaf = ctx.sessionManager.getLeafId();
 
   const fork = captureMainSessionFork(ctx);
+  assert.deepEqual(fork.sessionManager.getBranch(), parentBranch);
+  assert.ok(fork.sessionManager.getEntry(firstKeptEntryId));
   fork.sessionManager.appendMessage(makeUserMessage("side-only turn"));
 
   assert.equal(ctx.sessionManager.getLeafId(), parentLeaf);

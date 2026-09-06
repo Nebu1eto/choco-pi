@@ -499,6 +499,13 @@ Agent-authored user-role messages are the exception to ordinary user rendering:
 raw XML-like markup with `✉ /sender/path [TYPE]` followed by the multiline body.
 Real user messages still use `UserMessageComponent` unchanged.
 
+Pi 0.85 moved its built-in tool-renderer fallback out of
+`ToolExecutionComponent` and into interactive-mode callers. The viewer mirrors
+that caller behavior with lazily cached built-in tool definitions, preserving
+registered custom renderers while filling missing built-in call/result
+renderers. Factory failures remain contained so transcript rendering degrades
+instead of breaking the view.
+
 ### Zentui-aligned subagent completion notifications
 
 The fork adds a pure completion-notification formatter that mirrors zentui's

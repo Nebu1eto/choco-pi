@@ -11,6 +11,9 @@
     },
     "openai": {
       "modelOverrides": {
+        "gpt-6-astra": {
+          "contextWindow": 1050000
+        },
         "gpt-5.6-sol": {
           "contextWindow": 1050000
         },
@@ -21,6 +24,9 @@
     },
     "openai-codex": {
       "modelOverrides": {
+        "gpt-6-astra": {
+          "contextWindow": 1050000
+        },
         "gpt-5.6-sol": {
           "contextWindow": 1050000
         },
