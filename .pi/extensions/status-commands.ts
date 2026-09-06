@@ -359,7 +359,8 @@ async function showTabOnce(
     const scrollView = new ScrollView(component, {
       primary: true,
       scrollbar: "auto",
-      scrollbarStyle: (value) => theme.fg("dim", value),
+      scrollbarTrackStyle: (value) => theme.fg("dim", value),
+      scrollbarThumbStyle: (value) => theme.fg("text", value),
     });
 
     const header = (): string =>
