@@ -31,7 +31,7 @@ function fixture(overrides: Partial<HarnessOptions> = {}) {
         if (value === undefined) throw new Error(`missing fixture: ${target}`);
         return value;
       },
-      pathExists: async () => false,
+      pathExists: async () => true,
       runCommand: async () => ({ status: 0, stdout: "0.84.2\n", stderr: "" }),
       ...overrides,
     },
@@ -60,13 +60,40 @@ test("a requested unavailable capability fails closed", async () => {
 });
 
 test("full check preserves every capability failure", async () => {
-  const { options } = fixture({ mode: "full" });
+  const { options } = fixture({ mode: "full", pathExists: async () => false });
   const report = await checkHarness(options);
 
   assert.equal(report.status, "fail");
   assert.equal(report.requiredCapabilities, "all");
   for (const id of ["tui-mode", "subagents", "resources", "choco-pi-lsp"]) {
     assert.equal(report.checks.find((check) => check.id === id)?.status, "fail");
+  }
+});
+
+for (const missing of ["SYSTEM.md", "scripts/checkout-mutation-lease.ts"]) {
+  test(`automatic readiness blocks missing ${missing}`, async () => {
+    const { options } = fixture({
+      pathExists: async (target) => target !== path.join(root, missing),
+    });
+    const report = await checkHarness(options);
+    assert.equal(report.status, "fail");
+    assert.equal(report.checks.find((check) => check.id === "core-resources")?.status, "fail");
+  });
+}
+
+test("optional resources block only when requested", async () => {
+  for (const required of [false, true]) {
+    const { options } = fixture({
+      requiredCapabilities: required ? ["resources"] : [],
+      pathExists: async (target) => target !== path.join(root, "extensions/apex-provider.ts"),
+    });
+    const report = await checkHarness(options);
+    assert.equal(report.status, required ? "fail" : "warn");
+    assert.equal(report.checks.find((check) => check.id === "core-resources")?.status, "pass");
+    assert.equal(
+      report.checks.find((check) => check.id === "resources")?.status,
+      required ? "fail" : "warn",
+    );
   }
 });
 
