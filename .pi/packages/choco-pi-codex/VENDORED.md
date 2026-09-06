@@ -124,12 +124,10 @@ and interop identifiers (originator header `pi-codex-conversion`, preflight and
 apply-patch-display protocol strings, code-mode host cache path) are kept
 verbatim for protocol parity.
 
-`src/providers/openai-codex/model-catalog.ts` also registers `gpt-6-astra`
-for the ChatGPT-backed provider because the host's pinned built-in catalog does
-not yet include it. The entry follows OpenAI's published 1,050,000-token context
-window, 128,000-token output limit, text/image input, and minimum `low`
-reasoning effort; it is automatically deduplicated once the host catalog adds
-the same model ID.
+`src/providers/openai-codex/model-catalog.ts` only adds models missing from the
+host's built-in `openai-codex` catalog (currently the Daybreak entries). The
+temporary `gpt-6-astra` registration was removed once pi 0.85.1 shipped the
+model in the host catalog (272,000-token Codex context limit, `max` effort).
 
 ## Registered-tool bridge (choco-pi addition)
 
@@ -198,6 +196,12 @@ of the session-derived `prompt_cache_key`, deterministic instruction and tool
 serialization for identical inputs, and omission of the unproven
 `prompt_cache_retention` field on the ChatGPT-backed Codex endpoint. The test
 documents existing upstream request behavior; no provider source was changed.
+
+## Codex SSE EOF handling (pi 0.85.1 backport)
+
+`src/providers/openai-codex/sse.ts` ports upstream pi issue #9047's fix so EOF
+terminates and parses a residual SSE frame even when no final blank line was sent.
+The fork's CR/CRLF normalization remains in place before the EOF flush.
 
 ## Bundled native binaries (choco-pi addition)
 

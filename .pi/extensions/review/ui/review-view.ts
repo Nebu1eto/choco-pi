@@ -3,7 +3,18 @@ import type { RuntimeValue } from "../../lib/runtime-values.ts";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
-import { getMarkdownTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import {
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  createLsToolDefinition,
+  createPowerShellToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
+  getMarkdownTheme,
+  ToolExecutionComponent,
+} from "@earendil-works/pi-coding-agent";
 import {
   Markdown,
   matchesKey,
@@ -177,6 +188,59 @@ function fileListLines(state: ReviewViewState, width: number, theme: Theme): str
 
 type DiffBody = { lines: string[]; selectedLine: number };
 type ReviewPaneFocus = "review" | "chat";
+type ToolExecutionDefinition = ConstructorParameters<typeof ToolExecutionComponent>[4];
+
+function withBuiltInRenderers(
+  name: string,
+  definition: ToolExecutionDefinition,
+  cwd: string,
+  cache: Map<string, ToolExecutionDefinition>,
+): ToolExecutionDefinition {
+  let builtIn = cache.get(name);
+  if (!cache.has(name)) {
+    try {
+      switch (name) {
+        case "read":
+          builtIn = createReadToolDefinition(cwd);
+          break;
+        case "bash":
+          builtIn = createBashToolDefinition(cwd);
+          break;
+        case "powershell":
+          builtIn = createPowerShellToolDefinition(cwd);
+          break;
+        case "edit":
+          builtIn = createEditToolDefinition(cwd);
+          break;
+        case "write":
+          builtIn = createWriteToolDefinition(cwd);
+          break;
+        case "grep":
+          builtIn = createGrepToolDefinition(cwd);
+          break;
+        case "find":
+          builtIn = createFindToolDefinition(cwd);
+          break;
+        case "ls":
+          builtIn = createLsToolDefinition(cwd);
+          break;
+        default:
+          builtIn = undefined;
+      }
+    } catch {
+      builtIn = undefined;
+    }
+    cache.set(name, builtIn);
+  }
+
+  if (!definition) return builtIn;
+  if (!builtIn) return definition;
+  return {
+    ...definition,
+    renderCall: definition.renderCall ?? builtIn.renderCall,
+    renderResult: definition.renderResult ?? builtIn.renderResult,
+  };
+}
 
 /**
  * One header plus status, inactive-input, and two context-sensitive keymap rows.
@@ -718,6 +782,8 @@ export async function openReviewView(
           string,
           { component: ToolExecutionComponent; result?: unknown; done?: boolean }
         >();
+        // Pi 0.85 moved the built-in renderer fallback from the component to callers.
+        const builtInToolDefinitions = new Map<string, ToolExecutionDefinition>();
         // Collapsed by default, exactly like the main transcript; Ctrl+O
         // flips every tool at once, matching the main agent's toggle.
         let toolsExpanded = false;
@@ -730,10 +796,21 @@ export async function openReviewView(
             // renderers — exactly what the main transcript passes — so
             // extension and MCP tools render their concise titles instead
             // of the raw argument/output fallback.
-            // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-            const definition = chat?.toolDefinition(entry.toolName) as
-              | ConstructorParameters<typeof ToolExecutionComponent>[4]
-              | undefined;
+            let registeredDefinition: ToolExecutionDefinition;
+            try {
+              // SAFETY: ReviewChat exposes the host definition consumed by ToolExecutionComponent.
+              registeredDefinition = chat?.toolDefinition(
+                entry.toolName,
+              ) as ToolExecutionDefinition;
+            } catch {
+              registeredDefinition = undefined;
+            }
+            const definition = withBuiltInRenderers(
+              entry.toolName,
+              registeredDefinition,
+              options.reviewRoot,
+              builtInToolDefinitions,
+            );
             const component = new ToolExecutionComponent(
               entry.toolName,
               entry.toolCallId,

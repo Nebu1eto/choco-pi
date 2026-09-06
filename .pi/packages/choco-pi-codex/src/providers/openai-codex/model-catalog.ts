@@ -11,24 +11,6 @@ const UNKNOWN_SUBSCRIPTION_COST = {
 
 const ADDITIONAL_MODELS: Model<"openai-codex-responses">[] = [
   {
-    id: "gpt-6-astra",
-    name: "GPT-6 Astra",
-    api: "openai-codex-responses",
-    provider: "openai-codex",
-    baseUrl: DEFAULT_CODEX_BASE_URL,
-    reasoning: true,
-    input: ["text", "image"],
-    cost: UNKNOWN_SUBSCRIPTION_COST,
-    contextWindow: 1_050_000,
-    maxTokens: 128_000,
-    thinkingLevelMap: { minimal: "low", xhigh: "xhigh", max: "max" },
-    compat: {
-      supportsOpenAIGrammarTools: true,
-      supportsAdditionalTools: true,
-      supportsToolSearch: true,
-    },
-  },
-  {
     id: "gpt-daybreak-blue-latest",
     name: "Daybreak Blue",
     api: "openai-codex-responses",
