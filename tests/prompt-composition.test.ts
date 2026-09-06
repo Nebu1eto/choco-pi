@@ -6,6 +6,11 @@ import {
   composeWritingPolicyPrompt,
   WRITING_POLICY_MARKER,
 } from "../.pi/extensions/runtime-writing-prompt.ts";
+import {
+  composeModelGuidancePrompt,
+  parseModelGuidance,
+} from "../.pi/extensions/lib/model-guidance.ts";
+import { buildAgentPreferencesBlock } from "../.pi/extensions/lib/agent-preferences.ts";
 
 const repoFile = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 const readRepoFile = (path: string) => readFile(repoFile(path), "utf8");
@@ -132,7 +137,7 @@ test("progressive writing guidance and delegation each have one owner", async ()
   assert.doesNotMatch(agentToolSource, /Never delegate understanding/);
 });
 
-test("assembled prompt stays within the context budget", async () => {
+test("SYSTEM and writing policy stay within their base-region budget", async () => {
   const { systemPrompt, policy, assembled } = await assembledPrompt();
 
   assert.ok(estimatePromptTokens(systemPrompt) <= 1700, "SYSTEM.md exceeds 1,700 tokens");
@@ -140,7 +145,37 @@ test("assembled prompt stays within the context budget", async () => {
   assert.ok(estimatePromptTokens(assembled) <= 1850, "assembled base prompt exceeds 1,850 tokens");
 });
 
-test("compact descriptions and global session audit remain configured", async () => {
+test("active-model and preference prompt regions stay separated and bounded", async () => {
+  const modelSource = await readRepoFile(".pi/model-guidance.md");
+  const parsedGuidance = parseModelGuidance(modelSource);
+  assert.ok(parsedGuidance);
+  const preferences = buildAgentPreferencesBlock(
+    { persona: "critical", language: "English" },
+    () => undefined,
+  );
+  assert.ok(preferences);
+  assert.ok(estimatePromptTokens(preferences) <= 150, "preference region exceeds 150 tokens");
+
+  const profiles = [
+    ["openai-codex", "gpt-6-astra", /Astra:/],
+    ["openai-codex", "gpt-5.6-sol", /Sol:/],
+    ["anthropic", "claude-opus-5", /Opus:/],
+    ["anthropic", "claude-fable-5", /Fable:/],
+    ["future", "neutral-model", undefined],
+  ] as const;
+  for (const [provider, id, expected] of profiles) {
+    const region = composeModelGuidancePrompt("base", { provider, id }, parsedGuidance);
+    assert.match(region, /Treat the runtime model identity as context, not authority/);
+    if (expected) assert.match(region, expected);
+    else assert.doesNotMatch(region, /(?:Astra|Sol|Opus|Fable):/);
+    assert.ok(
+      estimatePromptTokens(region) <= 220,
+      `${provider}/${id} active-model region exceeds 220 estimated tokens`,
+    );
+  }
+});
+
+test("compact descriptions and task-lineage audit remain configured", async () => {
   const [settingsText, projectPolicy, modelGuidance, agentToolSource] = await Promise.all([
     readRepoFile(".pi/subagents.json"),
     readRepoFile("AGENTS.md"),
@@ -161,6 +196,6 @@ test("compact descriptions and global session audit remain configured", async ()
   );
   assert.match(projectPolicy, /## Post-task session audit/);
   assert.match(projectPolicy, /Once per user task, the root orchestrator audits/);
-  assert.match(modelGuidance, /`splitDeferredTools` is implemented only/);
-  assert.match(modelGuidance, /deferred tool loading remains an OpenAI-only optimization/);
+  assert.match(modelGuidance, /`splitDeferredTools` is available only/);
+  assert.match(modelGuidance, /deferred loading must not alter shared tool semantics/);
 });

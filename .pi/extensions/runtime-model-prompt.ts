@@ -1,49 +1,29 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  composeModelGuidancePrompt,
+  parseModelGuidance,
+  type ParsedModelGuidance,
+} from "./lib/model-guidance.ts";
 
-export const CURRENT_MODEL_PLACEHOLDER = "{{PI_CURRENT_MODEL}}";
-const MAX_RUNTIME_MODEL_LENGTH = 512;
+const PROFILE_GUIDANCE_PATH = fileURLToPath(new URL("../model-guidance.md", import.meta.url));
 
-function escapeXml(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
-function encodeRuntimeModel(provider: string, model: string): string {
-  const value = `${provider}/${model}`;
-  const bounded =
-    value.length > MAX_RUNTIME_MODEL_LENGTH
-      ? `${value.slice(0, MAX_RUNTIME_MODEL_LENGTH - 1)}…`
-      : value;
-  const serialized = JSON.stringify(bounded)
-    .replaceAll("\u2028", "\\u2028")
-    .replaceAll("\u2029", "\\u2029");
-
-  return escapeXml(serialized);
-}
-
-export function injectCurrentModel(systemPrompt: string, provider: string, model: string): string {
-  const currentModel = encodeRuntimeModel(provider, model);
-  if (systemPrompt.includes(CURRENT_MODEL_PLACEHOLDER)) {
-    return systemPrompt.replaceAll(CURRENT_MODEL_PLACEHOLDER, currentModel);
+function readProfileGuidance(): ParsedModelGuidance | undefined {
+  try {
+    return parseModelGuidance(readFileSync(PROFILE_GUIDANCE_PATH, "utf8"));
+  } catch {
+    return undefined;
   }
-
-  const runtimeContext = [
-    "<runtime_environment>",
-    "Harness: choco-pi",
-    `Current model: ${currentModel}`,
-    "</runtime_environment>",
-  ].join("\n");
-
-  return `${systemPrompt}\n\n${runtimeContext}`;
 }
+
+const profileGuidance = readProfileGuidance();
 
 export default function runtimeModelPrompt(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event, ctx) => {
-    if (!ctx.model) {
-      return;
-    }
-
+    const model = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
     return {
-      systemPrompt: injectCurrentModel(event.systemPrompt, ctx.model.provider, ctx.model.id),
+      systemPrompt: composeModelGuidancePrompt(event.systemPrompt, model, profileGuidance),
     };
   });
 }

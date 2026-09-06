@@ -1,6 +1,6 @@
 ---
 name: task
-description: Use parallel planning and agents for repository changes only when at least two genuinely independent implementation units materially benefit; do not route by file count.
+description: Use parallel agents only for two or more independent implementation units.
 ---
 
 # choco-pi Parallel Implementation
@@ -11,7 +11,7 @@ When the user explicitly invokes `task-dynamic`, that workflow supersedes this o
 
 ## 1. Bootstrap
 
-1. Read `../task-core/SKILL.md`, then run `check`, including sub-agent discovery, plus repository gates required by applicable `AGENTS.md`.
+1. Read `../task-core/SKILL.md`, then run `check`, including sub-agent discovery.
 2. Read path-scoped instructions and apply the shared investigation and evidence mechanics.
 3. Record `review_base`, inspect the dirty tree, resolve `../../scripts/checkout-mutation-lease.ts` relative to this skill, and run `node <resolved-script> acquire --cwd "$PWD"`. The script identifies the calling session itself; stop on a conflicting owner it does not report as dead.
 4. Create the acceptance ledger required by `task-core`.
@@ -54,6 +54,6 @@ Unless the user explicitly excluded a commit, load and follow the harness `commi
 
 ## 5. Review and handoff
 
-Select review depth by risk. Use one fresh `reviewer` only when the user or project risk policy requires independent review. Give it the exact immutable range and applicable requirements, but not claimed safety, expected findings, or previous conclusions. Findings remain advisory until the main agent reproduces or proves them.
+Select review through `task-core`'s task-shaped rule. When selected, prepare the immutable input through `../review/references/review-bundle.md` and give one fresh `reviewer` only its bundle path and manifest digest, not claimed safety, expected findings, or previous conclusions. Findings remain advisory until the main agent reproduces or proves them.
 
 Use `handoff` only when it materially improves a complex delivery. Stop all children and owned runtimes, then release the lease with `node <resolved-script> release --cwd "$PWD"`. Report exact final revision, acceptance results, review disposition, waivers, and remaining risk. Never treat a worker report as completion proof.

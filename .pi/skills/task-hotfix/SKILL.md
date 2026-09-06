@@ -1,11 +1,11 @@
 ---
 name: task-hotfix
-description: Apply an urgent production or critical-regression fix directly; use only for an actual requested hotfix, not diagnosis, status, incident explanation, or ordinary follow-up.
+description: Direct implementation for an urgent production fix.
 ---
 
 # choco-pi Urgent Fix
 
-Keep implementation in the main agent. Do not spawn implementation agents. A fresh read-only reviewer is optional only when required by the user or project risk policy.
+Keep implementation in the main agent. Do not spawn implementation agents. A fresh read-only reviewer is optional under `task-core`'s task-shaped selection rule.
 
 ## 1. Triage
 
@@ -28,4 +28,4 @@ Unless the user explicitly excluded a commit, load and follow the harness `commi
 
 ## 4. Review and report
 
-Use fresh read-only review only when required, and independently validate any finding. After owned runtime cleanup, release the lease with `node <resolved-script> release --cwd "$PWD"`. Report the root cause, minimal patch, exact gates and runtime observations, final revision, waivers, and remaining risk.
+When independent review is selected, prepare its immutable input through `../review/references/review-bundle.md`; independently validate any finding. After owned runtime cleanup, release the lease with `node <resolved-script> release --cwd "$PWD"`. Report the root cause, minimal patch, exact gates and runtime observations, final revision, waivers, and remaining risk.
