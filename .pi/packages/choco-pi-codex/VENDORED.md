@@ -124,6 +124,13 @@ and interop identifiers (originator header `pi-codex-conversion`, preflight and
 apply-patch-display protocol strings, code-mode host cache path) are kept
 verbatim for protocol parity.
 
+`src/providers/openai-codex/model-catalog.ts` also registers `gpt-6-astra`
+for the ChatGPT-backed provider because the host's pinned built-in catalog does
+not yet include it. The entry follows OpenAI's published 1,050,000-token context
+window, 128,000-token output limit, text/image input, and minimum `low`
+reasoning effort; it is automatically deduplicated once the host catalog adds
+the same model ID.
+
 ## Registered-tool bridge (choco-pi addition)
 
 tools/code-mode/registered-tool-bridge.ts exposes every tool Pi has registered
