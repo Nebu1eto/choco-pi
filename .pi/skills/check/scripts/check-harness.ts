@@ -309,6 +309,22 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
   const missingResources = resourceResults
     .filter((result) => !result.exists)
     .map((result) => result.entry);
+  const coreResources = new Set([
+    "SYSTEM.md",
+    "writing-policy.md",
+    "skills/check/SKILL.md",
+    "skills/check/scripts/check-harness.ts",
+    "skills/task-core/SKILL.md",
+    "scripts/checkout-mutation-lease.ts",
+  ]);
+  const missingCore = missingResources.filter((entry) => coreResources.has(entry));
+  add(
+    "core-resources",
+    missingCore.length ? "fail" : "pass",
+    missingCore.length
+      ? `missing: ${missingCore.join(", ")}`
+      : "shared instructions and mutation-ownership resources present",
+  );
   add(
     "resources",
     missingResources.length ? "fail" : "pass",

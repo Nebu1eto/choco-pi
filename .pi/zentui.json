@@ -116,7 +116,7 @@
           },
           "segments": {
             "cwd": true,
-            "sessionName": true,
+            "sessionName": false,
             "gitBranch": true,
             "gitStatus": true,
             "gitCounts": false,
