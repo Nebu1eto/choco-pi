@@ -9,7 +9,25 @@ const UNKNOWN_SUBSCRIPTION_COST = {
   cacheWrite: 0,
 };
 
-const DAYBREAK_MODELS: Model<"openai-codex-responses">[] = [
+const ADDITIONAL_MODELS: Model<"openai-codex-responses">[] = [
+  {
+    id: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    baseUrl: DEFAULT_CODEX_BASE_URL,
+    reasoning: true,
+    input: ["text", "image"],
+    cost: UNKNOWN_SUBSCRIPTION_COST,
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    thinkingLevelMap: { minimal: "low", xhigh: "xhigh", max: "max" },
+    compat: {
+      supportsOpenAIGrammarTools: true,
+      supportsAdditionalTools: true,
+      supportsToolSearch: true,
+    },
+  },
   {
     id: "gpt-daybreak-blue-latest",
     name: "Daybreak Blue",
@@ -51,5 +69,5 @@ const DAYBREAK_MODELS: Model<"openai-codex-responses">[] = [
 export function openAICodexModelsWithDaybreak(): Model<Api>[] {
   const models: Model<Api>[] = getBuiltinModels("openai-codex");
   const existing = new Set(models.map(({ id }) => id));
-  return [...models, ...DAYBREAK_MODELS.filter(({ id }) => !existing.has(id))];
+  return [...models, ...ADDITIONAL_MODELS.filter(({ id }) => !existing.has(id))];
 }
