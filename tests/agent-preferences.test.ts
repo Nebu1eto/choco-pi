@@ -384,6 +384,8 @@ test("persona definitions append once and remain synchronized with the system pr
   const appended = appendPersonaDefinitions("Base prompt");
   assert.equal(appended, `Base prompt\n\n${PERSONA_DEFINITIONS_BLOCK}`);
   assert.equal(appendPersonaDefinitions(appended), undefined);
+  assert.match(PERSONA_DEFINITIONS_BLOCK, /evidence sufficient for the outcome and material risks/);
+  assert.doesNotMatch(PERSONA_DEFINITIONS_BLOCK, /Verify as much as possible|keep asking whether/);
 
   const systemPrompt = readFileSync(new URL("../.pi/SYSTEM.md", import.meta.url), "utf8");
   assert.ok(systemPrompt.includes(PERSONA_DEFINITIONS_BLOCK));

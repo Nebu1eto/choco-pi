@@ -109,6 +109,8 @@ test("profile installer links tracked config and is idempotent", async (context)
     "anthropic/claude-opus-5": "medium",
     "anthropic/claude-opus-4-6": "high",
     "anthropic/claude-sonnet-5": "xhigh",
+    "openai/gpt-6-astra": "low",
+    "openai-codex/gpt-6-astra": "low",
     "openai-codex/gpt-5.6-sol": "low",
     "openai-codex/gpt-daybreak-blue-latest": "high",
     "openai-codex/gpt-5.6-terra": "high",

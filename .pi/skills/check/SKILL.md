@@ -5,16 +5,20 @@ description: Run choco-pi's baseline environment check before implementation or 
 
 # choco-pi Environment Check
 
-Run this baseline before `task-inline`, `task`, or `task-hotfix`. Project instructions may add checks but do not replace this baseline.
+Use a capability-relevant check before `task-inline`, `task`, or `task-hotfix`. A user-requested `/check` always runs the complete check. Project instructions may add checks but do not replace it.
 
 ## Scan
 
-1. Resolve `scripts/check-harness.ts` relative to this `SKILL.md` and execute it with Node.
-2. Interpret `fail` as a blocking harness requirement, `warn` as an optional capability, and `pass` as ready.
-3. Confirm that the current choco-pi session exposes the tools needed by the selected workflow. For parallel work, confirm that the `planner`, `implementer`, `reviewer`, and `handoff` agents are discoverable.
-4. If resources changed after the session started, ask the user to run `/reload`, then repeat only the affected checks.
+1. Resolve `scripts/check-harness.ts` relative to this `SKILL.md`.
+2. For an explicit `/check`, execute it with Node and no arguments. This checks core readiness and every harness capability; report every genuine failure.
+3. For automatic workflow readiness, execute it with `--automatic`, followed by one `--require <capability>` for each capability the work needs. Supported capabilities are `tui`, `subagents`, `resources`, and `lsp`. For example, parallel semantic code work uses `--automatic --require subagents --require lsp`; simple code or prose work uses `--automatic`. Do not infer that an unlisted capability is ready.
+4. Interpret `fail` as blocking core readiness or a requested capability, `warn` as an unavailable unrequested capability, and `pass` as ready for the reported scope. The JSON `mode` and `requiredCapabilities` fields define that scope.
+5. Confirm separately that the current choco-pi session exposes the live tools needed by the selected workflow; installed manifests do not establish live availability. For parallel work, confirm that the `planner`, `implementer`, `reviewer`, and `handoff` agents are discoverable.
+6. If resources changed after the session started, ask the user to run `/reload`, then repeat only the affected checks.
 
 Never read or print `auth.json`, API keys, OAuth tokens, environment secrets, or credential-bearing configuration.
+
+A successful automatic check may be reused within the same session only while its relevant runtime, configuration, resources, and required live tools remain unchanged. Always rerun a fresh explicit `/check`.
 
 ## Scope additions
 
