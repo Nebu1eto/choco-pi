@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type { AcquiredWebSocket, ProviderEnv, SessionWebSocketCacheEntry } from "./types.ts";
 import { clearCanonicalSessions } from "./session-continuity.ts";
+import { clearAsyncCodeModeCalls } from "./native-features.ts";
+import { closeNativeSteering } from "./native-steering.ts";
 
 function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
   let promise: Promise<Module> | undefined;
@@ -63,6 +65,8 @@ export function recordWebSocketSseFallback(sessionId: string | undefined): void 
 }
 
 function closeWebSocketSessions(sessionId: string | undefined): void {
+  closeNativeSteering(sessionId);
+  clearAsyncCodeModeCalls(sessionId);
   const closeEntry = (entry: SessionWebSocketCacheEntry) => {
     closeWebSocketSilently(entry.socket, 1000, "session_shutdown");
   };

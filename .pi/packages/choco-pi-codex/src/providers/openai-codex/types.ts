@@ -108,6 +108,19 @@ export interface CodexDiagnosticsFailure {
 }
 export type CodexDiagnosticsEvent =
   | {
+      type: "native-steering";
+      phase:
+        | "sent"
+        | "accepted"
+        | "automatic-ready"
+        | "required-ready"
+        | "failed"
+        | "closed"
+        | "fallback-history"
+        | "fallback-input"
+        | "fallback-settings";
+    }
+  | {
       type: "request";
       lane: CodexDiagnosticsLane;
       transport: CodexDiagnosticsTransport;
@@ -120,6 +133,7 @@ export type CodexDiagnosticsEvent =
       canonicalHistory?: CanonicalHistoryDecision | undefined;
       compaction?: CodexCompactionDiagnostic | undefined;
       previousResponseId?: boolean | undefined;
+      nativeSteering?: "automatic" | "required" | undefined;
     }
   | {
       type: "usage";
@@ -174,6 +188,8 @@ export type CodexProviderStreamOptions = SimpleStreamOptions & {
 };
 export type CodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type OpenAICodexStreamOptions = CodexProviderStreamOptions & {
+  midTurnSteering?: boolean | undefined;
+  asyncCodeMode?: boolean | undefined;
   reasoningEffort?: CodexReasoningEffort | undefined;
   responsesLite?: boolean | undefined;
   grammarToolInputProperties?: ReadonlyMap<string, string> | undefined;

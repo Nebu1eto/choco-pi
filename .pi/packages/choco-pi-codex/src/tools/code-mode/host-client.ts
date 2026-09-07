@@ -55,7 +55,10 @@ export class CodeModeHostClient {
     throwIfAborted(signal);
     const { code, yieldTimeMs, maxOutputTokens } = parseExecSource(source);
     const effectiveYieldTimeMs =
-      directToolYieldTime(code, tools) ?? yieldTimeMs ?? DEFAULT_CODE_MODE_EXEC_YIELD_MS;
+      directToolYieldTime(code, tools) ??
+      yieldTimeMs ??
+      context.defaultYieldTimeMs ??
+      DEFAULT_CODE_MODE_EXEC_YIELD_MS;
     const id = this.session.nextRequestId();
     const initial = this.session.expectInitial(id);
     void initial.catch(() => undefined);

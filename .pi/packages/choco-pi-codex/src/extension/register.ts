@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registerNativeFeatures } from "./native-features.ts";
 import { registerCodeModeProxyProvider } from "../providers/code-mode-proxy-provider.ts";
 import { registerOpenAICodexCustomProvider } from "../providers/openai-codex-provider-registration.ts";
 import { registerApplyPatchDisplayBroker } from "../tools/apply-patch/display-broker.ts";
@@ -21,6 +22,7 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
   registerCodexTransportCleanup();
   registerApplyPatchDisplayBroker(pi);
   const runtime = createCodexExtensionRuntime(pi);
+  registerNativeFeatures(pi, () => runtime.state.config.openai.midTurnSteering);
   registerCanonicalAliasEndpointPreflight(pi, runtime);
   const codeMode = await registerCodexCodeMode(pi, runtime);
   let cleanupProxyProvider: ReturnType<typeof registerCodeModeProxyProvider> | undefined;

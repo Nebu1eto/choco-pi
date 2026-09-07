@@ -5,6 +5,12 @@ import type {
   Model,
 } from "@earendil-works/pi-ai";
 import { normalizeTimeoutMs } from "./sse.ts";
+import {
+  withAsyncCodeMode,
+  rememberAsyncCodeModeCalls,
+  supportsNativeSteeringTools,
+} from "./native-features.ts";
+import { nativeSteeringForSocket, openNativeSteering } from "./native-steering.ts";
 import { buildCachedWebSocketRequestBody } from "./websocket-continuation.ts";
 import { acquireWebSocket, parseWebSocket, startWebSocketOutputOnFirstEvent } from "./websocket.ts";
 import {
@@ -62,6 +68,7 @@ export async function processWebSocketStream<TApi extends Api>(
     | undefined,
 ): Promise<void> {
   let streamStarted = false;
+  body = withAsyncCodeMode(body, options?.asyncCodeMode === true);
   const idleTimeoutMs = normalizeTimeoutMs(
     options?.timeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
     "timeoutMs",
@@ -84,7 +91,13 @@ export async function processWebSocketStream<TApi extends Api>(
   let released = false;
   const responseItems: ProviderOutputItem[] = [];
   const transport = options?.transport ?? "auto";
-  const useCachedContext = transport === "websocket-cached" || transport === "auto";
+  const nativeEnabled =
+    options?.midTurnSteering === true &&
+    body.model === "gpt-6-astra" &&
+    supportsNativeSteeringTools(body) &&
+    Boolean(entry && options.sessionId);
+  const useCachedContext =
+    transport === "websocket-cached" || transport === "auto" || nativeEnabled;
   // ChatGPT Codex Responses rejects `store: true` ("Store must be set to false").
   // WebSocket continuation still works via connection-scoped previous_response_id state.
   const fullBody = body;
@@ -114,6 +127,43 @@ export async function processWebSocketStream<TApi extends Api>(
   };
 
   try {
+    const previousNative = nativeSteeringForSocket(socket);
+    const native =
+      nativeEnabled && options?.sessionId
+        ? openNativeSteering(socket, options.sessionId, recordDiagnostics)
+        : undefined;
+    const preparation = native
+      ? await native.prepare(
+          requestBody,
+          fullBody,
+          options?.signal,
+          idleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+        )
+      : { kind: "send" as const, body: requestBody };
+    options?.signal?.throwIfAborted();
+    if ((!native && previousNative) || preparation.kind === "reconnect") {
+      (native ?? previousNative)?.close();
+      releaseOnce({ keep: false });
+      // Keep the user's ordinary Pi-queued message. Discard only unconsumed server generation.
+      return await processWebSocketStream(
+        url,
+        body,
+        headers,
+        output,
+        stream,
+        model,
+        accountId,
+        onStart,
+        { ...options, midTurnSteering: false },
+        turnState,
+        diagnostics,
+        canonical,
+      );
+    }
+    native?.begin(fullBody, options?.signal);
+    const sentInputItems = preparation.kind === "automatic" ? 0 : preparation.body.input.length;
+    if (options?.compactionDiagnostics)
+      options.compactionDiagnostics.sentInputItems = sentInputItems;
     if (diagnostics && recordDiagnostics) {
       const requestEvent: Extract<CodexDiagnosticsEvent, { type: "request" }> = {
         type: "request",
@@ -121,25 +171,34 @@ export async function processWebSocketStream<TApi extends Api>(
         transport: "websocket",
         attempt: diagnostics.attempt,
         fullInputItems: fullBody.input.length,
-        sentInputItems: requestBody.input.length,
+        sentInputItems,
         model: fullBody.model,
         socketReused: reused,
         continuation: cachedRequest.decision,
         previousResponseId: Boolean(requestBody.previous_response_id),
       };
       if (canonical?.decision) requestEvent.canonicalHistory = canonical.decision;
+      if (preparation.kind === "automatic") requestEvent.nativeSteering = "automatic";
+      else if (preparation.body !== requestBody) requestEvent.nativeSteering = "required";
       if (options?.compactionDiagnostics) {
         requestEvent.compaction = structuredClone(options.compactionDiagnostics);
       }
       recordDiagnostics(requestEvent);
     }
-    socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
+    if (preparation.kind === "send")
+      socket.send(JSON.stringify({ type: "response.create", ...preparation.body }));
     await processMappedCodexResponsesStream(
       startWebSocketOutputOnFirstEvent(
         mapCodexEvents(
-          parseWebSocket(socket, options?.signal, idleTimeoutMs, (value) =>
-            turnState?.capture(value),
-          ),
+          native
+            ? native.responseEvents(
+                options?.signal,
+                idleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+                (value) => turnState?.capture(value),
+              )
+            : parseWebSocket(socket, options?.signal, idleTimeoutMs, (value) =>
+                turnState?.capture(value),
+              ),
           output,
         ),
         () => {
@@ -161,6 +220,8 @@ export async function processWebSocketStream<TApi extends Api>(
       keepConnection = false;
     } else {
       assertSuccessfulCodexOutput(output);
+      if (options?.asyncCodeMode && body.model === "gpt-6-astra")
+        rememberAsyncCodeModeCalls(options.sessionId, responseItems);
       for (const item of responseItems) options?.onOutputItemDone?.(item);
       if (useCachedContext && entry && output.responseId) {
         entry.continuation = {
@@ -184,8 +245,11 @@ export async function processWebSocketStream<TApi extends Api>(
         });
       }
     }
+    if (native?.steered) output.rawStopReason = "incomplete.steered";
+    native?.finish();
     releaseOnce({ keep: keepConnection });
   } catch (error) {
+    nativeSteeringForSocket(socket)?.close();
     if (entry) entry.continuation = undefined;
     keepConnection = false;
     releaseOnce({ keep: false });
@@ -205,6 +269,7 @@ export async function prewarmWebSocket(
   diagnostics?: CodexDiagnosticsSink | undefined,
   preserveContinuation = false,
 ): Promise<CodexPrewarmResult> {
+  body = withAsyncCodeMode(body, options.asyncCodeMode === true);
   const recordDiagnostics = noThrowCodexDiagnosticsSink(diagnostics);
   const websocketConnectTimeoutMs = normalizeTimeoutMs(
     options.websocketConnectTimeoutMs,
