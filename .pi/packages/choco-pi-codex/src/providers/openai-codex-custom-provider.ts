@@ -106,6 +106,8 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
         headers: withRemoteCompactionV2Feature(options.headers),
       }
     : { ...options, grammarToolInputProperties };
+  effectiveOptions.asyncCodeMode =
+    runtimeConfig?.executionMode === "code" && runtimeConfig.openai.asyncCodeMode === true;
   const body = deps.preparedBody
     ? structuredClone(deps.preparedBody)
     : await prepareCodexRequestBody(model, context, effectiveOptions, responsesLite);

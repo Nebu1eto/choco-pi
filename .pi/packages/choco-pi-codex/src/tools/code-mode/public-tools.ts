@@ -12,6 +12,7 @@ import { formatRunningExecSessionGuidance, toCodeModeToolResult } from "./tool-r
 import type { CodeModeRenderContext, CodeModeRenderTheme, ToolExecutionContext } from "./types.ts";
 import { CODE_MODE_EXEC_CONSTRAINED_SAMPLING } from "./exec-contract.ts";
 import { registeredToolNames } from "./registered-tool-bridge.ts";
+import { consumeAsyncCodeModeCall } from "../../providers/openai-codex/native-features.ts";
 import { preflightCodeModeSource } from "./source-preflight.ts";
 import {
   registerCodeModePreflightBroker,
@@ -75,6 +76,9 @@ function createExecTool(
     parameters: EXEC_PARAMETERS,
     constrainedSampling: CODE_MODE_EXEC_CONSTRAINED_SAMPLING,
     async execute(id, params, signal, onUpdate, ctx) {
+      const owner = ctx.sessionManager.getSessionId();
+      const cwd = ctx.cwd;
+      const nativeAsync = consumeAsyncCodeModeCall(owner, id);
       const executionKind = runtime.executionKind(ctx);
       const tools = runtime.collectTools(ctx);
       preflightCodeModeSource(params.code, {
@@ -84,11 +88,20 @@ function createExecTool(
       });
       tracker.start(id);
       try {
-        const response = await (
-          await runtime.getClient(ctx)
-        ).execute(
+        const client = await runtime.getClient(ctx);
+        signal?.throwIfAborted();
+        if (ctx.sessionManager.getSessionId() !== owner)
+          throw new Error("Code Mode session changed before execution");
+        const response = await client.execute(
           params.code,
-          { cwd: ctx.cwd, toolCallId: id, extensionContext: ctx, preflight, onUpdate },
+          {
+            cwd,
+            toolCallId: id,
+            extensionContext: ctx,
+            preflight,
+            onUpdate,
+            defaultYieldTimeMs: nativeAsync ? 250 : undefined,
+          },
           signal,
           tools,
         );

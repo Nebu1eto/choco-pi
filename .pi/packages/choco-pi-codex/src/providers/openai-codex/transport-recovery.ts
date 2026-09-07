@@ -276,6 +276,9 @@ export function createCodexTransportStream<TApi extends Api>(
   const effectiveOptions: OpenAICodexStreamOptions = options
     ? { ...options, transport: effectiveTransport, grammarToolInputProperties }
     : { transport: effectiveTransport, grammarToolInputProperties };
+  effectiveOptions.midTurnSteering = runtimeConfig?.openai.midTurnSteering === true;
+  effectiveOptions.asyncCodeMode =
+    runtimeConfig?.executionMode === "code" && runtimeConfig.openai.asyncCodeMode === true;
   if (options && runtimeConfig?.compaction?.responsesCompaction) {
     effectiveOptions.headers = withRemoteCompactionV2Feature(options.headers);
   }

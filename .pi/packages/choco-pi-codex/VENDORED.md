@@ -228,3 +228,28 @@ existing unexpired credential through Pi's public API without refreshing it,
 and isolates resources, settings, model cache, and session state. See
 `src/prototype/README.md` for commands and limits. Protocol regressions run in
 the baseline suite; the real Pi host `.e2e.ts` suite remains opt-in.
+
+## Native Mid-turn Steering and Async Code Mode (choco-pi addition)
+
+The production config and `/preferences` Model section expose independent Auto
+defaults and Off overrides for `openai.midTurnSteering` (label **Mid-turn
+Steering**) and `openai.asyncCodeMode` (**Async Code Mode**). The native path is
+limited to `gpt-6-astra` Responses WebSocket requests. Other models and SSE keep
+their ordinary behavior; Pi's queued steering remains available.
+
+`providers/openai-codex/native-steering.ts` owns a bounded socket inbox across
+Pi turns. The public input hook forwards steering without consuming Pi's input;
+the next provider call consumes the server's automatic successor, or supplies
+required tool outputs without repeating accepted input. Changed input/settings
+fall back to an ordinary request on a fresh connection. Cleanup invalidates
+ownership synchronously. Diagnostics contain phases, never steering text.
+
+`native-features.ts` marks only direct client-owned `exec` as async. Pi still
+dispatches it after normal preflight; no tool runs early from a streaming event.
+The actual async call gives Code Mode a 250ms default initial yield, subordinate
+to explicit script pragmas and tool-specific yield settings. Existing wait,
+termination, and result handling remain authoritative. Hosted programmatic tool
+calling is excluded; local Code Mode is not that hosted protocol. Owned state is
+shared across loader copies via a versioned global symbol without replacing Pi
+methods. No new monkeypatch or credential handling is introduced. See
+`NATIVE-FEATURES.md` for behavior, limits, and opt-in live validation.

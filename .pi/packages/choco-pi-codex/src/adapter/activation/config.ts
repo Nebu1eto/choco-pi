@@ -109,6 +109,8 @@ export interface CodexConversionConfig {
     cacheKeepalive: boolean;
     proxyResponsesLite: boolean;
     forceCachedWebSockets: boolean;
+    midTurnSteering: boolean;
+    asyncCodeMode: boolean;
     cacheDiagnostics: CacheDiagnosticsMode;
     harnessIdentifierHeader: boolean;
     webSearchModel: WebSearchModel;
@@ -162,6 +164,8 @@ export const DEFAULT_CODEX_CONVERSION_CONFIG: CodexConversionConfig = {
     cacheKeepalive: false,
     proxyResponsesLite: false,
     forceCachedWebSockets: true,
+    midTurnSteering: true,
+    asyncCodeMode: true,
     cacheDiagnostics: "off",
     harnessIdentifierHeader: false,
     webSearchModel: "gpt-5.6-luna",
@@ -441,6 +445,8 @@ export function normalizeCodexConversionConfig(value: BoundaryValue): CodexConve
         openai["forceCachedWebSockets"],
         DEFAULT_CODEX_CONVERSION_CONFIG.openai["forceCachedWebSockets"],
       ),
+      midTurnSteering: bool(openai["midTurnSteering"], true),
+      asyncCodeMode: bool(openai["asyncCodeMode"], true),
       cacheDiagnostics:
         normalizeCacheDiagnosticsMode(openai["cacheDiagnostics"]) ??
         DEFAULT_CODEX_CONVERSION_CONFIG.openai.cacheDiagnostics,

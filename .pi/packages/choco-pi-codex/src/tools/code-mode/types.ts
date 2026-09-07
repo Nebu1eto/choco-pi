@@ -54,6 +54,7 @@ export type CodeModeToolDefinition = CustomToolDefinition | ProgrammaticCodeMode
 
 export interface ToolExecutionContext {
   cwd: string;
+  defaultYieldTimeMs?: number | undefined;
   toolCallId?: string | undefined;
   extensionContext?: ExtensionContext | undefined;
   preflight?: CodeModeToolPreflightRunner | undefined;

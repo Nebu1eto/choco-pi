@@ -73,6 +73,8 @@ const CODEX_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[]
     section: "model",
     rows: [
       EXECUTION_MODE_ITEM_ID,
+      "midTurnSteering",
+      "asyncCodeMode",
       "fast",
       "cacheKeepalive",
       "verbosity",
