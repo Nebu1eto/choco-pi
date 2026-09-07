@@ -175,6 +175,23 @@ test("concurrent reset dialogs cannot spend twice", async () => {
   assert.equal(fixture.consumed.length, 0);
 });
 
+test("a stalled post-reset read times out and releases the account guard", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const fixture = flowFixture("stalled-refresh");
+  const started = Promise.withResolvers<void>();
+  fixture.options.refresh = () => {
+    started.resolve();
+    return new Promise<void>(() => {});
+  };
+  const result = runCodexResetFlow(fixture.options);
+  await started.promise;
+  t.mock.timers.tick(10_000);
+  assert.match((await result)!, /Codex reset applied.*Usage refresh failed/);
+  fixture.options.select = async () => undefined;
+  assert.equal(await runCodexResetFlow(fixture.options), undefined);
+  assert.equal(fixture.consumed.length, 1);
+});
+
 test("post-reset refresh waits for older reads and bypasses the normal cache interval", async () => {
   const cache = createUsageCache();
   const policy = { minIntervalMs: 60_000, maxStaleMs: 60_000 };
