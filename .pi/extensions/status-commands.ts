@@ -49,7 +49,9 @@ import {
   summarizeStatusRows,
 } from "./session-status.ts";
 import { buildContextCapSection } from "./model-context-cap.ts";
-import { usageReport } from "./provider-usage.ts";
+import { resetCodexUsage, usageReport } from "./provider-usage.ts";
+import { CodexResetError } from "./lib/codex-resets.ts";
+import { rethrowUnlessStaleContext } from "./lib/lifecycle.ts";
 
 export type StatusTabId = "status" | "context" | "usage" | "preferences";
 export type TextTabId = "status" | "context" | "usage";
@@ -371,6 +373,7 @@ async function showTabOnce(
     const digitHint = STATUS_TABS.map((_tab, index) => index + 1).join("/");
     const textHint = (): string => {
       const parts = ["Tab switches tabs", "↑/↓ scrolls", `${digitHint} jumps`];
+      if (active === "usage") parts.push("r uses a saved Codex reset");
       if (isExpandableTab(active)) parts.push(expanded ? "Ctrl+O collapses" : "Ctrl+O expands");
       parts.push("Enter/Esc closes");
       return theme.fg("dim", parts.join(" · "));
@@ -502,6 +505,11 @@ async function showTabOnce(
         controller.dispose();
       },
       handleInput: (data: string) => {
+        if (finished) return;
+        if (active === "usage" && data === "r") {
+          finish("usage:reset-codex");
+          return;
+        }
         // A panel submenu, such as the model picker, needs every key it can
         // get: no tab switching or digit jumps while one is open. The same is
         // true of the panel's search field.
@@ -567,28 +575,56 @@ async function showTab(
 ): Promise<void> {
   let focus = initialFocus;
   let startTab = initial;
-  for (;;) {
-    const outcome = await showTabOnce(ctx, thinkingLevel, startTab, focus, initialExpanded);
-    focus = {};
-    if (outcome === undefined) return;
-    startTab = "preferences";
-    if (outcome.startsWith(AGENT_OUTCOME_PREFIX)) {
-      focus = await runAgentPreferencesOutcome(outcome, ctx);
-      continue;
-    }
-    if (outcome.startsWith(CODEX_OUTCOME_PREFIX)) {
-      const codex = getCodexPreferencesProvider();
-      if (!codex) return;
-      const handled = await codex.runOutcome(outcome, ctx);
+  let current = true;
+  const unregister = registerDialogClose(() => {
+    current = false;
+  });
+  try {
+    for (;;) {
+      const outcome = await showTabOnce(ctx, thinkingLevel, startTab, focus, initialExpanded);
+      if (!current) return;
+      focus = {};
+      if (outcome === undefined) return;
+      if (outcome === "usage:reset-codex") {
+        try {
+          const message = await resetCodexUsage(ctx, () => current);
+          if (!current) return;
+          if (message) ctx.ui.notify(message, "info");
+        } catch (error) {
+          if (!current) return;
+          if (error instanceof CodexResetError) ctx.ui.notify(error.message, "error");
+          else {
+            rethrowUnlessStaleContext(error);
+            return;
+          }
+        }
+        startTab = "usage";
+        continue;
+      }
+      startTab = "preferences";
+      if (outcome.startsWith(AGENT_OUTCOME_PREFIX)) {
+        focus = await runAgentPreferencesOutcome(outcome, ctx);
+        if (!current) return;
+        continue;
+      }
+      if (outcome.startsWith(CODEX_OUTCOME_PREFIX)) {
+        const codex = getCodexPreferencesProvider();
+        if (!codex) return;
+        const handled = await codex.runOutcome(outcome, ctx);
+        if (!current) return;
+        if (handled === undefined) return;
+        focus = handled;
+        continue;
+      }
+      const provider = getPreferencesProvider();
+      if (!provider) return;
+      const handled = await provider.runOutcome(outcome, ctx);
+      if (!current) return;
       if (handled === undefined) return;
       focus = handled;
-      continue;
     }
-    const provider = getPreferencesProvider();
-    if (!provider) return;
-    const handled = await provider.runOutcome(outcome, ctx);
-    if (handled === undefined) return;
-    focus = handled;
+  } finally {
+    unregister();
   }
 }
 
