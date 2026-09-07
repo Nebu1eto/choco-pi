@@ -12,7 +12,12 @@ import {
 } from "./native-features.ts";
 import { nativeSteeringForSocket, openNativeSteering } from "./native-steering.ts";
 import { buildCachedWebSocketRequestBody } from "./websocket-continuation.ts";
-import { acquireWebSocket, parseWebSocket, startWebSocketOutputOnFirstEvent } from "./websocket.ts";
+import {
+  acquireWebSocket,
+  parseWebSocket,
+  startWebSocketOutputOnFirstEvent,
+  recordWebSocketSseFallback,
+} from "./websocket.ts";
 import {
   assertSuccessfulCodexOutput,
   assertSuccessfulCodexStatus,
@@ -130,7 +135,12 @@ export async function processWebSocketStream<TApi extends Api>(
     const previousNative = nativeSteeringForSocket(socket);
     const native =
       nativeEnabled && options?.sessionId
-        ? openNativeSteering(socket, options.sessionId, recordDiagnostics)
+        ? openNativeSteering(
+            socket,
+            options.sessionId,
+            recordDiagnostics,
+            recordWebSocketSseFallback.bind(undefined, options.sessionId),
+          )
         : undefined;
     const preparation = native
       ? await native.prepare(

@@ -10,6 +10,12 @@ import type {
   CodexDiagnosticsSink,
 } from "./types.ts";
 import { decodeWebSocketData } from "./websocket-parser.ts";
+import { DEFAULT_WEBSOCKET_CLOSE_TIMEOUT_MS } from "./constants.ts";
+import {
+  extractWebSocketCloseError,
+  extractWebSocketError,
+  isWebSocketMessageTooBigError,
+} from "./websocket-connection.ts";
 import {
   requestBodyForWebSocketContinuationComparison,
   responseInputsEqual,
@@ -76,13 +82,22 @@ export class NativeSteeringConnection {
   private chain = Promise.resolve();
   private abortCleanup: (() => void) | undefined;
   private failure: Error | undefined;
+  private socketError: Error | undefined;
+  private socketErrorTimer: ReturnType<typeof setTimeout> | undefined;
+  private onMessageTooBig: (() => void) | undefined;
   private trace: CodexDiagnosticsSink | undefined;
   steered = false;
 
-  constructor(socket: WebSocketLike, owner: string, trace?: CodexDiagnosticsSink) {
+  constructor(
+    socket: WebSocketLike,
+    owner: string,
+    trace?: CodexDiagnosticsSink,
+    onMessageTooBig?: () => void,
+  ) {
     this.socket = socket;
     this.owner = owner;
     this.trace = trace;
+    this.onMessageTooBig = onMessageTooBig;
     socket.addEventListener("message", this.onMessage);
     socket.addEventListener("close", this.onClose);
     socket.addEventListener("error", this.onError);
@@ -138,9 +153,10 @@ export class NativeSteeringConnection {
     const abort = () => pending.resolve("failed");
     signal?.addEventListener("abort", abort, { once: true });
     try {
-      timer = setTimeout(() => {
-        this.close();
-      }, timeout);
+      if (timeout > 0)
+        timer = setTimeout(() => {
+          this.close();
+        }, timeout);
       if (signal?.aborted) abort();
       const resolution = await pending.ready;
       signal?.throwIfAborted();
@@ -221,9 +237,10 @@ export class NativeSteeringConnection {
       let timer: ReturnType<typeof setTimeout> | undefined;
       await new Promise<void>((resolve) => {
         this.wake = resolve;
-        timer = setTimeout(() => {
-          this.close();
-        }, timeout);
+        if (timeout > 0)
+          timer = setTimeout(() => {
+            this.close();
+          }, timeout);
       }).finally(() => {
         if (timer) clearTimeout(timer);
         this.wake = undefined;
@@ -242,6 +259,7 @@ export class NativeSteeringConnection {
     this.generating = false;
     this.pending?.resolve("failed");
     this.abortCleanup?.();
+    if (this.socketErrorTimer) clearTimeout(this.socketErrorTimer);
     this.socket.removeEventListener("message", this.onMessage);
     this.socket.removeEventListener("close", this.onClose);
     this.socket.removeEventListener("error", this.onError);
@@ -251,12 +269,25 @@ export class NativeSteeringConnection {
     if (closeSocket) this.socket.close();
   }
 
-  private onClose = () => {
-    void this.chain.finally(() => this.close(false));
+  private onClose = (event: WebSocketEvent) => {
+    const closeError = extractWebSocketCloseError(event);
+    if (this.socketErrorTimer) clearTimeout(this.socketErrorTimer);
+    void this.chain.finally(() => {
+      if (this.closed) return;
+      const tooBig = isWebSocketMessageTooBigError(closeError);
+      this.failure = tooBig ? closeError : (this.socketError ?? closeError);
+      if (tooBig) this.onMessageTooBig?.();
+      this.close(false);
+    });
   };
-  private onError = () => {
-    this.failure = new Error("Native steering WebSocket failed");
-    this.close();
+  private onError = (event: WebSocketEvent) => {
+    this.socketError = extractWebSocketError(event);
+    if (this.socketErrorTimer) clearTimeout(this.socketErrorTimer);
+    this.socketErrorTimer = setTimeout(() => {
+      if (this.closed) return;
+      this.failure = this.socketError;
+      this.close();
+    }, DEFAULT_WEBSOCKET_CLOSE_TIMEOUT_MS);
   };
   private onMessage = (message: WebSocketEvent) => {
     const data = message.data;
@@ -327,11 +358,12 @@ export function openNativeSteering(
   socket: WebSocketLike,
   owner: string,
   trace?: CodexDiagnosticsSink,
+  onMessageTooBig?: () => void,
 ): NativeSteeringConnection {
   const existing = bySocket.get(socket);
   if (existing) return existing;
   byOwner.get(owner)?.close();
-  const connection = new NativeSteeringConnection(socket, owner, trace);
+  const connection = new NativeSteeringConnection(socket, owner, trace, onMessageTooBig);
   bySocket.set(socket, connection);
   byOwner.set(owner, connection);
   return connection;

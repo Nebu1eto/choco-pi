@@ -253,3 +253,8 @@ calling is excluded; local Code Mode is not that hosted protocol. Owned state is
 shared across loader copies via a versioned global symbol without replacing Pi
 methods. No new monkeypatch or credential handling is introduced. See
 `NATIVE-FEATURES.md` for behavior, limits, and opt-in live validation.
+
+The native inbox preserves the ordinary transport's zero-timeout semantics and
+structured WebSocket close/error classification. Close code 1009 selects SSE
+fallback even if it arrives between Pi turns, and a following close event can
+refine an earlier generic socket error without dropping received terminal frames.
