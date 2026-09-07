@@ -20,7 +20,17 @@ node .pi/packages/choco-pi-codex/src/prototype/run.ts steering --live
 node .pi/packages/choco-pi-codex/src/prototype/run.ts async --live
 ```
 
-The live runner rejects other checkout locations. It uses an existing Codex
+To retest from `~/Workspace/choco-pi`, explicitly add `--allow-main`:
+
+```sh
+node .pi/packages/choco-pi-codex/src/prototype/run.ts steering --live --allow-main
+node .pi/packages/choco-pi-codex/src/prototype/run.ts async --live --allow-main
+```
+
+This flag allows the isolated probe; it does not enable the prototype in the
+normal profile. The live runner still rejects other checkout locations and
+requires its working directory to match the checkout containing the script.
+It uses an existing Codex
 OAuth credential through Pi's public `readStoredCredential` API. It never
 prints, refreshes, or writes credentials. An expired or nearly expired login
 stops the probe. Each run uses an empty resource directory, in-memory settings

@@ -221,7 +221,9 @@ Load-time-only changes defer provider stream processing, websocket connection se
 Responses steering and one module-owned async synthetic lookup. It uses public
 Pi SDK/provider/input APIs only; it neither imports the registered-tool bridge
 nor modifies Pi. It is not imported by the package entry points or enabled in
-the profile. The live runner requires the `choco-pi-dev` checkout, reads an
+the profile. The live runner defaults to the `choco-pi-dev` checkout and permits
+the `choco-pi` checkout only with explicit `--allow-main`; the working directory
+must match the script's checkout. It reads an
 existing unexpired credential through Pi's public API without refreshing it,
 and isolates resources, settings, model cache, and session state. See
 `src/prototype/README.md` for commands and limits. Protocol regressions run in
