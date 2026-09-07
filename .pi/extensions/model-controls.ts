@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { EFFORT_PICKER_FOCUS } from "./lib/native-settings.ts";
 import { openPreferencesPicker } from "./status-commands.ts";
+import { inChildSessionContext } from "../packages/choco-pi-subagents/src/child-context.ts";
 
 const THINKING_LEVELS: ThinkingLevel[] = [
   "off",
@@ -26,6 +27,7 @@ const THINKING_LEVELS: ThinkingLevel[] = [
   "max",
 ];
 const FAST_MODE_ENTRY = "choco-pi-fast-mode";
+const ROOT_FAST_MODE_SYMBOL = Symbol.for("choco-pi.model-controls.root-fast-mode");
 const CODEX_FAST_MODE_SYMBOL = Symbol.for("choco-pi.codex-fast-mode");
 const FAST_EDITOR_FACTORY = Symbol.for("choco-pi.model-controls.fast-editor-factory");
 const FOCUSED_MODEL_CONTROLS_SYMBOL = Symbol.for("choco-pi.model-controls.focused-sessions");
@@ -99,8 +101,8 @@ export function isEffectiveFastModeEnabled(sessionEnabled: boolean): boolean {
   return sessionEnabled || codexFastModeEnabled();
 }
 
-export function restoreFastMode(entries: readonly SessionEntry[]): boolean {
-  let enabled = false;
+export function restoreFastMode(entries: readonly SessionEntry[], fallback = false): boolean {
+  let enabled = fallback;
   for (const entry of entries) {
     if (entry.type !== "custom" || entry.customType !== FAST_MODE_ENTRY || !isRecord(entry.data))
       continue;
@@ -218,7 +220,14 @@ export function installFastModeEditorWhenReady(
 }
 
 export default function modelControls(pi: ExtensionAPI): void {
+  const isChild = inChildSessionContext();
+  const host = reinterpretHostValue<
+    typeof globalThis & { [ROOT_FAST_MODE_SYMBOL]?: { isEnabled(): boolean } }
+  >(globalThis);
+  // Capture before child extensions initialize; their own history takes precedence.
+  const inheritedFast = isChild ? (host[ROOT_FAST_MODE_SYMBOL]?.isEnabled() ?? false) : false;
   let fastEnabled = false;
+  const rootFastMode = { isEnabled: () => isEffectiveFastModeEnabled(fastEnabled) };
   let effortCompletions: ThinkingLevel[] = ["off"];
   let activeModel: Model<Api> | undefined;
   let editorInstallGeneration = 0;
@@ -246,7 +255,8 @@ export default function modelControls(pi: ExtensionAPI): void {
 
   pi.on("session_start", (_event, ctx) => {
     updateModel(ctx.model);
-    fastEnabled = restoreFastMode(ctx.sessionManager.getBranch());
+    fastEnabled = restoreFastMode(ctx.sessionManager.getBranch(), inheritedFast);
+    if (!isChild) host[ROOT_FAST_MODE_SYMBOL] = rootFastMode;
     registeredSessionId = ctx.sessionManager.getSessionId();
     focusedModelControlsRegistry().set(registeredSessionId, { setFast });
     const generation = ++editorInstallGeneration;
@@ -265,6 +275,7 @@ export default function modelControls(pi: ExtensionAPI): void {
   });
   pi.on("session_shutdown", () => {
     editorInstallGeneration++;
+    if (host[ROOT_FAST_MODE_SYMBOL] === rootFastMode) delete host[ROOT_FAST_MODE_SYMBOL];
     if (registeredSessionId) focusedModelControlsRegistry().delete(registeredSessionId);
     registeredSessionId = undefined;
   });
@@ -334,7 +345,8 @@ export default function modelControls(pi: ExtensionAPI): void {
   });
 
   pi.on("before_provider_request", (event, ctx) => {
-    if (!fastEnabled || !isCodexModel(ctx.model) || !isRecord(event.payload)) return;
+    const supportsFast = isCodexModel(ctx.model) || (isChild && ctx.model?.provider === "openai");
+    if (!fastEnabled || !supportsFast || !isRecord(event.payload)) return;
     return { ...event.payload, service_tier: "priority" };
   });
 }
