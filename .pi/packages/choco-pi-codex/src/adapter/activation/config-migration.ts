@@ -134,6 +134,8 @@ export function migrateCodexConversionConfigIfNeeded(value: BoundaryValue): Conf
         normalizeCodexVerbosity(value["verbosity"]) ??
         DEFAULT_CODEX_CONVERSION_CONFIG.openai["verbosity"],
       cacheKeepalive: DEFAULT_CODEX_CONVERSION_CONFIG.openai.cacheKeepalive,
+      midTurnSteering: DEFAULT_CODEX_CONVERSION_CONFIG.openai.midTurnSteering,
+      asyncCodeMode: DEFAULT_CODEX_CONVERSION_CONFIG.openai.asyncCodeMode,
       proxyResponsesLite: DEFAULT_CODEX_CONVERSION_CONFIG.openai.proxyResponsesLite,
       forceCachedWebSockets: Value.Check(Type.Boolean(), value["forceCachedWebSockets"])
         ? value["forceCachedWebSockets"]

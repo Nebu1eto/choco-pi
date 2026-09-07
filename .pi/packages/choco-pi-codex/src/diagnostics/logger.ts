@@ -62,6 +62,8 @@ function field(key: string, value: string | number | boolean | undefined): strin
 }
 
 function eventFields(event: CodexDiagnosticsEvent): Array<string | undefined> {
+  if (event.type === "native-steering")
+    return [field("event", event.type), field("phase", event.phase)];
   if (event.type === "request")
     return [
       field("event", event.type),
@@ -74,6 +76,7 @@ function eventFields(event: CodexDiagnosticsEvent): Array<string | undefined> {
       ),
       field("continuation", event.continuation),
       field("canonical_history", event.canonicalHistory),
+      field("native_steering", event.nativeSteering),
       field("previous_response_id", event.previousResponseId),
       field("full_input_items", event.fullInputItems),
       field("sent_input_items", event.sentInputItems),

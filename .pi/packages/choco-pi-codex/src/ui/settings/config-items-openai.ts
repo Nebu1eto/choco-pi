@@ -10,6 +10,34 @@ import { type ConfigSetting, projectToggle, setting, toggle } from "./config-ite
 
 export function buildOpenAISettings(config: CodexConversionConfig, theme: Theme): ConfigSetting[] {
   return [
+    setting(
+      {
+        id: "midTurnSteering",
+        label: "Mid-turn Steering",
+        description:
+          "Auto for gpt-6-astra over Responses WebSocket. Pi queued steering remains the fallback.",
+        currentValue: config.openai.midTurnSteering ? "auto" : "off",
+        values: ["auto", "off"],
+      },
+      (value, current) => ({
+        ...current,
+        openai: { ...current.openai, midTurnSteering: value === "auto" },
+      }),
+    ),
+    setting(
+      {
+        id: "asyncCodeMode",
+        label: "Async Code Mode",
+        description:
+          "Auto for direct exec on gpt-6-astra Responses WebSocket. Pi preflight and Code Mode yield/wait are retained; hosted programmatic tools are excluded.",
+        currentValue: config.openai.asyncCodeMode ? "auto" : "off",
+        values: ["auto", "off"],
+      },
+      (value, current) => ({
+        ...current,
+        openai: { ...current.openai, asyncCodeMode: value === "auto" },
+      }),
+    ),
     toggle("fast", "Fast mode", config.openai.fast, (enabled, current) => ({
       ...current,
       openai: { ...current.openai, fast: enabled },

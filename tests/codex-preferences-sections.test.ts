@@ -201,6 +201,26 @@ test(
 );
 
 test(
+  "native feature preferences expose Auto defaults and persist independent Off choices",
+  withCodexDirs(({ ctx, deps, saved }) => {
+    // SAFETY: the fixture supplies every host member the section touches.
+    const sections = buildCodexPreferencesSections(ctx as never, deps);
+    const model = findSection(sections, `${CODEX_SECTION_ID}:model`);
+    assert.ok(model);
+    const items = model.buildItems();
+    assert.equal(items.find((item) => item.id === "midTurnSteering")?.label, "Mid-turn Steering");
+    assert.equal(items.find((item) => item.id === "midTurnSteering")?.currentValue, "auto");
+    assert.equal(items.find((item) => item.id === "asyncCodeMode")?.currentValue, "auto");
+    model.handleChange("midTurnSteering", "off");
+    assert.equal(saved.at(-1)?.config.openai.midTurnSteering, false);
+    assert.equal(saved.at(-1)?.config.openai.asyncCodeMode, true);
+    model.handleChange("asyncCodeMode", "off");
+    assert.equal(saved.at(-1)?.config.openai.asyncCodeMode, false);
+    assert.equal(saved.at(-1)?.config.executionMode, "code");
+  }),
+);
+
+test(
   "an untrusted project edits the defaults even when it has its own file",
   withCodexDirs((_fixture, cwd) => {
     writeFileSync(

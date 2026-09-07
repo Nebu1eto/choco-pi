@@ -19,7 +19,7 @@ const ArrayBufferDataSchema = Type.Object({
   arrayBuffer: Type.Function([], Type.Unknown()),
 });
 
-async function decodeWebSocketData(data: WebSocketEvent["data"]): Promise<string | null> {
+export async function decodeWebSocketData(data: WebSocketEvent["data"]): Promise<string | null> {
   if (Check(StringSchema, data)) return data;
   if (data instanceof ArrayBuffer) {
     return new TextDecoder().decode(new Uint8Array(data));

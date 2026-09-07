@@ -132,6 +132,7 @@ export async function createCodexDiagnosticsRuntime(options: {
   return {
     record(event) {
       log?.record(event);
+      if (event.type === "native-steering") return;
       if (event.type === "request") {
         latestRequests.set(event.lane, event);
         showCurrent(
