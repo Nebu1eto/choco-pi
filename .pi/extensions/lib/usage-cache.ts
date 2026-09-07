@@ -105,6 +105,7 @@ export type UsageCache = {
     key: string,
     load: () => Promise<RuntimeValue>,
     policy: UsageRequestPolicy,
+    refresh?: boolean,
   ) => Promise<UsageRequestResult>;
   /** Resolves once every pending store write has settled. */
   flush: () => Promise<void>;
@@ -324,6 +325,7 @@ export function createUsageCache(
     key: string,
     load: () => Promise<RuntimeValue>,
     policy: UsageRequestPolicy,
+    refresh = false,
   ): Promise<UsageRequestResult> => {
     const entry = await loadEntry(key);
     const startedAt = now();
@@ -331,7 +333,7 @@ export function createUsageCache(
     const usable =
       snapshot && startedAt - snapshot.storedAt <= policy.maxStaleMs ? snapshot : undefined;
 
-    if (entry && startedAt < entry.nextAttemptAt) {
+    if (!refresh && entry && startedAt < entry.nextAttemptAt) {
       if (usable) {
         return {
           payload: usable.payload,
@@ -381,12 +383,15 @@ export function createUsageCache(
   };
 
   return {
-    request: (key, load, policy) => {
+    request: (key, load, policy, refresh = false) => {
       const pending = inflight.get(key);
-      if (pending) return pending;
-      const started = run(key, load, policy).finally(() => {
-        inflight.delete(key);
-      });
+      if (pending && !refresh) return pending;
+      // A mutation refresh must run AFTER an older read, never share its stale result.
+      const started = (pending ? pending.catch(() => undefined) : Promise.resolve())
+        .then(() => run(key, load, policy, refresh))
+        .finally(() => {
+          if (inflight.get(key) === started) inflight.delete(key);
+        });
       inflight.set(key, started);
       return started;
     },

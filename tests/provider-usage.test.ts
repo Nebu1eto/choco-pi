@@ -171,6 +171,49 @@ test("contains a synchronous stale-context failure while a tab is switching", as
   controller.dispose();
 });
 
+test("Usage reset key runs the action once and returns to the Usage menu", async () => {
+  type Command = { handler: (args: string, ctx: never) => Promise<void> };
+  type DialogFactory = (
+    tui: { requestRender(): void },
+    theme: { fg(color: string, text: string): string; bold(text: string): string },
+    keybindings: Record<string, never>,
+    done: (result?: string) => void,
+  ) => { handleInput(data: string): void };
+  const commands = new Map<string, Command>();
+  // SAFETY: Registration uses only these API methods.
+  statusCommands({
+    on: () => {},
+    registerCommand: (name: string, command: Command) => commands.set(name, command),
+    getThinkingLevel: () => "medium",
+  } as never);
+  let dialogs = 0;
+  const notices: string[] = [];
+  const ctx = {
+    mode: "tui",
+    modelRegistry: { getProviderAuthStatus: () => ({ configured: false }) },
+    ui: {
+      notify: (message: string) => notices.push(message),
+      custom: (factory: DialogFactory) =>
+        new Promise<string | undefined>((resolve) => {
+          const dialog = factory(
+            { requestRender: () => {} },
+            { fg: (_color, text) => text, bold: (text) => text },
+            {},
+            resolve,
+          );
+          if (++dialogs === 1) {
+            dialog.handleInput("r");
+            dialog.handleInput("r");
+          } else dialog.handleInput("\r");
+        }),
+    },
+  };
+  // SAFETY: The fixture implements the Usage dialog and disconnected reset path.
+  await commands.get("usage")?.handler("", ctx as never);
+  assert.equal(dialogs, 2);
+  assert.deepEqual(notices, ["OpenAI Codex is not connected."]);
+});
+
 test("labels Claude plans from the live profile, with Team seats before the rate-limit tier", () => {
   const profile = (
     organization: Record<string, RuntimeValue>,

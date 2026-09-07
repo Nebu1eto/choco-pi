@@ -9,6 +9,7 @@ import {
   type UsageRequestResult,
 } from "./lib/usage-cache.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createCodexResetClient, runCodexResetFlow } from "./lib/codex-resets.ts";
 
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
 const USAGE_BAR_WIDTH = 50;
@@ -357,10 +358,21 @@ export function normalizeCodexUsage(payload: RuntimeValue): ProviderUsage {
   const balance = credits
     ? (stringValue(credits.balance) ?? numberValue(credits.balance)?.toString())
     : undefined;
+  const resetCredits = isRecord(payload.rate_limit_reset_credits)
+    ? payload.rate_limit_reset_credits
+    : undefined;
+  const resetCount = numberValue(resetCredits?.available_count);
+  const resets =
+    resetCount !== undefined && Number.isSafeInteger(resetCount) && resetCount >= 0
+      ? `${resetCount} saved reset${resetCount === 1 ? "" : "s"} available`
+      : undefined;
   return {
     name: "OpenAI Codex",
     plan,
-    status: balance === undefined ? undefined : `${balance} credits`,
+    status:
+      [balance === undefined ? undefined : `${balance} credits`, resets]
+        .filter(Boolean)
+        .join(" · ") || undefined,
     windows,
   };
 }
@@ -553,6 +565,14 @@ async function codexUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
   if (!token) return { name: "OpenAI Codex", status: "not connected", windows: [] };
   const accountId = codexAccountId(token);
   if (!accountId) throw new Error("OAuth account ID is unavailable");
+  return readCodexUsage(token, accountId);
+}
+
+async function readCodexUsage(
+  token: string,
+  accountId: string,
+  refresh = false,
+): Promise<ProviderUsage> {
   const usage = await usageCache.request(
     `openai-codex:usage:${identityKey(accountId)}`,
     () =>
@@ -561,8 +581,32 @@ async function codexUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
         originator: "pi",
       }),
     USAGE_POLICY,
+    refresh,
   );
   return withCacheNote(normalizeCodexUsage(usage.payload), usage);
+}
+
+export async function resetCodexUsage(
+  ctx: ExtensionContext,
+  isCurrent: () => boolean,
+): Promise<string | undefined> {
+  const registry = ctx.modelRegistry;
+  if (!registry.getProviderAuthStatus("openai-codex").configured)
+    return "OpenAI Codex is not connected.";
+  const token = await registry.getApiKeyForProvider("openai-codex");
+  if (!isCurrent()) return;
+  if (!token) return "OpenAI Codex is not connected.";
+  const accountId = codexAccountId(token);
+  if (!accountId) return "OAuth account ID is unavailable.";
+  return runCodexResetFlow({
+    client: createCodexResetClient(token, accountId),
+    select: (title, choices) => ctx.ui.select(title, choices),
+    isCurrent,
+    refresh: async () => {
+      const usage = await readCodexUsage(token, accountId, true);
+      if (usage.cached) throw new Error("Usage refresh returned a cached snapshot.");
+    },
+  });
 }
 
 async function syntheticUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
