@@ -3,17 +3,17 @@ import { fileURLToPath } from "node:url";
 import { createPrototypeHost } from "./host.ts";
 import { connectPrototype } from "./transport.ts";
 
-const checkout = fileURLToPath(new URL("../../../../../", import.meta.url));
-if (
-  realpathSync(process.cwd()) !== realpathSync(checkout) ||
-  !realpathSync(checkout).endsWith("/choco-pi-dev")
-) {
-  throw new Error("Run only from the choco-pi-dev worktree");
+const checkout = realpathSync(fileURLToPath(new URL("../../../../../", import.meta.url)));
+const allowedCheckout =
+  checkout.endsWith("/choco-pi-dev") ||
+  (checkout.endsWith("/choco-pi") && process.argv.includes("--allow-main"));
+if (realpathSync(process.cwd()) !== checkout || !allowedCheckout) {
+  throw new Error("Run from choco-pi-dev, or explicitly allow choco-pi with --allow-main");
 }
 const mode = process.argv[2];
 if (!process.argv.includes("--live") || (mode !== "steering" && mode !== "async")) {
   throw new Error(
-    "Usage: node .pi/packages/choco-pi-codex/src/prototype/run.ts steering|async --live",
+    "Usage: node .pi/packages/choco-pi-codex/src/prototype/run.ts steering|async --live [--allow-main]",
   );
 }
 let trace: string[] = [];
