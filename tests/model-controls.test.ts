@@ -2,6 +2,7 @@ import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { runInChildSessionContext } from "../.pi/packages/choco-pi-subagents/src/child-context.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
@@ -15,6 +16,79 @@ import {
 } from "../.pi/extensions/model-controls.ts";
 
 type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
+
+function fastModeSession(id: string, enabled?: boolean) {
+  const handlers = new Map<string, (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue>();
+  const commands = new Map<string, (args: string, ctx: RuntimeValue) => Promise<void>>();
+  const entries =
+    enabled === undefined
+      ? []
+      : [{ type: "custom", customType: "choco-pi-fast-mode", data: { enabled } }];
+  const ctx = {
+    mode: "rpc",
+    model: model("openai-codex"),
+    sessionManager: { getBranch: () => entries, getSessionId: () => id },
+    ui: { notify: () => {}, setStatus: () => {} },
+  };
+  modelControls(
+    reinterpretHostValue<import("@earendil-works/pi-coding-agent").ExtensionAPI>({
+      on: (name: string, handler: (event: RuntimeValue, context: RuntimeValue) => RuntimeValue) =>
+        handlers.set(name, handler),
+      registerCommand: (
+        name: string,
+        options: { handler: (args: string, context: RuntimeValue) => Promise<void> },
+      ) => commands.set(name, options.handler),
+      appendEntry: () => {},
+    }),
+  );
+  return {
+    start: () => handlers.get("session_start")?.({}, ctx),
+    stop: () => handlers.get("session_shutdown")?.({}, ctx),
+    toggle: (action: string) => commands.get("fast")?.(action, ctx),
+    request: (provider = "openai-codex") =>
+      handlers.get("before_provider_request")?.(
+        { payload: { model: "test", service_tier: "auto" } },
+        { ...ctx, model: { ...ctx.model, provider } },
+      ),
+  };
+}
+
+test("child OpenAI requests inherit main fast mode without overriding child history", async () => {
+  const root = fastModeSession("fast-root");
+  root.start();
+  const children: ReturnType<typeof fastModeSession>[] = [];
+  const child = async (id: string, enabled?: boolean) => {
+    const session = await runInChildSessionContext(async () => fastModeSession(id, enabled));
+    children.push(session);
+    session.start();
+    return session;
+  };
+  try {
+    assert.equal((await child("before-on")).request(), undefined);
+    await root.toggle("on");
+    const inherited = await child("inherited");
+    const priority = { model: "test", service_tier: "priority" };
+    assert.deepEqual(inherited.request(), priority);
+    assert.deepEqual(inherited.request("openai"), priority);
+    assert.equal(inherited.request("synthetic"), undefined);
+    assert.equal((await child("explicit-off", false)).request(), undefined);
+    assert.deepEqual(root.request(), priority);
+    await inherited.toggle("off");
+    assert.deepEqual((await child("sibling")).request(), priority);
+    await root.toggle("off");
+    assert.equal((await child("after-off")).request(), undefined);
+    assert.deepEqual((await child("explicit-on", true)).request(), priority);
+  } finally {
+    for (const session of children) session.stop();
+    root.stop();
+  }
+  const orphan = await child("after-shutdown");
+  try {
+    assert.equal(orphan.request(), undefined);
+  } finally {
+    orphan.stop();
+  }
+});
 
 function model(provider: "openai-codex" | "synthetic"): Model<Api> {
   return {
