@@ -214,3 +214,15 @@ are the upstream prebuilt Rust binaries for those tools (same tarball provenance
 ## Deferred runtime imports (choco-pi addition)
 
 Load-time-only changes defer provider stream processing, websocket connection setup, Code Mode host process support, exec session internals, apply-patch execution, optional image and web tool execution, settings screens, and image codecs until the corresponding provider request, tool call, command, or event handler runs. Registration keeps the same provider, tool and command names, schemas, event channels, descriptions, and `Symbol.for` keys. Public helper exports remain synchronous and load their implementation on first use.
+
+## Isolated Responses protocol prototype (choco-pi addition)
+
+`src/prototype/` adds an explicitly invoked, single-turn experiment for native
+Responses steering and one module-owned async synthetic lookup. It uses public
+Pi SDK/provider/input APIs only; it neither imports the registered-tool bridge
+nor modifies Pi. It is not imported by the package entry points or enabled in
+the profile. The live runner requires the `choco-pi-dev` checkout, reads an
+existing unexpired credential through Pi's public API without refreshing it,
+and isolates resources, settings, model cache, and session state. See
+`src/prototype/README.md` for commands and limits. Protocol regressions run in
+the baseline suite; the real Pi host `.e2e.ts` suite remains opt-in.
