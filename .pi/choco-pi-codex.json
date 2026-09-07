@@ -40,7 +40,9 @@
     "cacheDiagnostics": "off",
     "harnessIdentifierHeader": false,
     "webSearchModel": "gpt-5.6-luna",
-    "proxyResponsesLite": false
+    "proxyResponsesLite": false,
+    "midTurnSteering": true,
+    "asyncCodeMode": true
   },
   "executionMode": "code",
   "notebook": {
