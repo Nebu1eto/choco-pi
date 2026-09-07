@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { isWebSocketMessageTooBigError } from "../src/providers/openai-codex/websocket-connection.ts";
+import {
+  recordWebSocketSseFallback,
+  isWebSocketSseFallbackActive,
+  closeOpenAICodexWebSocketSessions,
+} from "../src/providers/openai-codex/websocket-session-cache.ts";
 import {
   normalizeCodexConversionConfig,
   DEFAULT_CODEX_CONVERSION_CONFIG,
@@ -30,8 +36,12 @@ class Socket implements WebSocketLike {
   send(data: string) {
     this.sent.push(data);
   }
-  close() {
-    for (const listener of this.listeners.get("close") ?? []) listener({});
+  close(code?: number, reason?: string) {
+    for (const listener of this.listeners.get("close") ?? []) listener({ code, reason });
+  }
+  error() {
+    for (const listener of this.listeners.get("error") ?? [])
+      listener({ error: new Error("socket error") });
   }
   addEventListener(type: string, listener: (event: WebSocketEvent) => void) {
     const listeners = this.listeners.get(type) ?? new Set();
@@ -287,4 +297,92 @@ test("a received terminal frame is drained before a following socket close", asy
   for await (const event of connection.responseEvents(undefined, 1000)) events.push(event);
   assert.equal(events.at(-1)?.type, "response.completed");
   connection.close();
+});
+
+test("zero idle timeout waits for delayed frames instead of closing immediately", async () => {
+  const socket = new Socket();
+  const connection = openNativeSteering(socket, "zero-idle");
+  const signal = AbortSignal.timeout(2000);
+  connection.begin(body(), signal);
+  const timer = setTimeout(
+    () => socket.emit({ type: "response.completed", response: { id: "r1", status: "completed" } }),
+    30,
+  );
+  try {
+    const events: CodexStreamEvent[] = [];
+    for await (const event of connection.responseEvents(signal, 0)) events.push(event);
+    assert.equal(events.at(-1)?.type, "response.completed");
+  } finally {
+    clearTimeout(timer);
+    connection.close();
+  }
+});
+
+test("zero continuation timeout waits for accepted steering's successor", async () => {
+  const { socket, connection } = await active("zero-prepare");
+  const timer = setTimeout(
+    () => socket.emit({ type: "response.created", response: { id: "r2" } }),
+    30,
+  );
+  try {
+    const next = {
+      ...body(),
+      previous_response_id: "r1",
+      input: [{ role: "user", content: "change" }],
+    };
+    assert.deepEqual(await connection.prepare(next, next, AbortSignal.timeout(2000), 0), {
+      kind: "automatic",
+    });
+  } finally {
+    clearTimeout(timer);
+    connection.close();
+  }
+});
+
+for (const errorFirst of [false, true]) {
+  test(`close code 1009 retains immediate SSE fallback classification (error first: ${errorFirst})`, async () => {
+    const socket = new Socket();
+    const connection = openNativeSteering(socket, `close-1009-${errorFirst}`);
+    connection.begin(body());
+    if (errorFirst) socket.error();
+    socket.close(1009, "message too big");
+    try {
+      await assert.rejects(
+        async () => {
+          for await (const _event of connection.responseEvents(undefined, 1000)) {
+            /* drain */
+          }
+        },
+        (error: Error) => isWebSocketMessageTooBigError(error),
+      );
+    } finally {
+      connection.close();
+    }
+  });
+}
+
+test("oversized close between turns marks the owner for SSE without an active reader", async () => {
+  const owner = "parked-1009";
+  const socket = new Socket();
+  const connection = openNativeSteering(socket, owner, undefined, () =>
+    recordWebSocketSseFallback(owner),
+  );
+  connection.begin(body());
+  const events = connection.responseEvents(undefined, 1000)[Symbol.asyncIterator]();
+  socket.emit({ type: "response.created", response: { id: "r1" } });
+  await events.next();
+  assert.equal(connection.steer("change"), true);
+  socket.emit({ type: "response.completed", response: { id: "r1", status: "completed" } });
+  while (!(await events.next()).done) {
+    /* drain the original response */
+  }
+  connection.finish();
+  try {
+    socket.close(1009, "message too big");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(isWebSocketSseFallbackActive(owner), true);
+  } finally {
+    connection.close();
+    closeOpenAICodexWebSocketSessions(owner);
+  }
 });
