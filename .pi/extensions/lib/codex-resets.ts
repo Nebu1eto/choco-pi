@@ -103,6 +103,16 @@ const OUTCOMES = new Map([
   ["no_credit", "No saved Codex reset is available."],
 ]);
 
+async function refreshAfterReset(refresh: () => Promise<void>): Promise<void> {
+  const timeout = Promise.withResolvers<never>();
+  const timer = setTimeout(() => timeout.reject(new Error("Usage refresh timed out.")), 10_000);
+  try {
+    await Promise.race([refresh(), timeout.promise]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function runCodexResetFlow(options: {
   client: CodexResetClient;
   select(title: string, choices: string[]): Promise<string | undefined>;
@@ -145,7 +155,7 @@ export async function runCodexResetFlow(options: {
     }
     if (!isCurrent()) return;
     try {
-      await refresh();
+      await refreshAfterReset(refresh);
     } catch {
       message += " Usage refresh failed; displayed data may be stale.";
     }
