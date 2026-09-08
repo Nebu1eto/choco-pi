@@ -12,6 +12,8 @@ import {
   SettingsManager,
   readStoredCredential,
   type ExtensionFactory,
+  type ExtensionUIContext,
+  AgentSessionRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../src/adapter/activation/config.ts";
 import { registerNativeFeatures } from "../src/extension/native-features.ts";
@@ -32,6 +34,8 @@ export async function createNativeHost(options: {
   transport?: "websocket-cached" | "sse";
   blockExec?: boolean;
   delayMs?: number;
+  uiContext?: ExtensionUIContext;
+  transformSteer?: boolean;
 }) {
   const credential = readStoredCredential("openai-codex");
   if (credential?.type !== "oauth" || credential.expires < Date.now() + 180000)
@@ -60,6 +64,15 @@ export async function createNativeHost(options: {
   let codeMode: CodeModeRegistration | undefined;
   const extension: ExtensionFactory = async (pi) => {
     registerNativeFeatures(pi, () => enabled);
+    if (options.transformSteer) {
+      pi.on("input", (event) => {
+        if (event.streamingBehavior === "steer")
+          return {
+            action: "transform",
+            text: `${event.text}\nThis input was transformed by the test.`,
+          };
+      });
+    }
     pi.registerProvider("openai-codex", {
       api: "openai-codex-responses",
       apiKey: "probe-uses-readonly-auth",
@@ -173,7 +186,7 @@ export async function createNativeHost(options: {
       tools: options.codeMode ? ["exec", "wait"] : [],
     });
     try {
-      await session.bindExtensions({});
+      await session.bindExtensions(options.uiContext ? { uiContext: options.uiContext } : {});
       const model = runtime.getModel("openai-codex", "gpt-6-astra");
       if (!model) throw new Error("Native model not registered");
       await session.setModel(model);
@@ -195,6 +208,20 @@ export async function createNativeHost(options: {
     });
     return {
       session,
+      runtime: new AgentSessionRuntime(
+        session,
+        {
+          cwd: scratch,
+          agentDir: scratch,
+          modelRuntime: runtime,
+          settingsManager: settings,
+          resourceLoader: loader,
+          diagnostics: [],
+        },
+        async () => {
+          throw new Error("Native probe does not support session replacement");
+        },
+      ),
       marker,
       observations,
       async dispose() {

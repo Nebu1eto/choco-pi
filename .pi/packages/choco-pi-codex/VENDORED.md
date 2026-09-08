@@ -258,3 +258,12 @@ The native inbox preserves the ordinary transport's zero-timeout semantics and
 structured WebSocket close/error classification. Close code 1009 selects SSE
 fallback even if it arrives between Pi turns, and a following close event can
 refine an earlier generic socket error without dropping received terminal frames.
+
+Native steering now carries a per-submission observer from the public input
+hook through acceptance and validated successor consumption. The session-local
+`ui/steering-status.ts` widget displays the latest four numbered previews and
+their queue/sent/accepted/applied/fallback receipts without modifying Pi history
+or its queue. Terminal receipts settle once; session invalidation suppresses
+stale UI callbacks. Logging remains optional and contains no steering text.
+Focused regressions cover correlation, fallback and lifecycle; opt-in Astra SDK
+and dedicated interactive Pi probes cover production UI delivery.
