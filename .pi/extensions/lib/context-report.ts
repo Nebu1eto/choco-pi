@@ -169,7 +169,8 @@ function contextEntries(ctx: ExtensionCommandContext): SessionEntry[] {
 }
 
 function messageTokens(entries: SessionEntry[]): number {
-  return estimate(entries.flatMap(sessionEntryToContextMessages));
+  const messages = entries.flatMap(sessionEntryToContextMessages);
+  return messages.length > 0 ? estimate(messages) : 0;
 }
 
 function measuredUsagePredatesCompaction(entries: SessionEntry[]): boolean {
@@ -240,15 +241,16 @@ function categoryData(
   let prompt = providerMetrics
     ? Math.max(0, providerMetrics.systemTokens - skills - contextFiles)
     : estimate(ctx.getSystemPrompt());
-  if (measuredTotal !== undefined) {
-    [prompt, systemTools, mcp, agents, contextFiles, skills] = allocateTokens(
-      [prompt, systemTools, mcp, agents, contextFiles, skills],
-      Math.min(measuredTotal, prompt + systemTools + mcp + agents + contextFiles + skills),
+  const known = prompt + systemTools + mcp + agents + contextFiles + skills;
+  let messages =
+    measuredTotal === undefined ? messagesEstimate : Math.max(0, measuredTotal - known);
+  if (measuredTotal !== undefined && known + messagesEstimate > measuredTotal) {
+    // Normalize all estimates together: overhead must not erase real messages.
+    [prompt, systemTools, mcp, agents, contextFiles, skills, messages] = allocateTokens(
+      [prompt, systemTools, mcp, agents, contextFiles, skills, messagesEstimate],
+      measuredTotal,
     );
   }
-  const known = prompt + systemTools + mcp + agents + contextFiles + skills;
-  const messages =
-    measuredTotal === undefined ? messagesEstimate : Math.max(0, measuredTotal - known);
   return [
     { label: "System prompt", tokens: prompt, marker: "S" },
     { label: "System tools", tokens: systemTools, marker: "T" },
