@@ -284,3 +284,18 @@ models, Off, and ineligible requests retain existing behavior. Failed successors
 reconnect directly instead of retrying an invalidated previous response ID, and
 metadata diagnostics include sanitized error codes without raw error messages.
 Regression and opt-in live coverage include a thinking steer after a prior turn.
+
+## Native steering pending bridge (choco-pi addition)
+
+"providers/openai-codex/native-steering.ts" adds a read-only
+"isNativeSteerPending(owner)" predicate over its existing owner registry, and
+"extension/native-steering-bridge.ts" publishes it to sibling extension
+packages through the established "Symbol.for" frozen-process-global seam
+(mirroring "extension/transport-cleanup.ts"). "register.ts" installs the
+bridge beside transport cleanup with one import and one call.
+Notification-producing packages can duck-type the slot to hold queued
+completions while a native steer is pending, instead of having any queued
+message downgrade the user's steer through "hasPendingMessages()". No steering
+behavior, history, or Pi internals change; tests cover symbol resolution,
+unknown owners, pending transitions, and close cleanup.
+

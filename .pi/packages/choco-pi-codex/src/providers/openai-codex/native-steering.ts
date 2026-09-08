@@ -412,3 +412,6 @@ export function closeNativeSteering(owner?: string): void {
   if (owner) byOwner.get(owner)?.close();
   else for (const connection of byOwner.values()) connection.close();
 }
+export function isNativeSteerPending(owner: string): boolean {
+  return byOwner.get(owner)?.hasPending ?? false;
+}
