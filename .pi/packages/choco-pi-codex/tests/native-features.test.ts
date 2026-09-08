@@ -22,6 +22,7 @@ import {
   openNativeSteering,
   closeNativeSteering,
   steerNativeResponse,
+  type SteeringStatus,
 } from "../src/providers/openai-codex/native-steering.ts";
 import type {
   ResponsesBody,
@@ -149,6 +150,7 @@ test("async hints are owner-scoped, one-shot, and cleared on shutdown", () => {
 });
 
 async function active(owner: string) {
+  const statuses: SteeringStatus[] = [];
   const socket = new Socket();
   const connection = openNativeSteering(socket, owner);
   const controller = new AbortController();
@@ -156,14 +158,17 @@ async function active(owner: string) {
   const events = connection.responseEvents(controller.signal, 1000)[Symbol.asyncIterator]();
   socket.emit({ type: "response.created", response: { id: "r1" } });
   await events.next();
-  assert.equal(steerNativeResponse(owner, "change"), true);
+  assert.equal(
+    steerNativeResponse(owner, "change", (status) => statuses.push(status)),
+    true,
+  );
   socket.emit({ type: "response.steer.accepted", steer: { id: "s1", previous_response_id: "r1" } });
-  return { socket, connection, events, controller };
+  return { socket, connection, events, controller, statuses };
 }
 
 for (const terminal of ["response.completed", "response.incomplete"]) {
   test(`steering buffers the automatic successor after ${terminal}`, async () => {
-    const { socket, connection, events } = await active(terminal);
+    const { socket, connection, events, statuses } = await active(terminal);
     try {
       socket.emit({
         type: terminal,
@@ -188,9 +193,13 @@ for (const terminal of ["response.completed", "response.incomplete"]) {
       assert.deepEqual(await connection.prepare(next, next, undefined, 1000), {
         kind: "automatic",
       });
+      assert.deepEqual(statuses, ["sent", "accepted"], "preparation is not application");
       const successor: CodexStreamEvent[] = [];
       for await (const event of connection.responseEvents(undefined, 1000)) successor.push(event);
       assert.equal(successor.at(-1)?.response?.id, "r2");
+      assert.deepEqual(statuses, ["sent", "accepted", "applied"]);
+      connection.close();
+      assert.deepEqual(statuses, ["sent", "accepted", "applied"], "close cannot overwrite applied");
       assert.deepEqual(
         socket.sent.map((raw) => JSON.parse(raw).type),
         ["response.steer"],
@@ -202,7 +211,7 @@ for (const terminal of ["response.completed", "response.incomplete"]) {
 }
 
 test("pending required input removes only the accepted steer, not tool outputs", async () => {
-  const { socket, connection } = await active("required");
+  const { socket, connection, events, statuses } = await active("required");
   try {
     socket.emit({
       type: "response.steer.pending",
@@ -218,13 +227,24 @@ test("pending required input removes only the accepted steer, not tool outputs",
       kind: "send",
       body: { ...next, input: [output] },
     });
+    assert.deepEqual(statuses, ["sent", "accepted"]);
+    socket.emit({ type: "response.completed", response: { id: "r1", status: "completed" } });
+    while (!(await events.next()).done) {
+      /* original response */
+    }
+    socket.emit({ type: "response.created", response: { id: "r2" } });
+    socket.emit({ type: "response.completed", response: { id: "r2", status: "completed" } });
+    for await (const _event of connection.responseEvents(undefined, 1000)) {
+      /* successor */
+    }
+    assert.deepEqual(statuses, ["sent", "accepted", "applied"]);
   } finally {
     connection.close();
   }
 });
 
 test("changed queued input discards unconsumed generation rather than dropping user data", async () => {
-  const { socket, connection } = await active("mismatch");
+  const { socket, connection, statuses } = await active("mismatch");
   try {
     socket.emit({ type: "response.created", response: { id: "r2" } });
     const next = {
@@ -233,13 +253,15 @@ test("changed queued input discards unconsumed generation rather than dropping u
       input: [{ role: "user", content: "transformed" }],
     };
     assert.deepEqual(await connection.prepare(next, next, undefined, 1000), { kind: "reconnect" });
+    connection.close();
+    assert.deepEqual(statuses, ["sent", "accepted", "fallback"]);
   } finally {
     connection.close();
   }
 });
 
 test("steering failure preserves Pi's queued input for ordinary delivery", async () => {
-  const { socket, connection } = await active("failed");
+  const { socket, connection, statuses } = await active("failed");
   try {
     socket.emit({ type: "response.steer.failed", steer: { id: "s1", previous_response_id: "r1" } });
     const next = {
@@ -251,6 +273,8 @@ test("steering failure preserves Pi's queued input for ordinary delivery", async
       kind: "send",
       body: next,
     });
+    connection.close();
+    assert.deepEqual(statuses, ["sent", "accepted", "fallback"]);
   } finally {
     connection.close();
   }

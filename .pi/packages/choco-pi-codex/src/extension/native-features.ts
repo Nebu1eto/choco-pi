@@ -4,17 +4,21 @@ import {
   steerNativeResponse,
 } from "../providers/openai-codex/native-steering.ts";
 import { clearAsyncCodeModeCalls } from "../providers/openai-codex/native-features.ts";
+import { SteeringStatusWidget } from "../ui/steering-status.ts";
 
 /** Side-band delivery only: returning normally lets Pi persist and queue the original input. */
 export function registerNativeFeatures(pi: ExtensionAPI, isEnabled: () => boolean): void {
   let owner = "";
+  const widget = new SteeringStatusWidget();
   pi.on("session_start", (_event, ctx) => {
+    widget.clear(ctx);
     if (owner) closeNativeSteering(owner);
     owner = ctx.sessionManager.getSessionId();
   });
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", (_event, ctx) => {
     const closing = owner;
     owner = "";
+    widget.clear(ctx);
     if (closing) closeNativeSteering(closing);
     if (closing) clearAsyncCodeModeCalls(closing);
   });
@@ -25,8 +29,14 @@ export function registerNativeFeatures(pi: ExtensionAPI, isEnabled: () => boolea
     }
   });
   pi.on("input", (event, ctx) => {
+    if (event.streamingBehavior !== "steer") {
+      if (ctx.isIdle()) widget.clear(ctx);
+      return;
+    }
+    const currentOwner = ctx.sessionManager.getSessionId();
+    if (currentOwner !== owner) return;
+    const observe = widget.add(event.text, ctx);
     if (
-      event.streamingBehavior !== "steer" ||
       event.images?.length ||
       ctx.hasPendingMessages() ||
       !isEnabled() ||
@@ -34,8 +44,6 @@ export function registerNativeFeatures(pi: ExtensionAPI, isEnabled: () => boolea
       ctx.model.provider !== "openai-codex"
     )
       return;
-    const currentOwner = ctx.sessionManager.getSessionId();
-    if (currentOwner !== owner) return;
-    steerNativeResponse(currentOwner, event.text);
+    steerNativeResponse(currentOwner, event.text, observe);
   });
 }

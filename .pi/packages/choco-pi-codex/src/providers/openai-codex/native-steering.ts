@@ -45,12 +45,16 @@ const OutputSchema = Type.Object({
 const IncompleteSchema = Type.Object({ reason: Type.Literal("steered") });
 
 type Resolution = "automatic" | "required" | "failed";
+export type SteeringStatus = "sent" | "accepted" | "applied" | "fallback";
+export type SteeringObserver = (status: SteeringStatus) => void;
 interface PendingSteer {
   text: string;
   target: string;
   acceptedId?: string;
   ready: Promise<Resolution>;
   resolve: (value: Resolution) => void;
+  observe?: SteeringObserver | undefined;
+  settled?: boolean;
 }
 type Preparation =
   | { kind: "automatic" }
@@ -75,6 +79,7 @@ export class NativeSteeringConnection {
   private generating = false;
   private responseId = "";
   private pending: PendingSteer | undefined;
+  private delivery: PendingSteer | undefined;
   private body: ResponsesBody | undefined;
   private queue: { event: CodexStreamEvent; bytes: number }[] = [];
   private bytes = 0;
@@ -107,14 +112,14 @@ export class NativeSteeringConnection {
     return Boolean(this.pending);
   }
 
-  steer(text: string): boolean {
+  steer(text: string, observe?: SteeringObserver): boolean {
     if (this.closed || !this.generating || this.pending || !text.trim() || text.length > 16384)
       return false;
     let resolve!: PendingSteer["resolve"];
     const ready = new Promise<Resolution>((done) => {
       resolve = done;
     });
-    this.pending = { text, target: this.responseId, ready, resolve };
+    this.pending = { text, target: this.responseId, ready, resolve, observe };
     try {
       this.socket.send(
         JSON.stringify({
@@ -124,11 +129,18 @@ export class NativeSteeringConnection {
         }),
       );
       this.trace?.({ type: "native-steering", phase: "sent" });
+      this.report(this.pending, "sent");
       return true;
     } catch {
       this.close();
       return false; // Pi's ordinary input path still owns and queues this message.
     }
+  }
+
+  private report(pending: PendingSteer | undefined, status: SteeringStatus): void {
+    if (!pending || pending.settled) return;
+    if (status === "applied" || status === "fallback") pending.settled = true;
+    pending.observe?.(status);
   }
 
   begin(body: ResponsesBody, signal?: AbortSignal): void {
@@ -162,6 +174,7 @@ export class NativeSteeringConnection {
       signal?.throwIfAborted();
       if (this.closed) return { kind: "reconnect" };
       this.pending = undefined;
+      this.delivery = pending;
       if (resolution === "failed") return { kind: "send", body: request };
       if (!pending.acceptedId) return { kind: "reconnect" };
       const users = request.input.filter((item) => matchesUser(item, pending.text));
@@ -207,6 +220,15 @@ export class NativeSteeringConnection {
       if (next) {
         this.bytes -= next.bytes;
         const event = next.event;
+        if (
+          event.type === "response.created" &&
+          event.response?.id &&
+          this.delivery &&
+          event.response.id !== this.delivery.target
+        ) {
+          this.report(this.delivery, "applied");
+          this.delivery = undefined;
+        }
         const turnState = extractCodexTurnStateFromWebSocketEvent(event);
         if (turnState) onTurnState?.(turnState);
         const terminal =
@@ -255,6 +277,8 @@ export class NativeSteeringConnection {
   close(closeSocket = true): void {
     if (this.closed) return;
     this.closed = true;
+    this.report(this.pending, "fallback");
+    this.report(this.delivery, "fallback");
     this.trace?.({ type: "native-steering", phase: "closed" });
     this.generating = false;
     this.pending?.resolve("failed");
@@ -322,6 +346,7 @@ export class NativeSteeringConnection {
         ) {
           pending.acceptedId = event["steer"].id;
           this.trace?.({ type: "native-steering", phase: "accepted" });
+          this.report(pending, "accepted");
         }
         if (
           event.type === "response.steer.pending" &&
@@ -334,6 +359,7 @@ export class NativeSteeringConnection {
         }
         if (event.type === "response.steer.failed" && pending) {
           this.trace?.({ type: "native-steering", phase: "failed" });
+          this.report(pending, "fallback");
           pending.resolve("failed");
         }
         this.bytes += text.length;
@@ -368,8 +394,12 @@ export function openNativeSteering(
   byOwner.set(owner, connection);
   return connection;
 }
-export function steerNativeResponse(owner: string, text: string): boolean {
-  return byOwner.get(owner)?.steer(text) ?? false;
+export function steerNativeResponse(
+  owner: string,
+  text: string,
+  observe?: SteeringObserver,
+): boolean {
+  return byOwner.get(owner)?.steer(text, observe) ?? false;
 }
 export function closeNativeSteering(owner?: string): void {
   if (owner) byOwner.get(owner)?.close();

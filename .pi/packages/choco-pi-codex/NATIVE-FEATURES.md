@@ -34,6 +34,16 @@ bypass the extension input hook; prompt submission with
 `streamingBehavior: "steer"` uses it.
 
 Steering does not undo completed output or cancel tools already running.
+The editor widget shows the latest four steering submissions independently,
+with numbered, sanitized message previews: **Queued (Pi path)**, **Mid-turn
+sent**, **Mid-turn accepted**, **Mid-turn applied**, or **Queue fallback**.
+Applied means the validated native successor started being consumed; it does
+not claim that the model followed the instruction or completed successfully.
+Pi's ordinary queue remains authoritative. These session-local receipts are
+not saved to history or sent to the model, and clear on the next idle prompt,
+session replacement, or reload. They do not require diagnostic logging.
+Direct SDK/RPC steer commands that bypass the input hook have no receipt.
+
 The inbox is capped at 10,000 queued events and two million decoded characters;
 overflow or an invalid connection fails rather than replaying partial tool work.
 
@@ -74,3 +84,12 @@ CHOCO_PI_NATIVE_LIVE=1 node --test .pi/packages/choco-pi-codex/tests/native-feat
 This consumes Codex inference quota. It exercises steering history, actual Code
 Mode yield/wait, normal Pi tool blocking, Off, and SSE. The older single-turn
 prototype under `src/prototype/` remains a separate explicitly invoked experiment.
+
+For an isolated real interactive Pi TUI, run the following in a disposable
+terminal and submit a text-only steer while Astra is streaming. Add `--off`
+for a queue-only control or `--fallback` to test a post-hook input transform
+that forces ordinary queue recovery. Exit with `/quit`.
+
+```sh
+CHOCO_PI_NATIVE_LIVE=1 node .pi/packages/choco-pi-codex/tests/native-steering-tui.ts
+```
