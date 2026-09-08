@@ -4,6 +4,7 @@ import { createNativeHost } from "./native-host-support.ts";
 
 if (process.env.CHOCO_PI_NATIVE_LIVE !== "1") throw new Error("Requires CHOCO_PI_NATIVE_LIVE=1");
 const host = await createNativeHost({
+  watchdog: false,
   enabled: !process.argv.includes("--off"),
   transformSteer: process.argv.includes("--fallback"),
 });

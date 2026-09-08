@@ -267,3 +267,5 @@ or its queue. Terminal receipts settle once; session invalidation suppresses
 stale UI callbacks. Logging remains optional and contains no steering text.
 Focused regressions cover correlation, fallback and lifecycle; opt-in Astra SDK
 and dedicated interactive Pi probes cover production UI delivery.
+The interactive probe opts out of the automated host's 120-second abort watchdog
+so human-paced verification is not interrupted by a test-only timer.
