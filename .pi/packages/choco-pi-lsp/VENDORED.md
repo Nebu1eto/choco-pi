@@ -139,6 +139,16 @@ the runtime provenance check reads it.
 
 ## Added (choco-pi feature)
 
+`clients/context-injection-history.ts` retains consumed context guidance at its
+original transcript position for the current agent run. Session-start guidance,
+findings, and nudges no longer disappear on the next provider call and invalidate
+native steering/cached continuation prefixes. State is isolated by session, cleared
+synchronously at agent end and session start/shutdown, and discarded when transcript
+content is rewritten or shortened. Guidance is not persisted into Pi's session
+history. Existing new-guidance placement and tool-call/result adjacency are retained.
+Regression tests include actual Codex request serialization and refusal of genuinely
+changed history; long-session full-profile steering is verified separately.
+
 Code-mode edit tracking (`clients/code-mode-tool-results.ts`) — pi 0.84.2
 reports the agent's edits as nested `details.traces` entries on an outer `exec`
 tool result. Upstream inspects only the outer `toolName`, so under code mode it
