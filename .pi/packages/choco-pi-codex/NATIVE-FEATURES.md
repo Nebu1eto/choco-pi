@@ -88,7 +88,9 @@ prototype under `src/prototype/` remains a separate explicitly invoked experimen
 For an isolated real interactive Pi TUI, run the following in a disposable
 terminal and submit a text-only steer while Astra is streaming. Add `--off`
 for a queue-only control or `--fallback` to test a post-hook input transform
-that forces ordinary queue recovery. Exit with `/quit`.
+that forces ordinary queue recovery. The interactive runner disables the
+automated suite's 120-second abort watchdog; transport idle timeouts still apply.
+Exit with `/quit`.
 
 ```sh
 CHOCO_PI_NATIVE_LIVE=1 node .pi/packages/choco-pi-codex/tests/native-steering-tui.ts

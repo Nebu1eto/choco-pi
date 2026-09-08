@@ -36,7 +36,9 @@ export async function createNativeHost(options: {
   delayMs?: number;
   uiContext?: ExtensionUIContext;
   transformSteer?: boolean;
+  watchdog?: boolean;
 }) {
+  const watchdog = options.watchdog !== false;
   const credential = readStoredCredential("openai-codex");
   if (credential?.type !== "oauth" || credential.expires < Date.now() + 180000)
     throw new Error("Native probe requires an existing unexpired Codex login");
@@ -194,9 +196,11 @@ export async function createNativeHost(options: {
       session.dispose();
       throw error;
     }
-    const timer = setTimeout(() => {
-      void session.abort();
-    }, 120000);
+    const timer = watchdog
+      ? setTimeout(() => {
+          void session.abort();
+        }, 120000)
+      : undefined;
     session.subscribe((event) => {
       if (
         event.type === "message_update" &&
