@@ -8,13 +8,16 @@ import type {
   UserMessage,
 } from "@earendil-works/pi-ai";
 import type { AgentSession, AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { AssistantMessageComponent, initTheme } from "@earendil-works/pi-coding-agent";
 import {
   getKeybindings,
+  Container,
   KeybindingsManager,
   setKeybindings,
   stripTerminalSequences,
   TUI_KEYBINDINGS,
+  type TUI,
+  type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
 import type { AgentRecord } from "../src/types.ts";
 import { continueRunningAgentNavigation, FocusedAgentController } from "../src/ui/focus-mode.ts";
@@ -25,6 +28,71 @@ import {
 import { installMethodPatch } from "../src/ui/method-patch-registry.ts";
 
 initTheme("dark", false);
+
+test("focused mouse routing isolates orchestrator reasoning and restores inherited predecessors", () => {
+  const thinking = (text: string): AssistantMessage => ({
+    ...makeAssistantMessage("answer"),
+    content: [{ type: "thinking", thinking: text }],
+  });
+  const document = new Container();
+  document.addChild(new AssistantMessageComponent(thinking("Orchestrator reasoning")));
+  const originalRender = document.render;
+  const originalMouse = document.handleMouse;
+  const originalLines = document.render(100).map(stripTerminalSequences);
+  const session = partialFixture<AgentSession>({
+    messages: [thinking("Child reasoning")],
+    subscribe: () => () => {},
+  });
+  const record = partialFixture<AgentRecord>({
+    id: "mouse-child",
+    type: "implementer",
+    status: "completed",
+    session,
+  });
+  const tui = partialFixture<TUI>({
+    children: [document],
+    terminal: partialFixture<TUI["terminal"]>({ rows: 40, columns: 100 }),
+    requestRender() {},
+  });
+  const controller = new FocusedAgentController({
+    steer: () => true,
+    abort: () => true,
+    resume: async () => undefined,
+  });
+  try {
+    assert.equal(controller.focus(record, tui, theme), true);
+    const lines = document.render(100).map(stripTerminalSequences);
+    const y = lines.findIndex((line) => line.includes("Child reasoning"));
+    assert.ok(y >= 0);
+    const click: TuiMouseEvent = {
+      type: "click",
+      button: "left",
+      x: 2,
+      y,
+      screenX: 2,
+      screenY: y,
+      width: 100,
+      height: lines.length,
+      shift: false,
+      alt: false,
+      ctrl: false,
+    };
+    assert.equal(document.handleMouse(click)?.handled, true);
+    assert.match(document.render(100).map(stripTerminalSequences).join("\n"), /Thinking\.\.\./);
+    assert.deepEqual(document.children[0].render(100).map(stripTerminalSequences), originalLines);
+    assert.equal(document.handleMouse({ ...click, y: lines.length + 10 }), undefined);
+    controller.unfocus();
+    assert.equal(document.render, originalRender);
+    assert.equal(document.handleMouse, originalMouse);
+    assert.equal(Object.hasOwn(document, "render"), false);
+    assert.equal(Object.hasOwn(document, "handleMouse"), false);
+    assert.deepEqual(document.render(100).map(stripTerminalSequences), originalLines);
+    assert.equal(document.handleMouse(click)?.handled, true);
+    assert.match(document.render(100).map(stripTerminalSequences).join("\n"), /Thinking\.\.\./);
+  } finally {
+    controller.dispose();
+  }
+});
 
 const theme = {
   fg: (_color: string, text: string) => text,

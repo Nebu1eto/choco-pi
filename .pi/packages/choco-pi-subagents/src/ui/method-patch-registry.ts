@@ -5,8 +5,11 @@ export const SUBAGENT_METHOD_PATCH_REGISTRY = Symbol.for(
   "choco-pi-subagents.method-patch-registry",
 );
 
-type PatchAdapter = "focused-conversation-render" | "focused-editor-input";
-type PatchMethod = "render" | "handleInput";
+type PatchAdapter =
+  | "focused-conversation-render"
+  | "focused-conversation-mouse"
+  | "focused-editor-input";
+type PatchMethod = "render" | "handleInput" | "handleMouse";
 type Method = (this: any, ...args: any[]) => any;
 
 type PatchInvocation = {
