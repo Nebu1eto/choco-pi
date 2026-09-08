@@ -1,8 +1,74 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createNativeHost } from "./native-host-support.ts";
+import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 
 const live = process.env.CHOCO_PI_NATIVE_LIVE === "1";
+
+for (const scenario of ["native", "off", "sse", "fallback"] as const) {
+  test(`steering UI correlates real Astra delivery: ${scenario}`, { skip: !live }, async () => {
+    const frames: string[][] = [];
+    // SAFETY: The production native input hook uses only setWidget in this SDK UI fixture.
+    // Interactive rendering is exercised separately by native-steering-tui.ts.
+    const uiContext = {
+      setWidget(_key: string, lines: string[] | undefined) {
+        if (lines) frames.push([...lines]);
+      },
+    } as ExtensionUIContext;
+    const host = await createNativeHost({
+      enabled: scenario !== "off",
+      transport: scenario === "sse" ? "sse" : "websocket-cached",
+      transformSteer: scenario === "fallback",
+      uiContext,
+    });
+    let steer: Promise<void> | undefined;
+    host.session.subscribe((event) => {
+      if (
+        event.type === "message_update" &&
+        !steer &&
+        (event.assistantMessageEvent.type === "text_delta" ||
+          event.assistantMessageEvent.type === "thinking_delta")
+      ) {
+        steer = host.session.prompt("Change direction. Say exactly STEERING_UI_OK.", {
+          streamingBehavior: "steer",
+        });
+        void steer.catch(() => {});
+      }
+    });
+    try {
+      assert.equal(host.session.model?.id, "gpt-6-astra");
+      assert.equal(host.session.model?.provider, "openai-codex");
+      await host.session.prompt("Explain five approaches to sorting a list with examples.");
+      await steer;
+      const rendered = frames.flat().join("\n");
+      assert.match(rendered, /Steer #1 · Queued/);
+      if (scenario === "native") {
+        assert.match(rendered, /Mid-turn sent/);
+        assert.match(rendered, /Mid-turn accepted/);
+        assert.match(frames.at(-1)![0]!, /Mid-turn applied/);
+        assert.equal(host.observations.automatic, 1);
+      } else if (scenario === "fallback") {
+        assert.match(rendered, /Mid-turn accepted/);
+        assert.match(frames.at(-1)![0]!, /Queue fallback/);
+        assert.doesNotMatch(rendered, /Mid-turn applied/);
+      } else {
+        assert.doesNotMatch(rendered, /Mid-turn|Queue fallback/);
+        assert.equal(host.observations.steeringPhases.includes("sent"), false);
+      }
+      assert.equal(host.session.messages.filter((message) => message.role === "user").length, 2);
+      const last = host.session.messages.at(-1);
+      assert.ok(last?.role === "assistant" && last.stopReason === "stop");
+      assert.ok(
+        last.content.some((part) => part.type === "text" && part.text.includes("STEERING_UI_OK")),
+      );
+      console.log(
+        JSON.stringify({ scenario, model: host.session.model?.id, frames, ...host.observations }),
+      );
+    } finally {
+      await host.dispose();
+    }
+  });
+}
 
 test(
   "production Mid-turn Steering preserves normal Pi user history and subsequent turns",
