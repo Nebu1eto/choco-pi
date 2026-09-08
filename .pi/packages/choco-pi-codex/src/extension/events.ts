@@ -7,7 +7,11 @@ const ToolCallOnlyAssistantMessageSchema = Type.Object({
   role: Type.Literal("assistant"),
   content: Type.Array(Type.Object({ type: Type.Literal("toolCall") }), { minItems: 1 }),
 });
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  buildSessionContext,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { readEffectiveCodexConversionConfig } from "../adapter/activation/config-store.ts";
 import { syncAdapter } from "../adapter/activation/activation.ts";
 import {
@@ -36,6 +40,19 @@ import type { CodexToolRegistration } from "./tools.ts";
 import type { CodexUiController } from "./ui.ts";
 import { withLiveCtx } from "./live-context.ts";
 import { resetRegisteredToolCapture } from "../tools/code-mode/registered-tool-bridge.ts";
+import { isNativeSteerPending } from "../providers/openai-codex/native-steering.ts";
+import {
+  assignTurnOrdinals,
+  computeCut,
+  eligibleToolResultChars,
+  elideToolResults,
+} from "./context-elision.ts";
+
+const CONTEXT_ELISION_ENTRY = "codex-context-elision";
+const ContextElisionEntrySchema = Type.Object({
+  epoch: Type.String(),
+  cut: Type.Integer({ minimum: 0 }),
+});
 
 function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
   let promise: Promise<Module> | undefined;
@@ -148,10 +165,27 @@ export function registerCodexEvents(
   proxyProvider: CodeModeProxyProviderRegistration,
 ): void {
   const { state, tracker, sessions } = runtime;
+  let elisionEpoch = "";
+  let elisionCut = 0;
+  const restoreElision = (ctx: ExtensionContext): void => {
+    const branch = ctx.sessionManager.getBranch();
+    elisionEpoch = branch.findLast((entry) => entry.type === "compaction")?.id ?? "";
+    elisionCut = 0;
+    for (const entry of branch) {
+      if (
+        entry.type === "custom" &&
+        entry.customType === CONTEXT_ELISION_ENTRY &&
+        Value.Check(ContextElisionEntrySchema, entry.data) &&
+        entry.data.epoch === elisionEpoch
+      )
+        elisionCut = Math.max(elisionCut, entry.data.cut);
+    }
+  };
   sessions.onSessionExit((sessionId) => tracker.recordSessionFinished(sessionId));
   registerSessionReplacementEvents(pi, runtime);
 
   pi.on("session_start", async (event, ctx) => {
+    restoreElision(ctx);
     ui.invalidateUsageStatus();
     const [{ initializeBashParser }, { extractPiPromptSkills }, { maybeWarnLocalCheckoutVersion }] =
       await Promise.all([loadBash(), loadPromptBuilder(), loadLocalVersionWarning()]);
@@ -219,6 +253,7 @@ export function registerCodexEvents(
       );
   });
   pi.on("session_tree", async (_event, ctx) => {
+    restoreElision(ctx);
     state.activeProviderSystemPrompt = undefined;
     state.voiceSystemPromptOverride = undefined;
     runtime.resetTransport(ctx.sessionManager.getSessionId());
@@ -290,6 +325,21 @@ export function registerCodexEvents(
   pi.on("agent_start", async () => {
     runtime.cancelCacheKeepalive();
   });
+  pi.on("turn_start", (_event, ctx) => {
+    if (!isAdapterRuntime(resolveCodexRuntimePlan(ctx, state.config, state.executionMode))) return;
+    if (isNativeSteerPending(ctx.sessionManager.getSessionId())) return;
+    const messages = buildSessionContext(ctx.sessionManager.getBranch()).messages.filter(
+      (message) => !isProviderContextExcludedMessage(message),
+    );
+    const cut = computeCut({
+      ordinal: assignTurnOrdinals(messages),
+      priorCut: elisionCut,
+      eligibleChars: messages.map(eligibleToolResultChars),
+    });
+    if (cut === elisionCut) return;
+    pi.appendEntry(CONTEXT_ELISION_ENTRY, { epoch: elisionEpoch, cut });
+    elisionCut = cut;
+  });
   pi.on("agent_settled", async (_event, ctx) => {
     handleCodexAgentSettled(runtime, ui, ctx);
   });
@@ -310,6 +360,8 @@ export function registerCodexEvents(
     return handleCodexSessionBeforeCompact(event, ctx, state, pi);
   });
   pi.on("session_compact", async (event, ctx) => {
+    elisionEpoch = event.compactionEntry.id;
+    elisionCut = 0;
     state.pendingPiCompactionNativeWindow = undefined;
     let nativeCompaction = false;
     const { findLatestCompactionEntry } = await loadCompactionDetails();
@@ -345,9 +397,14 @@ export function registerCodexEvents(
       ? runtime.startCompactionPrewarm(ctx)
       : runtime.startPrewarm(ctx, postCompactionPrompt, true));
   });
-  pi.on("context", async (event) => {
+  pi.on("context", (event, ctx) => {
     const messages = event.messages.filter((message) => !isProviderContextExcludedMessage(message));
-    if (state.config.voiceFeaturesOnly) return { messages };
+    if (
+      elisionCut > 0 &&
+      isAdapterRuntime(resolveCodexRuntimePlan(ctx, state.config, state.executionMode)) &&
+      !isNativeSteerPending(ctx.sessionManager.getSessionId())
+    )
+      return { messages: elideToolResults(messages, elisionCut) };
     return { messages };
   });
 }
