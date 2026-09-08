@@ -43,6 +43,10 @@ test("production hook selects only exact active model guidance", () => {
     ["openai", "gpt-6-astra", /Astra: carry authorized work/],
     ["openai-codex", "gpt-5.6-sol", /Sol: use the established role effort/],
     ["openai", "gpt-5.6-sol", /Sol: use the established role effort/],
+    ["openai-codex", "gpt-5.6-terra", /Sol: use the established role effort/],
+    ["openai", "gpt-5.6-terra", /Sol: use the established role effort/],
+    ["openai-codex", "gpt-5.6-luna", /Sol: use the established role effort/],
+    ["openai", "gpt-5.6-luna", /Sol: use the established role effort/],
     ["anthropic", "claude-opus-5", /Opus: follow the complete task/],
     ["anthropic", "claude-fable-5", /Fable: for long runs/],
     ["anthropic", "claude-fable-5-1", /Fable: for long runs/],
@@ -61,7 +65,6 @@ test("production hook selects only exact active model guidance", () => {
 
 test("unknown, utility, and provider-mismatched models receive shared guidance only", () => {
   for (const model of [
-    { provider: "openai-codex", id: "gpt-5.6-terra" },
     { provider: "future", id: "unknown" },
     { provider: "anthropic", id: "gpt-6-astra" },
     { provider: "synthetic", id: "gpt-5.6-sol" },
