@@ -37,7 +37,7 @@
     "verbosity": "low",
     "forceCachedWebSockets": true,
     "cacheKeepalive": true,
-    "cacheDiagnostics": "off",
+    "cacheDiagnostics": "status-and-log",
     "harnessIdentifierHeader": false,
     "webSearchModel": "gpt-5.6-luna",
     "proxyResponsesLite": false,
