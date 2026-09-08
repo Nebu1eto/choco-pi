@@ -108,7 +108,11 @@ export async function processWebSocketStream<TApi extends Api>(
   const fullBody = body;
   const cachedRequest =
     useCachedContext && entry
-      ? buildCachedWebSocketRequestBody(entry.continuation, fullBody)
+      ? buildCachedWebSocketRequestBody(
+          entry.continuation,
+          fullBody,
+          nativeEnabled && !nativeSteeringForSocket(socket)?.hasPending,
+        )
       : ({
           body: fullBody,
           decision: useCachedContext ? "no_session_cache_entry" : "disabled",

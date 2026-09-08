@@ -5,6 +5,54 @@ import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 
 const live = process.env.CHOCO_PI_NATIVE_LIVE === "1";
 
+test(
+  "thinking-phase steering after a previous turn consumes a native successor",
+  { skip: !live },
+  async () => {
+    const host = await createNativeHost({});
+    let steer: Promise<void> | undefined;
+    try {
+      await host.session.prompt("Say only SEED_READY.");
+      host.session.subscribe((event) => {
+        if (
+          event.type === "message_update" &&
+          !steer &&
+          event.assistantMessageEvent.type === "thinking_start"
+        ) {
+          steer = host.session.prompt("Skip the counting problem. Say exactly THINKING_STEER_OK.", {
+            streamingBehavior: "steer",
+          });
+          void steer.catch(() => {});
+        }
+      });
+      await host.session.prompt(
+        "Without tools, determine how many permutations of 1 through 12 have every adjacent pair sum to a prime. Think carefully through the counting before answering. Do not output preliminary commentary.",
+      );
+      assert.ok(steer, "The test must submit during thinking, not substitute a text-phase steer");
+      await steer;
+      assert.equal(host.observations.automatic, 1, "Native successor was not consumed");
+      assert.equal(host.observations.steeringPhases.includes("failed"), false);
+      assert.equal(host.session.messages.filter((message) => message.role === "user").length, 3);
+      const last = host.session.messages.at(-1);
+      assert.ok(last?.role === "assistant" && last.stopReason === "stop");
+      assert.ok(
+        last.content.some(
+          (part) => part.type === "text" && part.text.includes("THINKING_STEER_OK"),
+        ),
+      );
+      console.log(
+        JSON.stringify({
+          scenario: "thinking-after-previous-turn",
+          model: host.session.model?.id,
+          ...host.observations,
+        }),
+      );
+    } finally {
+      await host.dispose();
+    }
+  },
+);
+
 for (const scenario of ["native", "off", "sse", "fallback"] as const) {
   test(`steering UI correlates real Astra delivery: ${scenario}`, { skip: !live }, async () => {
     const frames: string[][] = [];

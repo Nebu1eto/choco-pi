@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import { nativeRuntime } from "./native-runtime.ts";
+import { codexDiagnosticsFailure } from "./diagnostic-failure.ts";
 import type {
   CodexStreamEvent,
   ProtocolValue,
@@ -175,7 +176,9 @@ export class NativeSteeringConnection {
       if (this.closed) return { kind: "reconnect" };
       this.pending = undefined;
       this.delivery = pending;
-      if (resolution === "failed") return { kind: "send", body: request };
+      // A failed successor can invalidate the steered response's server-side ID.
+      // Reconnect with Pi's full context instead of first sending a doomed delta.
+      if (resolution === "failed") return { kind: "reconnect" };
       if (!pending.acceptedId) return { kind: "reconnect" };
       const users = request.input.filter((item) => matchesUser(item, pending.text));
       const outputs = request.input.filter((item) => !matchesUser(item, pending.text));
@@ -358,7 +361,11 @@ export class NativeSteeringConnection {
           pending.resolve("required");
         }
         if (event.type === "response.steer.failed" && pending) {
-          this.trace?.({ type: "native-steering", phase: "failed" });
+          this.trace?.({
+            type: "native-steering",
+            phase: "failed",
+            failure: codexDiagnosticsFailure(event["error"]),
+          });
           this.report(pending, "fallback");
           pending.resolve("failed");
         }
