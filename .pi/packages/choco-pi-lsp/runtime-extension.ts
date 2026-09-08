@@ -34,6 +34,7 @@ import { createDefaultHostPorts, type HostPorts } from "./clients/host-ports.ts"
 import { AstGrepClient } from "./clients/ast-grep-client.ts";
 import { loadBootstrapClients } from "./clients/bootstrap.ts";
 import { CacheManager } from "./clients/cache-manager.ts";
+import { ContextInjectionHistory } from "./clients/context-injection-history.ts";
 // #1561 F2: the retire hook re-syncs the gate latch and the persisted record
 // the same way the per-dispatch path does, so a retired blocker stops gating
 // the commit.
@@ -552,6 +553,7 @@ function activateExtension(hostPi: ExtensionAPI) {
   // the log instead of pi's frame. Host-initiated output stays on the real
   // console, because it runs outside every window.
   const pi = withConsoleCaptureWindows(hostPi);
+  const contextInjectionHistory = new ContextInjectionHistory<{ role: string; content: unknown }>();
   // Event contexts belong to the activation that owns this factory closure.
   // The process-global latest ctx remains only a boot-window fallback.
   // biome-ignore lint/suspicious/noExplicitAny: heterogeneous pi event ctx shapes
@@ -1659,6 +1661,7 @@ function activateExtension(hostPi: ExtensionAPI) {
   // --- Events ---
 
   pi.on("session_start", async (event, ctx) => {
+    contextInjectionHistory.clear(getStableSessionId(ctx));
     warmDispatchAtSessionStart();
     void warmLspService().catch((err) =>
       logExtension({ subsystem: "lsp", level: "warn", message: `LSP warm failed: ${err}` }),
@@ -2279,6 +2282,7 @@ function activateExtension(hostPi: ExtensionAPI) {
   }
 
   pi.on("agent_end", async (_event, ctx) => {
+    contextInjectionHistory.clear(getStableSessionId(ctx));
     if (!lensEnabled) return;
     // Esc/abort during the debounce flush kills in-flight children. The
     // deferred-format/autofix drain no longer runs from this handler at
@@ -2680,9 +2684,8 @@ function activateExtension(hostPi: ExtensionAPI) {
     // (its sibling primary — the real parent — still active) must NOT run
     // the shared-infra teardown below: no LSP fleet shutdown, no idle-timer
     // cancel that the parent still relies on. Only cheap/idempotent work
-    // (none here) would be safe to keep; everything in this handler today
-    // is destructive shared-infra teardown, so a secondary skips the whole
-    // body.
+    // is safe before that guard. Clear only this owner's context replay first;
+    // a secondary then skips the destructive shared-infra teardown below.
     const stableSessionId = (() => {
       try {
         // SAFETY: Pi session-shutdown contexts provide a signature-compatible sessionManager accessor when present.
@@ -2693,6 +2696,7 @@ function activateExtension(hostPi: ExtensionAPI) {
         return undefined;
       }
     })();
+    contextInjectionHistory.clear(stableSessionId);
     const shutdownClassification = noteSessionShutdown(ctx, stableSessionId);
     if (shutdownClassification === "secondary") {
       decrementSecondarySessionCount();
@@ -2771,7 +2775,10 @@ function activateExtension(hostPi: ExtensionAPI) {
   // --- Inject turn-end findings into next agent turn ---
   // jscpd, madge, and turn-end delta results are cached at turn_end and consumed here
   // via the context event, which fires before each provider request.
-  // Placement (#1016): splice the ephemeral choco-pi-lsp findings in IMMEDIATELY BEFORE
+  // Delivered findings are replayed at their original positions for this agent run,
+  // including native steering and tool continuations; consuming a cache entry must
+  // not remove a message already sent to the provider. New findings retain placement
+  // (#1016): splice choco-pi-lsp findings in IMMEDIATELY BEFORE
   // the final message rather than prepending at index 0. Prepending flipped
   // messages[0] every turn, which invalidated the entire prompt-cache prefix on
   // EVERY prefix-caching provider (Anthropic, Bedrock, AND OpenAI — all key the
@@ -2814,10 +2821,16 @@ function activateExtension(hostPi: ExtensionAPI) {
     ) => {
       // #1018: context telemetry deliberately runs even when the lens or its
       // injection toggle is off, so an A/B run has a no-injection observation.
-      const existingMessages =
+      const incomingMessages =
         // SAFETY: The asserted members mirror the installed Pi host event and extension APIs; optional members are guarded before invocation.
         (event as { messages?: Array<{ role: string; content: unknown }> })?.messages ?? [];
       const prefixSessionId = getStableSessionId(ctx);
+      const effectiveInjectionEnabled = lensEnabled && contextInjectionEnabled;
+      if (!effectiveInjectionEnabled) contextInjectionHistory.clear(prefixSessionId);
+      // Already-delivered guidance is history, not another freshly consumed advisory.
+      const existingMessages = effectiveInjectionEnabled
+        ? contextInjectionHistory.apply(prefixSessionId, incomingMessages)
+        : incomingMessages;
       const sessionRole = classifyCurrentSessionEmission(ctx, prefixSessionId);
       const prefixObservation = observeCachePrefix(
         existingMessages,
@@ -2826,7 +2839,6 @@ function activateExtension(hostPi: ExtensionAPI) {
         sessionRole,
         dbg,
       );
-      const effectiveInjectionEnabled = lensEnabled && contextInjectionEnabled;
       let telemetryLogged = false;
       const logContextObservation = (
         resultMessages: Array<{ role: string; content: unknown }>,
@@ -2886,19 +2898,23 @@ function activateExtension(hostPi: ExtensionAPI) {
         const injectionSources = sourceMessages.map((source) => source.source);
         if (injectedMessages.length === 0) {
           logContextObservation(existingMessages, "none", [], []);
-          return;
+          return existingMessages === incomingMessages ? undefined : { messages: existingMessages };
         }
 
         // Empty transcript (no turns yet): fall back to prepend semantics —
         // there is no trailing user message to sit before, and we must never
         // emit empty input (fe0ed5da: OpenAI Responses fails on empty input).
-        if (existingMessages.length === 0) {
-          const resultMessages = [...injectedMessages];
+        if (incomingMessages.length === 0) {
+          const resultMessages = contextInjectionHistory.apply(
+            prefixSessionId,
+            incomingMessages,
+            injectedMessages,
+          );
           logContextObservation(resultMessages, "prepend", injectionSources, injectedMessages);
           return { messages: resultMessages };
         }
 
-        const lastMessage = existingMessages[existingMessages.length - 1];
+        const lastMessage = incomingMessages[incomingMessages.length - 1];
 
         // Mid-loop the tail can be a tool_result (or assistant/tool) message;
         // inserting before it would break tool_use↔tool_result adjacency. Only
@@ -2907,14 +2923,23 @@ function activateExtension(hostPi: ExtensionAPI) {
           // Append after the whole transcript — pure append preserves the
           // adjacency AND leaves the entire prior transcript as an untouched
           // cache prefix.
-          const resultMessages = [...existingMessages, ...injectedMessages];
+          const resultMessages = contextInjectionHistory.apply(
+            prefixSessionId,
+            incomingMessages,
+            injectedMessages,
+          );
           logContextObservation(resultMessages, "append", injectionSources, injectedMessages);
           return { messages: resultMessages };
         }
 
         // Insert the injected block just before the final message so
         // messages[0] stays stable and the real user prompt stays trailing.
-        const resultMessages = [...existingMessages.slice(0, -1), ...injectedMessages, lastMessage];
+        const resultMessages = contextInjectionHistory.apply(
+          prefixSessionId,
+          incomingMessages,
+          injectedMessages,
+          true,
+        );
         logContextObservation(
           resultMessages,
           "insert-before-final",
