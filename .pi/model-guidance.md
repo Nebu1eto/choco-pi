@@ -37,19 +37,19 @@ Fable: for long runs, ground progress in observed evidence and explicit mileston
 Fable: for long runs, ground progress in observed evidence and explicit milestones. Use an independent verifier only when risk or ambiguity warrants one; use asynchronous collaboration when independent work can proceed safely.
 <!-- choco-pi:model-guidance:end -->
 
-<!-- choco-pi:model-guidance openai-codex/gpt-5.6-sol,openai/gpt-5.6-sol -->
+<!-- choco-pi:model-guidance openai-codex/gpt-5.6-sol,openai/gpt-5.6-sol,openai-codex/gpt-5.6-terra,openai/gpt-5.6-terra,openai-codex/gpt-5.6-luna,openai/gpt-5.6-luna -->
 
-Sol: use the established role effort as the baseline and compare the same level with one level lower on representative work. Confirm findings have legitimate in-scope impact before fixing them.
+Sol: use the established role effort as the baseline and compare one level lower on representative work. When the user prompt requests action ("can you...", "I want to...", "help me..."), act on it: do the work, never stop at acknowledging capability or at a plan. Match shape to intent: analysis or plan requests get evidence answers with no edits; change requests are completed. Confirm in-scope impact before fixing.
 <!-- choco-pi:model-guidance:end -->
 
 <!-- choco-pi:model-guidance openai-codex/gpt-6-astra,openai/gpt-6-astra -->
 
-Astra: carry authorized work through routine implementation details without stopping early. Use proportional verification, and notice useful delegation opportunities without delegating work that is coupled or too small to benefit.
+Astra: carry authorized work through routine implementation details without stopping early. When the user prompt requests action ("can you...", "I want to...", "help me..."), act on it: do the work, never stop at acknowledging capability or at a plan. Match shape to intent: analysis or plan requests get evidence answers with no edits; change requests are completed. Ask only when clarification could change the outcome.
 <!-- choco-pi:model-guidance:end -->
 
 ## Sources and refresh
 
-Reviewed 2026-09-06 against the full current vendor guides:
+Reviewed 2026-09-08 against the full current vendor guides (GPT-6 Astra guide is the source of the action-request intent rule and follow-through prompts; GPT-5.6 guide covers intent understanding and the Sol/Terra/Luna family):
 
 - [Claude Opus 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5): refresh when Opus prompting, effort, self-verification, or subagent guidance changes.
 - [Claude Fable 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5): refresh when Fable identifiers, long-run scaffolding, verification, or async collaboration guidance changes.
