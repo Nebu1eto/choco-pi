@@ -269,3 +269,13 @@ Focused regressions cover correlation, fallback and lifecycle; opt-in Astra SDK
 and dedicated interactive Pi probes cover production UI delivery.
 The interactive probe opts out of the automated host's 120-second abort watchdog
 so human-paced verification is not interrupted by a test-only timer.
+
+Native-steerable response starts now bypass cached `previous_response_id` deltas:
+live full-profile and isolated wire probes showed that Astra's cached path fails
+thinking-phase successor creation with unsupported `prompt_cache_options`.
+Full context preserves prompt-cache identity and native application; pending
+successors still use delta validation and normal tool-output continuation. Other
+models, Off, and ineligible requests retain existing behavior. Failed successors
+reconnect directly instead of retrying an invalidated previous response ID, and
+metadata diagnostics include sanitized error codes without raw error messages.
+Regression and opt-in live coverage include a thinking steer after a prior turn.

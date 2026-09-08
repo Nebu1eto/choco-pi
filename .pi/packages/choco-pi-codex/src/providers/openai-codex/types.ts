@@ -70,6 +70,7 @@ export interface CachedWebSocketContinuationState {
 
 export type WebSocketContinuationDecision =
   | "disabled"
+  | "native_steering_full"
   | "no_session_cache_entry"
   | "no_continuation"
   | "body_mismatch"
@@ -109,6 +110,7 @@ export interface CodexDiagnosticsFailure {
 export type CodexDiagnosticsEvent =
   | {
       type: "native-steering";
+      failure?: CodexDiagnosticsFailure | undefined;
       phase:
         | "sent"
         | "accepted"
