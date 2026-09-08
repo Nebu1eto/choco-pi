@@ -65,7 +65,11 @@ export async function createNativeHost(options: {
   const marker = randomUUID();
   let codeMode: CodeModeRegistration | undefined;
   const extension: ExtensionFactory = async (pi) => {
-    registerNativeFeatures(pi, () => enabled);
+    registerNativeFeatures(
+      pi,
+      () => enabled,
+      () => true,
+    );
     if (options.transformSteer) {
       pi.on("input", (event) => {
         if (event.streamingBehavior === "steer")

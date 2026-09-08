@@ -142,12 +142,31 @@ test(
       "toolRenaming",
       "compactTools",
       "codeModeDetails",
+      "steeringDeliveryStatus",
     ]);
     assert.deepEqual(sectionRowIds(sections, `${CODEX_SECTION_ID}:agent`), [
       "codexSourceHeader:agent",
       "additionalProviders",
       "editConfig",
     ]);
+  }),
+);
+
+test(
+  "steering receipt preference defaults off and persists both choices independently",
+  withCodexDirs(({ ctx, deps, saved }) => {
+    // SAFETY: the fixture supplies every host member the section touches.
+    const sections = buildCodexPreferencesSections(ctx as never, deps);
+    const appearance = findSection(sections, `${CODEX_SECTION_ID}:appearance`);
+    assert.ok(appearance);
+    const row = appearance.buildItems().find((item) => item.id === "steeringDeliveryStatus");
+    assert.equal(row?.currentValue, "off");
+    assert.deepEqual(row?.values, ["off", "on"]);
+    for (const value of ["on", "off"]) {
+      appearance.handleChange("steeringDeliveryStatus", value);
+      assert.equal(saved.at(-1)?.config.ui.steeringDeliveryStatus, value === "on");
+      assert.equal(saved.at(-1)?.config.openai.midTurnSteering, true);
+    }
   }),
 );
 

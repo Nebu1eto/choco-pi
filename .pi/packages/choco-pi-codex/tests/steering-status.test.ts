@@ -4,6 +4,18 @@ import type { ExtensionAPI, ExtensionContext, InputEvent } from "@earendil-works
 import { reinterpretHostValue } from "../../../extensions/lib/runtime-values.ts";
 import { SteeringStatusWidget } from "../src/ui/steering-status.ts";
 import { registerNativeFeatures } from "../src/extension/native-features.ts";
+import { normalizeCodexConversionConfig } from "../src/adapter/activation/config.ts";
+
+test("steering receipt config defaults off and accepts only booleans", () => {
+  for (const value of [{}, { ui: {} }, { ui: { steeringDeliveryStatus: "true" } }]) {
+    assert.equal(normalizeCodexConversionConfig(value).ui.steeringDeliveryStatus, false);
+  }
+  for (const enabled of [true, false]) {
+    const config = normalizeCodexConversionConfig({ ui: { steeringDeliveryStatus: enabled } });
+    assert.equal(config.ui.steeringDeliveryStatus, enabled);
+    assert.equal(normalizeCodexConversionConfig(config).ui.steeringDeliveryStatus, enabled);
+  }
+});
 
 function fixture() {
   const frames: (string[] | undefined)[] = [];
@@ -91,7 +103,12 @@ test("input hook shows queue-only receipt without consuming or rewriting input",
     on: (name: string, handler: (event: InputEvent, ctx: ExtensionContext) => void) =>
       handlers.set(name, handler),
   });
-  registerNativeFeatures(pi, () => false);
+  let showStatus = false;
+  const controls = registerNativeFeatures(
+    pi,
+    () => false,
+    () => showStatus,
+  );
   const context = reinterpretHostValue<ExtensionContext>({
     ...ctx,
     isIdle: () => false,
@@ -104,9 +121,16 @@ test("input hook shows queue-only receipt without consuming or rewriting input",
     streamingBehavior: "steer",
   };
   handlers.get("session_start")!(event, context);
+  handlers.get("input")!(event, context);
+  assert.equal(frames.at(-1), undefined);
+  showStatus = true;
   assert.equal(handlers.get("input")!(event, context), undefined);
   assert.equal(event.text, "keep input");
   assert.match(frames.at(-1)![0]!, /Queued \(Pi path\).*keep input/);
+  showStatus = false;
+  controls.clearDeliveryStatus(context);
+  handlers.get("input")!(event, context);
+  assert.equal(frames.at(-1), undefined);
   handlers.get("session_shutdown")!(event, context);
   assert.equal(frames.at(-1), undefined);
 });
