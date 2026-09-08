@@ -22,7 +22,11 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
   registerCodexTransportCleanup();
   registerApplyPatchDisplayBroker(pi);
   const runtime = createCodexExtensionRuntime(pi);
-  registerNativeFeatures(pi, () => runtime.state.config.openai.midTurnSteering);
+  const nativeFeatures = registerNativeFeatures(
+    pi,
+    () => runtime.state.config.openai.midTurnSteering,
+    () => runtime.state.config.ui.steeringDeliveryStatus,
+  );
   registerCanonicalAliasEndpointPreflight(pi, runtime);
   const codeMode = await registerCodexCodeMode(pi, runtime);
   let cleanupProxyProvider: ReturnType<typeof registerCodeModeProxyProvider> | undefined;
@@ -58,6 +62,7 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
       proxyProvider.applyConfig(config, ctx.modelRegistry);
       tools.applyConfig(config);
       ui.applyConfig(config, ctx, previousConfig);
+      if (!config.ui.steeringDeliveryStatus) nativeFeatures.clearDeliveryStatus(ctx);
       if (config.openai.cacheDiagnostics !== previousConfig.openai.cacheDiagnostics) {
         void withLiveCtx(() =>
           runtime.configureDiagnostics(

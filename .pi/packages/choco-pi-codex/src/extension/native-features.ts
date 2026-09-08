@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   closeNativeSteering,
   steerNativeResponse,
@@ -7,7 +7,11 @@ import { clearAsyncCodeModeCalls } from "../providers/openai-codex/native-featur
 import { SteeringStatusWidget } from "../ui/steering-status.ts";
 
 /** Side-band delivery only: returning normally lets Pi persist and queue the original input. */
-export function registerNativeFeatures(pi: ExtensionAPI, isEnabled: () => boolean): void {
+export function registerNativeFeatures(
+  pi: ExtensionAPI,
+  isEnabled: () => boolean,
+  showDeliveryStatus: () => boolean = () => false,
+) {
   let owner = "";
   const widget = new SteeringStatusWidget();
   pi.on("session_start", (_event, ctx) => {
@@ -35,7 +39,7 @@ export function registerNativeFeatures(pi: ExtensionAPI, isEnabled: () => boolea
     }
     const currentOwner = ctx.sessionManager.getSessionId();
     if (currentOwner !== owner) return;
-    const observe = widget.add(event.text, ctx);
+    const observe = showDeliveryStatus() ? widget.add(event.text, ctx) : undefined;
     if (
       event.images?.length ||
       ctx.hasPendingMessages() ||
@@ -46,4 +50,5 @@ export function registerNativeFeatures(pi: ExtensionAPI, isEnabled: () => boolea
       return;
     steerNativeResponse(currentOwner, event.text, observe);
   });
+  return { clearDeliveryStatus: (ctx: ExtensionContext) => widget.clear(ctx) };
 }

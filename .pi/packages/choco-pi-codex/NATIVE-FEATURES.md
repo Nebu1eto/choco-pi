@@ -44,6 +44,9 @@ bypass the extension input hook; prompt submission with
 `streamingBehavior: "steer"` uses it.
 
 Steering does not undo completed output or cancel tools already running.
+Enable **Show per-submission steering delivery status** in `/preferences` →
+Appearance (`ui.steeringDeliveryStatus`, default `false`) to show the receipt widget.
+Disabling it clears existing receipts without disabling steering.
 The editor widget shows the latest four steering submissions independently,
 with numbered, sanitized message previews: **Queued (Pi path)**, **Mid-turn
 sent**, **Mid-turn accepted**, **Mid-turn applied**, or **Queue fallback**.
