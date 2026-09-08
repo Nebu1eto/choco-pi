@@ -26,6 +26,7 @@ type EditorLike = {
 
 type RenderTarget = {
   render(width: number): string[];
+  handleMouse?: TUI["handleMouse"];
 };
 
 export type FocusUICtx = {
@@ -250,6 +251,7 @@ export class FocusedAgentController {
   private ui: FocusUICtx | undefined;
   private active: ActiveFocus | undefined;
   private restoreDocument: (() => void) | undefined;
+  private restoreDocumentMouse: (() => void) | undefined;
   private restorePendingMessages: (() => void) | undefined;
   private restoreEditor: (() => void) | undefined;
   private clearFocusedRuntime: (() => void) | undefined;
@@ -329,6 +331,14 @@ export class FocusedAgentController {
         return viewer.render(width);
       },
     );
+    if (document.handleMouse instanceof Function) {
+      this.restoreDocumentMouse = installMethodPatch(
+        document,
+        "handleMouse",
+        "focused-conversation-mouse",
+        ({ args }) => viewer.handleMouse(args[0]),
+      );
+    }
     if (pendingMessages) {
       this.restorePendingMessages = installMethodPatch(
         pendingMessages,
@@ -381,6 +391,8 @@ export class FocusedAgentController {
     this.toolOutputExpandedByAgent.set(previous.record.id, previous.viewer.getToolOutputExpanded());
     this.restorePendingMessages?.();
     this.restorePendingMessages = undefined;
+    this.restoreDocumentMouse?.();
+    this.restoreDocumentMouse = undefined;
     this.restoreDocument?.();
     this.restoreDocument = undefined;
     previous.viewer.dispose();

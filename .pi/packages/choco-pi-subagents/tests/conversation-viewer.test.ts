@@ -14,12 +14,77 @@ import {
   type AgentSessionEventListener,
   initTheme,
 } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences, type TUI } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import type { AgentInvocation, AgentRecord, SubagentType } from "../src/types.ts";
 import { formatAgentMessage } from "../src/messaging.ts";
 import { ConversationViewer } from "../src/ui/conversation-viewer.ts";
 
 initTheme("dark", false);
+
+for (const status of ["completed", "running"] as const) {
+  test(`focused reasoning clicks toggle a cached second message (${status})`, () => {
+    const { session } = makeSession([
+      makeUserMessage(Array.from({ length: 60 }, (_, i) => `Earlier row ${i}`).join("\n")),
+      makeAssistantMessage([
+        { type: "thinking", thinking: "Visible private reasoning" },
+        { type: "text", text: "Public answer" },
+      ]),
+    ]);
+    let requests = 0;
+    const tui = makeTui();
+    tui.requestRender = () => {
+      requests++;
+    };
+    const viewer = new ConversationViewer(
+      tui,
+      session,
+      makeRecord(session, status),
+      undefined,
+      theme,
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      { profile: "focus" },
+    );
+    const render = () => viewer.render(100).map(stripTerminalSequences);
+    try {
+      let lines = render();
+      assert.deepEqual(render(), lines, "exercise whole-transcript cache");
+      const y = lines.findIndex((line) => line.includes("Visible private reasoning"));
+      assert.ok(y > 40, "reasoning is beyond the terminal viewport");
+      const click: TuiMouseEvent = {
+        type: "click",
+        button: "left",
+        x: 3,
+        y,
+        screenX: 3,
+        screenY: 5,
+        width: 100,
+        height: lines.length,
+        shift: false,
+        alt: false,
+        ctrl: false,
+      };
+      assert.equal(viewer.handleMouse({ ...click, button: "right" }), undefined);
+      assert.equal(requests, 0);
+      assert.equal(viewer.handleMouse(click)?.handled, true);
+      assert.equal(requests, 1);
+      lines = render();
+      assert.ok(!lines.some((line) => line.includes("Visible private reasoning")));
+      const hiddenY = lines.findIndex((line) => line.includes("Thinking..."));
+      assert.ok(hiddenY >= 0);
+      assert.equal(
+        viewer.handleMouse({ ...click, y: hiddenY, height: lines.length })?.handled,
+        true,
+      );
+      assert.ok(render().some((line) => line.includes("Visible private reasoning")));
+      assert.equal(requests, 2);
+    } finally {
+      viewer.dispose();
+    }
+  });
+}
 
 function partialFixture<T extends object>(fixture: Partial<T>): T {
   // SAFETY: Each test supplies the named slice exercised by its subject.
