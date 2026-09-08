@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createCodexDiagnosticsLog } from "../src/diagnostics/logger.ts";
+import { buildCachedWebSocketRequestBody } from "../src/providers/openai-codex/websocket-continuation.ts";
 import { isWebSocketMessageTooBigError } from "../src/providers/openai-codex/websocket-connection.ts";
 import {
   recordWebSocketSseFallback,
@@ -29,6 +34,7 @@ import type {
   WebSocketLike,
   WebSocketEvent,
   CodexStreamEvent,
+  CodexDiagnosticsEvent,
 } from "../src/providers/openai-codex/types.ts";
 
 class Socket implements WebSocketLike {
@@ -151,8 +157,9 @@ test("async hints are owner-scoped, one-shot, and cleared on shutdown", () => {
 
 async function active(owner: string) {
   const statuses: SteeringStatus[] = [];
+  const diagnostics: CodexDiagnosticsEvent[] = [];
   const socket = new Socket();
-  const connection = openNativeSteering(socket, owner);
+  const connection = openNativeSteering(socket, owner, (event) => diagnostics.push(event));
   const controller = new AbortController();
   connection.begin(body(), controller.signal);
   const events = connection.responseEvents(controller.signal, 1000)[Symbol.asyncIterator]();
@@ -163,8 +170,30 @@ async function active(owner: string) {
     true,
   );
   socket.emit({ type: "response.steer.accepted", steer: { id: "s1", previous_response_id: "r1" } });
-  return { socket, connection, events, controller, statuses };
+  return { socket, connection, events, controller, statuses, diagnostics };
 }
+
+test("new native-steerable responses send full history instead of cached previous_response_id", () => {
+  const warm = { role: "user", content: "warm" };
+  const reply = { role: "assistant", content: "ready" };
+  const question = { role: "user", content: "thinking task" };
+  const initial = { ...body(), input: [warm], prompt_cache_key: "same-owner" };
+  const continuation = {
+    lastRequestBody: initial,
+    lastResponseId: "warm-response",
+    lastResponseItems: [reply],
+  };
+  const full = { ...initial, input: [warm, reply, question] };
+  const native = buildCachedWebSocketRequestBody(continuation, full, true);
+  assert.equal(native.decision, "native_steering_full");
+  assert.equal(native.body, full, "keep full input and prompt-cache identity unchanged");
+  assert.equal(native.body.previous_response_id, undefined);
+  const ordinary = buildCachedWebSocketRequestBody(continuation, full);
+  assert.equal(ordinary.decision, "delta");
+  assert.equal(ordinary.body.previous_response_id, "warm-response");
+  assert.deepEqual(ordinary.body.input, [question]);
+  assert.deepEqual(full.input, [warm, reply, question]);
+});
 
 for (const terminal of ["response.completed", "response.incomplete"]) {
   test(`steering buffers the automatic successor after ${terminal}`, async () => {
@@ -260,23 +289,54 @@ test("changed queued input discards unconsumed generation rather than dropping u
   }
 });
 
-test("steering failure preserves Pi's queued input for ordinary delivery", async () => {
-  const { socket, connection, statuses } = await active("failed");
+test("failed successors reconnect without reusing an invalidated response ID and log only safe metadata", async () => {
+  const { socket, connection, statuses, diagnostics } = await active("failed");
+  const directory = await mkdtemp(join(tmpdir(), "choco-pi-steer-log-"));
   try {
-    socket.emit({ type: "response.steer.failed", steer: { id: "s1", previous_response_id: "r1" } });
+    socket.emit({
+      type: "response.steer.failed",
+      steer: { id: "s1", previous_response_id: "r1", input: "private steering input" },
+      error: { code: "successor_creation_failed", message: "private error message" },
+    });
     const next = {
       ...body(),
       previous_response_id: "r1",
       input: [{ role: "user", content: "change" }],
     };
     assert.deepEqual(await connection.prepare(next, next, undefined, 1000), {
-      kind: "send",
-      body: next,
+      kind: "reconnect",
     });
+    assert.deepEqual(
+      next.input,
+      [{ role: "user", content: "change" }],
+      "Pi still owns the queued input",
+    );
     connection.close();
     assert.deepEqual(statuses, ["sent", "accepted", "fallback"]);
+    const failure = diagnostics.find(
+      (event) => event.type === "native-steering" && event.phase === "failed",
+    );
+    assert.ok(failure?.type === "native-steering");
+    assert.equal(failure.failure?.code, "successor_creation_failed");
+    const log = await createCodexDiagnosticsLog({
+      sessionId: "fixture",
+      cwd: directory,
+      agentDir: directory,
+      onError(error) {
+        throw error;
+      },
+    });
+    try {
+      log.record(failure);
+    } finally {
+      await log.close();
+    }
+    const output = await readFile(log.path, "utf8");
+    assert.match(output, /phase="failed".*code="successor_creation_failed"/);
+    assert.equal(output.includes("private"), false);
   } finally {
     connection.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

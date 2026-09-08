@@ -19,11 +19,21 @@ message and controls the next turn. A connection-owned inbox retains the
 automatic successor until Pi requests that turn, preserving separate assistant
 messages and normal multi-turn history.
 
+New native-steerable Astra responses send full context rather than a cached
+`previous_response_id` delta. The endpoint's cached-continuation path can reject
+thinking-phase successor creation with `successor_creation_failed` and
+`prompt_cache_options is not supported on this model`. Full-context starts avoid
+that failure while retaining the prompt-cache key and ordinary prompt-cache reuse.
+This increases transmitted input for those starts; accepted automatic successors
+still require no new request. Off and ineligible requests keep normal delta behavior.
+
 If the server needs tool results, Pi executes those tools through its normal
 checks and returns their outputs. The adapter omits the accepted steer from that
 request because the server inserts it. If input or request settings change, the
 adapter discards unconsumed generation and sends Pi's full context on a fresh
 connection. It does not replay actions or discard Pi's queued input.
+A failed successor also reconnects directly, because its previous response ID may
+no longer exist. Diagnostics retain safe failure codes, never raw error messages.
 
 One steer may be pending per connection. Images, already queued input, unsupported
 models/transports, and submissions before a response ID exists use ordinary Pi

@@ -63,7 +63,13 @@ function field(key: string, value: string | number | boolean | undefined): strin
 
 function eventFields(event: CodexDiagnosticsEvent): Array<string | undefined> {
   if (event.type === "native-steering")
-    return [field("event", event.type), field("phase", event.phase)];
+    return [
+      field("event", event.type),
+      field("phase", event.phase),
+      field("failure", event.failure?.category),
+      field("code", event.failure?.code),
+      field("status", event.failure?.status),
+    ];
   if (event.type === "request")
     return [
       field("event", event.type),
