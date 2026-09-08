@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { Type } from "typebox";
 
 import { inChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
+import { ShellNotificationGate } from "./notification-gate.ts";
 import { ShellManager } from "./shell-manager.ts";
 import type { ReadShellResult, ShellChangeEvent, ShellResult } from "./shell-manager.ts";
 import { isStaleContextError, type RuntimeValue } from "./lifecycle.ts";
@@ -15,7 +16,6 @@ import {
 } from "./ui/shells-widget.ts";
 
 const MANAGER_KEY = Symbol.for("choco-pi-shells:manager");
-const COMPLETION_DEBOUNCE_MS = 250;
 const COMPLETION_TAIL_CHARACTERS = 480;
 const COMPLETION_TAIL_BYTES = 2_048;
 const SHELL_NOTIFICATION_TYPE = "shell-completion-notification";
@@ -244,14 +244,10 @@ export default function shellsExtension(pi: ExtensionAPI): void {
   let rootSessionId: string | undefined;
   let rootUI: (ShellsUICtx & ShellsWidgetUICtx) | undefined;
   let currentSessionId: string | undefined;
-  let completionTimer: ReturnType<typeof setTimeout> | undefined;
   let shuttingDown = false;
-  const pendingCompletions: ShellResult[] = [];
 
-  const flushCompletions = (): void => {
-    completionTimer = undefined;
-    if (shuttingDown || pendingCompletions.length === 0) return;
-    const completed = pendingCompletions.splice(0);
+  const flushCompletions = (completed: ShellResult[]): void => {
+    if (shuttingDown || completed.length === 0) return;
     const shells = completed.flatMap((shell) => {
       try {
         return [buildCompletionDetails(manager, shell)];
@@ -279,9 +275,14 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       // SAFETY: catch produces unknown; the helper narrows via instanceof before reading the message.
       if (!isStaleContextError(error as RuntimeValue)) throw error;
       shuttingDown = true;
-      pendingCompletions.length = 0;
     }
   };
+
+  const notificationGate = new ShellNotificationGate({
+    manager,
+    flush: flushCompletions,
+    appendEntry: (type, data) => pi.appendEntry(type, data),
+  });
 
   const unsubscribeCompletions = manager.onChange((event: ShellChangeEvent) => {
     if (
@@ -291,10 +292,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       event.shell.ownerId !== currentSessionId
     )
       return;
-    pendingCompletions.push(event.shell);
-    if (completionTimer !== undefined) return;
-    completionTimer = setTimeout(flushCompletions, COMPLETION_DEBOUNCE_MS);
-    completionTimer.unref();
+    notificationGate.enqueue(event.shell);
   });
 
   pi.registerMessageRenderer<ShellCompletionDetails>(
@@ -326,7 +324,20 @@ export default function shellsExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (_event, ctx) => {
     currentSessionId = ctx.sessionManager.getSessionId();
+    notificationGate.sessionStart(currentSessionId, ctx.sessionManager.getEntries());
     if (!isChildActivation && ctx.hasUI) bindRootUI(ctx.ui, currentSessionId);
+  });
+
+  pi.on("agent_start", () => {
+    notificationGate.agentStart();
+  });
+
+  pi.on("agent_end", () => {
+    notificationGate.agentEnd();
+  });
+
+  pi.on("turn_end", () => {
+    notificationGate.turnEnd();
   });
 
   if (!isChildActivation) {
@@ -481,11 +492,9 @@ export default function shellsExtension(pi: ExtensionAPI): void {
   pi.on("session_shutdown", async (event, ctx) => {
     if (shutdownHandled) return;
     shutdownHandled = true;
+    notificationGate.shutdown();
     shuttingDown = true;
     unsubscribeCompletions();
-    if (completionTimer !== undefined) clearTimeout(completionTimer);
-    completionTimer = undefined;
-    pendingCompletions.length = 0;
 
     if (isChildActivation) {
       await manager.cleanupOwner(ctx.sessionManager.getSessionId());
