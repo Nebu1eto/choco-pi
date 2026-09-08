@@ -29,9 +29,11 @@ import {
   type MarkdownTheme,
   Text,
   type TUI,
+  type TuiMouseEvent,
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
+import { dispatchMouseEvent } from "@earendil-works/pi-tui/dist/tui.js";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { renderAgentName } from "../agent-color.ts";
@@ -63,6 +65,9 @@ export const VIEWPORT_HEIGHT_PCT = 70;
  * cached lines in between. Settling always gets one final full render.
  */
 const TAIL_RENDER_INTERVAL_MS = 100;
+
+type MessageLayout = { component: Component; y: number; height: number };
+type MessageRender = { width: number; lines: string[]; layout: MessageLayout[] };
 
 interface HostBashExecutionTrace {
   role?: any;
@@ -150,9 +155,10 @@ export class ConversationViewer implements Component {
    * BashExecutionComponent), so a zentui install restyles this overlay the
    * same way it restyles the main agent.
    */
-  private messageComponents = new Map<object, Array<{ render(w: number): string[] }>>();
+  private messageComponents = new Map<object, Component[]>();
   /** Rendered lines per message + width; dropped when a tool result lands. */
-  private messageLineCache = new Map<object, { width: number; lines: string[] }>();
+  private messageLineCache = new Map<object, MessageRender>();
+  private mouseLayout: Array<MessageLayout & { msg: object }> = [];
   private toolComponents = new Map<string, ToolExecutionComponent>();
   private builtInToolDefinitions = new Map<
     string,
@@ -525,6 +531,29 @@ export class ConversationViewer implements Component {
     this.fastAssistantHeads.clear();
     this.contentCache = undefined;
     this.contentDirty = true;
+    this.mouseLayout = [];
+  }
+
+  /** Focus receives document-relative y, already translated by Pi's scroll view. */
+  handleMouse(event: TuiMouseEvent) {
+    // The overlay owns separate chrome and scrolling; leave its routing unchanged.
+    if (this.closed || this.profile !== "focus" || this.contentCache?.width !== event.width) {
+      return undefined;
+    }
+    const hit = this.mouseLayout.find(({ y, height }) => event.y >= y && event.y < y + height);
+    if (!hit) return undefined;
+    const result = dispatchMouseEvent(hit.component, {
+      ...event,
+      y: event.y - hit.y,
+      height: hit.height,
+    });
+    if (result) {
+      this.messageLineCache.delete(hit.msg);
+      this.contentCache = undefined;
+      this.contentDirty = true;
+      this.tui.requestRender();
+    }
+    return result;
   }
 
   dispose(): void {
@@ -581,6 +610,7 @@ export class ConversationViewer implements Component {
     const th = this.theme;
     const messages = this.session.messages;
     const lines: string[] = [];
+    this.mouseLayout = [];
 
     if (messages.length === 0) {
       lines.push(th.fg("dim", "(waiting for first message...)"));
@@ -592,29 +622,33 @@ export class ConversationViewer implements Component {
 
     messages.forEach((msg, index) => {
       const isTail = streaming && index === messages.length - 1;
-      let block: string[];
+      let rendered: MessageRender;
       const cached = this.messageLineCache.get(msg);
       const reusable = !!cached && cached.width === width;
       if (isTail) {
         // Inside the frame budget the tail keeps its last lines; a budget tick
         // or a width change re-renders it. Either way the lines get cached.
         if (renderTail || !reusable) {
-          block = this.renderMessage(msg, width);
-          this.messageLineCache.set(msg, { width, lines: block });
+          rendered = this.renderMessage(msg, width);
+          this.messageLineCache.set(msg, rendered);
           this.lastTailRenderAt = now;
         } else {
-          block = cached.lines;
+          rendered = cached;
         }
       } else if (reusable) {
-        block = cached.lines;
+        rendered = cached;
       } else {
-        block = this.renderMessage(msg, width);
-        this.messageLineCache.set(msg, { width, lines: block });
+        rendered = this.renderMessage(msg, width);
+        this.messageLineCache.set(msg, rendered);
       }
+      const block = rendered.lines;
       if (block.length === 0) return;
       // Pi spaces transcript blocks with a blank row before user messages;
       // one row between rendered blocks reads the same inside this overlay.
       if (lines.length > 0) lines.push("");
+      for (const entry of rendered.layout) {
+        this.mouseLayout.push({ ...entry, msg, y: lines.length + entry.y });
+      }
       lines.push(...block);
     });
 
@@ -787,14 +821,16 @@ export class ConversationViewer implements Component {
     }
   }
 
-  private renderMessage(msg: AgentSession["messages"][number], width: number): string[] {
+  private renderMessage(msg: AgentSession["messages"][number], width: number): MessageRender {
     const components = this.messageComponents.get(msg);
-    if (!components) return [];
     const lines: string[] = [];
-    for (const component of components) {
-      lines.push(...component.render(width));
+    const layout: MessageLayout[] = [];
+    for (const component of components ?? []) {
+      const rendered = component.render(width);
+      layout.push({ component, y: lines.length, height: rendered.length });
+      lines.push(...rendered);
     }
-    return lines;
+    return { width, lines, layout };
   }
 
   /** Registered tool renderers, exactly what the main transcript passes. */

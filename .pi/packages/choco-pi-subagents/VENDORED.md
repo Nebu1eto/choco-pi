@@ -119,6 +119,15 @@ whole-manager disposal use the same seam.
 
 ### Focused-subagent fullscreen mode
 
+Focused reasoning clicks now dispatch through `ConversationViewer`'s cached
+per-component transcript layout, including message spacers and streaming tails.
+Handled clicks invalidate the owning message's line cache and request repaint.
+`focus-mode.ts` installs and restores a separate document mouse adapter through
+`method-patch-registry.ts`, so hidden orchestrator components never receive
+focused clicks. Pi retains ownership of scroll-to-document coordinates; the
+overlay's mouse behavior and global thinking visibility setting are unchanged.
+
+The fork adds `src/ui/focus-mode.ts` and `src/ui/method-patch-registry.ts` and
 extends FleetView and `ConversationViewer` with fullscreen focus. Moving the
 FleetView cursor onto a subagent row (or pressing `f`, or `f focus` in its modal
 viewer) replaces Pi's main transcript rendering with that agent's live
