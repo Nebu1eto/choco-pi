@@ -100,6 +100,7 @@ export function migrateCodexConversionConfigIfNeeded(value: BoundaryValue): Conf
       toolRenaming: DEFAULT_CODEX_CONVERSION_CONFIG.ui["toolRenaming"],
       compactTools: DEFAULT_CODEX_CONVERSION_CONFIG.ui["compactTools"],
       codeModeDetails: DEFAULT_CODEX_CONVERSION_CONFIG.ui["codeModeDetails"],
+      steeringDeliveryStatus: DEFAULT_CODEX_CONVERSION_CONFIG.ui.steeringDeliveryStatus,
       backgroundShellWidget: Value.Check(Type.Boolean(), value["backgroundShellWidget"])
         ? value["backgroundShellWidget"]
         : DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellWidget"],

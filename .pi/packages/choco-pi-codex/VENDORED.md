@@ -270,6 +270,11 @@ and dedicated interactive Pi probes cover production UI delivery.
 The interactive probe opts out of the automated host's 120-second abort watchdog
 so human-paced verification is not interrupted by a test-only timer.
 
+`ui.steeringDeliveryStatus` defaults to false. The Appearance preference
+**Show per-submission steering delivery status** enables these receipts independently
+of native steering. Disabling it clears displayed receipts and invalidates their
+pending callbacks without changing steering delivery or Pi's queue.
+
 Native-steerable response starts now bypass cached `previous_response_id` deltas:
 live full-profile and isolated wire probes showed that Astra's cached path fails
 thinking-phase successor creation with unsupported `prompt_cache_options`.

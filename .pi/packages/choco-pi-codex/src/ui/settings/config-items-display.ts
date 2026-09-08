@@ -3,6 +3,15 @@ import { type ConfigSetting, toggle } from "./config-items-shared.ts";
 
 export function buildDisplaySettings(config: CodexConversionConfig): ConfigSetting[] {
   return [
+    toggle(
+      "steeringDeliveryStatus",
+      "Show per-submission steering delivery status",
+      config.ui.steeringDeliveryStatus,
+      (enabled, current) => ({
+        ...current,
+        ui: { ...current.ui, steeringDeliveryStatus: enabled },
+      }),
+    ),
     toggle("toolRenaming", "Tool naming", config.ui.toolRenaming, (enabled, current) => ({
       ...current,
       ui: { ...current.ui, toolRenaming: enabled },

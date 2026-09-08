@@ -76,6 +76,7 @@ export interface CodexConversionConfig {
     toolRenaming: boolean;
     compactTools: boolean;
     codeModeDetails: boolean;
+    steeringDeliveryStatus: boolean;
     backgroundShellWidget: boolean;
     backgroundShellToggleShortcut: string;
     backgroundShellPrevShortcut: string;
@@ -137,6 +138,7 @@ export const DEFAULT_CODEX_CONVERSION_CONFIG: CodexConversionConfig = {
     toolRenaming: true,
     compactTools: false,
     codeModeDetails: false,
+    steeringDeliveryStatus: false,
     backgroundShellWidget: true,
     backgroundShellToggleShortcut: "alt+w",
     backgroundShellPrevShortcut: "alt+q",
@@ -349,6 +351,10 @@ export function normalizeCodexConversionConfig(value: BoundaryValue): CodexConve
       backgroundShellWidget: bool(
         ui["backgroundShellWidget"],
         DEFAULT_CODEX_CONVERSION_CONFIG.ui["backgroundShellWidget"],
+      ),
+      steeringDeliveryStatus: bool(
+        ui["steeringDeliveryStatus"],
+        DEFAULT_CODEX_CONVERSION_CONFIG.ui.steeringDeliveryStatus,
       ),
       backgroundShellToggleShortcut: stringValue(
         ui["backgroundShellToggleShortcut"],

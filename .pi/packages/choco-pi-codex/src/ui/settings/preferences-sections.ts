@@ -68,7 +68,10 @@ export interface CodexPreferencesDeps {
  * so an upgrade never hides a setting.
  */
 const CODEX_ROW_LAYOUT: ReadonlyArray<{ section: string; rows: readonly string[] }> = [
-  { section: "appearance", rows: ["toolRenaming", "compactTools", "codeModeDetails"] },
+  {
+    section: "appearance",
+    rows: ["toolRenaming", "compactTools", "codeModeDetails", "steeringDeliveryStatus"],
+  },
   {
     section: "model",
     rows: [
