@@ -2950,6 +2950,7 @@ function activateExtension(hostPi: ExtensionAPI) {
       } catch (err) {
         if (!telemetryLogged) logContextObservation(existingMessages, "none", [], []);
         dbg(`context event error: ${err}`);
+        return existingMessages === incomingMessages ? undefined : { messages: existingMessages };
       }
     },
   );

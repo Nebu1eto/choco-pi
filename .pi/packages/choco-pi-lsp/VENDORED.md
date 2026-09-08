@@ -146,6 +146,7 @@ native steering/cached continuation prefixes. State is isolated by session, clea
 synchronously at agent end and session start/shutdown, and discarded when transcript
 content is rewritten or shortened. Guidance is not persisted into Pi's session
 history. Existing new-guidance placement and tool-call/result adjacency are retained.
+Already-delivered guidance is also retained if collecting new findings fails.
 Regression tests include actual Codex request serialization and refusal of genuinely
 changed history; long-session full-profile steering is verified separately.
 
