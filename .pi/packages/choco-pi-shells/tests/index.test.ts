@@ -10,7 +10,8 @@ import shellsExtension, {
   type ShellNotificationTheme,
   renderShellCompletion,
 } from "../src/index.ts";
-import type { ShellManager } from "../src/shell-manager.ts";
+import type { ShellManager, ShellResult } from "../src/shell-manager.ts";
+import type { RuntimeValue } from "../src/validation.ts";
 import type { ShellCustomOptions, ShellViewerKeybindings } from "../src/ui/shells-overlay.ts";
 import type {
   ShellsWidgetComponent,
@@ -54,7 +55,7 @@ interface TestContext {
   cwd: string;
   hasUI: boolean;
   mode: "tui" | "print" | "json" | "rpc";
-  sessionManager: { getSessionId(): string };
+  sessionManager: { getSessionId(): string; getEntries(): RuntimeValue[] };
   ui: TestUI;
 }
 
@@ -82,12 +83,12 @@ interface ShutdownEventFixture {
 }
 
 interface SessionEventFixture {
-  type?: "session_start" | "tool_execution_start";
+  type?: "session_start" | "tool_execution_start" | "agent_start" | "agent_end" | "turn_end";
 }
 type LifecycleHandler = (
   event: SessionEventFixture | ShutdownEventFixture,
   ctx: TestContext,
-) => Promise<void>;
+) => Promise<void> | void;
 
 interface Notice {
   message: string;
@@ -116,6 +117,9 @@ interface Activation {
   command?: CommandDefinition;
   sessionStart?: LifecycleHandler;
   toolExecutionStart?: LifecycleHandler;
+  agentStart?: LifecycleHandler;
+  agentEnd?: LifecycleHandler;
+  turnEnd?: LifecycleHandler;
   shutdown?: LifecycleHandler;
 }
 
@@ -131,6 +135,7 @@ interface ExtensionFixture {
   registerTool(tool: ToolDefinition): void;
   registerCommand(name: string, command: CommandDefinition): void;
   on(event: string, handler: LifecycleHandler): void;
+  appendEntry(type: string, data: { keys: string[]; shells: ShellResult[] }): void;
   sendMessage(
     message: {
       customType: string;
@@ -234,9 +239,16 @@ function activate(child: boolean): Promise<Activation> {
       if (event === "session_start") activation.sessionStart = handler;
       else if (event === "tool_execution_start") {
         activation.toolExecutionStart = handler;
+      } else if (event === "agent_start") {
+        activation.agentStart = handler;
+      } else if (event === "agent_end") {
+        activation.agentEnd = handler;
+      } else if (event === "turn_end") {
+        activation.turnEnd = handler;
       } else if (event === "session_shutdown") activation.shutdown = handler;
       else assert.fail(`unexpected event ${event}`);
     },
+    appendEntry() {},
     sendMessage(message, options) {
       activation.messages.push({ message, options });
     },
@@ -261,7 +273,7 @@ function context(
     cwd,
     hasUI,
     mode,
-    sessionManager: { getSessionId: () => sessionId },
+    sessionManager: { getSessionId: () => sessionId, getEntries: () => [] },
     ui,
   };
 }
@@ -496,6 +508,36 @@ test("terminal shells steer a compact grouped completion callback to their owner
     const rendered = renderShellCompletion(notification, notificationTheme);
     assert.match(rendered, /Shell: Completed/);
     assert.match(rendered, /stdout-tail/);
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
+  }
+});
+
+test("five streaming completions produce one grouped steer at turn_end", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const root = await activate(false);
+  try {
+    assert.ok(root.sessionStart);
+    assert.ok(root.agentStart);
+    assert.ok(root.agentEnd);
+    assert.ok(root.turnEnd);
+    const rootContext = context("root-session", [], packageCwd, new TestUI(), "print", false);
+    await root.sessionStart({}, rootContext);
+    await root.agentStart({}, rootContext);
+    await Promise.all(
+      Array.from({ length: 5 }, (_, index) =>
+        execute(root, "shell_start", { command: `exit ${index}` }, "root-session"),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.equal(root.messages.length, 0);
+
+    await root.agentEnd({}, rootContext);
+    await root.turnEnd({}, rootContext);
+    assert.equal(root.messages.length, 1);
+    assert.equal(root.messages[0]?.message.details.shells.length, 5);
+    assert.deepEqual(root.messages[0]?.options, { deliverAs: "steer", triggerTurn: true });
   } finally {
     assert.ok(root.shutdown);
     await root.shutdown({ reason: "quit" }, context("root-session"));
