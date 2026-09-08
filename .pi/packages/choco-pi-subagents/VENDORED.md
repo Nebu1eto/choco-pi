@@ -119,7 +119,6 @@ whole-manager disposal use the same seam.
 
 ### Focused-subagent fullscreen mode
 
-The fork adds `src/ui/focus-mode.ts` and `src/ui/method-patch-registry.ts` and
 extends FleetView and `ConversationViewer` with fullscreen focus. Moving the
 FleetView cursor onto a subagent row (or pressing `f`, or `f focus` in its modal
 viewer) replaces Pi's main transcript rendering with that agent's live
@@ -689,3 +688,26 @@ exact-once result claims, queue draining, slot release, single watchdog steering
 and timer disposal. `tests/invocation-budgets.test.ts` pins spawn-parameter
 resolution and UI metadata plumbing; `tests/result-read.test.ts` includes both
 new statuses in the terminal-settlement matrix.
+
+### Consolidated subagent completion notifications
+
+"notification-gate.ts" is a new fork-only module owning completion delivery
+coalescing. Individual terminal records and whole group joins enter one
+session-scoped shared gate instead of one timer per record: idle deliveries
+wait out a 200 ms cancellation window, streaming deliveries hold until
+"turn_end" or a 5 s cap, and while the duck-typed
+"choco-pi-codex:native-steering" process-global bridge reports a pending
+native steer the gate keeps holding (250 ms poll, 30 s cap) so a queued
+notification never downgrades the user's native mid-turn steer through
+"ctx.hasPendingMessages()". One flush emits a single consolidated
+"subagent-notification" message (records beyond the first land in
+"details.others", replacing the previous per-record group "partial" label in
+group presentation), filtered by "resultConsumed" at send time so a result
+already read through "get_subagent_result" or a queue wait never notifies at all. Records carry idempotency keys; on session shutdown held keys are
+persisted in a "subagent-notification-pending" custom session entry and
+re-enqueued at the next "session_start" when their record still exists
+unconsumed. Timer failures never escape a timer callback: the canonical
+stale-context error deactivates the gate without surfacing, and unrelated
+delivery failures are reported through the gate's error reporter with only
+the failed batch dropped. Workflow summary notifications keep their
+pre-existing per-key timers and are deliberately not routed through the gate.

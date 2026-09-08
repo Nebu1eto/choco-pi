@@ -46,6 +46,12 @@ function asExtensionAPI(value: RuntimeValue): ExtensionAPI {
   return value as ExtensionAPI;
 }
 
+function asExtensionContext(value: RuntimeValue): ExtensionContext {
+  // SAFETY: The fixture supplies the session binding reads; child setup is
+  // deliberately incomplete so this test can observe its terminal error.
+  return value as ExtensionContext;
+}
+
 function fixture(): PiFixture {
   const handlers = new Map<string, LifecycleHandler>();
   const tools = new Map<string, ToolDefinition>();
@@ -85,8 +91,15 @@ test("top-level get_subagent_result refuses repeated generation reads and retain
   assert.ok(resultTool);
 
   try {
-    // SAFETY: The detached runner reads cwd before failing on the deliberately incomplete host context.
-    const context = { cwd: process.cwd() } as ExtensionContext;
+    // SAFETY: Session binding needs only these session-manager reads; the detached
+    // runner still fails on the deliberately incomplete child-runtime context.
+    const context = asExtensionContext({
+      cwd: process.cwd(),
+      sessionManager: { getSessionId: () => "result-generation-probe", getEntries: () => [] },
+    });
+    const start = root.handlers.get("session_start");
+    assert.ok(start);
+    await start({}, context);
     const id = manager.spawn(root.pi, context, "implementer", "generation probe", {
       description: "generation probe",
       isBackground: true,
