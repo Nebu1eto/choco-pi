@@ -139,12 +139,61 @@ test("measured usage caps message estimates and keeps categories inside the wind
     { systemTokens: 100, toolsTokens: 60, toolCount: 1 },
   );
 
-  assert.match(rendered, /System prompt: 96 tokens/);
-  assert.match(rendered, /System tools: 60 tokens/);
-  assert.match(rendered, /Context files: 4 tokens/);
-  assert.match(rendered, /Messages: 840 tokens/);
+  assert.match(rendered, /1\.0k\/20k tokens/);
+  assert.match(rendered, /Messages: 99\d tokens/);
   assert.match(rendered, /Free space: 2\.6k tokens/);
   assert.doesNotMatch(rendered, /\(1\d\d(?:\.\d)?%\)/);
+});
+
+for (const withMetrics of [false, true]) {
+  test(`overestimated overhead preserves messages (provider metrics: ${withMetrics})`, () => {
+    const ctx = {
+      ...contextTabContext(),
+      getContextUsage: () => ({ tokens: 100, contextWindow: 20_000, percent: 0.5 }),
+      getSystemPrompt: () => "system".repeat(1_000),
+      sessionManager: {
+        buildContextEntries: () => [
+          {
+            type: "message",
+            message: { role: "user", content: "hello?", timestamp: 0 },
+          },
+        ],
+      },
+    };
+    // SAFETY: the fixture supplies every host member exercised by renderContext.
+    const rendered = renderContext(
+      { getAllTools: () => TOOLS, getActiveTools: () => ["read"] } as never,
+      ctx as never,
+      false,
+      false,
+      withMetrics ? { systemTokens: 1_500, toolsTokens: 60, toolCount: 1 } : undefined,
+    );
+    assert.match(rendered, /Messages: [1-9]\d* tokens/);
+    const categories = [
+      ...rendered.matchAll(
+        /(?:System prompt|System tools|MCP tools|Custom agents|Context files|Skills|Messages): (\d+) tokens/g,
+      ),
+    ];
+    assert.equal(categories.length, 7);
+    assert.equal(
+      categories.reduce((sum, match) => sum + Number(match[1]), 0),
+      100,
+    );
+    assert.match(rendered, /100\/20k tokens/);
+  });
+}
+
+test("empty unmeasured history has no message tokens", () => {
+  const ctx = { ...contextTabContext(), getContextUsage: () => undefined };
+  // SAFETY: the fixture supplies every host member exercised by renderContext.
+  const rendered = renderContext(
+    { getAllTools: () => TOOLS, getActiveTools: () => ["read"] } as never,
+    ctx as never,
+    false,
+    false,
+    undefined,
+  );
+  assert.match(rendered, /Messages: 0 tokens/);
 });
 
 test("base system prompt is not reduced by separately listed context files", () => {
