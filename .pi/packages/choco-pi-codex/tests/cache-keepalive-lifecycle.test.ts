@@ -80,7 +80,7 @@ test("session_start resets only the transport lane for the starting session", as
       isProjectTrusted: () => false,
       model: undefined,
       modelRegistry: {},
-      sessionManager: { getSessionId: () => sessionId },
+      sessionManager: { getSessionId: () => sessionId, getBranch: () => [] },
     });
 
   registerCodexEvents(pi, runtime, tools, ui, codeMode, proxyProvider);

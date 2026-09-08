@@ -299,3 +299,19 @@ message downgrade the user's steer through "hasPendingMessages()". No steering
 behavior, history, or Pi internals change; tests cover symbol resolution,
 unknown owners, pending transitions, and close cleanup.
 
+## Aged tool-result elision for Codex contexts (choco-pi addition)
+
+"extension/context-elision.ts" plus the "turn_start"/"session_start"/
+"session_tree"/"session_compact"/"context" wiring in "extension/events.ts"
+optionally replace old tool-result bodies with a bounded head/tail tombstone
+when Codex requests are built. Elision is request-only (session JSONL and UI
+keep the full transcript), cut advances in 64 KiB character steps and never
+regresses, the current and prior turn are never elided, pairing fields
+("toolCallId"/"toolName"/"isError"/"details") are preserved, and error or
+encrypted results are always retained. The cut persists as a session custom
+entry scoped to the current compaction epoch, resets on compaction, and is
+skipped entirely while a native steer is pending or the adapter runtime is
+inactive. Server-cache economy holds because cuts advance discretely at turn
+boundaries and continuation baselines are recorded from the already-elided
+request body. "turn_start" fires before the new user message persists, so the
+cut conservatively reflects the previous completed branch at that moment.
