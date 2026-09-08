@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
+import { runInNewContext } from "node:vm";
 import type { Message, Model, UserMessage } from "@earendil-works/pi-ai";
 import {
   ContextInjectionHistory,
@@ -13,6 +16,50 @@ const user = (content: string, timestamp = 1): UserMessage => ({
   role: "user",
   content,
   timestamp,
+});
+
+test("the actual context handler retains delivered guidance when a findings collector fails", async () => {
+  // Execute the production callback with controlled collectors, without booting LSP services.
+  const source = readFileSync(new URL("../runtime-extension.ts", import.meta.url), "utf8");
+  const start = source.indexOf("    async (\n      event: { messages?");
+  assert.ok(start >= 0);
+  const end = source.indexOf("\n  );", start);
+  assert.ok(end > start);
+  const callback = source.slice(start, end).trim().replace(/,$/, "");
+  let fail = false;
+  let guidancePending = true;
+  const errors: string[] = [];
+  const history = new ContextInjectionHistory<ContextInjectionMessage>();
+  const handler = runInNewContext(stripTypeScriptTypes(`(${callback})`), {
+    contextInjectionHistory: history,
+    lensEnabled: true,
+    contextInjectionEnabled: true,
+    getStableSessionId: () => "owner",
+    classifyCurrentSessionEmission: () => "primary",
+    observeCachePrefix: () => "unchanged",
+    observeCacheContext: () => {},
+    runtime: { turnIndex: 1 },
+    cacheManager: {},
+    dbg: (message: string) => errors.push(message),
+    isPlainUserPrompt: (message: ContextInjectionMessage) => message.role === "user",
+    consumeTurnEndFindings: () => {
+      if (fail) throw new Error("collector failed");
+    },
+    consumeSessionStartGuidance: () => {
+      if (!guidancePending) return;
+      guidancePending = false;
+      return { messages: [user("startup guidance")] };
+    },
+    consumeTestFindings: () => undefined,
+    consumeAgentNudge: () => undefined,
+  });
+  const initial: ContextInjectionMessage[] = [user("task"), { role: "custom", content: "persona" }];
+  const first = await handler({ messages: initial }, { cwd: "/fixture" });
+  fail = true;
+  const next = [...initial, { role: "assistant", content: [] }, user("steer")];
+  const recovered = await handler({ messages: next }, { cwd: "/fixture" });
+  assert.deepEqual(recovered.messages, [...first.messages, ...next.slice(initial.length)]);
+  assert.ok(errors.some((message) => message.includes("collector failed")));
 });
 
 test("consumed startup guidance remains in the exact serialized native continuation prefix", () => {
