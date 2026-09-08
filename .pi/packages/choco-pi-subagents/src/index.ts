@@ -32,6 +32,7 @@ import {
   Text,
 } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import { abortable } from "./abortable.ts";
 import { hasAgentBadge, renderAgentName } from "./agent-color.ts";
 import {
@@ -126,6 +127,7 @@ import {
 } from "./settings.ts";
 import { getForegroundOutcomeNote, getStatusNote, partialOutputSuffix } from "./status-note.ts";
 import { resolveStopOutcome } from "./stop-subagent.ts";
+import { NotificationGate, NUDGE_HOLD_MS } from "./notification-gate.ts";
 import {
   claimSubagentResultRead,
   formatResultReadGenerationChanged,
@@ -472,48 +474,68 @@ export default function (pi: ExtensionAPI) {
   // ---- Cancellable pending notifications ----
   // Holds notifications briefly so get_subagent_result can cancel them
   // before they reach pi.sendMessage (fire-and-forget).
-  const pendingNudges = new Map<string, ReturnType<typeof setTimeout>>();
-  const NUDGE_HOLD_MS = 200;
+  const notificationGate = new NotificationGate<AgentRecord>({
+    resolve: (key) => {
+      const record = manager.getRecord(key);
+      return record && record.status !== "running" && record.status !== "queued"
+        ? record
+        : undefined;
+    },
+    send: emitNudges,
+    onError: (error) => console.error("[choco-pi-subagents] Notification delivery failed", error),
+  });
   // A queued result wait must observe completion before its held notification
   // can fire, so successful waits can still suppress that redundant nudge.
   const QUEUE_WAIT_POLL_MS = Math.floor(NUDGE_HOLD_MS / 4);
 
-  function scheduleNudge(key: string, send: () => void, delay = NUDGE_HOLD_MS) {
+  // Workflow summaries have their own result API and are not terminal records.
+  const workflowNudges = new Map<string, ReturnType<typeof setTimeout>>();
+  function scheduleNudge(key: string, send: () => void) {
     cancelNudge(key);
-    pendingNudges.set(
+    workflowNudges.set(
       key,
       setTimeout(() => {
-        pendingNudges.delete(key);
+        workflowNudges.delete(key);
         try {
           send();
         } catch {
-          /* ignore stale completion side-effect errors */
+          /* Preserve the existing workflow-summary delivery behavior. */
         }
-      }, delay),
+      }, NUDGE_HOLD_MS),
     );
   }
 
   function cancelNudge(key: string) {
-    const timer = pendingNudges.get(key);
-    if (timer != null) {
-      clearTimeout(timer);
-      pendingNudges.delete(key);
-    }
+    notificationGate.cancel(key);
+    const timer = workflowNudges.get(key);
+    if (timer !== undefined) clearTimeout(timer);
+    workflowNudges.delete(key);
   }
 
-  // ---- Individual nudge helper (async join mode) ----
-  function emitIndividualNudge(record: AgentRecord) {
-    if (record.resultConsumed) return; // re-check at send time
-
-    const notification = formatTaskNotification(record, 500);
-    const footer = record.outputFile ? `\nFull transcript available at: ${record.outputFile}` : "";
-
+  // One send for individual and group-join completions; the gate filters consumed
+  // records at this boundary, not when they originally entered the hold.
+  function emitNudges(records: AgentRecord[]) {
+    const [first, ...rest] = records;
+    if (!first) return;
+    const limit = rest.length > 0 ? 300 : 500;
+    const details = buildNotificationDetails(first, limit, agentActivity.get(first.id));
+    if (rest.length > 0) {
+      details.others = rest.map((record) =>
+        buildNotificationDetails(record, limit, agentActivity.get(record.id)),
+      );
+    }
+    const notifications = records.map((record) => {
+      const footer = record.outputFile
+        ? `\nFull transcript available at: ${record.outputFile}`
+        : "";
+      return formatTaskNotification(record, limit) + footer;
+    });
     pi.sendMessage<NotificationDetails>(
       {
         customType: "subagent-notification",
-        content: notification + footer,
+        content: `${notifications.join("\n\n")}\n\n${TERMINAL_RESULT_RETRIEVAL_GUIDANCE}`,
         display: true,
-        details: buildNotificationDetails(record, 500, agentActivity.get(record.id)),
+        details,
       },
       { deliverAs: "followUp", triggerTurn: true },
     );
@@ -523,48 +545,19 @@ export default function (pi: ExtensionAPI) {
     agentActivity.delete(record.id);
     widget.markFinished(record.id);
     fleet.onAgentFinished(record.id);
-    scheduleNudge(record.id, () => emitIndividualNudge(record));
+    notificationGate.enqueue(record.id);
     widget.update();
   }
 
   // ---- Group join manager ----
-  const groupJoin = new GroupJoinManager((records, partial) => {
+  const groupJoin = new GroupJoinManager((records) => {
     for (const r of records) {
       agentActivity.delete(r.id);
       widget.markFinished(r.id);
       fleet.onAgentFinished(r.id);
     }
 
-    const groupKey = `group:${records.map((r) => r.id).join(",")}`;
-    scheduleNudge(groupKey, () => {
-      // Re-check at send time
-      const unconsumed = records.filter((r) => !r.resultConsumed);
-      if (unconsumed.length === 0) {
-        widget.update();
-        return;
-      }
-
-      const notifications = unconsumed.map((r) => formatTaskNotification(r, 300)).join("\n\n");
-      const label = partial
-        ? `${unconsumed.length} agent(s) finished (partial — others still running)`
-        : `${unconsumed.length} agent(s) finished`;
-
-      const [first, ...rest] = unconsumed;
-      const details = buildNotificationDetails(first, 300, agentActivity.get(first.id));
-      if (rest.length > 0) {
-        details.others = rest.map((r) => buildNotificationDetails(r, 300, agentActivity.get(r.id)));
-      }
-
-      pi.sendMessage<NotificationDetails>(
-        {
-          customType: "subagent-notification",
-          content: `Background agent group completed: ${label}\n\n${notifications}\n\nRetrieve each full result exactly once with get_subagent_result.`,
-          display: true,
-          details,
-        },
-        { deliverAs: "followUp", triggerTurn: true },
-      );
-    });
+    for (const record of records) notificationGate.enqueue(record.id);
     widget.update();
   }, 30_000);
 
@@ -902,6 +895,22 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     activeMentionCloneGeneration = ++nextMentionCloneGeneration;
     currentCtx = ctx;
+    const pendingEntry = ctx.sessionManager
+      .getEntries()
+      .findLast(
+        (entry) => entry.type === "custom" && entry.customType === "subagent-notification-pending",
+      );
+    const pendingData = pendingEntry?.type === "custom" ? pendingEntry.data : undefined;
+    const pendingSchema = Type.Object({ keys: Type.Array(Type.String()) });
+    const pendingKeys = Value.Check(pendingSchema, pendingData) ? pendingData.keys : [];
+    notificationGate.start(
+      ctx.sessionManager.getSessionId(),
+      pendingKeys.filter((key) => {
+        const record = manager.getRecord(key);
+        return record !== undefined && !record.resultConsumed;
+      }),
+    );
+    if (pendingKeys.length > 0) pi.appendEntry("subagent-notification-pending", { keys: [] });
     if (ctx.hasUI) {
       widget.setUICtx(ctx.ui);
       focus.setUICtx(ctx.ui);
@@ -1228,12 +1237,20 @@ export default function (pi: ExtensionAPI) {
     scheduler.stop();
   });
 
+  pi.on("agent_start", () => notificationGate.agentStart());
+  pi.on("agent_end", () => notificationGate.agentEnd());
+  pi.on("turn_end", () => notificationGate.turnEnd());
+
   // On shutdown, abort all agents immediately and clean up.
   // If the session is going down, there's nothing left to consume agent results.
   pi.on("session_shutdown", async () => {
     // Invalidate detached clone continuations before clearing their captured
     // context and before any future cleanup step can introduce an await.
     activeMentionCloneGeneration = undefined;
+    const pendingKeys = notificationGate.shutdown();
+    if (pendingKeys.length > 0) {
+      pi.appendEntry("subagent-notification-pending", { keys: pendingKeys });
+    }
     removeHookContinuationListener();
     unregisterPreferencesProvider?.();
     unregisterPreferencesProvider = undefined;
@@ -1252,8 +1269,9 @@ export default function (pi: ExtensionAPI) {
     scheduler.stop();
     workflowManager.dispose();
     manager.abortAll();
-    for (const timer of pendingNudges.values()) clearTimeout(timer);
-    pendingNudges.clear();
+    groupJoin.dispose();
+    for (const timer of workflowNudges.values()) clearTimeout(timer);
+    workflowNudges.clear();
     sideConversations.dispose();
     focus.dispose();
     fleet.dispose();
