@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -129,6 +130,27 @@ test("validation policy is acceptance-selected and provenance-bound", () => {
   ]) {
     assert.doesNotMatch(readRepoFile(path), /run `check`[^\n]*repository gates/i);
   }
+});
+
+test("repository policy prohibits diagnostic bypasses and blocking executable code", async () => {
+  const policyUrl = new URL("../AGENTS.md", import.meta.url);
+  const agents = await readFile(policyUrl, "utf8");
+  assert.match(agents, /Never bypass lint findings/);
+  assert.match(agents, /Do not add suppression directives, disable or weaken rules, exclude files/);
+  assert.match(agents, /Never ignore type errors/);
+  assert.match(agents, /@ts-ignore.*@ts-nocheck.*@ts-expect-error.*unchecked casts.*`any`/s);
+  assert.match(
+    agents,
+    /New or rewritten first-party executable code must be Node-erasable TypeScript/,
+  );
+  assert.match(agents, /Use non-blocking Node\.js APIs whenever an asynchronous equivalent exists/);
+  assert.match(agents, /`\*Sync` variants, are prohibited in new or rewritten code/);
+  assert.match(agents, /Required lint and typecheck gates must finish with zero errors/);
+  assert.match(agents, /Pre-existing failures are not an exemption/);
+  assert.match(
+    agents,
+    /report the blocker and request that scope rather than suppressing the failure/,
+  );
 });
 
 test("review recovery preserves runner and evidence state", () => {

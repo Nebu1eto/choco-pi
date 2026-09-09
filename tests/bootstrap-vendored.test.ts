@@ -226,7 +226,23 @@ async function workspace(root: string) {
   for (const dir of VENDORED) await tree(path.join(root, dir), "prior");
 }
 
-for (const manifest of ["{", "null", "{}", '{"packageManager":"pnpm@^11.11.0"}']) {
+for (const manifest of [
+  "{",
+  "null",
+  "{}",
+  "[]",
+  "42",
+  "true",
+  '"pnpm@11.11.0"',
+  '{"packageManager":null}',
+  '{"packageManager":42}',
+  '{"packageManager":true}',
+  '{"packageManager":["pnpm@11.11.0"]}',
+  '{"packageManager":{}}',
+  '{"packageManager":"pnpm@^11.11.0"}',
+  '{"packageManager":"pnpm@11.11.0-beta.1"}',
+  '{"packageManager":"npm@11.11.0"}',
+]) {
   test(`invalid manifest fails before spawn: ${manifest}`, async (t) => {
     const root = await fixture(t);
     await workspace(root);
@@ -241,6 +257,22 @@ for (const manifest of ["{", "null", "{}", '{"packageManager":"pnpm@^11.11.0"}']
     }
   });
 }
+
+test("exact pin comes from the selected root manifest", async (t) => {
+  const root = await fixture(t);
+  await workspace(root);
+  await writeFile(path.join(root, "package.json"), '{"packageManager":"pnpm@10.9.8"}');
+  await bootstrap(
+    root,
+    async (args, cwd) => {
+      if (args[0] === "--version") return "10.9.8\n";
+      await tree(cwd, "selected pin");
+      return "";
+    },
+    () => {},
+  );
+  for (const dir of VENDORED) assert.equal(await marker(path.join(root, dir)), "selected pin");
+});
 
 for (const version of ["11.10.0", "11.11.1", "12.0.0"]) {
   test(`exact version preflight rejects ${version} before any tree mutation`, async (t) => {

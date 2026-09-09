@@ -7,14 +7,14 @@ import {
 } from "../../../extensions/lib/runtime-values.ts";
 
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type Capability = "tui" | "subagents" | "resources" | "lsp";
+export const PI_SDK_TARGET = "0.85.1";
 type CheckStatus = "pass" | "warn" | "fail";
 
 type Check = { id: string; status: CheckStatus; detail: string };
@@ -154,7 +154,11 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
   if (piVersionResult.status !== 0) add("pi", "fail", "pi executable is unavailable");
   else {
     const piVersion = piVersionResult.stdout.trim();
-    add("pi", atLeast(piVersion, "0.84.2") ? "pass" : "fail", `${piVersion}; required >=0.84.2`);
+    add(
+      "pi",
+      piVersion === PI_SDK_TARGET ? "pass" : "fail",
+      `${piVersion}; required exactly ${PI_SDK_TARGET}`,
+    );
   }
 
   let settings: Settings | undefined;
@@ -387,13 +391,16 @@ async function main(): Promise<void> {
   process.exitCode = report.status === "fail" ? 1 : 0;
 }
 
-function isCliEntry(entry: string | undefined): boolean {
+async function isCliEntry(entry: string | undefined, modulePath: string): Promise<boolean> {
   if (!entry) return false;
   try {
-    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+    const [entryPath, sourcePath] = await Promise.all([realpath(entry), realpath(modulePath)]);
+    return entryPath === sourcePath;
   } catch {
     return false;
   }
 }
 
-if (isCliEntry(process.argv[1])) await main();
+const cliEntry = process.argv[1];
+const modulePath = fileURLToPath(import.meta.url);
+if (await isCliEntry(cliEntry, modulePath)) await main();

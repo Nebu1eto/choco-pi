@@ -338,6 +338,15 @@ Successful delivery emits the new cross-extension `subagents:message` event;
 `tests/messaging.test.ts` pins identities, resolution, envelopes and delivery
 classification without a live extension host.
 
+Agent-authored root messages and root, workflow, and nested terminal notices use
+Pi's `steer` delivery with `triggerTurn`, so active recipients see them at the
+next safe assistant/tool boundary while idle recipients still wake. This does
+not abort in-flight providers or tools and is separate from provider-native
+user steering. Current-generation cancellation closes peer delivery before
+session steering or pre-session queueing, reports the recipient as cancelling
+rather than already finished, and suppresses nested completion delivery to a
+cancelled parent without consuming the child's durable result.
+
 Recipient resolution no longer depends on parent lookup, so a nested record that
 outlives an evicted parent keeps its flat identity. Records without any identity
 are skipped, and missing callers return ordinary tool errors.
@@ -806,3 +815,12 @@ This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
 isolated one-package workspace boundary. Frozen installs retain the repository's
 `typebox@1.3.29` release-age exception. This is installer configuration only;
 it does not migrate or change the package's Pi SDK compatibility.
+
+## Pi SDK target alignment
+
+Host-provided Pi SDK peer contracts and any development SDK dependencies now
+require exactly `0.85.1`, matching the harness target. Package-local frozen
+locks resolve that release, with release-age exceptions
+limited to the six exact SDK/chord/telemetry `0.85.1` packages and the existing
+`typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
+installer-policy change; unrelated dependency contracts are unchanged.

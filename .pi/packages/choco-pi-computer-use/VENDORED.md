@@ -72,3 +72,10 @@ No enums, namespaces, decorators, or other constructor parameter properties rema
 ## Updating
 
 Diff a fresh checkout of the upstream repository against base commit `de72583`, then reapply every divergence above. Preserve explicit `.ts` relative imports and the one deliberate `.mjs` import. Do not restore npm lifecycle installation, network downloads, or non-macOS native helper support without an explicit fork decision.
+
+## Pi SDK target alignment
+
+Host-provided Pi SDK peer contracts and any development SDK dependencies now
+require exactly `0.85.1`, matching the harness target. This SDK alignment is
+separate from installer policy; TypeBox and unrelated
+dependencies retain their existing contracts.
