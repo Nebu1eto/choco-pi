@@ -31,8 +31,8 @@ import {
   Spacer,
   Text,
 } from "@earendil-works/pi-tui";
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { abortable } from "./abortable.ts";
 import { hasAgentBadge, renderAgentName } from "./agent-color.ts";
 import {

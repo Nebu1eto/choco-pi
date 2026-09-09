@@ -181,6 +181,7 @@ export {
   uiStreamCallToolResultSchema,
   uiStreamResultPatchNotificationSchema,
   serverStreamResultPatchNotificationSchema,
+  serverStreamResultPatchParamsStandard,
   getUiStreamHostContext,
   getVisualizationStreamEnvelope,
   type UiStreamMode,
@@ -192,6 +193,7 @@ export {
   type UiStreamCallToolResult,
   type UiStreamResultPatchNotification,
   type ServerStreamResultPatchNotification,
+  type ServerStreamResultPatchParams,
   type UiStreamSummary,
 } from "./ui-stream-types.ts";
 

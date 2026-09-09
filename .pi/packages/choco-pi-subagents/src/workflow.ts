@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { Type, type Static } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const STEP_ID_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,63}$";
@@ -137,7 +137,7 @@ type WorkflowBoundaryValue =
 function parseWorkflowDefinition(input: WorkflowBoundaryValue): WorkflowDefinition {
   if (Value.Check(WorkflowDefinitionSchema, input)) return structuredClone(input);
   for (const error of Value.Errors(WorkflowDefinitionSchema, input)) {
-    const path = error.path || "/";
+    const path = error.instancePath || "/";
     throw new Error(`Invalid workflow definition: ${path}: ${error.message}`);
   }
   throw new Error("Invalid workflow definition: invalid workflow definition");

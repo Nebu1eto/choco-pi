@@ -17,14 +17,19 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@sinclair/typebox": "0.34.52",
     "croner": "10.0.1",
     "nanoid": "5.1.16"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": ">=0.84.0",
     "@earendil-works/pi-coding-agent": ">=0.84.0",
-    "@earendil-works/pi-tui": ">=0.84.0"
+    "@earendil-works/pi-tui": ">=0.84.0",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "typebox": {
+      "optional": true
+    }
   },
   "chocoPi": {
     "supersedes": [

@@ -3,7 +3,7 @@ import {
   type ExtensionAPI,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 /** Persisted settings and runtime setters never exceed these safety bounds. */
 export const MAX_CONCURRENT_SANITY_CAP = 1024;

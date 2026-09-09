@@ -33,18 +33,40 @@ All upstream direct dependencies were installed into this package's `node_module
 - `@modelcontextprotocol/core@2.0.0`
 - `@modelcontextprotocol/ext-apps@1.7.5`
 - `@napi-rs/keyring@1.3.0`
-- `ajv@8.20.0`
-- `ajv-formats@3.0.1`
+- `ajv@8.20.0` (transitive-only, retained for the vendored MCP SDK)
+- `ajv-formats@3.0.1` (transitive-only, retained for the vendored MCP SDK)
 - `cross-spawn@7.0.6`
 - `open@10.2.0`
 - `recheck@4.5.0`
 - `smol-toml@1.8.0`
 - `strip-json-comments@5.0.3`
-- `zod@4.4.3`
+- `zod@4.4.3` (transitive-only, retained for the vendored MCP SDK)
 
-The installed peer closure also contains `@modelcontextprotocol/sdk@1.30.0`, required by `@modelcontextprotocol/ext-apps`. The source import audit found direct runtime imports of client/core, keyring, AJV and AJV formats, cross-spawn, open, recheck, smol-toml, strip-json-comments, and zod. `@modelcontextprotocol/ext-apps` has no direct import in the shipped TypeScript or helper scripts; it remains vendored because it is an upstream direct runtime dependency. Host-provided `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, and `typebox` resolve from the parent choco-pi installation and were typechecked against version 0.84.2 packages.
+The installed peer closure also contains `@modelcontextprotocol/sdk@1.30.0`, required by `@modelcontextprotocol/ext-apps`. The source import audit found direct runtime imports of client/core, keyring, cross-spawn, open, recheck, smol-toml, strip-json-comments, and host TypeBox. AJV, ajv-formats, and zod have no first-party runtime imports or direct dependency declarations. The vendored `@modelcontextprotocol/sdk` and `@modelcontextprotocol/ext-apps` declare `zod` as a non-optional consumer peer; because `node_modules` is vendored, that peer is fulfilled transitively through `@modelcontextprotocol/client`/`core`'s `zod@^4.2.0` dependency rather than a first-party declaration. `@modelcontextprotocol/ext-apps` has no direct import in the shipped TypeScript or helper scripts; it remains vendored because it is an upstream direct runtime dependency. Host-provided `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, and `typebox` resolve from the parent choco-pi installation and were typechecked against version 0.84.2 packages.
 
 ## Source changes relative to upstream 2.26.1
+
+### Host schema validation (`json-schema-validator.ts`, `ui-stream-types.ts`)
+
+The JSON Schema provider now uses host `typebox/compile` AOT validators, cached
+by schema identity and by `$id` in separate draft-07 and 2020-12 registries.
+Dialect acceptance and AJV-style error text are preserved. TypeBox leaves
+`byte`, `int32`, `int64`, `float`, and `double` formats unasserted, unlike
+ajv-formats. Its default `maxErrors = 8` caps reported errors versus AJV's
+`allErrors`; the adapter does not mutate host-global settings. Validation was
+targeted at repository TypeBox 1.3.29; Pi host resolution remains pinned to
+1.3.7 and is outside this migration's runtime alignment scope.
+
+UI stream schemas now use TypeBox and `Static` types rather than zod. The two
+getters clone and clean candidates before checking and returning them, preserving
+zod's unknown-key stripping without mutating inputs. Loose records and explicitly
+passthrough tool results retain unknown members. Regression tests cover dialects,
+formats, cache reuse, error wording, and stream parsing; tsconfig includes them.
+The vendored MCP client's setNotificationHandler accepts a StandardSchemaV1
+params schema rather than a TypeBox object, so ui-stream-types.ts exports
+serverStreamResultPatchParamsStandard, a ~standard wrapper over the patch
+params schema; server-manager.ts consumes that export at the registration
+site where zod's ["shape"].params previously stood.
 
 ### Command lifecycle ownership (`index.ts`, `prompts.ts`)
 

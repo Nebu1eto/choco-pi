@@ -1,4 +1,6 @@
-import { z } from "zod";
+import { Type, type Static } from "typebox";
+import * as Value from "typebox/value";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { isObjectValue, type McpObject } from "./protocol-values.ts";
 
 export const UI_STREAM_HOST_CONTEXT_KEY = "pi-mcp-adapter/stream";
@@ -7,73 +9,99 @@ export const UI_STREAM_RESULT_PATCH_METHOD = "notifications/pi-mcp-adapter/ui-re
 export const SERVER_STREAM_RESULT_PATCH_METHOD = "notifications/pi-mcp-adapter/result-patch";
 export const UI_STREAM_STRUCTURED_CONTENT_KEY = "pi-mcp-adapter/stream";
 
-export const uiStreamModeSchema = z.enum(["eager", "stream-first"]);
-export type UiStreamMode = z.infer<typeof uiStreamModeSchema>;
+export const uiStreamModeSchema = Type.Enum(["eager", "stream-first"]);
+export type UiStreamMode = Static<typeof uiStreamModeSchema>;
 
-export const visualizationStreamPhaseSchema = z.enum([
+export const visualizationStreamPhaseSchema = Type.Enum([
   "shell",
   "narrative",
   "structure",
   "detail",
   "settled",
 ]);
-export type VisualizationStreamPhase = z.infer<typeof visualizationStreamPhaseSchema>;
+export type VisualizationStreamPhase = Static<typeof visualizationStreamPhaseSchema>;
 
-export const visualizationStreamFrameTypeSchema = z.enum(["patch", "checkpoint", "final"]);
-export type VisualizationStreamFrameType = z.infer<typeof visualizationStreamFrameTypeSchema>;
+export const visualizationStreamFrameTypeSchema = Type.Enum(["patch", "checkpoint", "final"]);
+export type VisualizationStreamFrameType = Static<typeof visualizationStreamFrameTypeSchema>;
 
-export const visualizationStreamStatusSchema = z.enum(["ok", "error"]);
-export type VisualizationStreamStatus = z.infer<typeof visualizationStreamStatusSchema>;
+export const visualizationStreamStatusSchema = Type.Enum(["ok", "error"]);
+export type VisualizationStreamStatus = Static<typeof visualizationStreamStatusSchema>;
 
-const looseRecordSchema = z.record(z.string(), z.unknown());
-const looseArraySchema = z.array(z.unknown());
+const looseRecordSchema = Type.Record(Type.String(), Type.Unknown());
+const looseArraySchema = Type.Array(Type.Unknown());
 
-export const uiStreamHostContextSchema = z.object({
+export const uiStreamHostContextSchema = Type.Object({
   mode: uiStreamModeSchema,
-  streamId: z.string().min(1),
-  intermediateResultPatches: z.boolean(),
-  partialInput: z.boolean(),
+  streamId: Type.String({ minLength: 1 }),
+  intermediateResultPatches: Type.Boolean(),
+  partialInput: Type.Boolean(),
 });
-export type UiStreamHostContext = z.infer<typeof uiStreamHostContextSchema>;
+export type UiStreamHostContext = Static<typeof uiStreamHostContextSchema>;
 
-export const visualizationStreamEnvelopeSchema = z.object({
-  streamId: z.string().min(1),
-  sequence: z.number().int().nonnegative(),
+export const visualizationStreamEnvelopeSchema = Type.Object({
+  streamId: Type.String({ minLength: 1 }),
+  sequence: Type.Integer({ minimum: 0 }),
   frameType: visualizationStreamFrameTypeSchema,
   phase: visualizationStreamPhaseSchema,
   status: visualizationStreamStatusSchema,
-  message: z.string().optional(),
-  spec: looseRecordSchema.optional(),
-  checkpoint: looseRecordSchema.optional(),
+  message: Type.Optional(Type.String()),
+  spec: Type.Optional(looseRecordSchema),
+  checkpoint: Type.Optional(looseRecordSchema),
 });
-export type VisualizationStreamEnvelope = z.infer<typeof visualizationStreamEnvelopeSchema>;
+export type VisualizationStreamEnvelope = Static<typeof visualizationStreamEnvelopeSchema>;
 
-export const uiStreamCallToolResultSchema = z
-  .object({
-    content: looseArraySchema.optional(),
-    structuredContent: looseRecordSchema.optional(),
-    isError: z.boolean().optional(),
-    _meta: looseRecordSchema.optional(),
-  })
-  .passthrough();
-export type UiStreamCallToolResult = z.infer<typeof uiStreamCallToolResultSchema>;
+export const uiStreamCallToolResultSchema = Type.Object(
+  {
+    content: Type.Optional(looseArraySchema),
+    structuredContent: Type.Optional(looseRecordSchema),
+    isError: Type.Optional(Type.Boolean()),
+    _meta: Type.Optional(looseRecordSchema),
+  },
+  { additionalProperties: true },
+);
+export type UiStreamCallToolResult = Static<typeof uiStreamCallToolResultSchema>;
 
-export const uiStreamResultPatchNotificationSchema = z.object({
-  method: z.literal(UI_STREAM_RESULT_PATCH_METHOD),
+export const uiStreamResultPatchNotificationSchema = Type.Object({
+  method: Type.Literal(UI_STREAM_RESULT_PATCH_METHOD),
   params: uiStreamCallToolResultSchema,
 });
-export type UiStreamResultPatchNotification = z.infer<typeof uiStreamResultPatchNotificationSchema>;
+export type UiStreamResultPatchNotification = Static<typeof uiStreamResultPatchNotificationSchema>;
 
-export const serverStreamResultPatchNotificationSchema = z.object({
-  method: z.literal(SERVER_STREAM_RESULT_PATCH_METHOD),
-  params: z.object({
-    streamToken: z.string().min(1),
+export const serverStreamResultPatchNotificationSchema = Type.Object({
+  method: Type.Literal(SERVER_STREAM_RESULT_PATCH_METHOD),
+  params: Type.Object({
+    streamToken: Type.String({ minLength: 1 }),
     result: uiStreamCallToolResultSchema,
   }),
 });
-export type ServerStreamResultPatchNotification = z.infer<
+export type ServerStreamResultPatchNotification = Static<
   typeof serverStreamResultPatchNotificationSchema
 >;
+
+const serverStreamResultPatchParamsSchema = Type.Object({
+  streamToken: Type.String({ minLength: 1 }),
+  result: uiStreamCallToolResultSchema,
+});
+export type ServerStreamResultPatchParams = Static<typeof serverStreamResultPatchParamsSchema>;
+
+/** StandardSchemaV1 surface the vendored MCP client's setNotificationHandler expects. */
+export const serverStreamResultPatchParamsStandard: StandardSchemaV1<
+  unknown,
+  ServerStreamResultPatchParams
+> = {
+  "~standard": {
+    version: 1,
+    vendor: "typebox",
+    validate(value) {
+      if (Value.Check(serverStreamResultPatchParamsSchema, value)) return { value };
+      const issues = [...Value.Errors(serverStreamResultPatchParamsSchema, value)].map((error) => ({
+        message: error.message,
+        path: error.instancePath.split("/").filter((segment) => segment !== ""),
+      }));
+      return { issues };
+    },
+  },
+};
 
 export interface UiStreamSummary {
   streamId: string;
@@ -88,8 +116,8 @@ export function getUiStreamHostContext(
   hostContext: McpObject | undefined,
 ): UiStreamHostContext | undefined {
   const candidate = hostContext?.[UI_STREAM_HOST_CONTEXT_KEY];
-  const parsed = uiStreamHostContextSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : undefined;
+  const cleaned = Value.Clean(uiStreamHostContextSchema, Value.Clone(candidate));
+  return Value.Check(uiStreamHostContextSchema, cleaned) ? cleaned : undefined;
 }
 
 export function getVisualizationStreamEnvelope<BoundaryValue>(
@@ -103,6 +131,6 @@ export function getVisualizationStreamEnvelope<BoundaryValue>(
     /* SAFETY: Runtime validation or the typed MCP/Pi boundary establishes McpObject for this value. */ (
       structuredContent as McpObject
     )[UI_STREAM_STRUCTURED_CONTENT_KEY];
-  const parsed = visualizationStreamEnvelopeSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : undefined;
+  const cleaned = Value.Clean(visualizationStreamEnvelopeSchema, Value.Clone(candidate));
+  return Value.Check(visualizationStreamEnvelopeSchema, cleaned) ? cleaned : undefined;
 }
