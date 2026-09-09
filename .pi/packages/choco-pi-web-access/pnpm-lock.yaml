@@ -9,13 +9,13 @@ importers:
   .:
     dependencies:
       '@earendil-works/pi-ai':
-        specifier: '*'
+        specifier: 0.85.1
         version: 0.85.1(ws@8.21.3)
       '@earendil-works/pi-coding-agent':
-        specifier: '*'
+        specifier: 0.85.1
         version: 0.85.1(ws@8.21.3)
       '@earendil-works/pi-tui':
-        specifier: '*'
+        specifier: 0.85.1
         version: 0.85.1
       '@mozilla/readability':
         specifier: 0.6.0

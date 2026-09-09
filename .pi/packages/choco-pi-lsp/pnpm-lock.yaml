@@ -12,10 +12,10 @@ importers:
         specifier: 0.45.1
         version: 0.45.1
       '@earendil-works/pi-coding-agent':
-        specifier: '>=0.84.2'
+        specifier: 0.85.1
         version: 0.85.1(ws@8.21.3)
       '@earendil-works/pi-tui':
-        specifier: '>=0.84.2'
+        specifier: 0.85.1
         version: 0.85.1
       js-yaml:
         specifier: 5.2.3
@@ -35,6 +35,10 @@ importers:
       web-tree-sitter:
         specifier: 0.25.10
         version: 0.25.10
+    devDependencies:
+      '@types/pidusage':
+        specifier: 2.0.5
+        version: 2.0.5
 
 packages:
 
@@ -544,6 +548,9 @@ packages:
 
   '@types/node@26.5.0':
     resolution: {integrity: sha512-dVSGpriSoCgz8WnDNTuSSuSv1PC/ALXihO4ulRZt7Md8k9mlbdin3lGOcDE8SnWOgf513ByWlXd7BK4azmyg/A==}
+
+  '@types/pidusage@2.0.5':
+    resolution: {integrity: sha512-MIiyZI4/MK9UGUXWt0jJcCZhVw7YdhBuTOuqP/BjuLDLZ2PmmViMIQgZiWxtaMicQfAz/kMrZ5T7PKxFSkTeUA==}
 
   '@types/retry@0.12.0':
     resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
@@ -1398,6 +1405,8 @@ snapshots:
   '@types/node@26.5.0':
     dependencies:
       undici-types: 8.9.0
+
+  '@types/pidusage@2.0.5': {}
 
   '@types/retry@0.12.0': {}
 

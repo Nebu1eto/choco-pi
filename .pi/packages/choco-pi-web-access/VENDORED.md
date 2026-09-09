@@ -81,3 +81,12 @@ This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
 isolated one-package workspace boundary. Frozen installs retain the repository's
 `typebox@1.3.29` release-age exception. This is installer configuration only;
 it does not migrate or change the package's Pi SDK compatibility.
+
+## Pi SDK target alignment
+
+Host-provided Pi SDK peer contracts and any development SDK dependencies now
+require exactly `0.85.1`, matching the harness target. Package-local frozen
+locks resolve that release, with release-age exceptions
+limited to the six exact SDK/chord/telemetry `0.85.1` packages and the existing
+`typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
+installer-policy change; unrelated dependency contracts are unchanged.

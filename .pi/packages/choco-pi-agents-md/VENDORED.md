@@ -95,3 +95,10 @@ and everything under `dist/src/core/workflow*`, `dist/src/core/skill*`,
 `dist/src/tools/workflows-create.js`, `dist/src/commands/*`, and
 `dist/src/ui/*` — all workflows/skills-command machinery, out of scope for
 this package.
+
+## Pi SDK target alignment
+
+Host-provided Pi SDK peer contracts and any development SDK dependencies now
+require exactly `0.85.1`, matching the harness target. This SDK alignment is
+separate from installer policy; TypeBox and unrelated
+dependencies retain their existing contracts.

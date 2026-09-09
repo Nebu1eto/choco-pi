@@ -522,7 +522,7 @@ export default function (pi: ExtensionAPI) {
         display: true,
         details,
       },
-      { deliverAs: "followUp", triggerTurn: true },
+      { deliverAs: "steer", triggerTurn: true },
     );
   }
 
@@ -591,7 +591,10 @@ export default function (pi: ExtensionAPI) {
       if (record.parentAgentId) {
         const parent = manager.getRecord(record.parentAgentId);
         const parentSession = parent?.session;
-        const parentIsActive = parent?.status === "running" || parent?.status === "queued";
+        const parentIsActive =
+          parent !== undefined &&
+          (parent.status === "running" || parent.status === "queued") &&
+          parent.cancellation?.generation !== (parent.resultGeneration ?? 1);
         const generation = record.terminalResultGeneration;
         if (parentSession && parentIsActive && generation !== undefined && !record.resultConsumed) {
           const content =
@@ -604,7 +607,7 @@ export default function (pi: ExtensionAPI) {
                 display: true,
                 details: buildNotificationDetails(record, 500),
               },
-              { deliverAs: "followUp", triggerTurn: true },
+              { deliverAs: "steer", triggerTurn: true },
             )
             .catch(() => {
               /* missed delivery never consumes or removes the durable record */
@@ -1351,7 +1354,7 @@ export default function (pi: ExtensionAPI) {
             resultPreview: summary,
           },
         },
-        { deliverAs: "followUp", triggerTurn: true },
+        { deliverAs: "steer", triggerTurn: true },
       );
     });
   });

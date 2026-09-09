@@ -89,9 +89,18 @@ re-run the upstream test suite (`pnpm install && pnpm test`).
 ## Vendored install policy
 
 This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
-isolated one-package workspace boundary. Its workspace preserves the lockfile's
-exact `@earendil-works/pi-ai@0.84.0` and `@earendil-works/pi-tui@0.84.0`
-overrides plus the repository's `typebox@1.3.29` release-age exception. The
+isolated one-package workspace boundary. The installer-policy change originally
+preserved SDK overrides (subsequently aligned to `0.85.1` below) plus the
+repository's `typebox@1.3.29` release-age exception. The
 legacy manifest-level pnpm override block was moved here because pnpm 11 reads
 workspace-root overrides. This is installer configuration only; it does not
 migrate or change the package's Pi SDK compatibility.
+
+## Pi SDK target alignment
+
+Host-provided Pi SDK peer contracts and any development SDK dependencies now
+require exactly `0.85.1`, matching the harness target. Package-local frozen
+locks resolve that release, with release-age exceptions
+limited to the six exact SDK/chord/telemetry `0.85.1` packages and the existing
+`typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
+installer-policy change; unrelated dependency contracts are unchanged.

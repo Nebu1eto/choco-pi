@@ -42,7 +42,7 @@ All upstream direct dependencies were installed into this package's `node_module
 - `strip-json-comments@5.0.3`
 - `zod@4.4.3` (transitive-only, retained for the vendored MCP SDK)
 
-The installed peer closure also contains `@modelcontextprotocol/sdk@1.30.0`, required by `@modelcontextprotocol/ext-apps`. The source import audit found direct runtime imports of client/core, keyring, cross-spawn, open, recheck, smol-toml, strip-json-comments, and host TypeBox. AJV, ajv-formats, and zod have no first-party runtime imports or direct dependency declarations. The vendored `@modelcontextprotocol/sdk` and `@modelcontextprotocol/ext-apps` declare `zod` as a non-optional consumer peer; because `node_modules` is vendored, that peer is fulfilled transitively through `@modelcontextprotocol/client`/`core`'s `zod@^4.2.0` dependency rather than a first-party declaration. `@modelcontextprotocol/ext-apps` has no direct import in the shipped TypeScript or helper scripts; it remains vendored because it is an upstream direct runtime dependency. Host-provided `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, and `typebox` resolve from the parent choco-pi installation and were typechecked against version 0.84.2 packages.
+The installed peer closure also contains `@modelcontextprotocol/sdk@1.30.0`, required by `@modelcontextprotocol/ext-apps`. The source import audit found direct runtime imports of client/core, keyring, cross-spawn, open, recheck, smol-toml, strip-json-comments, and host TypeBox. AJV, ajv-formats, and zod have no first-party runtime imports or direct dependency declarations. The vendored `@modelcontextprotocol/sdk` and `@modelcontextprotocol/ext-apps` declare `zod` as a non-optional consumer peer; because `node_modules` is vendored, that peer is fulfilled transitively through `@modelcontextprotocol/client`/`core`'s `zod@^4.2.0` dependency rather than a first-party declaration. `@modelcontextprotocol/ext-apps` has no direct import in the shipped TypeScript or helper scripts; it remains vendored because it is an upstream direct runtime dependency. Host-provided `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, and `typebox` remain optional peers. The Pi SDK peers and development dependencies pin `0.85.1`, matching the repository's targeted host version and aligning the isolated package's SDK types with the root host.
 
 ## Source changes relative to upstream 2.26.1
 
@@ -190,5 +190,27 @@ flow, matching Claude Code's MCP hook behavior.
 
 This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
 isolated one-package workspace boundary. Frozen installs retain the repository's
-`typebox@1.3.29` release-age exception. This is installer configuration only;
-it does not migrate or change the package's Pi SDK compatibility.
+`typebox@1.3.29` release-age exception and the root workspace's six exact
+`@earendil-works/*@0.85.1` exceptions for the development SDK closure.
+
+### Declared type dependencies and SDK alignment
+
+`@standard-schema/spec@1.1.0` is now a direct dependency because
+`ui-stream-types.ts` imports its `StandardSchemaV1` type in published TypeScript.
+It supplies type declarations, not a schema-validation implementation; runtime
+validation still uses host TypeBox. The existing transitive version is unchanged.
+
+The development SDK moves from auto-installed optional peers at `0.84.4` to
+explicit `0.85.1` pins, matching the root's `ExtensionAPI` types without casts or
+compiler exclusions. The optional peers also pin `0.85.1` rather than retaining
+an alternate SDK version; no SDK becomes a runtime dependency. The required lockfile closure
+updates Pi agent-core, ai, coding-agent, telemetry, and tui, adds chord and its
+esbuild `0.28.1` binaries, removes the old client/protocol packages, and replaces
+Anthropic SDK `0.91.1` with the Pi SDK's exact `0.123.0` dependency and its webhook
+helpers. Existing MCP client/core, ext-apps, MCP SDK, zod, TypeBox, and unrelated
+lockfile selections remain unchanged.
+
+`tests/mcp-dependency-contract.test.ts` checks root/package SDK development and
+installed-version alignment, optional peers, and the declared Standard Schema
+types. Root typechecking and MCP lifecycle/schema tests validate the resulting
+type and runtime boundaries.

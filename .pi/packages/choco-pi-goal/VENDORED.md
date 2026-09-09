@@ -98,3 +98,10 @@ the former `npm:pi-codex-goal@0.2.0` entry.
 Re-run `npm pack pi-codex-goal@<version>` and diff `src/` against this copy;
 upstream `prompts/create-goal.md` diffs against `goalObjectivePrompt` in
 `src/prompts.ts`. Re-apply the five changes listed above.
+
+## Pi SDK target alignment
+
+Host-provided Pi SDK peer contracts and any development SDK dependencies now
+require exactly `0.85.1`, matching the harness target. This SDK alignment is
+separate from installer policy; TypeBox and unrelated
+dependencies retain their existing contracts.
