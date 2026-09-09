@@ -128,6 +128,7 @@ import {
 import { getForegroundOutcomeNote, getStatusNote, partialOutputSuffix } from "./status-note.ts";
 import { resolveStopOutcome } from "./stop-subagent.ts";
 import { NotificationGate, NUDGE_HOLD_MS } from "./notification-gate.ts";
+import { formatTaskNotificationStatus } from "./notification-status.ts";
 import {
   claimSubagentResultRead,
   formatResultReadGenerationChanged,
@@ -279,22 +280,6 @@ function createActivityTracker(maxTurns?: number, onStreamUpdate?: () => void) {
  */
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-/** Human-readable status label for agent completion. */
-function getStatusLabel(status: string, error?: string): string {
-  switch (status) {
-    case "error":
-      return `Error: ${error ?? "unknown"}`;
-    case "aborted":
-      return "Aborted (max turns exceeded)";
-    case "steered":
-      return "Wrapped up (turn limit)";
-    case "stopped":
-      return "Stopped";
-    default:
-      return "Done";
-  }
-}
-
 /** Escape XML special characters to prevent injection in structured notifications. */
 function escapeXml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -302,7 +287,7 @@ function escapeXml(s: string): string {
 
 /** Format a structured task notification matching Claude Code's <task-notification> XML. */
 function formatTaskNotification(record: AgentRecord, resultMaxLen: number): string {
-  const status = getStatusLabel(record.status, record.error);
+  const status = formatTaskNotificationStatus(record.status, record.error);
   const durationMs = record.completedAt ? record.completedAt - record.startedAt : 0;
   const totalTokens = getLifetimeTotal(record.lifetimeUsage);
   const contextPercent = getSessionContextPercent(record.session);
@@ -2947,6 +2932,11 @@ If the target is already known, use a direct tool — \`read\` for a known path,
           `Type: ${displayName} | Status: ${record.status}${getStatusNote(record.status)} | ${statsParts.join(" | ")}\n` +
           `Description: ${record.description}\n\n`;
 
+        const cancellation = record.cancellation;
+        if (cancellation && cancellation.generation === record.resultGeneration) {
+          output += `Cancellation: ${cancellation.cause} — ${cancellation.reason}\n\n`;
+        }
+
         if (record.status === "running" || record.status === "queued") {
           output +=
             waitOutcome === "timed-out"
@@ -3006,22 +2996,18 @@ If the target is already known, use a direct tool — \`read\` for a known path,
           );
         }
         const envelope = formatSteerMessage(ROOT_AGENT_PATH, params.message);
-        if (!record.session) {
-          // Session not ready yet — queue the steer for delivery once initialized
-          if (!record.pendingSteers) record.pendingSteers = [];
-          record.pendingSteers.push(envelope);
-          pi.events.emit("subagents:steered", { id: record.id, message: envelope });
-          return textResult(
-            `Steering message queued for agent ${record.id}. It will be delivered once the session initializes.`,
-          );
-        }
-
         // UI steering (overlay composer, prompt mentions and fullscreen focus)
         // converges on this same manager path, including pre-session queueing.
+        const queuedBeforeSession = !record.session;
         if (!manager.steer(record.id, envelope)) {
           return textResult(`Failed to steer agent ${record.id}. It is no longer running.`);
         }
         pi.events.emit("subagents:steered", { id: record.id, message: envelope });
+        if (queuedBeforeSession) {
+          return textResult(
+            `Steering message queued for agent ${record.id}. It will be delivered once the session initializes.`,
+          );
+        }
         const tokens = formatLifetimeTokens(record);
         const contextPercent = getSessionContextPercent(record.session);
         const stateParts: string[] = [];
@@ -3075,11 +3061,15 @@ If the target is already known, use a direct tool — \`read\` for a known path,
           );
         }
 
-        // The tool result already reports this stop. Mark it consumed before
-        // aborting so the asynchronous completion callback cannot schedule a
-        // redundant follow-up turn when the runner finishes unwinding.
-        record.resultConsumed = true;
-        cancelNudge(record.id);
+        if (outcome.kind === "pending") {
+          return textResult(
+            `Cancellation requested for agent ${record.id}; terminal result is still pending. ` +
+              TERMINAL_RESULT_RETRIEVAL_GUIDANCE,
+          );
+        }
+
+        // A stop acknowledgement is not a terminal-result read. Running cleanup
+        // still owns publication and its eventual completion notification.
         if (!manager.abort(record.id)) {
           return textResult(
             `Failed to stop agent ${record.id}. It is no longer running or queued.`,
@@ -3096,10 +3086,15 @@ If the target is already known, use a direct tool — \`read\` for a known path,
           stateParts.push(
             `${record.compactionCount} compaction${record.compactionCount === 1 ? "" : "s"}`,
           );
+        const pending = resolveStopOutcome(record).kind === "pending";
         return textResult(
-          `Agent ${record.id} stopped.\n` +
+          (pending
+            ? `Cancellation requested for agent ${record.id}; terminal result is still pending.\n`
+            : `Agent ${record.id} stopped and settled.\n`) +
             `Current state: ${stateParts.join(" · ")}\n` +
-            "Its partial transcript is still readable with get_subagent_result.",
+            (pending
+              ? TERMINAL_RESULT_RETRIEVAL_GUIDANCE
+              : "Retrieve its terminal result exactly once with get_subagent_result."),
         );
       },
     }),

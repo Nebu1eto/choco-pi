@@ -3,6 +3,7 @@ import test from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../src/agent-manager.ts";
+import { publishTerminalResult } from "../src/result-read.ts";
 import type { AgentRecord } from "../src/types.ts";
 
 function partialFixture<T extends object>(fixture: Partial<T>): T {
@@ -25,6 +26,7 @@ function sessionFixture(): AgentSession {
     },
     subscribe: () => () => {},
     abort: async () => {},
+    clearQueue: () => ({ steering: [], followUp: [] }),
     dispose: () => {},
     sessionManager: partialFixture<AgentSession["sessionManager"]>({
       getSessionId: () => "resume-alias-session",
@@ -40,6 +42,8 @@ function managerWithResumeRecords(): AgentManager {
       record.completedAt = Date.now();
       record.session = sessionFixture();
       record.sessionFile = `/tmp/${record.id}.jsonl`;
+      publishTerminalResult(record);
+      record.promise = Promise.resolve("");
     },
   });
   return manager;

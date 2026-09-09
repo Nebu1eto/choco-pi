@@ -315,3 +315,10 @@ inactive. Server-cache economy holds because cuts advance discretely at turn
 boundaries and continuation baselines are recorded from the already-elided
 request body. "turn_start" fires before the new user message persists, so the
 cut conservatively reflects the previous completed branch at that moment.
+
+## Vendored install policy
+
+This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
+isolated one-package workspace boundary. Frozen installs retain the repository's
+`typebox@1.3.29` release-age exception. This is installer configuration only;
+it does not migrate or change the package's Pi SDK compatibility.

@@ -185,3 +185,10 @@ already-connected MCP clients. The bridge waits for initialization, converges
 the requested server, forwards cancellation, and returns only text content in
 the command-hook stdout shape. It never starts a separate OAuth or connection
 flow, matching Claude Code's MCP hook behavior.
+
+## Vendored install policy
+
+This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
+isolated one-package workspace boundary. Frozen installs retain the repository's
+`typebox@1.3.29` release-age exception. This is installer configuration only;
+it does not migrate or change the package's Pi SDK compatibility.

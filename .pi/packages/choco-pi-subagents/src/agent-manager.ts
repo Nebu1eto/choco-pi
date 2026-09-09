@@ -137,6 +137,15 @@ function isBudgetedToolActivity(activity: ToolActivity): boolean {
   return activity.type === "start" || !activity.toolName.includes("-error:");
 }
 
+function ownsUnsettledGeneration(record: AgentRecord): boolean {
+  return (
+    record.status === "running" ||
+    record.status === "queued" ||
+    (record.resultGeneration !== undefined &&
+      record.terminalResultGeneration !== record.resultGeneration)
+  );
+}
+
 interface SpawnArgs {
   pi: ExtensionAPI;
   ctx: ExtensionContext;
@@ -149,6 +158,16 @@ interface RunBudgetState {
   controller?: RunBudgetController;
   forcedStatus?: ForcedTerminalStatus;
   forcedReason?: string;
+}
+
+type CancellationCause = NonNullable<AgentRecord["cancellation"]>["cause"];
+
+function cancellationForGeneration(
+  record: AgentRecord,
+  generation: number,
+): AgentRecord["cancellation"] {
+  const cancellation: AgentRecord["cancellation"] = record.cancellation;
+  return cancellation?.generation === generation ? cancellation : undefined;
 }
 
 interface SpawnOptions {
@@ -330,6 +349,22 @@ export class AgentManager {
     return schedulingMaxConcurrent(this.maxConcurrent);
   }
 
+  private requestCancellation(
+    record: AgentRecord,
+    generation: number,
+    cause: CancellationCause,
+    reason: string,
+    abortController = record.abortController,
+  ): boolean {
+    if ((record.resultGeneration ?? 1) !== generation) return false;
+    if (record.cancellation?.generation !== generation) {
+      record.cancellation = { generation, cause, reason, requestedAt: Date.now() };
+    }
+    record.pendingSteers = undefined;
+    abortController?.abort();
+    return true;
+  }
+
   private armRunBudgets(
     record: AgentRecord,
     generation: number,
@@ -364,7 +399,13 @@ export class AgentManager {
         if (state.forcedStatus !== undefined) return;
         state.forcedStatus = status;
         state.forcedReason = reason;
-        abortController.abort();
+        this.requestCancellation(
+          record,
+          generation,
+          status === "watchdog_stopped" ? "watchdog" : "budget",
+          reason,
+          abortController,
+        );
       },
       onDispose: (disposedController) => {
         this.activeRunBudgets.delete(disposedController);
@@ -542,8 +583,21 @@ export class AgentManager {
     // Wire parent abort signal to stop the subagent when the parent is interrupted
     let detachParentSignal: (() => void) | undefined;
     if (options.signal) {
-      const onParentAbort = () => this.abort(id);
-      options.signal.addEventListener("abort", onParentAbort, { once: true });
+      const onParentAbort = () => {
+        if (
+          this.requestCancellation(
+            record,
+            runGeneration,
+            "parent_signal",
+            "Parent run was cancelled.",
+          )
+        ) {
+          record.status = "stopped";
+          record.completedAt ??= Date.now();
+        }
+      };
+      if (options.signal.aborted) onParentAbort();
+      else options.signal.addEventListener("abort", onParentAbort, { once: true });
       detachParentSignal = () => options.signal!.removeEventListener("abort", onParentAbort);
     }
     const detach = () => {
@@ -623,6 +677,12 @@ export class AgentManager {
           maxSubagentDepth: record.maxSubagentDepth,
         },
         onSessionCreated: (session) => {
+          if (
+            record.resultGeneration !== runGeneration ||
+            record.cancellation?.generation === runGeneration
+          ) {
+            return;
+          }
           record.session = session;
           if (options.mainSessionFork) {
             record.sessionCostBaseline = getSessionCostBaseline(session) ?? undefined;
@@ -693,6 +753,14 @@ export class AgentManager {
           }
 
           if (record.resultGeneration !== runGeneration) return responseText;
+          if (this.disposed) {
+            record.session = session;
+            this.abortOwnedChildren(id);
+            releaseRunPoolSlot();
+            currentRunSettled = true;
+            this.removeRecord(id, record);
+            return responseText;
+          }
           // Publish status, output and generation together. Keeping the record
           // active through asynchronous worktree cleanup prevents resume/result
           // reads from observing a terminal status with unfinished output.
@@ -700,7 +768,9 @@ export class AgentManager {
             record.status = runBudget.forcedStatus ?? terminalStatus;
           }
           if (runBudget.forcedReason !== undefined) record.error = runBudget.forcedReason;
-          else if (failure) record.error = failure;
+          else if (record.cancellation?.generation === runGeneration) {
+            record.error = record.cancellation.reason;
+          } else if (failure) record.error = failure;
           record.result = finalResult;
           record.session = session;
           record.completedAt ??= Date.now();
@@ -766,10 +836,21 @@ export class AgentManager {
           }
 
           if (record.resultGeneration !== runGeneration) return "";
+          if (this.disposed) {
+            this.abortOwnedChildren(id);
+            releaseRunPoolSlot();
+            currentRunSettled = true;
+            this.removeRecord(id, record);
+            return "";
+          }
           if (record.status !== "stopped") {
             record.status = runBudget.forcedStatus ?? "error";
           }
-          record.error = runBudget.forcedReason ?? error;
+          record.error =
+            runBudget.forcedReason ??
+            (record.cancellation?.generation === runGeneration
+              ? record.cancellation.reason
+              : error);
           record.completedAt ??= Date.now();
           publishTerminalResult(record);
 
@@ -888,7 +969,14 @@ export class AgentManager {
     // A live run cannot be resumed safely in either mode: it owns the record's
     // abort controller and session prompt. Refuse before changing its alias or
     // any run state so a failed attempt leaves every address intact.
-    if (record.status === "running" || record.status === "queued") return undefined;
+    if (
+      record.status === "running" ||
+      record.status === "queued" ||
+      (record.resultGeneration !== undefined &&
+        record.terminalResultGeneration !== record.resultGeneration)
+    ) {
+      return undefined;
+    }
 
     if (options?.name !== undefined) {
       const previousAlias = record.alias;
@@ -918,6 +1006,7 @@ export class AgentManager {
       beginResultGeneration(record);
       record.result = undefined;
       record.error = undefined;
+      record.cancellation = undefined;
       record.completedAt = undefined;
       record.status = "queued";
 
@@ -938,60 +1027,91 @@ export class AgentManager {
     record.completedAt = undefined;
     record.result = undefined;
     record.error = undefined;
+    record.cancellation = undefined;
     const abortController = new AbortController();
     record.abortController = abortController;
-    const onParentAbort = () => abortController.abort();
-    if (signal?.aborted) abortController.abort();
+    const onParentAbort = () =>
+      this.requestCancellation(
+        record,
+        runGeneration,
+        "parent_signal",
+        "Parent run was cancelled.",
+        abortController,
+      );
+    if (signal?.aborted) onParentAbort();
     else signal?.addEventListener("abort", onParentAbort, { once: true });
     const runBudget = this.armRunBudgets(record, runGeneration, options?.budgets, abortController);
+    const session = record.session;
 
-    try {
-      const session = record.session;
-      const { text, failure } = await this.runner.resumeAgent(session, prompt, {
-        onToolActivity: (activity) => {
-          if (isBudgetedToolActivity(activity)) {
-            runBudget.controller?.noteToolActivity(activity.type);
-          }
-          if (activity.type === "end") record.toolUses++;
-          options?.onToolActivity?.(activity);
-        },
-        onAssistantUsage: (usage) => {
-          runBudget.controller?.noteUsage(usage);
-          addUsage(record.lifetimeUsage, usage);
-          options?.onAssistantUsage?.(usage);
-        },
-        onCompaction: (info) => {
-          record.compactionCount++;
-          this.onCompact?.(record, info);
-          options?.onCompaction?.(info);
-        },
-        signal: abortController.signal,
-      });
-      if (record.resultGeneration !== runGeneration) return record;
-      // Same contract as the spawn path (#144): a failed final turn is an
-      // error, not a completion — but the resumed text stays available.
-      record.status = runBudget.forcedStatus ?? (failure ? "error" : "completed");
-      if (runBudget.forcedReason !== undefined) record.error = runBudget.forcedReason;
-      else if (failure) record.error = failure;
-      record.result = text;
-      record.completedAt = Date.now();
-      markResultGenerationConsumed(record);
-    } catch (err) {
-      if (record.resultGeneration !== runGeneration) return record;
-      record.status = runBudget.forcedStatus ?? "error";
-      record.error = runBudget.forcedReason ?? (err instanceof Error ? err.message : String(err));
-      record.completedAt = Date.now();
-      markResultGenerationConsumed(record);
-    } finally {
-      runBudget.controller?.dispose();
-      signal?.removeEventListener("abort", onParentAbort);
-    }
+    const resumePromise = (async (): Promise<AgentRecord> => {
+      try {
+        const { text, failure } = await this.runner.resumeAgent(session, prompt, {
+          onToolActivity: (activity) => {
+            if (isBudgetedToolActivity(activity)) {
+              runBudget.controller?.noteToolActivity(activity.type);
+            }
+            if (activity.type === "end") record.toolUses++;
+            options?.onToolActivity?.(activity);
+          },
+          onAssistantUsage: (usage) => {
+            runBudget.controller?.noteUsage(usage);
+            addUsage(record.lifetimeUsage, usage);
+            options?.onAssistantUsage?.(usage);
+          },
+          onCompaction: (info) => {
+            record.compactionCount++;
+            this.onCompact?.(record, info);
+            options?.onCompaction?.(info);
+          },
+          signal: abortController.signal,
+        });
+        if (record.resultGeneration !== runGeneration) return record;
+        if (this.disposed) {
+          this.abortOwnedChildren(id);
+          this.removeRecord(id, record);
+          return record;
+        }
+        // Same contract as the spawn path (#144): a failed final turn is an
+        // error, not a completion — but the resumed text stays available.
+        const cancellation = cancellationForGeneration(record, runGeneration);
+        record.status =
+          runBudget.forcedStatus ?? (cancellation ? "stopped" : failure ? "error" : "completed");
+        if (cancellation) {
+          record.error = cancellation.reason;
+        }
+        if (runBudget.forcedReason !== undefined) record.error = runBudget.forcedReason;
+        else if (failure) record.error = failure;
+        record.result = text;
+        record.completedAt = Date.now();
+        markResultGenerationConsumed(record);
+      } catch (err) {
+        if (record.resultGeneration !== runGeneration) return record;
+        if (this.disposed) {
+          this.abortOwnedChildren(id);
+          this.removeRecord(id, record);
+          return record;
+        }
+        const cancellation = cancellationForGeneration(record, runGeneration);
+        record.status = runBudget.forcedStatus ?? (cancellation ? "stopped" : "error");
+        record.error =
+          runBudget.forcedReason ??
+          cancellation?.reason ??
+          (err instanceof Error ? err.message : String(err));
+        record.completedAt = Date.now();
+        markResultGenerationConsumed(record);
+      } finally {
+        runBudget.controller?.dispose();
+        signal?.removeEventListener("abort", onParentAbort);
+      }
 
-    // Same contract as the spawn settle paths: children spawned during the
-    // resumed turn must not outlive it — nothing else can see or reach them.
-    this.abortOwnedChildren(id);
+      // Same contract as the spawn settle paths: children spawned during the
+      // resumed turn must not outlive it — nothing else can see or reach them.
+      this.abortOwnedChildren(id);
 
-    return record;
+      return record;
+    })();
+    record.promise = resumePromise.then((settledRecord) => settledRecord.result ?? "");
+    return resumePromise;
   }
 
   /**
@@ -1028,8 +1148,21 @@ export class AgentManager {
     // for a detached one — background spawns omit it for exactly this reason.
     let detachParentSignal: (() => void) | undefined;
     if (parentSignal) {
-      const onParentAbort = () => this.abort(id);
-      parentSignal.addEventListener("abort", onParentAbort, { once: true });
+      const onParentAbort = () => {
+        if (
+          this.requestCancellation(
+            record,
+            runGeneration,
+            "parent_signal",
+            "Parent run was cancelled.",
+          )
+        ) {
+          record.status = "stopped";
+          record.completedAt ??= Date.now();
+        }
+      };
+      if (parentSignal.aborted) onParentAbort();
+      else parentSignal.addEventListener("abort", onParentAbort, { once: true });
       detachParentSignal = () => parentSignal.removeEventListener("abort", onParentAbort);
     }
     const detach = () => {
@@ -1078,6 +1211,10 @@ export class AgentManager {
       this.abortOwnedChildren(id);
       releaseRunPoolSlot();
       currentRunSettled = true;
+      if (this.disposed) {
+        this.removeRecord(id, record);
+        return;
+      }
       try {
         this.onComplete?.(record);
       } catch {
@@ -1111,6 +1248,10 @@ export class AgentManager {
         try {
           runBudget.controller?.dispose();
           if (record.resultGeneration !== runGeneration) return text;
+          if (this.disposed) {
+            settle();
+            return text;
+          }
           // Don't overwrite status if externally stopped via abort().
           if (record.status !== "stopped") {
             const forcedStatus = runBudget.forcedStatus;
@@ -1123,6 +1264,9 @@ export class AgentManager {
               record.status = forcedStatus;
               record.error = runBudget.forcedReason;
             }
+          }
+          if (record.cancellation?.generation === runGeneration && record.error === undefined) {
+            record.error = record.cancellation.reason;
           }
           record.result = text;
           record.completedAt ??= Date.now();
@@ -1137,10 +1281,17 @@ export class AgentManager {
         try {
           runBudget.controller?.dispose();
           if (record.resultGeneration !== runGeneration) return "";
+          if (this.disposed) {
+            settle();
+            return "";
+          }
           if (record.status !== "stopped") {
             record.status = runBudget.forcedStatus ?? "error";
             record.error =
               runBudget.forcedReason ?? (err instanceof Error ? err.message : String(err));
+          }
+          if (record.cancellation?.generation === runGeneration && record.error === undefined) {
+            record.error = record.cancellation.reason;
           }
           record.completedAt ??= Date.now();
           publishTerminalResult(record);
@@ -1166,6 +1317,7 @@ export class AgentManager {
     const record = this.agents.get(id);
     if (!record) return false;
     if (record.status !== "running" && record.status !== "queued") return false;
+    if (record.cancellation?.generation === (record.resultGeneration ?? 1)) return false;
     if (record.session) {
       record.session.steer(message).catch(() => {});
     } else {
@@ -1266,16 +1418,13 @@ export class AgentManager {
 
   /** Active records across the full tree, including ownership-scoped nested agents. */
   getActiveCount(): number {
-    return [...this.agents.values()].filter(
-      (record) => record.status === "running" || record.status === "queued",
-    ).length;
+    return [...this.agents.values()].filter(ownsUnsettledGeneration).length;
   }
 
   /** Active top-level background records governed by the shared pool cap. */
   getScheduledActiveCount(): number {
     return [...this.agents.values()].filter(
-      (record) =>
-        (record.status === "running" || record.status === "queued") && occupiesPoolSlot(record),
+      (record) => ownsUnsettledGeneration(record) && occupiesPoolSlot(record),
     ).length;
   }
 
@@ -1287,6 +1436,12 @@ export class AgentManager {
     if (record.status === "queued") {
       this.queue = this.queue.filter((q) => q.id !== id);
       record.status = "stopped";
+      this.requestCancellation(
+        record,
+        record.resultGeneration ?? 1,
+        "user_stop",
+        "Stopped by user request.",
+      );
       record.completedAt = Date.now();
       publishTerminalResult(record);
       // Ordinary queued Agent calls historically settle without a completion
@@ -1303,7 +1458,12 @@ export class AgentManager {
     }
 
     if (record.status !== "running") return false;
-    record.abortController?.abort();
+    this.requestCancellation(
+      record,
+      record.resultGeneration ?? 1,
+      "user_stop",
+      "Stopped by user request.",
+    );
     record.status = "stopped";
     record.completedAt = Date.now();
     return true;
@@ -1351,6 +1511,7 @@ export class AgentManager {
     const cutoff = Date.now() - 10 * 60_000;
     for (const [id, record] of this.agents) {
       if (record.status === "running" || record.status === "queued") continue;
+      if (record.terminalResultGeneration !== record.resultGeneration) continue;
       if ((record.completedAt ?? 0) >= cutoff) continue;
       this.removeRecord(id, record);
     }
@@ -1365,6 +1526,7 @@ export class AgentManager {
   clearCompleted(skipUnconsumed = false): void {
     for (const [id, record] of this.agents) {
       if (record.status === "running" || record.status === "queued") continue;
+      if (record.terminalResultGeneration !== record.resultGeneration) continue;
       if (skipUnconsumed && !record.resultConsumed) continue;
       this.removeRecord(id, record);
     }
@@ -1379,7 +1541,7 @@ export class AgentManager {
 
   /** Whether any agents are still running or queued. */
   hasRunning(): boolean {
-    return [...this.agents.values()].some((r) => r.status === "running" || r.status === "queued");
+    return [...this.agents.values()].some(ownsUnsettledGeneration);
   }
 
   /** Abort all running and queued agents immediately. */
@@ -1390,7 +1552,14 @@ export class AgentManager {
       const record = this.agents.get(queued.id);
       if (record) {
         record.status = "stopped";
+        this.requestCancellation(
+          record,
+          record.resultGeneration ?? 1,
+          "shutdown",
+          "Manager shutdown requested.",
+        );
         record.completedAt = Date.now();
+        publishTerminalResult(record);
         count++;
       }
     }
@@ -1398,7 +1567,12 @@ export class AgentManager {
     // Abort running agents
     for (const record of this.agents.values()) {
       if (record.status === "running") {
-        record.abortController?.abort();
+        this.requestCancellation(
+          record,
+          record.resultGeneration ?? 1,
+          "shutdown",
+          "Manager shutdown requested.",
+        );
         record.status = "stopped";
         record.completedAt = Date.now();
         count++;
@@ -1414,7 +1588,7 @@ export class AgentManager {
     while (true) {
       this.drainQueue();
       const pending = [...this.agents.values()]
-        .filter((r) => r.status === "running" || r.status === "queued")
+        .filter(ownsUnsettledGeneration)
         .map((r) => r.promise)
         .filter(Boolean);
       if (pending.length === 0) break;
@@ -1427,15 +1601,15 @@ export class AgentManager {
     clearInterval(this.cleanupInterval);
     for (const controller of this.activeRunBudgets) controller.dispose();
     this.activeRunBudgets.clear();
-    // Clear queue
-    this.queue = [];
-    for (const record of this.agents.values()) {
-      if (record.session) {
-        cleanupChildSessionOwner(record.session);
-        record.session.dispose();
+    this.abortAll();
+    for (const [id, record] of this.agents) {
+      if (
+        record.resultGeneration === undefined ||
+        record.terminalResultGeneration === record.resultGeneration
+      ) {
+        this.removeRecord(id, record);
       }
     }
-    this.agents.clear();
     // Prune any orphaned git worktrees (crash recovery)
     try {
       pruneWorktrees(process.cwd());

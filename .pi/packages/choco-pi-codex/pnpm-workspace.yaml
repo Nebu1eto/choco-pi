@@ -1,2 +1,5 @@
+packages:
+  - .
+
 minimumReleaseAgeExclude:
   - typebox@1.3.29

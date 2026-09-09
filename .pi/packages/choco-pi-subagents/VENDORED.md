@@ -211,8 +211,15 @@ dynamic updates, idle waits, retention and cancellation.
 The fork adds root and ownership-scoped nested `stop_subagent` tools. Both use
 `AgentManager.abort`, keep partial transcripts readable, and no-op after
 settlement. Root stops resolve ids or handles, exclude nested children, emit
-`subagents:stopped`, and consume the result before aborting so completion cannot
-trigger a redundant follow-up turn. Workflow-step stops remain allowed: the
+`subagents:stopped`, and distinguish cancellation acknowledgement from terminal
+result consumption. Running cancellation remains pending until its generation
+publishes; repeated stops neither re-abort nor suppress the eventual terminal
+notification. Never-started queued cancellation reports immediate settlement
+without promising a notification. A published result read still consumes once
+and suppresses any held notice. Legacy terminal records without generations
+retain their already-settled classification. `tests/stop-result-delivery.test.ts`
+drives the registered stop/result callbacks and real manager with an injected
+runner through delayed cancellation, notification delivery, and queued stops. Workflow-step stops remain allowed: the
 workflow runner observes the manager's terminal record and settles the step as
 an error, preserving scheduler state and failure policy. `src/stop-subagent.ts`
 holds the pure decision logic; `tests/stop-subagent.test.ts` pins every outcome.
@@ -727,3 +734,63 @@ stale-context error deactivates the gate without surfacing, and unrelated
 delivery failures are reported through the gate's error reporter with only
 the failed batch dropped. Workflow summary notifications keep their
 pre-existing per-key timers and are deliberately not routed through the gate.
+
+### 2026-09-09 cancellation ownership and settlement hardening
+
+External cancellation now belongs to the affected execution generation. The
+runner clears that owned child session's steering and follow-up queues before
+aborting it, clears any messages queued by synchronous abort listeners at the
+aborted `turn_end`, suppresses turn-limit steering and hard-abort actions for
+that event, and does not prompt a pre-aborted spawn or resume. Uncancelled queue
+and turn-limit behavior is unchanged. `tests/runner-cancellation.test.ts` covers
+the cancelled and ordinary runner paths.
+
+`AgentRecord` carries the first cancellation cause, reason, request time, and
+generation. Manager operations use that metadata to keep a cancelled run
+pending until its runner cleanup settles: result publication and consumption,
+resume, retention eviction, pool release, child-session disposal, and shutdown
+removal remain owned by the current generation rather than by an early
+`stopped` label. Foreground resume replaces `record.promise` with the current
+generation's full resume-and-cleanup lifetime, and completion callbacks remain
+generation-pinned. Pending-state counts and `waitForAll()` include unsettled
+generations; ordinary cancelled runs therefore remain pending until their code
+actually unwinds. Shutdown suppresses stale late completion callbacks, and
+cancelled foreground and background resumes do not publish false successful
+completion. `get_subagent_result` includes matching cancellation metadata in
+terminal-pending diagnostics. Coverage is in
+`tests/agent-manager-cancellation.test.ts`,
+`tests/agent-manager-budgets.test.ts`,
+`tests/agent-manager-generation.test.ts`, and `tests/result-read.test.ts`.
+
+This hardening does not change the public status union, global budget policy,
+or notification-gate delivery rules, and it cannot force uncooperative code to
+stop. A pre-existing lifecycle boundary also remains: hook-managed worktree
+cleanup can still invoke its removal hook through a retired host `pi` after
+manager disposal and late runner settlement. Correcting that requires ownership
+of the hook/event-provider lifecycle beyond this patch; none of the guarantees
+above covers that boundary.
+
+### 2026-09-09 explicit terminal-status presentation
+
+Structured completion XML now maps `completed`, `steered`, `aborted`,
+`stopped`, `budget_exceeded`, `watchdog_stopped`, and `error` explicitly;
+unknown non-success values are labeled unknown instead of falling through to
+`Done`. TUI completion rendering likewise treats stopped and unknown
+non-success values as unsuccessful, while preserving the existing distinct
+budget and watchdog labels. `tests/notification-status.test.ts` and
+`tests/notification-render.test.ts` cover the mappings.
+
+### 2026-09-09 opt-in scripted real-host hardening probe
+
+`tests/fixtures/hardening-host-probe.ts` adds a deterministic local-provider
+fixture for an opt-in real Pi host check of the cancellation and notification
+path; `tests/fixtures/hardening-host-check.ts` checks the resulting trace and
+session artifacts. They are acceptance scaffolding, not evidence about model
+policy, and this entry does not claim that a live-host run has passed.
+
+## Vendored install policy
+
+This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
+isolated one-package workspace boundary. Frozen installs retain the repository's
+`typebox@1.3.29` release-age exception. This is installer configuration only;
+it does not migrate or change the package's Pi SDK compatibility.

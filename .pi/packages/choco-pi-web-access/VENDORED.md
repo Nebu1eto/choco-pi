@@ -74,3 +74,10 @@ Deleted these search-provider modules and all imports, routing branches, availab
 - `ssrf-protection.ts` keeps its allow-range parsing, address validation, and IPv4/IPv6 blocklists. Enforcement was re-verified empirically after hardening: loopback, `localhost`, link-local cloud metadata (`169.254.169.254`), RFC1918 ranges, `0.0.0.0`, IPv6 loopback, and IPv6 ULA are all rejected while public hosts resolve. The 34 SSRF assertions pass unchanged.
 - `storage.ts` persisted record format, the curator HTTP route and payload contract, and the `web_search`/`source_check` provider enum (`auto | all | openai | exa | kagi`) are unchanged. Conditional properties are still constructed by explicit statements so omission semantics survive JSON serialization.
 - Removed dead state the linter surfaced: `currentProvider` in `index.ts` was declared and reassigned but never read, upstream included; `currentSearchProvider` is the value actually consumed, and the curator page keeps its own client-side copy. The `thumbnail` omission idiom was preserved by renaming the binding rather than deleting it.
+
+## Vendored install policy
+
+This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
+isolated one-package workspace boundary. Frozen installs retain the repository's
+`typebox@1.3.29` release-age exception. This is installer configuration only;
+it does not migrate or change the package's Pi SDK compatibility.

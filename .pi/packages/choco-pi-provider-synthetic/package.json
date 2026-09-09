@@ -73,13 +73,7 @@
       "optional": true
     }
   },
-  "packageManager": "pnpm@10.26.1",
-  "pnpm": {
-    "overrides": {
-      "@earendil-works/pi-ai": "$@earendil-works/pi-coding-agent",
-      "@earendil-works/pi-tui": "$@earendil-works/pi-coding-agent"
-    }
-  },
+  "packageManager": "pnpm@11.11.0",
   "chocoPi": {
     "supersedes": [
       "@aliou/pi-synthetic",

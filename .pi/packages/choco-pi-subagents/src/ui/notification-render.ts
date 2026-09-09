@@ -63,7 +63,7 @@ function statusPresentation(status: string): StatusPresentation {
     case "steered":
       return { icon: "✓", iconColor: "warning", outputColor: "toolOutput", title: "Wrapped up" };
     case "stopped":
-      return { icon: "■", iconColor: "dim", outputColor: "toolOutput", title: "Stopped" };
+      return { icon: "■", iconColor: "warning", outputColor: "warning", title: "Stopped" };
     case "aborted":
       return { icon: "✗", iconColor: "error", outputColor: "warning", title: "Aborted" };
     case "budget_exceeded":
@@ -74,10 +74,10 @@ function statusPresentation(status: string): StatusPresentation {
       return { icon: "✗", iconColor: "error", outputColor: "error", title: "Failed" };
     default:
       return {
-        icon: "•",
-        iconColor: "dim",
-        outputColor: "toolOutput",
-        title: compact(status || "finished", 32),
+        icon: "✗",
+        iconColor: "warning",
+        outputColor: "warning",
+        title: `Unknown status: ${compact(status || "(empty)", 24)}`,
       };
   }
 }
@@ -151,13 +151,7 @@ function resultLines(details: NotificationDetails, expanded: boolean): string[] 
 }
 
 function notificationBackground(status: string, theme: Theme): string {
-  const color =
-    status === "error" ||
-    status === "aborted" ||
-    status === "budget_exceeded" ||
-    status === "watchdog_stopped"
-      ? "toolErrorBg"
-      : "toolSuccessBg";
+  const color = status === "completed" || status === "steered" ? "toolSuccessBg" : "toolErrorBg";
   // Lightweight host themes may provide only foreground styling.
   return theme.getBgAnsi?.(color) ?? "";
 }

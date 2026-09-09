@@ -156,6 +156,7 @@
   "engines": {
     "node": ">=20"
   },
+  "packageManager": "pnpm@11.11.0",
   "chocoPi": {
     "supersedes": [
       "pi-mcp-adapter",

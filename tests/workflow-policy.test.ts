@@ -131,6 +131,31 @@ test("validation policy is acceptance-selected and provenance-bound", () => {
   }
 });
 
+test("review recovery preserves runner and evidence state", () => {
+  const core = readRepoFile(".pi/skills/task-core/SKILL.md");
+  const review = readRepoFile(".pi/skills/review/SKILL.md");
+
+  assert.match(core, /observation wait ending without a result.*not evidence.*execution failed/s);
+  assert.match(core, /execution failure or execution timeout.*only when the runner reports/s);
+  assert.match(core, /cancellation request is `cancellation pending`.*terminal settlement/s);
+  assert.match(core, /completed `INCOMPLETE` review.*not a pass/s);
+  assert.match(core, /first reviewer the complete immutable packet/);
+  assert.match(core, /instead of repeating the same wait, poll, or steer loop/);
+  assert.match(
+    core,
+    /partial output may be independently validated.*do not make the review complete or clean/s,
+  );
+  assert.match(core, /never loop on an identical defective packet/);
+  assert.match(core, /transient provider or capacity failure.*bounded retry and fallback policy/s);
+  assert.match(core, /Do not ask an incomplete reviewer.*`NO_FINDINGS`/);
+  assert.match(core, /task is blocked or partially complete/);
+  assert.match(core, /do not declare completion.*partial `NO_FINDINGS`.*pass/s);
+
+  assert.match(review, /follow `task-core`'s \*\*Observe and recover a review run\*\*/);
+  assert.match(review, /observation timeout is not an execution failure/);
+  assert.match(review, /completed `INCOMPLETE` result must remain incomplete/);
+});
+
 test("shared authority permits local implementation without weakening approval boundaries", () => {
   const system = readRepoFile(".pi/SYSTEM.md");
   const agents = readRepoFile("AGENTS.md");
