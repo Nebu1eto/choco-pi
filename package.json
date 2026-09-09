@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "install:profile": "node scripts/install-profile.mjs",
+    "install:vendored": "node scripts/bootstrap-vendored.mjs",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt .",
