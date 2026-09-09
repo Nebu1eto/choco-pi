@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "install:profile": "node scripts/install-profile.mjs",
-    "install:vendored": "node scripts/bootstrap-vendored.mjs",
+    "install:vendored": "node scripts/bootstrap-vendored.ts",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt .",
@@ -25,5 +25,6 @@
     "oxlint": "1.79.0",
     "typebox": "^1.3.29",
     "typescript": "^7.0.2"
-  }
+  },
+  "packageManager": "pnpm@11.11.0"
 }

@@ -13,6 +13,8 @@
 .pi/subagent-schedules/
 node_modules/
 **/node_modules/
+**/node_modules.bootstrap-backup*
+**/node_modules.bootstrap-lock/
 
 # Never commit local credentials or environment overrides.
 .env

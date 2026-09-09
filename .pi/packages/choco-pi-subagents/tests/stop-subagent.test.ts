@@ -37,12 +37,46 @@ test("allows workflow records because their scheduler observes manager settlemen
   assert.deepEqual(resolveStopOutcome(stepRecord), { kind: "stop", record: stepRecord });
 });
 
-test("classifies every terminal record as already settled", () => {
-  const statuses = ["completed", "steered", "aborted", "stopped", "error"] as const;
+test("keeps legacy terminal records without generations already settled", () => {
+  const statuses = [
+    "completed",
+    "steered",
+    "aborted",
+    "stopped",
+    "error",
+    "budget_exceeded",
+    "watchdog_stopped",
+  ] as const;
   for (const status of statuses) {
     const record = recordFixture({ status });
     assert.deepEqual(resolveStopOutcome(record), { kind: "already_settled", record });
   }
+});
+
+test("classifies terminal records by generation publication rather than status", () => {
+  for (const status of [
+    "stopped",
+    "aborted",
+    "completed",
+    "error",
+    "budget_exceeded",
+    "watchdog_stopped",
+  ] as const) {
+    const record = recordFixture({ status, resultGeneration: 2, terminalResultGeneration: 1 });
+    assert.deepEqual(resolveStopOutcome(record), { kind: "pending", record });
+    record.terminalResultGeneration = 2;
+    assert.deepEqual(resolveStopOutcome(record), { kind: "already_settled", record });
+  }
+});
+
+test("does not re-abort running cancellation for the current unpublished generation", () => {
+  const record = recordFixture({
+    resultGeneration: 2,
+    cancellation: { generation: 2, cause: "user_stop", reason: "stop", requestedAt: 1 },
+  });
+  assert.deepEqual(resolveStopOutcome(record), { kind: "pending", record });
+  record.cancellation!.generation = 1;
+  assert.deepEqual(resolveStopOutcome(record), { kind: "stop", record });
 });
 
 test("allows running and queued records to stop", () => {

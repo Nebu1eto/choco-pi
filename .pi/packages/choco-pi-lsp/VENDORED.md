@@ -173,3 +173,10 @@ the same machinery as upstream's `--no-lsp` flag (`lsp.enabled` config key):
   `lsp_diagnostics`/`lsp_navigation` return a graceful "disabled" message
   instead of spawning servers (upstream gated only `lsp_navigation` on the
   flag; gating `lsp_diagnostics` too is a deliberate fork behavior).
+
+## Vendored install policy
+
+This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
+isolated one-package workspace boundary. Frozen installs retain the repository's
+`typebox@1.3.29` release-age exception. This is installer configuration only;
+it does not migrate or change the package's Pi SDK compatibility.

@@ -50,7 +50,6 @@ async function runForcedCase(
           });
         pending.set(prompt, { options, resolve: settle });
         options.onSessionCreated?.(session);
-        options.signal?.addEventListener("abort", settle, { once: true });
       });
     },
     async resumeAgent() {
@@ -74,11 +73,30 @@ async function runForcedCase(
     assert.equal(claimSubagentResultRead(active).kind, "active-refused");
 
     await trigger(forcedRun);
+    while (!forcedRun.options.signal?.aborted) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(active.status, "running", "budget cancellation does not fake settlement");
+    assert.equal(active.terminalResultGeneration, undefined);
+    assert.equal(manager.getRecord(queuedId)?.status, "queued", "slot remains owned until unwind");
+    assert.equal(
+      await manager.resume(forcedId, "too soon", undefined, { name: "mutated" }),
+      undefined,
+    );
+    assert.notEqual(active.alias, "mutated");
+
+    forcedRun.resolve();
     await manager.getRecord(forcedId)?.promise;
 
     const forced = manager.getRecord(forcedId);
     assert.ok(forced);
     assert.equal(forced.status, expectedStatus);
+    assert.equal(
+      forced.cancellation?.cause,
+      expectedStatus === "watchdog_stopped" ? "watchdog" : "budget",
+    );
+    assert.equal(forced.error, forced.cancellation?.reason);
+    assert.equal(forced.result, "partial:forced");
     assert.equal(forced.terminalResultGeneration, forced.resultGeneration);
     assert.equal(claimSubagentResultRead(forced).kind, "terminal");
     assert.equal(claimSubagentResultRead(forced).kind, "terminal-refused");
@@ -121,7 +139,53 @@ test("idle watchdog steers exactly once, then publishes watchdog_stopped and rel
   assert.match(result.steers[0] ?? "", /conclude now/i);
 });
 
-test("disposing the manager cancels budget and watchdog timers", async () => {
+test("later user stop preserves the first budget cancellation cause", async () => {
+  let resolveRun: (() => void) | undefined;
+  const session = hostFixture<AgentSession>({
+    sessionManager: { getSessionFile: () => undefined },
+    dispose: () => undefined,
+  });
+  const runner: AgentManagerRunner = {
+    runAgent(_ctx, _type, _prompt, options) {
+      return new Promise((resolve) => {
+        resolveRun = () =>
+          resolve({ responseText: "partial", session, aborted: true, steered: false });
+        options.onSessionCreated?.(session);
+      });
+    },
+    async resumeAgent() {
+      return { text: "unused" };
+    },
+  };
+  const manager = new AgentManager(undefined, 1, undefined, undefined, runner);
+  const id = manager.spawn(
+    hostFixture<ExtensionAPI>({}),
+    hostFixture<ExtensionContext>({ cwd: process.cwd() }),
+    "reviewer",
+    "forced",
+    {
+      description: "immutable cancellation",
+      isBackground: true,
+      budgets: { timeoutMs: 5 },
+    },
+  );
+  const record = manager.getRecord(id);
+  assert.ok(record);
+  while (!record.abortController?.signal.aborted) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  const first = record.cancellation;
+  assert.equal(first?.cause, "budget");
+  assert.equal(manager.abort(id), true);
+  assert.deepEqual(record.cancellation, first);
+  resolveRun?.();
+  await record.promise;
+  assert.equal(record.status, "stopped");
+  assert.equal(record.error, first?.reason);
+  manager.dispose();
+});
+
+test("disposing the manager cancels the run once and disarms budget timers", async () => {
   let aborts = 0;
   const runner: AgentManagerRunner = {
     runAgent(_ctx, _type, _prompt, options) {
@@ -146,5 +210,5 @@ test("disposing the manager cancels budget and watchdog timers", async () => {
   );
   manager.dispose();
   await new Promise((resolve) => setTimeout(resolve, 30));
-  assert.equal(aborts, 0);
+  assert.equal(aborts, 1);
 });

@@ -100,7 +100,7 @@ export function releaseActiveResultRead(record: ResultReadRecord, generation: nu
 }
 
 export function formatResultReadRefusal(
-  record: Pick<AgentRecord, "id" | "status">,
+  record: Pick<AgentRecord, "id" | "status" | "cancellation">,
   claim: Extract<
     ResultReadClaim,
     { kind: "active-refused" | "terminal-refused" | "terminal-pending" }
@@ -118,18 +118,18 @@ export function formatResultReadRefusal(
     claim.kind === "terminal-refused"
       ? "Do not call get_subagent_result again for this generation."
       : "Wait for the terminal completion notification; do not poll get_subagent_result.";
-  return JSON.stringify(
-    {
-      kind: "subagent_result_read_refused",
-      agent_id: record.id,
-      status: record.status,
-      generation: claim.generation,
-      reason,
-      action,
-    },
-    null,
-    2,
-  );
+  const payload = {
+    kind: "subagent_result_read_refused",
+    agent_id: record.id,
+    status: record.status,
+    generation: claim.generation,
+    reason,
+    action,
+  };
+  if (record.cancellation?.generation === claim.generation) {
+    return JSON.stringify({ ...payload, cancellation: record.cancellation }, null, 2);
+  }
+  return JSON.stringify(payload, null, 2);
 }
 
 export function formatResultReadGenerationChanged(

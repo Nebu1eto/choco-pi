@@ -91,7 +91,19 @@ test("a resumed run gets a fresh generation without leaking consumed state", () 
 
 test("stopped runs refuse reads until partial output is atomically published", () => {
   const stopped = record("stopped");
-  assert.equal(claimSubagentResultRead(stopped).kind, "terminal-pending");
+  stopped.cancellation = {
+    generation: 1,
+    cause: "user_stop",
+    reason: "Stopped by user request.",
+    requestedAt: 2,
+  };
+  const pending = claimSubagentResultRead(stopped);
+  assert.equal(pending.kind, "terminal-pending");
+  if (pending.kind !== "terminal-pending") assert.fail("expected pending terminal result");
+  assert.deepEqual(
+    JSON.parse(formatResultReadRefusal(stopped, pending)).cancellation,
+    stopped.cancellation,
+  );
   stopped.result = "partial transcript";
   publishTerminalResult(stopped);
   assert.equal(claimSubagentResultRead(stopped).kind, "terminal");

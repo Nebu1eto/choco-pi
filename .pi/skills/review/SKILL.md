@@ -20,6 +20,8 @@ Spawn one fresh `reviewer` sub-agent. Give it the review-bundle path and manifes
 
 Do not include implementation plans, claimed safety, expected findings, or previous reviewer conclusions. The reviewer must remain read-only and must not spawn another agent.
 
+For observation, cancellation, terminal-state classification, and recovery, follow `task-core`'s **Observe and recover a review run** section. In particular, an observation timeout is not an execution failure, and a completed `INCOMPLETE` result must remain incomplete rather than being forced into findings or `NO_FINDINGS`.
+
 ## 3. Validate findings
 
 The main agent independently checks every candidate against the exact diff and evidence. Reject findings that are pre-existing, speculative, prevented by an existing guarantee, outside scope, or unsupported by a reproducible failure or deterministic path.

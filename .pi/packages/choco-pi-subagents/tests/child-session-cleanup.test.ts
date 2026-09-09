@@ -7,6 +7,7 @@ import {
   CODEX_TRANSPORT_CLEANUP_SYMBOL,
   SHELL_MANAGER_SYMBOL,
 } from "../src/child-session-cleanup.ts";
+import { publishTerminalResult } from "../src/result-read.ts";
 import type { AgentRecord } from "../src/types.ts";
 
 function sessionFixture(sessionId: string, dispose: () => void = () => {}): AgentSession {
@@ -41,6 +42,8 @@ function addCompletedRecord(manager: AgentManager, session: AgentSession): void 
       record.status = "completed";
       record.completedAt = Date.now();
       record.session = session;
+      publishTerminalResult(record);
+      record.promise = Promise.resolve("");
     },
   });
   // SAFETY: The patched startAgent does not observe the placeholder host objects.

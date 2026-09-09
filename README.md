@@ -8,29 +8,71 @@ Keep OAuth tokens, API keys, and machine-local configuration outside Git.
 
 ## Requirements
 
-- Pi `>=0.84.2 <0.85`
 - Node.js 24 or later
+- pnpm `11.11.0` exactly
+- Pi `0.85.1`, matching the SDK packages pinned by this checkout
 - Git
 - Optional: [`agent-browser`](https://github.com/vercel-labs/agent-browser) 0.34.0 for browser automation
 
-## Quick start
+If `pnpm --version` does not print `11.11.0`, install the required version with
+`npm install --global pnpm@11.11.0`, then check again. The vendored-package
+installer refuses a different pnpm version before changing package trees.
+
+## Initial installation
+
+Clone the repository to a stable path. The profile installer records absolute
+paths into Pi's user configuration, so moving the checkout later requires
+running it again from the new location.
 
 ```sh
+git clone https://github.com/Nebu1eto/choco-pi.git
 cd choco-pi
+
+npm install --global pnpm@11.11.0
+pnpm --version
+npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
+
+pnpm install --frozen-lockfile --ignore-scripts
+npm run install:vendored
 npm run install:profile
 pi
 ```
 
-This project also vendors six Pi packages (choco-pi-codex, choco-pi-lsp,
-choco-pi-mcp, choco-pi-provider-synthetic, choco-pi-subagents,
-choco-pi-web-access), each with a per-package pnpm-lock.yaml that is pinned
-on install. After cloning or pulling they must be restored via
-`npm run install:vendored` — the bootstrap is a no-op when every install
-already matches the lockfile.
+When Pi opens, run `/login` and select a provider. The installation scripts do
+not authenticate, open a login flow, or copy credentials into the repository.
 
-The installer preserves runtime and authentication state plus user-added packages, writes absolute checkout paths, and links tracked profile resources into `~/.pi/agent`.
-It does not link MCP configuration, and it stops on conflicting targets unless you rerun `npm run install:profile -- --backup`; keep the checkout at a stable path.
-Rerun the installer after updating the checkout, and run `/reload` after editing files under `.pi`.
+The root install and all six vendored-package installs use their committed
+lockfiles. `npm run install:vendored` installs each package in its isolated
+workspace and attempts to restore that package's previous dependency tree if
+its install fails. An interrupted process can leave a
+`node_modules.bootstrap-lock` claim directory and a
+`node_modules.bootstrap-backup*` dependency backup. The installer does not
+automatically prune this recoverable state or guarantee rollback after an
+interrupt such as SIGINT; inspect and preserve it before retrying rather than
+deleting it blindly.
+
+`npm run install:profile` preserves existing runtime and authentication state
+plus user-added packages, writes absolute checkout paths, and links tracked
+profile resources into `~/.pi/agent`. It does not link MCP configuration. If a
+target already contains unrelated content, the installer stops; review the
+conflict, then use `npm run install:profile -- --backup` to preserve and replace
+it when appropriate.
+
+## Updating and reloading
+
+Stop active Pi sessions before replacing their dependency trees. After pulling
+repository changes, keep the same Node and pnpm versions, then rerun the frozen
+root install, vendored install, and profile install:
+
+```sh
+pnpm install --frozen-lockfile --ignore-scripts
+npm run install:vendored
+npm run install:profile
+```
+
+Restart Pi after an update. For edits under `.pi` during an existing Pi session,
+run `/reload` to reload extensions, skills, prompts, themes, and linked profile
+files.
 
 ## Authentication
 

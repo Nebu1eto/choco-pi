@@ -71,9 +71,21 @@ test("opens the settled tool background band on every rendered row", () => {
     { expanded: false },
     backgroundTheme,
   );
+  const stopped = renderSubagentNotification(
+    notificationFixture({ status: "stopped", resultPreview: "Partial answer" }),
+    { expanded: false },
+    backgroundTheme,
+  );
+  const unknown = renderSubagentNotification(
+    notificationFixture({ status: "future_terminal", resultPreview: "Partial answer" }),
+    { expanded: false },
+    backgroundTheme,
+  );
 
   assert.ok(success.split("\n").every((line) => line.startsWith("\u001b[42m")));
   assert.ok(error.split("\n").every((line) => line.startsWith("\u001b[41m")));
+  assert.ok(stopped.split("\n").every((line) => line.startsWith("\u001b[41m")));
+  assert.ok(unknown.split("\n").every((line) => line.startsWith("\u001b[41m")));
 });
 
 test("adds one background row above and below each completion", () => {
@@ -190,6 +202,39 @@ test("distinguishes error, stopped, and aborted outcomes", () => {
   assert.match(stopped, /^      Partial answer$/m);
   assert.match(aborted, /^ • ✗ Delegation: Aborted$/m);
   assert.match(aborted, /^      Turn limit reached$/m);
+});
+
+test("distinguishes budget, watchdog, and unknown terminal outcomes", () => {
+  const budget = renderSubagentNotification(
+    notificationFixture({
+      status: "budget_exceeded",
+      error: "Token budget exceeded",
+      resultPreview: "Partial answer",
+    }),
+    { expanded: false },
+    theme,
+  );
+  const watchdog = renderSubagentNotification(
+    notificationFixture({
+      status: "watchdog_stopped",
+      error: "Idle watchdog stopped the run",
+      resultPreview: "Partial answer",
+    }),
+    { expanded: false },
+    theme,
+  );
+  const unknown = renderSubagentNotification(
+    notificationFixture({ status: "future_terminal", resultPreview: "Partial answer" }),
+    { expanded: false },
+    theme,
+  );
+
+  assert.match(budget, /^ • ■ Delegation: Budget exceeded$/m);
+  assert.match(budget, /^      Error: Token budget exceeded$/m);
+  assert.match(watchdog, /^ • ■ Delegation: Watchdog stopped$/m);
+  assert.match(watchdog, /^      Error: Idle watchdog stopped the run$/m);
+  assert.match(unknown, /^ • ✗ Delegation: Unknown status: future_terminal$/m);
+  assert.doesNotMatch(unknown, /Delegation: Completed/);
 });
 
 test("labels steered completions as wrapped up", () => {
