@@ -26,7 +26,7 @@ import {
   type Transport,
   type McpTraceSettings,
   SERVER_STREAM_RESULT_PATCH_METHOD,
-  serverStreamResultPatchNotificationSchema,
+  serverStreamResultPatchParamsStandard,
 } from "./types.ts";
 import { resolveNpxBinary } from "./npx-resolver.ts";
 import { createJsonSchemaValidator } from "./json-schema-validator.ts";
@@ -1121,7 +1121,7 @@ export class McpServerManager {
     client.setNotificationHandler(
       SERVER_STREAM_RESULT_PATCH_METHOD,
 
-      { params: serverStreamResultPatchNotificationSchema["shape"].params },
+      { params: serverStreamResultPatchParamsStandard },
       (params) => {
         const listener = this.uiStreamListeners.get(params.streamToken);
         if (!listener) return;

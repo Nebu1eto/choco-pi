@@ -1,7 +1,7 @@
 /** usage.ts — Token usage: shapes, accumulator operators, session-stats readers. */
 
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 
 /**
  * Lifetime usage components, accumulated via `message_end` events. Survives

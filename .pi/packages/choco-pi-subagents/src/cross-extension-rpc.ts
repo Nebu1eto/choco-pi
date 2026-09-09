@@ -10,8 +10,8 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
 
 type RpcScalar = string | number | boolean | null;

@@ -15,8 +15,9 @@ changing anything under `src/`, and `ARCHITECTURE.md` before adding a feature.
   renaming them fails silently at runtime, not at compile time.
 - **No build step.** Pi loads `src/index.ts` through jiti. Do not add a `dist/`.
 - **Runtime dependencies are vendored and exactly pinned** under
-  `node_modules/`. Adding one means copying the package in and pinning the exact
-  version; do not rely on the repository-root `node_modules`.
+  `node_modules/`, except for the host-provided `typebox` alias declared as an
+  optional peer. Adding another dependency means copying the package in and
+  pinning the exact version; do not rely on other repository-root modules.
 
 ## Before finishing a change
 

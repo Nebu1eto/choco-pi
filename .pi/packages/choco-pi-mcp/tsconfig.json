@@ -3,6 +3,12 @@
   "compilerOptions": {
     "rootDir": "."
   },
-  "include": ["./*.ts", "./figma/**/*.ts", "./tests/figma-*.test.ts"],
+  "include": [
+    "./*.ts",
+    "./figma/**/*.ts",
+    "./tests/figma-*.test.ts",
+    "./tests/json-schema-validator.test.ts",
+    "./tests/ui-stream-types.test.ts"
+  ],
   "exclude": ["./node_modules"]
 }

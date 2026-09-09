@@ -1,5 +1,5 @@
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 
 export const SUBAGENT_METHOD_PATCH_REGISTRY = Symbol.for(
   "choco-pi-subagents.method-patch-registry",
