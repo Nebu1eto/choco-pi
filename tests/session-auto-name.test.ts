@@ -9,6 +9,8 @@ import {
   firstSuccessfulInteraction,
   registerSessionAutoName,
   sanitizeSessionTitle,
+  SESSION_TITLE_PROMPT,
+  sessionTitleSystemPrompt,
   type SessionTitleGenerator,
 } from "../.pi/extensions/session-auto-name.ts";
 
@@ -135,6 +137,32 @@ test("only one successful assistant interaction is eligible", () => {
   ]);
   assert.equal(firstSuccessfulInteraction(one.ctx), undefined);
 });
+
+test("the title prompt carries the agent's preferred-language directive", () => {
+  assert.equal(sessionTitleSystemPrompt(undefined), SESSION_TITLE_PROMPT);
+  assert.ok(!SESSION_TITLE_PROMPT.includes("Preferred response language"));
+  assert.ok(
+    sessionTitleSystemPrompt("English").endsWith("\n\nPreferred response language: English"),
+  );
+});
+
+test(
+  "the configured agent language reaches the title generator",
+  withAgentDir(async (agentDir) => {
+    writeFileSync(
+      path.join(agentDir, "settings.json"),
+      JSON.stringify({ agentLanguage: "English" }),
+    );
+    const languages: Array<string | undefined> = [];
+    const harness = createHarness(async ({ language }) => {
+      languages.push(language);
+      return "Analyze schemas and plan TypeBox migration";
+    });
+    await harness.emit("session_start");
+    await harness.emit("agent_settled");
+    assert.deepEqual(languages, ["English"]);
+  }),
+);
 
 test(
   "the first settled turn prefers the configured model and runs once",

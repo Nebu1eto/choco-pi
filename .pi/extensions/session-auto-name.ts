@@ -5,6 +5,7 @@ import {
   DEFAULT_PERSONA,
   DEFAULT_SESSION_AUTO_NAME_MODEL,
   readAgentPreferences,
+  renderPreferredLanguageLine,
   SESSION_AUTO_NAME_FALLBACK_MODEL,
   type AgentPreferences,
 } from "./lib/agent-preferences.ts";
@@ -16,9 +17,16 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 export const SESSION_TITLE_PROMPT =
   "Create a concise display title for this coding-agent session. " +
-  "Describe the user's goal, not the conversation. Use the user's language. " +
+  "Describe the user's goal, not the conversation. " +
+  "Write the title in the preferred response language when one is given below; otherwise use the user's language. " +
   "Return only the title: one line, 3 to 7 words when the language uses spaces, " +
   "with no quotes, markdown, label, explanation, or ending punctuation.";
+
+/** The title request's system prompt, carrying the same language directive as the agent prompt. */
+export function sessionTitleSystemPrompt(language: string | undefined): string {
+  if (!language) return SESSION_TITLE_PROMPT;
+  return `${SESSION_TITLE_PROMPT}\n\n${renderPreferredLanguageLine(language)}`;
+}
 
 interface Interaction {
   user: string;
@@ -28,6 +36,7 @@ interface Interaction {
 export interface SessionTitleRequest {
   ctx: ExtensionContext;
   modelName: string;
+  language: string | undefined;
   interaction: Interaction;
   signal: AbortSignal;
 }
@@ -107,6 +116,7 @@ export function sanitizeSessionTitle(raw: string): string | undefined {
 export const generateSessionTitle: SessionTitleGenerator = async ({
   ctx,
   modelName,
+  language,
   interaction,
   signal,
 }) => {
@@ -118,7 +128,7 @@ export const generateSessionTitle: SessionTitleGenerator = async ({
   const response = await completeSimple(
     model,
     {
-      systemPrompt: SESSION_TITLE_PROMPT,
+      systemPrompt: sessionTitleSystemPrompt(language),
       messages: [
         {
           role: "user",
@@ -150,6 +160,7 @@ interface NamingAttempt {
   sessionId: string;
   controller: AbortController;
   ctx: ExtensionContext;
+  language: string | undefined;
   interaction: Interaction;
   candidates: string[];
 }
@@ -197,6 +208,7 @@ function beginNamingAttempt(
     sessionId,
     controller,
     ctx,
+    language: preferences.language,
     interaction,
     candidates: [
       preferences.sessionAutoNameModel ?? DEFAULT_SESSION_AUTO_NAME_MODEL,
@@ -227,6 +239,7 @@ async function tryCandidates(
       const title = await generateTitle({
         ctx: attempt.ctx,
         modelName,
+        language: attempt.language,
         interaction: attempt.interaction,
         signal: AbortSignal.any([
           attempt.controller.signal,

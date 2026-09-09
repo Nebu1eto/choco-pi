@@ -34,6 +34,11 @@ export const AGENT_PREFERENCES_MARKER_END = "</choco_pi_agent_preferences>";
 export const USER_STYLES_DIR_NAME = "agent-styles";
 export const PREFERENCES_PROVIDER_SYMBOL = Symbol.for("choco-pi.preferences-provider");
 
+/** The language directive line shared by the agent prompt and every side prompt that must honor it. */
+export function renderPreferredLanguageLine(language: string): string {
+  return `Preferred response language: ${language}`;
+}
+
 export type Persona = "unset" | "critical" | "pessimistic";
 
 export const PERSONA_VALUES: readonly Persona[] = ["unset", "critical", "pessimistic"];
@@ -328,7 +333,7 @@ export function buildAgentPreferencesBlock(
     const language = preferences.language;
     blocks.push(
       [
-        `Preferred response language: ${language}`,
+        renderPreferredLanguageLine(language),
         `Governs responses, plans, reports, and generated prose regardless of message language, unless overridden for an artifact. Code, identifiers, and paths are unaffected. Commit messages follow the language established by the repository's own history and policy, not this setting.`,
       ].join("\n"),
     );
