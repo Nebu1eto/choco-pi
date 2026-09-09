@@ -164,3 +164,10 @@ so `"theme": "nord-dark"` resolves exactly as before.
   changes above.
 - Themes: `npm pack @maddeye/pi-nord@<version>`, replace `themes/*.json` and
   `LICENSE.pi-nord`, and record the new version, shasum, and date here.
+
+## Pi SDK target alignment
+
+Host-provided Pi SDK peer contracts and any development SDK dependencies now
+require exactly `0.85.1`, matching the harness target. This SDK alignment is
+separate from installer policy; TypeBox and unrelated
+dependencies retain their existing contracts.

@@ -2,7 +2,7 @@
 
 choco-pi fork of **pi-lens**, loaded as a local TypeScript-source pi package.
 
-- Upstream repository: https://github.com/apmantza/pi-lens
+- Upstream repository: <https://github.com/apmantza/pi-lens>
 - Base commit: `51050ea0bd04acc022aaf9c8e1b69729c7c44b2b` (master, 2026-08-20, version 4.0.1)
 - Fork date: 2026-08-22
 - Upstream license: MIT (see `LICENSE`, unchanged)
@@ -180,3 +180,18 @@ This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
 isolated one-package workspace boundary. Frozen installs retain the repository's
 `typebox@1.3.29` release-age exception. This is installer configuration only;
 it does not migrate or change the package's Pi SDK compatibility.
+
+## Pi SDK target alignment
+
+Host-provided Pi SDK peer contracts and any development SDK dependencies now
+require exactly `0.85.1`, matching the harness target. Package-local frozen
+locks resolve that release, with release-age exceptions
+limited to the six exact SDK/chord/telemetry `0.85.1` packages and the existing
+`typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
+installer-policy change; unrelated dependency contracts are unchanged.
+
+The manifest now declares the previously documented typecheck-only
+`@types/pidusage@2.0.5` as an exact development dependency, and the frozen lock
+includes it. Fresh development installs therefore provide the published
+`pidusage` declarations without relying on an incidental installed copy;
+runtime dependency ownership is unchanged.

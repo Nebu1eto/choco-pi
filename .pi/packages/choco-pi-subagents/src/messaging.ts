@@ -16,6 +16,9 @@ export interface MessagingRecord {
   parentAgentId?: string;
   status: string;
   session?: unknown;
+  resultGeneration?: number;
+  terminalResultGeneration?: number;
+  cancellation?: { generation: number };
 }
 
 export type RecipientResolution<T extends MessagingRecord = MessagingRecord> =
@@ -147,11 +150,20 @@ export function formatSteerMessage(senderIdentity: string, text: string): string
   return formatAgentMessage(senderIdentity, text, "MESSAGE");
 }
 
-export type MessageDeliveryClass = "running" | "queued" | "finished";
+export type MessageDeliveryClass = "running" | "queued" | "closing" | "finished";
 
 /** Classify whether a recipient can receive now, before session creation, or not at all. */
 export function classifyMessageDelivery(record: MessagingRecord): MessageDeliveryClass {
+  const generation = record.resultGeneration ?? 1;
+  const active = record.status === "running" || record.status === "queued";
+  if (
+    active &&
+    record.cancellation?.generation === generation &&
+    record.terminalResultGeneration !== generation
+  ) {
+    return "closing";
+  }
   if (record.status === "running" && record.session !== undefined) return "running";
-  if (record.status === "running" || record.status === "queued") return "queued";
+  if (active) return "queued";
   return "finished";
 }

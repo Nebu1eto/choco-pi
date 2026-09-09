@@ -415,7 +415,7 @@ test("agent-message envelopes neutralize hostile body delimiters case-insensitiv
   assert.equal(parseAgentMessage(envelope)?.body.replaceAll("\u200B", ""), hostile);
 });
 
-test("delivery classification distinguishes live sessions, pre-session queues, and finished agents", () => {
+test("delivery classification distinguishes live sessions, queues, unpublished cancellation, and finished agents", () => {
   assert.equal(
     classifyMessageDelivery({ id: "a", handle: "a", status: "running", session: {} }),
     "running",
@@ -424,6 +424,37 @@ test("delivery classification distinguishes live sessions, pre-session queues, a
   assert.equal(classifyMessageDelivery({ id: "c", handle: "c", status: "queued" }), "queued");
   assert.equal(classifyMessageDelivery({ id: "d", handle: "d", status: "completed" }), "finished");
   assert.equal(classifyMessageDelivery({ id: "e", handle: "e", status: "aborted" }), "finished");
+  assert.equal(
+    classifyMessageDelivery({
+      id: "f",
+      handle: "f",
+      status: "running",
+      resultGeneration: 2,
+      cancellation: { generation: 2 },
+    }),
+    "closing",
+  );
+  assert.equal(
+    classifyMessageDelivery({
+      id: "g",
+      handle: "g",
+      status: "stopped",
+      resultGeneration: 2,
+      terminalResultGeneration: 2,
+      cancellation: { generation: 2 },
+    }),
+    "finished",
+  );
+  assert.equal(
+    classifyMessageDelivery({
+      id: "h",
+      handle: "h",
+      status: "stopped",
+      resultGeneration: 2,
+      cancellation: { generation: 2 },
+    }),
+    "finished",
+  );
 });
 
 test("steer_subagent wrapping uses the same MESSAGE envelope", () => {

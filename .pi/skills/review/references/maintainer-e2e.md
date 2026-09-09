@@ -86,3 +86,53 @@ continuation order. Production exposes no `done: false` field, so this probe
 claims conceptual not-done status only from those real terminal contracts. The
 fixture does not duplicate production settlement logic and does not make
 network-backed policy claims.
+
+## Coordination delivery probe
+
+This opt-in fixture runs the production extension, native `Agent`, the child's
+real scoped `agent_message`, the coordination and terminal sends, and the real
+`get_subagent_result`. The child uses a controlled local provider. Its unique
+message marker is created inside the fixture and does not appear in the parent
+prompt or `Agent` arguments.
+
+Run the fully local scripted parent first:
+
+```bash
+scratch="${TASKSCRATCH:?TASKSCRATCH must be an approved task-scratch directory}"
+mkdir -p "$scratch/coordination-local-sessions"
+CHOCO_PI_COORDINATION_TRACE="$scratch/coordination-local-trace.jsonl" \
+  PI_OFFLINE=1 pi -p -ne \
+  -e .pi/packages/choco-pi-subagents/tests/fixtures/coordination-host-probe.ts \
+  --provider coordination-fixture --model parent --thinking off \
+  --session-dir "$scratch/coordination-local-sessions" \
+  'Run the scripted coordination host probe.'
+node .pi/packages/choco-pi-subagents/tests/fixtures/coordination-host-check.ts \
+  "$scratch/coordination-local-trace.jsonl" "$scratch/coordination-local-sessions"
+```
+
+For a native Astra parent against the same controlled child, use this exact
+prompt. It names the production tool sequence and child limits but cannot quote
+the fixture-generated marker:
+
+```bash
+scratch="${TASKSCRATCH:?TASKSCRATCH must be an approved task-scratch directory}"
+mkdir -p "$scratch/coordination-astra-sessions"
+prompt='Use native Agent to spawn exactly one isolated general child named coordination-host-child with model coordination-fixture/child, thinking off, run_in_background true, max_turns 3, timeout_ms 15000, and max_tool_calls 2. Tell it to send one MESSAGE to /root with its available coordination tool and then finish normally. After Agent returns, call coordination_delivery_barrier with its agent ID. In the next context confirm the actual agent-message envelope is present, then call coordination_settlement_barrier with the same ID. In the next context confirm the matching terminal notification is present, call get_subagent_result exactly once with that ID, and finish. Do not end a response merely to flush pending messages.'
+CHOCO_PI_COORDINATION_TRACE="$scratch/coordination-astra-trace.jsonl" \
+  pi -p -ne \
+  -e .pi/packages/choco-pi-subagents/tests/fixtures/coordination-host-probe.ts \
+  --provider openai-codex --model gpt-6-astra \
+  --session-dir "$scratch/coordination-astra-sessions" "$prompt"
+node .pi/packages/choco-pi-subagents/tests/fixtures/coordination-host-check.ts \
+  "$scratch/coordination-astra-trace.jsonl" "$scratch/coordination-astra-sessions"
+```
+
+Record the Pi and checker exit statuses separately. The checker parses the
+structured trace and persisted session JSONL. It binds the child ID and result
+generation across both `steer`/`triggerTurn` sends, requires the coordination
+envelope in parent context immediately after the first barrier, requires the
+terminal notice immediately after the settlement barrier, rejects any first
+outer `agent_end` before both observations, and requires one terminal result
+consumption. A pass demonstrates standard Pi safe-boundary delivery. It does not
+claim that an in-flight native Astra response was interrupted; provider-native
+in-flight steering is a separate behavior.

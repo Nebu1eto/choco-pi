@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
@@ -42,24 +43,14 @@ export const runPnpm: Runner = (args, cwd) =>
 const filesystem = { lstat, mkdir, readdir, rename, rm };
 type Filesystem = typeof filesystem;
 
-// eslint-disable-next-line anti-slop/no-unknown-parameters -- OS and runner failures are untrusted catch values.
-function hasCode(error: unknown, code: string): boolean {
-  return error instanceof Error && "code" in error && error.code === code;
-}
-
 async function exists(file: string, fs: Filesystem): Promise<boolean> {
   try {
     await fs.lstat(file);
     return true;
   } catch (error) {
-    if (hasCode(error, "ENOENT")) return false;
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
     throw error;
   }
-}
-
-// eslint-disable-next-line anti-slop/no-unknown-parameters -- Preserve arbitrary child/filesystem failures at the reporting boundary.
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** The runner must settle only after its child has exited; cancellation alone is not settlement. */
@@ -75,7 +66,7 @@ export async function installOne(
     await fs.mkdir(claim);
   } catch (error) {
     throw new Error(
-      `Cannot claim ${claim}; inspect for another installer or interrupted run: ${message(error)}`,
+      `Cannot claim ${claim}; inspect for another installer or interrupted run: ${String(error)}`,
       { cause: error },
     );
   }
@@ -105,7 +96,7 @@ export async function installOne(
         retainClaim = true;
         throw new AggregateError(
           [error, rollbackError],
-          `Install failed: ${message(error)}; rollback failed: ${message(rollbackError)}. Inspect ${modules}, ${backup}, and retained claim ${claim}.`,
+          `Install failed: ${String(error)}; rollback failed: ${String(rollbackError)}. Inspect ${modules}, ${backup}, and retained claim ${claim}.`,
         );
       }
       throw error;
@@ -126,20 +117,19 @@ export async function bootstrap(
     throw new Error("Vendored installation requires Node >=24");
   }
   // Bootstrap runs before dependencies exist: validate the one manifest field using built-ins.
-  let manifest: unknown;
+  let manager: string;
   try {
-    manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+    const manifest: { packageManager?: string } | null = JSON.parse(
+      await readFile(path.join(root, "package.json"), "utf8"),
+    );
+    manager = manifest?.packageManager ?? "";
+    // assert.match checks primitive string identity as well as the exact pin syntax.
+    assert.match(manager, /^pnpm@\d+\.\d+\.\d+$/);
   } catch (error) {
-    throw new Error(`Cannot read root package.json: ${message(error)}`, { cause: error });
-  }
-  const manager =
-    // eslint-disable-next-line anti-slop/no-runtime-typeof -- Validate external JSON at its I/O boundary without an installed schema library.
-    manifest && typeof manifest === "object" && "packageManager" in manifest
-      ? manifest.packageManager
-      : undefined;
-  // eslint-disable-next-line anti-slop/no-runtime-typeof -- This exact-version parser establishes the package-manager contract.
-  if (typeof manager !== "string" || !/^pnpm@\d+\.\d+\.\d+$/.test(manager)) {
-    throw new Error("Root package.json must pin packageManager to an exact pnpm@x.y.z");
+    throw new Error(
+      `Root package.json must be readable JSON pinning packageManager to an exact pnpm@x.y.z: ${String(error)}`,
+      { cause: error },
+    );
   }
   const expected = manager.slice("pnpm@".length);
   const actual = (await runner(["--version"], root)).trim();
@@ -153,7 +143,7 @@ export async function bootstrap(
       await installOne(path.join(root, dir), runner);
       report(`> ${dir}: ok`);
     } catch (error) {
-      const failure = new Error(`${dir}: ${message(error)}`, { cause: error });
+      const failure = new Error(`${dir}: ${String(error)}`, { cause: error });
       failures.push(failure);
       report(`> ${failure.message}`);
     }
@@ -173,7 +163,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     await bootstrap(path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."));
   } catch (error) {
-    process.stderr.write(`${message(error)}\n`);
+    process.stderr.write(`${String(error)}\n`);
     process.exitCode = 1;
   }
 }

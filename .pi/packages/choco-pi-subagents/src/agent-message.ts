@@ -76,7 +76,8 @@ export function createAgentMessageTool(context: AgentMessageToolContext): ToolDe
       if (recipient.kind === "root") {
         context.pi.sendMessage(
           { customType: "subagent-message", content: envelope, display: true },
-          { deliverAs: "followUp", triggerTurn: true },
+          // SDK steering waits for the next safe boundary; it does not abort a tool/provider.
+          { deliverAs: "steer", triggerTurn: true },
         );
         context.pi.events.emit("subagents:message", {
           from: senderIdentity,
@@ -89,6 +90,12 @@ export function createAgentMessageTool(context: AgentMessageToolContext): ToolDe
       }
 
       const delivery = classifyMessageDelivery(recipient.record);
+      if (delivery === "closing") {
+        return textResult(
+          `Agent ${recipient.address} is cancelling and cannot receive new work.`,
+          true,
+        );
+      }
       if (delivery === "finished") {
         return textResult(
           `Agent ${recipient.address} already finished (status: ${recipient.record.status}).`,

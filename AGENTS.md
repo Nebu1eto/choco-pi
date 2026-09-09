@@ -27,6 +27,19 @@ model-specific advice only to the matching model; runtime, user, and project ins
   from TypeScript source through `bin/choco-pi-acp.ts` and ships no build output; it is not a Pi extension and has no manifest entry.
 - After adding a package to `.pi/settings.json`, re-run `pnpm install:profile`. Pi loads the package only after that run.
 
+## Mandatory implementation constraints
+
+- Never bypass lint findings. Do not add suppression directives, disable or weaken rules, exclude files, or restructure code merely
+  to evade a rule. Fix the underlying cause instead.
+- Never ignore type errors. Do not use `@ts-ignore`, `@ts-nocheck`, `@ts-expect-error`, unchecked casts, `any`, or placeholder types
+  merely to silence diagnostics. Use accurate contracts and validate external data at its boundary.
+- New or rewritten first-party executable code must be Node-erasable TypeScript, not plain JavaScript (`.js`, `.mjs`, or `.cjs`).
+  When changing legacy JavaScript logic, migrate the in-scope code to TypeScript; do not hand-edit generated dependency output.
+- Use non-blocking Node.js APIs whenever an asynchronous equivalent exists. Blocking filesystem and child-process APIs, including
+  `*Sync` variants, are prohibited in new or rewritten code. Use asynchronous APIs and ESM top-level `await` where appropriate.
+- Required lint and typecheck gates must finish with zero errors before completion. Pre-existing failures are not an exemption.
+  If the correct fix exceeds authorized scope, report the blocker and request that scope rather than suppressing the failure.
+
 ## Lifecycle and verification
 
 - Before the first `await` or dynamic import, snapshot scalars and a generation or owner. Invalidate it synchronously on shutdown,
