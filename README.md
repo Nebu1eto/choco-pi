@@ -21,6 +21,13 @@ npm run install:profile
 pi
 ```
 
+This project also vendors six Pi packages (choco-pi-codex, choco-pi-lsp,
+choco-pi-mcp, choco-pi-provider-synthetic, choco-pi-subagents,
+choco-pi-web-access), each with a per-package pnpm-lock.yaml that is pinned
+on install. After cloning or pulling they must be restored via
+`npm run install:vendored` — the bootstrap is a no-op when every install
+already matches the lockfile.
+
 The installer preserves runtime and authentication state plus user-added packages, writes absolute checkout paths, and links tracked profile resources into `~/.pi/agent`.
 It does not link MCP configuration, and it stops on conflicting targets unless you rerun `npm run install:profile -- --backup`; keep the checkout at a stable path.
 Rerun the installer after updating the checkout, and run `/reload` after editing files under `.pi`.
