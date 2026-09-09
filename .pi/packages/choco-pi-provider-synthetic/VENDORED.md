@@ -62,6 +62,15 @@ identities are unchanged, as are activation and event-handler ordering. The
 sub-bar entry remains eager because its exported synchronous registration and
 first event-driven render path must stay immediately available.
 
+## choco-pi divergence: devDependency `typebox` version bump
+
+The harness-wide typebox alignment (Wave 1 of the schema-validation migration)
+bumped this package's `devDependencies.typebox` from `^1.1.37` to `^1.3.29` to
+match the single latest line used across the repository. `peerDependencies.typebox`
+remains `"*"` (unchanged) since this package accepts any host-provided typebox.
+Upstream `@aliou/pi-synthetic@0.24.3` pins `^1.1.37`; this divergence is local
+to the choco-pi vendored copy only.
+
 ## How this copy is used
 
 `.pi/settings.json` references it as a local Pi package (`./packages/pi-synthetic`,

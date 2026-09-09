@@ -200,6 +200,12 @@ sessions receive no workflow tools. `tests/workflow.test.ts` uses a stub runner
 to pin validation, topological scheduling, result bounds, failure policies,
 dynamic updates, idle waits, retention and cancellation.
 
+### Host TypeBox alignment
+
+- 2026-09-09: Replaced the vendored TypeBox 0.34.52 runtime dependency with the
+  host-provided `typebox` alias and an optional peer, aligning schema validation
+  repo-wide to `typebox` `^1.3.29`.
+
 ### LLM-callable subagent stopping
 
 The fork adds root and ownership-scoped nested `stop_subagent` tools. Both use
@@ -607,18 +613,19 @@ mentions with the off-screen clone start path (`src/mention.ts`,
 ## Runtime dependencies
 
 Vendored under `node_modules/`, copied from the pnpm store of the original
-`choco-pi` checkout at the exact versions that resolved there. All three are
+`choco-pi` checkout at the exact versions that resolved there. Both are
 dependency-free, so the vendored tree is flat and complete:
 
-| Package             | Version | Upstream range |
-| ------------------- | ------- | -------------- |
-| `@sinclair/typebox` | 0.34.52 | `^0.34.49`     |
-| `croner`            | 10.0.1  | `^10.0.1`      |
-| `nanoid`            | 5.1.16  | `^5.0.0`       |
+| Package  | Version | Upstream range |
+| -------- | ------- | -------------- |
+| `croner` | 10.0.1  | `^10.0.1`      |
+| `nanoid` | 5.1.16  | `^5.0.0`       |
 
-`package.json` pins them exactly, so a future `npm install` here cannot drift
-away from what is vendored. The `@earendil-works/*` packages stay peers: pi
-substitutes its own bundled modules for those imports at extension load time.
+`package.json` pins the vendored dependencies exactly, so a future `npm install`
+here cannot drift away from what is vendored. TypeBox stays an optional peer
+resolved through the host-provided `typebox` alias. The `@earendil-works/*`
+packages stay peers: pi substitutes its own bundled modules for those imports at
+extension load time.
 
 ## How this copy is used
 

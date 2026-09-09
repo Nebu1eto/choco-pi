@@ -1,69 +1,57 @@
-import { Ajv } from "ajv";
-import Ajv2020Import from "ajv/dist/2020.js";
-import addFormatsImport from "ajv-formats";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
+import { Compile } from "typebox/compile";
+import { isStringValue } from "./protocol-values.ts";
 import type {
   JsonSchemaType,
   JsonSchemaValidator,
   jsonSchemaValidator as JsonSchemaValidatorProvider,
 } from "@modelcontextprotocol/client";
-import { isStringValue } from "./protocol-values.ts";
 
-// ajv-formats types target its bundled ajv; the runtime accepts both instances.
-const addFormats = (instance: Ajv): void => {
-  addFormatsImport.default(instance);
-};
-
-type SchemaDialect = { status: "unstamped" } | { status: "stamped"; uri: string };
-
-const DRAFT_07_SCHEMA_URIS: ReadonlySet<string> = new Set([
+const DRAFT_07_SCHEMA_URIS = new Set([
   "http://json-schema.org/draft-07/schema",
   "https://json-schema.org/draft-07/schema",
 ]);
-const DRAFT_2020_12_SCHEMA_URIS: ReadonlySet<string> = new Set([
-  "https://json-schema.org/draft/2020-12/schema",
-]);
-
-function schemaDialect(schema: JsonSchemaType): SchemaDialect {
-  if (!("$schema" in schema) || !isStringValue(schema.$schema)) {
-    return { status: "unstamped" };
-  }
-  return {
-    status: "stamped",
-    uri: schema.$schema.endsWith("#") ? schema.$schema.slice(0, -1) : schema.$schema,
-  };
-}
+const DRAFT_2020_12_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema";
 
 export function createJsonSchemaValidator(): JsonSchemaValidatorProvider {
-  let draft07Validator: AjvJsonSchemaValidator | undefined;
-  let draft2020Validator: AjvJsonSchemaValidator | undefined;
+  const identities = new WeakMap<object, JsonSchemaValidator<unknown>>();
+  // The previous SDK engines had separate $id registries for each dialect.
+  const draft07Ids = new Map<string, JsonSchemaValidator<unknown>>();
+  const draft2020Ids = new Map<string, JsonSchemaValidator<unknown>>();
 
   return {
     getValidator<T>(schema: JsonSchemaType): JsonSchemaValidator<T> {
-      const dialect = schemaDialect(schema);
-      if (dialect.status === "unstamped" || DRAFT_2020_12_SCHEMA_URIS.has(dialect.uri)) {
-        draft2020Validator ??= (() => {
-          const ajv = new Ajv2020Import.default({ strict: false, allErrors: true });
-          addFormats(ajv);
-          return new AjvJsonSchemaValidator(ajv);
-        })();
-        return draft2020Validator.getValidator<T>(schema);
+      const uri = isStringValue(schema.$schema) ? schema.$schema.replace(/#$/, "") : undefined;
+      if (uri !== undefined && uri !== DRAFT_2020_12_SCHEMA_URI && !DRAFT_07_SCHEMA_URIS.has(uri)) {
+        throw new Error(`Unsupported JSON Schema dialect: ${uri}`);
       }
-      if (!DRAFT_07_SCHEMA_URIS.has(dialect.uri)) {
-        throw new Error(`Unsupported JSON Schema dialect: ${dialect.uri}`);
+      const ids = uri !== undefined && DRAFT_07_SCHEMA_URIS.has(uri) ? draft07Ids : draft2020Ids;
+      const id = isStringValue(schema.$id) ? schema.$id.replace(/#$/, "") : undefined;
+      const cached = identities.get(schema) ?? (id === undefined ? undefined : ids.get(id));
+      if (cached) {
+        identities.set(schema, cached);
+        // SAFETY: The SDK's generic T describes the caller's schema, not a runtime conversion.
+        return cached as JsonSchemaValidator<T>;
       }
-
-      draft07Validator ??= (() => {
-        const ajv = new Ajv({
-          strict: false,
-          validateFormats: true,
-          validateSchema: false,
-          allErrors: true,
-        });
-        addFormats(ajv);
-        return new AjvJsonSchemaValidator(ajv);
-      })();
-      return draft07Validator.getValidator<T>(schema);
+      const compiled = Compile(schema);
+      const validator: JsonSchemaValidator<T> = (input) => {
+        if (compiled.Check(input)) {
+          // SAFETY: The compiled schema validates the caller's requested T.
+          return { valid: true, data: input as T, errorMessage: undefined };
+        }
+        return {
+          valid: false,
+          data: undefined,
+          // TypeBox's host-owned maxErrors defaults to 8; never change global settings here.
+          errorMessage: [...compiled.Errors(input)]
+            .map((error) => `data${error.instancePath} ${error.message}`)
+            .join(", "),
+        };
+      };
+      identities.set(schema, validator);
+      if (id !== undefined) {
+        ids.set(id, validator);
+      }
+      return validator;
     },
   };
 }

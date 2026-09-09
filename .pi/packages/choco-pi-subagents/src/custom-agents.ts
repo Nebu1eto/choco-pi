@@ -5,8 +5,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { BUILTIN_TOOL_NAMES } from "./agent-types.ts";
 import type { AgentConfig, IsolationMode, MemoryScope, ThinkingLevel } from "./types.ts";
 

@@ -37,6 +37,8 @@ development files that the local source-only package does not use:
 - `scripts/`, including the upstream smoke scripts
 - the upstream `package.json`, replaced by the local package manifest
 
+The `zod` dependency is retained solely to fulfill the `@agentclientprotocol/sdk` peer dependency; first-party source, bin, and tests have zero zod imports.
+
 ## Divergences from `pi-acp@0.0.33`
 
 1. **Package manifest:** the package is named `choco-pi-acp`, marked private,

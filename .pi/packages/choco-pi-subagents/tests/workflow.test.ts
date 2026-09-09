@@ -90,6 +90,17 @@ test("validation rejects cycles, unknown dependencies, agent types, and bad refe
   );
 });
 
+test("invalid definitions report the JSON-pointer instance path", () => {
+  assert.throws(
+    () =>
+      validateWorkflowDefinition(
+        definition([{ id: "1invalid", subagent_type: "Explore", prompt: "inspect" }]),
+        resolveType,
+      ),
+    /Invalid workflow definition: \/steps\/0\/id:/,
+  );
+});
+
 test("scheduler starts only ready steps and respects its concurrency bound", async () => {
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();

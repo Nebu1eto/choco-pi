@@ -29,8 +29,8 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { ModelEntry } from "./model-resolver.ts";
 
 /** Minimal registry shape — only the methods resolveEnabledModels actually calls. */

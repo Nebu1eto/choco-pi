@@ -34,8 +34,8 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { dispatchMouseEvent } from "@earendil-works/pi-tui/dist/tui.js";
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { renderAgentName } from "../agent-color.ts";
 import { extractText } from "../context.ts";
 import { parseAgentMessage } from "../messaging.ts";
