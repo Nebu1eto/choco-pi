@@ -677,12 +677,9 @@ export class AgentManager {
           maxSubagentDepth: record.maxSubagentDepth,
         },
         onSessionCreated: (session) => {
-          if (
-            record.resultGeneration !== runGeneration ||
-            record.cancellation?.generation === runGeneration
-          ) {
-            return;
-          }
+          if (record.resultGeneration !== runGeneration) return;
+          // Cancellation stops provider work, not ownership of the child that
+          // startup created. Retain it even after shutdown for settlement cleanup.
           record.session = session;
           if (options.mainSessionFork) {
             record.sessionCostBaseline = getSessionCostBaseline(session) ?? undefined;
@@ -696,8 +693,10 @@ export class AgentManager {
           // stubbed session must degrade to "not resumable" rather than throw
           // and take the whole spawn down with it.
           record.sessionFile = session.sessionManager?.getSessionFile?.();
-          // Flush any steers that arrived before the session was ready
-          if (record.pendingSteers?.length) {
+          // Caller wiring can use host-owned context; shutdown retires it.
+          if (this.disposed) return;
+          // Flush pre-session steers only while this generation is uncancelled.
+          if (record.cancellation?.generation !== runGeneration && record.pendingSteers?.length) {
             for (const msg of record.pendingSteers) {
               session.steer(msg).catch(() => {});
             }
