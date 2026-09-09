@@ -347,6 +347,14 @@ session steering or pre-session queueing, reports the recipient as cancelling
 rather than already finished, and suppresses nested completion delivery to a
 cancelled parent without consuming the child's durable result.
 
+Pi 0.85.1's default one-at-a-time steering mode drains one shared FIFO queue.
+An agent message already queued there can therefore be delivered before a later
+user steer. This is a scheduling limitation, not an authority rule: user
+instructions always outrank agent-authored content. The notification gate's
+native-user-pending hold reduces one collision window but does not provide
+strict user-first queue priority; this fork leaves Pi's native steering and
+private queues unchanged.
+
 Recipient resolution no longer depends on parent lookup, so a nested record that
 outlives an evicted parent keeps its flat identity. Records without any identity
 are skipped, and missing callers return ordinary tool errors.
