@@ -158,6 +158,121 @@ test("budget-cancelled startup discards queued steering and refuses new messages
   manager.dispose();
 });
 
+for (const cancellation of ["user", "budget", "shutdown"] as const) {
+  for (const settlement of ["resolve", "reject"] as const) {
+    test(
+      `${cancellation}-cancelled startup retains child ownership on ${settlement}`,
+      { timeout: 2_000 },
+      async (t) => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        const run = Promise.withResolvers<Awaited<ReturnType<AgentManagerRunner["runAgent"]>>>();
+        let createSession: ((session: AgentSession) => void) | undefined;
+        let callbacks = 0;
+        let completions = 0;
+        let disposals = 0;
+        let outputFlushes = 0;
+        const steers: string[] = [];
+        const sessionFile = "/tmp/child-session.jsonl";
+        const session = partialHostFixture<AgentSession>({
+          sessionManager: partialHostFixture<AgentSession["sessionManager"]>({
+            getSessionFile: () => sessionFile,
+            getSessionId: () => "cancelled-child",
+          }),
+          getSessionStats: () =>
+            partialHostFixture<ReturnType<AgentSession["getSessionStats"]>>({
+              sessionId: "cancelled-child",
+              cost: 2,
+            }),
+          steer: async (message) => void steers.push(message),
+          dispose: () => disposals++,
+        });
+        const runner: AgentManagerRunner = {
+          runAgent(_ctx, _type, _prompt, options) {
+            createSession = options.onSessionCreated;
+            return run.promise;
+          },
+          async resumeAgent() {
+            return { text: "unused" };
+          },
+        };
+        const manager = new AgentManager(() => completions++, 1, undefined, undefined, runner);
+        const id = manager.spawn(
+          partialHostFixture<ExtensionAPI>({}),
+          partialHostFixture<ExtensionContext>({ cwd: process.cwd() }),
+          "implementer",
+          "run",
+          {
+            description: "late child ownership",
+            isBackground: true,
+            budgets: cancellation === "budget" ? { timeoutMs: 5 } : undefined,
+            mainSessionFork: {
+              sessionManager: session.sessionManager,
+              systemPrompt: "fork",
+              model: undefined,
+              thinkingLevel: undefined,
+            },
+            onSessionCreated(created) {
+              assert.equal(created, session);
+              callbacks++;
+              const current = manager.getRecord(id);
+              assert.ok(current);
+              current.outputCleanup = () => outputFlushes++;
+            },
+          },
+        );
+        const record = manager.getRecord(id);
+        assert.ok(record?.promise);
+        try {
+          assert.equal(manager.steer(id, "queued before creation"), true);
+          if (cancellation === "shutdown") manager.dispose();
+          else if (cancellation === "budget") t.mock.timers.tick(5);
+          else assert.equal(manager.abort(id), true);
+          assert.equal(record.abortController?.signal.aborted, true);
+          assert.equal(record.cancellation?.generation, record.resultGeneration);
+          assert.notEqual(record.terminalResultGeneration, record.resultGeneration);
+          assert.equal(record.pendingSteers, undefined);
+          assert.equal(manager.steer(id, "after cancellation"), false);
+          assert.ok(createSession);
+          createSession(session);
+          assert.equal(record.session, session, "capture the owned session before settlement");
+          assert.equal(record.sessionFile, sessionFile);
+          assert.deepEqual(record.sessionCostBaseline, { sessionId: "cancelled-child", cost: 2 });
+          assert.equal(callbacks, cancellation === "shutdown" ? 0 : 1);
+          assert.deepEqual(steers, []);
+          assert.equal(disposals, 0, "runner still owns session until unwind");
+          if (settlement === "reject") run.reject(new Error("startup failed after creation"));
+          else run.resolve({ responseText: "partial", session, aborted: true, steered: false });
+          await record.promise;
+          assert.equal(callbacks, cancellation === "shutdown" ? 0 : 1);
+          assert.equal(outputFlushes, callbacks, "observational transcript wiring flushes once");
+          assert.equal(completions, cancellation === "shutdown" ? 0 : 1);
+          if (cancellation === "shutdown") {
+            assert.notEqual(record.terminalResultGeneration, record.resultGeneration);
+            assert.equal(manager.getRecord(id), undefined);
+          } else {
+            assert.equal(record.terminalResultGeneration, record.resultGeneration);
+            assert.equal(disposals, 0);
+            if (settlement === "resolve") assert.equal(record.result, "partial");
+          }
+          manager.dispose();
+          assert.equal(disposals, 1);
+          assert.equal(manager.getRecord(id), undefined);
+          assert.equal(
+            manager.listTombstones().find((entry) => entry.id === id)?.sessionFile,
+            sessionFile,
+          );
+          manager.dispose();
+          assert.equal(disposals, 1, "cleanup is exact-once");
+        } finally {
+          run.resolve({ responseText: "cleanup", session, aborted: true, steered: false });
+          await record.promise;
+          manager.dispose();
+        }
+      },
+    );
+  }
+}
+
 test("shutdown disposes settled sessions now and pending sessions only after unwind", async () => {
   let resolvePending:
     | ((value: {

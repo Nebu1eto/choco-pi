@@ -770,6 +770,18 @@ manager disposal and late runner settlement. Correcting that requires ownership
 of the hook/event-provider lifecycle beyond this patch; none of the guarantees
 above covers that boundary.
 
+### 2026-09-09 cancelled-startup ownership correction
+
+Current-generation child creation retains the session, transcript path, and fork
+cost baseline even after cancellation, while suppressing queued steering.
+Caller transcript/activity wiring still runs for ordinary user and budget stops,
+but not after manager disposal retires its host context. Late-created sessions
+remain owned for exact-once cleanup on either runner success or rejection.
+`tests/agent-manager-cancellation.test.ts` covers those cancellation/settlement
+pairs, retained tombstone paths, and shutdown suppression of caller callbacks
+and terminal publication. The separate hook-managed worktree boundary above is
+unchanged.
+
 ### 2026-09-09 explicit terminal-status presentation
 
 Structured completion XML now maps `completed`, `steered`, `aborted`,
