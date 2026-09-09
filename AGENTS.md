@@ -2,6 +2,14 @@
 
 This file contains only repository-specific requirements absent from `.pi/SYSTEM.md` and the authoritative workflow skills.
 
+## Commit policy
+
+When a `task`/`task-inline`/`task-hotfix` workflow completes and the user has not explicitly excluded a commit, the completing orchestrator commits locally per `.pi/skills/commit/SKILL.md` (sign, trailer, never push). Deferring without that exclusion silently bypasses the task skill; when rules appear to conflict, resolve precedence explicitly in the plan (runtime > user > project > skill > default).
+
+## Vendored dependencies
+
+Package `node_modules/` trees under `.pi/packages/*` are on-disk load-bearing (verified: `jpeg-js`, `croner`, `@mozilla/readability`, MCP client fail to resolve without them) but never git-tracked. Their content is enforced by `pnpm install`/install-profile and documented per-package in `VENDORED.md` divergence entries.
+
 ## Model guidance
 
 `.pi/model-guidance.md` owns model routing and the reviewed source references for model-specific policy. Before adding or changing
