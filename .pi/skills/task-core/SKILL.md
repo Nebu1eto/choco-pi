@@ -32,6 +32,22 @@ The `check` skill owns environment readiness. Choose validation from the accepta
 
 Use a fresh read-only reviewer when the user or project risk policy requires one. Active-model guidance may also select review for a qualifying long-running task when fresh context materially improves evidence. Do not require or forbid a reviewer from the provider or model name alone, and do not add routine review to small work. Before every review handoff, follow `../review/references/review-bundle.md`.
 
+### Observe and recover a review run
+
+The orchestrator owns review-run recovery. Give the first reviewer the complete immutable packet; do not rely on later steering to supply requirements, policy, target, or evidence.
+
+Classify what was actually observed before deciding what to do:
+
+- an observation wait ending without a result means only that the observation window ended; it is not evidence that execution failed or timed out;
+- an execution failure or execution timeout is a terminal failed run only when the runner reports that terminal state;
+- a cancellation request is `cancellation pending` until the runner reports terminal settlement, and must not be reported or consumed as completed;
+- a completed `INCOMPLETE` review is a completed run with insufficient review evidence, not a pass; preserve its named missing input or scope limitation;
+- actionable findings from partial output may be independently validated, but they do not make the review complete or clean; `NO_FINDINGS` applies only to the complete bundled target and evidence the reviewer actually reviewed.
+
+After an observation timeout, use the runner's state or terminal notification instead of repeating the same wait, poll, or steer loop. Do not stop a still-running reviewer merely because an observation window elapsed. For an evidence defect or incomplete scope, retry only after naming and correcting the defect or revising the scope, and create a new immutable bundle when its inputs change; never loop on an identical defective packet. A transient provider or capacity failure may use the bounded retry and fallback policy in `.pi/model-guidance.md`. Do not ask an incomplete reviewer to replace `INCOMPLETE` with findings or `NO_FINDINGS`.
+
+If a required review fails, remains cancellation-pending, or completes `INCOMPLETE` and the named defect cannot be corrected within current authority, the task is blocked or partially complete. Report the exact review state, usable partial output, missing evidence, and required next action; do not declare completion or turn a partial `NO_FINDINGS` statement into a pass.
+
 ## Validate the current state
 
 1. Inspect the diff for scope, minimality, and unintended changes.

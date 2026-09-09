@@ -827,13 +827,65 @@ function finalTurnError(session: AgentSession, startIndex = 0): string | undefin
  */
 function forwardAbortSignal(session: AgentSession, signal?: AbortSignal): () => void {
   if (!signal) return () => {};
-  if (signal.aborted) {
+  const abortSession = () => {
+    // AgentSession.abort() leaves steering/follow-up queues intact, and its
+    // post-run loop continues whenever those queues are non-empty. Clear only
+    // this owned child session before aborting so cancellation cannot launch
+    // another provider turn.
+    session.clearQueue();
     session.abort();
+  };
+  if (signal.aborted) {
+    abortSession();
     return () => {};
   }
-  const onAbort = () => session.abort();
+  const onAbort = () => abortSession();
   signal.addEventListener("abort", onAbort, { once: true });
   return () => signal.removeEventListener("abort", onAbort);
+}
+
+/** Install max-turn enforcement at the host's turn_end event boundary. */
+export function installRunnerTurnLimit(
+  session: Pick<AgentSession, "subscribe" | "steer" | "abort" | "clearQueue">,
+  options: {
+    maxTurns: number | undefined;
+    signal?: AbortSignal;
+    onTurnEnd?: (turnCount: number) => void;
+  },
+) {
+  let turnCount = 0;
+  let softLimitReached = false;
+  let aborted = false;
+  const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+    if (event.type !== "turn_end") return;
+    turnCount++;
+    options.onTurnEnd?.(turnCount);
+
+    // An externally cancelled run owns its shutdown. In particular, pi still
+    // emits turn_end for the aborted provider turn; steering there would start
+    // another provider request, while a later hard-limit abort would be redundant.
+    if (options.signal?.aborted) {
+      // Catch messages queued by synchronous post-abort session listeners
+      // before the host checks queues to decide whether to continue.
+      session.clearQueue();
+      return;
+    }
+    if (options.maxTurns == null) return;
+    if (!softLimitReached && turnCount >= options.maxTurns) {
+      softLimitReached = true;
+      session.steer(
+        "You have reached your turn limit. Wrap up immediately — provide your final answer now.",
+      );
+    } else if (softLimitReached && turnCount >= options.maxTurns + graceTurns) {
+      aborted = true;
+      session.abort();
+    }
+  });
+  return {
+    getAborted: () => aborted,
+    getSteered: () => softLimitReached,
+    unsubscribe,
+  };
 }
 
 function resolveConfiguredSessionDir(
@@ -1310,28 +1362,15 @@ export async function runAgent(
   options.onSessionCreated?.(session);
 
   // Track turns for graceful max_turns enforcement
-  let turnCount = 0;
   const maxTurns = normalizeMaxTurns(options.maxTurns ?? agentConfig?.maxTurns ?? defaultMaxTurns);
-  let softLimitReached = false;
-  let aborted = false;
 
   let currentMessageText = "";
-  const unsubTurns = session.subscribe((event: AgentSessionEvent) => {
-    if (event.type === "turn_end") {
-      turnCount++;
-      options.onTurnEnd?.(turnCount);
-      if (maxTurns != null) {
-        if (!softLimitReached && turnCount >= maxTurns) {
-          softLimitReached = true;
-          session.steer(
-            "You have reached your turn limit. Wrap up immediately — provide your final answer now.",
-          );
-        } else if (softLimitReached && turnCount >= maxTurns + graceTurns) {
-          aborted = true;
-          session.abort();
-        }
-      }
-    }
+  const turnLimit = installRunnerTurnLimit(session, {
+    maxTurns,
+    signal: options.signal,
+    onTurnEnd: options.onTurnEnd,
+  });
+  const unsubEvents = session.subscribe((event: AgentSessionEvent) => {
     if (event.type === "message_start") {
       currentMessageText = "";
     }
@@ -1365,9 +1404,10 @@ export async function runAgent(
   // on counts as this run's output (a fresh session, so usually 0).
   const startLen = session.messages.length;
   try {
-    await session.prompt(effectivePrompt);
+    if (!options.signal?.aborted) await session.prompt(effectivePrompt);
   } finally {
-    unsubTurns();
+    turnLimit.unsubscribe();
+    unsubEvents();
     collector.unsubscribe();
     cleanupAbort();
   }
@@ -1376,8 +1416,8 @@ export async function runAgent(
   return {
     responseText,
     session,
-    aborted,
-    steered: softLimitReached,
+    aborted: turnLimit.getAborted(),
+    steered: turnLimit.getSteered(),
     failure: finalTurnError(session, startLen),
   };
 }
@@ -1426,7 +1466,7 @@ export async function resumeAgent(
       : () => {};
 
   try {
-    await session.prompt(prompt);
+    if (!options.signal?.aborted) await session.prompt(prompt);
   } finally {
     collector.unsubscribe();
     unsubEvents();

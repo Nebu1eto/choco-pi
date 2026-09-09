@@ -189,6 +189,13 @@ export interface AgentRecord {
    * production records initialize it synchronously at spawn.
    */
   resultGeneration?: number;
+  /** First cancellation request for the current generation; immutable until the next run. */
+  cancellation?: {
+    generation: number;
+    cause: "budget" | "watchdog" | "user_stop" | "parent_signal" | "shutdown";
+    reason: string;
+    requestedAt: number;
+  };
   /** Current generation whose final status/output has been published atomically. */
   terminalResultGeneration?: number;
   /** Active generation for which one status read has already been returned. */

@@ -85,3 +85,13 @@ release already consumes `reasoning_parameters.efforts`; if it does, drop this
 vendored copy and switch the settings entries back to
 `npm:@aliou/pi-synthetic@<version>`. If not, re-apply the patch above and
 re-run the upstream test suite (`pnpm install && pnpm test`).
+
+## Vendored install policy
+
+This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
+isolated one-package workspace boundary. Its workspace preserves the lockfile's
+exact `@earendil-works/pi-ai@0.84.0` and `@earendil-works/pi-tui@0.84.0`
+overrides plus the repository's `typebox@1.3.29` release-age exception. The
+legacy manifest-level pnpm override block was moved here because pnpm 11 reads
+workspace-root overrides. This is installer configuration only; it does not
+migrate or change the package's Pi SDK compatibility.

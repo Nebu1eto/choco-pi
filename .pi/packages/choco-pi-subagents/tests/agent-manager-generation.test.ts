@@ -25,7 +25,7 @@ function deferred<Value>(): Deferred<Value> {
   return { promise, resolve: resolvePromise };
 }
 
-test("a stopped run settling after resume releases its own slot and drains the queue", async () => {
+test("a stopped run rejects resume until settlement, then starts a fresh generation", async () => {
   const session = reinterpretHostValue<AgentSession>({
     sessionManager: { getSessionFile: () => undefined },
     dispose: () => undefined,
@@ -91,7 +91,7 @@ test("a stopped run settling after resume releases its own slot and drains the q
   };
   const manager = new AgentManager(
     (record) => completions.push(`${record.id}:${record.resultGeneration}`),
-    2,
+    1,
     undefined,
     undefined,
     runner,
@@ -116,10 +116,19 @@ test("a stopped run settling after resume releases its own slot and drains the q
     assert.ok(stoppedRecord);
     stoppedRecord.resultConsumed = true; // stop_subagent suppresses its redundant completion nudge.
     assert.equal(manager.abort(agentId), true, "stop_subagent reaches this manager abort boundary");
-    const resumedRecord = await manager.resume(agentId, "resumed", undefined, {
+    const prematureResume = await manager.resume(agentId, "resumed", undefined, {
       isBackground: true,
+      name: "must-not-mutate",
     });
-    assert.equal(resumedRecord?.resultGeneration, 2);
+    assert.equal(prematureResume, undefined);
+    assert.equal(
+      manager.hasRunning(),
+      true,
+      "pending cancellation remains active until settlement",
+    );
+    assert.equal(manager.getActiveCount(), 2, "the stopped parent and live child still own runs");
+    assert.equal(stoppedRecord.resultGeneration, 1);
+    assert.notEqual(stoppedRecord.alias, "must-not-mutate");
     const queuedId = manager.spawn(pi, ctx, "implementer", "queued", background);
     assert.equal(manager.getRecord(queuedId)?.status, "queued");
     assert.doesNotMatch(starts.join(","), /queued/);
@@ -132,11 +141,20 @@ test("a stopped run settling after resume releases its own slot and drains the q
     });
     await stalePromise;
 
-    assert.deepEqual(completions, [], "stale settlement skips onComplete");
+    assert.equal(stoppedRecord.terminalResultGeneration, 1);
+    assert.equal(stoppedRecord.result, "stale result");
+    assert.equal(stoppedRecord.cancellation?.cause, "user_stop");
+    assert.deepEqual(completions, [`${agentId}:1`]);
     assert.equal(manager.getRecord(childId)?.status, "stopped");
     assert.equal(manager.getRecord(childId)?.abortController?.signal.aborted, true);
     assert.equal(manager.getRecord(queuedId)?.status, "running");
     assert.match(starts.join(","), /queued/);
+
+    const resumedRecord = await manager.resume(agentId, "resumed", undefined, {
+      isBackground: true,
+    });
+    assert.equal(resumedRecord?.resultGeneration, 2);
+    assert.equal(resumedRecord?.cancellation, undefined);
 
     resumed.resolve({ text: "current result" });
     queued.resolve({ responseText: "queued result", session, aborted: false, steered: false });
@@ -147,6 +165,7 @@ test("a stopped run settling after resume releases its own slot and drains the q
       manager.getRecord(childId)?.promise,
     ]);
 
+    manager.setMaxConcurrent(2);
     const laterOneId = manager.spawn(pi, ctx, "implementer", "later-one", background);
     const laterTwoId = manager.spawn(pi, ctx, "implementer", "later-two", background);
     assert.equal(manager.getRecord(laterOneId)?.status, "running");
