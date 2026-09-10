@@ -969,6 +969,14 @@
       }
     },
     {
+      "name": "lsp-warmup",
+      "options": {
+        "description": "Opt in to pre-starting a language server during session startup. Also via warmup.enabled=true in ~/.choco-pi-lsp/config.json or CHOCO_PI_LSP_WARMUP=1.",
+        "type": "boolean",
+        "default": false
+      }
+    },
+    {
       "name": "no-autoformat",
       "options": {
         "description": "Disable automatic formatting entirely (deferred format runs at agent_end by default). Also via format.enabled=false in config.",

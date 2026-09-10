@@ -48,7 +48,7 @@ import { resolveJavaRuntimeEnv } from "./jvm-runtime.ts";
 import { normalizeMapKey } from "./path-utils.ts";
 import { getRubyVersionDirNamesSync } from "./ruby-drive-dirs.ts";
 import { defaultTypeScriptInitialization } from "./typescript-config.ts";
-import { isAutomaticTypeAcquisitionEnabled } from "../lsp-config.ts";
+import { isAutomaticTypeAcquisitionEnabledAsync } from "../lsp-config.ts";
 
 // --- Types ---
 
@@ -1715,7 +1715,9 @@ export const TypeScriptServer: LSPServerInfo = {
   root: TypeScriptRoot,
   async spawn(root, options) {
     const fs = await import("node:fs/promises");
-    const ataInitialization = defaultTypeScriptInitialization(isAutomaticTypeAcquisitionEnabled());
+    const ataInitialization = defaultTypeScriptInitialization(
+      await isAutomaticTypeAcquisitionEnabledAsync(),
+    );
     const nativeLsp = await findNativeTypeScriptLsp(root);
     if (nativeLsp) {
       const env = await getToolEnvironment();
