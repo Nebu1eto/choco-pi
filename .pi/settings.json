@@ -17,6 +17,7 @@
   ],
   "theme": "nord-dark",
   "tuiMode": "fullscreen",
+  "fullscreenExitOutput": "resume-hint",
   "fuzzyFileMentions": true,
   "modelThinkingLevels": {
     "anthropic/claude-fable-5": "high",

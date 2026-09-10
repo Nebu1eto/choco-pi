@@ -47,6 +47,8 @@ import { createLombokJdtlsArgs } from "./lombok.ts";
 import { resolveJavaRuntimeEnv } from "./jvm-runtime.ts";
 import { normalizeMapKey } from "./path-utils.ts";
 import { getRubyVersionDirNamesSync } from "./ruby-drive-dirs.ts";
+import { defaultTypeScriptInitialization } from "./typescript-config.ts";
+import { isAutomaticTypeAcquisitionEnabled } from "../lsp-config.ts";
 
 // --- Types ---
 
@@ -1713,6 +1715,7 @@ export const TypeScriptServer: LSPServerInfo = {
   root: TypeScriptRoot,
   async spawn(root, options) {
     const fs = await import("node:fs/promises");
+    const ataInitialization = defaultTypeScriptInitialization(isAutomaticTypeAcquisitionEnabled());
     const nativeLsp = await findNativeTypeScriptLsp(root);
     if (nativeLsp) {
       const env = await getToolEnvironment();
@@ -1723,7 +1726,12 @@ export const TypeScriptServer: LSPServerInfo = {
         cwd: root,
         env,
       });
-      return { process: proc, source: "direct", launchVariant: "native-ts7" };
+      return {
+        process: proc,
+        source: "direct",
+        initialization: ataInitialization,
+        launchVariant: "native-ts7",
+      };
     }
 
     let source: "direct" | "managed" = "direct";
@@ -1780,11 +1788,13 @@ export const TypeScriptServer: LSPServerInfo = {
         TSSERVER_PATH: tsserverPath,
       },
     });
+    const initialization: InitializationConfig = { ...ataInitialization };
+    if (tsserverPath) initialization.tsserver = { path: tsserverPath };
 
     return {
       process: proc,
       source,
-      initialization: tsserverPath ? { tsserver: { path: tsserverPath } } : undefined,
+      initialization,
       launchVariant: "classic",
     };
   },

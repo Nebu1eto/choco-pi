@@ -30,8 +30,11 @@
  */
 export class PathKeyedMap<V> {
   private readonly store = new Map<string, { displayPath: string; value: V }>();
+  private readonly normalize: (p: string) => string;
 
-  constructor(private readonly normalize: (p: string) => string) {}
+  constructor(normalize: (p: string) => string) {
+    this.normalize = normalize;
+  }
 
   get size(): number {
     return this.store.size;

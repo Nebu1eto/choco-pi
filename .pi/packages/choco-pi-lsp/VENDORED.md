@@ -139,6 +139,13 @@ the runtime provenance check reads it.
 
 ## Added (choco-pi feature)
 
+Session-start language-server prewarm is opt-in through
+`warmup.enabled=true` in `~/.choco-pi-lsp/config.json` or
+`CHOCO_PI_LSP_WARMUP=1`. Language servers otherwise remain lazy and start on
+the first diagnostics/navigation request. TypeScript automatic type acquisition
+is also off by default to prevent implicit npm network activity; opt in with
+`typeAcquisition.enabled=true` or `CHOCO_PI_LSP_TYPE_ACQUISITION=1`.
+
 `clients/context-injection-history.ts` retains consumed context guidance at its
 original transcript position for the current agent run. Session-start guidance,
 findings, and nudges no longer disappear on the next provider call and invalidate

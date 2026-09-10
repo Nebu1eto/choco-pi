@@ -15,6 +15,7 @@ import {
   readFlagConfigValue,
 } from "./lsp-flag-registry.ts";
 import { findNestedProjectMutationValue, type PiLensProjectConfig } from "./project-lsp-config.ts";
+import { typeAcquisitionEnabledFromConfig } from "./lsp/typescript-config.ts";
 
 const LspBoundaryValueSchema = Type.Unknown();
 type LspBoundaryValue = Static<typeof LspBoundaryValueSchema>;
@@ -54,6 +55,10 @@ export interface PiLensGlobalConfig {
   lens?: PiLensToggleConfig;
   /** Whether unified LSP diagnostics run (`--no-lsp`). */
   lsp?: PiLensToggleConfig;
+  /** Whether session start may pre-start a language server. Defaults false. */
+  warmup?: PiLensToggleConfig;
+  /** Whether TypeScript language servers may use automatic type acquisition. Defaults false. */
+  typeAcquisition?: PiLensToggleConfig;
   /** Whether the test runner fires on write (`--no-tests`). */
   tests?: PiLensToggleConfig;
   /** Whether delta mode limits diagnostics to new ones (`--no-delta`). */
@@ -269,6 +274,18 @@ export function loadPiLensGlobalConfig(
       }
     }
 
+    const typeAcquisition = asConfigObject(raw.typeAcquisition);
+    if (typeAcquisition) {
+      if (Check(Type.Boolean(), typeAcquisition.enabled)) {
+        config.typeAcquisition = { enabled: typeAcquisition.enabled };
+      } else {
+        if ("enabled" in typeAcquisition) {
+          warnInvalid("typeAcquisition.enabled must be a boolean");
+        }
+        config.typeAcquisition = { enabled: undefined };
+      }
+    }
+
     const autoFix = asConfigObject(asConfigObject(raw.actionableWarnings)?.autoFix);
     if (autoFix && "maxFixes" in autoFix) {
       if (
@@ -360,6 +377,16 @@ export function getGlobalWidgetDefaultVisible(configPath?: string): boolean {
 /** Per-turn quickfix cap; undefined means "use the built-in default of 5". */
 export function getGlobalActionableWarningMaxFixes(configPath?: string): number | undefined {
   return loadPiLensGlobalConfig(configPath)?.actionableWarnings?.autoFix?.maxFixes;
+}
+
+/**
+ * Automatic type acquisition is an explicit network opt-in. The environment
+ * override follows the package's boolean opt-in convention; otherwise the
+ * machine-global config is authoritative and absence means disabled.
+ */
+export function isAutomaticTypeAcquisitionEnabled(configPath?: string): boolean {
+  if (process.env.CHOCO_PI_LSP_TYPE_ACQUISITION === "1") return true;
+  return typeAcquisitionEnabledFromConfig(loadPiLensGlobalConfig(configPath));
 }
 
 /** Which tier decided a resolved flag's value — for provenance in debug/skip logs (#792). */
