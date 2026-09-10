@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -86,7 +86,6 @@ test("async TypeScript ATA config preserves resolution and memoizes each path", 
   try {
     assert.equal(await isAutomaticTypeAcquisitionEnabledAsync(configPath), false);
 
-    resetAsyncGlobalConfigCache();
     await writeFile(configPath, '{"typeAcquisition":{"enabled":true}}', "utf-8");
     assert.equal(await isAutomaticTypeAcquisitionEnabledAsync(configPath), true);
 
@@ -104,4 +103,49 @@ test("async TypeScript ATA config preserves resolution and memoizes each path", 
     else process.env.CHOCO_PI_LSP_TYPE_ACQUISITION = previousEnv;
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("TypeScript spawn wiring uses only the asynchronous ATA config API", async () => {
+  const source = await readFile(new URL("../clients/lsp/server.ts", import.meta.url), "utf-8");
+  assert.match(source, /\bisAutomaticTypeAcquisitionEnabledAsync\b/);
+
+  const withoutAsyncApi = source.replaceAll("isAutomaticTypeAcquisitionEnabledAsync", "");
+  assert.doesNotMatch(withoutAsyncApi, /\bisAutomaticTypeAcquisitionEnabled\b/);
+});
+
+test("runtime session keeps explicit and automatic LSP warm wiring separate", async () => {
+  const source = await readFile(new URL("../clients/runtime-session.ts", import.meta.url), "utf-8");
+
+  // Wiring guards: both startup paths must resolve warmFiles before deciding
+  // whether automatic dominant-language warming is enabled. The helper tests
+  // above own behavioral branching; these assertions protect its call sites.
+  const quickPathStart = source.indexOf("const lspConfig = await loadLSPConfig(warmupCwd)");
+  const fullPathStart = source.indexOf("// LSP warm files — deferred");
+  assert.notEqual(quickPathStart, -1);
+  assert.notEqual(fullPathStart, -1);
+
+  const quickPath = source.slice(quickPathStart, fullPathStart);
+  const fullPath = source.slice(
+    fullPathStart,
+    source.indexOf("setSessionLanguages", fullPathStart),
+  );
+
+  for (const startupPath of [quickPath, fullPath]) {
+    assert.match(startupPath, /const warmFiles = lspConfig\.warmFiles \?\? \[\]/);
+    assert.match(
+      startupPath,
+      /runLanguageServerPrewarm\(\{[\s\S]*?warmFiles,[\s\S]*?automaticWarmupEnabled[\s\S]*?warmConfiguredFiles:[\s\S]*?igniteWarmFiles[\s\S]*?warmDominantLanguage:[\s\S]*?igniteDominantLanguageWarm[\s\S]*?\}\)/,
+    );
+    assert.ok(
+      startupPath.indexOf("const warmFiles =") <
+        startupPath.indexOf("shouldPrewarmLanguageServers"),
+    );
+  }
+
+  // The guarded quick-path fallback must still warm explicitly configured
+  // files when dominant-language warming is disallowed by the startup scan.
+  assert.match(
+    quickPath,
+    /if \(!scan\.canWarmCaches\)[\s\S]*?warmFiles\.length > 0[\s\S]*?igniteWarmFiles\(/,
+  );
 });
