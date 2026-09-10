@@ -80,6 +80,16 @@ export const LENS_FLAGS: readonly LensFlagSpec[] = [
     scope: "global",
   },
   {
+    name: "lsp-warmup",
+    description:
+      "Opt in to pre-starting a language server during session startup. Also via warmup.enabled=true in ~/.choco-pi-lsp/config.json or CHOCO_PI_LSP_WARMUP=1.",
+    configKey: "warmup.enabled",
+    negated: false,
+    default: false,
+    scope: "global",
+    env: "CHOCO_PI_LSP_WARMUP",
+  },
+  {
     name: "no-autoformat",
     description:
       "Disable automatic formatting entirely (deferred format runs at agent_end by default). Also via format.enabled=false in config.",
@@ -267,6 +277,7 @@ export const GLOBAL_NON_FLAG_CONFIG_SECTIONS: readonly string[] = [
   "ignore",
   "dispatch",
   "widget",
+  "typeAcquisition",
   "$schema",
 ];
 

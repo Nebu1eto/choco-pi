@@ -109,15 +109,14 @@ export abstract class SecurityScanClient<TResult> {
   protected readonly inFlight = new Map<string, Promise<TResult>>();
   protected binaryPath: string | null = null;
   protected readonly log: (msg: string) => void;
+  protected readonly toolName: string;
 
   /**
    * @param toolName binary / installer id used for probes, logs and auto-install
    * @param verbose  when true, diagnostics are written to stderr
    */
-  protected constructor(
-    protected readonly toolName: string,
-    verbose = false,
-  ) {
+  protected constructor(toolName: string, verbose = false) {
+    this.toolName = toolName;
     this.log = verbose ? createSubsystemLogger(toolName) : () => {};
   }
 

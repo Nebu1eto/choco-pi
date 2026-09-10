@@ -50,7 +50,11 @@ import {
 } from "./editor-transfer";
 import { installFooter, installHiddenFooter } from "./footer";
 import { collectFooterFormatReferences, parseFooterFormat } from "./footer-format";
-import { buildSessionDurationLabel, invalidateUsageTotalsCache } from "./format";
+import {
+  buildSessionDurationLabel,
+  formatTimeLabel,
+  invalidateUsageTotalsCache,
+} from "./format.ts";
 import { emptyGitStatus, readGitStatus } from "./git";
 import {
   InteractionMetricsTracker,
@@ -70,6 +74,7 @@ import { applyProjectRefreshToState } from "./project-state";
 import { readRuntimeInfo } from "./runtime";
 import { installSelectorBorderStyle, removeSelectorBorderStyle } from "./selector-border";
 import { SessionLifecycle } from "./session-lifecycle";
+import { createSessionTimerTick } from "./session-timer.ts";
 import { registerZentuiPreferencesProvider } from "./settings-command";
 import { createInitialState, type FooterState, modelLabelFor, syncState } from "./state";
 import { resolveFooterTelemetry } from "./telemetry";
@@ -223,7 +228,6 @@ export default function (pi: ExtensionAPI) {
   let minimalistDurationUpdatesActive = false;
   let minimalistDecorationActive = false;
   let sessionTimerRequirements = "";
-  let lastDurationLabel = "";
   let lastProjectCwd: string | undefined;
   let requestedProjectCwd: string | undefined;
   const agentDurationClock = new AgentDurationClock();
@@ -438,26 +442,23 @@ export default function (pi: ExtensionAPI) {
     ) {
       stopSessionTimer();
       sessionTimerRequirements = "";
-      lastDurationLabel = "";
       return;
     }
     if (sessionTimerRequirements === nextRequirements) return;
 
     stopSessionTimer();
     sessionTimerRequirements = nextRequirements;
-    lastDurationLabel = "";
+    const tick = createSessionTimerTick({
+      needsTime,
+      needsDuration,
+      timeLabel: () => formatTimeLabel(currentConfig.icons.time),
+      durationLabel: () =>
+        state.sessionStartEpoch ? buildSessionDurationLabel(state.sessionStartEpoch) : "",
+      refresh,
+    });
     const timer = setInterval(() => {
       if (!sessionLifecycle.isCurrent()) return;
-      if (needsTime) {
-        refresh();
-        return;
-      }
-      const label = state.sessionStartEpoch
-        ? buildSessionDurationLabel(state.sessionStartEpoch)
-        : "";
-      if (label === lastDurationLabel) return;
-      lastDurationLabel = label;
-      refresh();
+      tick();
     }, 1000);
     stopSessionTimer = () => {
       clearInterval(timer);

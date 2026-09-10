@@ -66,13 +66,13 @@ export type SpawnFailureType =
 /** Intent-level spawn failure. `cause` retains the original OS Error/errno. */
 export class SpawnFailureError extends Error {
   readonly name = "SpawnFailureError";
+  readonly kind: SpawnFailureType;
+  readonly cause: Error;
 
-  constructor(
-    readonly kind: SpawnFailureType,
-    message: string,
-    readonly cause: Error,
-  ) {
+  constructor(kind: SpawnFailureType, message: string, cause: Error) {
     super(message, { cause });
+    this.kind = kind;
+    this.cause = cause;
   }
 }
 

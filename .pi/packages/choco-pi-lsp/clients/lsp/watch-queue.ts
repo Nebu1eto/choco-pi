@@ -27,11 +27,16 @@ export class WatchedFilesQueue {
   // URI (last-type-wins) while preserving first-seen insertion order.
   private readonly pending = new Map<string, number>();
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private readonly flushFn: (changes: WatchedFileChange[]) => void;
+  private readonly debounceMs: number;
 
   constructor(
-    private readonly flushFn: (changes: WatchedFileChange[]) => void,
-    private readonly debounceMs: number = WATCH_DEBOUNCE_MS,
-  ) {}
+    flushFn: (changes: WatchedFileChange[]) => void,
+    debounceMs: number = WATCH_DEBOUNCE_MS,
+  ) {
+    this.flushFn = flushFn;
+    this.debounceMs = debounceMs;
+  }
 
   /** Queue a change; arms the debounce timer if not already pending. */
   enqueue(uri: string, type: number): void {

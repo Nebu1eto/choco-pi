@@ -4,11 +4,13 @@ import type { RuleDescription } from "./ast-grep-types.ts";
 
 export class AstGrepRuleManager {
   private ruleDescriptions: Map<string, RuleDescription> | null = null;
+  private ruleDir: string;
+  private log: (msg: string) => void;
 
-  constructor(
-    private ruleDir: string,
-    private log: (msg: string) => void,
-  ) {}
+  constructor(ruleDir: string, log: (msg: string) => void) {
+    this.ruleDir = ruleDir;
+    this.log = log;
+  }
 
   loadRuleDescriptions(): Map<string, RuleDescription> {
     if (this.ruleDescriptions !== null) return this.ruleDescriptions;

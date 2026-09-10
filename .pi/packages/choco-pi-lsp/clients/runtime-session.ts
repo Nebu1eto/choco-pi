@@ -54,6 +54,7 @@ import { scanProjectRules } from "./rules-scanner.ts";
 import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
 import type { RustClient } from "./rust-client.ts";
 import { resetSafeSpawnWindowsCommandCache } from "./safe-spawn.ts";
+import { shouldPrewarmLanguageServers } from "./session-warmup-config.ts";
 import { getSlowFsVerdict, isSlowFs, slowFsDegradationNotice } from "./slow-fs.ts";
 import {
   countRecentSmells,
@@ -1429,7 +1430,9 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
           // #473 guard in index.ts), so they never schedule this
           // warmup in the first place.
           const lspPrewarmStartedAt = Date.now();
-          if (deps.getFlag("no-lsp")) {
+          if (!shouldPrewarmLanguageServers(deps.getFlag)) {
+            warmupDbg("warmup: skipping LSP pre-warm (warmup disabled)");
+          } else if (deps.getFlag("no-lsp")) {
             warmupDbg("warmup: skipping LSP pre-warm (no-lsp)");
           } else if (isSubagentSession()) {
             warmupDbg("warmup: skipping LSP pre-warm (subagent session)");
@@ -2072,7 +2075,7 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
   // lazily on first edit instead of eagerly at session start.
   if (subagentSession) {
     dbg("session_start lsp-warm: skipping pre-warm (subagent session)");
-  } else if (!getFlag("no-lsp") && allowBootstrapTasks) {
+  } else if (shouldPrewarmLanguageServers(getFlag) && !getFlag("no-lsp") && allowBootstrapTasks) {
     setImmediate(() => {
       void loadLSPConfig(cwd).then((lspConfig) => {
         const warmFiles = lspConfig.warmFiles ?? [];
