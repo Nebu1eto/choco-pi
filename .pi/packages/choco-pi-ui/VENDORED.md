@@ -137,6 +137,13 @@ host's `estimateTokens` over `sessionEntryToContextMessages` for every entry;
 `update` and `updateAfterCompaction` share one lifecycle-guarded `set` path, so
 the next measured assistant usage supersedes the estimate exactly as before.
 
+### choco-pi change: display-gated footer timer
+
+The Starship footer's one-second session timer now compares the current rendered
+time and duration labels with their last rendered values before requesting a
+host refresh. Seconds-precision formats still update whenever their label
+changes, while minute-only clocks no longer re-render the transcript each second.
+
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
 
 - Original source code: <https://github.com/maddeye/pi-nord>

@@ -1,8 +1,11 @@
 /** Small insertion-ordered LRU used for process-lifetime memo tables. */
 export class BoundedLruCache<K, V> {
   private readonly entries = new Map<K, V>();
+  private readonly maxEntries: number;
 
-  constructor(private readonly maxEntries: number) {}
+  constructor(maxEntries: number) {
+    this.maxEntries = maxEntries;
+  }
 
   get(key: K): V | undefined {
     const value = this.entries.get(key);

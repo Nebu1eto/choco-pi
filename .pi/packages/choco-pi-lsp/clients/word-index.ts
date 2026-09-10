@@ -14,8 +14,6 @@
  * embeddings, no native deps, no daemon — pure in-process TypeScript.
  */
 
-import { Type } from "typebox";
-import { Check } from "typebox/value";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createDeadline, forEachCooperatively, yieldIfOverBudget } from "./cooperative-budget.ts";
@@ -1449,34 +1447,57 @@ export function deserializeWordIndex(
     !Array.isArray(data.postings) ||
     !Array.isArray(data.docLengths) ||
     !Array.isArray(data.fileMtimes) ||
-    data.fileMtimes.length !== data.files.length
+    data.docLengths.length !== data.files.length ||
+    data.fileMtimes.length !== data.files.length ||
+    !Number.isFinite(data.totalTokens) ||
+    (data.indexedFileCount !== undefined && !Number.isFinite(data.indexedFileCount)) ||
+    (data.truncated !== undefined && data.truncated !== Boolean(data.truncated)) ||
+    (data.fileSizes !== undefined &&
+      (!Array.isArray(data.fileSizes) || data.fileSizes.length !== data.files.length)) ||
+    (data.forward !== undefined && !Array.isArray(data.forward))
   ) {
     return null;
   }
+
   const docLengths = new PathKeyedMap<number>(wordIndexKey);
   const fileMtimes = new PathKeyedMap<number>(wordIndexKey);
   const fileSizes = new PathKeyedMap<number>(wordIndexKey);
-  data.files.forEach((file, i) => docLengths.set(file, data.docLengths[i] ?? 0));
-  data.files.forEach((file, i) => fileMtimes.set(file, data.fileMtimes[i] ?? 0));
+  for (let i = 0; i < data.files.length; i += 1) {
+    const file = data.files[i];
+    const docLength = data.docLengths[i];
+    const fileMtime = data.fileMtimes[i];
+    if (file !== String(file) || !Number.isFinite(docLength) || !Number.isFinite(fileMtime)) {
+      return null;
+    }
+    docLengths.set(file, docLength);
+    fileMtimes.set(file, fileMtime);
+  }
   // #1105: `fileSizes` is optional on the wire (pre-#1105 snapshots omit it).
-  // Only populate when the array is present AND parallel to `files`; otherwise
-  // leave it empty so the refresh gate re-reads every file once to repopulate,
-  // rather than trusting a bogus/misaligned size. Never treated as "current".
-  if (Array.isArray(data.fileSizes) && data.fileSizes.length === data.files.length) {
-    data.files.forEach((file, i) => fileSizes.set(file, data.fileSizes?.[i] ?? 0));
+  // An omitted array leaves the map empty so the refresh gate re-reads every
+  // file once. A present but malformed array is rejected above as corruption.
+  if (Array.isArray(data.fileSizes)) {
+    for (let i = 0; i < data.files.length; i += 1) {
+      const fileSize = data.fileSizes[i];
+      if (!Number.isFinite(fileSize)) return null;
+      fileSizes.set(data.files[i], fileSize);
+    }
   }
 
   const postings = new Map<string, WordHit[]>();
-  for (const [token, flat] of data.postings) {
-    if (!Check(Type.String(), token) || !Array.isArray(flat)) continue;
+  // Validate while materializing the maps. These native primitive checks add
+  // no traversal beyond the work hydration already has to perform.
+  for (const entry of data.postings) {
+    if (!Array.isArray(entry) || entry.length !== 2) return null;
+    const [token, flat] = entry;
+    if (token !== String(token) || !Array.isArray(flat) || flat.length % 2 !== 0) return null;
     const hits: WordHit[] = [];
-    for (let i = 0; i + 1 < flat.length; i += 2) {
-      const file = data.files[flat[i]];
+    for (let i = 0; i < flat.length; i += 2) {
+      const fileIndex = flat[i];
       const line = flat[i + 1];
-
-      if (Check(Type.String(), file) && Check(Type.Number(), line)) {
-        hits.push({ file, line });
-      }
+      if (!Number.isInteger(fileIndex) || !Number.isFinite(line)) return null;
+      const file = data.files[fileIndex];
+      if (file === undefined) return null;
+      hits.push({ file, line });
     }
     if (hits.length > 0) postings.set(token, hits);
   }
@@ -1485,19 +1506,18 @@ export function deserializeWordIndex(
   if (Array.isArray(data.forward)) {
     forward = new PathKeyedMap<Map<string, number>>(wordIndexKey);
     for (const entry of data.forward) {
-      if (!Array.isArray(entry) || entry.length !== 2) continue;
+      if (!Array.isArray(entry) || entry.length !== 2) return null;
       const [fileIdx, tokenCounts] = entry;
+      if (!Number.isInteger(fileIdx)) return null;
       const file = data.files[fileIdx];
 
-      if (!Check(Type.String(), file) || !Array.isArray(tokenCounts)) continue;
+      if (file === undefined || !Array.isArray(tokenCounts)) return null;
       const perToken = new Map<string, number>();
       for (const pair of tokenCounts) {
-        if (!Array.isArray(pair) || pair.length !== 2) continue;
+        if (!Array.isArray(pair) || pair.length !== 2) return null;
         const [token, count] = pair;
-
-        if (Check(Type.String(), token) && Check(Type.Number(), count)) {
-          perToken.set(token, count);
-        }
+        if (token !== String(token) || !Number.isFinite(count)) return null;
+        perToken.set(token, count);
       }
       forward.set(file, perToken);
     }
@@ -1507,7 +1527,7 @@ export function deserializeWordIndex(
     postings,
     docLengths,
 
-    totalTokens: Check(Type.Number(), data.totalTokens) ? data.totalTokens : 0,
+    totalTokens: data.totalTokens,
     docCount: data.files.length,
     truncated: data.truncated === true,
     forward,
