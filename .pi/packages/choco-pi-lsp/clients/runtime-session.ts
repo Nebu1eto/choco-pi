@@ -54,7 +54,7 @@ import { scanProjectRules } from "./rules-scanner.ts";
 import type { RuntimeCoordinator } from "./runtime-coordinator.ts";
 import type { RustClient } from "./rust-client.ts";
 import { resetSafeSpawnWindowsCommandCache } from "./safe-spawn.ts";
-import { shouldPrewarmLanguageServers } from "./session-warmup-config.ts";
+import { runLanguageServerPrewarm, shouldPrewarmLanguageServers } from "./session-warmup-config.ts";
 import { getSlowFsVerdict, isSlowFs, slowFsDegradationNotice } from "./slow-fs.ts";
 import {
   countRecentSmells,
@@ -1368,6 +1368,11 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
             startedAt: new Date(scanContextStartedAt).toISOString(),
             durationMs: Date.now() - scanContextStartedAt,
           });
+          const lspConfig = await loadLSPConfig(warmupCwd).catch(() => ({
+            // SAFETY: This fallback preserves loadLSPConfig's warmFiles boundary shape.
+            warmFiles: [] as string[],
+          }));
+          const warmFiles = lspConfig.warmFiles ?? [];
           // Respect the startup-scan guard (#250): canWarmCaches is false for
           // home-dir / no-project-root / too-many-source-files. Proceeding into
           // the language-profile source walk in those cases lets it root at an
@@ -1378,6 +1383,20 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
             warmupDbg(
               `warmup: skipping language-profile (canWarm=false, reason=${scan.reason ?? "unknown"})`,
             );
+            if (
+              warmFiles.length > 0 &&
+              !deps.getFlag("no-lsp") &&
+              !isSubagentSession() &&
+              !isWarmAttached()
+            ) {
+              await igniteWarmFiles(
+                warmupCwd,
+                warmFiles,
+                deps.runtime,
+                deps.runtime.sessionGeneration,
+                warmupDbg,
+              );
+            }
             return;
           }
           const languageRoot = scan.projectRoot ?? warmupCwd;
@@ -1430,9 +1449,7 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
           // #473 guard in index.ts), so they never schedule this
           // warmup in the first place.
           const lspPrewarmStartedAt = Date.now();
-          if (!shouldPrewarmLanguageServers(deps.getFlag)) {
-            warmupDbg("warmup: skipping LSP pre-warm (warmup disabled)");
-          } else if (deps.getFlag("no-lsp")) {
+          if (deps.getFlag("no-lsp")) {
             warmupDbg("warmup: skipping LSP pre-warm (no-lsp)");
           } else if (isSubagentSession()) {
             warmupDbg("warmup: skipping LSP pre-warm (subagent session)");
@@ -1442,26 +1459,27 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
             // #957 review: honor explicit warmFiles (#203) like the full
             // path does — configured projects warm exactly what they
             // asked for; dominant-language warm is the fallback.
-            const lspConfig = await loadLSPConfig(warmupCwd).catch(() => ({
-              // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
-              warmFiles: [] as string[],
-            }));
-            const warmFiles = lspConfig.warmFiles ?? [];
-            if (warmFiles.length > 0) {
-              await igniteWarmFiles(
-                warmupCwd,
-                warmFiles,
-                deps.runtime,
-                deps.runtime.sessionGeneration,
-                warmupDbg,
-              );
-            } else {
-              await igniteDominantLanguageWarm(
-                languageRoot,
-                deps.runtime,
-                deps.runtime.sessionGeneration,
-                warmupDbg,
-              );
+            const prewarmResult = await runLanguageServerPrewarm({
+              warmFiles,
+              automaticWarmupEnabled: shouldPrewarmLanguageServers(deps.getFlag),
+              warmConfiguredFiles: (configuredFiles) =>
+                igniteWarmFiles(
+                  warmupCwd,
+                  configuredFiles,
+                  deps.runtime,
+                  deps.runtime.sessionGeneration,
+                  warmupDbg,
+                ),
+              warmDominantLanguage: () =>
+                igniteDominantLanguageWarm(
+                  languageRoot,
+                  deps.runtime,
+                  deps.runtime.sessionGeneration,
+                  warmupDbg,
+                ),
+            });
+            if (prewarmResult === "disabled") {
+              warmupDbg("warmup: skipping LSP pre-warm (warmup disabled)");
             }
             logLatency({
               type: "phase",
@@ -1939,7 +1957,8 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
   // the slow-FS probe above. Logged to the latency log so dogfooding can see
   // how often subagent fan-outs engage it and what identity they carry.
   const subagentSession = isSubagentSession();
-  if (isWarmAttached()) {
+  const warmAttached = isWarmAttached();
+  if (warmAttached) {
     dbg("session_start lsp-warm: skipping pre-warm (attached to incumbent)");
   } else if (subagentSession) {
     const identity = getSubagentIdentity();
@@ -2073,32 +2092,36 @@ export async function handleSessionStart(deps: SessionStartDeps): Promise<void> 
   // LSP dispatch is untouched (see `pipeline.ts`), so a subagent that
   // actually edits code still gets diagnostics; it just spawns the server
   // lazily on first edit instead of eagerly at session start.
-  if (subagentSession) {
+  if (warmAttached) {
+    // Already logged above when the session mode was established.
+  } else if (subagentSession) {
     dbg("session_start lsp-warm: skipping pre-warm (subagent session)");
-  } else if (shouldPrewarmLanguageServers(getFlag) && !getFlag("no-lsp") && allowBootstrapTasks) {
+  } else if (!getFlag("no-lsp") && allowBootstrapTasks) {
     setImmediate(() => {
-      void loadLSPConfig(cwd).then((lspConfig) => {
-        const warmFiles = lspConfig.warmFiles ?? [];
-        dbg(`session_start lsp-config: loaded (${warmFiles.length} warm file(s) configured)`);
-        if (warmFiles.length > 0) {
-          igniteWarmFiles(cwd, warmFiles, runtime, sessionGeneration, dbg).catch((err) =>
-            dbg(`session_start lsp-warm: unhandled error: ${err}`),
-          );
-        } else if (startupScan.canWarmCaches) {
-          // No explicit warmFiles — pre-spawn just the dominant language's
-          // LSP so the first edit doesn't pay the cold-spawn stall (#203).
-          // Only do the auto-discovery warm on guarded real project roots; on
-          // home/no-project/too-large roots this source walk can become the same
-          // delayed background tree scan that the startup-scan guard prevents.
-          igniteDominantLanguageWarm(analysisRoot, runtime, sessionGeneration, dbg).catch((err) =>
-            dbg(`session_start lsp-warm: unhandled dominant error: ${err}`),
-          );
-        } else {
-          dbg(
-            `session_start lsp-warm: skipping dominant-language auto-warm (${startupScan.reason ?? "unknown"})`,
-          );
-        }
-      });
+      void loadLSPConfig(cwd)
+        .then(async (lspConfig) => {
+          const warmFiles = lspConfig.warmFiles ?? [];
+          dbg(`session_start lsp-config: loaded (${warmFiles.length} warm file(s) configured)`);
+          const automaticWarmupEnabled = shouldPrewarmLanguageServers(getFlag);
+          if (automaticWarmupEnabled && !startupScan.canWarmCaches && warmFiles.length === 0) {
+            dbg(
+              `session_start lsp-warm: skipping dominant-language auto-warm (${startupScan.reason ?? "unknown"})`,
+            );
+            return;
+          }
+          const prewarmResult = await runLanguageServerPrewarm({
+            warmFiles,
+            automaticWarmupEnabled,
+            warmConfiguredFiles: (configuredFiles) =>
+              igniteWarmFiles(cwd, configuredFiles, runtime, sessionGeneration, dbg),
+            warmDominantLanguage: () =>
+              igniteDominantLanguageWarm(analysisRoot, runtime, sessionGeneration, dbg),
+          });
+          if (prewarmResult === "disabled") {
+            dbg("session_start lsp-warm: skipping pre-warm (warmup disabled)");
+          }
+        })
+        .catch((err) => dbg(`session_start lsp-warm: unhandled error: ${err}`));
     });
     phase("lsp-config");
   }

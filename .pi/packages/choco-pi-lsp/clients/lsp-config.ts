@@ -3,6 +3,7 @@ import { Check } from "typebox/value";
 import { logExtension } from "./extension-log.ts";
 import { notifyUserDegradation } from "./user-notify.ts";
 import * as fs from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -232,138 +233,173 @@ function asConfigObject(value: LspBoundaryValue): Record<string, LspDictionaryVa
   return value as Record<string, LspDictionaryValue>;
 }
 
+function parsePiLensGlobalConfig(
+  parsed: LspBoundaryValue,
+  configPath: string,
+): PiLensGlobalConfig | undefined {
+  if (!parsed || !Check(Type.Object({}), parsed)) return undefined;
+
+  // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+  const raw = parsed as Record<string, LspDictionaryValue>;
+  const warnInvalid = (reason: string) => warnInvalidGlobalConfigOnce(configPath, reason);
+
+  const config: Record<string, LspDictionaryValue> = {};
+
+  for (const spec of LENS_FLAGS) {
+    if (spec.readGlobal) continue;
+    assignFlagConfigSection(raw, config, spec.configKey, warnInvalid);
+  }
+
+  const ignore = Array.isArray(raw.ignore)
+    ? raw.ignore.filter((p): p is string => Check(Type.String(), p))
+    : undefined;
+  if (ignore && ignore.length > 0) config.ignore = ignore;
+
+  const dispatch = asConfigObject(raw.dispatch);
+  if (dispatch) {
+    const floor = dispatch.runnerTimeoutFloorMs;
+
+    if (Check(Type.Number(), floor) && Number.isFinite(floor) && floor > 0) {
+      config.dispatch = { runnerTimeoutFloorMs: floor };
+    } else {
+      // #533: warn only when the key is PRESENT but malformed — an absent
+      // key stays silent so a config that never mentions it is not falsely
+      // flagged. Same warn-once path as the maxFixes case below.
+      if ("runnerTimeoutFloorMs" in dispatch) {
+        warnInvalid("dispatch.runnerTimeoutFloorMs must be a positive finite number");
+      }
+      config.dispatch = { runnerTimeoutFloorMs: undefined };
+    }
+  }
+
+  const typeAcquisition = asConfigObject(raw.typeAcquisition);
+  if (typeAcquisition) {
+    if (Check(Type.Boolean(), typeAcquisition.enabled)) {
+      config.typeAcquisition = { enabled: typeAcquisition.enabled };
+    } else {
+      if ("enabled" in typeAcquisition) {
+        warnInvalid("typeAcquisition.enabled must be a boolean");
+      }
+      config.typeAcquisition = { enabled: undefined };
+    }
+  }
+
+  const autoFix = asConfigObject(asConfigObject(raw.actionableWarnings)?.autoFix);
+  if (autoFix && "maxFixes" in autoFix) {
+    if (
+      Check(Type.Number(), autoFix.maxFixes) &&
+      Number.isFinite(autoFix.maxFixes) &&
+      autoFix.maxFixes >= 0
+    ) {
+      config.actionableWarnings ??= {};
+
+      // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+      const warnings = config.actionableWarnings as Record<string, LspDictionaryValue>;
+      warnings.autoFix ??= {};
+
+      // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+      (warnings.autoFix as Record<string, LspDictionaryValue>).maxFixes = Math.floor(
+        autoFix.maxFixes,
+      );
+    } else {
+      warnInvalid("actionableWarnings.autoFix.maxFixes must be a non-negative finite number");
+    }
+  }
+
+  const widget = asConfigObject(raw.widget);
+  if (widget) {
+    if (Check(Type.Boolean(), widget.visible)) {
+      config.widget = { visible: widget.visible };
+    } else {
+      // #533: present-but-wrong-type warns; absent stays silent.
+      if ("visible" in widget) {
+        warnInvalid("widget.visible must be a boolean");
+      }
+      config.widget = { visible: undefined };
+    }
+  }
+
+  const format = asConfigObject(raw.format);
+  if (format) {
+    config.format ??= {};
+
+    // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
+    const formatSection = config.format as Record<string, LspDictionaryValue>;
+    if (format.mode === "immediate" || format.mode === "deferred") {
+      formatSection.mode = format.mode;
+    } else {
+      // #533: a present-but-invalid mode (e.g. "immedaite") warns and
+      // falls back; an absent mode stays silent.
+      if ("mode" in format) {
+        warnInvalid('format.mode must be "immediate" or "deferred"');
+      }
+      formatSection.mode = undefined;
+    }
+  }
+
+  // #533 hygiene: a completely unknown top-level key (e.g. a typo like
+  // `lps` for `lsp`) is otherwise dropped silently, so a setting the user
+  // thought they made does nothing with no signal. Warn once per key. The
+  // recognized set is single-sourced (#883): the flag sections derived
+  // from the registry plus the declared non-flag global sections
+  // (`GLOBAL_NON_FLAG_CONFIG_SECTIONS`, which co-locates `$schema` and the
+  // hand-parsed namespaces beside the registry). Adding a flag needs no
+  // edit here; adding a namespace is a one-line edit in that one constant.
+  const knownGlobalConfigKeys = new Set<string>([
+    ...flagConfigSectionKeys(LENS_FLAGS),
+    ...GLOBAL_NON_FLAG_CONFIG_SECTIONS,
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!knownGlobalConfigKeys.has(key)) {
+      warnInvalid(
+        `unknown key "${key}" is not a recognized choco-pi-lsp setting (check for a typo); ignored`,
+      );
+    }
+  }
+
+  // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
+  return config as PiLensGlobalConfig;
+}
+
 export function loadPiLensGlobalConfig(
   configPath = getPiLensGlobalConfigPath(),
 ): PiLensGlobalConfig | undefined {
   try {
     // SAFETY: JSON.parse produced the local JSON document, and the consumer validates every field it reads before relying on that field type.
     const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
-
-    if (!parsed || !Check(Type.Object({}), parsed)) return undefined;
-
-    // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
-    const raw = parsed as Record<string, LspDictionaryValue>;
-    const warnInvalid = (reason: string) => warnInvalidGlobalConfigOnce(configPath, reason);
-
-    const config: Record<string, LspDictionaryValue> = {};
-
-    for (const spec of LENS_FLAGS) {
-      if (spec.readGlobal) continue;
-      assignFlagConfigSection(raw, config, spec.configKey, warnInvalid);
-    }
-
-    const ignore = Array.isArray(raw.ignore)
-      ? raw.ignore.filter((p): p is string => Check(Type.String(), p))
-      : undefined;
-    if (ignore && ignore.length > 0) config.ignore = ignore;
-
-    const dispatch = asConfigObject(raw.dispatch);
-    if (dispatch) {
-      const floor = dispatch.runnerTimeoutFloorMs;
-
-      if (Check(Type.Number(), floor) && Number.isFinite(floor) && floor > 0) {
-        config.dispatch = { runnerTimeoutFloorMs: floor };
-      } else {
-        // #533: warn only when the key is PRESENT but malformed — an absent
-        // key stays silent so a config that never mentions it is not falsely
-        // flagged. Same warn-once path as the maxFixes case below.
-        if ("runnerTimeoutFloorMs" in dispatch) {
-          warnInvalid("dispatch.runnerTimeoutFloorMs must be a positive finite number");
-        }
-        config.dispatch = { runnerTimeoutFloorMs: undefined };
-      }
-    }
-
-    const typeAcquisition = asConfigObject(raw.typeAcquisition);
-    if (typeAcquisition) {
-      if (Check(Type.Boolean(), typeAcquisition.enabled)) {
-        config.typeAcquisition = { enabled: typeAcquisition.enabled };
-      } else {
-        if ("enabled" in typeAcquisition) {
-          warnInvalid("typeAcquisition.enabled must be a boolean");
-        }
-        config.typeAcquisition = { enabled: undefined };
-      }
-    }
-
-    const autoFix = asConfigObject(asConfigObject(raw.actionableWarnings)?.autoFix);
-    if (autoFix && "maxFixes" in autoFix) {
-      if (
-        Check(Type.Number(), autoFix.maxFixes) &&
-        Number.isFinite(autoFix.maxFixes) &&
-        autoFix.maxFixes >= 0
-      ) {
-        config.actionableWarnings ??= {};
-
-        // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
-        const warnings = config.actionableWarnings as Record<string, LspDictionaryValue>;
-        warnings.autoFix ??= {};
-
-        // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
-        (warnings.autoFix as Record<string, LspDictionaryValue>).maxFixes = Math.floor(
-          autoFix.maxFixes,
-        );
-      } else {
-        warnInvalid("actionableWarnings.autoFix.maxFixes must be a non-negative finite number");
-      }
-    }
-
-    const widget = asConfigObject(raw.widget);
-    if (widget) {
-      if (Check(Type.Boolean(), widget.visible)) {
-        config.widget = { visible: widget.visible };
-      } else {
-        // #533: present-but-wrong-type warns; absent stays silent.
-        if ("visible" in widget) {
-          warnInvalid("widget.visible must be a boolean");
-        }
-        config.widget = { visible: undefined };
-      }
-    }
-
-    const format = asConfigObject(raw.format);
-    if (format) {
-      config.format ??= {};
-
-      // SAFETY: The adjacent TypeBox/object guard establishes an indexable boundary object before these named fields are consumed.
-      const formatSection = config.format as Record<string, LspDictionaryValue>;
-      if (format.mode === "immediate" || format.mode === "deferred") {
-        formatSection.mode = format.mode;
-      } else {
-        // #533: a present-but-invalid mode (e.g. "immedaite") warns and
-        // falls back; an absent mode stays silent.
-        if ("mode" in format) {
-          warnInvalid('format.mode must be "immediate" or "deferred"');
-        }
-        formatSection.mode = undefined;
-      }
-    }
-
-    // #533 hygiene: a completely unknown top-level key (e.g. a typo like
-    // `lps` for `lsp`) is otherwise dropped silently, so a setting the user
-    // thought they made does nothing with no signal. Warn once per key. The
-    // recognized set is single-sourced (#883): the flag sections derived
-    // from the registry plus the declared non-flag global sections
-    // (`GLOBAL_NON_FLAG_CONFIG_SECTIONS`, which co-locates `$schema` and the
-    // hand-parsed namespaces beside the registry). Adding a flag needs no
-    // edit here; adding a namespace is a one-line edit in that one constant.
-    const knownGlobalConfigKeys = new Set<string>([
-      ...flagConfigSectionKeys(LENS_FLAGS),
-      ...GLOBAL_NON_FLAG_CONFIG_SECTIONS,
-    ]);
-    for (const key of Object.keys(raw)) {
-      if (!knownGlobalConfigKeys.has(key)) {
-        warnInvalid(
-          `unknown key "${key}" is not a recognized choco-pi-lsp setting (check for a typo); ignored`,
-        );
-      }
-    }
-
-    // SAFETY: The adjacent discriminator, schema check, or typed producer establishes this representation before the asserted value is consumed.
-    return config as PiLensGlobalConfig;
+    return parsePiLensGlobalConfig(parsed, configPath);
   } catch {
     return undefined;
   }
+}
+
+// Machine-global configuration is treated as immutable for this process. A
+// fresh process is the intentional invalidation boundary because sessions do
+// not normally rewrite type-acquisition policy while a language server starts.
+const asyncGlobalConfigCache = new Map<string, Promise<PiLensGlobalConfig | undefined>>();
+
+export function loadPiLensGlobalConfigAsync(
+  configPath = getPiLensGlobalConfigPath(),
+): Promise<PiLensGlobalConfig | undefined> {
+  const resolvedPath = path.resolve(configPath);
+  let pending = asyncGlobalConfigCache.get(resolvedPath);
+  if (!pending) {
+    pending = fsPromises
+      .readFile(resolvedPath, "utf-8")
+      .then((contents) => {
+        // SAFETY: JSON.parse is intentionally retained as an untrusted boundary value; parsePiLensGlobalConfig validates it before field access.
+        const parsed = JSON.parse(contents) as LspBoundaryValue;
+        return parsePiLensGlobalConfig(parsed, resolvedPath);
+      })
+      .catch(() => undefined);
+    asyncGlobalConfigCache.set(resolvedPath, pending);
+  }
+  return pending;
+}
+
+/** Test-only reset for process-lifetime async config memoization. */
+export function resetAsyncGlobalConfigCache(): void {
+  asyncGlobalConfigCache.clear();
 }
 
 export function getGlobalIgnorePatterns(configPath?: string): string[] {
@@ -387,6 +423,13 @@ export function getGlobalActionableWarningMaxFixes(configPath?: string): number 
 export function isAutomaticTypeAcquisitionEnabled(configPath?: string): boolean {
   if (process.env.CHOCO_PI_LSP_TYPE_ACQUISITION === "1") return true;
   return typeAcquisitionEnabledFromConfig(loadPiLensGlobalConfig(configPath));
+}
+
+export async function isAutomaticTypeAcquisitionEnabledAsync(
+  configPath?: string,
+): Promise<boolean> {
+  if (process.env.CHOCO_PI_LSP_TYPE_ACQUISITION === "1") return true;
+  return typeAcquisitionEnabledFromConfig(await loadPiLensGlobalConfigAsync(configPath));
 }
 
 /** Which tier decided a resolved flag's value — for provenance in debug/skip logs (#792). */
