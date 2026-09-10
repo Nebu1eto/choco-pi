@@ -378,6 +378,19 @@ export function loadPiLensGlobalConfig(
 // not normally rewrite type-acquisition policy while a language server starts.
 const asyncGlobalConfigCache = new Map<string, Promise<PiLensGlobalConfig | undefined>>();
 
+function parsePiLensGlobalConfigContents(
+  contents: string,
+  configPath: string,
+): PiLensGlobalConfig | undefined {
+  try {
+    // SAFETY: JSON.parse is intentionally retained as an untrusted boundary value; parsePiLensGlobalConfig validates it before field access.
+    const parsed = JSON.parse(contents) as LspBoundaryValue;
+    return parsePiLensGlobalConfig(parsed, configPath);
+  } catch (error) {
+    throw new Error(`Could not parse choco-pi-lsp config at ${configPath}`, { cause: error });
+  }
+}
+
 export function loadPiLensGlobalConfigAsync(
   configPath = getPiLensGlobalConfigPath(),
 ): Promise<PiLensGlobalConfig | undefined> {
@@ -386,12 +399,11 @@ export function loadPiLensGlobalConfigAsync(
   if (!pending) {
     pending = fsPromises
       .readFile(resolvedPath, "utf-8")
-      .then((contents) => {
-        // SAFETY: JSON.parse is intentionally retained as an untrusted boundary value; parsePiLensGlobalConfig validates it before field access.
-        const parsed = JSON.parse(contents) as LspBoundaryValue;
-        return parsePiLensGlobalConfig(parsed, resolvedPath);
-      })
-      .catch(() => undefined);
+      .then((contents) => parsePiLensGlobalConfigContents(contents, resolvedPath))
+      .catch(() => {
+        asyncGlobalConfigCache.delete(resolvedPath);
+        return undefined;
+      });
     asyncGlobalConfigCache.set(resolvedPath, pending);
   }
   return pending;
