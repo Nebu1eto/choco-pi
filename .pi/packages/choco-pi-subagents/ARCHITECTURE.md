@@ -101,9 +101,9 @@ so provider/tool loops cannot duplicate reminders inside one agent-run start.
 
 | Module                                                          | Role                                                                                                                                                                                                   |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ui/agent-tree.ts`                                              | Pure parent-first tree ordering shared by FleetView and the widget; siblings retain `startedAt` order and orphan records remain visible.                                                               |
-| `ui/agent-widget.ts`                                            | The `aboveEditor` whole-tree widget and the `subagents` status-bar key. The status text is the tree-wide `active / cap` summary; `WidgetMode` (`all`/`background`/`off`) is read live at render.       |
-| `ui/fleet-list.ts`                                              | The `belowEditor` parent/child FleetView. Nested rows retain the ordinary focus/view/stop actions. All keys go through `ui.onTerminalInput`, gated on pi's prompt editor being focused.                |
+| `ui/agent-tree.ts`                                              | Pure parent-first tree ordering used by the fleet panel; siblings retain `startedAt` order and orphan records remain visible.                                                                          |
+| `ui/agent-widget.ts`                                            | Pure agent-label, activity, duration, and token rendering helpers shared by the fleet panel and notifications.                                                                                         |
+| `ui/fleet-panel.ts`, `ui/shell-section-contract.ts`             | Unified `aboveEditor` main/agent/shell roster, status, timer, input router, focus actions, and optional shell-provider contract.                                                                       |
 | `ui/conversation-viewer.ts`                                     | The live conversation overlay: scroll, stop, steering/reply and focus handoff. Ordinary messages use the main transcript components; agent-message envelopes render as a sender/type header plus body. |
 | `ui/notification-render.ts`                                     | Pure completion and compact `subagents:message` notification formatters, independent of host/TUI side effects.                                                                                         |
 | `ui/side-conversation.ts`                                       | BTW launch defaults, dismissible overlay ownership, continuation, and notice-only completion delivery.                                                                                                 |
@@ -140,8 +140,8 @@ no-parameter case resolving to the role default.
 
 ## Seam A — focused agent fullscreen takeover
 
-The modal remains the default conversation viewer. FleetView uses **Enter** to
-open it, and its selection doubles as the focus: moving the cursor with ↑/↓ onto
+The modal remains the default conversation viewer. The FleetPanel selection
+doubles as the focus: moving the cursor with ↑/↓ onto
 a subagent row focuses that agent, and moving onto `main` restores the
 orchestrator. **f** still focuses the selected row explicitly; the
 modal also exposes **f focus**. Focus mode uses the existing
@@ -157,17 +157,17 @@ each pending value clipped to its first terminal line before width truncation.
 
 ```text
 orchestrator (default)
-  -- FleetView ↑↓ onto an agent row / FleetView f / modal f --> focused(agentId, session)
+  -- FleetPanel ↑↓ onto an agent row / FleetPanel f / modal f --> focused(agentId, session)
 focused(agentId, session)
-  -- FleetView ↑↓ onto main or a [btw] row / session switch / shutdown --> orchestrator
+  -- FleetPanel ↑↓ onto main or a [btw] row / session switch / shutdown --> orchestrator
 focused(A) -- ↑↓ onto B / focus(B) --> orchestrator -- focus(B)
 ```
 
-Esc is not part of this machine. In FleetView it only leaves list navigation,
+Esc is not part of this machine. In FleetPanel it only leaves list navigation,
 and the focused editor adapter swallows it, so a prompt addressed to a subagent
 can neither exit focus by accident nor interrupt the main session. The adapter
-asks `hasSwitcher()` (wired to the FleetView enabled flag) first: with the
-switcher turned off there is no other way back, so Esc still exits. `/btw` rows
+asks `hasSwitcher()` (wired to FleetView plus `hasAgentRows()`) first: with agent
+rows turned off there is no other way back, so Esc still exits. `/btw` rows
 are excluded from selection-focus because they own a dismissible overlay opened
 with Enter; selecting one restores the orchestrator transcript.
 
@@ -398,23 +398,22 @@ once sealed and settled. Settled aggregate records remain available for repeat
 result reads for 10 minutes; a 60-second cleanup timer then removes the workflow
 and its consumed marker together.
 
-## Seam D — cooperative fleet navigation
+## Seam D — unified fleet panel
 
-FleetView and the shell widget install independent terminal-input listeners, and
-the shells package normally loads first. They coordinate only through optional
-read-only methods on the existing process-global
-`Symbol.for("pi-subagents:manager")` entry. The root entry exposes
-`hasFleetRows()` and `isFleetActive()` through a runtime FleetList source; before
-FleetList construction both safely report false. No package imports the other's
-runtime implementation.
+FleetPanel owns the single `aboveEditor` widget, timer, and terminal-input
+listener. The root `Symbol.for("pi-subagents:manager")` entry exposes
+`registerShellSection(provider)`, buffering a provider registered before panel
+construction and applying it when FleetPanel becomes live. Superseding a provider
+unsubscribes the old one; each registration's `unregister()` is idempotent and a
+superseded registration cannot clear the current provider.
 
-Each shell keypress probes those methods again. Visible agent rows keep Down and
-Left activation; Right activates shell navigation and is shown in the shell
-widget hint. With no agent rows, shells retain Down activation. If FleetView is
-already active, the earlier shell listener deactivates itself and yields every
-navigation/action key, leaving a single active list. Root-first registry
-ownership and identity-checked cleanup remain unchanged, so a child activation
-cannot replace, mutate, or clear the root peer-state source.
+The panel roster combines `main`, agent rows, and optional shell rows. FleetView
+enables only the agent section, so shell rows remain when it is off.
+`hasAgentRows()` gates focused-mode Esc ownership. Agent rows switch focus with
+↑/↓ and expose focus/view/stop actions; shell rows open the two-pane viewer with
+Enter and use `x` for administrative stop. Root-first registry ownership and
+identity-checked cleanup remain unchanged, so child activation cannot replace or
+clear the root registry entry.
 
 ## Invariants a later phase should not casually break
 

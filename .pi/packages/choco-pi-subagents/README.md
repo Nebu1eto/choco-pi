@@ -17,11 +17,11 @@ of [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents)
 
 The `Agent` tool (foreground and `run_in_background`), `get_subagent_result`,
 `steer_subagent`, `stop_subagent`, `resume`, `@handle` prompt mentions, the
-`/agents` command tree, the above-editor widget, FleetView, the live conversation overlay,
+`/agents` command tree, the unified above-editor fleet panel, the live conversation overlay,
 fullscreen subagent focus, `isolation: "worktree"`, cron/interval scheduling,
 opt-in nested delegation, and cross-extension RPC.
 
-In FleetView, the selection is the focus: ↑/↓ onto a subagent row focuses it in
+In the fleet panel, the selection is the focus: ↑/↓ onto a subagent row focuses it in
 Pi's main conversation area, and moving back onto `main` restores the
 orchestrator conversation and prompt unchanged. The switcher stays visible while
 an agent is focused, so `main` and every other agent are always one arrow key

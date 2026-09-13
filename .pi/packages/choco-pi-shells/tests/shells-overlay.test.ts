@@ -157,7 +157,7 @@ test("openShellsOverlay uses centered overlays and Enter opens ShellOutputViewer
   });
 });
 
-test("ShellOutputViewer tails with absolute cursors, toggles streams, and confirms stop", async () => {
+test("ShellOutputViewer tails both panes with absolute cursors and confirms stop", async () => {
   const running = shell("1");
   let reads = 0;
   const manager = managerFixture([running]);
@@ -171,9 +171,13 @@ test("ShellOutputViewer tails with absolute cursors, toggles streams, and confir
     };
   };
   const component = new ShellOutputViewer(tui(), manager, "admin", running, theme, () => {});
-  assert.match(rendered(component), /out/);
+  const initial = rendered(component);
+  assert.match(initial, /stdout/);
+  assert.match(initial, /out/);
+  assert.match(initial, /stderr/);
+  assert.match(initial, /err/);
   component.handleInput("\t");
-  assert.match(rendered(component), /err/);
+  assert.match(rendered(component), /Tab switch pane/);
   await new Promise((resolve) => setTimeout(resolve, 230));
   assert.deepEqual(manager.readCalls[1], { stdoutOffset: 3, stderrOffset: 3 });
   assert.match(rendered(component), /err!/);
@@ -183,6 +187,40 @@ test("ShellOutputViewer tails with absolute cursors, toggles streams, and confir
   component.handleInput("x");
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(manager.stopCalls, ["1"]);
+  component.dispose();
+});
+
+test("ShellOutputViewer gives the active pane two thirds and scrolls it independently", () => {
+  const exited = shell("1", "exited");
+  const manager = managerFixture([exited]);
+  manager.read = () => ({
+    shell: exited,
+    stdout: chunk(Array.from({ length: 10 }, (_, index) => `out-${index}`).join("\n")),
+    stderr: chunk(Array.from({ length: 10 }, (_, index) => `err-${index}`).join("\n")),
+  });
+  const markedTheme = {
+    fg: (color: string, text: string) => (color === "accent" ? `<active>${text}</active>` : text),
+  };
+  // SAFETY: ShellOutputViewer exercises only Theme.fg, which the fixture implements exactly.
+  const viewerTheme = markedTheme as Theme;
+  const component = new ShellOutputViewer(tui(20), manager, "admin", exited, viewerTheme, () => {});
+
+  const stdoutActive = rendered(component);
+  assert.match(stdoutActive, /<active>stdout<\/active>/);
+  assert.doesNotMatch(stdoutActive, /<active>stderr<\/active>/);
+  assert.match(stdoutActive, /out-6/);
+  assert.doesNotMatch(stdoutActive, /err-6/);
+
+  for (let index = 0; index < 10; index++) component.handleInput("k");
+  component.handleInput("\t");
+  const stderrActive = rendered(component);
+  assert.match(stderrActive, /<active>stderr<\/active>/);
+  assert.match(stderrActive, /out-0/);
+  assert.match(stderrActive, /err-6/);
+  for (let index = 0; index < 10; index++) component.handleInput("k");
+  const independentlyScrolled = rendered(component);
+  assert.match(independentlyScrolled, /out-0/);
+  assert.match(independentlyScrolled, /err-0/);
   component.dispose();
 });
 
@@ -240,7 +278,8 @@ test("ShellOutputViewer retains bounded incremental state under noisy output", (
   assert.ok((output.match(/line-\d+/g) ?? []).length <= SHELL_VIEWER_MAX_LINES);
   assert.doesNotMatch(output, /oldest-marker/);
   assert.match(output, /newest-tail/);
-  assert.match(output, /earlier output omitted from viewer/);
+  for (let index = 0; index < SHELL_VIEWER_MAX_LINES; index++) component.handleInput("k");
+  assert.match(rendered(component), /earlier output omitted from viewer/);
   component.dispose();
 
   const longLineManager = managerFixture([exited]);
