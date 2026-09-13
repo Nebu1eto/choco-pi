@@ -170,6 +170,517 @@ test("failure is fail-fast by default", async () => {
   assert.deepEqual(runner.starts, ["build"]);
 });
 
+test("provider unavailability skips pending fan-out with one aggregate error", async () => {
+  const runner = new DeferredRunner();
+  let available = true;
+  // SAFETY: This test supplies both optional health methods immediately below.
+  const healthRunner = runner as DeferredRunner &
+    Required<Pick<WorkflowStepRunner, "providerKey" | "isProviderAvailable">>;
+  healthRunner.providerKey = () => "anthropic";
+  healthRunner.isProviderAvailable = () => available;
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      { id: "first", subagent_type: "Explore", prompt: "first" },
+      { id: "second", subagent_type: "Explore", prompt: "second" },
+      { id: "third", subagent_type: "Explore", prompt: "third" },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  available = false;
+  runner.finish("first", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+  const result = await manager.wait(started.workflowId)!;
+
+  assert.deepEqual(runner.starts, ["first"], "closed gate causes no extra spawn calls");
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["error", "skipped", "skipped"],
+  );
+  const aggregate = "Provider anthropic unavailable (temporarily rate limited); 2 steps skipped.";
+  assert.equal(result.steps[1].error, aggregate);
+  assert.equal(result.steps[2].error, aggregate);
+});
+
+test("provider failure settles a sealed workflow with no runnable steps as error", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies the optional provider identity method immediately below.
+  const healthRunner = runner as DeferredRunner & Required<Pick<WorkflowStepRunner, "providerKey">>;
+  healthRunner.providerKey = () => "anthropic";
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      { id: "first", subagent_type: "Explore", prompt: "first" },
+      { id: "second", subagent_type: "Explore", prompt: "second" },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  runner.finish("first", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+
+  const result = await manager.wait(started.workflowId)!;
+  assert.equal(result.status, "error");
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["error", "skipped"],
+  );
+});
+
+test("non-continue provider error skips another-provider dependent and fails", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies the optional provider identity method immediately below.
+  const healthRunner = runner as DeferredRunner & Required<Pick<WorkflowStepRunner, "providerKey">>;
+  healthRunner.providerKey = (step) => step.model;
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      { id: "hard", subagent_type: "Explore", prompt: "hard", model: "anthropic" },
+      {
+        id: "dependent",
+        subagent_type: "Plan",
+        prompt: "{{steps.hard.output}}",
+        model: "openai",
+        needs: ["hard"],
+      },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  runner.finish("hard", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+  await flush();
+
+  assert.deepEqual(runner.starts, ["hard"]);
+  const result = await manager.wait(started.workflowId)!;
+  assert.equal(result.status, "error");
+  assert.equal(result.steps.find((step) => step.id === "dependent")?.status, "skipped");
+});
+
+test("non-continue provider error with no pending steps fails", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies the optional provider identity method immediately below.
+  const healthRunner = runner as DeferredRunner & Required<Pick<WorkflowStepRunner, "providerKey">>;
+  healthRunner.providerKey = () => "anthropic";
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([{ id: "hard", subagent_type: "Explore", prompt: "hard" }]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  runner.finish("hard", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+
+  assert.equal((await manager.wait(started.workflowId)!).status, "error");
+});
+
+for (const finishOrder of ["healthy-first", "provider-first"] as const) {
+  test(`non-continue provider error is ordering-independent (${finishOrder})`, async () => {
+    const runner = new DeferredRunner();
+    // SAFETY: This test supplies the optional provider identity method immediately below.
+    const healthRunner = runner as DeferredRunner &
+      Required<Pick<WorkflowStepRunner, "providerKey">>;
+    healthRunner.providerKey = (step) => step.model;
+    const manager = new WorkflowManager();
+    const started = manager.start(
+      definition([
+        { id: "provider", subagent_type: "Explore", prompt: "provider", model: "anthropic" },
+        { id: "healthy", subagent_type: "Explore", prompt: "healthy", model: "openai" },
+      ]),
+      resolveType,
+      runner,
+      2,
+    );
+
+    await flush();
+    const finishProvider = () =>
+      runner.finish("provider", {
+        status: "error",
+        error: "Provider anthropic unavailable (temporarily rate limited).",
+      });
+    if (finishOrder === "healthy-first") {
+      runner.finish("healthy");
+      await flush();
+      finishProvider();
+    } else {
+      finishProvider();
+      await flush();
+      runner.finish("healthy", { status: "cancelled" });
+    }
+
+    assert.equal((await manager.wait(started.workflowId)!).status, "error");
+  });
+}
+
+test("non-continue provider error skips independent pending work", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies the optional provider identity method immediately below.
+  const healthRunner = runner as DeferredRunner & Required<Pick<WorkflowStepRunner, "providerKey">>;
+  healthRunner.providerKey = (step) => step.model;
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      { id: "hard", subagent_type: "Explore", prompt: "hard", model: "anthropic" },
+      { id: "independent", subagent_type: "Explore", prompt: "independent", model: "openai" },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  runner.finish("hard", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+  await flush();
+
+  assert.deepEqual(runner.starts, ["hard"]);
+  const result = await manager.wait(started.workflowId)!;
+  assert.equal(result.status, "error");
+  // Exact-once provider leniency belongs to spawn/precheck gates, not settled hard failures.
+  assert.equal(result.steps.find((step) => step.id === "independent")?.status, "skipped");
+});
+
+test("provider failure remains fail-fast when only continue_on_error dependents are skipped", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies the optional provider identity method immediately below.
+  const healthRunner = runner as DeferredRunner & Required<Pick<WorkflowStepRunner, "providerKey">>;
+  healthRunner.providerKey = () => "anthropic";
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      { id: "a", subagent_type: "Explore", prompt: "a" },
+      {
+        id: "d",
+        subagent_type: "Plan",
+        prompt: "d",
+        needs: ["a"],
+        continue_on_error: true,
+      },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  runner.finish("a", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+
+  const result = await manager.wait(started.workflowId)!;
+  assert.equal(result.status, "error");
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["error", "skipped"],
+  );
+});
+
+for (const finishOrder of ["provider-abort-first", "hard-failure-first"] as const) {
+  test(`provider-abort settlement preserves fail-fast status (${finishOrder})`, async () => {
+    const runner = new DeferredRunner();
+    // SAFETY: This test supplies the optional provider identity method immediately below.
+    const healthRunner = runner as DeferredRunner &
+      Required<Pick<WorkflowStepRunner, "providerKey">>;
+    healthRunner.providerKey = (step) => step.model;
+    const manager = new WorkflowManager();
+    const started = manager.start(
+      definition([
+        { id: "provider", subagent_type: "Explore", prompt: "provider", model: "anthropic" },
+        { id: "hard", subagent_type: "Explore", prompt: "hard", model: "openai" },
+        {
+          id: "aborted",
+          subagent_type: "Explore",
+          prompt: "aborted",
+          model: "anthropic",
+          continue_on_error: true,
+        },
+        {
+          id: "skipped",
+          subagent_type: "Plan",
+          prompt: "skipped",
+          model: "anthropic",
+          needs: ["provider"],
+          continue_on_error: true,
+        },
+      ]),
+      resolveType,
+      runner,
+      3,
+    );
+
+    await flush();
+    assert.deepEqual(runner.starts, ["provider", "hard", "aborted"]);
+    runner.finish("provider", {
+      status: "error",
+      error: "Provider anthropic unavailable (temporarily rate limited).",
+    });
+    await flush();
+
+    const finishProviderAbort = () => runner.finish("aborted", { status: "cancelled" });
+    const finishHardFailure = () =>
+      runner.finish("hard", { status: "error", error: "unrelated hard failure" });
+    if (finishOrder === "provider-abort-first") {
+      finishProviderAbort();
+      await flush();
+      finishHardFailure();
+    } else {
+      finishHardFailure();
+      await flush();
+      finishProviderAbort();
+    }
+
+    const result = await manager.wait(started.workflowId)!;
+    assert.equal(result.status, "error");
+    assert.equal(result.steps.find((step) => step.id === "hard")?.status, "error");
+    assert.equal(result.steps.find((step) => step.id === "skipped")?.status, "skipped");
+  });
+}
+
+test("tagged provider abort that settles as a hard error remains fail-fast", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies the optional provider identity method immediately below.
+  const healthRunner = runner as DeferredRunner & Required<Pick<WorkflowStepRunner, "providerKey">>;
+  healthRunner.providerKey = (step) => step.model;
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      {
+        id: "provider",
+        subagent_type: "Explore",
+        prompt: "provider",
+        model: "anthropic",
+        continue_on_error: true,
+      },
+      { id: "tagged", subagent_type: "Explore", prompt: "tagged", model: "anthropic" },
+      {
+        id: "dependent",
+        subagent_type: "Plan",
+        prompt: "{{steps.tagged.output}}",
+        model: "openai",
+        needs: ["tagged"],
+      },
+    ]),
+    resolveType,
+    runner,
+    2,
+  );
+
+  await flush();
+  assert.deepEqual(runner.starts, ["provider", "tagged"]);
+  runner.finish("provider", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+  await flush();
+  assert.equal(runner.signals.get("tagged")?.aborted, true);
+  runner.finish("tagged", { status: "error", error: "abort cleanup failed" });
+  await flush();
+  if (runner.starts.includes("dependent")) {
+    runner.finish("dependent");
+  }
+
+  const result = await manager.wait(started.workflowId)!;
+  assert.equal(result.status, "error");
+  assert.equal(result.steps.find((step) => step.id === "tagged")?.status, "error");
+  assert.equal(result.steps.find((step) => step.id === "dependent")?.status, "skipped");
+  assert.deepEqual(runner.starts, ["provider", "tagged"], "dependent must not launch");
+});
+
+test("tagged provider abort settles through provider path while healthy work remains", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies the optional provider identity method immediately below.
+  const healthRunner = runner as DeferredRunner & Required<Pick<WorkflowStepRunner, "providerKey">>;
+  healthRunner.providerKey = (step) => step.model;
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      {
+        id: "provider",
+        subagent_type: "Explore",
+        prompt: "provider",
+        model: "anthropic",
+        continue_on_error: true,
+      },
+      {
+        id: "tagged",
+        subagent_type: "Explore",
+        prompt: "tagged",
+        model: "anthropic",
+        continue_on_error: true,
+      },
+      { id: "healthy", subagent_type: "Explore", prompt: "healthy", model: "openai" },
+    ]),
+    resolveType,
+    runner,
+    3,
+  );
+
+  await flush();
+  runner.finish("provider", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+  await flush();
+  assert.equal(runner.signals.get("tagged")?.aborted, true);
+  runner.finish("tagged", { status: "cancelled" });
+  await flush();
+  assert.equal(manager.get(started.workflowId)?.status, "running");
+
+  runner.finish("healthy");
+  const result = await manager.wait(started.workflowId)!;
+  assert.equal(result.status, "completed_with_errors");
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["error", "cancelled", "completed"],
+  );
+});
+
+test("provider failure settles an unsealed workflow instead of leaving wait pending", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies the optional provider identity method immediately below.
+  const healthRunner = runner as DeferredRunner & Required<Pick<WorkflowStepRunner, "providerKey">>;
+  healthRunner.providerKey = () => "anthropic";
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([{ id: "only", subagent_type: "Explore", prompt: "only" }], true),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  const waiting = manager.wait(started.workflowId)!;
+  runner.finish("only", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+  const result = await waiting;
+
+  assert.equal(result.status, "error");
+});
+
+test("provider precheck failure settles an unstarted workflow as error", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies both optional health methods immediately below.
+  const healthRunner = runner as DeferredRunner &
+    Required<Pick<WorkflowStepRunner, "providerKey" | "isProviderAvailable">>;
+  healthRunner.providerKey = () => "anthropic";
+  healthRunner.isProviderAvailable = () => false;
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      { id: "a", subagent_type: "Explore", prompt: "a" },
+      { id: "b", subagent_type: "Explore", prompt: "b" },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  const result = await manager.wait(started.workflowId)!;
+  const aggregate = "Provider anthropic unavailable (temporarily rate limited); 2 steps skipped.";
+  assert.equal(result.status, "error");
+  assert.deepEqual(runner.starts, [], "closed gate causes zero spawn calls");
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["skipped", "skipped"],
+  );
+  assert.ok(result.steps.every((step) => step.error === aggregate));
+});
+
+test("provider precheck skips with continue_on_error complete with errors", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies both optional health methods immediately below.
+  const healthRunner = runner as DeferredRunner &
+    Required<Pick<WorkflowStepRunner, "providerKey" | "isProviderAvailable">>;
+  healthRunner.providerKey = () => "anthropic";
+  healthRunner.isProviderAvailable = () => false;
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      {
+        id: "a",
+        subagent_type: "Explore",
+        prompt: "a",
+        continue_on_error: true,
+      },
+      {
+        id: "b",
+        subagent_type: "Explore",
+        prompt: "b",
+        continue_on_error: true,
+      },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  const result = await manager.wait(started.workflowId)!;
+  assert.equal(result.status, "completed_with_errors");
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["skipped", "skipped"],
+  );
+});
+
+test("provider precheck failure settles after an earlier step completes", async () => {
+  const runner = new DeferredRunner();
+  let available = true;
+  // SAFETY: This test supplies both optional health methods immediately below.
+  const healthRunner = runner as DeferredRunner &
+    Required<Pick<WorkflowStepRunner, "providerKey" | "isProviderAvailable">>;
+  healthRunner.providerKey = () => "anthropic";
+  healthRunner.isProviderAvailable = () => available;
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      { id: "a", subagent_type: "Explore", prompt: "a" },
+      { id: "b", subagent_type: "Explore", prompt: "b", needs: ["a"] },
+      { id: "c", subagent_type: "Explore", prompt: "c", needs: ["a"] },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  available = false;
+  runner.finish("a");
+  const result = await manager.wait(started.workflowId)!;
+
+  assert.equal(result.status, "error");
+  assert.deepEqual(runner.starts, ["a"], "closed gate causes no dependent spawn calls");
+  assert.deepEqual(
+    result.steps.map((step) => step.status),
+    ["completed", "skipped", "skipped"],
+  );
+});
+
 test("continue_on_error allows dependents and reports completed_with_errors", async () => {
   const runner = new DeferredRunner();
   const manager = new WorkflowManager();
@@ -204,6 +715,146 @@ test("continue_on_error allows dependents and reports completed_with_errors", as
     result.steps.map((step) => step.status),
     ["error", "completed"],
   );
+});
+
+test("provider unavailability respects continue_on_error across providers", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies both optional health methods immediately below.
+  const healthRunner = runner as DeferredRunner &
+    Required<Pick<WorkflowStepRunner, "providerKey" | "isProviderAvailable">>;
+  healthRunner.providerKey = (step) => step.model;
+  healthRunner.isProviderAvailable = () => true;
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      {
+        id: "a",
+        subagent_type: "Explore",
+        prompt: "a",
+        model: "anthropic",
+        continue_on_error: true,
+      },
+      { id: "b", subagent_type: "Plan", prompt: "b", model: "openai", needs: ["a"] },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  runner.finish("a", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+  await flush();
+  assert.deepEqual(runner.starts, ["a", "b"]);
+  runner.finish("b");
+
+  const result = await manager.wait(started.workflowId)!;
+  assert.equal(result.status, "completed_with_errors");
+});
+
+test("provider precheck skips only closed-provider steps", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies both optional health methods immediately below.
+  const healthRunner = runner as DeferredRunner &
+    Required<Pick<WorkflowStepRunner, "providerKey" | "isProviderAvailable">>;
+  healthRunner.providerKey = (step) => step.model;
+  healthRunner.isProviderAvailable = (providerKey) => providerKey !== "anthropic";
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      { id: "closed", subagent_type: "Explore", prompt: "closed", model: "anthropic" },
+      { id: "healthy", subagent_type: "Explore", prompt: "healthy", model: "openai" },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  assert.deepEqual(runner.starts, ["healthy"]);
+  assert.equal(
+    manager.get(started.workflowId)?.steps[0].error,
+    "Provider anthropic unavailable (temporarily rate limited); 1 step skipped.",
+  );
+  runner.finish("healthy");
+
+  const result = await manager.wait(started.workflowId)!;
+  assert.equal(result.status, "completed_with_errors");
+});
+
+test("provider closure after a running step does not block another provider", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies both optional health methods immediately below.
+  const healthRunner = runner as DeferredRunner &
+    Required<Pick<WorkflowStepRunner, "providerKey" | "isProviderAvailable">>;
+  healthRunner.providerKey = (step) => step.model;
+  healthRunner.isProviderAvailable = () => true;
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      {
+        id: "a",
+        subagent_type: "Explore",
+        prompt: "a",
+        model: "anthropic",
+        continue_on_error: true,
+      },
+      { id: "b", subagent_type: "Explore", prompt: "b", model: "openai" },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  runner.finish("a", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+  await flush();
+  assert.deepEqual(runner.starts, ["a", "b"]);
+  runner.finish("b");
+  assert.equal((await manager.wait(started.workflowId)!).status, "completed_with_errors");
+});
+
+test("continue provider error skips same-provider pending work", async () => {
+  const runner = new DeferredRunner();
+  // SAFETY: This test supplies the optional provider identity method immediately below.
+  const healthRunner = runner as DeferredRunner & Required<Pick<WorkflowStepRunner, "providerKey">>;
+  healthRunner.providerKey = () => "anthropic";
+  const manager = new WorkflowManager();
+  const started = manager.start(
+    definition([
+      {
+        id: "first",
+        subagent_type: "Explore",
+        prompt: "first",
+        continue_on_error: true,
+      },
+      {
+        id: "pending",
+        subagent_type: "Plan",
+        prompt: "pending",
+        continue_on_error: true,
+      },
+    ]),
+    resolveType,
+    runner,
+    1,
+  );
+
+  await flush();
+  runner.finish("first", {
+    status: "error",
+    error: "Provider anthropic unavailable (temporarily rate limited).",
+  });
+
+  const result = await manager.wait(started.workflowId)!;
+  assert.equal(result.status, "completed_with_errors");
+  assert.deepEqual(runner.starts, ["first"]);
+  assert.equal(result.steps.find((step) => step.id === "pending")?.status, "skipped");
 });
 
 test("dynamic workflow can add a result-dependent step while idle, then seal", async () => {

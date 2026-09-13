@@ -817,6 +817,12 @@ path; `tests/fixtures/hardening-host-check.ts` checks the resulting trace and
 session artifacts. They are acceptance scaffolding, not evidence about model
 policy, and this entry does not claim that a live-host run has passed.
 
+### 2026-09-13 provider-health spawn gate
+
+Provider capacity failures surfaced after Pi's bounded retries now close a process-wide per-provider gate. Terminal rate-limit and overloaded failures use an exponential cooldown from 30 seconds through a 300-second cap, while a surfaced `Retry-After` extends the cooldown within that cap. Spawn attempts against a closed gate throw the typed `ProviderUnavailableError`; queue draining parks already-queued records as terminal errors instead of starting them. Settlement records successful provider recovery and terminal provider failures, while cancellation and budget-forced statuses do not affect provider health.
+
+Workflow runners may expose provider-key and availability hooks. The production runner resolves the same effective provider key passed to `AgentManager`, and the workflow pump prechecks that gate before launch. A closed provider therefore becomes one aggregate fail-fast rather than repeated step-level spawn failures. `tests/agent-manager-provider-health.test.ts` and `tests/workflow.test.ts` cover provider classification, cooldowns, spawn and queue gates, settlement recording, and workflow prechecks.
+
 ### 2026-09-13 benign aborted result waits
 
 `get_subagent_result`, `get_workflow_result`, and the nested result tool now return an ordinary non-error cancellation message when their tool-call signal is aborted. Subagent result readers release the active generation claim before returning, so the running result remains retrievable; workflow waits do not mark the workflow consumed. This converts the former thrown rejection and error assistant turn into an informative tool result, so goal recovery no longer pauses an active goal on a user-cancelled result wait. `tests/result-tool-generation.test.ts` and `tests/nested-tools.test.ts` cover all three tools, claim release, retained workflow results, and unchanged non-abort rejection propagation.
