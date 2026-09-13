@@ -8,8 +8,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import subagentsExtension from "../src/index.ts";
+import { claimSubagentResultRead } from "../src/result-read.ts";
+import type { AgentRecord } from "../src/types.ts";
 
 interface GlobalManagerEntry {
+  getRecord(id: string): AgentRecord | undefined;
   waitForAll(): Promise<void>;
   spawn(
     pi: ExtensionAPI,
@@ -156,4 +159,108 @@ test("top-level get_subagent_result refuses repeated generation reads and retain
     await shutdown();
   }
   assert.equal(registry[key], undefined);
+});
+
+test("top-level get_subagent_result treats an aborted wait as benign and releases its claim", async () => {
+  const key = Symbol.for("pi-subagents:manager");
+  // SAFETY: This test reads only the package's documented process-global manager slot.
+  const registry = globalThis as typeof globalThis & {
+    [registryKey: symbol]: GlobalManagerEntry | undefined;
+  };
+  const root = fixture();
+  subagentsExtension(root.pi);
+  const manager = registry[key];
+  assert.ok(manager);
+  try {
+    const context = asExtensionContext({
+      cwd: process.cwd(),
+      sessionManager: { getSessionId: () => "result-abort-probe", getEntries: () => [] },
+    });
+    const start = root.handlers.get("session_start");
+    assert.ok(start);
+    await start({}, context);
+    const resultTool = root.tools.get("get_subagent_result");
+    assert.ok(resultTool);
+    const id = manager.spawn(root.pi, context, "implementer", "abort probe", {
+      description: "abort probe",
+      isBackground: true,
+      isolated: true,
+    });
+    const controller = new AbortController();
+    const wait = resultTool.execute(
+      "active-cancelled",
+      { agent_id: id, wait: true },
+      controller.signal,
+      undefined,
+      context,
+    );
+    controller.abort(new Error("user cancelled tool call"));
+    const cancelled = await wait;
+    assert.equal("isError" in cancelled && cancelled.isError === true, false);
+    assert.match(resultText(cancelled), /cancelled/);
+    const record = manager.getRecord(id);
+    assert.ok(record);
+    assert.match(claimSubagentResultRead(record).kind, /^(active|terminal)$/);
+  } finally {
+    const shutdown = root.handlers.get("session_shutdown");
+    assert.ok(shutdown);
+    await shutdown();
+  }
+  assert.equal(registry[key], undefined);
+});
+
+test("get_workflow_result treats an aborted wait as benign and leaves the workflow unconsumed", async () => {
+  const root = fixture();
+  subagentsExtension(root.pi);
+  const context = asExtensionContext({
+    cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "workflow-abort-probe", getEntries: () => [] },
+  });
+  const start = root.handlers.get("session_start");
+  assert.ok(start);
+  await start({}, context);
+  try {
+    const runTool = root.tools.get("workflow_run");
+    const resultTool = root.tools.get("get_workflow_result");
+    assert.ok(runTool);
+    assert.ok(resultTool);
+    const started = await runTool.execute(
+      "workflow-start",
+      {
+        name: "abort probe",
+        steps: [{ id: "probe", subagent_type: "implementer", prompt: "wait for cancellation" }],
+      },
+      undefined,
+      undefined,
+      context,
+    );
+    const workflowId = /Workflow ID: (\S+)/.exec(resultText(started))?.[1];
+    assert.ok(workflowId);
+
+    const controller = new AbortController();
+    const wait = resultTool.execute(
+      "workflow-wait",
+      { workflow_id: workflowId, wait: true },
+      controller.signal,
+      undefined,
+      context,
+    );
+    controller.abort(new Error("user cancelled tool call"));
+    const cancelled = await wait;
+    assert.equal("isError" in cancelled && cancelled.isError === true, false);
+    assert.match(resultText(cancelled), /cancelled/);
+
+    const stillAvailable = await resultTool.execute(
+      "workflow-read-again",
+      { workflow_id: workflowId },
+      undefined,
+      undefined,
+      context,
+    );
+    assert.match(resultText(stillAvailable), new RegExp(workflowId));
+  } finally {
+    const shutdown = root.handlers.get("session_shutdown");
+    assert.ok(shutdown);
+    await shutdown();
+  }
 });

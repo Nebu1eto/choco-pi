@@ -817,6 +817,10 @@ path; `tests/fixtures/hardening-host-check.ts` checks the resulting trace and
 session artifacts. They are acceptance scaffolding, not evidence about model
 policy, and this entry does not claim that a live-host run has passed.
 
+### 2026-09-13 benign aborted result waits
+
+`get_subagent_result`, `get_workflow_result`, and the nested result tool now return an ordinary non-error cancellation message when their tool-call signal is aborted. Subagent result readers release the active generation claim before returning, so the running result remains retrievable; workflow waits do not mark the workflow consumed. This converts the former thrown rejection and error assistant turn into an informative tool result, so goal recovery no longer pauses an active goal on a user-cancelled result wait. `tests/result-tool-generation.test.ts` and `tests/nested-tools.test.ts` cover all three tools, claim release, retained workflow results, and unchanged non-abort rejection propagation.
+
 ## Vendored install policy
 
 This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
