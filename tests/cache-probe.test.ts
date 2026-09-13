@@ -16,6 +16,7 @@ import {
   prefixAttribution,
   systemRegionHashes,
   systemText,
+  toolNamesHash,
 } from "../.pi/extensions/cache-probe.ts";
 
 test("canonicalJson is stable across object key order", () => {
@@ -386,12 +387,269 @@ test("request linker is deterministic and refuses ambiguous overlap linkage", ()
   const linker = createRequestLinker();
   assert.deepEqual(linker.begin("a"), { requestId: 1, overlap: false });
   assert.deepEqual(linker.begin("b"), { requestId: 2, overlap: false });
-  assert.deepEqual(linker.finish("a"), { requestId: 1, note: null });
-  assert.deepEqual(linker.finish("missing"), { note: "unmatched-assistant-message" });
+  assert.deepEqual(linker.finish("a"), { requestId: 1, note: null, linkStatus: "linked" });
+  assert.deepEqual(linker.finish("missing"), {
+    note: "unmatched-assistant-message",
+    linkStatus: "unmatched",
+  });
 
   assert.deepEqual(linker.begin("b"), { requestId: 3, overlap: true });
-  assert.deepEqual(linker.finish("b"), { note: "overlapping-requests-unlinked" });
-  assert.deepEqual(linker.finish("b"), { note: "overlapping-requests-unlinked" });
+  assert.deepEqual(linker.finish("b"), {
+    note: "overlapping-requests-unlinked",
+    linkStatus: "ambiguous",
+  });
+  assert.deepEqual(linker.finish("b"), {
+    note: "overlapping-requests-unlinked",
+    linkStatus: "ambiguous",
+  });
+});
+
+test("tool name hashes preserve ordered active-tool identity", () => {
+  assert.equal(toolNamesHash(["exec", "read"]), toolNamesHash(["exec", "read"]));
+  assert.notEqual(toolNamesHash(["exec", "read"]), toolNamesHash(["read", "exec"]));
+  assert.match(toolNamesHash([]), /^[a-f0-9]{40}$/);
+});
+
+test("transport observations stay bounded and the newest links to later usage", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "cache-probe-transport-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    type TestEvent = {
+      payload?: {
+        provider: string;
+        model: string;
+        instructions: string;
+        input: Array<{ role: string; content: string }>;
+        tools: Array<{ name: string }>;
+      };
+      message?: {
+        role: string;
+        provider: string;
+        model: string;
+        usage: { cacheRead: number };
+      };
+    };
+    type TestContext = {
+      model: { provider: string; id: string };
+      sessionManager: { getSessionId(): string };
+    };
+    type Handler = (event: TestEvent, ctx: TestContext) => void;
+    const handlers = new Map<string, Handler>();
+    cacheProbe(
+      reinterpretHostValue<Parameters<typeof cacheProbe>[0]>({
+        on(name: string, handler: Handler) {
+          handlers.set(name, handler);
+        },
+      }),
+    );
+    const ctx: TestContext = {
+      model: { provider: "openai-codex", id: "gpt-5" },
+      sessionManager: { getSessionId: () => "transport-stream" },
+    };
+    handlers.get("before_provider_request")?.(
+      {
+        payload: {
+          provider: "openai-codex",
+          model: "gpt-5",
+          instructions: "system",
+          input: [{ role: "user", content: "hello" }],
+          tools: [{ name: "exec" }],
+        },
+      },
+      ctx,
+    );
+    type TestTransportRecord = {
+      requestId?: number;
+      stream: string;
+      ts: string;
+      provider: string;
+      model: string;
+      continuation: string;
+      previousResponseId: boolean;
+      fullInputItemCount: number;
+      sentInputItemCount: number;
+    };
+    const registry = reinterpretHostValue<{
+      publish(record: TestTransportRecord): void;
+      pendingCount(): number;
+    }>(Object.getOwnPropertyDescriptor(globalThis, Symbol.for("choco-pi.transport-probe"))?.value);
+    for (let requestId = 1; requestId <= 64; requestId += 1) {
+      registry.publish({
+        requestId,
+        stream: `abandoned-${requestId}`,
+        ts: new Date().toISOString(),
+        provider: "openai-codex",
+        model: "gpt-5",
+        continuation: "full",
+        previousResponseId: false,
+        fullInputItemCount: 2,
+        sentInputItemCount: 2,
+      });
+    }
+    registry.publish({
+      stream: "transport-stream",
+      ts: new Date().toISOString(),
+      provider: "openai-codex",
+      model: "gpt-5",
+      continuation: "delta",
+      previousResponseId: true,
+      fullInputItemCount: 4,
+      sentInputItemCount: 1,
+    });
+    assert.equal(registry.pendingCount(), 64);
+    handlers.get("message_end")?.(
+      {
+        message: {
+          role: "assistant",
+          provider: "openai-codex",
+          model: "gpt-5",
+          usage: { cacheRead: 9 },
+        },
+      },
+      ctx,
+    );
+    const day = new Date().toISOString().slice(0, 10);
+    const records = readFileSync(
+      path.join(home, ".pi", "agent", "cache-probe", `${day}.jsonl`),
+      "utf8",
+    )
+      .trim()
+      .split("\n")
+      .map((line) =>
+        reinterpretHostValue<{
+          type: string;
+          linkStatus?: string;
+          continuation?: string;
+          sentInputItemCount?: number;
+          probeInstance?: string;
+        }>(JSON.parse(line)),
+      );
+    const usage = records.find((record) => record.type === "usage");
+    assert.equal(usage?.linkStatus, "linked");
+    assert.equal(usage?.continuation, "delta");
+    assert.equal(usage?.sentInputItemCount, 1);
+    assert.equal(usage?.probeInstance, records[0]?.probeInstance);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("reload creates a fresh instance and cannot link the old pending request", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "cache-probe-reload-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    type Event = {
+      payload?: { provider: string; model: string; instructions: string; input: never[] };
+      message?: {
+        role: string;
+        provider: string;
+        model: string;
+        usage: { cacheRead: number };
+      };
+    };
+    type Context = {
+      model: { provider: string; id: string };
+      sessionManager: { getSessionId(): string };
+    };
+    type Handler = (event: Event, ctx: Context) => void;
+    const install = () => {
+      const handlers = new Map<string, Handler>();
+      cacheProbe(
+        reinterpretHostValue<Parameters<typeof cacheProbe>[0]>({
+          on(name: string, handler: Handler) {
+            handlers.set(name, handler);
+          },
+        }),
+      );
+      return handlers;
+    };
+    const ctx: Context = {
+      model: { provider: "openai-codex", id: "gpt-5" },
+      sessionManager: { getSessionId: () => "reload-stream" },
+    };
+    const first = install();
+    first.get("before_provider_request")?.(
+      {
+        payload: {
+          provider: "openai-codex",
+          model: "gpt-5",
+          instructions: "system",
+          input: [],
+        },
+      },
+      ctx,
+    );
+    const day = new Date().toISOString().slice(0, 10);
+    const file = path.join(home, ".pi", "agent", "cache-probe", `${day}.jsonl`);
+    const oldInstance = reinterpretHostValue<{ probeInstance: string }>(
+      JSON.parse(readFileSync(file, "utf8").trim()),
+    ).probeInstance;
+
+    const second = install();
+    type Registry = { publish(record: TransportProbeRecordForTest): void };
+    type TransportProbeRecordForTest = {
+      probeInstance: string;
+      requestId: number;
+      stream: string;
+      ts: string;
+      provider: string;
+      model: string;
+      continuation: string;
+      previousResponseId: boolean;
+      fullInputItemCount: number;
+      sentInputItemCount: number;
+    };
+    const registry = reinterpretHostValue<Registry>(
+      Object.getOwnPropertyDescriptor(globalThis, Symbol.for("choco-pi.transport-probe"))?.value,
+    );
+    registry.publish({
+      probeInstance: oldInstance,
+      requestId: 1,
+      stream: "reload-stream",
+      ts: new Date().toISOString(),
+      provider: "openai-codex",
+      model: "gpt-5",
+      continuation: "delta",
+      previousResponseId: true,
+      fullInputItemCount: 2,
+      sentInputItemCount: 1,
+    });
+    second.get("message_end")?.(
+      {
+        message: {
+          role: "assistant",
+          provider: "openai-codex",
+          model: "gpt-5",
+          usage: { cacheRead: 1 },
+        },
+      },
+      ctx,
+    );
+    const records = readFileSync(file, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) =>
+        reinterpretHostValue<{
+          type: string;
+          probeInstance: string;
+          linkStatus?: string;
+          continuation?: string;
+        }>(JSON.parse(line)),
+      );
+    const usage = records.at(-1);
+    assert.equal(usage?.type, "usage");
+    assert.equal(usage?.linkStatus, "unmatched");
+    assert.notEqual(usage?.probeInstance, oldInstance);
+    assert.equal(usage?.continuation, undefined);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("cache-less assistant events do not consume observable usage linkage", () => {
