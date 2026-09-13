@@ -316,6 +316,26 @@ boundaries and continuation baselines are recorded from the already-elided
 request body. "turn_start" fires before the new user message persists, so the
 cut conservatively reflects the previous completed branch at that moment.
 
+## WebSocket transport probe registry (choco-pi addition)
+
+"src/diagnostics/transport-probe-registry.ts" owns an additive, optional
+"Symbol.for(\"choco-pi.transport-probe\")" registry slot so the root
+cache-probe extension can observe what Codex WebSocket requests actually
+transmit without the package importing the extension. "websocket-stream.ts"
+synchronously publishes one record per provider send — continuation
+decision, previous-response-id flag, native-steering flag, and full/sent
+input item counts — immediately before "socket.send", wrapped so a publish
+failure can never affect the request path; automatic staging sends nothing.
+With no consumer the slot stays unset and the hot path is a single
+existence check. The producer registry validates records with TypeBox `Check`
+at its publish boundary. The in-process consumer trusts that publisher shape
+and matches by stream and request ID, additionally requiring the probe
+instance when one is present. Unmatchable observations are honestly marked
+`linkStatus: "unmatched" | "ambiguous"` rather than paired by guesswork, and
+the consumer retains only the newest 64 unlinked transport records.
+"tests/transport-probe-registry.test.ts" pins publication counts, item-count
+fidelity, and send-path exception isolation.
+
 ## Vendored install policy
 
 This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -18,6 +18,8 @@ const MAX_HASH_CHARS = 500_000;
 const MAX_ERRORS = 3;
 const MAX_IDENTIFIER_CHARS = 128;
 const MAX_CACHE_KEY_CHARS = 1_024;
+// 64 exceeds a plausible number of concurrent provider requests in one process.
+const MAX_TRANSPORT_RECORDS = 64;
 
 type SegmentKind = "system" | "tools" | "message";
 
@@ -68,6 +70,21 @@ export interface ProviderPrefixMetrics {
 const PROVIDER_PREFIX_METRICS_KEY: unique symbol = Symbol.for(
   "choco-pi.cache-probe.provider-prefix-metrics",
 );
+const TRANSPORT_PROBE_KEY: unique symbol = Symbol.for("choco-pi.transport-probe");
+
+type TransportProbeRecord = {
+  probeInstance?: string;
+  requestId?: number;
+  stream: string;
+  ts: string;
+  provider: string;
+  model: string;
+  continuation: string;
+  previousResponseId: boolean;
+  nativeSteering?: boolean;
+  fullInputItemCount: number;
+  sentInputItemCount: number;
+};
 
 function providerPrefixRegistry(): Map<string, ProviderPrefixMetrics> {
   const store = reinterpretHostValue<{
@@ -107,6 +124,7 @@ export type SystemRegionHashes = Readonly<Record<string, string>>;
 type ProbeRecord = {
   ts: string;
   type: "prefix" | "usage";
+  probeInstance: string;
   stream: string;
   requestId?: number;
   provider: string;
@@ -116,6 +134,10 @@ type ProbeRecord = {
   modelChanged?: boolean;
   systemRegions?: string[];
   toolCount?: number;
+  toolNamesHash?: string;
+  linkStatus?: "linked" | "unmatched" | "ambiguous";
+  continuation?: string;
+  sentInputItemCount?: number;
   promptCacheKeyPresent?: boolean;
   promptCacheKeyHash?: string;
   promptCacheKeyTruncated?: boolean;
@@ -192,6 +214,11 @@ function namesForTools(tools: JsonValue[]): string[] {
     const normalized = normalizedTool(tool);
     return isJsonRecord(normalized) && isString(normalized.name) ? [normalized.name] : [];
   });
+}
+
+/** Stable ordered identity for the active provider tool families. */
+export function toolNamesHash(toolNames: readonly string[]): string {
+  return createHash("sha1").update(JSON.stringify(toolNames)).digest("hex");
 }
 
 function isOpenAiPayload(request: JsonRecord, provider: string | undefined): boolean {
@@ -395,7 +422,11 @@ export function cachePayloadMetadata(payload: JsonValue): CachePayloadMetadata {
 
 type PendingRequests = { ids: number[]; ambiguous: boolean };
 type RequestLinkStart = { requestId: number; overlap: boolean };
-type RequestLinkFinish = { requestId?: number; note: string | null };
+type RequestLinkFinish = {
+  requestId?: number;
+  note: string | null;
+  linkStatus: "linked" | "unmatched" | "ambiguous";
+};
 
 /** Correlates usage only while at most one provider request is in flight per stream. */
 export function createRequestLinker() {
@@ -416,11 +447,19 @@ export function createRequestLinker() {
     },
     finish(stream: string): RequestLinkFinish {
       const pending = pendingByStream.get(stream);
-      if (!pending) return { note: "unmatched-assistant-message" };
+      if (!pending) return { note: "unmatched-assistant-message", linkStatus: "unmatched" };
       const requestId = pending.ids.shift();
       if (pending.ids.length === 0) pendingByStream.delete(stream);
-      if (pending.ambiguous) return { note: "overlapping-requests-unlinked" };
-      return { requestId, note: requestId === undefined ? "unmatched-assistant-message" : null };
+      if (pending.ambiguous) {
+        return { note: "overlapping-requests-unlinked", linkStatus: "ambiguous" };
+      }
+      return requestId === undefined
+        ? { note: "unmatched-assistant-message", linkStatus: "unmatched" }
+        : { requestId, note: null, linkStatus: "linked" };
+    },
+    uniquePending(stream: string): number | undefined {
+      const pending = pendingByStream.get(stream);
+      return pending && !pending.ambiguous && pending.ids.length === 1 ? pending.ids[0] : undefined;
     },
   };
 }
@@ -510,11 +549,41 @@ function numberValue(value: JsonValue): number | undefined {
 }
 
 export default function cacheProbe(pi: ExtensionAPI): void {
+  const probeInstance = randomUUID();
   providerPrefixRegistry().clear();
   const previousByLane = new Map<string, CacheSegment[]>();
   const systemByLane = new Map<string, SystemRegionHashes>();
   const modelByStream = new Map<string, string>();
   const requestLinker = createRequestLinker();
+  const transportByRequest = new Map<string, TransportProbeRecord>();
+  const transportStore = reinterpretHostValue<{
+    [TRANSPORT_PROBE_KEY]?: {
+      publish(record: TransportProbeRecord): void;
+      pendingCount(): number;
+    };
+  }>(globalThis);
+  transportStore[TRANSPORT_PROBE_KEY] = {
+    publish(record) {
+      const requestId = record.requestId ?? requestLinker.uniquePending(record.stream);
+      const instance = record.probeInstance ?? probeInstance;
+      if (instance !== probeInstance || requestId === undefined) return;
+      const key = `${instance}\0${record.stream}\0${requestId}`;
+      transportByRequest.delete(key);
+      transportByRequest.set(key, {
+        ...record,
+        probeInstance: instance,
+        requestId,
+      });
+      while (transportByRequest.size > MAX_TRANSPORT_RECORDS) {
+        const oldestKey = transportByRequest.keys().next().value;
+        if (oldestKey === undefined) break;
+        transportByRequest.delete(oldestKey);
+      }
+    },
+    pendingCount() {
+      return transportByRequest.size;
+    },
+  };
   let errors = 0;
   let enabled = true;
 
@@ -568,6 +637,7 @@ export default function cacheProbe(pi: ExtensionAPI): void {
       appendRecord({
         ts: new Date().toISOString(),
         type: "prefix",
+        probeInstance,
         stream,
         requestId: linkage.requestId,
         provider,
@@ -577,6 +647,7 @@ export default function cacheProbe(pi: ExtensionAPI): void {
         modelChanged: attribution.modelChanged,
         systemRegions: attribution.systemRegions,
         toolCount: metrics.toolCount,
+        toolNamesHash: toolNamesHash(snapshot.toolNames),
         ...cacheMetadata,
         segmentCount: snapshot.segments.length,
         firstDivergence: attribution.firstDivergence,
@@ -602,9 +673,17 @@ export default function cacheProbe(pi: ExtensionAPI): void {
       const cacheWrite = numberValue(usage.cacheWrite);
       if (cacheRead === undefined && cacheWrite === undefined) return;
       const linkage = requestLinker.finish(stream);
+      const transport =
+        linkage.requestId === undefined
+          ? undefined
+          : transportByRequest.get(`${probeInstance}\0${stream}\0${linkage.requestId}`);
+      if (transport && linkage.requestId !== undefined) {
+        transportByRequest.delete(`${probeInstance}\0${stream}\0${linkage.requestId}`);
+      }
       appendRecord({
         ts: new Date().toISOString(),
         type: "usage",
+        probeInstance,
         stream,
         requestId: linkage.requestId,
         provider: safeIdentifier(event.message.provider),
@@ -612,6 +691,9 @@ export default function cacheProbe(pi: ExtensionAPI): void {
         cacheRead,
         cacheWrite,
         cacheWrite1h: numberValue(usage.cacheWrite1h),
+        linkStatus: linkage.linkStatus,
+        continuation: transport?.continuation,
+        sentInputItemCount: transport?.sentInputItemCount,
         note: linkage.note,
       });
     });
