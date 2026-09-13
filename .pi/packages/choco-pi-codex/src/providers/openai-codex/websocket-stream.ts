@@ -45,6 +45,29 @@ import {
   recordCanonicalSessionResponse,
   type CanonicalSessionToken,
 } from "./session-continuity.ts";
+import {
+  publishTransportProbe,
+  type TransportProbeRecord,
+} from "../../diagnostics/transport-probe-registry.ts";
+
+type SendablePreparation = { kind: "automatic" } | { kind: "send"; body: ResponsesBody };
+
+export function sendPreparedWebSocketRequest(
+  socket: { send(data: string): void },
+  preparation: SendablePreparation,
+  probe: Omit<
+    TransportProbeRecord,
+    "previousResponseId" | "sentInputItemCount" | "nativeSteering"
+  > & { nativeSteering?: boolean },
+): void {
+  if (preparation.kind === "automatic") return;
+  publishTransportProbe({
+    ...probe,
+    previousResponseId: Boolean(preparation.body.previous_response_id),
+    sentInputItemCount: preparation.body.input.length,
+  });
+  socket.send(JSON.stringify({ type: "response.create", ...preparation.body }));
+}
 
 export async function processWebSocketStream<TApi extends Api>(
   url: string,
@@ -199,8 +222,21 @@ export async function processWebSocketStream<TApi extends Api>(
       }
       recordDiagnostics(requestEvent);
     }
-    if (preparation.kind === "send")
-      socket.send(JSON.stringify({ type: "response.create", ...preparation.body }));
+    const transportProbe = {
+      stream: options?.sessionId ?? "process",
+      ts: new Date().toISOString(),
+      provider: model.provider,
+      model: fullBody.model,
+      continuation: cachedRequest.decision,
+      fullInputItemCount: fullBody.input.length,
+    };
+    sendPreparedWebSocketRequest(
+      socket,
+      preparation,
+      native && preparation.kind === "send"
+        ? { ...transportProbe, nativeSteering: preparation.body !== requestBody }
+        : transportProbe,
+    );
     await processMappedCodexResponsesStream(
       startWebSocketOutputOnFirstEvent(
         mapCodexEvents(
