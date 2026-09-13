@@ -5,6 +5,10 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import { runInChildSessionContext } from "../src/child-context.ts";
 import subagentsExtension from "../src/index.ts";
+import type {
+  ShellSectionProvider,
+  ShellSectionRegistration,
+} from "../src/ui/shell-section-contract.ts";
 
 type RuntimeValue = {} | null | undefined;
 type LifecycleResult = RuntimeValue | Promise<RuntimeValue>;
@@ -51,14 +55,37 @@ function piFixture(): PiFixture {
 test("root registry capabilities survive a child activation", async () => {
   const key = Symbol.for("pi-subagents:manager");
   type RegistryEntry = {
-    hasFleetRows?: () => boolean;
-    isFleetActive?: () => boolean;
+    hasFleetRows?: unknown;
+    isFleetActive?: unknown;
+    registerShellSection(provider: ShellSectionProvider): ShellSectionRegistration;
   };
   // SAFETY: This test reads only its symbol-keyed optional registry slot on the global object.
   const registry = globalThis as typeof globalThis & {
     [registryKey: symbol]: RegistryEntry | undefined;
   };
-  const getEntry = (): RegistryEntry | undefined => registry[key];
+  let storedEntry: RegistryEntry | undefined;
+  let bufferedRegistration: ShellSectionRegistration | undefined;
+  let bufferedListenerRegistered = false;
+  const bufferedProvider: ShellSectionProvider = {
+    rows: () => [],
+    onChange: () => {
+      bufferedListenerRegistered = true;
+      return () => {
+        bufferedListenerRegistered = false;
+      };
+    },
+    stop: async () => {},
+    openViewer: async () => {},
+  };
+  Object.defineProperty(registry, key, {
+    configurable: true,
+    get: () => storedEntry,
+    set: (entry: RegistryEntry | undefined) => {
+      storedEntry = entry;
+      if (entry) bufferedRegistration = entry.registerShellSection(bufferedProvider);
+    },
+  });
+  const getEntry = (): RegistryEntry | undefined => storedEntry;
   assert.equal(getEntry(), undefined);
   const root = piFixture();
   subagentsExtension(root.pi);
@@ -66,18 +93,41 @@ test("root registry capabilities survive a child activation", async () => {
   assert.ok(rootEntry);
 
   try {
-    assert.equal(rootEntry.hasFleetRows?.(), false);
-    assert.equal(rootEntry.isFleetActive?.(), false);
+    assert.equal("hasFleetRows" in rootEntry, false);
+    assert.equal("isFleetActive" in rootEntry, false);
+    assert.equal("registerShellSection" in rootEntry, true);
+    assert.equal(bufferedListenerRegistered, true, "pre-panel provider must be applied later");
+    bufferedRegistration?.unregister();
+    bufferedRegistration?.unregister();
+    assert.equal(bufferedListenerRegistered, false, "buffered unregister must clear the provider");
+
+    let firstRegistered = false;
+    const provider = (setRegistered: (registered: boolean) => void): ShellSectionProvider => ({
+      rows: () => [],
+      onChange: () => {
+        setRegistered(true);
+        return () => setRegistered(false);
+      },
+      stop: async () => {},
+      openViewer: async () => {},
+    });
+    const first = rootEntry.registerShellSection(provider((value) => (firstRegistered = value)));
+    const second = rootEntry.registerShellSection(provider(() => {}));
+    assert.equal(firstRegistered, false, "superseding a provider must unsubscribe it");
+    first.unregister();
+    second.unregister();
+    second.unregister();
     const child = piFixture();
     await runInChildSessionContext(async () => subagentsExtension(child.pi));
     assert.strictEqual(getEntry(), rootEntry);
+    assert.strictEqual(getEntry()?.registerShellSection, rootEntry.registerShellSection);
     assert.equal(child.handlers.has("session_shutdown"), false);
   } finally {
     const shutdown = root.handlers.get("session_shutdown");
     assert.ok(shutdown);
     await shutdown();
   }
-  assert.equal(getEntry(), undefined);
+  assert.equal(registry[key], undefined);
 });
 
 test("root activation wires the live manager into a persisted turn-start status handler", async () => {

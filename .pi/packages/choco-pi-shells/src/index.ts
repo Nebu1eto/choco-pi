@@ -9,11 +9,8 @@ import { ShellManager } from "./shell-manager.ts";
 import type { ReadShellResult, ShellChangeEvent, ShellResult } from "./shell-manager.ts";
 import { isStaleContextError, type RuntimeValue } from "./lifecycle.ts";
 import { openShellsOverlay, type ShellsUICtx } from "./ui/shells-overlay.ts";
-import {
-  ShellsWidget,
-  type ShellsWidgetManager,
-  type ShellsWidgetUICtx,
-} from "./ui/shells-widget.ts";
+import { createShellSectionProvider, findShellSectionHost } from "./ui/shell-section.ts";
+import type { ShellSectionRegistration } from "../../choco-pi-subagents/src/ui/shell-section-contract.ts";
 
 const MANAGER_KEY = Symbol.for("choco-pi-shells:manager");
 const COMPLETION_TAIL_CHARACTERS = 480;
@@ -240,9 +237,10 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     registry[MANAGER_KEY] = manager;
   }
 
-  let widget: ShellsWidget | undefined;
+  let shellSectionProvider: ReturnType<typeof createShellSectionProvider> | undefined;
+  let shellSectionRegistration: ShellSectionRegistration | undefined;
   let rootSessionId: string | undefined;
-  let rootUI: (ShellsUICtx & ShellsWidgetUICtx) | undefined;
+  let rootUI: ShellsUICtx | undefined;
   let currentSessionId: string | undefined;
   let shuttingDown = false;
 
@@ -301,25 +299,20 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       message.details ? new Text(renderShellCompletion(message.details, theme), 0, 0) : undefined,
   );
 
-  const bindRootUI = (ui: ShellsUICtx & ShellsWidgetUICtx, sessionId: string): void => {
+  const bindRootUI = (ui: ShellsUICtx, sessionId: string): void => {
     if (isChildActivation) return;
     rootUI = ui;
-    if (!widget || rootSessionId !== sessionId) {
-      widget?.dispose();
+    if (!shellSectionProvider || rootSessionId !== sessionId) {
+      shellSectionRegistration?.unregister();
+      shellSectionProvider?.dispose();
+      shellSectionRegistration = undefined;
       rootSessionId = sessionId;
-      const widgetManager: ShellsWidgetManager = {
-        onChange(listener) {
-          const unsubscribe = manager.onChange(listener);
-          for (const shell of manager.list({ requesterId: sessionId, isAdmin: true }).shells) {
-            if (shell.state === "running") listener({ type: "start", shell });
-          }
-          return unsubscribe;
-        },
-        stop: manager.stop.bind(manager),
-      };
-      widget = new ShellsWidget(widgetManager, sessionId);
+      shellSectionProvider = createShellSectionProvider({ manager, rootSessionId: sessionId });
     }
-    widget.setUICtx(ui);
+    if (!shellSectionRegistration) {
+      const host = findShellSectionHost();
+      if (host) shellSectionRegistration = host.registerShellSection(shellSectionProvider);
+    }
   };
 
   pi.on("session_start", async (_event, ctx) => {
@@ -501,8 +494,10 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    widget?.dispose();
-    widget = undefined;
+    shellSectionRegistration?.unregister();
+    shellSectionProvider?.dispose();
+    shellSectionRegistration = undefined;
+    shellSectionProvider = undefined;
     rootUI = undefined;
     rootSessionId = undefined;
 

@@ -20,7 +20,7 @@ import {
 } from "../src/limits.ts";
 import { sanitizeSettings } from "../src/settings.ts";
 import type { AgentRecord } from "../src/types.ts";
-import { AgentWidget } from "../src/ui/agent-widget.ts";
+import { FleetPanel } from "../src/ui/fleet-panel.ts";
 
 interface AgentManagerSchedulerFixture {
   runningBackground: number;
@@ -394,17 +394,21 @@ test("agent widget status compares scheduled and whole-tree active counts", () =
     parentAgentId: topLevelId,
   });
   let statusText: string | undefined;
-  const widget = new AgentWidget(manager, new Map());
-  // SAFETY: This fake implements the only UICtx members AgentWidget.update and dispose access.
-  widget.setUICtx({
+  const panel = new FleetPanel(manager, new Map(), {}, { widgetMode: () => "background" });
+  // SAFETY: This fake implements the FleetPanel members reached by update and dispose.
+  panel.setUICtx({
     setStatus: (_name: string, value: string | undefined) => {
       statusText = value;
     },
     setWidget: () => {},
+    onTerminalInput: () => () => {},
+    getEditorText: () => "",
+    notify: () => {},
+    custom: async () => undefined,
   } as never);
 
-  widget.update();
+  panel.update();
 
   assert.equal(statusText, "1 scheduled / cap 4 · 2 in tree");
-  widget.dispose();
+  panel.dispose();
 });

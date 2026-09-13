@@ -200,16 +200,17 @@ export class ShellOutputViewer implements Component {
   render(width: number): string[] {
     if (width < 8) return [];
     const inner = width - 4;
-    const state = this.streams[this.stream];
-    const content = this.contentLines(state);
     const notice = this.actionNotice ?? this.readNotice;
-    this.viewportRows = Math.max(
-      3,
-      Math.floor((this.tui.terminal.rows * 70) / 100) - (notice || this.evicted ? 8 : 7),
+    const availableRows = Math.max(
+      2,
+      Math.floor((this.tui.terminal.rows * 70) / 100) - (notice || this.evicted ? 9 : 8),
     );
-    const maxScroll = Math.max(0, content.length - this.viewportRows);
-    if (state.follow) state.scroll = maxScroll;
-    state.scroll = Math.min(state.scroll, maxScroll);
+    const activeRows = Math.min(availableRows - 1, Math.ceil((availableRows * 2) / 3));
+    const paneRows = {
+      stdout: this.stream === "stdout" ? activeRows : availableRows - activeRows,
+      stderr: this.stream === "stderr" ? activeRows : availableRows - activeRows,
+    };
+    this.viewportRows = paneRows[this.stream];
 
     const lines = [this.theme.fg("border", `╭${"─".repeat(width - 2)}╮`)];
     const name = sanitizeShellText(this.shell.name ?? this.shell.shellId);
@@ -218,16 +219,9 @@ export class ShellOutputViewer implements Component {
     lines.push(
       this.row(`${this.shell.state} · ${name} · ${pid}${exit} · ${duration(this.shell)}`, inner),
     );
-    lines.push(
-      this.row(
-        `${this.stream === "stdout" ? this.theme.fg("accent", "stdout") : "stdout"}  ${this.stream === "stderr" ? this.theme.fg("accent", "stderr") : "stderr"}`,
-        inner,
-      ),
-    );
+    this.renderPane(lines, "stdout", paneRows.stdout, inner);
     lines.push(this.row(this.theme.fg("dim", "─".repeat(inner)), inner));
-    for (let index = 0; index < this.viewportRows; index++) {
-      lines.push(this.row(content[state.scroll + index] ?? "", inner));
-    }
+    this.renderPane(lines, "stderr", paneRows.stderr, inner);
     if (this.evicted)
       lines.push(this.row(this.theme.fg("warning", "Shell record evicted; output frozen."), inner));
     else if (notice) lines.push(this.row(this.theme.fg("error", notice), inner));
@@ -238,11 +232,7 @@ export class ShellOutputViewer implements Component {
     }
     lines.push(
       this.row(
-        [
-          stop,
-          `Tab ${this.stream === "stdout" ? "stderr" : "stdout"}`,
-          "↑↓/kj · PgUp/PgDn · End follow · Esc/q back",
-        ]
+        [stop, "Tab switch pane", "↑↓/kj · PgUp/PgDn · End follow · Esc/q back"]
           .filter(Boolean)
           .join(" · "),
         inner,
@@ -344,6 +334,20 @@ export class ShellOutputViewer implements Component {
     if (state.dropped)
       lines.unshift(this.theme.fg("warning", "[earlier output dropped from buffer]"));
     return lines;
+  }
+
+  private renderPane(lines: string[], stream: StreamName, rows: number, inner: number): void {
+    const state = this.streams[stream];
+    const content = this.contentLines(state);
+    const maxScroll = Math.max(0, content.length - rows);
+    if (state.follow) state.scroll = maxScroll;
+    state.scroll = Math.min(state.scroll, maxScroll);
+    const label =
+      stream === this.stream ? this.theme.fg("accent", stream) : this.theme.fg("dim", stream);
+    lines.push(this.row(label, inner));
+    for (let index = 0; index < rows; index++) {
+      lines.push(this.row(content[state.scroll + index] ?? "", inner));
+    }
   }
 
   private retainLine(state: StreamState, line: string): void {

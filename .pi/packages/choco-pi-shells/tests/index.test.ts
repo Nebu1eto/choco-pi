@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import { Editor, type Component, type TUI } from "@earendil-works/pi-tui";
+import type { Component, TUI } from "@earendil-works/pi-tui";
 
 import { runInChildSessionContext } from "../../choco-pi-subagents/src/child-context.ts";
 import shellsExtension, {
@@ -14,12 +14,12 @@ import type { ShellManager, ShellResult } from "../src/shell-manager.ts";
 import type { RuntimeValue } from "../src/validation.ts";
 import type { ShellCustomOptions, ShellViewerKeybindings } from "../src/ui/shells-overlay.ts";
 import type {
-  ShellsWidgetComponent,
-  ShellsWidgetTheme,
-  ShellsWidgetTUI,
-} from "../src/ui/shells-widget.ts";
+  ShellSectionProvider,
+  ShellSectionRegistration,
+} from "../../choco-pi-subagents/src/ui/shell-section-contract.ts";
 
 const managerKey = Symbol.for("choco-pi-shells:manager");
+const subagentsManagerKey = Symbol.for("pi-subagents:manager");
 const packageCwd = resolve(import.meta.dirname, "..");
 
 interface ToolResult {
@@ -125,6 +125,9 @@ interface Activation {
 
 interface GlobalFixtureRegistry {
   [managerKey]?: ShellManager;
+  [subagentsManagerKey]?: {
+    registerShellSection(provider: ShellSectionProvider): ShellSectionRegistration;
+  };
 }
 
 interface MessageRenderOptionsFixture {
@@ -157,7 +160,7 @@ interface ExtensionFixture {
 
 interface WidgetCall {
   key: string;
-  content: undefined | ((tui: ShellsWidgetTUI, theme: ShellsWidgetTheme) => ShellsWidgetComponent);
+  content: undefined | ((tui: TUI, theme: Theme) => Component);
   placement?: "aboveEditor" | "belowEditor";
 }
 
@@ -180,9 +183,7 @@ class TestUI {
 
   setWidget(
     key: string,
-    content:
-      | undefined
-      | ((tui: ShellsWidgetTUI, theme: ShellsWidgetTheme) => ShellsWidgetComponent),
+    content: undefined | ((tui: TUI, theme: Theme) => Component),
     options?: { placement?: "aboveEditor" | "belowEditor" },
   ): void {
     this.widgetCalls.push({ key, content, placement: options?.placement });
@@ -276,21 +277,6 @@ function context(
     sessionManager: { getSessionId: () => sessionId, getEntries: () => [] },
     ui,
   };
-}
-
-function widgetText(ui: TestUI): string {
-  const registration = ui.widgetCalls.findLast((call) => call.content !== undefined);
-  assert.ok(registration?.content);
-  const component = registration.content(
-    {
-      requestRender() {},
-      // SAFETY: The fixture needs only Editor's prototype identity for the focused-component check.
-      focusedComponent: Object.create(Editor.prototype) as Editor,
-      hasOverlay: () => false,
-    },
-    { fg: (_color, text) => text, bold: (text) => text },
-  );
-  return component.render().join("\n");
 }
 
 function tool(activation: Activation, name: string): ToolDefinition {
@@ -388,12 +374,23 @@ test("extension registers documented portable tool schemas and the /shells comma
   }
 });
 
-test("only root activation wires UI and a child-owned start automatically registers the widget", async () => {
+test("root UI registers one shell section per session with admin controls", async () => {
   assert.equal(registry()[managerKey], undefined);
+  const previousHost = registry()[subagentsManagerKey];
+  const registrations: Array<{
+    provider: ShellSectionProvider;
+    unregistered: boolean;
+  }> = [];
+  registry()[subagentsManagerKey] = {
+    registerShellSection(provider) {
+      const registration = { provider, unregistered: false };
+      registrations.push(registration);
+      return { unregister: () => (registration.unregistered = true) };
+    },
+  };
   const root = await activate(false);
   const child = await activate(true);
   const rootUI = new TestUI();
-  let activeRootUI = rootUI;
   try {
     assert.ok(root.sessionStart);
     assert.ok(root.toolExecutionStart);
@@ -418,7 +415,8 @@ test("only root activation wires UI and a child-owned start automatically regist
 
     await root.sessionStart({}, context("root-session", [], packageCwd, rootUI));
     assert.equal(rootUI.widgetCalls.length, 0);
-    assert.equal(rootUI.inputHandlers.size, 1);
+    assert.equal(rootUI.inputHandlers.size, 0);
+    assert.equal(registrations.length, 1);
     const started = details<{ shellId: string; ownerId: string }>(
       await execute(
         child,
@@ -429,32 +427,83 @@ test("only root activation wires UI and a child-owned start automatically regist
     );
 
     assert.equal(started.ownerId, "nested-session");
-    assert.equal(rootUI.widgetCalls.length, 1);
-    assert.equal(rootUI.widgetCalls[0]?.placement, "aboveEditor");
-    const text = widgetText(rootUI);
-    assert.match(text, /nested shell/);
-    assert.match(text, /owner:nested-session/);
-
-    assert.deepEqual(rootUI.send("\x1b[B"), { consume: true });
-    assert.deepEqual(rootUI.send("x"), { consume: true });
+    const row = registrations[0]?.provider.rows(Date.now())[0];
+    assert.equal(row?.label, "nested shell");
+    assert.equal(row?.ownerTag, "[owner:nested-session]");
+    await registrations[0]?.provider.stop(started.shellId);
     assert.deepEqual(stopInputs, [
       { requesterId: "root-session", isAdmin: true, shellId: started.shellId },
     ]);
 
     const refreshedUI = new TestUI();
     await root.toolExecutionStart({}, context("root-session", [], packageCwd, refreshedUI));
-    activeRootUI = refreshedUI;
-    assert.equal(rootUI.widgetCalls.at(-1)?.content, undefined);
-    assert.equal(rootUI.inputHandlers.size, 0);
-    assert.equal(refreshedUI.inputHandlers.size, 1);
-    assert.match(widgetText(refreshedUI), /nested shell/);
+    assert.equal(registrations.length, 1);
+
+    await root.toolExecutionStart({}, context("successor-session", [], packageCwd, refreshedUI));
+    assert.equal(registrations.length, 2);
+    assert.equal(registrations[0]?.unregistered, true);
+    assert.equal(registrations[1]?.unregistered, false);
   } finally {
     assert.ok(child.shutdown);
     await child.shutdown({ reason: "quit" }, context("nested-session"));
     assert.ok(root.shutdown);
-    await root.shutdown({ reason: "quit" }, context("root-session", [], packageCwd, activeRootUI));
-    assert.equal(activeRootUI.widgetCalls.at(-1)?.content, undefined);
-    assert.equal(activeRootUI.inputHandlers.size, 0);
+    await root.shutdown({ reason: "quit" }, context("successor-session", [], packageCwd, rootUI));
+    assert.equal(registrations.at(-1)?.unregistered, true);
+    if (previousHost) registry()[subagentsManagerKey] = previousHost;
+    else delete registry()[subagentsManagerKey];
+  }
+});
+
+test("root UI degrades to the shells overlay when no section host exists", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const previousHost = registry()[subagentsManagerKey];
+  delete registry()[subagentsManagerKey];
+  const root = await activate(false);
+  const ui = new TestUI();
+  try {
+    assert.ok(root.sessionStart);
+    await root.sessionStart({}, context("root-session", [], packageCwd, ui));
+    assert.equal(ui.widgetCalls.length, 0);
+    assert.equal(ui.inputHandlers.size, 0);
+
+    assert.ok(root.command);
+    await root.command.handler("list", context("root-session", [], packageCwd, ui));
+    assert.equal(ui.customOptions.length, 1);
+    assert.equal(ui.customOptions[0]?.overlay, true);
+    assert.equal(ui.widgetCalls.length, 0);
+    assert.equal(ui.inputHandlers.size, 0);
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session", [], packageCwd, ui));
+    if (previousHost) registry()[subagentsManagerKey] = previousHost;
+  }
+});
+
+test("root UI retries section registration after a late host appears", async () => {
+  assert.equal(registry()[managerKey], undefined);
+  const previousHost = registry()[subagentsManagerKey];
+  delete registry()[subagentsManagerKey];
+  const root = await activate(false);
+  const registrations: ShellSectionProvider[] = [];
+  try {
+    assert.ok(root.sessionStart);
+    assert.ok(root.toolExecutionStart);
+    await root.sessionStart({}, context("root-session"));
+
+    registry()[subagentsManagerKey] = {
+      registerShellSection(provider) {
+        registrations.push(provider);
+        return { unregister() {} };
+      },
+    };
+    await root.toolExecutionStart({}, context("root-session"));
+    await root.toolExecutionStart({}, context("root-session"));
+    assert.equal(registrations.length, 1);
+  } finally {
+    assert.ok(root.shutdown);
+    await root.shutdown({ reason: "quit" }, context("root-session"));
+    if (previousHost) registry()[subagentsManagerKey] = previousHost;
+    else delete registry()[subagentsManagerKey];
   }
 });
 
@@ -544,8 +593,16 @@ test("five streaming completions produce one grouped steer at turn_end", async (
   }
 });
 
-test("tool execution without UI does not wire a shell widget", async () => {
+test("tool execution without UI does not create a shell section provider", async () => {
   assert.equal(registry()[managerKey], undefined);
+  const previousHost = registry()[subagentsManagerKey];
+  let registrations = 0;
+  registry()[subagentsManagerKey] = {
+    registerShellSection() {
+      registrations += 1;
+      return { unregister() {} };
+    },
+  };
   const root = await activate(false);
   const noUI = new TestUI();
   try {
@@ -561,9 +618,12 @@ test("tool execution without UI does not wire a shell widget", async () => {
       "root-session",
     );
     assert.equal(noUI.widgetCalls.length, 0);
+    assert.equal(registrations, 0);
   } finally {
     assert.ok(root.shutdown);
     await root.shutdown({ reason: "quit" }, context("root-session"));
+    if (previousHost) registry()[subagentsManagerKey] = previousHost;
+    else delete registry()[subagentsManagerKey];
   }
 });
 
@@ -771,6 +831,18 @@ test("tool and command handlers preserve ownership and defensively handle direct
 
 test("root session replacement preserves the process manager and quit removes an adopted manager", async () => {
   assert.equal(registry()[managerKey], undefined);
+  const previousHost = registry()[subagentsManagerKey];
+  const registrations: Array<{
+    provider: ShellSectionProvider;
+    unregistered: boolean;
+  }> = [];
+  registry()[subagentsManagerKey] = {
+    registerShellSection(provider) {
+      const registration = { provider, unregistered: false };
+      registrations.push(registration);
+      return { unregister: () => (registration.unregistered = true) };
+    },
+  };
   let current = await activate(false);
   let currentUI = new TestUI();
   assert.ok(current.sessionStart);
@@ -785,20 +857,20 @@ test("root session replacement preserves the process manager and quit removes an
       "root-session",
     ),
   );
-  assert.match(widgetText(currentUI), /surviving shell/);
+  assert.equal(registrations[0]?.provider.rows(Date.now())[0]?.label, "surviving shell");
 
   try {
     for (const reason of ["reload", "new", "resume", "fork"] as const) {
       assert.ok(current.shutdown);
       await current.shutdown({ reason }, context("root-session"));
       assert.strictEqual(registry()[managerKey], originalManager);
-      assert.equal(currentUI.widgetCalls.at(-1)?.content, undefined);
+      assert.equal(registrations.at(-1)?.unregistered, true);
 
       const successor = await activate(false);
       const successorUI = new TestUI();
       assert.ok(successor.sessionStart);
       await successor.sessionStart({}, context("successor-session", [], packageCwd, successorUI));
-      assert.match(widgetText(successorUI), /surviving shell/);
+      assert.equal(registrations.at(-1)?.provider.rows(Date.now())[0]?.label, "surviving shell");
       const listed = details<{ shells: Array<{ shellId: string; state: string }> }>(
         await execute(successor, "shell_list", {}, "successor-session"),
       );
@@ -812,12 +884,14 @@ test("root session replacement preserves the process manager and quit removes an
 
     assert.ok(current.shutdown);
     await current.shutdown({ reason: "quit" }, context("successor-session"));
-    assert.equal(currentUI.widgetCalls.at(-1)?.content, undefined);
+    assert.equal(registrations.at(-1)?.unregistered, true);
     assert.equal(registry()[managerKey], undefined);
   } finally {
     if (registry()[managerKey]) {
       assert.ok(current.shutdown);
       await current.shutdown({ reason: "quit" }, context("successor-session"));
     }
+    if (previousHost) registry()[subagentsManagerKey] = previousHost;
+    else delete registry()[subagentsManagerKey];
   }
 });
