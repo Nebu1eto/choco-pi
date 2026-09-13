@@ -153,7 +153,6 @@ import { createMentionProvider, mentionRoster, type TypeInfo } from "./ui/agent-
 import {
   type AgentActivity,
   type AgentDetails,
-  AgentWidget,
   buildInvocationTags,
   describeActivity,
   fgPreservingNestedStyles,
@@ -164,9 +163,12 @@ import {
   getDisplayName,
   SPINNER,
   type Theme,
-  type UICtx,
 } from "./ui/agent-widget.ts";
-import { FleetList, type FleetUICtx } from "./ui/fleet-list.ts";
+import { FleetPanel, type FleetPanelUICtx } from "./ui/fleet-panel.ts";
+import type {
+  ShellSectionProvider,
+  ShellSectionRegistration,
+} from "./ui/shell-section-contract.ts";
 import { continueRunningAgentNavigation, FocusedAgentController } from "./ui/focus-mode.ts";
 import {
   parseSubagentMessageNotification,
@@ -193,8 +195,8 @@ import {
 
 // ---- Shared helpers ----
 
-interface FleetUIContext {
-  ui: FleetUICtx;
+interface FleetPanelUIContext {
+  ui: FleetPanelUICtx;
 }
 
 /** Tool execute return value for a text response. */
@@ -452,10 +454,11 @@ export default function (pi: ExtensionAPI) {
 
   // ---- Agent activity tracking + widget ----
   const agentActivity = new Map<string, AgentActivity>();
-  // The process-global registry is initialized before FleetList construction.
+  // The process-global registry is initialized before FleetPanel construction.
   // Keep its optional UI capability behind a non-TDZ source that becomes live
-  // only after the root FleetList exists.
-  let fleetSource: FleetList | undefined;
+  // only after the root FleetPanel exists.
+  let fleetSource: FleetPanel | undefined;
+  let shellSectionProvider: ShellSectionProvider | undefined;
 
   // ---- Cancellable pending notifications ----
   // Holds notifications briefly so get_subagent_result can cancel them
@@ -529,22 +532,22 @@ export default function (pi: ExtensionAPI) {
 
   function sendIndividualNudge(record: AgentRecord) {
     agentActivity.delete(record.id);
-    widget.markFinished(record.id);
+    fleet.markFinished(record.id);
     fleet.onAgentFinished(record.id);
     notificationGate.enqueue(record.id);
-    widget.update();
+    fleet.update();
   }
 
   // ---- Group join manager ----
   const groupJoin = new GroupJoinManager((records) => {
     for (const r of records) {
       agentActivity.delete(r.id);
-      widget.markFinished(r.id);
+      fleet.markFinished(r.id);
       fleet.onAgentFinished(r.id);
     }
 
     for (const record of records) notificationGate.enqueue(record.id);
-    widget.update();
+    fleet.update();
   }, 30_000);
 
   /** Helper: build event data for lifecycle events from an AgentRecord. */
@@ -658,9 +661,9 @@ export default function (pi: ExtensionAPI) {
         } else {
           record.resultConsumed = true;
           agentActivity.delete(record.id);
-          widget.markFinished(record.id);
+          fleet.markFinished(record.id);
           fleet.onAgentFinished(record.id);
-          widget.update();
+          fleet.update();
         }
         return;
       }
@@ -671,26 +674,26 @@ export default function (pi: ExtensionAPI) {
       // still applies because this is an ordinary top-level record.
       if (record.sideConversation) {
         agentActivity.delete(record.id);
-        widget.markFinished(record.id);
+        fleet.markFinished(record.id);
         fleet.onAgentFinished(record.id);
         sideConversations.onAgentComplete(record);
-        widget.update();
+        fleet.update();
         return;
       }
 
       // Skip notification if result was already consumed via get_subagent_result
       if (record.resultConsumed) {
         agentActivity.delete(record.id);
-        widget.markFinished(record.id);
+        fleet.markFinished(record.id);
         fleet.onAgentFinished(record.id);
-        widget.update();
+        fleet.update();
         return;
       }
 
       // If this agent is pending batch finalization (debounce window still open),
       // don't send an individual nudge — finalizeBatch will pick it up retroactively.
       if (currentBatchAgents.some((a) => a.id === record.id)) {
-        widget.update();
+        fleet.update();
         return;
       }
 
@@ -700,7 +703,7 @@ export default function (pi: ExtensionAPI) {
       }
       // 'held' → do nothing, group will fire later
       // 'delivered' → group callback already fired
-      widget.update();
+      fleet.update();
     },
     undefined,
     (record) => {
@@ -708,8 +711,6 @@ export default function (pi: ExtensionAPI) {
       // Agent-tool spawns refresh these surfaces in their tool handler, but RPC
       // and scheduler spawns enter through the manager directly.
       if (currentCtx?.hasUI) {
-        widget.ensureTimer();
-        widget.update();
         fleet.ensureTimer();
         fleet.update();
       }
@@ -822,8 +823,20 @@ export default function (pi: ExtensionAPI) {
   const registryEntry = {
     waitForAll: () => manager.waitForAll(),
     hasRunning: () => manager.hasRunning(),
-    hasFleetRows: () => fleetSource?.isShowingRows() === true,
-    isFleetActive: () => fleetSource?.isActive() === true,
+    registerShellSection: (provider: ShellSectionProvider): ShellSectionRegistration => {
+      shellSectionProvider = provider;
+      fleetSource?.setShellSection(provider);
+      let registered = true;
+      return {
+        unregister: () => {
+          if (!registered) return;
+          registered = false;
+          if (shellSectionProvider !== provider) return;
+          shellSectionProvider = undefined;
+          fleetSource?.setShellSection(undefined);
+        },
+      };
+    },
     spawn: spawnTopLevel,
     getRecord: (id: string) => {
       const record = manager.getRecord(id);
@@ -901,10 +914,9 @@ export default function (pi: ExtensionAPI) {
     );
     if (pendingKeys.length > 0) pi.appendEntry("subagent-notification-pending", { keys: [] });
     if (ctx.hasUI) {
-      widget.setUICtx(ctx.ui);
+      fleet.setUICtx(ctx.ui);
       focus.setUICtx(ctx.ui);
       sideConversations.setUICtx(ctx.ui);
-      fleet.setUICtx(ctx.ui);
     }
     if (ownsManagerRegistry && !unregisterPreferencesProvider) {
       unregisterPreferencesProvider = registerSubagentPreferencesProvider((providerCtx) =>
@@ -1267,19 +1279,14 @@ export default function (pi: ExtensionAPI) {
     manager.dispose();
   });
 
-  // Live widget: show running agents above editor.
-  // widgetMode (default "background") selects what the widget shows: "all" =
-  // every agent; "background" = hide foreground (they already render inline as
-  // the Agent tool result, so showing them here too is a duplicate, #118), keep
-  // everything else; "off" = hide the widget entirely. Read live at render time.
+  // Widget mode controls agent-row detail verbosity and is read live at render time.
   let widgetMode: WidgetMode = "background";
   function getWidgetMode(): WidgetMode {
     return widgetMode;
   }
-  const widget = new AgentWidget(manager, agentActivity, getWidgetMode);
   function setWidgetMode(m: WidgetMode): void {
     widgetMode = m;
-    widget.update();
+    fleet.update();
   }
 
   // Fullscreen focus replaces the main transcript renderer and binds the existing
@@ -1289,7 +1296,7 @@ export default function (pi: ExtensionAPI) {
     onSteered: (id, message) => pi.events.emit("subagents:steered", { id, message }),
     // FleetView is the focus switcher; when it is turned off, focus mode keeps
     // its own Esc exit so the prompt can always return to main.
-    hasSwitcher: () => isFleetViewEnabled() && fleet.isShowingRows(),
+    hasSwitcher: () => isFleetViewEnabled() && fleet.hasAgentRows(),
     resolveModel: (query) => {
       if (!currentCtx) return undefined;
       const resolution = resolveModel(query, currentCtx.modelRegistry);
@@ -1306,21 +1313,27 @@ export default function (pi: ExtensionAPI) {
     focusAgent: (record, tui, theme) => focus.focus(record, tui, theme),
   });
 
-  // Claude Code-style FleetView: navigable list of main + subagents below the editor.
-  const fleet = new FleetList(manager, agentActivity, {
-    focusAgent: (record, tui, theme) => focus.focus(record, tui, theme),
-    focusedAgentId: () => focus.getFocusedAgentId(),
-    unfocusAgent: () => focus.unfocus(),
-    openSideConversation: (record) => sideConversations.open(record),
-  });
+  const fleet = new FleetPanel(
+    manager,
+    agentActivity,
+    {
+      focusAgent: (record, tui, theme) => focus.focus(record, tui, theme),
+      focusedAgentId: () => focus.getFocusedAgentId(),
+      unfocusAgent: () => focus.unfocus(),
+      openSideConversation: (record) => sideConversations.open(record),
+    },
+    { widgetMode: getWidgetMode },
+  );
   fleetSource = fleet;
   let fleetViewEnabled = true;
   function isFleetViewEnabled(): boolean {
     return fleetViewEnabled;
   }
+  fleet.setAgentSectionEnabled(isFleetViewEnabled());
+  if (shellSectionProvider) fleet.setShellSection(shellSectionProvider);
   function setFleetViewEnabled(b: boolean): void {
     fleetViewEnabled = b;
-    fleet.setEnabled(b);
+    fleet.setAgentSectionEnabled(b);
   }
 
   const workflowManager = new WorkflowManager((result) => {
@@ -1567,9 +1580,7 @@ export default function (pi: ExtensionAPI) {
     // This agent already finished once, so the widget holds a finished-age
     // for it that is past the linger limit — without clearing it, the
     // resumed run's ✓/✗ line never renders and the agent just vanishes.
-    widget.markRunning(id);
-    widget.ensureTimer();
-    widget.update();
+    fleet.markRunning(id);
     fleet.ensureTimer();
     fleet.update();
 
@@ -1617,12 +1628,10 @@ export default function (pi: ExtensionAPI) {
 
   // Grab UI context from first tool execution + clear lingering widget on new turn
   pi.on("tool_execution_start", async (_event, ctx) => {
-    // SAFETY: Pi's UI context implements the widget and fleet subsets declared by this package.
-    widget.setUICtx(ctx.ui as UICtx);
-    // SAFETY: Pi's UI context implements the FleetUICtx methods consumed by FleetList.
-    const fleetContext = ctx as FleetUIContext;
+    // SAFETY: Pi's UI context implements the FleetPanel UI surface consumed here.
+    const fleetContext = ctx as FleetPanelUIContext;
     fleet.setUICtx(fleetContext.ui);
-    widget.onTurnStart();
+    fleet.onTurnStart();
   });
 
   /** Build the full type list text dynamically from available agents only. */
@@ -2090,9 +2099,9 @@ If the target is already known, use a direct tool — \`read\` for a known path,
     // ---- Execute ----
 
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-      // Ensure we have UI context for widget rendering
-      // SAFETY: Pi's UI context implements the widget subset declared by UICtx.
-      widget.setUICtx(ctx.ui as UICtx);
+      // SAFETY: Pi's UI context implements the FleetPanel UI surface consumed here.
+      const fleetContext = ctx as FleetPanelUIContext;
+      fleet.setUICtx(fleetContext.ui);
 
       // Reload custom agents so new project/global .md files are picked up without restart
       reloadCustomAgents();
@@ -2427,8 +2436,6 @@ If the target is already known, use a direct tool — \`read\` for a known path,
         }
 
         agentActivity.set(id, bgState);
-        widget.ensureTimer();
-        widget.update();
         fleet.ensureTimer();
         fleet.update();
 
@@ -2502,7 +2509,6 @@ If the target is already known, use a direct tool — \`read\` for a known path,
           if (a.session === session) {
             fgId = a.id;
             agentActivity.set(a.id, fgState);
-            widget.ensureTimer();
             fleet.ensureTimer();
             fleet.update();
             break;
@@ -2563,7 +2569,7 @@ If the target is already known, use a direct tool — \`read\` for a known path,
         clearInterval(spinnerInterval);
         if (fgId) {
           agentActivity.delete(fgId);
-          widget.markFinished(fgId);
+          fleet.markFinished(fgId);
           fleet.onAgentFinished(fgId);
         }
       }
@@ -2702,8 +2708,6 @@ If the target is already known, use a direct tool — \`read\` for a known path,
         writeInitialEntry(record.outputFile, id, prompt, ctx.cwd);
       }
       agentActivity.set(id, state);
-      widget.ensureTimer();
-      widget.update();
       fleet.ensureTimer();
       fleet.update();
       pi.events.emit("subagents:created", {
@@ -3935,8 +3939,6 @@ Write the file using the write tool. Only write the file, nothing else.`;
       try {
         const id = sideConversations.launch(pi, ctx, dispatch.type, question);
         const record = manager.getRecord(id);
-        widget.ensureTimer();
-        widget.update();
         fleet.ensureTimer();
         fleet.update();
         pi.events.emit("subagents:created", {

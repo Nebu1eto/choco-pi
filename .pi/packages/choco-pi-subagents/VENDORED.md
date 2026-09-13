@@ -128,15 +128,10 @@ focused clicks. Pi retains ownership of scroll-to-document coordinates; the
 overlay's mouse behavior and global thinking visibility setting are unchanged.
 
 The fork adds `src/ui/focus-mode.ts` and `src/ui/method-patch-registry.ts` and
-extends FleetView and `ConversationViewer` with fullscreen focus. Moving the
-FleetView cursor onto a subagent row (or pressing `f`, or `f focus` in its modal
-viewer) replaces Pi's main transcript rendering with that agent's live
-conversation and binds the existing main editor to `AgentManager.steer`; moving
-the cursor back onto `main` restores the exact orchestrator renderer and editor
-input predecessor. FleetView therefore keeps rendering and keeps owning ↑/↓ while
-an agent is focused, and Esc neither exits focus nor reaches the main session —
-except with FleetView turned off, where Esc stays the only escape hatch and still
-exits.
+extends `ConversationViewer` with fullscreen focus. Selecting an agent replaces
+Pi's main transcript rendering with that agent's live conversation and binds the
+existing main editor to `AgentManager.steer`; selecting `main` restores the exact
+orchestrator renderer and editor input predecessor.
 Focus also replaces Pi's root pending-message sibling with only the active
 child session's steering/follow-up queues, clips each entry to its first terminal
 line like Pi's `TruncatedText`, and restores the exact main renderer on exit. While
@@ -146,8 +141,6 @@ The configured `app.tools.expand` action is likewise claimed and toggles
 viewer-owned tool/bash rows only. Expansion is retained per agent across A → B →
 A switches; newly created rows inherit it, while Pi's main queue, expansion state,
 and actions are never invoked or mutated.
-The above-editor focus indicator follows the same rule: silent while the switcher
-is up, since it would only repeat it.
 `/exit` (and `/quit`) typed at a focused prompt stops that agent and returns to
 the orchestrator instead of quitting the session: the prompt belongs to the
 subagent while focus is active, so the focused editor adapter claims the key
@@ -158,9 +151,7 @@ levels instead of reopening the parent selector, which would consume the first
 Esc. The method registry uses an additive, instance-scoped wrapper so pi-zentui
 and prompt-editor adapters remain composed. `tests/focus-mode.test.ts` pins
 transcript swapping, streaming refresh, steering ownership, focus propagation,
-Esc being swallowed, and restoration on exit; `tests/fleet-list.test.ts` pins
-selection-driven focus switching, the `main` return, Esc leaving navigation only,
-and the `/btw` exclusion. FleetView recognizes the focused prompt editor by its
+Esc being swallowed, and restoration on exit. The fleet panel recognizes the focused prompt editor by its
 public editor methods rather than `instanceof Editor`, so custom editors loaded
 through a different package instance retain arrow navigation while selectors
 and other overlays still own their keys.
@@ -379,38 +370,43 @@ longer request it. Their search guidance prefers registered choco-pi-lsp tools,
 uses ast-grep for structural patterns, and reserves read-only Bash `rg` for
 non-code text or queries those tools cannot cover.
 
-### Whole-tree agent UI
+### Whole-tree agent records
 
-Upstream's FleetView and persistent agent widget filtered out every record with
-`parentAgentId`, making nested workers invisible. The fork adds a shared pure
-parent-first tree ordering helper, renders descendants with two-space depth
-indentation and globally unique flat aliases, and keeps the existing FleetView row
-selection/focus/view/stop paths for nested records. Active descendants retain
-their ancestor rows, while orphan records remain visible at depth zero. The
-`subagents` status-bar text now compares the scheduled top-level background
-count with the configured concurrency cap, including `unlimited`, and adds the
-whole-tree active count when it differs.
+Upstream's UI filtered out every record with `parentAgentId`, making nested
+workers invisible. The fork adds a shared pure parent-first tree ordering helper
+with two-space depth indentation and globally unique flat aliases. Active
+descendants retain their ancestor rows, while orphan records remain visible at
+depth zero.
 
 `tests/fleet-tree.test.ts` pins recursive grouping, launch ordering and orphan
-visibility; the existing FleetView/focus tests continue to exercise the shared
-row actions.
+visibility.
 
-Named FleetView and agent-widget rows render only the bold, role-styled `@alias`;
-unnamed rows retain the role label. Their compact stats omit turn counts and the
-redundant `token` word, while completion notifications keep both.
+### Unified above-editor fleet panel (agents + shells)
 
-### Cooperative shell and agent fleet navigation
+Upstream ships separate `agent-widget` and `fleet-list` surfaces. This fork
+replaces both with `ui/fleet-panel.ts::FleetPanel`: one `aboveEditor` widget, one
+100 ms unref timer, one input router, and one 12-line budget. Its roster contains
+`main`, agent rows, and shell rows supplied by the optional `ShellSectionProvider`
+contract in `ui/shell-section-contract.ts`. choco-pi-shells registers that
+provider through `registerShellSection()` on
+`Symbol.for("pi-subagents:manager")`; registration buffers before panel
+construction and supports idempotent, supersession-safe unregistration. The old
+`hasFleetRows()` and `isFleetActive()` probes are removed.
 
-The fork structurally extends the existing
-`Symbol.for("pi-subagents:manager")` entry with two bounded read-only UI probes:
-`hasFleetRows()` and `isFleetActive()`. They are backed by the root `FleetList`
-and let the separately loaded shell extension choose a navigation activator
-without importing this package or a runtime instance. FleetView retains Down
-whenever it has visible rows; shells use Right in that shared state and Down
-when no agent rows exist. An active FleetView remains the sole owner of its
-navigation/action keys. The first activation still exclusively owns the
-registry slot, and child activations neither replace nor clear these peer-state
-capabilities.
+`FleetView` controls agent rows only; disabling it leaves shell rows visible.
+`WidgetMode` controls detail verbosity rather than visibility: foreground agents
+always remain in the roster, with #118 answered by compact rows in `background`
+mode, while `off` makes all agent rows compact. Esc is swallowed only while agent
+rows are visible, via `hasAgentRows()`. Shell rows use Enter for the two-pane
+viewer and `x` for the administrative stop. Named agent rows render the bold,
+role-styled `@alias`; unnamed rows retain the role label.
+
+This supersedes upstream `CHANGELOG.upstream.md` notes for FleetView's
+`belowEditor` placement and separate timer, widget-mode visibility semantics,
+the queued summary line, and the widget overflow cap. The editor-focus gate
+(#123), completion retention (#230), shared keybinding behavior (#155), and
+focus/navigation behavior (#136) remain. `tests/fleet-panel.test.ts` absorbs the
+former `fleet-list.test.ts` and `agent-widget.test.ts` coverage.
 
 ### Role model and effort defaults
 

@@ -309,7 +309,7 @@ export const SUBAGENT_SETTING_DEFINITIONS: readonly SubagentSettingDefinition[] 
     id: "fleetView",
     label: "Fleet view",
     description:
-      "Claude Code-style main+subagents list below the editor (↓/← to navigate, Enter to view)",
+      "Agent rows in the above-editor fleet panel (↓/← navigate, ↑↓ switch focus, f focus); off keeps shell rows only",
     currentValue: (controller) => (controller.isFleetViewEnabled() ? "on" : "off"),
     values: toggleValues,
     apply: (value, controller) => {
@@ -354,7 +354,7 @@ export const SUBAGENT_SETTING_DEFINITIONS: readonly SubagentSettingDefinition[] 
     id: "widgetMode",
     label: "Widget",
     description:
-      "Above-editor agent widget: all = every agent; background = hide foreground (they already render inline); off = hide the widget.",
+      "Agent row detail in the fleet panel: all = detail for every running agent; background = detail only for background agents; off = compact rows",
     currentValue: (controller) => controller.getWidgetMode(),
     values: () => ["all", "background", "off"],
     apply: (value, controller) => {
