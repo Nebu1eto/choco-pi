@@ -5,8 +5,132 @@ import toolSearch, {
   LEAN_SURFACE_SYMBOL,
   type LeanSurfacePolicy,
 } from "../.pi/extensions/tool-search.ts";
+import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 
 type McpStatusPayload = { servers: never[] };
+
+test("settles the lean surface synchronously before the first request", async () => {
+  let active = ["deferred_probe"];
+  let availableNames = ["deferred_probe"];
+  let sessionStart: (() => void) | undefined;
+  let beforeAgentStart: (() => void) | undefined;
+  const commits: string[][] = [];
+  const registered: { name: string; description: string; parameters: object }[] = [];
+  // SAFETY: The fixture supplies every host member exercised by this test.
+  toolSearch(
+    reinterpretHostValue<Parameters<typeof toolSearch>[0]>({
+      registerTool: (tool: { name: string; description: string; parameters: object }) => {
+        registered.push(tool);
+      },
+      getAllTools: () =>
+        [...availableNames, ...registered.map((tool) => tool.name)].map((name) => ({
+          name,
+          description: name,
+          parameters: {},
+          sourceInfo: { source: "extension", path: name },
+        })),
+      getActiveTools: () => active,
+      setActiveTools: (names: string[]) => {
+        commits.push([...names]);
+        active = names;
+      },
+      events: { on: () => undefined },
+      on: (name: string, handler: () => void) => {
+        if (name === "session_start") sessionStart = handler;
+        if (name === "before_agent_start") beforeAgentStart = handler;
+      },
+    }),
+  );
+
+  sessionStart?.();
+  availableNames = ["deferred_probe", "read", "exec_command", "apply_patch"];
+  active = [...active, "read", "exec_command", "apply_patch"];
+  beforeAgentStart?.();
+  assert.equal(commits.length, 1);
+  assert.deepEqual(active, ["read", "apply_patch", "exec_command", "tool_search"]);
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(commits.length, 1, "the cancelled deferred commit must not run");
+
+  beforeAgentStart?.();
+  assert.equal(commits.length, 1, "an unchanged surface must not be recommitted");
+
+  active = ["tool_search"];
+  beforeAgentStart?.();
+  assert.equal(commits.length, 2, "an external removal must be repaired in one commit");
+  assert.deepEqual(active, ["read", "apply_patch", "exec_command", "tool_search"]);
+
+  beforeAgentStart?.();
+  assert.equal(commits.length, 2, "the repaired surface must not be recommitted");
+});
+
+test("preserves external activations and commits searched tools only once", async () => {
+  type SearchResult = { details: { added: string[] } };
+  type SearchExecutor = {
+    execute(toolCallId: string, params: { query: string; limit?: number }): Promise<SearchResult>;
+  };
+
+  let active = ["read", "deferred_probe"];
+  let searchTool: SearchExecutor | undefined;
+  let sessionStart: (() => void) | undefined;
+  let beforeAgentStart: (() => void) | undefined;
+  const commits: string[][] = [];
+  const tools = ["read", "deferred_probe", "ast_grep_search"].map((name) => ({
+    name,
+    description: name === "deferred_probe" ? "Inspect deferred probe state" : name,
+    parameters: {},
+    sourceInfo: { source: "extension", path: name },
+  }));
+
+  toolSearch(
+    reinterpretHostValue<Parameters<typeof toolSearch>[0]>({
+      registerTool: (tool: SearchExecutor & { name: string }) => {
+        searchTool = tool;
+        tools.push({
+          name: tool.name,
+          description: "Search deferred tools",
+          parameters: {},
+          sourceInfo: { source: "extension", path: "tool-search" },
+        });
+      },
+      getAllTools: () => tools,
+      getActiveTools: () => active,
+      setActiveTools: (names: string[]) => {
+        commits.push([...names]);
+        active = names;
+      },
+      events: { on: () => undefined },
+      on: (name: string, handler: () => void) => {
+        if (name === "session_start") sessionStart = handler;
+        if (name === "before_agent_start") beforeAgentStart = handler;
+      },
+    }),
+  );
+
+  sessionStart?.();
+  beforeAgentStart?.();
+  assert.deepEqual(active, ["read", "tool_search"]);
+
+  active = [...active, "ast_grep_search"];
+  beforeAgentStart?.();
+  assert.deepEqual(active, ["read", "ast_grep_search", "tool_search"]);
+  const afterExternalActivation = commits.length;
+  beforeAgentStart?.();
+  assert.equal(
+    commits.length,
+    afterExternalActivation,
+    "an unchanged external tool must not rewrite",
+  );
+
+  const beforeSearch = commits.length;
+  const result = await searchTool?.execute("call", { query: "deferred probe", limit: 1 });
+  assert.deepEqual(result?.details.added, ["deferred_probe"]);
+  assert.equal(commits.length, beforeSearch + 1, "tool_search activation must make one commit");
+  assert.deepEqual(active, ["read", "ast_grep_search", "deferred_probe", "tool_search"]);
+
+  beforeAgentStart?.();
+  assert.equal(commits.length, beforeSearch + 1, "the following turn must not reorder tools");
+});
 
 test("keeps Agent and core execution gateways always active", async () => {
   assert.ok(ALWAYS_ACTIVE_TOOL_NAMES.includes("Agent"));
