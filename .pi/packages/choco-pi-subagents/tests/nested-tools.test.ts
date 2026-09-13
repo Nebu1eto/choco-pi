@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createNestedSubagentTools, type NestedAgentManager } from "../src/nested-tools.ts";
-import { publishTerminalResult } from "../src/result-read.ts";
+import { claimSubagentResultRead, publishTerminalResult } from "../src/result-read.ts";
 import type { AgentRecord } from "../src/types.ts";
 
 test("nested Agent exposes name and forwards it to the manager alias option", async () => {
@@ -279,4 +279,128 @@ test("nested result reads enforce one shared run generation", async () => {
   );
   const consumedText = consumed.content[0]?.type === "text" ? consumed.content[0].text : "";
   assert.equal(JSON.parse(consumedText).reason, "terminal_generation_already_consumed");
+});
+
+test("nested result wait cancellation is benign and releases its read claim", async () => {
+  const parent: AgentRecord = {
+    id: "parent-cancelled-result",
+    type: "general-purpose",
+    description: "parent",
+    status: "running",
+    toolUses: 0,
+    startedAt: 1,
+    lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+    compactionCount: 0,
+  };
+  const child: AgentRecord = {
+    id: "child-cancelled-result",
+    type: "implementer",
+    description: "nested result",
+    status: "running",
+    promise: new Promise<string>(() => undefined),
+    toolUses: 0,
+    startedAt: 2,
+    lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+    compactionCount: 0,
+    parentAgentId: parent.id,
+  };
+  const manager: NestedAgentManager = {
+    spawn: () => assert.fail("result read must not spawn"),
+    spawnAndWait: () => assert.fail("result read must not spawn and wait"),
+    getRecord: (id) => (id === parent.id ? parent : id === child.id ? child : undefined),
+    listAgents: () => [parent, child],
+    getActiveCount: () => 2,
+    getScheduledActiveCount: () => 1,
+    getMaxConcurrent: () => 4,
+    abort: () => false,
+    resume: async () => undefined,
+  };
+  // SAFETY: Result reads never dereference the ExtensionAPI fixture.
+  const resultTool = createNestedSubagentTools({
+    manager,
+    pi: {} as never,
+    parentAgentId: parent.id,
+    depth: 1,
+    maxSubagentDepth: 3,
+    allowedSubagents: "all",
+    configCwd: "/tmp/choco-pi-nested-cancelled-result-test",
+  })[1];
+  assert.ok(resultTool);
+
+  const controller = new AbortController();
+  // SAFETY: The nested result execute path does not inspect its ExtensionContext argument.
+  const wait = resultTool.execute(
+    "cancelled",
+    { agent_id: child.id, wait: true },
+    controller.signal,
+    undefined,
+    {} as never,
+  );
+  controller.abort(new Error("user cancelled tool call"));
+  const cancelled = await wait;
+  assert.equal("isError" in cancelled && cancelled.isError === true, false);
+  assert.match(cancelled.content[0]?.type === "text" ? cancelled.content[0].text : "", /cancelled/);
+  assert.equal(child.status, "running");
+  assert.equal(claimSubagentResultRead(child).kind, "active");
+});
+
+test("nested result wait still propagates non-abort rejections", async () => {
+  const failure = new Error("child wait failed");
+  const parent = {
+    id: "parent-rejected-result",
+    type: "general-purpose",
+    description: "parent",
+    status: "running",
+    toolUses: 0,
+    startedAt: 1,
+    lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+    compactionCount: 0,
+  } satisfies AgentRecord;
+  const child = {
+    id: "child-rejected-result",
+    type: "implementer",
+    description: "nested result",
+    status: "running",
+    promise: Promise.reject(failure),
+    toolUses: 0,
+    startedAt: 2,
+    lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+    compactionCount: 0,
+    parentAgentId: parent.id,
+  } satisfies AgentRecord;
+  const manager = {
+    spawn: () => assert.fail("result read must not spawn"),
+    spawnAndWait: () => assert.fail("result read must not spawn and wait"),
+    getRecord: (id: string) => (id === parent.id ? parent : id === child.id ? child : undefined),
+    listAgents: () => [parent, child],
+    getActiveCount: () => 2,
+    getScheduledActiveCount: () => 1,
+    getMaxConcurrent: () => 4,
+    abort: () => false,
+    resume: async () => undefined,
+  } satisfies NestedAgentManager;
+  // SAFETY: Result reads never dereference the ExtensionAPI fixture.
+  const resultTool = createNestedSubagentTools({
+    manager,
+    pi: {} as never,
+    parentAgentId: parent.id,
+    depth: 1,
+    maxSubagentDepth: 3,
+    allowedSubagents: "all",
+    configCwd: "/tmp/choco-pi-nested-rejected-result-test",
+  })[1];
+  assert.ok(resultTool);
+
+  // SAFETY: The nested result execute path does not inspect its ExtensionContext argument.
+  await assert.rejects(
+    resultTool.execute(
+      "rejected",
+      { agent_id: child.id, wait: true },
+      undefined,
+      undefined,
+      {} as never,
+    ),
+    failure,
+  );
+  assert.equal(claimSubagentResultRead(child).kind, "active");
 });
