@@ -524,6 +524,11 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           }
         } catch (error) {
           releaseActiveResultRead(record, generation);
+          if (signal?.aborted) {
+            return textResult(
+              "Result wait cancelled. The agent continues and its result remains unconsumed.",
+            );
+          }
           throw error;
         }
       }

@@ -2815,7 +2815,18 @@ If the target is already known, use a direct tool — \`read\` for a known path,
         if (!result) return textResult(`Workflow not found: "${params.workflow_id}".`);
         if (params.wait && (result.status === "running" || result.status === "waiting")) {
           const completion = workflowManager.wait(params.workflow_id);
-          if (completion) result = await abortable(completion, signal);
+          if (completion) {
+            try {
+              result = await abortable(completion, signal);
+            } catch (error) {
+              if (signal?.aborted) {
+                return textResult(
+                  "Result wait cancelled. The agent continues and its result remains unconsumed.",
+                );
+              }
+              throw error;
+            }
+          }
         }
         if (result.completedAt !== undefined) {
           workflowManager.markConsumed(params.workflow_id);
@@ -2916,6 +2927,11 @@ If the target is already known, use a direct tool — \`read\` for a known path,
             }
           } catch (error) {
             releaseActiveResultRead(record, generation);
+            if (signal?.aborted) {
+              return textResult(
+                "Result wait cancelled. The agent continues and its result remains unconsumed.",
+              );
+            }
             throw error;
           }
         }
