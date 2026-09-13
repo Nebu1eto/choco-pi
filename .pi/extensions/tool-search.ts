@@ -536,12 +536,46 @@ export default function toolSearch(pi: ExtensionAPI): void {
   let allowedNames = new Set<string>();
   const loadedNames = new Set<string>();
   let initializationScheduled = false;
+  let scheduledImmediate: ReturnType<typeof setImmediate> | undefined;
+  let scheduledTimeout: ReturnType<typeof setTimeout> | undefined;
+  let leanSurfaceInitialized = false;
   let sessionStarted = false;
   let mcpCatalogReady = false;
   let enabledMcpServers: Set<string> | undefined;
 
-  const applyLeanSurface = (attempt = 0): void => {
-    initializationScheduled = false;
+  const computeLeanSurface = (): string[] => {
+    const allNames = new Set(pi.getAllTools().map((tool) => tool.name));
+    const alwaysActive = ALWAYS_ACTIVE_TOOL_NAMES.filter(
+      (name) => name !== "tool_search" && allNames.has(name),
+    );
+    const included = new Set<string>(alwaysActive);
+    const currentlyActive = leanSurfaceInitialized
+      ? withoutDisabledTools(pi.getActiveTools()).filter(
+          (name) => name !== "tool_search" && !included.has(name),
+        )
+      : [];
+    for (const name of currentlyActive) included.add(name);
+    const loaded = [...loadedNames].filter(
+      (name) => allNames.has(name) && name !== "tool_search" && !included.has(name),
+    );
+    return [...alwaysActive, ...currentlyActive, ...loaded, "tool_search"];
+  };
+
+  const commitLeanSurface = (names: string[]): void => {
+    const activeNames = pi.getActiveTools();
+    const active = withoutDisabledTools(activeNames);
+    leanSurfaceInitialized = true;
+    if (
+      active.length === activeNames.length &&
+      active.length === names.length &&
+      active.every((name, index) => name === names[index])
+    ) {
+      return;
+    }
+    pi.setActiveTools(names);
+  };
+
+  const refreshSearchCatalog = (): void => {
     const allTools = pi.getAllTools();
     const allNames = new Set(allTools.map((tool) => tool.name));
     for (const name of withoutDisabledTools(pi.getActiveTools())) allowedNames.add(name);
@@ -555,25 +589,32 @@ export default function toolSearch(pi: ExtensionAPI): void {
       ...buildPiDocuments(allTools.filter((tool) => searchableNames.has(tool.name))),
       ...loadMcpDocuments(enabledMcpServers),
     ];
-    const active = withoutDisabledTools(pi.getActiveTools());
-    const leanSurface = active.filter((name) => ALWAYS_ACTIVE.has(name) || loadedNames.has(name));
-    // Restore registered eager tools that fell out of the active set during a model-switch
-    // adapter reactivation; otherwise Code Mode can silently lose exec_command/apply_patch
-    // for the rest of the session.
-    const alwaysActive = ALWAYS_ACTIVE_TOOL_NAMES.filter((name) => allNames.has(name));
-    pi.setActiveTools(
-      withoutDisabledTools([...new Set([...leanSurface, ...alwaysActive, "tool_search"])]),
-    );
+  };
+
+  const applyLeanSurface = (attempt = 0): void => {
+    initializationScheduled = false;
+    scheduledImmediate = undefined;
+    scheduledTimeout = undefined;
+    refreshSearchCatalog();
+    commitLeanSurface(computeLeanSurface());
     if (!mcpCatalogReady && attempt < 4) {
       initializationScheduled = true;
-      setTimeout(() => applyLeanSurface(attempt + 1), 25 * (attempt + 1));
+      scheduledTimeout = setTimeout(() => applyLeanSurface(attempt + 1), 25 * (attempt + 1));
     }
+  };
+
+  const cancelScheduledLeanSurface = (): void => {
+    if (scheduledImmediate !== undefined) clearImmediate(scheduledImmediate);
+    if (scheduledTimeout !== undefined) clearTimeout(scheduledTimeout);
+    scheduledImmediate = undefined;
+    scheduledTimeout = undefined;
+    initializationScheduled = false;
   };
 
   const scheduleLeanSurface = (): void => {
     if (initializationScheduled) return;
     initializationScheduled = true;
-    setImmediate(() => applyLeanSurface());
+    scheduledImmediate = setImmediate(() => applyLeanSurface());
   };
 
   pi.registerTool({
@@ -612,7 +653,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
       const activated = withoutDisabledTools([...added, ...siblings]);
       if (activated.length > 0) {
         for (const name of activated) loadedNames.add(name);
-        pi.setActiveTools(withoutDisabledTools([...new Set([...active, ...activated])]));
+        commitLeanSurface(computeLeanSurface());
       }
 
       const lines = matches.map((target) =>
@@ -654,8 +695,14 @@ export default function toolSearch(pi: ExtensionAPI): void {
     sessionStarted = true;
     mcpCatalogReady = false;
     loadedNames.clear();
+    leanSurfaceInitialized = false;
     allowedNames = new Set(withoutDisabledTools(pi.getActiveTools()));
     scheduleLeanSurface();
+  });
+  pi.on("before_agent_start", () => {
+    cancelScheduledLeanSurface();
+    refreshSearchCatalog();
+    commitLeanSurface(computeLeanSurface());
   });
   pi.on("session_shutdown", () => {
     sessionStarted = false;
