@@ -401,8 +401,7 @@ export function registerCodexEvents(
     const messages = event.messages.filter((message) => !isProviderContextExcludedMessage(message));
     if (
       elisionCut > 0 &&
-      isAdapterRuntime(resolveCodexRuntimePlan(ctx, state.config, state.executionMode)) &&
-      !isNativeSteerPending(ctx.sessionManager.getSessionId())
+      isAdapterRuntime(resolveCodexRuntimePlan(ctx, state.config, state.executionMode))
     )
       return { messages: elideToolResults(messages, elisionCut) };
     return { messages };

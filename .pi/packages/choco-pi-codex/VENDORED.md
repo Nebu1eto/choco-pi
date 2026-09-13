@@ -310,11 +310,15 @@ regresses, the current and prior turn are never elided, pairing fields
 ("toolCallId"/"toolName"/"isError"/"details") are preserved, and error or
 encrypted results are always retained. The cut persists as a session custom
 entry scoped to the current compaction epoch, resets on compaction, and is
-skipped entirely while a native steer is pending or the adapter runtime is
-inactive. Server-cache economy holds because cuts advance discretely at turn
-boundaries and continuation baselines are recorded from the already-elided
-request body. "turn_start" fires before the new user message persists, so the
-cut conservatively reflects the previous completed branch at that moment.
+inactive outside the adapter runtime. Cut advancement is frozen while a
+native steer is pending ("turn_start" recomputes nothing), but the frozen
+cut keeps applying to every request — earlier versions additionally skipped
+application, which un-elided the history for the steer turn and re-elided it
+afterwards, paying two full cache rewrites per steer. Server-cache economy
+holds because cuts advance discretely at turn boundaries and continuation
+baselines are recorded from the already-elided request body. "turn_start"
+fires before the new user message persists, so the cut conservatively
+reflects the previous completed branch at that moment.
 
 ## WebSocket transport probe registry (choco-pi addition)
 
