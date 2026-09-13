@@ -19,6 +19,14 @@ import { cleanupChildSessionOwner } from "./child-session-cleanup.ts";
 import { normalizeMaxConcurrent, schedulingMaxConcurrent } from "./limits.ts";
 import { assignHandle, handleBase } from "./mention.ts";
 import {
+  classifyTerminalFailure,
+  isAvailable,
+  ProviderUnavailableError,
+  recordFailure,
+  recordSuccess,
+  retryAfterMsFromFailure,
+} from "./provider-health.ts";
+import {
   beginResultGeneration,
   markResultGenerationConsumed,
   publishTerminalResult,
@@ -152,6 +160,10 @@ interface SpawnArgs {
   type: SubagentType;
   prompt: string;
   options: SpawnOptions;
+}
+
+function providerKeyFor(options: SpawnOptions, ctx: ExtensionContext): string {
+  return (options.model?.provider ?? ctx.model?.provider ?? "unknown").toLowerCase();
 }
 
 interface RunBudgetState {
@@ -312,7 +324,7 @@ export class AgentManager {
   private tombstones = new Map<string, AgentTombstone>();
 
   /** Queue of background agents waiting to start. */
-  private queue: { id: string; start: () => void }[] = [];
+  private queue: { id: string; providerKey: string; start: () => void }[] = [];
   /** Number of currently running background agents. */
   private runningBackground = 0;
 
@@ -347,6 +359,10 @@ export class AgentManager {
   /** Concrete scheduler bound; configured 0 remains displayable as unlimited. */
   getSchedulingMaxConcurrent(): number {
     return schedulingMaxConcurrent(this.maxConcurrent);
+  }
+
+  isProviderAvailable(providerKey: string): boolean {
+    return isAvailable(providerKey.toLowerCase());
   }
 
   private requestCancellation(
@@ -431,6 +447,8 @@ export class AgentManager {
     // call, not minutes later at drain. Throw (not warn): programmatic callers
     // can fix and retry; the RPC layer converts throws into error envelopes.
     assertValidSpawnCwd(options.cwd);
+    const providerKey = providerKeyFor(options, ctx);
+    if (!this.isProviderAvailable(providerKey)) throw new ProviderUnavailableError(providerKey);
 
     const id = randomUUID().slice(0, 17);
     const abortController = new AbortController();
@@ -507,7 +525,7 @@ export class AgentManager {
       this.runningBackground >= this.getSchedulingMaxConcurrent()
     ) {
       // Queue it — will be started when a running agent completes
-      this.queue.push({ id, start: () => this.startAgent(id, record, args) });
+      this.queue.push({ id, providerKey, start: () => this.startAgent(id, record, args) });
       return id;
     }
 
@@ -539,6 +557,8 @@ export class AgentManager {
     // spawn()'s check, and the directory may be gone by then (TOCTOU). Same
     // curated errors; drainQueue parks a throw on the record as an error.
     assertValidSpawnCwd(options.cwd);
+    const providerKey = providerKeyFor(options, ctx);
+    if (!this.isProviderAvailable(providerKey)) throw new ProviderUnavailableError(providerKey);
     // Single resolution point for the caller-supplied cwd — the worktree base
     // repo and both cleanup calls below MUST agree on this value forever.
     const customCwd = options.cwd ?? undefined; // null (RPC "unset") → undefined
@@ -773,6 +793,15 @@ export class AgentManager {
           record.result = finalResult;
           record.session = session;
           record.completedAt ??= Date.now();
+          if (
+            record.cancellation?.generation !== runGeneration &&
+            runBudget.forcedStatus === undefined
+          ) {
+            if (failure !== undefined) {
+              const kind = classifyTerminalFailure(failure);
+              if (kind) recordFailure(providerKey, kind, retryAfterMsFromFailure(failure));
+            } else if (!aborted) recordSuccess(providerKey);
+          }
           publishTerminalResult(record);
 
           this.abortOwnedChildren(id);
@@ -851,6 +880,13 @@ export class AgentManager {
               ? record.cancellation.reason
               : error);
           record.completedAt ??= Date.now();
+          if (
+            record.cancellation?.generation !== runGeneration &&
+            runBudget.forcedStatus === undefined
+          ) {
+            const kind = classifyTerminalFailure(error);
+            if (kind) recordFailure(providerKey, kind, retryAfterMsFromFailure(error));
+          }
           publishTerminalResult(record);
 
           this.abortOwnedChildren(id);
@@ -899,6 +935,14 @@ export class AgentManager {
       const next = this.queue.shift()!;
       const record = this.agents.get(next.id);
       if (!record || record.status !== "queued") continue;
+      if (!this.isProviderAvailable(next.providerKey)) {
+        record.status = "error";
+        record.error = new ProviderUnavailableError(next.providerKey).message;
+        record.completedAt = Date.now();
+        publishTerminalResult(record);
+        this.onComplete?.(record);
+        continue;
+      }
       try {
         next.start();
       } catch (err) {
@@ -1012,7 +1056,11 @@ export class AgentManager {
       const start = () => this.startResume(id, record, prompt, signal, options);
       if (occupiesPoolSlot(record) && this.runningBackground >= this.getSchedulingMaxConcurrent()) {
         // At the concurrency limit — queue it, drains when a slot frees.
-        this.queue.push({ id, start });
+        this.queue.push({
+          id,
+          providerKey: (record.session.model?.provider ?? "unknown").toLowerCase(),
+          start,
+        });
       } else {
         start();
       }

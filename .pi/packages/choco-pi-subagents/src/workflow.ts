@@ -116,12 +116,18 @@ export type WorkflowRunnerContext = {
 };
 
 export type WorkflowStepRunner = {
+  providerKey?(step: WorkflowStepDefinition): string | undefined;
+  isProviderAvailable?(providerKey: string): boolean;
   run(
     step: WorkflowStepDefinition,
     prompt: string,
     context: WorkflowRunnerContext,
   ): Promise<WorkflowRunnerResult>;
 };
+
+function unavailableProvider(error: string | undefined): string | undefined {
+  return error?.match(/^Provider (.+) unavailable \(temporarily rate limited\)\.$/)?.[1];
+}
 
 export type WorkflowTypeResolver = (requested: string) => string | undefined;
 
@@ -287,6 +293,7 @@ class WorkflowController {
   private readonly onComplete?: (result: WorkflowResult) => void;
   private readonly states = new Map<string, WorkflowStepResult>();
   private readonly stepControllers = new Map<string, AbortController>();
+  private readonly providerAborts = new Map<string, string>();
   private readonly progressWaiters = new Set<(result: WorkflowResult) => void>();
   private resolveCompletion!: (result: WorkflowResult) => void;
   private runningCount = 0;
@@ -413,6 +420,7 @@ class WorkflowController {
       return;
     }
 
+    let providerError: string | undefined;
     while (this.runningCount < this.maxConcurrent) {
       const step = this.definition.steps.find((candidate) => {
         const state = this.states.get(candidate.id)!;
@@ -422,11 +430,17 @@ class WorkflowController {
         );
       });
       if (!step) break;
+      const providerKey = this.runner.providerKey?.(step);
+      if (providerKey !== undefined && this.runner.isProviderAvailable?.(providerKey) === false) {
+        providerError = this.failProviderUnavailable(providerKey);
+        continue;
+      }
       this.launch(step);
     }
 
     const hasPending = [...this.states.values()].some((state) => state.status === "pending");
     if (this.runningCount === 0 && !hasPending) {
+      if (providerError !== undefined && this.settleAfterProviderFail(providerError)) return;
       if (!this.sealed) {
         this.status = "waiting";
         const result = this.snapshot();
@@ -434,7 +448,9 @@ class WorkflowController {
         this.progressWaiters.clear();
         return;
       }
-      const hasErrors = [...this.states.values()].some((state) => state.status === "error");
+      const hasErrors = [...this.states.values()].some(
+        (state) => state.status === "error" || state.status === "skipped",
+      );
       this.settle(hasErrors ? "completed_with_errors" : "completed");
     }
   }
@@ -523,7 +539,17 @@ class WorkflowController {
     state.completedAt = Date.now();
     this.runningCount--;
 
-    if (state.status === "error" && step.continue_on_error !== true && !this.cancelled) {
+    const providerAbortError = this.providerAborts.get(step.id);
+    this.providerAborts.delete(step.id);
+    const providerKey = state.status === "error" ? unavailableProvider(state.error) : undefined;
+    if (providerKey !== undefined && !this.cancelled) {
+      const error = this.failProviderUnavailable(providerKey);
+      if (step.continue_on_error === true && this.settleAfterProviderFail(error)) return;
+    }
+    const hardError = state.status === "error" && step.continue_on_error !== true;
+    if (providerAbortError !== undefined && !hardError && !this.cancelled) {
+      if (this.settleAfterProviderFail(providerAbortError)) return;
+    } else if (hardError && !this.cancelled) {
       this.failFastError = `Step "${step.id}" failed: ${state.error ?? "unknown error"}`;
       for (const pending of this.states.values()) {
         if (pending.status !== "pending") continue;
@@ -535,6 +561,59 @@ class WorkflowController {
     }
 
     this.pump();
+  }
+
+  private failProviderUnavailable(providerKey: string): string {
+    const pendingSteps = this.definition.steps.filter(
+      (step) =>
+        this.states.get(step.id)?.status === "pending" &&
+        this.runner.providerKey?.(step) === providerKey,
+    );
+    const count = pendingSteps.length;
+    const error = `Provider ${providerKey} unavailable (temporarily rate limited); ${count} step${count === 1 ? "" : "s"} skipped.`;
+    for (const step of pendingSteps) {
+      const state = this.states.get(step.id)!;
+      state.status = "skipped";
+      state.error = error;
+      state.completedAt = Date.now();
+    }
+    for (const [stepId, active] of this.stepControllers) {
+      const step = this.definition.steps.find((candidate) => candidate.id === stepId);
+      if (step !== undefined && this.runner.providerKey?.(step) === providerKey) {
+        this.providerAborts.set(stepId, error);
+        active.abort();
+      }
+    }
+    return error;
+  }
+
+  private settleAfterProviderFail(error: string): boolean {
+    if (
+      this.runningCount !== 0 ||
+      [...this.states.values()].some((state) => state.status === "pending")
+    ) {
+      return false;
+    }
+    const hasHardFailure =
+      this.failFastError !== undefined ||
+      this.definition.steps.some(
+        (step) => this.states.get(step.id)?.status === "error" && step.continue_on_error !== true,
+      );
+    if (hasHardFailure) {
+      this.failFastError ??= error;
+      this.settle("error");
+      return true;
+    }
+    const skippedSteps = this.definition.steps.filter(
+      (step) => this.states.get(step.id)?.status === "skipped",
+    );
+    if (skippedSteps.length > 0 && skippedSteps.every((step) => step.continue_on_error === true)) {
+      this.settle("completed_with_errors");
+      return true;
+    }
+    this.failFastError = error;
+    this.settle("error");
+    return true;
   }
 
   private settle(status: WorkflowStatus): void {

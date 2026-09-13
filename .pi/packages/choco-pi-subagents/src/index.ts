@@ -187,6 +187,7 @@ import {
   WorkflowDefinitionSchema,
   WorkflowManager,
   WorkflowStepSchema,
+  type WorkflowStepDefinition,
   type WorkflowStepRunner,
 } from "./workflow.ts";
 
@@ -2605,25 +2606,37 @@ If the target is already known, use a direct tool — \`read\` for a known path,
     return matches.length === 1 ? matches[0] : undefined;
   };
 
-  const createWorkflowRunner = (ctx: ExtensionContext): WorkflowStepRunner => ({
-    run: async (step, prompt, workflowContext) => {
-      const config = getAgentConfig(step.subagent_type);
-      const resolvedConfig = resolveAgentInvocationConfig(config, step, {
-        worktreeAllowed: isWorktreeIsolationEnabled(),
-      });
-
-      let model = ctx.model;
-      if (resolvedConfig.modelInput) {
-        const resolution = resolveModel(resolvedConfig.modelInput, ctx.modelRegistry);
-        switch (resolution.tag) {
-          case "error":
-            if (resolvedConfig.modelFromParams) throw new Error(resolution.message);
-            break;
-          case "resolved":
-            model = resolution.model;
-            break;
-        }
+  const resolveWorkflowStepModel = (ctx: ExtensionContext, step: WorkflowStepDefinition) => {
+    const config = getAgentConfig(step.subagent_type);
+    const resolvedConfig = resolveAgentInvocationConfig(config, step, {
+      worktreeAllowed: isWorktreeIsolationEnabled(),
+    });
+    let model = ctx.model;
+    if (resolvedConfig.modelInput) {
+      const resolution = resolveModel(resolvedConfig.modelInput, ctx.modelRegistry);
+      switch (resolution.tag) {
+        case "error":
+          if (resolvedConfig.modelFromParams) throw new Error(resolution.message);
+          break;
+        case "resolved":
+          model = resolution.model;
+          break;
       }
+    }
+    return { config, resolvedConfig, model };
+  };
+
+  const createWorkflowRunner = (ctx: ExtensionContext): WorkflowStepRunner => ({
+    providerKey: (step) => {
+      try {
+        return (resolveWorkflowStepModel(ctx, step).model?.provider ?? "unknown").toLowerCase();
+      } catch {
+        return undefined;
+      }
+    },
+    isProviderAvailable: (providerKey) => manager.isProviderAvailable(providerKey),
+    run: async (step, prompt, workflowContext) => {
+      const { config, resolvedConfig, model } = resolveWorkflowStepModel(ctx, step);
       const scopeVerdict = checkModelScope({
         model,
         cwd: ctx.cwd,
