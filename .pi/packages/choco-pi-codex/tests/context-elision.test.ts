@@ -305,13 +305,12 @@ class Socket implements WebSocketLike {
   }
 }
 
-test("context and cut advancement bypass pending native steering and inactive runtimes", async () => {
+test("pending native steering preserves frozen elision and blocks cut advancement", async () => {
   const host = harness();
   for (const message of history()) host.manager.appendMessage(fixture(message));
   host.activate();
   host.invoke("turn_start");
   const rewritten = host.context();
-  const original = host.manager.buildSessionContext().messages;
   const owner = host.manager.getSessionId();
   const socket = new Socket();
   const connection = openNativeSteering(socket, owner);
@@ -325,13 +324,15 @@ test("context and cut advancement bypass pending native steering and inactive ru
     tool_choice: "auto",
     parallel_tool_calls: true,
   };
+  let pending: AgentMessage[] | undefined;
   try {
     connection.begin(body);
     const events = connection.responseEvents(undefined, 1000)[Symbol.asyncIterator]();
     socket.emit({ type: "response.created", response: { id: "response-1" } });
     await events.next();
     assert.equal(steerNativeResponse(owner, "follow up"), true);
-    assert.deepEqual(host.context(), original);
+    pending = host.context();
+    assert.deepEqual(pending, rewritten);
     host.manager.appendMessage(fixture(user("next")));
     const leaf = host.manager.getLeafEntry();
     host.invoke("turn_start");
@@ -339,7 +340,23 @@ test("context and cut advancement bypass pending native steering and inactive ru
   } finally {
     closeNativeSteering(owner);
   }
-  assert.deepEqual(host.context().slice(0, rewritten.length), rewritten);
+  const cleared = host.context().slice(0, rewritten.length);
+  assert.deepEqual(cleared, rewritten);
+  assert.ok(pending);
+  const sequenceEligibleChars = [rewritten, pending, cleared].map((messages) =>
+    messages.reduce((total, message) => total + eligibleToolResultChars(message), 0),
+  );
+  assert.deepEqual(
+    sequenceEligibleChars,
+    [...sequenceEligibleChars].sort((a, b) => b - a),
+  );
+});
+
+test("inactive runtimes bypass context elision and cut advancement", () => {
+  const host = harness();
+  for (const message of history()) host.manager.appendMessage(fixture(message));
+  host.activate();
+  host.invoke("turn_start");
   host.ctx.model = fixture({
     provider: "anthropic",
     api: "anthropic-messages",
