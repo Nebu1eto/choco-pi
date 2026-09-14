@@ -58,6 +58,7 @@ export const DEFAULT_TOOL_LABELS = {
 
   // Sub-agents
   Agent: "Delegation: Launching",
+  advisor: "Delegation: Advising",
   get_subagent_result: "Delegation: Retrieving",
   steer_subagent: "Delegation: Steering",
   stop_subagent: "Delegation: Stopping",
@@ -141,6 +142,7 @@ export const DEFAULT_FINISHED_TOOL_LABELS = {
 
   // Sub-agents
   Agent: "Delegation: Launched",
+  advisor: "Delegation: Advised",
   get_subagent_result: "Delegation: Retrieved",
   steer_subagent: "Delegation: Steered",
   stop_subagent: "Delegation: Stopped",
