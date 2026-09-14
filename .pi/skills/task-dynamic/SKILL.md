@@ -29,6 +29,8 @@ flowchart TD
 
 Choose roles by unit semantics, using `.pi/model-guidance.md` resolved relative to the repository for justified overrides. Every parent uses the `task` skill's delegation packet, narrowed to the scope it owns. Before any authorized reviewer handoff, the packet requires a scope-owning child to locate the `review` skill's actual `SKILL.md` from available skill metadata or Pi's configured skill directories, inspecting only the `skills` configuration field if needed, then read `references/review-bundle.md` relative to that file. Conventional paths are candidates only. Name every spawned child by its goal (`role-goal`, one to three dashed words, unique among its siblings). Spawned children of a worker are that worker's responsibility; standard `Agent`, `steer_subagent`, `get_subagent_result`, and `stop_subagent` tools remain available.
 
+When the advisor tool is enabled, the orchestrator may consult it before presenting a complex plan and before final acceptance; advisor output is advice, not evidence.
+
 ### Scoped reviewer grandchildren
 
 A scope-owning `implementer` or `general` worker may spawn one bounded `reviewer` child after its implementation unit reaches a reviewable state, but only when the root task packet explicitly authorizes that review and fresh context materially helps. Do not add reviewer grandchildren to trivial units or use them as routine verification.

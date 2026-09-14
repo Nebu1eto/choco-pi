@@ -26,6 +26,7 @@ const PROFILE_LINKS = [
   [".pi/zentui.json", "choco-pi-ui.json"],
   [".pi/models.json", "models.json"],
   [".pi/keybindings.json", "keybindings.json"],
+  [".pi/agents/advisor.md", "agents/advisor.md"],
   [".pi/agents/general.md", "agents/general.md"],
   [".pi/agents/planner.md", "agents/planner.md"],
   [".pi/agents/implementer.md", "agents/implementer.md"],

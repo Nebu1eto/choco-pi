@@ -25,6 +25,7 @@ import {
   getCodexPreferencesProvider,
 } from "./lib/codex-preferences.ts";
 import { buildSubagentPreferencesSections } from "./lib/subagent-preferences.ts";
+import { buildAdvisorPreferencesSections } from "./lib/advisor-preferences.ts";
 import {
   buildNativeSettingsSections,
   createHostCommandContext,
@@ -273,6 +274,7 @@ function buildPreferencesExtraSections(ctx: ExtensionCommandContext): Preference
     buildContextCapSection(ctx),
     ...buildCodexPreferencesSections(ctx),
     ...buildSubagentPreferencesSections(ctx),
+    ...buildAdvisorPreferencesSections(ctx),
     buildAgentPreferencesSection(ctx),
   ];
 }
@@ -285,6 +287,8 @@ function buildPreferencesExtraSections(ctx: ExtensionCommandContext): Preference
  */
 const PREFERENCES_SECTION_MERGES = {
   subagents: "agent",
+  // Advisor is an agent-level capability, so its settings belong with the other agent settings.
+  advisor: "agent",
   userMessages: "appearance",
   footer: "appearance",
   extensions: "appearance",

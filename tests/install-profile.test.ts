@@ -92,6 +92,7 @@ test("profile installer links tracked config and is idempotent", async (context)
       "choco-pi-shells",
       "choco-pi-hooks",
       "choco-pi-subagents",
+      "choco-pi-advisor",
       "choco-pi-goal",
       "choco-pi-mcp",
       "choco-pi-lsp",
