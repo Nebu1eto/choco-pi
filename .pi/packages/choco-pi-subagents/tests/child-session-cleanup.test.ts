@@ -36,8 +36,9 @@ const setShellManager = (value: CleanupFixture) => setCleanupCandidate(SHELL_MAN
 const setCodexCleanup = (value: CleanupFixture) =>
   setCleanupCandidate(CODEX_TRANSPORT_CLEANUP_SYMBOL, value);
 
-function addCompletedRecord(manager: AgentManager, session: AgentSession): void {
+function addCompletedRecord(manager: AgentManager, session: AgentSession): string {
   Object.defineProperty(manager, "startAgent", {
+    configurable: true,
     value: (_id: string, record: AgentRecord) => {
       record.status = "completed";
       record.completedAt = Date.now();
@@ -47,11 +48,50 @@ function addCompletedRecord(manager: AgentManager, session: AgentSession): void 
     },
   });
   // SAFETY: The patched startAgent does not observe the placeholder host objects.
-  manager.spawn({} as never, {} as never, "general-purpose", "done", {
+  return manager.spawn({} as never, {} as never, "general-purpose", "done", {
     description: "done",
     isBackground: false,
   });
 }
+
+test("disposeSettledRecord removes only settled records through the cleanup bridge", () => {
+  const events: string[] = [];
+  const restoreCodex = setCodexCleanup({
+    cleanupOwner: (ownerId: string) => {
+      events.push(`codex:${ownerId}`);
+      return Promise.resolve();
+    },
+  });
+  const manager = new AgentManager();
+  try {
+    const settledId = addCompletedRecord(
+      manager,
+      sessionFixture("child-settled", () => events.push("dispose:settled")),
+    );
+    assert.equal(manager.disposeSettledRecord(settledId), true);
+    assert.deepEqual(events, ["codex:child-settled", "dispose:settled"]);
+
+    Object.defineProperty(manager, "startAgent", {
+      configurable: true,
+      value: (_id: string, record: AgentRecord) => {
+        record.status = "completed";
+        record.session = sessionFixture("child-unsettled", () => events.push("dispose:unsettled"));
+        record.promise = new Promise(() => {});
+      },
+    });
+    // SAFETY: The patched startAgent above never observes the placeholder host objects.
+    const unsettledId = manager.spawn({} as never, {} as never, "general-purpose", "pending", {
+      description: "pending",
+      isBackground: false,
+    });
+    assert.equal(manager.disposeSettledRecord(unsettledId), false);
+    assert.equal(manager.disposeSettledRecord("missing"), false);
+    assert.deepEqual(events, ["codex:child-settled", "dispose:settled"]);
+  } finally {
+    manager.dispose();
+    restoreCodex();
+  }
+});
 
 test("cleanup bridge ignores missing and malformed registries", () => {
   const restoreShell = setShellManager(undefined);
