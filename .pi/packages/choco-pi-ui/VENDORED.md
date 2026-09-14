@@ -149,6 +149,14 @@ changes, while minute-only clocks no longer re-render the transcript each second
 The built-in tool label tables include the host's `advisor` tool, allowing the
 existing generic semantic call and result renderers to decorate it.
 
+### choco-pi change: shared model preference picker
+
+`extensions/zentui/model-picker.ts` supplies an in-place searchable model submenu
+using public pi-tui `Input` and `SelectList` components and the host's theme colors.
+It sorts and deduplicates full `provider/id` values, preselects the configured
+model case-insensitively, and cancels without writing when no models are available.
+Session naming, web search, and advisor preferences share this selector.
+
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
 
 - Original source code: <https://github.com/maddeye/pi-nord>

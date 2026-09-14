@@ -17,6 +17,8 @@ Read `advisor.json` from the agent directory, then overlay `.pi/advisor.json` in
 project. Preferences writes go only to the global file, so project settings still
 take precedence. Unknown keys are ignored. Invalid layers use defaults and warn in
 interactive sessions.
+The picker lists registry models scoped by Pi's `enabledModels` (project over global)
+when set, otherwise the whole registry. The configured model always appears in the in-place searchable `provider/id` selector.
 Consults are skipped when the advisor model equals the session model with the message
 `advisor is disabled for this session: the advisor model (<provider>/<id>) is the same as the session model; pick a different advisor model in /preferences`.
 

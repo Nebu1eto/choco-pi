@@ -11,6 +11,7 @@ import { isSameModel, sameModelDisabledMessage } from "../src/model-gate.ts";
 import {
   buildAdvisorPreferencesSection,
   drainWriteQueueForTests,
+  listAdvisorModelChoices,
 } from "../src/preferences-section.ts";
 import {
   DEFAULT_SETTINGS,
@@ -227,6 +228,50 @@ test("same-model skips do not consume the per-turn cap", () => {
   assert.equal(countAdvisorCallsThisTurn([user("question"), result("advisor", message)]), 0);
 });
 
+test("unscoped advisor model choices include the full registry in stable order", () => {
+  assert.deepEqual(
+    listAdvisorModelChoices(
+      [
+        { provider: "zeta", id: "second" },
+        { provider: "alpha", id: "second" },
+        { provider: "alpha", id: "first" },
+        { provider: "alpha", id: "first" },
+      ],
+      "alpha/first",
+    ),
+    ["alpha/first", "alpha/second", "zeta/second"],
+  );
+});
+
+test("scoped advisor model choices keep only allowed case-insensitive model keys", () => {
+  assert.deepEqual(
+    listAdvisorModelChoices(
+      [
+        { provider: "zeta", id: "second" },
+        { provider: "Alpha", id: "First" },
+        { provider: "alpha", id: "third" },
+      ],
+      "Alpha/First",
+      new Set(["alpha/first"]),
+    ),
+    ["Alpha/First"],
+  );
+});
+
+test("advisor model choices preserve the current model outside scope", () => {
+  assert.deepEqual(
+    listAdvisorModelChoices(
+      [
+        { provider: "alpha", id: "first" },
+        { provider: "beta", id: "second" },
+      ],
+      "custom/current",
+      new Set(["alpha/first"]),
+    ),
+    ["custom/current", "alpha/first"],
+  );
+});
+
 test("prompt cache prefix is stable and question is last", () => {
   const excerpt = buildAdvisorExcerpt([user("live turn")]);
   const first = buildAdvisorPrompt(excerpt, "context", "First question?");
@@ -255,8 +300,24 @@ test("preferences expose four rows and serialize global writes", async () => {
       ["off", DEFAULT_SETTINGS.model, "low", "0"],
     );
     assert.ok(rows[3]?.submenu);
+    const modelRow = rows.find((row) => row.id === "advisor.model");
+    assert.ok(modelRow?.submenu);
+    assert.equal(modelRow.values, undefined);
+    assert.equal(modelRow.currentValue, DEFAULT_SETTINGS.model);
     section.handleChange("advisor.enabled", "on");
-    section.handleChange("advisor.model", "p/m");
+    let modelChanges = 0;
+    const picker = modelRow.submenu(modelRow.currentValue, (value) => {
+      if (value === undefined) return;
+      modelChanges += 1;
+      section.handleChange(modelRow.id, value);
+    });
+    picker.handleInput?.("p/");
+    picker.handleInput?.("\r");
+    assert.equal(modelChanges, 1);
+    assert.equal(
+      section.buildItems().find((row) => row.id === "advisor.model")?.currentValue,
+      "p/m",
+    );
     section.handleChange("advisor.effort", "max");
     section.handleChange("advisor.maxUses", "4");
     await drainWriteQueueForTests();

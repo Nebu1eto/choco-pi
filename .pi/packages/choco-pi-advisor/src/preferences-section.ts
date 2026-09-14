@@ -1,5 +1,11 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Input, type SettingItem } from "@earendil-works/pi-tui";
+import { modelPickerSubmenu } from "../../choco-pi-ui/extensions/zentui/model-picker.ts";
+import {
+  isModelInScope,
+  readEnabledModels,
+  resolveEnabledModels,
+} from "../../choco-pi-subagents/src/enabled-models.ts";
 import {
   DEFAULT_SETTINGS,
   EFFORTS,
@@ -32,9 +38,31 @@ interface SettingDefinition {
   label: string;
   description: string;
   currentValue: (settings: AdvisorSettings) => string;
-  values: (models: string[]) => string[] | undefined;
+  values: () => string[] | undefined;
   apply: (value: string) => Partial<AdvisorSettings> | undefined;
 }
+
+interface AdvisorModelChoice {
+  provider: string;
+  id: string;
+}
+
+export function listAdvisorModelChoices(
+  all: readonly AdvisorModelChoice[],
+  current: string,
+  allowed?: Set<string>,
+): string[] {
+  const candidates = [...all]
+    .sort((left, right) =>
+      left.provider === right.provider
+        ? left.id.localeCompare(right.id)
+        : left.provider.localeCompare(right.provider),
+    )
+    .filter((model) => allowed === undefined || isModelInScope(model, allowed))
+    .map((model) => `${model.provider}/${model.id}`);
+  return [...new Set([current, ...candidates])];
+}
+
 const definitions: SettingDefinition[] = [
   {
     id: "enabled",
@@ -49,7 +77,7 @@ const definitions: SettingDefinition[] = [
     label: "Advisor model",
     description: "Provider/model used for fresh advisor leaves.",
     currentValue: (settings) => settings.model,
-    values: (models) => models,
+    values: () => undefined,
     apply: (value) => (value.trim() ? { model: value.trim() } : undefined),
   },
   {
@@ -112,10 +140,21 @@ export function buildAdvisorPreferencesSection(
           label: definition.label,
           description: definition.description,
           currentValue: definition.currentValue(settings),
-          values: definition.values(options.models),
+          values: definition.values(),
         };
-        if (definition.id === "model")
-          item.values = [...new Set([settings.model, ...options.models])];
+        if (definition.id === "model") {
+          item.submenu = (current, done) =>
+            modelPickerSubmenu({
+              choices: [settings.model, ...options.models].map((value) => {
+                const separator = value.indexOf("/");
+                return { provider: value.slice(0, separator), id: value.slice(separator + 1) };
+              }),
+              // Let the host's change handler retain ownership of the serialized write queue.
+              onPick: done,
+            })(current, (value) => {
+              if (value === undefined) done();
+            });
+        }
         if (definition.id === "maxUses") {
           item.submenu = (current, done) => {
             const input = new Input({ prompt: "Max uses (0 = unlimited): " });
@@ -173,9 +212,9 @@ export function registerAdvisorPreferencesProvider(
       surfaceAdvisorWriteError(ctx);
       const settings = settingsByCwd.get(ctx.cwd) ?? { ...DEFAULT_SETTINGS };
       settingsByCwd.set(ctx.cwd, settings);
-      const models = (ctx.modelRegistry.getAvailable?.() ?? ctx.modelRegistry.getAll()).map(
-        (model) => `${model.provider}/${model.id}`,
-      );
+      const patterns = readEnabledModels(ctx.cwd);
+      const allowed = resolveEnabledModels(patterns, ctx.modelRegistry, ctx.cwd);
+      const models = listAdvisorModelChoices(ctx.modelRegistry.getAll(), settings.model, allowed);
       return [buildAdvisorPreferencesSection({ agentDir, settings, models, ctx, isActive })];
     },
   };
