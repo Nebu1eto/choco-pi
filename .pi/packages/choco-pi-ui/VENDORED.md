@@ -144,6 +144,11 @@ time and duration labels with their last rendered values before requesting a
 host refresh. Seconds-precision formats still update whenever their label
 changes, while minute-only clocks no longer re-render the transcript each second.
 
+### choco-pi change: advisor tool label
+
+The built-in tool label tables include the host's `advisor` tool, allowing the
+existing generic semantic call and result renderers to decorate it.
+
 ## 2. Themes — vendored copy of `@maddeye/pi-nord`
 
 - Original source code: <https://github.com/maddeye/pi-nord>
