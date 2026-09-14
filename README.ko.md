@@ -8,15 +8,23 @@ OAuth 토큰, API 키, 컴퓨터별 로컬 설정은 Git 밖에 보관하세요.
 
 ## 요구 사항
 
-- Pi `>=0.84.2 <0.85`
 - Node.js 24 이상
+- pnpm `11.11.0` 정확히 해당 버전
+- Pi `0.85.1` (이 체크아웃이 고정한 SDK 패키지와 동일한 버전)
 - Git
 - 선택 사항: 브라우저 자동화를 위한 [`agent-browser`](https://github.com/vercel-labs/agent-browser) 0.34.0
 
 ## 빠른 시작
 
 ```sh
+git clone https://github.com/Nebu1eto/choco-pi.git
 cd choco-pi
+
+npm install --global pnpm@11.11.0
+npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
+
+pnpm install --frozen-lockfile --ignore-scripts
+npm run install:vendored
 npm run install:profile
 pi
 ```
@@ -39,15 +47,17 @@ Pi는 인증 정보를 저장소 밖에 보관합니다. 인증 정보가 담긴
 
 ## 기능
 
-| 영역            | 용도                                                        |
-| --------------- | ----------------------------------------------------------- |
-| 정책            | 공통 운용 규칙과 루트 및 경로별 `AGENTS.md` 지침            |
-| 작업 절차       | 직접 구현, 병렬 구현, 동적 분해, 리뷰, 점검, 커밋 절차      |
-| 에이전트        | 설정 가능한 계획, 구현, 탐색, 리뷰, 인계 역할               |
-| 세션과 goal     | 독립 대화와 compaction 후에도 유지되는 지속형 goal          |
-| 코드 인텔리전스 | LSP 탐색, 시맨틱 인덱싱, AST 검색, 진단, Code Mode          |
-| 연동            | MCP, 웹 조사, 브라우저 자동화, macOS 조작, Claude 호환 훅   |
-| 인터페이스      | Nord TUI, 컨텍스트와 사용량 화면, 환경 설정, Mermaid 렌더링 |
+| 영역            | 용도                                                                               |
+| --------------- | ---------------------------------------------------------------------------------- |
+| 정책            | 공통 운용 규칙과 루트 및 경로별 `AGENTS.md` 지침                                   |
+| 작업 절차       | 직접 구현, 병렬 구현, 동적 분해, 리뷰, 점검, 커밋 절차                             |
+| 에이전트        | 설정 가능한 전문 역할과 독립 문맥의 읽기 전용 advisor 자문                         |
+| 세션과 goal     | 독립 대화와 compaction 후에도 유지되는 지속형 goal                                 |
+| 코드 인텔리전스 | LSP 탐색, 시맨틱 인덱싱, AST 검색, 진단, Code Mode                                 |
+| 연동            | MCP, 웹 조사, 브라우저 자동화, macOS 조작, Claude 호환 훅                          |
+| 인터페이스      | Nord TUI, 통합 서브 에이전트·셸 fleet 패널, 컨텍스트와 사용량 화면, Mermaid 렌더링 |
+
+동기식 `advisor` 도구는 루트 또는 하위 에이전트에 현재 세션의 제한된 발췌문과 설정된 고성능 모델을 사용한 새로운 읽기 전용 자문을 제공합니다. 기본값은 비활성이며 advisor 모델과 세션 모델이 같으면 자문을 건너뜁니다. `/preferences`의 Agent → Advisor Agent에서 `enabled`, `model`, `effort`, `maxUses`를 설정할 수 있습니다.
 
 Pi의 내장 `grep` 도구는 비활성화되어 있습니다. 소스 탐색은 LSP와 Code Mode 절차를 따릅니다: `symbol_search`, `module_report`, 필요한 심벌만 읽기, 코드 탐색, AST 검색.
 
@@ -56,7 +66,7 @@ Pi의 내장 `grep` 도구는 비활성화되어 있습니다. 소스 탐색은 
 | 명령                        | 용도                                                        |
 | --------------------------- | ----------------------------------------------------------- |
 | `/status`                   | 세션, 모델, 공급자, 컨텍스트, 불러온 프로필 상태 표시       |
-| `/preferences`              | 에이전트 언어, 응답 스타일, 인터페이스 환경 설정            |
+| `/preferences`              | 에이전트, advisor, 언어, 응답 스타일, 인터페이스 설정       |
 | `/context all`              | 프롬프트, 도구, MCP, 에이전트, 파일, 스킬, 토큰 사용량 확인 |
 | `/usage`                    | 지원하는 공급자의 사용량과 초기화 정보 표시                 |
 | `/check`                    | 설치된 프로필과 필수 리소스 검증                            |
@@ -73,7 +83,7 @@ Pi의 내장 `grep` 도구는 비활성화되어 있습니다. 소스 탐색은 
 
 ## 설치된 패키지
 
-[`.pi/settings.json`](.pi/settings.json)은 다음 로컬 패키지 13개를 불러옵니다.
+[`.pi/settings.json`](.pi/settings.json)은 다음 로컬 패키지 15개를 불러옵니다.
 
 | 패키지                                                                    |           버전 | 용도                                        |
 | ------------------------------------------------------------------------- | -------------: | ------------------------------------------- |
@@ -82,6 +92,8 @@ Pi의 내장 `grep` 도구는 비활성화되어 있습니다. 소스 탐색은 
 | [`choco-pi-shells`](.pi/packages/choco-pi-shells)                         |          0.1.0 | 소유자별 백그라운드 셸 프로세스             |
 | [`choco-pi-hooks`](.pi/packages/choco-pi-hooks)                           |          0.1.0 | Claude Code 호환 생명주기 훅                |
 | [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   |          0.1.0 | 서브 에이전트, 작업 절차, 세션, fleet UI    |
+| [`choco-pi-advisor`](.pi/packages/choco-pi-advisor)                       |          0.1.0 | 서브 에이전트를 통한 읽기 전용 advisor 자문 |
+| [`choco-pi-editor-context`](.pi/packages/choco-pi-editor-context)         |          0.1.0 | 에디터 컨텍스트 프로토콜, 저장, 주입        |
 | [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |          0.1.0 | Codex 형태의 지속형 goal                    |
 | [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | 지연 로딩 MCP 서버, Figma 도구, elicitation |
 | [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, 구조 분석, 시맨틱 도구           |
@@ -102,6 +114,7 @@ Pi의 내장 `grep` 도구는 비활성화되어 있습니다. 소스 탐색은 
 | [`context-cap.json`](.pi/extensions/context-cap.json)                                                                                         | 모델별 context cap과 compaction 임계값            |
 | [`apex-provider.json`](.pi/extensions/apex-provider.json)                                                                                     | Callstack Apex 공급자 탐색 기본값                 |
 | [`review.json`](.pi/extensions/review.json)                                                                                                   | 로컬 리뷰 인터페이스 설정                         |
+| 전역 `~/.pi/agent/advisor.json`과 프로젝트 재정의 `.pi/advisor.json`                                                                          | advisor 활성화, 모델, effort, 턴별 사용 한도      |
 | `~/.pi/agent/mcp.json`과 그 예시인 [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                             | 추적하지 않는 MCP 서버 및 OAuth 설정              |
 | 패키지별 [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md)와 [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) 파일 | 패키지 정책과 기록된 업스트림 변경 사항           |
 

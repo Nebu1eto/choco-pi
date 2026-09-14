@@ -92,37 +92,39 @@ Pi stores credentials outside the repository; do not copy credential files into 
 | ------------------ | -------------------------------------------------------------------------------------- |
 | Policy             | Shared operating rules plus root and path-scoped `AGENTS.md` instructions              |
 | Workflows          | Direct, parallel, dynamic, review, check, and commit procedures                        |
-| Agents             | Configurable planning, implementation, exploration, review, and handoff roles          |
+| Agents             | Configurable specialist roles plus fresh-context, read-only advisor consults           |
 | Sessions and goals | Independent conversations and persistent goals across compaction                       |
 | Code intelligence  | LSP navigation, semantic indexing, AST search, diagnostics, and Code Mode              |
 | Integrations       | MCP, web research, browser automation, macOS computer use, and Claude-compatible hooks |
-| Interface          | Nord TUI, context and usage views, preferences, and Mermaid rendering                  |
+| Interface          | Nord TUI, unified subagent and shell fleet panel, context and usage views, and Mermaid |
+
+The blocking `advisor` tool gives root or child agents a fresh, read-only second opinion from a configured higher-intelligence model using a bounded excerpt of the live session. It is disabled by default and skips consults when the advisor and session models match. Configure `enabled`, `model`, `effort`, and `maxUses` in `/preferences` under Agent → Advisor Agent.
 
 Pi's built-in `grep` tool is disabled. Source discovery follows the LSP and Code Mode path: `symbol_search`, `module_report`, targeted symbol reads, navigation, and AST search.
 
 ## Common commands
 
-| Command                     | Purpose                                                             |
-| --------------------------- | ------------------------------------------------------------------- |
-| `/status`                   | Show session, model, provider, context, and loaded profile state    |
-| `/preferences`              | Configure agent language, response style, and interface preferences |
-| `/context all`              | Inspect prompt, tools, MCP, agents, files, skills, and token use    |
-| `/usage`                    | Show supported provider usage and reset information                 |
-| `/check`                    | Validate the installed profile and required resources               |
-| `/task-inline <task>`       | Implement one ordinary change directly                              |
-| `/task <task>`              | Run independent implementation units in parallel                    |
-| `/task-dynamic <task>`      | Explicitly enable dynamically decomposed nested work                |
-| `/review [target]`          | Open the local human review interface                               |
-| `/review-agent [target]`    | Run a fresh, report-only adversarial review                         |
-| `/commit [guidance]`        | Create a verified local commit without pushing                      |
-| `/sessions`, `/session-new` | List project conversations or start an independent one              |
-| `/goal [objective]`         | Create, inspect, or manage a persistent goal                        |
-| `/hooks`                    | Inspect effective Claude-compatible hook configuration              |
-| `/mcp`                      | Inspect MCP configuration, authentication, and server state         |
+| Command                     | Purpose                                                                    |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `/status`                   | Show session, model, provider, context, and loaded profile state           |
+| `/preferences`              | Configure agent, advisor, language, response style, and interface settings |
+| `/context all`              | Inspect prompt, tools, MCP, agents, files, skills, and token use           |
+| `/usage`                    | Show supported provider usage and reset information                        |
+| `/check`                    | Validate the installed profile and required resources                      |
+| `/task-inline <task>`       | Implement one ordinary change directly                                     |
+| `/task <task>`              | Run independent implementation units in parallel                           |
+| `/task-dynamic <task>`      | Explicitly enable dynamically decomposed nested work                       |
+| `/review [target]`          | Open the local human review interface                                      |
+| `/review-agent [target]`    | Run a fresh, report-only adversarial review                                |
+| `/commit [guidance]`        | Create a verified local commit without pushing                             |
+| `/sessions`, `/session-new` | List project conversations or start an independent one                     |
+| `/goal [objective]`         | Create, inspect, or manage a persistent goal                               |
+| `/hooks`                    | Inspect effective Claude-compatible hook configuration                     |
+| `/mcp`                      | Inspect MCP configuration, authentication, and server state                |
 
 ## Installed packages
 
-[`.pi/settings.json`](.pi/settings.json) loads these 13 local packages.
+[`.pi/settings.json`](.pi/settings.json) loads these 15 local packages.
 
 | Package                                                                   |        Version | Purpose                                               |
 | ------------------------------------------------------------------------- | -------------: | ----------------------------------------------------- |
@@ -131,6 +133,8 @@ Pi's built-in `grep` tool is disabled. Source discovery follows the LSP and Code
 | [`choco-pi-shells`](.pi/packages/choco-pi-shells)                         |          0.1.0 | Owner-scoped background shell processes               |
 | [`choco-pi-hooks`](.pi/packages/choco-pi-hooks)                           |          0.1.0 | Claude Code-compatible lifecycle hooks                |
 | [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   |          0.1.0 | Sub-agents, workflows, sessions, and fleet UI         |
+| [`choco-pi-advisor`](.pi/packages/choco-pi-advisor)                       |          0.1.0 | Read-only advisor consults through sub-agents         |
+| [`choco-pi-editor-context`](.pi/packages/choco-pi-editor-context)         |          0.1.0 | Editor-context protocol, storage, and injection       |
 | [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |          0.1.0 | Persistent Codex-style goals                          |
 | [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | Lazy MCP servers, Figma tools, and elicitation        |
 | [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, structural analysis, and semantic tools    |
@@ -151,6 +155,7 @@ Pi's built-in `grep` tool is disabled. Source discovery follows the LSP and Code
 | [`context-cap.json`](.pi/extensions/context-cap.json)                                                                                           | Model-specific context caps and compaction thresholds         |
 | [`apex-provider.json`](.pi/extensions/apex-provider.json)                                                                                       | Callstack Apex provider discovery defaults                    |
 | [`review.json`](.pi/extensions/review.json)                                                                                                     | Local review interface configuration                          |
+| Global `~/.pi/agent/advisor.json` with project override `.pi/advisor.json`                                                                      | Advisor enablement, model, effort, and per-turn cap           |
 | `~/.pi/agent/mcp.json` from [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                                      | Untracked MCP server and OAuth configuration                  |
 | Package [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md) and [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) files | Package policy and recorded upstream differences              |
 
