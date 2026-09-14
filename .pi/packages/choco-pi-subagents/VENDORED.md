@@ -117,6 +117,10 @@ promise rejection is contained independently, so one missing, malformed, or
 failing extension does not suppress the other cleanup. Both record eviction and
 whole-manager disposal use the same seam.
 
+- 2026-09-14: Added `AgentManager.disposeSettledRecord` and exposed it on the
+  manager registry slot so choco-pi-advisor can dispose ephemeral consults
+  immediately after settlement without clearing unrelated records.
+
 ### Focused-subagent fullscreen mode
 
 Focused reasoning clicks now dispatch through `ConversationViewer`'s cached

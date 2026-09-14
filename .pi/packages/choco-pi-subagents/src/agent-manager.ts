@@ -1378,6 +1378,15 @@ export class AgentManager {
     return this.agents.get(id);
   }
 
+  /** Dispose one record only after its current generation has settled. */
+  disposeSettledRecord(id: string): boolean {
+    const record = this.agents.get(id);
+    if (!record || record.status === "running" || record.status === "queued") return false;
+    if (record.terminalResultGeneration !== record.resultGeneration) return false;
+    this.removeRecord(id, record);
+    return true;
+  }
+
   /** Handles and aliases already in use across the live tree. */
   private takenHandles(parentAgentId: string | undefined, aliasOwner?: AgentRecord): Set<string> {
     const taken = new Set<string>();

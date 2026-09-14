@@ -842,6 +842,7 @@ export default function (pi: ExtensionAPI) {
       const record = manager.getRecord(id);
       return record?.parentAgentId ? undefined : record;
     },
+    disposeSettledRecord: (id: string) => manager.disposeSettledRecord(id),
   };
   interface GlobalManagerRegistry {
     [key: symbol]: typeof registryEntry | undefined;
