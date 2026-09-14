@@ -77,6 +77,9 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
   "get_goal",
   "create_goal",
   "update_goal",
+  // Deferred tools shrink to a bare name in listings, but advisor's when-to-call
+  // guidance lives in its description, so keep it fully documented here.
+  "advisor",
   // Research tools travel together: a search is followed by fetching and
   // checking what it returned, so deferring any of them costs a rewrite in the
   // middle of one lookup.

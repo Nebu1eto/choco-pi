@@ -5,6 +5,7 @@
     "./packages/choco-pi-shells",
     "./packages/choco-pi-hooks",
     "./packages/choco-pi-subagents",
+    "./packages/choco-pi-advisor",
     "./packages/choco-pi-goal",
     "./packages/choco-pi-mcp",
     "./packages/choco-pi-lsp",

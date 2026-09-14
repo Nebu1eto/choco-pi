@@ -25,6 +25,8 @@ Require the plan to carry a `mermaid` flowchart of the units, their dependencies
 
 Select each role from the unit's work before considering a model or reasoning override; an override must never replace a specialized role with `general`. The role file's `default_model` and `default_thinking` apply when the spawn omits those fields. Pass an override only for a reason allowed by `.pi/model-guidance.md`, and record that reason. Present the plan only when it contains a material user decision.
 
+When the advisor tool is enabled, the orchestrator may consult it before presenting a complex plan and before final acceptance; advisor output is advice, not evidence.
+
 ### Delegation packet
 
 Write every fresh child's prompt as a self-contained briefing for a capable colleague with no access to the parent conversation. Include:
