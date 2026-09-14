@@ -1,5 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
+import { modelPickerSubmenu } from "./model-picker.ts";
 import {
   AGENT_LANGUAGE_CUSTOM_OUTCOME,
   AGENT_LANGUAGE_KEY,
@@ -109,6 +110,7 @@ function writeSessionAutoName(ctx: ExtensionCommandContext, enabled: boolean): v
 
 function writeSessionAutoNameModel(ctx: ExtensionCommandContext, model: string): void {
   try {
+    if (readAgentPreferences().sessionAutoNameModel === model) return;
     writeAgentPreference(SESSION_AUTO_NAME_MODEL_KEY, model);
     ctx.ui.notify(`Session naming model: ${model}`, "info");
   } catch (error) {
@@ -212,7 +214,13 @@ export function buildAgentPreferencesSection(
           label: "Session naming model",
           description: `Low-latency model used without reasoning. If unavailable or unsuccessful, ${SESSION_AUTO_NAME_FALLBACK_MODEL} is tried once.`,
           currentValue: namingModel,
-          values: namingModelValues(ctx, namingModel),
+          submenu: modelPickerSubmenu({
+            choices: namingModelValues(ctx, namingModel).map((value) => {
+              const separator = value.indexOf("/");
+              return { provider: value.slice(0, separator), id: value.slice(separator + 1) };
+            }),
+            onPick: (value) => writeSessionAutoNameModel(ctx, value),
+          }),
         },
       ];
     },

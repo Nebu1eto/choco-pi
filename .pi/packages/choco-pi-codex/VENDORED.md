@@ -77,6 +77,14 @@ configs keep loading without errors; the features those keys configured no
 longer exist, so the values have no effect. Settings-screen writes may re-emit
 those keys with defaults; that is harmless.
 
+## Web-search model preference (choco-pi addition)
+
+`src/ui/settings/config-items-tools.ts` uses choco-pi-ui's public SelectList-based
+model submenu instead of cycling values. The row displays full
+`openai-codex/<id>` values while its existing config-update path strips the
+provider and validates the stored bare id with the unchanged
+`normalizeWebSearchModel`. Choices remain the static Codex-only model list.
+
 ## Native binaries
 
 The fork vendors darwin-arm64 Rust tool binaries (see "Bundled native

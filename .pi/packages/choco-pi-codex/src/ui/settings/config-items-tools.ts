@@ -1,4 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { modelPickerSubmenu } from "../../../../choco-pi-ui/extensions/zentui/model-picker.ts";
 import {
   type CodexConversionConfig,
   DEFAULT_CODEX_CONVERSION_CONFIG,
@@ -31,15 +32,23 @@ export function buildToolsSettings(
       {
         id: "webSearchModel",
         label: "Web search model",
-        currentValue: config.openai.webSearchModel,
-        values: [...WEB_SEARCH_MODELS],
+        currentValue: `openai-codex/${config.openai.webSearchModel}`,
+        submenu: (current, done) =>
+          modelPickerSubmenu({
+            choices: WEB_SEARCH_MODELS.map((id) => ({ provider: "openai-codex", id })),
+            // The host's done callback applies the ConfigSetting update and persists it.
+            onPick: done,
+          })(current, (value) => {
+            if (value === undefined) done();
+          }),
       },
       (value, current) => ({
         ...current,
         openai: {
           ...current.openai,
           webSearchModel:
-            normalizeWebSearchModel(value) ?? DEFAULT_CODEX_CONVERSION_CONFIG.openai.webSearchModel,
+            normalizeWebSearchModel(value.replace(/^openai-codex\//, "")) ??
+            DEFAULT_CODEX_CONVERSION_CONFIG.openai.webSearchModel,
         },
       }),
     ),
