@@ -35,6 +35,11 @@ ${CODE_MODE_DIRECT_EXCEPTIONS}. Discover an unfamiliar tool by selecting its ent
 Use only capabilities actually listed here. Filesystem reads must use an available filesystem-capable tool or a direct read outside code mode; UI tools require UI references/state and never accept filesystem paths as a substitute.
 Do not repeat successful writes blindly. For long-running work, start a managed shell/process or retain an exec_command session handle; do not keep a cell alive solely to wait or poll.`;
 
+function buildCapabilityGuidance(tools: CodeModeToolDefinition[]): string {
+  if (!tools.some((tool) => tool.name === "read_text")) return CODE_MODE_ROUTING_GUIDANCE;
+  return `${CODE_MODE_ROUTING_GUIDANCE}\nread_text reads observed UI text by reference; it is not a filesystem reader. Read files with an available exec_command or a direct read outside code mode, as capabilities permit.`;
+}
+
 const READ_ONLY_EXAMPLES = new Map<string, string>([
   ["module_report", 'tools.module_report({path: "src/example.ts", view: "summary"})'],
   ["symbol_search", 'tools.symbol_search({query: "target symbol", limit: 5})'],
@@ -129,7 +134,7 @@ export function buildCodeModeToolsPrompt(
   const bridgedLine = buildBridgedToolsLine(tools);
   const sections = [
     buildUsageSection(BUNDLED_TOOLS_HEADING, bundled, true),
-    [CODE_MODE_ROUTING_GUIDANCE, buildCapabilityExample(tools)].filter(Boolean).join("\n"),
+    [buildCapabilityGuidance(tools), buildCapabilityExample(tools)].filter(Boolean).join("\n"),
     bridgedLine || undefined,
     buildUsageSection(CUSTOM_TOOLS_HEADING, promotedCustom),
     custom.some((tool) => tool.deferLoading) ? DEFERRED_CUSTOM_TOOLS_GUIDANCE : undefined,

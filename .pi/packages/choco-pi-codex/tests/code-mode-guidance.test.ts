@@ -112,6 +112,24 @@ test("production injection refreshes its owned block when child permissions chan
   assert.equal(child.match(new RegExp(prose, "g"))?.length, 1);
 });
 
+test("production guidance distinguishes UI read_text from filesystem reads when exposed", () => {
+  const withoutReadText = injectCodeModeToolsPrompt("BASE", [tool("exec_command")]);
+  const withReadText = injectCodeModeToolsPrompt(withoutReadText, [
+    tool("exec_command"),
+    tool("read_text", true),
+  ]);
+  const repeated = injectCodeModeToolsPrompt(withReadText, [
+    tool("exec_command"),
+    tool("read_text", true),
+  ]);
+
+  assert.doesNotMatch(withoutReadText, /read_text reads observed UI text/);
+  assert.match(withReadText, /read_text reads observed UI text by reference/);
+  assert.match(withReadText, /it is not a filesystem reader/);
+  assert.match(withReadText, /Read files with an available exec_command or a direct read/);
+  assert.equal(repeated, withReadText);
+});
+
 test("an old composition marker in unrelated prose cannot freeze generated routing", () => {
   const prompt = injectCodeModeToolsPrompt(
     "BASE\nLegacy note: one exec block per coherent step, not one wrapper per call",
