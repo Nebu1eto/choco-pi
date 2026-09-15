@@ -71,7 +71,7 @@ export class CodeModeHostClient {
         request: {
           tool_call_id: `exec-${id}`,
           enabled_tools: tools.map(toWireToolDefinition),
-          source: scopeAllToolsToDeferredCustom(code, tools),
+          source: scopeAllToolsToDeferredCustom(code, tools, context.extensionContext),
           yield_time_ms: effectiveYieldTimeMs,
           max_output_tokens: maxOutputTokens,
         },

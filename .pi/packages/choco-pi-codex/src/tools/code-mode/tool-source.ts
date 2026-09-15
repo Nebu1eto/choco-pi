@@ -1,10 +1,12 @@
-import { registeredToolNames } from "./registered-tool-bridge.ts";
+import { registeredToolNames, registeredToolRunner } from "./registered-tool-bridge.ts";
 import { unavailableToolsGuardPreamble } from "./tools-namespace.ts";
 import type { CodeModeToolDefinition } from "./types.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export function scopeAllToolsToDeferredCustom(
   source: string,
   tools: CodeModeToolDefinition[],
+  ctx?: ExtensionContext,
 ): string {
   // Deferred tools are the ones kept out of the prompt, so ALL_TOOLS is how a
   // script discovers them: configured custom tools and the bridged Pi tools
@@ -12,7 +14,7 @@ export function scopeAllToolsToDeferredCustom(
   const deferredNames = tools.filter((tool) => tool.deferLoading).map((tool) => tool.name);
   const namespaceGuard = unavailableToolsGuardPreamble(
     tools.map((tool) => tool.name),
-    registeredToolNames(),
+    registeredToolNames(registeredToolRunner(ctx)),
   );
   return `globalThis.ALL_TOOLS=globalThis.ALL_TOOLS.filter(({name})=>${JSON.stringify(deferredNames)}.includes(name));${namespaceGuard}${source}`;
 }
