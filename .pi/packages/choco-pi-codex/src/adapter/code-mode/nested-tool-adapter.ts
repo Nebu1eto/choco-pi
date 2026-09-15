@@ -1,6 +1,7 @@
 import { conditionalProperties } from "../runtime-values.ts";
 import { isBoundaryValue, JsonObjectSchema, type BoundaryValue } from "../runtime-values.ts";
 import { Value } from "typebox/value";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import type {
   AgentToolResult,
   ExtensionContext,
@@ -9,6 +10,13 @@ import type {
 import { Type, type TSchema } from "typebox";
 
 const WebRunDetailsSchema = Type.Object({ webRun: Type.Unknown() });
+
+/** Pi's native validator appends the raw payload after this marker; code mode never surfaces it. */
+const RECEIVED_ARGUMENTS_MARKER = "\n\nReceived arguments:\n";
+const VALIDATION_FAILURE_PREFIX = 'Validation failed for tool "';
+const MAX_REPORTED_ISSUES = 3;
+const MAX_ISSUE_LENGTH = 160;
+
 import type {
   ProgrammaticCodeModeToolDefinition,
   CodeModeToolIdentity,
@@ -82,11 +90,12 @@ export function toNestedTool<TParams extends TSchema, TDetails, TState>(
         parsedInput === undefined && Value.Check(tool.parameters, {}) ? {} : parsedInput;
       const toolInput = prepareInput(schemaInput);
       const prepared = tool.prepareArguments ? tool.prepareArguments(toolInput) : toolInput;
-      if (!Value.Check(tool.parameters, prepared)) {
-        const issues = [...Value.Errors(tool.parameters, prepared)]
-          .slice(0, 3)
-          .map((issue) => issue.message)
-          .join("; ");
+      const validation = validateBridgedArguments(
+        tool,
+        isBoundaryValue(prepared) ? prepared : undefined,
+      );
+      if (!validation.ok) {
+        const issues = validation.issues;
         const hint =
           tool.name === "read_text"
             ? " read_text accepts UI refs, not filesystem paths; use an available filesystem reader for files."
@@ -95,16 +104,16 @@ export function toNestedTool<TParams extends TSchema, TDetails, TState>(
           `Code mode tool error [invalid_arguments]: ${tool.name} prepared input does not match its registered schema${issues ? ` (${issues})` : ""}.${hint}`,
         );
       }
+      const validated = validation.value;
       if (signal.aborted) throw new Error(`${tool.name} aborted`);
       const toolCallId = context.toolCallId ?? `code-mode-${tool.name}`;
-      const lifecycleInput = isBoundaryValue(prepared) ? prepared : undefined;
+      const lifecycleInput = isBoundaryValue(validated) ? validated : undefined;
       lifecycle.start?.(toolCallId, lifecycleInput);
       context.refreshTrace?.();
       try {
         const result = await tool.execute(
           toolCallId,
-          // SAFETY: tool.prepareArguments produced the argument for this same tool definition and parameter schema.
-          prepared as never,
+          validated,
           signal,
           (update) => forwardUpdate(update, context),
           extensionContext,
@@ -118,6 +127,97 @@ export function toNestedTool<TParams extends TSchema, TDetails, TState>(
       }
     },
   };
+}
+
+/** Prepared code-mode payloads crossing the bridge before schema validation. */
+type BridgeCandidate = BoundaryValue | undefined;
+
+/** The executor's own parameter type, which tracks the SDK's bundled typebox build. */
+type ExecuteParams<TParams extends TSchema, TDetails, TState> = Parameters<
+  ToolDefinition<TParams, TDetails, TState>["execute"]
+>[1];
+
+type BridgedArguments<TParams extends TSchema, TDetails, TState> =
+  | { ok: true; value: ExecuteParams<TParams, TDetails, TState> }
+  | { ok: false; issues: string };
+
+/**
+ * Schema guard for the executor parameter type.
+ *
+ * SAFETY: the predicate is decided by a real schema check against the tool's own
+ * parameters; the declared type only reconciles the structurally identical
+ * `Static` instantiations of the host and SDK typebox builds.
+ */
+function matchesToolParameters<TParams extends TSchema, TDetails, TState>(
+  tool: ToolDefinition<TParams, TDetails, TState>,
+  value: BridgeCandidate,
+): value is ExecuteParams<TParams, TDetails, TState> {
+  return Value.Check(tool.parameters, value);
+}
+
+/**
+ * Validate prepared code-mode arguments exactly as Pi validates a native tool call.
+ *
+ * Object payloads go through the SDK's public validator, so optional-null removal,
+ * scalar conversion, and the cloned argument object match a directly registered tool.
+ * Non-object payloads keep their previous bare schema check, which preserves freeform
+ * inputs and explicit top-level null rejection for object-only schemas. A native failure
+ * that is not a validation rejection propagates unchanged, as it would for a directly
+ * registered tool call, and never reaches the executor.
+ */
+function validateBridgedArguments<TParams extends TSchema, TDetails, TState>(
+  tool: ToolDefinition<TParams, TDetails, TState>,
+  prepared: BridgeCandidate,
+): BridgedArguments<TParams, TDetails, TState> {
+  if (Value.Check(JsonObjectSchema, prepared)) {
+    try {
+      const normalized: unknown = validateToolArguments(
+        { name: tool.name, description: tool.description, parameters: tool.parameters },
+        { type: "toolCall", id: `code-mode-${tool.name}`, name: tool.name, arguments: prepared },
+      );
+      const validated: BridgeCandidate = isBoundaryValue(normalized) ? normalized : undefined;
+      if (matchesToolParameters(tool, validated)) return { ok: true, value: validated };
+      return { ok: false, issues: describeSchemaIssues(tool.parameters, validated) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.startsWith(VALIDATION_FAILURE_PREFIX))
+        return { ok: false, issues: describeNativeIssues(message) };
+      // Not a validation rejection: propagate it instead of executing on unvalidated input.
+      throw error;
+    }
+  }
+  if (matchesToolParameters(tool, prepared)) return { ok: true, value: prepared };
+  return { ok: false, issues: describeSchemaIssues(tool.parameters, prepared) };
+}
+
+function boundIssue(issue: string): string {
+  const flattened = issue.replace(/\s+/g, " ").trim();
+  return flattened.length > MAX_ISSUE_LENGTH
+    ? `${flattened.slice(0, MAX_ISSUE_LENGTH)}…`
+    : flattened;
+}
+
+/** Schema issues name their instance path and never repeat the rejected value. */
+function describeSchemaIssues(schema: TSchema, value: BridgeCandidate): string {
+  return [...Value.Errors(schema, value)]
+    .slice(0, MAX_REPORTED_ISSUES)
+    .map((issue) => {
+      const path = issue.instancePath.replace(/^\//, "").replace(/\//g, ".");
+      return boundIssue(`${path || "root"}: ${issue.message}`);
+    })
+    .join("; ");
+}
+
+/** Keep the native validator's path-qualified bullets and drop its raw-arguments suffix. */
+function describeNativeIssues(message: string): string {
+  const [head = ""] = message.split(RECEIVED_ARGUMENTS_MARKER);
+  const issues: string[] = [];
+  for (const line of head.split("\n")) {
+    if (issues.length >= MAX_REPORTED_ISSUES) break;
+    const issue = /^ {2}- (.+)$/.exec(line)?.[1];
+    if (issue !== undefined) issues.push(boundIssue(issue));
+  }
+  return issues.join("; ");
 }
 
 export function codeModeImageResult<TDetails>(

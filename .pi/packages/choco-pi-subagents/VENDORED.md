@@ -308,10 +308,11 @@ on collisions, and uses the bare `alias ?? handle` as its agent-message identity
 Root and every child session receive `agent_message`, including isolated,
 read-only and depth-capped leaves; recipients resolve across the whole tree by
 alias, handle or id. Legacy `/root/...` input remains accepted by its final
-segment. `/root` reuses the completion-notification follow-up path:
-`pi.sendMessage(..., { deliverAs: "followUp", triggerTurn: true })`.
-Running sessions receive messages immediately, pre-session records reuse
-`pendingSteers`, and settled records reject delivery.
+segment. `/root` reuses the completion-notification delivery path with steering:
+`pi.sendMessage(..., { deliverAs: "steer", triggerTurn: true })`, which the SDK
+hands to the root agent's steering queue while it streams and to a single new
+turn while it is idle. Running sessions receive messages immediately,
+pre-session records reuse `pendingSteers`, and settled records reject delivery.
 
 When a spawn has `name`, that globally unique alias becomes its preferred flat
 address and its fleet/widget label while the type-derived handle remains valid.
@@ -353,6 +354,28 @@ private queues unchanged.
 Recipient resolution no longer depends on parent lookup, so a nested record that
 outlives an evicted parent keeps its flat identity. Records without any identity
 are skipped, and missing callers return ordinary tool errors.
+
+Delivery reporting states what actually happened: a steered recipient (root or a
+live child session) emits `queued: false` and a "steered … next safe boundary"
+tool result, and only a recipient whose session does not exist yet emits
+`queued: true` with a "held … until its session starts" result. Before this fix
+the root branch hardcoded `queued: true`, so a genuinely steered worker message
+rendered as `… → /root [MESSAGE] (queued)`; the transport was already correct.
+The delivery body is the exported `deliverAgentMessage`, with the registered
+tool as a thin wrapper, and the tool's record/session contract is narrowed to
+`AgentMessageRecord`/`SteerableAgentSession` (the fields and the single `steer`
+call it actually uses) so tests state real contracts instead of placeholder
+casts. Because the recipient steer is the one suspension point, that helper
+snapshots the recipient id, result generation, and session before the await and
+rechecks the manager's current record identity, generation, session, published
+cancellation, and live classification afterwards; a retired, replaced, or
+cancelled recipient returns an explicit stale-delivery error without emitting
+`subagents:message`, touching UI, or retrying as a pre-session hold, while an
+unrelated steer failure still propagates its own message. The opt-in
+coordination host probe now also traces the production
+`subagents:message` event through the production parser and its checker requires
+`queued: false` on the root route, ordered after the real send and before the
+terminal notification.
 
 The fork also exposes a pure compact event formatter (`✉ from → to [TYPE]`,
 with `(queued)` when applicable) in `ui/notification-render.ts`. It is separate

@@ -133,17 +133,32 @@ test("renders compact agent_message routes and queued delivery", () => {
     },
   );
   assert.equal(parseSubagentMessageNotification({ from: "planner" }), undefined);
+  // A steered root message must not claim to be queued: the screenshot route
+  // that motivated this case rendered "(queued)" for an envelope the root
+  // session's steering queue had already accepted.
+  assert.equal(
+    renderAgentMessageNotification(
+      {
+        from: "implementer-compiler-guard",
+        to: "/root",
+        type: "MESSAGE",
+        queued: false,
+      },
+      theme,
+    ),
+    "✉ implementer-compiler-guard → /root [MESSAGE]",
+  );
   assert.equal(
     renderAgentMessageNotification(
       {
         from: "reviewer-code",
-        to: "/root",
+        to: "scout-2",
         type: "MESSAGE",
         queued: true,
       },
       theme,
     ),
-    "✉ reviewer-code → /root [MESSAGE] (queued)",
+    "✉ reviewer-code → scout-2 [MESSAGE] (queued)",
   );
 });
 

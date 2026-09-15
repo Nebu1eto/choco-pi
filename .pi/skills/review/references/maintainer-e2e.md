@@ -127,8 +127,28 @@ node .pi/packages/choco-pi-subagents/tests/fixtures/coordination-host-check.ts \
   "$scratch/coordination-astra-trace.jsonl" "$scratch/coordination-astra-sessions"
 ```
 
+For a native Sol root against the same controlled child, reuse that prompt with
+the Sol model. Only the root session costs a model call; the child stays on the
+local fixture provider:
+
+```bash
+scratch="${TASKSCRATCH:?TASKSCRATCH must be an approved task-scratch directory}"
+mkdir -p "$scratch/coordination-sol-sessions"
+CHOCO_PI_COORDINATION_TRACE="$scratch/coordination-sol-trace.jsonl" \
+  pi -p -ne \
+  -e .pi/packages/choco-pi-subagents/tests/fixtures/coordination-host-probe.ts \
+  --provider openai-codex --model gpt-5.6-sol \
+  --session-dir "$scratch/coordination-sol-sessions" "$prompt"
+node .pi/packages/choco-pi-subagents/tests/fixtures/coordination-host-check.ts \
+  "$scratch/coordination-sol-trace.jsonl" "$scratch/coordination-sol-sessions"
+```
+
 Record the Pi and checker exit statuses separately. The checker parses the
-structured trace and persisted session JSONL. It binds the child ID and result
+structured trace and persisted session JSONL. It also requires exactly one
+production `subagents:message` event for the `/root` route, emitted after the
+actual send, carrying the child identity with `queued: false`, and ordered
+before the child's terminal notification send — the delivery-report contract the
+TUI route notice renders. It binds the child ID and result
 generation across both `steer`/`triggerTurn` sends, requires the coordination
 envelope in parent context immediately after the first barrier, requires the
 terminal notice immediately after the settlement barrier, rejects any first

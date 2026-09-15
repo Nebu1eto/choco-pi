@@ -18,6 +18,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import subagentsExtension from "../../src/index.ts";
+import { parseSubagentMessageNotification } from "../../src/ui/notification-render.ts";
 
 const TRACE_PATH = process.env.CHOCO_PI_COORDINATION_TRACE;
 if (!TRACE_PATH) {
@@ -271,7 +272,7 @@ function streamFixture(model: Model<Api>, context: Context) {
     }
     if (childRequests === 2) {
       const result = toolResults(context, "agent_message")[0];
-      if (!result || !contentText(result.content).startsWith("Message queued for /root.")) {
+      if (!result || !contentText(result.content).startsWith("Message steered to /root;")) {
         throw new Error("actual child agent_message tool did not report root delivery");
       }
       trace("child_finishes_normally");
@@ -338,6 +339,7 @@ function streamFixture(model: Model<Api>, context: Context) {
 
 export default function coordinationHostProbe(pi: ExtensionAPI): void {
   let completionUnsubscribe: (() => void) | undefined;
+  let messageUnsubscribe: (() => void) | undefined;
   const wrapped = new Proxy(pi, {
     get(target, property) {
       if (property !== "sendMessage") {
@@ -364,6 +366,19 @@ export default function coordinationHostProbe(pi: ExtensionAPI): void {
     },
   });
   subagentsExtension(wrapped);
+  // The production event parser, not a hand-rolled dictionary cast: it is the
+  // same contract the TUI notice renders, so a queued flag captured here is the
+  // flag the user sees.
+  messageUnsubscribe = pi.events.on("subagents:message", (eventData) => {
+    const message = parseSubagentMessageNotification(eventData);
+    if (!message) return;
+    trace("message_event", {
+      from: message.from,
+      to: message.to,
+      type: message.type,
+      queued: message.queued,
+    });
+  });
   completionUnsubscribe = pi.events.on("subagents:completed", (eventData) => {
     if (!Value.Check(CompletedEventSchema, eventData)) return;
     const record = managerRecord(eventData.id);
@@ -525,6 +540,8 @@ export default function coordinationHostProbe(pi: ExtensionAPI): void {
     owner += 1;
     completionUnsubscribe?.();
     completionUnsubscribe = undefined;
+    messageUnsubscribe?.();
+    messageUnsubscribe = undefined;
     coordinationSent.resolve();
     terminalSent.resolve();
     productionPublished.resolve();

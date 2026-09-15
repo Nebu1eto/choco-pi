@@ -221,3 +221,164 @@ test("bridged runtime rejection remains a single failed execution", async () => 
   await assert.rejects(tool.invoke({}, context, new AbortController().signal), /runtime rejection/);
   assert.equal(executions, 1);
 });
+
+function recordingTool(parameters: ToolDefinition["parameters"]) {
+  let calls = 0;
+  let last: unknown;
+  const tool = bridge({
+    name: "recorded",
+    label: "recorded",
+    description: "recorded",
+    parameters,
+    async execute(_id, input) {
+      calls += 1;
+      last = input;
+      return success("ok");
+    },
+  });
+  return {
+    tool,
+    get calls() {
+      return calls;
+    },
+    get last() {
+      return last;
+    },
+  };
+}
+
+const ReadSchema = Type.Object({
+  path: Type.String(),
+  offset: Type.Optional(Type.Number()),
+  limit: Type.Optional(Type.Number()),
+});
+
+test("bridged arguments match native normalization for optional nulls and coercible scalars", async () => {
+  const optional = recordingTool(ReadSchema);
+  const raw = { path: "package.json", offset: null };
+  assert.equal(await optional.tool.invoke(raw, context, new AbortController().signal), "ok");
+  assert.deepEqual(optional.last, { path: "package.json" });
+  assert.deepEqual(raw, { path: "package.json", offset: null }, "caller input stays unmodified");
+  assert.notEqual(optional.last, raw, "executor receives the native cloned arguments");
+
+  const coercible = recordingTool(ReadSchema);
+  assert.equal(
+    await coercible.tool.invoke(
+      { path: "package.json", limit: "50" },
+      context,
+      new AbortController().signal,
+    ),
+    "ok",
+  );
+  assert.deepEqual(coercible.last, { path: "package.json", limit: 50 });
+
+  const nested = recordingTool(
+    Type.Object({
+      edits: Type.Array(
+        Type.Object({ oldText: Type.String(), newText: Type.Optional(Type.String()) }),
+      ),
+    }),
+  );
+  assert.equal(
+    await nested.tool.invoke(
+      { edits: [{ oldText: "a", newText: null }] },
+      context,
+      new AbortController().signal,
+    ),
+    "ok",
+  );
+  assert.deepEqual(nested.last, { edits: [{ oldText: "a" }] });
+
+  const nullable = recordingTool(Type.Object({ value: Type.Union([Type.String(), Type.Null()]) }));
+  assert.equal(
+    await nullable.tool.invoke({ value: null }, context, new AbortController().signal),
+    "ok",
+  );
+  assert.deepEqual(nullable.last, { value: null }, "nullable properties keep explicit null");
+  assert.equal(nullable.calls, 1);
+});
+
+test("invalid nested arguments report their path without the rejected payload", async () => {
+  let executions = 0;
+  const tool = bridge({
+    name: "edit",
+    label: "edit",
+    description: "edit",
+    parameters: Type.Object({
+      edits: Type.Array(Type.Object({ oldText: Type.String(), newText: Type.String() })),
+    }),
+    async execute() {
+      executions += 1;
+      return success("unexpected");
+    },
+  });
+
+  await assert.rejects(
+    tool.invoke(
+      { edits: [{ oldText: { secret: "s3cret-value" }, newText: "n" }] },
+      context,
+      new AbortController().signal,
+    ),
+    (error: Error) => {
+      assert.match(error.message, /\[invalid_arguments\]/);
+      assert.match(error.message, /edits\.0\.oldText/);
+      assert.doesNotMatch(error.message, /s3cret-value/);
+      assert.doesNotMatch(error.message, /Received arguments/);
+      assert.doesNotMatch(error.message, /read_text accepts UI refs/);
+      return true;
+    },
+  );
+  assert.equal(executions, 0);
+});
+
+test("non-validation failures from the native validator propagate without executing", async () => {
+  let executions = 0;
+  const tool = bridge({
+    name: "permissive",
+    label: "permissive",
+    description: "permissive",
+    parameters: Type.Object({ handler: Type.Any() }),
+    prepareArguments() {
+      // A schema-valid but structured-clone-hostile member: the native validator clones first.
+      return { handler: () => undefined };
+    },
+    async execute() {
+      executions += 1;
+      return success("unexpected");
+    },
+  });
+
+  await assert.rejects(
+    tool.invoke({ handler: "replaced" }, context, new AbortController().signal),
+    (error: Error) => {
+      assert.doesNotMatch(error.message, /\[invalid_arguments\]/);
+      assert.match(error.message, /could not be cloned|DataCloneError/);
+      return true;
+    },
+  );
+  assert.equal(executions, 0);
+});
+
+test("missing required properties are named without executing the tool", async () => {
+  let executions = 0;
+  const tool = bridge({
+    name: "missing",
+    label: "missing",
+    description: "missing",
+    parameters: ReadSchema,
+    async execute() {
+      executions += 1;
+      return success("unexpected");
+    },
+  });
+
+  await assert.rejects(
+    tool.invoke({ offset: 1 }, context, new AbortController().signal),
+    (error: Error) => {
+      assert.match(error.message, /\[invalid_arguments\]/);
+      assert.match(error.message, /path/);
+      return true;
+    },
+  );
+  assert.equal(executions, 0);
+});
