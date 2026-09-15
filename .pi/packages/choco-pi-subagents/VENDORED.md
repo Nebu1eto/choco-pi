@@ -659,6 +659,9 @@ mentions with the off-screen clone start path (`src/mention.ts`,
 
 ## Runtime dependencies
 
+Notification-render tests spell repeated literal indentation spaces as fixed
+regex counts (` {4}` and ` {6}`), preserving the exact asserted output.
+
 Vendored under `node_modules/`, copied from the pnpm store of the original
 `choco-pi` checkout at the exact versions that resolved there. Both are
 dependency-free, so the vendored tree is flat and complete:
