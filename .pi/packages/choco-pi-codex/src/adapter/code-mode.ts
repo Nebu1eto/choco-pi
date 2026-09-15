@@ -252,7 +252,7 @@ function createNestedTools(
   // Everything else Pi has registered (LSP, MCP, sub-agents, sessions, goals,
   // web access) rides along as deferred tools: no prompt cost, callable as
   // tools.<name>(...) inside a block, discoverable through ALL_TOOLS.
-  tools.push(...collectBridgedTools(registeredToolRunner(ctx)));
+  tools.push(...collectBridgedTools(registeredToolRunner(ctx), ctx?.hasUI ?? false));
   return scopeCodeModeToolsToSessionPermissions(tools, activeToolNames);
 }
 

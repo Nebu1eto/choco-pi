@@ -144,10 +144,11 @@ time and duration labels with their last rendered values before requesting a
 host refresh. Seconds-precision formats still update whenever their label
 changes, while minute-only clocks no longer re-render the transcript each second.
 
-### choco-pi change: advisor tool label
+### choco-pi change: first-party tool labels
 
-The built-in tool label tables include the host's `advisor` tool, allowing the
-existing generic semantic call and result renderers to decorate it.
+The built-in tool label tables include the host's `advisor`, native-tier
+`agent_browser`, and namespaced `image_gen__imagegen` tools, allowing the
+existing generic semantic call and result renderers to decorate them.
 
 ### choco-pi change: shared model preference picker
 

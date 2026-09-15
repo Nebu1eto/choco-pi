@@ -5,10 +5,11 @@ import {
   isString,
   type RuntimeValue,
 } from "./lib/runtime-values.ts";
+import { isPrefixLocked, lockPrefix, publishPrefixLock, unlockPrefix } from "./lib/prefix-lock.ts";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { ExtensionAPI, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 const MAX_QUERY_LENGTH = 500;
@@ -31,86 +32,24 @@ export const ALWAYS_ACTIVE_TOOL_NAMES = [
   "apply_patch",
   "exec_command",
   "write_stdin",
-  // Background shells are one execution lifecycle: start a command, read its
-  // output, list running sessions, and stop it. Keep the whole path available
-  // to parent and nested agents without a mid-command tool search.
+  // Starting a long-running command and reading its output is a serial,
+  // decision-dependent flow. Keep those two calls native; terminal cleanup
+  // and inventory remain available through the exec bridge.
   "shell_start",
   "shell_read",
-  "shell_stop",
-  "shell_list",
-  // Pi's own path discovery. A session that reads or edits anything reaches
-  // these before it reaches the file, so deferring them buys a prompt-cache
-  // rewrite at the start of nearly every task.
   "find",
   "ls",
   "Agent",
-  // Launching Agent inevitably leads to checking on or redirecting the
-  // background agent it started; deferring these guarantees a mid-session
-  // tool_search activation (and a full prompt-cache rewrite) in every
-  // delegating session. Provided by choco-pi-subagents; if that package is
-  // absent or renames a tool, these names simply never appear
-  // in getActiveTools() and are dropped silently (see applyLeanSurface).
   "get_subagent_result",
   "steer_subagent",
-  // Stopping a background agent belongs to the same coordination path.
   "stop_subagent",
-  // Dependent delegation is the same coordination path as Agent: a workflow is
-  // declared, updated while it runs, then collected or cancelled. Provided by
-  // choco-pi-subagents.
-  "workflow_run",
-  "workflow_update",
-  "get_workflow_result",
-  "workflow_cancel",
-  // choco-pi's cross-session tools are the same kind of coordination path:
-  // listing, reading, waiting on, and steering another conversation happen
-  // together, so deferring any of them costs a prompt-cache rewrite in the
-  // middle of the coordination they support. Provided by session-bridge.ts.
-  "session_create",
-  "session_send",
-  "session_list",
-  "session_read",
-  "session_wait",
-  // Goal mode is driven from the system prompt, which tells the agent to call
-  // the creation tool in the same turn the user asks for a goal. A deferred
-  // tool cannot satisfy that instruction without a search first. Provided by
-  // choco-pi-goal.
-  "get_goal",
-  "create_goal",
-  "update_goal",
-  // Deferred tools shrink to a bare name in listings, but advisor's when-to-call
-  // guidance lives in its description, so keep it fully documented here.
-  "advisor",
-  // Research tools travel together: a search is followed by fetching and
-  // checking what it returned, so deferring any of them costs a rewrite in the
-  // middle of one lookup.
-  "web_search",
-  "source_check",
-  "fetch_content",
-  "get_search_content",
-  // choco-pi-lsp's own mandated funnel and completion gate (see .pi/SYSTEM.md
-  // and the package's own runtime status line, which calls exactly this set
-  // its "Key tools"): symbol_search finds candidates, module_report inspects
-  // one, read_symbol/read_enclosing read a body before editing, and
-  // lsp_diagnostics/diagnostics_report are required before declaring work
-  // done, with project_report opening the same funnel at repository scope. A
-  // session that reads or edits code with choco-pi-lsp active reaches these
-  // every time, so deferring any of them buys a mid-session prompt-cache
-  // rewrite in the middle of that mandatory path. The package's remaining
-  // tools (ast_grep_*, lsp_navigation, diagnostic_mark) are choco-pi-lsp's own
-  // "situational" tools, gated behind its own lsp_activate_tools call even
-  // when this extension's tool_search is bypassed; they stay deferred here.
-  // Provided by choco-pi-lsp; if that package is absent or renames a tool,
-  // these names simply never appear in getActiveTools() and are dropped
-  // silently (see applyLeanSurface).
-  "symbol_search",
-  "project_report",
-  "module_report",
-  "read_symbol",
-  "read_enclosing",
-  "lsp_diagnostics",
-  "diagnostics_report",
-  "mcp",
   "tool_search",
+  // These tools can return native image artifacts or own an approval-gated
+  // browser interaction, which cannot be represented faithfully by a plain
+  // deferred schema call in every provider UI.
+  "agent_browser",
+  "view_image",
+  "image_gen__imagegen",
 ] as const;
 const ALWAYS_ACTIVE = new Set<string>(ALWAYS_ACTIVE_TOOL_NAMES);
 
@@ -137,72 +76,6 @@ function publishLeanSurface(): void {
     writable: true,
     value: policy,
   });
-}
-
-/**
- * Activating one tool from a package usually predicts calls to its siblings
- * (observe_ui after find_roots, act_ui after observe_ui, ...). Each separate
- * activation rewrites the prompt prefix and re-bills the whole context, so
- * matched tools pull in every deferred sibling that shares their sourceInfo
- * in the same activation. Probe evidence from a live 400k-token session: two
- * single-tool activations two minutes apart cost one full re-bill each.
- * Oversized families are left alone; a package that ships more tools than
- * this cap is a toolbox, not a workflow family.
- */
-const MAX_SIBLING_ACTIVATION = 12;
-
-/** The slice of a searchable document that family expansion actually reads. */
-export type FamilyActivationDocument = {
-  readonly target:
-    | {
-        readonly kind: "pi";
-        readonly tool: {
-          readonly name: string;
-          readonly sourceInfo: { readonly source: string; readonly path: string };
-        };
-      }
-    | { readonly kind: "mcp" };
-};
-
-/** Family key: tools registered by the same extension source belong together. */
-export function toolFamilyKey(tool: {
-  readonly sourceInfo: { readonly source: string; readonly path: string };
-}): string {
-  return `${tool.sourceInfo.source}\u0000${tool.sourceInfo.path}`;
-}
-
-/** Deferred sibling names to co-activate for the directly matched additions. */
-export function expandFamilyActivation(
-  added: readonly string[],
-  documents: readonly FamilyActivationDocument[],
-  activeNames: ReadonlySet<string>,
-): string[] {
-  if (added.length === 0) return [];
-  const families = new Map<string, string[]>();
-  const familyByName = new Map<string, string>();
-  for (const document of documents) {
-    if (document.target.kind !== "pi") continue;
-    if (DISABLED_TOOL_NAMES.has(document.target.tool.name)) continue;
-    const key = toolFamilyKey(document.target.tool);
-    familyByName.set(document.target.tool.name, key);
-    const members = families.get(key);
-    if (members) members.push(document.target.tool.name);
-    else families.set(key, [document.target.tool.name]);
-  }
-  const addedSet = new Set(added);
-  const siblings: string[] = [];
-  for (const name of added) {
-    const key = familyByName.get(name);
-    if (key === undefined) continue;
-    const members = families.get(key) ?? [];
-    if (members.length > MAX_SIBLING_ACTIVATION) continue;
-    for (const member of members) {
-      if (addedSet.has(member) || activeNames.has(member)) continue;
-      addedSet.add(member);
-      siblings.push(member);
-    }
-  }
-  return siblings;
 }
 
 type SearchTarget =
@@ -532,8 +405,15 @@ function compactDescription(value: string): string {
   return singleLine.length > 140 ? `${singleLine.slice(0, 137)}...` : singleLine;
 }
 
+function usesNativeToolSearch(context: ExtensionContext | undefined): boolean {
+  const model = context?.model;
+  if (model?.provider !== "openai-codex" || !isJsonRecord(model.compat)) return false;
+  return model.compat.supportsAdditionalTools !== true && model.compat.supportsToolSearch === true;
+}
+
 export default function toolSearch(pi: ExtensionAPI): void {
   publishLeanSurface();
+  publishPrefixLock();
   let searchableNames = new Set<string>();
   let searchableDocuments: SearchDocument[] = [];
   let allowedNames = new Set<string>();
@@ -564,7 +444,8 @@ export default function toolSearch(pi: ExtensionAPI): void {
     return [...alwaysActive, ...currentlyActive, ...loaded, "tool_search"];
   };
 
-  const commitLeanSurface = (names: string[]): void => {
+  const commitLeanSurface = (names: string[], allowLocked = false): void => {
+    if (isPrefixLocked() && !allowLocked) return;
     const activeNames = pi.getActiveTools();
     const active = withoutDisabledTools(activeNames);
     leanSurfaceInitialized = true;
@@ -624,8 +505,8 @@ export default function toolSearch(pi: ExtensionAPI): void {
     name: "tool_search",
     label: "Tool Search",
     description:
-      "Search deferred Pi tools and cached MCP capabilities by natural language. Pi tools are activated; MCP matches are returned with compact parameters and called through the active mcp gateway.",
-    promptSnippet: "Search for deferred tools when the active tools cannot perform the task",
+      "Search deferred Pi tools and cached MCP capabilities by natural language. Results include compact exec bridge call snippets without changing the provider tool list.",
+    promptSnippet: "Discover deferred tools and call them through exec without activating them",
     parameters: Type.Object({
       query: Type.String({
         minLength: 1,
@@ -635,7 +516,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
       }),
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 5, default: DEFAULT_LIMIT })),
     }),
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, context) {
       const query = params.query.trim();
       if (!query) {
         return {
@@ -652,17 +533,17 @@ export default function toolSearch(pi: ExtensionAPI): void {
         .filter((target): target is Extract<SearchTarget, { kind: "pi" }> => target.kind === "pi")
         .map((target) => target.tool.name)
         .filter((name) => !activeSet.has(name));
-      const siblings = expandFamilyActivation(added, searchableDocuments, activeSet);
-      const activated = withoutDisabledTools([...added, ...siblings]);
+      const nativeToolSearch = usesNativeToolSearch(context);
+      const activated = isPrefixLocked() && !nativeToolSearch ? [] : withoutDisabledTools(added);
       if (activated.length > 0) {
         for (const name of activated) loadedNames.add(name);
-        commitLeanSurface(computeLeanSurface());
+        commitLeanSurface(computeLeanSurface(), nativeToolSearch);
       }
 
       const lines = matches.map((target) =>
         target.kind === "pi"
-          ? `- ${target.tool.name} [Pi]: ${compactDescription(target.tool.description)}\n  Call: ${target.tool.name} directly (native Pi tool; never use mcp)`
-          : `- ${target.name} [MCP: ${target.server}]: ${compactDescription(target.description)}\n  Parameters: ${parameterSummary(target.parameters)}\n  Call: mcp({ tool: "${target.name}", args: { ... } })`,
+          ? `- ${target.tool.name} [Pi]: ${compactDescription(target.tool.description)}\n  Call: ${nativeToolSearch ? `${target.tool.name} directly (native provider tool search)` : `await tools.${target.tool.name}({ ...args })`}`
+          : `- ${target.name} [MCP: ${target.server}]: ${compactDescription(target.description)}\n  Parameters: ${parameterSummary(target.parameters)}\n  Call: await tools.mcp({ tool: "${target.name}", args: { ...args } })`,
       );
       const mcpMatches = matches.filter((target) => target.kind === "mcp").length;
       const mcpHelp =
@@ -676,7 +557,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
             text:
               matches.length === 0
                 ? `No deferred tools found for: ${query}`
-                : `Found ${matches.length} matching tool(s)${activated.length > 0 ? `; activated ${activated.length} Pi tool(s)${siblings.length > 0 ? ` (${siblings.length} same-package sibling(s) co-activated to avoid another prompt-cache rewrite: ${siblings.join(", ")})` : ""}` : ""}${mcpMatches > 0 ? `; ${mcpMatches} MCP tool(s) are callable through mcp` : ""}:\n${lines.join("\n")}${mcpHelp}`,
+                : `Found ${matches.length} matching tool(s)${activated.length > 0 ? `; activated ${activated.length} Pi tool(s) before the provider prefix was locked` : ""}${mcpMatches > 0 ? `; ${mcpMatches} MCP tool(s) are callable through mcp` : ""}:\n${lines.join("\n")}${mcpHelp}`,
           },
         ],
         details: { matches: matches.map(targetName), added: activated },
@@ -695,6 +576,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
     if (sessionStarted) scheduleLeanSurface();
   });
   pi.on("session_start", () => {
+    unlockPrefix();
     sessionStarted = true;
     mcpCatalogReady = false;
     loadedNames.clear();
@@ -706,9 +588,13 @@ export default function toolSearch(pi: ExtensionAPI): void {
     cancelScheduledLeanSurface();
     refreshSearchCatalog();
     commitLeanSurface(computeLeanSurface());
+    lockPrefix();
   });
   pi.on("session_shutdown", () => {
     sessionStarted = false;
   });
-  pi.on("model_select", scheduleLeanSurface);
+  pi.on("model_select", () => {
+    unlockPrefix();
+    scheduleLeanSurface();
+  });
 }

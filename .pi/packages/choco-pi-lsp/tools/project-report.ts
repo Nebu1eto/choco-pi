@@ -25,10 +25,8 @@ export function createProjectReportTool(getProjectRoot: () => string) {
   return {
     name: "project_report" as const,
     label: "Project Report",
-    description:
-      "Project-level orientation from the review graph — 'orient me in this project' before drilling into any one file. First step of a wider discovery funnel: project_report orients, module_report explains a file, read_symbol reads a body. Six capped, ranked sections: a trust header (graph freshness, file coverage, edge-resolution-quality mix), hubs (top fan-in files — the repo's contract surface), entry points (near-zero fan-in / high fan-out files — activation/CLI/mains), a directory-level subsystem map (import cycles + layering violations, e.g. a forbidden clients/ -> tools/ edge), risk hotspots (fan-in × max per-symbol cyclomatic complexity), and suspected dead weight (zero-importer files, shipped with a low-confidence disclaimer — dynamic imports/runtime registration/test-only reachability all produce false positives). Every file line carries a `suggestedNext` module_report call. No per-symbol detail and no prose summary — structural facts only. Read-only over the cached graph: returns `available: false` with a retry hint on a cold cache and kicks off a background build (never blocks this call).\n" +
-      '`view: "compact"` returns a line-oriented text rendering instead of JSON (cheapest option); default view returns JSON. Pass `focus` to re-rank every section toward a task hint (does not expand scope).',
-    promptSnippet: "Project-level orientation from the review graph",
+    description: "Summarize project structure and risks from the review graph.",
+    promptSnippet: "Orient within a project using its review graph.",
     renderResult: compactRenderResult<{
       available?: boolean;
       hint?: string;
@@ -46,21 +44,18 @@ export function createProjectReportTool(getProjectRoot: () => string) {
     parameters: Type.Object({
       limit: Type.Optional(
         Type.Number({
-          description:
-            "Scales every ranked section's cap (default 10) — a single knob for all sections.",
+          description: "Result cap per ranked section; defaults to 10.",
         }),
       ),
       focus: Type.Optional(
         Type.String({
-          description:
-            "Optional task hint used only to re-rank sections toward relevant subsystems (does not expand scope or trigger scans).",
+          description: "Task hint used only to rerank sections.",
         }),
       ),
       view: Type.Optional(
         Type.String({
           enum: ["default", "compact"],
-          description:
-            "Payload tier. compact (cheapest) returns a line-oriented TEXT rendering instead of JSON. Default returns JSON.",
+          description: "Output default JSON or compact line-oriented text.",
         }),
       ),
     }),

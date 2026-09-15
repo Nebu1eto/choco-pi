@@ -1,5 +1,8 @@
 # Vendored: choco-pi-goal (fork of pi-codex-goal)
 
+Goal tool metadata is compacted to the repository's provider schema budgets;
+goal policy remains in the owning prompt guidelines.
+
 This directory is a **vendored, renamed copy** of the upstream open-source
 package **pi-codex-goal**. This is not the original source repository.
 

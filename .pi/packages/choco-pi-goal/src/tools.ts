@@ -26,8 +26,7 @@ const CreateGoalParams = Type.Object({
   ),
   replace_existing: Type.Optional(
     Type.Boolean({
-      description:
-        "Replace an existing non-complete goal. Use only when the user explicitly asks to set a new goal over the current one.",
+      description: "Replace a non-complete goal only when explicitly requested.",
     }),
   ),
 });
@@ -64,8 +63,7 @@ export function registerGoalTools(pi: ExtensionAPI, host: ToolHost): void {
     name: "get_goal",
     label: "Get Goal",
     description: "Get the current Codex-style goal and usage for this pi session.",
-    promptSnippet:
-      "Inspect the current goal, status, token budget, tokens used, and active elapsed time.",
+    promptSnippet: "Inspect the current goal and usage.",
     promptGuidelines: TOOL_PROMPT_GUIDELINES,
     parameters: EmptyParams,
     async execute() {
@@ -78,8 +76,7 @@ export function registerGoalTools(pi: ExtensionAPI, host: ToolHost): void {
     name: "create_goal",
     label: "Create Goal",
     description: "Create a Codex-style long-running goal for this pi session.",
-    promptSnippet:
-      "Create one goal with an objective. Omit token_budget unless the user explicitly supplied a cumulative cap. Fails when a non-complete goal already exists unless replace_existing is true; replaces a completed goal.",
+    promptSnippet: "Create a long-running goal for this session.",
     promptGuidelines: TOOL_PROMPT_GUIDELINES,
     parameters: CreateGoalParams,
     executionMode: "sequential",
@@ -101,10 +98,8 @@ export function registerGoalTools(pi: ExtensionAPI, host: ToolHost): void {
   pi.registerTool({
     name: "update_goal",
     label: "Update Goal",
-    description:
-      "Mark the current Codex-style goal complete only after the objective is actually achieved and no required work remains. Do not use this tool just because work is stopping, budget is low, or partial progress looks sufficient.",
-    promptSnippet:
-      "Mark the current goal complete only after an evidence-backed completion audit proves no required work remains.",
+    description: "Mark the current goal complete after its objective is achieved.",
+    promptSnippet: "Mark the achieved current goal complete.",
     promptGuidelines: TOOL_PROMPT_GUIDELINES,
     parameters: UpdateGoalParams,
     executionMode: "sequential",

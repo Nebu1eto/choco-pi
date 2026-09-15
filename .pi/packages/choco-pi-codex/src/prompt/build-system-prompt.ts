@@ -59,22 +59,10 @@ const NORMAL_CODEX_GUIDELINES = [
   "Run independent tool calls in parallel when practical",
 ];
 
-const CODE_MODE_GUIDELINES = [
-  "Use tools.exec_command for shell commands; prefer rg / rg --files",
-  "Every tools.exec_command requires a short 3-7 word description of its intent for readable collapsed output",
-  "With exec_command cmd, use String.raw (no backticks/${}); avoid nested quotes; split independent commands",
-  "Keep exec code mode bounded; route persistent processes and commands expected to exceed about 30 seconds to shell_start, continue independent work, and inspect completion details with shell_read only when needed",
-  "Use tty=true only for input/persistent processes",
-  "Use tools.apply_patch(patch) for edits; split large patches; shell/Python only for formatting/bulk work",
-  CODE_MODE_DEFAULT_ROUTING,
-  CODE_MODE_DIRECT_EXCEPTIONS,
-];
-
 const NOTEBOOK_MODE_GUIDELINES = [
   "exec is a persistent Deno/TypeScript Jupyter notebook; project globals may come from earlier agents and sessions",
   "Check notebook status and reuse matching retained globals before rebuilding; inspect description/usage before constructing reusable ones",
   "Keep one-offs block-local; store cheap reusable state and repeatable helpers on purpose-named globalThis properties as unpinned scratch, pin only important prune-resistant state; give helpers concise description/usage with a safe inspection recipe",
-  ...CODE_MODE_GUIDELINES,
   "Use notebook status to inspect retained state or memory, release/prune disposable state, and diagnostics after broken state or helpers",
   "Filter retained data inside exec and return only needed findings; never dump the namespace",
   "Keep canonical project artifacts in files; tools.exec_command subprocess shell state does not persist",
@@ -85,22 +73,12 @@ const NOTEBOOK_MODE_GUIDELINES = [
   "Use Deno APIs and approved npm: imports for persistent computation; prefer Pi/custom tools for project operations with richer contracts, rendering, bounds, or background handles",
 ];
 
-const CODE_MODE_REPLACED_GUIDELINES = new Set([
-  "Reserve tty=true for input or persistent processes",
-  "Use apply_patch for text-file changes, including creates/deletes/moves; split oversized patches",
-  "Run independent tool calls in parallel when practical",
-]);
-
 const REMOVED_GUIDELINES = new Set([
   "Prefer the apply_patch tool; use shell apply_patch only when chaining edits with other shell steps",
   "Use text() only for concise final output",
 ]);
 
-const ALL_STATIC_CODEX_GUIDELINES = [
-  ...NORMAL_CODEX_GUIDELINES,
-  ...CODE_MODE_GUIDELINES,
-  ...NOTEBOOK_MODE_GUIDELINES,
-];
+const ALL_STATIC_CODEX_GUIDELINES = [...NORMAL_CODEX_GUIDELINES, ...NOTEBOOK_MODE_GUIDELINES];
 
 function withoutCosmeticTerminalPeriod(value: string): string {
   return value.endsWith(".") && !value.endsWith("..") ? value.slice(0, -1) : value;
@@ -112,25 +90,6 @@ const STATIC_CODEX_GUIDELINES_BY_KEY = new Map([
   ),
   ["Use tty=true for dev servers, watchers, REPLs, and prompts", NORMAL_CODEX_GUIDELINES[1]!],
   ["Use tty=true for interactive commands", NORMAL_CODEX_GUIDELINES[1]!],
-  ["Use tools.exec_command for shell commands; prefer rg and rg --files", CODE_MODE_GUIDELINES[0]!],
-  [
-    "For tools.exec_command cmd, use String.raw only without backticks or ${}; avoid nested quoting; split independent commands into separate calls",
-    CODE_MODE_GUIDELINES[2]!,
-  ],
-  [
-    "Long command: keep tools.exec_command awaited inside exec; resume the yielded cell_id with wait near completion. Do not request a short child yield and poll its session_id with tools.write_stdin",
-    CODE_MODE_GUIDELINES[3]!,
-  ],
-  ["Use tty=true only for input or persistent processes", CODE_MODE_GUIDELINES[4]!],
-  [
-    "Use tools.apply_patch(patch) for file edits; split large patches; reserve shell/Python for formatting or bulk rewrites",
-    CODE_MODE_GUIDELINES[5]!,
-  ],
-  ["Await dependencies; use Promise.all for independent calls", CODE_MODE_GUIDELINES[6]!],
-  [
-    "Use code mode only for bounded multi-call stages where JavaScript/TypeScript can reduce intermediate output; use direct calls when one call suffices, each result changes the next decision, approval is required, or native artifacts or citations must be preserved",
-    CODE_MODE_GUIDELINES[6]!,
-  ],
 ]);
 
 function canonicalizeGuidelineLine(line: string): string {
@@ -141,28 +100,37 @@ function canonicalizeGuidelineLine(line: string): string {
   return canonical ? `${match[1]}${canonical}` : line;
 }
 
+function isCodeModeOwnedGuideline(guideline: string): boolean {
+  return (
+    NORMAL_CODEX_GUIDELINES.includes(guideline) ||
+    guideline === CODE_MODE_DEFAULT_ROUTING ||
+    guideline === CODE_MODE_DIRECT_EXCEPTIONS ||
+    guideline.startsWith("Use tools.exec_command for shell commands") ||
+    guideline.startsWith("Every tools.exec_command requires") ||
+    guideline.startsWith("With exec_command cmd") ||
+    guideline.startsWith("For tools.exec_command cmd") ||
+    guideline.startsWith("Keep exec code mode bounded") ||
+    guideline.startsWith("Long command: keep tools.exec_command") ||
+    guideline.startsWith("Use tty=true only") ||
+    guideline.startsWith("Use tools.apply_patch") ||
+    guideline.startsWith("Await dependencies; use Promise.all") ||
+    guideline.startsWith("Use code mode only for bounded multi-call stages")
+  );
+}
+
 type CodexPromptMode = "normal" | "code" | "notebook";
 
 function buildCodexGuidelines(
   mode: CodexPromptMode = "normal",
   piPackageRoot?: string,
-  selectedTools?: readonly string[],
+  _selectedTools?: readonly string[],
 ): string[] {
   let guidelines =
     mode === "normal"
       ? [...NORMAL_CODEX_GUIDELINES]
       : mode === "notebook"
         ? [...NOTEBOOK_MODE_GUIDELINES]
-        : [...CODE_MODE_GUIDELINES];
-  if (mode !== "normal" && selectedTools !== undefined) {
-    const hasShell = selectedTools.includes("bash");
-    const hasMutation = selectedTools.includes("edit") || selectedTools.includes("write");
-    guidelines = guidelines.filter((guideline) => {
-      if (guideline === CODE_MODE_GUIDELINES[5]) return hasMutation;
-      if (CODE_MODE_GUIDELINES.slice(0, 5).includes(guideline)) return hasShell;
-      return true;
-    });
-  }
+        : [];
   if (piPackageRoot) {
     guidelines.push(
       `When work depends on Pi APIs or runtime behavior not established in the current repository, consult the relevant README.md, docs/, or examples/ files under ${piPackageRoot} and follow their references before implementing`,
@@ -244,32 +212,44 @@ export function resolvePromptSkills(
     : promptSkillsFromStructuredSkills(structuredSkills);
 }
 
+const SKILL_DESCRIPTION_WORD_LIMIT = 12;
+
+function skillRootOf(skill: PromptSkill): string {
+  return skill.filePath.replace(/[\\/][^\\/]+[\\/]SKILL\.md$/, "");
+}
+
+/** First sentence of a skill description, bounded so the index stays one line per skill. */
+function compactSkillDescription(description: string): string {
+  const firstSentence = description.trim().split(/(?<=[.!?])\s+/, 1)[0] ?? "";
+  const words = firstSentence.split(/\s+/).filter((word) => word.length > 0);
+  if (words.length <= SKILL_DESCRIPTION_WORD_LIMIT) return words.join(" ");
+  return `${words.slice(0, SKILL_DESCRIPTION_WORD_LIMIT).join(" ")}…`;
+}
+
 function buildSkillsSection(skills: PromptSkill[]): string {
   if (skills.length === 0) return "";
-  const lines = [
-    "<skills_instructions>",
-    "## Skills",
-    "Skill: local instructions in `SKILL.md` file",
-    "### Available skills",
-  ];
-
+  // Group by root so every skill name resolves to exactly one SKILL.md path
+  // without repeating the absolute path per skill.
+  const skillsByRoot = new Map<string, PromptSkill[]>();
   for (const skill of skills) {
-    lines.push(`- ${skill.name}: ${skill.description} (file: ${skill.filePath})`);
+    const root = skillRootOf(skill);
+    const group = skillsByRoot.get(root);
+    if (group) group.push(skill);
+    else skillsByRoot.set(root, [skill]);
+  }
+
+  const lines = ["<skills_instructions>", "## Skills"];
+  for (const [root, groupedSkills] of skillsByRoot) {
+    lines.push(`Skill files: ${root}/<name>/SKILL.md`);
+    for (const skill of groupedSkills) {
+      lines.push(`- ${skill.name}: ${compactSkillDescription(skill.description)}`);
+    }
   }
 
   lines.push("### How to use skills");
   lines.push(
-    "- Use skill when user names it (`$SkillName` or plain text) or request clearly matches its description",
-  );
-  lines.push(
-    "- Use the minimal required set of skills. If multiple apply, use them together and state the order briefly",
-  );
-  lines.push(
-    "- For each selected skill, open its `SKILL.md`, resolve relative paths from the skill directory first, load only the files you need, and prefer existing scripts/assets/templates over recreating them",
-  );
-  lines.push("### Fallback");
-  lines.push(
-    "- If skill is missing or path cannot be read, say so briefly and continue with best fallback approach",
+    "Use a skill when the user names it or the request matches its description; select only the skills needed.",
+    "Open each selected `SKILL.md`, resolve its relative paths from that skill directory, and follow it; if unavailable, report that briefly and use the best fallback.",
   );
   lines.push("</skills_instructions>");
   return lines.join("\n");
@@ -291,9 +271,9 @@ function injectGuidelines(
     /(^Guidelines:\n)([\s\S]*?)(\n\n(?=Pi documentation\b|# Project Context|# Skills|Current date:))/m,
   );
   if (!match || match.index === undefined) {
-    const fallbackSection = `Guidelines:\n${buildCodexGuidelines(mode, undefined, selectedTools)
-      .map((line) => `- ${line}`)
-      .join("\n")}`;
+    const guidelines = buildCodexGuidelines(mode, undefined, selectedTools);
+    if (guidelines.length === 0) return prompt;
+    const fallbackSection = `Guidelines:\n${guidelines.map((line) => `- ${line}`).join("\n")}`;
     return insertBeforeTrailingContext(prompt, fallbackSection);
   }
 
@@ -301,25 +281,12 @@ function injectGuidelines(
   const [, header, body, suffix] = match as RegExpMatchArray & { 1: string; 2: string; 3: string };
   const bodyLines = body.split("\n");
   const canonicalBodyLines = bodyLines.map(canonicalizeGuidelineLine);
-  const allowedModeGuidelines = new Set(buildCodexGuidelines(mode, undefined, selectedTools));
   const withoutRemoved = canonicalBodyLines.filter((line) => {
     const guideline = withoutCosmeticTerminalPeriod(line.trim().replace(/^-\s*/, ""));
     if (REMOVED_GUIDELINES.has(guideline)) return false;
-    return (
-      mode === "normal" ||
-      !CODE_MODE_GUIDELINES.includes(guideline) ||
-      allowedModeGuidelines.has(guideline)
-    );
+    return mode === "normal" || !isCodeModeOwnedGuideline(guideline);
   });
-  const keptBodyLines =
-    mode !== "normal"
-      ? withoutRemoved.filter(
-          (line) =>
-            !CODE_MODE_REPLACED_GUIDELINES.has(
-              withoutCosmeticTerminalPeriod(line.trim().replace(/^-\s*/, "")),
-            ),
-        )
-      : withoutRemoved;
+  const keptBodyLines = withoutRemoved;
   const existingLines = keptBodyLines
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- "));

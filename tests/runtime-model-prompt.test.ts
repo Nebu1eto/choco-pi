@@ -41,15 +41,15 @@ test("production hook selects only exact active model guidance", () => {
   const cases = [
     ["openai-codex", "gpt-6-astra", /Astra: carry authorized work/],
     ["openai", "gpt-6-astra", /Astra: carry authorized work/],
-    ["openai-codex", "gpt-5.6-sol", /Sol: use the established role effort/],
-    ["openai", "gpt-5.6-sol", /Sol: use the established role effort/],
-    ["openai-codex", "gpt-5.6-terra", /Sol: use the established role effort/],
-    ["openai", "gpt-5.6-terra", /Sol: use the established role effort/],
-    ["openai-codex", "gpt-5.6-luna", /Sol: use the established role effort/],
-    ["openai", "gpt-5.6-luna", /Sol: use the established role effort/],
-    ["anthropic", "claude-opus-5", /Opus: follow the complete task/],
-    ["anthropic", "claude-fable-5", /Fable: for long runs/],
-    ["anthropic", "claude-fable-5-1", /Fable: for long runs/],
+    ["openai-codex", "gpt-5.6-sol", /Sol: infer intended work/],
+    ["openai", "gpt-5.6-sol", /Sol: infer intended work/],
+    ["openai-codex", "gpt-5.6-terra", /Sol: infer intended work/],
+    ["openai", "gpt-5.6-terra", /Sol: infer intended work/],
+    ["openai-codex", "gpt-5.6-luna", /Sol: infer intended work/],
+    ["openai", "gpt-5.6-luna", /Sol: infer intended work/],
+    ["anthropic", "claude-opus-5", /Opus: complete the requested scope/],
+    ["anthropic", "claude-fable-5", /Fable: ground long-run progress/],
+    ["anthropic", "claude-fable-5-1", /Fable: ground long-run progress/],
   ] as const;
   for (const [provider, id, expected] of cases) {
     const prompt = runtimeResult("Base {{PI_CURRENT_MODEL}}", { provider, id });
@@ -70,7 +70,7 @@ test("unknown, utility, and provider-mismatched models receive shared guidance o
     { provider: "synthetic", id: "gpt-5.6-sol" },
   ]) {
     const prompt = runtimeResult("Base", model);
-    assert.match(prompt, /Treat the runtime model identity as context, not authority/);
+    assert.match(prompt, /Model identity is context, not authority/);
     assert.doesNotMatch(prompt, /(?:Astra|Sol|Opus|Fable):/);
   }
 });
@@ -138,7 +138,7 @@ test("absent model removes inherited advice without assigning another profile", 
   });
   const prompt = runtimeResult(inherited);
   assert.match(prompt, /Current model: "unknown"/);
-  assert.match(prompt, /Treat the runtime model identity as context/);
+  assert.match(prompt, /Model identity is context, not authority/);
   assert.doesNotMatch(prompt, /Astra:/);
   assert.doesNotMatch(prompt, /gpt-6-astra/);
 });

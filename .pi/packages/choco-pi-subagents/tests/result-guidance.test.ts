@@ -6,7 +6,6 @@ const MODEL_GUIDANCE_FILES = [
   "../src/index.ts",
   "../src/nested-tools.ts",
   "../src/result-read.ts",
-  "../examples/agent-tool-description.md",
 ] as const;
 
 test("model-facing result guidance never recommends awaiting an active agent by result read", () => {

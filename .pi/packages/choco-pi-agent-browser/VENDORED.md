@@ -65,6 +65,10 @@ The fork lets choco-pi customize the extension in-tree and load its TypeScript s
 - Kept schema-only limits in small constant modules so registering `agent_browser` no longer imports the script runner or Electron discovery implementation. The optional web-search tool likewise registers from a lightweight schema/metadata module and memoizes its existing implementation on first execution.
 - This is a load-time-only divergence. External CLI argv construction, result details, lifecycle handling, TypeBox imports, and the retained `.mjs` target-version edge are unchanged.
 
+### Compact provider schema
+
+- The provider-facing `agent_browser` schema omits descriptive JSON Schema prose while preserving every property, constraint, and runtime validation path. Detailed workflows remain in prompt guidelines and the skill. The tool description and prompt snippet are bounded for the native schema tier.
+
 ### Session-tree restoration ownership
 
 - Reserve a branch restoration generation when `session_start` or `session_tree` takes ownership. A queued tree restoration checks that generation after waiting for active scripts and at both serialized queue boundaries, so shutdown or a newer tree event can supersede it before it reads an obsolete extension context.

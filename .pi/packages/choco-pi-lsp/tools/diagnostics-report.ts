@@ -250,8 +250,7 @@ export function createLensDiagnosticsTool(
       "fact-rules + ast-grep) plus a FRESH opengrep run — rather than a " +
       "possibly-stale session_start cache; each analyzer de-dupes against a " +
       "concurrent background run of itself, so this can't double-spawn.",
-    promptSnippet:
-      "Use diagnostics_report mode=all to verify no blocking errors remain; use mode=full for expensive project-wide checks",
+    promptSnippet: "Review cached or project-wide diagnostics.",
     renderResult: compactRenderResult<{
       mode?: string;
       phase?: string;

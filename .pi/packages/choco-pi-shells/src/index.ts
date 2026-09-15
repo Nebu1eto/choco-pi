@@ -346,7 +346,8 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       name: "shell_start",
       label: "Start Shell",
       description:
-        "Start a managed long-running background process. Use bash for ordinary commands; use code mode for bounded multi-call processing, with Promise.all for independent calls. Exit is delivered to you as a shell-completion notification — do NOT poll shell_read or shell_list, sleep, or keep a code-mode cell alive waiting for it. Continue with other work or respond to the user, then read output only once the notification arrives or you actually need partial output.",
+        "Start a managed long-running background process. Exit is delivered as a shell-completion notification; do not poll.",
+      promptSnippet: "Start a managed long-running background process.",
       parameters: StartSchema,
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
@@ -370,8 +371,8 @@ export default function shellsExtension(pi: ExtensionAPI): void {
     defineTool({
       name: "shell_read",
       label: "Read Shell",
-      description:
-        "Read stdout and stderr from independent absolute byte cursors. Use it to fetch output you need, never as a wait loop: completion arrives as a shell-completion notification, so repeated reads that only check whether the process finished are meaningless.",
+      description: "Read managed process output from absolute byte cursors.",
+      promptSnippet: "Read available output from a managed process.",
       parameters: ReadSchema,
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
@@ -397,6 +398,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       name: "shell_stop",
       label: "Stop Shell",
       description: "Stop a managed shell process.",
+      promptSnippet: "Stop a managed shell process.",
       parameters: StopSchema,
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
         try {
@@ -419,6 +421,7 @@ export default function shellsExtension(pi: ExtensionAPI): void {
       name: "shell_list",
       label: "List Shells",
       description: "List managed shell processes visible to this session.",
+      promptSnippet: "List managed processes visible to this session.",
       parameters: ListSchema,
       execute: async (_toolCallId, _params, _signal, _onUpdate, ctx) => {
         try {

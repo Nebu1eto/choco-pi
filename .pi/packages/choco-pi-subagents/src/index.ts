@@ -19,7 +19,6 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
   type ExtensionContext,
-  getAgentDir,
   getSettingsListTheme,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -123,7 +122,6 @@ import {
   loadSettings,
   type SubagentsSettings,
   saveAndEmitChanged,
-  type ToolDescriptionMode,
 } from "./settings.ts";
 import { getForegroundOutcomeNote, getStatusNote, partialOutputSuffix } from "./status-note.ts";
 import { resolveStopOutcome } from "./stop-subagent.ts";
@@ -135,7 +133,6 @@ import {
   formatResultReadRefusal,
   formatResultReadTimeout,
   releaseActiveResultRead,
-  RESULT_WAIT_MECHANICS,
   TERMINAL_RESULT_RETRIEVAL_GUIDANCE,
   waitForSubagentResult,
 } from "./result-read.ts";
@@ -418,6 +415,11 @@ export function formatToolsSuffix(cfg: AgentConfig | undefined): string {
     tools.length === BUILTIN_TOOL_NAMES.length &&
     BUILTIN_TOOL_NAMES.every((t) => tools.includes(t));
   return isFullSet ? "*" : tools.join(", ");
+}
+
+function getModelLabelFromConfig(model: string): string {
+  const name = model.split("/").at(-1) ?? model;
+  return name.replace(/-\d{8}$/, "");
 }
 
 export default function (pi: ExtensionAPI) {
@@ -1433,18 +1435,6 @@ export default function (pi: ExtensionAPI) {
     reloadCustomAgents(); // re-register with new setting
   }
 
-  // ---- Agent tool description mode ----
-  // "full" (default) keeps the rich Claude Code-style description; "compact"
-  // swaps in a ~75% smaller one for small/local models (#91). Read once at
-  // tool registration — flipping it applies on the next pi session.
-  let toolDescriptionMode: ToolDescriptionMode = "full";
-  function getToolDescriptionMode(): ToolDescriptionMode {
-    return toolDescriptionMode;
-  }
-  function setToolDescriptionMode(mode: ToolDescriptionMode): void {
-    toolDescriptionMode = mode;
-  }
-
   // ---- Batch tracking for smart join mode ----
   // Collects background agent IDs spawned in the current turn for smart grouping.
   // Uses a debounced timer: each new agent resets the 100ms window so that all
@@ -1635,43 +1625,6 @@ export default function (pi: ExtensionAPI) {
     fleet.onTurnStart();
   });
 
-  /** Build the full type list text dynamically from available agents only. */
-  const buildTypeListText = () => {
-    const available = getAvailableTypes();
-
-    return available
-      .map((name) => {
-        const cfg = getAgentConfig(name);
-        const modelSuffix = cfg?.model ? ` (${getModelLabelFromConfig(cfg.model)})` : "";
-        const toolsSuffix = ` (Tools: ${formatToolsSuffix(cfg)})`;
-        return `- ${name}: ${cfg?.description ?? name}${modelSuffix}${toolsSuffix}`;
-      })
-      .join("\n");
-  };
-
-  /** First sentence of an agent description — for the compact type list. */
-  const firstSentence = (text: string): string => {
-    const match = text.match(/^.*?[.!?](?=\s|$)/s);
-    return (match ? match[0] : text).replace(/\s+/g, " ").trim();
-  };
-
-  /** Compact type list: one line per agent, first sentence only. */
-  const buildCompactTypeListText = () =>
-    getAvailableTypes()
-      .map((name) => {
-        const cfg = getAgentConfig(name);
-        return `- ${name}: ${firstSentence(cfg?.description ?? name)} (Tools: ${formatToolsSuffix(cfg)})`;
-      })
-      .join("\n");
-
-  /** Derive a short model label from a model string. */
-  function getModelLabelFromConfig(model: string): string {
-    // Strip provider prefix (e.g. "anthropic/claude-sonnet-4-6" → "claude-sonnet-4-6")
-    const name = model.includes("/") ? model.split("/").pop()! : model;
-    // Strip trailing date suffix (e.g. "claude-haiku-4-5-20251001" → "claude-haiku-4-5")
-    return name.replace(/-\d{8}$/, "");
-  }
-
   // Apply persisted settings on startup and emit `subagents:settings_loaded`.
   // Global + project merged; missing → defaults; corrupt file emits a warning
   // to stderr and falls back to defaults.
@@ -1687,7 +1640,6 @@ export default function (pi: ExtensionAPI) {
         strictAgentFiles = b;
       },
       setDisableDefaultAgents: setDisableDefaultAgents,
-      setToolDescriptionMode: setToolDescriptionMode,
       setFleetView: setFleetViewEnabled,
       setAgentMentions: setAgentMentionMode,
       setRememberAgents,
@@ -1715,7 +1667,7 @@ export default function (pi: ExtensionAPI) {
 
   // ---- Agent tool ----
 
-  // Schedule param + its guideline are gated on `schedulingEnabled` (read once
+  // The schedule parameter is gated on `schedulingEnabled` (read once
   // at registration; flipping the setting later requires next pi session for
   // the schema to update). Defining the shape once and spreading it via Partial
   // preserves Type.Object's inference when present and produces a
@@ -1724,10 +1676,7 @@ export default function (pi: ExtensionAPI) {
     schedule: Type.Optional(
       Type.String({
         description:
-          "Opt-in only — fire later instead of now. Omit to run immediately (the default, almost always correct). " +
-          'Formats: 6-field cron ("0 0 9 * * 1" = 9am Mon), interval ("5m"/"1h"), one-shot ("+10m" or ISO). ' +
-          "A scheduled job always runs in the background, so run_in_background: false is refused alongside it. " +
-          "Incompatible with inherit_context and resume. Returns job ID.",
+          "Schedule for later; refused with run_in_background:false; incompatible with inherit_context/resume. Accepts cron, interval, +delay, or ISO.",
       }),
     ),
   };
@@ -1735,125 +1684,7 @@ export default function (pi: ExtensionAPI) {
     ? scheduleSchemaFields
     : {};
 
-  const scheduleGuideline = isSchedulingEnabled()
-    ? `\n- Use \`schedule\` only when the user explicitly asked for scheduled / recurring / delayed execution (e.g. "every Monday", "in an hour"). Don't auto-schedule from vague intent like "monitor X" — run once now or ask.`
-    : "";
-
-  // Same trade as scheduleParam/scheduleGuideline above: `isolationParam` drops
-  // the field from the schema when the project set `worktreeIsolation: false`,
-  // so the prose has to go with it. Left in, it would teach the model to pass a
-  // parameter that isn't declared — accepted (TypeBox sets no
-  // `additionalProperties: false`) and then silently dropped by the resolver.
-  // With no per-result note by design, the model would have every reason to go
-  // on reporting a `pi-agent-*` branch that was never created.
-  const isolationGuideline = isWorktreeIsolationEnabled()
-    ? `\n- Use isolation: "worktree" to give the agent its own git worktree (safe parallel file modifications); leave it unset, or pass "off", for none. The worktree is removed when the agent finishes; if it made changes, they are committed to a branch and the branch is named in the result.`
-    : "";
-
-  const isolationCompactGuideline = isWorktreeIsolationEnabled()
-    ? `\n- isolation: "worktree" gives the agent its own git worktree (removed on completion); changes land on a branch named in the result.`
-    : "";
-
-  // Compact Agent tool description (#91, `toolDescriptionMode: "compact"`) —
-  // the same load-bearing facts as the full version at ~75% fewer tokens, for
-  // small/local models. Per-option details live in the param descriptions.
-  const compactAgentToolDescription = `Launch an autonomous agent for complex, multi-step tasks. Agent types:
-${buildCompactTypeListText()}
-
-Custom agents: .pi/agents/<name>.md (project) or ${getAgentDir()}/agents/<name>.md (global).
-
-Notes:
-- description: 3-5 words (shown in UI). Prompts must be self-contained — the agent has not seen this conversation.
-- Default to run_in_background: true. Omitting it runs the agent in the foreground, which blocks this conversation until the agent finishes; keep a call in the foreground only when it is short and your next step cannot proceed without its result.
-- Parallel work: one message, multiple Agent calls, run_in_background: true on each. You are notified when background agents finish — never poll or sleep. Continue other work until each terminal completion notification, then retrieve each result exactly once with get_subagent_result.
-- The result is not shown to the user — summarize it for them. Verify an agent's claimed code changes before reporting work done.
-- resume continues a previous agent by ID; steer_subagent messages a running one.${isolationCompactGuideline}`;
-
-  const fullAgentToolDescription = `Launch a new agent to handle complex, multi-step tasks autonomously. Each agent type has specific capabilities and tools available to it.
-
-Available agent types and the tools they have access to:
-${buildTypeListText()}
-
-Custom agents can be defined in .pi/agents/<name>.md (project) or ${getAgentDir()}/agents/<name>.md (global) — they are picked up automatically. Project-level agents override global ones. Creating a .md file with the same name as a default agent overrides it.
-
-When using the Agent tool, specify a subagent_type parameter to select which agent type to use.
-
-## When not to use
-
-If the target is already known, use a direct tool — \`read\` for a known path, \`grep\`/\`find\` for a specific symbol or string. Reserve this tool for open-ended questions that span the codebase, or tasks that match an available agent type.
-
-## Usage notes
-
-- Always include a short (3-5 word) description summarizing what the agent will do (shown in UI).
-- Pass run_in_background: true by default. A foreground call holds this conversation until the agent finishes, so the user cannot steer you while it runs — and the parameter is false when omitted, so background is something you must ask for explicitly. Keep a call in the foreground only when it is short and your very next step genuinely cannot proceed without its result.
-- A background call returns an agent ID, and you are notified when it completes — do NOT poll or sleep waiting for it. Continue with other work or respond to the user, then retrieve the result exactly once with get_subagent_result after the terminal completion notification arrives. Backgrounding defers the result, not your responsibility for it.
-- When you launch multiple agents for independent work, send them in a single message with multiple tool uses, with run_in_background: true on each, so they run concurrently. If the user specifies that they want agents run "in parallel", you MUST send a single message with multiple tool calls. Foreground calls run sequentially — only one executes at a time.
-- However you get it, an agent's answer comes back to you and not to the user — to show the user, send a text message with a concise summary.
-- Trust but verify: an agent's summary describes what it intended to do, not necessarily what it did. When an agent writes or edits code, check the actual changes before reporting work as done.
-- Use resume with an agent ID to continue a previous agent's work. A new (non-resume) Agent call starts a fresh agent with no memory of prior runs, so the prompt must be self-contained.
-- Use steer_subagent to send mid-run messages to a running background agent.
-- Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, etc.), since it is not aware of the user's intent.
-- If an agent's description says it should be used proactively, try to use it without the user having to ask for it first.
-- Use model to specify a different model (as "provider/modelId", or fuzzy e.g. "haiku", "sonnet").
-- Use thinking to control extended thinking level.
-- Use inherit_context if the agent needs the parent conversation history.${isolationGuideline}${scheduleGuideline}`;
-
-  // `toolDescriptionMode: "custom"` — user-authored description with live
-  // dynamic parts. Project file wins over global; missing/empty falls back to
-  // "full" (a stale fallback beats a blank tool description). Only the prose
-  // is customizable — the parameter schema stays code-owned.
-  const renderToolDescriptionTemplate = (template: string): string => {
-    const vars = new Map(
-      Object.entries({
-        typeList: buildTypeListText,
-        compactTypeList: buildCompactTypeListText,
-        agentDir: getAgentDir,
-        isolationGuideline: () => isolationGuideline,
-        scheduleGuideline: () => scheduleGuideline,
-      }),
-    );
-    // Replacement callback (not a string) — agent descriptions may contain `$&` etc.
-    return template.replace(/\{\{(\w+)\}\}/g, (raw, name: string) => {
-      const replacement = vars.get(name);
-      if (replacement) return replacement();
-      console.warn(
-        `[choco-pi-subagents] agent-tool-description.md: unknown placeholder ${raw} left as-is`,
-      );
-      return raw;
-    });
-  };
-
-  const loadCustomToolDescription = (): string | undefined => {
-    for (const path of [
-      join(process.cwd(), ".pi", "agent-tool-description.md"),
-      join(getAgentDir(), "agent-tool-description.md"),
-    ]) {
-      try {
-        if (!existsSync(path)) continue;
-        const text = readFileSync(path, "utf-8").trim();
-        if (text) return renderToolDescriptionTemplate(text);
-        console.warn(`[choco-pi-subagents] ${path} is empty — ignoring`);
-      } catch (err) {
-        console.warn(
-          `[choco-pi-subagents] failed to read ${path}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-    return undefined;
-  };
-
-  const agentToolDescription = (() => {
-    const mode = getToolDescriptionMode();
-    if (mode === "compact") return compactAgentToolDescription;
-    if (mode === "custom") {
-      const custom = loadCustomToolDescription();
-      if (custom) return custom;
-      console.warn(
-        '[choco-pi-subagents] toolDescriptionMode is "custom" but no agent-tool-description.md found — using "full"',
-      );
-    }
-    return fullAgentToolDescription;
-  })();
+  const agentToolDescription = `Launch a child-safe nested subagent for bounded delegated work. Available types: ${getAvailableTypes().join(", ")}.`;
 
   // Held rather than registered inline: the mention clone reuses this exact
   // definition, so the agent it starts is an ordinary top-level spawn instead
@@ -1862,7 +1693,7 @@ If the target is already known, use a direct tool — \`read\` for a known path,
     name: SUBAGENT_TOOL_NAMES.AGENT,
     label: "Agent",
     description: agentToolDescription,
-    promptSnippet: "Launch autonomous sub-agents for complex multi-step tasks",
+    promptSnippet: "Launch a specialized subagent for a bounded task.",
     promptGuidelines: [
       "Use Agent with specialized agents when the task matches an agent type's description. Subagents are valuable for parallelizing independent queries or for protecting the main context window from excessive results, but should not be used excessively when not needed. Importantly, avoid duplicating work that subagents are already doing — if you delegate research to a subagent, do not also perform the same searches yourself.",
       "For broad codebase exploration or research, spawn Agent with an appropriate subagent_type (e.g. Explore). Otherwise use direct tools (read, grep, find) when the target is already known.",
@@ -1878,17 +1709,15 @@ If the target is already known, use a direct tool — \`read\` for a known path,
       }),
       name: Type.Optional(
         Type.String({
-          description:
-            "Callers SHOULD name every spawn with a short kebab-case goal label: one to three dash-joined words prefixed by role or purpose, e.g. `implementer-limits-core`, `explorer-guidance`, `reviewer-code`, `reviewer-e2e-validation`. The name becomes the agent's alias, agent_message/steering address, and fleet label. With `resume`, supplying `name` explicitly renames that existing alias; omitting `name` preserves it. Collisions are globally auto-numbered; choose distinct names so addresses stay meaningful. Letters, digits, `_`, and `-`.",
+          description: "Short kebab-case alias; with resume, renames the existing alias.",
         }),
       ),
       subagent_type: Type.String({
-        description: `The type of specialized agent to use. Available types: ${getAvailableTypes().join(", ")}. Custom agents from .pi/agents/*.md (project) or ${getAgentDir()}/agents/*.md (global) are also available.`,
+        description: `Agent type. Available: ${getAvailableTypes().join(", ")}.`,
       }),
       model: Type.Optional(
         Type.String({
-          description:
-            'Optional model override. Accepts "provider/modelId" or fuzzy name (e.g. "haiku", "sonnet"). Omit to use the agent type\'s default.',
+          description: 'Model override as "provider/modelId" or a fuzzy name.',
         }),
       ),
       thinking: Type.Optional(
@@ -1906,41 +1735,36 @@ If the target is already known, use a direct tool — \`read\` for a known path,
       timeout_ms: Type.Optional(
         Type.Integer({
           minimum: 1,
-          description:
-            "Wall-clock budget in milliseconds, measured from actual run start. Exceeding it publishes terminal status budget_exceeded.",
+          description: "Wall-clock run budget in milliseconds.",
         }),
       ),
       max_tool_calls: Type.Optional(
         Type.Integer({
           minimum: 1,
-          description:
-            "Maximum completed tool calls for this run. Reaching the cap stops the run with terminal status budget_exceeded.",
+          description: "Completed tool-call cap for this run.",
         }),
       ),
       max_tokens: Type.Optional(
         Type.Integer({
           minimum: 1,
-          description:
-            "Maximum reported input + output + cache-write tokens for this run. Reaching the cap stops it with terminal status budget_exceeded.",
+          description: "Input, output, and cache-write token cap.",
         }),
       ),
       idle_timeout_ms: Type.Optional(
         Type.Integer({
           minimum: 1,
-          description:
-            "Tool-inactivity interval in milliseconds. One idle interval steers the agent to conclude; a second idle interval stops it with terminal status watchdog_stopped.",
+          description: "Inactivity interval before conclusion steering and watchdog stop.",
         }),
       ),
       run_in_background: Type.Optional(
         Type.Boolean({
           description:
-            "Prefer true. True runs the agent in the background: it returns an agent ID immediately, leaves this conversation steerable while the agent works, and notifies you on terminal completion (continue other work until then, then retrieve the result exactly once with get_subagent_result). Omitted or false runs the agent in the foreground, which blocks the conversation until it finishes and returns its output inline — reserve that for a short call whose result you need before you can do anything else.",
+            "true: return an ID and notify on completion; false: block until the agent finishes.",
         }),
       ),
       resume: Type.Optional(
         Type.String({
-          description:
-            "Optional agent ID to resume from. Continues from previous context. Supplying `name` with `resume` explicitly renames the existing alias; omitting `name` preserves it. Combine with run_in_background to resume detached and be notified on completion. An agent can only be resumed once its current run has finished — use steer_subagent to reach one mid-run.",
+          description: "Finished agent ID to resume; name optionally renames its alias.",
         }),
       ),
       isolated: Type.Optional(
@@ -2752,9 +2576,7 @@ If the target is already known, use a direct tool — \`read\` for a known path,
     defineTool({
       name: "workflow_run",
       label: "Run Workflow",
-      description:
-        "Launch a dependency-aware workflow of subagents. Independent steps run in parallel under the shared subagent concurrency limit. " +
-        "Use dynamic: true with workflow_update to add or change pending steps based on completed results. Workflow tools are available only to the root orchestrator; workflow steps cannot nest workflows.",
+      description: "Launch a dependency-aware workflow of subagents.",
       promptSnippet: "Launch a dynamic DAG workflow of subagents",
       parameters: WorkflowDefinitionSchema,
       execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
@@ -2783,9 +2605,7 @@ If the target is already known, use a direct tool — \`read\` for a known path,
     defineTool({
       name: "workflow_update",
       label: "Update Workflow",
-      description:
-        "Add steps or replace pending steps in a running workflow. Dependencies and references are revalidated atomically. " +
-        "Set finish: true to seal a dynamic workflow; it completes after all remaining steps settle.",
+      description: "Add, replace, or finish pending workflow steps.",
       promptSnippet: "Adjust a running subagent workflow",
       parameters: Type.Object(
         {
@@ -2818,8 +2638,7 @@ If the target is already known, use a direct tool — \`read\` for a known path,
     defineTool({
       name: "get_workflow_result",
       label: "Get Workflow Result",
-      description:
-        "Retrieve aggregate workflow status and per-step outputs. wait: true waits until terminal, or until an open dynamic workflow becomes idle and needs an update.",
+      description: "Retrieve aggregate workflow status and step outputs.",
       promptSnippet: "Get aggregate subagent workflow results",
       parameters: Type.Object(
         {
@@ -2866,8 +2685,7 @@ If the target is already known, use a direct tool — \`read\` for a known path,
     defineTool({
       name: "workflow_cancel",
       label: "Cancel Workflow",
-      description:
-        "Cancel a workflow. Pending steps are cancelled and running step agents are aborted.",
+      description: "Cancel pending and running workflow steps.",
       promptSnippet: "Cancel a running subagent workflow",
       parameters: Type.Object({ workflow_id: Type.String() }, { additionalProperties: false }),
       execute: async (_toolCallId, params) => {
@@ -2886,19 +2704,15 @@ If the target is already known, use a direct tool — \`read\` for a known path,
     defineTool({
       name: SUBAGENT_TOOL_NAMES.GET_RESULT,
       label: "Get Agent Result",
-      description:
-        "Retrieve a background agent result after terminal completion. The first active read returns current status; repeated active reads in that run are refused until completion. " +
-        `Use the agent ID returned by Agent with run_in_background. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} ${RESULT_WAIT_MECHANICS}`,
+      description: "Retrieve a background agent's status or terminal result.",
       promptSnippet: "Retrieve a terminal background-agent result",
       parameters: Type.Object({
         agent_id: Type.String({
-          description:
-            "The terminal agent ID to retrieve. The agent's handle also works — its `name` if you gave it one, otherwise its type (`explore`, `explore-2`).",
+          description: "Agent ID, handle, or assigned name.",
         }),
         wait: Type.Optional(
           Type.Boolean({
-            description:
-              "For the first active read in a run only, allow up to 5 seconds for terminal status instead of returning current status immediately. Cancellation or timeout leaves the child running and its result unconsumed. Further active reads in that generation are refused. Default: false.",
+            description: "Wait up to five seconds on the first active read.",
           }),
         ),
         verbose: Type.Optional(
@@ -3009,17 +2823,14 @@ If the target is already known, use a direct tool — \`read\` for a known path,
     defineTool({
       name: SUBAGENT_TOOL_NAMES.STEER,
       label: "Steer Agent",
-      description:
-        "Send an agent-authored MESSAGE envelope from /root to a running or queued agent. It interrupts the agent after its current tool execution and only works while the agent is running or queued.",
-      promptSnippet: "Send a steering message to redirect a running background agent",
+      description: "Send guidance to a running or queued agent.",
+      promptSnippet: "Redirect a running or queued agent.",
       parameters: Type.Object({
         agent_id: Type.String({
-          description:
-            "The agent ID to steer (must be currently running). The agent's handle also works — its `name` if you gave it one, otherwise its type (`explore`, `explore-2`).",
+          description: "Running agent ID, handle, or assigned name.",
         }),
         message: Type.String({
-          description:
-            "Agent-authored guidance wrapped as a MESSAGE envelope in the recipient's conversation.",
+          description: "Guidance delivered as an agent MESSAGE.",
         }),
       }),
       execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
@@ -3069,15 +2880,11 @@ If the target is already known, use a direct tool — \`read\` for a known path,
     defineTool({
       name: SUBAGENT_TOOL_NAMES.STOP,
       label: "Stop Agent",
-      description:
-        "Stop a running or queued background agent. The partial transcript remains available through get_subagent_result. " +
-        "Stopping a workflow step settles that step as an error, which fail-fast then applies to the rest of the workflow " +
-        "unless the step set continue_on_error — use workflow_cancel to end a whole workflow deliberately.",
-      promptSnippet: "Stop a running or queued background agent",
+      description: "Stop a running or queued background agent.",
+      promptSnippet: "Stop a running or queued agent.",
       parameters: Type.Object({
         agent_id: Type.String({
-          description:
-            "The agent ID to stop. The agent's handle also works — its `name` if you gave it one, otherwise its type (`explore`, `explore-2`).",
+          description: "Agent ID, handle, or assigned name.",
         }),
       }),
       execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
@@ -3764,7 +3571,6 @@ Write the file using the write tool. Only write the file, nothing else.`;
       scopeModels: isScopeModelsEnabled(),
       strictAgentFiles,
       disableDefaultAgents: isDefaultsDisabled(),
-      toolDescriptionMode: getToolDescriptionMode(),
       fleetView: isFleetViewEnabled(),
       agentMentions: getAgentMentionMode(),
       rememberAgents: getRememberAgents(),
@@ -3830,8 +3636,6 @@ Write the file using the write tool. Only write the file, nothing else.`;
       setRememberAgents,
       getWidgetMode,
       setWidgetMode,
-      getToolDescriptionMode,
-      setToolDescriptionMode,
       notifyApplied: (message) => notifyApplied(ctx, message),
       notifyInfo: (message) => ctx.ui.notify(message, "info"),
     };

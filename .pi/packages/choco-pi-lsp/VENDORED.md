@@ -1,5 +1,8 @@
 # VENDORED — choco-pi-lsp
 
+Public report and diagnostics tool metadata is compacted to the repository's
+provider schema budgets; detailed behavior remains represented by result data.
+
 choco-pi fork of **pi-lens**, loaded as a local TypeScript-source pi package.
 
 - Upstream repository: <https://github.com/apmantza/pi-lens>
@@ -184,6 +187,13 @@ the same machinery as upstream's `--no-lsp` flag (`lsp.enabled` config key):
   `lsp_diagnostics`/`lsp_navigation` return a graceful "disabled" message
   instead of spawning servers (upstream gated only `lsp_navigation` on the
   flag; gating `lsp_diagnostics` too is a deliberate fork behavior).
+
+## Prefix-stable situational tool discovery
+
+`lsp_activate_tools` now consults `Symbol.for("choco-pi.prefix.locked")`. After
+the first provider request it returns `await tools.<name>({ ...args })` exec-bridge
+snippets instead of changing the active-tool list; its pre-request activation
+behavior remains available to session setup.
 
 ## Vendored install policy
 

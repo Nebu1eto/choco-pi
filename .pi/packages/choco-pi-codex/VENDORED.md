@@ -146,12 +146,15 @@ Pi hands extensions tool schemas but not executable definitions and no event
 carries the live session, so the bridge patches ExtensionRunner.prototype the
 way .pi/extensions/command-filter.ts does, captures the runner the first time
 Pi assembles its tool list, and wraps each definition through the existing
-nested-tool adapter. Bridged tools are deferred, so they add no per-tool prompt
-lines; tool-source.ts now keeps every deferred tool in ALL_TOOLS (not just
-custom ones) and custom-tool-prompt.ts adds one line naming them. Code mode's
+nested-tool adapter. Bridged tools are deferred, so their schemas add no native
+prompt cost; tool-source.ts keeps every deferred tool in ALL_TOOLS (not just
+custom ones), and custom-tool-prompt.ts catalogs them with bounded summaries
+sourced from `promptSnippet` or an eight-word description fallback. Headless
+sessions omit computer-use's UI-only tools from both the catalog and callable
+bridge. Code mode's
 own entry points and the natively wrapped Codex tools stay excluded.
 tests/codex-code-mode-bridge.test.ts pins exclusions, usage lines, deferral,
-the ALL_TOOLS scope and the prompt line.
+the ALL_TOOLS scope, UI filtering, and catalog entries.
 
 ## Transport cleanup bridge (choco-pi addition)
 
@@ -191,10 +194,11 @@ Code Mode call's intent. Without it, the renderer derives the parent intent from
 the first `exec_command` description and suppresses its redundant generic
 “Calls” line.
 
-Code Mode prompt routing now uses one provider-neutral rule shared by the system
-prompt and the `exec` description: bounded tool workflows default to Code Mode,
-while approvals, native artifacts, citations, decision-dependent single results,
-and unavailable capabilities stay direct. Capability-aware examples mention only
+Code Mode prompt routing is owned solely by the generated `<code_mode_tools>`
+block: the `exec` description points to that block, and system-prompt composition
+removes legacy duplicate guideline lines. Bounded tool workflows default to Code
+Mode, while approvals, native artifacts, citations, decision-dependent single
+results, and unavailable capabilities stay direct. Capability-aware examples mention only
 tools present in the filtered namespace, preserve fulfilled and rejected outcomes,
 and never manufacture filesystem or UI capabilities; when exposed, `read_text` is
 explicitly identified as an observed-UI-text-by-reference tool, not a filesystem reader. Static shell and mutation
@@ -206,6 +210,10 @@ probe requires successful manifest-reading `exec` calls and normally stopped fin
 answers from both the real root and explore child. It records bounded tool counts,
 revision stability, and process teardown separately, is excluded from the default
 `*.test.ts` suite, and refuses to run without its environment guard.
+
+Injected skill indexes group skill locations by root, render each skill as one
+description line capped at twelve words, and keep invocation guidance to two
+sentences. Full skill instructions remain in each root's `<name>/SKILL.md`.
 
 The probe's wire decoding lives in `tests/code-mode-probe-events.ts` so it can be
 regression-tested offline. Message `content` is modelled as the SDK's real union

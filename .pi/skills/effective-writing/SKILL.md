@@ -1,6 +1,6 @@
 ---
 name: effective-writing
-description: Draft or revise substantive user-facing prose artifacts such as documentation, reports, tickets, review comments, messages, and presentation copy; do not load for routine coding updates.
+description: Draft or revise substantive user-facing prose artifacts; exclude routine coding updates.
 ---
 
 # Effective Writing

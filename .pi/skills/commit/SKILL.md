@@ -1,11 +1,13 @@
 ---
 name: commit
-description: Create an authorized local Git checkpoint only when requested or required by workflow; follow repository policy, staging, trailers, signing, and final verification, never push.
+description: Create an authorized local Git checkpoint with signing and verification; never push.
 ---
 
 # choco-pi Commit
 
 Create a commit only under explicit user authority or an active workflow's checkpoint rule. Never push.
+
+When a `task`, `task-inline`, or `task-hotfix` workflow completes, the orchestrator commits locally unless the user explicitly excluded a commit. Deferring without that exclusion bypasses the workflow; resolve instruction conflicts by precedence before checkpointing.
 
 ## Resolve policy
 

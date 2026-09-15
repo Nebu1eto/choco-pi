@@ -215,8 +215,7 @@ export function createLensDiagnosticMarkTool(
       "the one you passed. When suppressing several findings in the SAME file in one turn, work " +
       "bottom-up (highest line number first) — each inserted comment shifts later lines down by one, " +
       "and reanchoring can't always disambiguate two nearby findings.",
-    promptSnippet:
-      "Use diagnostic_mark to dismiss a false-positive, suppress a won't-fix, defer, or flag a finding to fix later",
+    promptSnippet: "Record a diagnostic disposition or deferred fix.",
     parameters: Type.Object({
       filePath: Type.String({
         description: "The file the diagnostic was reported on (relative or absolute).",

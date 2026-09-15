@@ -28,8 +28,7 @@ import type { AgentConfig, IsolationMode, JoinMode, ThinkingLevel } from "./type
 const isolationSchemaFields = {
   isolation: Type.Optional(
     Type.Union([Type.Literal("off"), Type.Literal("worktree")], {
-      description:
-        'Isolation mode. Default "off". "off" runs the agent in the current checkout, the same as omitting the field. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo (a copy cannot see uncommitted or staged changes in the main checkout).',
+      description: '"off" uses this checkout; "worktree" creates an isolated temporary copy.',
     }),
   ),
 };

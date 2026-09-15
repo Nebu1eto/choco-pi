@@ -15,6 +15,7 @@ export interface CodeModeToolMetadata {
   label?: string | undefined;
   toolName?: CodeModeToolIdentity | undefined;
   usage: string;
+  summary?: string | undefined;
   description?: string | undefined;
   output?: string | undefined;
   deferLoading: boolean;

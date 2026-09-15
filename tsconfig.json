@@ -15,7 +15,8 @@
     ".pi/skills/**/scripts/**/*.ts",
     "scripts/**/*.mts",
     "scripts/**/*.ts",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "tools/**/*.ts"
   ],
   "exclude": [".pi/npm", ".pi/packages"]
 }

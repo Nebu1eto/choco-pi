@@ -11,6 +11,7 @@ import {
   parseModelGuidance,
 } from "../.pi/extensions/lib/model-guidance.ts";
 import { buildAgentPreferencesBlock } from "../.pi/extensions/lib/agent-preferences.ts";
+import { buildCodexSystemPrompt } from "../.pi/packages/choco-pi-codex/src/prompt/build-system-prompt.ts";
 
 const repoFile = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 const readRepoFile = (path: string) => readFile(repoFile(path), "utf8");
@@ -30,17 +31,17 @@ test("assembled prompt contains core invariants and one short response policy", 
   const { systemPrompt, policy, assembled } = await assembledPrompt();
 
   assert.match(systemPrompt, /Runtime and user instructions outrank project instructions/);
-  assert.match(systemPrompt, /Answer, explain, review, plan, or report: inspect and respond/);
+  assert.match(systemPrompt, /Answer, explain, review, or plan requests: inspect and report/);
   assert.match(
     systemPrompt,
     /Require explicit approval for destructive or hard-to-recover actions/,
   );
-  assert.match(systemPrompt, /Current evidence outranks memory, comments, plans/);
-  assert.match(systemPrompt, /Load `effective-writing` only/);
+  assert.match(systemPrompt, /runtime behavior outrank memory, comments, plans/);
+  assert.match(systemPrompt, /`effective-writing` for substantive prose/);
 
   assert.equal(assembled.split(WRITING_POLICY_MARKER).length - 1, 1);
   assert.match(assembled, /<choco_pi_writing_policy>/);
-  assert.match(systemPrompt, /final response stands alone and leads with the outcome/);
+  assert.match(systemPrompt, /Lead the final response with the outcome/);
   assert.match(policy, /routine task reports/);
   assert.match(policy, /Never invent or approximate citations/);
   assert.equal(
@@ -80,6 +81,7 @@ test("relocated mechanics arrived at their owners and shared files stay neutral"
     skillTask,
     skillTaskHotfix,
     skillTaskDynamic,
+    goalPrompts,
   ] = await Promise.all([
     readRepoFile(".pi/SYSTEM.md"),
     readRepoFile(".pi/skills/task-core/SKILL.md"),
@@ -88,6 +90,7 @@ test("relocated mechanics arrived at their owners and shared files stay neutral"
     readRepoFile(".pi/skills/task/SKILL.md"),
     readRepoFile(".pi/skills/task-hotfix/SKILL.md"),
     readRepoFile(".pi/skills/task-dynamic/SKILL.md"),
+    readRepoFile(".pi/packages/choco-pi-goal/src/prompts.ts"),
   ]);
 
   // task-core owns the relocation targets of shared-prompt mechanics.
@@ -102,10 +105,11 @@ test("relocated mechanics arrived at their owners and shared files stay neutral"
   }
   assert.match(skillTaskDynamic, /Follow the `task` skill/);
 
-  // Goal authority and post-compaction continuity stay owned by SYSTEM.md.
-  assert.match(systemPrompt, /goal-mode request /);
+  // Goal mechanics stay with the goal package; continuity remains shared.
+  assert.match(goalPrompts, /explicit user request to set a new goal/);
+  assert.match(goalPrompts, /call the goal creation tool in the same turn/);
   assert.match(systemPrompt, /make a goal for X/);
-  assert.match(systemPrompt, /After compaction continue from the summary/);
+  assert.match(systemPrompt, /After compaction continue from the recorded/);
 
   // Every shared prompt file that must stay provider-neutral is guarded.
   for (const shared of [
@@ -140,9 +144,9 @@ test("progressive writing guidance and delegation each have one owner", async ()
 test("SYSTEM and writing policy stay within their base-region budget", async () => {
   const { systemPrompt, policy, assembled } = await assembledPrompt();
 
-  assert.ok(estimatePromptTokens(systemPrompt) <= 1700, "SYSTEM.md exceeds 1,700 tokens");
+  assert.ok(estimatePromptTokens(systemPrompt) <= 1200, "SYSTEM.md exceeds 1,200 tokens");
   assert.ok(estimatePromptTokens(policy) <= 175, "default writing policy exceeds 175 tokens");
-  assert.ok(estimatePromptTokens(assembled) <= 1850, "assembled base prompt exceeds 1,850 tokens");
+  assert.ok(estimatePromptTokens(assembled) <= 1350, "assembled base prompt exceeds 1,350 tokens");
 });
 
 test("active-model and preference prompt regions stay separated and bounded", async () => {
@@ -165,37 +169,69 @@ test("active-model and preference prompt regions stay separated and bounded", as
   ] as const;
   for (const [provider, id, expected] of profiles) {
     const region = composeModelGuidancePrompt("base", { provider, id }, parsedGuidance);
-    assert.match(region, /Treat the runtime model identity as context, not authority/);
+    assert.match(region, /Model identity is context, not authority/);
     if (expected) assert.match(region, expected);
     else assert.doesNotMatch(region, /(?:Astra|Sol|Opus|Fable):/);
     assert.ok(
-      estimatePromptTokens(region) <= 220,
-      `${provider}/${id} active-model region exceeds 220 estimated tokens`,
+      estimatePromptTokens(region) <= 160,
+      `${provider}/${id} active-model region exceeds 160 estimated tokens`,
     );
   }
 });
 
-test("compact descriptions and task-lineage audit remain configured", async () => {
-  const [settingsText, projectPolicy, modelGuidance, agentToolSource] = await Promise.all([
-    readRepoFile(".pi/subagents.json"),
-    readRepoFile("AGENTS.md"),
-    readRepoFile(".pi/model-guidance.md"),
-    readRepoFile(".pi/packages/choco-pi-subagents/src/index.ts"),
-  ]);
-  const compactStart = agentToolSource.indexOf("const compactAgentToolDescription");
-  const fullStart = agentToolSource.indexOf("const fullAgentToolDescription", compactStart);
+test("skill index groups skills under their root and bounds descriptions", () => {
+  const prompt = buildCodexSystemPrompt("Base", {
+    skills: [
+      {
+        name: "example",
+        description: "one two three four five six seven eight nine ten eleven twelve thirteen",
+        filePath: "/profile/skills/example/SKILL.md",
+      },
+      {
+        name: "other",
+        description: "Short trigger. A second sentence that must not appear.",
+        filePath: "/profile/skills/other/SKILL.md",
+      },
+      {
+        name: "packaged",
+        description: "Packaged skill",
+        filePath: "/project/.pi/packages/example/skills/packaged/SKILL.md",
+      },
+    ],
+  });
 
-  assert.match(settingsText, /"toolDescriptionMode": "compact"/);
-  assert.notEqual(compactStart, -1);
-  assert.notEqual(fullStart, -1);
-  const compactDescription = agentToolSource.slice(compactStart, fullStart);
-  assert.doesNotMatch(compactDescription, /\b(?:Anthropic|OpenAI|Claude|GPT|Kimi|Apex)\b/i);
-  assert.ok(
-    estimatePromptTokens(compactDescription) <= 320,
-    "compact Agent description source exceeds 320 tokens",
+  assert.match(prompt, /Skill files: \/profile\/skills\/<name>\/SKILL\.md/);
+  assert.match(prompt, /- example: one two three four five six seven eight nine ten eleven twelve/);
+  assert.doesNotMatch(prompt, /thirteen/);
+  assert.match(prompt, /- other: Short trigger\.\n/);
+  assert.doesNotMatch(prompt, /second sentence/);
+  assert.doesNotMatch(prompt, /\/profile\/skills\/example\/SKILL\.md/);
+  assert.equal(prompt.match(/Skill files:/g)?.length, 2);
+  // A skill is listed directly under the root that contains it.
+  const packagedRootIndex = prompt.indexOf(
+    "Skill files: /project/.pi/packages/example/skills/<name>/SKILL.md",
   );
-  assert.match(projectPolicy, /## Post-task session audit/);
-  assert.match(projectPolicy, /Once per user task, the root orchestrator audits/);
+  const packagedSkillIndex = prompt.indexOf("- packaged: Packaged skill");
+  assert.ok(packagedRootIndex >= 0 && packagedSkillIndex > packagedRootIndex);
+  assert.ok(prompt.indexOf("- other: Short trigger.") < packagedRootIndex);
+});
+
+test("compact descriptions and task-lineage audit remain configured", async () => {
+  const [settingsText, projectPolicy, taskCore, modelGuidance, agentToolSource] = await Promise.all(
+    [
+      readRepoFile(".pi/subagents.json"),
+      readRepoFile("AGENTS.md"),
+      readRepoFile(".pi/skills/task-core/SKILL.md"),
+      readRepoFile(".pi/model-guidance.md"),
+      readRepoFile(".pi/packages/choco-pi-subagents/src/index.ts"),
+    ],
+  );
+  assert.doesNotMatch(settingsText, /"toolDescriptionMode"/);
+  assert.match(agentToolSource, /Launch a child-safe nested subagent for bounded delegated work/);
+  assert.doesNotMatch(agentToolSource, /agentToolDescription\.slice/);
+  assert.doesNotMatch(projectPolicy, /## Post-task session audit/);
+  assert.match(taskCore, /## Post-task session audit/);
+  assert.match(taskCore, /Once per user task, the root orchestrator audits/);
   assert.match(modelGuidance, /`splitDeferredTools` is available only/);
   assert.match(modelGuidance, /deferred loading must not alter shared tool semantics/);
 });

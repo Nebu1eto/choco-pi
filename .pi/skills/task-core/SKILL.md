@@ -57,3 +57,11 @@ If a required review fails, remains cancellation-pending, or completes `INCOMPLE
 5. For changed files covered by the diagnostics pipeline, run `diagnostics_report mode=all` before completion. Treat stale or unavailable results as incomplete diagnostics evidence and report the focused fallback used; do not make this an unrelated prose-only gate.
 
 A change after validation invalidates affected evidence. Repeat the relevant checks on the new state. Protected validation that mutates remote systems, databases, deployments, credentials, or published artifacts requires explicit user authority.
+
+Acceptance-selected extension-host and TUI checks use a fresh separate Pi process, and real-Pi suites remain opt-in.
+
+## Post-task session audit
+
+Once per user task, the root orchestrator audits the current task lineage from a recorded cutoff; leaf and workflow agents do not repeat it. Historical sweeps require an explicit request and remain bounded and incremental. Exclude audit workers created after the cutoff to prevent recursion.
+
+Report coverage limits, recurring failures or retries, repeated review findings, and only new durable lessons. Never expose secrets or mutate, delete, steer, compact, or annotate sessions; report unavailable records instead of inventing coverage.

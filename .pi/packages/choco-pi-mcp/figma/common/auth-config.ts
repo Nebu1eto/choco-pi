@@ -65,6 +65,7 @@ export function registerAuthConfigurator(pi: ExtensionAPI, options: AuthConfigur
     name: options.toolName,
     label: `${options.displayName} Auth`,
     description: `Securely prompt the user for a ${options.displayName} token and store it without exposing it to the model. Use only when auth is missing/expired/invalid, or when the user asks to update the token.`,
+    promptSnippet: `Configure ${options.displayName} authentication securely.`,
     parameters: ConfigureAuthParamsSchema,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await configureAuthToken(ctx, options, { force: params.force });

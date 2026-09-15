@@ -57,6 +57,25 @@ import {
   type McpObject,
 } from "./protocol-values.ts";
 
+const PREFIX_LOCK_SYMBOL = Symbol.for("choco-pi.prefix.locked");
+const LEAN_SURFACE_SYMBOL = Symbol.for("choco-pi.tool-search.lean-surface");
+
+function isPrefixLocked(): boolean {
+  const prefixLock = Object.getOwnPropertyDescriptor(globalThis, PREFIX_LOCK_SYMBOL)?.value;
+  if (!isObjectValue(prefixLock)) return false;
+  const isLocked = Object.getOwnPropertyDescriptor(prefixLock, "isLocked")?.value;
+  return isFunctionValue(isLocked) && isLocked() === true;
+}
+
+function leanSurfaceKeepsTool(toolName: string): boolean {
+  const surface = Object.getOwnPropertyDescriptor(globalThis, LEAN_SURFACE_SYMBOL)?.value;
+  if (!isObjectValue(surface)) return true;
+  const alwaysActive = Object.getOwnPropertyDescriptor(surface, "alwaysActive")?.value;
+  if (!isFunctionValue(alwaysActive)) return true;
+  const names: unknown = alwaysActive();
+  return Array.isArray(names) && names.includes(toolName);
+}
+
 function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Module> {
   let promise: Promise<Module> | undefined;
   return () => (promise ??= loader());
@@ -270,6 +289,23 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let proxyToolRegistered = false;
   let proxyToolDescription: string | null = null;
   let directToolsFrozen = false;
+  let toolSurfaceDeferred = false;
+  let applyingDeferredSurface = false;
+
+  function prefixMutationAllowed(): boolean {
+    return applyingDeferredSurface || !isPrefixLocked();
+  }
+
+  function replayDeferredToolSurface(ctx: ExtensionContext): void {
+    if (!toolSurfaceDeferred) return;
+    applyingDeferredSurface = true;
+    try {
+      syncToolSurface(ctx);
+      toolSurfaceDeferred = false;
+    } finally {
+      applyingDeferredSurface = false;
+    }
+  }
 
   // OMP remaps `typebox` to a host shim that historically lacked Type.Unsafe.
   // Prefer Unsafe when present (real TypeBox / fixed OMP shim); otherwise pass
@@ -341,6 +377,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   function deactivateTools(toolNames: string[]): string[] {
     if (toolNames.length === 0) return [];
+    if (!prefixMutationAllowed()) {
+      toolSurfaceDeferred = true;
+      return [];
+    }
     // SAFETY: Adjacent validation or the typed SDK establishes the asserted protocol value shape at this compatibility boundary.
     const unregisterTool = (pi as ExtensionAPI & { unregisterTool?: (name: string) => boolean })
       .unregisterTool;
@@ -371,12 +411,17 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const fingerprint = directToolFingerprint(spec);
       const previous = registeredDirectTools.get(spec.prefixedName);
       if (previous !== fingerprint) {
+        if (!prefixMutationAllowed()) {
+          toolSurfaceDeferred = true;
+          continue;
+        }
         registerDirectTool(spec);
         registeredDirectTools.set(spec.prefixedName, fingerprint);
         if (fallbackDeactivatedTools.delete(spec.prefixedName)) {
           const activeTools = getActiveToolsIfReady();
           if (activeTools && !activeTools.includes(spec.prefixedName)) {
-            pi.setActiveTools([...activeTools, spec.prefixedName]);
+            if (prefixMutationAllowed()) pi.setActiveTools([...activeTools, spec.prefixedName]);
+            else toolSurfaceDeferred = true;
           }
         }
         (previous ? updated : added).push(spec.prefixedName);
@@ -385,6 +430,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
     for (const toolName of registeredDirectTools.keys()) {
       if (nextNames.has(toolName)) continue;
+      if (!prefixMutationAllowed()) {
+        toolSurfaceDeferred = true;
+        continue;
+      }
       registeredDirectTools.delete(toolName);
       deactivated.push(toolName);
     }
@@ -583,6 +632,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    replayDeferredToolSurface(ctx);
     const generation = ++lifecycleGeneration;
     const previousState = state;
     const previousOwner = currentOwner;
@@ -630,6 +680,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         await initialization;
       }
     }
+  });
+
+  pi.on("model_select", (_event, ctx) => {
+    replayDeferredToolSurface(ctx);
   });
 
   pi.on("input", async () => {
@@ -958,8 +1012,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       label: "MCP Script",
       description:
         "Run trusted JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } } — or use direct flat calls when the name is already known; use emit(value) for user-visible output. Load the mcp-scripting skill for the full workflow guide.",
-      promptSnippet:
-        "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
+      promptSnippet: "Batch MCP tool calls with JavaScript.",
       parameters: Type.Object({
         code: Type.String({
           description:
@@ -1022,7 +1075,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       name: "mcp",
       label: "MCP",
       description,
-      promptSnippet: "MCP gateway — status, search, describe, auth, and single MCP tool calls",
+      promptSnippet: "MCP gateway for status, discovery, authentication, and tool calls.",
       renderShell: toolRenderShell,
       renderCall: createMcpProxyToolCallRenderer(toolRenderOptions),
       parameters: Type.Object({
@@ -1284,6 +1337,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     });
     proxyToolRegistered = true;
     proxyToolDescription = description;
+    const activeTools = getActiveToolsIfReady();
+    if (activeTools?.includes("mcp") && !leanSurfaceKeepsTool("mcp") && prefixMutationAllowed()) {
+      pi.setActiveTools(activeTools.filter((toolName) => toolName !== "mcp"));
+    }
   }
 
   function syncProxyTool(
@@ -1304,12 +1361,17 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (shouldRegisterProxyTool) {
       const description = buildProxyDescription(config, cache, directSpecs);
       if (!proxyToolRegistered || proxyToolDescription !== description) {
+        if (!prefixMutationAllowed()) {
+          toolSurfaceDeferred = true;
+          return;
+        }
         registerProxyTool(description);
         return;
       }
       const activeTools = getActiveToolsIfReady();
-      if (activeTools && !activeTools.includes("mcp")) {
-        pi.setActiveTools([...activeTools, "mcp"]);
+      if (activeTools && !activeTools.includes("mcp") && leanSurfaceKeepsTool("mcp")) {
+        if (prefixMutationAllowed()) pi.setActiveTools([...activeTools, "mcp"]);
+        else toolSurfaceDeferred = true;
       }
       return;
     }

@@ -74,14 +74,16 @@ function hasSessionId(connection: ServerConnection): boolean {
 }
 
 export class SessionRecoveryAuthRequiredError extends Error {
-  constructor(
-    readonly serverName: string,
-    readonly authMessage?: string,
-  ) {
+  readonly serverName: string;
+  readonly authMessage: string | undefined;
+
+  constructor(serverName: string, authMessage?: string) {
     super(
       authMessage ?? `MCP server "${serverName}" requires OAuth authentication after reconnect.`,
     );
     this.name = "SessionRecoveryAuthRequiredError";
+    this.serverName = serverName;
+    this.authMessage = authMessage;
   }
 }
 

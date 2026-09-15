@@ -400,11 +400,8 @@ export function createLspDiagnosticsTool(
   return {
     name: "lsp_diagnostics" as const,
     label: "LSP Diagnostics",
-    description:
-      "Get errors, warnings, and hints from language servers for a file or directory. " +
-      "Use BEFORE running builds to proactively check for issues. " +
-      "Works on directories by auto-detecting file extensions and scanning all matching files.",
-    promptSnippet: "Get LSP diagnostics for a file or directory (use before builds)",
+    description: "Get language-server diagnostics for files or directories.",
+    promptSnippet: "Check files or directories for language-server diagnostics.",
     renderResult: compactRenderResult<{
       mode?: string;
       phase?: string;
@@ -471,16 +468,14 @@ export function createLspDiagnosticsTool(
     parameters: Type.Object({
       path: Type.Optional(
         Type.String({
-          description:
-            "File or directory path to check. For directories, all matching source files are scanned.",
+          description: "File or directory to check.",
         }),
       ),
       paths: Type.Optional(
         Type.Array(Type.String(), {
           minItems: 1,
           maxItems: MAX_BATCH_FILES,
-          description:
-            "Explicit files to check as a bounded-concurrency batch. When provided, path is ignored.",
+          description: "Explicit file batch; overrides path.",
         }),
       ),
       severity: Type.Optional(
@@ -491,31 +486,18 @@ export function createLspDiagnosticsTool(
       ),
       concurrency: Type.Optional(
         Type.Number({
-          description:
-            "Batch/directory concurrency, in distinct LSP server groups run in parallel " +
-            "(default 8, max 16) — not individual files. Files sharing one server " +
-            "(e.g. a same-language batch) are always processed one at a time against " +
-            "that server regardless of this value; this caps how many DIFFERENT " +
-            "servers run concurrently.",
+          description: "Concurrent language-server groups; defaults to 8, maximum 16.",
         }),
       ),
       waitMs: Type.Optional(
         Type.Number({
-          description:
-            "Optional per-file LSP wait budget for batch diagnostics. Uses server defaults when omitted.",
+          description: "Per-file wait budget in milliseconds.",
         }),
       ),
       serverScope: Type.Optional(
         Type.String({
           enum: ["primary", "all"],
-          description:
-            "'primary' (fast, low-noise): only the file's actual language " +
-            "server (e.g. typescript) — for 'does this have real type " +
-            "errors'. 'all' (default): also touches cross-cutting auxiliary " +
-            "scanners (ast-grep, opengrep, zizmor, typos, marksman) attached " +
-            "to this file, including findings for files not yet dispatched " +
-            "this session. Primary confirmation is always reported " +
-            "separately from auxiliary findings regardless of this setting.",
+          description: "Use the primary server only or all auxiliary scanners.",
         }),
       ),
     }),

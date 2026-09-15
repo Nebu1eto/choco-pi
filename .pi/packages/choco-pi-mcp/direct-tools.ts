@@ -318,7 +318,7 @@ export function resolveDirectTools(
   return specs;
 }
 
-export function buildProxyDescription(
+function buildDetailedProxyDescription(
   config: McpConfig,
   cache: MetadataCache | null,
   directSpecs: DirectToolSpec[],
@@ -463,6 +463,18 @@ export function buildProxyDescription(
   desc += `\nMode: action > tool (call) > connect > describe > instructions > search > server (list) > nothing (status)`;
 
   return desc;
+}
+
+export function buildProxyDescription(
+  config: McpConfig,
+  cache: MetadataCache | null,
+  directSpecs: DirectToolSpec[],
+): string {
+  void config;
+  void cache;
+  void directSpecs;
+  void buildDetailedProxyDescription;
+  return "Access MCP server status, discovery, authentication, and tool calls.";
 }
 
 type DirectToolExecute = (

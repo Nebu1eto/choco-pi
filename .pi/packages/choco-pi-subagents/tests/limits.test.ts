@@ -156,6 +156,7 @@ class PersistingSessionHost {
 test("settings accept maxConcurrent 0 and reject negatives", () => {
   assert.deepEqual(sanitizeSettings({ maxConcurrent: 0 }), { maxConcurrent: 0 });
   assert.deepEqual(sanitizeSettings({ maxConcurrent: -1 }), {});
+  assert.deepEqual(sanitizeSettings({ toolDescriptionMode: "compact" }), {});
 });
 
 test("unlimited manager scheduling drains immediately to the sanity cap", () => {

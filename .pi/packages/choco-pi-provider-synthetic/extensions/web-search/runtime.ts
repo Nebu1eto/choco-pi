@@ -8,28 +8,12 @@ import {
 } from "../../src/config-events.ts";
 import { ensureSyntheticConfig, publishSyntheticConfig } from "../../src/config-state.ts";
 import { detectBillingMode } from "../../src/utils/quotas.ts";
-import { registerSyntheticWebSearchTool, SYNTHETIC_WEB_SEARCH_TOOL } from "./tool.ts";
-
-type WebSearchEntitlement = "unknown" | "subscription" | "pay-as-you-go";
-
-function shouldActivateWebSearch(enabled: boolean, entitlement: WebSearchEntitlement): boolean {
-  return enabled && entitlement === "subscription";
-}
-
-function syncToolActivation(pi: ExtensionAPI, active: boolean): void {
-  const allToolNames = new Set(pi.getAllTools().map((tool) => tool.name));
-  const activeTools = new Set(pi.getActiveTools());
-
-  if (!allToolNames.has(SYNTHETIC_WEB_SEARCH_TOOL)) return;
-
-  if (active) {
-    activeTools.add(SYNTHETIC_WEB_SEARCH_TOOL);
-  } else {
-    activeTools.delete(SYNTHETIC_WEB_SEARCH_TOOL);
-  }
-
-  pi.setActiveTools([...activeTools].filter((name) => allToolNames.has(name)));
-}
+import {
+  shouldActivateWebSearch,
+  syncToolActivation,
+  type WebSearchEntitlement,
+} from "./activation.ts";
+import { registerSyntheticWebSearchTool } from "./tool.ts";
 
 export default async function (pi: ExtensionAPI) {
   let config = await ensureSyntheticConfig();

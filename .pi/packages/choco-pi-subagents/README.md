@@ -53,7 +53,6 @@ Project configuration is unchanged and still lives in `.pi/subagents.json` and
 ```
 src/                  TypeScript source; src/index.ts is the extension entry
 node_modules/         vendored runtime deps (croner, nanoid); typebox is host-provided
-examples/             starting point for toolDescriptionMode: "custom"
 tsconfig.json         package-local typecheck config
 CHANGELOG.upstream.md upstream history, for provenance only
 ```

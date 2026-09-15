@@ -728,14 +728,12 @@ function installUserCommands(pi: ExtensionAPI): void {
   });
 }
 
-function installAgentTools(pi: ExtensionAPI): void {
+export function installAgentTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "session_create",
     label: "Create conversation",
-    description:
-      "Create an independent choco-pi conversation in the current project and start it with an initial user prompt. The call returns immediately while the new conversation continues; Pi persists its JSONL after the first assistant response.",
-    promptSnippet:
-      "Create an independent choco-pi conversation with a selected model and reasoning effort",
+    description: "Create and start an independent project conversation.",
+    promptSnippet: "Start an independent project conversation.",
     parameters: Type.Object({
       initial_prompt: Type.String({ description: "Initial user prompt for the new conversation" }),
       model: Type.Optional(
@@ -764,9 +762,8 @@ function installAgentTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "session_send",
     label: "Send conversation message",
-    description:
-      "Asynchronously send a message to another choco-pi conversation in the current project without waiting for its next turn. Use steer for an active conversation's next safe point, or queue for FIFO delivery after its current work. Queued messages persist while a target is inactive.",
-    promptSnippet: "Send queue or steer messages to another choco-pi conversation",
+    description: "Send a queued or steering message to another conversation.",
+    promptSnippet: "Message another project conversation.",
     parameters: Type.Object({
       session_id: Type.String({ description: "Target session ID" }),
       mode: Type.Union([Type.Literal("queue"), Type.Literal("steer")]),
@@ -786,9 +783,8 @@ function installAgentTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "session_list",
     label: "List conversations",
-    description:
-      "List persisted choco-pi conversations for the current project, including live status, model, reasoning effort, cursor, and message count.",
-    promptSnippet: "List independent choco-pi conversations in the current project",
+    description: "List persisted conversations for the current project.",
+    promptSnippet: "List persisted project conversations.",
     parameters: Type.Object({}),
     executionMode: "parallel",
     execute: async (_toolCallId, _params, _signal, _onUpdate, ctx) =>
@@ -798,9 +794,8 @@ function installAgentTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "session_read",
     label: "Read conversation",
-    description:
-      "Read recent user and assistant messages from another persisted choco-pi conversation in the current project. Returns a cursor for subsequent waits.",
-    promptSnippet: "Read another choco-pi conversation and obtain its cursor",
+    description: "Read recent messages from another persisted conversation.",
+    promptSnippet: "Read another conversation's recent messages.",
     parameters: Type.Object({
       session_id: Type.String({ description: "Session ID to read" }),
       limit: Type.Optional(
@@ -824,9 +819,8 @@ function installAgentTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "session_wait",
     label: "Wait for conversation",
-    description:
-      "Give another choco-pi conversation one bounded wait of at most 5 seconds to become idle. With after_cursor, also require transcript progress. Continue other work after a timeout instead of polling.",
-    promptSnippet: "Wait for another choco-pi conversation to make progress and become idle",
+    description: "Wait briefly for conversation progress and idle state.",
+    promptSnippet: "Wait briefly for another conversation's progress.",
     parameters: Type.Object({
       session_id: Type.String({ description: "Session ID to wait for" }),
       after_cursor: Type.Optional(
@@ -841,7 +835,7 @@ function installAgentTools(pi: ExtensionAPI): void {
         Type.Integer({
           minimum: 0,
           maximum: SESSION_WAIT_LIMIT_MS,
-          description: "Wait timeout in milliseconds; defaults to 5000 and cannot exceed 5000",
+          description: "Wait milliseconds; defaults to and cannot exceed 5000.",
         }),
       ),
     }),

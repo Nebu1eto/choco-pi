@@ -162,6 +162,12 @@ export interface McpOAuthCallbacks {
  * Implements the OAuthClientProvider interface from the MCP SDK.
  */
 export class McpOAuthProvider implements OAuthClientProvider {
+  private serverName: string;
+  private serverUrl: string;
+  private config: McpOAuthConfig;
+  private callbacks: McpOAuthCallbacks;
+  private storageOptions: AuthStorageOptions;
+  private runtimeSignal: AbortSignal | undefined;
   private readonly redirectUrlSnapshot: string | undefined;
   private active = true;
   private flowClientInfo: StoredClientInfo | undefined;
@@ -171,14 +177,20 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private flowState: string | undefined;
 
   constructor(
-    private serverName: string,
-    private serverUrl: string,
-    private config: McpOAuthConfig,
-    private callbacks: McpOAuthCallbacks,
-    private storageOptions: AuthStorageOptions = {},
-    private runtimeSignal?: AbortSignal,
+    serverName: string,
+    serverUrl: string,
+    config: McpOAuthConfig,
+    callbacks: McpOAuthCallbacks,
+    storageOptions: AuthStorageOptions = {},
+    runtimeSignal?: AbortSignal,
     initialState?: string,
   ) {
+    this.serverName = serverName;
+    this.serverUrl = serverUrl;
+    this.config = config;
+    this.callbacks = callbacks;
+    this.storageOptions = storageOptions;
+    this.runtimeSignal = runtimeSignal;
     this.flowState = initialState;
     this.redirectUrlSnapshot =
       config.grantType === "client_credentials"

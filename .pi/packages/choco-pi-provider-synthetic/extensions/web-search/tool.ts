@@ -14,8 +14,8 @@ import {
   type SyntheticSearchResult,
 } from "../../src/client/index.ts";
 import { ensureSyntheticConfig } from "../../src/config-state.ts";
+import { SYNTHETIC_WEB_SEARCH_TOOL } from "./activation.ts";
 
-export const SYNTHETIC_WEB_SEARCH_TOOL = "synthetic_web_search" as const;
 const MAX_INLINE_SEARCH_BYTES = 20_000;
 const MAX_INLINE_SEARCH_RESULT_BYTES = 4_000;
 const MAX_INLINE_SEARCH_RESULT_LINES = 1_000;

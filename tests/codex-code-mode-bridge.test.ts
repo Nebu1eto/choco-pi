@@ -12,11 +12,12 @@ import { buildBridgedToolsLine } from "../.pi/packages/choco-pi-codex/src/tools/
 import { scopeAllToolsToDeferredCustom } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/tool-source.ts";
 import type { CodeModeToolDefinition } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/types.ts";
 
-function makeTool(name: string, parameters: TSchema): ToolDefinition {
+function makeTool(name: string, parameters: TSchema, promptSnippet?: string): ToolDefinition {
   return {
     name,
     label: name,
     description: name + " description",
+    promptSnippet,
     parameters,
     async execute(_toolCallId: string) {
       return { content: [{ type: "text" as const, text: name + " ran" }], details: undefined };
@@ -58,26 +59,29 @@ test("the bridge skips its own entry points and the natively wrapped tools", () 
   ]);
   const bridged = collectBridgedTools(runner);
   const names = bridged.map((tool) => tool.name).sort();
-  assert.deepEqual(names, ["Agent", "symbol_search"]);
-  for (const excluded of ["exec", "wait", "apply_patch"]) {
+  assert.deepEqual(names, ["symbol_search"]);
+  for (const excluded of ["exec", "wait", "apply_patch", "Agent"]) {
     assert.ok(BRIDGE_EXCLUDED_TOOLS.has(excluded), excluded + " stays excluded");
   }
 });
 
 test("bridged tools are deferred so they cost no prompt tokens", () => {
-  const runner = makeRunner([makeTool("module_report", Type.Object({ path: Type.String() }))]);
+  const runner = makeRunner([
+    makeTool("module_report", Type.Object({ path: Type.String() }), "Inspect module structure."),
+  ]);
   const [bridged] = collectBridgedTools(runner);
   assert.ok(bridged);
   assert.equal(bridged.deferLoading, true);
   assert.equal(bridged.usage, "await tools.module_report({path})");
   assert.equal(bridged.description, "module_report description");
+  assert.equal(bridged.summary, "Inspect module structure.");
 });
 
 test("a cold capture yields no bridged tools instead of throwing", () => {
   assert.deepEqual(collectBridgedTools(undefined), []);
 });
 
-test("the prompt advertises bridged names on one deferred line", () => {
+test("the prompt catalogs bridged tools with deterministic summaries", () => {
   const bridged = collectBridgedTools(
     makeRunner([
       makeTool("session_send", Type.Object({ session_id: Type.String() })),
@@ -88,9 +92,28 @@ test("the prompt advertises bridged names on one deferred line", () => {
   const line = buildBridgedToolsLine(bridged as CodeModeToolDefinition[]);
   assert.match(line, /^Pi tools callable in exec/);
   assert.match(line, /ALL_TOOLS/);
-  assert.match(line, /lsp_diagnostics, session_send/);
+  assert.match(
+    line,
+    /lsp_diagnostics: lsp_diagnostics description\nsession_send: session_send description/,
+  );
 
   assert.equal(buildBridgedToolsLine([]), "", "no line without bridged tools");
+});
+
+test("headless bridge omits UI-only tools but retains workflow tools", () => {
+  const bridged = collectBridgedTools(
+    makeRunner([
+      makeTool("observe_ui", Type.Object({})),
+      makeTool("read_text", Type.Object({ ref: Type.String() })),
+      makeTool("workflow_run", Type.Object({ name: Type.String() })),
+    ]),
+    false,
+  );
+
+  assert.deepEqual(
+    bridged.map((tool) => tool.name),
+    ["workflow_run"],
+  );
 });
 
 test("bridged tools stay discoverable in ALL_TOOLS and callable through the guard", () => {

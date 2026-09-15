@@ -59,8 +59,7 @@ export function createAstGrepOutlineTool(astGrepClient: AstGrepClient) {
       "`isExported`/`isImport`, nested `members[]` (with `isPublic`), and ready " +
       "`read` args on every entry. NOTE: structure only — an outline is NOT a read " +
       "of a symbol's body (use read_symbol/read_enclosing for that).",
-    promptSnippet:
-      "Syntax-only code outline via ast-grep (no index/LSP); module_report is the richer default",
+    promptSnippet: "Inspect a syntax-only ast-grep code outline.",
     renderResult: compactRenderResult<{
       files?: number;
       items?: number;

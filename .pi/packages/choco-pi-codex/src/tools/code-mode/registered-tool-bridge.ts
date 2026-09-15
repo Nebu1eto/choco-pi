@@ -52,7 +52,38 @@ export const BRIDGE_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "web__run",
   "web_run",
   "image_gen__imagegen",
+  "Agent",
+  "get_subagent_result",
+  "steer_subagent",
+  "stop_subagent",
+  "shell_start",
+  "shell_read",
+  "agent_browser",
+  "tool_search",
 ]);
+
+export const UI_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "find_roots",
+  "observe_ui",
+  "search_ui",
+  "expand_ui",
+  "inspect_ui",
+  "act_ui",
+  "read_text",
+  "wait_for",
+  "launch_browser",
+  "navigate_browser",
+  "evaluate_browser",
+]);
+
+const FALLBACK_SUMMARY_WORD_LIMIT = 12;
+
+function fallbackToolSummary(description: string): string {
+  const firstSentence = description.split(/(?<=[.!?])(?:\s|$)/, 1)[0]?.trim() ?? "";
+  const words = firstSentence.split(/\s+/).filter(Boolean);
+  if (words.length <= FALLBACK_SUMMARY_WORD_LIMIT) return words.join(" ");
+  return words.slice(0, FALLBACK_SUMMARY_WORD_LIMIT).join(" ") + "…";
+}
 
 /** The single runner method the bridge needs; keeps fakes and tests honest. */
 export type RegisteredToolSource = Pick<ExtensionRunner, "getAllRegisteredTools">;
@@ -170,12 +201,14 @@ export function bridgedToolUsage(definition: ToolDefinition): string {
  */
 export function collectBridgedTools(
   runner: RegisteredToolSource | undefined = registeredToolRunner(),
+  hasUI = true,
 ): ProgrammaticCodeModeToolDefinition[] {
   if (!runner) return [];
   const bridged: ProgrammaticCodeModeToolDefinition[] = [];
   for (const registered of runner.getAllRegisteredTools()) {
     const definition = registered.definition;
     if (BRIDGE_EXCLUDED_TOOLS.has(definition.name)) continue;
+    if (!hasUI && UI_TOOL_NAMES.has(definition.name)) continue;
     const nested = toNestedTool(
       definition,
       bridgedToolUsage(definition),
@@ -187,6 +220,7 @@ export function collectBridgedTools(
     const toolName = definition.name;
     bridged.push({
       ...nested,
+      summary: definition.promptSnippet?.trim() || fallbackToolSummary(definition.description),
       async invoke(input, context, signal) {
         const cwd = context.cwd;
         try {

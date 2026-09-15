@@ -46,9 +46,11 @@ export const DEFAULT_TOOL_LABELS = {
   fetch_content: "Web: Fetching Content",
   get_search_content: "Web: Reading Content",
   synthetic_web_search: "Web: Searching",
+  agent_browser: "Browser: Automating",
 
   // Images
   imagegen: "Image: Generating",
+  image_gen__imagegen: "Image: Generating",
   view_image: "Image: Viewing",
 
   // Tool discovery and MCP
@@ -130,9 +132,11 @@ export const DEFAULT_FINISHED_TOOL_LABELS = {
   fetch_content: "Web: Fetched Content",
   get_search_content: "Web: Read Content",
   synthetic_web_search: "Web: Searched",
+  agent_browser: "Browser: Automated",
 
   // Images
   imagegen: "Image: Generated",
+  image_gen__imagegen: "Image: Generated",
   view_image: "Image: Viewed",
 
   // Tool discovery and MCP

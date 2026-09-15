@@ -345,10 +345,10 @@ test("extension registers documented portable tool schemas and the /shells comma
     }
     const startTool = tool(root, "shell_start");
     const readTool = tool(root, "shell_read");
-    assert.match(startTool.description, /long-running background/);
-    assert.match(startTool.description, /bash for ordinary commands/);
-    assert.match(startTool.description, /bounded multi-call processing/);
-    assert.match(startTool.description, /Promise\.all for independent calls/);
+    assert.equal(
+      startTool.description,
+      "Start a managed long-running background process. Exit is delivered as a shell-completion notification; do not poll.",
+    );
     assert.match(startTool.parameters.properties?.command?.description ?? "", /long-running/i);
     assert.match(startTool.parameters.properties?.cwd?.description ?? "", /calling session cwd/);
     assert.match(readTool.parameters.properties?.stdout_offset?.description ?? "", /nextOffset/);

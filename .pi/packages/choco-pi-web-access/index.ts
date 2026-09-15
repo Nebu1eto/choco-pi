@@ -1018,9 +1018,6 @@ export default function (pi: ExtensionAPI) {
   const searchQueryDescription = webSearchEnabled
     ? `Get content for this query (${toolNames.webSearch})`
     : "Get content for a stored search query";
-  const fetchContentStorageNote = getSearchContentEnabled
-    ? `Full original content is stored for retrieval with ${toolNames.getSearchContent}.`
-    : "Full original content is stored internally, but the retrieval tool is not registered.";
   const curateKey = initConfig.shortcuts?.curate || DEFAULT_SHORTCUTS.curate;
   const activityKey = initConfig.shortcuts?.activity || DEFAULT_SHORTCUTS.activity;
 
@@ -1784,20 +1781,17 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
       name: toolNames.webSearch,
       label: "Web Search",
-      description: `Search the web using OpenAI, Exa, or Kagi. Pass a provider array to search only those providers simultaneously, or use provider "all" to search every available provider. Returns an AI-synthesized answer with source citations. OpenAI search uses a Codex subscription or OpenAI API key. For comprehensive research, prefer queries (plural) with 2-4 varied angles over a single query. When includeContent is true, full page content is fetched in the background. Searches auto-open the interactive browser curator and stream results live; set workflow to "none" to skip curation or "auto-summary" for a model-generated summary without the browser curator. The configured provider is used when provider is omitted or set to auto. When the active Pi model is openai-codex, Codex-backed OpenAI search is preferred; otherwise Exa is preferred before OpenAI and Kagi.`,
-      promptSnippet:
-        "Use for web research questions. Prefer {queries:[...]} with 2-4 varied angles over a single query for broader coverage. Omit provider unless explicitly overriding the configured default.",
+      description: "Search the web and return a cited synthesized answer.",
+      promptSnippet: "Search the web and synthesize cited results.",
       parameters: Type.Object({
         query: Type.Optional(
           Type.String({
-            description:
-              "Single search query. For research tasks, prefer 'queries' with multiple varied angles instead.",
+            description: "One search query; use queries for broader research.",
           }),
         ),
         queries: Type.Optional(
           Type.Array(Type.String(), {
-            description:
-              "Multiple queries searched in sequence, each returning its own synthesized answer. Prefer this for research — vary phrasing, scope, and angle across 2-4 queries to maximize coverage. Good: ['React vs Vue performance benchmarks 2026', 'React vs Vue developer experience comparison', 'React ecosystem size vs Vue ecosystem']. Bad: ['React vs Vue', 'React vs Vue comparison', 'React vs Vue review'] (too similar, redundant results).",
+            description: "Distinct queries searched sequentially for broader coverage.",
           }),
         ),
         numResults: Type.Optional(
@@ -2521,7 +2515,7 @@ export default function (pi: ExtensionAPI) {
       label: "Source Check",
       description:
         "Check a claim against web sources and return a bounded machine-readable research artifact with exact passage citations.",
-      promptSnippet: "Verify a claim with structured source evidence and passage-level citations.",
+      promptSnippet: "Verify a claim with passage-level source citations.",
       parameters: Type.Object({
         claim: Type.String({ description: "The assertion to check against web sources." }),
         queries: Type.Optional(
@@ -2665,9 +2659,8 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
       name: toolNames.fetchContent,
       label: "Fetch Content",
-      description: `Fetch URL(s) and extract readable content as markdown. Use mode "raw" for exact textual HTTP response bodies or mode "answer" with prompt to answer using only fetched content. Direct image URLs return resized image content. Supports GitHub repositories and PDFs. ${fetchContentStorageNote}`,
-      promptSnippet:
-        "Use to fetch readable or raw URL content, direct images, and GitHub repositories. Mode answer answers a prompt using only the fetched source.",
+      description: "Fetch readable, raw, or question-focused URL content.",
+      promptSnippet: "Fetch readable or raw content from URLs.",
       parameters: Type.Object({
         url: Type.Optional(Type.String({ description: "Single URL to fetch" })),
         urls: Type.Optional(Type.Array(Type.String(), { description: "Multiple URLs (parallel)" })),
@@ -2683,20 +2676,17 @@ export default function (pi: ExtensionAPI) {
         ),
         mode: Type.Optional(
           StringEnum(["readable", "raw", "answer"], {
-            description:
-              "Fetch mode: readable (default extraction), raw (exact textual HTTP body), or answer (answer prompt using only fetched content).",
+            description: "Output readable, raw, or source-grounded answer content.",
           }),
         ),
         answerModel: Type.Optional(
           Type.String({
-            description:
-              "Optional provider/model-id override for mode answer. Defaults to the current Pi model.",
+            description: "Provider/model override for answer mode.",
           }),
         ),
         auth: Type.Optional(
           Type.Union([Type.String(), Type.Boolean()], {
-            description:
-              "Opt into an authFetch profile for local browser-cookie fetching. Use a profile name, or true only when exactly one profile exists.",
+            description: "Authentication profile name, or true for the sole profile.",
           }),
         ),
       }),
@@ -3053,7 +3043,7 @@ export default function (pi: ExtensionAPI) {
       name: toolNames.getSearchContent,
       label: "Get Search Content",
       description: `Retrieve bounded content slices or find matching passages in a previous ${storedContentSources} call.`,
-      promptSnippet: `Use after ${storedContentSources} to retrieve stored content via responseId. Use findText to locate passages without paging through the full content.`,
+      promptSnippet: "Retrieve slices or matching passages from stored content.",
       parameters: Type.Object({
         responseId: Type.String({ description: `The responseId from ${storedContentSources}` }),
         query: Type.Optional(Type.String({ description: searchQueryDescription })),
@@ -3067,16 +3057,14 @@ export default function (pi: ExtensionAPI) {
         offset: Type.Optional(
           Type.Integer({
             minimum: 0,
-            description:
-              "Character offset for fetched URL content slices (default 0). Cannot be combined with findText.",
+            description: "Slice offset; cannot be combined with findText.",
           }),
         ),
         limit: Type.Optional(
           Type.Integer({
             minimum: 1,
             maximum: maxInlineContentChars,
-            description:
-              "Maximum characters to return for fetched URL content slices (default and max are set by maxInlineContentChars). Cannot be combined with findText.",
+            description: "Slice length; cannot be combined with findText.",
           }),
         ),
         findText: Type.Optional(

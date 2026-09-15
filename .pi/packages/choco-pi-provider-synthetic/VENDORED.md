@@ -86,6 +86,16 @@ vendored copy and switch the settings entries back to
 `npm:@aliou/pi-synthetic@<version>`. If not, re-apply the patch above and
 re-run the upstream test suite (`pnpm install && pnpm test`).
 
+## Prefix-stable web-search entitlement
+
+The web-search extension now consults the process-wide
+`Symbol.for("choco-pi.prefix.locked")` contract before changing active tools.
+A subscription entitlement resolved after the first provider request does not
+rewrite that session's tool prefix. Each `session_start` resets entitlement to
+unknown and rechecks it for the new session. The lock-gated activation decision
+lives in a dependency-free module so strip-only Node tests do not load the TUI
+dependency graph.
+
 ## Vendored install policy
 
 This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
