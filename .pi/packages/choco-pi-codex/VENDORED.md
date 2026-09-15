@@ -196,7 +196,8 @@ prompt and the `exec` description: bounded tool workflows default to Code Mode,
 while approvals, native artifacts, citations, decision-dependent single results,
 and unavailable capabilities stay direct. Capability-aware examples mention only
 tools present in the filtered namespace, preserve fulfilled and rejected outcomes,
-and never manufacture filesystem or UI capabilities. Static shell and mutation
+and never manufacture filesystem or UI capabilities; when exposed, `read_text` is
+explicitly identified as an observed-UI-text-by-reference tool, not a filesystem reader. Static shell and mutation
 guidance is omitted when the session permission filter removed `bash`, `edit`, or
 `write`. Generated tool guidance is enclosed in a bounded owned block and rebuilt
 when the root/child tool set changes; unrelated prompt prose and legacy composition
