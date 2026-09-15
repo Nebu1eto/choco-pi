@@ -178,9 +178,8 @@ test(
         recordCleanupError(signalGroup(child.pid, "SIGKILL"));
       }
       teardown = await Promise.race([closed, delay(5_000).then(() => undefined)]);
-      if (!teardown) recordCleanupError("Pi process did not close after SIGKILL");
-      // The group is gone: drop the abort listener so a later abort cannot signal a reused pid.
-      else t.signal.removeEventListener("abort", onAbort);
+      if (teardown) t.signal.removeEventListener("abort", onAbort);
+      else recordCleanupError("Pi process did not close after SIGKILL");
     }
 
     let failure: unknown;

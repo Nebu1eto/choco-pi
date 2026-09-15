@@ -220,6 +220,9 @@ and user payloads. Probe teardown attempts SIGTERM and SIGKILL unconditionally,
 retaining only the first cleanup error, and drops its abort listener once the
 detached group is confirmed closed.
 
+The probe's teardown branch uses a positive settled-result check; its success
+and error actions are unchanged by this test-only readability cleanup.
+
 ## Code Mode and edit preflight (choco-pi addition)
 
 `tools/code-mode/source-preflight.ts` parses restricted cells before host execution and scans executable source tokens for unsupported restricted globals. It hard-rejects a `tools.<name>` reference only when the reference is unconditional at the cell's top level and Pi registers the name neither inside nor outside code mode. A separate compile-only `node:vm` `Script` sentinel detects conflicting same-scope `tools` bindings without executing cell source or transforming it at runtime, so automatic semicolon insertion, loop-scoped lexical declarations, nested functions, property and named function expressions keep their real JavaScript meaning; multiple declarations are covered without rejecting nested expression arrows or notebook-local bindings. Guarded references and real-but-unbridged tool names run to the namespace proxy. String, comment, template text, and regular expression contents are ignored. Notebook cells retain Deno TypeScript capabilities and skip restricted-global and JavaScript-only checks. Command strings and non-zero `exec_command` exits remain runtime data and are not reclassified.

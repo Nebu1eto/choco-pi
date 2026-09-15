@@ -182,11 +182,11 @@ test("carries the agent role badge, falling back to a generic label", () => {
     theme,
   );
   const [, , typedDetail = ""] = typed.split("\n");
-  assert.match(typedDetail, /^    └ implementer · /);
+  assert.match(typedDetail, /^ {4}└ implementer · /);
 
   const untyped = renderSubagentNotification(notificationFixture(), { expanded: false }, theme);
   const [, , untypedDetail = ""] = untyped.split("\n");
-  assert.match(untypedDetail, /^    └ Agent · /);
+  assert.match(untypedDetail, /^ {4}└ Agent · /);
   registerAgents(new Map());
 });
 
@@ -212,11 +212,11 @@ test("distinguishes error, stopped, and aborted outcomes", () => {
   );
 
   assert.match(error, /^ • ✗ Delegation: Failed$/m);
-  assert.match(error, /^      Error: model unavailable$/m);
+  assert.match(error, /^ {6}Error: model unavailable$/m);
   assert.match(stopped, /^ • ■ Delegation: Stopped$/m);
-  assert.match(stopped, /^      Partial answer$/m);
+  assert.match(stopped, /^ {6}Partial answer$/m);
   assert.match(aborted, /^ • ✗ Delegation: Aborted$/m);
-  assert.match(aborted, /^      Turn limit reached$/m);
+  assert.match(aborted, /^ {6}Turn limit reached$/m);
 });
 
 test("distinguishes budget, watchdog, and unknown terminal outcomes", () => {
@@ -245,9 +245,9 @@ test("distinguishes budget, watchdog, and unknown terminal outcomes", () => {
   );
 
   assert.match(budget, /^ • ■ Delegation: Budget exceeded$/m);
-  assert.match(budget, /^      Error: Token budget exceeded$/m);
+  assert.match(budget, /^ {6}Error: Token budget exceeded$/m);
   assert.match(watchdog, /^ • ■ Delegation: Watchdog stopped$/m);
-  assert.match(watchdog, /^      Error: Idle watchdog stopped the run$/m);
+  assert.match(watchdog, /^ {6}Error: Idle watchdog stopped the run$/m);
   assert.match(unknown, /^ • ✗ Delegation: Unknown status: future_terminal$/m);
   assert.doesNotMatch(unknown, /Delegation: Completed/);
 });
@@ -260,7 +260,7 @@ test("labels steered completions as wrapped up", () => {
   );
 
   assert.match(output, /^ • ✓ Delegation: Wrapped up$/m);
-  assert.match(output, /^      Delivered a bounded result$/m);
+  assert.match(output, /^ {6}Delivered a bounded result$/m);
 });
 
 test("collapses to one result line and expands to the bounded result body", () => {
@@ -268,11 +268,11 @@ test("collapses to one result line and expands to the bounded result body", () =
   const collapsed = renderSubagentNotification(details, { expanded: false }, theme);
   const expanded = renderSubagentNotification(details, { expanded: true }, theme);
 
-  assert.match(collapsed, /^      first line$/m);
+  assert.match(collapsed, /^ {6}first line$/m);
   assert.doesNotMatch(collapsed, /second line/);
-  assert.match(expanded, /^      first line$/m);
-  assert.match(expanded, /^      second line$/m);
-  assert.match(expanded, /^      third line$/m);
+  assert.match(expanded, /^ {6}first line$/m);
+  assert.match(expanded, /^ {6}second line$/m);
+  assert.match(expanded, /^ {6}third line$/m);
 });
 
 test("summarizes the first prose line without markdown heading or list markers", () => {
@@ -282,9 +282,9 @@ test("summarizes the first prose line without markdown heading or list markers",
   const collapsed = renderSubagentNotification(details, { expanded: false }, theme);
   const expanded = renderSubagentNotification(details, { expanded: true }, theme);
 
-  assert.match(collapsed, /^      The role name is hardcoded in one renderer\.$/m);
+  assert.match(collapsed, /^ {6}The role name is hardcoded in one renderer\.$/m);
   assert.doesNotMatch(collapsed, /Findings|^\s*##(?:\s|$)/m);
-  assert.match(expanded, /^      Another item\.$/m);
+  assert.match(expanded, /^ {6}Another item\.$/m);
   assert.doesNotMatch(expanded, /^\s*##(?:\s|$)/m);
 });
 
@@ -305,7 +305,7 @@ test("renders grouped notifications as adjacent complete blocks", () => {
   );
 
   assert.equal(output.match(/^ • (?:✓|■) Delegation: /gm)?.length, 2);
-  assert.match(output, /      All done\.\n\n\n • ■ Delegation: Stopped\n    └ Agent · Second task/);
+  assert.match(output, / {6}All done\.\n\n\n • ■ Delegation: Stopped\n {4}└ Agent · Second task/);
 });
 
 test("omits the transcript row when outputFile is absent", () => {
@@ -331,6 +331,6 @@ test("bounds long descriptions and transcript paths", () => {
   assert.ok(detail.length <= 124);
   assert.match(detail, /\.\.\. · ↻3≤5/);
   assert.ok(transcript.length <= 119);
-  assert.match(transcript, /^      Transcript · …\/tasks\/x+\.\.\.$/);
+  assert.match(transcript, /^ {6}Transcript · …\/tasks\/x+\.\.\.$/);
   assert.doesNotMatch(transcript, /\/var\/folders/);
 });
