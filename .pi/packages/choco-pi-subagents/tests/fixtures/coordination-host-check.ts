@@ -21,6 +21,10 @@ interface TraceEntry {
   content?: string;
   deliverAs?: string;
   triggerTurn?: boolean;
+  from?: string;
+  to?: string;
+  type?: string;
+  queued?: boolean;
   toolName?: string;
   args?: string;
   result?: string;
@@ -174,6 +178,25 @@ requireEvidence(
   "child-to-root send did not use steer with triggerTurn",
 );
 
+// The user-visible route notice is rendered from this production event, so a
+// steered message reported as queued is exactly the defect it must reject.
+const messageEvent = one(
+  (entry) => entry.event === "message_event" && entry.to === "/root",
+  "production subagents:message event for the root route is not unique",
+);
+requireEvidence(
+  messageEvent.from === childAlias && messageEvent.type === "MESSAGE",
+  "root-route message event did not carry the child identity and MESSAGE type",
+);
+requireEvidence(
+  messageEvent.queued === false,
+  "root-route message event reported queued delivery for a steered message",
+);
+requireEvidence(
+  position(messageEvent) > position(messageSend),
+  "message event was emitted before the actual root send",
+);
+
 const deliveryStarted = one(
   (entry) => entry.event === "delivery_barrier_started",
   "delivery barrier did not start exactly once",
@@ -197,6 +220,10 @@ const settled = one(
 const terminalSend = one(
   (entry) => entry.event === "send_message" && entry.customType === "subagent-notification",
   "terminal notification send is not unique",
+);
+requireEvidence(
+  position(messageEvent) < position(terminalSend),
+  "coordination message was not delivered before the child's terminal notification",
 );
 const settlementReleased = one(
   (entry) => entry.event === "settlement_barrier_released",

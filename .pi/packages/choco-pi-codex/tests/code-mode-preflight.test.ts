@@ -102,8 +102,11 @@ test("top-level tools namespace shadowing is rejected before execution", () => {
   for (const source of [
     "const tools = await tools.exec_command({description: 'x', cmd: 'true'});",
     "let tools;",
+    "var tools;",
     "const { tools } = value;",
+    "let [tools] = value;",
     "const x = 1, tools = await tools.exec_command({description: 'x', cmd: 'true'});",
+    "if (false) { var tools; }",
   ]) {
     const message = messageFromThrown(() => preflightCodeModeSource(source, RESTRICTED));
     assert.match(message, /\[reserved_namespace_shadowing\]/);
@@ -111,18 +114,31 @@ test("top-level tools namespace shadowing is rejected before execution", () => {
   }
 });
 
-test("nested tools bindings and tools object properties remain valid", () => {
+test("non-conflicting tools syntax remains valid", () => {
   for (const source of [
+    "const answer = 1\n0, tools;",
+    "for (const tools of []) { text(String(tools)); }",
     "const map = (tools) => tools.value; text(String(map({value: 1})));",
     "const pick = (tools) => tools.value; text(String(pick({value: 1})));",
     "function readLocal(tools) { return tools.value; } text(String(readLocal({value: 1})));",
+    "const nested = () => { const tools = { value: 1 }; return tools.value; }; text(String(nested()));",
     "const value = { tools: 1 }; text(String(value.tools));",
+    "const value = { tools() { return 1; } }; text(String(value.tools()));",
     "const f = function tools() { return 1; }; text(String(f()));",
     "const f = class tools {}; text(f.name);",
     "await tools.exec_command({description: 'x', cmd: 'true'});",
   ]) {
     assert.doesNotThrow(() => preflightCodeModeSource(source, RESTRICTED), source);
   }
+});
+
+test("reserved namespace probe compiles without executing source", () => {
+  assert.doesNotThrow(() =>
+    preflightCodeModeSource(
+      "await tools.exec_command({description: 'must not run', cmd: 'exit 99'}); throw new Error('must not execute');",
+      RESTRICTED,
+    ),
+  );
 });
 
 test("declaration keywords used as property names do not start declarations", () => {

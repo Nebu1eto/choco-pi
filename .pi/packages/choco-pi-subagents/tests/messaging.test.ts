@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../src/agent-manager.ts";
-import { createAgentMessageTool } from "../src/agent-message.ts";
+import {
+  type AgentMessageRecord,
+  createAgentMessageTool,
+  deliverAgentMessage,
+} from "../src/agent-message.ts";
+import {
+  parseSubagentMessageNotification,
+  type SubagentMessageNotification,
+} from "../src/ui/notification-render.ts";
 import { computeChildToolGate, SUBAGENT_TOOL_NAMES } from "../src/agent-runner.ts";
 import { DEFAULT_AGENTS } from "../src/default-agents.ts";
 import {
@@ -239,7 +248,12 @@ test("orphaned senders retain their flat identity", async () => {
     undefined,
     {} as never,
   );
-  assert.deepEqual(result.content, [{ type: "text", text: "Message queued for /root." }]);
+  assert.deepEqual(result.content, [
+    {
+      type: "text",
+      text: "Message steered to /root; it arrives at the recipient's next safe boundary.",
+    },
+  ]);
 });
 
 test("message envelopes and events use flat alias identities", async () => {
@@ -277,6 +291,7 @@ test("message envelopes and events use flat alias identities", async () => {
   };
   const namedRecords = [alpha, beta];
   let sentContent: string | undefined;
+  let sentOptions: { deliverAs?: string; triggerTurn?: boolean } | undefined;
   let emitted: { event: string; payload: MessageEventPayload } | undefined;
   const piFixture = {
     events: {
@@ -284,8 +299,12 @@ test("message envelopes and events use flat alias identities", async () => {
         emitted = { event, payload };
       },
     },
-    sendMessage: (message: { content: string }) => {
+    sendMessage: (
+      message: { content: string },
+      options?: { deliverAs?: string; triggerTurn?: boolean },
+    ) => {
       sentContent = message.content;
+      sentOptions = options;
     },
   };
   const tool = createAgentMessageTool({
@@ -307,11 +326,19 @@ test("message envelopes and events use flat alias identities", async () => {
     {} as never,
   );
 
-  assert.deepEqual(result.content, [{ type: "text", text: "Message queued for /root." }]);
+  assert.deepEqual(result.content, [
+    {
+      type: "text",
+      text: "Message steered to /root; it arrives at the recipient's next safe boundary.",
+    },
+  ]);
   assert.equal(
     sentContent,
     '<agent-message from="beta" type="FINAL">\nfrom-beta\n</agent-message>',
   );
+  // The SDK only reaches the root session's steering queue for deliverAs
+  // "steer"; triggerTurn covers the idle root with exactly one continuation.
+  assert.deepEqual(sentOptions, { deliverAs: "steer", triggerTurn: true });
   assert.deepEqual(emitted, {
     event: "subagents:message",
     payload: {
@@ -319,9 +346,253 @@ test("message envelopes and events use flat alias identities", async () => {
       to: "/root",
       toId: undefined,
       type: "FINAL",
-      queued: true,
+      queued: false,
     },
   });
+});
+
+/** Read the single text part a messaging tool result carries. */
+function resultText(result: { content: Array<{ type: string; text?: string }> }): string {
+  const part = result.content[0];
+  assert.equal(part?.type, "text");
+  return part?.text ?? "";
+}
+
+interface SentRootMessage {
+  content: string;
+  deliverAs: "steer" | "followUp" | "nextTurn" | undefined;
+  triggerTurn: boolean | undefined;
+}
+
+/**
+ * A fully typed `agent_message` host. Every member the tool can reach records
+ * what it received; the rest throw, so an unexpected call fails loudly instead
+ * of being silently accepted by a placeholder cast.
+ */
+interface MessageSink {
+  sent: SentRootMessage[];
+  events: SubagentMessageNotification[];
+}
+
+function newSink(): MessageSink {
+  return { sent: [], events: [] };
+}
+
+function messageHost(sink: MessageSink): Pick<ExtensionAPI, "events" | "sendMessage"> {
+  return {
+    events: {
+      emit: (channel, data) => {
+        assert.equal(channel, "subagents:message");
+        const parsed = parseSubagentMessageNotification(data);
+        assert.ok(parsed, "the emitted payload must satisfy the production event contract");
+        sink.events.push(parsed);
+      },
+      on: () => {
+        throw new Error("agent_message never subscribes to events");
+      },
+    },
+    sendMessage: (message, options) => {
+      const content = message.content;
+      assert.equal(Array.isArray(content), false, "the root envelope is sent as one text body");
+      sink.sent.push({
+        content: Array.isArray(content) ? "" : content,
+        deliverAs: options?.deliverAs,
+        triggerTurn: options?.triggerTurn,
+      });
+    },
+  };
+}
+
+test("worker messages reach live recipients by steering, not by the follow-up queue", async () => {
+  const steered: string[] = [];
+  const sink = newSink();
+  function workerRecord(overrides: Partial<AgentMessageRecord>): AgentMessageRecord {
+    return {
+      id: "worker-id",
+      handle: "implementer",
+      alias: "implementer-compiler-guard",
+      status: "running",
+      ...overrides,
+    };
+  }
+  const sender = workerRecord({});
+  const liveChild = workerRecord({
+    id: "child-id",
+    alias: "reviewer-e2e",
+    session: {
+      steer: async (text: string) => {
+        steered.push(text);
+      },
+    },
+  });
+  const startingChild = workerRecord({ id: "starting-id", alias: "late-child", status: "queued" });
+  const agents = [sender, liveChild, startingChild];
+  const tool = {
+    manager: {
+      getRecord: (id: string) => agents.find((record) => record.id === id),
+      listAgents: () => agents,
+    },
+    pi: messageHost(sink),
+    senderAgentId: sender.id,
+  };
+
+  const live = await deliverAgentMessage(tool, { to: "reviewer-e2e", message: "mid-run note" });
+  assert.match(resultText(live), /steered to reviewer-e2e/);
+  assert.deepEqual(steered, [
+    '<agent-message from="implementer-compiler-guard" type="MESSAGE">\nmid-run note\n</agent-message>',
+  ]);
+  assert.deepEqual(sink.sent, [], "an agent recipient must not reach the root session");
+  assert.equal(sink.events.at(-1)?.queued, false);
+
+  const pending = await deliverAgentMessage(tool, {
+    to: "late-child",
+    message: "pre-session note",
+    type: "TASK",
+  });
+  assert.match(resultText(pending), /held for late-child until its session starts/);
+  assert.deepEqual(startingChild.pendingSteers, [
+    '<agent-message from="implementer-compiler-guard" type="TASK">\npre-session note\n</agent-message>',
+  ]);
+  assert.equal(steered.length, 1, "a pre-session recipient must not be steered twice");
+  assert.equal(sink.events.at(-1)?.queued, true);
+});
+
+test("a steer that lands on a retired, replaced, or cancelled recipient reports staleness", async () => {
+  // Each case suspends inside steer(), mutates the manager exactly as a real
+  // generation change/eviction/cancellation would, then releases the steer.
+  const cases: Array<{ name: string; retire: (record: AgentMessageRecord) => void }> = [
+    { name: "generation replaced", retire: (record) => void (record.resultGeneration = 2) },
+    {
+      name: "record cancelled",
+      retire: (record) => {
+        record.cancellation = { generation: 1 };
+      },
+    },
+    {
+      name: "session replaced",
+      retire: (record) => {
+        record.session = { steer: async () => assert.fail("replacement must not be steered") };
+      },
+    },
+    {
+      name: "record settled",
+      retire: (record) => {
+        record.status = "completed";
+      },
+    },
+  ];
+
+  for (const scenario of cases) {
+    const sink = newSink();
+    let release: (() => void) | undefined;
+    const steerStarted = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let held: Promise<void> | undefined;
+    const record: AgentMessageRecord = {
+      id: "deferred-id",
+      handle: "implementer",
+      alias: "deferred",
+      status: "running",
+      resultGeneration: 1,
+      session: {
+        steer: async () => {
+          release?.();
+          await held;
+        },
+      },
+    };
+    let visible: AgentMessageRecord | undefined = record;
+    let resumeSteer: (() => void) | undefined;
+    held = new Promise<void>((resolve) => {
+      resumeSteer = resolve;
+    });
+
+    const delivery = deliverAgentMessage(
+      {
+        manager: {
+          getRecord: () => visible,
+          listAgents: () => (visible ? [visible] : []),
+        },
+        pi: messageHost(sink),
+      },
+      { to: "deferred", message: "in-flight" },
+    );
+    await steerStarted;
+    if (scenario.name === "record settled") visible = undefined;
+    scenario.retire(record);
+    resumeSteer?.();
+
+    const result = await delivery;
+    assert.equal("isError" in result ? result.isError : undefined, true, scenario.name);
+    assert.match(resultText(result), /is stale: the recipient was replaced/, scenario.name);
+    assert.deepEqual(sink.events, [], `${scenario.name} must not emit a delivery event`);
+    assert.equal(record.pendingSteers, undefined, `${scenario.name} must not retry as a hold`);
+  }
+});
+
+test("an uncontested deferred steer still acknowledges delivery exactly once", async () => {
+  const sink = newSink();
+  let resumeSteer: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => {
+    resumeSteer = resolve;
+  });
+  let steers = 0;
+  const record: AgentMessageRecord = {
+    id: "stable-id",
+    handle: "implementer",
+    alias: "stable",
+    status: "running",
+    resultGeneration: 3,
+    session: {
+      steer: async () => {
+        steers += 1;
+        await held;
+      },
+    },
+  };
+  const delivery = deliverAgentMessage(
+    {
+      manager: { getRecord: () => record, listAgents: () => [record] },
+      pi: messageHost(sink),
+    },
+    { to: "stable", message: "in-flight" },
+  );
+  resumeSteer?.();
+
+  const result = await delivery;
+  assert.match(resultText(result), /steered to stable/);
+  assert.equal(steers, 1);
+  assert.equal(sink.events.length, 1);
+  assert.equal(sink.events[0]?.queued, false);
+  assert.equal(sink.events[0]?.to, "stable");
+});
+
+test("a failing recipient steer reports the failure instead of silently queueing", async () => {
+  const target: AgentMessageRecord = {
+    id: "target-id",
+    handle: "implementer",
+    alias: "target",
+    status: "running",
+    session: {
+      steer: async () => {
+        throw new Error("session closed");
+      },
+    },
+  };
+  const sink = newSink();
+  const result = await deliverAgentMessage(
+    {
+      manager: { getRecord: () => target, listAgents: () => [target] },
+      pi: messageHost(sink),
+    },
+    { to: "target", message: "hello" },
+  );
+  assert.deepEqual(sink.sent, [], "a failed delivery must not send");
+  assert.deepEqual(sink.events, [], "a failed delivery must not emit");
+  assert.equal(target.pendingSteers, undefined, "a failed steer must not fall back to a hold");
+  assert.equal("isError" in result ? result.isError : undefined, true);
+  assert.match(resultText(result), /Failed to deliver to target: session closed/);
 });
 
 test("unknown recipients list nearby flat identities", () => {
