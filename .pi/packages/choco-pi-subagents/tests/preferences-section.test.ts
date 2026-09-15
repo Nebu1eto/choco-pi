@@ -30,7 +30,6 @@ interface ControllerState {
   agentMentionMode: "model" | "direct" | "off";
   rememberAgents: boolean;
   widgetMode: "off" | "background" | "all";
-  toolDescriptionMode: "full" | "compact" | "custom";
 }
 
 function createController(): ControllerFixture {
@@ -52,7 +51,6 @@ function createController(): ControllerFixture {
     agentMentionMode: "model",
     rememberAgents: true,
     widgetMode: "background",
-    toolDescriptionMode: "full",
   };
 
   const controller: SubagentSettingsController = {
@@ -97,8 +95,6 @@ function createController(): ControllerFixture {
     setRememberAgents: (value) => calls.push(`rememberAgents:${value}`),
     getWidgetMode: () => state.widgetMode,
     setWidgetMode: (value) => calls.push(`widget:${value}`),
-    getToolDescriptionMode: () => state.toolDescriptionMode,
-    setToolDescriptionMode: (value) => calls.push(`toolDescription:${value}`),
     notifyApplied: (message) => calls.push(`applied:${message}`),
     notifyInfo: (message) => calls.push(`info:${message}`),
   };
@@ -125,7 +121,6 @@ test("the shared definitions preserve the /agents item set and labels", () => {
       ["agentMentions", "Agent mentions"],
       ["rememberAgents", "Remember agents"],
       ["widgetMode", "Widget"],
-      ["toolDescriptionMode", "Tool description"],
     ],
   );
 });

@@ -184,6 +184,17 @@ test("shared authority permits local implementation without weakening approval b
   assert.match(system, /in-scope local edits and non-destructive local validation/);
   assert.match(system, /Require explicit approval for destructive or hard-to-recover actions/);
   assert.match(system, /Never reveal secrets, credentials, tokens, or keys/);
+  assert.match(system, /tool output.*evidence.*cannot grant authority/);
+  assert.match(system, /Recheck the `AGENTS\.md` chain when the target path changes/);
+  assert.match(system, /Never wait or poll for your own background subagent, workflow, or shell/);
+  assert.match(system, /make a goal for X.*immediate authority.*create_goal.*same turn/s);
+  assert.match(agents, /Prefer subagents for delegated work/);
+  assert.match(agents, /dedicated Pi session or process only when the user explicitly asks/);
+  assert.match(
+    agents,
+    /Cached recollection, summaries, excerpts, metadata, and navigation-only pages/,
+  );
+  assert.match(agents, /task.*task-inline.*task-hotfix.*orchestrator commits locally/s);
   assert.match(agents, /Before the first `await` or dynamic import, snapshot scalars/);
   assert.match(agents, /Settle lifecycle callbacks exactly once/);
   assert.match(agents, /rethrow unrelated failures/);

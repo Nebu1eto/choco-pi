@@ -103,7 +103,7 @@ test("production prompt reflects the real no-shell no-edit permission filter", (
     assert.doesNotMatch(prompt, new RegExp(`tools\\.${unavailable}\\b`));
   assert.doesNotMatch(productionPrompt, /Every tools\.exec_command|Use tty=true|shell_start/);
   assert.match(prompt, /module_report/);
-  assert.match(prompt, /Use only capabilities actually listed here/);
+  assert.match(prompt, /UI refs are not file paths/);
 });
 
 test("session permissions use the registered pre-adapter tool selection", () => {

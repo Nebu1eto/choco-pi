@@ -41,12 +41,14 @@ interface ReadUiResourceOptions {
 }
 
 export class UiResourceHandler {
+  private manager: McpServerManager;
+  private config: McpConfig | undefined;
   private log = logger.child({ component: "UiResourceHandler" });
 
-  constructor(
-    private manager: McpServerManager,
-    private config: McpConfig | undefined = undefined,
-  ) {}
+  constructor(manager: McpServerManager, config: McpConfig | undefined = undefined) {
+    this.manager = manager;
+    this.config = config;
+  }
 
   async readUiResource(
     serverName: string,

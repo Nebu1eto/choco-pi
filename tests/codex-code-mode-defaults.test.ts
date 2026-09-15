@@ -26,11 +26,12 @@ test("Code Mode is the append-style default for every OpenAI Codex model", () =>
 
   const prompt = buildCodexSystemPrompt("BASE PROMPT", { mode: "code" });
   assert.match(prompt, /^BASE PROMPT/);
-  assert.match(prompt, /Use tools\.exec_command for shell commands/);
-  assert.match(prompt, /Keep exec code mode bounded/);
-  assert.match(prompt, /commands expected to exceed about 30 seconds to shell_start/);
-  assert.match(prompt, /Use code mode by default for bounded tool workflows/);
-  assert.match(prompt, /Use direct tools only for approvals, native artifacts, citations/);
+  assert.doesNotMatch(prompt, /Use tools\.exec_command for shell commands/);
+  assert.doesNotMatch(prompt, /Use code mode by default for bounded tool workflows/);
+
+  const guidance = buildCodeModeToolsPrompt([]);
+  assert.match(guidance, /Use code mode by default for bounded tool workflows/);
+  assert.match(guidance, /Use direct tools only for approvals, native artifacts, citations/);
 });
 
 test("Code Mode guidance canonicalizes legacy rules without losing execution semantics", () => {
@@ -47,13 +48,8 @@ test("Code Mode guidance canonicalizes legacy rules without losing execution sem
   );
 
   for (const line of legacy) assert.ok(!prompt.includes(line));
-  assert.match(prompt, /String\.raw \(no backticks\/\$\{\}\)/);
-  assert.match(
-    prompt,
-    /route persistent processes and commands expected to exceed about 30 seconds to shell_start/,
-  );
-  assert.match(prompt, /tools\.apply_patch\(patch\) for edits/);
-  assert.match(prompt, /Every tools\.exec_command requires a short 3-7 word description/);
+  assert.doesNotMatch(prompt, /tools\.apply_patch\(patch\) for edits/);
+  assert.doesNotMatch(prompt, /Every tools\.exec_command requires a short 3-7 word description/);
 });
 
 test("Code Mode canonicalizes legacy composition guidance into bounded routing rules", () => {
@@ -67,7 +63,7 @@ test("Code Mode canonicalizes legacy composition guidance into bounded routing r
   );
 
   for (const line of legacy) assert.ok(!prompt.includes(line));
-  assert.equal(prompt.match(/Use code mode by default for bounded tool workflows/g)?.length, 1);
+  assert.doesNotMatch(prompt, /Use code mode by default for bounded tool workflows/);
   assert.doesNotMatch(prompt, /Use code mode only for bounded multi-call stages/);
 });
 
@@ -107,6 +103,15 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
       kind: "freeform",
       invoke: async () => undefined,
     },
+    {
+      name: "custom_probe",
+      usage: "await tools.custom_probe()",
+      deferLoading: false,
+      command: "custom-probe",
+      args: [],
+      input: "arg",
+      sourcePath: "/tmp/custom-probe.toml",
+    },
   ];
   const guidance = buildCodeModeToolsPrompt(tools, "/tmp/CUSTOM-TOOLS.md");
   const applyPatchGuidance = guidance
@@ -114,33 +119,17 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
     .find((line) => line.includes("tools.apply_patch"))!;
   const webRunGuidance = guidance.split("\n").find((line) => line.includes("tools.web__run"))!;
 
-  assert.match(applyPatchGuidance, /envelope: \*\*\* Begin Patch … \*\*\* End Patch/);
-  assert.match(
-    applyPatchGuidance,
-    /actions: \*\*\* Add File: path \| \*\*\* Update File: path \| \*\*\* Delete File: path/,
-  );
-  assert.match(
-    applyPatchGuidance,
-    /\*\*\* Move to: path immediately follows its \*\*\* Update File: path header/,
-  );
-  assert.match(
-    applyPatchGuidance,
-    /pure moves need a nonempty @@ hunk with one unchanged context line/,
-  );
-  assert.match(applyPatchGuidance, /hunks in file order/);
-  assert.match(applyPatchGuidance, /@@ is context, not a line range/);
+  assert.match(applyPatchGuidance, /Begin\/End Patch/);
+  assert.match(applyPatchGuidance, /Add\/Update\/Delete File/);
+  assert.match(applyPatchGuidance, /ordered hunks/);
   assert.ok(applyPatchGuidance.length < longApplyPatchUsage.length);
-  assert.match(
-    guidance,
-    /await tools\.exec_command\(\{description, cmd, workdir\?, shell\?, tty\?/,
-  );
-  assert.match(guidance, /description: required 3-7 word intent for collapsed display/);
+  assert.match(guidance, /await tools\.exec_command\(\{description, cmd, workdir\?, tty\?/);
+  assert.match(guidance, /description: 3-7 words/);
   assert.match(
     webRunGuidance,
-    /\{search_query\?: \[\{q, recency\?, domains\?\}\], image_query\?: \[\{q\}\], open\?: \[\{ref_id, lineno\?\}\], click\?: \[\{ref_id, id\}\], find\?: \[\{ref_id, pattern\}\], response_length\?\}/,
+    /\{search_query\?, image_query\?, open\?, click\?, find\?, response_length\?\}/,
   );
-  assert.match(webRunGuidance, /final answers cite result URLs/);
-  assert.match(webRunGuidance, /never emit internal turn… or cite… citation artifacts/);
+  assert.match(webRunGuidance, /cite result URLs, not internal refs/);
   assert.ok(webRunGuidance.length < longWebRunUsage.length);
   assert.match(
     guidance,
@@ -152,20 +141,17 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
   );
   assert.match(
     guidance,
-    /Pattern: const \[files, todos\] = await Promise\.all\(\[tools\.exec_command\(\{description: "List source files", cmd: "rg --files src"\}\), tools\.exec_command\(\{description: "Find pending work", cmd: "rg -n TODO src"\}\)\]\); text\(JSON\.stringify\(\{files, todos\}\)\)/,
+    /Pattern: text\(await Promise\.all\(\[tools\.exec_command\(\{description:"List files",cmd:"rg --files"\}\),tools\.exec_command\(\{description:"Find TODOs",cmd:"rg -n TODO"\}\)\]\)\)/,
   );
   assert.match(
     guidance,
-    /To create or edit a custom tool, read .* only when creating or editing a custom tool; never for discovering or calling tools; do not read Pi docs/,
+    /To create or edit a custom tool, read .* for custom-tool authoring only; never for discovery/,
   );
   assert.match(EXEC_DESCRIPTION, /JavaScript source only; no JSON\/fences/);
-  assert.match(EXEC_DESCRIPTION, /Use code mode by default for bounded tool workflows/);
+  assert.match(EXEC_DESCRIPTION, /Follow the <code_mode_tools> system block/);
   assert.match(EXEC_DESCRIPTION, /first-line \/\/ @description: short intent/);
   assert.match(EXEC_DESCRIPTION, /first exec_command description labels it/);
-  assert.match(
-    EXEC_DESCRIPTION,
-    /Use direct tools only for approvals, native artifacts, citations/,
-  );
+  assert.doesNotMatch(EXEC_DESCRIPTION, /Use direct tools only for approvals/);
   assert.match(EXEC_DESCRIPTION, /Code: fresh restricted JS/);
   assert.match(EXEC_DESCRIPTION, /Notebook: persistent shared Deno TypeScript globals/);
   // text()/notify() emit and return undefined; the description must not imply

@@ -27,16 +27,14 @@ jiti. The fork keeps the source form:
 
 - `src/**` — all 39 modules, verbatim except for the renames listed below
 - `LICENSE` — verbatim
-- `examples/agent-tool-description.md` — the starting point the `custom`
-  `toolDescriptionMode` expects users to copy
 - `CHANGELOG.upstream.md` — upstream `CHANGELOG.md`, kept for provenance and
   renamed so it cannot be mistaken for this fork's own history
 
 ## What was removed
 
-Nothing functional. No feature, tool, setting, agent field, event or UI surface
-was dropped, and no `src/` module is orphaned — `src/index.ts` transitively
-reaches all 39 files (verified by a reachability walk over the import graph).
+The fork omits upstream build, test and publish scaffolding that a vendored
+source package cannot use, plus the retired tool-description customization
+surface described below.
 
 Removed items are upstream build, test and publish scaffolding that a vendored
 source package cannot use:
@@ -46,6 +44,7 @@ source package cannot use:
 | `dist/**`                                                                                                                            | The package is loaded from `src/`; a second copy of every module would drift silently.                                                                             |
 | `vitest.config.ts`                                                                                                                   | Upstream's `test/` directory is not part of the npm tarball, so the config points at nothing here.                                                                 |
 | `CONTRIBUTING.md`, `SECURITY.md`                                                                                                     | Upstream project process; routes reports to the upstream repository.                                                                                               |
+| `examples/agent-tool-description.md`                                                                                                 | Its custom-description setting was removed after the Agent description became a fixed bounded sentence.                                                            |
 | Upstream `README.md`                                                                                                                 | Replaced by this fork's `README.md`, which documents the fork's name, wiring and load mechanism. Upstream's full feature manual stays available in its repository. |
 | `package.json`: `repository`, `homepage`, `bugs`, `author`, `publishConfig`, `pi.video`, `pi.image`                                  | Point at the upstream project; this fork is `private` and not published.                                                                                           |
 | `package.json`: `devDependencies`, `scripts.build`/`test`/`test:watch`/`test:e2e`/`test:coverage`/`lint`/`lint:fix`/`prepublishOnly` | The fork has no build step, no vendored test suite and no Biome config. `scripts.typecheck` is kept.                                                               |
@@ -259,9 +258,9 @@ record for the package's retention window, so adding a second filesystem message
 store here would create two competing result owners rather than improve recovery.
 
 The root and nested tool descriptions, active-resume refusals, spawn results,
-timeout guidance, and custom-description example continue to direct the caller
-to continue other work until the terminal completion notification, retrieve the
-result exactly once afterward, and use `steer_subagent` for mid-run messages.
+and timeout guidance direct the caller to continue other work until the terminal
+completion notification, retrieve the result exactly once afterward, and use
+`steer_subagent` for mid-run messages.
 Only the result-tool mechanics text changed: it now documents immediate first
 status reads, the optional one-time five-second grace, and generation refusal.
 `tests/result-guidance.test.ts` guards the reconciled wording;
@@ -456,22 +455,11 @@ conversations; thinking and background invocation tags are unchanged.
 
 ### Background-by-default spawn guidance
 
-Upstream's `Agent` tool prose named the foreground the recommended mode ("use
-foreground (default) when you need the agent's results before you can
-proceed"), which contradicted this repository's `.pi/SYSTEM.md` delegation
-policy: a foreground child holds the main conversation for its whole run, so
-the user cannot steer the orchestrator while it works. The prose now states one
-policy in all three places it appears — `fullAgentToolDescription`,
-`compactAgentToolDescription`, and the `run_in_background` parameter
-description in `src/index.ts` — plus `examples/agent-tool-description.md`,
-which exists to reproduce the full description for `toolDescriptionMode:
-"custom"` and would otherwise reintroduce the old advice for anyone who copied
-it. Each says to pass `run_in_background: true` by default, that omitting the
-parameter still runs foreground, and that a background result must be read back
-exactly once with `get_subagent_result` after its terminal completion
-notification rather than polled for. The full description's
-bullets were reordered so the default-mode rule precedes the parallel-spawn
-rule that depends on it.
+Upstream's `Agent` tool prose named the foreground the recommended mode. The
+fork moves the decision-relevant distinction into the bounded
+`run_in_background` field: true returns an ID and notifies on completion; false
+blocks until the agent finishes. Workflow guidance owns which mode to prefer and
+how to retrieve results.
 
 **The behavioral default is deliberately unchanged.** `run_in_background` stays
 `Type.Optional(Type.Boolean())` with no JSON Schema `default` keyword — no tool
@@ -488,13 +476,11 @@ no description. Guidance moves; the mechanism does not.
 
 ### Workflow-owned delegation briefing
 
-The fork removes the full Agent tool description's `Writing the prompt` section.
-That prose prescribed task-packet content, lookup versus investigation prompts,
-and parent-side synthesis, which are workflow policy rather than tool parameter
-semantics. The authoritative `task` skill now owns that guidance and the dynamic
-workflow reuses it. The compact description retains only load-bearing invocation
-and result-retrieval facts, and this profile selects it with
-`toolDescriptionMode: "compact"`.
+The fork removes task-packet, lookup-versus-investigation, and parent-side
+synthesis prose from the Agent tool description because the authoritative
+`task` skill owns it. The registered description is now one bounded purpose
+sentence plus the complete available type list; parameter fields retain their
+own invocation semantics.
 
 The `schedule` parameter description said it "Forces run_in_background", which
 upstream's own 0.15.2 changelog records as wrong: an explicit
@@ -515,9 +501,9 @@ names, persistence formats and valid runtime paths are unchanged.
 
 `installExtensionToolScope` in `src/agent-runner.ts` intersects the extension
 tools it admits with the lean surface choco-pi's `tool-search` extension
-publishes on `Symbol.for("choco-pi.tool-search.lean-surface")`, and remembers
-what a turn earned through `tool_search` so the next re-narrow does not take it
-back. Upstream admits every tool of every loaded extension: probe evidence put
+publishes on `Symbol.for("choco-pi.tool-search.lean-surface")`. Sub-agents reach
+deferred tools through the `exec` bridge; `tool_search` no longer activates or
+tracks granted tools. Upstream admits every tool of every loaded extension: probe evidence put
 child sessions at 78-83 tool schemas against the main agent's 22-28, all of it
 carried in the cached prefix for the life of the task.
 
@@ -525,6 +511,23 @@ Tool names the agent's own configuration lists stay active regardless, so a
 role with an explicit `tools:` set is unaffected. When the extension is absent
 the symbol is unset and scope falls back to upstream behavior, so the package
 still runs standalone.
+
+### Compact tool schema text
+
+First-party subagent tools use short prompt snippets for the deferred Code Mode
+catalog. Root workflow, result, steering, and stopping tools also use bounded
+descriptions. Detailed consumption and workflow guidance is delivered in
+runtime results and notifications instead of provider schemas.
+
+The upstream `toolDescriptionMode` setting, preferences and status surfaces,
+and custom template example are removed. The Agent description is now one fixed
+bounded sentence under the repository-wide schema budget; persisted unknown
+settings remain silently ignored.
+
+The root `Agent` description is a purpose-written catalog sentence that keeps
+the complete available agent-type list. Its `run_in_background` field states
+both blocking modes, and `schedule` preserves the foreground refusal plus its
+`inherit_context`/`resume` incompatibilities within the field budget.
 
 ### Main-transcript message rendering in the conversation viewer
 

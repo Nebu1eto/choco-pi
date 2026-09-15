@@ -5,13 +5,12 @@ import type {
 } from "./types.ts";
 
 export const CODE_MODE_DEFAULT_ROUTING =
-  "Use code mode by default for bounded tool workflows, including independent reads, searches, checks, and programmatic result aggregation; use one exec block per coherent step, not one wrapper per call";
+  "Use code mode by default for bounded tool workflows; use one exec block per coherent step, not one wrapper per call";
 export const CODE_MODE_DIRECT_EXCEPTIONS =
-  "Use direct tools only for approvals, native artifacts, citations, a decision requiring inspection of one individual result before continuing, or capabilities unavailable in code mode";
+  "Use direct tools only for approvals, native artifacts, citations, one decision-gating result, or capabilities unavailable in code mode";
 
 export const EXEC_DESCRIPTION = `Run JavaScript source only; no JSON/fences
-${CODE_MODE_DEFAULT_ROUTING}
-${CODE_MODE_DIRECT_EXCEPTIONS}
+Follow the <code_mode_tools> system block for routing and composition guidance.
 Code: fresh restricted JS in every cell with no Deno, console, imports, Node, filesystem/network, or browser globals. Notebook: persistent shared Deno TypeScript globals with console, imports/npm, Deno, and Web APIs
 Source preflight rejects malformed restricted JavaScript, unsupported restricted globals, and unconditional top-level tools.<name> typos absent from both code mode and direct Pi tools; guarded or real unbridged references run to the runtime guard; command strings and non-zero exec_command exits are not rewritten
 Optional // @exec: {"yield_time_ms":10000,"max_output_tokens":1000}; defaults 30000 ms/10000 tokens
@@ -29,11 +28,11 @@ const CUSTOM_TOOL_DOCUMENTATION_MARKER = "To create or edit a custom tool, read"
 const CUSTOM_TOOLS_GUIDANCE = "Prefer custom tools for command-backed capabilities";
 const CODE_MODE_PROMPT_START = "<code_mode_tools>";
 const CODE_MODE_PROMPT_END = "</code_mode_tools>";
+const BRIDGED_SUMMARY_WORD_LIMIT = 8;
 const CODE_MODE_ROUTING_GUIDANCE = `Composition: ${CODE_MODE_DEFAULT_ROUTING}.
-Run only independent calls concurrently (usually with Promise.all); await decision-dependent work in sequence. Preserve failed outcomes when aggregating; Promise.allSettled is appropriate for independent read-only calls when every outcome matters, but do not add generic catch/retry wrappers or a batching framework.
-${CODE_MODE_DIRECT_EXCEPTIONS}. Discover an unfamiliar tool by selecting its entry from ALL_TOOLS and inspect only that schema; do not dump all schemas.
-Use only capabilities actually listed here. Filesystem reads must use an available filesystem-capable tool or a direct read outside code mode; UI tools require UI references/state and never accept filesystem paths as a substitute.
-Do not repeat successful writes blindly. For long-running work, start a managed shell/process or retain an exec_command session handle; do not keep a cell alive solely to wait or poll.`;
+Parallelize only independent calls; sequence dependent work. Preserve Promise.allSettled failures instead of hiding them.
+${CODE_MODE_DIRECT_EXCEPTIONS}. Inspect one unfamiliar schema in ALL_TOOLS; never dump the catalog.
+UI refs are not file paths. Never repeat writes or keep cells alive only to poll.`;
 
 function buildCapabilityGuidance(tools: CodeModeToolDefinition[]): string {
   if (!tools.some((tool) => tool.name === "read_text")) return CODE_MODE_ROUTING_GUIDANCE;
@@ -49,7 +48,7 @@ const READ_ONLY_EXAMPLES = new Map<string, string>([
 function buildCapabilityExample(tools: CodeModeToolDefinition[]): string {
   const names = new Set(tools.map((tool) => tool.name));
   if (names.has("exec_command"))
-    return 'Pattern: const [files, todos] = await Promise.all([tools.exec_command({description: "List source files", cmd: "rg --files src"}), tools.exec_command({description: "Find pending work", cmd: "rg -n TODO src"})]); text(JSON.stringify({files, todos}))';
+    return 'Pattern: text(await Promise.all([tools.exec_command({description:"List files",cmd:"rg --files"}),tools.exec_command({description:"Find TODOs",cmd:"rg -n TODO"})]))';
   const calls = [...READ_ONLY_EXAMPLES]
     .filter(([name]) => names.has(name))
     .slice(0, 2)
@@ -61,15 +60,15 @@ function buildCapabilityExample(tools: CodeModeToolDefinition[]): string {
 const COMPACT_BUNDLED_TOOL_USAGE = new Map([
   [
     "apply_patch",
-    "await tools.apply_patch(patch) // envelope: *** Begin Patch … *** End Patch; actions: *** Add File: path | *** Update File: path | *** Delete File: path; *** Move to: path immediately follows its *** Update File: path header; pure moves need a nonempty @@ hunk with one unchanged context line; hunks in file order; @@ is context, not a line range",
+    "await tools.apply_patch(patch) // Begin/End Patch; Add/Update/Delete File; ordered hunks",
   ],
   [
     "exec_command",
-    "await tools.exec_command({description, cmd, workdir?, shell?, tty?, yield_time_ms?, max_output_tokens?, login?}) // description: required 3-7 word intent for collapsed display; returns output, session_id?, exit_code?",
+    "await tools.exec_command({description, cmd, workdir?, tty?, yield_time_ms?, max_output_tokens?}) // description: 3-7 words",
   ],
   [
     "web__run",
-    "await tools.web__run({search_query?: [{q, recency?, domains?}], image_query?: [{q}], open?: [{ref_id, lineno?}], click?: [{ref_id, id}], find?: [{ref_id, pattern}], response_length?}) // refs from web__run; final answers cite result URLs; never emit internal turn… or cite… citation artifacts",
+    "await tools.web__run({search_query?, image_query?, open?, click?, find?, response_length?}) // cite result URLs, not internal refs",
   ],
   [
     "web_run",
@@ -111,16 +110,23 @@ function buildUsageSection(
 }
 
 export function buildBridgedToolsLine(tools: CodeModeToolDefinition[]): string {
-  const names = tools
+  const bridgedTools = tools
     .filter((tool) => !isConfiguredCustomTool(tool) && tool.deferLoading)
-    .map((tool) => tool.name)
-    .sort((left, right) => left.localeCompare(right));
-  if (names.length === 0) return "";
-  return (
-    BRIDGED_TOOLS_HEADING +
-    " (deferred; call as tools.<name>(args), schemas in ALL_TOOLS): " +
-    names.join(", ")
-  );
+    .sort((left, right) => left.name.localeCompare(right.name));
+  if (bridgedTools.length === 0) return "";
+  return `${BRIDGED_TOOLS_HEADING} (schemas in ALL_TOOLS):\n${bridgedTools
+    .map((tool) => {
+      const promptSummary = tool.summary?.trim() ?? "";
+      const descriptionSummary = tool.description?.split(/(?<=[.!?])(?:\s|$)/, 1)[0]?.trim() ?? "";
+      const summary = promptSummary || descriptionSummary || "Deferred Pi tool";
+      const words = summary.split(/\s+/).filter(Boolean);
+      const boundedSummary =
+        words.length > BRIDGED_SUMMARY_WORD_LIMIT
+          ? `${words.slice(0, BRIDGED_SUMMARY_WORD_LIMIT).join(" ")}…`
+          : words.join(" ");
+      return `${tool.name}: ${boundedSummary}`;
+    })
+    .join("\n")}`;
 }
 
 export function buildCodeModeToolsPrompt(
@@ -132,14 +138,17 @@ export function buildCodeModeToolsPrompt(
   const custom = tools.filter(isConfiguredCustomTool);
   const promotedCustom = custom.filter((tool) => !tool.deferLoading);
   const bridgedLine = buildBridgedToolsLine(tools);
+  const deferredToolCount = tools.filter((tool) => tool.deferLoading).length;
   const sections = [
     buildUsageSection(BUNDLED_TOOLS_HEADING, bundled, true),
-    [buildCapabilityGuidance(tools), buildCapabilityExample(tools)].filter(Boolean).join("\n"),
+    [buildCapabilityGuidance(tools), deferredToolCount <= 20 ? buildCapabilityExample(tools) : ""]
+      .filter(Boolean)
+      .join("\n"),
     bridgedLine || undefined,
     buildUsageSection(CUSTOM_TOOLS_HEADING, promotedCustom),
     custom.some((tool) => tool.deferLoading) ? DEFERRED_CUSTOM_TOOLS_GUIDANCE : undefined,
-    documentationPath
-      ? `${CUSTOM_TOOL_DOCUMENTATION_MARKER} ${documentationPath} only when creating or editing a custom tool; never for discovering or calling tools; do not read Pi docs`
+    documentationPath && custom.length > 0
+      ? `${CUSTOM_TOOL_DOCUMENTATION_MARKER} ${documentationPath} for custom-tool authoring only; never for discovery`
       : undefined,
     custom.length > 0 ? CUSTOM_TOOLS_GUIDANCE : undefined,
   ].filter(Boolean);

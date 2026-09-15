@@ -58,8 +58,6 @@ export interface SubagentSettingsController {
   setRememberAgents: (value: boolean) => void;
   getWidgetMode: () => WidgetMode;
   setWidgetMode: (value: WidgetMode) => void;
-  getToolDescriptionMode: () => "full" | "compact" | "custom";
-  setToolDescriptionMode: (value: "full" | "compact" | "custom") => void;
   notifyApplied: (message: string) => void;
   notifyInfo: (message: string) => void;
 }
@@ -361,21 +359,6 @@ export const SUBAGENT_SETTING_DEFINITIONS: readonly SubagentSettingDefinition[] 
       if (value !== "all" && value !== "background" && value !== "off") return;
       controller.setWidgetMode(value);
       controller.notifyApplied(`Widget set to ${value}`);
-    },
-  },
-  {
-    id: "toolDescriptionMode",
-    label: "Tool description",
-    description:
-      "Agent tool description sent to the LLM: full (rich, default), compact (~75% fewer tokens, for small/local models), or custom (.pi/agent-tool-description.md with {{placeholders}})",
-    currentValue: (controller) => controller.getToolDescriptionMode(),
-    values: () => ["full", "compact", "custom"],
-    apply: (value, controller) => {
-      if (value !== "full" && value !== "compact" && value !== "custom") return;
-      controller.setToolDescriptionMode(value);
-      controller.notifyApplied(
-        `Tool description set to ${value}. Takes effect on next pi session.`,
-      );
     },
   },
 ];

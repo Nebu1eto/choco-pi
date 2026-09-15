@@ -1,6 +1,6 @@
 ---
 name: check
-description: Run choco-pi's baseline environment check before implementation or for explicit /check requests, covering versions, packages, harness resources, aliases, and optional capabilities.
+description: Validate environment readiness before implementation or for explicit /check requests.
 ---
 
 # choco-pi Environment Check

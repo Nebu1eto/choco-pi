@@ -1,6 +1,6 @@
 import type { ProtocolDictionary } from "./runtime-values.ts";
 import type { RuntimeValue } from "./runtime-values.ts";
-import { isRuntimeString } from "./runtime-values.ts";
+import { isRuntimeFunction, isRuntimeObject, isRuntimeString } from "./runtime-values.ts";
 /**
  * lsp_activate_tools — the loader tool that bootstraps pi's dynamic
  * tooling (registered-but-inactive tools activated via `pi.setActiveTools`).
@@ -22,6 +22,15 @@ import { isRuntimeString } from "./runtime-values.ts";
  */
 
 import { Type } from "../clients/deps/typebox.ts";
+
+const PREFIX_LOCK_SYMBOL = Symbol.for("choco-pi.prefix.locked");
+
+function isPrefixLocked(): boolean {
+  const prefixLock = Object.getOwnPropertyDescriptor(globalThis, PREFIX_LOCK_SYMBOL)?.value;
+  if (!isRuntimeObject(prefixLock) || prefixLock === null) return false;
+  const isLocked = Object.getOwnPropertyDescriptor(prefixLock, "isLocked")?.value;
+  return isRuntimeFunction(isLocked) && isLocked() === true;
+}
 
 export interface ActivatableToolInfo {
   name: string;
@@ -101,6 +110,24 @@ export function createActivateToolsTool(
           ],
           isError: true,
           details: { matches: [], added: [] },
+        };
+      }
+
+      if (isPrefixLocked()) {
+        const entries = requested
+          .map((name) => {
+            const summary = lazyTools.find((tool) => tool.name === name)?.summary ?? "";
+            return `- ${name}: ${summary}\n  Call: await tools.${name}({ ...args })`;
+          })
+          .join("\n");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `The provider tool list is locked. Call through exec instead:\n${entries}`,
+            },
+          ],
+          details: { matches: requested, added: [] },
         };
       }
 

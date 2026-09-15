@@ -7,7 +7,6 @@
   "scopeModels": false,
   "strictAgentFiles": false,
   "disableDefaultAgents": true,
-  "toolDescriptionMode": "compact",
   "fleetView": true,
   "agentMentions": "model",
   "rememberAgents": true,

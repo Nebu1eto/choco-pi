@@ -71,4 +71,24 @@ export const JsonSchema = {
 };
 
 export type JsonSchemaBuilder = typeof JsonSchema;
+
+export function withoutSchemaDescription(options?: TSchemaOptions): TSchemaOptions | undefined {
+  if (!options) return undefined;
+  const { description: _description, ...schemaOptions } = options;
+  return schemaOptions;
+}
+
+/** Provider-facing schema builder that preserves validation while omitting prompt prose. */
+export const CompactJsonSchema: JsonSchemaBuilder = {
+  ...JsonSchema,
+  Array: (items, options) => JsonSchema.Array(items, withoutSchemaDescription(options)),
+  Boolean: (options) => JsonSchema.Boolean(withoutSchemaDescription(options)),
+  Integer: (options) => JsonSchema.Integer(withoutSchemaDescription(options)),
+  Literal: (value, options) => JsonSchema.Literal(value, withoutSchemaDescription(options)),
+  Number: (options) => JsonSchema.Number(withoutSchemaDescription(options)),
+  Object: (properties, options) => JsonSchema.Object(properties, withoutSchemaDescription(options)),
+  String: (options) => JsonSchema.String(withoutSchemaDescription(options)),
+  Union: (types, options) => JsonSchema.Union(types, withoutSchemaDescription(options)),
+};
+
 export type { TSchema, TSchemaOptions, TUnsafe };

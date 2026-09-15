@@ -28,6 +28,8 @@ interface RetryState {
 }
 
 export class McpLifecycleManager {
+  private readonly manager: McpServerManager;
+  private readonly hasPendingAuthForServer: typeof hasPendingAuth;
   private keepAliveServers = new Map<string, ServerDefinition>();
   private allServers = new Map<string, ServerDefinition>();
   private serverSettings = new Map<string, { idleTimeout?: number }>();
@@ -46,10 +48,10 @@ export class McpLifecycleManager {
   private stopped = false;
   private removeHealthAbortListener: (() => void) | undefined;
 
-  constructor(
-    private readonly manager: McpServerManager,
-    private readonly hasPendingAuthForServer = hasPendingAuth,
-  ) {}
+  constructor(manager: McpServerManager, hasPendingAuthForServer = hasPendingAuth) {
+    this.manager = manager;
+    this.hasPendingAuthForServer = hasPendingAuthForServer;
+  }
 
   setReconnectCallback(callback: ReconnectCallback): void {
     this.onReconnect = callback;

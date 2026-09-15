@@ -1,5 +1,8 @@
 # Vendored: choco-pi-web-access
 
+Tool metadata is compacted to the repository's provider schema budgets; runtime
+behavior is unchanged.
+
 This directory is a vendored, renamed fork of the upstream open-source package `pi-web-access`.
 
 - Original source: https://github.com/nicobailon/pi-web-access

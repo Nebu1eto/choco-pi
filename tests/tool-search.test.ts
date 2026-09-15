@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import toolSearch, {
   ALWAYS_ACTIVE_TOOL_NAMES,
   LEAN_SURFACE_SYMBOL,
@@ -57,17 +58,26 @@ test("settles the lean surface synchronously before the first request", async ()
 
   active = ["tool_search"];
   beforeAgentStart?.();
-  assert.equal(commits.length, 2, "an external removal must be repaired in one commit");
-  assert.deepEqual(active, ["read", "apply_patch", "exec_command", "tool_search"]);
+  assert.equal(commits.length, 1, "the locked surface must not be repaired after request one");
+  assert.deepEqual(active, ["tool_search"]);
 
   beforeAgentStart?.();
-  assert.equal(commits.length, 2, "the repaired surface must not be recommitted");
+  assert.equal(commits.length, 1, "the locked surface must not be recommitted");
 });
 
-test("preserves external activations and commits searched tools only once", async () => {
-  type SearchResult = { details: { added: string[] } };
+test("returns exec bridge calls without changing the locked tool surface", async () => {
+  type SearchResult = {
+    content: Array<{ type: string; text: string }>;
+    details: { added: string[] };
+  };
   type SearchExecutor = {
-    execute(toolCallId: string, params: { query: string; limit?: number }): Promise<SearchResult>;
+    execute(
+      toolCallId: string,
+      params: { query: string; limit?: number },
+      signal?: AbortSignal,
+      onUpdate?: undefined,
+      context?: ExtensionContext,
+    ): Promise<SearchResult>;
   };
 
   let active = ["read", "deferred_probe"];
@@ -113,7 +123,7 @@ test("preserves external activations and commits searched tools only once", asyn
 
   active = [...active, "ast_grep_search"];
   beforeAgentStart?.();
-  assert.deepEqual(active, ["read", "ast_grep_search", "tool_search"]);
+  assert.deepEqual(active, ["read", "tool_search", "ast_grep_search"]);
   const afterExternalActivation = commits.length;
   beforeAgentStart?.();
   assert.equal(
@@ -124,12 +134,36 @@ test("preserves external activations and commits searched tools only once", asyn
 
   const beforeSearch = commits.length;
   const result = await searchTool?.execute("call", { query: "deferred probe", limit: 1 });
-  assert.deepEqual(result?.details.added, ["deferred_probe"]);
-  assert.equal(commits.length, beforeSearch + 1, "tool_search activation must make one commit");
-  assert.deepEqual(active, ["read", "ast_grep_search", "deferred_probe", "tool_search"]);
+  assert.deepEqual(result?.details.added, []);
+  assert.match(result?.content[0]?.text ?? "", /await tools\.deferred_probe\(\{ \.\.\.args \}\)/);
+  assert.equal(commits.length, beforeSearch, "tool_search must not mutate the locked surface");
+  assert.deepEqual(active, ["read", "tool_search", "ast_grep_search"]);
 
   beforeAgentStart?.();
-  assert.equal(commits.length, beforeSearch + 1, "the following turn must not reorder tools");
+  assert.equal(commits.length, beforeSearch, "the following turn must not reorder tools");
+
+  const nativeResult = await searchTool?.execute(
+    "native-call",
+    { query: "deferred probe", limit: 1 },
+    undefined,
+    undefined,
+    reinterpretHostValue<ExtensionContext>({
+      model: {
+        provider: "openai-codex",
+        compat: { supportsAdditionalTools: false, supportsToolSearch: true },
+      },
+    }),
+  );
+  assert.deepEqual(nativeResult?.details.added, ["deferred_probe"]);
+  assert.match(
+    nativeResult?.content[0]?.text ?? "",
+    /deferred_probe directly \(native provider tool search\)/,
+  );
+  assert.equal(
+    commits.length,
+    beforeSearch + 1,
+    "native provider tool search keeps its message-based schema loading path",
+  );
 });
 
 test("keeps Agent and core execution gateways always active", async () => {
@@ -339,8 +373,10 @@ test("removes disabled grep from initialization, model selection, and tool searc
   assert.ok(active.includes("deferred_probe"));
 });
 
-test("publishes background shells and keeps them active through lean filtering", async () => {
+test("keeps shell start and read native while deferring inventory and cleanup", async () => {
   const shellTools = ["shell_start", "shell_read", "shell_stop", "shell_list"];
+  const nativeShellTools = ["shell_start", "shell_read"];
+  const bridgedShellTools = ["shell_stop", "shell_list"];
   let active = [...shellTools, "deferred_probe"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
@@ -385,24 +421,30 @@ test("publishes background shells and keeps them active through lean filtering",
   // SAFETY: toolSearch synchronously publishes this typed policy before registering tools.
   const policy = Object.getOwnPropertyDescriptor(globalThis, LEAN_SURFACE_SYMBOL)
     ?.value as LeanSurfacePolicy;
-  for (const name of shellTools) {
+  for (const name of nativeShellTools) {
     assert.ok(policy.alwaysActive().includes(name), `${name} must be published`);
+  }
+  for (const name of bridgedShellTools) {
+    assert.ok(!policy.alwaysActive().includes(name), `${name} must be deferred`);
   }
 
   sessionStart?.();
   mcpStatus?.({ servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
-  for (const name of shellTools) {
+  for (const name of nativeShellTools) {
     assert.ok(active.includes(name), `${name} must remain active`);
   }
+  for (const name of bridgedShellTools)
+    assert.ok(!active.includes(name), `${name} must be bridged`);
   assert.ok(!active.includes("deferred_probe"));
 
   const result = await searchTool.execute("call", {
     query: "manage background shell",
     limit: 5,
   });
-  for (const name of shellTools) assert.ok(!result.details.matches.includes(name));
+  for (const name of nativeShellTools) assert.ok(!result.details.matches.includes(name));
+  for (const name of bridgedShellTools) assert.ok(result.details.matches.includes(name));
 });
 
 test("keeps the subagent orchestration trio active and out of search results", async () => {
@@ -577,11 +619,11 @@ test("labels deferred Pi tools as direct calls rather than MCP calls", async () 
   const result = await searchTool.execute("call", { query: "deferred probe", limit: 1 });
   const text = result.content[0].text;
 
-  assert.match(text, /Call: deferred_probe directly \(native Pi tool; never use mcp\)/);
+  assert.match(text, /Call: await tools\.deferred_probe\(\{ \.\.\.args \}\)/);
   assert.doesNotMatch(text, /mcp\(\{ describe/);
 });
 
-test("keeps cross-session coordination tools active and out of search results", async () => {
+test("keeps cross-session coordination tools bridge-only and discoverable", async () => {
   const sessionTools = [
     "session_create",
     "session_send",
@@ -591,7 +633,7 @@ test("keeps cross-session coordination tools active and out of search results", 
   ];
   for (const name of sessionTools)
     // SAFETY: The fixture supplies every host member exercised by this test.
-    assert.ok(ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never), `${name} must stay active`);
+    assert.ok(!ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never), `${name} must be bridge-only`);
 
   let active = [...sessionTools, "deferred_probe"];
   let searchTool: any;
@@ -638,20 +680,18 @@ test("keeps cross-session coordination tools active and out of search results", 
   mcpStatus?.({ servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
-  // Eager loading is the point: no search may be required to reach them.
   for (const name of sessionTools)
-    assert.ok(active.includes(name), `${name} must remain in the active surface`);
+    assert.ok(!active.includes(name), `${name} must stay outside the native surface`);
 
-  // Always-active tools are not searchable, so they never consume a result slot.
   const result = await searchTool.execute("call", {
     query: "coordinate another conversation",
     limit: 5,
   });
   const text = result.content[0].text;
-  for (const name of sessionTools) assert.doesNotMatch(text, new RegExp(`\\b${name}\\b`));
+  for (const name of sessionTools) assert.match(text, new RegExp(`\\b${name}\\b`));
 });
 
-test("keeps the choco-pi-lsp mandated funnel and diagnostics gate active and out of search results", async () => {
+test("keeps the LSP funnel bridge-only and discoverable", async () => {
   const lspTools = [
     "symbol_search",
     "module_report",
@@ -662,7 +702,7 @@ test("keeps the choco-pi-lsp mandated funnel and diagnostics gate active and out
   ];
   for (const name of lspTools)
     // SAFETY: The fixture supplies every host member exercised by this test.
-    assert.ok(ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never), `${name} must stay active`);
+    assert.ok(!ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never), `${name} must be bridge-only`);
 
   // Situational choco-pi-lsp tools (gated behind the package's own
   // lsp_activate_tools call) are deliberately left out.
@@ -716,85 +756,46 @@ test("keeps the choco-pi-lsp mandated funnel and diagnostics gate active and out
   mcpStatus?.({ servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
-  // Eager loading is the point: no search may be required to reach them.
   for (const name of lspTools)
-    assert.ok(active.includes(name), `${name} must remain in the active surface`);
+    assert.ok(!active.includes(name), `${name} must stay outside the native surface`);
 
-  // Always-active tools are not searchable, so they never consume a result slot.
   const result = await searchTool.execute("call", {
     query: "symbol module read diagnostics",
-    limit: 5,
+    limit: 10,
   });
   const text = result.content[0].text;
-  for (const name of lspTools) assert.doesNotMatch(text, new RegExp(`\\b${name}\\b`));
+  for (const name of lspTools) assert.match(text, new RegExp(`\\b${name}\\b`));
 });
 
-test("family expansion co-activates deferred same-source siblings", async () => {
-  const { expandFamilyActivation } = await import("../.pi/extensions/tool-search.ts");
-  const tool = (name: string, path: string) => ({
-    target: {
-      kind: "pi" as const,
-      tool: { name, sourceInfo: { source: "extension", path } },
-    },
-  });
-  const documents = [
-    tool("find_roots", "computer-use"),
-    tool("observe_ui", "computer-use"),
-    tool("act_ui", "computer-use"),
-    tool("lonely_tool", "other-pkg"),
-  ];
-  assert.deepEqual(expandFamilyActivation(["find_roots"], documents, new Set()).sort(), [
-    "act_ui",
-    "observe_ui",
-  ]);
-  assert.deepEqual(expandFamilyActivation(["find_roots"], documents, new Set(["act_ui"])), [
-    "observe_ui",
-  ]);
-  assert.deepEqual(expandFamilyActivation(["lonely_tool"], documents, new Set()), []);
-  assert.deepEqual(expandFamilyActivation([], documents, new Set()), []);
-
-  const bigFamily = Array.from({ length: 13 }, (_, index) => tool(`big_${index}`, "mega-pkg"));
-  assert.deepEqual(expandFamilyActivation(["big_0"], bigFamily, new Set()), []);
+test("does not expose family activation helpers", async () => {
+  const toolSearchModule = await import("../.pi/extensions/tool-search.ts");
+  assert.equal("expandFamilyActivation" in toolSearchModule, false);
+  assert.equal("toolFamilyKey" in toolSearchModule, false);
 });
 
-test("the eager surface covers discovery, delegation, goals, research, and the code funnel", () => {
-  const eager = [
-    // Pi execution and path discovery.
+test("the native tier contains only core calls and rich-artifact tools", () => {
+  const expected = [
     "read",
     "bash",
     "edit",
     "write",
-    "find",
-    "ls",
     "exec",
     "wait",
-    // Dependent delegation, collected and cancelled from the same path.
-    "workflow_run",
-    "workflow_update",
-    "get_workflow_result",
-    "workflow_cancel",
-    // Goal mode, which the system prompt requires in the turn the user asks.
-    "get_goal",
-    "create_goal",
-    "update_goal",
-    // A lookup and the calls that read what it returned.
-    "web_search",
-    "source_check",
-    "fetch_content",
-    "get_search_content",
-    // Repository-scope entry to the choco-pi-lsp funnel.
-    "project_report",
+    "apply_patch",
+    "exec_command",
+    "write_stdin",
+    "shell_start",
+    "shell_read",
+    "find",
+    "ls",
+    "Agent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "tool_search",
+    "agent_browser",
+    "view_image",
+    "image_gen__imagegen",
   ];
-  for (const name of eager) {
-    // SAFETY: The list is a literal set of tool names checked against the export.
-    assert.ok(
-      ALWAYS_ACTIVE_TOOL_NAMES.includes(name as never),
-      `${name} must be eager, not deferred`,
-    );
-  }
-  assert.equal(
-    new Set(ALWAYS_ACTIVE_TOOL_NAMES).size,
-    ALWAYS_ACTIVE_TOOL_NAMES.length,
-    "the eager surface must not repeat a name",
-  );
+  assert.deepEqual([...ALWAYS_ACTIVE_TOOL_NAMES], expected);
 });

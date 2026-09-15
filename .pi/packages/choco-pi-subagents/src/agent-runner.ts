@@ -431,14 +431,8 @@ export function installExtensionToolScope(
     alwaysToolNames,
   } = ctx;
 
-  // Extension tools this agent earned through `tool_search`. pi grants them by
-  // reporting `addedToolNames` to the calling session, so they show up in the
-  // active set; without remembering them here the next re-narrow would take
-  // back the tool the agent just searched for.
-  const granted = new Set<string>();
   const lean = leanSurfaceNames();
-  const leanAllows = (name: string): boolean =>
-    lean === undefined || lean.has(name) || granted.has(name);
+  const leanAllows = (name: string): boolean => lean === undefined || lean.has(name);
 
   // The names allowed right now. Mirrors the `ext:` opt-in flip: when any `ext:`
   // selector is present, extension tools become an explicit allowlist — a loaded
@@ -475,13 +469,6 @@ export function installExtensionToolScope(
   };
 
   const renarrow = () => {
-    // Record what this turn was granted before scope is recomputed, or the
-    // recomputation would drop it.
-    if (lean !== undefined) {
-      for (const name of session.getActiveToolNames()) {
-        if (!lean.has(name) && !toolNames.includes(name)) granted.add(name);
-      }
-    }
     const allowed = inScope();
     const next = session
       .getAllTools()

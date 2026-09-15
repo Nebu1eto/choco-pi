@@ -73,17 +73,6 @@ export interface SubagentsSettings {
    */
   disableDefaultAgents?: boolean;
   /**
-   * Which Agent tool description the LLM sees. "full" (default) is the rich
-   * Claude Code-style prompt; "compact" is a ~75% smaller version (one-line
-   * agent type list, terse usage notes) for small/local models where tool-spec
-   * tokens are expensive; "custom" reads `.pi/agent-tool-description.md`
-   * (project, falling back to `<agentDir>/agent-tool-description.md`) with
-   * `{{placeholder}}` substitution — a missing/empty file falls back to "full".
-   * The mode is read once at tool registration — changing it applies on the
-   * next pi session.
-   */
-  toolDescriptionMode?: ToolDescriptionMode;
-  /**
    * Agent rows in the above-editor fleet panel (↓/← navigate, ↑↓ switch focus,
    * f focus); off keeps shell rows only. Defaults to `true` and applies live.
    */
@@ -180,8 +169,6 @@ export interface SubagentsSettings {
   fallbackSubagent?: string;
 }
 
-export type ToolDescriptionMode = "full" | "compact" | "custom";
-
 /** Setter hooks used by applySettings to wire persisted values into in-memory state. */
 export interface SettingsAppliers {
   setMaxConcurrent: (n: number) => void;
@@ -192,7 +179,6 @@ export interface SettingsAppliers {
   setScopeModels: (enabled: boolean) => void;
   setStrictAgentFiles: (b: boolean) => void;
   setDisableDefaultAgents: (b: boolean) => void;
-  setToolDescriptionMode: (mode: ToolDescriptionMode) => void;
   setFleetView: (b: boolean) => void;
   setAgentMentions: (mode: AgentMentionMode) => void;
   setRememberAgents: (b: boolean) => void;
@@ -256,10 +242,6 @@ function parseJoinMode(value: JsonValue | undefined): JoinMode | undefined {
   return value === "async" || value === "group" || value === "smart" ? value : undefined;
 }
 
-function parseToolDescriptionMode(value: JsonValue | undefined): ToolDescriptionMode | undefined {
-  return value === "full" || value === "compact" || value === "custom" ? value : undefined;
-}
-
 function parseWidgetMode(value: JsonValue | undefined): WidgetMode | undefined {
   return value === "all" || value === "background" || value === "off" ? value : undefined;
 }
@@ -292,8 +274,6 @@ export function sanitizeSettings(raw: JsonValue): SubagentsSettings {
   if (strictAgentFiles !== undefined) out.strictAgentFiles = strictAgentFiles;
   const disableDefaultAgents = asBoolean(raw.disableDefaultAgents);
   if (disableDefaultAgents !== undefined) out.disableDefaultAgents = disableDefaultAgents;
-  const toolDescriptionMode = parseToolDescriptionMode(raw.toolDescriptionMode);
-  if (toolDescriptionMode !== undefined) out.toolDescriptionMode = toolDescriptionMode;
   const fleetView = asBoolean(raw.fleetView);
   if (fleetView !== undefined) out.fleetView = fleetView;
   const agentMentions = parseAgentMentionMode(raw.agentMentions);
@@ -378,7 +358,6 @@ export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers):
   if (s.strictAgentFiles !== undefined) appliers.setStrictAgentFiles(s.strictAgentFiles);
   if (s.disableDefaultAgents !== undefined)
     appliers.setDisableDefaultAgents(s.disableDefaultAgents);
-  if (s.toolDescriptionMode) appliers.setToolDescriptionMode(s.toolDescriptionMode);
   if (s.fleetView !== undefined) appliers.setFleetView(s.fleetView);
   if (s.agentMentions) appliers.setAgentMentions(s.agentMentions);
   if (s.rememberAgents !== undefined) appliers.setRememberAgents(s.rememberAgents);

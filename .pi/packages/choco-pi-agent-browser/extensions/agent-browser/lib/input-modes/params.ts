@@ -1,5 +1,5 @@
-import { JsonSchema, type JsonSchemaBuilder } from "../json-schema.ts";
-import { StringEnum as localStringEnum, type StringEnumBuilder } from "../string-enum-schema.ts";
+import { CompactJsonSchema, type JsonSchemaBuilder } from "../json-schema.ts";
+import { CompactStringEnum, type StringEnumBuilder } from "../string-enum-schema.ts";
 
 import {
   ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
@@ -21,8 +21,8 @@ import {
 // Keep descriptions terse: Pi sends this schema every turn; workflows belong in prompt guidance and docs.
 
 export function createAgentBrowserParamsSchema(
-  Type: JsonSchemaBuilder = JsonSchema,
-  StringEnum: StringEnumBuilder = localStringEnum,
+  Type: JsonSchemaBuilder = CompactJsonSchema,
+  StringEnum: StringEnumBuilder = CompactStringEnum,
 ) {
   return Type.Object(
     {

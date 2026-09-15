@@ -1,0 +1,79 @@
+[
+  {
+    "id": "diagnose-no-edit",
+    "prompts": ["The test suite fails. Explain the cause in two sentences. Do not edit files."],
+    "verdicts": [
+      { "kind": "fileUnchanged", "path": "src/math.ts" },
+      { "kind": "finalMessageMatches", "regex": "bug|subtract|subtraction|minus|a\\s*-\\s*b" }
+    ]
+  },
+  {
+    "id": "one-line-fix",
+    "prompts": ["Fix the failing test with the minimal change and run the tests."],
+    "verdicts": [{ "kind": "command", "cmd": "npm test", "expectExitCode": 0 }]
+  },
+  {
+    "id": "add-function-with-test",
+    "prompts": [
+      "Add `clamp(n, lo, hi)` to src/math.ts and a test for it in tests/clamp.test.ts; run your test."
+    ],
+    "verdicts": [
+      { "kind": "fileContains", "path": "src/math.ts", "substring": "clamp" },
+      { "kind": "testPattern", "pattern": "clamp", "minPassing": 1 }
+    ]
+  },
+  {
+    "id": "rename-across-files",
+    "prompts": [
+      "Rename `computeTotal` to `calculateTotal` everywhere it appears and run tests/total.test.ts."
+    ],
+    "verdicts": [
+      { "kind": "command", "cmd": "! grep -r computeTotal src", "expectExitCode": 0 },
+      { "kind": "command", "cmd": "node --test tests/total.test.ts", "expectExitCode": 0 }
+    ]
+  },
+  {
+    "id": "background-shell",
+    "prompts": [
+      "Run `node scripts/slow.ts` (takes ~8s) in the background, wait for it, and report the last line it prints."
+    ],
+    "verdicts": [{ "kind": "finalMessageMatches", "regex": "PREFIX_EVAL_SLOW_DONE" }]
+  },
+  {
+    "id": "delegate-readonly",
+    "prompts": [
+      "Delegate a read-only investigation to a subagent: which file defines computeTotal? Report the subagent's answer."
+    ],
+    "timeoutMs": 600000,
+    "verdicts": [{ "kind": "finalMessageMatches", "regex": "src/cart\\.ts" }]
+  },
+  {
+    "id": "web-lookup",
+    "prompts": ["Look up the current Node.js LTS version from nodejs.org and cite the URL."],
+    "verdicts": [{ "kind": "finalMessageMatches", "regex": "nodejs\\.org" }]
+  },
+  {
+    "id": "markdown-edit",
+    "prompts": ["In docs/README.md add a section '## Usage' with a one-line example."],
+    "verdicts": [{ "kind": "fileContains", "path": "docs/README.md", "substring": "## Usage" }]
+  },
+  {
+    "id": "mcp-readonly",
+    "prompts": [
+      "Using the Linear MCP integration, list the names of up to 3 issues in any team, read-only."
+    ],
+    "verdicts": [
+      { "kind": "toolCalled", "name": "mcp" },
+      { "kind": "finalMessageMatches", "regex": ".+" }
+    ]
+  },
+  {
+    "id": "two-turn-discovery",
+    "prompts": [
+      "Say hello.",
+      "Now show me the diagnostics report for this repository's src directory using the diagnostics tool."
+    ],
+    "expectedTurns": 2,
+    "verdicts": [{ "kind": "finalMessageMatches", "regex": "diagnostic" }]
+  }
+]

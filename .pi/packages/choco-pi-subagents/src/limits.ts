@@ -126,6 +126,7 @@ export function createSubagentLimitsTool(controller: SubagentLimitController): T
       "Read or adjust subagent limits only when the user asks for a different limit. " +
       "Values apply to this session only and are not persisted. " +
       "maxConcurrent=0 means unlimited concurrency (with a sanity cap of 1024).",
+    promptSnippet: "Inspect or adjust this session's subagent limits.",
     parameters: Type.Object({
       maxConcurrent: Type.Optional(
         Type.Integer({ minimum: 0, description: "Maximum concurrency; 0 means unlimited." }),

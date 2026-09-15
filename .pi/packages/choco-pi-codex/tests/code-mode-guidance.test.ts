@@ -12,10 +12,17 @@ import type {
   ProgrammaticCodeModeToolDefinition,
 } from "../src/tools/code-mode/types.ts";
 
-function tool(name: string, deferLoading = false): ProgrammaticCodeModeToolDefinition {
+function tool(
+  name: string,
+  deferLoading = false,
+  summary?: string,
+  description?: string,
+): ProgrammaticCodeModeToolDefinition {
   return {
     name,
     usage: `await tools.${name}({})`,
+    summary,
+    description,
     deferLoading,
     kind: "function",
     async invoke() {
@@ -33,12 +40,15 @@ test("root capabilities receive strong code-mode routing with a valid shell exam
   ]);
 
   assert.match(prompt, /Use code mode by default for bounded tool workflows/);
-  assert.match(prompt, /independent reads, searches, checks/);
-  assert.match(prompt, /tools\.exec_command\(\{description: "List source files"/);
-  assert.match(prompt, /Preserve failed outcomes when aggregating/);
-  assert.match(prompt, /decision-dependent work in sequence/);
-  assert.match(prompt, /selecting its entry from ALL_TOOLS and inspect only that schema/);
-  assert.match(prompt, /do not keep a cell alive solely to wait or poll/);
+  assert.match(prompt, /one exec block per coherent step/);
+  assert.match(
+    prompt,
+    /text\(await Promise\.all\(\[tools\.exec_command\(\{description:"List files"/,
+  );
+  assert.match(prompt, /Preserve Promise\.allSettled failures/);
+  assert.match(prompt, /sequence dependent work/);
+  assert.match(prompt, /Inspect one unfamiliar schema in ALL_TOOLS/);
+  assert.match(prompt, /keep cells alive only to poll/);
 });
 
 test("restricted child example preserves successful and failed read-only outcomes", async () => {
@@ -53,7 +63,7 @@ test("restricted child example preserves successful and failed read-only outcome
   assert.doesNotMatch(prompt, /tools\.exec_command\(/);
   assert.doesNotMatch(prompt, /tools\.read(?:\(|\b)/);
   assert.doesNotMatch(prompt, /read_text/);
-  assert.match(prompt, /UI tools require UI references\/state/);
+  assert.match(prompt, /UI refs are not file paths/);
 
   const example = prompt
     .split("\n")
@@ -106,7 +116,7 @@ test("production injection refreshes its owned block when child permissions chan
 
   assert.equal(repeated, child);
   assert.match(child, /<code_mode_tools>/);
-  assert.match(child, /Pi tools callable in exec.*module_report/);
+  assert.match(child, /Pi tools callable in exec[^]*module_report: Deferred/);
   assert.doesNotMatch(child, /tools\.exec_command\(/);
   assert.doesNotMatch(child, /tools\.apply_patch\(/);
   assert.equal(child.match(new RegExp(prose, "g"))?.length, 1);
@@ -151,15 +161,35 @@ test("previousSection refresh keeps exactly one marked owned block", () => {
 
   assert.equal(refreshed.systemPrompt.match(/<code_mode_tools>/g)?.length, 1);
   assert.equal(refreshed.systemPrompt.match(/<\/code_mode_tools>/g)?.length, 1);
-  assert.match(refreshed.systemPrompt, /Pi tools callable in exec.*module_report/);
+  assert.match(refreshed.systemPrompt, /Pi tools callable in exec[^]*module_report/);
   assert.doesNotMatch(refreshed.systemPrompt, /tools\.exec_command\(/);
 });
 
-test("the exec tool description independently carries the shared default", () => {
-  assert.match(EXEC_DESCRIPTION, /Use code mode by default for bounded tool workflows/);
+test("bridged catalog is sorted and renders one bounded summary per line", () => {
+  const prompt = buildCodeModeToolsPrompt([
+    tool("session_send", true, "Send a message to another session."),
+    tool(
+      "diagnostics_report",
+      true,
+      "Review current diagnostics across every edited file before declaring the task complete today please.",
+    ),
+    tool("module_report", true, undefined, "Describe a module. Ignore later sentences."),
+    tool("unknown", true, "", ""),
+  ]);
+
   assert.match(
-    EXEC_DESCRIPTION,
-    /Use direct tools only for approvals, native artifacts, citations/,
+    prompt,
+    /Pi tools callable in exec \(schemas in ALL_TOOLS\):\ndiagnostics_report: Review current diagnostics across every edited file before…\nmodule_report: Describe a module\.\nsession_send: Send a message to another session\.\nunknown: Deferred Pi tool/,
   );
+});
+
+test("the code-mode tools block solely owns routing guidance", () => {
+  const prompt = buildCodeModeToolsPrompt([tool("exec_command")]);
+
+  assert.match(prompt, /Use code mode by default for bounded tool workflows/);
+  assert.match(prompt, /Use direct tools only for approvals, native artifacts, citations/);
+  assert.match(EXEC_DESCRIPTION, /Follow the <code_mode_tools> system block/);
+  assert.doesNotMatch(EXEC_DESCRIPTION, /Use code mode by default for bounded tool workflows/);
+  assert.doesNotMatch(EXEC_DESCRIPTION, /Use direct tools only for approvals/);
   assert.match(EXEC_DESCRIPTION, /do not declare a local tools variable/);
 });

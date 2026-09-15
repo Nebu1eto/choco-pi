@@ -1,5 +1,9 @@
 # Vendored source record
 
+The MCP proxy and first-party Figma tools carry compact prompt snippets for the
+provider schema budget and deferred Code Mode catalog. Dynamic server and
+instruction details remain available through proxy discovery actions.
+
 ## Provenance
 
 - Upstream package: `pi-mcp-adapter`
@@ -24,6 +28,10 @@ The npm tarball contains no tests or conformance fixtures, so there was no upstr
 ### Deferred runtime imports
 
 The fork defers connection initialization, OAuth, proxy execution, MCP scripting, direct-tool execution, and command UI modules until their tool, command, or lifecycle handler runs. Registration still reads the effective config and metadata cache and emits the same tool schemas, command names, event channels, cached prompt commands, and direct-tool registrations. This is a load-time-only change; registered behavior and protocol identifiers are unchanged.
+
+OAuth provider and credential-store constructors use explicit fields rather
+than TypeScript parameter properties so Node's strip-only loader can parse the
+deferred runtime graph.
 
 ## Runtime dependencies
 
@@ -185,6 +193,13 @@ already-connected MCP clients. The bridge waits for initialization, converges
 the requested server, forwards cancellation, and returns only text content in
 the command-hook stdout shape. It never starts a separate OAuth or connection
 flow, matching Claude Code's MCP hook behavior.
+
+## Prefix-stable late tool updates
+
+The adapter now consults `Symbol.for("choco-pi.prefix.locked")` before any direct
+or proxy registration, replacement, removal, or active-list repair. A locked
+surface records deferred work without changing Pi's registry; `session_start`
+and `model_select` replay it after the prefix lock is released.
 
 ## Vendored install policy
 

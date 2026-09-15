@@ -1,6 +1,6 @@
 ---
 name: figma
-description: Use native Pi tools to inspect Figma summaries, context, screenshots, components, styles, variables, and tokens when implementing from Figma; requires a personal access token.
+description: Implement Figma designs with native tools; requires a personal access token.
 ---
 
 # Figma Design Integration

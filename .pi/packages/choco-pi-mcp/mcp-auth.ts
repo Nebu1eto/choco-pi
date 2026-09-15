@@ -96,14 +96,12 @@ export interface AuthStorageOptions {
 
 export class OAuthCredentialStoreError extends Error {
   readonly code = "OAUTH_CREDENTIAL_STORE_UNAVAILABLE";
+  readonly operation: "read" | "write" | "remove";
 
-  constructor(
-    message: string,
-    readonly operation: "read" | "write" | "remove",
-    cause: unknown,
-  ) {
+  constructor(message: string, operation: "read" | "write" | "remove", cause: unknown) {
     super(message, { cause });
     this.name = "OAuthCredentialStoreError";
+    this.operation = operation;
   }
 }
 

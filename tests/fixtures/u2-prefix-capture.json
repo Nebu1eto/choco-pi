@@ -1,0 +1,21 @@
+{
+  "model": "anthropic/claude-opus-5",
+  "before": { "total": 21527, "system": 5450, "tools": 16069 },
+  "after": { "total": 11606, "system": 5584, "tools": 6014 },
+  "codeModeTools": 1160,
+  "rewrites": 0,
+  "toolNames": [
+    "exec",
+    "wait",
+    "shell_start",
+    "shell_read",
+    "find",
+    "ls",
+    "Agent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "agent_browser",
+    "tool_search"
+  ]
+}
