@@ -23,6 +23,7 @@ import type { ProgrammaticCodeModeToolDefinition } from "../tools/code-mode/type
 import {
   collectBridgedTools,
   installRegisteredToolCapture,
+  registeredToolRunner,
 } from "../tools/code-mode/registered-tool-bridge.ts";
 import { prepareCodeModeApplyPatchInput } from "../tools/apply-patch/code-mode-input.ts";
 import { createApplyPatchTool } from "../tools/apply-patch/tool.ts";
@@ -251,7 +252,7 @@ function createNestedTools(
   // Everything else Pi has registered (LSP, MCP, sub-agents, sessions, goals,
   // web access) rides along as deferred tools: no prompt cost, callable as
   // tools.<name>(...) inside a block, discoverable through ALL_TOOLS.
-  tools.push(...collectBridgedTools());
+  tools.push(...collectBridgedTools(registeredToolRunner(ctx)));
   return scopeCodeModeToolsToSessionPermissions(tools, activeToolNames);
 }
 

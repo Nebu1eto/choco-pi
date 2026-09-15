@@ -11,7 +11,7 @@ import type { SharedCodeModeRuntime } from "./shared-runtime.ts";
 import { formatRunningExecSessionGuidance, toCodeModeToolResult } from "./tool-result.ts";
 import type { CodeModeRenderContext, CodeModeRenderTheme, ToolExecutionContext } from "./types.ts";
 import { CODE_MODE_EXEC_CONSTRAINED_SAMPLING } from "./exec-contract.ts";
-import { registeredToolNames } from "./registered-tool-bridge.ts";
+import { registeredToolNames, registeredToolRunner } from "./registered-tool-bridge.ts";
 import { consumeAsyncCodeModeCall } from "../../providers/openai-codex/native-features.ts";
 import { preflightCodeModeSource } from "./source-preflight.ts";
 import {
@@ -84,7 +84,7 @@ function createExecTool(
       preflightCodeModeSource(params.code, {
         mode: executionKind,
         availableToolNames: tools.map((tool) => tool.name),
-        outsideToolNames: registeredToolNames(),
+        outsideToolNames: registeredToolNames(registeredToolRunner(ctx)),
       });
       tracker.start(id);
       try {

@@ -81,20 +81,41 @@ export function installRegisteredToolCapture(): void {
   prototype.__chocoPiCodeModeToolBridgeVersion = BRIDGE_CAPTURE_VERSION;
 }
 
-/** The live runner, once Pi has assembled its tool list at least once. */
-export function registeredToolRunner(): RegisteredToolSource | undefined {
+/**
+ * The runner whose registry code mode must mirror.
+ *
+ * Every AgentSession — including each subagent's — builds its own
+ * ExtensionRunner and lands in this shared capture list, and a child session
+ * deliberately skips whole extensions (choco-pi-subagents returns early
+ * there), so the newest live runner is not necessarily the calling session's.
+ * Resolving by session identity keeps a root `exec` cell from mirroring a
+ * subagent's narrower registry while background agents run, which otherwise
+ * hides every orchestration tool from both the tools namespace and the
+ * "outside code mode" hint. Without a ctx, with a ctx that has no session
+ * manager, or when the caller's session never registered a runner, the newest
+ * live runner remains the answer.
+ */
+export function registeredToolRunner(ctx?: ExtensionContext): RegisteredToolSource | undefined {
   const runners = bridgedRunnerPrototype().__chocoPiCodeModeToolBridgeRunners ?? [];
+  const targetSessionManager = ctx ? withLiveCtx(() => ctx.sessionManager) : undefined;
+  let newestLive: ExtensionRunner | undefined;
   for (let index = runners.length - 1; index >= 0; index -= 1) {
     const runner = runners[index];
     if (!runner) continue;
-    const live = withLiveCtx(() => {
-      runner.createContext().isIdle();
-      return true;
+    const probe = withLiveCtx(() => {
+      const context = runner.createContext();
+      context.isIdle();
+      return { sessionManager: context.sessionManager };
     });
-    if (live) return runner;
-    runners.splice(index, 1);
+    if (!probe) {
+      runners.splice(index, 1);
+      continue;
+    }
+    if (targetSessionManager !== undefined && probe.sessionManager === targetSessionManager)
+      return runner;
+    newestLive ??= runner;
   }
-  return undefined;
+  return newestLive;
 }
 
 /** Test seam: forget the captured runner. */
