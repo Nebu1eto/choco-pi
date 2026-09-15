@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
 import { Type } from "typebox";
@@ -26,12 +26,12 @@ interface CandidateRange {
   end: number;
 }
 
-export function enhanceCodeModeNestedToolError(
+export async function enhanceCodeModeNestedToolError(
   toolName: string,
   input: BoundaryValue,
   error: Error,
   cwd: string,
-): Error {
+): Promise<Error> {
   const readOffset = /Offset (\d+) is beyond end of file \((\d+) lines total\)/i.exec(
     error.message,
   );
@@ -46,7 +46,7 @@ export function enhanceCodeModeNestedToolError(
         `Path: ${input.path}`,
         `Requested offset: ${requestedOffset}`,
         `Current line count: ${lineCount}`,
-        `Recovery: call await tools.read(${JSON.stringify({ path: input.path, offset, limit })}) to re-read the current file tail, then choose any next offset from that result.`,
+        `Recovery: use an available filesystem reader (a direct read outside code mode if needed) for ${JSON.stringify(input.path)} and inspect its current tail near offset ${offset} with limit ${limit}. tools.read_text is UI-only.`,
       ].join("\n"),
     );
   }
@@ -67,7 +67,7 @@ export function enhanceCodeModeNestedToolError(
         "Code mode tool precondition [observation_required]",
         `Tool: ${toolName}`,
         `Cause: ${error.message}`,
-        "Recovery: call await tools.observe_ui({}) in this session to establish fresh observation state, then retry the original tool call.",
+        "Recovery: if observe_ui is available in this session, call it to establish fresh UI observation state, then retry the original UI tool call. For filesystem content, use an available filesystem reader; tools.read_text is UI-only.",
       ].join("\n"),
     );
   }
@@ -75,25 +75,33 @@ export function enhanceCodeModeNestedToolError(
   return error;
 }
 
-function staleEditError(
+async function staleEditError(
   input: { path: string; edits: Array<{ oldText: string; newText: string }> },
   error: Error,
   cwd: string,
-): Error {
+): Promise<Error> {
   const absolutePath = isAbsolute(input.path) ? input.path : resolve(cwd, input.path);
-  if (!existsSync(absolutePath)) {
+  try {
+    await access(absolutePath);
+  } catch (failure) {
+    if (!(failure instanceof Error && "code" in failure && failure.code === "ENOENT")) return error;
     return new Error(
       [
         "Code mode tool error [stale_edit]",
         `Path: ${input.path}`,
         `Cause: ${error.message}`,
         "Current file state: path no longer exists.",
-        `Recovery: call await tools.read(${JSON.stringify({ path: input.path, offset: 1, limit: 80 })}) to confirm the current path before retrying.`,
+        "Recovery: use an available filesystem reader (a direct read outside code mode if needed) to confirm the current path before retrying. tools.read_text is UI-only.",
       ].join("\n"),
     );
   }
 
-  const content = readFileSync(absolutePath, "utf8");
+  let content: string;
+  try {
+    content = await readFile(absolutePath, "utf8");
+  } catch {
+    return error;
+  }
   const lines = fileLines(content);
   const exact = uniqueRanges(input.edits.flatMap((edit) => exactTextRanges(content, edit.oldText)));
   const candidates = (
@@ -114,7 +122,7 @@ function staleEditError(
       "Focused re-read:",
       ...reads.map(
         (range) =>
-          `- await tools.read(${JSON.stringify(readCall(input.path, range, lines.length))})`,
+          `- use an available filesystem reader for ${JSON.stringify(readCall(input.path, range, lines.length))}`,
       ),
       ambiguous
         ? "Retry with enough current unchanged text to select exactly one oldText range."

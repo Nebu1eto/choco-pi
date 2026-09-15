@@ -98,6 +98,54 @@ test("unconditional top-level tool typos report close matches", () => {
   assert.match(message, /Outside code mode: no/);
 });
 
+test("top-level tools namespace shadowing is rejected before execution", () => {
+  for (const source of [
+    "const tools = await tools.exec_command({description: 'x', cmd: 'true'});",
+    "let tools;",
+    "const { tools } = value;",
+    "const x = 1, tools = await tools.exec_command({description: 'x', cmd: 'true'});",
+  ]) {
+    const message = messageFromThrown(() => preflightCodeModeSource(source, RESTRICTED));
+    assert.match(message, /\[reserved_namespace_shadowing\]/);
+    assert.match(message, /temporal dead zone/);
+  }
+});
+
+test("nested tools bindings and tools object properties remain valid", () => {
+  for (const source of [
+    "const map = (tools) => tools.value; text(String(map({value: 1})));",
+    "const pick = (tools) => tools.value; text(String(pick({value: 1})));",
+    "function readLocal(tools) { return tools.value; } text(String(readLocal({value: 1})));",
+    "const value = { tools: 1 }; text(String(value.tools));",
+    "const f = function tools() { return 1; }; text(String(f()));",
+    "const f = class tools {}; text(f.name);",
+    "await tools.exec_command({description: 'x', cmd: 'true'});",
+  ]) {
+    assert.doesNotThrow(() => preflightCodeModeSource(source, RESTRICTED), source);
+  }
+});
+
+test("declaration keywords used as property names do not start declarations", () => {
+  for (const source of [
+    "const obj = { var() {} }; text(obj.var(), tools);",
+    "const obj = { const() {} }; text(obj.const(), tools);",
+    "const obj = { let() {} }; text(obj.let(), tools);",
+  ]) {
+    assert.doesNotThrow(() =>
+      preflightCodeModeSource(source, { mode: "code", availableToolNames: [] }),
+    );
+  }
+});
+
+test("notebook mode permits a local tools namespace", () => {
+  assert.doesNotThrow(() =>
+    preflightCodeModeSource("const tools = { local() { return 1; } }; tools.local();", {
+      ...RESTRICTED,
+      mode: "notebook",
+    }),
+  );
+});
+
 test("destructuring, method shorthand, and class fields are valid local bindings", () => {
   for (const source of [
     'const { document } = await tools.read({path:"a"}); text(String(document));',
@@ -138,8 +186,8 @@ test("code-mode apply_patch rejects object arguments with the exact call shape",
   assert.deepEqual(prepareCodeModeApplyPatchInput("patch"), { input: "patch" });
 });
 
-test("bridged read errors include current EOF and an exact tail re-read", () => {
-  const enhanced = enhanceCodeModeNestedToolError(
+test("bridged read errors include current EOF and accurate recovery", async () => {
+  const enhanced = await enhanceCodeModeNestedToolError(
     "read",
     { path: "src/example.ts", offset: 260, limit: 40 },
     new Error("Offset 260 is beyond end of file (175 lines total)"),
@@ -147,7 +195,8 @@ test("bridged read errors include current EOF and an exact tail re-read", () => 
   );
   assert.match(enhanced.message, /\[read_offset_beyond_eof\]/);
   assert.match(enhanced.message, /Current line count: 175/);
-  assert.match(enhanced.message, /"offset":136,"limit":40/);
+  assert.match(enhanced.message, /available filesystem reader/);
+  assert.match(enhanced.message, /tools\.read_text is UI-only/);
 });
 
 test("the registered-tool bridge applies focused read-offset errors", async () => {
@@ -182,11 +231,11 @@ test("the registered-tool bridge applies focused read-offset errors", async () =
   );
 });
 
-test("bridged stale edits include candidate ranges and focused reads", () => {
+test("bridged stale edits include candidate ranges and focused reads", async () => {
   const directory = mkdtempSync(join(tmpdir(), "codex-preflight-edit-"));
   try {
     writeFileSync(join(directory, "sample.txt"), "header\nanchor\ncurrent\nanchor\nfooter\n");
-    const enhanced = enhanceCodeModeNestedToolError(
+    const enhanced = await enhanceCodeModeNestedToolError(
       "edit",
       {
         path: "sample.txt",
@@ -198,21 +247,21 @@ test("bridged stale edits include candidate ranges and focused reads", () => {
     assert.match(enhanced.message, /\[stale_edit\]/);
     assert.match(enhanced.message, /Current line count: 5/);
     assert.match(enhanced.message, /Candidate ranges: 2-3, 4-5/);
-    assert.match(enhanced.message, /await tools\.read\(/);
+    assert.match(enhanced.message, /available filesystem reader/);
     assert.match(enhanced.message, /Re-read current contents and rebuild oldText/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test("bridged ambiguous edits require multiple exact oldText matches", () => {
+test("bridged ambiguous edits require multiple exact oldText matches", async () => {
   const directory = mkdtempSync(join(tmpdir(), "codex-ambiguous-edit-"));
   try {
     writeFileSync(
       join(directory, "sample.txt"),
       "header\nanchor\ncurrent\nanchor\ncurrent\nfooter\n",
     );
-    const enhanced = enhanceCodeModeNestedToolError(
+    const enhanced = await enhanceCodeModeNestedToolError(
       "edit",
       {
         path: "sample.txt",
@@ -229,16 +278,17 @@ test("bridged ambiguous edits require multiple exact oldText matches", () => {
   }
 });
 
-test("missing UI observation state becomes a focused prerequisite error", () => {
-  const enhanced = enhanceCodeModeNestedToolError(
+test("missing UI observation state becomes a focused prerequisite error", async () => {
+  const enhanced = await enhanceCodeModeNestedToolError(
     "inspect_ui",
     {},
     new Error("No observation state is available; call observe_ui first"),
     "/tmp",
   );
   assert.match(enhanced.message, /\[observation_required\]/);
-  assert.match(enhanced.message, /await tools\.observe_ui\(\{\}\)/);
-  assert.match(enhanced.message, /retry the original tool call/);
+  assert.match(enhanced.message, /if observe_ui is available/);
+  assert.match(enhanced.message, /retry the original UI tool call/);
+  assert.match(enhanced.message, /tools\.read_text is UI-only/);
 });
 
 test("repeated and anchored apply_patch context remains authoritative to the applier", async () => {

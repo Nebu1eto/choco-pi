@@ -166,12 +166,14 @@ export function collectBridgedTools(
     const toolName = definition.name;
     bridged.push({
       ...nested,
-      invoke(input, context, signal) {
+      async invoke(input, context, signal) {
         const cwd = context.cwd;
-        return nested.invoke(input, context, signal).catch((error) => {
+        try {
+          return await nested.invoke(input, context, signal);
+        } catch (error) {
           const parsedError = error instanceof Error ? error : new Error(String(error));
-          throw enhanceCodeModeNestedToolError(toolName, input, parsedError, cwd);
-        });
+          throw await enhanceCodeModeNestedToolError(toolName, input, parsedError, cwd);
+        }
       },
     });
   }

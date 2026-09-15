@@ -1,3 +1,8 @@
+import {
+  CODE_MODE_DEFAULT_ROUTING,
+  CODE_MODE_DIRECT_EXCEPTIONS,
+} from "../tools/code-mode/custom-tool-prompt.ts";
+
 export interface PromptSkill {
   name: string;
   description: string;
@@ -61,7 +66,8 @@ const CODE_MODE_GUIDELINES = [
   "Keep exec code mode bounded; route persistent processes and commands expected to exceed about 30 seconds to shell_start, continue independent work, and inspect completion details with shell_read only when needed",
   "Use tty=true only for input/persistent processes",
   "Use tools.apply_patch(patch) for edits; split large patches; shell/Python only for formatting/bulk work",
-  "Use code mode only for bounded multi-call stages where JavaScript/TypeScript can reduce intermediate output; use direct calls when one call suffices, each result changes the next decision, approval is required, or native artifacts or citations must be preserved",
+  CODE_MODE_DEFAULT_ROUTING,
+  CODE_MODE_DIRECT_EXCEPTIONS,
 ];
 
 const NOTEBOOK_MODE_GUIDELINES = [
@@ -121,6 +127,10 @@ const STATIC_CODEX_GUIDELINES_BY_KEY = new Map([
     CODE_MODE_GUIDELINES[5]!,
   ],
   ["Await dependencies; use Promise.all for independent calls", CODE_MODE_GUIDELINES[6]!],
+  [
+    "Use code mode only for bounded multi-call stages where JavaScript/TypeScript can reduce intermediate output; use direct calls when one call suffices, each result changes the next decision, approval is required, or native artifacts or citations must be preserved",
+    CODE_MODE_GUIDELINES[6]!,
+  ],
 ]);
 
 function canonicalizeGuidelineLine(line: string): string {
@@ -133,13 +143,26 @@ function canonicalizeGuidelineLine(line: string): string {
 
 type CodexPromptMode = "normal" | "code" | "notebook";
 
-function buildCodexGuidelines(mode: CodexPromptMode = "normal", piPackageRoot?: string): string[] {
-  const guidelines =
+function buildCodexGuidelines(
+  mode: CodexPromptMode = "normal",
+  piPackageRoot?: string,
+  selectedTools?: readonly string[],
+): string[] {
+  let guidelines =
     mode === "normal"
       ? [...NORMAL_CODEX_GUIDELINES]
       : mode === "notebook"
         ? [...NOTEBOOK_MODE_GUIDELINES]
         : [...CODE_MODE_GUIDELINES];
+  if (mode !== "normal" && selectedTools !== undefined) {
+    const hasShell = selectedTools.includes("bash");
+    const hasMutation = selectedTools.includes("edit") || selectedTools.includes("write");
+    guidelines = guidelines.filter((guideline) => {
+      if (guideline === CODE_MODE_GUIDELINES[5]) return hasMutation;
+      if (CODE_MODE_GUIDELINES.slice(0, 5).includes(guideline)) return hasShell;
+      return true;
+    });
+  }
   if (piPackageRoot) {
     guidelines.push(
       `When work depends on Pi APIs or runtime behavior not established in the current repository, consult the relevant README.md, docs/, or examples/ files under ${piPackageRoot} and follow their references before implementing`,
@@ -259,12 +282,16 @@ function injectSkills(prompt: string, skills: PromptSkill[]): string {
   return insertBeforeTrailingContext(prompt, buildSkillsSection(skills));
 }
 
-function injectGuidelines(prompt: string, mode?: CodexPromptMode): string {
+function injectGuidelines(
+  prompt: string,
+  mode?: CodexPromptMode,
+  selectedTools?: readonly string[],
+): string {
   const match = prompt.match(
     /(^Guidelines:\n)([\s\S]*?)(\n\n(?=Pi documentation\b|# Project Context|# Skills|Current date:))/m,
   );
   if (!match || match.index === undefined) {
-    const fallbackSection = `Guidelines:\n${buildCodexGuidelines(mode)
+    const fallbackSection = `Guidelines:\n${buildCodexGuidelines(mode, undefined, selectedTools)
       .map((line) => `- ${line}`)
       .join("\n")}`;
     return insertBeforeTrailingContext(prompt, fallbackSection);
@@ -274,10 +301,16 @@ function injectGuidelines(prompt: string, mode?: CodexPromptMode): string {
   const [, header, body, suffix] = match as RegExpMatchArray & { 1: string; 2: string; 3: string };
   const bodyLines = body.split("\n");
   const canonicalBodyLines = bodyLines.map(canonicalizeGuidelineLine);
-  const withoutRemoved = canonicalBodyLines.filter(
-    (line) =>
-      !REMOVED_GUIDELINES.has(withoutCosmeticTerminalPeriod(line.trim().replace(/^-\s*/, ""))),
-  );
+  const allowedModeGuidelines = new Set(buildCodexGuidelines(mode, undefined, selectedTools));
+  const withoutRemoved = canonicalBodyLines.filter((line) => {
+    const guideline = withoutCosmeticTerminalPeriod(line.trim().replace(/^-\s*/, ""));
+    if (REMOVED_GUIDELINES.has(guideline)) return false;
+    return (
+      mode === "normal" ||
+      !CODE_MODE_GUIDELINES.includes(guideline) ||
+      allowedModeGuidelines.has(guideline)
+    );
+  });
   const keptBodyLines =
     mode !== "normal"
       ? withoutRemoved.filter(
@@ -291,7 +324,7 @@ function injectGuidelines(prompt: string, mode?: CodexPromptMode): string {
     .map((line) => line.trim())
     .filter((line) => line.startsWith("- "));
   const existing = new Set(existingLines.map((line) => line.slice(2)));
-  const additions = buildCodexGuidelines(mode)
+  const additions = buildCodexGuidelines(mode, undefined, selectedTools)
     .filter((line) => !existing.has(line))
     .map((line) => `- ${line}`);
   if (additions.length === 0 && keptBodyLines.join("\n") === body) {
@@ -443,7 +476,10 @@ function buildHeavyCodexSystemPrompt(
     !source.customPrompt && stripPiDocumentation(prompt) !== prompt
       ? extractPiPackageRoot(prompt)
       : undefined;
-  prompt = replaceHeavyGuidelines(prompt, buildCodexGuidelines(options.mode, piPackageRoot));
+  prompt = replaceHeavyGuidelines(
+    prompt,
+    buildCodexGuidelines(options.mode, piPackageRoot, source.selectedTools),
+  );
   prompt = stripPiDocumentation(prompt);
   prompt = replaceSkills(prompt, options.skills);
   prompt = injectShell(prompt, options.shell);
@@ -475,7 +511,10 @@ export function buildCodexSystemPrompt(
     });
   }
   return injectShell(
-    injectSkills(injectGuidelines(basePrompt, options.mode), options.skills ?? []),
+    injectSkills(
+      injectGuidelines(basePrompt, options.mode, options.systemPromptOptions?.selectedTools),
+      options.skills ?? [],
+    ),
     options.shell,
   );
 }
