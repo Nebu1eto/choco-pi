@@ -29,7 +29,8 @@ test("Code Mode is the append-style default for every OpenAI Codex model", () =>
   assert.match(prompt, /Use tools\.exec_command for shell commands/);
   assert.match(prompt, /Keep exec code mode bounded/);
   assert.match(prompt, /commands expected to exceed about 30 seconds to shell_start/);
-  assert.match(prompt, /use direct calls when one call suffices/);
+  assert.match(prompt, /Use code mode by default for bounded tool workflows/);
+  assert.match(prompt, /Use direct tools only for approvals, native artifacts, citations/);
 });
 
 test("Code Mode guidance canonicalizes legacy rules without losing execution semantics", () => {
@@ -66,7 +67,8 @@ test("Code Mode canonicalizes legacy composition guidance into bounded routing r
   );
 
   for (const line of legacy) assert.ok(!prompt.includes(line));
-  assert.equal(prompt.match(/Use code mode only for bounded multi-call stages/g)?.length, 1);
+  assert.equal(prompt.match(/Use code mode by default for bounded tool workflows/g)?.length, 1);
+  assert.doesNotMatch(prompt, /Use code mode only for bounded multi-call stages/);
 });
 
 test("Code Mode tool guidance is compact and retains callable patch, web, and custom-tool guidance", () => {
@@ -146,21 +148,24 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
   );
   assert.match(
     guidance,
-    /Composition: one exec block per step, not one per tools\.\* call — for a bounded processing step, batch independent calls with Promise\.all/,
+    /Composition: Use code mode by default for bounded tool workflows.*one exec block per coherent step, not one wrapper per call/,
   );
   assert.match(
     guidance,
-    /Pattern: const \[a, b\] = await Promise\.all\(\[tools\.exec_command\(\{description: "List source files", cmd: "rg --files src"\}\), tools\.exec_command\(\{description: "Find pending work", cmd: "rg -n TODO src"\}\)\]\); text\(a\.output \+ b\.output\)/,
+    /Pattern: const \[files, todos\] = await Promise\.all\(\[tools\.exec_command\(\{description: "List source files", cmd: "rg --files src"\}\), tools\.exec_command\(\{description: "Find pending work", cmd: "rg -n TODO src"\}\)\]\); text\(JSON\.stringify\(\{files, todos\}\)\)/,
   );
   assert.match(
     guidance,
     /To create or edit a custom tool, read .* only when creating or editing a custom tool; never for discovering or calling tools; do not read Pi docs/,
   );
   assert.match(EXEC_DESCRIPTION, /JavaScript source only; no JSON\/fences/);
-  assert.match(EXEC_DESCRIPTION, /bounded multi-call workflows that filter or aggregate results/);
+  assert.match(EXEC_DESCRIPTION, /Use code mode by default for bounded tool workflows/);
   assert.match(EXEC_DESCRIPTION, /first-line \/\/ @description: short intent/);
   assert.match(EXEC_DESCRIPTION, /first exec_command description labels it/);
-  assert.match(EXEC_DESCRIPTION, /prefer direct calls when one call suffices/);
+  assert.match(
+    EXEC_DESCRIPTION,
+    /Use direct tools only for approvals, native artifacts, citations/,
+  );
   assert.match(EXEC_DESCRIPTION, /Code: fresh restricted JS/);
   assert.match(EXEC_DESCRIPTION, /Notebook: persistent shared Deno TypeScript globals/);
   // text()/notify() emit and return undefined; the description must not imply

@@ -8,6 +8,8 @@ import type {
   SharedCodeModeRuntime,
 } from "../src/tools/code-mode/shared-runtime.ts";
 import type { RuntimeResponse } from "../src/tools/code-mode/types.ts";
+import type { CodeModeToolDefinition } from "../src/tools/code-mode/types.ts";
+import { WAIT_DESCRIPTION } from "../src/tools/code-mode/custom-tool-prompt.ts";
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -51,7 +53,10 @@ type RuntimeStub = Pick<
   "getClient" | "collectTools" | "collectRenderTools" | "useRichRendering"
 >;
 
-function registerWaitTool(client: CodeModeExecutionClient): WaitTool {
+function registerWaitTool(
+  client: CodeModeExecutionClient,
+  nestedTools: CodeModeToolDefinition[] = [],
+): WaitTool {
   const tools: WaitTool[] = [];
   const stubEvents: StubEvents = {
     on: () => () => {},
@@ -69,7 +74,7 @@ function registerWaitTool(client: CodeModeExecutionClient): WaitTool {
   const pi = stubPi as ExtensionAPI;
   const runtimeStub: RuntimeStub = {
     getClient: () => Promise.resolve(client),
-    collectTools: () => [],
+    collectTools: () => nestedTools,
     collectRenderTools: () => [],
     useRichRendering: () => false,
   };
@@ -181,4 +186,70 @@ test("terminating a missing cell reports that it is already gone", async () => {
     },
   });
   assert.equal("isError" in result, false);
+});
+
+test("wait distinguishes exec cells from managed command sessions", () => {
+  assert.match(WAIT_DESCRIPTION, /Cell IDs do not survive restart/);
+  assert.match(WAIT_DESCRIPTION, /exec_command session IDs belong to write_stdin/);
+});
+
+test("numeric missing cell resumes an available exec session exactly once", async () => {
+  const invocations: unknown[] = [];
+  const writeStdin: CodeModeToolDefinition = {
+    name: "write_stdin",
+    usage: "await tools.write_stdin({ session_id: 7 })",
+    deferLoading: false,
+    kind: "function",
+    async invoke(input) {
+      invocations.push(input);
+      return { output: "resumed output", exit_code: 0 };
+    },
+  };
+  const client: CodeModeExecutionClient = {
+    execute() {
+      throw new Error("execute not used");
+    },
+    wait(cellId) {
+      return Promise.resolve({
+        ...response("result", cellId),
+        missingCell: true,
+        errorText: `exec cell ${cellId} not found`,
+      });
+    },
+    terminate() {
+      throw new Error("terminate not used");
+    },
+    shutdown() {
+      return Promise.resolve();
+    },
+  };
+  const wait = registerWaitTool(client, [writeStdin]);
+  const resumed = await wait.execute(
+    "wait-resume",
+    { cell_id: "7", yield_time_ms: 1_000 },
+    undefined,
+    undefined,
+    { cwd: "/work" },
+  );
+
+  assert.deepEqual(invocations, [{ session_id: 7, yield_time_ms: 1_000 }]);
+  assert.deepEqual(
+    resumed.content.map((item) => item.text),
+    [
+      "Recovered wait cell_id 7 as exec_command session_id 7 and continued it with write_stdin",
+      "resumed output",
+      "Process exited with code 0",
+    ],
+  );
+
+  const denied = registerWaitTool(client);
+  const missing = await denied.execute(
+    "wait-denied",
+    { cell_id: "7", yield_time_ms: 1_000 },
+    undefined,
+    undefined,
+    { cwd: "/work" },
+  );
+  assert.match(missing.content[0]?.text ?? "", /does not exist in this session/);
+  assert.equal(invocations.length, 1);
 });

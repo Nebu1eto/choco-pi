@@ -191,11 +191,26 @@ Code Mode call's intent. Without it, the renderer derives the parent intent from
 the first `exec_command` description and suppresses its redundant generic
 “Calls” line.
 
+Code Mode prompt routing now uses one provider-neutral rule shared by the system
+prompt and the `exec` description: bounded tool workflows default to Code Mode,
+while approvals, native artifacts, citations, decision-dependent single results,
+and unavailable capabilities stay direct. Capability-aware examples mention only
+tools present in the filtered namespace, preserve fulfilled and rejected outcomes,
+and never manufacture filesystem or UI capabilities. Static shell and mutation
+guidance is omitted when the session permission filter removed `bash`, `edit`, or
+`write`. Generated tool guidance is enclosed in a bounded owned block and rebuilt
+when the root/child tool set changes; unrelated prompt prose and legacy composition
+phrases cannot suppress that refresh. The opt-in `tests/code-mode-first.e2e.ts`
+probe requires successful manifest-reading `exec` calls and normally stopped final
+answers from both the real root and explore child. It records bounded tool counts,
+revision stability, and process teardown separately, is excluded from the default
+`*.test.ts` suite, and refuses to run without its environment guard.
+
 ## Code Mode and edit preflight (choco-pi addition)
 
-`tools/code-mode/source-preflight.ts` parses restricted cells before host execution and scans executable source tokens for unsupported restricted globals. It hard-rejects a `tools.<name>` reference only when the reference is unconditional at the cell's top level and Pi registers the name neither inside nor outside code mode. Guarded references and real-but-unbridged tool names run to the namespace proxy. String, comment, template text, and regular expression contents are ignored. Notebook cells retain Deno TypeScript capabilities and skip restricted-global and JavaScript-only checks. Command strings and non-zero `exec_command` exits remain runtime data and are not reclassified.
+`tools/code-mode/source-preflight.ts` parses restricted cells before host execution and scans executable source tokens for unsupported restricted globals. It hard-rejects a `tools.<name>` reference only when the reference is unconditional at the cell's top level and Pi registers the name neither inside nor outside code mode. The top-level guard covers multiple declarations without rejecting nested expression arrows or notebook-local bindings. Guarded references and real-but-unbridged tool names run to the namespace proxy. String, comment, template text, and regular expression contents are ignored. Notebook cells retain Deno TypeScript capabilities and skip restricted-global and JavaScript-only checks. Command strings and non-zero `exec_command` exits remain runtime data and are not reclassified.
 
-The tools namespace guard supplies close-match and direct-registration guidance at runtime. Bridged tools translate stale `read` offsets, exact-match ambiguity versus stale `edit` context, and missing UI observation state into focused recovery errors. `apply_patch` accepts only its documented freeform string in Code Mode; its native first-match, `@@` anchor, and fuzzy resolution remain authoritative. Context analysis runs only after the native applier rejects a hunk, when it reports current line counts, anchor-scoped candidate ranges, and exact re-read windows. `tests/code-mode-preflight.test.ts` pins each measured failure class and the false-positive boundaries.
+The tools namespace guard supplies close-match and direct-registration guidance at runtime. The registered-tool bridge validates prepared arguments against each tool's TypeBox schema before execution. Only `undefined` normalizes to an empty object, and only when that object is valid; explicit `null` keeps its schema meaning. Invalid calls return at most three `[invalid_arguments]` messages without raw values. Bridged tools translate stale `read` offsets, exact-match ambiguity versus stale `edit` context, and missing UI observation state into focused recovery errors. Recovery names only an available filesystem reader or direct `read`; UI recovery names `observe_ui` only when available, and the `read_text` hint remains UI-specific. Filesystem recovery uses asynchronous Node APIs. `apply_patch` accepts only its documented freeform string in Code Mode; its native first-match, `@@` anchor, and fuzzy resolution remain authoritative. Context analysis runs only after the native applier rejects a hunk, when it reports current line counts, anchor-scoped candidate ranges, and exact re-read windows. `tests/code-mode-preflight.test.ts`, `tests/code-mode-bridge-arguments.test.ts`, and focused namespace tests pin these boundaries.
 
 ## Codex request-body invariants (choco-pi addition)
 

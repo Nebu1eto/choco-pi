@@ -8,7 +8,10 @@ import {
   scopeCodeModeToolsToSessionPermissions,
   type SessionToolSource,
 } from "../src/adapter/code-mode/session-tool-permissions.ts";
+import { buildCodexSystemPrompt } from "../src/prompt/build-system-prompt.ts";
+import { buildCodeModeToolsPrompt } from "../src/tools/code-mode/custom-tool-prompt.ts";
 import { unavailableToolsGuardPreamble } from "../src/tools/code-mode/tools-namespace.ts";
+import type { ProgrammaticCodeModeToolDefinition } from "../src/tools/code-mode/types.ts";
 
 const CODE_MODE_TOOL_NAMES = [
   "apply_patch",
@@ -71,6 +74,36 @@ test("native shell tools require bash without removing bridged tools", () => {
   assert.ok(!names.includes("write_stdin"));
   assert.ok(names.includes("module_report"));
   assert.ok(names.includes("lsp_diagnostics"));
+});
+
+test("production prompt reflects the real no-shell no-edit permission filter", () => {
+  const definitions: ProgrammaticCodeModeToolDefinition[] = CODE_MODE_TOOL_NAMES.map((name) => ({
+    name,
+    usage: `await tools.${name}({})`,
+    deferLoading: !["apply_patch", "exec_command", "write_stdin", "view_image"].includes(name),
+    kind: "function",
+    async invoke() {
+      return undefined;
+    },
+  }));
+  const scoped = scopeCodeModeToolsToSessionPermissions(definitions, new Set(["read", "exec"]));
+  const productionPrompt = buildCodexSystemPrompt("BASE", {
+    mode: "code",
+    systemPromptOptions: { cwd: "/work", selectedTools: ["read", "exec"] },
+  });
+  const prompt = `${productionPrompt}\n${buildCodeModeToolsPrompt(scoped)}`;
+
+  assert.deepEqual(
+    scoped.map((tool) => tool.name),
+    CODE_MODE_TOOL_NAMES.filter(
+      (name) => !["apply_patch", "exec_command", "write_stdin"].includes(name),
+    ),
+  );
+  for (const unavailable of ["apply_patch", "exec_command", "write_stdin"])
+    assert.doesNotMatch(prompt, new RegExp(`tools\\.${unavailable}\\b`));
+  assert.doesNotMatch(productionPrompt, /Every tools\.exec_command|Use tty=true|shell_start/);
+  assert.match(prompt, /module_report/);
+  assert.match(prompt, /Use only capabilities actually listed here/);
 });
 
 test("session permissions use the registered pre-adapter tool selection", () => {

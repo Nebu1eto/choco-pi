@@ -69,6 +69,7 @@ const UNAVAILABLE_GLOBALS = new Map<string, string>([
 
 const TOKEN_PATTERN = /[A-Za-z_$][A-Za-z0-9_$]*|\?\.|=>|&&|\|\||\?\?|[()[\]{}.,:;=?]/g;
 const BINDING_KEYWORDS = new Set(["const", "let", "var", "class"]);
+const VARIABLE_BINDING_KEYWORDS = new Set(["const", "let", "var"]);
 
 export function preflightCodeModeSource(
   source: string,
@@ -76,8 +77,71 @@ export function preflightCodeModeSource(
 ): void {
   if (options.mode === "code") validateRestrictedJavaScript(source);
   const tokens = tokenizeExecutableSource(source);
-  if (options.mode === "code") validateRestrictedGlobals(tokens);
+  if (options.mode === "code") {
+    validateReservedNamespaceShadowing(tokens);
+    validateRestrictedGlobals(tokens);
+  }
   validateToolCalls(tokens, options);
+}
+
+function validateReservedNamespaceShadowing(tokens: readonly SourceToken[]): void {
+  let braceDepth = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const value = tokens[index]!.value;
+    if (value === "{") {
+      braceDepth += 1;
+      continue;
+    }
+    if (value === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+      continue;
+    }
+    if (braceDepth !== 0 || !VARIABLE_BINDING_KEYWORDS.has(value) || isPropertyName(tokens, index))
+      continue;
+    if (topLevelDeclarationBindsTools(tokens, index)) {
+      throw reservedNamespaceShadowingError(tokens[index + 1]?.line ?? tokens[index]!.line);
+    }
+  }
+}
+
+function topLevelDeclarationBindsTools(
+  tokens: readonly SourceToken[],
+  keywordIndex: number,
+): boolean {
+  let parentheses = 0;
+  let brackets = 0;
+  let braces = 0;
+  let bindingPosition = true;
+  for (let index = keywordIndex + 1; index < tokens.length; index += 1) {
+    const value = tokens[index]!.value;
+    if (value === ";" && parentheses === 0 && brackets === 0 && braces === 0) return false;
+    if (bindingPosition) {
+      if (value === "tools") return true;
+      if ((value === "{" || value === "[") && bindingListContainsTools(tokens, index)) return true;
+      bindingPosition = false;
+    }
+    if (value === "(") parentheses += 1;
+    else if (value === ")") parentheses = Math.max(0, parentheses - 1);
+    else if (value === "[") brackets += 1;
+    else if (value === "]") brackets = Math.max(0, brackets - 1);
+    else if (value === "{") braces += 1;
+    else if (value === "}") braces = Math.max(0, braces - 1);
+    else if (value === "," && parentheses === 0 && brackets === 0 && braces === 0)
+      bindingPosition = true;
+  }
+  return false;
+}
+
+function reservedNamespaceShadowingError(line: number): Error {
+  return new Error(
+    `Code mode source preflight [reserved_namespace_shadowing] at line ${line}: the top-level binding shadows the host-provided tools namespace and can fail in its temporal dead zone. Rename this binding; nested callback bindings and object properties may still use the name tools.`,
+  );
+}
+
+function bindingListContainsTools(tokens: readonly SourceToken[], openIndex: number): boolean {
+  const bindings = new Set<string>();
+  collectDestructuredBindings(tokens, openIndex, bindings);
+  return bindings.has("tools");
 }
 
 function validateRestrictedJavaScript(source: string): void {
@@ -117,7 +181,7 @@ function validateToolCalls(
   tokens: readonly SourceToken[],
   options: CodeModeSourcePreflightOptions,
 ): void {
-  if (collectBindings(tokens).has("tools")) return;
+  if (options.mode === "notebook" && collectBindings(tokens).has("tools")) return;
   const available = [...new Set(options.availableToolNames)].sort((left, right) =>
     left.localeCompare(right),
   );

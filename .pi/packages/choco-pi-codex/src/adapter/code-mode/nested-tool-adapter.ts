@@ -78,8 +78,23 @@ export function toNestedTool<TParams extends TSchema, TDetails, TState>(
       if (signal.aborted) throw new Error(`${tool.name} aborted`);
       const extensionContext = requireExtensionContext(context);
       const parsedInput = isBoundaryValue(input) ? input : undefined;
-      const toolInput = prepareInput(parsedInput);
+      const schemaInput =
+        parsedInput === undefined && Value.Check(tool.parameters, {}) ? {} : parsedInput;
+      const toolInput = prepareInput(schemaInput);
       const prepared = tool.prepareArguments ? tool.prepareArguments(toolInput) : toolInput;
+      if (!Value.Check(tool.parameters, prepared)) {
+        const issues = [...Value.Errors(tool.parameters, prepared)]
+          .slice(0, 3)
+          .map((issue) => issue.message)
+          .join("; ");
+        const hint =
+          tool.name === "read_text"
+            ? " read_text accepts UI refs, not filesystem paths; use an available filesystem reader for files."
+            : "";
+        throw new Error(
+          `Code mode tool error [invalid_arguments]: ${tool.name} prepared input does not match its registered schema${issues ? ` (${issues})` : ""}.${hint}`,
+        );
+      }
       if (signal.aborted) throw new Error(`${tool.name} aborted`);
       const toolCallId = context.toolCallId ?? `code-mode-${tool.name}`;
       const lifecycleInput = isBoundaryValue(prepared) ? prepared : undefined;
