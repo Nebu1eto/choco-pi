@@ -4,8 +4,26 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
+import {
+  AgentTraceSchema,
+  assertFinal,
+  decodeProbeEventLine,
+  decodeTranscriptLine,
+  ErrorCodeSchema,
+  ErrorStatusSchema,
+  ExecArgumentsSchema,
+  finalAssistant,
+  isLookupExecCode,
+  type ProbeAgentEnd,
+  type ProbeMessage,
+  type ProbeToolEnd,
+  type ProbeToolResult,
+  type ProbeToolStart,
+  resultText,
+  toolCallsOf,
+  ToolResultSchema,
+} from "./code-mode-probe-events.ts";
 
 const enabled = process.env["CHOCO_PI_CODE_MODE_FIRST_E2E"] === "1";
 const MODEL = "openai-codex/gpt-5.6-sol";
@@ -13,75 +31,6 @@ const PROMPT = `This is an authorized, bounded read-only runtime acceptance prob
 `;
 const EXPECTED = ["choco-pi-harness", "pnpm@11.11.0", "choco-pi-codex", "0.1.0"];
 const execFileAsync = promisify(execFile);
-
-/**
- * Wire contracts for the Pi JSON event stream and session transcript.
- *
- * Every schema is intentionally partial: only the fields this probe asserts on are named, and
- * unrelated payload fields (reasoning, signatures, usage, provider metadata) stay unmodelled and
- * are never read or printed. Nested payloads whose shape this probe does not own stay raw JSON and
- * are re-parsed through a narrow schema at the point of use instead of being widened into an open
- * dictionary.
- */
-const TextBlockSchema = Type.Object({ type: Type.Literal("text"), text: Type.String() });
-const ToolCallBlockSchema = Type.Object({
-  type: Type.Literal("toolCall"),
-  id: Type.String(),
-  name: Type.String(),
-  arguments: Type.Optional(Type.Unknown()),
-});
-const ExecArgumentsSchema = Type.Object({ code: Type.String() });
-const ErrorStatusSchema = Type.Object({ status: Type.Literal("error") });
-const ErrorCodeSchema = Type.Object({ code: Type.Literal("ESRCH") });
-const ToolResultDetailsSchema = Type.Object({
-  agentId: Type.Optional(Type.String()),
-  traces: Type.Optional(Type.Array(Type.Unknown())),
-});
-const ToolResultSchema = Type.Object({
-  content: Type.Optional(Type.Array(Type.Unknown())),
-  details: Type.Optional(ToolResultDetailsSchema),
-});
-const AgentTraceSchema = Type.Object({
-  name: Type.String(),
-  status: Type.String(),
-  result: ToolResultSchema,
-});
-const NullableString = Type.Optional(Type.Union([Type.String(), Type.Null()]));
-const MessageSchema = Type.Object({
-  role: Type.String(),
-  content: Type.Optional(Type.Array(Type.Unknown())),
-  stopReason: NullableString,
-  errorMessage: NullableString,
-  toolName: NullableString,
-  toolCallId: NullableString,
-  isError: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-  details: Type.Optional(Type.Unknown()),
-});
-const AgentEndEventSchema = Type.Object({
-  type: Type.Literal("agent_end"),
-  messages: Type.Array(MessageSchema),
-});
-const ToolStartEventSchema = Type.Object({
-  type: Type.Literal("tool_execution_start"),
-  toolCallId: Type.String(),
-  toolName: Type.String(),
-  args: Type.Optional(Type.Unknown()),
-});
-const ToolEndEventSchema = Type.Object({
-  type: Type.Literal("tool_execution_end"),
-  toolCallId: Type.String(),
-  toolName: Type.String(),
-  isError: Type.Boolean(),
-  result: Type.Optional(Type.Unknown()),
-});
-const TranscriptEntrySchema = Type.Object({ message: MessageSchema });
-
-type ProbeMessage = Static<typeof MessageSchema>;
-type ProbeToolCall = Static<typeof ToolCallBlockSchema>;
-type ProbeToolResult = Static<typeof ToolResultSchema>;
-type ProbeAgentEnd = Static<typeof AgentEndEventSchema>;
-type ProbeToolStart = Static<typeof ToolStartEventSchema>;
-type ProbeToolEnd = Static<typeof ToolEndEventSchema>;
 
 type RootMetrics = {
   outerChoices: [string, number][];
@@ -96,51 +45,6 @@ type ChildMetrics = {
   failedChildExec: number;
 };
 type FailureSummary = { name: string; message: string };
-
-/** Decode the text blocks of a content array, ignoring every other block kind. */
-function textFromContentBlocks(blocks: readonly unknown[] | undefined): string {
-  const parts: string[] = [];
-  for (const block of blocks ?? []) {
-    if (Value.Check(TextBlockSchema, block)) parts.push(block.text);
-  }
-  return parts.join("\n");
-}
-
-function messageText(message: ProbeMessage): string {
-  return textFromContentBlocks(message.content);
-}
-
-function resultText(result: ProbeToolResult): string {
-  return textFromContentBlocks(result.content);
-}
-
-/** Decode the tool calls an assistant message issued. */
-function toolCallsOf(messages: readonly ProbeMessage[]): ProbeToolCall[] {
-  const calls: ProbeToolCall[] = [];
-  for (const message of messages) {
-    if (message.role !== "assistant") continue;
-    for (const block of message.content ?? []) {
-      if (Value.Check(ToolCallBlockSchema, block)) calls.push(block);
-    }
-  }
-  return calls;
-}
-
-function isLookupExecCode(code: string): boolean {
-  return code.includes("package.json") && code.includes(".pi/packages/choco-pi-codex/package.json");
-}
-
-function finalAssistant(messages: readonly ProbeMessage[]): ProbeMessage | undefined {
-  return messages.findLast((message) => message.role === "assistant");
-}
-
-function assertFinal(message: ProbeMessage | undefined, subject: string): void {
-  assert.ok(message, `${subject} final assistant message missing`);
-  assert.equal(message.stopReason, "stop", `${subject} did not stop normally`);
-  assert.equal(message.errorMessage, undefined, `${subject} returned an error`);
-  const text = messageText(message);
-  for (const expected of EXPECTED) assert.ok(text.includes(expected), `${subject}: ${expected}`);
-}
 
 function signalGroup(pid: number, signal: NodeJS.Signals): string | undefined {
   try {
@@ -213,16 +117,12 @@ test(
       buffered = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        let raw: unknown;
-        try {
-          raw = JSON.parse(line);
-        } catch {
-          // Malformed output is not an event; it only feeds the bounded failure summary.
-          continue;
-        }
-        if (Value.Check(AgentEndEventSchema, raw)) rootEnd = raw;
-        else if (Value.Check(ToolStartEventSchema, raw)) starts.set(raw.toolCallId, raw);
-        else if (Value.Check(ToolEndEventSchema, raw)) toolEnds.push(raw);
+        // Malformed output is not an event; it only feeds the bounded failure summary.
+        const event = decodeProbeEventLine(line);
+        if (event === undefined) continue;
+        if (event.kind === "agentEnd") rootEnd = event.event;
+        else if (event.kind === "toolStart") starts.set(event.event.toolCallId, event.event);
+        else toolEnds.push(event.event);
       }
     });
     child.stderr.on("data", (chunk: string) => {
@@ -241,18 +141,19 @@ test(
     );
     let cleanupError: string | undefined;
     let forcedTermination = false;
+    /** Retain the first cleanup failure without ever skipping a later cleanup attempt. */
+    const recordCleanupError = (message: string | undefined): void => {
+      if (message !== undefined) cleanupError ??= message;
+    };
     // The probe owns a detached process group: kill it even if the test is aborted or times out,
     // when the async body below may never resume.
-    t.signal.addEventListener(
-      "abort",
-      () => {
-        if (child.exitCode === null && child.pid !== undefined) {
-          forcedTermination = true;
-          cleanupError ??= signalGroup(child.pid, "SIGKILL") ?? "probe aborted";
-        }
-      },
-      { once: true },
-    );
+    const onAbort = (): void => {
+      if (child.exitCode === null && child.pid !== undefined) {
+        forcedTermination = true;
+        recordCleanupError(signalGroup(child.pid, "SIGKILL") ?? "probe aborted");
+      }
+    };
+    t.signal.addEventListener("abort", onAbort, { once: true });
     let teardown: { code: number | null; signal: NodeJS.Signals | null } | undefined;
     try {
       const deadline = Date.now() + 180_000;
@@ -270,14 +171,16 @@ test(
     } finally {
       if (child.exitCode === null && child.pid !== undefined) {
         forcedTermination = true;
-        cleanupError ??= signalGroup(child.pid, "SIGTERM");
+        recordCleanupError(signalGroup(child.pid, "SIGTERM"));
         await Promise.race([closed, delay(2_000)]);
       }
       if (child.exitCode === null && child.pid !== undefined) {
-        cleanupError ??= signalGroup(child.pid, "SIGKILL");
+        recordCleanupError(signalGroup(child.pid, "SIGKILL"));
       }
       teardown = await Promise.race([closed, delay(5_000).then(() => undefined)]);
-      if (!teardown) cleanupError ??= "Pi process did not close after SIGKILL";
+      if (!teardown) recordCleanupError("Pi process did not close after SIGKILL");
+      // The group is gone: drop the abort listener so a later abort cannot signal a reused pid.
+      else t.signal.removeEventListener("abort", onAbort);
     }
 
     let failure: unknown;
@@ -313,7 +216,7 @@ test(
       };
       assert.equal(failedRootExec, 0, "root had failed exec wrapper calls");
       assert.ok(usefulRootExec.length > 0, "root had no successful exec containing both lookups");
-      assertFinal(finalAssistant(rootEnd.messages), "root");
+      assertFinal(finalAssistant(rootEnd.messages), "root", EXPECTED);
 
       const agentResults: ProbeToolResult[] = [];
       for (const end of successfulExec.values()) {
@@ -344,14 +247,9 @@ test(
       const childMessages: ProbeMessage[] = [];
       for (const line of (await readFile(outputPath, "utf8")).split("\n")) {
         if (!line.trim()) continue;
-        let raw: unknown;
-        try {
-          raw = JSON.parse(line);
-        } catch {
-          // A non-JSON transcript line carries no message contract; skip it.
-          continue;
-        }
-        if (Value.Check(TranscriptEntrySchema, raw)) childMessages.push(raw.message);
+        // A non-JSON transcript line carries no message contract; skip it.
+        const message = decodeTranscriptLine(line);
+        if (message !== undefined) childMessages.push(message);
       }
       const childToolCalls = toolCallsOf(childMessages);
       const childExecCalls = childToolCalls.filter(
@@ -384,7 +282,7 @@ test(
         correlatedUsefulChildExec.length > 0,
         "child has no correlated successful lookup exec call/result",
       );
-      assertFinal(finalAssistant(childMessages), "child");
+      assertFinal(finalAssistant(childMessages), "child", EXPECTED);
     } catch (error) {
       failure = error;
     }

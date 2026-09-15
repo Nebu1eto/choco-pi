@@ -206,6 +206,19 @@ answers from both the real root and explore child. It records bounded tool count
 revision stability, and process teardown separately, is excluded from the default
 `*.test.ts` suite, and refuses to run without its environment guard.
 
+The probe's wire decoding lives in `tests/code-mode-probe-events.ts` so it can be
+regression-tested offline. Message `content` is modelled as the SDK's real union
+(`string | block[]`, per `CustomMessage` in `@earendil-works/pi-coding-agent`);
+an array-only contract silently discarded the whole terminal `agent_end` envelope
+whenever an extension-injected `custom` message was present, which reported a
+settled real run as "root did not settle". `tests/code-mode-probe-events.test.ts`
+pins that decoder against a mixed custom-string plus assistant-block envelope and
+fails under the array-only contract; probe assertions still require a normally
+stopped final assistant message with the exact expected answers and ignore custom
+and user payloads. Probe teardown attempts SIGTERM and SIGKILL unconditionally,
+retaining only the first cleanup error, and drops its abort listener once the
+detached group is confirmed closed.
+
 ## Code Mode and edit preflight (choco-pi addition)
 
 `tools/code-mode/source-preflight.ts` parses restricted cells before host execution and scans executable source tokens for unsupported restricted globals. It hard-rejects a `tools.<name>` reference only when the reference is unconditional at the cell's top level and Pi registers the name neither inside nor outside code mode. The top-level guard covers multiple declarations without rejecting nested expression arrows or notebook-local bindings. Guarded references and real-but-unbridged tool names run to the namespace proxy. String, comment, template text, and regular expression contents are ignored. Notebook cells retain Deno TypeScript capabilities and skip restricted-global and JavaScript-only checks. Command strings and non-zero `exec_command` exits remain runtime data and are not reclassified.
