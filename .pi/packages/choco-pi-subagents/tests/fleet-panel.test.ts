@@ -26,6 +26,12 @@ const styledTheme: Theme = {
   fg: (color, text) => `<${color}>${text}</${color}>`,
   bold: (text) => `<bold>${text}</bold>`,
 };
+const ANSI_DIM = "\u001b[2m";
+const ANSI_FOREGROUND_RESET = "\u001b[39m";
+const ansiTheme: Theme = {
+  fg: (_color, text) => `${ANSI_DIM}${text}${ANSI_FOREGROUND_RESET}`,
+  bold: (text) => text,
+};
 
 function partialFixture<T extends object>(fixture: Partial<T>): T {
   // SAFETY: Each test supplies the exact structural slice exercised by its subject.
@@ -435,6 +441,42 @@ test("running detail row keeps alias and compact activity stats", () => {
     assert.match(text, /<bold>@explorer-api<\/bold>/);
     assert.match(text, /thinking… · 5 tool uses · 58\.5k \(<dim>9%<\/dim>\)/);
     assert.doesNotMatch(text, /↻|\b(?:token|tokens)\b/);
+  } finally {
+    view.panel.dispose();
+  }
+});
+
+test("running detail row keeps the closing paren styled after nested token colors", () => {
+  const record = agent("api", "Find hook", {
+    alias: "explorer-api",
+    toolUses: 3,
+    compactionCount: 1,
+  });
+  const activity = partialFixture<AgentActivity>({
+    activeTools: new Map(),
+    toolUses: 3,
+    responseText: "",
+    lifetimeUsage: { input: 12_000, output: 900, cacheWrite: 0 },
+    session: {
+      getSessionStats: () => ({
+        tokens: { input: 12_000, output: 900, cacheWrite: 0 },
+        contextUsage: { percent: 2 },
+      }),
+    },
+  });
+  const view = mount({
+    records: [record],
+    activity: new Map([[record.id, activity]]),
+    renderTheme: ansiTheme,
+    width: 400,
+  });
+  try {
+    const text = view.text();
+    assert.match(text, /12\.9k \(/);
+    // Every foreground reset inside the row must re-enter the dim style, so the
+    // separators and trailing ")" never fall back to the default foreground.
+    assert.ok(text.includes(`2%${ANSI_FOREGROUND_RESET}${ANSI_DIM} `));
+    assert.ok(text.includes(`⇊1${ANSI_FOREGROUND_RESET}${ANSI_DIM})`));
   } finally {
     view.panel.dispose();
   }
