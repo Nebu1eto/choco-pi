@@ -182,13 +182,12 @@ wired as an optional parameter in tools/code-mode/public-tools.ts.
 tests/codex-code-mode-batching.test.ts pins detection, streak/interval policy
 and the advisory wording.
 
-Collapsed Code Mode `exec_command` summaries omit Bash reserved words used for
-control flow and retain only executable command names. The expanded trace still
-shows the complete command source.
+Collapsed Code Mode `exec_command` items show only their supplied description;
+the expanded trace still shows the complete command source.
 
 Code Mode `exec_command` requires a concise `description`. Collapsed
-traces show that intent before the parsed executable names, while sanitizing and
-bounding display text; command execution remains unchanged.
+traces show that intent while sanitizing and bounding display text; command
+execution remains unchanged.
 An optional first-line `// @description:` pragma supplies the collapsed parent
 Code Mode call's intent. Without it, the renderer derives the parent intent from
 the first `exec_command` description and suppresses its redundant generic
