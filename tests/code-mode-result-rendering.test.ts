@@ -130,7 +130,8 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
     .render(200)
     .join("\n");
 
-  assert.match(collapsed, /3\. • Ran Exec command · npm run test/);
+  assert.match(collapsed, /3\. • Ran Exec command/);
+  assert.doesNotMatch(collapsed, /npm run test/);
   assert.match(collapsed, /4\. • Ran Apply patch · src\/example\.ts/);
   assert.doesNotMatch(collapsed, /--watch=false/);
   assert.doesNotMatch(collapsed, /nested command output/);
@@ -156,7 +157,7 @@ test("collapsed nested calls show ordered labels while expansion reveals inputs 
   assert.match(expanded, /final output/);
 });
 
-test("collapsed exec calls summarize every chained command", () => {
+test("collapsed exec calls hide every chained command", () => {
   const renderCommand = (cmd: string) =>
     renderTrackedCodeModeResult(
       {
@@ -181,16 +182,14 @@ test("collapsed exec calls summarize every chained command", () => {
       .render(200)
       .join("\n");
 
-  assert.match(
-    renderCommand(
-      "cd /Users/Nebuleto/Workspace/choco-pi && rm -f /tmp/e2e-ro.txt && nohup pi -p 'Use the Agent tool'",
-    ),
-    /Ran Exec command · cd, rm, nohup pi/,
-  );
-  assert.match(
-    renderCommand("cd /tmp && wc -c e2e-ro.txt e2e-ro.err; tail -30 e2e-ro.txt"),
-    /Ran Exec command · cd, wc, tail/,
-  );
+  for (const command of [
+    "cd /Users/Nebuleto/Workspace/choco-pi && rm -f /tmp/e2e-ro.txt && nohup pi -p 'Use the Agent tool'",
+    "cd /tmp && wc -c e2e-ro.txt e2e-ro.err; tail -30 e2e-ro.txt",
+  ]) {
+    const rendered = renderCommand(command);
+    assert.match(rendered, /Ran Exec command/);
+    assert.doesNotMatch(rendered, /cd|rm|nohup|wc|tail/);
+  }
 });
 
 test("collapsed output stays concise regardless of the former detail flag", () => {
