@@ -15,6 +15,7 @@ import { getLifetimeTotal, getSessionContextPercent } from "../usage.ts";
 import { buildAgentTree, type AgentTreeRow } from "./agent-tree.ts";
 import {
   describeActivity,
+  fgPreservingNestedStyles,
   formatRowSessionTokens,
   renderAgentTreeLabel,
   SPINNER,
@@ -864,7 +865,12 @@ export class FleetPanel {
       );
     }
     const indent = "  ".repeat(entry.depth);
-    return truncateToWidth(theme.fg("dim", `      ${indent}⎿  ${parts.join(" · ")}`), width);
+    // Token stats embed nested colors (context %, ⇊compactions) whose ANSI resets
+    // would otherwise leave the trailing ")" unstyled against the dim row.
+    return truncateToWidth(
+      fgPreservingNestedStyles(theme, "dim", `      ${indent}⎿  ${parts.join(" · ")}`),
+      width,
+    );
   }
 
   private renderShellRow(
