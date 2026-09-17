@@ -18,15 +18,16 @@ Use applicable `AGENTS.md` and repository documentation first. If they define me
 
 - <essential detail, only when needed>
 
-Assisted-by: choco-pi:<orchestrator model id without provider>
-Assisted-by: choco-pi:<contributing sub-agent model id without provider, when applicable>
+Assisted-by: choco-pi:<orchestrator model name, normalized>
+Assisted-by: choco-pi:<contributing sub-agent model name, normalized, when applicable>
 ```
 
 - Use `[*]` for repository-wide work and the smallest meaningful package or component for `<scope>`. Omit the bracketed scope only when none can be determined.
 - Use `feat`, `fix`, `refactor`, `test`, `docs`, or `chore`. Include an issue only when known; never invent one.
 - Determine the message language from the repository, never from the configured agent language: applicable project policy decides first, then the user's recent commits (the configured Git identity) in this repository — match the language those subjects are written in, so a Korean history produces a Korean message and an English history produces an English one. Use English when neither a policy nor a usable history exists. Keep the subject and each body bullet at or under 72 characters.
 - Omit the body when the subject is sufficient. Otherwise use at most two terse bullets containing only essential context not already stated in the subject. Prefer short fragments; do not repeat the summary, narrate files, or add routine implementation detail.
-- Include one `Assisted-by` trailer for the orchestrator model and one for each distinct sub-agent model that materially contributed to the committed changes. Omit unused worker output, deduplicate model IDs, and list the orchestrator first followed by sub-agent models in first-contribution order. Strip any provider prefix from each model ID: for example, use `gpt-5.6-sol` for `openai-codex/gpt-5.6-sol`.
+- Include one `Assisted-by` trailer for the orchestrator model and one for each distinct sub-agent model that materially contributed to the committed changes. Omit unused worker output, list the orchestrator first followed by sub-agent models in first-contribution order, and deduplicate only after normalizing each ID.
+- Normalize every model ID to the bare model name in lower case. Drop each provider, registry, and owner segment, keeping only the final path segment: `openai-codex/gpt-5.6-sol`, `hf:moonshotai/Kimi-K3`, and `synthetic/hf:moonshotai/Kimi-K3` become `gpt-5.6-sol`, `kimi-k3`, and `kimi-k3`. Lower-casing is the only character change; keep the remaining characters, including dots, exactly as the provider spells them.
 - Never write a `Signed-off-by` trailer by hand; the template above deliberately omits it. Commit with `-s` so Git appends exactly one trailer in its canonical `Signed-off-by: {git user.name} <{git user.email}>` form, angle brackets included. A hand-written line that differs by even one character is not deduplicated and produces two sign-offs.
 
 ## Create the checkpoint
