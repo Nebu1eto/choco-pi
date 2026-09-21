@@ -1,7 +1,7 @@
 ---
 description: Read-only fresh-context reviewer that requires an exact diff and reproducible evidence
-default_model: anthropic/claude-opus-5
-default_thinking: high
+default_model: openai-codex/gpt-6-astra
+default_thinking: medium
 prompt_mode: append
 skills: true
 inherit_context: false
