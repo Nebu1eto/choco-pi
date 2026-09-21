@@ -37,8 +37,8 @@ test("implementer role remains selected with model and thinking overrides", asyn
   assert.match(implementer.systemPrompt, /implementation leaf/);
   assert.equal(implementer.model, undefined);
   assert.equal(implementer.thinking, undefined);
-  assert.equal(implementer.defaultModel, "openai-codex/gpt-5.6-sol");
-  assert.equal(implementer.defaultThinking, "low");
+  assert.equal(implementer.defaultModel, "anthropic/claude-opus-5");
+  assert.equal(implementer.defaultThinking, "medium");
 
   const invocation = resolveAgentInvocationConfig(implementer, {
     model: "openai-codex/gpt-5.6-terra",
@@ -62,9 +62,9 @@ test("role defaults follow hard pin, caller, then default precedence", async () 
   assert.ok(implementer);
 
   const defaults = resolveAgentInvocationConfig(implementer, {});
-  assert.equal(defaults.modelInput, "openai-codex/gpt-5.6-sol");
+  assert.equal(defaults.modelInput, "anthropic/claude-opus-5");
   assert.equal(defaults.modelFromParams, false);
-  assert.equal(defaults.thinking, "low");
+  assert.equal(defaults.thinking, "medium");
 
   const pinned = resolveAgentInvocationConfig(
     {
