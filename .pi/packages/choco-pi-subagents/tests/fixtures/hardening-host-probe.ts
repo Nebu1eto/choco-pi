@@ -5,6 +5,7 @@ import {
   createAssistantMessageEventStream,
   type AssistantMessage,
   type Context,
+  type JsonObject,
   type Model,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
@@ -101,7 +102,7 @@ function completeText(model: Model<any>, value: string) {
   return stream;
 }
 
-function completeTool(model: Model<any>, name: string, args: Record<string, TraceValue>) {
+function completeTool(model: Model<any>, name: string, args: JsonObject) {
   const stream = createAssistantMessageEventStream();
   const output = assistant(model);
   const toolCall = {

@@ -1,4 +1,14 @@
-import type { Api, Context, Model, Tool, Usage } from "@earendil-works/pi-ai";
+import {
+  getSystemMessageText,
+  renderSystemMessageUpdate,
+  resolveTranscript,
+  resolveTranscriptTools,
+  type Api,
+  type Model,
+  type Tool,
+  type TranscriptContext,
+  type Usage,
+} from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import type {
@@ -10,7 +20,6 @@ import type {
 } from "openai/resources/responses/responses.js";
 import {
   getJsonSchemaToolParameters,
-  getGrammarToolInput,
   resolveGrammarConstrainedSampling,
   resolveJsonSchemaStrictSampling,
 } from "../constrained-sampling.ts";
@@ -30,7 +39,7 @@ import {
 } from "./native-items.ts";
 import type { ProviderOutputItem } from "../openai-codex/types.ts";
 
-type Message = Context["messages"][number];
+type Message = TranscriptContext["messages"][number];
 
 type InternalAssistantContent =
   | Extract<Message, { role: "assistant" }>["content"][number]
@@ -82,6 +91,8 @@ export interface OpenAIResponsesStreamOptions {
 
 interface ConvertResponsesMessagesOptions {
   includeSystemPrompt?: boolean | undefined;
+  leadingSystemHandled?: boolean | undefined;
+  supportsMidConvoSystemMessages?: boolean | undefined;
   grammarToolInputProperties?: ReadonlyMap<string, string> | undefined;
   deferredTools?: ReadonlyMap<string, Tool> | undefined;
   deferredToolsMode?: "additional-tools" | "tool-search" | undefined;
@@ -116,32 +127,22 @@ interface DeferredToolPlacement {
   deferred: Map<string, Tool>;
 }
 
-export function splitDeferredTools(context: Context, enabled: boolean): DeferredToolPlacement {
-  const uniqueTools = new Map<string, Tool>();
-  for (const tool of context.tools ?? []) uniqueTools.set(tool.name, tool);
-  if (!enabled) return { immediate: [...uniqueTools.values()], deferred: new Map() };
-
-  const deferredNames = new Set<string>();
-  const usedNames = new Set<string>();
-  for (const message of context.messages) {
-    if (message.role === "assistant") {
-      for (const block of message.content) {
-        if (block.type === "toolCall") usedNames.add(block.name);
-      }
-    } else if (message.role === "toolResult") {
-      for (const name of message.addedToolNames ?? []) {
-        if (!usedNames.has(name)) deferredNames.add(name);
+export function splitDeferredTools(
+  context: TranscriptContext,
+  enabled: boolean,
+): DeferredToolPlacement {
+  const transcriptTools = resolveTranscriptTools(context.messages, enabled);
+  const immediateNames = new Set(transcriptTools.requestTools.map((tool) => tool.name));
+  const deferred = new Map<string, Tool>();
+  if (transcriptTools.anchorsAdditions) {
+    for (const message of context.messages) {
+      if (message.role !== "system") continue;
+      for (const tool of message.toolsAdded ?? []) {
+        if (!immediateNames.has(tool.name)) deferred.set(tool.name, tool);
       }
     }
   }
-
-  const immediate: Tool[] = [];
-  const deferred = new Map<string, Tool>();
-  for (const [name, tool] of uniqueTools) {
-    if (deferredNames.has(name)) deferred.set(name, tool);
-    else immediate.push(tool);
-  }
-  return { immediate, deferred };
+  return { immediate: transcriptTools.requestTools, deferred };
 }
 
 function sanitizeSurrogates(text: string): string {
@@ -162,12 +163,12 @@ function parseResponsesThinkingSignature(signature: string): ResponseInput[numbe
 
 export function convertResponsesMessages<TApi extends Api>(
   model: Model<TApi>,
-  context: Context,
+  context: TranscriptContext,
   allowedToolCallProviders: ReadonlySet<string>,
   options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
+  const normalizedContext = resolveTranscript(context, options?.supportsMidConvoSystemMessages);
   const messages: ResponseInput = [];
-  const loadedToolNames = new Set<string>();
   const normalizeIdPart = (part: string) => {
     const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
     const normalized = sanitized.length > 64 ? sanitized.slice(0, 64) : sanitized;
@@ -196,21 +197,62 @@ export function convertResponsesMessages<TApi extends Api>(
   };
 
   const transformedMessages = normalizeResponsesMessageHistory(
-    context.messages,
+    normalizedContext.messages,
     model,
     normalizeToolCallId,
   );
   const includeSystemPrompt = options?.includeSystemPrompt ?? true;
-  if (includeSystemPrompt && context.systemPrompt) {
-    messages.push({
-      role: model.reasoning ? "developer" : "system",
-      content: sanitizeSurrogates(context.systemPrompt),
-    });
-  }
-
+  const instructionRole = model.reasoning ? "developer" : "system";
   let msgIndex = 0;
+  let sourceIndex = 0;
   for (const msg of transformedMessages) {
-    if (msg.role === "user") {
+    const isLeadingSystemMessage =
+      (options?.leadingSystemHandled ?? true) && sourceIndex++ === 0 && msg.role === "system";
+    if (msg.role === "system") {
+      if (!isLeadingSystemMessage || includeSystemPrompt) {
+        const content = isLeadingSystemMessage
+          ? getSystemMessageText(msg)
+          : renderSystemMessageUpdate(msg);
+        if (content.length > 0) {
+          messages.push({ role: instructionRole, content: sanitizeSurrogates(content) });
+        }
+      }
+      if (!isLeadingSystemMessage) {
+        const deferredTools = (msg.toolsAdded ?? []).filter(
+          (tool) => options?.deferredTools?.has(tool.name) === true,
+        );
+        if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
+          const additionalTools = {
+            type: "additional_tools",
+            role: "developer",
+            tools: convertResponsesTools(deferredTools, options.toolOptions),
+          };
+          // SAFETY: additional_tools is a Codex Responses extension whose nested tools are
+          // produced by the same validated converter as top-level Responses tools.
+          messages.push(additionalTools as ResponseInputItem);
+        } else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
+          const names = deferredTools.map((tool) => tool.name);
+          const searchCallId = `pi_tool_load_${shortHash(`system:${msgIndex}:${names.join(",")}`)}`;
+          messages.push({
+            type: "tool_search_call",
+            call_id: searchCallId,
+            execution: "client",
+            status: "completed",
+            arguments: { query: names.join(" "), limit: names.length },
+          } satisfies ResponseInputItem);
+          messages.push({
+            type: "tool_search_output",
+            call_id: searchCallId,
+            execution: "client",
+            status: "completed",
+            tools: convertResponsesTools(deferredTools, {
+              ...options.toolOptions,
+              deferLoading: true,
+            }),
+          } satisfies ResponseToolSearchOutputItemParam);
+        }
+      }
+    } else if (msg.role === "user") {
       if (Check(StringSchema, msg.content)) {
         messages.push({
           role: "user",
@@ -319,9 +361,7 @@ export function convertResponsesMessages<TApi extends Api>(
               type: "custom_tool_call",
               call_id: callId,
               name: block.name,
-              input: sanitizeSurrogates(
-                getGrammarToolInput(block.name, block.arguments, customInputProperty),
-              ),
+              input: sanitizeSurrogates(getGrammarToolInputValue(block, customInputProperty)),
             };
             if (itemId) customCall.id = itemId;
             if (canReplayNamespace && block.namespace !== undefined) {
@@ -369,49 +409,24 @@ export function convertResponsesMessages<TApi extends Api>(
       // SAFETY: output is constructed from the documented string, input content, or encrypted
       // content representations accepted by Responses tool-call output items.
       messages.push(outputItem as ResponseInput[number]);
-
-      const deferredTools: Tool[] = [];
-      for (const name of msg.addedToolNames ?? []) {
-        const tool = options?.deferredTools?.get(name);
-        if (!tool || loadedToolNames.has(name)) continue;
-        loadedToolNames.add(name);
-        deferredTools.push(tool);
-      }
-      if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
-        const additionalTools = {
-          type: "additional_tools",
-          role: "developer",
-          tools: convertResponsesTools(deferredTools, options.toolOptions),
-        };
-        // SAFETY: additional_tools is the Codex Responses extension item used only on Codex-capable
-        // paths; all nested tools are built by convertResponsesTools.
-        messages.push(additionalTools as ResponseInputItem);
-      } else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
-        const names = deferredTools.map((tool) => tool.name);
-        const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
-        messages.push({
-          type: "tool_search_call",
-          call_id: searchCallId,
-          execution: "client",
-          status: "completed",
-          arguments: { query: names.join(" "), limit: names.length },
-        } satisfies ResponseInputItem);
-        messages.push({
-          type: "tool_search_output",
-          call_id: searchCallId,
-          execution: "client",
-          status: "completed",
-          tools: convertResponsesTools(deferredTools, {
-            ...options.toolOptions,
-            deferLoading: true,
-          }),
-        } satisfies ResponseToolSearchOutputItemParam);
-      }
     }
     msgIndex++;
   }
 
   return normalizeResponsesToolHistory(messages);
+}
+
+function getGrammarToolInputValue(
+  block: Extract<Message, { role: "assistant" }>["content"][number] & { type: "toolCall" },
+  inputProperty: string,
+): string {
+  const input = block.arguments[inputProperty];
+  if (!Check(StringSchema, input)) {
+    throw new Error(
+      `Grammar tool call "${block.name}" requires argument "${inputProperty}" to be a string.`,
+    );
+  }
+  return input;
 }
 
 export function convertResponsesTools(

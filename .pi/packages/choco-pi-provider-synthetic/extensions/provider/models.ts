@@ -22,9 +22,7 @@ export type SyntheticModel = Omit<ProviderModelConfig, "api" | "compat"> & {
 
 export const SYNTHETIC_MODELS: SyntheticModel[] = [
   // API: syn:large:text → ctx=524288, out=65536
-  // Reasoning: GLM-5.2 accepts `max` (default, highest), `high` (lower), and
-  // `none` (disables reasoning) as effort values; "low", "medium", "minimal", and
-  // "xhigh" are rejected upstream. Map the three accepted values; hide the rest.
+  // API efforts: ['none', 'low', 'high', 'xhigh', 'max'] ('minimal'/'medium' rejected upstream).
   // Live API/store models get this map from reasoning_parameters.efforts.
   {
     id: "syn:large:text",
@@ -33,20 +31,20 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     thinkingLevelMap: {
       off: "none",
       minimal: null,
-      low: null,
+      low: "low",
       medium: null,
       high: "high",
-      xhigh: null,
+      xhigh: "xhigh",
       max: "max",
     },
     compat: {
       supportsReasoningEffort: true,
     },
-    input: ["text"],
+    input: ["text", "image"],
     cost: {
-      input: 1,
-      output: 3,
-      cacheRead: 0.16,
+      input: 0.6,
+      output: 1.2,
+      cacheRead: 0.03,
       cacheWrite: 0,
     },
     contextWindow: 524288,
@@ -111,18 +109,18 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     maxTokens: 65536,
   },
   // API: syn:small:vision → ctx=262144, out=65536
-  // API efforts: ['none', 'low', 'medium', 'high'] ('minimal'/'xhigh'/'max' rejected upstream).
+  // API efforts: ['low', 'medium', 'xhigh'] — reasoning is always on, so off is hidden.
   {
     id: "syn:small:vision",
     name: "syn:small:vision",
     reasoning: true,
     thinkingLevelMap: {
-      off: "none",
+      off: null,
       minimal: null,
       low: "low",
       medium: "medium",
-      high: "high",
-      xhigh: null,
+      high: null,
+      xhigh: "xhigh",
       max: null,
     },
     compat: {
@@ -168,15 +166,16 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 131072,
     maxTokens: 65536,
   },
-  // API: hf:zai-org/GLM-5.2 → ctx=524288, out=65536
+  // API: hf:zai-org/GLM-5.3-Flash → ctx=524288, out=65536
+  // API efforts: ['low', 'high', 'max'] — reasoning is always on, so off is hidden.
   {
-    id: "hf:zai-org/GLM-5.2",
-    name: "zai-org/GLM-5.2",
+    id: "hf:zai-org/GLM-5.3-Flash",
+    name: "zai-org/GLM-5.3-Flash",
     reasoning: true,
     thinkingLevelMap: {
-      off: "none",
+      off: null,
       minimal: null,
-      low: null,
+      low: "low",
       medium: null,
       high: "high",
       xhigh: null,
@@ -185,11 +184,11 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     compat: {
       supportsReasoningEffort: true,
     },
-    input: ["text"],
+    input: ["text", "image"],
     cost: {
-      input: 1,
-      output: 3,
-      cacheRead: 0.16,
+      input: 0.15,
+      output: 0.5,
+      cacheRead: 0.04,
       cacheWrite: 0,
     },
     contextWindow: 524288,
@@ -223,6 +222,34 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 196608,
     maxTokens: 65536,
   },
+  // API: hf:deepseek-ai/DeepSeek-V4.1-Flash → ctx=524288, out=65536
+  // API efforts: ['none', 'low', 'high', 'xhigh', 'max'] ('minimal'/'medium' rejected upstream).
+  {
+    id: "hf:deepseek-ai/DeepSeek-V4.1-Flash",
+    name: "deepseek-ai/DeepSeek-V4.1-Flash",
+    reasoning: true,
+    thinkingLevelMap: {
+      off: "none",
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    },
+    compat: {
+      supportsReasoningEffort: true,
+    },
+    input: ["text", "image"],
+    cost: {
+      input: 0.6,
+      output: 1.2,
+      cacheRead: 0.03,
+      cacheWrite: 0,
+    },
+    contextWindow: 524288,
+    maxTokens: 65536,
+  },
   // API: hf:moonshotai/Kimi-K3 → ctx=524288, out=65536
   // API efforts: ['low', 'high', 'max'] — reasoning is always on (upstream
   // rejects 'none'), so off is hidden. Live API/store models get this map
@@ -253,19 +280,19 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     contextWindow: 524288,
     maxTokens: 65536,
   },
-  // API: hf:Qwen/Qwen3.6-27B → ctx=262144, out=65536
-  // API efforts: ['none', 'low', 'medium', 'high'] ('minimal'/'xhigh'/'max' rejected upstream).
+  // API: hf:Qwen/Qwen3.8-27B → ctx=262144, out=65536
+  // API efforts: ['low', 'medium', 'xhigh'] — reasoning is always on, so off is hidden.
   {
-    id: "hf:Qwen/Qwen3.6-27B",
-    name: "Qwen/Qwen3.6-27B",
+    id: "hf:Qwen/Qwen3.8-27B",
+    name: "Qwen/Qwen3.8-27B",
     reasoning: true,
     thinkingLevelMap: {
-      off: "none",
+      off: null,
       minimal: null,
       low: "low",
       medium: "medium",
-      high: "high",
-      xhigh: null,
+      high: null,
+      xhigh: "xhigh",
       max: null,
     },
     compat: {

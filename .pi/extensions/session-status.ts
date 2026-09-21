@@ -3,12 +3,54 @@ import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type {
+  CacheWarmingMode,
+  CacheWarmingStatus,
+  ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 import { VERSION } from "@earendil-works/pi-coding-agent";
 
 type ModelRecord = { baseUrl?: unknown; name?: unknown };
 
 export type StatusRow = { label: string; value: string };
+
+export type CacheWarmingInfo = {
+  mode: CacheWarmingMode;
+  status: CacheWarmingStatus | undefined;
+};
+
+function warmingDuration(nextWarmAt: number | undefined, now: number): string {
+  if (nextWarmAt === undefined || nextWarmAt <= now) return "now";
+  let seconds = Math.ceil((nextWarmAt - now) / 1000);
+  const hours = Math.floor(seconds / 3600);
+  seconds %= 3600;
+  const minutes = Math.floor(seconds / 60);
+  seconds %= 60;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
+  return parts.join(" ");
+}
+
+/** Deterministic display over Pi's public cache-warming status model. */
+export function formatCacheWarming(
+  warming: CacheWarmingInfo | undefined,
+  now = Date.now(),
+): string {
+  if (!warming) return "unavailable";
+  if (warming.mode === "off") return "off";
+  const status = warming.status;
+  if (!status) return `${warming.mode} · unavailable`;
+  const decision = status.decision;
+  if (!decision) return `${warming.mode} · Inactive (${status.reason ?? "unknown reason"})`;
+  const economics = decision.economicsAvailable
+    ? `${Math.round(decision.continuationProbability * 100)}% continuation, expected savings ${decision.expectedSavings < 0 ? "-" : ""}$${Math.abs(decision.expectedSavings).toFixed(3)} -> ${decision.action}${status.extensionOverride ? "; extension override" : ""}`
+    : "cache economics unavailable";
+  if (status.state === "refreshing") return `${warming.mode} · Warming cache (${economics})`;
+  if (status.state === "inactive") return `${warming.mode} · Stopped (${economics})`;
+  return `${warming.mode} · Decision in ${warmingDuration(status.nextWarmAt, now)} (${economics})`;
+}
 
 function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
   return isObject(value) && value !== null && !Array.isArray(value);

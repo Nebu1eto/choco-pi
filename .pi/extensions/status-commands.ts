@@ -1,6 +1,8 @@
 import { isString, reinterpretHostValue, type RuntimeValue } from "./lib/runtime-values.ts";
 import {
   InteractiveMode,
+  type AgentSession,
+  type CacheWarmingMode,
   type ExtensionAPI,
   type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
@@ -45,9 +47,11 @@ import { renderContext } from "./lib/context-report.ts";
 import { hasRunningSubagents } from "./lib/subagent-manager.ts";
 import {
   condenseStatusRows,
+  formatCacheWarming,
   formatStatus,
   statusHeading,
   summarizeStatusRows,
+  type CacheWarmingInfo,
 } from "./session-status.ts";
 import { buildContextCapSection } from "./model-context-cap.ts";
 import { resetCodexUsage, usageReport } from "./provider-usage.ts";
@@ -83,6 +87,30 @@ export function isExpandableTab(id: StatusTabId): boolean {
 type ToolInventory = Pick<ExtensionAPI, "getAllTools" | "getActiveTools">;
 
 const TOOL_INVENTORY_KEY: unique symbol = Symbol.for("choco-pi.status.tool-inventory");
+const CACHE_WARMING_SOURCE_KEY: unique symbol = Symbol.for("choco-pi.status.cache-warming-source");
+
+/** The live InteractiveMode instance; both members are getters that follow session switches. */
+type CacheWarmingSource = {
+  readonly session: Pick<AgentSession, "cacheWarmingStatus">;
+  readonly settingsManager: { getCacheWarmingMode(): CacheWarmingMode };
+};
+
+function setCacheWarmingSource(source: CacheWarmingSource): void {
+  reinterpretHostValue<{ [CACHE_WARMING_SOURCE_KEY]?: CacheWarmingSource }>(globalThis)[
+    CACHE_WARMING_SOURCE_KEY
+  ] = source;
+}
+
+function currentCacheWarming(): CacheWarmingInfo | undefined {
+  const source = reinterpretHostValue<{ [CACHE_WARMING_SOURCE_KEY]?: CacheWarmingSource }>(
+    globalThis,
+  )[CACHE_WARMING_SOURCE_KEY];
+  if (!source) return undefined;
+  return {
+    mode: source.settingsManager.getCacheWarmingMode(),
+    status: source.session.cacheWarmingStatus,
+  };
+}
 
 function getToolInventory(): ToolInventory | undefined {
   return reinterpretHostValue<{ [TOOL_INVENTORY_KEY]?: ToolInventory }>(globalThis)[
@@ -204,6 +232,14 @@ export function statusBody(
       cacheWaste: computeCacheWaste(entries, ctx.modelRegistry),
       subagents: summarizeSubagentUsage(sessionId),
       subagentsRunning: hasRunningSubagents(),
+      cacheWarming: (() => {
+        const warming = currentCacheWarming();
+        const decision = warming?.status?.decision;
+        const summary = formatCacheWarming(warming);
+        return decision?.economicsAvailable
+          ? { summary, missCost: decision.missCost, warmCost: decision.warmCost }
+          : { summary };
+      })(),
     },
     style,
     expanded,
@@ -723,7 +759,9 @@ export default function statusCommands(pi: ExtensionAPI): void {
 /** Pi's interactive mode, reached only to retire its built-in `/session` command. */
 type SessionCommandHost = {
   handleSessionCommand: () => void;
-  session: { prompt: (text: string) => Promise<void> };
+  run: () => Promise<void>;
+  session: Pick<AgentSession, "cacheWarmingStatus"> & { prompt: (text: string) => Promise<void> };
+  settingsManager: { getCacheWarmingMode(): CacheWarmingMode };
   __chocoPiSessionCommandApplied?: boolean;
 };
 
@@ -740,7 +778,17 @@ type SessionCommandHost = {
 function overrideSessionCommand(): void {
   const prototype = reinterpretHostValue<SessionCommandHost>(InteractiveMode.prototype);
   if (prototype.__chocoPiSessionCommandApplied) return;
+  const run = prototype.run;
+  prototype.run = function captureStatusHost(this: SessionCommandHost): Promise<void> {
+    // SAFETY: `run` is InteractiveMode's public entry point (interactive-mode.d.ts), and
+    // AgentSession.cacheWarmingStatus / SettingsManager.getCacheWarmingMode are documented
+    // SDK properties that InteractiveMode's own /session handler reads. Capturing here
+    // records the live host once per interactive process, before any command is typed.
+    setCacheWarmingSource(this);
+    return run.call(this);
+  };
   prototype.handleSessionCommand = function openStatusDialog(this: SessionCommandHost) {
+    setCacheWarmingSource(this);
     void this.session.prompt("/status");
   };
   prototype.__chocoPiSessionCommandApplied = true;

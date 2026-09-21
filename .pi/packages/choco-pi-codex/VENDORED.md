@@ -397,8 +397,19 @@ it does not migrate or change the package's Pi SDK compatibility.
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.85.1`, matching the harness target. Package-local frozen
+require exactly `0.86.1`, matching the harness target. Package-local frozen
 locks resolve that release, with release-age exceptions
-limited to the six exact SDK/chord/telemetry `0.85.1` packages and the existing
+limited to the six exact SDK/chord/telemetry `0.86.1` packages and the existing
 `typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
 installer-policy change; unrelated dependency contracts are unchanged.
+
+## 2026-09-21 choco-pi patch: Pi 0.86.1 transcript migration
+
+Provider boundaries now accept `TranscriptContext`. The Responses converter
+replays system messages as the leading prompt and later developer items,
+preserving `tool_search` anchors and `additional_tools`; deferred-tool placement
+comes from `resolveTranscriptTools`, and grammar-tool metadata comes from
+`getDeclaredTools`. Prewarm and native compaction paths use `normalizeContext`,
+the Code Mode nested-tool boundary validates `JsonObject` arguments, and Off
+reasoning effort is explicit. `tests/request-body-invariants.test.ts` and
+`tests/transcript-request-paths.test.ts` cover the request paths.

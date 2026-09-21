@@ -1,4 +1,13 @@
-import { clampThinkingLevel, type Api, type Context, type Model } from "@earendil-works/pi-ai";
+import {
+  clampThinkingLevel,
+  getCurrentSystemPrompt,
+  getInitialSystemMessage,
+  getSystemMessageText,
+  resolveTranscript,
+  type Api,
+  type Model,
+  type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import {
@@ -14,6 +23,7 @@ interface ModelCompat {
   supportsStrictMode?: boolean | undefined;
   supportsAdditionalTools?: boolean | undefined;
   supportsToolSearch?: boolean | undefined;
+  supportsMidConvoSystemMessages?: boolean | undefined;
 }
 
 // Model metadata is a live registry object; keep these guards shallow as the former casts were.
@@ -43,7 +53,7 @@ function clampReasoningEffort(modelId: string, effort: string): string {
 
 export function buildRequestBody<TApi extends Api>(
   model: Model<TApi>,
-  context: Context,
+  context: TranscriptContext,
   options?: OpenAICodexStreamOptions,
 ): ResponsesBody {
   const compat = Check(ModelCompatSchema, model.compat) ? model.compat : undefined;
@@ -60,9 +70,17 @@ export function buildRequestBody<TApi extends Api>(
     supportsOpenAIGrammarTools && !CODEX_TOOL_CALL_PROVIDERS.has(model.provider)
       ? new Set([...CODEX_TOOL_CALL_PROVIDERS, model.provider])
       : CODEX_TOOL_CALL_PROVIDERS;
-  const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
-  const messages = convertResponsesMessages(model, context, allowedToolCallProviders, {
+  const resolvedContext = resolveTranscript(context, compat?.supportsMidConvoSystemMessages);
+  const initialSystemMessage = getInitialSystemMessage(resolvedContext.messages);
+  const instructions = compat?.supportsMidConvoSystemMessages
+    ? initialSystemMessage
+      ? getSystemMessageText(initialSystemMessage)
+      : ""
+    : getCurrentSystemPrompt(resolvedContext.messages);
+  const toolPlacement = splitDeferredTools(resolvedContext, deferredToolsMode !== undefined);
+  const messages = convertResponsesMessages(model, resolvedContext, allowedToolCallProviders, {
     includeSystemPrompt: false,
+    supportsMidConvoSystemMessages: compat?.supportsMidConvoSystemMessages,
     grammarToolInputProperties,
     deferredTools: toolPlacement.deferred,
     deferredToolsMode,
@@ -73,7 +91,7 @@ export function buildRequestBody<TApi extends Api>(
     model: model.id,
     store: false,
     stream: true,
-    instructions: context.systemPrompt || "You are a helpful assistant.",
+    instructions: instructions || "You are a helpful assistant.",
     input: messages,
     text: {
       verbosity: options?.textVerbosity ?? "low",
@@ -126,6 +144,10 @@ export function buildRequestBody<TApi extends Api>(
     body.reasoning = {
       effort: clampReasoningEffort(model.id, effort),
       summary: options?.reasoningSummary ?? "auto",
+    };
+  } else if (model.reasoning && model.thinkingLevelMap?.off !== null) {
+    body.reasoning = {
+      effort: model.thinkingLevelMap?.off ?? "none",
     };
   }
 

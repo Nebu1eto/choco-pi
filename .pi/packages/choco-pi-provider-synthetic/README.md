@@ -85,13 +85,23 @@ Cross-session reuse is not guaranteed; reuse within a single session or a short 
 
 ### Reasoning Levels
 
-Synthetic reasoning models are mostly binary on/off (a single `medium` toggle in Pi's UI). The exception is `hf:zai-org/GLM-5.2`, which exposes two tiers plus off:
+Synthetic exposes model-specific reasoning efforts. The extension builds the
+live model map from each API entry's `reasoning_parameters.efforts` and hides
+levels that the API does not advertise. Its offline catalog currently maps:
 
-- off → `none` (disable reasoning)
-- high → `high` (GLM High tier, lower)
-- max → `max` (GLM Max tier, highest — native `max` thinking level, accepted by Synthetic's OpenAI shim)
+- `syn:large:text` and `hf:deepseek-ai/DeepSeek-V4.1-Flash`: off, low, high,
+  xhigh, and max.
+- `syn:small:text`, `hf:openai/gpt-oss-120b`, `hf:zai-org/GLM-4.7-Flash`, and
+  `hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4`: off, low, medium, and
+  high.
+- `syn:large:vision`, `hf:zai-org/GLM-5.3-Flash`, and
+  `hf:moonshotai/Kimi-K3`: low, high, and max. These models do not advertise
+  an off effort.
+- `syn:small:vision` and `hf:Qwen/Qwen3.8-27B`: low, medium, and xhigh. These
+  models do not advertise an off effort.
 
-Other Pi levels (`minimal`, `low`, `medium`, `xhigh`) are hidden for GLM-5.2. The `max` level is opt-in and was added in Pi 0.80.6.
+Pi's `off` level sends Synthetic's `none` effort only when the API advertises
+it. `minimal` is hidden for every model in the current offline catalog.
 
 ### Quotas Command
 

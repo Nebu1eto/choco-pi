@@ -392,12 +392,12 @@ export async function processResponsesStream<TApi extends Api>(
             : (options?.grammarToolInputProperties?.get(customItem.name) ?? "input");
         const toolCall: ToolCallBlock =
           state?.kind === "custom_tool_call"
-            ? { ...state.block, arguments: { [property]: customInput } }
+            ? { ...state.block, arguments: { [property]: customInput ?? "" } }
             : {
                 type: "toolCall",
                 id: `${customItem.call_id}|${customItem.id ?? ""}`,
                 name: customItem.name,
-                arguments: { [property]: customInput },
+                arguments: { [property]: customInput ?? "" },
               };
         if (customItem.namespace !== undefined) toolCall.namespace = customItem.namespace;
         if (state?.kind !== "custom_tool_call") {

@@ -9,7 +9,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import type { Context } from "@earendil-works/pi-ai";
+import { normalizeContext, type Context } from "@earendil-works/pi-ai";
 import { dirname } from "node:path";
 import type { CodexConversionConfig } from "../adapter/activation/config.ts";
 import {
@@ -46,6 +46,7 @@ import { getActiveToolsInActiveOrder } from "../adapter/active-tools.ts";
 import { createLazyCodexDiagnostics } from "../diagnostics/lazy.ts";
 import type { CodexDiagnosticsSink } from "../providers/openai-codex/types.ts";
 import { withLiveCtx } from "./live-context.ts";
+import { projectForcedPromptContext } from "../adapter/forced-prompt-projection.ts";
 
 export type CodexContext = ExtensionContext;
 
@@ -102,10 +103,27 @@ const loadProviderRequest = memoizedImport(() => import("../adapter/provider-req
 
 const CACHE_KEEPALIVE_INTERVAL_MS = 25 * 60 * 1000;
 
+export function captureSessionOwnedKeepaliveRequest(
+  current: ResponsesBody | undefined,
+  ownerSessionId: string | undefined,
+  payload: ResponsesBody,
+): ResponsesBody | undefined {
+  if (!ownerSessionId || payload.client_metadata?.["session_id"] !== ownerSessionId) return current;
+  return structuredClone(payload);
+}
+
 function activeToolContext(pi: ExtensionAPI): NonNullable<Context["tools"]> {
   // Pi ToolInfo omits constrainedSampling; restore our owned exec contract so
   // prewarm and the real Code Mode turn serialize the same provider tools.
   return getActiveToolsInActiveOrder(pi, true);
+}
+
+export function normalizePrewarmContext(
+  systemPrompt: string,
+  tools: NonNullable<Context["tools"]>,
+  messages: Context["messages"],
+): ReturnType<typeof normalizeContext> {
+  return projectForcedPromptContext(systemPrompt, tools, messages);
 }
 
 function prewarmReasoningOption(
@@ -145,6 +163,7 @@ export function createCodexExtensionRuntime(
   let cacheKeepaliveTimer: ReturnType<typeof setTimeout> | undefined;
   let cacheKeepaliveEpoch = 0;
   let cacheKeepaliveRequest: ResponsesBody | undefined;
+  let owningSessionId: string | undefined;
   const diagnostics = createLazyCodexDiagnostics();
   const buildPrewarmPlan = (
     ctx: CodexContext,
@@ -244,7 +263,7 @@ export function createCodexExtensionRuntime(
         ]);
         const transportSettlement = prewarmOpenAICodexWebSocket(
           requestModel,
-          { systemPrompt: preparedSystemPrompt, messages, tools },
+          normalizePrewarmContext(preparedSystemPrompt, tools, messages),
           {
             apiKey: auth.apiKey,
             ...conditionalProperties(Boolean(auth.headers), { headers: auth.headers }),
@@ -444,9 +463,16 @@ export function createCodexExtensionRuntime(
       cancelCacheKeepalive();
     },
     captureCacheKeepaliveRequest(payload) {
-      if (state.config.openai.cacheKeepalive) cacheKeepaliveRequest = structuredClone(payload);
+      if (state.config.openai.cacheKeepalive) {
+        cacheKeepaliveRequest = captureSessionOwnedKeepaliveRequest(
+          cacheKeepaliveRequest,
+          owningSessionId,
+          payload,
+        );
+      }
     },
     resetTransport(sessionId) {
+      owningSessionId = sessionId;
       cancelCacheKeepalive();
       prewarmController?.abort();
       prewarmController = undefined;

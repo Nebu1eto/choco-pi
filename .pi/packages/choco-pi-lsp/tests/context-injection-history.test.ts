@@ -3,7 +3,12 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { runInNewContext } from "node:vm";
-import type { Message, Model, UserMessage } from "@earendil-works/pi-ai";
+import {
+  normalizeContext,
+  type Message,
+  type Model,
+  type UserMessage,
+} from "@earendil-works/pi-ai";
 import {
   ContextInjectionHistory,
   type ContextInjectionMessage,
@@ -78,7 +83,10 @@ test("consumed startup guidance remains in the exact serialized native continuat
   const history = new ContextInjectionHistory<Message>();
   const original = [user("initial task"), user("Agent persona: pessimistic", 2)];
   const guidance = user("[choco-pi-lsp automated context — not a user request] guidance", 3);
-  const first = buildRequestBody(model, { messages: history.apply("owner", original, [guidance]) });
+  const first = buildRequestBody(
+    model,
+    normalizeContext({ messages: history.apply("owner", original, [guidance]) }),
+  );
   const reasoning = {
     type: "reasoning",
     id: "rs_fixture",
@@ -96,7 +104,7 @@ test("consumed startup guidance remains in the exact serialized native continuat
     lastResponseId: "r1",
     lastResponseItems: [reasoning],
   };
-  const next = buildRequestBody(model, { messages: history.apply("owner", raw) });
+  const next = buildRequestBody(model, normalizeContext({ messages: history.apply("owner", raw) }));
   const prepared = buildCachedWebSocketRequestBody(continuation, next);
   assert.equal(prepared.decision, "delta");
   assert.equal(prepared.body.previous_response_id, "r1");
@@ -104,10 +112,13 @@ test("consumed startup guidance remains in the exact serialized native continuat
     { role: "user", content: [{ type: "input_text", text: "steer" }] },
   ]);
   // The original one-shot behavior drops guidance and cannot prove continuation.
-  const dropped = buildRequestBody(model, { messages: raw });
+  const dropped = buildRequestBody(model, normalizeContext({ messages: raw }));
   assert.notEqual(buildCachedWebSocketRequestBody(continuation, dropped).decision, "delta");
   const edited: Message[] = [user("changed original task"), ...raw.slice(1)];
-  const changed = buildRequestBody(model, { messages: history.apply("owner", edited) });
+  const changed = buildRequestBody(
+    model,
+    normalizeContext({ messages: history.apply("owner", edited) }),
+  );
   assert.notEqual(buildCachedWebSocketRequestBody(continuation, changed).decision, "delta");
 });
 

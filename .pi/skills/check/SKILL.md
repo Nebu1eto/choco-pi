@@ -18,7 +18,7 @@ Use a capability-relevant check before `task-inline`, `task`, or `task-hotfix`. 
 
 Never read or print `auth.json`, API keys, OAuth tokens, environment secrets, or credential-bearing configuration.
 
-Core readiness requires Node `>=24` and Pi exactly `0.85.1`, matching the repository's SDK contracts. Older, newer, and prerelease Pi versions fail rather than implying unverified compatibility.
+Core readiness requires Node `>=24` and Pi exactly `0.86.1`, matching the repository's SDK contracts. Older, newer, and prerelease Pi versions fail rather than implying unverified compatibility.
 
 A successful automatic check may be reused within the same session only while its relevant runtime, configuration, resources, and required live tools remain unchanged. Always rerun a fresh explicit `/check`.
 

@@ -26,6 +26,7 @@ const ADDITIONAL_MODELS: Model<"openai-codex-responses">[] = [
       supportsOpenAIGrammarTools: true,
       supportsAdditionalTools: true,
       supportsToolSearch: true,
+      supportsMidConvoSystemMessages: true,
     },
   },
   {
@@ -44,6 +45,7 @@ const ADDITIONAL_MODELS: Model<"openai-codex-responses">[] = [
       supportsOpenAIGrammarTools: true,
       supportsAdditionalTools: true,
       supportsToolSearch: true,
+      supportsMidConvoSystemMessages: true,
     },
   },
 ];

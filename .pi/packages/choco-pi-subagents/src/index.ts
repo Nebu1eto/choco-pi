@@ -94,7 +94,11 @@ import {
   resolveHandleToType,
   stripAgentPrefix,
 } from "./mention.ts";
-import { runMentionClone, shouldHandleMentionCloneCompletion } from "./mention-clone.ts";
+import {
+  registerMentionCloneParentPromptObserver,
+  runMentionClone,
+  shouldHandleMentionCloneCompletion,
+} from "./mention-clone.ts";
 import { formatSteerMessage, ROOT_AGENT_PATH } from "./messaging.ts";
 import { type ModelRegistry, resolveModel } from "./model-resolver.ts";
 import { checkModelScope, isScopeModelsEnabled, setScopeModelsEnabled } from "./model-scope.ts";
@@ -427,6 +431,7 @@ export default function (pi: ExtensionAPI) {
   // would create another manager and leak handlers. Nested orchestration is
   // injected as scoped custom tools by the existing manager instead.
   if (inChildSessionContext()) return;
+  registerMentionCloneParentPromptObserver(pi);
 
   // ---- Register custom notification renderer ----
   // Layout lives in ui/notification-render.ts so it stays testable and matches

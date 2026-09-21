@@ -5,12 +5,14 @@ import {
   type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
-  type Context,
+  getDeclaredTools,
   type Model,
+  type TranscriptContext,
   type Transport,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
+import { conditionalProperties } from "../../adapter/runtime-values.ts";
 import type { CodexConversionConfig } from "../../adapter/activation/config.ts";
 import { createGrammarToolInputProperties } from "../constrained-sampling.ts";
 import {
@@ -115,7 +117,7 @@ export interface CodexTransportRecoveryDependencies {
   getDiagnostics?: (() => CodexDiagnosticsSink | undefined) | undefined;
   prepareRequestBody: <TApi extends Api>(
     model: Model<TApi>,
-    context: Context,
+    context: TranscriptContext,
     options: OpenAICodexStreamOptions | undefined,
     responsesLite: boolean,
   ) => Promise<ResponsesBody>;
@@ -257,7 +259,7 @@ async function openCodexSSE<TApi extends Api>(
 
 export function createCodexTransportStream<TApi extends Api>(
   model: Model<TApi>,
-  context: Context,
+  context: TranscriptContext,
   options: CodexProviderStreamOptions | undefined,
   deps: CodexTransportRecoveryDependencies,
 ): AssistantMessageEventStream {
@@ -266,7 +268,10 @@ export function createCodexTransportStream<TApi extends Api>(
     deps.useResponsesLite?.(model) ??
     ((runtimeConfig?.executionMode === "code" || runtimeConfig?.executionMode === "notebook") &&
       supportsResponsesLiteModel(model.id));
-  const grammarToolInputProperties = createGrammarToolInputProperties(context.tools, responsesLite);
+  const grammarToolInputProperties = createGrammarToolInputProperties(
+    getDeclaredTools(context.messages),
+    responsesLite,
+  );
   const preferredTransport = getEffectiveCodexTransport(options?.transport, runtimeConfig?.openai);
   const effectiveTransport = getEffectiveCodexTransport(
     options?.transport,
@@ -449,7 +454,7 @@ export function createCodexTransportStream<TApi extends Api>(
                 error,
                 {
                   configuredTransport: preferredTransport,
-                  fallbackTransport: fallbackArmed ? "sse" : undefined,
+                  ...conditionalProperties(fallbackArmed, { fallbackTransport: "sse" as const }),
                   eventsEmitted: websocketStarted,
                   phase: websocketStarted
                     ? "after_message_stream_start"

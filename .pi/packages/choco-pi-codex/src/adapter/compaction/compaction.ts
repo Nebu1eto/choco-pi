@@ -3,16 +3,20 @@ import { JsonObjectSchema } from "../runtime-values.ts";
 import type { JsonObject, BoundaryValue } from "../runtime-values.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  SessionBeforeCompactEvent,
-  SessionEntry,
+import {
+  buildSessionContext,
+  convertToLlm,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type SessionBeforeCompactEvent,
+  type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import {
   clampThinkingLevel,
   type Api,
   type Context,
+  getCurrentTools,
+  normalizeContext,
   type Model,
   type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
@@ -32,9 +36,9 @@ import {
   resolveNativeCompactionEnvironment,
   type ResponsesCompatibleRequestPayload,
 } from "./compaction-runtime.ts";
-import { convertResponsesTools } from "../../providers/openai-responses/shared.ts";
 import {
   serializeActiveSessionToResponsesInput,
+  serializeMessagesToResponsesInput,
   type NativeCompactionRequestOptions,
   type ResponsesInputItem,
   type SerializeResponsesMessagesOptions,
@@ -52,12 +56,14 @@ import { executeRemoteCompactionV2 } from "./remote-v2-client.ts";
 import { buildRemoteCompactionV2Window } from "./remote-v2-history.ts";
 import { CODE_MODE_EXEC_GRAMMAR_INPUTS } from "../../tools/code-mode/exec-contract.ts";
 import { getActiveToolsInActiveOrder } from "../active-tools.ts";
+import { isProviderContextExcludedMessage } from "../prompt/context-filter.ts";
 import { resolveCanonicalCompactionPromptInput } from "../../providers/openai-codex/session-continuity.ts";
 import {
   extractAccountId,
   resolveCodexWebSocketUrl,
 } from "../../providers/openai-codex/headers.ts";
 import type { CodexCompactionDiagnostic } from "./diagnostics.ts";
+import { projectForcedPromptContext } from "../forced-prompt-projection.ts";
 
 function isRecord(value: BoundaryValue): value is JsonObject {
   return Value.Check(JsonObjectSchema, value);
@@ -91,12 +97,6 @@ function stashLatestNativeWindowForPiCompactionFallback(
 function cloneCompactedWindow(window: readonly BoundaryValue[]): ResponsesInputItem[] | undefined {
   if (!window.every(isRecord)) return undefined;
   return window.map((item) => structuredClone(item));
-}
-
-function buildCompactionTools(pi: ExtensionAPI, codeMode: boolean): BoundaryValue[] | undefined {
-  const tools = getActiveToolsInActiveOrder(pi, codeMode);
-  if (tools.length === 0) return undefined;
-  return convertResponsesTools(tools, { strict: null });
 }
 
 function buildCompactionReasoning(
@@ -142,9 +142,7 @@ function buildCompactionRequestOptions(
   ctx: ExtensionContext,
   state: AdapterState,
   compactionTargetModel: Model<Api>,
-  codeMode: boolean,
 ): NativeCompactionRequestOptions {
-  const tools = buildCompactionTools(pi, codeMode);
   const reasoning = buildCompactionReasoning(pi, ctx, state, compactionTargetModel);
   return {
     parallel_tool_calls: true,
@@ -157,9 +155,16 @@ function buildCompactionRequestOptions(
       { service_tier: "priority" },
     ),
     text: { verbosity: state.config.openai.verbosity },
-    ...conditionalProperties(Boolean(tools), { tools }),
     ...conditionalProperties(Boolean(reasoning), { reasoning }),
   };
+}
+
+export function buildCompactionTranscriptContext(
+  messages: Context["messages"],
+  systemPrompt: string,
+  tools: NonNullable<Context["tools"]>,
+): ReturnType<typeof normalizeContext> {
+  return projectForcedPromptContext(systemPrompt, tools, messages);
 }
 
 function notifyNativeCompactionFallback(
@@ -219,6 +224,7 @@ export function buildNativeCompactionInput(args: {
   leafId?: string | null | undefined;
   latestNativeCompaction: LatestNativeCompactionResolution;
   serializationOptions?: SerializeResponsesMessagesOptions | undefined;
+  projectedContext?: ReturnType<typeof normalizeContext> | undefined;
 }): { input: ResponsesInputItem[]; compactedKeptWindow: boolean } | undefined {
   if (args.latestNativeCompaction.ok) {
     const compactedWindow = cloneCompactedWindow(
@@ -226,26 +232,58 @@ export function buildNativeCompactionInput(args: {
     );
     if (!compactedWindow) return undefined;
     const liveTailEntries = args.branchEntries.slice(args.latestNativeCompaction.index + 1);
-    return {
-      input: [
-        ...compactedWindow,
-        ...serializeLiveTailToResponsesInput({
+    const baselineEntries = args.branchEntries.slice(0, args.latestNativeCompaction.index + 1);
+    const baselineTools = getCurrentTools(
+      convertToLlm(buildSessionContext(baselineEntries).messages),
+    );
+    const projectedTools = args.projectedContext
+      ? getCurrentTools(args.projectedContext.messages)
+      : undefined;
+    const projectedTailMessages = args.projectedContext
+      ? projectForcedPromptContext(
+          "",
+          projectedTools ?? [],
+          convertToLlm(buildSessionContext(liveTailEntries).messages),
+        ).messages
+      : undefined;
+    const serializedTail = projectedTailMessages
+      ? serializeMessagesToResponsesInput(args.model, projectedTailMessages, {
+          ...args.serializationOptions,
+          leadingSystemHandled: false,
+          baselineTools,
+        }).filter(
+          (item) =>
+            !(
+              !("type" in item) &&
+              "role" in item &&
+              (item.role === "system" || item.role === "developer")
+            ),
+        )
+      : serializeLiveTailToResponsesInput({
           model: args.model,
           entries: liveTailEntries,
+          baselineEntries,
           serializationOptions: args.serializationOptions,
-        }),
-      ],
+        });
+    return {
+      input: [...compactedWindow, ...serializedTail],
       compactedKeptWindow: false,
     };
   }
 
   return {
-    input: serializeActiveSessionToResponsesInput({
-      model: args.model,
-      entries: args.allEntries,
-      leafId: args.leafId,
-      options: args.serializationOptions,
-    }),
+    input: args.projectedContext
+      ? serializeMessagesToResponsesInput(
+          args.model,
+          args.projectedContext.messages,
+          args.serializationOptions,
+        )
+      : serializeActiveSessionToResponsesInput({
+          model: args.model,
+          entries: args.allEntries,
+          leafId: args.leafId,
+          options: args.serializationOptions,
+        }),
     compactedKeptWindow: true,
   };
 }
@@ -309,14 +347,18 @@ async function handleCodexSessionBeforeCompactInner(
   const serializationOptions = codeMode
     ? { grammarToolInputProperties: CODE_MODE_EXEC_GRAMMAR_INPUTS }
     : undefined;
-  const requestOptions = buildCompactionRequestOptions(
-    pi,
-    ctx,
-    state,
-    compactionTargetModel,
-    codeMode,
-  );
+  const requestOptions = buildCompactionRequestOptions(pi, ctx, state, compactionTargetModel);
   const branchEntries = ctx.sessionManager.getBranch();
+  const transcriptMessages = convertToLlm(
+    buildSessionContext(branchEntries).messages.filter(
+      (message) => !isProviderContextExcludedMessage(message),
+    ),
+  );
+  const context = buildCompactionTranscriptContext(
+    transcriptMessages,
+    state.activeProviderSystemPrompt ?? ctx.getSystemPrompt(),
+    getActiveToolsInActiveOrder(pi, codeMode),
+  );
   const latestNativeCompaction = resolveLatestNativeCompactionEntry(branchEntries, {
     provider: runtime.provider,
     api: runtime.api,
@@ -339,6 +381,7 @@ async function handleCodexSessionBeforeCompactInner(
     leafId: ctx.sessionManager.getLeafId(),
     latestNativeCompaction,
     serializationOptions,
+    projectedContext: context,
   });
   if (!builtInput) {
     ctx.ui.notify(
@@ -389,14 +432,6 @@ async function handleCodexSessionBeforeCompactInner(
       "warning",
     );
   }
-  const tools = getActiveToolsInActiveOrder(pi, codeMode);
-  const context: Context = {
-    // Match the active provider lane so cached WebSocket compaction can send
-    // only previous_response_id plus the trigger instead of the full history.
-    systemPrompt: state.activeProviderSystemPrompt ?? ctx.getSystemPrompt(),
-    messages: [],
-    ...conditionalProperties(Boolean(tools.length > 0), { tools }),
-  };
   const compactResult = await executeRemoteCompactionV2({
     runtime,
     modelRegistry: ctx.modelRegistry,

@@ -105,6 +105,11 @@ upstream `prompts/create-goal.md` diffs against `goalObjectivePrompt` in
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.85.1`, matching the harness target. This SDK alignment is
+require exactly `0.86.1`, matching the harness target. This SDK alignment is
 separate from installer policy; TypeBox and unrelated
 dependencies retain their existing contracts.
+
+## 2026-09-21 choco-pi patch: Pi 0.86.1 transcript migration
+
+Test fixtures now provide the `ExtensionAPI["on"]` return value required by Pi
+0.86.1. This is a test-only type update; runtime source is unchanged.

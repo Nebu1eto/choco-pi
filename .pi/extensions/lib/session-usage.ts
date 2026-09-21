@@ -47,6 +47,7 @@ export type MainUsage = {
   counts: MessageCounts;
   totals: UsageTotals;
   breakdown: CostEntry[];
+  warming: { count: number; usage: UsageTotals; cost: number };
 };
 
 export type SubagentUsage = {
@@ -111,9 +112,18 @@ function toBreakdown(byKey: Map<string, UsageTotals>): CostEntry[] {
 export function summarizeMainUsage(entries: readonly SessionEntry[]): MainUsage {
   const counts: MessageCounts = { total: 0, user: 0, assistant: 0, toolCalls: 0, toolResults: 0 };
   const totals = createUsageTotals();
+  const warmingUsage = createUsageTotals();
+  let warmingCount = 0;
   const byKey = new Map<string, UsageTotals>();
 
   for (const entry of entries) {
+    if (entry.type === "usage") {
+      if (entry.kind === "cache_warm") {
+        warmingCount += 1;
+        addUsage(warmingUsage, entry.usage);
+      }
+      continue;
+    }
     if (entry.type === "compaction" || entry.type === "branch_summary") {
       if (entry.usage) {
         addUsage(totals, entry.usage);
@@ -149,7 +159,12 @@ export function summarizeMainUsage(entries: readonly SessionEntry[]): MainUsage 
     );
   }
 
-  return { counts, totals, breakdown: toBreakdown(byKey) };
+  return {
+    counts,
+    totals,
+    breakdown: toBreakdown(byKey),
+    warming: { count: warmingCount, usage: warmingUsage, cost: warmingUsage.cost },
+  };
 }
 
 /** Per-turn misses at or below this are cache breakpoint granularity, not waste. */
@@ -397,6 +412,11 @@ export type SessionInfoInput = {
   subagents: SubagentUsage;
   /** True when the sub-agent manager reports work still in flight. */
   subagentsRunning: boolean;
+  cacheWarming: {
+    summary: string;
+    missCost?: number;
+    warmCost?: number;
+  };
 };
 
 type Painter = {
@@ -524,13 +544,30 @@ export function formatSessionInfo(
   tokenLine.push(`${paint.value(formatCompactTokens(totals.output))} ${paint.dim("out")}`);
   lines.push(tokenLine.join(paint.dim(" · ")));
 
+  lines.push(`${sessionLabel("Cache warming", paint)}${paint.value(input.cacheWarming.summary)}`);
+  if (expanded && input.cacheWarming.missCost !== undefined) {
+    lines.push(
+      `${sessionLabel("Miss penalty", paint)}${paint.money(`$${input.cacheWarming.missCost.toFixed(3)}`)}`,
+      `${sessionLabel("Refresh cost", paint)}${paint.money(`$${input.cacheWarming.warmCost?.toFixed(3) ?? "0.000"}`)}`,
+    );
+  }
+  const warming = input.main.warming;
+  if (warming.count > 0) {
+    const refreshes = warming.count === 1 ? "1 refresh" : `${warming.count} refreshes`;
+    lines.push(
+      `${sessionLabel("Warming usage", paint)}${paint.value(refreshes)}, ${paint.money(`$${warming.cost.toFixed(3)}`)}`,
+    );
+  }
+
   const sub = input.subagents;
   const hasSubagents = sub.agents > 0 || sub.totals.cost > 0;
   const waste = input.cacheWaste;
   if (totals.cost > 0 || hasSubagents || waste.missedTokens > 0) {
     lines.push(
       "",
-      `${sessionLabel("Cost", paint)}${paint.money(formatCost(totals.cost + sub.totals.cost))} ${paint.dim("total")}`,
+      `${sessionLabel("Cost", paint)}${paint.money(formatCost(totals.cost + sub.totals.cost))} ${paint.dim(
+        warming.count > 0 ? "total (excl. warming)" : "total",
+      )}`,
     );
     if (input.main.breakdown.length > 0) {
       lines.push(...input.main.breakdown.map((entry) => costEntryLine(entry, paint, "main", "  ")));
