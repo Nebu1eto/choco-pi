@@ -1,4 +1,10 @@
-import type { ModelsSimpleStreamOptions, Usage } from "@earendil-works/pi-ai";
+import {
+  type AssistantMessage,
+  type ModelsSimpleStreamOptions,
+  retryAssistantCall,
+  type RetryPolicy,
+  type Usage,
+} from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 /** Thinking level as the host hands it to extensions, including "off". */
@@ -21,6 +27,11 @@ export interface SummaryCallRequest {
   readonly maxTokens: number;
   readonly signal: AbortSignal;
   readonly thinkingLevel: SessionThinkingLevel | undefined;
+  /**
+   * Retry policy for transient provider failures, or undefined for a single
+   * attempt. Aborts and deterministic errors never retry.
+   */
+  readonly retry: RetryPolicy | undefined;
   /** Prefix for failure messages, e.g. "Summarization". */
   readonly label: string;
 }
@@ -35,8 +46,14 @@ export interface SummaryCallResult {
  *
  * A truncated, empty, errored, or tool-calling response must never become a
  * session checkpoint: the checkpoint replaces the conversation, so a bad
- * summary destroys context instead of condensing it. There is no client-side
- * retry here; the host reports the failure and the user can compact again.
+ * summary destroys context instead of condensing it.
+ *
+ * A transient stream drop is not such a response: it carries no summary at
+ * all. The call is therefore wrapped in the host's own `retryAssistantCall`
+ * with the session's retry policy, exactly as the host's default compaction
+ * does, so a dropped stream does not cancel an overflow-triggered compaction.
+ * Aborts are terminal there, deterministic errors return immediately, and the
+ * classification below runs on whatever the retry loop finally returns.
  */
 export async function runSummaryCall(request: SummaryCallRequest): Promise<SummaryCallResult> {
   const options: ModelsSimpleStreamOptions = {
@@ -48,22 +65,24 @@ export async function runSummaryCall(request: SummaryCallRequest): Promise<Summa
     options.reasoning = request.thinkingLevel;
   }
 
-  const response = await request.modelRegistry
-    .streamSimple(
-      request.model,
-      {
-        systemPrompt: request.systemPrompt,
-        messages: [
-          {
-            role: "user",
-            content: [{ type: "text", text: request.promptText }],
-            timestamp: Date.now(),
-          },
-        ],
-      },
-      options,
-    )
-    .result();
+  const produce = async (): Promise<AssistantMessage> =>
+    await request.modelRegistry
+      .streamSimple(
+        request.model,
+        {
+          systemPrompt: request.systemPrompt,
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: request.promptText }],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        options,
+      )
+      .result();
+  const response = await retryAssistantCall(produce, request.retry, request.signal);
 
   if (request.signal.aborted || response.stopReason === "aborted") {
     throw new CompactionAbortedError(`${request.label} aborted`);

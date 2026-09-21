@@ -1,4 +1,4 @@
-import type { Usage } from "@earendil-works/pi-ai";
+import type { RetryPolicy, Usage } from "@earendil-works/pi-ai";
 import type {
   ExtensionContext,
   ExtensionHandler,
@@ -24,12 +24,13 @@ import {
   buildSinglePassPrompt,
   COMPACTION_SYSTEM_PROMPT,
 } from "./prompt.ts";
+import type { CompactionSessionState } from "./session-state.ts";
 import { CompactionAbortedError, runSummaryCall } from "./summarize.ts";
 import type { CompactionMessage } from "./types.ts";
 import { combineUsage } from "./usage.ts";
 
-/** Reads the handler's lifetime counter, which a session change increments. */
-export type GenerationReader = () => number;
+/** Reads the state `session_start` resolved for the current session. */
+export type SessionStateReader = () => CompactionSessionState;
 
 const CANCELLED: SessionBeforeCompactResult = { cancel: true };
 
@@ -82,16 +83,18 @@ interface SummaryOutcome {
  * marked as the current state.
  */
 export function createBeforeCompactHandler(
-  readGeneration: GenerationReader,
+  readState: SessionStateReader,
 ): ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult> {
   return async (event, ctx) => {
     // Snapshot every host-owned scalar before the first await.
-    const owner = resolveOwner(ctx);
+    const state = readState();
+    const owner = resolveOwner(ctx, state.codexCompaction);
     const model = ctx.model;
     if (owner !== "local" || !model) {
       return undefined;
     }
-    const generation = readGeneration();
+    const generation = state.generation;
+    const retry = state.retryPolicy;
     const sessionId = readSessionId(ctx);
     const thinkingLevel = ctx.thinkingLevel;
     const modelRegistry = ctx.modelRegistry;
@@ -103,7 +106,7 @@ export function createBeforeCompactHandler(
     }
 
     const isStale = (): boolean =>
-      signal.aborted || readGeneration() !== generation || readSessionId(ctx) !== sessionId;
+      signal.aborted || readState().generation !== generation || readSessionId(ctx) !== sessionId;
 
     let outcome: SummaryOutcome;
     let input: CompactionInput;
@@ -130,6 +133,7 @@ export function createBeforeCompactHandler(
           maxTokens,
           signal,
           thinkingLevel,
+          retry,
           label: "Summarization",
         });
         if (isStale()) {
@@ -144,6 +148,7 @@ export function createBeforeCompactHandler(
           maxTokens,
           signal,
           thinkingLevel,
+          retry,
           customInstructions,
           history: input.history,
           prefix: input.prefix,
@@ -201,6 +206,7 @@ interface TwoPassRequest {
   readonly maxTokens: number;
   readonly signal: AbortSignal;
   readonly thinkingLevel: ExtensionContext["thinkingLevel"];
+  readonly retry: RetryPolicy | undefined;
   readonly customInstructions: string | undefined;
   readonly history: readonly CompactionMessage[];
   readonly prefix: readonly CompactionMessage[];
@@ -236,6 +242,7 @@ async function runTwoPass(request: TwoPassRequest): Promise<SummaryOutcome> {
     maxTokens: request.maxTokens,
     signal: request.signal,
     thinkingLevel: request.thinkingLevel,
+    retry: request.retry,
     label: "History summarization",
   });
   if (request.isStaleAfterCall()) {
@@ -264,6 +271,7 @@ async function runTwoPass(request: TwoPassRequest): Promise<SummaryOutcome> {
     maxTokens: request.maxTokens,
     signal: request.signal,
     thinkingLevel: request.thinkingLevel,
+    retry: request.retry,
     label: "Reconciliation summarization",
   });
 

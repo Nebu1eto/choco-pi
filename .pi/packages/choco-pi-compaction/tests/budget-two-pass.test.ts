@@ -15,11 +15,10 @@ import {
   resolveMaxTokens,
   selectTailWithinBudget,
 } from "../src/budget.ts";
-import registerCompaction from "../src/index.ts";
 import { serializeMessages } from "../src/serialize.ts";
 import type { CompactionMessage } from "../src/types.ts";
 import { ordinaryCut, partialThenFailure } from "./fixtures.ts";
-import { type CompactionHost, createCompactionHost } from "./host-harness.ts";
+import { compactionExtension, type CompactionHost, createCompactionHost } from "./host-harness.ts";
 
 const HISTORY_PASS_TEXT = "## Goal\nhistory pass output marker";
 
@@ -29,7 +28,7 @@ async function hostFor(contextWindow: number, keepRecentTokens = 200): Promise<C
     reserveTokens: 1_000,
     contextWindow,
     maxTokens: 400,
-    extensionFactories: [registerCompaction],
+    extensionFactories: [compactionExtension()],
     script: (_call, index) => ({ text: index === 0 ? HISTORY_PASS_TEXT : "## Goal\nreconciled" }),
   });
 }

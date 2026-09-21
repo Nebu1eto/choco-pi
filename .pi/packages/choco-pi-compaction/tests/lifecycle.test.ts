@@ -11,9 +11,9 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import registerCompaction from "../src/index.ts";
 import { ordinaryCut } from "./fixtures.ts";
 import {
+  compactionExtension,
   type CompactionHost,
   type CompactionScript,
   createCompactionHost,
@@ -23,7 +23,8 @@ async function hostFor(
   script: CompactionScript,
   extraExtension?: (pi: ExtensionAPI) => void,
 ): Promise<CompactionHost> {
-  const factories = extraExtension ? [registerCompaction, extraExtension] : [registerCompaction];
+  const compaction = compactionExtension();
+  const factories = extraExtension ? [compaction, extraExtension] : [compaction];
   return await createCompactionHost({
     keepRecentTokens: 200,
     reserveTokens: 4_000,

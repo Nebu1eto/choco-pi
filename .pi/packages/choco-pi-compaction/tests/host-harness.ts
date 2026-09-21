@@ -18,6 +18,7 @@ import {
   getCurrentSystemPrompt,
   type Message,
   type Model,
+  type RetryPolicy,
   type SimpleStreamOptions,
   type StopReason,
   type TranscriptContext,
@@ -27,14 +28,38 @@ import {
   type AgentSession,
   createAgentSession,
   DefaultResourceLoader,
+  type ExtensionAPI,
   type InlineExtension,
   ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
+import registerCompaction from "../src/index.ts";
+
 export const FIXTURE_PROVIDER_ID = "fixture";
 export const FIXTURE_MODEL_ID = "fixture-summarizer";
+
+/**
+ * Retry policy every test registration uses unless it asks for another.
+ *
+ * Injecting a policy keeps the extension off `SettingsManager.create`, so no
+ * test depends on (or reads) the developer's real `~/.pi/agent` settings. The
+ * delays are 1ms so a retry costs no measurable test time.
+ */
+export const TEST_RETRY_POLICY: RetryPolicy = {
+  enabled: true,
+  maxRetries: 1,
+  baseDelayMs: 1,
+  maxAgentDelayMs: 1,
+};
+
+/** Register the compaction extension with a test-owned retry policy. */
+export function compactionExtension(retryPolicy: RetryPolicy = TEST_RETRY_POLICY): InlineExtension {
+  return (pi: ExtensionAPI): void => {
+    registerCompaction(pi, { retryPolicy });
+  };
+}
 
 /** One summarization request observed by the fake provider. */
 export interface RecordedSummarizationCall {
