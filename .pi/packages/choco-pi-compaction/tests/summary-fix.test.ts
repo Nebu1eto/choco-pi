@@ -9,7 +9,6 @@ import test from "node:test";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import registerCompaction from "../src/index.ts";
 import { parseLocalCompactionDetails } from "../src/details.ts";
 import {
   adversarialToolOutput,
@@ -22,6 +21,7 @@ import {
   splitTurn,
 } from "./fixtures.ts";
 import {
+  compactionExtension,
   type CompactionHost,
   type CompactionScript,
   createCompactionHost,
@@ -62,7 +62,8 @@ async function hostFor(
   script?: CompactionScript,
   extraExtension?: (pi: ExtensionAPI) => void,
 ): Promise<CompactionHost> {
-  const factories = extraExtension ? [registerCompaction, extraExtension] : [registerCompaction];
+  const compaction = compactionExtension();
+  const factories = extraExtension ? [compaction, extraExtension] : [compaction];
   return await createCompactionHost({
     keepRecentTokens,
     reserveTokens: RESERVE_TOKENS,

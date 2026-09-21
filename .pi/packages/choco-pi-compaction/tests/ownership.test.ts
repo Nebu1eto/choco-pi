@@ -10,10 +10,9 @@ import test from "node:test";
 
 import type { Api, Model } from "@earendil-works/pi-ai";
 
-import registerCompaction from "../src/index.ts";
-import { resolveOwner } from "../src/ownership.ts";
+import { type CodexCompactionSnapshot, resolveOwner } from "../src/ownership.ts";
 import { ordinaryCut } from "./fixtures.ts";
-import { createCompactionHost } from "./host-harness.ts";
+import { compactionExtension, createCompactionHost } from "./host-harness.ts";
 
 function model(overrides: Partial<Model<Api>>): Model<Api> {
   return {
@@ -60,8 +59,48 @@ test("an anthropic-messages model is summarized locally", () => {
   );
 });
 
+const CONFIGURED: CodexCompactionSnapshot = {
+  responsesCompaction: true,
+  additionalProviders: ["openrouter"],
+};
+
+test("a codex-configured extra provider on a responses model is codex-owned", () => {
+  const ctx = { model: model({ provider: "OpenRouter", api: "openai-responses" }) };
+  assert.equal(resolveOwner(ctx, CONFIGURED), "codex-native");
+  assert.equal(
+    resolveOwner(ctx, { ...CONFIGURED, responsesCompaction: false }),
+    "local",
+    "codex produces no native summary with the flag off",
+  );
+  assert.equal(
+    resolveOwner(ctx, { responsesCompaction: true, additionalProviders: [] }),
+    "local",
+    "a provider codex was not configured for stays local",
+  );
+  assert.equal(resolveOwner(ctx), "local", "no snapshot leaves only the transport rule");
+});
+
+test("the configured-provider rule needs a responses model", () => {
+  assert.equal(
+    resolveOwner({ model: model({ provider: "openrouter" }) }, CONFIGURED),
+    "local",
+    "an anthropic-messages model never reaches codex's responses compaction",
+  );
+});
+
+test("a codex transport is codex-owned regardless of the codex config", () => {
+  assert.equal(
+    resolveOwner(
+      { model: model({ provider: "openai-codex", api: "openai-codex-responses" }) },
+      { responsesCompaction: false, additionalProviders: [] },
+    ),
+    "codex-native",
+  );
+});
+
 test("no selected model means no owner", () => {
   assert.equal(resolveOwner({ model: undefined }), "none");
+  assert.equal(resolveOwner({ model: undefined }, CONFIGURED), "none");
 });
 
 test("on a codex transport the handler abstains and the host summarizes", async () => {
@@ -71,7 +110,7 @@ test("on a codex transport the handler abstains and the host summarizes", async 
     reserveTokens: 4_000,
     contextWindow: 200_000,
     maxTokens: 2_000,
-    extensionFactories: [registerCompaction],
+    extensionFactories: [compactionExtension()],
   });
   try {
     const fixture = ordinaryCut(host.sessionManager);
