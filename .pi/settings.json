@@ -9,6 +9,7 @@
     "./packages/choco-pi-goal",
     "./packages/choco-pi-mcp",
     "./packages/choco-pi-lsp",
+    "./packages/choco-pi-compaction",
     "./packages/choco-pi-codex",
     "./packages/choco-pi-agents-md",
     "./packages/choco-pi-web-access",
