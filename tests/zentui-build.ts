@@ -12,11 +12,13 @@ import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
  * rather than a temporary directory, keeps zentui's bare imports resolvable.
  */
 
-import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
-import { dirname, resolve as resolvePath } from "node:path";
+import { dirname, extname, relative, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import {
   resolveZentuiFile,
   type ZentuiLoader,
@@ -26,35 +28,75 @@ import {
 const REPOSITORY_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), "..");
 /** The fork this repository pins, after it was renamed from `pi-zentui`. */
 const PINNED_MANIFEST = resolvePath(REPOSITORY_ROOT, ".pi/packages/choco-pi-ui/package.json");
+const execFileAsync = promisify(execFile);
+const COMPLETION_MARKER = ".complete";
 
-function compileZentui(): string | undefined {
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function compileZentui(): Promise<string | undefined> {
   // The pinned fork is the copy the session loads; the adapter's lookup still
   // covers an installed package or a fork pinned elsewhere.
-  const manifest = existsSync(PINNED_MANIFEST)
+  const manifest = (await pathExists(PINNED_MANIFEST))
     ? PINNED_MANIFEST
     : resolveZentuiFile("package.json");
   if (!manifest) return undefined;
   const sourceDirectory = resolvePath(dirname(manifest), "extensions/zentui");
   const compiler = resolvePath(REPOSITORY_ROOT, "node_modules/.bin/tsc");
-  if (!existsSync(compiler)) return undefined;
+  if (!(await pathExists(compiler))) return undefined;
   let sources: string[];
+  let compilerVersion: string;
   try {
-    sources = readdirSync(sourceDirectory)
+    sources = (await readdir(sourceDirectory))
       .filter((entry) => entry.endsWith(".ts"))
-      .map((entry) => resolvePath(sourceDirectory, entry));
+      .map((entry) => resolvePath(sourceDirectory, entry))
+      .sort();
+    ({ stdout: compilerVersion } = await execFileAsync(compiler, ["--version"], {
+      cwd: REPOSITORY_ROOT,
+      encoding: "utf8",
+    }));
   } catch {
     return undefined;
   }
   if (sources.length === 0) return undefined;
-  const outDir = resolvePath(REPOSITORY_ROOT, "node_modules/.cache/choco-pi-zentui");
+  let sourceContents: Buffer[];
   try {
-    execFileSync(
+    sourceContents = await Promise.all(sources.map(async (source) => await readFile(source)));
+  } catch {
+    return undefined;
+  }
+  const hash = createHash("sha256");
+  hash.update(compilerVersion);
+  for (const [index, source] of sources.entries()) {
+    hash.update("\0");
+    hash.update(relative(sourceDirectory, source));
+    hash.update("\0");
+    hash.update(sourceContents[index]);
+  }
+  const cacheRoot =
+    process.env.CHOCO_PI_ZENTUI_CACHE_ROOT ??
+    resolvePath(REPOSITORY_ROOT, "node_modules/.cache/choco-pi-zentui");
+  const outDir = resolvePath(cacheRoot, hash.digest("hex"));
+  const marker = resolvePath(outDir, COMPLETION_MARKER);
+  if (await pathExists(marker)) return outDir;
+
+  const temporaryOutDir = `${outDir}.tmp-${process.pid}`;
+  try {
+    await mkdir(cacheRoot, { recursive: true });
+    await rm(temporaryOutDir, { force: true, recursive: true });
+    await execFileAsync(
       compiler,
       [
         "--ignoreConfig",
         ...sources,
         "--outDir",
-        outDir,
+        temporaryOutDir,
         "--target",
         "esnext",
         "--module",
@@ -64,15 +106,30 @@ function compileZentui(): string | undefined {
         "--noCheck",
         "--skipLibCheck",
       ],
-      { cwd: REPOSITORY_ROOT, stdio: "pipe" },
+      { cwd: REPOSITORY_ROOT },
     );
+    await writeFile(resolvePath(temporaryOutDir, COMPLETION_MARKER), "complete\n");
+    try {
+      await rename(temporaryOutDir, outDir);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        (error.code !== "EEXIST" && error.code !== "ENOTEMPTY")
+      ) {
+        throw error;
+      }
+      await rm(temporaryOutDir, { force: true, recursive: true });
+      if (!(await pathExists(marker))) return undefined;
+    }
   } catch {
+    await rm(temporaryOutDir, { force: true, recursive: true });
     return undefined;
   }
-  return existsSync(resolvePath(outDir, "ui.js")) ? outDir : undefined;
+  return (await pathExists(resolvePath(outDir, "ui.js"))) ? outDir : undefined;
 }
 
-export const ZENTUI_BUILD = compileZentui();
+export const ZENTUI_BUILD = await compileZentui();
 export const SKIP_WITHOUT_ZENTUI = ZENTUI_BUILD
   ? false
   : "choco-pi-ui could not be compiled for tests";
@@ -91,7 +148,7 @@ function registerBuildHooks(buildDirectory: string): void {
         fileURLToPath(parent).startsWith(buildDirectory)
       ) {
         const target = resolvePath(dirname(fileURLToPath(parent)), specifier);
-        if (!existsSync(target) && existsSync(`${target}.js`)) {
+        if (extname(target) === "") {
           return { url: pathToFileURL(`${target}.js`).href, shortCircuit: true };
         }
       }
