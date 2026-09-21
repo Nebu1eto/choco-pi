@@ -108,25 +108,26 @@ Pi의 내장 `grep` 도구는 비활성화되어 있습니다. 소스 탐색은 
 
 ## 설치된 패키지
 
-[`.pi/settings.json`](.pi/settings.json)은 다음 로컬 패키지 15개를 불러옵니다.
+[`.pi/settings.json`](.pi/settings.json)은 다음 로컬 패키지 16개를 불러옵니다.
 
-| 패키지                                                                    |           버전 | 용도                                        |
-| ------------------------------------------------------------------------- | -------------: | ------------------------------------------- |
-| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic 공급자, 인증, 사용량, 검색        |
-| [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 |          0.1.0 | TUI, 상태 표시줄, 환경 설정, Nord 테마      |
-| [`choco-pi-shells`](.pi/packages/choco-pi-shells)                         |          0.1.0 | 소유자별 백그라운드 셸 프로세스             |
-| [`choco-pi-hooks`](.pi/packages/choco-pi-hooks)                           |          0.1.0 | Claude Code 호환 생명주기 훅                |
-| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   |          0.1.0 | 서브 에이전트, 작업 절차, 세션, fleet UI    |
-| [`choco-pi-advisor`](.pi/packages/choco-pi-advisor)                       |          0.1.0 | 서브 에이전트를 통한 읽기 전용 advisor 자문 |
-| [`choco-pi-editor-context`](.pi/packages/choco-pi-editor-context)         |          0.1.0 | 에디터 컨텍스트 프로토콜, 저장, 주입        |
-| [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |          0.1.0 | Codex 형태의 지속형 goal                    |
-| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | 지연 로딩 MCP 서버, Figma 도구, elicitation |
-| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, 구조 분석, 시맨틱 도구           |
-| [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |          0.1.0 | Codex 도구, Code Mode, Responses compaction |
-| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   |          0.1.0 | 하위 `AGENTS.md` 지침 로딩                  |
-| [`choco-pi-web-access`](.pi/packages/choco-pi-web-access)                 | 0.24.1-choco.0 | 웹 검색, 출처 검증, 콘텐츠 추출             |
-| [`choco-pi-agent-browser`](.pi/packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | 네이티브 브라우저 자동화 도구               |
-| [`choco-pi-computer-use`](.pi/packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS 데스크톱 확인 및 조작                 |
+| 패키지                                                                    |           버전 | 용도                                             |
+| ------------------------------------------------------------------------- | -------------: | ------------------------------------------------ |
+| [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic 공급자, 인증, 사용량, 검색             |
+| [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 |          0.1.0 | TUI, 상태 표시줄, 환경 설정, Nord 테마           |
+| [`choco-pi-shells`](.pi/packages/choco-pi-shells)                         |          0.1.0 | 소유자별 백그라운드 셸 프로세스                  |
+| [`choco-pi-hooks`](.pi/packages/choco-pi-hooks)                           |          0.1.0 | Claude Code 호환 생명주기 훅                     |
+| [`choco-pi-subagents`](.pi/packages/choco-pi-subagents)                   |          0.1.0 | 서브 에이전트, 작업 절차, 세션, fleet UI         |
+| [`choco-pi-advisor`](.pi/packages/choco-pi-advisor)                       |          0.1.0 | 서브 에이전트를 통한 읽기 전용 advisor 자문      |
+| [`choco-pi-editor-context`](.pi/packages/choco-pi-editor-context)         |          0.1.0 | 에디터 컨텍스트 프로토콜, 저장, 주입             |
+| [`choco-pi-goal`](.pi/packages/choco-pi-goal)                             |          0.1.0 | Codex 형태의 지속형 goal                         |
+| [`choco-pi-mcp`](.pi/packages/choco-pi-mcp)                               |          0.1.0 | 지연 로딩 MCP 서버, Figma 도구, elicitation      |
+| [`choco-pi-lsp`](.pi/packages/choco-pi-lsp)                               |          0.1.0 | LSP, lint, 구조 분석, 시맨틱 도구                |
+| [`choco-pi-compaction`](.pi/packages/choco-pi-compaction)                 |          0.1.0 | 유지된 최근 메시지와 대조한 로컬 compaction 요약 |
+| [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |          0.1.0 | Codex 도구, Code Mode, Responses compaction      |
+| [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   |          0.1.0 | 하위 `AGENTS.md` 지침 로딩                       |
+| [`choco-pi-web-access`](.pi/packages/choco-pi-web-access)                 | 0.24.1-choco.0 | 웹 검색, 출처 검증, 콘텐츠 추출                  |
+| [`choco-pi-agent-browser`](.pi/packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | 네이티브 브라우저 자동화 도구                    |
+| [`choco-pi-computer-use`](.pi/packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS 데스크톱 확인 및 조작                      |
 
 ## 설정과 사용자화
 
@@ -153,7 +154,21 @@ Pi는 `cacheWarming`을 `~/.pi/agent/settings.json`에서만 읽으며 프로젝
 {
   "packages": [
     "/path/to/choco-pi/.pi/packages/choco-pi-provider-synthetic",
-    "/path/to/choco-pi/.pi/packages/choco-pi-ui"
+    "/path/to/choco-pi/.pi/packages/choco-pi-ui",
+    "/path/to/choco-pi/.pi/packages/choco-pi-shells",
+    "/path/to/choco-pi/.pi/packages/choco-pi-hooks",
+    "/path/to/choco-pi/.pi/packages/choco-pi-subagents",
+    "/path/to/choco-pi/.pi/packages/choco-pi-advisor",
+    "/path/to/choco-pi/.pi/packages/choco-pi-goal",
+    "/path/to/choco-pi/.pi/packages/choco-pi-mcp",
+    "/path/to/choco-pi/.pi/packages/choco-pi-lsp",
+    "/path/to/choco-pi/.pi/packages/choco-pi-compaction",
+    "/path/to/choco-pi/.pi/packages/choco-pi-codex",
+    "/path/to/choco-pi/.pi/packages/choco-pi-agents-md",
+    "/path/to/choco-pi/.pi/packages/choco-pi-web-access",
+    "/path/to/choco-pi/.pi/packages/choco-pi-agent-browser",
+    "/path/to/choco-pi/.pi/packages/choco-pi-computer-use",
+    "/path/to/choco-pi/.pi/packages/choco-pi-editor-context"
   ],
   "defaultProvider": "anthropic",
   "defaultModel": "claude-fable-5-1",

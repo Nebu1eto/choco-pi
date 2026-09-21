@@ -196,7 +196,21 @@ value is ignored. This example reflects the maintainer's current global file
 {
   "packages": [
     "/path/to/choco-pi/.pi/packages/choco-pi-provider-synthetic",
-    "/path/to/choco-pi/.pi/packages/choco-pi-ui"
+    "/path/to/choco-pi/.pi/packages/choco-pi-ui",
+    "/path/to/choco-pi/.pi/packages/choco-pi-shells",
+    "/path/to/choco-pi/.pi/packages/choco-pi-hooks",
+    "/path/to/choco-pi/.pi/packages/choco-pi-subagents",
+    "/path/to/choco-pi/.pi/packages/choco-pi-advisor",
+    "/path/to/choco-pi/.pi/packages/choco-pi-goal",
+    "/path/to/choco-pi/.pi/packages/choco-pi-mcp",
+    "/path/to/choco-pi/.pi/packages/choco-pi-lsp",
+    "/path/to/choco-pi/.pi/packages/choco-pi-compaction",
+    "/path/to/choco-pi/.pi/packages/choco-pi-codex",
+    "/path/to/choco-pi/.pi/packages/choco-pi-agents-md",
+    "/path/to/choco-pi/.pi/packages/choco-pi-web-access",
+    "/path/to/choco-pi/.pi/packages/choco-pi-agent-browser",
+    "/path/to/choco-pi/.pi/packages/choco-pi-computer-use",
+    "/path/to/choco-pi/.pi/packages/choco-pi-editor-context"
   ],
   "defaultProvider": "anthropic",
   "defaultModel": "claude-fable-5-1",
