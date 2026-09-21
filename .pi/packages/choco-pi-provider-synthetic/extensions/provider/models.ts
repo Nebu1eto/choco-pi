@@ -5,7 +5,8 @@
 // model-specific compatibility settings (thinkingLevelMap, compat). The live
 // API exposes per-model effort values via reasoning_parameters.efforts, which
 // the API/store model builders translate into thinkingLevelMap entries; the
-// static maps below only apply when that field is absent (offline fallback).
+// static maps below apply when that field is absent (offline fallback), except
+// for explicit compatibility overrides applied after API/store translation.
 // cacheRead stores the price reported by the API's input_cache_reads field
 // directly.
 
@@ -167,7 +168,8 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     maxTokens: 65536,
   },
   // API: hf:zai-org/GLM-5.3-Flash → ctx=524288, out=65536
-  // API efforts: ['low', 'high', 'max'] — reasoning is always on, so off is hidden.
+  // API efforts: ['low', 'high', 'max'] — reasoning is always on; off and the
+  // unreliable low effort are intentionally hidden.
   {
     id: "hf:zai-org/GLM-5.3-Flash",
     name: "zai-org/GLM-5.3-Flash",
@@ -175,7 +177,7 @@ export const SYNTHETIC_MODELS: SyntheticModel[] = [
     thinkingLevelMap: {
       off: null,
       minimal: null,
-      low: "low",
+      low: null,
       medium: null,
       high: "high",
       xhigh: null,
@@ -443,17 +445,32 @@ function finalizeModel(model: SyntheticModel): SyntheticModel {
   return applyDefaultCompat(model);
 }
 
+const THINKING_LEVEL_MAP_OVERRIDES = new Map<
+  string,
+  Partial<NonNullable<SyntheticModel["thinkingLevelMap"]>>
+>([
+  // Direct API probes on 2026-09-21 showed low can exhaust output on reasoning
+  // or stop with empty content, despite being advertised by the live catalog.
+  ["hf:zai-org/GLM-5.3-Flash", { low: null }],
+]);
+
 function mergeWithStaticOverride(
   apiModel: SyntheticModel,
   override: SyntheticModel | undefined,
 ): SyntheticModel {
   if (!override) return apiModel;
 
+  const translatedThinkingLevelMap = apiModel.thinkingLevelMap ?? override.thinkingLevelMap;
+  const thinkingLevelMapOverride = THINKING_LEVEL_MAP_OVERRIDES.get(apiModel.id);
+
   return {
     ...apiModel,
-    // API-sourced efforts win; the static map is a fallback for models whose
-    // API entries do not declare reasoning_parameters (offline catalogs).
-    thinkingLevelMap: apiModel.thinkingLevelMap ?? override.thinkingLevelMap,
+    // API-sourced efforts normally win. Explicit compatibility overrides are
+    // applied last so live refreshes and cached catalogs cannot restore them.
+    thinkingLevelMap:
+      translatedThinkingLevelMap && thinkingLevelMapOverride
+        ? { ...translatedThinkingLevelMap, ...thinkingLevelMapOverride }
+        : translatedThinkingLevelMap,
     compat: {
       ...apiModel.compat,
       ...override.compat,

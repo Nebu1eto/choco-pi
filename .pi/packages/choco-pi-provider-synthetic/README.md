@@ -94,9 +94,10 @@ levels that the API does not advertise. Its offline catalog currently maps:
 - `syn:small:text`, `hf:openai/gpt-oss-120b`, `hf:zai-org/GLM-4.7-Flash`, and
   `hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4`: off, low, medium, and
   high.
-- `syn:large:vision`, `hf:zai-org/GLM-5.3-Flash`, and
-  `hf:moonshotai/Kimi-K3`: low, high, and max. These models do not advertise
-  an off effort.
+- `syn:large:vision` and `hf:moonshotai/Kimi-K3`: low, high, and max. These
+  models do not advertise an off effort.
+- `hf:zai-org/GLM-5.3-Flash`: high and max. Its advertised low effort is hidden
+  because direct probes returned empty content or failed to complete.
 - `syn:small:vision` and `hf:Qwen/Qwen3.8-27B`: low, medium, and xhigh. These
   models do not advertise an off effort.
 
