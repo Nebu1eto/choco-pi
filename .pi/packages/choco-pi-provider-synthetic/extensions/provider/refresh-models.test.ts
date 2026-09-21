@@ -74,7 +74,7 @@ const apiModel: SyntheticApiModel = {
   id: "syn:large:text",
   name: "syn:large:text",
   provider: "synthetic",
-  hugging_face_id: "zai-org/GLM-5.2",
+  hugging_face_id: "deepseek-ai/DeepSeek-V4.1-Flash",
   input_modalities: ["text"],
   output_modalities: ["text"],
   context_length: 524288,

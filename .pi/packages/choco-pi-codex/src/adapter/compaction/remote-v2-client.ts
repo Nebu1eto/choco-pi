@@ -5,10 +5,10 @@ import { Value } from "typebox/value";
 import {
   type Api,
   type AssistantMessage,
-  type Context,
   type Model,
   type SimpleStreamOptions,
   type Transport,
+  type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { NativeCompactionRuntime } from "./compaction-runtime.ts";
@@ -41,7 +41,7 @@ import type { CodexCompactionDiagnostic } from "./diagnostics.ts";
 const MAX_STREAM_RETRIES = 2;
 type V2Stream = (
   model: Model<Api>,
-  context: Context,
+  context: TranscriptContext,
   options?: SimpleStreamOptions,
 ) => AsyncIterable<BoundaryValue>;
 
@@ -71,7 +71,7 @@ export type RemoteCompactionV2Usage = {
 export type ExecuteRemoteCompactionV2Options = {
   runtime: NativeCompactionRuntime;
   modelRegistry: ModelRegistry;
-  context: Context;
+  context: TranscriptContext;
   promptInput: readonly ResponsesInputItem[];
   requestOptions: NativeCompactionRequestOptions;
   tokensBefore: number;

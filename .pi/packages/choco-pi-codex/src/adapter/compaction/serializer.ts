@@ -19,11 +19,14 @@ import type {
   Model,
   TextContent,
   ToolResultMessage,
+  Tool,
   UserMessage,
 } from "@earendil-works/pi-ai";
+import { normalizeContext, resolveTranscript } from "@earendil-works/pi-ai";
 import {
   CODEX_TOOL_CALL_PROVIDERS,
   convertResponsesMessages,
+  splitDeferredTools,
 } from "../../providers/openai-responses/shared.ts";
 import { isCodexTransportModel } from "../prompt/codex-model.ts";
 import { isProviderContextExcludedMessage } from "../prompt/context-filter.ts";
@@ -120,6 +123,8 @@ export type SerializeResponsesMessagesOptions = {
   includeInstructionsInInput?: boolean | undefined;
   blockImages?: boolean | undefined;
   grammarToolInputProperties?: ReadonlyMap<string, string> | undefined;
+  leadingSystemHandled?: boolean | undefined;
+  baselineTools?: readonly Tool[] | undefined;
 };
 
 export type ResponsesParityReport = {
@@ -128,6 +133,14 @@ export type ResponsesParityReport = {
   expected: string[];
   mismatches: string[];
 };
+
+interface ResponsesModelCompat {
+  supportsAdditionalTools?: boolean | undefined;
+  supportsToolSearch?: boolean | undefined;
+  supportsMidConvoSystemMessages?: boolean | undefined;
+}
+
+const ResponsesModelCompatSchema = Type.Unsafe<ResponsesModelCompat>({ type: "object" });
 
 function isRecord(value: BoundaryValue): value is JsonObject {
   return Value.Check(JsonObjectSchema, value);
@@ -204,24 +217,44 @@ export function serializeMessagesToResponsesInput<TApi extends Api>(
     isCodexTransportModel(model) && !CODEX_TOOL_CALL_PROVIDERS.has(model.provider)
       ? new Set([...CODEX_TOOL_CALL_PROVIDERS, model.provider])
       : CODEX_TOOL_CALL_PROVIDERS;
-  // SAFETY: convertResponsesMessages is the provider serializer and returns Responses API input items for this model.
-  return convertResponsesMessages(
-    model,
-    {
+  const compat = Value.Check(ResponsesModelCompatSchema, model.compat) ? model.compat : undefined;
+  const supportsMidConvoSystemMessages = compat?.supportsMidConvoSystemMessages;
+  const deferredToolsMode = compat?.supportsAdditionalTools
+    ? "additional-tools"
+    : compat?.supportsToolSearch
+      ? "tool-search"
+      : undefined;
+  const context = resolveTranscript(
+    normalizeContext({
       messages: llmMessages,
       ...conditionalProperties(
         Boolean(options.includeInstructionsInInput && options.instructions),
         { systemPrompt: options.instructions },
       ),
-    },
-    allowedToolCallProviders,
-    {
-      includeSystemPrompt: options.includeInstructionsInInput ?? false,
-      ...conditionalProperties(Boolean(options.grammarToolInputProperties), {
-        grammarToolInputProperties: options.grammarToolInputProperties,
-      }),
-    },
-  ) as ResponsesInputItem[];
+    }),
+    supportsMidConvoSystemMessages,
+  );
+  const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
+  const baselineToolNames = new Set(options.baselineTools?.map((tool) => tool.name) ?? []);
+  const deferredTools =
+    options.leadingSystemHandled === false
+      ? new Map(
+          [...toolPlacement.immediate, ...toolPlacement.deferred.values()]
+            .filter((tool) => !baselineToolNames.has(tool.name))
+            .map((tool) => [tool.name, tool]),
+        )
+      : toolPlacement.deferred;
+  // SAFETY: convertResponsesMessages is the provider serializer and returns Responses API input items for this model.
+  return convertResponsesMessages(model, context, allowedToolCallProviders, {
+    includeSystemPrompt: options.includeInstructionsInInput ?? false,
+    leadingSystemHandled: options.leadingSystemHandled,
+    supportsMidConvoSystemMessages,
+    deferredTools,
+    deferredToolsMode,
+    ...conditionalProperties(Boolean(options.grammarToolInputProperties), {
+      grammarToolInputProperties: options.grammarToolInputProperties,
+    }),
+  }) as ResponsesInputItem[];
 }
 
 export function createResponsesInputParitySignature(input: readonly BoundaryValue[]): string[] {

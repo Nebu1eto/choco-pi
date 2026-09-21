@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import {
   type CommandHost,
@@ -38,14 +38,16 @@ function goalHost(): CommandHost {
 function commandFixture(copyResult: Promise<ClipboardCopyResult>) {
   const lifecycle = new Map<"session_start" | "session_shutdown", () => void>();
   let handler: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
+  const on = ((event: string, callback: (...args: never[]) => void) => {
+    if (event === "session_start" || event === "session_shutdown") {
+      lifecycle.set(event, () => {
+        callback();
+      });
+    }
+    return () => {};
+  }) satisfies ExtensionAPI["on"];
   const pi: GoalCommandPi = {
-    on(event, callback) {
-      if (event === "session_start" || event === "session_shutdown") {
-        // SAFETY: registerGoalCommand installs argument-independent handlers for these two events;
-        // the fixture records only those handlers and invokes them without host event/context values.
-        lifecycle.set(event, callback as () => void);
-      }
-    },
+    on,
     registerCommand(_name, options) {
       handler = options.handler;
     },

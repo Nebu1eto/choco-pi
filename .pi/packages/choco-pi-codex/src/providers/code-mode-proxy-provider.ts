@@ -2,8 +2,9 @@ import {
   createAssistantMessageEventStream,
   type Api,
   type AssistantMessage,
-  type Context,
+  getDeclaredTools,
   type Model,
+  type TranscriptContext,
   type ProviderHeaders,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
@@ -111,7 +112,7 @@ async function reportErrorResponse<TApi extends Api, TError>(
 
 export function streamCodeModeResponsesProxy<TApi extends Api>(
   model: Model<TApi>,
-  context: Context,
+  context: TranscriptContext,
   options?: SimpleStreamOptions,
 ) {
   const stream = createAssistantMessageEventStream();
@@ -138,7 +139,10 @@ export function streamCodeModeResponsesProxy<TApi extends Api>(
         loadResponsesLite(),
         loadStreamEvents(),
       ]);
-      const grammarToolInputProperties = createGrammarToolInputProperties(context.tools, true);
+      const grammarToolInputProperties = createGrammarToolInputProperties(
+        getDeclaredTools(context.messages),
+        true,
+      );
       const effectiveOptions = { ...options, grammarToolInputProperties };
       let headers = mergeHeaders(model.headers, options?.headers);
       let body: ResponsesBody = buildRequestBody(model, context, effectiveOptions);

@@ -12,7 +12,10 @@ import {
   registerSessionReplacementEvents,
 } from "../src/extension/events.ts";
 import { withLiveCtx } from "../src/extension/live-context.ts";
-import { createCodexExtensionRuntime } from "../src/extension/runtime.ts";
+import {
+  captureSessionOwnedKeepaliveRequest,
+  createCodexExtensionRuntime,
+} from "../src/extension/runtime.ts";
 import {
   installRegisteredToolCapture,
   registeredToolRunner,
@@ -38,6 +41,24 @@ function extensionApiFixture(): ExtensionAPI {
 function contextFixture(isIdle: () => boolean, notify: () => void): ExtensionContext {
   return reinterpretHostValue<ExtensionContext>({ isIdle, ui: { notify } });
 }
+
+test("a clone payload cannot replace the parent's keepalive request", () => {
+  const parent = reinterpretHostValue<Parameters<typeof captureSessionOwnedKeepaliveRequest>[2]>({
+    model: "parent-model",
+    input: [{ role: "user", content: "parent" }],
+    client_metadata: { session_id: "parent" },
+  });
+  const clone = reinterpretHostValue<Parameters<typeof captureSessionOwnedKeepaliveRequest>[2]>({
+    model: "parent-model",
+    input: [{ role: "user", content: "clone-one-tool" }],
+    tools: [{ name: "Agent" }],
+    client_metadata: { session_id: "clone" },
+  });
+  const capturedParent = captureSessionOwnedKeepaliveRequest(undefined, "parent", parent);
+  const afterClone = captureSessionOwnedKeepaliveRequest(capturedParent, "parent", clone);
+
+  assert.deepEqual(afterClone, parent);
+});
 
 test("session_start resets only the transport lane for the starting session", async () => {
   const handlers = new Map<string, RegisteredHandler>();

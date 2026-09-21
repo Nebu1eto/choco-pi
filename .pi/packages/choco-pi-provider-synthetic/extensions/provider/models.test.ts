@@ -77,6 +77,27 @@ function compareModels(
       });
     }
 
+    if (apiModel.reasoning_parameters) {
+      const efforts = new Set(apiModel.reasoning_parameters.efforts);
+      const apiThinkingLevelMap = {
+        off: efforts.has("none") ? "none" : null,
+        minimal: efforts.has("minimal") ? "minimal" : null,
+        low: efforts.has("low") ? "low" : null,
+        medium: efforts.has("medium") ? "medium" : null,
+        high: efforts.has("high") ? "high" : null,
+        xhigh: efforts.has("xhigh") ? "xhigh" : null,
+        max: efforts.has("max") ? "max" : null,
+      };
+      if (JSON.stringify(apiThinkingLevelMap) !== JSON.stringify(hardcoded.thinkingLevelMap)) {
+        discrepancies.push({
+          model: hardcoded.id,
+          field: "thinkingLevelMap",
+          hardcoded: hardcoded.thinkingLevelMap,
+          api: apiThinkingLevelMap,
+        });
+      }
+    }
+
     const apiInputCost = parseApiPrice(apiModel.pricing.prompt);
     const epsilon = 0.001;
     if (Math.abs(apiInputCost - hardcoded.cost.input) > epsilon) {
@@ -279,14 +300,8 @@ describe("Synthetic models", () => {
       const hardcoded = SYNTHETIC_MODELS.find((m) => m.id === apiModel.id);
       if (!hardcoded?.reasoning || !apiModel.reasoning_parameters) continue;
       const efforts = apiModel.reasoning_parameters.efforts;
-      // Kimi-K3 rejects "none" upstream and cannot disable reasoning, so its
-      // static map hides off; everything else maps "none" to off verbatim.
       const expected = {
-        off: efforts.includes("none")
-          ? "none"
-          : String(apiModel.hugging_face_id ?? apiModel.id).includes("Kimi")
-            ? null
-            : "none",
+        off: efforts.includes("none") ? "none" : null,
         minimal: efforts.includes("minimal") ? "minimal" : null,
         low: efforts.includes("low") ? "low" : null,
         medium: efforts.includes("medium") ? "medium" : null,

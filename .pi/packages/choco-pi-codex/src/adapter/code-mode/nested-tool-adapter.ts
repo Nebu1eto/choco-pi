@@ -1,13 +1,31 @@
 import { conditionalProperties } from "../runtime-values.ts";
 import { isBoundaryValue, JsonObjectSchema, type BoundaryValue } from "../runtime-values.ts";
 import { Value } from "typebox/value";
-import { validateToolArguments } from "@earendil-works/pi-ai";
+import { validateToolArguments, type JsonObject as PiJsonObject } from "@earendil-works/pi-ai";
 import type {
   AgentToolResult,
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
+
+const PiJsonValueSchema = Type.Cyclic(
+  {
+    JsonValue: Type.Union([
+      Type.Null(),
+      Type.Boolean(),
+      Type.Number(),
+      Type.String(),
+      Type.Array(Type.Ref("JsonValue")),
+      Type.Record(Type.String(), Type.Ref("JsonValue")),
+    ]),
+  },
+  "JsonValue",
+);
+const PiJsonObjectSchema = Type.Unsafe<PiJsonObject>({
+  type: "object",
+  additionalProperties: PiJsonValueSchema,
+});
 
 const WebRunDetailsSchema = Type.Object({ webRun: Type.Unknown() });
 
@@ -171,9 +189,13 @@ function validateBridgedArguments<TParams extends TSchema, TDetails, TState>(
 ): BridgedArguments<TParams, TDetails, TState> {
   if (Value.Check(JsonObjectSchema, prepared)) {
     try {
+      const cloned = structuredClone(prepared);
+      if (!isPiJsonObject(cloned)) {
+        return { ok: false, issues: describeSchemaIssues(tool.parameters, cloned) };
+      }
       const normalized: unknown = validateToolArguments(
         { name: tool.name, description: tool.description, parameters: tool.parameters },
-        { type: "toolCall", id: `code-mode-${tool.name}`, name: tool.name, arguments: prepared },
+        { type: "toolCall", id: `code-mode-${tool.name}`, name: tool.name, arguments: cloned },
       );
       const validated: BridgeCandidate = isBoundaryValue(normalized) ? normalized : undefined;
       if (matchesToolParameters(tool, validated)) return { ok: true, value: validated };
@@ -188,6 +210,10 @@ function validateBridgedArguments<TParams extends TSchema, TDetails, TState>(
   }
   if (matchesToolParameters(tool, prepared)) return { ok: true, value: prepared };
   return { ok: false, issues: describeSchemaIssues(tool.parameters, prepared) };
+}
+
+function isPiJsonObject(value: BoundaryValue): value is PiJsonObject {
+  return Value.Check(PiJsonObjectSchema, value);
 }
 
 function boundIssue(issue: string): string {

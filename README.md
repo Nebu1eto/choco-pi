@@ -10,7 +10,7 @@ Keep OAuth tokens, API keys, and machine-local configuration outside Git.
 
 - Node.js 24 or later
 - pnpm `11.11.0` exactly
-- Pi `0.85.1`, matching the SDK packages pinned by this checkout
+- Pi `0.86.1`, matching the SDK packages pinned by this checkout
 - Git
 - Optional: [`agent-browser`](https://github.com/vercel-labs/agent-browser) 0.34.0 for browser automation
 
@@ -22,7 +22,9 @@ installer refuses a different pnpm version before changing package trees.
 
 Clone the repository to a stable path. The profile installer records absolute
 paths into Pi's user configuration, so moving the checkout later requires
-running it again from the new location.
+running it again from the new location. First follow
+[Install Pi without Homebrew](#install-pi-without-homebrew), then install the
+profile:
 
 ```sh
 git clone https://github.com/Nebu1eto/choco-pi.git
@@ -30,13 +32,37 @@ cd choco-pi
 
 npm install --global pnpm@11.11.0
 pnpm --version
-npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
 
 pnpm install --frozen-lockfile --ignore-scripts
 npm run install:vendored
 npm run install:profile
 pi
 ```
+
+### Install Pi without Homebrew
+
+Homebrew's `pi-coding-agent` formula lags the supported release. Install Pi in
+a versioned local prefix instead:
+
+```sh
+npm install --prefix ~/.local/pi-0.86.1 --ignore-scripts @earendil-works/pi-coding-agent@0.86.1
+```
+
+Create an executable shim at `~/.local/pi-shim/pi`:
+
+```sh
+#!/bin/sh
+PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-0.86.1/node_modules/.bin/pi" "$@"
+```
+
+Place the shim before `/opt/homebrew/bin` in your shell configuration:
+
+```sh
+export PATH="$HOME/.local/pi-shim:$PATH"
+```
+
+Pi 0.86.1's `cli.js` launcher enables Node's compile cache. When diagnosing
+unusual module-load errors, set `NODE_DISABLE_COMPILE_CACHE=1` to disable it.
 
 When Pi opens, run `/login` and select a provider. The installation scripts do
 not authenticate, open a login flow, or copy credentials into the repository.

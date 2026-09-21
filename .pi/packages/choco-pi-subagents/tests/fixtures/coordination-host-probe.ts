@@ -8,6 +8,7 @@ import {
   type AssistantMessage,
   type Context,
   type ImageContent,
+  type JsonObject,
   type Model,
   type TextContent,
   type ThinkingContent,
@@ -35,7 +36,7 @@ const CompletedEventSchema = Type.Object({
 type TraceValue = string | number | boolean | undefined;
 type Deferred = { promise: Promise<void>; resolve: () => void };
 type MessageContent = string | (TextContent | ImageContent | ThinkingContent | ToolCall)[];
-interface AgentArguments {
+interface AgentArguments extends JsonObject {
   prompt: string;
   description: string;
   name: string;
@@ -48,12 +49,12 @@ interface AgentArguments {
   run_in_background: boolean;
   isolated: boolean;
 }
-interface AgentMessageArguments {
+interface AgentMessageArguments extends JsonObject {
   to: string;
   message: string;
   type: string;
 }
-interface BarrierArguments {
+interface BarrierArguments extends JsonObject {
   agent_id: string;
 }
 type FixtureToolArguments = AgentArguments | AgentMessageArguments | BarrierArguments;

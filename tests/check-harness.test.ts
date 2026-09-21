@@ -34,21 +34,21 @@ function fixture(overrides: Partial<HarnessOptions> = {}) {
         return value;
       },
       pathExists: async () => true,
-      runCommand: async () => ({ status: 0, stdout: "0.85.1\n", stderr: "" }),
+      runCommand: async () => ({ status: 0, stdout: "0.86.1\n", stderr: "" }),
       ...overrides,
     },
   };
 }
 
 test("Pi readiness requires exactly the supported SDK release", async () => {
-  for (const version of ["0.84.2", "0.85.0", "0.85.1", "0.85.2", "0.85.1-rc.1", "garbage"]) {
+  for (const version of ["0.85.1", "0.86.0", "0.86.1", "0.86.2", "0.86.1-rc.1", "garbage"]) {
     const { options } = fixture({
       runCommand: async () => ({ status: 0, stdout: `${version}\n`, stderr: "" }),
     });
     const report = await checkHarness(options);
     assert.equal(
       report.checks.find((check) => check.id === "pi")?.status,
-      version === "0.85.1" ? "pass" : "fail",
+      version === "0.86.1" ? "pass" : "fail",
       version,
     );
   }
@@ -83,6 +83,32 @@ test("full check preserves every capability failure", async () => {
   assert.equal(report.requiredCapabilities, "all");
   for (const id of ["tui-mode", "subagents", "resources", "choco-pi-lsp"]) {
     assert.equal(report.checks.find((check) => check.id === id)?.status, "fail");
+  }
+});
+
+test("subagent readiness accepts only supported fallback roles", async () => {
+  for (const [fallbackSubagent, expected] of [
+    ["general", "pass"],
+    ["other", "fail"],
+  ] as const) {
+    const { options } = fixture({
+      requiredCapabilities: ["subagents"],
+      readText: async (target) => {
+        if (target === path.join(root, "settings.json")) {
+          return JSON.stringify({ packages: [], tuiMode: "inline" });
+        }
+        if (target === path.join(root, "subagents.json")) {
+          return JSON.stringify({ disableDefaultAgents: true, fallbackSubagent });
+        }
+        if (target.startsWith(path.join(root, "agents"))) {
+          return "---\ndefault_model: test/model\ndefault_thinking: medium\n---\n";
+        }
+        throw new Error(`missing fixture: ${target}`);
+      },
+    });
+    const report = await checkHarness(options);
+
+    assert.equal(report.checks.find((check) => check.id === "subagents")?.status, expected);
   }
 });
 

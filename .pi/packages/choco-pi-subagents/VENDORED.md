@@ -866,8 +866,16 @@ it does not migrate or change the package's Pi SDK compatibility.
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.85.1`, matching the harness target. Package-local frozen
+require exactly `0.86.1`, matching the harness target. Package-local frozen
 locks resolve that release, with release-age exceptions
-limited to the six exact SDK/chord/telemetry `0.85.1` packages and the existing
+limited to the six exact SDK/chord/telemetry `0.86.1` packages and the existing
 `typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
 installer-policy change; unrelated dependency contracts are unchanged.
+
+## 2026-09-21 choco-pi patch: Pi 0.86.1 transcript migration
+
+Mention cloning now reads the parent prompt with `getCurrentSystemPrompt`,
+excludes system messages from cloned history, and installs the prompt through
+`DefaultResourceLoader.systemPromptOverride`; Pi 0.86.1 exposes
+`AgentState.systemPrompt` as a getter. Test fixtures now use `JsonObject` tool
+arguments.

@@ -100,7 +100,7 @@ dependency graph.
 
 This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
 isolated one-package workspace boundary. The installer-policy change originally
-preserved SDK overrides (subsequently aligned to `0.85.1` below) plus the
+preserved SDK overrides (subsequently aligned to `0.86.1` below) plus the
 repository's `typebox@1.3.29` release-age exception. The
 legacy manifest-level pnpm override block was moved here because pnpm 11 reads
 workspace-root overrides. This is installer configuration only; it does not
@@ -109,8 +109,18 @@ migrate or change the package's Pi SDK compatibility.
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.85.1`, matching the harness target. Package-local frozen
+require exactly `0.86.1`, matching the harness target. Package-local frozen
 locks resolve that release, with release-age exceptions
-limited to the six exact SDK/chord/telemetry `0.85.1` packages and the existing
+limited to the six exact SDK/chord/telemetry `0.86.1` packages and the existing
 `typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
 installer-policy change; unrelated dependency contracts are unchanged.
+
+## 2026-09-21 choco-pi patch: Pi 0.86.1 transcript migration
+
+The fallback and override catalog was refreshed from the live Synthetic API.
+GLM-5.3-Flash replaces GLM-5.2, Qwen3.8-27B replaces Qwen3.6-27B, and
+DeepSeek-V4.1-Flash is added. The catalog now records the API's current effort
+levels, including `xhigh`, together with current prices, input modalities,
+context windows, and output limits.
+
+Observed on 2026-09-21: `hf:zai-org/GLM-5.3-Flash` at `low` effort can spend its entire output budget on reasoning and return empty content for short prompts; `high` and the provider default answered normally. The level stays mapped because the API declares it.

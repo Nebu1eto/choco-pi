@@ -1,5 +1,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { Api, Context, Model } from "@earendil-works/pi-ai";
+import {
+  getDeclaredTools,
+  type Api,
+  type Model,
+  type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import {
   extractAccountId,
@@ -50,7 +55,7 @@ export type { ResponsesBody } from "./openai-codex/types.ts";
 
 async function prepareCodexRequestBody<TApi extends Api>(
   model: Model<TApi>,
-  context: Context,
+  context: TranscriptContext,
   options: OpenAICodexStreamOptions | undefined,
   responsesLite: boolean,
 ): Promise<ResponsesBody> {
@@ -76,7 +81,7 @@ async function prepareCodexRequestBody<TApi extends Api>(
 
 export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
   model: Model<TApi>,
-  context: Context,
+  context: TranscriptContext,
   options: OpenAICodexStreamOptions,
   deps: {
     getConfig?: () => CodexProviderRuntimeConfig | undefined;
@@ -85,6 +90,7 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
     getDiagnostics?: (() => CodexDiagnosticsSink | undefined) | undefined;
     preparedBody?: ResponsesBody | undefined;
     preserveContinuation?: boolean | undefined;
+    prewarmTransport?: typeof prewarmWebSocket | undefined;
   },
 ): Promise<CodexPrewarmResult | undefined> {
   const runtimeConfig = deps.getConfig?.();
@@ -98,7 +104,10 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
     deps.useResponsesLite?.(model) ??
     ((runtimeConfig?.executionMode === "code" || runtimeConfig?.executionMode === "notebook") &&
       supportsResponsesLiteModel(model.id));
-  const grammarToolInputProperties = createGrammarToolInputProperties(context.tools, responsesLite);
+  const grammarToolInputProperties = createGrammarToolInputProperties(
+    getDeclaredTools(context.messages),
+    responsesLite,
+  );
   const effectiveOptions = runtimeConfig?.compaction?.responsesCompaction
     ? {
         ...options,
@@ -136,7 +145,7 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
   );
   const diagnostics = noThrowCodexDiagnosticsSink(deps.getDiagnostics?.());
   try {
-    return await prewarmWebSocket(
+    return await (deps.prewarmTransport ?? prewarmWebSocket)(
       resolveCodexWebSocketUrl(model.baseUrl),
       websocketBody,
       headers,
@@ -182,7 +191,7 @@ function createTransportDependencies(options: OpenAICodexProviderOptions): Trans
 
 export function createOpenAICodexProviderStream<TApi extends Api>(
   model: Model<TApi>,
-  context: Context,
+  context: TranscriptContext,
   streamOptions: OpenAICodexStreamOptions | undefined,
   options: OpenAICodexProviderOptions,
 ) {

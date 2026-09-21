@@ -10,24 +10,49 @@ OAuth 토큰, API 키, 컴퓨터별 로컬 설정은 Git 밖에 보관하세요.
 
 - Node.js 24 이상
 - pnpm `11.11.0` 정확히 해당 버전
-- Pi `0.85.1` (이 체크아웃이 고정한 SDK 패키지와 동일한 버전)
+- Pi `0.86.1` (이 체크아웃이 고정한 SDK 패키지와 동일한 버전)
 - Git
 - 선택 사항: 브라우저 자동화를 위한 [`agent-browser`](https://github.com/vercel-labs/agent-browser) 0.34.0
 
 ## 빠른 시작
+
+먼저 [Homebrew를 사용하지 않고 Pi 설치](#homebrew를-사용하지-않고-pi-설치)의
+안내에 따라 Pi를 설치한 후 프로필을 설치하세요.
 
 ```sh
 git clone https://github.com/Nebu1eto/choco-pi.git
 cd choco-pi
 
 npm install --global pnpm@11.11.0
-npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
 
 pnpm install --frozen-lockfile --ignore-scripts
 npm run install:vendored
 npm run install:profile
 pi
 ```
+
+### Homebrew를 사용하지 않고 Pi 설치
+
+Homebrew의 `pi-coding-agent` formula는 지원 버전보다 늦게 갱신됩니다. 다음과 같이 버전별 로컬 경로에 Pi를 설치하세요.
+
+```sh
+npm install --prefix ~/.local/pi-0.86.1 --ignore-scripts @earendil-works/pi-coding-agent@0.86.1
+```
+
+`~/.local/pi-shim/pi` 파일을 만들고 실행 권한을 부여하세요.
+
+```sh
+#!/bin/sh
+PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-0.86.1/node_modules/.bin/pi" "$@"
+```
+
+셸 설정에서 이 shim 경로를 `/opt/homebrew/bin`보다 앞에 두세요.
+
+```sh
+export PATH="$HOME/.local/pi-shim:$PATH"
+```
+
+Pi 0.86.1의 `cli.js` 실행기는 Node 컴파일 캐시를 활성화합니다. 원인을 알 수 없는 모듈 로드 오류를 조사할 때는 `NODE_DISABLE_COMPILE_CACHE=1`로 설정해 캐시를 끌 수 있습니다.
 
 설치 프로그램은 런타임 및 인증 상태와 사용자가 추가한 패키지를 보존하고, 체크아웃의 절대 경로를 기록한 다음 추적 중인 프로필 리소스를 `~/.pi/agent`에 연결합니다.
 MCP 설정은 연결하지 않습니다. 대상 파일이 충돌하면 중단되며, `npm run install:profile -- --backup`으로 다시 실행하면 됩니다. 체크아웃은 경로가 바뀌지 않는 곳에 두세요.

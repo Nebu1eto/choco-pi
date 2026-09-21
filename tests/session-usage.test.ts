@@ -94,6 +94,15 @@ function simpleEntry(type: string, extra: Record<string, RuntimeValue> = {}): Se
   });
 }
 
+function warmingEntry(values: UsageInput): SessionEntry {
+  return simpleEntry("usage", {
+    kind: "cache_warm",
+    provider: "anthropic",
+    model: "claude-fable-5",
+    usage: usage(values),
+  });
+}
+
 test("formatTokens matches Pi's compact scale at every boundary", () => {
   assert.equal(formatTokens(0), "0");
   assert.equal(formatTokens(999), "999");
@@ -148,6 +157,20 @@ test("summarizeMainUsage counts messages and attributes cost per response model"
   );
   const other = summary.breakdown.find((entry) => entry.key === "Tools/summaries");
   assert.equal(other?.tokens, 10, "tool and compaction usage share one bucket");
+});
+
+test("summarizeMainUsage keeps cache warming outside conversation totals", () => {
+  const summary = summarizeMainUsage([
+    assistantEntry("anthropic", "claude-fable-5", { input: 100, costTotal: 1.25 }),
+    warmingEntry({ cacheRead: 100, output: 1, costTotal: 0.004 }),
+    warmingEntry({ cacheRead: 120, output: 1, costTotal: 0.006 }),
+  ]);
+
+  assert.equal(summary.totals.cost, 1.25);
+  assert.equal(summary.warming.count, 2);
+  assert.equal(summary.warming.cost, 0.01);
+  assert.equal(summary.warming.usage.cacheRead, 220);
+  assert.equal(totalTokens(summary.warming.usage), 222);
 });
 
 test("computeCacheWaste bills material full and partial cache collapse", () => {
@@ -322,7 +345,14 @@ const MAIN: MainUsage = {
     { key: "anthropic/claude-fable-5", cost: 224.121, tokens: 73_059_785 },
     { key: "Tools/summaries", cost: 1.988, tokens: 177_237 },
   ],
+  warming: {
+    count: 2,
+    usage: { input: 0, output: 2, cacheRead: 220, cacheWrite: 0, cost: 0.01 },
+    cost: 0.01,
+  },
 };
+
+const CACHE_WARMING = { summary: "off" };
 
 test("formatSessionInfo renders a concise, unstyled session summary", () => {
   const sessionFile = path.join(homedir(), ".pi", "agent", "sessions", "main.jsonl");
@@ -335,6 +365,7 @@ test("formatSessionInfo renders a concise, unstyled session summary", () => {
     cacheWaste: { missedTokens: 5_662_340, missedCost: 107.584, missCount: 37 },
     subagents: NO_SUBAGENTS,
     subagentsRunning: false,
+    cacheWarming: CACHE_WARMING,
   });
 
   assert.equal(body.split("\n")[0], "Session Info");
@@ -342,7 +373,9 @@ test("formatSessionInfo renders a concise, unstyled session summary", () => {
   assert.ok(!body.includes(sessionFile), "the full absolute session path is not shown");
   assert.match(body, /^Messages {4}504 total · 30 user · 243 assistant · 231 tool calls$/m);
   assert.match(body, /^Tokens {6}72\.7M in · 90\.6% cached · 495\.4k out$/m);
-  assert.match(body, /^Cost {8}\$226\.11 total$/m);
+  assert.match(body, /^Cache warming {2}off$/m);
+  assert.match(body, /^Warming usage {2}2 refreshes, \$0\.010$/m);
+  assert.match(body, /^Cost {8}\$226\.11 total \(excl\. warming\)$/m);
   assert.match(body, /^  main {2}claude-fable-5 {2}\$224\.12 · 73\.1M tok$/m);
   assert.match(body, /^  cache re-billed {2}\$107\.58 · 5\.7M tok · 37 misses$/m);
   assert.ok(!body.includes("\u001b"), "plain output contains no ANSI escapes");
@@ -365,11 +398,16 @@ test("formatSessionInfo separates the main agent from its sub-agents in the tota
       directories: ["/tmp/tasks"],
     },
     subagentsRunning: true,
+    cacheWarming: CACHE_WARMING,
   });
 
   assert.match(body, /^Name {8}novaid$/m);
   assert.match(body, /^File {8}In-memory$/m);
-  assert.match(body, /^Cost {8}\$425\.07 total$/m, "the total must include every sub-agent");
+  assert.match(
+    body,
+    /^Cost {8}\$425\.07 total \(excl\. warming\)$/m,
+    "the total must include every sub-agent but exclude warming",
+  );
   assert.match(body, /^  main {2}claude-fable-5 {2}\$224\.12 · 73\.1M tok$/m);
   assert.match(body, /^  sub \(35 agents; transcripts\) {2}\$198\.97 · 212\.0M tok$/m);
   assert.match(body, /^ {6}gpt-5\.6-sol {2}\$127\.67 · 178\.0M tok$/m);
@@ -397,6 +435,7 @@ test("formatSessionInfo assigns semantic roles to money and cache-hit thresholds
         cacheWaste: NO_WASTE,
         subagents: NO_SUBAGENTS,
         subagentsRunning: false,
+        cacheWarming: CACHE_WARMING,
       },
       style,
     );
@@ -423,14 +462,17 @@ test("Pi still exposes the /session handler this extension retires", () => {
 
 type SessionCommandPrototype = {
   handleSessionCommand: () => void;
+  isExtensionCommand: (text: string) => boolean;
   __chocoPiSessionCommandApplied?: boolean;
 };
 
 test("the extension points Pi's built-in /session at /status", (t) => {
   const prototype = reinterpretHostValue<SessionCommandPrototype>(InteractiveMode.prototype);
   const original = prototype.handleSessionCommand;
+  const originalIsExtensionCommand = prototype.isExtensionCommand;
   t.after(() => {
     prototype.handleSessionCommand = original;
+    prototype.isExtensionCommand = originalIsExtensionCommand;
     prototype.__chocoPiSessionCommandApplied = undefined;
   });
 
@@ -449,7 +491,11 @@ test("the extension points Pi's built-in /session at /status", (t) => {
 
   const prompts: string[] = [];
   prototype.handleSessionCommand.call({
-    session: { prompt: async (text: string) => void prompts.push(text) },
+    session: {
+      cacheWarmingStatus: undefined,
+      prompt: async (text: string) => void prompts.push(text),
+    },
+    settingsManager: { getCacheWarmingMode: () => "off" },
   });
   assert.deepEqual(prompts, ["/status"]);
 });

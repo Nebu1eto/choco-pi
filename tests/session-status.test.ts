@@ -8,11 +8,86 @@ import {
   condenseStatusRows,
   describePath,
   formatStatus,
+  formatCacheWarming,
   lookupModelRecord,
   normalizePackageKey,
   parseAgentFrontmatter,
   summarizeStatusRows,
 } from "../.pi/extensions/session-status.ts";
+
+test("formatCacheWarming renders actual state before decision explanations", () => {
+  assert.equal(formatCacheWarming({ mode: "off", status: undefined }), "off");
+  assert.equal(
+    formatCacheWarming(
+      {
+        mode: "idle",
+        status: {
+          state: "scheduled",
+          nextWarmAt: 65_000,
+          decision: {
+            phase: "idle",
+            warmCost: 0.004,
+            missCost: 0.2,
+            continuationProbability: 0.75,
+            expectedSavings: 0.146,
+            economicsAvailable: true,
+            action: "warm",
+          },
+        },
+      },
+      5_000,
+    ),
+    "idle · Decision in 1m (75% continuation, expected savings $0.146 -> warm)",
+  );
+  assert.equal(
+    formatCacheWarming(
+      {
+        mode: "streaming",
+        status: {
+          state: "scheduled",
+          nextWarmAt: 3_200_000,
+          decision: {
+            phase: "streaming",
+            warmCost: 0.003,
+            missCost: 0.029,
+            continuationProbability: 1,
+            expectedSavings: 0.029,
+            economicsAvailable: true,
+            action: "stop",
+          },
+        },
+      },
+      5_000,
+    ),
+    "streaming · Decision in 53m 15s (100% continuation, expected savings $0.029 -> stop)",
+  );
+  assert.equal(
+    formatCacheWarming({
+      mode: "idle",
+      status: {
+        state: "refreshing",
+        decision: {
+          phase: "idle",
+          warmCost: 0.003,
+          missCost: 0.029,
+          continuationProbability: 0,
+          expectedSavings: -0.003,
+          economicsAvailable: true,
+          action: "stop",
+        },
+        extensionOverride: true,
+      },
+    }),
+    "idle · Warming cache (0% continuation, expected savings -$0.003 -> stop; extension override)",
+  );
+  assert.equal(
+    formatCacheWarming({
+      mode: "streaming",
+      status: { state: "inactive", reason: "model has no published cache lifetime" },
+    }),
+    "streaming · Inactive (model has no published cache lifetime)",
+  );
+});
 
 test("formatStatus renders multi-line values with continuation lines", () => {
   const rendered = formatStatus([

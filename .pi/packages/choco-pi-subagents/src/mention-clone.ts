@@ -61,11 +61,15 @@
  * an invisible turn with the full toolset could do invisible work.
  */
 
-import type { Model } from "@earendil-works/pi-ai";
+import { getCurrentSystemMessage, getCurrentSystemPrompt, type Model } from "@earendil-works/pi-ai";
 import {
   buildSessionContext,
   createAgentSession,
+  DefaultResourceLoader,
   type ExtensionContext,
+  type ExtensionAPI,
+  type InlineExtension,
+  getAgentDir,
   SessionManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -104,6 +108,103 @@ export interface MentionCloneResult {
   error?: string;
 }
 
+export interface MentionCloneContext {
+  messages: ReturnType<typeof buildSessionContext>["messages"];
+  systemPrompt: string;
+}
+
+/** Resolve the active branch exactly as Pi will present it to a provider. */
+interface MentionCloneContextSource {
+  sessionManager: Pick<ExtensionContext["sessionManager"], "getEntries" | "getLeafId">;
+  getSystemPrompt(): string;
+  cwd: string;
+}
+
+export function buildMentionCloneContext(ctx: MentionCloneContextSource): MentionCloneContext {
+  const conversation = buildSessionContext(
+    ctx.sessionManager.getEntries(),
+    ctx.sessionManager.getLeafId(),
+  );
+  const currentSystemMessage = getCurrentSystemMessage(conversation.messages);
+  const transcriptSystemPrompt = currentSystemMessage
+    ? getCurrentSystemPrompt(conversation.messages)
+    : undefined;
+  return {
+    systemPrompt: transcriptSystemPrompt ?? ctx.getSystemPrompt(),
+    messages: conversation.messages.filter((entry) => entry.role !== "system"),
+  };
+}
+
+interface MentionSpawnState {
+  spawned: boolean;
+}
+
+interface ParentPromptSnapshot {
+  generation: number;
+  systemPrompt: string;
+}
+
+const parentPromptSnapshots = new Map<string, ParentPromptSnapshot>();
+const mentionGenerations = new Map<string, number>();
+
+/**
+ * Record the parent's effective provider prompt for each run. `agent_start` fires after every
+ * `before_agent_start` handler has run and the session has adopted the final forced prompt, so
+ * `ctx.getSystemPrompt()` (AgentSession.systemPrompt) returns the text the provider receives
+ * regardless of the order this package loads relative to prompt-forcing extensions.
+ */
+export function registerMentionCloneParentPromptObserver(pi: ExtensionAPI): void {
+  pi.on("agent_start", (_event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    const generation = (parentPromptSnapshots.get(sessionId)?.generation ?? 0) + 1;
+    parentPromptSnapshots.set(sessionId, { generation, systemPrompt: ctx.getSystemPrompt() });
+  });
+}
+
+export function createMentionClonePromptExtension(systemPrompt: string): InlineExtension {
+  return {
+    name: "mention-clone-forced-prompt",
+    hidden: true,
+    factory: (pi) => {
+      pi.on("before_agent_start", () => ({ systemPrompt }));
+    },
+  };
+}
+
+export function createMentionCloneAgentTool(
+  agentTool: ToolDefinition,
+  ctx: ExtensionContext,
+  state: MentionSpawnState,
+): ToolDefinition {
+  return {
+    ...agentTool,
+    execute: (_cloneToolCallId, params, signal, onUpdate, _cloneCtx) => {
+      if (state.spawned) {
+        return Promise.resolve({
+          content: [
+            {
+              type: "text" as const,
+              text: "Already started an agent for this mention. Stop here.",
+            },
+          ],
+          details: undefined,
+          isError: true,
+        });
+      }
+      state.spawned = true;
+      // SAFETY: Synthetic clone calls intentionally omit the tool-call id, and the registered
+      // Agent schema accepts this wrapper's optional background flag alongside its own params.
+      return agentTool.execute(
+        undefined as never,
+        { ...(params as MentionAgentToolParams), run_in_background: true },
+        signal,
+        onUpdate,
+        ctx,
+      );
+    },
+  };
+}
+
 /**
  * A detached clone completion may use its captured session objects only while
  * the activation generation that started it is still active. ExtensionContext
@@ -124,41 +225,25 @@ export function shouldHandleMentionCloneCompletion(
 export async function runMentionClone(opts: MentionCloneOptions): Promise<MentionCloneResult> {
   const { ctx, type, message, agentTool } = opts;
 
-  let spawned = false;
-  const cloneAgentTool: ToolDefinition = {
-    ...agentTool,
-    execute: (_cloneToolCallId, params, signal, onUpdate, _cloneCtx) => {
-      // One spawn per mention. The clone has a single tool and every reason to
-      // stop after using it, but a model that decides to "also" launch a second
-      // agent would do it where nobody can see and nobody asked.
-      if (spawned) {
-        return Promise.resolve({
-          content: [
-            {
-              type: "text" as const,
-              text: "Already started an agent for this mention. Stop here.",
-            },
-          ],
-          details: undefined,
-          isError: true,
-        });
-      }
-      spawned = true;
-      // undefined tool-call id + the main ctx: see the header. Background is
-      // forced rather than left to the clone: `run_in_background` defaults to
-      // false, and a foreground agent answers through its TOOL RESULT — which
-      // here is delivered into a session that is disposed moments later, so the
-      // agent would run, appear in the widget and the fleet, and reach nobody.
-      // SAFETY: Agent tool execution accepts an absent tool-call id for this synthetic in-memory call.
-      return agentTool.execute(
-        undefined as never,
-        { ...(params as MentionAgentToolParams), run_in_background: true },
-        signal,
-        onUpdate,
-        ctx,
-      );
-    },
-  };
+  const sessionId = ctx.sessionManager.getSessionId();
+  const mentionGeneration = (mentionGenerations.get(sessionId) ?? 0) + 1;
+  mentionGenerations.set(sessionId, mentionGeneration);
+  const cwd = ctx.cwd;
+  const model = ctx.model;
+  const modelRegistry = ctx.modelRegistry;
+  // SAFETY: Supported Pi registries may expose the optional runtime field before their public facade types do.
+  const registryFacade = Object(modelRegistry) as ModelRegistryWithRuntime;
+  const parentModelRuntime = registryFacade.runtime;
+  // SAFETY: Pi 0.82+ ExtensionContext instances own this optional documented thinking level.
+  const thinkingLevel = (ctx as ContextWithThinkingLevel).thinkingLevel;
+  const conversation = buildMentionCloneContext(ctx);
+  const promptSnapshot = parentPromptSnapshots.get(sessionId);
+  const systemPrompt = promptSnapshot?.systemPrompt ?? conversation.systemPrompt;
+
+  const spawnState: MentionSpawnState = { spawned: false };
+  // One spawn per mention. The clone has a single tool and every reason to stop
+  // after using it, but a model that calls twice must not launch unseen work.
+  const cloneAgentTool = createMentionCloneAgentTool(agentTool, ctx, spawnState);
 
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
   try {
@@ -166,30 +251,45 @@ export async function runMentionClone(opts: MentionCloneOptions): Promise<Mentio
     // agent-runner.ts carries the same shim for the same reason — pass both so
     // the clone keeps the parent's providers across the supported range.
     // SAFETY: Supported Pi registries may expose the optional runtime field before their public facade types do.
-    const registryFacade = Object(ctx.modelRegistry) as ModelRegistryWithRuntime;
-    const parentModelRuntime = registryFacade.runtime;
-    // The conversation as the main session resolves it: compaction applied,
-    // branch summaries substituted.
-    const conversation = buildSessionContext(
-      ctx.sessionManager.getEntries(),
-      ctx.sessionManager.getLeafId(),
-    );
     // Pi 0.82.0 added this; below it the field is absent and the clone takes
     // the settings level instead, which is what a session that never ran
     // `/think` is on anyway. Same shim shape as `modelRuntime` below.
     // SAFETY: Pi 0.82+ ExtensionContext instances own this optional documented thinking level.
-    const thinkingLevel = (ctx as ContextWithThinkingLevel).thinkingLevel;
+    // Pi 0.86 records the prompt and its later deltas as system messages. Replay
+    // those messages for the effective prompt, falling back only for a session
+    // that has not made its first provider request and therefore has no system
+    // message yet.
+    const resourceLoader = new DefaultResourceLoader({
+      cwd,
+      agentDir: getAgentDir(),
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      extensionFactories: [createMentionClonePromptExtension(systemPrompt)],
+      // This is the SDK's supported exact-prompt construction seam. Suppress
+      // appended prompt fragments too: they are already present in the resolved
+      // parent prompt and applying them again would duplicate the baseline.
+      systemPromptOverride: () => systemPrompt,
+      appendSystemPromptOverride: () => [],
+    });
+    await runInChildSessionContext(() => resourceLoader.reload());
+    if (mentionGenerations.get(sessionId) !== mentionGeneration) {
+      return { spawned: false, error: "the parent session changed while preparing the clone" };
+    }
     // SAFETY: The compatibility-only modelRuntime and model generic match the parent session that owns both values.
     const created = await runInChildSessionContext(() =>
       createAgentSession({
-        cwd: ctx.cwd,
+        cwd,
         // Nothing about the copy is worth persisting, and an in-memory manager
         // is also what keeps the real session untouched.
-        sessionManager: SessionManager.inMemory(ctx.cwd),
-        model: ctx.model as Model<never> | undefined,
+        sessionManager: SessionManager.inMemory(cwd),
+        model: model as Model<never> | undefined,
         ...(thinkingLevel && { thinkingLevel }),
-        modelRegistry: ctx.modelRegistry,
+        modelRegistry,
         ...(parentModelRuntime !== undefined && { modelRuntime: parentModelRuntime as never }),
+        resourceLoader,
         // An allowlist naming exactly the clone's own tool. NOT `noTools:
         // "all"`, whose doc comment ("start with no tools enabled") reads like
         // it spares custom tools and does not: it resolves to an EMPTY
@@ -202,29 +302,29 @@ export async function runMentionClone(opts: MentionCloneOptions): Promise<Mentio
         customTools: [cloneAgentTool],
       } as Parameters<typeof createAgentSession>[0]),
     );
+    if (mentionGenerations.get(sessionId) !== mentionGeneration) {
+      created.session.dispose();
+      return { spawned: false, error: "the parent session changed while preparing the clone" };
+    }
     session = created.session;
 
-    // The clone rebuilds a system prompt from cwd and agentDir, which is close
-    // but not the live one — extensions contribute to it per turn. Copy the
-    // real thing, so the copy reasons under the instructions the user's model
-    // is actually working under.
-    const systemPrompt = ctx.getSystemPrompt?.();
-    if (systemPrompt) session.agent.state.systemPrompt = systemPrompt;
-
     // The conversation itself. Pushed rather than assigned so the array the
-    // session was built around stays the one it goes on using.
+    // session was built around stays the one it goes on using. System messages
+    // are omitted because their fully replayed prompt is already the clone's
+    // baseline; retaining them would apply parent deltas twice and would also
+    // import the parent's tool declarations over the one-tool clone allowlist.
     session.agent.state.messages.push(...conversation.messages);
 
     // User text first, reminder after — the order Claude Code's attachment
     // renderer produces, where the reminder trails the message it is about.
     await session.prompt(`${message}\n\n${agentMentionReminder(type)}`);
   } catch (err) {
-    return { spawned, error: err instanceof Error ? err.message : String(err) };
+    return { spawned: spawnState.spawned, error: err instanceof Error ? err.message : String(err) };
   } finally {
     session?.dispose?.();
   }
 
-  return spawned
+  return spawnState.spawned
     ? { spawned: true }
     : { spawned: false, error: "the conversation clone did not start it" };
 }

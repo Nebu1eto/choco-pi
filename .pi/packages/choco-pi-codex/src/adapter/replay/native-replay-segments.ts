@@ -1,7 +1,11 @@
 import { conditionalProperties } from "../runtime-values.ts";
 import type { BoundaryValue } from "../runtime-values.ts";
-import type { Api, Model } from "@earendil-works/pi-ai";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { getCurrentTools, type Api, type Model, type Tool } from "@earendil-works/pi-ai";
+import {
+  buildSessionContext,
+  convertToLlm,
+  type SessionEntry,
+} from "@earendil-works/pi-coding-agent";
 import type { ResponsesCompatibleRequestPayload } from "../compaction/compaction-runtime.ts";
 import type { NativeCompactionEntry } from "../compaction/types.ts";
 import {
@@ -88,13 +92,19 @@ export function findCompactionBoundaryIndex(
 export function serializeLiveTailToResponsesInput<TApi extends Api>(args: {
   model: Model<TApi>;
   entries: readonly SessionEntry[];
+  baselineEntries?: readonly SessionEntry[] | undefined;
+  baselineTools?: readonly Tool[] | undefined;
   serializationOptions?: SerializeResponsesMessagesOptions | undefined;
 }): ResponsesInputItem[] {
-  return serializeMessagesToResponsesInput(
-    args.model,
-    collectReplayMessages(args.entries),
-    args.serializationOptions,
-  );
+  return serializeMessagesToResponsesInput(args.model, collectReplayMessages(args.entries), {
+    ...args.serializationOptions,
+    leadingSystemHandled: false,
+    baselineTools:
+      args.baselineTools ??
+      getCurrentTools(
+        convertToLlm(buildSessionContext([...(args.baselineEntries ?? [])]).messages),
+      ),
+  });
 }
 
 function buildNativeReplaySegmentsInternal<TApi extends Api>(args: {

@@ -14,7 +14,7 @@ import { promisify } from "node:util";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type Capability = "tui" | "subagents" | "resources" | "lsp";
-export const PI_SDK_TARGET = "0.85.1";
+export const PI_SDK_TARGET = "0.86.1";
 type CheckStatus = "pass" | "warn" | "fail";
 
 type Check = { id: string; status: CheckStatus; detail: string };
@@ -216,7 +216,9 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     if (!isRecord(parsed)) throw new Error("subagents.json must contain an object");
     // SAFETY: isRecord above establishes the only runtime shape used from this settings object.
     const subagents = parsed as SubagentsSettings;
-    const valid = subagents.disableDefaultAgents === true && subagents.fallbackSubagent === "none";
+    const valid =
+      subagents.disableDefaultAgents === true &&
+      (subagents.fallbackSubagent === "none" || subagents.fallbackSubagent === "general");
     const roleFiles = ["general", "planner", "implementer", "reviewer", "handoff"];
     const roleResults = await Promise.all(
       roleFiles.map(async (role) => {
@@ -237,9 +239,9 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
       "subagents",
       valid && invalidRoles.length === 0 ? "pass" : "fail",
       valid && invalidRoles.length === 0
-        ? "custom roles fail closed; model and thinking defaults remain spawn-overridable"
+        ? "custom roles fail closed or fall back to general; model and thinking defaults remain spawn-overridable"
         : [
-            valid ? null : "expected disableDefaultAgents=true and fallbackSubagent=none",
+            valid ? null : "expected disableDefaultAgents=true and fallbackSubagent=none|general",
             invalidRoles.length
               ? `locked or missing role defaults: ${invalidRoles.join(", ")}`
               : null,
