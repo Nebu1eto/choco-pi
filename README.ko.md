@@ -143,6 +143,35 @@ Pi의 내장 `grep` 도구는 비활성화되어 있습니다. 소스 탐색은 
 | `~/.pi/agent/mcp.json`과 그 예시인 [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                             | 추적하지 않는 MCP 서버 및 OAuth 설정              |
 | 패키지별 [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md)와 [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) 파일 | 패키지 정책과 기록된 업스트림 변경 사항           |
 
+### 전역 설정 예시
+
+Pi는 `cacheWarming`을 `~/.pi/agent/settings.json`에서만 읽으며 프로젝트 수준 값은
+무시합니다. 아래는 관리자의 현재 전역 파일을 반영한 예시입니다(패키지 경로는 줄였고,
+비밀 값은 이 파일에 두지 않습니다):
+
+```json
+{
+  "packages": [
+    "/path/to/choco-pi/.pi/packages/choco-pi-provider-synthetic",
+    "/path/to/choco-pi/.pi/packages/choco-pi-ui"
+  ],
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-fable-5-1",
+  "defaultThinkingLevel": "low",
+  "cacheWarming": "streaming",
+  "agentLanguage": "English",
+  "agentStyle": "concise",
+  "agentPersona": "pessimistic",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "httpIdleTimeoutMs": 300000,
+  "transport": "auto"
+}
+```
+
 ## Zed에서 choco-pi 사용하기
 
 `.pi/packages/choco-pi-acp`는 Agent Client Protocol로 Zed와 choco-pi를 연결하고,
