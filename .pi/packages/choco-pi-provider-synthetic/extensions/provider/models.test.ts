@@ -3,6 +3,7 @@ import type { SyntheticApiModel } from "../../src/client/types";
 import {
   buildSyntheticProviderModels,
   buildSyntheticProviderModelsFromApi,
+  buildSyntheticProviderModelsFromStore,
   parseApiPrice,
   SYNTHETIC_MODELS,
 } from "./models";
@@ -88,6 +89,9 @@ function compareModels(
         xhigh: efforts.has("xhigh") ? "xhigh" : null,
         max: efforts.has("max") ? "max" : null,
       };
+      if (hardcoded.id === "hf:zai-org/GLM-5.3-Flash") {
+        apiThinkingLevelMap.low = null;
+      }
       if (JSON.stringify(apiThinkingLevelMap) !== JSON.stringify(hardcoded.thinkingLevelMap)) {
         discrepancies.push({
           model: hardcoded.id,
@@ -235,6 +239,40 @@ describe("Synthetic models", () => {
     expect(model.compat?.supportsReasoningEffort).toBe(true);
   });
 
+  it("keeps GLM-5.3-Flash low hidden across live and cached catalogs", () => {
+    const apiModel: SyntheticApiModel = {
+      id: "hf:zai-org/GLM-5.3-Flash",
+      name: "zai-org/GLM-5.3-Flash",
+      provider: "synthetic",
+      input_modalities: ["text", "image"],
+      output_modalities: ["text"],
+      context_length: 524288,
+      max_output_length: 65536,
+      pricing: {
+        prompt: "$0.00000015",
+        completion: "$0.0000005",
+        input_cache_reads: "$0.00000004",
+        input_cache_writes: "0",
+      },
+      supported_features: ["reasoning"],
+      reasoning_parameters: { efforts: ["low", "high", "max"] },
+    };
+
+    const liveModel = buildSyntheticProviderModelsFromApi([apiModel])[0];
+    expect(liveModel?.thinkingLevelMap).toEqual({
+      off: null,
+      minimal: null,
+      low: null,
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
+    });
+
+    const cachedModel = buildSyntheticProviderModelsFromStore([liveModel])[0];
+    expect(cachedModel?.thinkingLevelMap?.low).toBeNull();
+  });
+
   it("buildSyntheticProviderModelsFromApi maps 'none' to off and hides unlisted levels", () => {
     const apiModels: SyntheticApiModel[] = [
       {
@@ -303,7 +341,12 @@ describe("Synthetic models", () => {
       const expected = {
         off: efforts.includes("none") ? "none" : null,
         minimal: efforts.includes("minimal") ? "minimal" : null,
-        low: efforts.includes("low") ? "low" : null,
+        low:
+          apiModel.id === "hf:zai-org/GLM-5.3-Flash"
+            ? null
+            : efforts.includes("low")
+              ? "low"
+              : null,
         medium: efforts.includes("medium") ? "medium" : null,
         high: efforts.includes("high") ? "high" : null,
         xhigh: efforts.includes("xhigh") ? "xhigh" : null,

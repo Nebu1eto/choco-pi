@@ -123,4 +123,15 @@ DeepSeek-V4.1-Flash is added. The catalog now records the API's current effort
 levels, including `xhigh`, together with current prices, input modalities,
 context windows, and output limits.
 
-Observed on 2026-09-21: `hf:zai-org/GLM-5.3-Flash` at `low` effort can spend its entire output budget on reasoning and return empty content for short prompts; `high` and the provider default answered normally. The level stays mapped because the API declares it.
+Observed by direct `chat/completions` API probes on 2026-09-21:
+`hf:zai-org/GLM-5.3-Flash` with `reasoning_effort=low` returned no response
+within 240 seconds for `Reply with the single word PONG` at
+`max_tokens=65536`; at `max_tokens=4096` it ended with
+`finish_reason=length`, 4,100 reasoning tokens, and empty content; and `What is
+17*23?` at `max_tokens=65536` ended with `finish_reason=stop`, 250 reasoning
+tokens, and empty content. The same PONG probe at `high` and `max_tokens=4096`
+returned `PONG` with 33 reasoning tokens. `low` is therefore intentionally
+hidden even though the live API declares it. To re-enable it, set the static
+map entry back to `low: "low"`, remove the matching entry from
+`THINKING_LEVEL_MAP_OVERRIDES`, and restore exact live-catalog parity in the
+model test.
