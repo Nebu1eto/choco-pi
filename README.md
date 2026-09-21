@@ -185,6 +185,35 @@ Pi's built-in `grep` tool is disabled. Source discovery follows the LSP and Code
 | `~/.pi/agent/mcp.json` from [`.pi/mcp.example.json`](.pi/mcp.example.json)                                                                      | Untracked MCP server and OAuth configuration                  |
 | Package [`AGENTS.md`](.pi/packages/choco-pi-agent-browser/AGENTS.md) and [`VENDORED.md`](.pi/packages/choco-pi-agent-browser/VENDORED.md) files | Package policy and recorded upstream differences              |
 
+### Example global settings
+
+Pi reads `cacheWarming` from `~/.pi/agent/settings.json` only; a project-level
+value is ignored. This example reflects the maintainer's current global file
+(package paths shortened, secrets never live here):
+
+```json
+{
+  "packages": [
+    "/path/to/choco-pi/.pi/packages/choco-pi-provider-synthetic",
+    "/path/to/choco-pi/.pi/packages/choco-pi-ui"
+  ],
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-fable-5-1",
+  "defaultThinkingLevel": "low",
+  "cacheWarming": "streaming",
+  "agentLanguage": "English",
+  "agentStyle": "concise",
+  "agentPersona": "pessimistic",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "httpIdleTimeoutMs": 300000,
+  "transport": "auto"
+}
+```
+
 ## Use choco-pi in Zed
 
 `.pi/packages/choco-pi-acp` connects Zed to choco-pi over the Agent Client Protocol,
