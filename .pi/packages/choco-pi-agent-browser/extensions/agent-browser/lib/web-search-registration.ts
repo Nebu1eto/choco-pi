@@ -134,7 +134,7 @@ export function createDeferredAgentBrowserWebSearchTool(
     loadConfigState?: (ctx: {
       cwd: string;
       isProjectTrusted?: () => boolean;
-    }) => AgentBrowserConfigState;
+    }) => Promise<AgentBrowserConfigState>;
   } = {},
 ) {
   let runtimeToolPromise: Promise<RuntimeWebSearchTool> | undefined;

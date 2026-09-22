@@ -1,7 +1,10 @@
 import type { AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
+  getWebSearchCredentialSource,
+  hasPotentialCredentialSource,
   resolvePreferredWebSearchCredential,
+  resolveWebSearchCredential,
   type AgentBrowserConfigState,
   type WebSearchProvider,
 } from "./config.ts";
@@ -40,6 +43,108 @@ export const EXA_SEARCH_ENDPOINT = "https://api.exa.ai/search";
 export const SEARCH_REQUEST_TIMEOUT_MS = 15_000;
 export const EXA_DEEP_SEARCH_REQUEST_TIMEOUT_MS = 45_000;
 export const WEB_SEARCH_MIN_REQUEST_INTERVAL_MS = 1_100;
+
+export type AgentBrowserSearchErrorKind =
+  | "auth"
+  | "cancelled"
+  | "config"
+  | "deadline"
+  | "invalid-request"
+  | "invalid-response"
+  | "network"
+  | "quota"
+  | "stale-context"
+  | "transient";
+
+export class AgentBrowserSearchError extends Error {
+  readonly kind: AgentBrowserSearchErrorKind;
+  readonly provider?: WebSearchProvider;
+  readonly retryable: boolean;
+  readonly status?: number;
+
+  constructor(
+    message: string,
+    options: {
+      kind: AgentBrowserSearchErrorKind;
+      provider?: WebSearchProvider;
+      retryable?: boolean;
+      status?: number;
+    },
+  ) {
+    super(message);
+    this.name = "AgentBrowserSearchError";
+    this.kind = options.kind;
+    this.provider = options.provider;
+    this.retryable = options.retryable ?? false;
+    this.status = options.status;
+  }
+}
+
+export type AgentBrowserSearchBackendAvailability =
+  | { status: "available" }
+  | { status: "disabled"; reason: string }
+  | { status: "error"; reason: string }
+  | { status: "unavailable"; reason: string };
+
+export type AgentBrowserSearchBackendRequest = WebSearchExecutionParams;
+
+export type AgentBrowserSearchBackendResponse = NormalizedProviderResponse & {
+  provider: WebSearchProvider;
+};
+
+export type AgentBrowserSearchExecutionGuard = {
+  generation: number;
+  isCurrent: (generation: number) => boolean;
+};
+
+export type AgentBrowserSearchBackendDescriptor = {
+  capabilities: Readonly<{
+    country: boolean;
+    freshness: boolean;
+    numResults: boolean;
+    offset: boolean;
+    safesearch: boolean;
+    searchLang: boolean;
+    searchType: boolean;
+  }>;
+  family: WebSearchProvider;
+  id: `agent-browser.${WebSearchProvider}`;
+  priority: number;
+  transport: "api";
+};
+
+export const AGENT_BROWSER_SEARCH_BACKENDS = {
+  brave: {
+    capabilities: {
+      country: true,
+      freshness: true,
+      numResults: true,
+      offset: true,
+      safesearch: true,
+      searchLang: true,
+      searchType: false,
+    },
+    family: "brave",
+    id: "agent-browser.brave",
+    priority: 20,
+    transport: "api",
+  },
+  exa: {
+    capabilities: {
+      country: true,
+      freshness: true,
+      numResults: true,
+      offset: true,
+      safesearch: true,
+      searchLang: false,
+      searchType: true,
+    },
+    family: "exa",
+    id: "agent-browser.exa",
+    priority: 50,
+    transport: "api",
+  },
+} as const satisfies Readonly<Record<WebSearchProvider, AgentBrowserSearchBackendDescriptor>>;
 
 export type BraveWebSearchResult = {
   title?: unknown;
@@ -352,7 +457,8 @@ export function buildBraveSearchUrl(params: {
   safesearch?: "off" | "moderate" | "strict";
   freshness?: SearchFreshness;
 }): URL {
-  const url = new URL(BRAVE_SEARCH_ENDPOINT);
+  const url = URL.parse(BRAVE_SEARCH_ENDPOINT);
+  if (!url) throw new Error("Brave search endpoint is invalid.");
   url.searchParams.set("q", params.query);
   url.searchParams.set("count", String(params.count));
   url.searchParams.set("offset", String(params.offset));
@@ -486,6 +592,95 @@ function formatSearchHttpError(
   return `${providerLabel} search failed with HTTP ${status}: ${errorPreview ? redactSearchSecret(errorPreview, apiKey) : statusText}`;
 }
 
+function createSearchHttpError(options: {
+  apiKey: string;
+  body: string;
+  provider: WebSearchProvider;
+  status: number;
+  statusText: string;
+}): AgentBrowserSearchError {
+  const { apiKey, body, provider, status, statusText } = options;
+  const message = formatSearchHttpError(provider, status, statusText, body, apiKey);
+  if (status === 429) {
+    return new AgentBrowserSearchError(message, {
+      kind: "quota",
+      provider,
+      retryable: false,
+      status,
+    });
+  }
+  if (status === 401 || status === 403) {
+    return new AgentBrowserSearchError(message, {
+      kind: "auth",
+      provider,
+      retryable: false,
+      status,
+    });
+  }
+  if (status === 408) {
+    return new AgentBrowserSearchError(message, {
+      kind: "deadline",
+      provider,
+      retryable: false,
+      status,
+    });
+  }
+  if (status >= 500) {
+    return new AgentBrowserSearchError(message, {
+      kind: "transient",
+      provider,
+      retryable: true,
+      status,
+    });
+  }
+  return new AgentBrowserSearchError(message, {
+    kind: "invalid-request",
+    provider,
+    retryable: false,
+    status,
+  });
+}
+
+function createSearchCancellationError(
+  provider: WebSearchProvider,
+  message: string,
+): AgentBrowserSearchError {
+  return new AgentBrowserSearchError(message, {
+    kind: "cancelled",
+    provider,
+    retryable: false,
+  });
+}
+
+function assertSearchTransportCurrent(options: {
+  cancelMessage: string;
+  controller: AbortController;
+  provider: WebSearchProvider;
+  signal?: AbortSignal;
+  timeoutMessage: string;
+}): void {
+  const { cancelMessage, controller, provider, signal, timeoutMessage } = options;
+  if (signal?.aborted) throw createSearchCancellationError(provider, cancelMessage);
+  if (controller.signal.aborted) {
+    throw new AgentBrowserSearchError(timeoutMessage, {
+      kind: "deadline",
+      provider,
+      retryable: false,
+    });
+  }
+}
+
+function createSearchNetworkError(provider: WebSearchProvider): AgentBrowserSearchError {
+  return new AgentBrowserSearchError(
+    `${getProviderLabel(provider)} search network request failed.`,
+    {
+      kind: "network",
+      provider,
+      retryable: true,
+    },
+  );
+}
+
 async function fetchSearchJson<T>(options: {
   apiKey: string;
   cancelMessage: string;
@@ -498,44 +693,76 @@ async function fetchSearchJson<T>(options: {
   timeoutMessage: string;
   timeoutMs: number;
 }): Promise<T> {
-  if (options.signal?.aborted) {
-    throw options.signal.reason ?? new Error(options.cancelMessage);
-  }
+  const {
+    apiKey,
+    cancelMessage,
+    init,
+    invalidJsonMessage,
+    parse,
+    provider,
+    request,
+    signal,
+    timeoutMessage,
+    timeoutMs,
+  } = options;
+  if (signal?.aborted) throw createSearchCancellationError(provider, cancelMessage);
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(new Error(options.timeoutMessage)),
-    options.timeoutMs,
-  );
-  const abort = () => controller.abort(options.signal?.reason ?? new Error(options.cancelMessage));
-  options.signal?.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(() => controller.abort(new Error(timeoutMessage)), timeoutMs);
+  const abort = () => controller.abort(signal?.reason ?? new Error(cancelMessage));
+  signal?.addEventListener("abort", abort, { once: true });
   try {
-    const response = await fetch(options.request, {
-      ...options.init,
-      signal: controller.signal,
-    });
-    const text = await response.text();
+    let response: Response;
+    try {
+      response = await fetch(request, {
+        ...init,
+        signal: controller.signal,
+      });
+    } catch {
+      assertSearchTransportCurrent({
+        cancelMessage,
+        controller,
+        provider,
+        signal,
+        timeoutMessage,
+      });
+      throw createSearchNetworkError(provider);
+    }
+    assertSearchTransportCurrent({ cancelMessage, controller, provider, signal, timeoutMessage });
+    let text: string;
+    try {
+      text = await response.text();
+    } catch {
+      assertSearchTransportCurrent({
+        cancelMessage,
+        controller,
+        provider,
+        signal,
+        timeoutMessage,
+      });
+      throw createSearchNetworkError(provider);
+    }
+    assertSearchTransportCurrent({ cancelMessage, controller, provider, signal, timeoutMessage });
     if (!response.ok) {
-      throw new Error(
-        formatSearchHttpError(
-          options.provider,
-          response.status,
-          response.statusText,
-          text,
-          options.apiKey,
-        ),
-      );
+      throw createSearchHttpError({
+        apiKey,
+        body: text,
+        provider,
+        status: response.status,
+        statusText: response.statusText,
+      });
     }
     try {
       const value: RuntimeValue = JSON.parse(text);
-      return options.parse(value);
+      return parse(value);
     } catch (error) {
-      throw new Error(
-        `${options.invalidJsonMessage}: ${error instanceof Error ? error.message : String(error)}`,
+      throw new AgentBrowserSearchError(
+        `${invalidJsonMessage}: ${error instanceof Error ? error.message : String(error)}`,
+        { kind: "invalid-response", provider, retryable: true },
       );
     }
   } finally {
     clearTimeout(timeout);
-    options.signal?.removeEventListener("abort", abort);
+    signal?.removeEventListener("abort", abort);
   }
 }
 
@@ -738,6 +965,107 @@ export function getWebSearchProviderAdapter(provider: WebSearchProvider): WebSea
   return WEB_SEARCH_PROVIDER_ADAPTERS[provider];
 }
 
+export function getAgentBrowserSearchBackendAvailability(
+  state: AgentBrowserConfigState,
+  provider: WebSearchProvider,
+  env: NodeJS.ProcessEnv = process.env,
+): AgentBrowserSearchBackendAvailability {
+  if (state.errors.length > 0) {
+    return { status: "error", reason: state.errors.join("; ") };
+  }
+  if (!state.webSearchEnabled) {
+    return { status: "disabled", reason: "Web search is disabled by agent-browser config." };
+  }
+  const source = getWebSearchCredentialSource(state, provider);
+  if (!hasPotentialCredentialSource(source, env)) {
+    return {
+      status: "unavailable",
+      reason: `${getProviderLabel(provider)} credentials are not configured.`,
+    };
+  }
+  return { status: "available" };
+}
+
+function assertBackendRequestSupported(
+  provider: WebSearchProvider,
+  request: AgentBrowserSearchBackendRequest,
+): void {
+  if (provider === "brave" && request.searchType && request.searchType !== "auto") {
+    throw new AgentBrowserSearchError("Brave search does not support the Exa searchType option.", {
+      kind: "invalid-request",
+      provider,
+    });
+  }
+  if (provider === "exa" && request.searchLang) {
+    throw new AgentBrowserSearchError("Exa search does not support the searchLang option.", {
+      kind: "invalid-request",
+      provider,
+    });
+  }
+}
+
+function assertExecutionCurrent(
+  provider: WebSearchProvider,
+  signal: AbortSignal | undefined,
+  guard: AgentBrowserSearchExecutionGuard | undefined,
+): void {
+  if (signal?.aborted) {
+    throw new AgentBrowserSearchError("Web search cancelled.", {
+      kind: "cancelled",
+      provider,
+    });
+  }
+  if (guard && !guard.isCurrent(guard.generation)) {
+    throw new AgentBrowserSearchError("Web search session is stale.", {
+      kind: "stale-context",
+      provider,
+    });
+  }
+}
+
+export async function executeAgentBrowserSearchBackend(options: {
+  configState: AgentBrowserConfigState;
+  env?: NodeJS.ProcessEnv;
+  guard?: AgentBrowserSearchExecutionGuard;
+  provider: WebSearchProvider;
+  request: AgentBrowserSearchBackendRequest;
+  requestGate: WebSearchRequestGate;
+  signal?: AbortSignal;
+}): Promise<AgentBrowserSearchBackendResponse> {
+  const { configState, env, guard, provider, request, requestGate, signal } = options;
+  assertExecutionCurrent(provider, signal, guard);
+  const availability = getAgentBrowserSearchBackendAvailability(configState, provider, env);
+  if (availability.status !== "available") {
+    const kind = availability.status === "unavailable" ? "auth" : "config";
+    throw new AgentBrowserSearchError(availability.reason, { kind, provider });
+  }
+  assertBackendRequestSupported(provider, request);
+  const credential = await resolveWebSearchCredential(configState, provider, { env, signal });
+  assertExecutionCurrent(provider, signal, guard);
+  if (!credential) {
+    throw new AgentBrowserSearchError(
+      `${getProviderLabel(provider)} credentials did not resolve.`,
+      {
+        kind: "auth",
+        provider,
+      },
+    );
+  }
+  const adapter = getWebSearchProviderAdapter(provider);
+  const builtRequest = adapter.buildRequest(request);
+  let response: unknown;
+  try {
+    response = await requestGate.run(signal, () =>
+      adapter.fetchJson(builtRequest, credential.value, signal),
+    );
+  } catch (error) {
+    if (signal?.aborted) throw createSearchCancellationError(provider, "Web search cancelled.");
+    throw error;
+  }
+  assertExecutionCurrent(provider, signal, guard);
+  return { provider, ...adapter.normalizeResponse(response, request) };
+}
+
 function buildMissingCredentialError(provider: WebSearchProviderParam): string {
   if (provider === "brave")
     return "agent_browser_web_search provider brave was requested but no BRAVE_API_KEY/config credential resolved.";
@@ -752,7 +1080,7 @@ export function createAgentBrowserWebSearchTool(
     loadConfigState?: (ctx: {
       cwd: string;
       isProjectTrusted?: () => boolean;
-    }) => AgentBrowserConfigState;
+    }) => Promise<AgentBrowserConfigState>;
   } = {},
 ) {
   const requestGate = new WebSearchRequestGate();
@@ -776,31 +1104,14 @@ export function createAgentBrowserWebSearchTool(
       _onUpdate?: AgentToolUpdateCallback<WebSearchToolDetails>,
       ctx?: ExtensionContext,
     ) {
-      const runtimeConfigState = ctx
-        ? (options.loadConfigState?.(ctx) ?? configState)
-        : configState;
-      if (runtimeConfigState.errors.length > 0) {
-        throw new Error(
-          `agent_browser_web_search config is invalid: ${runtimeConfigState.errors.join("; ")}`,
-        );
-      }
-      if (!runtimeConfigState.webSearchEnabled) {
-        throw new Error("agent_browser_web_search is disabled by pi-agent-browser-native config.");
-      }
+      const context = ctx;
       const requestedProvider: WebSearchProviderParam = params.provider ?? "auto";
-      const resolved = await resolvePreferredWebSearchCredential(runtimeConfigState, {
-        provider: requestedProvider,
-        signal,
-      });
-      if (!resolved) throw new Error(buildMissingCredentialError(requestedProvider));
       const query = params.query.trim();
-      if (!query) throw new Error("query must not be blank");
       const count = Math.min(
         Math.max(params.count ?? DEFAULT_SEARCH_RESULT_COUNT, 1),
         MAX_SEARCH_RESULT_COUNT,
       );
       const offset = Math.max(params.offset ?? 0, 0);
-      const adapter = getWebSearchProviderAdapter(resolved.provider);
       const executionParams: WebSearchExecutionParams = {
         country: params.country,
         count,
@@ -811,10 +1122,30 @@ export function createAgentBrowserWebSearchTool(
         searchLang: params.searchLang,
         searchType: params.searchType ?? "auto",
       };
+      const runtimeConfigState =
+        context && options.loadConfigState ? await options.loadConfigState(context) : configState;
+      if (signal?.aborted) throw signal.reason ?? new Error("Web search cancelled");
+      if (runtimeConfigState.errors.length > 0) {
+        throw new Error(
+          `agent_browser_web_search config is invalid: ${runtimeConfigState.errors.join("; ")}`,
+        );
+      }
+      if (!runtimeConfigState.webSearchEnabled) {
+        throw new Error("agent_browser_web_search is disabled by pi-agent-browser-native config.");
+      }
+      if (!query) throw new Error("query must not be blank");
+      const resolved = await resolvePreferredWebSearchCredential(runtimeConfigState, {
+        provider: requestedProvider,
+        signal,
+      });
+      if (signal?.aborted) throw signal.reason ?? new Error("Web search cancelled");
+      if (!resolved) throw new Error(buildMissingCredentialError(requestedProvider));
+      const adapter = getWebSearchProviderAdapter(resolved.provider);
       const request = adapter.buildRequest(executionParams);
       const data = await requestGate.run(signal, () =>
         adapter.fetchJson(request, resolved.credential.value, signal),
       );
+      if (signal?.aborted) throw signal.reason ?? new Error("Web search cancelled");
       const normalized = adapter.normalizeResponse(data, executionParams);
       const details: WebSearchToolDetails = {
         provider: adapter.provider,

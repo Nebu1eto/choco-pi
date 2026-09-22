@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,17 +16,26 @@ import type {
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import {
+  getSearchScope,
+  hasCanonicalSearch,
+  type SearchAdapterContext,
+} from "../../../choco-pi-web-search/index.ts";
 
-import { canRegisterWebSearchTool, loadAgentBrowserConfigSync } from "./lib/config.ts";
+import {
+  canRegisterWebSearchTool,
+  loadAgentBrowserConfig,
+  type AgentBrowserConfigState,
+} from "./lib/config.ts";
 import { AGENT_BROWSER_PARAMS } from "./lib/input-modes/params.ts";
 import type { AgentBrowserExecuteParams } from "./lib/orchestration/input-plan.ts";
-import { isRecord } from "./lib/parsing.ts";
 import {
   AgentBrowserResultComponent,
   formatAgentBrowserRenderCall,
   formatAgentBrowserRenderResult,
 } from "./lib/pi-tool-rendering.ts";
 import { buildToolPromptGuidelines } from "./lib/playbook.ts";
+import { registerAgentBrowserSearchAdapters } from "./lib/web-search-backend-registration.ts";
 import { createDeferredAgentBrowserWebSearchTool } from "./lib/web-search-registration.ts";
 
 type AgentBrowserTool = ToolDefinition<typeof AGENT_BROWSER_PARAMS>;
@@ -72,22 +80,8 @@ interface InstalledDocsPaths {
   readmePath: string;
 }
 
-function findPackageRoot(startDir: string): string {
-  let currentDir = startDir;
-  while (true) {
-    const packageJsonPath = join(currentDir, "package.json");
-    if (existsSync(packageJsonPath)) {
-      const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
-      if (isRecord(packageJson) && packageJson.name === "choco-pi-agent-browser") return currentDir;
-    }
-    const parentDir = dirname(currentDir);
-    if (parentDir === currentDir) return startDir;
-    currentDir = parentDir;
-  }
-}
-
 function getInstalledDocsPaths(): InstalledDocsPaths {
-  const packageRoot = findPackageRoot(dirname(fileURLToPath(import.meta.url)));
+  const packageRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   return { readmePath: join(packageRoot, "README.md") };
 }
 
@@ -150,15 +144,31 @@ async function dispatchRuntimeEvent<Result>(
   return (await handler(event, ctx)) as Result | void;
 }
 
-export default function agentBrowserExtension(pi: ExtensionAPI): void {
-  const agentBrowserConfig = loadAgentBrowserConfigSync({
-    cwd: process.cwd(),
-    includeProjectConfig: false,
+export interface AgentBrowserExtensionOptions {
+  initialConfigState: AgentBrowserConfigState;
+  loadSearchConfigState?: (context: SearchAdapterContext) => Promise<AgentBrowserConfigState>;
+}
+
+function registerResolvedAgentBrowserExtension(
+  pi: ExtensionAPI,
+  options: AgentBrowserExtensionOptions,
+  searchScope = getSearchScope(pi.events),
+): void {
+  const integratedWebSearch = hasCanonicalSearch(searchScope);
+  registerAgentBrowserSearchAdapters(searchScope, {
+    async loadConfigState(context) {
+      if (options.loadSearchConfigState) return options.loadSearchConfigState(context);
+      const cwd = context.context?.cwd ?? process.cwd();
+      const includeProjectConfig = shouldIncludeProjectConfig(context.context);
+      return loadAgentBrowserConfig({ cwd, includeProjectConfig });
+    },
   });
+  const agentBrowserConfig = options.initialConfigState;
   const webSearchToolAvailable = canRegisterWebSearchTool(agentBrowserConfig);
   const toolPromptGuidelines = buildToolPromptGuidelines({
     browserDefaultProfile: agentBrowserConfig.trustedBrowserDefaultProfile,
     browserExecutablePath: agentBrowserConfig.trustedBrowserExecutablePath,
+    integratedWebSearch,
     includeWebSearch: webSearchToolAvailable,
     docs: getInstalledDocsPaths(),
   });
@@ -225,16 +235,39 @@ export default function agentBrowserExtension(pi: ExtensionAPI): void {
   } satisfies AgentBrowserTool;
   pi.registerTool(agentBrowserTool);
 
-  if (webSearchToolAvailable) {
+  if (webSearchToolAvailable && !integratedWebSearch) {
     pi.registerTool(
       createDeferredAgentBrowserWebSearchTool(agentBrowserConfig, {
         loadConfigState(ctx) {
-          return loadAgentBrowserConfigSync({
-            cwd: ctx.cwd,
-            includeProjectConfig: shouldIncludeProjectConfig(ctx),
+          const cwd = ctx.cwd;
+          const includeProjectConfig = shouldIncludeProjectConfig(ctx);
+          return loadAgentBrowserConfig({
+            cwd,
+            includeProjectConfig,
           });
         },
       }),
     );
   }
+}
+
+export function registerAgentBrowserExtension(
+  pi: ExtensionAPI,
+  options: AgentBrowserExtensionOptions,
+): void {
+  registerResolvedAgentBrowserExtension(pi, options);
+}
+
+export default async function agentBrowserExtension(pi: ExtensionAPI): Promise<void> {
+  const eventBusOwner = pi.events;
+  const searchScopeOwner = getSearchScope(eventBusOwner);
+  const cwd = process.cwd();
+  const initialConfigState = await loadAgentBrowserConfig({
+    cwd,
+    includeProjectConfig: false,
+  });
+  if (pi.events !== eventBusOwner || getSearchScope(eventBusOwner) !== searchScopeOwner) {
+    throw new Error("agent_browser extension scope changed while loading configuration.");
+  }
+  registerResolvedAgentBrowserExtension(pi, { initialConfigState }, searchScopeOwner);
 }

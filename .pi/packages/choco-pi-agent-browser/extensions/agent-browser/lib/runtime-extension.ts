@@ -161,7 +161,11 @@ import {
   buildNextToolAction,
   type AgentBrowserNextAction,
 } from "./results/next-actions.ts";
-import { canRegisterWebSearchTool, loadAgentBrowserConfigSync } from "./config.ts";
+import {
+  canRegisterWebSearchTool,
+  loadAgentBrowserConfig,
+  loadAgentBrowserConfigSync,
+} from "./config.ts";
 import {
   appendRecordingReservationTransition,
   applyRecordingArtifactsToReservations,
@@ -2214,9 +2218,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
     pi.registerTool(
       createDeferredAgentBrowserWebSearchTool(configState, {
         loadConfigState(ctx) {
-          return loadAgentBrowserConfigSync({
-            cwd: ctx.cwd,
-            includeProjectConfig: shouldIncludeProjectConfig(ctx),
+          const cwd = ctx.cwd;
+          const includeProjectConfig = shouldIncludeProjectConfig(ctx);
+          return loadAgentBrowserConfig({
+            cwd,
+            includeProjectConfig,
           });
         },
       }),
