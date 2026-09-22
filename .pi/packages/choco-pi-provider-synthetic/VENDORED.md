@@ -96,6 +96,39 @@ unknown and rechecks it for the new session. The lock-gated activation decision
 lives in a dependency-free module so strip-only Node tests do not load the TUI
 dependency graph.
 
+## Unified web-search backend extraction
+
+The Synthetic `/v2/search` transport now exposes a session-owned backend for
+the harness's unified web-search registry. It resolves Synthetic credentials
+independently of the selected model, supports authenticated direct and proxy
+calls plus explicitly unauthenticated proxies, and performs the subscription
+eligibility check lazily on the same credential-bound client used for each
+search. PAYG accounts remain ineligible and are never auto-enabled.
+
+The extracted backend has no process-global config, credential, entitlement,
+or client cache. Cancellation and lifecycle invalidation are checked around
+every asynchronous boundary. Safe typed failures preserve auth, quota,
+network, request, abort, and stale categories without including API keys,
+proxy secrets, or provider response bodies. Reachable client modules use
+explicit `.ts` relative imports so native strip-types tests can load the
+production adapter boundary.
+
+The historical standalone `synthetic_web_search` registration and rendering
+remain available when this extension runs without the canonical core. When the
+core marker is already present, the extension instead registers only adapter
+`synthetic.search` (family `synthetic`, transport `synthetic-v2-search`) in the
+event-bus-rendezvoused session scope. Registration performs no quota network
+request. The adapter resolves credentials from Synthetic's registry entry,
+never from the selected conversation model, and returns result-only core
+responses with no fabricated answer. It enforces `numResults` locally and
+preserves the 20KB shared/4KB per-result excerpt bounds with explicit warnings.
+
+If the canonical marker arrives after standalone registration, Pi's extension
+API cannot unregister the already-defined tool. Session-start and config-update
+paths permanently keep it inactive and perform no further entitlement refresh;
+the unified tool discovery layer is responsible for filtering that legacy
+definition in this reversed load order.
+
 ## Vendored install policy
 
 This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an

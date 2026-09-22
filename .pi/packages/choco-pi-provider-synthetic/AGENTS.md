@@ -83,7 +83,7 @@ src/
 - Models are fetched dynamically from `https://api.synthetic.new/openai/v1/models` via `ProviderConfig.refreshModels` (Pi 0.80.8+) and cached in `context.store` with a 4-hour TTL; see `extensions/provider/refresh-models.ts`
 - The hardcoded catalog in `extensions/provider/models.ts` is kept as an offline fallback and as the override source for model-specific compatibility settings (`thinkingLevelMap`, `compat`) that the API does not expose
 - All user-facing model selection still uses the Pi provider name `synthetic`
-- Web search tool and quotas command are always registered; they fail at call time if credentials/subscription are missing unless an unauthenticated utility API proxy is configured
+- The quotas command is always registered. `synthetic_web_search` remains always registered in standalone compatibility mode, but is deliberately not registered when the canonical unified-search marker is already present; canonical mode registers only the session-scoped `synthetic.search` backend.
 - Error messages guide users to add credentials to `~/.pi/agent/auth.json`, set `SYNTHETIC_API_KEY`, or configure an unauthenticated utility API proxy when relevant
 - Quota data flows event-driven: provider ingests `x-synthetic-quotas` header from `after_provider_response` into `QuotaStore`, which broadcasts via `synthetic:quotas:updated`; consumers (usage-status, quota-warnings, sub-bar-integration) listen and request refreshes via `synthetic:quotas:request` — no polling
 - Persistent quota history is owned by the quota-warnings extension. It initializes and writes only while `quotaWarnings` is enabled; users who leave warnings disabled get no history directory or files

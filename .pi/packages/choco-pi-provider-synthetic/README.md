@@ -63,7 +63,9 @@ All user-facing model selection uses the Pi provider name `synthetic`.
 
 ### Web Search Tool
 
-The extension registers `synthetic_web_search` — a zero-data-retention web search tool. At session start, it checks the Synthetic quotas API in the background even when another provider is selected. The tool is available only after that check confirms a Synthetic subscription; it remains hidden for pay-as-you-go accounts, missing credentials, and quota API failures.
+In standalone compatibility mode, the extension registers `synthetic_web_search` — a zero-data-retention web search tool. At session start, it checks the Synthetic quotas API in the background even when another provider is selected. The tool is available only after that check confirms a Synthetic subscription; it remains hidden for pay-as-you-go accounts, missing credentials, and quota API failures.
+
+When the unified `web_search` core is loaded first, the extension instead registers the `synthetic.search` backend and does not register `synthetic_web_search`. Backend discovery performs no quota request. Synthetic credentials are resolved independently of the conversation model only when the router evaluates or executes Synthetic, and the subscription check uses the same credential-bound client as the selected `/v2/search` call. PAYG is never auto-enabled. Unified responses contain result snippets only—no fabricated answer—and enforce the legacy 20KB shared/4KB per-result excerpt limits. `numResults` is enforced locally with an explicit truncation warning.
 
 ### Prompt Cache
 

@@ -120,7 +120,7 @@ export type QuotasErrorKind = "cancelled" | "timeout" | "config" | "http" | "net
 
 export type QuotasResult =
   | { success: true; data: { quotas: QuotasResponse } }
-  | { success: false; error: { message: string; kind: QuotasErrorKind } };
+  | { success: false; error: { message: string; kind: QuotasErrorKind; status?: number } };
 
 /** Parse the `x-synthetic-quotas` header value into a QuotasResponse.
  *  Returns undefined if the header is missing or invalid. */

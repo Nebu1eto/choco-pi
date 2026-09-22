@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -131,6 +133,29 @@ test("real Pi API wrappers rendezvous only on their shared loader bus", async ()
     "<inline:isolated>",
   );
   assert.notEqual(isolated, first);
+});
+
+test("native and Jiti module copies share only owner-scoped search state", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "choco-pi-web-search-cross-loader-"));
+  const agentDir = path.join(root, "agent");
+  const environment: NodeJS.ProcessEnv = {
+    HOME: root,
+    PI_CODING_AGENT_DIR: agentDir,
+    XDG_CONFIG_HOME: path.join(root, "config"),
+  };
+  if (process.env.PATH !== undefined) environment.PATH = process.env.PATH;
+  try {
+    const fixture = fileURLToPath(new URL("./fixtures/cross-loader-runner.ts", import.meta.url));
+    const result = await execFileAsync(process.execPath, [fixture], {
+      cwd: root,
+      encoding: "utf8",
+      env: environment,
+    });
+    assert.match(result.stdout, /cross-loader-ok/);
+    assert.equal(result.stderr, "");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });
 
 test("synchronous cancellation settles an already-started adapter rejection", async () => {
