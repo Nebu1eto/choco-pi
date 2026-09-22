@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createEventBus, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import toolSearch, {
   ALWAYS_ACTIVE_TOOL_NAMES,
   LEAN_SURFACE_SYMBOL,
@@ -8,9 +8,10 @@ import toolSearch, {
 } from "../.pi/extensions/tool-search.ts";
 import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 
-type McpStatusPayload = { servers: never[] };
+const MCP_STATUS_CHANNEL = "pi-mcp-adapter/status/v1";
 
 test("settles the lean surface synchronously before the first request", async () => {
+  const events = createEventBus();
   let active = ["deferred_probe"];
   let availableNames = ["deferred_probe"];
   let sessionStart: (() => void) | undefined;
@@ -35,7 +36,7 @@ test("settles the lean surface synchronously before the first request", async ()
         commits.push([...names]);
         active = names;
       },
-      events: { on: () => undefined },
+      events,
       on: (name: string, handler: () => void) => {
         if (name === "session_start") sessionStart = handler;
         if (name === "before_agent_start") beforeAgentStart = handler;
@@ -81,6 +82,7 @@ test("returns exec bridge calls without changing the locked tool surface", async
   };
 
   let active = ["read", "deferred_probe"];
+  const events = createEventBus();
   let searchTool: SearchExecutor | undefined;
   let sessionStart: (() => void) | undefined;
   let beforeAgentStart: (() => void) | undefined;
@@ -109,7 +111,7 @@ test("returns exec bridge calls without changing the locked tool surface", async
         commits.push([...names]);
         active = names;
       },
-      events: { on: () => undefined },
+      events,
       on: (name: string, handler: () => void) => {
         if (name === "session_start") sessionStart = handler;
         if (name === "before_agent_start") beforeAgentStart = handler;
@@ -169,9 +171,9 @@ test("returns exec bridge calls without changing the locked tool surface", async
 test("keeps Agent and core execution gateways always active", async () => {
   assert.ok(ALWAYS_ACTIVE_TOOL_NAMES.includes("Agent"));
 
+  const events = createEventBus();
   let active = ["read", "Agent", "deferred_probe"];
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     {
       name: "read",
@@ -202,18 +204,14 @@ test("keeps Agent and core execution gateways always active", async () => {
     setActiveTools: (names: string[]) => {
       active = names;
     },
-    events: {
-      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
-        mcpStatus = handler;
-      },
-    },
+    events,
     on: (name: string, handler: () => void) => {
       if (name === "session_start") sessionStart = handler;
     },
   } as any);
 
   sessionStart?.();
-  mcpStatus?.({ servers: [] });
+  events.emit(MCP_STATUS_CHANNEL, { servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.ok(active.includes("Agent"));
@@ -223,11 +221,11 @@ test("keeps Agent and core execution gateways always active", async () => {
 });
 
 test("restores registered always-active tools after model selection without widening", async () => {
+  const events = createEventBus();
   let active = ["previously_loaded"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
   let modelSelect: (() => void) | undefined;
-  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     ...["bash", "edit", "write"].map((name) => ({
       name,
@@ -261,11 +259,7 @@ test("restores registered always-active tools after model selection without wide
     setActiveTools: (names: string[]) => {
       active = names;
     },
-    events: {
-      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
-        mcpStatus = handler;
-      },
-    },
+    events,
     on: (name: string, handler: () => void) => {
       if (name === "session_start") sessionStart = handler;
       if (name === "model_select") modelSelect = handler;
@@ -273,7 +267,7 @@ test("restores registered always-active tools after model selection without wide
   } as any);
 
   sessionStart?.();
-  mcpStatus?.({ servers: [] });
+  events.emit(MCP_STATUS_CHANNEL, { servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
   for (const name of ["bash", "edit", "write", "tool_search"]) {
@@ -303,11 +297,11 @@ test("restores registered always-active tools after model selection without wide
 });
 
 test("removes disabled grep from initialization, model selection, and tool search", async () => {
+  const events = createEventBus();
   let active = ["grep", "deferred_probe"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
   let modelSelect: (() => void) | undefined;
-  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     {
       name: "grep",
@@ -335,11 +329,7 @@ test("removes disabled grep from initialization, model selection, and tool searc
     setActiveTools: (names: string[]) => {
       active = names;
     },
-    events: {
-      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
-        mcpStatus = handler;
-      },
-    },
+    events,
     on: (name: string, handler: () => void) => {
       if (name === "session_start") sessionStart = handler;
       if (name === "model_select") modelSelect = handler;
@@ -347,7 +337,7 @@ test("removes disabled grep from initialization, model selection, and tool searc
   } as any);
 
   sessionStart?.();
-  mcpStatus?.({ servers: [] });
+  events.emit(MCP_STATUS_CHANNEL, { servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.ok(!active.includes("grep"));
@@ -374,13 +364,13 @@ test("removes disabled grep from initialization, model selection, and tool searc
 });
 
 test("keeps shell start and read native while deferring inventory and cleanup", async () => {
+  const events = createEventBus();
   const shellTools = ["shell_start", "shell_read", "shell_stop", "shell_list"];
   const nativeShellTools = ["shell_start", "shell_read"];
   const bridgedShellTools = ["shell_stop", "shell_list"];
   let active = [...shellTools, "deferred_probe"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     ...shellTools.map((name) => ({
       name,
@@ -408,11 +398,7 @@ test("keeps shell start and read native while deferring inventory and cleanup", 
     setActiveTools: (names: string[]) => {
       active = names;
     },
-    events: {
-      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
-        mcpStatus = handler;
-      },
-    },
+    events,
     on: (name: string, handler: () => void) => {
       if (name === "session_start") sessionStart = handler;
     },
@@ -429,7 +415,7 @@ test("keeps shell start and read native while deferring inventory and cleanup", 
   }
 
   sessionStart?.();
-  mcpStatus?.({ servers: [] });
+  events.emit(MCP_STATUS_CHANNEL, { servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
   for (const name of nativeShellTools) {
@@ -451,10 +437,10 @@ test("keeps the subagent orchestration trio active and out of search results", a
   assert.ok(ALWAYS_ACTIVE_TOOL_NAMES.includes("get_subagent_result"));
   assert.ok(ALWAYS_ACTIVE_TOOL_NAMES.includes("steer_subagent"));
 
+  const events = createEventBus();
   let active = ["read", "Agent", "get_subagent_result", "steer_subagent", "deferred_probe"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     {
       name: "read",
@@ -500,18 +486,14 @@ test("keeps the subagent orchestration trio active and out of search results", a
     setActiveTools: (names: string[]) => {
       active = names;
     },
-    events: {
-      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
-        mcpStatus = handler;
-      },
-    },
+    events,
     on: (name: string, handler: () => void) => {
       if (name === "session_start") sessionStart = handler;
     },
   } as any);
 
   sessionStart?.();
-  mcpStatus?.({ servers: [] });
+  events.emit(MCP_STATUS_CHANNEL, { servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
   // Stay active without any search.
@@ -528,9 +510,9 @@ test("keeps the subagent orchestration trio active and out of search results", a
 });
 
 test("an always-active name with no registered tool does not corrupt the active set", async () => {
+  const events = createEventBus();
   let active = ["read", "deferred_probe"];
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     {
       name: "read",
@@ -558,18 +540,14 @@ test("an always-active name with no registered tool does not corrupt the active 
     setActiveTools: (names: string[]) => {
       active = names;
     },
-    events: {
-      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
-        mcpStatus = handler;
-      },
-    },
+    events,
     on: (name: string, handler: () => void) => {
       if (name === "session_start") sessionStart = handler;
     },
   } as any);
 
   sessionStart?.();
-  mcpStatus?.({ servers: [] });
+  events.emit(MCP_STATUS_CHANNEL, { servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.ok(active.includes("read"));
@@ -580,10 +558,10 @@ test("an always-active name with no registered tool does not corrupt the active 
 });
 
 test("labels deferred Pi tools as direct calls rather than MCP calls", async () => {
+  const events = createEventBus();
   let active = ["deferred_probe"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const probe = {
     name: "deferred_probe",
     description: "Inspect deferred probe state",
@@ -603,18 +581,14 @@ test("labels deferred Pi tools as direct calls rather than MCP calls", async () 
     setActiveTools: (names: string[]) => {
       active = names;
     },
-    events: {
-      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
-        mcpStatus = handler;
-      },
-    },
+    events,
     on: (name: string, handler: () => void) => {
       if (name === "session_start") sessionStart = handler;
     },
   } as any);
 
   sessionStart?.();
-  mcpStatus?.({ servers: [] });
+  events.emit(MCP_STATUS_CHANNEL, { servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
   const result = await searchTool.execute("call", { query: "deferred probe", limit: 1 });
   const text = result.content[0].text;
@@ -624,6 +598,7 @@ test("labels deferred Pi tools as direct calls rather than MCP calls", async () 
 });
 
 test("keeps cross-session coordination tools bridge-only and discoverable", async () => {
+  const events = createEventBus();
   const sessionTools = [
     "session_create",
     "session_send",
@@ -638,7 +613,6 @@ test("keeps cross-session coordination tools bridge-only and discoverable", asyn
   let active = [...sessionTools, "deferred_probe"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     ...sessionTools.map((name) => ({
       name,
@@ -666,18 +640,14 @@ test("keeps cross-session coordination tools bridge-only and discoverable", asyn
     setActiveTools: (names: string[]) => {
       active = names;
     },
-    events: {
-      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
-        mcpStatus = handler;
-      },
-    },
+    events,
     on: (name: string, handler: () => void) => {
       if (name === "session_start") sessionStart = handler;
     },
   } as any);
 
   sessionStart?.();
-  mcpStatus?.({ servers: [] });
+  events.emit(MCP_STATUS_CHANNEL, { servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
   for (const name of sessionTools)
@@ -692,6 +662,7 @@ test("keeps cross-session coordination tools bridge-only and discoverable", asyn
 });
 
 test("keeps the LSP funnel bridge-only and discoverable", async () => {
+  const events = createEventBus();
   const lspTools = [
     "symbol_search",
     "module_report",
@@ -714,7 +685,6 @@ test("keeps the LSP funnel bridge-only and discoverable", async () => {
   let active = [...lspTools, "deferred_probe"];
   let searchTool: any;
   let sessionStart: (() => void) | undefined;
-  let mcpStatus: ((payload: McpStatusPayload) => void) | undefined;
   const tools = [
     ...lspTools.map((name) => ({
       name,
@@ -742,18 +712,14 @@ test("keeps the LSP funnel bridge-only and discoverable", async () => {
     setActiveTools: (names: string[]) => {
       active = names;
     },
-    events: {
-      on: (_name: string, handler: (payload: McpStatusPayload) => void) => {
-        mcpStatus = handler;
-      },
-    },
+    events,
     on: (name: string, handler: () => void) => {
       if (name === "session_start") sessionStart = handler;
     },
   } as any);
 
   sessionStart?.();
-  mcpStatus?.({ servers: [] });
+  events.emit(MCP_STATUS_CHANNEL, { servers: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
   for (const name of lspTools)

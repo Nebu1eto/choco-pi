@@ -111,6 +111,7 @@ function registeredTools(): ToolMetadata[] {
 }
 
 const FIRST_PARTY_TOOL_INVENTORY = new Map<string, readonly string[]>([
+  ["web-search", []],
   ["advisor", ["advisor"]],
   [
     "codex",
@@ -195,6 +196,7 @@ const FIRST_PARTY_TOOL_INVENTORY = new Map<string, readonly string[]>([
 
 async function loadFirstPartyTools(): Promise<Map<string, ToolMetadata[]>> {
   const extensionPaths = new Map<string, string>([
+    ["web-search", "../.pi/packages/choco-pi-web-search/extension.ts"],
     ["advisor", "../.pi/packages/choco-pi-advisor/src/index.ts"],
     ["codex", "../.pi/packages/choco-pi-codex/src/index.ts"],
     ["goal", "../.pi/packages/choco-pi-goal/src/index.ts"],

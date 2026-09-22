@@ -128,6 +128,8 @@ The blocking `advisor` tool gives root or child agents a fresh, read-only second
 
 Pi's built-in `grep` tool is disabled. Source discovery follows the LSP and Code Mode path: `symbol_search`, `module_report`, targeted symbol reads, navigation, and AST search.
 
+Web research uses one deferred `web_search` tool regardless of the conversation model. Search credentials and billing are resolved by the selected search backend, not inherited from the conversation provider. See [Web search](docs/web-search.md) for providers, routing, privacy, and fallback behavior.
+
 ## Common commands
 
 | Command                     | Purpose                                                                    |
@@ -150,10 +152,12 @@ Pi's built-in `grep` tool is disabled. Source discovery follows the LSP and Code
 
 ## Installed packages
 
-[`.pi/settings.json`](.pi/settings.json) loads these 16 local packages.
+[`.pi/settings.json`](.pi/settings.json) loads these 17 local packages.
 
 | Package                                                                   |        Version | Purpose                                                      |
 | ------------------------------------------------------------------------- | -------------: | ------------------------------------------------------------ |
+| [`choco-pi-web-search`](.pi/packages/choco-pi-web-search)                 |          0.1.0 | Session-scoped routing for the canonical web search tool     |
+| [`choco-pi-web-access`](.pi/packages/choco-pi-web-access)                 | 0.24.1-choco.0 | Web search, source checks, and content extraction            |
 | [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic provider, authentication, usage, and search        |
 | [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 |          0.1.0 | TUI, status line, preferences, and Nord themes               |
 | [`choco-pi-shells`](.pi/packages/choco-pi-shells)                         |          0.1.0 | Owner-scoped background shell processes                      |
@@ -167,7 +171,6 @@ Pi's built-in `grep` tool is disabled. Source discovery follows the LSP and Code
 | [`choco-pi-compaction`](.pi/packages/choco-pi-compaction)                 |          0.1.0 | Local compaction summaries reconciled with retained messages |
 | [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |          0.1.0 | Codex tools, Code Mode, and Responses compaction             |
 | [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   |          0.1.0 | Descendant `AGENTS.md` instruction loading                   |
-| [`choco-pi-web-access`](.pi/packages/choco-pi-web-access)                 | 0.24.1-choco.0 | Web search, source checks, and content extraction            |
 | [`choco-pi-agent-browser`](.pi/packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | Native browser automation tools                              |
 | [`choco-pi-computer-use`](.pi/packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS desktop inspection and interaction                     |
 
@@ -195,6 +198,8 @@ value is ignored. This example reflects the maintainer's current global file
 ```json
 {
   "packages": [
+    "/path/to/choco-pi/.pi/packages/choco-pi-web-search",
+    "/path/to/choco-pi/.pi/packages/choco-pi-web-access",
     "/path/to/choco-pi/.pi/packages/choco-pi-provider-synthetic",
     "/path/to/choco-pi/.pi/packages/choco-pi-ui",
     "/path/to/choco-pi/.pi/packages/choco-pi-shells",
@@ -207,7 +212,6 @@ value is ignored. This example reflects the maintainer's current global file
     "/path/to/choco-pi/.pi/packages/choco-pi-compaction",
     "/path/to/choco-pi/.pi/packages/choco-pi-codex",
     "/path/to/choco-pi/.pi/packages/choco-pi-agents-md",
-    "/path/to/choco-pi/.pi/packages/choco-pi-web-access",
     "/path/to/choco-pi/.pi/packages/choco-pi-agent-browser",
     "/path/to/choco-pi/.pi/packages/choco-pi-computer-use",
     "/path/to/choco-pi/.pi/packages/choco-pi-editor-context"

@@ -86,6 +86,8 @@ Pi는 인증 정보를 저장소 밖에 보관합니다. 인증 정보가 담긴
 
 Pi의 내장 `grep` 도구는 비활성화되어 있습니다. 소스 탐색은 LSP와 Code Mode 절차를 따릅니다: `symbol_search`, `module_report`, 필요한 심벌만 읽기, 코드 탐색, AST 검색.
 
+웹 조사는 대화 모델과 관계없이 지연 로딩되는 단일 `web_search` 도구를 사용합니다. 검색 인증 정보와 요금 청구 방식은 대화 공급자에서 가져오지 않고 선택된 검색 백엔드에서 별도로 결정합니다. 공급자, 라우팅, 개인정보 보호, fallback 동작은 [웹 검색 안내](docs/web-search.md)를 참고하세요.
+
 ## 주요 명령
 
 | 명령                        | 용도                                                        |
@@ -108,10 +110,12 @@ Pi의 내장 `grep` 도구는 비활성화되어 있습니다. 소스 탐색은 
 
 ## 설치된 패키지
 
-[`.pi/settings.json`](.pi/settings.json)은 다음 로컬 패키지 16개를 불러옵니다.
+[`.pi/settings.json`](.pi/settings.json)은 다음 로컬 패키지 17개를 불러옵니다.
 
 | 패키지                                                                    |           버전 | 용도                                             |
 | ------------------------------------------------------------------------- | -------------: | ------------------------------------------------ |
+| [`choco-pi-web-search`](.pi/packages/choco-pi-web-search)                 |          0.1.0 | 단일 웹 검색 도구의 세션별 라우팅                |
+| [`choco-pi-web-access`](.pi/packages/choco-pi-web-access)                 | 0.24.1-choco.0 | 웹 검색, 출처 검증, 콘텐츠 추출                  |
 | [`choco-pi-provider-synthetic`](.pi/packages/choco-pi-provider-synthetic) |          0.1.0 | Synthetic 공급자, 인증, 사용량, 검색             |
 | [`choco-pi-ui`](.pi/packages/choco-pi-ui)                                 |          0.1.0 | TUI, 상태 표시줄, 환경 설정, Nord 테마           |
 | [`choco-pi-shells`](.pi/packages/choco-pi-shells)                         |          0.1.0 | 소유자별 백그라운드 셸 프로세스                  |
@@ -125,7 +129,6 @@ Pi의 내장 `grep` 도구는 비활성화되어 있습니다. 소스 탐색은 
 | [`choco-pi-compaction`](.pi/packages/choco-pi-compaction)                 |          0.1.0 | 유지된 최근 메시지와 대조한 로컬 compaction 요약 |
 | [`choco-pi-codex`](.pi/packages/choco-pi-codex)                           |          0.1.0 | Codex 도구, Code Mode, Responses compaction      |
 | [`choco-pi-agents-md`](.pi/packages/choco-pi-agents-md)                   |          0.1.0 | 하위 `AGENTS.md` 지침 로딩                       |
-| [`choco-pi-web-access`](.pi/packages/choco-pi-web-access)                 | 0.24.1-choco.0 | 웹 검색, 출처 검증, 콘텐츠 추출                  |
 | [`choco-pi-agent-browser`](.pi/packages/choco-pi-agent-browser)           |  0.5.0-choco.0 | 네이티브 브라우저 자동화 도구                    |
 | [`choco-pi-computer-use`](.pi/packages/choco-pi-computer-use)             |  0.5.0-choco.0 | macOS 데스크톱 확인 및 조작                      |
 
@@ -153,6 +156,8 @@ Pi는 `cacheWarming`을 `~/.pi/agent/settings.json`에서만 읽으며 프로젝
 ```json
 {
   "packages": [
+    "/path/to/choco-pi/.pi/packages/choco-pi-web-search",
+    "/path/to/choco-pi/.pi/packages/choco-pi-web-access",
     "/path/to/choco-pi/.pi/packages/choco-pi-provider-synthetic",
     "/path/to/choco-pi/.pi/packages/choco-pi-ui",
     "/path/to/choco-pi/.pi/packages/choco-pi-shells",
@@ -165,7 +170,6 @@ Pi는 `cacheWarming`을 `~/.pi/agent/settings.json`에서만 읽으며 프로젝
     "/path/to/choco-pi/.pi/packages/choco-pi-compaction",
     "/path/to/choco-pi/.pi/packages/choco-pi-codex",
     "/path/to/choco-pi/.pi/packages/choco-pi-agents-md",
-    "/path/to/choco-pi/.pi/packages/choco-pi-web-access",
     "/path/to/choco-pi/.pi/packages/choco-pi-agent-browser",
     "/path/to/choco-pi/.pi/packages/choco-pi-computer-use",
     "/path/to/choco-pi/.pi/packages/choco-pi-editor-context"
