@@ -1,4 +1,4 @@
-import type { SyntheticClientOptions, SyntheticUtilityApiConfig } from "./types";
+import type { SyntheticClientOptions, SyntheticUtilityApiConfig } from "./types.ts";
 
 export const DEFAULT_SYNTHETIC_API_BASE_URL = "https://api.synthetic.new";
 

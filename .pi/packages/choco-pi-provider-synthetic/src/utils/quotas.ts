@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { QuotasResponse } from "../types/quotas";
+import type { QuotasResponse } from "../types/quotas.ts";
 
 export type BillingMode = "subscription" | "pay-as-you-go";
 

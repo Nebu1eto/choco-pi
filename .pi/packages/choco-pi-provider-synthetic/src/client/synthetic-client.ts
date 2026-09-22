@@ -1,5 +1,5 @@
 import { Value } from "typebox/value";
-import { QuotasResponseSchema, type QuotasResult } from "../types/quotas";
+import { QuotasResponseSchema, type QuotasResult } from "../types/quotas.ts";
 import {
   type SyntheticClientOptions,
   type SyntheticClientRequestOptions,
@@ -7,13 +7,27 @@ import {
   SyntheticModelsResponseSchema,
   type SyntheticSearchResponse,
   SyntheticSearchResponseSchema,
-} from "./types";
+} from "./types.ts";
 import {
   DEFAULT_SYNTHETIC_API_BASE_URL,
   resolveSyntheticUtilityApiBaseUrl,
   syntheticUtilityApiUrl,
-} from "./utility-api";
-import { authHeaders, combineWithTimeout, isTimeoutReason, parseErrorMessage } from "./utils";
+} from "./utility-api.ts";
+import { authHeaders, combineWithTimeout, isTimeoutReason, parseErrorMessage } from "./utils.ts";
+
+export type SyntheticSearchClientErrorKind = "auth" | "quota" | "network" | "request";
+
+export class SyntheticSearchClientError extends Error {
+  readonly kind: SyntheticSearchClientErrorKind;
+  readonly retryable: boolean;
+
+  constructor(kind: SyntheticSearchClientErrorKind, message: string, retryable: boolean) {
+    super(message);
+    this.name = "SyntheticSearchClientError";
+    this.kind = kind;
+    this.retryable = retryable;
+  }
+}
 
 export class SyntheticClient {
   private readonly apiKey: string | undefined;
@@ -57,7 +71,11 @@ export class SyntheticClient {
       if (!response.ok) {
         return {
           success: false,
-          error: { message: await parseErrorMessage(response), kind: "http" },
+          error: {
+            message: await parseErrorMessage(response),
+            kind: "http",
+            status: response.status,
+          },
         };
       }
 
@@ -90,22 +108,51 @@ export class SyntheticClient {
     options: SyntheticClientRequestOptions = {},
   ): Promise<SyntheticSearchResponse> {
     if (this.requiresAuth && !this.apiKey) {
-      throw new Error("No API key provided");
+      throw new SyntheticSearchClientError("auth", "Synthetic credentials are missing.", false);
     }
 
-    const response = await fetch(syntheticUtilityApiUrl(this.resolveBaseUrl(), "/v2/search"), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders(this.apiKey),
-      },
-      body: JSON.stringify({ query }),
-      signal: options.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(syntheticUtilityApiUrl(this.resolveBaseUrl(), "/v2/search"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(this.apiKey),
+        },
+        body: JSON.stringify({ query }),
+        signal: options.signal,
+      });
+    } catch (error: unknown) {
+      if (
+        options.signal?.aborted ||
+        (error instanceof DOMException && error.name === "AbortError") ||
+        (error instanceof Error && error.name === "AbortError")
+      ) {
+        throw error;
+      }
+      throw new SyntheticSearchClientError(
+        "network",
+        "Synthetic web search could not be reached.",
+        true,
+      );
+    }
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Search API error: ${response.status} ${errorText}`);
+      if (response.status === 401 || response.status === 403) {
+        throw new SyntheticSearchClientError("auth", "Synthetic credentials were rejected.", false);
+      }
+      if (response.status === 402 || response.status === 429) {
+        throw new SyntheticSearchClientError(
+          "quota",
+          "Synthetic quota prevents web search.",
+          response.status === 429,
+        );
+      }
+      throw new SyntheticSearchClientError(
+        "request",
+        "Synthetic web search request failed.",
+        response.status >= 500,
+      );
     }
 
     try {
@@ -114,11 +161,11 @@ export class SyntheticClient {
         throw new Error("Synthetic search API returned an invalid response");
       }
       return data;
-    } catch (parseError) {
-      throw new Error(
-        parseError instanceof Error
-          ? `Failed to parse search results: ${parseError.message}`
-          : "Failed to parse search results",
+    } catch {
+      throw new SyntheticSearchClientError(
+        "request",
+        "Synthetic web search returned an invalid response.",
+        false,
       );
     }
   }

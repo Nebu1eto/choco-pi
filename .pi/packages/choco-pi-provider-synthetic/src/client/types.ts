@@ -1,5 +1,5 @@
 import { type Static, Type } from "typebox";
-import type { QuotasResponse } from "../types/quotas";
+import type { QuotasResponse } from "../types/quotas.ts";
 
 export interface SyntheticUtilityApiConfig {
   proxyUrl?: string;

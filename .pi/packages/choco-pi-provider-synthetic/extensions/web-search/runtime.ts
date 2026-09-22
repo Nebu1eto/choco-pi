@@ -14,6 +14,7 @@ import {
   type WebSearchEntitlement,
 } from "./activation.ts";
 import { registerSyntheticWebSearchTool } from "./tool.ts";
+import { hasCanonicalSearch } from "../../../choco-pi-web-search/index.ts";
 
 export default async function (pi: ExtensionAPI) {
   let config = await ensureSyntheticConfig();
@@ -72,6 +73,11 @@ export default async function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     cancelQuotaCheck();
     entitlement = "unknown";
+    if (hasCanonicalSearch(pi.events)) {
+      getApiKey = undefined;
+      syncActivation();
+      return;
+    }
     getApiKey = () => ctx.modelRegistry.getApiKeyForProvider("synthetic");
     syncActivation();
     refreshEntitlement();
@@ -87,6 +93,14 @@ export default async function (pi: ExtensionAPI) {
 
     config = nextConfig;
     publishSyntheticConfig(nextConfig);
+
+    if (hasCanonicalSearch(pi.events)) {
+      cancelQuotaCheck();
+      entitlement = "unknown";
+      getApiKey = undefined;
+      syncActivation();
+      return;
+    }
 
     if (connectionChanged || (becameEnabled && entitlement === "unknown")) {
       entitlement = "unknown";
