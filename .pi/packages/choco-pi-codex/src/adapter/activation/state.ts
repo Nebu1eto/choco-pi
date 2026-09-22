@@ -15,6 +15,7 @@ export interface PendingPiCompactionNativeWindow {
 
 export interface AdapterState {
   enabled: boolean;
+  canonicalSearch?: boolean | undefined;
   cwd: string;
   adapterOwnedToolNames?: string[] | undefined;
   previousToolNames?: string[] | undefined;

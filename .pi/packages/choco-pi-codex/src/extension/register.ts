@@ -18,6 +18,7 @@ import { registerNativeSteeringBridge } from "./native-steering-bridge.ts";
 import { resolveCodexRuntimePlan } from "../adapter/activation/runtime-plan.ts";
 import { captureActiveProviderSystemPrompt } from "../adapter/provider-prompt-capture.ts";
 import { withLiveCtx } from "./live-context.ts";
+import { registerCodexWebRunSearchAdapter } from "./search-adapter.ts";
 
 export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
   registerCodexTransportCleanup();
@@ -30,7 +31,15 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
     () => runtime.state.config.ui.steeringDeliveryStatus,
   );
   registerCanonicalAliasEndpointPreflight(pi, runtime);
-  const codeMode = await registerCodexCodeMode(pi, runtime);
+  const searchAdapter = registerCodexWebRunSearchAdapter(pi, runtime);
+  pi.on("session_shutdown", () => searchAdapter.unregister());
+  let codeMode: Awaited<ReturnType<typeof registerCodexCodeMode>>;
+  try {
+    codeMode = await registerCodexCodeMode(pi, runtime);
+  } catch (error) {
+    searchAdapter.unregister();
+    throw error;
+  }
   let cleanupProxyProvider: ReturnType<typeof registerCodeModeProxyProvider> | undefined;
   try {
     registerOpenAICodexCustomProvider(pi, {
@@ -115,6 +124,7 @@ export async function registerCodexConversion(pi: ExtensionAPI): Promise<void> {
     });
     registerCodexEvents(pi, runtime, tools, ui, codeMode, proxyProvider);
   } catch (registrationError) {
+    searchAdapter.unregister();
     try {
       try {
         cleanupProxyProvider?.shutdown();

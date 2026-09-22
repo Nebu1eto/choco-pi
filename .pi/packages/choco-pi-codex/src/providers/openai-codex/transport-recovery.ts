@@ -103,6 +103,7 @@ import {
 } from "./session-continuity.ts";
 
 const CompactionTriggerSchema = Type.Object({ type: Type.Literal("compaction_trigger") });
+const StringRequestBodySchema = Type.String();
 
 export type CodexProviderRuntimeConfig = Pick<CodexConversionConfig, "openai" | "executionMode"> &
   Partial<Pick<CodexConversionConfig, "compaction">>;
@@ -192,6 +193,7 @@ async function openCodexSSE<TApi extends Api>(
   options: OpenAICodexStreamOptions | undefined,
   turnState: CodexTurnState | undefined,
 ): Promise<Response> {
+  const requestBody = snapshotCodexSSEBody(body);
   let lastError: Error | undefined;
   for (let attempt = 0; attempt <= MAX_SSE_REQUEST_RETRIES; attempt++) {
     if (options?.signal?.aborted) throw new Error("Request was aborted");
@@ -203,7 +205,7 @@ async function openCodexSSE<TApi extends Api>(
         response = await fetch(resolveCodexUrl(model.baseUrl), {
           method: "POST",
           headers: withCodexTurnStateHeader(baseHeaders, turnState),
-          body,
+          body: requestBody,
           signal: combinedSignal.signal,
         });
       } catch (error) {
@@ -254,6 +256,13 @@ async function openCodexSSE<TApi extends Api>(
       : new NonRetryableProviderError(message);
   }
   throw lastError ?? new Error("Failed after retries");
+}
+
+export function snapshotCodexSSEBody(body: string | Uint8Array): string | Uint8Array<ArrayBuffer> {
+  if (Check(StringRequestBodySchema, body)) return body;
+  const snapshot = new Uint8Array(body.byteLength);
+  snapshot.set(body);
+  return snapshot;
 }
 
 export function createCodexTransportStream<TApi extends Api>(

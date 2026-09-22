@@ -128,6 +128,7 @@ function extraToolNames(
   ctx: RuntimeContext,
   config: CodexConversionConfig,
   codexBacked: boolean,
+  legacyWebRun: boolean,
 ): string[] {
   const names: string[] = [];
   if (config.tools.applyPatchOnly) names.push(APPLY_PATCH_TOOL_NAME);
@@ -136,7 +137,11 @@ function extraToolNames(
     (supportsViewImageInputs(ctx.model) || config.tools.viewImageFallback)
   )
     names.push(VIEW_IMAGE_TOOL_NAME);
-  if (config.tools.webRunOnly && (supportsNativeWebSearch(ctx.model) || codexBacked))
+  if (
+    legacyWebRun &&
+    config.tools.webRunOnly &&
+    (supportsNativeWebSearch(ctx.model) || codexBacked)
+  )
     names.push(WEB_SEARCH_TOOL_NAME);
   if (config.tools.imageGenerationOnly && (supportsNativeImageGeneration(ctx.model) || codexBacked))
     names.push(IMAGE_GENERATION_TOOL_NAME);
@@ -147,9 +152,10 @@ function normalToolNames(
   ctx: RuntimeContext,
   config: CodexConversionConfig,
   codexBacked: boolean,
+  legacyWebRun: boolean,
 ): string[] {
   const names = [...CORE_ADAPTER_TOOL_NAMES];
-  if (config.tools.webRun && (supportsNativeWebSearch(ctx.model) || codexBacked))
+  if (legacyWebRun && config.tools.webRun && (supportsNativeWebSearch(ctx.model) || codexBacked))
     names.push(WEB_SEARCH_TOOL_NAME);
   if (config.tools.imageGeneration && (supportsNativeImageGeneration(ctx.model) || codexBacked))
     names.push(IMAGE_GENERATION_TOOL_NAME);
@@ -162,7 +168,10 @@ export function resolveCodexRuntimePlan(
   ctx: RuntimeContext,
   config: CodexConversionConfig,
   executionMode?: ExecutionMode,
-  options: { canonicalAliasEndpointTrusted?: boolean | undefined } = {},
+  options: {
+    canonicalAliasEndpointTrusted?: boolean | undefined;
+    canonicalSearch?: boolean | undefined;
+  } = {},
 ): CodexRuntimePlan {
   const isConfigured = configuredProvider(ctx, config);
   const codexTransport = isCodexTransportContext(ctx);
@@ -192,7 +201,7 @@ export function resolveCodexRuntimePlan(
     return {
       ...base,
       kind: "extras",
-      toolNames: extraToolNames(ctx, config, codexBacked),
+      toolNames: extraToolNames(ctx, config, codexBacked, options.canonicalSearch !== true),
       prompt: undefined,
       transport: "responses",
     };
@@ -239,7 +248,7 @@ export function resolveCodexRuntimePlan(
   return {
     ...base,
     kind: "normal",
-    toolNames: normalToolNames(ctx, config, codexBacked),
+    toolNames: normalToolNames(ctx, config, codexBacked, options.canonicalSearch !== true),
     prompt: "normal",
     transport: "responses",
     nativeCompaction,
@@ -248,15 +257,21 @@ export function resolveCodexRuntimePlan(
 
 export function resolveCodexRuntimePlanForState(
   ctx: RuntimeContext,
-  state: Pick<AdapterState, "config" | "canonicalAliasEndpoint" | "executionMode">,
+  state: Pick<
+    AdapterState,
+    "canonicalSearch" | "config" | "canonicalAliasEndpoint" | "executionMode"
+  >,
 ): CodexRuntimePlan {
   const model = ctx.model;
   if (!model || !isCanonicalCodexAliasModel(model))
-    return resolveCodexRuntimePlan(ctx, state.config, state.executionMode);
+    return resolveCodexRuntimePlan(ctx, state.config, state.executionMode, {
+      canonicalSearch: state.canonicalSearch,
+    });
   const endpoint = state.canonicalAliasEndpoint;
   const trusted = endpoint?.modelKey === canonicalCodexAliasModelKey(model) && endpoint.trusted;
   return resolveCodexRuntimePlan(ctx, state.config, state.executionMode, {
     canonicalAliasEndpointTrusted: trusted,
+    canonicalSearch: state.canonicalSearch,
   });
 }
 
