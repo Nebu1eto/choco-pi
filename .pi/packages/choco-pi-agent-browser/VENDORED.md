@@ -29,6 +29,7 @@ The fork lets choco-pi customize the extension in-tree and load its TypeScript s
 - Kept `@earendil-works/*` and `typebox` as optional peer dependencies supplied by the Pi host. No runtime dependency was vendored.
 - Replaced upstream `README.md` and `AGENTS.md` with fork-specific source-loading and maintenance guidance; added this provenance file and a root-extending `tsconfig.json`.
 - Updated package-root discovery in `index.ts` for the fork name. Reduced installed-document prompt guidance to the retained fork `README.md` and removed one link to the deleted architecture document; command and result guidance remains embedded in the tool prompt.
+- Derived the retained `README.md` path directly from the fixed source-only entrypoint layouts in `index.ts` and `lib/runtime-extension.ts`, removing redundant synchronous manifest walks and unchecked manifest parsing from registration.
 
 ### Source-only loading
 
@@ -74,6 +75,28 @@ The fork lets choco-pi customize the extension in-tree and load its TypeScript s
 
 - Reserve a branch restoration generation when `session_start` or `session_tree` takes ownership. A queued tree restoration checks that generation after waiting for active scripts and at both serialized queue boundaries, so shutdown or a newer tree event can supersede it before it reads an obsolete extension context.
 - Snapshot the restored branch and working directory before asynchronous script-lease recovery. Recovery stops after a lease close when its generation loses ownership, while the current generation retains the existing restore and cleanup behavior.
+
+### Unified web-search backend integration
+
+- Exported production-callable Brave and Exa backend descriptors, non-contacting availability
+  classification, guarded execution, and the existing per-runtime sequential request gate for the
+  canonical choco-pi web-search integration. Provider IDs are `agent-browser.brave` and
+  `agent-browser.exa`; the latter has lower routing precedence than the web-access Exa synthesis
+  transports while remaining available for advanced Exa constraints.
+- Registered both adapters in the canonical loader-local scope through the shared Pi event bus,
+  with one sequential request gate per extension scope and asynchronous context-aware config
+  loading. Canonical mode suppresses registration and prompt discovery of
+  `agent_browser_web_search`; standalone mode retains its existing name and behavior.
+- Preserved credential precedence. The backend boundary rejects unsupported hard constraints
+  instead of silently dropping them, checks cancellation/session generation and its own timeout
+  after credential and network awaits, and translates authentication, quota, invalid request,
+  transient HTTP, network, invalid response, deadline, cancellation, and stale-context failures
+  into typed router errors without exposing credentials. HTTP 429 remains nonretryable.
+- Added local-fetch regression coverage for Brave locale/pagination/freshness/safety forwarding,
+  Exa search type and single-request behavior, normalized source metadata/highlights, availability
+  states, sequential gating, queued cancellation, stale generations, all transport error classes,
+  canonical response metadata, real Pi wrapper scope isolation, and integrated/standalone tool
+  discovery.
 
 ## Updating
 

@@ -158,6 +158,7 @@ async function resolveCommandCredential(
       timeout: SECRET_COMMAND_TIMEOUT_MS,
       maxBuffer: 1024 * 1024,
     });
+    if (signal?.aborted) throw signal.reason ?? new Error("Credential resolution cancelled");
     const value = result.stdout.trim();
     return value.length > 0 ? value : undefined;
   } catch (error) {
@@ -204,6 +205,9 @@ export async function resolvePreferredWebSearchCredential(
   if (!state.webSearchEnabled || state.errors.length > 0) return undefined;
   for (const provider of getWebSearchProviderOrder(state, options.provider)) {
     const credential = await resolveWebSearchCredential(state, provider, options);
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? new Error("Credential resolution cancelled");
+    }
     if (credential) return { provider, credential };
   }
   return undefined;

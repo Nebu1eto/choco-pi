@@ -9,7 +9,9 @@ Vendored fork of `pi-agent-browser-native@0.5.0`. Read `VENDORED.md` before chan
 - Do not add a build step or compiled output. Pi loads `extensions/agent-browser/index.ts` directly.
 - Keep `agent-browser` as an external executable on `PATH`. Never vendor, bundle, install, or launch the CLI from package code.
 - Preserve the tested compatibility profiles and operation-specific capability gates. Version drift alone is advisory, including newer versions.
-- Keep the existing tool names, including `agent_browser` and `agent_browser_web_search`.
+- Keep `agent_browser` unchanged. Keep `agent_browser_web_search` in standalone mode; when the
+  canonical choco-pi web-search scope is present, that integrated tool exclusively owns search
+  discovery and the companion name must not be advertised or revivable.
 - Keep `typebox` and all `@earendil-works/*` imports as host-provided peer dependencies.
 - Import TypeBox only as `typebox`, `typebox/compile`, or `typebox/value`. Pi's loader aliases only those three specifiers; any other subpath breaks extension loading.
 - Record every difference from upstream in `VENDORED.md` when making it.

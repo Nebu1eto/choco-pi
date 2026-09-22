@@ -2,7 +2,7 @@
 
 Vendored choco-pi fork of [`pi-agent-browser-native`](https://github.com/fitchmultz/pi-agent-browser-native) 0.5.0. Pi loads `extensions/agent-browser/index.ts` directly; this package has no compilation or publication workflow.
 
-The extension keeps the upstream tool names, including `agent_browser` and the optional `agent_browser_web_search` companion. It requires `agent-browser` as a separate executable on `PATH`; the CLI is not included. Source-verified compatibility profiles cover 0.34.0, 0.35.2, 0.36.0, 0.37.1, and 0.38.1; the live binary matrix remains a separate validation gate. Older, intermediate, malformed, and newer versions produce bounded advisory warnings rather than a blanket version failure; operations still fail when a concrete required safety capability is unavailable.
+The extension keeps `agent_browser` and, in standalone mode, the optional `agent_browser_web_search` companion. Integrated choco-pi mode gives the canonical `web_search` tool exclusive search discovery while this package contributes callable Brave and Exa API backends. It requires `agent-browser` as a separate executable on `PATH`; the CLI is not included. Source-verified compatibility profiles cover 0.34.0, 0.35.2, 0.36.0, 0.37.1, and 0.38.1; the live binary matrix remains a separate validation gate. Older, intermediate, malformed, and newer versions produce bounded advisory warnings rather than a blanket version failure; operations still fail when a concrete required safety capability is unavailable.
 
 Run the read-only doctor with `node scripts/doctor.ts`. It performs side-effect-free version probes and source checks; it does not install, upgrade, launch, or contact a browser.
 

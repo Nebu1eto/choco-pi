@@ -123,6 +123,7 @@ export function buildToolPromptGuidelines(options: {
   };
   browserExecutablePath?: string;
   docs?: { readmePath: string };
+  integratedWebSearch?: boolean;
   includeWebSearch: boolean;
 }): string[] {
   const browserDefaultProfileGuideline = buildBrowserDefaultProfileGuideline(
@@ -131,10 +132,14 @@ export function buildToolPromptGuidelines(options: {
   const browserExecutablePathGuideline = buildBrowserExecutablePathGuideline(
     options.browserExecutablePath,
   );
+  const webSearchPromptGuideline = options.integratedWebSearch
+    ? WEB_SEARCH_PROMPT_GUIDELINE.replaceAll("agent_browser_web_search", "web_search")
+    : WEB_SEARCH_PROMPT_GUIDELINE;
   return [
     ...TOOL_PROMPT_GUIDELINES_PREFIX,
     ...(options.docs ? [buildInstalledDocsGuideline(options.docs)] : []),
     ...RUNTIME_PROMPT_GUIDELINES,
+    ...(options.includeWebSearch || options.integratedWebSearch ? [webSearchPromptGuideline] : []),
     ...(browserExecutablePathGuideline ? [browserExecutablePathGuideline] : []),
     ...(browserDefaultProfileGuideline ? [browserDefaultProfileGuideline] : []),
     TOOL_PROMPT_GUIDELINES_SUFFIX[0],
