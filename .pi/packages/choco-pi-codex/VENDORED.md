@@ -431,3 +431,34 @@ comes from `resolveTranscriptTools`, and grammar-tool metadata comes from
 the Code Mode nested-tool boundary validates `JsonObject` arguments, and Off
 reasoning effort is explicit. `tests/request-body-invariants.test.ts` and
 `tests/transcript-request-paths.test.ts` cover the request paths.
+
+## Native OpenAI web-search backend (choco-pi addition)
+
+`src/tools/web-run/backend.ts` extracts the native `web_run` subprocess boundary
+for reuse by the unified search router. Adapter calls supply an explicit session
+owner and already-resolved OpenAI Codex subscription credentials; the backend
+rejects other provider routes, stops the child process on cancellation, refuses
+stale owners before startup and after completion, and preserves structured output
+and source data. Transport failures retain typed categories and structured HTTP
+status when the helper reports one. `codex-tool-provider.ts` now exposes a separate
+OpenAI-only resolver that never accepts the conversation model or an arbitrary
+Responses proxy. The legacy standalone tool keeps its configured-Responses route,
+and Code Mode now passes the same Codex-provider fallback flag as the directly
+registered tool. Focused root tests use a temporary executable and no provider
+network requests.
+
+`src/extension/search-adapter.ts` registers the native helper with the shared
+search router as `codex.web_run` (`openai`, `codex-native`, subscription billing).
+It resolves only canonical OpenAI Codex credentials, derives availability from
+local configuration, credentials, and binary presence, and binds every native
+request to the router's session owner. Search, image search, direct or referenced
+open, click, and find retain native filters and references. The router owns public
+reference identity. When canonical search is active, Codex activation no longer
+registers or reactivates `web_run`, and Code Mode omits `web__run` while retaining
+the registered canonical `web_search` bridge across conversation providers.
+
+The extracted subprocess boundary now waits for child close after cancellation,
+escalates from `SIGTERM` to `SIGKILL` after a bounded grace period, and redacts the
+resolved token and account id from native diagnostics. SSE retry bodies snapshot
+typed-array input once into an owned `ArrayBuffer`, preserving the request bytes
+across retries and satisfying the integrated Fetch `BodyInit` contract.

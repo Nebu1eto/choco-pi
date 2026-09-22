@@ -1,8 +1,6 @@
 import type { BoundaryRecord, BoundaryValue } from "../boundary.ts";
 import { isFunctionValue, isObjectValue, isStringValue } from "../boundary.ts";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
-import { formatNativeBinaryError, nativeBinaryRecoveryMessage } from "../../native-binary-error.ts";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -22,6 +20,7 @@ function memoizedImport<Module>(loader: () => Promise<Module>): () => Promise<Mo
 
 const loadNativeBinary = memoizedImport(() => import("../native/binary.ts"));
 const loadToolProvider = memoizedImport(() => import("../../adapter/codex-tool-provider.ts"));
+const loadWebRunBackend = memoizedImport(() => import("./backend.ts"));
 
 export const WEB_SEARCH_UNSUPPORTED_MESSAGE =
   "web_run/imagegen requires an OpenAI Codex-compatible Responses provider or /login openai-codex";
@@ -88,12 +87,6 @@ function createEmptyResultComponent(): Container {
   return new Container();
 }
 
-interface WebRunRequest extends BoundaryRecord {
-  id: string | undefined;
-  model?: string | undefined;
-  input?: NonNullable<ReturnType<typeof buildWebSearchInput>> | undefined;
-}
-
 type WebRunOutput = BoundaryRecord;
 
 type WebRunExecutionResult = { text: string; details: WebRunOutput };
@@ -126,78 +119,11 @@ export interface WebSearchToolOptions {
   model?: string | (() => string | undefined) | undefined;
   allowConfiguredProvider?: ((model: ExtensionContext["model"]) => boolean) | undefined;
   allowCodexProviderFallback?: boolean | undefined;
+  /** Explicit owner id for adapter callers. Takes precedence over ctx.sessionManager. */
+  sessionIdOverride?: boolean | undefined;
+  isSessionCurrent?: (() => boolean) | undefined;
   customRendering?: boolean | undefined;
   promptSnippet?: boolean | undefined;
-}
-
-async function runWebRunBinary(
-  webRunPath: string,
-  params: BoundaryRecord,
-  env: NodeJS.ProcessEnv,
-  signal: AbortSignal | undefined | null,
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(webRunPath, ["-"], {
-      env,
-      signal: signal ?? undefined,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let stdinError: Error | undefined;
-    let stdinErrorTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (callback: () => void) => {
-      if (settled) return;
-      settled = true;
-      if (stdinErrorTimer) clearTimeout(stdinErrorTimer);
-      callback();
-    };
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", (error) =>
-      finish(() =>
-        reject(new Error(formatNativeBinaryError("web_run", error, { binaryPath: webRunPath }))),
-      ),
-    );
-    child.on("close", (code) =>
-      finish(() => {
-        const detail = stderr.trim() || `web_run exited with code ${code ?? "unknown"}`;
-        const nativeFailure =
-          code === 0 ? undefined : nativeBinaryRecoveryMessage("web_run", detail);
-        if (nativeFailure) reject(new Error(nativeFailure));
-        else if (stdinError) reject(stdinError);
-        else if (code === 0) resolve(stdout);
-        else reject(new Error(detail));
-      }),
-    );
-    child.stdin.on("error", (error) => {
-      if (settled) return;
-      stdinError = error;
-      child.kill();
-      stdinErrorTimer = setTimeout(() => finish(() => reject(error)), 50);
-    });
-    child.stdin.end(JSON.stringify(params));
-  });
-}
-
-function formatWebRunOutput(parsed: BoundaryRecord): string | undefined {
-  const outputText = parsed["output"] ?? parsed["output_text"] ?? parsed["text"];
-  if (isStringValue(outputText) && outputText.trim()) return outputText;
-  if (parsed["search_results"] !== undefined) return JSON.stringify(parsed, null, 2);
-  if (
-    Array.isArray(parsed["content"]) ||
-    Array.isArray(parsed["open"]) ||
-    Array.isArray(parsed["find"])
-  )
-    return JSON.stringify(parsed, null, 2);
-  return undefined;
 }
 
 function supportsExecutableWebSearch(
@@ -217,44 +143,70 @@ export async function executeCodexWebSearch(
   signal: AbortSignal | undefined | null,
   options: WebSearchToolOptions = {},
 ): Promise<WebRunExecutionResult> {
-  const [{ getBundledToolBinaryPath }, { codexToolProviderEnv, resolveCodexToolProvider }] =
-    await Promise.all([loadNativeBinary(), loadToolProvider()]);
+  const sessionManager = ctx.sessionManager;
+  const modelRegistry = ctx.modelRegistry;
+  const currentModel = ctx.model;
+  const contextSessionId = sessionManager.getSessionId();
+  const sessionId =
+    options.sessionIdOverride === true ? options.sessionId : contextSessionId || options.sessionId;
+  if (!sessionId) throw new Error("web_run requires a session owner id");
+  const configuredModelOption = options.model;
+  const configuredModel = isFunctionValue(configuredModelOption)
+    ? configuredModelOption()
+    : configuredModelOption;
+  const configuredProvider = options.allowConfiguredProvider;
+  const customRustBinariesDir = options.customRustBinariesDir;
+  const historyInput = SEND_NATIVE_WEB_SEARCH_HISTORY
+    ? buildWebSearchInput(sessionManager.buildContextEntries())
+    : undefined;
+  const isSessionCurrent =
+    options.isSessionCurrent ?? (() => sessionManager.getSessionId() === contextSessionId);
+  if (signal?.aborted) throw new Error("web_run was cancelled");
+  if (!isSessionCurrent()) throw new Error("web_run session is no longer current");
+  const [
+    { getBundledToolBinaryPath },
+    { resolveCodexToolProvider },
+    { CodexWebRunTransportError, executeConfiguredCodexWebRun },
+  ] = await Promise.all([loadNativeBinary(), loadToolProvider(), loadWebRunBackend()]);
+  if (signal?.aborted) throw new Error("web_run was cancelled");
+  if (!isSessionCurrent()) throw new Error("web_run session is no longer current");
   const webRunPath =
     process.env["PI_CODEX_WEB_RUN_BIN"]?.trim() ||
-    getBundledToolBinaryPath("web_run", {}, options.customRustBinariesDir);
+    getBundledToolBinaryPath("web_run", {}, customRustBinariesDir);
   if (!webRunPath)
-    throw new Error(`web_run binary is not bundled for ${process.platform}-${process.arch}`);
-  const provider = await resolveCodexToolProvider(ctx, options.allowConfiguredProvider);
-  const sessionId = ctx.sessionManager?.getSessionId?.() || options.sessionId;
-  const configuredModel = isFunctionValue(options.model) ? options.model() : options.model;
+    throw new CodexWebRunTransportError(
+      "missing_binary",
+      `web_run binary is not bundled for ${process.platform}-${process.arch}`,
+    );
+  const provider = await resolveCodexToolProvider(
+    { model: currentModel, modelRegistry },
+    configuredProvider,
+  );
+  if (signal?.aborted) throw new Error("web_run was cancelled");
+  if (!isSessionCurrent()) throw new Error("web_run session is no longer current");
   const model = provider.route === "configured-responses" ? provider.model : configuredModel;
-  const env = codexToolProviderEnv(provider);
-  const input = SEND_NATIVE_WEB_SEARCH_HISTORY
-    ? buildWebSearchInput(ctx.sessionManager.buildContextEntries())
-    : undefined;
-  try {
-    const request: WebRunRequest = { ...params, id: sessionId };
-    if (model) request["model"] = model;
-    if (input) request["input"] = input;
-    const stdout = await runWebRunBinary(webRunPath, request, env, signal);
-    const parsed: unknown = JSON.parse(stdout);
-    if (!isObjectValue(parsed)) throw new Error("web_run returned invalid structured JSON output");
-    const output = formatWebRunOutput(parsed);
-    if (output) return { text: output, details: parsed };
-    throw new Error("web_run search returned no output");
-  } catch (error) {
-    const stderr =
-      error && isObjectValue(error) && "stderr" in error ? String(error.stderr ?? "") : "";
-    const message = stderr.trim() || (error instanceof Error ? error.message : String(error));
-    throw new Error(message);
-  }
+  const requestParams: BoundaryRecord = { ...params };
+  if (historyInput) requestParams["input"] = historyInput;
+  return executeConfiguredCodexWebRun({
+    binaryPath: webRunPath,
+    params: requestParams,
+    provider,
+    sessionId,
+    model,
+    signal,
+    isSessionCurrent,
+  });
 }
 
 export function createWebSearchTool(
   name: string = WEB_SEARCH_TOOL_NAME,
   options: WebSearchToolOptions = {},
 ): ToolDefinition<typeof WEB_SEARCH_PARAMETERS> {
-  const toolOptions = { sessionId: randomUUID(), ...options };
+  const toolOptions = {
+    sessionId: randomUUID(),
+    ...options,
+    sessionIdOverride: options.sessionId !== undefined,
+  };
   // SAFETY: The Pi tool API provides object arguments to prepareArguments; the record check preserves that shape.
   const tool: ToolDefinition<typeof WEB_SEARCH_PARAMETERS> = {
     name,

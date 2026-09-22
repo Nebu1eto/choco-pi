@@ -13,6 +13,8 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { CodexExtensionRuntime } from "../extension/runtime.ts";
+import type { CodexConversionConfig } from "./activation/config.ts";
+import type { WebSearchToolOptions } from "../tools/web-run/tool.ts";
 import { formatRunningExecSessionGuidance } from "../tools/code-mode/tool-result.ts";
 import {
   type CodeModeRegistration,
@@ -33,7 +35,11 @@ import { createImageGenerationTool } from "../tools/imagegen/tool.ts";
 import { createViewImageTool } from "../tools/view-image/tool.ts";
 import { createWebSearchTool } from "../tools/web-run/tool.ts";
 import { supportsNativeImageGeneration, supportsViewImageInputs } from "./tool-support.ts";
-import { isCodeModeRuntime, resolveCodexRuntimePlanForState } from "./activation/runtime-plan.ts";
+import {
+  isCodeModeRuntime,
+  resolveCodexRuntimePlanForState,
+  usesCodexProviderFallback,
+} from "./activation/runtime-plan.ts";
 import {
   codeModeImageResult,
   codeModeWebResult,
@@ -46,6 +52,20 @@ import {
 } from "./code-mode/session-tool-permissions.ts";
 
 const LONG_RUNNING_TOOL_OUTER_YIELD_MS = 1_800_000;
+
+export function createCodeModeWebSearchTool(
+  config: CodexConversionConfig,
+  allowConfiguredProvider: NonNullable<WebSearchToolOptions["allowConfiguredProvider"]>,
+) {
+  return createWebSearchTool("web__run", {
+    customRustBinariesDir: config.tools.customRustBinariesDir,
+    model: () => config.openai.webSearchModel,
+    allowConfiguredProvider,
+    allowCodexProviderFallback: usesCodexProviderFallback(config),
+    promptSnippet: false,
+    customRendering: config.ui.toolRenaming,
+  });
+}
 
 export async function registerCodexCodeMode(
   pi: ExtensionAPI,
@@ -101,7 +121,7 @@ export async function registerCodexCodeMode(
   };
 }
 
-function createNestedTools(
+export function createNestedTools(
   runtime: CodexExtensionRuntime,
   activeToolNames: ReadonlySet<string>,
   ctx?: ExtensionContext,
@@ -204,16 +224,10 @@ function createNestedTools(
       ),
     );
   }
-  if (runtime.state.config.tools.webRun) {
+  if (runtime.state.config.tools.webRun && !runtime.state.canonicalSearch) {
     tools.push(
       toNestedTool(
-        createWebSearchTool("web__run", {
-          customRustBinariesDir: runtime.state.config.tools.customRustBinariesDir,
-          model: () => runtime.state.config.openai.webSearchModel,
-          allowConfiguredProvider,
-          promptSnippet: false,
-          customRendering: runtime.state.config.ui.toolRenaming,
-        }),
+        createCodeModeWebSearchTool(runtime.state.config, allowConfiguredProvider),
         'await tools.web__run({ search_query?: [{ q: string, recency?: number, domains?: string[] }], image_query?: [{ q: string }], open?: [{ ref_id: string, lineno?: number }], click?: [{ ref_id: string, id: number }], find?: [{ ref_id: string, pattern: string }], response_length?: "short" | "medium" | "long" }) // turn… ref_ids only for web__run; final answers cite result URLs with Markdown links, never turn… or cite…',
         {},
         { toolName: { namespace: "web", name: "run" }, resultValue: codeModeWebResult },

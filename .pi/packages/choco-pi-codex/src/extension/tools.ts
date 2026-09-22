@@ -68,7 +68,10 @@ export function registerCodexTools(
     const allowConfiguredProvider = (model: Model<Api> | undefined): boolean =>
       isExplicitlyConfiguredToolProvider(model, config);
     const allowCodexProviderFallback = usesCodexProviderFallback(config);
-    if ((!config.voiceFeaturesOnly && config.tools.webRun) || config.tools.webRunOnly) {
+    if (
+      !runtime.state.canonicalSearch &&
+      ((!config.voiceFeaturesOnly && config.tools.webRun) || config.tools.webRunOnly)
+    ) {
       registerWebSearchTool(pi, WEB_SEARCH_TOOL_NAME, {
         customRustBinariesDir: config.tools.customRustBinariesDir,
         model: () => runtime.state.config.openai.webSearchModel,
