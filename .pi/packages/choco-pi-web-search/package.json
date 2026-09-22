@@ -1,0 +1,23 @@
+{
+  "name": "choco-pi-web-search",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Provider-neutral session-scoped web search router for choco-pi.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "0.86.1",
+    "typebox": "^1.3.29"
+  },
+  "chocoPi": {
+    "supersedes": []
+  },
+  "pi": {
+    "extensions": [
+      "./extension.ts"
+    ]
+  }
+}
