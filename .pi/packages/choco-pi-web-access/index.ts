@@ -4,9 +4,26 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth, type KeyId } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { StringEnum, type ImageContent, type TextContent } from "@earendil-works/pi-ai/compat";
+import {
+  canonicalSearchParams,
+  confirmCanonicalSearchRegistration,
+  getSearchScope,
+  hasCanonicalSearch,
+  isSearchError,
+  resolveSearchScope,
+  search as unifiedSearch,
+  searchProviderFamilies,
+  searchProviderSchema as canonicalSearchProviderSchema,
+  type SearchCapability,
+  type SearchAttemptDiagnostic,
+  type SearchBilling,
+  type SearchErrorKind,
+  type SearchReference,
+  type SearchRequest as UnifiedSearchRequest,
+} from "../choco-pi-web-search/index.ts";
 import type { ExtractedContent, ExtractOptions } from "./extract.ts";
 import { normalizeFetchContentParams } from "./fetch-params.ts";
 import { resolveAuthFetchProfile, type AuthFetchProfile } from "./auth-fetch.ts";
@@ -17,10 +34,9 @@ import { clearCloneCache } from "./github-extract.ts";
 import {
   getConfiguredSearchRouting,
   normalizeSearchProviderSelection,
-  RESOLVED_SEARCH_PROVIDERS,
-  SEARCH_PROVIDERS,
   search,
   type AttributedSearchResponse,
+  type FullSearchOptions,
   type SearchProvider,
   type SearchProviderSelection,
   type ResolvedSearchProvider,
@@ -85,6 +101,7 @@ import {
   type RecencyFilter,
   type ResearchArtifact,
 } from "./source-check.ts";
+import { registerWebAccessSearchAdapters } from "./search-adapters.ts";
 
 type ExtensionTheme = ExtensionContext["ui"]["theme"];
 
@@ -146,6 +163,7 @@ interface WebSearchConfig extends ConfigObject {
   kagiApiKey?: ConfigValue;
   provider?: ConfigValue;
   searchProvider?: ConfigValue;
+  allowBilledApiFallback?: ConfigValue;
   workflow?: string;
   curatorTimeoutSeconds?: ConfigValue;
   autoOpenBrowser?: ConfigValue;
@@ -176,6 +194,8 @@ export interface ProviderAvailability {
   openai: boolean;
   exa: boolean;
   kagi: boolean;
+  synthetic: boolean;
+  brave: boolean;
 }
 
 type WebSearchWorkflow = "none" | "summary-review" | "auto-summary";
@@ -256,13 +276,7 @@ const MAX_CURATOR_TIMEOUT_SECONDS = 600;
 const MAX_SUMMARY_GENERATION_DEADLINE_MS = 600_000;
 
 function searchProviderSchema(description: string) {
-  return Type.Union(
-    [
-      StringEnum([...SEARCH_PROVIDERS]),
-      Type.Array(StringEnum([...RESOLVED_SEARCH_PROVIDERS]), { minItems: 1 }),
-    ],
-    { description },
-  );
+  return canonicalSearchProviderSchema(description);
 }
 
 function isToolEnabled(config: WebSearchConfig, key: keyof ToolNames): boolean {
@@ -348,6 +362,132 @@ function resolveRequestedProvider<Value>(requested: Value): SearchProviderSelect
       config.searchProvider ?? config.provider,
       `provider in ${WEB_SEARCH_CONFIG_PATH}`,
     ) ?? "auto"
+  );
+}
+
+function canonicalRequestForQuery(
+  params: Static<typeof canonicalSearchParams>,
+  query?: string,
+): UnifiedSearchRequest {
+  const request: UnifiedSearchRequest = {};
+  if (query !== undefined) request.query = query;
+  else if (params.query !== undefined) request.query = params.query;
+  if (
+    params.action === "search" ||
+    params.action === "image" ||
+    params.action === "open" ||
+    params.action === "click" ||
+    params.action === "find"
+  )
+    request.action = params.action;
+  if (params.imageQuery !== undefined) request.imageQuery = params.imageQuery;
+  if (params.url !== undefined) request.url = params.url;
+  if (params.lineno !== undefined) request.lineno = params.lineno;
+  if (params.open !== undefined) request.open = params.open;
+  if (params.click !== undefined) request.click = params.click;
+  if (params.find !== undefined) request.find = params.find;
+  if (params.reference !== undefined) request.reference = params.reference;
+  if (
+    params.responseLength === "short" ||
+    params.responseLength === "medium" ||
+    params.responseLength === "long"
+  )
+    request.responseLength = params.responseLength;
+  if (params.numResults !== undefined) request.numResults = params.numResults;
+  const recencyFilter = normalizeRecencyFilter(params.recencyFilter);
+  if (recencyFilter !== undefined) request.recencyFilter = recencyFilter;
+  if (params.recencyDays !== undefined) request.recencyDays = params.recencyDays;
+  if (params.domainFilter !== undefined) request.domainFilter = params.domainFilter;
+  if (params.includeContent !== undefined) request.includeContent = params.includeContent;
+  if (params.country !== undefined) request.country = params.country;
+  if (params.language !== undefined) request.language = params.language;
+  if (
+    params.safesearch === "off" ||
+    params.safesearch === "moderate" ||
+    params.safesearch === "strict"
+  )
+    request.safesearch = params.safesearch;
+  if (params.offset !== undefined) request.offset = params.offset;
+  if (
+    params.exaSearchType === "auto" ||
+    params.exaSearchType === "fast" ||
+    params.exaSearchType === "instant" ||
+    params.exaSearchType === "deep-lite" ||
+    params.exaSearchType === "deep" ||
+    params.exaSearchType === "deep-reasoning"
+  )
+    request.exaSearchType = params.exaSearchType;
+  if (
+    params.answerMode === "answer" ||
+    params.answerMode === "results" ||
+    params.answerMode === "both"
+  )
+    request.answerMode = params.answerMode;
+  if (
+    params.searchContextSize === "low" ||
+    params.searchContextSize === "medium" ||
+    params.searchContextSize === "high"
+  )
+    request.searchContextSize = params.searchContextSize;
+  if (params.requiredCapabilities !== undefined)
+    request.requiredCapabilities = params.requiredCapabilities.filter(isSearchCapability);
+  request.provider = resolveRequestedProvider(params.provider);
+  return request;
+}
+
+function isSearchCapability(value: string): value is SearchCapability {
+  return (
+    value === "url" ||
+    value === "lineno" ||
+    value === "numResults" ||
+    value === "recencyFilter" ||
+    value === "recencyDays" ||
+    value === "domainFilter" ||
+    value === "domainExclusions" ||
+    value === "includeContent" ||
+    value === "country" ||
+    value === "language" ||
+    value === "safesearch" ||
+    value === "offset" ||
+    value === "exaSearchType" ||
+    value === "answerMode" ||
+    value === "responseLength" ||
+    value === "searchContextSize"
+  );
+}
+
+function searchOptionsForCanonicalRequest(
+  request: UnifiedSearchRequest,
+  provider: SearchProviderSelection,
+  signal: AbortSignal | undefined,
+  extensionContext: ExtensionContext | undefined,
+): FullSearchOptions {
+  return {
+    provider,
+    numResults: request.numResults,
+    recencyFilter: request.recencyFilter,
+    recencyDays: request.recencyDays,
+    domainFilter: request.domainFilter,
+    includeContent: request.includeContent,
+    country: request.country,
+    language: request.language,
+    safesearch: request.safesearch,
+    offset: request.offset,
+    exaSearchType: request.exaSearchType,
+    answerMode: request.answerMode,
+    responseLength: request.responseLength,
+    searchContextSize: request.searchContextSize,
+    requiredCapabilities: request.requiredCapabilities,
+    signal,
+    extensionContext,
+  };
+}
+
+function formatOwnedReferences(references: SearchReference[] | undefined): string[] {
+  if (!references?.length) return [];
+  return references.map(
+    (reference) =>
+      `Reference (${reference.kind}): ${reference.id} [${reference.adapterId}/${reference.transport}]`,
   );
 }
 
@@ -437,31 +577,17 @@ function shouldAutoOpenCuratorBrowser(config: WebSearchConfig): boolean {
 }
 
 async function getProviderAvailability(ctx: ExtensionContext): Promise<ProviderAvailability> {
+  const scope = resolveSearchScope(ctx);
   const providers = {
     openai: await isOpenAISearchAvailable(ctx),
     exa: isExaAvailable(),
     kagi: isKagiAvailable(),
+    synthetic: [...(scope?.adapters.values() ?? [])].some(
+      (adapter) => adapter.family === "synthetic",
+    ),
+    brave: [...(scope?.adapters.values() ?? [])].some((adapter) => adapter.family === "brave"),
   };
   return { all: Object.values(providers).some(Boolean), ...providers };
-}
-
-function shouldUseOpenAICodexDefault(ctx?: Pick<ExtensionContext, "model">): boolean {
-  return ctx?.model?.provider === "openai-codex";
-}
-
-function shouldPreferOpenAI(
-  options: Pick<PendingCurate, "numResults" | "recencyFilter"> | undefined,
-  preferOpenAICodexDefault: boolean,
-): boolean {
-  if (options?.recencyFilter) return false;
-  if (
-    Check(NumberValueSchema, options?.numResults) &&
-    Number.isFinite(options.numResults) &&
-    Math.floor(options.numResults) !== 5
-  ) {
-    return false;
-  }
-  return preferOpenAICodexDefault;
 }
 
 async function loadCuratorBootstrap<Value>(
@@ -482,32 +608,29 @@ async function loadCuratorBootstrap<Value>(
 export function resolveCuratorDefaultProvider(
   provider: SearchProviderSelection,
   available: ProviderAvailability,
-  ctx?: Pick<ExtensionContext, "model">,
-  options?: Pick<PendingCurate, "numResults" | "recencyFilter">,
+  _ctx?: Pick<ExtensionContext, "model">,
+  _options?: Pick<PendingCurate, "numResults" | "recencyFilter">,
 ): CuratorProvider {
-  return resolveProvider(provider, available, options, shouldUseOpenAICodexDefault(ctx));
+  return resolveProvider(provider, available);
 }
 
 function firstAvailableProvider(
   available: ProviderAvailability,
-  preferOpenAI: boolean,
   fallback: ResolvedSearchProvider,
 ): ResolvedSearchProvider {
-  if (preferOpenAI && available.openai) return "openai";
-  if (available.exa) return "exa";
   if (available.openai) return "openai";
+  if (available.exa) return "exa";
   if (available.kagi) return "kagi";
+  if (available.synthetic) return "synthetic";
+  if (available.brave) return "brave";
   return fallback;
 }
 
 function resolveProvider(
   provider: SearchProviderSelection,
   available: ProviderAvailability,
-  options?: Pick<PendingCurate, "numResults" | "recencyFilter">,
-  preferOpenAICodexDefault = false,
 ): CuratorProvider {
   if (Array.isArray(provider)) return "all";
-  const preferOpenAI = shouldPreferOpenAI(options, preferOpenAICodexDefault);
   if (provider === "auto") {
     const routing = getConfiguredSearchRouting();
     if (routing) {
@@ -516,12 +639,8 @@ function resolveProvider(
       }
       return routing.providers[0];
     }
-    return firstAvailableProvider(available, preferOpenAI, "exa");
+    return firstAvailableProvider(available, "openai");
   }
-  if (provider === "all" && !available.all)
-    return firstAvailableProvider(available, preferOpenAI, "exa");
-  if (provider !== "all" && !available[provider])
-    return firstAvailableProvider(available, preferOpenAI, provider);
   return provider;
 }
 
@@ -545,6 +664,7 @@ interface PendingCurate {
   numResults?: number;
   recencyFilter?: "day" | "week" | "month" | "year";
   domainFilter?: string[];
+  searchRequest: UnifiedSearchRequest;
   availableProviders: ProviderAvailability;
   defaultProvider: CuratorProvider;
   searchProvider: SearchProviderSelection;
@@ -645,13 +765,94 @@ function formatInputValue<Value>(value: Value): string {
   }
 }
 
-function formatSearchSummary(results: SearchResult[], answer: string): string {
+function formatSearchSummary(queryData: QueryResultData): string {
+  const { results, answer, references } = queryData;
+  const referenceLines = formatOwnedReferences(references);
   if (results.length === 0) {
-    return answer ? `${answer}\n\n---\n\n**Sources:**\nNo sources returned.` : "No results found.";
+    let output = answer
+      ? `${answer}\n\n---\n\n**Sources:**\nNo sources returned.`
+      : "No results found.";
+    if (referenceLines.length > 0) output += `\n\n**References:**\n${referenceLines.join("\n")}`;
+    const diagnostics = formatSearchDiagnostics(queryData);
+    if (diagnostics.length > 0) output += `\n\n**Search diagnostics:**\n${diagnostics.join("\n")}`;
+    return output;
   }
   let output = answer ? `${answer}\n\n---\n\n**Sources:**\n` : "";
-  output += results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}`).join("\n\n");
+  output += results
+    .map((result, index) => {
+      const lines = [`${index + 1}. ${result.title}`, `   ${result.url}`];
+      const snippet = formatSearchSnippet(result.snippet);
+      if (snippet) lines.push(`   ${snippet.replaceAll("\n", "\n   ")}`);
+      return lines.join("\n");
+    })
+    .join("\n\n");
+  if (referenceLines.length > 0) output += `\n\n**References:**\n${referenceLines.join("\n")}`;
+  const diagnostics = formatSearchDiagnostics(queryData);
+  if (diagnostics.length > 0) output += `\n\n**Search diagnostics:**\n${diagnostics.join("\n")}`;
   return output;
+}
+
+const MAX_SEARCH_SNIPPET_CHARS = 1_200;
+const MAX_SEARCH_DIAGNOSTIC_CHARS = 800;
+
+function boundedSearchText(value: string, maxChars: number): string {
+  const normalized = value.trim();
+  return normalized.length > maxChars ? `${normalized.slice(0, maxChars)}…` : normalized;
+}
+
+function formatSearchSnippet(snippet: string): string {
+  return boundedSearchText(snippet, MAX_SEARCH_SNIPPET_CHARS);
+}
+
+function formatAttemptDiagnostic(attempt: SearchAttemptDiagnostic): string {
+  const identity = `${attempt.family} via ${attempt.adapterId} (${attempt.transport})`;
+  const reason = attempt.reason
+    ? `: ${boundedSearchText(attempt.reason, MAX_SEARCH_DIAGNOSTIC_CHARS)}`
+    : "";
+  if (attempt.outcome === "error")
+    return `- Fallback attempt: ${identity} failed${attempt.errorKind ? ` [${attempt.errorKind}]` : ""}${reason}`;
+  return `- Fallback attempt: ${identity} was ${attempt.outcome}${reason}`;
+}
+
+function formatSearchDiagnostics(queryData: QueryResultData): string[] {
+  const lines: string[] = [];
+  if (queryData.provider || queryData.adapterId || queryData.transport || queryData.backend) {
+    const provider = queryData.provider ?? "unknown provider";
+    const adapter = queryData.adapterId ? ` via ${queryData.adapterId}` : "";
+    const transport = queryData.transport ?? queryData.backend;
+    const transportText = transport ? ` (${transport})` : "";
+    const billing = queryData.billing ? `, ${queryData.billing} billing` : "";
+    lines.push(`- Backend: ${provider}${adapter}${transportText}${billing}`);
+  }
+  const attempts = queryData.attempts ?? [];
+  const successIndex = attempts.findIndex((attempt) => attempt.outcome === "success");
+  const fallbackAttempts = successIndex >= 0 ? attempts.slice(0, successIndex) : attempts;
+  for (const attempt of fallbackAttempts) {
+    if (attempt.outcome !== "success") lines.push(formatAttemptDiagnostic(attempt));
+  }
+  for (const warning of queryData.warnings ?? []) {
+    lines.push(`- Warning: ${boundedSearchText(warning, MAX_SEARCH_DIAGNOSTIC_CHARS)}`);
+  }
+  for (const failure of queryData.providerErrors ?? []) {
+    const kind = failure.kind ? ` [${failure.kind}]` : "";
+    lines.push(
+      `- Partial provider failure: ${failure.provider}${kind}: ${boundedSearchText(failure.error, MAX_SEARCH_DIAGNOSTIC_CHARS)}`,
+    );
+  }
+  return lines;
+}
+
+function searchDiagnosticDetails(result: QueryResultData): DetailObject {
+  return {
+    query: result.query,
+    provider: result.provider,
+    adapterId: result.adapterId,
+    transport: result.transport ?? result.backend,
+    billing: result.billing,
+    warnings: result.warnings,
+    attempts: result.attempts?.map((attempt) => ({ ...attempt })),
+    providerErrors: result.providerErrors?.map((failure) => ({ ...failure })),
+  };
 }
 
 function formatSourceCheckResult(
@@ -723,8 +924,15 @@ function formatFullResults(queryData: QueryResultData): string {
     output += `${queryData.answer}\n\n---\n\n`;
   }
   for (const r of queryData.results) {
-    output += `### ${r.title}\n${r.url}\n\n`;
+    output += `### ${r.title}\n${r.url}\n`;
+    const snippet = formatSearchSnippet(r.snippet);
+    if (snippet) output += `${snippet}\n`;
+    output += "\n";
   }
+  const referenceLines = formatOwnedReferences(queryData.references);
+  if (referenceLines.length > 0) output += `**References:**\n${referenceLines.join("\n")}\n\n`;
+  const diagnostics = formatSearchDiagnostics(queryData);
+  if (diagnostics.length > 0) output += `**Search diagnostics:**\n${diagnostics.join("\n")}\n\n`;
   return output;
 }
 
@@ -890,15 +1098,39 @@ function extractDomain(url: string): string {
   }
 }
 
-function toCuratorSearchEntries(response: AttributedSearchResponse): CuratorSearchEntry[] {
+interface CuratorSearchDiagnostics {
+  adapterId?: string;
+  transport?: string;
+  billing?: SearchBilling;
+  attempts?: readonly SearchAttemptDiagnostic[];
+  providerErrors?: QueryResultData["providerErrors"];
+}
+
+type AttributedCuratorSearchEntry = CuratorSearchEntry & {
+  searchDiagnostics?: CuratorSearchDiagnostics;
+};
+
+function toCuratorSearchEntries(
+  response: AttributedSearchResponse,
+): AttributedCuratorSearchEntry[] {
   const providerResponses =
     response.provider === "all" && response.providerResponses?.length
       ? response.providerResponses
       : [response];
-  const entries: CuratorSearchEntry[] = providerResponses.map((result) => ({
+  const entries: AttributedCuratorSearchEntry[] = providerResponses.map((result) => ({
     answer: result.answer,
     results: result.results.map((source) => ({ ...source, domain: extractDomain(source.url) })),
     provider: result.provider,
+    backend: result.transport,
+    warnings: result.warnings,
+    references: result.references,
+    searchDiagnostics: {
+      adapterId: result.adapterId,
+      transport: result.transport,
+      billing: result.billing,
+      attempts: result.attempts,
+      providerErrors: response.providerErrors,
+    },
   }));
   for (const failure of response.providerErrors ?? []) {
     entries.push({
@@ -906,12 +1138,84 @@ function toCuratorSearchEntries(response: AttributedSearchResponse): CuratorSear
       results: [],
       provider: failure.provider,
       error: failure.error,
+      searchDiagnostics: { providerErrors: [failure], attempts: response.attempts },
     });
   }
   return entries;
 }
 
+function isSearchBillingValue(value: DetailValue): value is SearchBilling {
+  return value === "subscription" || value === "api" || value === "free" || value === "unknown";
+}
+
+function isSearchErrorKindValue(value: DetailValue): value is SearchErrorKind {
+  return (
+    value === "auth" ||
+    value === "config" ||
+    value === "invalid-request" ||
+    value === "transient" ||
+    value === "quota" ||
+    value === "network" ||
+    value === "invalid-response" ||
+    value === "capability" ||
+    value === "stale-context" ||
+    value === "entitlement" ||
+    value === "conflict" ||
+    value === "deadline" ||
+    value === "cancelled"
+  );
+}
+
+function isSearchAttemptValue(value: DetailValue): value is SearchAttemptDiagnostic & DetailObject {
+  return (
+    isDetailObject(value) &&
+    Check(StringValueSchema, value.adapterId) &&
+    Check(StringValueSchema, value.family) &&
+    searchProviderFamilies.some((family) => family === value.family) &&
+    Check(StringValueSchema, value.transport) &&
+    (value.outcome === "success" ||
+      value.outcome === "unavailable" ||
+      value.outcome === "disabled" ||
+      value.outcome === "incompatible" ||
+      value.outcome === "error") &&
+    (value.errorKind === undefined || isSearchErrorKindValue(value.errorKind)) &&
+    (value.reason === undefined || Check(StringValueSchema, value.reason))
+  );
+}
+
+function curatorSearchDiagnostics(entry: IndexedCuratorSearchEntry): CuratorSearchDiagnostics {
+  if (!("searchDiagnostics" in entry) || !isDetailObject(entry.searchDiagnostics)) return {};
+  const raw = entry.searchDiagnostics;
+  const diagnostics: CuratorSearchDiagnostics = {};
+  if (Check(StringValueSchema, raw.adapterId)) diagnostics.adapterId = raw.adapterId;
+  if (Check(StringValueSchema, raw.transport)) diagnostics.transport = raw.transport;
+  if (isSearchBillingValue(raw.billing)) diagnostics.billing = raw.billing;
+  if (Array.isArray(raw.attempts) && raw.attempts.every(isSearchAttemptValue))
+    diagnostics.attempts = raw.attempts;
+  if (Array.isArray(raw.providerErrors)) {
+    const failures: NonNullable<QueryResultData["providerErrors"]> = [];
+    for (const value of raw.providerErrors) {
+      if (
+        !isDetailObject(value) ||
+        !Check(StringValueSchema, value.provider) ||
+        !Check(StringValueSchema, value.error) ||
+        (value.kind !== undefined && !isSearchErrorKindValue(value.kind))
+      )
+        continue;
+      const failure: NonNullable<QueryResultData["providerErrors"]>[number] = {
+        provider: value.provider,
+        error: value.error,
+      };
+      if (value.kind !== undefined) failure.kind = value.kind;
+      failures.push(failure);
+    }
+    diagnostics.providerErrors = failures;
+  }
+  return diagnostics;
+}
+
 function indexedCuratorEntryToQueryResult(entry: IndexedCuratorSearchEntry): QueryResultData {
+  const diagnostics = curatorSearchDiagnostics(entry);
   return {
     query: entry.query,
     answer: entry.answer,
@@ -922,6 +1226,14 @@ function indexedCuratorEntryToQueryResult(entry: IndexedCuratorSearchEntry): Que
     })),
     error: entry.error ?? null,
     provider: entry.provider,
+    backend: entry.backend,
+    adapterId: diagnostics.adapterId,
+    transport: diagnostics.transport ?? entry.backend,
+    billing: diagnostics.billing,
+    warnings: entry.warnings,
+    attempts: diagnostics.attempts,
+    providerErrors: diagnostics.providerErrors,
+    references: entry.references,
   };
 }
 
@@ -1004,6 +1316,7 @@ function handleSessionChange(ctx: ExtensionContext): void {
 }
 
 export default function (pi: ExtensionAPI) {
+  registerWebAccessSearchAdapters(pi);
   const initConfig = loadConfigForExtensionInit();
   const toolNames = resolveToolNames(initConfig);
   const webSearchEnabled = isToolEnabled(initConfig, "webSearch");
@@ -1020,6 +1333,48 @@ export default function (pi: ExtensionAPI) {
     : "Get content for a stored search query";
   const curateKey = initConfig.shortcuts?.curate || DEFAULT_SHORTCUTS.curate;
   const activityKey = initConfig.shortcuts?.activity || DEFAULT_SHORTCUTS.activity;
+  const coreReferenceIds = new Map<string, string>();
+  const publicReferenceIds = new Map<string, string>();
+
+  function clearPublishedReferences(): void {
+    coreReferenceIds.clear();
+    publicReferenceIds.clear();
+  }
+
+  function publishReferences(
+    references: SearchReference[] | undefined,
+  ): SearchReference[] | undefined {
+    if (!references?.length) return undefined;
+    return references.map((reference) => {
+      let publicId = publicReferenceIds.get(reference.id);
+      if (!publicId) {
+        publicId = `webref:${randomUUID()}`;
+        publicReferenceIds.set(reference.id, publicId);
+        coreReferenceIds.set(publicId, reference.id);
+      }
+      return { ...reference, id: publicId };
+    });
+  }
+
+  function publishAttributedReferences(
+    response: AttributedSearchResponse,
+  ): AttributedSearchResponse {
+    const published = { ...response, references: publishReferences(response.references) };
+    if (response.providerResponses) {
+      published.providerResponses = response.providerResponses.map((providerResponse) => ({
+        ...providerResponse,
+        references: publishReferences(providerResponse.references),
+      }));
+    }
+    return published;
+  }
+
+  function resolveCoreReference(request: UnifiedSearchRequest): void {
+    if (!request.reference) return;
+    const coreId = coreReferenceIds.get(request.reference.id);
+    if (!coreId) throw new Error("Search reference does not belong to this live session");
+    request.reference = { id: coreId };
+  }
 
   function startBackgroundFetch(urls: string[]): string | null {
     if (urls.length === 0) return null;
@@ -1355,14 +1710,20 @@ export default function (pi: ExtensionAPI) {
           "[These results were manually curated by the user in the browser. Use them as-is — do not re-search or discard.]\n\n";
       }
       const duplicateQueries = opts.curated ? duplicateQuerySet(opts.results) : new Set<string>();
-      for (const { query, answer, results, error, provider } of opts.results) {
+      for (const queryData of opts.results) {
+        const { query, error, provider } = queryData;
         if (opts.queryList.length > 1) {
           output += opts.curated
             ? formatQueryHeader(query, provider, duplicateQueries)
             : `## Query: "${query}"\n\n`;
         }
-        if (error) output += `Error: ${error}\n\n`;
-        else output += formatSearchSummary(results, answer) + "\n\n";
+        if (error) {
+          output += `Error: ${error}\n`;
+          const diagnostics = formatSearchDiagnostics(queryData);
+          if (diagnostics.length > 0)
+            output += `\n**Search diagnostics:**\n${diagnostics.join("\n")}\n`;
+          output += "\n";
+        } else output += formatSearchSummary(queryData) + "\n\n";
       }
     }
 
@@ -1400,6 +1761,7 @@ export default function (pi: ExtensionAPI) {
       fetchId,
       fetchUrls: isBackgroundFetch ? opts.urls : undefined,
       searchId,
+      searchDiagnostics: opts.results.map(searchDiagnosticDetails),
     });
     if (opts.curated) {
       details.curated = true;
@@ -1620,15 +1982,17 @@ export default function (pi: ExtensionAPI) {
             if (pendingCurates.get(callId) !== pc)
               throw new Error("Curator session is no longer active.");
             const requestedProvider = resolveCuratorSearchProvider(provider, pc.searchProvider);
-            const response = await search(query, {
-              provider: requestedProvider,
-              numResults: pc.numResults,
-              recencyFilter: pc.recencyFilter,
-              domainFilter: pc.domainFilter,
-              includeContent: pc.includeContent,
-              signal: addSearchSignal,
-              extensionContext: ctx,
-            });
+            const response = publishAttributedReferences(
+              await search(
+                query,
+                searchOptionsForCanonicalRequest(
+                  pc.searchRequest,
+                  requestedProvider,
+                  addSearchSignal,
+                  ctx,
+                ),
+              ),
+            );
             if (pendingCurates.get(callId) !== pc)
               throw new Error("Curator session is no longer active.");
             if (response.inlineContent) pc.allInlineContent.push(...response.inlineContent);
@@ -1661,10 +2025,23 @@ export default function (pi: ExtensionAPI) {
         if (data.error) {
           handle.pushError(qi, data.error, data.provider, { query: data.query, slotIndex });
         } else {
-          handle.pushResult(qi, {
+          const curatorEntry: AttributedCuratorSearchEntry = {
             answer: data.answer,
             results: data.results.map((r) => ({ ...r, domain: extractDomain(r.url) })),
             provider: data.provider || pc.defaultProvider,
+            backend: data.transport ?? data.backend,
+            warnings: data.warnings,
+            references: data.references,
+            searchDiagnostics: {
+              adapterId: data.adapterId,
+              transport: data.transport ?? data.backend,
+              billing: data.billing,
+              attempts: data.attempts,
+              providerErrors: data.providerErrors,
+            },
+          };
+          handle.pushResult(qi, {
+            ...curatorEntry,
             query: data.query,
             slotIndex,
           });
@@ -1761,10 +2138,17 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.on("session_start", async (_event, ctx) => handleSessionChange(ctx));
-  pi.on("session_tree", async (_event, ctx) => handleSessionChange(ctx));
+  pi.on("session_start", async (_event, ctx) => {
+    clearPublishedReferences();
+    handleSessionChange(ctx);
+  });
+  pi.on("session_tree", async (_event, ctx) => {
+    clearPublishedReferences();
+    handleSessionChange(ctx);
+  });
 
   pi.on("session_shutdown", () => {
+    clearPublishedReferences();
     sessionActive = false;
     abortPendingFetches();
     closeCurator();
@@ -1784,37 +2168,7 @@ export default function (pi: ExtensionAPI) {
       description: "Search the web and return a cited synthesized answer.",
       promptSnippet: "Search the web and synthesize cited results.",
       parameters: Type.Object({
-        query: Type.Optional(
-          Type.String({
-            description: "One search query; use queries for broader research.",
-          }),
-        ),
-        queries: Type.Optional(
-          Type.Array(Type.String(), {
-            description: "Distinct queries searched sequentially for broader coverage.",
-          }),
-        ),
-        numResults: Type.Optional(
-          Type.Integer({
-            minimum: 1,
-            maximum: 20,
-            description: "Results per query (default: 5, max: 20)",
-          }),
-        ),
-        includeContent: Type.Optional(
-          Type.Boolean({ description: "Fetch full page content (async)" }),
-        ),
-        recencyFilter: Type.Optional(
-          StringEnum(["day", "week", "month", "year"], { description: "Filter by recency" }),
-        ),
-        domainFilter: Type.Optional(
-          Type.Array(Type.String(), { description: "Limit to domains (prefix with - to exclude)" }),
-        ),
-        provider: Type.Optional(
-          searchProviderSchema(
-            "Search provider or non-empty list of providers to search simultaneously; use all to search every available provider, omit this field to use the configured provider, or use auto when none is configured",
-          ),
-        ),
+        ...canonicalSearchParams.properties,
         workflow: Type.Optional(
           StringEnum(["none", "summary-review", "auto-summary"], {
             description:
@@ -1824,6 +2178,90 @@ export default function (pi: ExtensionAPI) {
       }),
 
       async execute(callId, params, signal, onUpdate, ctx) {
+        const directAction =
+          (params.action !== undefined && params.action !== "search") ||
+          params.imageQuery !== undefined ||
+          params.url !== undefined ||
+          params.open === true ||
+          params.click !== undefined ||
+          params.find !== undefined ||
+          params.reference !== undefined;
+        if (directAction) {
+          if (!hasCanonicalSearch(pi.events)) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Error: This search action requires unified search core.",
+                },
+              ],
+              details: { error: "Direct search action requires unified search core" },
+            };
+          }
+          if (!ctx) {
+            return {
+              content: [
+                { type: "text", text: "Error: This search action requires a live session." },
+              ],
+              details: { error: "Missing extension context" },
+            };
+          }
+          const request = canonicalRequestForQuery(params);
+          resolveCoreReference(request);
+          const config = loadConfigForExtensionInit();
+          const response = await unifiedSearch(request, {
+            context: ctx,
+            signal,
+            routing: getConfiguredSearchRouting(),
+            allowBilledApiFallback: config.allowBilledApiFallback === true,
+          });
+          const references = publishReferences(response.references);
+          const resultLines = response.results.map(
+            (result) =>
+              `- [${result.title}](${result.url})${result.snippet ? ` — ${result.snippet}` : ""}`,
+          );
+          const diagnosticLines = formatSearchDiagnostics({
+            query: request.query ?? request.imageQuery ?? request.url ?? "direct action",
+            answer: response.answer,
+            results: response.results,
+            error: null,
+            provider: response.provider,
+            backend: response.transport,
+            adapterId: response.adapterId,
+            transport: response.transport,
+            billing: response.billing,
+            warnings: response.warnings,
+            attempts: response.attempts,
+            providerErrors: response.providerErrors,
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: [
+                  response.answer,
+                  ...resultLines,
+                  ...formatOwnedReferences(references),
+                  ...(diagnosticLines.length > 0
+                    ? ["**Search diagnostics:**", ...diagnosticLines]
+                    : []),
+                ]
+                  .filter(Boolean)
+                  .join("\n\n"),
+              },
+            ],
+            details: {
+              provider: response.provider,
+              adapterId: response.adapterId,
+              transport: response.transport,
+              billing: response.billing,
+              warnings: response.warnings,
+              attempts: response.attempts.map((attempt) => ({ ...attempt })),
+              providerErrors: response.providerErrors?.map((failure) => ({ ...failure })),
+              references,
+            },
+          };
+        }
         const rawQueryList: unknown[] = Array.isArray(params.queries)
           ? params.queries
           : params.query !== undefined
@@ -1834,6 +2272,8 @@ export default function (pi: ExtensionAPI) {
         const workflow = resolveWorkflow(params.workflow ?? configWorkflow, ctx?.hasUI !== false);
         const shouldCurate = workflow === "summary-review";
         const recencyFilter = normalizeRecencyFilter(params.recencyFilter);
+        const canonicalRequest = canonicalRequestForQuery(params);
+        if (recencyFilter !== undefined) canonicalRequest.recencyFilter = recencyFilter;
 
         if (queryList.length === 0) {
           return {
@@ -1906,6 +2346,7 @@ export default function (pi: ExtensionAPI) {
             numResults: params.numResults,
             recencyFilter,
             domainFilter: params.domainFilter,
+            searchRequest: canonicalRequest,
             availableProviders,
             defaultProvider,
             searchProvider,
@@ -1970,15 +2411,17 @@ export default function (pi: ExtensionAPI) {
             });
             const requestedProvider = pc.searchProvider;
             try {
-              const response = await search(queryList[qi], {
-                provider: requestedProvider,
-                numResults: params.numResults,
-                recencyFilter,
-                domainFilter: params.domainFilter,
-                includeContent: params.includeContent,
-                signal: searchSignal,
-                extensionContext: ctx,
-              });
+              const response = publishAttributedReferences(
+                await search(
+                  queryList[qi],
+                  searchOptionsForCanonicalRequest(
+                    pc.searchRequest,
+                    requestedProvider,
+                    searchSignal,
+                    ctx,
+                  ),
+                ),
+              );
               if (signal?.aborted || cancelled || searchAbort.signal.aborted) break;
               if (response.inlineContent) allInlineContent.push(...response.inlineContent);
               const entries = toCuratorSearchEntries(response);
@@ -2012,12 +2455,18 @@ export default function (pi: ExtensionAPI) {
               if (signal?.aborted || cancelled || searchAbort.signal.aborted) break;
               const message = err instanceof Error ? err.message : String(err);
               const failedProvider = toCuratorProvider(requestedProvider);
+              const diagnostic = isSearchError(err) ? err : undefined;
               searchResults.set(qi, {
                 query: queryList[qi],
                 answer: "",
                 results: [],
                 error: message,
-                provider: failedProvider,
+                provider: diagnostic?.family ?? failedProvider,
+                adapterId: diagnostic?.adapterId,
+                transport: diagnostic?.transport,
+                backend: diagnostic?.transport,
+                billing: diagnostic?.billing,
+                attempts: diagnostic?.attempts,
               });
               resultSlots.set(qi, qi);
               const curator = activeCurators.get(callId);
@@ -2094,17 +2543,41 @@ export default function (pi: ExtensionAPI) {
           });
 
           try {
-            const { answer, results, inlineContent, provider } = await search(query, {
-              provider: resolvedProvider,
-              numResults: params.numResults,
-              recencyFilter,
-              domainFilter: params.domainFilter,
-              includeContent: params.includeContent,
-              signal,
-              extensionContext: ctx,
-            });
+            const response = publishAttributedReferences(
+              await search(
+                query,
+                searchOptionsForCanonicalRequest(canonicalRequest, resolvedProvider, signal, ctx),
+              ),
+            );
+            const {
+              answer,
+              results,
+              inlineContent,
+              provider,
+              adapterId,
+              transport,
+              billing,
+              warnings,
+              attempts,
+              providerErrors,
+              references,
+            } = response;
 
-            searchResults.push({ query, answer, results, error: null, provider });
+            searchResults.push({
+              query,
+              answer,
+              results,
+              error: null,
+              provider,
+              backend: transport,
+              adapterId,
+              transport,
+              billing,
+              warnings,
+              attempts,
+              providerErrors,
+              references,
+            });
             for (const r of results) {
               if (!allUrls.includes(r.url)) {
                 allUrls.push(r.url);
@@ -2115,12 +2588,18 @@ export default function (pi: ExtensionAPI) {
             if (signal?.aborted || isAbortError(err)) throw err;
             const message = err instanceof Error ? err.message : String(err);
             const requestedProvider = toCuratorProvider(resolvedProvider);
+            const diagnostic = isSearchError(err) ? err : undefined;
             searchResults.push({
               query,
               answer: "",
               results: [],
               error: message,
-              provider: requestedProvider,
+              provider: diagnostic?.family ?? requestedProvider,
+              adapterId: diagnostic?.adapterId,
+              transport: diagnostic?.transport,
+              backend: diagnostic?.transport,
+              billing: diagnostic?.billing,
+              attempts: diagnostic?.attempts,
             });
           }
         }
@@ -2573,6 +3052,8 @@ export default function (pi: ExtensionAPI) {
         const summaries: string[] = [];
         const errors: Array<{ query: string; error: string }> = [];
         let provider: string | undefined;
+        let backend: string | undefined;
+        const searchWarnings = new Set<string>();
 
         for (const query of queries) {
           if (signal?.aborted) break;
@@ -2587,6 +3068,8 @@ export default function (pi: ExtensionAPI) {
             });
             if (signal?.aborted) break;
             provider ??= response.provider;
+            backend ??= response.transport;
+            for (const warning of response.warnings ?? []) searchWarnings.add(warning);
             if (response.answer) summaries.push(`${query}: ${response.answer}`);
             for (const result of response.results) {
               if (!resultsByUrl.has(result.url)) resultsByUrl.set(result.url, result);
@@ -2619,6 +3102,8 @@ export default function (pi: ExtensionAPI) {
           buildResearchArtifact({
             query: claim,
             provider,
+            backend,
+            warnings: [...searchWarnings],
             summary: summaries.length > 0 ? summaries.join("\n\n") : undefined,
             results,
             fetched,
@@ -3243,14 +3728,21 @@ export default function (pi: ExtensionAPI) {
           }
 
           if (queryData.error) {
+            const diagnostics = formatSearchDiagnostics(queryData);
+            const diagnosticText =
+              diagnostics.length > 0 ? `\n\nSearch diagnostics:\n${diagnostics.join("\n")}` : "";
             return {
               content: [
                 {
                   type: "text",
-                  text: `Error retrieving query ${formatInputValue(queryData.query)} from responseId ${formatInputValue(params.responseId)}: ${queryData.error}. Check the stored search result and retry with another query or queryIndex if needed.`,
+                  text: `Error retrieving query ${formatInputValue(queryData.query)} from responseId ${formatInputValue(params.responseId)}: ${queryData.error}. Check the stored search result and retry with another query or queryIndex if needed.${diagnosticText}`,
                 },
               ],
-              details: { error: queryData.error, query: queryData.query },
+              details: {
+                error: queryData.error,
+                query: queryData.query,
+                searchDiagnostics: searchDiagnosticDetails(queryData),
+              },
             };
           }
 
@@ -3268,6 +3760,7 @@ export default function (pi: ExtensionAPI) {
                 details: {
                   query: queryData.query,
                   resultCount: queryData.results.length,
+                  searchDiagnostics: searchDiagnosticDetails(queryData),
                   findMode: params.findMode ?? "case-insensitive",
                   ...findDetails,
                 },
@@ -3288,7 +3781,11 @@ export default function (pi: ExtensionAPI) {
 
           return {
             content: [{ type: "text", text: fullResults }],
-            details: { query: queryData.query, resultCount: queryData.results.length },
+            details: {
+              query: queryData.query,
+              resultCount: queryData.results.length,
+              searchDiagnostics: searchDiagnosticDetails(queryData),
+            },
           };
         }
 
@@ -3708,11 +4205,13 @@ export default function (pi: ExtensionAPI) {
                   provider,
                   currentSearchProvider,
                 );
-                const response = await search(query, {
-                  provider: requestedProvider,
-                  signal: searchAbort.signal,
-                  extensionContext: ctx,
-                });
+                const response = publishAttributedReferences(
+                  await search(query, {
+                    provider: requestedProvider,
+                    signal: searchAbort.signal,
+                    extensionContext: ctx,
+                  }),
+                );
                 if (commandHandle && !isCommandActive()) {
                   throw new Error("Curator session is no longer active.");
                 }
@@ -3785,11 +4284,13 @@ export default function (pi: ExtensionAPI) {
                 if (aborted || !isCommandActive()) break;
                 const requestedProvider = currentSearchProvider;
                 try {
-                  const response = await search(queries[qi], {
-                    provider: requestedProvider,
-                    signal: searchAbort.signal,
-                    extensionContext: ctx,
-                  });
+                  const response = publishAttributedReferences(
+                    await search(queries[qi], {
+                      provider: requestedProvider,
+                      signal: searchAbort.signal,
+                      extensionContext: ctx,
+                    }),
+                  );
                   if (aborted || !isCommandActive()) break;
                   const entries = toCuratorSearchEntries(response);
                   for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
@@ -3818,6 +4319,7 @@ export default function (pi: ExtensionAPI) {
                   if (aborted || !isCommandActive()) break;
                   const message = err instanceof Error ? err.message : String(err);
                   const failedProvider = toCuratorProvider(requestedProvider);
+                  const diagnostic = isSearchError(err) ? err : undefined;
                   handle.pushError(qi, message, failedProvider, {
                     query: queries[qi],
                     slotIndex: qi,
@@ -3827,7 +4329,12 @@ export default function (pi: ExtensionAPI) {
                     answer: "",
                     results: [],
                     error: message,
-                    provider: failedProvider,
+                    provider: diagnostic?.family ?? failedProvider,
+                    adapterId: diagnostic?.adapterId,
+                    transport: diagnostic?.transport,
+                    backend: diagnostic?.transport,
+                    billing: diagnostic?.billing,
+                    attempts: diagnostic?.attempts,
                   });
                 }
               }
@@ -3962,4 +4469,6 @@ export default function (pi: ExtensionAPI) {
         }
       },
     });
+
+  if (webSearchEnabled) confirmCanonicalSearchRegistration(getSearchScope(pi.events));
 }

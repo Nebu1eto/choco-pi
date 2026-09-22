@@ -4,7 +4,7 @@ Vendored fork of `pi-web-access@0.24.1`. Read `VENDORED.md` before changing sour
 
 ## Hard constraints
 
-- Search providers are limited to OpenAI, Exa, and Kagi. Do not restore another provider, its config, UI, command, schema value, or help text.
+- This package implements only OpenAI, Exa, and Kagi search transports. Its shared-router schema and curator may name or delegate the Synthetic and Brave logical provider families, but no Synthetic or Brave transport, credential, or provider-specific configuration belongs here.
 - Keep the OpenAI Codex-subscription credential path through Pi's model registry and `CODEX_RESPONSES_URL`; `OPENAI_API_KEY` remains only its fallback.
 - Keep Kagi credentials on `KAGI_API_KEY` / `kagiApiKey`, not browser cookies.
 - Use erasable TypeScript only: no enums, namespaces, decorators, or constructor parameter properties.

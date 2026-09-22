@@ -1,6 +1,7 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { generateCuratorPage } from "./curator-page.ts";
 import type { SummaryMeta } from "./summary-review.ts";
+import type { SearchReference } from "../choco-pi-web-search/index.ts";
 import { resolveCuratorNetworkConfig } from "./utils.ts";
 
 const STALE_THRESHOLD_MS = 30000;
@@ -26,7 +27,14 @@ export interface CuratorServerOptions {
   queries: string[];
   sessionToken: string;
   timeout: number;
-  availableProviders: { all: boolean; openai: boolean; exa: boolean; kagi: boolean };
+  availableProviders: {
+    all: boolean;
+    openai: boolean;
+    exa: boolean;
+    kagi: boolean;
+    synthetic: boolean;
+    brave: boolean;
+  };
   defaultProvider: string;
   searchProvider: string;
   summaryModels: Array<{ value: string; label: string }>;
@@ -37,6 +45,9 @@ export interface CuratorSearchEntry {
   answer: string;
   results: Array<{ title: string; url: string; domain: string; snippet?: string }>;
   provider: string;
+  backend?: string;
+  warnings?: string[];
+  references?: SearchReference[];
   error?: string;
 }
 
@@ -318,6 +329,8 @@ export function startCuratorServer(
     if (provider === "openai") return availableProviders.openai;
     if (provider === "exa") return availableProviders.exa;
     if (provider === "kagi") return availableProviders.kagi;
+    if (provider === "synthetic") return availableProviders.synthetic;
+    if (provider === "brave") return availableProviders.brave;
     return false;
   }
 

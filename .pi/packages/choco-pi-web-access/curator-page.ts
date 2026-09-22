@@ -8,7 +8,14 @@ function safeInlineJSON<Value>(data: Value): string {
 }
 
 function buildProviderButtons(
-  available: { all: boolean; openai: boolean; exa: boolean; kagi: boolean },
+  available: {
+    all: boolean;
+    openai: boolean;
+    exa: boolean;
+    kagi: boolean;
+    synthetic: boolean;
+    brave: boolean;
+  },
   selected: string,
   hasInitialQueries: boolean,
 ): string {
@@ -17,6 +24,8 @@ function buildProviderButtons(
     { value: "openai", label: "OpenAI", available: available.openai },
     { value: "exa", label: "Exa", available: available.exa },
     { value: "kagi", label: "Kagi", available: available.kagi },
+    { value: "synthetic", label: "Synthetic", available: available.synthetic },
+    { value: "brave", label: "Brave", available: available.brave },
   ];
 
   return providers
@@ -37,7 +46,14 @@ export function generateCuratorPage(
   queries: string[],
   sessionToken: string,
   timeout: number,
-  availableProviders: { all: boolean; openai: boolean; exa: boolean; kagi: boolean },
+  availableProviders: {
+    all: boolean;
+    openai: boolean;
+    exa: boolean;
+    kagi: boolean;
+    synthetic: boolean;
+    brave: boolean;
+  },
   defaultProvider: string,
   searchProvider: string,
   summaryModels: Array<{ value: string; label: string }>,
@@ -1386,7 +1402,7 @@ const SCRIPT = `(function() {
   var token = DATA.sessionToken;
   var timeoutSec = DATA.timeout;
   var queries = Array.isArray(DATA.queries) ? DATA.queries : [];
-  var providers = ["all", "openai", "exa", "kagi"];
+  var providers = ["all", "openai", "exa", "kagi", "synthetic", "brave"];
   var availProviders = DATA.availableProviders && typeof DATA.availableProviders === "object" ? DATA.availableProviders : {};
   var workflow = "summary-review";
   var initialDefaultProvider = typeof DATA.defaultProvider === "string" ? DATA.defaultProvider : "exa";
@@ -1593,6 +1609,8 @@ const SCRIPT = `(function() {
     if (provider === "openai") return "OpenAI";
     if (provider === "exa") return "Exa";
     if (provider === "kagi") return "Kagi";
+    if (provider === "synthetic") return "Synthetic";
+    if (provider === "brave") return "Brave";
     return "Unknown";
   }
 

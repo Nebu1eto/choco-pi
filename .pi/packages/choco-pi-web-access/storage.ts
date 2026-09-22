@@ -19,6 +19,13 @@ import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ExtractedContent } from "./extract.ts";
 import type { SearchResult } from "./search-types.ts";
+import {
+  searchProviderFamilies,
+  type SearchAttemptDiagnostic,
+  type SearchBilling,
+  type SearchErrorKind,
+  type SearchReference,
+} from "../choco-pi-web-search/index.ts";
 import { getWebSearchConfigDir } from "./utils.ts";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -56,6 +63,14 @@ export interface QueryResultData {
   results: SearchResult[];
   error: string | null;
   provider?: string;
+  backend?: string;
+  adapterId?: string;
+  transport?: string;
+  billing?: SearchBilling;
+  warnings?: string[];
+  attempts?: readonly SearchAttemptDiagnostic[];
+  providerErrors?: Array<{ provider: string; error: string; kind?: SearchErrorKind }>;
+  references?: SearchReference[];
 }
 
 interface FetchCacheRef {
@@ -654,6 +669,62 @@ function isSearchResult<Value>(value: Value): value is Value & SearchResult {
   );
 }
 
+function isSearchBilling<Value>(value: Value): value is Value & SearchBilling {
+  return value === "subscription" || value === "api" || value === "free" || value === "unknown";
+}
+
+function isSearchErrorKind<Value>(value: Value): value is Value & SearchErrorKind {
+  return (
+    value === "auth" ||
+    value === "config" ||
+    value === "invalid-request" ||
+    value === "transient" ||
+    value === "quota" ||
+    value === "network" ||
+    value === "invalid-response" ||
+    value === "capability" ||
+    value === "stale-context" ||
+    value === "entitlement" ||
+    value === "conflict" ||
+    value === "deadline" ||
+    value === "cancelled"
+  );
+}
+
+function isSearchAttemptDiagnostic<Value>(value: Value): value is Value & SearchAttemptDiagnostic {
+  return (
+    isObject(value) &&
+    "adapterId" in value &&
+    isString(value.adapterId) &&
+    "family" in value &&
+    isString(value.family) &&
+    searchProviderFamilies.some((family) => family === value.family) &&
+    "transport" in value &&
+    isString(value.transport) &&
+    "outcome" in value &&
+    (value.outcome === "success" ||
+      value.outcome === "unavailable" ||
+      value.outcome === "disabled" ||
+      value.outcome === "incompatible" ||
+      value.outcome === "error") &&
+    (!("errorKind" in value) || isSearchErrorKind(value.errorKind)) &&
+    (!("reason" in value) || isString(value.reason))
+  );
+}
+
+function isProviderError<Value>(
+  value: Value,
+): value is Value & { provider: string; error: string; kind?: SearchErrorKind } {
+  return (
+    isObject(value) &&
+    "provider" in value &&
+    isString(value.provider) &&
+    "error" in value &&
+    isString(value.error) &&
+    (!("kind" in value) || isSearchErrorKind(value.kind))
+  );
+}
+
 function isQueryResultData<Value>(value: Value): value is Value & QueryResultData {
   return (
     isObject(value) &&
@@ -666,7 +737,32 @@ function isQueryResultData<Value>(value: Value): value is Value & QueryResultDat
     value.results.every(isSearchResult) &&
     "error" in value &&
     (value.error === null || isString(value.error)) &&
-    (!("provider" in value) || isString(value.provider))
+    (!("provider" in value) || isString(value.provider)) &&
+    (!("backend" in value) || isString(value.backend)) &&
+    (!("adapterId" in value) || isString(value.adapterId)) &&
+    (!("transport" in value) || isString(value.transport)) &&
+    (!("billing" in value) || isSearchBilling(value.billing)) &&
+    (!("warnings" in value) || (Array.isArray(value.warnings) && value.warnings.every(isString))) &&
+    (!("attempts" in value) ||
+      (Array.isArray(value.attempts) && value.attempts.every(isSearchAttemptDiagnostic))) &&
+    (!("providerErrors" in value) ||
+      (Array.isArray(value.providerErrors) && value.providerErrors.every(isProviderError))) &&
+    (!("references" in value) ||
+      (Array.isArray(value.references) && value.references.every(isSearchReference)))
+  );
+}
+
+function isSearchReference<Value>(value: Value): value is Value & SearchReference {
+  return (
+    isObject(value) &&
+    "id" in value &&
+    isString(value.id) &&
+    "kind" in value &&
+    isString(value.kind) &&
+    "adapterId" in value &&
+    isString(value.adapterId) &&
+    "transport" in value &&
+    isString(value.transport)
   );
 }
 

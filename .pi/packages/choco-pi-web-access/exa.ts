@@ -5,6 +5,7 @@ import { activityMonitor } from "./activity.ts";
 import type { ExtractedContent } from "./extract.ts";
 import type { SearchOptions, SearchResponse } from "./search-types.ts";
 import { redactCredential, resolveCredential } from "./credential-source.ts";
+import { classifyHttpFailure, SearchTransportError } from "./transport-error.ts";
 import {
   fetchWithCredentialRedirects,
   getWebSearchConfigPath,
@@ -54,7 +55,31 @@ export type ExaSearchResult = SearchResponse | null;
 
 export interface ExaSearchOptions extends SearchOptions {
   includeContent?: boolean;
+  exaSearchType?: "auto" | "fast" | "instant" | "deep-lite" | "deep" | "deep-reasoning";
+  answerMode?: "answer" | "results" | "both";
 }
+
+export const EXA_API_SEARCH_CAPABILITIES = {
+  answer: true,
+  results: true,
+  inlineContent: true,
+  numResults: "hard",
+  domainFilter: "hard",
+  domainExclusions: "hard",
+  recencyFilter: "hard",
+  modes: ["answer", "search"],
+} as const;
+
+export const EXA_MCP_SEARCH_CAPABILITIES = {
+  answer: true,
+  results: true,
+  inlineContent: true,
+  numResults: "hard",
+  domainFilter: "hard",
+  domainExclusions: "hard",
+  recencyFilter: "hard",
+  modes: ["mcp-basic", "mcp-advanced"],
+} as const;
 
 type McpParsedResult = { title: string; url: string; content: string };
 type ExaMcpBasicArguments = { query: string; numResults: number };
@@ -64,7 +89,7 @@ interface ExaDomainFilter {
 }
 interface ExaSearchArguments extends ExaDomainFilter {
   query: string;
-  type: "auto";
+  type: Exclude<ExaSearchOptions["exaSearchType"], undefined>;
   numResults: number;
   startPublishedDate?: string;
   enableHighlights?: boolean;
@@ -95,7 +120,7 @@ function loadConfig(): WebSearchConfig {
   }
 }
 
-async function getApiKey(signal?: AbortSignal): Promise<string | null> {
+export async function resolveExaApiKey(signal?: AbortSignal): Promise<string | null> {
   return resolveCredential({
     provider: "Exa",
     configuredValue: loadConfig().exaApiKey,
@@ -166,7 +191,7 @@ function exaSearchArgs(query: string, options: ExaSearchOptions): ExaSearchArgum
   const startDate = options.recencyFilter ? recencyToStartDate(options.recencyFilter) : null;
   const args: ExaSearchArguments = {
     query,
-    type: "auto",
+    type: options.exaSearchType ?? "auto",
     numResults: options.numResults ?? 5,
     ...mapDomainFilter(options.domainFilter),
   };
@@ -254,33 +279,54 @@ export async function callExaMcp(
   args: ExaMcpArguments,
   signal?: AbortSignal,
 ): Promise<string> {
-  const response = await fetch(`${EXA_MCP_URL}?tools=${toolName}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      "x-exa-source": "pi-web-access",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: {
-        name: toolName,
-        arguments: args,
+  let response: Response;
+  try {
+    response = await fetch(`${EXA_MCP_URL}?tools=${toolName}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "x-exa-source": "pi-web-access",
       },
-    }),
-    signal: requestSignal(signal),
-  });
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: toolName,
+          arguments: args,
+        },
+      }),
+      signal: requestSignal(signal),
+    });
+  } catch (err) {
+    if (signal?.aborted) {
+      throw new SearchTransportError("Exa MCP", "cancelled", "Exa MCP request was cancelled");
+    }
+    throw new SearchTransportError(
+      "Exa MCP",
+      "network",
+      err instanceof Error ? err.message : String(err),
+      { retryable: true },
+    );
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
     if (response.status === 429) {
-      throw new Error(
+      throw new SearchTransportError(
+        "Exa MCP",
+        "quota",
         `Exa MCP rate limit reached (429). Add "exaApiKey" to ${CONFIG_PATH} for unthrottled Exa search: ${errorText.slice(0, 200)}`,
+        { status: response.status, retryable: true },
       );
     }
-    throw new Error(`Exa MCP error ${response.status}: ${errorText.slice(0, 300)}`);
+    throw new SearchTransportError(
+      "Exa MCP",
+      classifyHttpFailure(response.status),
+      `Exa MCP error ${response.status}: ${errorText.slice(0, 300)}`,
+      { status: response.status, retryable: response.status >= 500 },
+    );
   }
 
   const body = await response.text();
@@ -311,20 +357,20 @@ export async function callExaMcp(
   }
 
   if (!parsed) {
-    throw new Error("Exa MCP returned an empty response");
+    throw new SearchTransportError("Exa MCP", "response", "Exa MCP returned an empty response");
   }
 
   if (parsed.error) {
     const code = Check(NumberValueSchema, parsed.error.code) ? ` ${parsed.error.code}` : "";
     const message = parsed.error.message || "Unknown error";
-    throw new Error(`Exa MCP error${code}: ${message}`);
+    throw new SearchTransportError("Exa MCP", "request", `Exa MCP error${code}: ${message}`);
   }
 
   if (parsed.result?.isError) {
     const message = parsed.result.content
       ?.find((item) => item.type === "text" && Check(StringValueSchema, item.text))
       ?.text?.trim();
-    throw new Error(message || "Exa MCP returned an error");
+    throw new SearchTransportError("Exa MCP", "request", message || "Exa MCP returned an error");
   }
 
   const text = parsed.result?.content?.find(
@@ -333,7 +379,7 @@ export async function callExaMcp(
   )?.text;
 
   if (!text) {
-    throw new Error("Exa MCP returned empty content");
+    throw new SearchTransportError("Exa MCP", "response", "Exa MCP returned empty content");
   }
 
   return text;
@@ -474,21 +520,25 @@ async function searchWithFilteredExaMcp(
       options,
     );
   } catch (err) {
-    if (isAbortMessage(err instanceof Error ? err.message : String(err))) throw err;
+    if (err instanceof SearchTransportError && err.kind === "cancelled") throw err;
+    if (options.recencyFilter || options.domainFilter?.length || options.exaSearchType) throw err;
     // The basic tool ignores every argument except query/numResults, so the
-    // filters degrade into the query text.
+    // optional content request degrades into the formatted response.
     return searchWithExaMcpTool(EXA_MCP_BASIC_TOOL, basicArgs, options);
   }
 }
 
-async function searchWithExaMcp(
+export async function searchWithExaMcp(
   query: string,
   options: ExaSearchOptions = {},
 ): Promise<SearchResponse | null> {
   const activityId = activityMonitor.logStart({ type: "api", query });
   const basicArgs = { query: buildMcpQuery(query, options), numResults: options.numResults ?? 5 };
   const filtered =
-    !!options.includeContent || !!options.recencyFilter || !!options.domainFilter?.length;
+    !!options.includeContent ||
+    !!options.recencyFilter ||
+    !!options.domainFilter?.length ||
+    !!options.exaSearchType;
 
   try {
     const response = filtered
@@ -515,13 +565,24 @@ export async function searchWithExa(
   query: string,
   options: ExaSearchOptions = {},
 ): Promise<ExaSearchResult> {
-  const apiKey = await getApiKey(options.signal);
+  const apiKey = await resolveExaApiKey(options.signal);
   if (!apiKey) {
     return searchWithExaMcp(query, options);
   }
+  return searchWithExaApi(query, options, apiKey);
+}
 
+export async function searchWithExaApi(
+  query: string,
+  options: ExaSearchOptions,
+  resolvedApiKey: string,
+): Promise<SearchResponse> {
+  const apiKey = resolvedApiKey;
   const apiBaseUrl = getApiBaseUrl();
   const useSearch =
+    options.answerMode === "results" ||
+    options.answerMode === "both" ||
+    !!options.exaSearchType ||
     options.includeContent ||
     !!options.recencyFilter ||
     !!options.domainFilter?.length ||
@@ -544,7 +605,12 @@ export async function searchWithExa(
 
       if (!response.ok) {
         const errorText = redactCredential(await response.text(), apiKey);
-        throw new Error(`Exa API error ${response.status}: ${errorText.slice(0, 300)}`);
+        throw new SearchTransportError(
+          "Exa API",
+          classifyHttpFailure(response.status),
+          `Exa API error ${response.status}: ${errorText.slice(0, 300)}`,
+          { status: response.status, retryable: response.status >= 500 || response.status === 429 },
+        );
       }
 
       // SAFETY: A successful Exa /answer response follows the documented answer and citations envelope.
@@ -574,7 +640,12 @@ export async function searchWithExa(
 
     if (!response.ok) {
       const errorText = redactCredential(await response.text(), apiKey);
-      throw new Error(`Exa API error ${response.status}: ${errorText.slice(0, 300)}`);
+      throw new SearchTransportError(
+        "Exa API",
+        classifyHttpFailure(response.status),
+        `Exa API error ${response.status}: ${errorText.slice(0, 300)}`,
+        { status: response.status, retryable: response.status >= 500 || response.status === 429 },
+      );
     }
 
     // SAFETY: A successful Exa /search response follows the documented results envelope.
@@ -589,12 +660,20 @@ export async function searchWithExa(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const redactedMessage = redactCredential(message, apiKey);
-    if (isAbortMessage(redactedMessage)) {
+    if (options.signal?.aborted) {
       activityMonitor.logComplete(activityId, 0);
+      throw new SearchTransportError("Exa API", "cancelled", "Exa API request was cancelled");
     } else {
       activityMonitor.logError(activityId, redactedMessage);
     }
-    if (redactedMessage === message) throw err;
-    throw new Error(redactedMessage);
+    if (err instanceof SearchTransportError && redactedMessage === message) throw err;
+    throw new SearchTransportError(
+      "Exa API",
+      err instanceof SearchTransportError ? err.kind : "network",
+      redactedMessage,
+      err instanceof SearchTransportError
+        ? { status: err.status, retryable: err.retryable }
+        : { retryable: true },
+    );
   }
 }
