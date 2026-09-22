@@ -2,6 +2,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  resolveSearchScope,
+  search as searchCore,
+  searchProviderFamilies,
+  searchProviderSelections,
+  type SearchAttemptDiagnostic,
+  type SearchBilling,
+  type SearchProviderFamily,
+  type SearchProviderSelection,
+  type SearchCapability,
+  type SearchErrorKind,
+  type SearchRequest,
+  type SearchResponse as CoreSearchResponse,
+} from "../choco-pi-web-search/index.ts";
 import { CredentialResolutionError } from "./credential-source.ts";
 import { isExaAvailable, searchWithExa } from "./exa.ts";
 import { isKagiAvailable, searchWithKagi } from "./kagi.ts";
@@ -9,12 +23,12 @@ import { isOpenAISearchAvailable, searchWithOpenAI } from "./openai-search.ts";
 import type { SearchOptions, SearchResponse, SearchResult } from "./search-types.ts";
 import { getWebSearchConfigPath } from "./utils.ts";
 
-export const RESOLVED_SEARCH_PROVIDERS = ["openai", "exa", "kagi"] as const;
-export const SEARCH_PROVIDERS = ["auto", "all", ...RESOLVED_SEARCH_PROVIDERS] as const;
+export const RESOLVED_SEARCH_PROVIDERS = searchProviderFamilies;
+export const SEARCH_PROVIDERS = searchProviderSelections;
 
 export type ResolvedSearchProvider = (typeof RESOLVED_SEARCH_PROVIDERS)[number];
 export type SearchProvider = (typeof SEARCH_PROVIDERS)[number];
-export type SearchProviderSelection = SearchProvider | ResolvedSearchProvider[];
+export type { SearchProviderSelection };
 export type SearchProviderErrorKind =
   | "transient"
   | "quota"
@@ -57,18 +71,29 @@ export class SearchProviderError extends Error {
 }
 
 export interface ProviderSearchResponse extends SearchResponse {
-  provider: ResolvedSearchProvider;
+  provider: SearchProviderFamily;
+  adapterId?: string;
+  transport?: string;
+  billing?: SearchBilling;
+  warnings?: string[];
+  attempts?: readonly SearchAttemptDiagnostic[];
 }
 
 export interface ProviderSearchFailure {
-  provider: ResolvedSearchProvider;
+  provider: SearchProviderFamily;
   error: string;
+  kind?: SearchErrorKind;
 }
 
 export interface AttributedSearchResponse extends SearchResponse {
   provider: ResolvedSearchProvider | "all";
   providerResponses?: ProviderSearchResponse[];
   providerErrors?: ProviderSearchFailure[];
+  adapterId?: string;
+  transport?: string;
+  billing?: SearchBilling;
+  warnings?: string[];
+  attempts?: readonly SearchAttemptDiagnostic[];
 }
 
 const CONFIG_PATH = getWebSearchConfigPath();
@@ -79,6 +104,7 @@ type SearchConfig = {
   searchProvider: SearchProviderSelection;
   searchProviderConfigured: boolean;
   searchRouting?: SearchRoutingConfig;
+  allowBilledApiFallback: boolean;
 };
 
 type ConfigScalar = boolean | number | string | null;
@@ -88,7 +114,7 @@ interface ConfigObject {
 }
 
 const StringValueSchema = Type.String();
-const NumberValueSchema = Type.Number();
+const BooleanValueSchema = Type.Boolean();
 
 function isConfigObject<Value>(value: Value): value is Value & ConfigObject {
   return value !== null && Object(value) === value && !Array.isArray(value);
@@ -111,7 +137,11 @@ let cachedSearchConfig: SearchConfig | null = null;
 function getSearchConfig(): SearchConfig {
   if (cachedSearchConfig) return cachedSearchConfig;
   if (!existsSync(CONFIG_PATH)) {
-    cachedSearchConfig = { searchProvider: "auto", searchProviderConfigured: false };
+    cachedSearchConfig = {
+      searchProvider: "auto",
+      searchProviderConfigured: false,
+      allowBilledApiFallback: false,
+    };
     return cachedSearchConfig;
   }
 
@@ -128,16 +158,32 @@ function getSearchConfig(): SearchConfig {
 
   const searchProviderConfigured =
     Object.hasOwn(raw, "searchProvider") || Object.hasOwn(raw, "provider");
-  cachedSearchConfig = {
+  const config: SearchConfig = {
     searchProvider: normalizeSearchProviderSelection(
       raw.searchProvider ?? raw.provider,
       `provider in ${CONFIG_PATH}`,
     ),
     searchProviderConfigured,
+    allowBilledApiFallback:
+      raw.allowBilledApiFallback === undefined
+        ? false
+        : normalizeBoolean(raw.allowBilledApiFallback, `allowBilledApiFallback in ${CONFIG_PATH}`),
   };
-  if (Object.hasOwn(raw, "searchRouting"))
-    cachedSearchConfig.searchRouting = normalizeSearchRouting(raw.searchRouting);
-  return cachedSearchConfig;
+  if (Object.hasOwn(raw, "searchRouting")) {
+    if (searchProviderConfigured) {
+      throw new Error(
+        `Conflicting search configuration in ${CONFIG_PATH}: use searchProvider/provider or searchRouting, not both`,
+      );
+    }
+    config.searchRouting = normalizeSearchRouting(raw.searchRouting);
+  }
+  cachedSearchConfig = config;
+  return config;
+}
+
+function normalizeBoolean<Value>(value: Value, label: string): boolean {
+  if (!Check(BooleanValueSchema, value)) throw new Error(`${label} must be a boolean`);
+  return value;
 }
 
 function normalizeSearchRouting<Value>(value: Value): SearchRoutingConfig {
@@ -202,6 +248,98 @@ export interface FullSearchOptions extends SearchOptions {
   provider?: SearchProviderSelection;
   includeContent?: boolean;
   extensionContext?: ExtensionContext;
+  allowBilledApiFallback?: boolean;
+  recencyDays?: number;
+  country?: string;
+  language?: string;
+  safesearch?: "off" | "moderate" | "strict";
+  offset?: number;
+  exaSearchType?: "auto" | "fast" | "instant" | "deep-lite" | "deep" | "deep-reasoning";
+  answerMode?: "answer" | "results" | "both";
+  responseLength?: "short" | "medium" | "long";
+  searchContextSize?: "low" | "medium" | "high";
+  requiredCapabilities?: SearchCapability[];
+}
+
+function fromCoreResponse(response: CoreSearchResponse): AttributedSearchResponse {
+  const providerResponses = response.providerResponses?.flatMap((entry) =>
+    entry.provider === "all"
+      ? []
+      : [
+          {
+            answer: entry.answer,
+            results: entry.results,
+            inlineContent: entry.inlineContent,
+            provider: entry.provider,
+            adapterId: entry.adapterId,
+            transport: entry.transport,
+            billing: entry.billing,
+            warnings: entry.warnings,
+            attempts: entry.attempts,
+            references: entry.references,
+          },
+        ],
+  );
+  const mapped: AttributedSearchResponse = {
+    answer: response.answer,
+    results: response.results,
+    provider: response.provider,
+    adapterId: response.adapterId,
+    transport: response.transport,
+    billing: response.billing,
+    attempts: response.attempts,
+  };
+  if (response.inlineContent) mapped.inlineContent = response.inlineContent;
+  if (response.references?.length) mapped.references = response.references;
+  if (response.warnings?.length) mapped.warnings = response.warnings;
+  if (providerResponses) mapped.providerResponses = providerResponses;
+  if (response.providerErrors)
+    mapped.providerErrors = response.providerErrors.map(({ provider, error, kind }) => ({
+      provider,
+      error,
+      kind,
+    }));
+  return mapped;
+}
+
+async function searchWithCore(
+  query: string,
+  options: FullSearchOptions,
+  config: SearchConfig,
+  provider: SearchProviderSelection,
+): Promise<AttributedSearchResponse | undefined> {
+  const context = options.extensionContext;
+  if (!context || !resolveSearchScope(context)) return undefined;
+  const routing =
+    !config.searchProviderConfigured && config.searchRouting
+      ? {
+          providers: config.searchRouting.providers,
+          fallbackOn: config.searchRouting.fallbackOn,
+        }
+      : undefined;
+  const request: SearchRequest = { query };
+  if (!(routing && provider === "auto")) request.provider = provider;
+  if (options.numResults !== undefined) request.numResults = options.numResults;
+  if (options.recencyFilter) request.recencyFilter = options.recencyFilter;
+  if (options.recencyDays !== undefined) request.recencyDays = options.recencyDays;
+  if (options.domainFilter) request.domainFilter = options.domainFilter;
+  if (options.includeContent !== undefined) request.includeContent = options.includeContent;
+  if (options.country) request.country = options.country;
+  if (options.language) request.language = options.language;
+  if (options.safesearch) request.safesearch = options.safesearch;
+  if (options.offset !== undefined) request.offset = options.offset;
+  if (options.exaSearchType) request.exaSearchType = options.exaSearchType;
+  if (options.answerMode) request.answerMode = options.answerMode;
+  if (options.responseLength) request.responseLength = options.responseLength;
+  if (options.searchContextSize) request.searchContextSize = options.searchContextSize;
+  if (options.requiredCapabilities) request.requiredCapabilities = options.requiredCapabilities;
+  const response = await searchCore(request, {
+    context,
+    signal: options.signal,
+    routing,
+    allowBilledApiFallback: options.allowBilledApiFallback ?? config.allowBilledApiFallback,
+  });
+  return fromCoreResponse(response);
 }
 
 function errorMessage(cause: unknown): string {
@@ -214,17 +352,7 @@ function isAbortError(cause: unknown): boolean {
 
 function shouldTryOpenAIInAuto(options: SearchOptions): boolean {
   if (options.recencyFilter) return false;
-  if (
-    Check(NumberValueSchema, options.numResults) &&
-    Number.isFinite(options.numResults) &&
-    Math.floor(options.numResults) !== 5
-  )
-    return false;
   return true;
-}
-
-function isOpenAICodexSelected(ctx?: ExtensionContext): boolean {
-  return ctx?.model?.provider === "openai-codex";
 }
 
 async function tryOpenAIInAuto(
@@ -300,9 +428,14 @@ async function searchWithResolvedProvider(
   if (provider === "openai")
     return { ...(await searchWithOpenAI(query, options, options.extensionContext)), provider };
   if (provider === "kagi") return { ...(await searchWithKagi(query, options)), provider };
-  const result = await searchWithExa(query, options);
-  if (result) return { ...result, provider };
-  throw new Error("Exa search returned no results.");
+  if (provider === "exa") {
+    const result = await searchWithExa(query, options);
+    if (result) return { ...result, provider };
+    throw new Error("Exa search returned no results.");
+  }
+  throw new Error(
+    `${provider} search requires an integrated choco-pi-web-search session and adapter`,
+  );
 }
 
 async function isResolvedProviderAvailable(
@@ -311,13 +444,16 @@ async function isResolvedProviderAvailable(
 ): Promise<boolean> {
   if (provider === "openai") return isOpenAISearchAvailable(options.extensionContext);
   if (provider === "kagi") return isKagiAvailable();
-  return isExaAvailable();
+  if (provider === "exa") return isExaAvailable();
+  return false;
 }
 
 function providerLabel(provider: ResolvedSearchProvider): string {
   if (provider === "openai") return "OpenAI";
   if (provider === "kagi") return "Kagi";
-  return "Exa";
+  if (provider === "exa") return "Exa";
+  if (provider === "synthetic") return "Synthetic";
+  return "Brave";
 }
 
 async function searchWithProviders(
@@ -429,6 +565,8 @@ export async function search(
     options.provider === undefined || options.provider === "auto"
       ? config.searchProvider
       : options.provider;
+  const coreResponse = await searchWithCore(query, options, config, provider);
+  if (coreResponse) return coreResponse;
   if (Array.isArray(provider))
     return searchWithProviders(query, options, normalizeResolvedProviderList(provider, "provider"));
   if (provider === "all") return searchWithProviders(query, options);
@@ -437,12 +575,8 @@ export async function search(
     return searchWithConfiguredRouting(query, options, config.searchRouting);
 
   const fallbackErrors: string[] = [];
-  let triedOpenAI = false;
-  if (!options.extensionContext || isOpenAICodexSelected(options.extensionContext)) {
-    triedOpenAI = true;
-    const result = await tryOpenAIInAuto(query, options, fallbackErrors);
-    if (result) return result;
-  }
+  const openAIResult = await tryOpenAIInAuto(query, options, fallbackErrors);
+  if (openAIResult) return openAIResult;
   if (isExaAvailable()) {
     try {
       const result = await searchWithExa(query, options);
@@ -451,10 +585,6 @@ export async function search(
       if (err instanceof CredentialResolutionError || isAbortError(err)) throw err;
       fallbackErrors.push(`Exa: ${errorMessage(err)}`);
     }
-  }
-  if (!triedOpenAI) {
-    const result = await tryOpenAIInAuto(query, options, fallbackErrors);
-    if (result) return result;
   }
   if (isKagiAvailable()) {
     try {

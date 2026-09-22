@@ -54,6 +54,8 @@ export interface ResearchArtifact {
   passages: ResearchPassage[];
   claims?: ClaimAssessment[];
   provider?: string;
+  backend?: string;
+  warnings?: string[];
   summary?: string;
   content_hash?: string;
   filters?: { recency?: RecencyFilter; domain_include?: string[]; domain_exclude?: string[] };
@@ -303,6 +305,8 @@ interface RankedSearchResult extends SearchResult {
 export interface BuildArtifactInput {
   query: string;
   provider?: string;
+  backend?: string;
+  warnings?: string[];
   summary?: string;
   results: RankedSearchResult[];
   fetched?: ExtractedContent[];
@@ -353,6 +357,8 @@ export function buildResearchArtifact(input: BuildArtifactInput): ResearchArtifa
     filters: filtersValue,
   };
   if (input.provider !== undefined) artifact.provider = input.provider;
+  if (input.backend !== undefined) artifact.backend = input.backend;
+  if (input.warnings?.length) artifact.warnings = [...input.warnings];
   if (input.summary !== undefined) artifact.summary = input.summary;
   if (passages.length > 0)
     artifact.content_hash = hashContent(passages.map((passage) => passage.text).join("\n"));
@@ -525,6 +531,8 @@ function isResearchArtifact<Value>(value: Value): value is Value & ResearchArtif
     (!("claims" in value) ||
       (Array.isArray(value.claims) && value.claims.every(isClaimAssessment))) &&
     (!("provider" in value) || isString(value.provider)) &&
+    (!("backend" in value) || isString(value.backend)) &&
+    (!("warnings" in value) || isStringArray(value.warnings)) &&
     (!("summary" in value) || isString(value.summary)) &&
     (!("content_hash" in value) || isString(value.content_hash)) &&
     (!("filters" in value) || isResearchFilters(value.filters)) &&

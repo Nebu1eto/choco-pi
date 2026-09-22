@@ -5,6 +5,7 @@ import { activityMonitor } from "./activity.ts";
 import type { ExtractedContent, ExtractOptions } from "./extract.ts";
 import type { SearchOptions, SearchResponse } from "./search-types.ts";
 import { hasCredentialSource, redactCredential, resolveCredential } from "./credential-source.ts";
+import { classifyHttpFailure, SearchTransportError } from "./transport-error.ts";
 import {
   fetchRemoteUrl,
   loadFetchContentDomainPolicy,
@@ -29,9 +30,18 @@ interface WebSearchConfig extends KagiObject {
   kagiApiKey?: KagiValue;
 }
 
-interface KagiSearchOptions extends SearchOptions {
+export interface KagiSearchOptions extends SearchOptions {
   includeContent?: boolean;
 }
+
+export const KAGI_SEARCH_CAPABILITIES = {
+  answer: true,
+  results: true,
+  inlineContent: true,
+  numResults: "hard",
+  domainFilter: "unsupported",
+  recencyFilter: "unsupported",
+} as const;
 
 export interface KagiExtractOptions extends Pick<ExtractOptions, "timeoutMs" | "lookup"> {
   ssrf?: SsrfConfig;
@@ -67,7 +77,7 @@ function loadConfig(): WebSearchConfig {
   return cachedConfig;
 }
 
-async function getApiKey(signal?: AbortSignal): Promise<string | null> {
+export async function resolveKagiApiKey(signal?: AbortSignal): Promise<string | null> {
   return resolveCredential({
     provider: "Kagi",
     configuredValue: loadConfig().kagiApiKey,
@@ -77,7 +87,7 @@ async function getApiKey(signal?: AbortSignal): Promise<string | null> {
 }
 
 async function requireApiKey(signal?: AbortSignal): Promise<string> {
-  const apiKey = await getApiKey(signal);
+  const apiKey = await resolveKagiApiKey(signal);
   if (!apiKey) {
     throw new Error(
       "Kagi API key not found. Either:\n" +
@@ -211,6 +221,15 @@ export async function searchWithKagi(
   options: KagiSearchOptions = {},
 ): Promise<SearchResponse> {
   const apiKey = await requireApiKey(options.signal);
+  return searchWithKagiApi(query, options, apiKey);
+}
+
+export async function searchWithKagiApi(
+  query: string,
+  options: KagiSearchOptions,
+  resolvedApiKey: string,
+): Promise<SearchResponse> {
+  const apiKey = resolvedApiKey;
   const numResults = normalizeCount(options.numResults);
   const activityId = activityMonitor.logStart({ type: "api", query });
   let response: Response;
@@ -230,24 +249,35 @@ export async function searchWithKagi(
   } catch (err) {
     const message = errorMessage(err);
     const redactedMessage = redactCredential(message, apiKey);
-    if (redactedMessage.toLowerCase().includes("abort")) activityMonitor.logComplete(activityId, 0);
-    else activityMonitor.logError(activityId, redactedMessage);
-    if (redactedMessage === message) throw err;
-    const redactedError = new Error(redactedMessage);
-    if (err instanceof Error) redactedError.name = err.name;
-    throw redactedError;
+    if (options.signal?.aborted) {
+      activityMonitor.logComplete(activityId, 0);
+      throw new SearchTransportError("Kagi Search", "cancelled", "Kagi search was cancelled");
+    }
+    activityMonitor.logError(activityId, redactedMessage);
+    throw new SearchTransportError("Kagi Search", "network", redactedMessage, {
+      retryable: true,
+    });
   }
   if (!response.ok) {
     activityMonitor.logComplete(activityId, response.status);
     const errorText = redactCredential(await response.text(), apiKey);
-    throw new Error(`Kagi API error ${response.status}: ${errorText.slice(0, 300)}`);
+    throw new SearchTransportError(
+      "Kagi Search",
+      classifyHttpFailure(response.status),
+      `Kagi API error ${response.status}: ${errorText.slice(0, 300)}`,
+      { status: response.status, retryable: response.status >= 500 || response.status === 429 },
+    );
   }
   let rawData: KagiValue;
   try {
     rawData = await response.json();
   } catch (err) {
     activityMonitor.logComplete(activityId, response.status);
-    throw new Error(`Kagi API returned invalid JSON: ${errorMessage(err)}`);
+    throw new SearchTransportError(
+      "Kagi Search",
+      "response",
+      `Kagi API returned invalid JSON: ${errorMessage(err)}`,
+    );
   }
   const parsed = parseSearchResponse(rawData);
   activityMonitor.logComplete(activityId, response.status);

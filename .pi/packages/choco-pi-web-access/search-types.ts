@@ -1,4 +1,5 @@
 import type { ExtractedContent } from "./extract.ts";
+import type { SearchReference } from "../choco-pi-web-search/index.ts";
 
 export interface SearchResult {
   title: string;
@@ -10,6 +11,7 @@ export interface SearchResponse {
   answer: string;
   results: SearchResult[];
   inlineContent?: ExtractedContent[];
+  references?: SearchReference[];
 }
 
 export interface SearchOptions {

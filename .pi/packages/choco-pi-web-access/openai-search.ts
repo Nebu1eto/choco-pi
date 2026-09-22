@@ -1,10 +1,15 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { activityMonitor } from "./activity.ts";
 import type { SearchOptions, SearchResponse, SearchResult } from "./search-types.ts";
 import { hasCredentialSource, redactCredential, resolveCredential } from "./credential-source.ts";
+import {
+  assertTransportRequestActive,
+  classifyHttpFailure,
+  SearchTransportError,
+} from "./transport-error.ts";
 import { getWebSearchConfigPath } from "./utils.ts";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
@@ -49,12 +54,31 @@ interface WebSearchConfig extends OpenAIJsonObject {
 
 type ProviderHeaders = Record<string, string | null>;
 
-interface OpenAIAuth {
+export type OpenAITransport = "codex-subscription" | "responses-api";
+export type OpenAIBilling = "subscription" | "api";
+
+export interface OpenAIResolvedAuth {
+  /** @deprecated Use providerId. Retained for standalone callers. */
   provider: string;
+  providerId: string;
+  transport: OpenAITransport;
+  billing: OpenAIBilling;
   apiKey: string;
   model: string;
   headers: ProviderHeaders;
   responsesUrl: string;
+}
+
+export interface OpenAIAuthRequestSnapshot {
+  signal?: AbortSignal;
+  isCurrent?: () => boolean;
+}
+
+interface PiAuthResolutionOptions {
+  responsesUrl: string;
+  providers: readonly string[];
+  request: OpenAIAuthRequestSnapshot;
+  modelOverride?: string;
 }
 
 interface NormalizedDomainFilters {
@@ -79,25 +103,37 @@ function isJsonObject<Value>(value: Value): value is Value & OpenAIJsonObject {
   return value !== null && Object(value) === value && !Array.isArray(value);
 }
 
-let cachedConfig: WebSearchConfig | null = null;
+let cachedConfig: Promise<WebSearchConfig> | null = null;
 
-function loadConfig(): WebSearchConfig {
+async function loadConfig(): Promise<WebSearchConfig> {
   if (cachedConfig) return cachedConfig;
-  if (!existsSync(CONFIG_PATH)) {
-    cachedConfig = {};
-    return cachedConfig;
-  }
-
-  const raw = readFileSync(CONFIG_PATH, "utf-8");
-  try {
-    const parsed: OpenAIJsonValue = JSON.parse(raw);
-    if (!isJsonObject(parsed)) throw new Error("expected a JSON object");
-    cachedConfig = parsed;
-    return cachedConfig;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse ${CONFIG_PATH}: ${message}`);
-  }
+  cachedConfig = (async () => {
+    let raw: string;
+    try {
+      raw = await readFile(CONFIG_PATH, "utf8");
+    } catch (err) {
+      if (isJsonObject(err) && err.code === "ENOENT") return {};
+      const message = err instanceof Error ? err.message : String(err);
+      throw new SearchTransportError(
+        "OpenAI Responses",
+        "config",
+        `Failed to read ${CONFIG_PATH}: ${message}`,
+      );
+    }
+    try {
+      const parsed: OpenAIJsonValue = JSON.parse(raw);
+      if (!isJsonObject(parsed)) throw new Error("expected a JSON object");
+      return parsed;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new SearchTransportError(
+        "OpenAI Responses",
+        "config",
+        `Failed to parse ${CONFIG_PATH}: ${message}`,
+      );
+    }
+  })();
+  return cachedConfig;
 }
 
 function normalizeDomain(value: string): string | null {
@@ -212,46 +248,95 @@ function toRequestHeaders(headers: ProviderHeaders) {
 
 async function resolvePiAuth(
   ctx: ExtensionContext,
-  responsesUrl: string,
-  providers: readonly string[],
-  modelOverride?: string,
-): Promise<OpenAIAuth | undefined> {
+  options: PiAuthResolutionOptions,
+): Promise<OpenAIResolvedAuth | undefined> {
+  const { responsesUrl, providers, request, modelOverride } = options;
+  let getAll: typeof ctx.modelRegistry.getAll;
+  let getApiKeyAndHeaders: typeof ctx.modelRegistry.getApiKeyAndHeaders;
   let models: ReturnType<typeof ctx.modelRegistry.getAll>;
   try {
-    models = ctx.modelRegistry.getAll();
-  } catch {
-    return undefined;
+    getAll = ctx.modelRegistry.getAll.bind(ctx.modelRegistry);
+    getApiKeyAndHeaders = ctx.modelRegistry.getApiKeyAndHeaders.bind(ctx.modelRegistry);
+    models = getAll();
+  } catch (err) {
+    assertTransportRequestActive("OpenAI Responses", request.signal, request.isCurrent);
+    if (err instanceof SearchTransportError) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    throw new SearchTransportError(
+      "OpenAI Responses",
+      "config",
+      `Failed to inspect the OpenAI model registry: ${message}`,
+    );
   }
+  assertTransportRequestActive("OpenAI Responses", request.signal, request.isCurrent);
   for (const provider of providers) {
     const preferred = pickSearchModel(models.filter((model) => model.provider === provider));
     if (!preferred) continue;
+    const providerId = provider;
+    const model = modelOverride ?? preferred.id;
     try {
-      const resolved = await ctx.modelRegistry.getApiKeyAndHeaders(preferred);
-      if (resolved.ok && resolved.apiKey) {
+      assertTransportRequestActive("OpenAI Responses", request.signal, request.isCurrent);
+      const resolved = await getApiKeyAndHeaders(preferred);
+      assertTransportRequestActive("OpenAI Responses", request.signal, request.isCurrent);
+      if (!resolved.ok) {
+        throw new SearchTransportError(
+          "OpenAI Responses",
+          "auth",
+          `Failed to resolve OpenAI credentials for ${providerId}: ${resolved.error}`,
+        );
+      }
+      if (resolved.apiKey) {
+        const subscription = providerId === "openai-codex" || isCodexJwt(resolved.apiKey);
         return {
-          provider,
+          provider: providerId,
+          providerId,
+          transport: subscription ? "codex-subscription" : "responses-api",
+          billing: subscription ? "subscription" : "api",
           apiKey: resolved.apiKey,
-          model: modelOverride ?? preferred.id,
+          model,
           headers: resolved.headers ?? {},
           responsesUrl,
         };
       }
-    } catch {}
+    } catch (err) {
+      assertTransportRequestActive("OpenAI Responses", request.signal, request.isCurrent);
+      if (err instanceof SearchTransportError) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      throw new SearchTransportError(
+        "OpenAI Responses",
+        "auth",
+        `Failed to resolve OpenAI credentials for ${providerId}: ${message}`,
+      );
+    }
   }
   return undefined;
 }
 
+function normalizeAuthRequest(
+  request: AbortSignal | OpenAIAuthRequestSnapshot | undefined,
+): OpenAIAuthRequestSnapshot {
+  return request instanceof AbortSignal ? { signal: request } : (request ?? {});
+}
+
 export async function resolveOpenAIAuth(
   ctx?: ExtensionContext,
-  signal?: AbortSignal,
-): Promise<OpenAIAuth | undefined> {
-  const config = loadConfig();
+  signalOrRequest?: AbortSignal | OpenAIAuthRequestSnapshot,
+): Promise<OpenAIResolvedAuth | undefined> {
+  const request = normalizeAuthRequest(signalOrRequest);
+  assertTransportRequestActive("OpenAI Responses", request.signal, request.isCurrent);
+  const config = await loadConfig();
+  assertTransportRequestActive("OpenAI Responses", request.signal, request.isCurrent);
   const responsesUrl = resolveConfiguredResponsesUrl(config.openaiResponsesUrl);
   const modelOverride = resolveConfiguredSearchModel(config.openaiSearchModel);
   const providers = resolveConfiguredSearchProviders(config.openaiSearchProviders);
   if (ctx) {
-    const auth = await resolvePiAuth(ctx, responsesUrl, providers, modelOverride);
-    if (auth) return auth;
+    const resolved = await resolvePiAuth(ctx, {
+      responsesUrl,
+      providers,
+      request,
+      modelOverride,
+    });
+    if (resolved) return resolved;
   }
 
   const hasSource = hasCredentialSource({
@@ -264,24 +349,31 @@ export async function resolveOpenAIAuth(
     provider: "OpenAI",
     configuredValue: config.openaiApiKey,
     environmentValue: process.env.OPENAI_API_KEY,
-    signal,
+    signal: request.signal,
   });
-  return apiKey
-    ? {
-        provider: "openai",
-        apiKey,
-        model: modelOverride ?? "gpt-5.6-terra",
-        headers: {},
-        responsesUrl,
-      }
-    : undefined;
+  assertTransportRequestActive("OpenAI Responses", request.signal, request.isCurrent);
+  if (!apiKey) return undefined;
+  const subscription = isCodexJwt(apiKey);
+  return {
+    provider: subscription ? "openai-codex" : "openai",
+    providerId: subscription ? "openai-codex" : "openai",
+    transport: subscription ? "codex-subscription" : "responses-api",
+    billing: subscription ? "subscription" : "api",
+    apiKey,
+    model: modelOverride ?? "gpt-5.6-terra",
+    headers: {},
+    responsesUrl,
+  };
 }
 
 export async function isOpenAISearchAvailable(ctx?: ExtensionContext): Promise<boolean> {
-  const config = loadConfig();
+  const config = await loadConfig();
   const responsesUrl = resolveConfiguredResponsesUrl(config.openaiResponsesUrl);
   const providers = resolveConfiguredSearchProviders(config.openaiSearchProviders);
-  if (ctx && (await resolvePiAuth(ctx, responsesUrl, providers))) return true;
+  if (ctx) {
+    const resolved = await resolvePiAuth(ctx, { responsesUrl, providers, request: {} });
+    if (resolved) return true;
+  }
   return hasCredentialSource({
     provider: "OpenAI",
     configuredValue: config.openaiApiKey,
@@ -500,15 +592,39 @@ export async function searchWithOpenAI(
   options: SearchOptions = {},
   ctx?: ExtensionContext,
 ): Promise<SearchResponse> {
-  const auth = await resolveOpenAIAuth(ctx, options.signal);
+  const signal = options.signal;
+  const auth = await resolveOpenAIAuth(ctx, { signal });
   if (!auth) {
-    throw new Error(
+    throw new SearchTransportError(
+      "OpenAI Responses",
+      "auth",
       "OpenAI web search unavailable. Either:\n" +
         "  1. Use /login to sign in with a Codex subscription\n" +
         `  2. Create ${CONFIG_PATH} with { "openaiApiKey": "your-key" }\n` +
         "  3. Set OPENAI_API_KEY environment variable",
     );
   }
+  assertTransportRequestActive("OpenAI Responses", signal);
+  return searchWithResolvedOpenAIAuth(query, options, auth);
+}
+
+export async function searchWithResolvedOpenAIAuth(
+  query: string,
+  options: SearchOptions,
+  resolvedAuth: OpenAIResolvedAuth,
+): Promise<SearchResponse> {
+  const signal = options.signal;
+  const auth: OpenAIResolvedAuth = {
+    provider: resolvedAuth.providerId,
+    providerId: resolvedAuth.providerId,
+    transport: resolvedAuth.transport,
+    billing: resolvedAuth.billing,
+    apiKey: resolvedAuth.apiKey,
+    model: resolvedAuth.model,
+    headers: { ...resolvedAuth.headers },
+    responsesUrl: resolvedAuth.responsesUrl,
+  };
+  assertTransportRequestActive("OpenAI Responses", signal);
 
   const activityId = activityMonitor.logStart({ type: "api", query });
   const headers = Object.assign(toRequestHeaders(auth.headers), {
@@ -516,7 +632,7 @@ export async function searchWithOpenAI(
     "Content-Type": "application/json",
     "OpenAI-Beta": "responses=experimental",
   });
-  const useCodexEndpoint = auth.provider === "openai-codex" || isCodexJwt(auth.apiKey);
+  const useCodexEndpoint = auth.transport === "codex-subscription";
   if (useCodexEndpoint) {
     const accountId = extractAccountId(auth.apiKey);
     if (accountId) headers["chatgpt-account-id"] = accountId;
@@ -536,6 +652,7 @@ export async function searchWithOpenAI(
   };
 
   try {
+    assertTransportRequestActive("OpenAI Responses", signal);
     const response = await fetch(useCodexEndpoint ? CODEX_RESPONSES_URL : auth.responsesUrl, {
       method: "POST",
       headers,
@@ -544,35 +661,56 @@ export async function searchWithOpenAI(
         ? AbortSignal.any([AbortSignal.timeout(SEARCH_TIMEOUT_MS), options.signal])
         : AbortSignal.timeout(SEARCH_TIMEOUT_MS),
     });
+    assertTransportRequestActive("OpenAI Responses", signal);
 
     if (!response.ok) {
       activityMonitor.logError(activityId, `HTTP ${response.status}`);
       const errorText = redactCredential(await response.text(), auth.apiKey);
-      throw new Error(`OpenAI API error ${response.status}: ${errorText.slice(0, 300)}`);
+      assertTransportRequestActive("OpenAI Responses", signal);
+      throw new SearchTransportError(
+        "OpenAI Responses",
+        classifyHttpFailure(response.status),
+        `OpenAI API error ${response.status}: ${errorText.slice(0, 300)}`,
+        { status: response.status, retryable: response.status >= 500 || response.status === 429 },
+      );
     }
 
     const parsed = await parseOpenAIResponse(response);
+    assertTransportRequestActive("OpenAI Responses", signal);
     const output = Array.isArray(parsed.output) ? parsed.output : [];
     const answer = extractAnswer(output);
     const results = extractSearchResults(output, options.numResults);
 
     if (!answer && results.length === 0) {
-      throw new Error("OpenAI web_search returned no answer or sources");
+      throw new SearchTransportError(
+        "OpenAI Responses",
+        "response",
+        "OpenAI web_search returned no answer or sources",
+      );
     }
 
     activityMonitor.logComplete(activityId, response.status);
     return { answer, results };
   } catch (err) {
+    if (signal?.aborted) {
+      activityMonitor.logComplete(activityId, 0);
+      throw new SearchTransportError(
+        "OpenAI Responses",
+        "cancelled",
+        "OpenAI Responses request was cancelled",
+      );
+    }
     const message = err instanceof Error ? err.message : String(err);
     const redactedMessage = redactCredential(message, auth.apiKey);
-    if (redactedMessage.toLowerCase().includes("abort")) {
-      activityMonitor.logComplete(activityId, 0);
-    } else {
-      activityMonitor.logError(activityId, redactedMessage);
-    }
-    if (redactedMessage === message) throw err;
-    const redactedError = new Error(redactedMessage);
-    if (err instanceof Error) redactedError.name = err.name;
-    throw redactedError;
+    activityMonitor.logError(activityId, redactedMessage);
+    if (err instanceof SearchTransportError && redactedMessage === message) throw err;
+    throw new SearchTransportError(
+      "OpenAI Responses",
+      err instanceof SearchTransportError ? err.kind : "network",
+      redactedMessage,
+      err instanceof SearchTransportError
+        ? { status: err.status, retryable: err.retryable }
+        : { retryable: true },
+    );
   }
 }
