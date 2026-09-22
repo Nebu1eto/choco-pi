@@ -104,6 +104,8 @@ test("profile installer links tracked config and is idempotent", async (context)
   assert.deepEqual(
     settings.packages,
     [
+      "choco-pi-web-search",
+      "choco-pi-web-access",
       "choco-pi-provider-synthetic",
       "choco-pi-ui",
       "choco-pi-shells",
@@ -116,7 +118,6 @@ test("profile installer links tracked config and is idempotent", async (context)
       "choco-pi-compaction",
       "choco-pi-codex",
       "choco-pi-agents-md",
-      "choco-pi-web-access",
       "choco-pi-agent-browser",
       "choco-pi-computer-use",
       "choco-pi-editor-context",

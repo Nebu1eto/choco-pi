@@ -11,10 +11,17 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { hasCanonicalSearch } from "../packages/choco-pi-web-search/index.ts";
 
 const MAX_QUERY_LENGTH = 500;
 const DEFAULT_LIMIT = 5;
 const DISABLED_TOOL_NAMES = new Set<string>(["grep"]);
+const LEGACY_SEARCH_TOOL_NAMES = new Set<string>([
+  "web_run",
+  "web__run",
+  "synthetic_web_search",
+  "agent_browser_web_search",
+]);
 
 function withoutDisabledTools(names: readonly string[]): string[] {
   return names.filter((name) => !DISABLED_TOOL_NAMES.has(name));
@@ -426,14 +433,21 @@ export default function toolSearch(pi: ExtensionAPI): void {
   let mcpCatalogReady = false;
   let enabledMcpServers: Set<string> | undefined;
 
+  const withoutUnavailableTools = (names: readonly string[]): string[] => {
+    const canonicalSearch = hasCanonicalSearch(pi.events);
+    return withoutDisabledTools(names).filter(
+      (name) => !canonicalSearch || !LEGACY_SEARCH_TOOL_NAMES.has(name),
+    );
+  };
+
   const computeLeanSurface = (): string[] => {
-    const allNames = new Set(pi.getAllTools().map((tool) => tool.name));
+    const allNames = new Set(withoutUnavailableTools(pi.getAllTools().map((tool) => tool.name)));
     const alwaysActive = ALWAYS_ACTIVE_TOOL_NAMES.filter(
       (name) => name !== "tool_search" && allNames.has(name),
     );
     const included = new Set<string>(alwaysActive);
     const currentlyActive = leanSurfaceInitialized
-      ? withoutDisabledTools(pi.getActiveTools()).filter(
+      ? withoutUnavailableTools(pi.getActiveTools()).filter(
           (name) => name !== "tool_search" && !included.has(name),
         )
       : [];
@@ -447,7 +461,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
   const commitLeanSurface = (names: string[], allowLocked = false): void => {
     if (isPrefixLocked() && !allowLocked) return;
     const activeNames = pi.getActiveTools();
-    const active = withoutDisabledTools(activeNames);
+    const active = withoutUnavailableTools(activeNames);
     leanSurfaceInitialized = true;
     if (
       active.length === activeNames.length &&
@@ -460,9 +474,11 @@ export default function toolSearch(pi: ExtensionAPI): void {
   };
 
   const refreshSearchCatalog = (): void => {
-    const allTools = pi.getAllTools();
+    const allTools = pi
+      .getAllTools()
+      .filter((tool) => withoutUnavailableTools([tool.name]).length > 0);
     const allNames = new Set(allTools.map((tool) => tool.name));
-    for (const name of withoutDisabledTools(pi.getActiveTools())) allowedNames.add(name);
+    for (const name of withoutUnavailableTools(pi.getActiveTools())) allowedNames.add(name);
     searchableNames = new Set(
       [...allNames].filter(
         (name) =>
@@ -526,7 +542,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
         };
       }
 
-      const active = withoutDisabledTools(pi.getActiveTools());
+      const active = withoutUnavailableTools(pi.getActiveTools());
       const activeSet = new Set(active);
       const matches = rankTools(searchableDocuments, query).slice(0, params.limit ?? DEFAULT_LIMIT);
       const added = matches
@@ -534,7 +550,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
         .map((target) => target.tool.name)
         .filter((name) => !activeSet.has(name));
       const nativeToolSearch = usesNativeToolSearch(context);
-      const activated = isPrefixLocked() && !nativeToolSearch ? [] : withoutDisabledTools(added);
+      const activated = isPrefixLocked() && !nativeToolSearch ? [] : withoutUnavailableTools(added);
       if (activated.length > 0) {
         for (const name of activated) loadedNames.add(name);
         commitLeanSurface(computeLeanSurface(), nativeToolSearch);
@@ -581,7 +597,7 @@ export default function toolSearch(pi: ExtensionAPI): void {
     mcpCatalogReady = false;
     loadedNames.clear();
     leanSurfaceInitialized = false;
-    allowedNames = new Set(withoutDisabledTools(pi.getActiveTools()));
+    allowedNames = new Set(withoutUnavailableTools(pi.getActiveTools()));
     scheduleLeanSurface();
   });
   pi.on("before_agent_start", () => {

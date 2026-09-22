@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
+import { createEventBus } from "@earendil-works/pi-coding-agent";
 import toolSearch, { ALWAYS_ACTIVE_TOOL_NAMES } from "../.pi/extensions/tool-search.ts";
 import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import { readValidatedJson } from "../tools/prefix-eval/io.ts";
@@ -52,6 +53,7 @@ test("never changes active tools after the first before_agent_start", async () =
   const lifecycleHandlers = new Map<string, () => void>();
   const eventHandlers = new Map<string, (payload: RuntimeValue) => void>();
   const commits: string[][] = [];
+  const events = createEventBus();
 
   toolSearch(
     reinterpretHostValue<Parameters<typeof toolSearch>[0]>({
@@ -75,7 +77,9 @@ test("never changes active tools after the first before_agent_start", async () =
       events: {
         on: (name: string, handler: (payload: RuntimeValue) => void) => {
           eventHandlers.set(name, handler);
+          return events.on(name, handler);
         },
+        emit: events.emit.bind(events),
       },
       on: (name: string, handler: () => void) => {
         lifecycleHandlers.set(name, handler);
