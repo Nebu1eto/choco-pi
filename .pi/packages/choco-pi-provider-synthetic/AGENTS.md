@@ -6,7 +6,7 @@ Pi extension providing models available through the Synthetic provider.
 
 - TypeScript (strict mode)
 - pnpm 10.26.1
-- Biome for linting/formatting
+- oxlint for linting and oxfmt for formatting, using the choco-pi root configs
 - Changesets for versioning
 - Vitest for testing
 
@@ -16,6 +16,7 @@ Pi extension providing models available through the Synthetic provider.
 pnpm typecheck    # Type check
 pnpm lint         # Lint (runs on pre-commit)
 pnpm format       # Format
+pnpm fmt:check    # Check formatting
 pnpm test         # Run tests
 pnpm changeset    # Create changeset for versioning
 ```
