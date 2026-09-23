@@ -33,6 +33,9 @@ import {
   type CompatibilityWorkaround,
 } from "./runtime.ts";
 import {
+  COMMAND_VALUE_FLAGS,
+  GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
+  GLOBAL_VALUE_FLAGS,
   extractExplicitNamespace,
   extractExplicitSessionName,
   getAgentBrowserSessionIdentityKey,
@@ -40,7 +43,12 @@ import {
   isUpstreamEnvFlagEnabled,
   resolveAgentBrowserNamespace,
 } from "./argv-grammar.ts";
-import { parseArgvDescriptor } from "./argv-descriptor.ts";
+import {
+  extractCommandTokens,
+  findCommandStartIndex,
+  parseArgvDescriptor,
+  parseCommandInfoFromTokens,
+} from "./argv-descriptor.ts";
 import { needsManagedSession } from "./command-policy.ts";
 import {
   cleanupManagedSessionRestoreConfig,
@@ -83,6 +91,7 @@ import {
   isOpenNavigationCommand,
   isRecordPageTransitionCommand,
   isUnverifiedPageTransitionCommand,
+  normalizeCommandName,
 } from "./command-taxonomy.ts";
 import { hasLaunchScopedFlagToken } from "./launch-scoped-flags.ts";
 import { cleanupSecureTempArtifacts } from "./temp.ts";
@@ -220,21 +229,77 @@ const CAPABILITY_FLAG_REQUIREMENTS = new Map<string, AgentBrowserCapability>([
   ["--threshold", "screenshot-if-changed"],
 ]);
 
+const CAPABILITY_FLAG_COMMANDS = new Map<string, ReadonlySet<string> | undefined>([
+  ["--ca-cert", undefined],
+  ["--contact-sheet", new Set(["record"])],
+  ["--contact-sheet-threshold", new Set(["record"])],
+  ["--cursor", new Set(["record"])],
+  ["--delta", new Set(["snapshot"])],
+  ["--fps", new Set(["record"])],
+  ["--if-changed", new Set(["screenshot"])],
+  ["--input-mode", undefined],
+  ["--no-ca-cert", undefined],
+  ["--no-webmcp", undefined],
+  ["--threshold", new Set(["screenshot"])],
+]);
+
+const CAPABILITY_VALUE_FLAGS = new Set<string>([...GLOBAL_VALUE_FLAGS, ...COMMAND_VALUE_FLAGS]);
+
+function inspectCapabilityCommand(
+  tokens: readonly string[],
+  requested: Set<AgentBrowserCapability>,
+): void {
+  const args = [...tokens];
+  const commandStartIndex = findCommandStartIndex(args);
+  const commandInfo = parseCommandInfoFromTokens(extractCommandTokens(args));
+  const command = normalizeCommandName(commandInfo.command);
+  if (commandStartIndex !== undefined && command === "webmcp") requested.add("webmcp");
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--") break;
+    const flag = token.split("=", 1)[0] ?? token;
+    const capability = CAPABILITY_FLAG_REQUIREMENTS.get(flag);
+    const acceptedCommands = CAPABILITY_FLAG_COMMANDS.get(flag);
+    if (
+      capability &&
+      (acceptedCommands === undefined || (command !== undefined && acceptedCommands.has(command)))
+    )
+      requested.add(capability);
+    if (!token.includes("=") && CAPABILITY_VALUE_FLAGS.has(flag)) index += 1;
+    else if (
+      !token.includes("=") &&
+      GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(flag) &&
+      ["true", "false"].includes(args[index + 1] ?? "")
+    )
+      index += 1;
+  }
+}
+
 export function getRequestedAgentBrowserCapabilities(
   args: readonly string[],
   stdin?: string,
 ): AgentBrowserCapability[] {
   const requested = new Set<AgentBrowserCapability>();
-  const inspectToken = (token: string) => {
-    const flag = token.split("=", 1)[0];
-    const capability = CAPABILITY_FLAG_REQUIREMENTS.get(flag);
-    if (capability) requested.add(capability);
-    if (token === "webmcp") requested.add("webmcp");
-  };
-  for (const token of args) inspectToken(token);
+  const commandTokens = extractCommandTokens([...args]);
+  if (commandTokens[0] === "batch") {
+    for (const command of commandTokens.slice(1)) {
+      if (command === "--bail") continue;
+      const parsed = parseBatchCommandArgument(command);
+      if (parsed.step) inspectCapabilityCommand(parsed.step, requested);
+    }
+  } else {
+    inspectCapabilityCommand(args, requested);
+  }
   if (stdin) {
-    for (const token of stdin.match(/(?:^|\s)(?:--[\w-]+|webmcp)(?=$|[=\s])/gu) ?? [])
-      inspectToken(token.trim());
+    const parsed = parseUserBatchStdin(stdin);
+    if (parsed.steps) {
+      for (const step of parsed.steps) inspectCapabilityCommand(step, requested);
+    } else {
+      for (const statement of stdin.split(/\r?\n/u)) {
+        const command = parseBatchCommandArgument(statement);
+        if (command.step) inspectCapabilityCommand(command.step, requested);
+      }
+    }
   }
   return [...requested];
 }
@@ -346,7 +411,7 @@ function getArtifactCommandSteps(args: string[], stdin: string | undefined): Art
     : { batch, steps: parsed.steps ?? [] };
 }
 
-function getArtifactPreflightValidationError(options: {
+export function getArtifactPreflightValidationError(options: {
   activeRecordingReservations?: Iterable<ActiveRecordingReservation>;
   args: string[];
   cwd: string;
@@ -365,9 +430,10 @@ function getArtifactPreflightValidationError(options: {
     });
   for (const reservation of options.activeRecordingReservations ?? []) {
     try {
-      activeRecordingDestinations.add(
-        canonicalizeExplicitArtifactDestination(reservation.cwd, reservation.absolutePath),
-      );
+      for (const destination of enumerateRecordingReservationDestinations(reservation))
+        activeRecordingDestinations.add(
+          canonicalizeExplicitArtifactDestination(reservation.cwd, destination.absolutePath),
+        );
     } catch (canonicalizationError) {
       if (!cleanupOnly)
         return canonicalizationError instanceof Error

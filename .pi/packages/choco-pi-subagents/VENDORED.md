@@ -276,6 +276,11 @@ The accepted generation retains a mutable bootstrap snapshot until child startup
 so updates during loader initialization apply to the first prewarm/request. An
 explicit child override is registered ahead of copied parent history and persisted
 as the first child-owned fast-mode entry.
+At child session binding, immediately after `session_start`, the hidden loader also
+reconciles its copied bootstrap against the owning manager record by revision and
+source precedence. This closes the pre-attachment window where an accepted update
+could mutate the manager after factory creation but before `onSessionCreated`
+attached the child session.
 
 The root and nested tool descriptions, active-resume refusals, spawn results,
 and timeout guidance direct the caller to continue other work until the terminal

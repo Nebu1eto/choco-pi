@@ -119,6 +119,9 @@ Diff a new upstream revision against the base commit, copy the same runtime subs
 - Exact upstream binaries 0.34.0, 0.35.2, 0.36.0, 0.37.1, and 0.38.1 passed the isolated macOS arm64 CLI matrix. A fresh Pi 0.86.1 host also exercised the native script path with 0.38.1. These checks do not establish live compatibility on other platforms.
 - Derive recording contact sheets as `<stem>.contact-sheet.png`, matching the observed 0.38.1 output. Reserve that exact destination before recording; artifact presentation also accepts historical hyphen-form filenames.
 - Make the script worker self-contained and grant Node's permission model read access only to its worker file. This fixes the pre-dispatch `ERR_ACCESS_DENIED` startup failure without exposing general filesystem, process, or network access to sandbox scripts. The production-child regression uses the supported `browser(...)` and `emit(...)` API.
+- Classify compatibility capabilities by parsed command grammar rather than raw token presence, so positional values, option values, unrelated same-named flags, and tokens after `--` do not create false requirements.
+- Protect every active recording reservation destination, including contact sheets, from general artifact and `outputPath` writes while preserving recording cleanup operations.
+- Translate backend-local search deadlines into retryable attempt deadlines at the canonical adapter boundary so router fallback and fan-out continue without weakening total-deadline handling.
 
 ## Pi SDK target alignment
 

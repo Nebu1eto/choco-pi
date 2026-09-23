@@ -17,6 +17,16 @@ interface FastModeOwner {
   toString(): string;
 }
 
+interface FastModeRecordLookup extends FastModeOwner {
+  getRecord(id: string):
+    | {
+        fastModeRequested?: boolean;
+        fastModeSource?: FastModeSource;
+        fastModeRevision?: number;
+      }
+    | undefined;
+}
+
 interface FastModeController {
   getState(): FastModeState;
   decide(model: Model<Api> | undefined): FastModeDecision;
@@ -114,6 +124,39 @@ export function createChildFastModeExtension(
     });
     factory?.(pi);
   };
+}
+
+export function reconcileChildFastMode(
+  sessionId: string | undefined,
+  child: { id: string; manager: FastModeRecordLookup },
+): FastModeState | undefined {
+  if (!sessionId) return undefined;
+  const record = child.manager.getRecord(child.id);
+  const controller = resolveFastModeBridge()?.get(sessionId);
+  if (!record || !validController(controller)) return undefined;
+  const current = controller.getState();
+  const latest: FastModeSnapshot = {
+    requested: record.fastModeRequested ?? false,
+    source: record.fastModeSource ?? "default",
+    revision: record.fastModeRevision ?? 0,
+  };
+  const sourceRank = {
+    default: 0,
+    inherited: 1,
+    explicit: 2,
+  } satisfies Record<FastModeSource, number>;
+  if (
+    latest.revision < current.revision ||
+    (latest.revision === current.revision &&
+      (sourceRank[latest.source] < sourceRank[current.source] ||
+        (latest.requested === current.requested && latest.source === current.source)))
+  )
+    return current;
+  let reconciled = controller.set(latest.requested, latest.source);
+  while (reconciled.revision < latest.revision) {
+    reconciled = controller.set(latest.requested, latest.source);
+  }
+  return reconciled;
 }
 
 export function setSessionFastMode(

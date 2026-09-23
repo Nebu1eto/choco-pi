@@ -13,6 +13,7 @@ import {
   enumerateRecordingReservationDestinations,
   restoreRecordingReservationStateFromBranch,
 } from "../extensions/agent-browser/lib/recording-reservations.ts";
+import { getArtifactPreflightValidationError } from "../extensions/agent-browser/lib/runtime-extension.ts";
 import { extractFileArtifacts } from "../extensions/agent-browser/lib/results/presentation/artifacts.ts";
 
 test("derives and rejects colliding contact-sheet destinations before recording", async () => {
@@ -92,4 +93,51 @@ test("restores version-two extra recording destinations and closes them", () => 
   ]);
   assert.equal(closed.active.size, 0);
   assert.equal(closed.terminal.size, 1);
+});
+
+test("general artifact guards reserve recording contact sheets without blocking cleanup", () => {
+  const reservation = {
+    absolutePath: "/tmp/take.webm",
+    additionalDestinations: [
+      {
+        absolutePath: "/tmp/take.contact-sheet.png",
+        kind: "image" as const,
+        path: "take.contact-sheet.png",
+        role: "contact-sheet" as const,
+      },
+    ],
+    cwd: "/tmp",
+    path: "take.webm",
+    sessionName: "owned",
+  };
+  const common = { activeRecordingReservations: [reservation], cwd: "/tmp" };
+  assert.match(
+    getArtifactPreflightValidationError({
+      ...common,
+      args: ["snapshot"],
+      outputPath: "/tmp/take.contact-sheet.png",
+    }) ?? "",
+    /reserved by an active recording/u,
+  );
+  assert.match(
+    getArtifactPreflightValidationError({
+      ...common,
+      args: ["batch"],
+      stdin: '[["screenshot","/tmp/take.contact-sheet.png"]]',
+    }) ?? "",
+    /reserved by an active recording/u,
+  );
+  assert.equal(
+    getArtifactPreflightValidationError({ ...common, args: ["record", "stop"] }),
+    undefined,
+  );
+  assert.equal(getArtifactPreflightValidationError({ ...common, args: ["close"] }), undefined);
+  assert.equal(
+    getArtifactPreflightValidationError({
+      ...common,
+      args: ["snapshot"],
+      outputPath: "/tmp/distinct.json",
+    }),
+    undefined,
+  );
 });
