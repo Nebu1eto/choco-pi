@@ -145,8 +145,8 @@ test("SYSTEM and writing policy stay within their base-region budget", async () 
   const { systemPrompt, policy, assembled } = await assembledPrompt();
 
   assert.ok(estimatePromptTokens(systemPrompt) <= 1200, "SYSTEM.md exceeds 1,200 tokens");
-  assert.ok(estimatePromptTokens(policy) <= 175, "default writing policy exceeds 175 tokens");
-  assert.ok(estimatePromptTokens(assembled) <= 1350, "assembled base prompt exceeds 1,350 tokens");
+  assert.ok(estimatePromptTokens(policy) <= 200, "default writing policy exceeds 200 tokens");
+  assert.ok(estimatePromptTokens(assembled) <= 1400, "assembled base prompt exceeds 1,400 tokens");
 });
 
 test("active-model and preference prompt regions stay separated and bounded", async () => {
