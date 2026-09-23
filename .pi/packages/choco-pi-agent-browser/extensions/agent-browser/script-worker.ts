@@ -1,6 +1,18 @@
-import { hasRuntimeType, isRecord, type RuntimeValue } from "./lib/parsing.ts";
 import { randomBytes } from "node:crypto";
 import { createContext, runInContext, Script, type Context } from "node:vm";
+
+type RuntimeValue = null | boolean | number | string | RuntimeValue[] | RuntimeRecord | undefined;
+interface RuntimeRecord {
+  [key: string]: RuntimeValue;
+}
+
+function isString<Value>(value: Value): value is Extract<Value, string> {
+  return Object.prototype.toString.call(value) === "[object String]";
+}
+
+function isRecord<Value>(value: Value): value is Value & RuntimeRecord {
+  return value !== null && Object(value) === value && !Array.isArray(value);
+}
 
 function parseLimit(value: string | undefined, label: string): number {
   const parsed = Number(value);
@@ -21,7 +33,7 @@ const context = createContext(sandbox, {
 const bridgeKey = `__piab_send_${randomBytes(16).toString("hex")}`;
 const stateName = `__piab_state_${randomBytes(16).toString("hex")}`;
 const hostSend = (json: string): boolean => {
-  if (!hasRuntimeType(json, "string")) return false;
+  if (!isString(json)) return false;
   const bytes = Buffer.byteLength(json, "utf8") + 1;
   if (bytes > maxMessageBytes || cumulativeBytes + bytes > maxCumulativeBytes) return false;
   cumulativeBytes += bytes;
@@ -118,7 +130,7 @@ interface ScriptStartMessage {
 }
 
 function isScriptStartMessage<Value>(value: Value): value is Value & ScriptStartMessage {
-  return isRecord(value) && value.type === "start" && hasRuntimeType(value.code, "string");
+  return isRecord(value) && value.type === "start" && isString(value.code);
 }
 
 function isScriptResponseMessage<Value>(value: Value): value is Value & { type: "response" } {
@@ -128,10 +140,10 @@ function isScriptResponseMessage<Value>(value: Value): value is Value & { type: 
 function describeError(cause: unknown, fallback: string): ScriptErrorDescription {
   if (!isRecord(cause)) return { message: fallback, name: "Error" };
   return {
-    message: hasRuntimeType(cause.message, "string")
+    message: isString(cause.message)
       ? cause.message.replace(/[\r\n]+/g, " ").slice(0, 400)
       : fallback,
-    name: hasRuntimeType(cause.name, "string") ? cause.name.slice(0, 80) : "Error",
+    name: isString(cause.name) ? cause.name.slice(0, 80) : "Error",
   };
 }
 

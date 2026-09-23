@@ -18,11 +18,31 @@ import type { FileArtifactMetadata } from "./results/contracts.ts";
 export const RECORDING_RESERVATION_ENTRY_TYPE = "agent-browser-recording-reservation";
 
 export interface ActiveRecordingReservation {
+  additionalDestinations?: RecordingReservedDestination[];
   absolutePath: string;
   cwd: string;
   namespace?: string;
   path: string;
   sessionName: string;
+}
+
+export interface RecordingReservedDestination {
+  absolutePath: string;
+  kind: "image";
+  path: string;
+  role: "contact-sheet";
+}
+
+export function enumerateRecordingReservationDestinations(
+  reservation: ActiveRecordingReservation,
+): Array<{ absolutePath: string; path: string }> {
+  return [
+    { absolutePath: reservation.absolutePath, path: reservation.path },
+    ...(reservation.additionalDestinations ?? []).map(({ absolutePath, path }) => ({
+      absolutePath,
+      path,
+    })),
+  ];
 }
 
 export interface RecordingReservationTransition {
@@ -50,6 +70,19 @@ function getArtifactReservation(
   };
 }
 
+function getContactSheetDestination(
+  artifact: FileArtifactMetadata,
+): RecordingReservedDestination | undefined {
+  if (!artifact.session || artifact.command !== "record" || artifact.kind !== "image")
+    return undefined;
+  return {
+    absolutePath: artifact.absolutePath,
+    kind: "image",
+    path: artifact.path,
+    role: "contact-sheet",
+  };
+}
+
 export function applyRecordingArtifactsToReservations(
   reservations: Map<string, ActiveRecordingReservation>,
   artifacts: readonly FileArtifactMetadata[],
@@ -57,6 +90,18 @@ export function applyRecordingArtifactsToReservations(
   const pendingBySession = new Map<string, ActiveRecordingReservation>();
   const terminalBySession = new Map<string, ActiveRecordingReservation>();
   for (const artifact of artifacts) {
+    const contactSheet = getContactSheetDestination(artifact);
+    if (contactSheet) {
+      const key = getAgentBrowserSessionIdentityKey(artifact.session ?? "", artifact.namespace);
+      const pending = pendingBySession.get(key) ?? reservations.get(key);
+      if (pending && isPendingRecordingArtifact(artifact)) {
+        pendingBySession.set(key, {
+          ...pending,
+          additionalDestinations: [contactSheet],
+        });
+      }
+      continue;
+    }
     const reservation = getArtifactReservation(artifact);
     if (!reservation) continue;
     const key = getReservationKey(reservation);
@@ -102,18 +147,23 @@ export function appendRecordingReservationTransition(
 ): void {
   const { reservation, state } = transition;
   pi.appendEntry(RECORDING_RESERVATION_ENTRY_TYPE, {
+    additionalDestinations: state === "active" ? reservation.additionalDestinations : undefined,
     absolutePath: state === "active" ? reservation.absolutePath : undefined,
     cwd: state === "active" ? reservation.cwd : undefined,
     namespace: reservation.namespace,
     path: state === "active" ? reservation.path : undefined,
     sessionName: reservation.sessionName,
     state,
-    version: 1,
+    version: 2,
   });
 }
 
 function parseReservationTransition<Data>(data: Data): RecordingReservationTransition | undefined {
-  if (!isRecord(data) || data.version !== 1 || (data.state !== "active" && data.state !== "closed"))
+  if (
+    !isRecord(data) ||
+    (data.version !== 1 && data.version !== 2) ||
+    (data.state !== "active" && data.state !== "closed")
+  )
     return undefined;
   if (!hasRuntimeType(data.sessionName, "string") || data.sessionName.length === 0)
     return undefined;
@@ -136,8 +186,30 @@ function parseReservationTransition<Data>(data: Data): RecordingReservationTrans
     !hasRuntimeType(data.path, "string")
   )
     return undefined;
+  const additionalDestinations: RecordingReservedDestination[] = [];
+  if (data.version === 2 && data.additionalDestinations !== undefined) {
+    if (!Array.isArray(data.additionalDestinations)) return undefined;
+    for (const destination of data.additionalDestinations) {
+      if (
+        !isRecord(destination) ||
+        !hasRuntimeType(destination.absolutePath, "string") ||
+        !hasRuntimeType(destination.path, "string") ||
+        destination.kind !== "image" ||
+        destination.role !== "contact-sheet"
+      )
+        return undefined;
+      additionalDestinations.push({
+        absolutePath: destination.absolutePath,
+        kind: "image",
+        path: destination.path,
+        role: "contact-sheet",
+      });
+    }
+  }
   return {
     reservation: {
+      additionalDestinations:
+        additionalDestinations.length > 0 ? additionalDestinations : undefined,
       absolutePath: data.absolutePath,
       cwd: data.cwd,
       namespace: data.namespace,

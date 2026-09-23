@@ -47,7 +47,15 @@ interface SnapshotRoleCounts {
 }
 
 function getSnapshotText<Value>(data: Record<string, Value>): string | undefined {
-  return hasRuntimeType(data.snapshot, "string") ? data.snapshot : undefined;
+  if (hasRuntimeType(data.snapshot, "string")) return data.snapshot;
+  if (isRecord(data.snapshot) && hasRuntimeType(data.snapshot.tree, "string"))
+    return data.snapshot.tree;
+  return undefined;
+}
+
+function getSnapshotRefs<Value>(data: Record<string, Value>): object | undefined {
+  if (isRecord(data.refs)) return data.refs;
+  return isRecord(data.snapshot) && isRecord(data.snapshot.refs) ? data.snapshot.refs : undefined;
 }
 
 function getSnapshotOrigin<Value>(data: Record<string, Value>): string {
@@ -124,13 +132,13 @@ function shouldCompactSnapshot<Value>(rawText: string, data: Record<string, Valu
 
 export function formatSnapshotSummary<Value>(data: Record<string, Value>): string {
   const origin = hasRuntimeType(data.origin, "string") ? data.origin : "page";
-  const refs = isRecord(data.refs) ? Object.keys(data.refs).length : 0;
+  const refs = Object.keys(getSnapshotRefs(data) ?? {}).length;
   return `Snapshot: ${refs} refs on ${origin}`;
 }
 
 export function formatRawSnapshotText<Value>(data: Record<string, Value>): string {
   const origin = getSnapshotOrigin(data);
-  const refs = isRecord(data.refs) ? Object.keys(data.refs).length : 0;
+  const refs = Object.keys(getSnapshotRefs(data) ?? {}).length;
   const snapshot = getSnapshotText(data);
   if (!snapshot) {
     return `Origin: ${origin}\nRefs: ${refs}\n\n(no interactive elements)`;

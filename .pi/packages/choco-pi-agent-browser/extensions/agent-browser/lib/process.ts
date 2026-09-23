@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
 import { parseArgvDescriptor } from "./argv-descriptor.ts";
+import type { AgentBrowserExecutableFingerprint } from "./compatibility-contract.ts";
 import { needsManagedSession } from "./command-policy.ts";
 import { isKnownCommandToken } from "./command-taxonomy.ts";
 import {
@@ -60,6 +61,7 @@ const WINDOWS_AGENT_BROWSER_MISSING_MARKER = "PI_AGENT_BROWSER_COMMAND_NOT_FOUND
 const UNTRUSTED_LOCAL_FILE_SESSION_MESSAGE =
   "Local file navigation requires a wrapper-managed local browser because caller-owned or attached sessions can retain unsafe file-access launch flags. Omit the explicit session or attachment and retry with sessionMode fresh.";
 const attachedBrowserSessionContext = new AsyncLocalStorage<boolean>();
+const agentBrowserExecutableContext = new AsyncLocalStorage<AgentBrowserExecutableFingerprint>();
 const WINDOWS_COMMANDS_WITH_ADJACENT_SUBCOMMAND = new Set([
   "auth",
   "clipboard",
@@ -97,6 +99,21 @@ export function withAttachedBrowserSessionContext<T>(
     preserve || attachedBrowserSessionContext.getStore() === true,
     run,
   );
+}
+
+export function withAgentBrowserExecutableContext<T>(
+  executable: AgentBrowserExecutableFingerprint,
+  run: () => Promise<T>,
+): Promise<T> {
+  return agentBrowserExecutableContext.run(executable, run);
+}
+
+export function hasAgentBrowserExecutableContext(): boolean {
+  return agentBrowserExecutableContext.getStore() !== undefined;
+}
+
+export function getAgentBrowserExecutableContext(): AgentBrowserExecutableFingerprint | undefined {
+  return agentBrowserExecutableContext.getStore();
 }
 
 export function getWindowsExplicitDefaultNamespaceEnv(
@@ -221,18 +238,26 @@ export interface AgentBrowserSpawnCommand {
 export function buildAgentBrowserSpawnCommand(
   args: string[],
   platform: NodeJS.Platform = processPlatform,
+  executablePath = "agent-browser",
 ): AgentBrowserSpawnCommand {
   if (platform !== "win32") {
-    return { command: "agent-browser", args };
+    return { command: executablePath, args };
   }
   const invocationArgs = reorderWindowsLeadingGlobalArgs(args)
     .map(quoteWindowsPowerShellArg)
     .join(" ");
-  const commandLine = [
-    "$agentBrowser = Get-Command agent-browser.cmd -ErrorAction SilentlyContinue;",
-    `if (-not $agentBrowser) { [Console]::Error.WriteLine('${WINDOWS_AGENT_BROWSER_MISSING_MARKER}'); exit 127 };`,
-    `& $agentBrowser.Source ${invocationArgs}`.trimEnd(),
-  ].join(" ");
+  const commandLine =
+    executablePath === "agent-browser"
+      ? [
+          "$agentBrowser = Get-Command agent-browser.cmd -ErrorAction SilentlyContinue;",
+          `if (-not $agentBrowser) { [Console]::Error.WriteLine('${WINDOWS_AGENT_BROWSER_MISSING_MARKER}'); exit 127 };`,
+          `& $agentBrowser.Source ${invocationArgs}`.trimEnd(),
+        ].join(" ")
+      : [
+          `$agentBrowser = ${quoteWindowsPowerShellArg(executablePath)};`,
+          `if (-not (Test-Path -LiteralPath $agentBrowser -PathType Leaf)) { [Console]::Error.WriteLine('${WINDOWS_AGENT_BROWSER_MISSING_MARKER}'); exit 127 };`,
+          `& $agentBrowser ${invocationArgs}`.trimEnd(),
+        ].join(" ");
   return {
     command: "powershell.exe",
     args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", commandLine],
@@ -940,6 +965,8 @@ export async function runAgentBrowserProcess(options: {
         ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT,
         preserveAttachedBrowserSession,
       ),
+      processPlatform,
+      agentBrowserExecutableContext.getStore()?.realPath,
     );
     const child = spawn(spawnCommand.command, spawnCommand.args, {
       cwd,

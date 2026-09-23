@@ -64,6 +64,7 @@ The fork lets choco-pi customize the extension in-tree and load its TypeScript s
 - Split the extension entrypoint into a lightweight registration module and a memoized runtime module. Tool names, labels, descriptions, prompt text, parameter schemas, renderers, and event registrations remain synchronous and byte-identical; the session, orchestration, process, result, and Electron graph loads on the first runtime event or `agent_browser` execution.
 - Kept schema-only limits in small constant modules so registering `agent_browser` no longer imports the script runner or Electron discovery implementation. The optional web-search tool likewise registers from a lightweight schema/metadata module and memoizes its existing implementation on first execution.
 - This is a load-time-only divergence. External CLI argv construction, result details, lifecycle handling, TypeBox imports, and the retained `.mjs` target-version edge are unchanged.
+- Resolve the deferred runtime's retained README directly from its fixed source layout instead of synchronously searching and parsing ancestor package manifests. This preserves standalone-install paths without filesystem work during runtime capture.
 
 ### Compact provider schema
 
@@ -77,6 +78,24 @@ The fork lets choco-pi customize the extension in-tree and load its TypeScript s
 ## Updating
 
 Diff a new upstream revision against the base commit, copy the same runtime subset, and reapply every divergence above. Run the target-checking specifier codemod rather than a blind replacement, then update the base revision, version, fork date, rewrite counts, and divergence log here.
+
+### Agent-browser compatibility profiles
+
+- Replaced exact 0.34.0 rejection with tested profiles for 0.34.0, 0.35.2, 0.36.0, 0.37.1, and 0.38.1. Version drift is advisory; concrete missing safety capabilities remain operation-specific failures.
+- Added executable fingerprinting over resolved path, realpath, size, and modification time so upgrades and symlink retargeting invalidate warning state. Aborted and failed probes are not cached.
+- Added 0.38.1 global grammar for input mode, CA trust, and WebMCP control, plus WebMCP/recording option arities. Nested full snapshots retain their tree and refs.
+- Migrated changed doctor and target metadata executables to erasable TypeScript. The doctor uses the shared host identity helper when installed in choco-pi and safely falls back when the standalone vendored package lacks it.
+- Browser-version warnings remain successful and are exposed in headless result metadata once per executable fingerprint. The doctor uses only real package commands and exits nonzero only for genuine failures.
+- Bound PATH discovery, version probing, script/QA workers, normal commands, and cleanup to the same resolved real executable through per-invocation async context, including explicit Windows launcher paths.
+- Added source-derived capability introduction profiles: CA trust in 0.35, WebMCP in 0.36, recording FPS in 0.37, and snapshot deltas, conditional screenshots, input modes, recording cursor/contact sheets in 0.38. Known older profiles reject only requested unsupported operations; future versions remain advisory.
+- Added bounded snapshot revision reconstruction scoped to namespace/session plus wrapper-owned tab/document generations, URL, and snapshot options. Missing or incompatible baselines trigger at most one read-only full refresh; nested batch deltas fail before execution when intermediate identity cannot be proven.
+- Added pre-spawn video/contact-sheet collision checks, persisted multi-destination recording reservations, WebMCP params-file validation/redaction, and generation/frame/session-scoped detached invocation ownership and cleanup.
+
+### Live compatibility corrections
+
+- Exact upstream binaries 0.34.0, 0.35.2, 0.36.0, 0.37.1, and 0.38.1 passed the isolated macOS arm64 CLI matrix. A fresh Pi 0.86.1 host also exercised the native script path with 0.38.1. These checks do not establish live compatibility on other platforms.
+- Derive recording contact sheets as `<stem>.contact-sheet.png`, matching the observed 0.38.1 output. Reserve that exact destination before recording; artifact presentation also accepts historical hyphen-form filenames.
+- Make the script worker self-contained and grant Node's permission model read access only to its worker file. This fixes the pre-dispatch `ERR_ACCESS_DENIED` startup failure without exposing general filesystem, process, or network access to sandbox scripts. The production-child regression uses the supported `browser(...)` and `emit(...)` API.
 
 ## Pi SDK target alignment
 

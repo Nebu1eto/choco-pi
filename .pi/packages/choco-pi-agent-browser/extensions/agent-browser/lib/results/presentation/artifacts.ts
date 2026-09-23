@@ -100,7 +100,8 @@ export function applyArtifactManifest(
 }
 
 export function getScreenshotSummary<Value>(data: Record<string, Value>): string | undefined {
-  return hasRuntimeType(data.path, "string") ? `Saved image: ${data.path}` : undefined;
+  if (hasRuntimeType(data.path, "string")) return `Saved image: ${data.path}`;
+  return data.changed === false ? "Screenshot unchanged; no new image was written." : undefined;
 }
 
 const PATH_FIELD_CANDIDATES = [
@@ -116,6 +117,7 @@ const PATH_FIELD_CANDIDATES = [
   "tracePath",
   "profilePath",
   "videoPath",
+  "contactSheetPath",
 ] as const;
 
 const ARTIFACT_EXTENSION_TO_MEDIA_TYPE: MediaTypeByExtension = {
@@ -134,7 +136,7 @@ function isDownloadWaitSubcommand(subcommand: string | undefined): boolean {
   return subcommand === "--download" || subcommand === "-d";
 }
 
-function getArtifactKind(commandInfo: CommandInfo): FileArtifactKind | undefined {
+function getArtifactKind(commandInfo: CommandInfo, path?: string): FileArtifactKind | undefined {
   if (commandInfo.command === "screenshot") return "image";
   if (commandInfo.command === "diff" && commandInfo.subcommand === "screenshot") return "image";
   if (commandInfo.command === "pdf") return "pdf";
@@ -144,7 +146,11 @@ function getArtifactKind(commandInfo: CommandInfo): FileArtifactKind | undefined
   if (commandInfo.command === "state" && commandInfo.subcommand === "save") return "file";
   if (commandInfo.command === "trace") return "trace";
   if (commandInfo.command === "profiler") return "profile";
-  if (commandInfo.command === "record") return "video";
+  if (commandInfo.command === "record")
+    return path?.toLowerCase().endsWith(".contact-sheet.png") ||
+      path?.toLowerCase().endsWith("-contact-sheet.png")
+      ? "image"
+      : "video";
   if (commandInfo.command === "network" && commandInfo.subcommand === "har") return "har";
   return undefined;
 }
@@ -215,7 +221,7 @@ async function buildFileArtifactMetadata(options: {
   path: string;
   sessionName?: string;
 }): Promise<FileArtifactMetadata | undefined> {
-  const kind = getArtifactKind(options.commandInfo);
+  const kind = getArtifactKind(options.commandInfo, options.path);
   if (!kind) {
     return undefined;
   }
@@ -415,7 +421,7 @@ export function isManifestFileArtifact(artifact: FileArtifactMetadata): boolean 
       artifact.subcommand === "restart-previous"
     );
   }
-  return artifact.kind === "video" && artifact.command === "record"
+  return artifact.command === "record" && (artifact.kind === "video" || artifact.kind === "image")
     ? true
     : !isPendingRecordingArtifact(artifact);
 }

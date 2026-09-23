@@ -1,4 +1,5 @@
 import { rm } from "node:fs/promises";
+import { runAgentBrowserProcess } from "../../process.ts";
 
 import {
   getAgentBrowserSessionIdentityKey,
@@ -73,6 +74,7 @@ import {
   type SessionRefSnapshotInvalidation,
 } from "../../session-page-state.ts";
 import { hasRuntimeType, isRecord, type RuntimeValue } from "../../parsing.ts";
+import type { SnapshotOptionsIdentity, SnapshotRevisionContext } from "../../snapshot-revisions.ts";
 import { pruneOwnedManagedSessionRestoreSnapshots } from "../../managed-session-restore.ts";
 import { isManagedSessionRestoreKey } from "../../managed-session-storage.ts";
 import {
@@ -109,6 +111,103 @@ import {
   unwrapPinnedSessionBatchEnvelope,
   updateTraceOwnerState,
 } from "./session-state.ts";
+
+function asSnapshotRuntimeValue<Value>(value: Value): RuntimeValue {
+  if (value === null) return null;
+  if (value === undefined) return undefined;
+  if (Array.isArray(value) || isRecord(value)) return value;
+  if (hasRuntimeType(value, "string")) return value;
+  if (hasRuntimeType(value, "number")) return value;
+  if (hasRuntimeType(value, "boolean")) return value;
+  return undefined;
+}
+
+export function getEffectiveSnapshotOptions(tokens: readonly string[]): SnapshotOptionsIdentity {
+  const readValue = (aliases: readonly string[]): string | undefined => {
+    for (let index = tokens.length - 1; index >= 0; index -= 1) {
+      const token = tokens[index];
+      if (!token) continue;
+      for (const alias of aliases) {
+        if (token === alias) return tokens[index + 1];
+        if (token.startsWith(`${alias}=`)) return token.slice(alias.length + 1);
+      }
+    }
+    return undefined;
+  };
+  const readBoolean = (aliases: readonly string[]): boolean | undefined => {
+    for (let index = tokens.length - 1; index >= 0; index -= 1) {
+      const token = tokens[index];
+      if (!token) continue;
+      for (const alias of aliases) {
+        if (token === alias) {
+          const value = tokens[index + 1];
+          return value === "false" ? false : true;
+        }
+        if (token.startsWith(`${alias}=`)) return token.slice(alias.length + 1) !== "false";
+      }
+    }
+    return undefined;
+  };
+  const depthValue = readValue(["-d", "--depth"]);
+  const parsedDepth = depthValue === undefined ? undefined : Number(depthValue);
+  return {
+    compact: readBoolean(["-c", "--compact"]),
+    cursor: readBoolean(["-C", "--cursor"]),
+    depth: parsedDepth !== undefined && Number.isInteger(parsedDepth) ? parsedDepth : undefined,
+    interactive: readBoolean(["-i", "--interactive"]),
+    selector: readValue(["-s", "--selector"]),
+    urls: readBoolean(["-u", "--urls"]),
+  };
+}
+
+export async function normalizeSnapshotEnvelopeForBrowserRun(options: {
+  cleanupRefresh?: (result: AgentBrowserProcessResult) => Promise<void>;
+  context?: SnapshotRevisionContext;
+  envelope: AgentBrowserEnvelope;
+  isCurrent: () => boolean;
+  parseRefresh: (result: AgentBrowserProcessResult) => Promise<{ envelope?: AgentBrowserEnvelope }>;
+  refreshArgs: string[];
+  runRefresh: (args: string[]) => Promise<AgentBrowserProcessResult>;
+  store: BrowserRunOptions["snapshotRevisionStore"];
+}): Promise<AgentBrowserEnvelope> {
+  const staleEnvelope: AgentBrowserEnvelope = {
+    error:
+      "Snapshot recovery was discarded because browser session ownership changed while output was being processed.",
+    success: false,
+  };
+  if (!options.isCurrent()) return staleEnvelope;
+  let normalization = options.store.normalize(
+    asSnapshotRuntimeValue(options.envelope.data),
+    options.context,
+  );
+  if (normalization.kind === "refresh-required") {
+    const refresh = await options.runRefresh(options.refreshArgs);
+    if (!options.isCurrent()) return staleEnvelope;
+    if (!refresh.spawnError && refresh.exitCode === 0 && !refresh.aborted && !refresh.timedOut) {
+      const parsedRefresh = await options.parseRefresh(refresh);
+      if (!options.isCurrent()) return staleEnvelope;
+      if (options.cleanupRefresh) {
+        await options.cleanupRefresh(refresh);
+        if (!options.isCurrent()) return staleEnvelope;
+      }
+      if (parsedRefresh.envelope?.success !== false)
+        normalization = options.store.normalize(
+          asSnapshotRuntimeValue(parsedRefresh.envelope?.data),
+          options.context,
+        );
+    }
+  }
+  if (normalization.kind === "normalized") return { ...options.envelope, data: normalization.data };
+  if (normalization.kind === "refresh-required")
+    return {
+      error: `Snapshot delta could not be reconstructed safely (${normalization.reason}); run snapshot --delta --full once to establish a scoped baseline.`,
+      success: false,
+    };
+  return {
+    error: `Snapshot output did not match the required legacy/full/delta contract (${normalization.reason}).`,
+    success: false,
+  };
+}
 import { collectClickDispatchDiagnostic } from "./click-dispatch.ts";
 import {
   buildScrollNoopDiagnostic,
@@ -142,7 +241,9 @@ import {
 } from "./final-result.ts";
 import type {
   AboutBlankSessionMismatch,
+  AgentBrowserProcessResult,
   BrowserProcessOutputResult,
+  BrowserRunOptions,
   BrowserRunStatePatch,
   ParseFailureOutput,
   ProcessBrowserOutputInput,
@@ -360,6 +461,70 @@ export async function processBrowserOutput(
       presentationEnvelope = pinnedBatchResult.envelope ?? presentationEnvelope;
       navigationSummary = pinnedBatchResult.navigationSummary;
     }
+    if (
+      presentationEnvelope &&
+      prepared.executionPlan.commandInfo.command === "snapshot" &&
+      presentationEnvelope.success !== false
+    ) {
+      const tokens = prepared.commandTokens;
+      const options = getEffectiveSnapshotOptions(tokens);
+      const sessionName = prepared.executionPlan.sessionName ?? state.managedSessionName;
+      const namespace = prepared.executionPlan.namespace;
+      const sessionKey = getSessionContextKey(sessionName, namespace) ?? sessionName;
+      const identity = input.snapshotIdentityBySession.get(sessionKey) ?? {
+        documentGeneration: 1,
+        tabGeneration: 1,
+      };
+      input.snapshotIdentityBySession.set(sessionKey, identity);
+      const responseData = asSnapshotRuntimeValue(presentationEnvelope.data);
+      const origin =
+        isRecord(responseData) && hasRuntimeType(responseData.origin, "string")
+          ? responseData.origin
+          : prepared.priorSessionTabTarget?.url;
+      const context: SnapshotRevisionContext | undefined = origin
+        ? {
+            document: `${sessionKey}:document:${identity.documentGeneration}`,
+            namespace,
+            options,
+            session: sessionName,
+            tab: `${sessionKey}:tab:${identity.tabGeneration}`,
+            url: origin,
+          }
+        : undefined;
+      const refreshArgs = [
+        "--json",
+        ...(namespace ? ["--namespace", namespace] : []),
+        "--session",
+        sessionName,
+        ...tokens.filter((token) => token !== "--full"),
+        "--full",
+      ];
+      presentationEnvelope = await normalizeSnapshotEnvelopeForBrowserRun({
+        cleanupRefresh: async (refresh) => {
+          if (refresh.stdoutSpillPath)
+            await rm(refresh.stdoutSpillPath, { force: true }).catch(() => undefined);
+        },
+        context,
+        envelope: presentationEnvelope,
+        isCurrent: () => state.sessionPageState.isCurrentUpdate(sessionPageStateUpdate, sessionKey),
+        parseRefresh: (refresh) =>
+          parseAgentBrowserEnvelope({
+            stdout: refresh.stdout,
+            stdoutPath: refresh.stdoutSpillPath,
+          }),
+        refreshArgs,
+        runRefresh: (args) =>
+          runAgentBrowserProcess({
+            args,
+            cwd,
+            managedSessionRestoreState: state.managedSessionRestoreState,
+            ownedManagedSession: prepared.ownedManagedSessionContext !== undefined,
+            signal,
+            timeoutMs: prepared.processTimeoutMs,
+          }),
+        store: input.snapshotRevisionStore,
+      });
+    }
     const repairedScreenshot = await repairScreenshotArtifact({
       cwd,
       envelope: presentationEnvelope,
@@ -438,6 +603,37 @@ export async function processBrowserOutput(
       prepared.executionPlan.sessionName,
       prepared.executionPlan.namespace,
     );
+    const commandName = prepared.executionPlan.commandInfo.command;
+    const commandSubcommand = prepared.executionPlan.commandInfo.subcommand;
+    if (succeeded && sessionStateKey && commandName !== "snapshot") {
+      const identity = input.snapshotIdentityBySession.get(sessionStateKey) ?? {
+        documentGeneration: 1,
+        tabGeneration: 1,
+      };
+      const tabChanged = commandName === "tab" && commandSubcommand !== "list";
+      const documentChanged =
+        tabChanged ||
+        isOpenNavigationCommand(commandName) ||
+        isUnverifiedPageTransitionCommand(commandName, commandSubcommand) ||
+        isRecordPageTransitionCommand(prepared.commandTokens);
+      if (documentChanged) {
+        input.snapshotIdentityBySession.set(sessionStateKey, {
+          documentGeneration: identity.documentGeneration + 1,
+          tabGeneration: tabChanged ? identity.tabGeneration + 1 : identity.tabGeneration,
+        });
+        input.snapshotRevisionStore.invalidateSession(
+          prepared.executionPlan.namespace,
+          prepared.executionPlan.sessionName ?? sessionStateKey,
+        );
+      }
+      if (commandName === "batch") {
+        input.snapshotIdentityBySession.delete(sessionStateKey);
+        input.snapshotRevisionStore.invalidateSession(
+          prepared.executionPlan.namespace,
+          prepared.executionPlan.sessionName ?? sessionStateKey,
+        );
+      }
+    }
     const closeAllApplied = nestedBatchClosesAll || (directCloseAllRequested && succeeded);
     if (closeAllApplied) {
       allowedDomainsBySession = withoutNamespaceEntries(
@@ -451,6 +647,11 @@ export async function processBrowserOutput(
       deleteNamespaceEntries(state.attachedSessionKeys, prepared.executionPlan.namespace);
       deleteNamespaceEntries(traceOwners, prepared.executionPlan.namespace);
       sessionPageState.clearNamespace(prepared.executionPlan.namespace);
+      input.snapshotRevisionStore.invalidateNamespace(prepared.executionPlan.namespace);
+      for (const key of input.snapshotIdentityBySession.keys()) {
+        if (isAgentBrowserSessionIdentityKeyInNamespace(key, prepared.executionPlan.namespace))
+          input.snapshotIdentityBySession.delete(key);
+      }
       const retainedSessionKey = nestedBatchRemainsActive ? sessionStateKey : undefined;
       for (const [key, owner] of state.ownedManagedSessions) {
         if (
@@ -467,6 +668,11 @@ export async function processBrowserOutput(
       networkRoutesBySession = new Map(networkRoutesBySession);
       networkRoutesBySession.delete(sessionStateKey);
       sessionPageState.clearSession(sessionStateKey);
+      input.snapshotIdentityBySession.delete(sessionStateKey);
+      input.snapshotRevisionStore.invalidateSession(
+        prepared.executionPlan.namespace,
+        prepared.executionPlan.sessionName ?? sessionStateKey,
+      );
     }
     if (
       prepared.executionPlan.commandInfo.command === "batch" &&

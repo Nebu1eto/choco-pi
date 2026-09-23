@@ -37,6 +37,7 @@ import type {
   SessionRefSnapshotInvalidation,
   SessionTabTarget,
 } from "../../session-page-state.ts";
+import type { SnapshotRevisionStore } from "../../snapshot-revisions.ts";
 import type {
   buildExecutionPlan,
   CompatibilityWorkaround,
@@ -152,6 +153,8 @@ export interface BrowserRunOptions {
   preserveAttachedBrowserSession?: boolean;
   promptPolicy: PromptPolicy;
   sessionPageStateUpdate: ReturnType<SessionPageState["beginUpdate"]>;
+  snapshotIdentityBySession: Map<string, { documentGeneration: number; tabGeneration: number }>;
+  snapshotRevisionStore: SnapshotRevisionStore;
   signal?: AbortSignal;
   state: BrowserRunState;
 }
