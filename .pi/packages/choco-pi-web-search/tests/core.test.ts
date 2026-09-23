@@ -736,6 +736,18 @@ test("rebinding removes the old manager context mapping", () => {
   assert.equal(resolveSearchSession({ sessionManager: newManager }), scope.session);
 });
 
+test("session-only invocation resolves its live manager binding", async () => {
+  const { scope } = setup();
+  const session = scope.session;
+  assert.ok(session);
+  registerSearchAdapter(scope, adapter("session-only", "openai"));
+  const response = await search({ query: "q" }, { session });
+  assert.equal(response.answer, "session-only");
+
+  invalidateSearchSession(scope);
+  await expectKind(search({ query: "q" }, { session }), "stale-context");
+});
+
 test("direct URL open is validated and routes only to capable adapters", async () => {
   const { scope } = setup();
   let incompatibleCalls = 0;

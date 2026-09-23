@@ -158,11 +158,14 @@ function getSearchConfig(): SearchConfig {
 
   const searchProviderConfigured =
     Object.hasOwn(raw, "searchProvider") || Object.hasOwn(raw, "provider");
+  if (Object.hasOwn(raw, "searchProvider") && Object.hasOwn(raw, "provider")) {
+    throw new Error(
+      `Conflicting search configuration in ${CONFIG_PATH}: both searchProvider and provider are present`,
+    );
+  }
+  const providerValue = raw.searchProvider ?? raw.provider;
   const config: SearchConfig = {
-    searchProvider: normalizeSearchProviderSelection(
-      raw.searchProvider ?? raw.provider,
-      `provider in ${CONFIG_PATH}`,
-    ),
+    searchProvider: normalizeConfiguredSearchProvider(providerValue),
     searchProviderConfigured,
     allowBilledApiFallback:
       raw.allowBilledApiFallback === undefined
@@ -179,6 +182,16 @@ function getSearchConfig(): SearchConfig {
   }
   cachedSearchConfig = config;
   return config;
+}
+
+function normalizeConfiguredSearchProvider<Value>(value: Value): SearchProviderSelection {
+  if (Check(StringValueSchema, value)) {
+    const normalized = value.trim().toLowerCase();
+    if (!isSearchProvider(normalized)) {
+      throw new Error(`Invalid provider in ${CONFIG_PATH}: ${value}`);
+    }
+  }
+  return normalizeSearchProviderSelection(value, `provider in ${CONFIG_PATH}`);
 }
 
 function normalizeBoolean<Value>(value: Value, label: string): boolean {

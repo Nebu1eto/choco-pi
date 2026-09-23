@@ -6,7 +6,6 @@ import {
   type SearchErrorKind,
   type SearchRequest,
 } from "../../../choco-pi-web-search/index.ts";
-import { resolveSyntheticClientOptions } from "../../src/client/utility-api.ts";
 import type { ResolvedSyntheticConfig } from "../../src/config.ts";
 import {
   createSyntheticSearchBackend,
@@ -19,6 +18,7 @@ const MAX_RESULT_SNIPPET_BYTES = 4_000;
 
 export interface SyntheticSearchAdapterDependencies {
   getConfig: () => ResolvedSyntheticConfig;
+  getConfigRevision: () => number;
 }
 
 function getApiKey(context: ExtensionContext | undefined): Promise<string | undefined> {
@@ -80,6 +80,34 @@ function queryFor(request: SearchRequest): string {
 export function createSyntheticSearchAdapter(
   dependencies: SyntheticSearchAdapterDependencies,
 ): SearchAdapter {
+  const contextBackends = new WeakMap<
+    ExtensionContext,
+    ReturnType<typeof createSyntheticSearchBackend>
+  >();
+  let contextlessBackend: ReturnType<typeof createSyntheticSearchBackend> | undefined;
+
+  function createBackend(context: ExtensionContext | undefined) {
+    return createSyntheticSearchBackend({
+      loadConfig: async () => ({
+        ...dependencies.getConfig(),
+        eligibilityRevision: dependencies.getConfigRevision(),
+      }),
+      getApiKey: async () => getApiKey(context),
+    });
+  }
+
+  function backendFor(context: ExtensionContext | undefined) {
+    if (!context) {
+      contextlessBackend ??= createBackend(undefined);
+      return contextlessBackend;
+    }
+    const existing = contextBackends.get(context);
+    if (existing) return existing;
+    const backend = createBackend(context);
+    contextBackends.set(context, backend);
+    return backend;
+  }
+
   return {
     id: SYNTHETIC_SEARCH_ADAPTER_ID,
     family: "synthetic",
@@ -90,57 +118,25 @@ export function createSyntheticSearchAdapter(
       constraints: { numResults: true },
     },
     async availability(context: SearchAdapterContext) {
-      const config = dependencies.getConfig();
-      if (!config.webSearch) {
+      const backend = backendFor(context.context);
+      const availability = await backend.resolveAvailability(context.signal);
+      if (availability.status === "error") throwCoreError(availability.error);
+      if (availability.status === "available") {
         return {
-          status: "disabled",
-          reason: "Synthetic web search is disabled by configuration.",
-          transport: "synthetic-v2-search",
-          billing: "subscription",
-        } as const;
-      }
-      let options: Awaited<ReturnType<typeof resolveSyntheticClientOptions>>;
-      try {
-        options = await resolveSyntheticClientOptions(config, () => getApiKey(context.context));
-      } catch {
-        if (context.signal.aborted) {
-          throw new SearchError("cancelled", "Synthetic web search was cancelled", {
-            family: "synthetic",
-            adapterId: SYNTHETIC_SEARCH_ADAPTER_ID,
-          });
-        }
-        throw new SearchError("auth", "Synthetic credentials could not be resolved", {
-          family: "synthetic",
-          adapterId: SYNTHETIC_SEARCH_ADAPTER_ID,
-          retryable: true,
-        });
-      }
-      if (context.signal.aborted) {
-        throw new SearchError("cancelled", "Synthetic web search was cancelled", {
-          family: "synthetic",
-          adapterId: SYNTHETIC_SEARCH_ADAPTER_ID,
-        });
-      }
-      if (!options) {
-        return {
-          status: "unavailable",
-          reason: "Synthetic credentials or an unauthenticated proxy are required.",
+          status: "available",
           transport: "synthetic-v2-search",
           billing: "subscription",
         } as const;
       }
       return {
-        status: "available",
+        status: availability.status === "disabled" ? "disabled" : "unavailable",
+        reason: availability.reason,
         transport: "synthetic-v2-search",
         billing: "subscription",
       } as const;
     },
     async execute(request, context) {
-      const config = dependencies.getConfig();
-      const backend = createSyntheticSearchBackend({
-        loadConfig: async () => config,
-        getApiKey: () => getApiKey(context.context),
-      });
+      const backend = backendFor(context.context);
       const execution = await backend.search(queryFor(request), context.signal);
       if (!execution.ok) throwCoreError(execution.error);
 

@@ -762,7 +762,11 @@ interface SearchInvocation {
 
 function resolveInvocation(options: SearchOptions): SearchInvocation {
   const contextScope = options.context ? resolveSearchScope(options.context) : undefined;
-  const scope = options.scope ?? contextScope;
+  const sessionScope =
+    !options.scope && !options.context && isSearchSession(options.session)
+      ? resolveSearchScope({ sessionManager: options.session.manager })
+      : undefined;
+  const scope = options.scope ?? contextScope ?? sessionScope;
   const session =
     options.session ?? (options.context ? resolveSearchSession(options.context) : scope?.session);
   if (

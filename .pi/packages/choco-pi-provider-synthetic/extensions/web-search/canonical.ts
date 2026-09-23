@@ -15,11 +15,19 @@ export default async function registerCanonicalSyntheticSearch(
   scope: SearchScope,
 ): Promise<void> {
   let config = await ensureSyntheticConfig();
-  registerSearchAdapter(scope, createSyntheticSearchAdapter({ getConfig: () => config }));
+  let configRevision = 0;
+  registerSearchAdapter(
+    scope,
+    createSyntheticSearchAdapter({
+      getConfig: () => config,
+      getConfigRevision: () => configRevision,
+    }),
+  );
 
   pi.events.on(SYNTHETIC_CONFIG_UPDATED_EVENT, (data) => {
     if (!Value.Check(SyntheticConfigUpdatedPayloadSchema, data)) return;
     config = data.config;
+    configRevision++;
     publishSyntheticConfig(config);
   });
 
