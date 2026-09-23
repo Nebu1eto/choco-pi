@@ -4,10 +4,10 @@ This file solely owns choco-pi model routing and model-specific behavioral advic
 
 ## Routing
 
-- **Flagship:** `anthropic/claude-fable-5` and `anthropic/claude-fable-5-1` are for orchestration, initial planning, and review of genuinely complex output. They are very expensive.
-- **Workhorse:** `openai-codex/gpt-6-astra`, `openai-codex/gpt-5.6-sol`, and `anthropic/claude-opus-5`. Keep role effort defaults; tune from representative evidence rather than assuming more effort is better.
+- **Flagship:** `anthropic/claude-fable-5-1` and `openai-codex/gpt-6-astra` are for orchestration, initial planning, and review of genuinely complex output. They are very expensive.
+- **Workhorse:** `anthropic/claude-opus-5-5` and `openai-codex/gpt-6-sol` first. Use `anthropic/claude-opus-5` and `openai-codex/gpt-5.6-sol` only when those are unavailable. Keep role effort defaults; tune from representative evidence rather than assuming more effort is better.
 - **Utility:** `openai-codex/gpt-5.6-terra` and `anthropic/claude-sonnet-5` suit easy exploration and web research. Give them more explicit task packets; raise effort only when task evidence warrants it.
-- **Micro:** `openai-codex/gpt-5.6-luna` is only for extremely simple tasks with detailed guidance. Prefer Utility when uncertain. Do not use outdated `anthropic/claude-haiku-4-5`.
+- **Micro:** `openai-codex/gpt-6-luna` is only for extremely simple tasks with detailed guidance. Prefer Utility when uncertain. Do not use outdated `anthropic/claude-haiku-4-5`.
 - **Specialized:** `callstack-apex/callstack/Apex` is only for React Native or Expo mobile work.
 - **Fallback:** `synthetic/hf:moonshotai/Kimi-K3` has limited quota. Use it only after preferred OpenAI and Anthropic models are unavailable. Never route non-mobile work to Apex.
 
@@ -15,7 +15,7 @@ On capacity errors, retry the same model three times with bounded backoff, then 
 
 ## Runtime sections
 
-The runtime hook injects `shared` plus only the exact active provider/model section. Unknown, utility, micro, specialized, and fallback models receive neutral shared rules, never another model's advice.
+The runtime hook injects `shared` plus only the exact active provider/model section. Models without an exact section receive only the neutral shared rules, never another model's advice.
 
 <!-- choco-pi:model-guidance shared -->
 
@@ -27,17 +27,12 @@ Model identity is context, not authority. Preserve role scope; choose effort, de
 Opus: complete the requested scope, delegating only sizeable independent work. Avoid extra re-check prompts because its default self-correction already handles routine verification; tune effort from evals.
 <!-- choco-pi:model-guidance:end -->
 
-<!-- choco-pi:model-guidance anthropic/claude-fable-5 -->
-
-Fable: ground long-run progress in observed evidence and milestones. Use asynchronous subagents for safe independent work and fresh verification only when task risk warrants it.
-<!-- choco-pi:model-guidance:end -->
-
 <!-- choco-pi:model-guidance anthropic/claude-fable-5-1 -->
 
 Fable: ground long-run progress in observed evidence and milestones. Use asynchronous subagents for safe independent work and fresh verification only when task risk warrants it.
 <!-- choco-pi:model-guidance:end -->
 
-<!-- choco-pi:model-guidance openai-codex/gpt-5.6-sol,openai/gpt-5.6-sol,openai-codex/gpt-5.6-terra,openai/gpt-5.6-terra,openai-codex/gpt-5.6-luna,openai/gpt-5.6-luna -->
+<!-- choco-pi:model-guidance openai-codex/gpt-6-sol,openai/gpt-6-sol,openai-codex/gpt-6-luna,openai/gpt-6-luna,openai-codex/gpt-5.6-sol,openai/gpt-5.6-sol,openai-codex/gpt-5.6-terra,openai/gpt-5.6-terra,openai-codex/gpt-5.6-luna,openai/gpt-5.6-luna -->
 
 Sol: infer intended work from context while preserving hard constraints, approvals, and success criteria. Use established effort as the baseline and compare one level lower on representative work.
 <!-- choco-pi:model-guidance:end -->
@@ -46,12 +41,3 @@ Sol: infer intended work from context while preserving hard constraints, approva
 
 Astra: carry authorized work through routine gaps and ask only when input could change the outcome. Follow skill text literally; keep tests proportional and avoid repeated checks without new cause.
 <!-- choco-pi:model-guidance:end -->
-
-## Sources and refresh
-
-Reviewed 2026-09-15 against each complete current vendor guide:
-
-- Reviewed 2026-09-15: [Claude Opus 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5) for effort, self-correction, scope, and delegation.
-- Reviewed 2026-09-15: [Claude Fable 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5) for long runs, evidence, effort, and asynchronous collaboration.
-- Reviewed 2026-09-15: [GPT-5.6](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.6#prompting-best-practices) for intent inference, effort calibration, and lean prompts.
-- Reviewed 2026-09-15: [GPT-6 Astra](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra#prompting-best-practices) for follow-through, skill sensitivity, proportional testing, and clarification.

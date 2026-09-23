@@ -157,7 +157,7 @@ export function buildCachedWebSocketRequestBody(
   body: ResponsesBody,
   nativeSteeringStart = false,
 ): CachedWebSocketRequestBodyResult {
-  // Astra's cached previous_response_id path rejects thinking-phase successors
+  // GPT-6's cached previous_response_id path rejects thinking-phase successors
   // with "prompt_cache_options is not supported on this model".
   // Start steerable responses with full input; pending native successors still
   // need the ordinary delta for identity/settings validation and tool outputs.

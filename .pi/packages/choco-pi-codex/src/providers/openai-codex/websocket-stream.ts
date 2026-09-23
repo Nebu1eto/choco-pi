@@ -8,6 +8,7 @@ import { normalizeTimeoutMs } from "./sse.ts";
 import {
   withAsyncCodeMode,
   rememberAsyncCodeModeCalls,
+  supportsNativeResponsesModel,
   supportsNativeSteeringTools,
 } from "./native-features.ts";
 import { nativeSteeringForSocket, openNativeSteering } from "./native-steering.ts";
@@ -121,7 +122,7 @@ export async function processWebSocketStream<TApi extends Api>(
   const transport = options?.transport ?? "auto";
   const nativeEnabled =
     options?.midTurnSteering === true &&
-    body.model === "gpt-6-astra" &&
+    supportsNativeResponsesModel(body.model) &&
     supportsNativeSteeringTools(body) &&
     Boolean(entry && options.sessionId);
   const useCachedContext =
@@ -270,7 +271,7 @@ export async function processWebSocketStream<TApi extends Api>(
       keepConnection = false;
     } else {
       assertSuccessfulCodexOutput(output);
-      if (options?.asyncCodeMode && body.model === "gpt-6-astra")
+      if (options?.asyncCodeMode && supportsNativeResponsesModel(body.model))
         rememberAsyncCodeModeCalls(options.sessionId, responseItems);
       for (const item of responseItems) options?.onOutputItemDone?.(item);
       if (useCachedContext && entry && output.responseId) {

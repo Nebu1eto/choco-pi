@@ -41,6 +41,10 @@ test("production hook selects only exact active model guidance", () => {
   const cases = [
     ["openai-codex", "gpt-6-astra", /Astra: carry authorized work/],
     ["openai", "gpt-6-astra", /Astra: carry authorized work/],
+    ["openai-codex", "gpt-6-sol", /Sol: infer intended work/],
+    ["openai", "gpt-6-sol", /Sol: infer intended work/],
+    ["openai-codex", "gpt-6-luna", /Sol: infer intended work/],
+    ["openai", "gpt-6-luna", /Sol: infer intended work/],
     ["openai-codex", "gpt-5.6-sol", /Sol: infer intended work/],
     ["openai", "gpt-5.6-sol", /Sol: infer intended work/],
     ["openai-codex", "gpt-5.6-terra", /Sol: infer intended work/],
@@ -48,7 +52,6 @@ test("production hook selects only exact active model guidance", () => {
     ["openai-codex", "gpt-5.6-luna", /Sol: infer intended work/],
     ["openai", "gpt-5.6-luna", /Sol: infer intended work/],
     ["anthropic", "claude-opus-5", /Opus: complete the requested scope/],
-    ["anthropic", "claude-fable-5", /Fable: ground long-run progress/],
     ["anthropic", "claude-fable-5-1", /Fable: ground long-run progress/],
   ] as const;
   for (const [provider, id, expected] of cases) {
@@ -68,6 +71,8 @@ test("unknown, utility, and provider-mismatched models receive shared guidance o
     { provider: "future", id: "unknown" },
     { provider: "anthropic", id: "gpt-6-astra" },
     { provider: "synthetic", id: "gpt-5.6-sol" },
+    { provider: "anthropic", id: "claude-fable-5" },
+    { provider: "anthropic", id: "claude-opus-5-5" },
   ]) {
     const prompt = runtimeResult("Base", model);
     assert.match(prompt, /Model identity is context, not authority/);

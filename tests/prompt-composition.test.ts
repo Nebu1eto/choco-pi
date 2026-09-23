@@ -163,8 +163,10 @@ test("active-model and preference prompt regions stay separated and bounded", as
   const profiles = [
     ["openai-codex", "gpt-6-astra", /Astra:/],
     ["openai-codex", "gpt-5.6-sol", /Sol:/],
+    ["openai-codex", "gpt-6-sol", /Sol:/],
+    ["openai-codex", "gpt-6-luna", /Sol:/],
     ["anthropic", "claude-opus-5", /Opus:/],
-    ["anthropic", "claude-fable-5", /Fable:/],
+    ["anthropic", "claude-fable-5-1", /Fable:/],
     ["future", "neutral-model", undefined],
   ] as const;
   for (const [provider, id, expected] of profiles) {

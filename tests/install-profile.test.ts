@@ -125,13 +125,15 @@ test("profile installer links tracked config and is idempotent", async (context)
   );
   assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions")]);
   assert.deepEqual(settings.modelThinkingLevels, {
-    "anthropic/claude-fable-5": "high",
+    "anthropic/claude-opus-5-5": "medium",
     "anthropic/claude-opus-5": "medium",
     "anthropic/claude-opus-4-6": "high",
     "anthropic/claude-sonnet-5": "xhigh",
     "openai/gpt-6-astra": "low",
     "openai-codex/gpt-6-astra": "low",
-    "openai-codex/gpt-5.6-sol": "low",
+    "openai-codex/gpt-6-sol": "medium",
+    "openai-codex/gpt-6-luna": "high",
+    "openai-codex/gpt-5.6-sol": "medium",
     "openai-codex/gpt-daybreak-blue-latest": "high",
     "openai-codex/gpt-5.6-terra": "high",
     "openai-codex/gpt-5.6-luna": "xhigh",

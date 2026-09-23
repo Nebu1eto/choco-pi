@@ -468,3 +468,12 @@ escalates from `SIGTERM` to `SIGKILL` after a bounded grace period, and redacts 
 resolved token and account id from native diagnostics. SSE retry bodies snapshot
 typed-array input once into an owned `ArrayBuffer`, preserving the request bytes
 across retries and satisfying the integrated Fetch `BodyInit` contract.
+
+## 2026-09-23 choco-pi patch: GPT-6 family native features
+
+Mid-turn Steering and Async Code Mode now gate on `supportsNativeResponsesModel`
+(`gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`) instead of the exact
+`gpt-6-astra` ID, because the whole GPT-6 family supports both features.
+The WebSocket request gate, async exec decoration and call tracking, the
+`openai-codex` input-hook steering gate, and the setting descriptions share it.
+Other models and SSE keep ordinary behavior.
