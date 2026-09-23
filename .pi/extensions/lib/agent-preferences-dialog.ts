@@ -197,7 +197,7 @@ export function buildAgentPreferencesSection(
           id: "agentPersona",
           label: "Agent persona",
           description:
-            "Critical-thinking disposition announced on every turn: unset leaves it to the model, critical (default) demands evidence and scope judgment, pessimistic also assumes things can fail and looks for a better way. Sub-agents may override via their agent file.",
+            "Critical-thinking disposition announced on every turn: unset leaves it to the model, critical demands evidence and scope judgment, pessimistic (default) also assumes things can fail and looks for a better way. Sub-agents may override via their agent file.",
           currentValue: preferences.persona,
           values: [...PERSONA_VALUES],
         },

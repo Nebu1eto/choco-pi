@@ -216,7 +216,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 - [`.pi/SYSTEM.md`](.pi/SYSTEM.md)는 범위, 권한, 증거, 완료 기준에 대한 공통 규칙을 정합니다. [`.pi/model-guidance.md`](.pi/model-guidance.md)는 모델별 지침을, [`.pi/writing-policy.md`](.pi/writing-policy.md)는 응답 문장 규칙을 더합니다.
 - 루트와 경로별 `AGENTS.md` 파일은 에이전트가 하위 디렉터리에서 작업할 때 함께 불러옵니다.
 - 작업 절차 스킬은 직접 구현(`task-inline`), 병렬 구현 단위(`task`), 동적 분해 작업(`task-dynamic`), 긴급 수정(`task-hotfix`), 적대적 리뷰(`review`), 환경 점검(`check`), 서명된 로컬 커밋(`commit`), 문서 작성(`effective-writing`)을 다룹니다. 구현 절차는 체크아웃 변경 lease를 잡고 인수 기준표로 검증하며, 푸시하지 않습니다.
-- `/preferences`에서 응답 언어, 응답 스타일(`concise` 또는 `explanatory`), 에이전트 페르소나(`unset`, `critical`, `pessimistic`)를 설정합니다. 페르소나는 에이전트가 자신의 주장과 계획을 얼마나 엄격하게 검증할지 정합니다.
+- `/preferences`에서 응답 언어, 응답 스타일(`concise` 또는 `explanatory`), 에이전트 페르소나(`unset`, `critical`, 기본값인 `pessimistic`)를 설정합니다. 페르소나는 에이전트가 자신의 주장과 계획을 얼마나 엄격하게 검증할지 정합니다.
 
 ### 에이전트와 오케스트레이션
 
@@ -231,7 +231,7 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 - `/goal`은 여러 턴과 compaction에 걸쳐 지속되는 목표를 유지합니다.
 - `/rewind`는 체크포인트가 있는 턴 기준으로 파일을 롤백하거나, 세션을 되감거나, 분기합니다.
 - compaction 요약은 로컬에서 만들며, 요약 뒤에도 남는 최근 메시지와 대조합니다. [`context-cap.json`](.pi/extensions/context-cap.json)은 모델별 사용 가능한 컨텍스트 상한과 compaction 임계값을 정합니다.
-- 새 세션에는 이름이 자동으로 붙습니다. 이름을 짓는 모델은 `sessionAutoNameModel`로 정하며 기본값은 `synthetic/hf:Qwen/Qwen3.8-27B`입니다. 끄려면 `sessionAutoName`을 `false`로 설정하세요.
+- 새 세션에는 이름이 자동으로 붙습니다. 이름을 짓는 모델은 `sessionAutoNameModel`로 정하며 기본값은 `openai-codex/gpt-6-luna`입니다. 끄려면 `sessionAutoName`을 `false`로 설정하세요.
 
 ### 코드 인텔리전스와 Code Mode
 
@@ -345,12 +345,13 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 다음 세 가지를 합니다.
 
 - `packages`, `extensions`, `skills`, `prompts`를 체크아웃 절대 경로로 기록합니다. 사용자가 추가한 항목은 choco-pi 항목 뒤에 유지됩니다.
-- `.pi/settings.json`의 나머지 키(`theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `modelThinkingLevels`, `compaction`)를 전역 값 위에 덮어씁니다. 이 키들은 `.pi/settings.json`에서 바꾸세요. 전역 파일에서만 고친 값은 다음 설치 때 사라집니다.
+- `.pi/settings.json`의 `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`을 전역 값 위에 덮어씁니다. 이 키들은 `.pi/settings.json`에서 바꾸세요. 전역 파일에서만 고친 값은 다음 설치 때 사라집니다.
+- `modelThinkingLevels`는 합칩니다. 전역 파일의 값이 우선하며, `.pi/settings.json`은 사용자가 설정하지 않은 모델의 수준만 추가합니다.
 - 그 밖의 키는 건드리지 않습니다. 직접 쓰거나 `/preferences`로 설정하세요.
 
 완성된 전역 파일은 다음과 같습니다. `/path/to/choco-pi`는 실제 체크아웃 경로로
-바꾸세요. `modelThinkingLevels`는 여기서 줄여 적었으며, 설치 프로그램은 전체 목록을
-복사합니다. 비밀 값은 이 파일에 두지 마세요.
+바꾸세요. `defaultModel`, `modelThinkingLevels`, `enabledModels` 값은 관리자의 현재
+설정입니다. 비밀 값은 이 파일에 두지 마세요.
 
 ```json
 {
@@ -382,9 +383,22 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
   "fullscreenExitOutput": "resume-hint",
   "fuzzyFileMentions": true,
   "modelThinkingLevels": {
-    "anthropic/claude-opus-5-5": "medium",
+    "anthropic/claude-fable-5": "high",
+    "anthropic/claude-opus-5": "medium",
+    "anthropic/claude-opus-4-6": "high",
     "anthropic/claude-sonnet-5": "xhigh",
-    "openai-codex/gpt-6-sol": "medium"
+    "openai/gpt-6-astra": "low",
+    "openai-codex/gpt-6-astra": "low",
+    "openai-codex/gpt-5.6-sol": "low",
+    "openai-codex/gpt-daybreak-blue-latest": "high",
+    "openai-codex/gpt-5.6-terra": "high",
+    "openai-codex/gpt-5.6-luna": "xhigh",
+    "synthetic/hf:moonshotai/Kimi-K3": "high",
+    "anthropic/claude-fable-5-1": "low",
+    "anthropic/claude-opus-5-5": "medium",
+    "openai-codex/gpt-6-sol": "low",
+    "openai-codex/gpt-6-luna": "high",
+    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low"
   },
   "compaction": {
     "enabled": true,
@@ -393,12 +407,23 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
   },
 
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-5-5",
+  "defaultModel": "claude-fable-5-1",
   "defaultThinkingLevel": "low",
   "enabledModels": [
+    "anthropic/claude-fable-5-1",
     "anthropic/claude-opus-5-5",
+    "anthropic/claude-opus-5",
+    "anthropic/claude-opus-4-6",
     "anthropic/claude-sonnet-5",
-    "openai-codex/gpt-6-sol"
+    "openai-codex/gpt-6-astra",
+    "openai-codex/gpt-6-sol",
+    "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-5.6-terra",
+    "openai-codex/gpt-6-luna",
+    "openai-codex/gpt-daybreak-blue-latest",
+    "synthetic/hf:moonshotai/Kimi-K3",
+    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash",
+    "synthetic/hf:zai-org/GLM-5.3-Flash"
   ],
   "cacheWarming": "streaming",
   "transport": "auto",
@@ -410,9 +435,9 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 
   "agentLanguage": "English",
   "agentStyle": "concise",
-  "agentPersona": "critical",
+  "agentPersona": "pessimistic",
   "sessionAutoName": true,
-  "sessionAutoNameModel": "synthetic/hf:Qwen/Qwen3.8-27B",
+  "sessionAutoNameModel": "openai-codex/gpt-6-luna",
 
   "hooks": {
     "Stop": [
@@ -424,14 +449,15 @@ helper에는 macOS 권한 두 가지가 필요합니다. 화면 기록(Screen Re
 }
 ```
 
-| 키                                                                                                                 | 설정 주체                                   | 설명                                                                                                                                                                                                                                |
-| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages`, `extensions`, `skills`, `prompts`                                                                      | 설치 프로그램                               | 체크아웃 절대 경로입니다. 체크아웃을 옮기면 설치 프로그램을 다시 실행하세요.                                                                                                                                                        |
-| `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `modelThinkingLevels`, `compaction`               | 설치 프로그램(`.pi/settings.json`에서 복사) | `compaction.reserveTokens`는 모델 응답용으로 남겨 두는 토큰 수, `compaction.keepRecentTokens`는 요약하지 않고 남기는 최근 토큰 수입니다. 모델별 컨텍스트 상한은 [`context-cap.json`](.pi/extensions/context-cap.json)에서 정합니다. |
-| `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`                                         | 사용자                                      | 시작 모델과 thinking 수준입니다. `enabledModels`는 모델 전환 대상을 제한합니다.                                                                                                                                                     |
-| `cacheWarming`, `transport`, `httpIdleTimeoutMs`, `quietStartup`, `enableInstallTelemetry`, `markdown`, `terminal` | 사용자                                      | Pi 런타임 설정입니다. `cacheWarming`은 전역 파일에서만 읽으며 `off`, `streaming`(기본값), `idle` 중 하나입니다.                                                                                                                     |
-| `agentLanguage`, `agentStyle`, `agentPersona`, `sessionAutoName`, `sessionAutoNameModel`                           | 사용자 또는 `/preferences`                  | choco-pi는 이 키를 전역 파일에서만 읽습니다. `agentStyle`은 `concise`, `explanatory`, 또는 `~/.pi/agent/agent-styles/`에 둔 스타일 파일 이름입니다. `agentPersona`의 기본값은 `critical`입니다.                                     |
-| `hooks`                                                                                                            | 사용자                                      | Claude Code 훅 형식입니다. choco-pi-hooks는 `.claude`, `.agents` 설정 파일의 훅도 읽습니다. 자세한 내용은 [README](.pi/packages/choco-pi-hooks/README.md)를 참고하세요.                                                             |
+| 키                                                                                                                 | 설정 주체                                   | 설명                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages`, `extensions`, `skills`, `prompts`                                                                      | 설치 프로그램                               | 체크아웃 절대 경로입니다. 체크아웃을 옮기면 설치 프로그램을 다시 실행하세요.                                                                                                                                                                                    |
+| `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`                                      | 설치 프로그램(`.pi/settings.json`에서 복사) | `compaction.reserveTokens`는 모델 응답용으로 남겨 두는 토큰 수, `compaction.keepRecentTokens`는 요약하지 않고 남기는 최근 토큰 수입니다. 모델별 컨텍스트 상한은 [`context-cap.json`](.pi/extensions/context-cap.json)에서 정합니다.                             |
+| `modelThinkingLevels`                                                                                              | 사용자(설치 프로그램이 기본값 추가)         | 정확한 `provider/modelId`를 키로 씁니다. 사용자 값이 우선하며, 설치 프로그램은 사용자가 설정하지 않은 모델에 대해서만 `.pi/settings.json`의 값을 추가합니다.                                                                                                    |
+| `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`                                         | 사용자                                      | 시작 모델과 thinking 수준입니다. `enabledModels`는 모델 전환 대상을 제한합니다.                                                                                                                                                                                 |
+| `cacheWarming`, `transport`, `httpIdleTimeoutMs`, `quietStartup`, `enableInstallTelemetry`, `markdown`, `terminal` | 사용자                                      | Pi 런타임 설정입니다. `cacheWarming`은 전역 파일에서만 읽으며 `off`, `streaming`(기본값), `idle` 중 하나입니다.                                                                                                                                                 |
+| `agentLanguage`, `agentStyle`, `agentPersona`, `sessionAutoName`, `sessionAutoNameModel`                           | 사용자 또는 `/preferences`                  | choco-pi는 이 키를 전역 파일에서만 읽습니다. `agentStyle`은 `concise`, `explanatory`, 또는 `~/.pi/agent/agent-styles/`에 둔 스타일 파일 이름입니다. `agentPersona`의 기본값은 `pessimistic`, `sessionAutoNameModel`의 기본값은 `openai-codex/gpt-6-luna`입니다. |
+| `hooks`                                                                                                            | 사용자                                      | Claude Code 훅 형식입니다. choco-pi-hooks는 `.claude`, `.agents` 설정 파일의 훅도 읽습니다. 자세한 내용은 [README](.pi/packages/choco-pi-hooks/README.md)를 참고하세요.                                                                                         |
 
 advisor 설정은 별도 파일인 `~/.pi/agent/advisor.json`에 두며, 프로젝트의
 `.pi/advisor.json`이 키 단위로 덮어씁니다.

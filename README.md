@@ -230,7 +230,7 @@ win. Neither file is created for you. This example shows the defaults:
 - [`.pi/SYSTEM.md`](.pi/SYSTEM.md) sets shared rules for scope, authority, evidence, and completion. [`.pi/model-guidance.md`](.pi/model-guidance.md) adds per-model guidance and [`.pi/writing-policy.md`](.pi/writing-policy.md) governs response prose.
 - Root and path-scoped `AGENTS.md` files are loaded as the agent works in subdirectories.
 - Workflow skills cover direct implementation (`task-inline`), parallel units (`task`), dynamically decomposed work (`task-dynamic`), urgent fixes (`task-hotfix`), adversarial review (`review`), environment readiness (`check`), signed local commits (`commit`), and prose (`effective-writing`). Implementation workflows hold a checkout mutation lease, validate against an acceptance ledger, and never push.
-- `/preferences` sets the response language, response style (`concise` or `explanatory`), and agent persona (`unset`, `critical`, or `pessimistic`), which controls how strictly the agent tests its own claims and plans.
+- `/preferences` sets the response language, response style (`concise` or `explanatory`), and agent persona (`unset`, `critical`, or the default `pessimistic`), which controls how strictly the agent tests its own claims and plans.
 
 ### Agents and orchestration
 
@@ -245,7 +245,7 @@ win. Neither file is created for you. This example shows the defaults:
 - `/goal` keeps a persistent objective across turns and compaction.
 - `/rewind` rolls back files, rewinds, or forks the session at a checkpointed turn.
 - Compaction summaries are produced locally and reconciled with retained messages. [`context-cap.json`](.pi/extensions/context-cap.json) caps usable context per model and sets the compaction threshold.
-- New sessions are named automatically. `sessionAutoNameModel` selects the naming model (default `synthetic/hf:Qwen/Qwen3.8-27B`); set `sessionAutoName` to `false` to disable naming.
+- New sessions are named automatically. `sessionAutoNameModel` selects the naming model (default `openai-codex/gpt-6-luna`); set `sessionAutoName` to `false` to disable naming.
 
 ### Code intelligence and Code Mode
 
@@ -359,12 +359,13 @@ win. Neither file is created for you. This example shows the defaults:
 Each run does three things:
 
 - Writes `packages`, `extensions`, `skills`, and `prompts` as absolute checkout paths. Entries you added are kept after the choco-pi entries.
-- Copies every other key in `.pi/settings.json` (`theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `modelThinkingLevels`, and `compaction`) over the global value. Change these in `.pi/settings.json`; edits made only in the global file are lost on the next install.
+- Copies `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, and `compaction` from `.pi/settings.json` over the global value. Change these in `.pi/settings.json`; edits made only in the global file are lost on the next install.
+- Merges `modelThinkingLevels`. Your global entries win; `.pi/settings.json` only adds levels for models you have not set.
 - Leaves the remaining keys alone. Set them yourself or through `/preferences`.
 
 A complete global file looks like this. Replace `/path/to/choco-pi` with your
-checkout path. `modelThinkingLevels` is shortened here; the installer copies the
-full map. Secrets never belong in this file.
+checkout path. The `defaultModel`, `modelThinkingLevels`, and `enabledModels`
+values are the maintainer's current settings. Secrets never belong in this file.
 
 ```json
 {
@@ -396,9 +397,22 @@ full map. Secrets never belong in this file.
   "fullscreenExitOutput": "resume-hint",
   "fuzzyFileMentions": true,
   "modelThinkingLevels": {
-    "anthropic/claude-opus-5-5": "medium",
+    "anthropic/claude-fable-5": "high",
+    "anthropic/claude-opus-5": "medium",
+    "anthropic/claude-opus-4-6": "high",
     "anthropic/claude-sonnet-5": "xhigh",
-    "openai-codex/gpt-6-sol": "medium"
+    "openai/gpt-6-astra": "low",
+    "openai-codex/gpt-6-astra": "low",
+    "openai-codex/gpt-5.6-sol": "low",
+    "openai-codex/gpt-daybreak-blue-latest": "high",
+    "openai-codex/gpt-5.6-terra": "high",
+    "openai-codex/gpt-5.6-luna": "xhigh",
+    "synthetic/hf:moonshotai/Kimi-K3": "high",
+    "anthropic/claude-fable-5-1": "low",
+    "anthropic/claude-opus-5-5": "medium",
+    "openai-codex/gpt-6-sol": "low",
+    "openai-codex/gpt-6-luna": "high",
+    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash": "low"
   },
   "compaction": {
     "enabled": true,
@@ -407,12 +421,23 @@ full map. Secrets never belong in this file.
   },
 
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-5-5",
+  "defaultModel": "claude-fable-5-1",
   "defaultThinkingLevel": "low",
   "enabledModels": [
+    "anthropic/claude-fable-5-1",
     "anthropic/claude-opus-5-5",
+    "anthropic/claude-opus-5",
+    "anthropic/claude-opus-4-6",
     "anthropic/claude-sonnet-5",
-    "openai-codex/gpt-6-sol"
+    "openai-codex/gpt-6-astra",
+    "openai-codex/gpt-6-sol",
+    "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-5.6-terra",
+    "openai-codex/gpt-6-luna",
+    "openai-codex/gpt-daybreak-blue-latest",
+    "synthetic/hf:moonshotai/Kimi-K3",
+    "synthetic/hf:deepseek-ai/DeepSeek-V4.1-Flash",
+    "synthetic/hf:zai-org/GLM-5.3-Flash"
   ],
   "cacheWarming": "streaming",
   "transport": "auto",
@@ -424,9 +449,9 @@ full map. Secrets never belong in this file.
 
   "agentLanguage": "English",
   "agentStyle": "concise",
-  "agentPersona": "critical",
+  "agentPersona": "pessimistic",
   "sessionAutoName": true,
-  "sessionAutoNameModel": "synthetic/hf:Qwen/Qwen3.8-27B",
+  "sessionAutoNameModel": "openai-codex/gpt-6-luna",
 
   "hooks": {
     "Stop": [
@@ -438,14 +463,15 @@ full map. Secrets never belong in this file.
 }
 ```
 
-| Keys                                                                                                               | Set by                              | Notes                                                                                                                                                                                                              |
-| ------------------------------------------------------------------------------------------------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `packages`, `extensions`, `skills`, `prompts`                                                                      | Installer                           | Absolute checkout paths; rerun the installer after moving the checkout.                                                                                                                                            |
-| `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `modelThinkingLevels`, `compaction`               | Installer, from `.pi/settings.json` | `compaction.reserveTokens` is reserved for the model response and `compaction.keepRecentTokens` is kept without summarizing. Per-model context caps live in [`context-cap.json`](.pi/extensions/context-cap.json). |
-| `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`                                         | You                                 | Startup model and thinking level; `enabledModels` limits model cycling.                                                                                                                                            |
-| `cacheWarming`, `transport`, `httpIdleTimeoutMs`, `quietStartup`, `enableInstallTelemetry`, `markdown`, `terminal` | You                                 | Pi runtime settings. `cacheWarming` is read only from the global file and accepts `off`, `streaming` (default), or `idle`.                                                                                         |
-| `agentLanguage`, `agentStyle`, `agentPersona`, `sessionAutoName`, `sessionAutoNameModel`                           | You or `/preferences`               | choco-pi reads these only from the global file. `agentStyle` is `concise`, `explanatory`, or the name of a style file in `~/.pi/agent/agent-styles/`. `agentPersona` defaults to `critical`.                       |
-| `hooks`                                                                                                            | You                                 | Claude Code hook format. choco-pi-hooks also reads hooks from `.claude` and `.agents` settings files, as described in its [README](.pi/packages/choco-pi-hooks/README.md).                                         |
+| Keys                                                                                                               | Set by                              | Notes                                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages`, `extensions`, `skills`, `prompts`                                                                      | Installer                           | Absolute checkout paths; rerun the installer after moving the checkout.                                                                                                                                                                                 |
+| `theme`, `tuiMode`, `fullscreenExitOutput`, `fuzzyFileMentions`, `compaction`                                      | Installer, from `.pi/settings.json` | `compaction.reserveTokens` is reserved for the model response and `compaction.keepRecentTokens` is kept without summarizing. Per-model context caps live in [`context-cap.json`](.pi/extensions/context-cap.json).                                      |
+| `modelThinkingLevels`                                                                                              | You, with installer defaults        | Keyed by exact `provider/modelId`. Your entries win; the installer adds entries from `.pi/settings.json` for models you have not set.                                                                                                                   |
+| `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `enabledModels`                                         | You                                 | Startup model and thinking level; `enabledModels` limits model cycling.                                                                                                                                                                                 |
+| `cacheWarming`, `transport`, `httpIdleTimeoutMs`, `quietStartup`, `enableInstallTelemetry`, `markdown`, `terminal` | You                                 | Pi runtime settings. `cacheWarming` is read only from the global file and accepts `off`, `streaming` (default), or `idle`.                                                                                                                              |
+| `agentLanguage`, `agentStyle`, `agentPersona`, `sessionAutoName`, `sessionAutoNameModel`                           | You or `/preferences`               | choco-pi reads these only from the global file. `agentStyle` is `concise`, `explanatory`, or the name of a style file in `~/.pi/agent/agent-styles/`. `agentPersona` defaults to `pessimistic` and `sessionAutoNameModel` to `openai-codex/gpt-6-luna`. |
+| `hooks`                                                                                                            | You                                 | Claude Code hook format. choco-pi-hooks also reads hooks from `.claude` and `.agents` settings files, as described in its [README](.pi/packages/choco-pi-hooks/README.md).                                                                              |
 
 The advisor has its own file, `~/.pi/agent/advisor.json`, which a project
 `.pi/advisor.json` overrides key by key:

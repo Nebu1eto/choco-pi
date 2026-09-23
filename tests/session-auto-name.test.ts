@@ -6,6 +6,10 @@ import test from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import {
+  DEFAULT_SESSION_AUTO_NAME_MODEL,
+  SESSION_AUTO_NAME_FALLBACK_MODEL,
+} from "../.pi/extensions/lib/agent-preferences.ts";
+import {
   firstSuccessfulInteraction,
   registerSessionAutoName,
   sanitizeSessionTitle,
@@ -138,12 +142,11 @@ test("only one successful assistant interaction is eligible", () => {
   assert.equal(firstSuccessfulInteraction(one.ctx), undefined);
 });
 
-test("the title prompt carries the agent's preferred-language directive", () => {
+test("the title prompt appends the preferred language only when one is set", () => {
   assert.equal(sessionTitleSystemPrompt(undefined), SESSION_TITLE_PROMPT);
-  assert.ok(!SESSION_TITLE_PROMPT.includes("Preferred response language"));
-  assert.ok(
-    sessionTitleSystemPrompt("English").endsWith("\n\nPreferred response language: English"),
-  );
+  const withLanguage = sessionTitleSystemPrompt("English");
+  assert.ok(withLanguage.startsWith(SESSION_TITLE_PROMPT));
+  assert.ok(withLanguage.endsWith("English"));
 });
 
 test(
@@ -176,7 +179,7 @@ test(
     await harness.emit("agent_settled");
     await harness.emit("agent_settled");
     assert.equal(harness.name, "Automatic Session Naming");
-    assert.deepEqual(calls, ["synthetic/hf:Qwen/Qwen3.8-27B"]);
+    assert.deepEqual(calls, [DEFAULT_SESSION_AUTO_NAME_MODEL]);
   }),
 );
 
@@ -192,7 +195,7 @@ test(
     await harness.emit("session_start");
     await harness.emit("agent_settled");
     assert.equal(harness.name, "Luna Generated Name");
-    assert.deepEqual(calls, ["synthetic/hf:Qwen/Qwen3.8-27B", "openai-codex/gpt-5.6-luna"]);
+    assert.deepEqual(calls, [DEFAULT_SESSION_AUTO_NAME_MODEL, SESSION_AUTO_NAME_FALLBACK_MODEL]);
   }),
 );
 

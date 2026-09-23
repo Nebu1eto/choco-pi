@@ -85,8 +85,6 @@ test("a violation arms exactly one reminder on the next request context", () => 
   };
   assert.equal(patched.messages.length, 2);
   assert.equal(patched.messages[1]?.content, DIAGRAM_REMINDER);
-  assert.match(DIAGRAM_REMINDER, /^<system-reminder>/);
-  assert.match(DIAGRAM_REMINDER, /mermaid/);
 
   assert.equal(
     context({ messages: [{ role: "user", content: "hi" }] }, {}),

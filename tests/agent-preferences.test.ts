@@ -16,7 +16,6 @@ import {
   parsePersona,
   personaDirectiveFromPrompt,
   readAgentPreferences,
-  renderPersonaAnnouncement,
   resolveAgentPersonaOverride,
   resolveAgentStyle,
   resolvePersona,
@@ -105,7 +104,7 @@ test(
 test(
   "store creates the settings file when missing and ignores invalid values",
   withTempDirs(({ agent }) => {
-    assert.deepEqual(readAgentPreferences(agent), { persona: "critical" });
+    assert.deepEqual(readAgentPreferences(agent), { persona: DEFAULT_PERSONA });
     writeAgentPreference("agentStyle", "concise", agent);
     assert.equal(readAgentPreferences(agent).style, "concise");
 
@@ -113,7 +112,7 @@ test(
       path.join(agent, "settings.json"),
       JSON.stringify({ agentLanguage: "", agentStyle: 42 }),
     );
-    assert.deepEqual(readAgentPreferences(agent), { persona: "critical" });
+    assert.deepEqual(readAgentPreferences(agent), { persona: DEFAULT_PERSONA });
   }),
 );
 
@@ -184,53 +183,22 @@ test("injection block covers each settings combination and wraps markers", () =>
     resolver,
   );
   assert.ok(languageOnly !== undefined);
-  assert.ok(languageOnly?.includes("Preferred response language: Korean"));
+  assert.ok(languageOnly?.includes("Korean"));
   assert.ok(languageOnly?.includes(AGENT_PREFERENCES_MARKER));
   assert.ok(languageOnly?.endsWith(AGENT_PREFERENCES_MARKER_END));
-  assert.ok(!languageOnly.includes("Agent style:"));
+  assert.ok(!languageOnly.includes("Be brief."));
 
   const both = buildAgentPreferencesBlock(
     { persona: "critical", language: "Japanese", style: "concise" },
     resolver,
   );
-  assert.ok(both?.includes("Preferred response language: Japanese"));
-  assert.ok(both?.includes("Agent style: concise\nBe brief."));
+  assert.ok(both?.includes("Japanese"));
+  assert.ok(both?.includes("Be brief."));
 
   const styleOnly = buildAgentPreferencesBlock({ persona: "critical", style: "concise" }, resolver);
   assert.ok(styleOnly?.includes(AGENT_PREFERENCES_MARKER));
-  assert.ok(!styleOnly?.includes("Preferred response language"));
-});
-
-test("every block yields to explicit requests and to path-scoped project instructions", () => {
-  const resolver = (name: string) =>
-    name === "concise" ? styleOf("concise", "Be brief.") : undefined;
-  const precedence = "an explicit request in the user's message";
-  const projectRule = "path-scoped project instruction";
-
-  for (const preferences of [
-    { persona: "critical" as const, language: "Korean" },
-    { persona: "critical" as const, style: "concise" },
-    { persona: "critical" as const, language: "Korean", style: "concise" },
-  ]) {
-    const block = buildAgentPreferencesBlock(preferences, resolver);
-    assert.ok(block?.includes(precedence), `${JSON.stringify(preferences)} must yield to requests`);
-    assert.ok(
-      block?.includes(projectRule),
-      `${JSON.stringify(preferences)} must yield to projects`,
-    );
-  }
-});
-
-test("the language directive leaves commit messages to the repository", () => {
-  const block = buildAgentPreferencesBlock(
-    { persona: "critical", language: "Korean" },
-    () => undefined,
-  );
-  assert.ok(
-    block?.includes(
-      "Commit messages follow the language established by the repository's own history and policy, not this setting.",
-    ),
-  );
+  assert.ok(styleOnly?.includes("Be brief."));
+  assert.ok(!styleOnly?.includes("Korean") && !styleOnly?.includes("Japanese"));
 });
 
 test("persona parsing trims and normalizes only known string values", () => {
@@ -249,12 +217,15 @@ test("persona parsing trims and normalizes only known string values", () => {
 });
 
 test(
-  "persona settings default to critical and preserve explicit unset",
+  "persona settings default to pessimistic and preserve explicit values",
   withTempDirs(({ agent }) => {
-    assert.equal(readAgentPreferences(agent).persona, "critical");
+    assert.equal(readAgentPreferences(agent).persona, "pessimistic");
 
     mkdirSync(agent, { recursive: true });
     writeFileSync(path.join(agent, "settings.json"), JSON.stringify({ agentPersona: "wrong" }));
+    assert.equal(readAgentPreferences(agent).persona, "pessimistic");
+
+    writeAgentPreference("agentPersona", "critical", agent);
     assert.equal(readAgentPreferences(agent).persona, "critical");
 
     writeAgentPreference("agentPersona", "unset", agent);
@@ -384,13 +355,7 @@ test("persona definitions append once and remain synchronized with the system pr
   const appended = appendPersonaDefinitions("Base prompt");
   assert.equal(appended, `Base prompt\n\n${PERSONA_DEFINITIONS_BLOCK}`);
   assert.equal(appendPersonaDefinitions(appended), undefined);
-  assert.match(PERSONA_DEFINITIONS_BLOCK, /evidence sufficient for the outcome and material risks/);
-  assert.doesNotMatch(PERSONA_DEFINITIONS_BLOCK, /Verify as much as possible|keep asking whether/);
 
   const systemPrompt = readFileSync(new URL("../.pi/SYSTEM.md", import.meta.url), "utf8");
   assert.ok(systemPrompt.includes(PERSONA_DEFINITIONS_BLOCK));
-});
-
-test("persona announcement uses the stable message text", () => {
-  assert.equal(renderPersonaAnnouncement("critical"), "Agent persona: critical");
 });

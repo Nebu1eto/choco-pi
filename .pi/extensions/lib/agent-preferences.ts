@@ -27,7 +27,7 @@ export const PERSONA_MESSAGE_TYPE = "choco-pi-agent-persona";
 export const PERSONA_DEFINITIONS_HEADING = "## Agent persona";
 export const SESSION_AUTO_NAME_KEY = "sessionAutoName";
 export const SESSION_AUTO_NAME_MODEL_KEY = "sessionAutoNameModel";
-export const DEFAULT_SESSION_AUTO_NAME_MODEL = "synthetic/hf:Qwen/Qwen3.8-27B";
+export const DEFAULT_SESSION_AUTO_NAME_MODEL = "openai-codex/gpt-6-luna";
 export const SESSION_AUTO_NAME_FALLBACK_MODEL = "openai-codex/gpt-5.6-luna";
 export const AGENT_PREFERENCES_MARKER = "<choco_pi_agent_preferences>";
 export const AGENT_PREFERENCES_MARKER_END = "</choco_pi_agent_preferences>";
@@ -42,7 +42,7 @@ export function renderPreferredLanguageLine(language: string): string {
 export type Persona = "unset" | "critical" | "pessimistic";
 
 export const PERSONA_VALUES: readonly Persona[] = ["unset", "critical", "pessimistic"];
-export const DEFAULT_PERSONA: Persona = "critical";
+export const DEFAULT_PERSONA: Persona = "pessimistic";
 export const PERSONA_DEFINITIONS_BLOCK = String.raw`## Agent persona
 
 A turn may announce "Agent persona: <name>". An announced or role-assigned persona governs; absence adds no persona instructions. Runtime preferences and role defaults still apply. A persona changes claim and plan scrutiny, never scope, approval, authority, or user precedence. A parent may set a leaf's persona for one task.

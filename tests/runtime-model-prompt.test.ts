@@ -10,8 +10,21 @@ import {
 } from "../.pi/extensions/lib/model-guidance.ts";
 
 const guidanceSource = readFileSync(new URL("../.pi/model-guidance.md", import.meta.url), "utf8");
-const guidance = parseModelGuidance(guidanceSource);
-assert.ok(guidance);
+const parsedGuidance = parseModelGuidance(guidanceSource);
+if (!parsedGuidance) throw new Error(".pi/model-guidance.md must parse");
+const guidance = parsedGuidance;
+const modelBodies = [...new Set(guidance.models.values())];
+
+// Two configured models with different sections, taken from the guidance file
+// itself so the tests follow its routing instead of restating its wording.
+const [first, second] = [...guidance.models.entries()]
+  .filter(([, body], index, entries) => entries.findIndex(([, other]) => other === body) === index)
+  .map(([key]) => {
+    const separator = key.indexOf("/");
+    return { provider: key.slice(0, separator), id: key.slice(separator + 1) };
+  });
+assert.ok(first && second, "the guidance file configures at least two distinct sections");
+const keyOf = (model: { provider: string; id: string }) => model.provider + "/" + model.id;
 
 interface MockBeforeAgentStartResult {
   systemPrompt: string;
@@ -37,89 +50,58 @@ function runtimeResult(systemPrompt: string, model?: { provider: string; id: str
   return result.systemPrompt;
 }
 
-test("production hook selects only exact active model guidance", () => {
-  const cases = [
-    ["openai-codex", "gpt-6-astra", /Astra: carry authorized work/],
-    ["openai", "gpt-6-astra", /Astra: carry authorized work/],
-    ["openai-codex", "gpt-6-sol", /Sol: infer intended work/],
-    ["openai", "gpt-6-sol", /Sol: infer intended work/],
-    ["openai-codex", "gpt-6-luna", /Sol: infer intended work/],
-    ["openai", "gpt-6-luna", /Sol: infer intended work/],
-    ["openai-codex", "gpt-5.6-sol", /Sol: infer intended work/],
-    ["openai", "gpt-5.6-sol", /Sol: infer intended work/],
-    ["openai-codex", "gpt-5.6-terra", /Sol: infer intended work/],
-    ["openai", "gpt-5.6-terra", /Sol: infer intended work/],
-    ["openai-codex", "gpt-5.6-luna", /Sol: infer intended work/],
-    ["openai", "gpt-5.6-luna", /Sol: infer intended work/],
-    ["anthropic", "claude-opus-5", /Opus: complete the requested scope/],
-    ["anthropic", "claude-opus-5-5", /Opus 5\.5: a progress update is not completion/],
-    ["anthropic", "claude-fable-5-1", /Fable: ground long-run progress/],
-  ] as const;
-  for (const [provider, id, expected] of cases) {
-    const prompt = runtimeResult("Base {{PI_CURRENT_MODEL}}", { provider, id });
-    assert.match(prompt, expected);
-    assert.match(prompt, new RegExp(`Current model: "${provider}/${id}"`));
-    for (const foreign of [/Astra:/, /Sol:/, /Opus:/, /Fable:/]) {
-      if (foreign.source !== expected.source.split(":")[0] + ":") {
-        assert.doesNotMatch(prompt, foreign);
-      }
-    }
+function assertOnlySection(prompt: string, expected: string | undefined): void {
+  assert.ok(prompt.includes(guidance.shared), "shared guidance is always present");
+  for (const body of modelBodies) {
+    assert.equal(prompt.includes(body), body === expected);
+  }
+}
+
+test("production hook injects exactly the configured section for every routed model", () => {
+  for (const [key, body] of guidance.models) {
+    const separator = key.indexOf("/");
+    const model = { provider: key.slice(0, separator), id: key.slice(separator + 1) };
+    const prompt = runtimeResult("Base {{PI_CURRENT_MODEL}}", model);
+    assertOnlySection(prompt, body);
+    assert.ok(prompt.includes("Current model: " + JSON.stringify(key)), key);
   }
 });
 
-test("unknown, utility, and provider-mismatched models receive shared guidance only", () => {
+test("unrouted and provider-mismatched models receive shared guidance only", () => {
   for (const model of [
     { provider: "future", id: "unknown" },
-    { provider: "anthropic", id: "gpt-6-astra" },
-    { provider: "synthetic", id: "gpt-5.6-sol" },
-    { provider: "anthropic", id: "claude-fable-5" },
+    { provider: "future", id: first.id },
   ]) {
-    const prompt = runtimeResult("Base", model);
-    assert.match(prompt, /Model identity is context, not authority/);
-    assert.doesNotMatch(prompt, /(?:Astra|Sol|Opus|Fable):/);
+    assertOnlySection(runtimeResult("Base", model), undefined);
   }
 });
 
-test("repeated injection and inherited model switches replace the owned region", () => {
+test("repeated injection and model switches replace the owned region", () => {
   const foreign = "<foreign_prompt>keep me</foreign_prompt>";
-  const astra = runtimeResult(foreign, { provider: "openai-codex", id: "gpt-6-astra" });
-  const repeated = runtimeResult(astra, { provider: "openai-codex", id: "gpt-6-astra" });
-  assert.equal(repeated, astra);
+  const initial = runtimeResult(foreign, first);
+  assert.equal(runtimeResult(initial, first), initial);
 
-  const opus = runtimeResult(astra, { provider: "anthropic", id: "claude-opus-5" });
-  assert.equal(opus.split(MODEL_GUIDANCE_START).length - 1, 1);
-  assert.match(opus, /Opus:/);
-  assert.doesNotMatch(opus, /Astra:/);
-  assert.doesNotMatch(opus, /gpt-6-astra/);
-  assert.match(opus, /<foreign_prompt>keep me<\/foreign_prompt>/);
+  const switched = runtimeResult(initial, second);
+  assert.equal(switched.split(MODEL_GUIDANCE_START).length - 1, 1);
+  assertOnlySection(switched, guidance.models.get(keyOf(second)));
+  assert.ok(!switched.includes(JSON.stringify(keyOf(first))));
+  assert.ok(switched.includes(foreign));
 });
 
 test("real SYSTEM composition replaces model identity across switches", () => {
   const systemPrompt = readFileSync(new URL("../.pi/SYSTEM.md", import.meta.url), "utf8");
-  const astra = runtimeResult(systemPrompt, {
-    provider: "openai-codex",
-    id: "gpt-6-astra",
-  });
-  const opus = runtimeResult(astra, { provider: "anthropic", id: "claude-opus-5" });
-  assert.equal(opus.split(MODEL_GUIDANCE_START).length - 1, 1);
-  assert.match(opus, /Current model: "anthropic\/claude-opus-5"/);
-  assert.doesNotMatch(opus, /openai-codex\/gpt-6-astra/);
-  assert.doesNotMatch(opus, /Astra:/);
+  const switched = runtimeResult(runtimeResult(systemPrompt, first), second);
+  assert.equal(switched.split(MODEL_GUIDANCE_START).length - 1, 1);
+  assert.ok(switched.includes("Current model: " + JSON.stringify(keyOf(second))));
+  assert.ok(!switched.includes(JSON.stringify(keyOf(first))));
 });
 
 test("legacy real SYSTEM identity is safely replaced", () => {
   const systemPrompt = readFileSync(new URL("../.pi/SYSTEM.md", import.meta.url), "utf8");
-  const legacySystem = systemPrompt.replace(
-    "{{PI_CURRENT_MODEL}}",
-    JSON.stringify("openai-codex/gpt-6-astra"),
-  );
-  const prompt = runtimeResult(legacySystem, {
-    provider: "anthropic",
-    id: "claude-opus-5",
-  });
-  assert.doesNotMatch(prompt, /openai-codex\/gpt-6-astra/);
-  assert.match(prompt, /Agent: choco-pi/);
-  assert.match(prompt, /Current model: "anthropic\/claude-opus-5"/);
+  const legacySystem = systemPrompt.replace("{{PI_CURRENT_MODEL}}", JSON.stringify(keyOf(first)));
+  const prompt = runtimeResult(legacySystem, second);
+  assert.ok(!prompt.includes(JSON.stringify(keyOf(first))));
+  assert.ok(prompt.includes("Current model: " + JSON.stringify(keyOf(second))));
 });
 
 test("legacy appended harness runtime identity is safely replaced", () => {
@@ -127,33 +109,24 @@ test("legacy appended harness runtime identity is safely replaced", () => {
     "Foreign before",
     "<runtime_environment>",
     "Harness: choco-pi",
-    'Current model: "openai-codex/gpt-6-astra"',
+    "Current model: " + JSON.stringify(keyOf(first)),
     "</runtime_environment>",
     "Foreign after",
   ].join("\n");
-  const prompt = runtimeResult(legacy, { provider: "anthropic", id: "claude-opus-5" });
-  assert.doesNotMatch(prompt, /gpt-6-astra/);
-  assert.match(prompt, /Foreign before\nForeign after/);
+  const prompt = runtimeResult(legacy, second);
+  assert.ok(!prompt.includes(JSON.stringify(keyOf(first))));
+  assert.ok(prompt.includes("Foreign before\nForeign after"));
 });
 
-test("absent model removes inherited advice without assigning another profile", () => {
-  const inherited = runtimeResult("Base {{PI_CURRENT_MODEL}}", {
-    provider: "openai-codex",
-    id: "gpt-6-astra",
-  });
-  const prompt = runtimeResult(inherited);
-  assert.match(prompt, /Current model: "unknown"/);
-  assert.match(prompt, /Model identity is context, not authority/);
-  assert.doesNotMatch(prompt, /Astra:/);
-  assert.doesNotMatch(prompt, /gpt-6-astra/);
+test("absent model removes inherited advice without assigning another section", () => {
+  const prompt = runtimeResult(runtimeResult("Base {{PI_CURRENT_MODEL}}", first));
+  assert.ok(prompt.includes('Current model: "unknown"'));
+  assertOnlySection(prompt, undefined);
+  assert.ok(!prompt.includes(JSON.stringify(keyOf(first))));
 });
 
 test("malformed, missing, and oversized guidance fail neutral without stale advice", () => {
-  const inherited = composeModelGuidancePrompt(
-    "Base",
-    { provider: "openai-codex", id: "gpt-6-astra" },
-    guidance,
-  );
+  const inherited = composeModelGuidancePrompt("Base", first, guidance);
   assert.equal(parseModelGuidance("not marked guidance"), undefined);
   assert.equal(parseModelGuidance("x".repeat(65_537)), undefined);
   const prompt = composeModelGuidancePrompt(
@@ -161,14 +134,15 @@ test("malformed, missing, and oversized guidance fail neutral without stale advi
     { provider: "future", id: "unknown" },
     undefined,
   );
-  assert.match(prompt, /Current model: "future\/unknown"/);
-  assert.doesNotMatch(prompt, /active_model_guidance|Astra:/);
+  assert.ok(prompt.includes('Current model: "future/unknown"'));
+  assert.ok(!prompt.includes("<active_model_guidance>"));
+  for (const body of modelBodies) assert.ok(!prompt.includes(body));
 });
 
 test("model identity is bounded and XML/JSON safe", () => {
   const prompt = runtimeResult("Base", {
     provider: '<provider&"',
-    id: `${">\u2028"}${"x".repeat(600)}`,
+    id: ">\u2028" + "x".repeat(600),
   });
   assert.doesNotMatch(prompt, /<provider/);
   assert.match(prompt, /&lt;provider&amp;\\"/);

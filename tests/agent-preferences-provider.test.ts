@@ -18,6 +18,7 @@ type Notice = [string, string];
 function createCtx(notices: Notice[]): RuntimeValue {
   const models = [
     { provider: "synthetic", id: "hf:Qwen/Qwen3.8-27B" },
+    { provider: "openai-codex", id: "gpt-6-luna" },
     { provider: "openai-codex", id: "gpt-5.6-luna" },
   ];
   return {
@@ -68,14 +69,14 @@ test(
     assert.equal(items[0].currentValue, "Match user");
     assert.equal(items[1].currentValue, "Default");
     assert.ok(items[1].values?.includes("concise"), "shipped presets must be offered");
-    assert.equal(items[2].currentValue, "critical");
+    assert.equal(items[2].currentValue, "pessimistic");
     assert.deepEqual(items[2].values, PERSONA_VALUES);
     assert.equal(items[3].currentValue, "Enabled");
-    assert.equal(items[4].currentValue, "synthetic/hf:Qwen/Qwen3.8-27B");
+    assert.equal(items[4].currentValue, "openai-codex/gpt-6-luna");
 
     assert.deepEqual(section.handleChange("agentLanguage", "Korean"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentStyle", "concise"), { kind: "update" });
-    assert.deepEqual(section.handleChange("agentPersona", "pessimistic"), { kind: "update" });
+    assert.deepEqual(section.handleChange("agentPersona", "critical"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoName", "Disabled"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai-codex/gpt-5.6-luna"), {
       kind: "update",
@@ -83,7 +84,7 @@ test(
     const settings = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
     assert.equal(settings.agentLanguage, "Korean");
     assert.equal(settings.agentStyle, "concise");
-    assert.equal(settings.agentPersona, "pessimistic");
+    assert.equal(settings.agentPersona, "critical");
     assert.equal(settings.sessionAutoName, false);
     assert.equal(settings.sessionAutoNameModel, "openai-codex/gpt-5.6-luna");
     assert.equal(settings.theme, "nord-dark", "unrelated settings must survive");
