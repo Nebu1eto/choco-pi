@@ -31,3 +31,20 @@ test("per-spawn budget parameters survive invocation resolution and UI metadata"
     ["timeout: 12000ms", "max tools: 8", "max tokens: 50000", "idle: 3000ms"],
   );
 });
+
+test("fast mode resolves from caller over definition and renders focused metadata", () => {
+  const resolved = resolveAgentInvocationConfig(
+    {
+      name: "fast-probe",
+      description: "probe",
+      extensions: false,
+      skills: false,
+      systemPrompt: "probe",
+      promptMode: "replace",
+      fastMode: false,
+    },
+    { fast_mode: true },
+  );
+  assert.equal(resolved.fastMode, true);
+  assert.deepEqual(buildInvocationTags({ fastMode: resolved.fastMode }).tags, ["fast"]);
+});

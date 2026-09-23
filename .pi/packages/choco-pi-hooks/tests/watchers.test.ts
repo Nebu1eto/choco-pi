@@ -105,6 +105,24 @@ test("disposed watcher drops ConfigChange and FileChanged continuations", async 
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "hook-watch-dispose-"));
   fs.mkdirSync(path.join(cwd, ".claude"));
   t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  const realWatch = fs.watch.bind(fs);
+  const callbacks = new Map<string, fs.WatchListener<string>>();
+  const watcherClosed: Promise<void>[] = [];
+  t.mock.method(
+    fs,
+    "watch",
+    (filename: fs.PathLike, options: fs.WatchOptions, listener: fs.WatchListener<string>) => {
+      const watchedPath = path.resolve(String(filename));
+      callbacks.set(watchedPath, listener);
+      const realWatcher = realWatch(filename, options, () => undefined);
+      watcherClosed.push(
+        new Promise((resolve) => {
+          realWatcher.once("close", resolve);
+        }),
+      );
+      return realWatcher;
+    },
+  );
   const source: HookSource = {
     id: "project",
     kind: "project",
@@ -142,15 +160,17 @@ test("disposed watcher drops ConfigChange and FileChanged continuations", async 
   });
   t.after(() => watcher.dispose());
 
-  fs.writeFileSync(path.join(cwd, ".env"), "A=1\n");
-  fs.writeFileSync(path.join(cwd, ".claude", "settings.json"), "{}\n");
-  await waitFor(
-    () =>
-      pending.some(({ event }) => event === "FileChanged") &&
-      pending.some(({ event }) => event === "ConfigChange"),
+  const onProjectChange = callbacks.get(path.resolve(cwd));
+  assert.ok(onProjectChange);
+  onProjectChange("change", ".env");
+  onProjectChange("change", path.join(".claude", "settings.json"));
+  assert.deepEqual(
+    pending.map(({ event }) => event),
+    ["FileChanged", "ConfigChange"],
   );
 
   watcher.dispose();
+  await Promise.all(watcherClosed);
   stale = true;
   const unhandled: RuntimeValue[] = [];
   const onUnhandled = (reason: RuntimeValue) => unhandled.push(reason);

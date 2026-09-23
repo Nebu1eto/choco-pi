@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  InlineExtension,
+} from "@earendil-works/pi-coding-agent";
 
 import { registerAgents } from "../src/agent-types.ts";
 import { runAgent, type RunOptions } from "../src/agent-runner.ts";
@@ -20,6 +24,10 @@ interface NamedInlineFactory {
   name: string;
   hidden?: boolean;
   factory(pi: ExtensionAPI): void | Promise<void>;
+}
+
+function isNamedInlineFactory(value: InlineExtension): value is NamedInlineFactory {
+  return !(value instanceof Function) && "factory" in value && "name" in value;
 }
 
 function reinterpretHostValue<Target>(value: RuntimeValue): Target {
@@ -70,6 +78,7 @@ async function captureLoaderOptions(agentConfig: AgentConfig): Promise<LoaderOpt
         depth: 2,
         maxSubagentDepth: 3,
       },
+      fastMode: { requested: true, source: "inherited", revision: 4 },
       createResourceLoader: (loaderOptions) => {
         captured = loaderOptions;
         throw stop;
@@ -135,6 +144,21 @@ test("runAgent wires child status through loader allowlists and excludes", async
       "/tmp/extensions/beta.ts",
     ]);
     await invokeStatusFactory(exclude);
+  } finally {
+    registerAgents(new Map());
+  }
+});
+
+test("runAgent always installs fast mode before loader reload, including extensions false", async () => {
+  try {
+    const options = await captureLoaderOptions(config("fast-inline", false));
+    assert.equal(options.noExtensions, true);
+    const inline = options.extensionFactories?.find(
+      (factory) => factory.name === "subagent-fast-mode",
+    );
+    assert.ok(inline, "fast-mode registration must be an inline loader factory");
+    assert.ok(isNamedInlineFactory(inline), "fast-mode registration must use named metadata");
+    assert.equal(inline.hidden, true);
   } finally {
     registerAgents(new Map());
   }

@@ -1,36 +1,57 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AdapterState } from "../src/adapter/activation/state.ts";
 import type { NormalRuntimePlan } from "../src/adapter/activation/runtime-plan.ts";
 import { DEFAULT_CODEX_CONVERSION_CONFIG } from "../src/adapter/activation/config.ts";
+import { createCodexTurnState } from "../src/providers/openai-codex/turn-state.ts";
 import { renderCodexStatus } from "../src/ui/status.ts";
+import { getFastModeBridge } from "../../../extensions/lib/fast-mode-state.ts";
+import { createSdkFixture } from "./sdk-fixture.ts";
 
-const CODEX_FAST_MODE_SYMBOL = Symbol.for("choco-pi.codex-fast-mode");
-
-interface PublishedFastModeState {
-  enabled: boolean;
+const LEGACY_SYMBOL: unique symbol = Symbol.for("choco-pi.codex-fast-mode");
+interface LegacyRegistry {
+  [LEGACY_SYMBOL]?: { enabled: boolean };
 }
 
-type StatusUiFixture = Pick<ExtensionContext["ui"], "setStatus"> &
-  Partial<Omit<ExtensionContext["ui"], "setStatus">>;
+const model: Model<Api> = {
+  id: "fixture",
+  name: "Fixture",
+  api: "openai-codex-responses",
+  provider: "openai-codex",
+  baseUrl: "https://chatgpt.com/backend-api/codex",
+  reasoning: true,
+  input: ["text"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 128_000,
+  maxTokens: 16_000,
+};
 
-function statusUiFixture(value: StatusUiFixture): ExtensionContext["ui"] {
-  // SAFETY: The status-line-disabled path exercises only setStatus on the UI fixture.
-  return value as ExtensionContext["ui"];
-}
-
-test("Codex status publishes effective Fast mode while its status line is disabled", () => {
-  // SAFETY: The test reads and restores only its symbol-keyed registry slot.
-  const registry = globalThis as { [CODEX_FAST_MODE_SYMBOL]?: PublishedFastModeState };
-  const previous = registry[CODEX_FAST_MODE_SYMBOL];
+test("Codex status reads session-owned explicit off without publishing a global default", async () => {
+  const fixture = await createSdkFixture(model);
+  const legacy = { enabled: true };
+  const registry: typeof globalThis & LegacyRegistry = globalThis;
+  Object.defineProperty(globalThis, LEGACY_SYMBOL, { configurable: true, value: legacy });
+  const bridge = getFastModeBridge();
+  const controller = bridge.register({
+    sessionId: fixture.ctx.sessionManager.getSessionId(),
+    owner: {},
+    generation: 1,
+    initial: { requested: false, source: "explicit" },
+  });
+  let status: string | undefined;
   const config = {
     ...DEFAULT_CODEX_CONVERSION_CONFIG,
     openai: { ...DEFAULT_CODEX_CONVERSION_CONFIG.openai, fast: true },
-    ui: { ...DEFAULT_CODEX_CONVERSION_CONFIG.ui, statusLine: false },
   };
-  // SAFETY: With the status line disabled, renderCodexStatus reads only config from this state.
-  const state = { config } as AdapterState;
+  const state: AdapterState = {
+    enabled: true,
+    cwd: process.cwd(),
+    promptSkills: [],
+    config,
+    executionMode: "normal",
+    codexTurnState: createCodexTurnState(),
+  };
   const plan: NormalRuntimePlan = {
     kind: "normal",
     prompt: "normal",
@@ -42,27 +63,14 @@ test("Codex status publishes effective Fast mode while its status line is disabl
     effectiveOpenAICodex: true,
     nativeCompaction: false,
   };
-  // SAFETY: The status-line-disabled path exercises only hasUI and ui.setStatus.
-  const ctx = {
-    hasUI: true,
-    ui: statusUiFixture({ setStatus: () => {} }),
-  } as ExtensionContext;
-
   try {
-    renderCodexStatus(ctx, state, plan);
-    assert.equal(registry[CODEX_FAST_MODE_SYMBOL]?.enabled, true);
-
-    renderCodexStatus(ctx, state, { ...plan, effectiveOpenAICodex: false });
-    assert.equal(registry[CODEX_FAST_MODE_SYMBOL]?.enabled, false);
-
-    state.config = {
-      ...config,
-      openai: { ...config.openai, fast: false },
-    };
-    renderCodexStatus(ctx, state, plan);
-    assert.equal(registry[CODEX_FAST_MODE_SYMBOL]?.enabled, false);
+    renderCodexStatus(fixture.ctx, state, plan);
+    status = fixture.ctx.hasUI ? status : undefined;
+    assert.doesNotMatch(status ?? "", /fast/i);
+    assert.equal(registry[LEGACY_SYMBOL], legacy);
   } finally {
-    if (previous === undefined) delete registry[CODEX_FAST_MODE_SYMBOL];
-    else registry[CODEX_FAST_MODE_SYMBOL] = previous;
+    controller.dispose();
+    fixture.session.dispose();
+    Reflect.deleteProperty(globalThis, LEGACY_SYMBOL);
   }
 });

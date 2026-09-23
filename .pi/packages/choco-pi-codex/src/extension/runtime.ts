@@ -272,9 +272,6 @@ export function createCodexExtensionRuntime(
             signal: controller.signal,
             ...reasoning,
             textVerbosity: config.openai.verbosity,
-            ...conditionalProperties(Boolean(config.openai.fast), {
-              serviceTier: "priority" as const,
-            }),
             onPayload: (body) => {
               if (!isBoundaryValue(body)) return undefined;
               return rewriteFinalRequest

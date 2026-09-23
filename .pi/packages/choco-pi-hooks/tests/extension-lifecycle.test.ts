@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { cleanupSessionResources } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import chocoPiHooks from "../src/extension.ts";
 import type { RuntimeValue } from "../src/validation.ts";
@@ -16,6 +20,10 @@ interface ExtensionApiDouble {
     on(event: string, handler: Handler): () => void;
     emit(): void;
   };
+  getFlag?(name: string): boolean | string | undefined;
+  setSessionName?(name: string): void;
+  sendUserMessage?(message: string): void;
+  sendMessage?(message: RuntimeValue): void;
 }
 
 interface ShutdownContextDouble {
@@ -140,6 +148,66 @@ test("session shutdown synchronously disposes producers and snapshots context", 
   assert.equal(activeEventProducers, 0);
   stale = true;
   await completion;
+});
+
+test("SDK session cleanup disposes listeners and invalidates a pending session start", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "choco-pi-hooks-cleanup-"));
+  const extensionHandlers = new Map<string, Handler[]>();
+  let activeEventProducers = 0;
+  const addExtensionHandler = (event: string, handler: Handler) => {
+    const handlers = extensionHandlers.get(event) ?? [];
+    handlers.push(handler);
+    extensionHandlers.set(event, handlers);
+  };
+  try {
+    chocoPiHooks(
+      extensionApi({
+        registerFlag() {},
+        registerCommand() {},
+        registerTool() {},
+        registerMarkdownTransformer() {},
+        on: addExtensionHandler,
+        getFlag: () => undefined,
+        setSessionName() {},
+        sendUserMessage() {},
+        sendMessage() {},
+        events: {
+          on() {
+            activeEventProducers += 1;
+            let active = true;
+            return () => {
+              if (!active) return;
+              active = false;
+              activeEventProducers -= 1;
+            };
+          },
+          emit() {},
+        },
+      }),
+    );
+    const start = extensionHandlers.get("session_start")?.[0];
+    assert.ok(start);
+    const sessionId = `hooks-cleanup-${crypto.randomUUID()}`;
+    const ctx = {
+      cwd,
+      mode: "json",
+      thinkingLevel: "off",
+      model: undefined,
+      isProjectTrusted: () => true,
+      sessionManager: {
+        getSessionId: () => sessionId,
+        getSessionFile: () => undefined,
+      },
+    };
+    const startCompletion = Promise.resolve(start({ reason: "startup" }, ctx));
+
+    cleanupSessionResources(sessionId);
+    assert.equal(activeEventProducers, 0);
+    await startCompletion;
+    assert.equal(activeEventProducers, 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test("repo-root completion runs once across context replacement, stale cancellation, and failure", async () => {

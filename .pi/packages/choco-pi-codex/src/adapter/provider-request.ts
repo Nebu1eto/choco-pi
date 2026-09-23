@@ -31,6 +31,11 @@ import {
   RESPONSES_LITE_HEADER,
   type ResponsesLiteCompatibleBody,
 } from "../providers/openai-codex/responses-lite.ts";
+import {
+  codexServiceTierForDecision,
+  snapshotCodexFastModeDecision,
+  type CodexFastModeDecision,
+} from "../providers/openai-codex/fast-mode-decision.ts";
 
 function prepareCodexProviderRequest(
   payload: BoundaryValue,
@@ -42,17 +47,34 @@ function prepareCodexProviderRequest(
   if (!isAdapterRuntime(plan) || (!plan.effectiveOpenAICodex && !isResponsesContext(ctx))) {
     return undefined;
   }
+  const model = ctx.model;
+  if (!model) return undefined;
+  const fastModeDecision = snapshotCodexFastModeDecision(
+    ctx.sessionManager.getSessionId(),
+    model,
+    state.config.openai.fast === true,
+  );
   return {
     plan,
+    fastModeDecision,
     configuredPayload: applyCodexRequestOptions(
       applyVoiceSystemPrompt(payload, state.voiceSystemPromptOverride),
       state.config,
       {
-        serviceTier: plan.effectiveOpenAICodex,
+        serviceTier: false,
         verbosity: true,
       },
     ),
   };
+}
+
+function applyAuthoritativeServiceTier(
+  payload: BoundaryValue,
+  decision: CodexFastModeDecision,
+): BoundaryValue {
+  if (!isRecord(payload)) return payload;
+  const serviceTier = codexServiceTierForDecision(decision);
+  return serviceTier ? { ...payload, service_tier: serviceTier } : payload;
 }
 
 function applyVoiceSystemPrompt(
@@ -123,7 +145,7 @@ export async function rewriteCodexProviderRequest(
   const prepared = prepareCodexProviderRequest(payload, ctx, state);
   if (!prepared) return undefined;
   if (!hasCanonicalAliasEndpoint(ctx, state)) return undefined;
-  const { plan, configuredPayload } = prepared;
+  const { plan, fastModeDecision, configuredPayload } = prepared;
   let rewrittenPayload = configuredPayload;
   if (plan.nativeCompaction || state.pendingPiCompactionNativeWindow) {
     const piCompactionPayload = await injectPendingNativeWindowIntoPiCompactionRequest(
@@ -136,7 +158,10 @@ export async function rewriteCodexProviderRequest(
       (await rewriteCodexCompactedProviderRequest(configuredPayload, ctx, state)) ??
       configuredPayload;
   }
-  const finalPayload = applyCodexRuntimePayload(rewrittenPayload, isCodeModeRuntime(plan));
+  const finalPayload = applyAuthoritativeServiceTier(
+    applyCodexRuntimePayload(rewrittenPayload, isCodeModeRuntime(plan)),
+    fastModeDecision,
+  );
   // Stock Responses providers and configured Code Mode overlays have no
   // post-serialization callback. Keep native replay on the instructions that
   // reached this final hook boundary; the custom Codex provider captures again
@@ -153,7 +178,10 @@ export function rewriteCodexPrewarmProviderRequest(
 ): BoundaryValue | undefined {
   const prepared = prepareCodexProviderRequest(payload, ctx, state);
   return prepared
-    ? applyCodexRuntimePayload(prepared.configuredPayload, isCodeModeRuntime(prepared.plan))
+    ? applyAuthoritativeServiceTier(
+        applyCodexRuntimePayload(prepared.configuredPayload, isCodeModeRuntime(prepared.plan)),
+        prepared.fastModeDecision,
+      )
     : undefined;
 }
 

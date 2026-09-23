@@ -41,6 +41,7 @@ import type { CodexUiController } from "./ui.ts";
 import { withLiveCtx } from "./live-context.ts";
 import { resetRegisteredToolCapture } from "../tools/code-mode/registered-tool-bridge.ts";
 import { isNativeSteerPending } from "../providers/openai-codex/native-steering.ts";
+import { initializeCodexFastModeDefault } from "../providers/openai-codex/fast-mode-decision.ts";
 import {
   assignTurnOrdinals,
   computeCut,
@@ -196,6 +197,10 @@ export function registerCodexEvents(
       cwd: ctx.cwd,
       projectTrusted: ctx.isProjectTrusted(),
     });
+    initializeCodexFastModeDefault(
+      ctx.sessionManager.getSessionId(),
+      state.config.openai.fast === true,
+    );
     state.weeklyUsageLeft = undefined;
     state.executionMode = state.config.executionMode;
     state.activeProviderSystemPrompt = undefined;

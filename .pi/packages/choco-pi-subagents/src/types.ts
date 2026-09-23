@@ -77,6 +77,8 @@ export interface AgentConfig {
   runInBackground?: boolean;
   /** Default for spawn: no extension tools. undefined = caller decides. */
   isolated?: boolean;
+  /** Default fast-mode request. Caller parameters override this default. */
+  fastMode?: boolean;
   /** Persistent memory scope — agents with memory get a persistent directory and MEMORY.md */
   memory?: MemoryScope;
   /**
@@ -276,6 +278,16 @@ export interface AgentRecord {
    * directory as their ancestors' instead of the child session's own id.
    */
   rootSessionId?: string;
+  /** Accepted fast-mode request for the current generation. */
+  fastModeRequested?: boolean;
+  fastModeSource?: "default" | "explicit" | "inherited";
+  fastModeRevision?: number;
+  /** Mutable bootstrap snapshot so accepted updates win before session_start/prewarm. */
+  fastModeInitialization?: {
+    requested: boolean;
+    source: "default" | "explicit" | "inherited";
+    revision: number;
+  };
 }
 
 export interface AgentInvocation {
@@ -291,6 +303,7 @@ export interface AgentInvocation {
   inheritContext?: boolean;
   runInBackground?: boolean;
   isolation?: IsolationMode;
+  fastMode?: boolean;
 }
 
 /** Details attached to custom notification messages for visual rendering. */
@@ -347,6 +360,7 @@ export interface ScheduledSubagent {
   idle_timeout_ms?: number;
   isolated?: boolean;
   isolation?: IsolationMode;
+  fast_mode?: boolean;
 
   // state
   enabled: boolean;

@@ -257,6 +257,26 @@ its filesystem claim queue. The manager already owns the authoritative child
 record for the package's retention window, so adding a second filesystem message
 store here would create two competing result owners rather than improve recovery.
 
+### Child fast-mode propagation and control
+
+The fork resolves the process-global `Symbol.for("choco-pi.fast-mode-state")`
+bridge structurally, without importing the repository-root implementation. Every
+accepted spawn snapshots the immediate parent's requested state; an explicit
+`fast_mode` parameter or agent definition overrides that snapshot. A mandatory
+hidden inline loader factory registers the child before extension filtering and
+therefore survives `extensions: false`, isolation, allowlists, and denylists.
+Queued changes update the accepted record before launch, while live changes use
+the child controller. Root `set_subagent_fast_mode` owns the full descendant
+tree; nested copies own only their descendants. Records, result output, and
+focused invocation metadata expose the request and revision. The request is
+also carried by workflow steps, schedules, RPC/default spawn paths, mentions,
+BTW clones, worktrees, and resumed sessions through the shared manager boundary;
+child registration persists only fast-mode state and never auto-resumes a prompt.
+The accepted generation retains a mutable bootstrap snapshot until child startup,
+so updates during loader initialization apply to the first prewarm/request. An
+explicit child override is registered ahead of copied parent history and persisted
+as the first child-owned fast-mode entry.
+
 The root and nested tool descriptions, active-resume refusals, spawn results,
 and timeout guidance direct the caller to continue other work until the terminal
 completion notification, retrieve the result exactly once afterward, and use
@@ -879,3 +899,13 @@ excludes system messages from cloned history, and installs the prompt through
 `DefaultResourceLoader.systemPromptOverride`; Pi 0.86.1 exposes
 `AgentState.systemPrompt` as a getter. Test fixtures now use `JsonObject` tool
 arguments.
+
+## 2026-09-21 choco-pi patch: focused Fast-mode canonical routing
+
+Focused `/fast` commands now route through `AgentManager.setFastMode`, which
+updates the owned record and the child session's canonical inline Fast-mode
+controller. Isolated and extension-filtered children therefore no longer depend
+on the optional legacy model-controls UI registry. Bare toggles read the current
+canonical request, status remains model-aware, and non-OpenAI models retain the
+preference without activating acceleration. Coverage includes the inline child
+factory with no legacy UI registration.

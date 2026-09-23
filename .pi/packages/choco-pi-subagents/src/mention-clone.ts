@@ -74,6 +74,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { runInChildSessionContext } from "./child-context.ts";
+import { createChildFastModeExtension, snapshotFastMode } from "./fast-mode-bridge.ts";
 import { agentMentionReminder } from "./mention.ts";
 import type { SubagentType, ThinkingLevel } from "./types.ts";
 
@@ -226,6 +227,7 @@ export async function runMentionClone(opts: MentionCloneOptions): Promise<Mentio
   const { ctx, type, message, agentTool } = opts;
 
   const sessionId = ctx.sessionManager.getSessionId();
+  const fastMode = snapshotFastMode(sessionId);
   const mentionGeneration = (mentionGenerations.get(sessionId) ?? 0) + 1;
   mentionGenerations.set(sessionId, mentionGeneration);
   const cwd = ctx.cwd;
@@ -267,7 +269,13 @@ export async function runMentionClone(opts: MentionCloneOptions): Promise<Mentio
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      extensionFactories: [createMentionClonePromptExtension(systemPrompt)],
+      extensionFactories: [
+        createMentionClonePromptExtension(systemPrompt),
+        createChildFastModeExtension(opts, mentionGeneration, {
+          ...fastMode,
+          source: "inherited",
+        }),
+      ],
       // This is the SDK's supported exact-prompt construction seam. Suppress
       // appended prompt fragments too: they are already present in the resolved
       // parent prompt and applying them again would duplicate the baseline.

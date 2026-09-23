@@ -1,6 +1,7 @@
 import {
   isBoolean,
   isObject,
+  isString,
   reinterpretHostValue,
   type RuntimeValue,
 } from "./lib/runtime-values.ts";
@@ -15,7 +16,12 @@ import {
 } from "@earendil-works/pi-tui";
 import { EFFORT_PICKER_FOCUS } from "./lib/native-settings.ts";
 import { openPreferencesPicker } from "./status-commands.ts";
-import { inChildSessionContext } from "../packages/choco-pi-subagents/src/child-context.ts";
+import {
+  FAST_MODE_ENTRY,
+  getFastModeBridge,
+  supportsFastMode,
+  type FastModeController,
+} from "./lib/fast-mode-state.ts";
 
 const THINKING_LEVELS: ThinkingLevel[] = [
   "off",
@@ -26,11 +32,9 @@ const THINKING_LEVELS: ThinkingLevel[] = [
   "xhigh",
   "max",
 ];
-const FAST_MODE_ENTRY = "choco-pi-fast-mode";
-const ROOT_FAST_MODE_SYMBOL = Symbol.for("choco-pi.model-controls.root-fast-mode");
-const CODEX_FAST_MODE_SYMBOL = Symbol.for("choco-pi.codex-fast-mode");
 const FAST_EDITOR_FACTORY = Symbol.for("choco-pi.model-controls.fast-editor-factory");
 const FOCUSED_MODEL_CONTROLS_SYMBOL = Symbol.for("choco-pi.model-controls.focused-sessions");
+const FOCUSED_AGENT_RUNTIME_SYMBOL = Symbol.for("choco-pi.subagents.focused-agent-runtime");
 const ZENTUI_EDITOR_FACTORY = Symbol.for("pi-zentui.editor-factory");
 const ZENTUI_EDITOR_SYMBOLS = [
   ZENTUI_EDITOR_FACTORY,
@@ -47,6 +51,28 @@ type FastEditorState = {
 };
 
 type FocusedModelControlsRegistry = Map<string, { setFast(action: string): string }>;
+type FocusedAgentRuntimeRegistry = {
+  [FOCUSED_AGENT_RUNTIME_SYMBOL]?: {
+    current():
+      | {
+          modelId?: RuntimeValue;
+          modelName?: RuntimeValue;
+          provider?: RuntimeValue;
+          fastModeSupported?: RuntimeValue;
+          fastModeActive?: RuntimeValue;
+        }
+      | undefined;
+  };
+};
+
+export type FocusedFastEditorState = {
+  focused: true;
+  modelId?: string;
+  modelName?: string;
+  provider?: string;
+  supported: boolean;
+  active: boolean;
+};
 
 function focusedModelControlsRegistry(): FocusedModelControlsRegistry {
   const host = reinterpretHostValue<
@@ -55,6 +81,22 @@ function focusedModelControlsRegistry(): FocusedModelControlsRegistry {
     }
   >(globalThis);
   return (host[FOCUSED_MODEL_CONTROLS_SYMBOL] ??= new Map());
+}
+
+function focusedFastEditorState(): FocusedFastEditorState | undefined {
+  const host: typeof globalThis & FocusedAgentRuntimeRegistry = globalThis;
+  const source = host[FOCUSED_AGENT_RUNTIME_SYMBOL];
+  if (!source) return undefined;
+  const current = source.current();
+  const state: FocusedFastEditorState = {
+    focused: true,
+    supported: isBoolean(current?.fastModeSupported) && current.fastModeSupported,
+    active: isBoolean(current?.fastModeActive) && current.fastModeActive,
+  };
+  if (isString(current?.modelId)) state.modelId = current.modelId;
+  if (isString(current?.modelName)) state.modelName = current.modelName;
+  if (isString(current?.provider)) state.provider = current.provider;
+  return state;
 }
 
 type FastEditorFactory = EditorFactory & {
@@ -83,22 +125,12 @@ function supportedThinkingLevels(model: Model<Api>): ThinkingLevel[] {
   });
 }
 
-function isCodexModel(model: Model<Api> | undefined): boolean {
-  return model?.provider === "openai-codex";
-}
-
 function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
   return isObject(value) && value !== null && !Array.isArray(value);
 }
 
-function codexFastModeEnabled(): boolean {
-  const candidate =
-    reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(globalThis)[CODEX_FAST_MODE_SYMBOL];
-  return isRecord(candidate) && isBoolean(candidate.enabled) && candidate.enabled;
-}
-
 export function isEffectiveFastModeEnabled(sessionEnabled: boolean): boolean {
-  return sessionEnabled || codexFastModeEnabled();
+  return sessionEnabled;
 }
 
 export function restoreFastMode(entries: readonly SessionEntry[], fallback = false): boolean {
@@ -118,13 +150,22 @@ export function appendFastModeToEditorMetadata(
   enabled: boolean,
   style: (text: string) => string = (text) => text,
 ): string[] {
-  if (!model || !isCodexModel(model) || !enabled) return lines;
+  if (!model || !supportsFastMode(model) || !enabled) return lines;
 
+  return appendFastBadge(lines, width, model.id, style);
+}
+
+function appendFastBadge(
+  lines: string[],
+  width: number,
+  modelId: string,
+  style: (text: string) => string,
+): string[] {
   for (let index = lines.length - 1; index >= 0; index--) {
     const line = lines[index];
     if (line === undefined) continue;
     const plain = stripTerminalSequences(line).trimEnd();
-    if (!plain.includes(model.id)) continue;
+    if (!plain.includes(modelId)) continue;
 
     const label = style("fast");
     const labelWidth = visibleWidth(label);
@@ -149,6 +190,34 @@ export function appendFastModeToEditorMetadata(
   return lines;
 }
 
+export function appendFocusedModelToEditorMetadata(
+  lines: string[],
+  width: number,
+  rootModel: Model<Api> | undefined,
+  rootEnabled: boolean,
+  focused: FocusedFastEditorState | undefined,
+  style: (text: string) => string = (text) => text,
+): string[] {
+  if (!focused) {
+    return appendFastModeToEditorMetadata(lines, width, rootModel, rootEnabled, style);
+  }
+  if (!rootModel || !focused.modelId) return lines;
+  const providerPattern = new RegExp(
+    rootModel.provider.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "gi",
+  );
+  const updated = lines.map((line) =>
+    line.includes(rootModel.id)
+      ? line
+          .replaceAll(rootModel.id, focused.modelId ?? rootModel.id)
+          .replaceAll(rootModel.name, focused.modelName ?? focused.modelId ?? rootModel.name)
+          .replace(providerPattern, focused.provider ?? rootModel.provider)
+      : line,
+  );
+  if (!focused.supported || !focused.active) return updated;
+  return appendFastBadge(updated, width, focused.modelId, style);
+}
+
 export function wrapFastModeEditorFactory(
   baseFactory: EditorFactory,
   state: FastEditorState,
@@ -165,11 +234,12 @@ export function wrapFastModeEditorFactory(
     const editor = baseFactory(...args);
     const render = editor.render.bind(editor);
     editor.render = (width: number) =>
-      appendFastModeToEditorMetadata(
+      appendFocusedModelToEditorMetadata(
         render(width),
         width,
         state.getModel(),
         state.isEnabled(),
+        focusedFastEditorState(),
         state.style,
       );
     return editor;
@@ -220,17 +290,13 @@ export function installFastModeEditorWhenReady(
 }
 
 export default function modelControls(pi: ExtensionAPI): void {
-  const isChild = inChildSessionContext();
-  const host = reinterpretHostValue<
-    typeof globalThis & { [ROOT_FAST_MODE_SYMBOL]?: { isEnabled(): boolean } }
-  >(globalThis);
-  // Capture before child extensions initialize; their own history takes precedence.
-  const inheritedFast = isChild ? (host[ROOT_FAST_MODE_SYMBOL]?.isEnabled() ?? false) : false;
+  const bridge = getFastModeBridge();
   let fastEnabled = false;
-  const rootFastMode = { isEnabled: () => isEffectiveFastModeEnabled(fastEnabled) };
+  let fastController: FastModeController | undefined;
   let effortCompletions: ThinkingLevel[] = ["off"];
   let activeModel: Model<Api> | undefined;
   let editorInstallGeneration = 0;
+  let stateGeneration = 0;
   let registeredSessionId: string | undefined;
 
   const updateModel = (model: Model<Api> | undefined): void => {
@@ -239,26 +305,52 @@ export default function modelControls(pi: ExtensionAPI): void {
   };
 
   const setFast = (actionInput: string): string => {
-    if (!isCodexModel(activeModel))
-      throw new Error("/fast is available only for OpenAI Codex models.");
+    const currentController = registeredSessionId
+      ? (bridge.get(registeredSessionId) ?? fastController)
+      : fastController;
     const action = actionInput.trim().toLowerCase();
     if (action === "status") {
-      return `Fast mode: ${isEffectiveFastModeEnabled(fastEnabled) ? "on" : "off"}`;
+      const decision = currentController?.decide(activeModel);
+      return `Fast mode: ${decision?.requested ? "on" : "off"}${decision && !decision.supported ? " (saved; inactive for this model)" : ""}`;
     }
     if (action && action !== "on" && action !== "off") {
       throw new Error("Usage: /fast [on|off|status]");
     }
-    fastEnabled = action === "on" || (action === "" && !fastEnabled);
-    pi.appendEntry(FAST_MODE_ENTRY, { enabled: fastEnabled });
-    return `Fast mode: ${isEffectiveFastModeEnabled(fastEnabled) ? "on" : "off"}`;
+    const requested =
+      action === "on" || (action === "" && !currentController?.getState().requested);
+    const controller = currentController;
+    if (!controller) throw new Error("Fast mode state is not initialized.");
+    const state = controller.set(requested);
+    fastEnabled = state.requested;
+    return `Fast mode: ${fastEnabled ? "on" : "off"}${controller.decide(activeModel).supported ? "" : " (saved; inactive for this model)"}`;
+  };
+
+  const registerState = (ctx: ExtensionContext): void => {
+    updateModel(ctx.model);
+    registeredSessionId = ctx.sessionManager.getSessionId();
+    fastController = bridge.get(registeredSessionId);
+    if (!fastController) {
+      fastController = bridge.register({
+        sessionId: registeredSessionId,
+        owner: pi,
+        generation: stateGeneration,
+        initial: { requested: false, source: "default" },
+        entries: ctx.sessionManager.getBranch(),
+        persist: (state) =>
+          pi.appendEntry(FAST_MODE_ENTRY, {
+            enabled: state.requested,
+            source: state.source,
+            revision: state.revision,
+          }),
+      });
+    }
+    fastEnabled = fastController.getState().requested;
   };
 
   pi.on("session_start", (_event, ctx) => {
-    updateModel(ctx.model);
-    fastEnabled = restoreFastMode(ctx.sessionManager.getBranch(), inheritedFast);
-    if (!isChild) host[ROOT_FAST_MODE_SYMBOL] = rootFastMode;
-    registeredSessionId = ctx.sessionManager.getSessionId();
-    focusedModelControlsRegistry().set(registeredSessionId, { setFast });
+    registerState(ctx);
+    const sessionId = registeredSessionId;
+    if (sessionId) focusedModelControlsRegistry().set(sessionId, { setFast });
     const generation = ++editorInstallGeneration;
     if (ctx.mode !== "tui") return;
     // Local editors load before package editors. Retry for up to five seconds so
@@ -267,15 +359,28 @@ export default function modelControls(pi: ExtensionAPI): void {
       ctx.ui,
       {
         getModel: () => activeModel,
-        isEnabled: () => isEffectiveFastModeEnabled(fastEnabled),
+        isEnabled: () => {
+          return (
+            (registeredSessionId ? bridge.get(registeredSessionId) : fastController)?.decide(
+              activeModel,
+            ).active ?? false
+          );
+        },
         style: (text) => ctx.ui.theme.fg("muted", text),
       },
       () => generation === editorInstallGeneration,
     );
   });
+  pi.on("session_tree", (_event, ctx) => {
+    fastController?.dispose();
+    fastController = undefined;
+    stateGeneration++;
+    registerState(ctx);
+  });
   pi.on("session_shutdown", () => {
     editorInstallGeneration++;
-    if (host[ROOT_FAST_MODE_SYMBOL] === rootFastMode) delete host[ROOT_FAST_MODE_SYMBOL];
+    fastController?.dispose();
+    fastController = undefined;
     if (registeredSessionId) focusedModelControlsRegistry().delete(registeredSessionId);
     registeredSessionId = undefined;
   });
@@ -325,15 +430,13 @@ export default function modelControls(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("fast", {
-    description: "Control OpenAI Codex Fast mode: /fast [on|off|status]",
+    description: "Set the session Fast mode preference: /fast [on|off|status]",
     handler: async (args, ctx) => {
       try {
         updateModel(ctx.model);
         const status = setFast(args);
-        if (args.trim().toLowerCase() === "status") ctx.ui.notify(status, "info");
-        if (args.trim().toLowerCase() === "off" && isEffectiveFastModeEnabled(fastEnabled)) {
-          ctx.ui.notify("Fast mode remains on through Codex preferences.", "info");
-        }
+        if (args.trim().toLowerCase() === "status" || status.includes("inactive"))
+          ctx.ui.notify(status, "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
         return;
@@ -345,8 +448,10 @@ export default function modelControls(pi: ExtensionAPI): void {
   });
 
   pi.on("before_provider_request", (event, ctx) => {
-    const supportsFast = isCodexModel(ctx.model) || (isChild && ctx.model?.provider === "openai");
-    if (!fastEnabled || !supportsFast || !isRecord(event.payload)) return;
-    return { ...event.payload, service_tier: "priority" };
+    const decision = (
+      registeredSessionId ? bridge.get(registeredSessionId) : fastController
+    )?.decide(ctx.model);
+    if (!decision?.supported || !isRecord(event.payload)) return;
+    return { ...event.payload, service_tier: decision.active ? "priority" : "default" };
   });
 }

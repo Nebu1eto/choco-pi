@@ -147,13 +147,6 @@ function buildCompactionRequestOptions(
   return {
     parallel_tool_calls: true,
     prompt_cache_key: clampOpenAIPromptCacheKey(ctx.sessionManager.getSessionId()),
-    ...conditionalProperties(
-      Boolean(
-        resolveCodexRuntimePlanForState(ctx, state).effectiveOpenAICodex &&
-        state.config.openai.fast,
-      ),
-      { service_tier: "priority" },
-    ),
     text: { verbosity: state.config.openai.verbosity },
     ...conditionalProperties(Boolean(reasoning), { reasoning }),
   };

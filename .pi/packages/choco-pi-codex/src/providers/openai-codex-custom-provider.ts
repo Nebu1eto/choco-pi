@@ -31,6 +31,7 @@ import type {
   OpenAICodexStreamOptions,
   ResponsesBody,
 } from "./openai-codex/types.ts";
+import { isProtocolObject } from "./openai-codex/types.ts";
 import { recordWebSocketSseFallback } from "./openai-codex/websocket.ts";
 import {
   isWebSocketMessageTooBigError,
@@ -39,6 +40,12 @@ import {
 import { prewarmWebSocket } from "./openai-codex/websocket-stream.ts";
 import { openaiCodexNativeOAuthProvider } from "./openai-codex/oauth.ts";
 import { type CodexTurnState, withCodexTurnState } from "./openai-codex/turn-state.ts";
+import {
+  codexServiceTierForDecision,
+  isCurrentCodexFastModeDecision,
+  snapshotCodexFastModeDecision,
+  type CodexFastModeDecision,
+} from "./openai-codex/fast-mode-decision.ts";
 import { withRemoteCompactionV2Feature } from "./openai-responses/compaction-v2-feature.ts";
 import { normalizeResponsesToolHistory } from "./openai-responses/tool-history.ts";
 import {
@@ -53,7 +60,7 @@ export { buildCachedWebSocketRequestBody } from "./openai-codex/websocket-contin
 export { closeOpenAICodexWebSocketSessions } from "./openai-codex/websocket.ts";
 export type { ResponsesBody } from "./openai-codex/types.ts";
 
-async function prepareCodexRequestBody<TApi extends Api>(
+export async function prepareCodexRequestBody<TApi extends Api>(
   model: Model<TApi>,
   context: TranscriptContext,
   options: OpenAICodexStreamOptions | undefined,
@@ -61,11 +68,7 @@ async function prepareCodexRequestBody<TApi extends Api>(
 ): Promise<ResponsesBody> {
   let body = buildRequestBody(model, context, options);
   const nextBody = await options?.onPayload?.(body, model);
-  if (nextBody !== undefined) {
-    // SAFETY: The provider payload hook receives a ResponsesBody and a defined replacement must
-    // preserve that same request representation for the host provider API.
-    body = nextBody as ResponsesBody;
-  }
+  if (nextBody !== undefined && isProtocolObject(nextBody)) body = { ...body, ...nextBody };
   if (responsesLite) {
     body = isResponsesLiteRequest(body)
       ? namespaceExistingResponsesLiteRequest({ ...body, parallel_tool_calls: false })
@@ -76,7 +79,15 @@ async function prepareCodexRequestBody<TApi extends Api>(
     const input = normalizeResponsesToolHistory(body.input ?? []);
     if (input !== body.input) body = { ...body, input };
   }
-  return body;
+  return applyFrozenFastModeDecision(body, options?.fastModeDecision);
+}
+
+function applyFrozenFastModeDecision(
+  body: ResponsesBody,
+  decision: CodexFastModeDecision | undefined,
+): ResponsesBody {
+  const serviceTier = decision ? codexServiceTierForDecision(decision) : undefined;
+  return serviceTier ? { ...body, service_tier: serviceTier } : body;
 }
 
 export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
@@ -94,6 +105,17 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
   },
 ): Promise<CodexPrewarmResult | undefined> {
   const runtimeConfig = deps.getConfig?.();
+  const fastModeDecision = snapshotCodexFastModeDecision(
+    options.sessionId,
+    model,
+    runtimeConfig?.openai.fast === true,
+  );
+  const serviceTier = codexServiceTierForDecision(fastModeDecision);
+  options = {
+    ...options,
+    fastModeDecision,
+  };
+  if (serviceTier) options.serviceTier = serviceTier;
   if (
     getEffectiveCodexTransport(options.transport, runtimeConfig?.openai, options.sessionId) ===
     "sse"
@@ -117,13 +139,15 @@ export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
     : { ...options, grammarToolInputProperties };
   effectiveOptions.asyncCodeMode =
     runtimeConfig?.executionMode === "code" && runtimeConfig.openai.asyncCodeMode === true;
-  const body = deps.preparedBody
+  const preparedBody = deps.preparedBody
     ? structuredClone(deps.preparedBody)
     : await prepareCodexRequestBody(model, context, effectiveOptions, responsesLite);
+  const body = applyFrozenFastModeDecision(preparedBody, fastModeDecision);
+  if (!isCurrentCodexFastModeDecision(fastModeDecision)) return;
   const accountId = extractAccountId(options.apiKey);
   const routing = resolveCodexRequestRouting({
     model: body.model,
-    fast: runtimeConfig?.openai.fast === true,
+    fast: fastModeDecision.active,
     serviceTier: body.service_tier === null ? undefined : body.service_tier,
     normalOriginator: runtimeConfig?.openai.harnessIdentifierHeader
       ? PI_CODEX_CONVERSION_ORIGINATOR
@@ -195,10 +219,22 @@ export function createOpenAICodexProviderStream<TApi extends Api>(
   streamOptions: OpenAICodexStreamOptions | undefined,
   options: OpenAICodexProviderOptions,
 ) {
+  const runtimeConfig = options.getConfig?.();
+  const fastModeDecision = snapshotCodexFastModeDecision(
+    streamOptions?.sessionId,
+    model,
+    runtimeConfig?.openai.fast === true,
+  );
+  const serviceTier = codexServiceTierForDecision(fastModeDecision);
+  const effectiveStreamOptions: OpenAICodexStreamOptions = {
+    ...streamOptions,
+    fastModeDecision,
+  };
+  if (serviceTier) effectiveStreamOptions.serviceTier = serviceTier;
   return createCodexTransportStream(
     model,
     context,
-    streamOptions,
+    effectiveStreamOptions,
     createTransportDependencies(options),
   );
 }

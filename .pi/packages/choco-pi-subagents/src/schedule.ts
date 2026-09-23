@@ -67,6 +67,7 @@ export interface NewJobInput {
   idle_timeout_ms?: number;
   isolated?: boolean;
   isolation?: IsolationMode;
+  fast_mode?: boolean;
 }
 
 export class SubagentScheduler {
@@ -139,6 +140,7 @@ export class SubagentScheduler {
       idle_timeout_ms: input.idle_timeout_ms,
       isolated: input.isolated,
       isolation: input.isolation,
+      fast_mode: input.fast_mode,
       enabled: true,
       createdAt: new Date().toISOString(),
       runCount: 0,
@@ -307,6 +309,7 @@ export class SubagentScheduler {
         },
         isolated: job.isolated,
         thinkingLevel: job.thinking,
+        fastModeRequested: job.fast_mode,
         isolation: job.isolation,
       });
     } catch (err) {

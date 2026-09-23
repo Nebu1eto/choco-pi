@@ -1504,6 +1504,7 @@ export default function (pi: ExtensionAPI) {
       maxTurns?: number;
       toolCallId?: string;
       name?: string;
+      fastModeRequested?: boolean;
       budgets?: {
         timeoutMs?: number;
         maxToolCalls?: number;
@@ -1544,6 +1545,7 @@ export default function (pi: ExtensionAPI) {
     const record = await manager.resume(id, prompt, undefined, {
       isBackground: true,
       name: opts.name,
+      fastModeRequested: opts.fastModeRequested,
       budgets: opts.budgets,
       onToolActivity: bgCallbacks.onToolActivity,
       onAssistantUsage: bgCallbacks.onAssistantUsage,
@@ -1781,6 +1783,11 @@ export default function (pi: ExtensionAPI) {
         Type.Boolean({
           description:
             "If true, fork parent conversation into the agent. Default: false (fresh context).",
+        }),
+      ),
+      fast_mode: Type.Optional(
+        Type.Boolean({
+          description: "Request fast mode for this run; defaults to the parent request.",
         }),
       ),
       ...isolationParam(isWorktreeIsolationEnabled()),
@@ -2051,6 +2058,7 @@ export default function (pi: ExtensionAPI) {
         inheritContext,
         runInBackground,
         isolation,
+        fastMode: resolvedConfig.fastMode,
       };
       const { tags: invocationTags } = buildInvocationTags(agentInvocation);
       const detailBase = {
@@ -2107,6 +2115,7 @@ export default function (pi: ExtensionAPI) {
             idle_timeout_ms: resolvedConfig.idleTimeoutMs,
             isolated: isolated,
             isolation: isolation,
+            fast_mode: resolvedConfig.fastMode,
           });
           const next = scheduler.getNextRun(job.id);
           return textResult(
@@ -2149,6 +2158,7 @@ export default function (pi: ExtensionAPI) {
             maxTurns: effectiveMaxTurns,
             toolCallId,
             name: params.name,
+            fastModeRequested: params.fast_mode,
             budgets,
           });
           if (!record) {
@@ -2183,6 +2193,7 @@ export default function (pi: ExtensionAPI) {
 
         const record = await manager.resume(params.resume, params.prompt, signal, {
           name: params.name,
+          fastModeRequested: params.fast_mode,
           budgets,
         });
         if (!record) {
@@ -2236,6 +2247,7 @@ export default function (pi: ExtensionAPI) {
           isolated,
           inheritContext,
           thinkingLevel: thinking,
+          fastModeRequested: resolvedConfig.fastMode,
           isBackground: true,
           isolation,
           hookWorktreePath,
@@ -2377,6 +2389,7 @@ export default function (pi: ExtensionAPI) {
             isolated,
             inheritContext,
             thinkingLevel: thinking,
+            fastModeRequested: resolvedConfig.fastMode,
             isolation,
             hookWorktreePath,
             invocation: agentInvocation,
@@ -2498,6 +2511,7 @@ export default function (pi: ExtensionAPI) {
         inheritContext: false,
         runInBackground: true,
         isolation: resolvedConfig.isolation,
+        fastMode: resolvedConfig.fastMode,
       };
       const { state, callbacks } = createActivityTracker(effectiveMaxTurns);
       const outputTranscript = config?.outputTranscript ?? getOutputTranscriptDefault();
@@ -2519,6 +2533,7 @@ export default function (pi: ExtensionAPI) {
         isolated: resolvedConfig.isolated,
         inheritContext: false,
         thinkingLevel: resolvedConfig.thinking,
+        fastModeRequested: resolvedConfig.fastMode,
         isBackground: true,
         isolation: resolvedConfig.isolation,
         invocation,
@@ -2703,6 +2718,33 @@ export default function (pi: ExtensionAPI) {
     }),
   );
 
+  pi.registerTool(
+    defineTool({
+      name: "set_subagent_fast_mode",
+      label: "Set Subagent Fast Mode",
+      description:
+        "Enable or disable fast mode for a running or queued descendant. Applies deterministically to the accepted generation.",
+      promptSnippet: "Change a descendant subagent's fast-mode request",
+      parameters: Type.Object(
+        { agent_id: Type.String(), enabled: Type.Boolean() },
+        { additionalProperties: false },
+      ),
+      execute: async (_toolCallId, params) => {
+        const record = resolveAgentRef(params.agent_id);
+        if (!record) return textResult(`Agent not found: "${params.agent_id}".`);
+        const updated = manager.setFastMode(record.id, params.enabled);
+        if (!updated) {
+          return textResult(`Agent "${params.agent_id}" is no longer retained.`);
+        }
+        return textResult(
+          `Fast mode ${params.enabled ? "enabled" : "disabled"} for ${updated.id}. ` +
+            `Generation: ${updated.resultGeneration ?? 1}. Revision: ${updated.fastModeRevision ?? 0}. ` +
+            `Status: ${updated.status}.`,
+        );
+      },
+    }),
+  );
+
   // ---- get_subagent_result tool ----
 
   pi.registerTool(
@@ -2786,6 +2828,7 @@ export default function (pi: ExtensionAPI) {
         let output =
           `Agent: ${record.id}\n` +
           `Type: ${displayName} | Status: ${record.status}${getStatusNote(record.status)} | ${statsParts.join(" | ")}\n` +
+          `Fast mode: ${record.fastModeRequested ? "requested" : "standard"} (revision ${record.fastModeRevision ?? 0})\n` +
           `Description: ${record.description}\n\n`;
 
         const cancellation = record.cancellation;

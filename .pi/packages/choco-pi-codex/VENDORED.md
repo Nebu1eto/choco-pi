@@ -389,6 +389,24 @@ fidelity, and send-path exception isolation.
 
 ## Vendored install policy
 
+## Shared fast-mode request decisions (choco-pi addition)
+
+Codex provider entry points consume the validated v1 process bridge at
+`Symbol.for("choco-pi.fast-mode-state")` by session id. Each request freezes one
+decision before asynchronous preparation and maps its explicit `priority` or
+`standard` choice to the SDK-verified `priority` or `default` wire tier across the
+body, routing headers, retries, continuation, usage
+pricing fallback, prewarm/keepalive, and native-compaction streams. Prewarm rejects
+a bridge-backed snapshot whose revision changes before transport send. The legacy
+Codex config remains the fallback while sibling packages transition; Codex routing
+headers remain confined to the `openai-codex` provider implementation.
+
+Payload hooks and prepared prewarm bodies are followed by a final application of
+the frozen session decision, so conversion defaults cannot restore priority after
+an explicit off. Codex config initializes only a session controller whose source
+is still `default`; status rendering reads that controller and no longer publishes
+the former process-global default.
+
 This package declares the repository pnpm toolchain (`pnpm@11.11.0`) and an
 isolated one-package workspace boundary. Frozen installs retain the repository's
 `typebox@1.3.29` release-age exception. This is installer configuration only;

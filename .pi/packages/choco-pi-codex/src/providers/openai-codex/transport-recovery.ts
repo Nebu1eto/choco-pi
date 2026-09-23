@@ -77,7 +77,6 @@ import type {
   CodexDiagnosticsEvent,
   CodexDiagnosticsLane,
   CodexDiagnosticsSink,
-  CodexProviderStreamOptions,
   OpenAICodexStreamOptions,
   ProviderOutputItem,
   ResponsesBody,
@@ -260,7 +259,7 @@ async function openCodexSSE<TApi extends Api>(
 export function createCodexTransportStream<TApi extends Api>(
   model: Model<TApi>,
   context: TranscriptContext,
-  options: CodexProviderStreamOptions | undefined,
+  options: OpenAICodexStreamOptions | undefined,
   deps: CodexTransportRecoveryDependencies,
 ): AssistantMessageEventStream {
   const runtimeConfig = deps.getConfig?.();
@@ -328,7 +327,7 @@ export function createCodexTransportStream<TApi extends Api>(
       const websocketRequestId = effectiveOptions?.sessionId || createCodexRequestId();
       const routing = resolveCodexRequestRouting({
         model: body.model,
-        fast: runtimeConfig?.openai.fast === true,
+        fast: options?.fastModeDecision?.active ?? runtimeConfig?.openai.fast === true,
         serviceTier: body.service_tier === null ? undefined : body.service_tier,
         normalOriginator: runtimeConfig?.openai.harnessIdentifierHeader
           ? PI_CODEX_CONVERSION_ORIGINATOR

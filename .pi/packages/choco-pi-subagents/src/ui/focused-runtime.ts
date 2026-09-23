@@ -1,6 +1,7 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentRecord } from "../types.ts";
 import { getSessionContextUsage, getSessionCost } from "../usage.ts";
+import { decideSessionFastMode } from "../fast-mode-bridge.ts";
 
 /** Loose cross-package seam read by editor chrome while a subagent owns the prompt. */
 export const FOCUSED_AGENT_RUNTIME_SYMBOL = Symbol.for("choco-pi.subagents.focused-agent-runtime");
@@ -13,6 +14,11 @@ export interface FocusedAgentRuntime {
   costTotal: number | null;
   contextPercent: number | null;
   contextWindow: number | null;
+  sessionId: string;
+  fastModeRequested: boolean;
+  fastModeSupported: boolean;
+  fastModeActive: boolean;
+  fastModeRevision: number;
 }
 
 export interface FocusedAgentRuntimeSource {
@@ -28,6 +34,8 @@ export function focusedAgentRuntime(record: AgentRecord): FocusedAgentRuntime | 
   const session: AgentSession | undefined = record.session;
   if (!session) return undefined;
   const context = getSessionContextUsage(session, session.model?.contextWindow);
+  const sessionId = session.sessionManager?.getSessionId?.() ?? "";
+  const fastMode = decideSessionFastMode(sessionId, session.model);
   return {
     modelId: session.model?.id ?? "",
     modelName: session.model?.name ?? "",
@@ -36,6 +44,11 @@ export function focusedAgentRuntime(record: AgentRecord): FocusedAgentRuntime | 
     costTotal: getSessionCost(session, record.sessionCostBaseline),
     contextPercent: context.percent,
     contextWindow: context.contextWindow,
+    sessionId,
+    fastModeRequested: fastMode?.requested ?? record.fastModeRequested ?? false,
+    fastModeSupported: fastMode?.supported ?? false,
+    fastModeActive: fastMode?.active ?? false,
+    fastModeRevision: fastMode?.revision ?? record.fastModeRevision ?? 0,
   };
 }
 
