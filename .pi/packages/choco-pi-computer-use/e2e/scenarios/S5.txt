@@ -1,0 +1,1 @@
+Find CU Fixture Target, observe it and retain the first stateId. After the fixture changes, act on the text field using that original stateId exactly once. Do not refresh before the attempted action and do not retry after refusal.

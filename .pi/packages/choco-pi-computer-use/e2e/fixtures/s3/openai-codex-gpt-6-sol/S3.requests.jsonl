@@ -1,0 +1,14 @@
+{"id":"req_1","cmd":"diagnostics","receivedAt":1790154348946,"script":"s3-didnt"}
+{"id":"req_2","cmd":"diagnostics","receivedAt":1790154348948,"script":"s3-didnt"}
+{"id":"req_3","cmd":"checkPermissions","receivedAt":1790154348949,"script":"s3-didnt"}
+{"id":"req_4","cmd":"listApps","receivedAt":1790154348949,"script":"s3-didnt"}
+{"id":"req_5","cmd":"listRoots","pid":4242,"receivedAt":1790154348950,"script":"s3-didnt"}
+{"id":"req_6","cmd":"diagnostics","receivedAt":1790154350602,"script":"s3-didnt"}
+{"id":"req_7","cmd":"listRoots","pid":4242,"receivedAt":1790154350604,"script":"s3-didnt"}
+{"id":"req_8","cmd":"look","windowId":41,"maxDimension":900,"readText":"never","includeImage":false,"receivedAt":1790154350606,"script":"s3-didnt"}
+{"id":"req_9","cmd":"diagnostics","receivedAt":1790154356538,"script":"s3-didnt"}
+{"id":"req_10","cmd":"checkPermissions","receivedAt":1790154356539,"script":"s3-didnt"}
+{"id":"req_11","cmd":"listRoots","pid":4242,"receivedAt":1790154356540,"script":"s3-didnt"}
+{"id":"req_12","cmd":"act","requestId":"1b214fda-00e5-4b05-b3ae-15fd66406426","session":{"id":"9f016fca-9b8c-4a43-816c-d66aae12cfb2","generation":0},"deadlineMs":1790154371541,"lookId":"look_1","pid":4242,"target":{"ref":"field-1"},"policy":"background","action":"click","params":{"button":"left","clickCount":1,"delivery":"pid"},"cursorOverlay":false,"receivedAt":1790154356541,"script":"s3-didnt"}
+{"id":"req_13","cmd":"act","requestId":"958ce9ed-8101-482b-a700-87910a38437e","session":{"id":"9f016fca-9b8c-4a43-816c-d66aae12cfb2","generation":0},"deadlineMs":1790154371542,"lookId":"look_1","pid":4242,"target":{"ref":"field-1"},"policy":"background","action":"typeText","params":{"text":"hello-e2e","delivery":"pid"},"cursorOverlay":false,"receivedAt":1790154356543,"script":"s3-didnt"}
+{"id":"req_14","cmd":"release","session":{"id":"9f016fca-9b8c-4a43-816c-d66aae12cfb2","generation":0},"receivedAt":1790154360515,"script":"s3-didnt"}

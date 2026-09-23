@@ -1,0 +1,1 @@
+Find CU Fixture Target and observe it. Click the custom-view field exactly once. If refused, stop without retrying.

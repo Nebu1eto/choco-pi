@@ -1,0 +1,14 @@
+{"id":"req_1","cmd":"diagnostics","receivedAt":1790154383231,"script":"s5-stale"}
+{"id":"req_2","cmd":"diagnostics","receivedAt":1790154383233,"script":"s5-stale"}
+{"id":"req_3","cmd":"checkPermissions","receivedAt":1790154383234,"script":"s5-stale"}
+{"id":"req_4","cmd":"listRoots","receivedAt":1790154383235,"script":"s5-stale"}
+{"id":"req_5","cmd":"diagnostics","receivedAt":1790154386274,"script":"s5-stale"}
+{"id":"req_6","cmd":"checkPermissions","receivedAt":1790154386274,"script":"s5-stale"}
+{"id":"req_7","cmd":"listRoots","pid":4242,"receivedAt":1790154386275,"script":"s5-stale"}
+{"id":"req_8","cmd":"look","windowId":41,"maxDimension":900,"readText":"never","includeImage":false,"receivedAt":1790154386276,"script":"s5-stale"}
+{"id":"fa2e995b-ca14-4f5a-9d98-21f5d4594afc","cmd":"look","session":{"id":"1964b746-4d5d-4121-9c6b-9dd5a9cee64b","generation":0},"deadlineMs":1790154388277,"fixtureMutation":"bump_root_generation","receivedAt":1790154386278,"script":"s5-stale"}
+{"id":"req_9","cmd":"diagnostics","receivedAt":1790154392142,"script":"s5-stale"}
+{"id":"req_10","cmd":"checkPermissions","receivedAt":1790154392143,"script":"s5-stale"}
+{"id":"req_11","cmd":"listRoots","pid":4242,"receivedAt":1790154392144,"script":"s5-stale"}
+{"id":"req_12","cmd":"act","requestId":"279f90ce-c7eb-483a-b49b-d9887dd4e851","session":{"id":"45a6d5e1-3db6-4a79-8ef8-73c6814799e9","generation":0},"deadlineMs":1790154407145,"lookId":"look_1","pid":4242,"target":{"ref":"field-1"},"policy":"background","action":"setText","params":{"text":"Test","delivery":"pid"},"cursorOverlay":false,"receivedAt":1790154392146,"script":"s5-stale"}
+{"id":"req_13","cmd":"release","session":{"id":"45a6d5e1-3db6-4a79-8ef8-73c6814799e9","generation":0},"receivedAt":1790154394819,"script":"s5-stale"}

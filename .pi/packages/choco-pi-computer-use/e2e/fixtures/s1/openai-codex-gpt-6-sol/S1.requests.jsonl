@@ -1,0 +1,11 @@
+{"id":"req_1","cmd":"diagnostics","receivedAt":1790153370860,"script":"s1-ok"}
+{"id":"req_2","cmd":"diagnostics","receivedAt":1790153370862,"script":"s1-ok"}
+{"id":"req_3","cmd":"checkPermissions","receivedAt":1790153370864,"script":"s1-ok"}
+{"id":"req_4","cmd":"listRoots","receivedAt":1790153370864,"script":"s1-ok"}
+{"id":"req_5","cmd":"diagnostics","receivedAt":1790153373234,"script":"s1-ok"}
+{"id":"req_6","cmd":"checkPermissions","receivedAt":1790153373235,"script":"s1-ok"}
+{"id":"req_7","cmd":"listRoots","pid":4242,"receivedAt":1790153373236,"script":"s1-ok"}
+{"id":"req_8","cmd":"look","windowId":41,"maxDimension":900,"readText":"never","includeImage":false,"receivedAt":1790153373237,"script":"s1-ok"}
+{"id":"req_9","cmd":"diagnostics","receivedAt":1790153378313,"script":"s1-ok"}
+{"id":"req_10","cmd":"checkPermissions","receivedAt":1790153378314,"script":"s1-ok"}
+{"id":"req_11","cmd":"listRoots","pid":4242,"receivedAt":1790153378315,"script":"s1-ok"}
