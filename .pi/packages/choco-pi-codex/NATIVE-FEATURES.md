@@ -5,8 +5,8 @@ default to **auto**. Select **off** independently to disable either feature.
 The config keys are `openai.midTurnSteering` and `openai.asyncCodeMode`.
 Existing project/global preference scoping is unchanged.
 
-The native integration targets `openai-codex/gpt-6-astra` over the Responses
-WebSocket transport. Other models and SSE do not enable these features.
+The native integration targets the `openai-codex` GPT-6 family (`gpt-6-astra`,
+`gpt-6-sol`, `gpt-6-luna`) over the Responses WebSocket transport. Other models and SSE do not enable these features.
 Code Mode stays selected; no temporary execution-mode switch is required.
 The native features use public Pi APIs and do not require the legacy
 registered-tool capture. That pre-existing Code Mode bridge is unchanged.
@@ -19,7 +19,7 @@ message and controls the next turn. A connection-owned inbox retains the
 automatic successor until Pi requests that turn, preserving separate assistant
 messages and normal multi-turn history.
 
-New native-steerable Astra responses send full context rather than a cached
+New native-steerable GPT-6 responses send full context rather than a cached
 `previous_response_id` delta. The endpoint's cached-continuation path can reject
 thinking-phase successor creation with `successor_creation_failed` and
 `prompt_cache_options is not supported on this model`. Full-context starts avoid
@@ -99,7 +99,7 @@ Mode yield/wait, normal Pi tool blocking, Off, and SSE. The older single-turn
 prototype under `src/prototype/` remains a separate explicitly invoked experiment.
 
 For an isolated real interactive Pi TUI, run the following in a disposable
-terminal and submit a text-only steer while Astra is streaming. Add `--off`
+terminal and submit a text-only steer while a GPT-6 model is streaming. Add `--off`
 for a queue-only control or `--fallback` to test a post-hook input transform
 that forces ordinary queue recovery. The interactive runner disables the
 automated suite's 120-second abort watchdog; transport idle timeouts still apply.

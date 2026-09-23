@@ -20,6 +20,11 @@ const AsyncExecSchema = Type.Object({
 });
 
 /** Unconsumed automatic generations must not have executed server-hosted actions. */
+/** GPT-6 family models (Astra, Sol, Luna) accept mid-turn steering and async tool calls. */
+export function supportsNativeResponsesModel(modelId: string | undefined): boolean {
+  return modelId !== undefined && /^gpt-6-(?:astra|sol|luna)$/.test(modelId);
+}
+
 export function supportsNativeSteeringTools(body: ResponsesBody): boolean {
   const clientOwned = (tool: ProtocolValue): boolean => {
     if (Check(NamespaceSchema, tool)) {
@@ -33,7 +38,7 @@ export function supportsNativeSteeringTools(body: ResponsesBody): boolean {
 
 /** The flag belongs to the direct client exec tool, never hosted PTC or nested calls. */
 export function withAsyncCodeMode(body: ResponsesBody, enabled: boolean): ResponsesBody {
-  if (!enabled || body.model !== "gpt-6-astra" || !body.tools) return body;
+  if (!enabled || !supportsNativeResponsesModel(body.model) || !body.tools) return body;
   if (
     body.tools.some((tool) => Check(ToolSchema, tool) && tool.type === "programmatic_tool_calling")
   )

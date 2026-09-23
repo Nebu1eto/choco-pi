@@ -21,6 +21,7 @@ import {
   rememberAsyncCodeModeCalls,
   consumeAsyncCodeModeCall,
   clearAsyncCodeModeCalls,
+  supportsNativeResponsesModel,
   supportsNativeSteeringTools,
 } from "../src/providers/openai-codex/native-features.ts";
 import {
@@ -99,15 +100,25 @@ test("native preferences default Auto and retain explicit Off, including legacy 
   assert.equal(migrated.openai.asyncCodeMode, true);
 });
 
-test("native async decorates only direct Astra exec and excludes hosted PTC", () => {
+test("native async decorates only direct GPT-6 exec and excludes hosted PTC", () => {
   const input = body();
   assert.deepEqual(withAsyncCodeMode(input, true).tools, [
     { type: "custom", name: "exec", format: { type: "text" }, async: true },
     { type: "function", name: "wait" },
   ]);
   assert.equal(withAsyncCodeMode(input, false), input);
-  const other = { ...input, model: "gpt-5.6-sol" };
-  assert.equal(withAsyncCodeMode(other, true), other);
+  for (const model of ["gpt-6-sol", "gpt-6-luna"]) {
+    assert.deepEqual(withAsyncCodeMode({ ...input, model }, true).tools?.[0], {
+      type: "custom",
+      name: "exec",
+      format: { type: "text" },
+      async: true,
+    });
+  }
+  for (const model of ["gpt-5.6-sol", "gpt-6", "gpt-6-astra-mini"]) {
+    const other = { ...input, model };
+    assert.equal(withAsyncCodeMode(other, true), other);
+  }
   const hosted = { ...input, tools: [...input.tools!, { type: "programmatic_tool_calling" }] };
   assert.equal(withAsyncCodeMode(hosted, true), hosted);
   const programmatic = {
@@ -116,6 +127,15 @@ test("native async decorates only direct Astra exec and excludes hosted PTC", ()
   };
   assert.deepEqual(withAsyncCodeMode(programmatic, true), programmatic);
   assert.deepEqual(input.tools?.[0], { type: "custom", name: "exec", format: { type: "text" } });
+});
+
+test("native features target exactly the GPT-6 family", () => {
+  for (const id of ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) {
+    assert.equal(supportsNativeResponsesModel(id), true, id);
+  }
+  for (const id of [undefined, "gpt-6", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-6-sol-mini"]) {
+    assert.equal(supportsNativeResponsesModel(id), false, String(id));
+  }
 });
 
 test("native steering excludes server-hosted actions from speculative successors", () => {

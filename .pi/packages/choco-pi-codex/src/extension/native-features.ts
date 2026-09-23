@@ -3,7 +3,10 @@ import {
   closeNativeSteering,
   steerNativeResponse,
 } from "../providers/openai-codex/native-steering.ts";
-import { clearAsyncCodeModeCalls } from "../providers/openai-codex/native-features.ts";
+import {
+  clearAsyncCodeModeCalls,
+  supportsNativeResponsesModel,
+} from "../providers/openai-codex/native-features.ts";
 import { SteeringStatusWidget } from "../ui/steering-status.ts";
 
 /** Side-band delivery only: returning normally lets Pi persist and queue the original input. */
@@ -44,8 +47,8 @@ export function registerNativeFeatures(
       event.images?.length ||
       ctx.hasPendingMessages() ||
       !isEnabled() ||
-      ctx.model?.id !== "gpt-6-astra" ||
-      ctx.model.provider !== "openai-codex"
+      ctx.model?.provider !== "openai-codex" ||
+      !supportsNativeResponsesModel(ctx.model.id)
     )
       return;
     steerNativeResponse(currentOwner, event.text, observe);
