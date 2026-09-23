@@ -19,7 +19,7 @@ Use a capability-relevant check before `task-inline`, `task`, or `task-hotfix`. 
 
 Never read or print `auth.json`, API keys, OAuth tokens, environment secrets, or credential-bearing configuration.
 
-Core readiness requires Node `>=24` and the actual runtime source exactly Pi `0.86.1`, matching the repository's SDK contracts. In-host checks name `active-host`; standalone checks name `imported-sdk`. Older, newer, prerelease, missing, or malformed actual runtime versions fail. A different or unavailable direct PATH launcher does not override a verified runtime and warns only in a full diagnostic.
+Core readiness requires Node `>=24` and the actual runtime source exactly Pi `0.87.1`, matching the repository's SDK contracts. In-host checks name `active-host`; standalone checks name `imported-sdk`. Older, newer, prerelease, missing, or malformed actual runtime versions fail. A different or unavailable direct PATH launcher does not override a verified runtime and warns only in a full diagnostic.
 
 A successful automatic check may be reused within the same session only while its relevant runtime, configuration, resources, and required live tools remain unchanged. Always rerun a fresh explicit `/check`.
 

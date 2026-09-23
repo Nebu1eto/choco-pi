@@ -150,9 +150,9 @@ migrate or change the package's Pi SDK compatibility.
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.86.1`, matching the harness target. Package-local frozen
+require exactly `0.87.1`, matching the harness target. Package-local frozen
 locks resolve that release, with release-age exceptions
-limited to the six exact SDK/chord/telemetry `0.86.1` packages and the existing
+limited to the six exact SDK/chord/telemetry `0.87.1` packages and the existing
 `typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
 installer-policy change; unrelated dependency contracts are unchanged.
 

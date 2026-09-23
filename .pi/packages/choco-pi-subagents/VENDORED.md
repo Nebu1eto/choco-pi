@@ -891,9 +891,9 @@ it does not migrate or change the package's Pi SDK compatibility.
 ## Pi SDK target alignment
 
 Host-provided Pi SDK peer contracts and any development SDK dependencies now
-require exactly `0.86.1`, matching the harness target. Package-local frozen
+require exactly `0.87.1`, matching the harness target. Package-local frozen
 locks resolve that release, with release-age exceptions
-limited to the six exact SDK/chord/telemetry `0.86.1` packages and the existing
+limited to the six exact SDK/chord/telemetry `0.87.1` packages and the existing
 `typebox@1.3.29` exception. This SDK alignment is separate from the pnpm 11
 installer-policy change; unrelated dependency contracts are unchanged.
 
@@ -914,3 +914,14 @@ on the optional legacy model-controls UI registry. Bare toggles read the current
 canonical request, status remains model-aware, and non-OpenAI models retain the
 preference without activating acceleration. Coverage includes the inline child
 factory with no legacy UI registration.
+
+## 2026-09-23 choco-pi patch: Pi 0.87.1 canonical session context
+
+Pi 0.87 rebuilds `agent.state.messages` from the `SessionManager` projection at
+every turn boundary, so the mention clone no longer pushes the parent
+conversation onto that array (it vanished after the clone's first turn).
+`seedCloneConversation` replays the projected messages as canonical clone
+session entries: plain messages through `appendMessage`, compaction summaries as
+retain-none `appendCompaction` entries, and branch summaries through
+`branchWithSummary`, followed by `session.refreshContext()`. System messages
+remain omitted. `tests/mention-clone.test.ts` covers the second clone turn.

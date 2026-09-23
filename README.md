@@ -10,7 +10,7 @@ Keep OAuth tokens, API keys, and machine-local configuration outside Git.
 
 - Node.js 24 or later
 - pnpm `11.11.0` exactly
-- Pi `0.86.1`, matching the SDK packages pinned by this checkout
+- Pi `0.87.1`, matching the SDK packages pinned by this checkout
 - Git
 - Optional: [`agent-browser`](https://github.com/vercel-labs/agent-browser) 0.34.0 for browser automation
 
@@ -45,14 +45,14 @@ Homebrew's `pi-coding-agent` formula lags the supported release. Install Pi in
 a versioned local prefix instead:
 
 ```sh
-npm install --prefix ~/.local/pi-0.86.1 --ignore-scripts @earendil-works/pi-coding-agent@0.86.1
+npm install --prefix ~/.local/pi-0.87.1 --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
 ```
 
 Create an executable shim at `~/.local/pi-shim/pi`:
 
 ```sh
 #!/bin/sh
-PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-0.86.1/node_modules/.bin/pi" "$@"
+PI_SKIP_VERSION_CHECK=1 exec "$HOME/.local/pi-0.87.1/node_modules/.bin/pi" "$@"
 ```
 
 Place the shim before `/opt/homebrew/bin` in your shell configuration:
@@ -61,7 +61,7 @@ Place the shim before `/opt/homebrew/bin` in your shell configuration:
 export PATH="$HOME/.local/pi-shim:$PATH"
 ```
 
-Pi 0.86.1's `cli.js` launcher enables Node's compile cache. When diagnosing
+Pi 0.87.1's `cli.js` launcher enables Node's compile cache. When diagnosing
 unusual module-load errors, set `NODE_DISABLE_COMPILE_CACHE=1` to disable it.
 
 When Pi opens, run `/login` and select a provider. The installation scripts do

@@ -23,7 +23,7 @@ function dependencies(): HarnessCheckExecutionDependencies {
     capture: () => ({
       runtime: {
         source: "active-host",
-        version: "0.86.1",
+        version: "0.87.1",
         path: "/active/sdk",
         authoritative: true,
       },
@@ -33,7 +33,7 @@ function dependencies(): HarnessCheckExecutionDependencies {
     currentOwner: () => owner,
     check: async (options) => {
       assert.equal(options.runtimeIdentity?.source, "active-host");
-      assert.equal(options.runtimeIdentity?.version, "0.86.1");
+      assert.equal(options.runtimeIdentity?.version, "0.87.1");
       return report;
     },
   };
@@ -137,7 +137,7 @@ test("default extension registers a host-authenticated schema and reports failur
     context("session-a"),
   );
   assert.equal(observedSource, "active-host");
-  assert.equal(observedVersion, "0.86.1");
+  assert.equal(observedVersion, "0.87.1");
   assert.equal(result.isError, true);
 });
 

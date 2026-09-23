@@ -140,6 +140,26 @@ interface MentionSpawnState {
   spawned: boolean;
 }
 
+/** Replay the parent's projected conversation as canonical clone session entries. */
+export function seedCloneConversation(
+  manager: SessionManager,
+  messages: MentionCloneContext["messages"],
+): void {
+  for (const message of messages) {
+    switch (message.role) {
+      case "compactionSummary":
+        // Retain-none: the summary already stands in for everything before it.
+        manager.appendCompaction(message.summary, null, message.tokensBefore);
+        break;
+      case "branchSummary":
+        manager.branchWithSummary(manager.getLeafId(), message.summary);
+        break;
+      default:
+        manager.appendMessage(message);
+    }
+  }
+}
+
 interface ParentPromptSnapshot {
   generation: number;
   systemPrompt: string;
@@ -316,12 +336,15 @@ export async function runMentionClone(opts: MentionCloneOptions): Promise<Mentio
     }
     session = created.session;
 
-    // The conversation itself. Pushed rather than assigned so the array the
-    // session was built around stays the one it goes on using. System messages
-    // are omitted because their fully replayed prompt is already the clone's
+    // The conversation itself. Appended through the clone's SessionManager,
+    // which Pi treats as canonical: `agent.state.messages` is rebuilt from the
+    // session projection at every turn boundary, so anything pushed onto it
+    // directly would vanish after the clone's first turn. System messages are
+    // omitted because their fully replayed prompt is already the clone's
     // baseline; retaining them would apply parent deltas twice and would also
     // import the parent's tool declarations over the one-tool clone allowlist.
-    session.agent.state.messages.push(...conversation.messages);
+    seedCloneConversation(session.sessionManager, conversation.messages);
+    session.refreshContext();
 
     // User text first, reminder after — the order Claude Code's attachment
     // renderer produces, where the reminder trails the message it is about.

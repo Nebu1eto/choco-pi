@@ -363,3 +363,111 @@ test("clone uses the parent's effective forced provider prompt", async () => {
     session.dispose();
   }
 });
+
+function userText(message: UserMessage): string {
+  const parts = Array.isArray(message.content)
+    ? message.content
+    : [{ type: "text", text: message.content }];
+  return parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+}
+
+test("clone keeps the parent conversation across its own turn boundary", async () => {
+  // Pi rebuilds agent.state.messages from the SessionManager at every turn_end,
+  // so the parent history must be canonical session entries, not a pushed array.
+  const requestUserTexts: string[][] = [];
+  let parentContext: ExtensionContext | undefined;
+  const runtime = await ModelRuntime.create({ refreshOnCreate: false, modelsPath: null });
+  runtime.registerProvider(captureModel.provider, {
+    api: captureModel.api,
+    apiKey: "test-key",
+    models: [captureModel],
+    streamSimple: (_model, transcript) => {
+      requestUserTexts.push(
+        transcript.messages.flatMap((message) =>
+          message.role === "user" ? [userText(message)] : [],
+        ),
+      );
+      const stream = createAssistantMessageEventStream();
+      const firstCloneTurn = requestUserTexts.length === 2;
+      const usage = {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      };
+      queueMicrotask(() =>
+        stream.push({
+          type: "done",
+          reason: firstCloneTurn ? "toolUse" : "stop",
+          message: {
+            role: "assistant",
+            content: firstCloneTurn
+              ? [{ type: "toolCall", id: "call-1", name: "Agent", arguments: {} }]
+              : [{ type: "text", text: "done" }],
+            api: captureModel.api,
+            provider: captureModel.provider,
+            model: captureModel.id,
+            usage,
+            stopReason: firstCloneTurn ? "toolUse" : "stop",
+            timestamp: Date.now(),
+          },
+        }),
+      );
+      return stream;
+    },
+  });
+  const observe: InlineExtension = {
+    name: "observe",
+    factory: (pi) => {
+      pi.on("before_agent_start", (_event, ctx) => {
+        parentContext = ctx;
+      });
+    },
+  };
+  const loader = new DefaultResourceLoader({
+    cwd: "/project",
+    agentDir: getAgentDir(),
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+    systemPromptOverride: () => "BASE",
+    extensionFactories: [observe],
+  });
+  await loader.reload();
+  const { session } = await createAgentSession({
+    cwd: "/project",
+    model: captureModel,
+    modelRuntime: runtime,
+    resourceLoader: loader,
+    sessionManager: SessionManager.inMemory("/project"),
+    noTools: "all",
+  });
+  const tool = reinterpretHostValue<ToolDefinition>({
+    name: "Agent",
+    label: "Agent",
+    description: "fixture",
+    parameters: Type.Object({}),
+    execute: () => Promise.resolve({ content: [{ type: "text", text: "started" }] }),
+  });
+  try {
+    await session.prompt("parent history");
+    assert.ok(parentContext);
+    const result = await runMentionClone({
+      ctx: parentContext,
+      type: "reviewer",
+      message: "review",
+      agentTool: tool,
+    });
+    assert.equal(result.spawned, true, result.error ?? "clone did not spawn");
+    assert.equal(requestUserTexts.length, 3);
+    for (const texts of requestUserTexts.slice(1)) {
+      assert.deepEqual(texts.slice(0, 1), ["parent history"]);
+    }
+  } finally {
+    session.dispose();
+  }
+});
