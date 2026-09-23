@@ -24,6 +24,9 @@ import {
 import { registerCodeModeTools, type CodeModeRegistration } from "../src/tools/code-mode/tools.ts";
 import { codeModeHostBinaryPath } from "../src/tools/code-mode/binary.ts";
 
+/** GPT-6 model the live native probes target; CHOCO_PI_NATIVE_MODEL selects Sol or Luna. */
+export const NATIVE_LIVE_MODEL = process.env.CHOCO_PI_NATIVE_MODEL ?? "gpt-6-astra";
+
 const AsyncCall = Type.Object({ name: Type.Literal("exec"), async: Type.Literal(true) });
 const Yielded = Type.Object({ codeMode: Type.Literal(true), status: Type.Literal("yielded") });
 
@@ -85,7 +88,7 @@ export async function createNativeHost(options: {
       baseUrl: "https://chatgpt.com/backend-api",
       models: [
         {
-          id: "gpt-6-astra",
+          id: NATIVE_LIVE_MODEL,
           name: "Native feature probe",
           reasoning: true,
           input: ["text"],
@@ -193,7 +196,7 @@ export async function createNativeHost(options: {
     });
     try {
       await session.bindExtensions(options.uiContext ? { uiContext: options.uiContext } : {});
-      const model = runtime.getModel("openai-codex", "gpt-6-astra");
+      const model = runtime.getModel("openai-codex", NATIVE_LIVE_MODEL);
       if (!model) throw new Error("Native model not registered");
       await session.setModel(model);
     } catch (error) {
