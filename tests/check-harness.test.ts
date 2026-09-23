@@ -27,6 +27,18 @@ function fixture(overrides: Partial<HarnessOptions> = {}) {
       configRoot: root,
       mode: "automatic" as const,
       nodeVersion: "v24.0.0",
+      runtimeIdentity: {
+        source: "active-host" as const,
+        version: "0.86.1",
+        path: "/active/pi-sdk",
+        authoritative: true,
+      },
+      readImportedRuntime: async () => ({
+        source: "imported-sdk" as const,
+        version: "0.86.1",
+        path: "/checkout/pi-sdk",
+        authoritative: true,
+      }),
       readText: async (target: string) => {
         reads.push(target);
         const value = files.get(target);
@@ -40,18 +52,135 @@ function fixture(overrides: Partial<HarnessOptions> = {}) {
   };
 }
 
-test("Pi readiness requires exactly the supported SDK release", async () => {
+test("active host readiness requires exactly the supported SDK release", async () => {
   for (const version of ["0.85.1", "0.86.0", "0.86.1", "0.86.2", "0.86.1-rc.1", "garbage"]) {
     const { options } = fixture({
-      runCommand: async () => ({ status: 0, stdout: `${version}\n`, stderr: "" }),
+      runtimeIdentity: {
+        source: "active-host",
+        version,
+        authoritative: true,
+      },
     });
     const report = await checkHarness(options);
     assert.equal(
-      report.checks.find((check) => check.id === "pi")?.status,
+      report.checks.find((check) => check.id === "active-host")?.status,
       version === "0.86.1" ? "pass" : "fail",
       version,
     );
   }
+});
+
+test("compatible active host ignores an old or missing PATH launcher automatically", async () => {
+  for (const launcher of [
+    { status: 0, stdout: "0.85.1\n", stderr: "" },
+    { status: 1, stdout: "", stderr: "not found" },
+  ]) {
+    let launches = 0;
+    const { options } = fixture({
+      runCommand: async () => {
+        launches += 1;
+        return launcher;
+      },
+    });
+    const report = await checkHarness(options);
+    assert.equal(report.checks.find((check) => check.id === "active-host")?.status, "pass");
+    assert.equal(
+      report.checks.some((check) => check.id === "launcher"),
+      false,
+    );
+    assert.equal(launches, 0);
+  }
+});
+
+test("incompatible active host fails despite a correct PATH launcher", async () => {
+  const { options } = fixture({
+    runtimeIdentity: { source: "active-host", version: "0.85.1", authoritative: true },
+    runCommand: async () => ({ status: 0, stdout: "0.86.1\n", stderr: "" }),
+  });
+  const report = await checkHarness(options);
+  assert.equal(report.status, "fail");
+  assert.equal(report.checks.find((check) => check.id === "active-host")?.status, "fail");
+});
+
+test("local SDK drift is reported separately from a compatible host", async () => {
+  const { options } = fixture({
+    readImportedRuntime: async () => ({
+      source: "imported-sdk",
+      version: "0.85.1",
+      authoritative: true,
+    }),
+  });
+  const report = await checkHarness(options);
+  assert.equal(report.checks.find((check) => check.id === "active-host")?.status, "pass");
+  assert.equal(report.checks.find((check) => check.id === "imported-sdk")?.status, "fail");
+});
+
+test("full diagnostics make launcher drift advisory", async () => {
+  const { options } = fixture({
+    mode: "full",
+    runCommand: async () => ({ status: 0, stdout: "0.85.1\n", stderr: "" }),
+  });
+  const report = await checkHarness(options);
+  const launcher = report.checks.find((check) => check.id === "launcher");
+  assert.equal(launcher?.status, "warn");
+  assert.match(launcher?.detail ?? "", /not used for active-host validation/);
+});
+
+test("malformed host metadata is not guessed from a valid launcher", async () => {
+  const { options } = fixture({
+    runtimeIdentity: {
+      source: "active-host",
+      authoritative: true,
+      error: "host metadata malformed",
+    },
+    runCommand: async () => ({ status: 0, stdout: "0.86.1\n", stderr: "" }),
+  });
+  const report = await checkHarness(options);
+  assert.equal(report.checks.find((check) => check.id === "active-host")?.status, "fail");
+});
+
+test("standalone fallback labels imported SDK without claiming an active host", async () => {
+  const { options } = fixture({ runtimeIdentity: undefined });
+  const report = await checkHarness(options);
+  assert.equal(report.checks.find((check) => check.id === "imported-sdk")?.status, "pass");
+  assert.equal(
+    report.checks.some((check) => check.id === "active-host"),
+    false,
+  );
+});
+
+test("matching launcher evidence cannot impersonate an active host", async () => {
+  const { options } = fixture({
+    runtimeIdentity: {
+      source: "launcher",
+      version: "0.86.1",
+      authoritative: false,
+    },
+  });
+  const report = await checkHarness(options);
+  assert.equal(report.status, "fail");
+  assert.equal(report.checks.find((check) => check.id === "active-host")?.status, "fail");
+  assert.match(
+    report.checks.find((check) => check.id === "active-host")?.detail ?? "",
+    /invalid primary runtime provenance/,
+  );
+});
+
+test("non-authoritative imported SDK evidence cannot pass standalone readiness", async () => {
+  const { options } = fixture({
+    runtimeIdentity: undefined,
+    readImportedRuntime: async () => ({
+      source: "imported-sdk",
+      version: "0.86.1",
+      authoritative: false,
+    }),
+  });
+  const report = await checkHarness(options);
+  assert.equal(report.status, "fail");
+  assert.match(
+    report.checks.find((check) => check.id === "imported-sdk")?.detail ?? "",
+    /invalid primary runtime provenance/,
+  );
 });
 
 test("automatic core readiness warns for irrelevant optional failures", async () => {
