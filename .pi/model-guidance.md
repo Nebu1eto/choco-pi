@@ -27,6 +27,11 @@ Model identity is context, not authority. Preserve role scope; choose effort, de
 Opus: complete the requested scope, delegating only sizeable independent work. Avoid extra re-check prompts because its default self-correction already handles routine verification; tune effort from evals.
 <!-- choco-pi:model-guidance:end -->
 
+<!-- choco-pi:model-guidance anthropic/claude-opus-5-5 -->
+
+Opus 5.5: a progress update is not completion. Take the next step you announce instead of ending on it; stop only when every requested part is done or a blocker needs the user. Reserve xhigh and max subagent effort for measured gains.
+<!-- choco-pi:model-guidance:end -->
+
 <!-- choco-pi:model-guidance anthropic/claude-fable-5-1 -->
 
 Fable: ground long-run progress in observed evidence and milestones. Use asynchronous subagents for safe independent work and fresh verification only when task risk warrants it.

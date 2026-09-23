@@ -48,3 +48,15 @@ test("fast mode resolves from caller over definition and renders focused metadat
   assert.equal(resolved.fastMode, true);
   assert.deepEqual(buildInvocationTags({ fastMode: resolved.fastMode }).tags, ["fast"]);
 });
+
+test("run mode defaults to the caller's context while explicit choices win", () => {
+  const params = { inherit_context: false };
+  const top = { defaultRunInBackground: true };
+  assert.equal(resolveAgentInvocationConfig(undefined, params).runInBackground, false);
+  assert.equal(resolveAgentInvocationConfig(undefined, params, top).runInBackground, true);
+  assert.equal(
+    resolveAgentInvocationConfig(undefined, { ...params, run_in_background: false }, top)
+      .runInBackground,
+    false,
+  );
+});

@@ -93,6 +93,12 @@ interface ResolvedAgentInvocationConfig {
 
 interface ResolveOptions {
   /**
+   * Run mode when neither the agent file nor the caller chooses one. The
+   * top-level Agent tool defaults to background; nested spawns stay foreground
+   * because a settled parent aborts the children it owns.
+   */
+  defaultRunInBackground?: boolean;
+  /**
    * Whether worktree isolation is permitted at all. False when the project set
    * `worktreeIsolation: false`, which drops a requested worktree rather than
    * failing the call: the fail-loud precedent covers spawns that *cannot* work,
@@ -139,7 +145,11 @@ export function resolveAgentInvocationConfig(
     maxTokens: params.max_tokens,
     idleTimeoutMs: params.idle_timeout_ms,
     inheritContext: agentConfig?.inheritContext ?? params.inherit_context ?? false,
-    runInBackground: agentConfig?.runInBackground ?? params.run_in_background ?? false,
+    runInBackground:
+      agentConfig?.runInBackground ??
+      params.run_in_background ??
+      opts?.defaultRunInBackground ??
+      false,
     isolated: agentConfig?.isolated ?? params.isolated ?? false,
     fastMode: params.fast_mode ?? agentConfig?.fastMode,
     isolation,

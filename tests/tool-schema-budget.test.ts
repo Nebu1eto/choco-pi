@@ -306,7 +306,7 @@ test("every first-party package tool has a bounded catalog snippet", async () =>
   const schedule = schemaNode(agentParameters?.properties?.schedule);
   assert.equal(
     runInBackground?.description,
-    "true: return an ID and notify on completion; false: block until the agent finishes.",
+    "Default true: return an ID and notify on completion. false blocks until the agent finishes; use it only when the user asks.",
   );
   assert.match(schedule?.description ?? "", /refused with run_in_background:false/);
   assert.match(schedule?.description ?? "", /incompatible with inherit_context\/resume/);

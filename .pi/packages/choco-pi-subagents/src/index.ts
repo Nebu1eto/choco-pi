@@ -1766,7 +1766,7 @@ export default function (pi: ExtensionAPI) {
       run_in_background: Type.Optional(
         Type.Boolean({
           description:
-            "true: return an ID and notify on completion; false: block until the agent finishes.",
+            "Default true: return an ID and notify on completion. false blocks until the agent finishes; use it only when the user asks.",
         }),
       ),
       resume: Type.Optional(
@@ -1977,6 +1977,7 @@ export default function (pi: ExtensionAPI) {
 
       const resolvedConfig = resolveAgentInvocationConfig(customConfig, params, {
         worktreeAllowed: isWorktreeIsolationEnabled(),
+        defaultRunInBackground: true,
       });
       // SAFETY: choco-pi-hooks adds this internal member in PreToolUse only after a successful WorktreeCreate hook.
       const hookWorktreePath = (
@@ -3461,7 +3462,7 @@ extensions: <true (inherit all MCP/extension tools), false (none), or comma-sepa
 skills: <true (inherit all), false (none), or comma-separated skill names to preload into prompt. Default: true>
 disallowed_tools: <comma-separated tool names to block, even if otherwise available. Omit for none>
 inherit_context: <true to fork parent conversation into agent so it sees chat history. Default: false>
-run_in_background: <true to run in background by default. Default: false>
+run_in_background: <true or false to fix this agent's run mode. Omit to follow the caller (top-level spawns default to background)>
 output_transcript: <false to write no transcript file or path for this agent. Independent of persist_session. Default: true>
 isolated: <true for no extension/MCP tools, only built-in tools. Default: false>
 memory: <"user" (global), "project" (per-project), or "local" (gitignored per-project) for persistent memory. Omit for none>${
