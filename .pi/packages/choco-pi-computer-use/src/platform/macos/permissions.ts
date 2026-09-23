@@ -106,6 +106,11 @@ async function checkPermissions(signal?: AbortSignal): Promise<PermissionStatus>
   };
 }
 
+/** Releases helper ownership held by this process's session (session shutdown). */
+export async function releaseMacosOwnership(signal?: AbortSignal): Promise<boolean> {
+  return await macosHelper.release(signal);
+}
+
 async function registerPermissions(signal?: AbortSignal): Promise<void> {
   // Raises the Accessibility prompt and performs a real ScreenCaptureKit
   // capture attempt so pi-computer-use.app is pre-listed in both Settings
@@ -126,6 +131,10 @@ export async function ensureMacosReady(
   }
   const helperDiagnostics = await macosHelper.ensureProtocol(signal);
   assertPlatformArchitecture("macOS", helperDiagnostics);
+  // Protocol 7 ownership: a refused claim surfaces owned_by_other_session.
+  // Before the first act no session is known; the helper then makes the
+  // first act's session the owner.
+  await macosHelper.claim(signal);
 
   const now = Date.now();
   const cachedStatus = state.permissionStatus;

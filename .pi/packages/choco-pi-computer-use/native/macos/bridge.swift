@@ -9,6 +9,110 @@ import ScreenCaptureKit
 struct BridgeFailure: Error {
 	let message: String
 	let code: String
+	/// False only when the helper proves nothing was delivered for the request.
+	var effectPossible: Bool? = nil
+	/// Partial result carried alongside the error (cancellation).
+	var result: [String: Any]? = nil
+	/// Extra fields merged into the wire `error` object (for example `activeRequests`).
+	var details: [String: Any]? = nil
+}
+
+/// Delivery state of one tracked act/actBatch request, shared between the
+/// executing client thread and a concurrent `cancel` on another connection.
+///
+/// `lock` is a leaf lock: nothing else is acquired while it is held, and
+/// `heartbeat` runs outside it.
+final class RequestContext {
+	let requestIds: [String]
+	let deadlineMs: Double?
+	/// Grant of the step currently executing; only the executing thread writes it.
+	var foregroundGrant = false
+	/// Runs at every checkpoint, outside `lock` (refreshes the owner lease).
+	private let heartbeat: (() -> Void)?
+	private let lock = NSLock()
+	private var cancelRequested: Bool
+	private var effect = false
+	private var stopped = false
+	private var step = 0
+
+	/// `cancelled: true` starts the request cancelled (a `cancel` for its id
+	/// arrived before it registered), so its first checkpoint refuses it.
+	init(requestIds: [String], deadlineMs: Double?, cancelled: Bool = false, heartbeat: (() -> Void)? = nil) {
+		self.requestIds = requestIds
+		self.deadlineMs = deadlineMs
+		self.cancelRequested = cancelled
+		self.heartbeat = heartbeat
+	}
+
+	/// True once cancellation was requested or the deadline passed. Unlike
+	/// `checkpoint`, it neither throws nor marks the request stopped, so a
+	/// caller can first finish a started unit (release a dragged button).
+	var stopRequested: Bool {
+		lock.lock()
+		defer { lock.unlock() }
+		return cancelRequested || (deadlineMs.map { Date().timeIntervalSince1970 * 1000 >= $0 } ?? false)
+	}
+
+	func requestCancel() {
+		lock.lock()
+		cancelRequested = true
+		lock.unlock()
+	}
+
+	func markEffect() {
+		lock.lock()
+		effect = true
+		lock.unlock()
+	}
+
+	var effectPossible: Bool {
+		lock.lock()
+		defer { lock.unlock() }
+		return effect
+	}
+
+	var isStopped: Bool {
+		lock.lock()
+		defer { lock.unlock() }
+		return stopped
+	}
+
+	var currentStep: Int {
+		lock.lock()
+		defer { lock.unlock() }
+		return step
+	}
+
+	func setStep(_ index: Int) {
+		lock.lock()
+		step = index
+		lock.unlock()
+	}
+
+	/// Throws `cancelled` once cancellation was requested or the absolute
+	/// deadline passed. Called before each atomic delivery unit, never between
+	/// the down and up halves of one key or button press.
+	func checkpoint() throws {
+		heartbeat?()
+		lock.lock()
+		let cancelled = cancelRequested
+		let expired = deadlineMs.map { Date().timeIntervalSince1970 * 1000 >= $0 } ?? false
+		if cancelled || expired { stopped = true }
+		let effectNow = effect
+		let stepNow = step
+		lock.unlock()
+		guard cancelled || expired else { return }
+		throw BridgeFailure(
+			message: cancelled ? "Request was cancelled" : "Request deadline passed before delivery completed",
+			code: "cancelled",
+			effectPossible: effectNow,
+			result: [
+				"outcome": effectNow ? "partial" : "rejected_before_delivery",
+				"stoppedAt": stepNow,
+				"reason": cancelled ? "cancelled" : "deadline",
+			]
+		)
+	}
 }
 
 final class AXRefStore {
@@ -108,6 +212,12 @@ private struct LookRecord {
 	let imageWidth: Int
 	let imageHeight: Int
 	let hasImage: Bool
+	/// Root AX element this look observed (nil for synthesized menu roots).
+	let rootElement: AXUIElement?
+	/// AX frame of `rootElement` when the look (or, for a scoped refresh, its
+	/// base look) was taken. `act` refuses with `stale_look` when the current
+	/// frame differs; nil (unreadable at look time) skips the check.
+	let observedFrame: CGRect?
 }
 
 private struct RootAXEvent {
@@ -368,8 +478,62 @@ final class InputSuppressionGuard {
 
 }
 
+/// Outcome of a bounded ancestor-role walk. Only `.notFound` proves absence;
+/// `.inconclusive` (depth limit reached or an AX read failed) must be treated
+/// as a possible match by every decision that gates ungranted delivery.
+enum AncestryResult {
+	case found
+	case notFound
+	case inconclusive
+}
+
+/// One attribute read classified for a fail-closed walk: a value, a proven
+/// absence (`kAXErrorNoValue` / `kAXErrorAttributeUnsupported`), or a failure.
+enum AncestryRead<Value> {
+	case value(Value)
+	case absent
+	case failed
+}
+
+/// Ancestor-walk cap; reaching it without a root is `.inconclusive`.
+let ancestryWalkLimit = 64
+
+/// Walks `start` and its parents for `role`. `.notFound` only when the walk
+/// reaches a root (an `AXApplication` element or a proven-absent parent)
+/// within `limit` elements with every read successful or proven absent.
+func walkAncestry<Node>(
+	from start: Node,
+	role: String,
+	limit: Int,
+	readRole: (Node) -> AncestryRead<String>,
+	readParent: (Node) -> AncestryRead<Node>
+) -> AncestryResult {
+	var current = start
+	for _ in 0..<limit {
+		switch readRole(current) {
+		case .value(let candidateRole):
+			if candidateRole == role { return .found }
+			// The application element is the root of a process's AX tree.
+			if candidateRole == "AXApplication" { return .notFound }
+		case .absent:
+			break
+		case .failed:
+			return .inconclusive
+		}
+		switch readParent(current) {
+		case .value(let parent):
+			current = parent
+		case .absent:
+			return .notFound
+		case .failed:
+			return .inconclusive
+		}
+	}
+	return .inconclusive
+}
+
 final class Bridge {
-	private let protocolVersion = 6
+	private let protocolVersion = 7
 	private let refStore = AXRefStore()
 	private let inputSuppressionGuard = InputSuppressionGuard()
 	private let physicalInputLock = NSRecursiveLock()
@@ -392,6 +556,33 @@ final class Bridge {
 	private var grantedPermissionStatus: [String: Any]?
 	private let completedRequestLock = NSLock()
 	private var recentCompletedRequestIds: [String] = []
+	// Lock discipline (protocol 7). `ownerLock`, `requestRegistryLock`, each
+	// `RequestContext.lock`, and `completedRequestLock` are leaf locks: a path
+	// takes one, finishes, and releases it before taking any other, so no two
+	// are ever held together and no order between them can invert.
+	// `physicalInputLock` (recursive) may be held while a leaf lock is taken
+	// (checkpoints and ownership heartbeats inside delivery); no path takes
+	// `physicalInputLock` while holding a leaf lock.
+	//
+	// Semantic request registry (protocol 7): act/actBatch requests keyed by
+	// their `requestId`, so `cancel` from another connection can stop them.
+	private let requestRegistryLock = NSLock()
+	private var activeRequests: [String: RequestContext] = [:]
+	private var completedSemanticRequestIds: [String] = []
+	/// Ids cancelled before they registered (guarded by `requestRegistryLock`).
+	/// A request that registers under a tombstoned id starts cancelled.
+	private var cancelTombstones: [(id: String, at: Date)] = []
+	private let tombstoneTTL: TimeInterval = 60
+	private let tombstoneLimit = 256
+	private static let requestContextKey = "pi.computer-use.request-context"
+	// Cross-process ownership (protocol 7): one client session may mutate at a time.
+	// `ownerActiveRequests` counts admitted owner-gated requests still running;
+	// while it is positive the owner is pinned (no TTL expiry, no takeover).
+	private let ownerLock = NSLock()
+	private var owner: (id: String, generation: Int, lastSeen: Date)?
+	private var ownerActiveRequests = 0
+	private let ownerTTL: TimeInterval = 30
+	private let ownerGatedCommands: Set<String> = ["act", "actBatch", "focusWindow", "setWindowFrame", "beginInputSuppression", "endInputSuppression", "restoreUserFocus"]
 
 	func run() {
 		if CommandLine.arguments.contains("serve") {
@@ -515,14 +706,15 @@ final class Bridge {
 					"result": result,
 				], to: responseSocket)
 			} catch let failure as BridgeFailure {
-				send([
-					"id": id,
-					"ok": false,
-					"error": [
-						"message": failure.message,
-						"code": failure.code,
-					],
-				], to: responseSocket)
+				var error: [String: Any] = [
+					"message": failure.message,
+					"code": failure.code,
+				]
+				if let effectPossible = failure.effectPossible { error["effectPossible"] = effectPossible }
+				for (key, value) in failure.details ?? [:] where error[key] == nil { error[key] = value }
+				var payload: [String: Any] = ["id": id, "ok": false, "error": error]
+				if let result = failure.result { payload["result"] = result }
+				send(payload, to: responseSocket)
 			} catch {
 				send([
 					"id": id,
@@ -594,10 +786,269 @@ final class Bridge {
 		return recentCompletedRequestIds
 	}
 
+	// MARK: Protocol 7 ownership
+
+	/// `session` of a request, or of the first batch action for actBatch.
+	private func requestSession(_ request: [String: Any]) -> (id: String, generation: Int)? {
+		let raw = (request["session"] as? [String: Any])
+			?? ((request["actions"] as? [[String: Any]])?.first?["session"] as? [String: Any])
+		guard let raw, let id = raw["id"] as? String, !id.isEmpty else { return nil }
+		return (id, (raw["generation"] as? NSNumber)?.intValue ?? 0)
+	}
+
+	/// Admits a mutating request (`pin: true`) or an explicit claim from
+	/// `session`. A live owner (seen within the TTL, or pinned by an admitted
+	/// request still running) excludes every other session id, requests without
+	/// a session, and older generations of its own id; while pinned it also
+	/// excludes newer generations of its own id. With no live owner, the first
+	/// session to arrive becomes the owner. Sessionless requests are admitted
+	/// only while nothing owns the helper; while they run no session can take
+	/// ownership. A pinned admission increments `ownerActiveRequests`; the caller
+	/// must balance it with `endOwnedRequest`. Refusals mutate nothing.
+	private func authorizeOwner(_ session: (id: String, generation: Int)?, pin: Bool) throws {
+		ownerLock.lock()
+		defer { ownerLock.unlock() }
+		let now = Date()
+		let pinned = ownerActiveRequests > 0
+		let live = owner.flatMap { pinned || now.timeIntervalSince($0.lastSeen) < ownerTTL ? $0 : nil }
+		let active = ownerActiveRequests
+		func refuse(_ message: String) -> BridgeFailure {
+			BridgeFailure(message: message, code: "owned_by_other_session", effectPossible: false, details: ["activeRequests": active])
+		}
+		guard let session else {
+			if live != nil { throw refuse("The helper is owned by another session; this request carries no session") }
+			// An expired, unpinned owner is dropped so it cannot resume beside
+			// this sessionless request.
+			owner = nil
+			if pin { ownerActiveRequests += 1 }
+			return
+		}
+		if let live {
+			if live.id != session.id {
+				throw refuse(pinned ? "The helper is owned by another session with requests in flight" : "The helper is owned by another session")
+			}
+			if session.generation < live.generation {
+				throw refuse("The helper is owned by a newer generation of this session")
+			}
+			if session.generation > live.generation && pinned {
+				throw refuse("An older generation of this session still has requests in flight")
+			}
+		} else if owner == nil && pinned {
+			throw refuse("Requests without a session are in flight")
+		}
+		owner = (session.id, session.generation, now)
+		if pin { ownerActiveRequests += 1 }
+	}
+
+	/// Balances a pinned `authorizeOwner` admission and restarts the owner's
+	/// TTL from the request's completion.
+	private func endOwnedRequest(_ session: (id: String, generation: Int)?) {
+		ownerLock.lock()
+		ownerActiveRequests = max(0, ownerActiveRequests - 1)
+		if let session, let current = owner, current.id == session.id, current.generation == session.generation {
+			owner = (current.id, current.generation, Date())
+		}
+		ownerLock.unlock()
+	}
+
+	/// Extends the lease of a live (or pinned) owner that `session` matches.
+	private func refreshOwner(_ session: (id: String, generation: Int)) {
+		ownerLock.lock()
+		if let current = owner, current.id == session.id, current.generation == session.generation,
+			ownerActiveRequests > 0 || Date().timeIntervalSince(current.lastSeen) < ownerTTL
+		{
+			owner = (current.id, current.generation, Date())
+		}
+		ownerLock.unlock()
+	}
+
+	/// Clears ownership for its owner. Refused with `owner_busy` while the owner
+	/// has admitted requests running; ownership then stays pinned until they end.
+	private func releaseOwner(_ session: (id: String, generation: Int)?) throws -> Bool {
+		ownerLock.lock()
+		defer { ownerLock.unlock() }
+		guard let session, let current = owner, current.id == session.id, session.generation >= current.generation else { return false }
+		if ownerActiveRequests > 0 {
+			throw BridgeFailure(message: "release refused: the owner has \(ownerActiveRequests) request(s) in flight", code: "owner_busy", effectPossible: false, details: ["activeRequests": ownerActiveRequests])
+		}
+		owner = nil
+		return true
+	}
+
+	// MARK: Protocol 7 request identity and cancellation
+
+	private func activeRequestContext() -> RequestContext? {
+		Thread.current.threadDictionary[Bridge.requestContextKey] as? RequestContext
+	}
+
+	/// Cancellation/deadline checkpoint for the request running on this thread.
+	private func checkpoint() throws {
+		try activeRequestContext()?.checkpoint()
+	}
+
+	/// A refusal that reports whether this request already delivered anything.
+	private func foregroundRequired(_ message: String) -> BridgeFailure {
+		BridgeFailure(message: message, code: "foreground_required", effectPossible: activeRequestContext()?.effectPossible ?? false)
+	}
+
+	/// Roles whose keyboard focus is window- or app-level: focusing them makes
+	/// a window key/main or targets the whole app, which is foreground work.
+	private static let windowLevelFocusRoles: Set<String> = ["AXWindow", "AXSheet", "AXDrawer", "AXApplication", "AXSystemWide"]
+
+	/// Refusal decision for an AX keyboard-focus write; reads attributes only.
+	/// Without a foreground grant only control-level focus is allowed: an
+	/// element whose role is readable, not window-level, and whose ancestry is
+	/// proven free of `AXWebArea`. An inconclusive ancestry walk (depth limit
+	/// or AX read error) is refused like web content: fail closed.
+	private func axFocusRefusal(_ element: AXUIElement, foregroundGranted: Bool) -> BridgeFailure? {
+		if foregroundGranted { return nil }
+		guard let role = stringAttribute(element, attribute: kAXRoleAttribute as CFString), !role.isEmpty else {
+			return foregroundRequired("The focus target's role is unreadable; focusing it requires a host foreground grant")
+		}
+		if Bridge.windowLevelFocusRoles.contains(role) {
+			return foregroundRequired("Focusing a \(role) is window-level focus and requires a host foreground grant")
+		}
+		switch ancestorRole(element, role: "AXWebArea") {
+		case .notFound:
+			return nil
+		case .found:
+			return foregroundRequired("Focusing web content requires a host foreground grant")
+		case .inconclusive:
+			return foregroundRequired("The focus target's web-content ancestry is inconclusive (ancestry inconclusive); focusing it requires a host foreground grant")
+		}
+	}
+
+	/// The single AX keyboard-focus write (`kAXFocusedAttribute`). The refusal
+	/// decision precedes the checkpoint and `markEffect`, so a refused write
+	/// leaves no effect and reports `effectPossible` from earlier work only.
+	private func setAXFocus(_ element: AXUIElement, foregroundGranted: Bool) throws -> AXError {
+		if let refusal = axFocusRefusal(element, foregroundGranted: foregroundGranted) { throw refusal }
+		try checkpoint()
+		activeRequestContext()?.markEffect()
+		return AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+	}
+
+	/// Runs an act/actBatch body registered under its semantic request ids.
+	/// Every failure leaving the body carries `effectPossible`.
+	///
+	/// Registration consults the cancel tombstones under the same lock as
+	/// `cancelRequest`, so a cancel that arrived before registration is never
+	/// lost: the context starts cancelled and the checkpoint below (which runs
+	/// before `body`, hence before target resolution or any AX access) refuses
+	/// it with `rejected_before_delivery`.
+	private func tracked(requestIds: [String], deadlineMs: Double?, session: (id: String, generation: Int)?, _ body: () throws -> [String: Any]) throws -> [String: Any] {
+		var heartbeat: (() -> Void)?
+		if let session { heartbeat = { [weak self] in self?.refreshOwner(session) } }
+		requestRegistryLock.lock()
+		if let duplicate = requestIds.first(where: { activeRequests[$0] != nil }) {
+			requestRegistryLock.unlock()
+			throw BridgeFailure(message: "Request id '\(duplicate)' is already in flight", code: "invalid_request", effectPossible: false)
+		}
+		pruneTombstones(now: Date())
+		let tombstoned = requestIds.contains { id in cancelTombstones.contains { $0.id == id } }
+		let context = RequestContext(requestIds: requestIds, deadlineMs: deadlineMs, cancelled: tombstoned, heartbeat: heartbeat)
+		for id in requestIds { activeRequests[id] = context }
+		requestRegistryLock.unlock()
+		let threadDictionary = Thread.current.threadDictionary
+		threadDictionary[Bridge.requestContextKey] = context
+		defer {
+			threadDictionary.removeObject(forKey: Bridge.requestContextKey)
+			requestRegistryLock.lock()
+			for id in requestIds {
+				activeRequests.removeValue(forKey: id)
+				completedSemanticRequestIds.removeAll { $0 == id }
+				completedSemanticRequestIds.append(id)
+			}
+			if completedSemanticRequestIds.count > 64 {
+				completedSemanticRequestIds.removeFirst(completedSemanticRequestIds.count - 64)
+			}
+			requestRegistryLock.unlock()
+		}
+		do {
+			try context.checkpoint()
+			return try body()
+		} catch var failure as BridgeFailure {
+			if failure.effectPossible == nil { failure.effectPossible = context.effectPossible }
+			throw failure
+		} catch {
+			throw BridgeFailure(message: error.localizedDescription, code: "internal_error", effectPossible: context.effectPossible)
+		}
+	}
+
+	/// Drops tombstones older than the TTL and beyond the size bound.
+	/// Caller holds `requestRegistryLock`.
+	private func pruneTombstones(now: Date) {
+		cancelTombstones.removeAll { now.timeIntervalSince($0.at) >= tombstoneTTL }
+		if cancelTombstones.count > tombstoneLimit {
+			cancelTombstones.removeFirst(cancelTombstones.count - tombstoneLimit)
+		}
+	}
+
+	/// `cancel {target}`: flags the in-flight request and waits up to 300 ms for
+	/// it to reach a checkpoint. States:
+	/// - `stopped`: it reached a checkpoint and delivers nothing more (terminal).
+	/// - `completed`: it finished before stopping (terminal).
+	/// - `stopping`: flagged but still executing (non-terminal). Delivery may
+	///   continue until its next checkpoint; the request itself then answers
+	///   `cancelled`. `effectPossible` is always true for this state.
+	/// - `not_found`: not yet seen. The id is tombstoned for 60 s (at most 256
+	///   ids), so if it arrives later it is refused before delivery.
+	private func cancelRequest(_ request: [String: Any]) throws -> [String: Any] {
+		let target = try stringArg(request, "target")
+		requestRegistryLock.lock()
+		let context = activeRequests[target]
+		let completed = completedSemanticRequestIds.contains(target)
+		if context == nil && !completed {
+			let now = Date()
+			cancelTombstones.removeAll { $0.id == target }
+			cancelTombstones.append((target, now))
+			pruneTombstones(now: now)
+		}
+		requestRegistryLock.unlock()
+		guard let context else {
+			return ["acknowledged": true, "state": completed ? "completed" : "not_found"]
+		}
+		context.requestCancel()
+		let waitUntil = Date().addingTimeInterval(0.3)
+		while true {
+			requestRegistryLock.lock()
+			let stillActive = activeRequests[target] === context
+			requestRegistryLock.unlock()
+			if context.isStopped {
+				return ["acknowledged": true, "state": "stopped", "stoppedAt": context.currentStep, "effectPossible": context.effectPossible]
+			}
+			if !stillActive {
+				return ["acknowledged": true, "state": "completed", "effectPossible": context.effectPossible]
+			}
+			if Date() >= waitUntil {
+				return ["acknowledged": true, "state": "stopping", "effectPossible": true]
+			}
+			usleep(5_000)
+		}
+	}
+
 	private func handleRequest(_ request: [String: Any]) throws -> Any {
 		let cmd = try stringArg(request, "cmd")
+		let session = requestSession(request)
+		// Owner-gated commands pin ownership from admission until they return;
+		// the balancing defer is registered only after a successful admission.
+		let gated = ownerGatedCommands.contains(cmd)
+		if gated {
+			try authorizeOwner(session, pin: true)
+		} else if let session {
+			refreshOwner(session)
+		}
+		defer { if gated { endOwnedRequest(session) } }
 
 		switch cmd {
+		case "claim":
+			guard let session else { throw BridgeFailure(message: "claim requires session {id, generation}", code: "invalid_args") }
+			try authorizeOwner(session, pin: false)
+			return ["claimed": true, "owner": ["id": session.id, "generation": session.generation], "ttlMs": Int(ownerTTL * 1000)]
+		case "release":
+			return ["released": try releaseOwner(session)]
+		case "cancel":
+			return try cancelRequest(request)
 		case "diagnostics":
 			return diagnostics()
 		case "checkPermissions":
@@ -638,9 +1089,19 @@ final class Bridge {
 		case "look":
 			return try look(request)
 		case "act":
-			return try act(request)
+			return try tracked(
+				requestIds: [optionalStringArg(request, "requestId")].compactMap { $0 },
+				deadlineMs: (request["deadlineMs"] as? NSNumber)?.doubleValue,
+				session: session
+			) { try act(request) }
 		case "actBatch":
-			return try actBatch(request)
+			let actions = request["actions"] as? [[String: Any]] ?? []
+			let deadlines = ([request] + actions).compactMap { ($0["deadlineMs"] as? NSNumber)?.doubleValue }
+			return try tracked(
+				requestIds: ([request] + actions).compactMap { $0["requestId"] as? String },
+				deadlineMs: deadlines.min(),
+				session: session
+			) { try actBatch(request) }
 		case "hitTest":
 			return try hitTest(request)
 		case "axWaitFor":
@@ -750,7 +1211,7 @@ final class Bridge {
 		var output: [String: Any] = [
 			"protocolVersion": protocolVersion,
 			"architectureVersion": 1,
-			"invariants": ["state-scoped-observations", "bounded-observation-history", "multi-root-forest", "progressive-disclosure", "atomic-physical-input", "concurrent-requests", "transactional-batching"],
+			"invariants": ["state-scoped-observations", "bounded-observation-history", "multi-root-forest", "progressive-disclosure", "atomic-physical-input", "concurrent-requests", "transactional-batching", "foreground-grant-enforced", "request-cancellation", "session-ownership"],
 			"pid": Int32(getpid()),
 			"parentPid": parentPid,
 			"executablePath": CommandLine.arguments.first ?? "",
@@ -1024,7 +1485,15 @@ final class Bridge {
 		return ["active": false]
 	}
 
+	/// Activation and raise require a host foreground grant on the request.
+	private func requireForegroundGrant(_ request: [String: Any], _ operation: String) throws {
+		guard (request["foregroundGrant"] as? Bool) == true else {
+			throw BridgeFailure(message: "\(operation) activates or raises a window and requires a host foreground grant", code: "foreground_required", effectPossible: false)
+		}
+	}
+
 	private func restoreUserFocus(_ request: [String: Any]) throws -> [String: Any] {
+		try requireForegroundGrant(request, "restoreUserFocus")
 		let pid = Int32(try intArg(request, "pid"))
 		let targetTitle = optionalStringArg(request, "windowTitle")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 		guard let app = NSRunningApplication(processIdentifier: pid) else {
@@ -1046,7 +1515,8 @@ final class Bridge {
 			}) {
 				restoredWindowTitle = stringAttribute(match, attribute: kAXTitleAttribute as CFString) ?? ""
 				let setMainStatus = AXUIElementSetAttributeValue(match, kAXMainAttribute as CFString, kCFBooleanTrue)
-				let setFocusedStatus = AXUIElementSetAttributeValue(match, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+				// requireForegroundGrant admitted this command.
+				let setFocusedStatus = try setAXFocus(match, foregroundGranted: true)
 				let raiseStatus = AXUIElementPerformAction(match, kAXRaiseAction as CFString)
 				windowRestored = setMainStatus == .success || setFocusedStatus == .success || raiseStatus == .success
 			}
@@ -1089,6 +1559,7 @@ final class Bridge {
 	}
 
 	private func focusWindow(_ request: [String: Any]) throws -> [String: Any] {
+		try requireForegroundGrant(request, "focusWindow")
 		let pid = Int32(try intArg(request, "pid"))
 		let windowId = optionalIntArg(request, "windowId").map { UInt32($0) }
 		let windowRef = optionalStringArg(request, "windowRef")
@@ -1104,7 +1575,8 @@ final class Bridge {
 		}
 
 		let setMainStatus = AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
-		let setFocusedStatus = AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+		// requireForegroundGrant admitted this command.
+		let setFocusedStatus = try setAXFocus(window, foregroundGranted: true)
 		let raiseStatus = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
 		let focused = setMainStatus == .success || setFocusedStatus == .success || raiseStatus == .success
 		var result: [String: Any] = [
@@ -1338,7 +1810,7 @@ final class Bridge {
 		if let windowRef, windowRef.hasPrefix("cgmenu:"), refStore.window(for: windowRef) == nil {
 			let frame = windowId.flatMap { windowInfo(windowId: $0)?.bounds } ?? CGRect(x: 0, y: 0, width: 1, height: 1)
 			let lookId = freshLookId()
-			storeLookRecord(LookRecord(lookId: lookId, windowId: windowId ?? 0, windowFrame: frame, imageWidth: max(1, Int(frame.width)), imageHeight: max(1, Int(frame.height)), hasImage: false))
+			storeLookRecord(LookRecord(lookId: lookId, windowId: windowId ?? 0, windowFrame: frame, imageWidth: max(1, Int(frame.width)), imageHeight: max(1, Int(frame.height)), hasImage: false, rootElement: nil, observedFrame: nil))
 			let outline = LookNode(element: nil, ref: windowRef, role: "AXMenu", subrole: "", identifier: "", title: "Menu", description: "", value: "", actions: [], canPress: false, canFocus: false, canSetValue: false, canScroll: false, canIncrement: false, canDecrement: false, isTextInput: false, rect: CGRect(x: 0, y: 0, width: max(1, frame.width), height: max(1, frame.height)), pictureOnly: true)
 			return [
 				"lookId": lookId,
@@ -1401,13 +1873,18 @@ final class Bridge {
 
 		let lookId = freshLookId()
 		let baseRecord = baseLookId.flatMap { lookRecord(for: $0) }
+		// A scoped refresh keeps its base look's geometry, so it also keeps the
+		// base's observed frame: a move since the base look stays detectable.
+		let observedFrame: CGRect? = baseRecord != nil ? baseRecord?.observedFrame : frameForElement(window)
 		storeLookRecord(LookRecord(
 			lookId: lookId,
 			windowId: windowId ?? baseRecord?.windowId ?? 0,
 			windowFrame: baseRecord?.windowFrame ?? capture?.frame ?? rootFrame,
 			imageWidth: baseRecord?.imageWidth ?? imageWidth,
 			imageHeight: baseRecord?.imageHeight ?? imageHeight,
-			hasImage: baseRecord?.hasImage ?? (capture != nil)
+			hasImage: baseRecord?.hasImage ?? (capture != nil),
+			rootElement: baseRecord?.rootElement ?? window,
+			observedFrame: observedFrame
 		))
 		let scale = (capture?.frame.width ?? rootFrame.width) > 0 ? Double(imageWidth) / (capture?.frame.width ?? rootFrame.width) : displayScaleFactor(for: rootFrame)
 		let pairing = pairingForWindow(window, pid: pid)
@@ -1462,6 +1939,25 @@ final class Bridge {
 		lookRecordLock.lock()
 		defer { lookRecordLock.unlock() }
 		return lookRecords[lookId]
+	}
+
+	/// Out-of-band staleness at act time: the look's root window must still
+	/// have the frame recorded at look time (within 1 pt in origin and size).
+	/// A window that moved or resized on its own is evidence the app changed
+	/// state, so every action, including AX value writes, is refused. Reads
+	/// only; the caller runs it before any delivery. A root whose frame is no
+	/// longer readable is refused too (fail closed). No polling or timers.
+	private func windowFrameStaleness(_ record: LookRecord) -> BridgeFailure? {
+		guard let observed = record.observedFrame, let root = record.rootElement else { return nil }
+		let effectPossible = activeRequestContext()?.effectPossible ?? false
+		guard let current = frameForElement(root) else {
+			return BridgeFailure(message: "Window is no longer readable since look \(record.lookId); observe again", code: "stale_look", effectPossible: effectPossible)
+		}
+		let tolerance: CGFloat = 1.0
+		let moved = abs(current.origin.x - observed.origin.x) > tolerance || abs(current.origin.y - observed.origin.y) > tolerance
+		let resized = abs(current.size.width - observed.size.width) > tolerance || abs(current.size.height - observed.size.height) > tolerance
+		guard moved || resized else { return nil }
+		return BridgeFailure(message: "Window frame changed since look \(record.lookId); observe again", code: "stale_look", effectPossible: effectPossible)
 	}
 
 	private func rectTransform(windowFrame: CGRect, imageWidth: Int, imageHeight: Int) -> (CGRect) -> CGRect {
@@ -1864,9 +2360,23 @@ final class Bridge {
 		let action = try stringArg(request, "action")
 		let target = request["target"] as? [String: Any] ?? [:]
 		let params = request["params"] as? [String: Any] ?? [:]
-		let policy = optionalStringArg(request, "policy") ?? "default"
+		// Protocol 7: an absent or legacy "default" policy is background. HID
+		// delivery, activation, and raise exist only for a granted foreground request.
+		let requestedPolicy = optionalStringArg(request, "policy") ?? "background"
+		let policy = requestedPolicy == "default" ? "background" : requestedPolicy
+		let foregroundGranted = policy == "foreground" && (request["foregroundGrant"] as? Bool) == true
+		if policy == "foreground" && !foregroundGranted {
+			throw foregroundRequired("Foreground delivery requires a host foreground grant on the request")
+		}
+		let context = activeRequestContext()
+		context?.foregroundGrant = foregroundGranted
+		try checkpoint()
+		// Before any target resolution or delivery: a window that moved or
+		// resized since the look makes the look stale.
+		if let stale = windowFrameStaleness(record) { throw stale }
 		let deferRootDelta = boolArg(request, "deferRootDelta") ?? false
-		let delivery = policy == "background" ? "pid" : ((params["delivery"] as? String) == "pid" ? "pid" : "hid")
+		let delivery = foregroundGranted && (params["delivery"] as? String) != "pid" ? "hid" : "pid"
+		let frontmostBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
 		var holdsPhysicalInput = false
 		func acquirePhysicalInputIfNeeded() {
 			if delivery == "hid" && !holdsPhysicalInput {
@@ -1883,17 +2393,43 @@ final class Bridge {
 		let eventCursor = eventsLive ? rootEventCursor(pid: pid) : 0
 		let beforeRootSnapshot = deferRootDelta ? [:] : rootMetadataSnapshot(pid: pid)
 		let beforeCgSignature = deferRootDelta ? [] : cgRootSignature(pid: pid)
+		// Baseline for the pid-pointer settle check below; batch steps defer the
+		// root delta, so they take their own (cheap) CG window-id snapshot.
+		let pointerBaselineCg: Set<UInt32> = (action == "press" || action == "click") ? (deferRootDelta ? cgRootSignature(pid: pid) : beforeCgSignature) : []
 		let beforeFrontmostPid = deferRootDelta ? nil : NSWorkspace.shared.frontmostApplication?.processIdentifier
 		let beforeSheetCount = windowElement(pid: pid, windowId: record.windowId).map { sheetElements(of: $0).count } ?? 0
 		let beforeFocusedWindow = focusedWindowSummary(pid: pid)
 		let beforeValue: String?
 		let beforeSelected: String?
-		func finish(_ response: [String: Any]) -> [String: Any] {
+		func finish(_ response: [String: Any]) throws -> [String: Any] {
 			if deferRootDelta { return response }
-			return attachRootDelta(to: response, before: beforeRootSnapshot, beforeFrontmostPid: beforeFrontmostPid, pid: pid, eventsLive: eventsLive, eventCursor: eventCursor, beforeCgSignature: beforeCgSignature)
+			var output = try attachRootDelta(to: response, before: beforeRootSnapshot, beforeFrontmostPid: beforeFrontmostPid, pid: pid, eventsLive: eventsLive, eventCursor: eventCursor, beforeCgSignature: beforeCgSignature)
+			attachFrontmost(to: &output, before: frontmostBefore)
+			return output
 		}
 
-		if let ref = target["ref"] as? String {
+		let focusResolved = optionalStringArg(request, "focusResolution") == "ax_focused_element"
+		if focusResolved {
+			// Resolve the target app's own AX focus, never system focus, and
+			// deliver by pid; a focus owned by another process is refused.
+			let appElement = AXUIElementCreateApplication(pid)
+			if let focused = copyAttribute(appElement, attribute: kAXFocusedUIElementAttribute as CFString).flatMap(asAXElement) {
+				var focusedPid: pid_t = 0
+				if AXUIElementGetPid(focused, &focusedPid) == .success, focusedPid != pid {
+					throw foregroundRequired("The focused element belongs to another process (pid \(focusedPid))")
+				}
+				element = focused
+				beforeValue = stringAttribute(focused, attribute: kAXValueAttribute as CFString)
+				beforeSelected = stringAttribute(focused, attribute: kAXSelectedTextAttribute as CFString)
+			} else {
+				beforeValue = nil
+				beforeSelected = nil
+			}
+			if record.hasImage, let xNumber = target["x"] as? NSNumber, let yNumber = target["y"] as? NSNumber {
+				rawPoint = lookPoint(record: record, x: xNumber.doubleValue, y: yNumber.doubleValue)
+			}
+			performed["focusResolution"] = "ax_focused_element"
+		} else if let ref = target["ref"] as? String {
 			var refound = false
 			let cached = refStore.element(for: ref)
 			let cachedIsLive = cached.map {
@@ -1942,14 +2478,17 @@ final class Bridge {
 			Task { @MainActor in AgentCursor.shared.animate(to: point, above: record.windowId) }
 		}
 
-		func focusTargetForPhysicalInput() {
+		func focusTargetForPhysicalInput() throws {
 			guard delivery == "hid" else { return }
+			guard foregroundGranted else { throw foregroundRequired("Activating or raising the target requires a host foreground grant") }
+			try checkpoint()
+			context?.markEffect()
 			if let app = NSRunningApplication(processIdentifier: pid), !app.isActive {
 				performed["activated"] = app.activate()
 			}
 			if let window = windowElement(pid: pid, windowId: record.windowId) {
 				_ = AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
-				_ = AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+				_ = try setAXFocus(window, foregroundGranted: foregroundGranted)
 				performed["raised"] = AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success
 			}
 			usleep(20_000)
@@ -1963,7 +2502,7 @@ final class Bridge {
 				let role = stringAttribute(hit, attribute: kAXRoleAttribute as CFString) ?? ""
 				if role == "AXWindow" || role == "AXApplication" { preflightCapsUnknown = true; return }
 				if delivery == "hid" && attempt < 3 {
-					focusTargetForPhysicalInput()
+					try focusTargetForPhysicalInput()
 					usleep(20_000)
 					continue
 				}
@@ -1971,6 +2510,10 @@ final class Bridge {
 			}
 		}
 
+		// Set once a pid-targeted click was posted, and when its target element
+		// exposes no AX action; together they drive the settle check below.
+		var pidPointerPosted = false
+		var pointerWithoutAXAction = false
 		func executeCoordinates(_ point: CGPoint) throws {
 			guard element != nil || record.hasImage else {
 				throw BridgeFailure(message: "Coordinate grounding is unavailable for this outline-only root", code: "coordinate_unavailable_for_root")
@@ -1978,12 +2521,13 @@ final class Bridge {
 			performed["grounding"] = "coordinates"
 			if delivery == "pid" { performed["verification"] = "caller_required" }
 			acquirePhysicalInputIfNeeded()
-			focusTargetForPhysicalInput()
+			try focusTargetForPhysicalInput()
 			if delivery == "hid" { try preflight(point) }
 			switch action {
 			case "press", "click":
 				animateCursor(at: point)
 				try postMouseClick(at: point, pid: pid, button: mouseButton(params["button"] as? String ?? "left"), clickCount: max(1, min(3, (params["clickCount"] as? NSNumber)?.intValue ?? 1)), delivery: delivery)
+				if delivery == "pid" { pidPointerPosted = true }
 			case "moveMouse":
 				animateCursor(at: point)
 				try postMouseMove(to: point, pid: pid, delivery: delivery)
@@ -2016,18 +2560,67 @@ final class Bridge {
 			return refreshed
 		}
 
+		// Set when a text-role click was delivered as a pid-scoped AX focus request;
+		// the outcome then requires the target app to report that focus.
+		var axFocusedTarget: AXUIElement?
 		if let element, action == "press" || action == "click" {
 			let elementRole = stringAttribute(element, attribute: kAXRoleAttribute as CFString) ?? ""
 			let textRoles: Set<String> = ["AXTextField", "AXTextArea", "AXTextView", "AXSearchField", "AXComboBox", "AXEditableText", "AXSecureTextField"]
-			let requiresPointerFocus = hasAncestorRole(element, role: "AXWebArea") || textRoles.contains(elementRole)
-			if requiresPointerFocus && policy != "ax_only" {
+			// Anything but a proven non-web ancestry is treated as web content.
+			let webAncestry = ancestorRole(element, role: "AXWebArea")
+			let inWebArea = webAncestry != .notFound
+			let isTextRole = textRoles.contains(elementRole)
+			let requiresPointerFocus = inWebArea || isTextRole
+			if webAncestry == .inconclusive && !foregroundGranted && (isTextRole || policy == "background") {
+				// Fail closed before any mutation: without proof the target is
+				// outside web content, no ungranted AX focus write is sent and
+				// background delivery is refused. ax_only non-text targets keep
+				// the confirmed-web path below (AXPress, no focus write).
+				throw foregroundRequired("The target's web-content ancestry is inconclusive (ancestry inconclusive); acting on it requires a host foreground grant")
+			}
+			if isTextRole && !inWebArea && (policy == "background" || policy == "ax_only") {
+				// Clicking a native text field only needs keyboard focus. Ask the
+				// target app for it through AX (pid-scoped, no activation, no HID).
+				// The refusal decision precedes every mutation: an element whose
+				// focus is not settable is refused in background before markEffect.
+				var focusSettable = DarwinBoolean(false)
+				let settableStatus = AXUIElementIsAttributeSettable(element, kAXFocusedAttribute as CFString, &focusSettable)
+				let canSetFocus = settableStatus == .success && focusSettable.boolValue
+				if !canSetFocus && policy == "background" {
+					throw foregroundRequired("The text field does not accept accessibility focus; focusing it requires pointer input")
+				}
+				if canSetFocus {
+					let cursorPoint = try? coordinatePoint()
+					var focusElement = element
+					var status = try setAXFocus(focusElement, foregroundGranted: foregroundGranted)
+					if status != .success, let refreshed = refreshElement() {
+						focusElement = refreshed
+						status = try setAXFocus(focusElement, foregroundGranted: foregroundGranted)
+					}
+					if status == .success {
+						performed["delivery"] = "ax"
+						performed["grounding"] = "focus"
+						performed["focused"] = true
+						axFocusedTarget = focusElement
+						if let cursorPoint { animateCursor(at: cursorPoint) }
+					} else if policy == "background" {
+						// markEffect already ran, so this refusal reports effectPossible true.
+						throw foregroundRequired("The text field rejected the accessibility focus request; focusing it requires pointer input")
+					}
+				}
+			}
+			if axFocusedTarget != nil {
+				// Delivered as AX focus; evaluated below.
+			} else if requiresPointerFocus && policy != "ax_only" {
 				if policy == "foreground" {
 					try executeCoordinates(coordinatePoint())
 				} else {
-					throw BridgeFailure(message: "Web content requires pointer input", code: "foreground_required")
+					throw foregroundRequired("Web content requires pointer input")
 				}
 			} else if supportsAction(element, action: kAXPressAction as CFString) {
 				let cursorPoint = try? coordinatePoint()
+				try checkpoint()
+				context?.markEffect()
 				var status = AXUIElementPerformAction(element, kAXPressAction as CFString)
 				if status != .success, let refreshed = refreshElement(), supportsAction(refreshed, action: kAXPressAction as CFString) {
 					status = AXUIElementPerformAction(refreshed, kAXPressAction as CFString)
@@ -2040,14 +2633,28 @@ final class Bridge {
 					try executeCoordinates(coordinatePoint())
 				}
 			} else {
+				// No AX action can realize this click, so only pointer input
+				// remains, and AppKit views often ignore pid-targeted events.
+				// Without a grant the refusal is decided here, before any
+				// checkpoint, markEffect, or event (effectPossible reflects only
+				// earlier work, such as a failed ax_only text focus write). A
+				// granted foreground request takes the HID path; confirmed or
+				// inconclusive web content keeps its prior ax_only pointer path.
+				if !foregroundGranted && !inWebArea {
+					throw foregroundRequired("target has no accessibility action; pointer delivery needs a host foreground grant")
+				}
+				pointerWithoutAXAction = true
 				try executeCoordinates(coordinatePoint())
 			}
 		} else if let element, action == "setText" {
 			let text = params["text"] as? String ?? ""
-			if hasAncestorRole(element, role: "AXWebArea") {
+			if ancestorRole(element, role: "AXWebArea") != .notFound {
+				// Web (or unprovable) focus needs a grant: refuse before activation
+				// or any write. axFocusRefusal re-walks and names the reason.
+				if let refusal = axFocusRefusal(element, foregroundGranted: foregroundGranted) { throw refusal }
 				acquirePhysicalInputIfNeeded()
-				focusTargetForPhysicalInput()
-				_ = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+				try focusTargetForPhysicalInput()
+				_ = try setAXFocus(element, foregroundGranted: foregroundGranted)
 				let currentValue = stringAttribute(element, attribute: kAXValueAttribute as CFString) ?? ""
 				var range = CFRange(location: 0, length: (currentValue as NSString).length)
 				let selected = AXValueCreate(.cfRange, &range).map {
@@ -2064,9 +2671,11 @@ final class Bridge {
 				performed["grounding"] = "keyboard-events"
 				performed["delivery"] = delivery
 				performed["selectionGrounding"] = selected ? "ax" : "keyboard"
-				return finish(["outcome": value == text ? "worked" : "didnt", "performed": performed, "evidence": ["value": value]])
+				return try finish(["outcome": value == text ? "worked" : "didnt", "performed": performed, "evidence": ["value": value]])
 			}
 			var targetElement = element
+			try checkpoint()
+			context?.markEffect()
 			var status = AXUIElementSetAttributeValue(targetElement, kAXValueAttribute as CFString, text as CFTypeRef)
 			if status != .success, let refreshed = refreshElement() {
 				targetElement = refreshed
@@ -2077,19 +2686,21 @@ final class Bridge {
 				performed["delivery"] = "ax"
 				let value = stringAttribute(targetElement, attribute: kAXValueAttribute as CFString) ?? ""
 				if value != text && policy != "foreground" {
-					throw BridgeFailure(message: "The background accessibility value write was accepted but did not take effect", code: "foreground_required")
+					throw foregroundRequired("The background accessibility value write was accepted but did not take effect")
 				}
-				return finish(["outcome": value == text ? "worked" : "didnt", "performed": performed, "evidence": ["value": value]])
+				return try finish(["outcome": value == text ? "worked" : "didnt", "performed": performed, "evidence": ["value": value]])
 			}
 			try executeCoordinates(coordinatePoint())
 		} else if action == "typeText" {
 			let preserveFocus = params["preserveFocus"] as? Bool ?? false
-			if let element {
-				let focused = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-				if focused == .success { performed["focused"] = true }
+			// A focus-resolved element already is the app's focused element: no
+			// focus write. Otherwise setAXFocus refuses window-level or web focus
+			// without a grant before any mutation.
+			if let element, !focusResolved, try setAXFocus(element, foregroundGranted: foregroundGranted) == .success {
+				performed["focused"] = true
 			}
 			acquirePhysicalInputIfNeeded()
-			if delivery == "hid" && !preserveFocus { focusTargetForPhysicalInput() }
+			if delivery == "hid" && !preserveFocus { try focusTargetForPhysicalInput() }
 			let text = params["text"] as? String ?? ""
 			try postUnicodeText(text, pid: pid, delivery: delivery)
 			performed["grounding"] = "coordinates"
@@ -2097,7 +2708,7 @@ final class Bridge {
 				usleep(30_000)
 				let afterValue = stringAttribute(element, attribute: kAXValueAttribute as CFString) ?? ""
 				let changed = afterValue != (beforeValue ?? "")
-				return finish(["outcome": changed ? "worked" : "didnt", "performed": performed, "evidence": ["value": afterValue, "valueChanged": changed]])
+				return try finish(["outcome": changed ? "worked" : "didnt", "performed": performed, "evidence": ["value": afterValue, "valueChanged": changed]])
 			}
 		} else if action == "keypress" {
 			let preserveFocus = params["preserveFocus"] as? Bool ?? false
@@ -2105,8 +2716,9 @@ final class Bridge {
 				throw BridgeFailure(message: "keypress requires keys", code: "invalid_args")
 			}
 			if let element {
-				let focused = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-				if focused == .success { performed["focused"] = true }
+				if !focusResolved, try setAXFocus(element, foregroundGranted: foregroundGranted) == .success {
+					performed["focused"] = true
+				}
 				let normalizedKeys = keys.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
 				if normalizedKeys.count == 2,
 					normalizedKeys.last == "a",
@@ -2114,6 +2726,8 @@ final class Bridge {
 					let value = stringAttribute(element, attribute: kAXValueAttribute as CFString)
 				{
 					var range = CFRange(location: 0, length: (value as NSString).length)
+					try checkpoint()
+					context?.markEffect()
 					if let selection = AXValueCreate(.cfRange, &range),
 						AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, selection) == .success
 					{
@@ -2122,19 +2736,21 @@ final class Bridge {
 				}
 			}
 			acquirePhysicalInputIfNeeded()
-			if delivery == "hid" && !preserveFocus { focusTargetForPhysicalInput() }
+			if delivery == "hid" && !preserveFocus { try focusTargetForPhysicalInput() }
 			try postKeyPress(keys: keys, pid: pid, delivery: delivery)
 			performed["grounding"] = "coordinates"
 		} else if let element, action == "scroll" {
 			let cursorPoint = try? coordinatePoint()
 			let before = scrollPositionSignature(element)
+			try checkpoint()
+			context?.markEffect()
 			let result = performScrollActionOrAncestor(startingAt: element, targetPid: pid, scrollX: (params["scrollX"] as? NSNumber)?.intValue ?? 0, scrollY: (params["scrollY"] as? NSNumber)?.intValue ?? 0, steps: 1)
 			if (result["scrolled"] as? Bool) == true {
 				performed["grounding"] = "description"
 				performed["delivery"] = "ax"
 				if let cursorPoint { animateCursor(at: cursorPoint) }
 				let after = scrollPositionSignature(element)
-				return finish(["outcome": before != after ? "worked" : "unknown", "performed": performed])
+				return try finish(["outcome": before != after ? "worked" : "unknown", "performed": performed])
 			}
 			try executeCoordinates(coordinatePoint())
 		} else {
@@ -2143,13 +2759,71 @@ final class Bridge {
 
 		let afterSheetCount = windowElement(pid: pid, windowId: record.windowId).map { sheetElements(of: $0).count } ?? beforeSheetCount
 		let windowChanged = beforeFocusedWindow != focusedWindowSummary(pid: pid) || beforeSheetCount != afterSheetCount
+		// `unknown` remains only where the helper cannot evaluate the effect: HID
+		// delivery (granted foreground; the event reaches the active app and a
+		// custom view may change no AX state), a coordinate target without an
+		// element, a successful AXPress or a pid click after a failed AXPress
+		// with no AX-visible change (the element advertises an action whose
+		// effect AX need not expose), and non-click coordinate actions.
 		var outcome = preflightCapsUnknown ? "unknown" : "unknown"
 		var evidence: [String: Any] = [:]
+		// True when a pid click on an element without an AX action showed no
+		// change within the settle window; a root delta can still upgrade it.
+		var pointerNoChange = false
 		if let element, action == "press" || action == "click" {
 			let afterValue = stringAttribute(element, attribute: kAXValueAttribute as CFString)
 			let afterSelected = stringAttribute(element, attribute: kAXSelectedTextAttribute as CFString)
 			if beforeValue != afterValue || beforeSelected != afterSelected || windowChanged {
 				outcome = "worked"
+			}
+			if pidPointerPosted && pointerWithoutAXAction && axFocusedTarget == nil && outcome != "worked" {
+				// Bounded settle window (6 x 50 ms, checkpointed): value,
+				// selection, focused window, sheets, onscreen windows, frontmost.
+				func changeObserved() -> Bool {
+					if stringAttribute(element, attribute: kAXValueAttribute as CFString) != beforeValue { return true }
+					if stringAttribute(element, attribute: kAXSelectedTextAttribute as CFString) != beforeSelected { return true }
+					if focusedWindowSummary(pid: pid) != beforeFocusedWindow { return true }
+					let sheets = windowElement(pid: pid, windowId: record.windowId).map { sheetElements(of: $0).count } ?? beforeSheetCount
+					if sheets != beforeSheetCount { return true }
+					if cgRootSignature(pid: pid) != pointerBaselineCg { return true }
+					return NSWorkspace.shared.frontmostApplication?.processIdentifier != frontmostBefore
+				}
+				var changed = false
+				for _ in 0..<6 where !changed {
+					try checkpoint()
+					usleep(50_000)
+					changed = changeObserved()
+				}
+				evidence["observableChange"] = changed
+				if changed {
+					outcome = "worked"
+				} else {
+					outcome = "didnt"
+					pointerNoChange = true
+				}
+			}
+			if let focusTarget = axFocusedTarget {
+				// The target app, not system focus, must report the requested focus.
+				let appElement = AXUIElementCreateApplication(pid)
+				func focusHeld() -> Bool {
+					if boolAttribute(focusTarget, attribute: kAXFocusedAttribute as CFString) == true { return true }
+					guard let focused = copyAttribute(appElement, attribute: kAXFocusedUIElementAttribute as CFString).flatMap(asAXElement) else { return false }
+					return sameElement(focused, focusTarget) || isElement(focused, descendantOf: focusTarget)
+				}
+				var held = focusHeld()
+				var attempt = 0
+				while !held && attempt < 4 {
+					try checkpoint()
+					usleep(25_000)
+					held = focusHeld()
+					attempt += 1
+				}
+				evidence["focusHeld"] = held
+				if held {
+					outcome = "worked"
+				} else if outcome != "worked" {
+					outcome = "didnt"
+				}
 			}
 		} else if windowChanged {
 			outcome = "worked"
@@ -2157,7 +2831,21 @@ final class Bridge {
 		if windowChanged { evidence["windowChanged"] = true }
 		var response: [String: Any] = ["outcome": outcome, "performed": performed]
 		if !evidence.isEmpty { response["evidence"] = evidence }
-		return finish(response)
+		var output = try finish(response)
+		if pointerNoChange, let delta = output["rootDelta"] as? [[String: Any]], !delta.isEmpty {
+			// A root appeared, closed, or took focus after the click: evidence it worked.
+			output["outcome"] = "worked"
+			var upgraded = output["evidence"] as? [String: Any] ?? [:]
+			upgraded["observableChange"] = true
+			upgraded["rootDelta"] = true
+			output["evidence"] = upgraded
+		}
+		return output
+	}
+
+	private func attachFrontmost(to response: inout [String: Any], before: pid_t?) {
+		if let before { response["frontmostBefore"] = Int(before) }
+		if let after = NSWorkspace.shared.frontmostApplication?.processIdentifier { response["frontmostAfter"] = Int(after) }
 	}
 
 	private func actBatch(_ request: [String: Any]) throws -> [String: Any] {
@@ -2183,17 +2871,27 @@ final class Bridge {
 		if mayUsePhysicalInput { physicalInputLock.lock() }
 		defer { if mayUsePhysicalInput { physicalInputLock.unlock() } }
 
+		let context = activeRequestContext()
 		var steps: [[String: Any]] = []
 		var stoppedAt: Int?
 		for (index, action) in actions.enumerated() {
 			var deferred = action
 			deferred["deferRootDelta"] = true
+			context?.setStep(index)
 			do {
+				try checkpoint()
 				let step = try act(deferred)
 				steps.append(step)
 				if (step["outcome"] as? String) == "didnt" { stoppedAt = index; break }
-			} catch let failure as BridgeFailure {
-				steps.append(["outcome": "didnt", "error": ["code": failure.code, "message": failure.message]])
+			} catch var failure as BridgeFailure {
+				if failure.code == "cancelled" {
+					var partial = failure.result ?? [:]
+					partial["stoppedAt"] = index
+					partial["steps"] = steps
+					failure.result = partial
+					throw failure
+				}
+				steps.append(["outcome": "didnt", "error": ["code": failure.code, "message": failure.message, "effectPossible": failure.effectPossible ?? context?.effectPossible ?? true]])
 				stoppedAt = index
 				break
 			}
@@ -2202,7 +2900,9 @@ final class Bridge {
 		let outcome = outcomes.contains("didnt") ? "didnt" : (outcomes.contains("unknown") ? "unknown" : "worked")
 		var response: [String: Any] = ["outcome": outcome, "performed": ["transaction": true, "actionCount": steps.count], "steps": steps]
 		if let stoppedAt { response["stoppedAt"] = stoppedAt }
-		return attachRootDelta(to: response, before: beforeRootSnapshot, beforeFrontmostPid: beforeFrontmostPid, pid: pid, eventsLive: eventsLive, eventCursor: eventCursor, beforeCgSignature: beforeCgSignature)
+		var output = try attachRootDelta(to: response, before: beforeRootSnapshot, beforeFrontmostPid: beforeFrontmostPid, pid: pid, eventsLive: eventsLive, eventCursor: eventCursor, beforeCgSignature: beforeCgSignature)
+		attachFrontmost(to: &output, before: beforeFrontmostPid)
+		return output
 	}
 
 	private func rootIdentity(_ root: [String: Any]) -> String {
@@ -2260,7 +2960,7 @@ final class Bridge {
 	// events can only accelerate the decision, never make it. A cheap
 	// CGWindowList id-set poll detects real-window appearance/closure early;
 	// the AX diff runs once at the first signal or at timeout.
-	private func attachRootDelta(to response: [String: Any], before: [String: [String: Any]], beforeFrontmostPid: pid_t?, pid: Int32, eventsLive: Bool, eventCursor: UInt64, beforeCgSignature: Set<UInt32>) -> [String: Any] {
+	private func attachRootDelta(to response: [String: Any], before: [String: [String: Any]], beforeFrontmostPid: pid_t?, pid: Int32, eventsLive: Bool, eventCursor: UInt64, beforeCgSignature: Set<UInt32>) throws -> [String: Any] {
 		var output = response
 		var performed = output["performed"] as? [String: Any] ?? [:]
 
@@ -2270,6 +2970,7 @@ final class Bridge {
 		var source = "snapshot"
 		let deadline = Date().addingTimeInterval(0.40)
 		while Date() < deadline {
+			try checkpoint()
 			if cgRootSignature(pid: pid) != beforeCgSignature { source = "cg-poll"; break }
 			if let beforeFrontmostPid, NSWorkspace.shared.frontmostApplication?.processIdentifier != beforeFrontmostPid { source = "cg-poll"; break }
 			if eventsLive && rootEvents(pid: pid, since: eventCursor).contains(where: { signalNotifications.contains($0.notification) }) { source = "events"; break }
@@ -2281,6 +2982,7 @@ final class Bridge {
 			// A signal fired but the AX tree can lag the CG window; give it a
 			// bounded moment to catch up.
 			for _ in 0..<3 where delta.isEmpty {
+				try checkpoint()
 				usleep(80_000)
 				delta = rootDelta(before: before, beforeFrontmostPid: beforeFrontmostPid, pid: pid)
 			}
@@ -2670,15 +3372,29 @@ final class Bridge {
 		return false
 	}
 
-	private func hasAncestorRole(_ element: AXUIElement, role: String) -> Bool {
-		var current: AXUIElement? = element
-		var depth = 0
-		while let candidate = current, depth < 30 {
-			if stringAttribute(candidate, attribute: kAXRoleAttribute as CFString) == role { return true }
-			current = parentElement(candidate)
-			depth += 1
+	/// Classifies one AX attribute read for `walkAncestry`.
+	private func ancestryRead<Value>(_ element: AXUIElement, _ attribute: CFString, _ convert: (AnyObject) -> Value?) -> AncestryRead<Value> {
+		var value: AnyObject?
+		switch AXUIElementCopyAttributeValue(element, attribute, &value) {
+		case .success:
+			guard let value, let converted = convert(value) else { return .failed }
+			return .value(converted)
+		case .noValue, .attributeUnsupported:
+			return .absent
+		default:
+			return .failed
 		}
-		return false
+	}
+
+	/// Tri-state `role` ancestry of `element` (itself included); see `walkAncestry`.
+	private func ancestorRole(_ element: AXUIElement, role: String) -> AncestryResult {
+		walkAncestry(
+			from: element,
+			role: role,
+			limit: ancestryWalkLimit,
+			readRole: { ancestryRead($0, kAXRoleAttribute as CFString) { $0 as? String } },
+			readParent: { ancestryRead($0, kAXParentAttribute as CFString) { asAXElement($0) } }
+		)
 	}
 
 	private func actionNames(_ element: AXUIElement) -> [String] {
@@ -3308,11 +4024,19 @@ final class Bridge {
 		optionalStringArg(request, "delivery") == "pid" ? "pid" : "hid"
 	}
 
-	private func postEvent(_ event: CGEvent, pid: Int32, delivery: String = "hid") {
+	/// The single CGEvent sink. HID delivery (and the activation it needs) is
+	/// refused unless the executing request carries a foreground grant.
+	private func postEvent(_ event: CGEvent, pid: Int32, delivery: String = "hid") throws {
+		let context = activeRequestContext()
 		if delivery == "pid" {
+			context?.markEffect()
 			event.postToPid(pid)
 			return
 		}
+		guard let context, context.foregroundGrant else {
+			throw foregroundRequired("HID event delivery requires a host foreground grant")
+		}
+		context.markEffect()
 		// Post as a real foreground HID event. AppKit views with mouseDown handlers
 		// can ignore pid-targeted CGEvents even though postToPid reports success.
 		// Keep the target app frontmost so the HID event is delivered to the intended
@@ -3331,10 +4055,11 @@ final class Bridge {
 	private func postMouseMove(to point: CGPoint, pid: Int32, delivery: String = "hid") throws {
 		if delivery == "hid" { physicalInputLock.lock() }
 		defer { if delivery == "hid" { physicalInputLock.unlock() } }
+		try checkpoint()
 		guard let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left) else {
 			throw BridgeFailure(message: "Failed to create mouse move event", code: "input_failed")
 		}
-		postEvent(move, pid: pid, delivery: delivery)
+		try postEvent(move, pid: pid, delivery: delivery)
 	}
 
 	private func mouseButton(_ name: String) -> CGMouseButton {
@@ -3393,9 +4118,11 @@ final class Bridge {
 			}
 			down.setIntegerValueField(.mouseEventClickState, value: Int64(index))
 			up.setIntegerValueField(.mouseEventClickState, value: Int64(index))
-			postEvent(down, pid: pid, delivery: delivery)
+			// Checkpoint per press; never between its down and up halves.
+			try checkpoint()
+			try postEvent(down, pid: pid, delivery: delivery)
 			usleep(12_000)
-			postEvent(up, pid: pid, delivery: delivery)
+			try postEvent(up, pid: pid, delivery: delivery)
 			if index < clickCount {
 				usleep(70_000)
 			}
@@ -3409,26 +4136,48 @@ final class Bridge {
 			throw BridgeFailure(message: "Drag requires at least two points", code: "invalid_args")
 		}
 		try postMouseMove(to: first, pid: pid, delivery: delivery)
-		guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: first, mouseButton: .left) else {
-			throw BridgeFailure(message: "Failed to create mouse down event", code: "input_failed")
+		// Create every event before the button goes down, so no creation
+		// failure can leave the button pressed.
+		guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: first, mouseButton: .left),
+			let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: first, mouseButton: .left)
+		else {
+			throw BridgeFailure(message: "Failed to create mouse button event", code: "input_failed")
 		}
-		postEvent(down, pid: pid, delivery: delivery)
-		usleep(12_000)
-
-		for point in points.dropFirst() {
+		let moves = try points.dropFirst().map { point -> (point: CGPoint, event: CGEvent) in
 			guard let drag = CGEvent(mouseEventSource: nil, mouseType: mouseDraggedType(for: .left), mouseCursorPosition: point, mouseButton: .left) else {
 				throw BridgeFailure(message: "Failed to create mouse drag event", code: "input_failed")
 			}
-			postEvent(drag, pid: pid, delivery: delivery)
+			return (point, drag)
+		}
+		try checkpoint()
+		try postEvent(down, pid: pid, delivery: delivery)
+
+		// The button is down: every exit below releases it at the last posted
+		// point. Cancellation or the deadline is polled before each drag point;
+		// when set, the button is released first and only then does the
+		// checkpoint throw `cancelled` (`partial`), which marks the request
+		// stopped. A `stopped` cancel ack therefore follows the mouse-up.
+		let context = activeRequestContext()
+		var current = first
+		var interrupted = false
+		func releaseButton() throws {
+			up.location = current
+			try postEvent(up, pid: pid, delivery: delivery)
+		}
+		usleep(12_000)
+		for move in moves {
+			if context?.stopRequested == true { interrupted = true; break }
+			do {
+				try postEvent(move.event, pid: pid, delivery: delivery)
+			} catch {
+				try releaseButton()
+				throw error
+			}
+			current = move.point
 			usleep(8_000)
 		}
-
-		guard let last = points.last,
-			let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: last, mouseButton: .left)
-		else {
-			throw BridgeFailure(message: "Failed to create mouse up event", code: "input_failed")
-		}
-		postEvent(up, pid: pid, delivery: delivery)
+		try releaseButton()
+		if interrupted { try checkpoint() }
 	}
 
 	private func postScrollWheel(at point: CGPoint, deltaX: Int, deltaY: Int, pid: Int32, delivery: String = "hid") throws {
@@ -3446,7 +4195,8 @@ final class Bridge {
 			throw BridgeFailure(message: "Failed to create scroll event", code: "input_failed")
 		}
 		event.location = point
-		postEvent(event, pid: pid, delivery: delivery)
+		try checkpoint()
+		try postEvent(event, pid: pid, delivery: delivery)
 	}
 
 	private func modifierFlag(_ key: String) -> CGEventFlags? {
@@ -3536,8 +4286,9 @@ final class Bridge {
 		}
 		down.flags = flags
 		up.flags = flags
-		postEvent(down, pid: pid, delivery: delivery)
-		postEvent(up, pid: pid, delivery: delivery)
+		try checkpoint()
+		try postEvent(down, pid: pid, delivery: delivery)
+		try postEvent(up, pid: pid, delivery: delivery)
 		usleep(8_000)
 	}
 
@@ -3545,6 +4296,7 @@ final class Bridge {
 		if delivery == "hid" { physicalInputLock.lock() }
 		defer { if delivery == "hid" { physicalInputLock.unlock() } }
 		for scalar in text.unicodeScalars {
+			try checkpoint()
 			let char = String(scalar)
 			if let stroke = physicalKeyStroke(for: char) {
 				try postKey(stroke.key, flags: stroke.flags, pid: pid, delivery: delivery)
@@ -3557,8 +4309,8 @@ final class Bridge {
 			}
 			setUnicodeString(event: down, text: char)
 			setUnicodeString(event: up, text: char)
-			postEvent(down, pid: pid, delivery: delivery)
-			postEvent(up, pid: pid, delivery: delivery)
+			try postEvent(down, pid: pid, delivery: delivery)
+			try postEvent(up, pid: pid, delivery: delivery)
 			usleep(8_000)
 		}
 	}
@@ -3571,9 +4323,10 @@ final class Bridge {
 		else { throw BridgeFailure(message: "Failed to create unicode text event", code: "input_failed") }
 		setUnicodeString(event: down, text: text)
 		setUnicodeString(event: up, text: text)
-		postEvent(down, pid: pid, delivery: delivery)
+		try checkpoint()
+		try postEvent(down, pid: pid, delivery: delivery)
 		usleep(8_000)
-		postEvent(up, pid: pid, delivery: delivery)
+		try postEvent(up, pid: pid, delivery: delivery)
 	}
 
 	/// Prefer physical key codes for characters represented by the US layout.

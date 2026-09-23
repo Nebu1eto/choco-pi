@@ -4,7 +4,7 @@ import {
   isChromeFamilyApp,
   openBrowserLocationWithAppleScript,
 } from "./macos/browser.ts";
-import { ensureMacosReady } from "./macos/permissions.ts";
+import { ensureMacosReady, releaseMacosOwnership } from "./macos/permissions.ts";
 import type {
   ComputerUsePlatformBackend,
   HelperActResult,
@@ -14,8 +14,24 @@ import type {
 import { linuxBackend } from "./linux/backend.ts";
 import { windowsBackend } from "./windows/backend.ts";
 
+/** Upper bound on the ownership release so session teardown never stalls on the helper. */
+const MACOS_RELEASE_TIMEOUT_MS = 2_500;
+
+/**
+ * Releases protocol-7 helper ownership during session teardown. Best effort:
+ * lease expiry and generation takeover cover any failure, so it never throws.
+ */
+async function shutdownMacos(): Promise<void> {
+  try {
+    await releaseMacosOwnership(AbortSignal.timeout(MACOS_RELEASE_TIMEOUT_MS));
+  } catch {
+    // Release is advisory; teardown must proceed regardless.
+  }
+}
+
 const macosPlatformBackend: ComputerUsePlatformBackend = {
   name: "macos",
+  shutdown: shutdownMacos,
   ensureReady: ensureMacosReady,
   listApps: macosBackend.listApps,
   listRoots: macosBackend.listRoots,
