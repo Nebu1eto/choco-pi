@@ -1,0 +1,1 @@
+Find CU Fixture Target, observe and click its text field, type hello-e2e, then press Increment. The harness tests a competing client after your first action; continue only with the fixture.

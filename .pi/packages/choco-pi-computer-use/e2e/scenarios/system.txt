@@ -1,0 +1,1 @@
+Use only the available computer-use tools. Work only on the disposable CU Fixture Target. Use semantic observation without images; do not use browser tools. Never operate another app. A refusal is final: do not retry a refused action. Report completion briefly. The harness checks tool traces rather than your final text.

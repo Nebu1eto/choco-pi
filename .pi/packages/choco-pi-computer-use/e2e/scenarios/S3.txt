@@ -1,0 +1,1 @@
+Find CU Fixture Target, observe the field, and enter hello-e2e once using the typeText action on the field ref (do not use setText). If the result reports the action did not work, stop; do not retry.

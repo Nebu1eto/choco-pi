@@ -1,0 +1,1 @@
+Find CU Fixture Target, observe its semantic outline, click the text field ref, type hello-e2e, then press Increment. Do not activate or raise another app.

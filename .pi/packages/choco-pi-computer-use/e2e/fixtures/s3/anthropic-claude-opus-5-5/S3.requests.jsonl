@@ -1,0 +1,17 @@
+{"id":"req_1","cmd":"diagnostics","receivedAt":1790154254799,"script":"s3-didnt"}
+{"id":"req_2","cmd":"diagnostics","receivedAt":1790154254800,"script":"s3-didnt"}
+{"id":"req_3","cmd":"checkPermissions","receivedAt":1790154254801,"script":"s3-didnt"}
+{"id":"req_4","cmd":"listRoots","receivedAt":1790154254801,"script":"s3-didnt"}
+{"id":"req_5","cmd":"diagnostics","receivedAt":1790154256618,"script":"s3-didnt"}
+{"id":"req_6","cmd":"listRoots","pid":4242,"receivedAt":1790154256619,"script":"s3-didnt"}
+{"id":"req_7","cmd":"look","windowId":41,"maxDimension":900,"readText":"never","includeImage":false,"receivedAt":1790154256621,"script":"s3-didnt"}
+{"id":"req_8","cmd":"diagnostics","receivedAt":1790154259053,"script":"s3-didnt"}
+{"id":"req_9","cmd":"checkPermissions","receivedAt":1790154259054,"script":"s3-didnt"}
+{"id":"req_10","cmd":"listRoots","pid":4242,"receivedAt":1790154259055,"script":"s3-didnt"}
+{"id":"req_11","cmd":"act","requestId":"959b811a-fd8a-497b-a58c-ff66115cf225","session":{"id":"eecd42b3-6745-4a67-836a-cda714443c7a","generation":0},"deadlineMs":1790154274056,"lookId":"look_1","pid":4242,"target":{"ref":"field-1"},"policy":"background","action":"typeText","params":{"text":"hello-e2e","delivery":"pid"},"cursorOverlay":false,"receivedAt":1790154259056,"script":"s3-didnt"}
+{"id":"req_12","cmd":"diagnostics","receivedAt":1790154261770,"script":"s3-didnt"}
+{"id":"req_13","cmd":"claim","session":{"id":"eecd42b3-6745-4a67-836a-cda714443c7a","generation":0},"receivedAt":1790154261771,"script":"s3-didnt"}
+{"id":"req_14","cmd":"checkPermissions","receivedAt":1790154261772,"script":"s3-didnt"}
+{"id":"req_15","cmd":"listRoots","pid":4242,"receivedAt":1790154261772,"script":"s3-didnt"}
+{"id":"req_16","cmd":"look","windowId":41,"maxDimension":900,"readText":"never","includeImage":false,"receivedAt":1790154261773,"script":"s3-didnt"}
+{"id":"req_17","cmd":"release","session":{"id":"eecd42b3-6745-4a67-836a-cda714443c7a","generation":0},"receivedAt":1790154264752,"script":"s3-didnt"}

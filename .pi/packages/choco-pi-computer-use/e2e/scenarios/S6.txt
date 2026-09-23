@@ -1,0 +1,1 @@
+Find CU Fixture Target, observe the custom-view target and click it once. The host has granted foreground access to this fixture. Do not touch other applications.
