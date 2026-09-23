@@ -110,9 +110,13 @@ function parseRoots(result: JsonValue): PlatformRoot[] {
 
 function helperAction(request: PlatformActRequest) {
   if (!("focus" in request.target)) return { ...request };
+  // Keep the requested policy: a focus target never implies foreground delivery.
+  // The helper resolves the target app's AX focused element instead of system focus.
+  const focusResolution: NonNullable<PlatformActRequest["focusResolution"]> = "ax_focused_element";
   return {
     ...request,
     target: request.target.focus,
+    focusResolution,
     params: { ...request.params, preserveFocus: true },
   };
 }
