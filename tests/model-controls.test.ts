@@ -8,6 +8,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import {
   appendFastModeToEditorMetadata,
+  appendFocusedModelToEditorMetadata,
   default as modelControls,
   installFastModeEditorWhenReady,
   isEffectiveFastModeEnabled,
@@ -45,58 +46,50 @@ function fastModeSession(id: string, enabled?: boolean) {
     start: () => handlers.get("session_start")?.({}, ctx),
     stop: () => handlers.get("session_shutdown")?.({}, ctx),
     toggle: (action: string) => commands.get("fast")?.(action, ctx),
-    request: (provider = "openai-codex") =>
+    request: (provider: "openai" | "openai-codex" | "synthetic" = "openai-codex") =>
       handlers.get("before_provider_request")?.(
         { payload: { model: "test", service_tier: "auto" } },
-        { ...ctx, model: { ...ctx.model, provider } },
+        { ...ctx, model: model(provider) },
       ),
   };
 }
 
-test("child OpenAI requests inherit main fast mode without overriding child history", async () => {
-  const root = fastModeSession("fast-root");
+test("sessions keep independent explicit preferences and emit standard when off", async () => {
+  const root = fastModeSession("fast-root", true);
+  const child = await runInChildSessionContext(async () => fastModeSession("fast-child", false));
   root.start();
-  const children: ReturnType<typeof fastModeSession>[] = [];
-  const child = async (id: string, enabled?: boolean) => {
-    const session = await runInChildSessionContext(async () => fastModeSession(id, enabled));
-    children.push(session);
-    session.start();
-    return session;
-  };
+  child.start();
   try {
-    assert.equal((await child("before-on")).request(), undefined);
-    await root.toggle("on");
-    const inherited = await child("inherited");
     const priority = { model: "test", service_tier: "priority" };
-    assert.deepEqual(inherited.request(), priority);
-    assert.deepEqual(inherited.request("openai"), priority);
-    assert.equal(inherited.request("synthetic"), undefined);
-    assert.equal((await child("explicit-off", false)).request(), undefined);
+    const standard = { model: "test", service_tier: "default" };
     assert.deepEqual(root.request(), priority);
-    await inherited.toggle("off");
-    assert.deepEqual((await child("sibling")).request(), priority);
+    assert.deepEqual(child.request(), standard);
+    assert.deepEqual(child.request("openai"), standard);
+    assert.equal(child.request("synthetic"), undefined);
     await root.toggle("off");
-    assert.equal((await child("after-off")).request(), undefined);
-    assert.deepEqual((await child("explicit-on", true)).request(), priority);
+    assert.deepEqual(root.request(), standard);
+    assert.deepEqual(child.request(), standard);
+    await child.toggle("on");
+    assert.deepEqual(child.request(), priority);
+    assert.deepEqual(root.request(), standard);
   } finally {
-    for (const session of children) session.stop();
+    child.stop();
     root.stop();
-  }
-  const orphan = await child("after-shutdown");
-  try {
-    assert.equal(orphan.request(), undefined);
-  } finally {
-    orphan.stop();
   }
 });
 
-function model(provider: "openai-codex" | "synthetic"): Model<Api> {
+function model(provider: "openai" | "openai-codex" | "synthetic"): Model<Api> {
   return {
     id: "gpt-5.6-sol",
     name: "GPT-5.6 Sol",
     provider,
     api: "openai-responses",
-    baseUrl: "https://example.com",
+    baseUrl:
+      provider === "openai"
+        ? "https://api.openai.com/v1"
+        : provider === "openai-codex"
+          ? "https://chatgpt.com/backend-api/codex"
+          : "https://example.com",
     reasoning: true,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -203,7 +196,7 @@ test("Fast mode state restores from the latest session entry", () => {
   assert.equal(restoreFastMode(entries as never), false);
 });
 
-test("effective Fast mode combines the session flag with the Codex registry", () => {
+test("effective Fast mode is the session preference, not a process-global override", () => {
   const symbol = Symbol.for("choco-pi.codex-fast-mode");
   const store = reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(globalThis);
   const previous = store[symbol];
@@ -213,7 +206,7 @@ test("effective Fast mode combines the session flag with the Codex registry", ()
     assert.equal(isEffectiveFastModeEnabled(true), true);
 
     store[symbol] = { enabled: true };
-    assert.equal(isEffectiveFastModeEnabled(false), true);
+    assert.equal(isEffectiveFastModeEnabled(false), false);
 
     store[symbol] = { enabled: false };
     assert.equal(isEffectiveFastModeEnabled(true), true);
@@ -226,14 +219,16 @@ test("effective Fast mode combines the session flag with the Codex registry", ()
   }
 });
 
-test("fast status and off stay truthful when Codex preferences enable Fast mode", async () => {
+test("legacy process-global Codex state cannot seed a new session", async () => {
   const symbol = Symbol.for("choco-pi.codex-fast-mode");
   const store = reinterpretHostValue<Record<PropertyKey, RuntimeValue>>(globalThis);
   const previous = store[symbol];
   let fastHandler: ((args: string, ctx: RuntimeValue) => Promise<void>) | undefined;
   const notifications: string[] = [];
+  const handlers = new Map<string, (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue>();
   const pi = reinterpretHostValue<import("@earendil-works/pi-coding-agent").ExtensionAPI>({
-    on: () => {},
+    on: (name: string, handler: (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue) =>
+      handlers.set(name, handler),
     registerCommand: (
       name: string,
       options: { handler: (args: string, ctx: RuntimeValue) => Promise<void> },
@@ -243,7 +238,9 @@ test("fast status and off stay truthful when Codex preferences enable Fast mode"
     appendEntry: () => {},
   });
   const ctx = {
+    mode: "rpc",
     model: model("openai-codex"),
+    sessionManager: { getBranch: () => [], getSessionId: () => "default-session" },
     ui: {
       notify: (message: string) => notifications.push(message),
       setStatus: () => {},
@@ -253,28 +250,85 @@ test("fast status and off stay truthful when Codex preferences enable Fast mode"
   try {
     store[symbol] = { enabled: true };
     modelControls(pi);
+    handlers.get("session_start")?.({}, ctx);
     await fastHandler?.("status", ctx);
     await fastHandler?.("off", ctx);
-    assert.deepEqual(notifications, [
-      "Fast mode: on",
-      "Fast mode remains on through Codex preferences.",
-    ]);
+    await fastHandler?.("status", ctx);
+    assert.deepEqual(notifications, ["Fast mode: off", "Fast mode: off"]);
+    handlers.get("session_shutdown")?.({}, ctx);
   } finally {
     if (previous === undefined) delete store[symbol];
     else store[symbol] = previous;
   }
 });
 
-test("non-OpenAI-Codex editor metadata is unchanged", () => {
+test("unsupported-provider editor metadata is unchanged", () => {
   const lines = [" synthetic-model  Synthetic  high"];
   assert.deepEqual(appendFastModeToEditorMetadata(lines, 80, model("synthetic"), true), lines);
+});
+
+test("focused editor metadata follows the child model and active support state", () => {
+  const parent = { ...model("synthetic"), id: "parent", name: "Parent", provider: "anthropic" };
+  const lines = [" parent  Anthropic  high"];
+  const child = {
+    focused: true as const,
+    modelId: "gpt-child",
+    modelName: "GPT Child",
+    provider: "openai-codex",
+    supported: true,
+    active: true,
+  };
+  const focused = appendFocusedModelToEditorMetadata(lines, 80, parent, false, child);
+  assert.match(
+    stripTerminalSequences(focused[0] ?? ""),
+    /^ gpt-child  openai-codex  high +fast {2}$/,
+  );
+
+  assert.deepEqual(
+    appendFocusedModelToEditorMetadata(lines, 80, parent, true, { ...child, active: false }),
+    [" gpt-child  openai-codex  high"],
+  );
+  assert.deepEqual(
+    appendFocusedModelToEditorMetadata(lines, 80, parent, true, {
+      ...child,
+      modelId: "claude-child",
+      provider: "anthropic",
+      supported: false,
+      active: false,
+    }),
+    [" claude-child  anthropic  high"],
+  );
+  assert.deepEqual(
+    appendFocusedModelToEditorMetadata(lines, 80, parent, true, {
+      focused: true,
+      supported: false,
+      active: false,
+    }),
+    lines,
+    "missing focused state must not fall back to the root badge",
+  );
+  assert.match(
+    stripTerminalSequences(
+      appendFocusedModelToEditorMetadata(
+        [" parent  OpenAI  high"],
+        80,
+        { ...model("openai-codex"), id: "parent" },
+        true,
+        undefined,
+      )[0] ?? "",
+    ),
+    /fast {2}$/,
+    "unfocused rendering restores root state",
+  );
 });
 
 test("fast toggles rerender without appending a scrollback status row", async () => {
   let fastHandler: ((args: string, ctx: RuntimeValue) => Promise<void>) | undefined;
   let entries = 0;
+  const handlers = new Map<string, (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue>();
   const pi = reinterpretHostValue<import("@earendil-works/pi-coding-agent").ExtensionAPI>({
-    on: () => {},
+    on: (name: string, handler: (event: RuntimeValue, ctx: RuntimeValue) => RuntimeValue) =>
+      handlers.set(name, handler),
     registerCommand: (
       name: string,
       options: { handler: (args: string, ctx: RuntimeValue) => Promise<void> },
@@ -289,8 +343,10 @@ test("fast toggles rerender without appending a scrollback status row", async ()
 
   let notifications = 0;
   let renders = 0;
-  await fastHandler?.("on", {
+  const ctx = {
+    mode: "rpc",
     model: model("openai-codex"),
+    sessionManager: { getBranch: () => [], getSessionId: () => "render-session" },
     ui: {
       notify: () => {
         notifications++;
@@ -300,9 +356,12 @@ test("fast toggles rerender without appending a scrollback status row", async ()
         renders++;
       },
     },
-  });
+  };
+  handlers.get("session_start")?.({}, ctx);
+  await fastHandler?.("on", ctx);
 
   assert.equal(entries, 1);
   assert.equal(notifications, 0);
   assert.equal(renders, 1);
+  handlers.get("session_shutdown")?.({}, ctx);
 });

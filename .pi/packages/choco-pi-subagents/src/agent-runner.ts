@@ -32,6 +32,7 @@ import { runInChildSessionContext } from "./child-context.ts";
 import { buildParentContext, extractText } from "./context.ts";
 import { DEFAULT_AGENTS } from "./default-agents.ts";
 import { detectEnv } from "./env.ts";
+import { createChildFastModeExtension, type FastModeSnapshot } from "./fast-mode-bridge.ts";
 import { registerSubagentStatusMessage } from "./limits.ts";
 import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.ts";
 import {
@@ -108,6 +109,7 @@ export const SUBAGENT_TOOL_NAMES = {
   GET_RESULT: "get_subagent_result",
   STEER: "steer_subagent",
   STOP: "stop_subagent",
+  SET_FAST: "set_subagent_fast_mode",
   MESSAGE: AGENT_MESSAGE_TOOL_NAME,
   LIMITS: "subagent_limits",
 } as const;
@@ -721,6 +723,9 @@ export interface RunOptions {
     depth: number;
     maxSubagentDepth?: number;
   };
+  /** Accepted at spawn time; never read dynamically from the parent. */
+  fastMode?: FastModeSnapshot;
+  fastModeGeneration?: number;
 }
 
 export interface RunResult {
@@ -1062,15 +1067,31 @@ export async function runAgent(
     noExtensions,
     additionalExtensionPaths,
     extensionsOverride,
-    extensionFactories: subagentStatusSource
-      ? [
-          {
-            name: "subagent-status",
-            hidden: true,
-            factory: (childPi) => registerSubagentStatusMessage(childPi, subagentStatusSource),
-          },
-        ]
-      : undefined,
+    extensionFactories: [
+      ...(options.fastMode
+        ? [
+            {
+              name: "subagent-fast-mode",
+              hidden: true,
+              factory: createChildFastModeExtension(
+                options.nestedRuntime?.manager ?? options,
+                options.fastModeGeneration ?? 1,
+                options.fastMode,
+              ),
+            },
+          ]
+        : []),
+      ...(subagentStatusSource
+        ? [
+            {
+              name: "subagent-status",
+              hidden: true,
+              factory: (childPi: ExtensionAPI) =>
+                registerSubagentStatusMessage(childPi, subagentStatusSource),
+            },
+          ]
+        : []),
+    ],
     noSkills,
     noPromptTemplates: true,
     noThemes: true,

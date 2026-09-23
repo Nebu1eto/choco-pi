@@ -64,6 +64,7 @@ interface AgentInvocationParams {
   run_in_background?: boolean;
   inherit_context?: boolean;
   isolated?: boolean;
+  fast_mode?: boolean;
   /**
    * Untyped on purpose. Both tool schemas now build this field conditionally
    * and spread it, which erases TypeBox's literal inference to `unknown` (the
@@ -87,6 +88,7 @@ interface ResolvedAgentInvocationConfig {
   runInBackground: boolean;
   isolated: boolean;
   isolation?: IsolationMode;
+  fastMode?: boolean;
 }
 
 interface ResolveOptions {
@@ -139,6 +141,7 @@ export function resolveAgentInvocationConfig(
     inheritContext: agentConfig?.inheritContext ?? params.inherit_context ?? false,
     runInBackground: agentConfig?.runInBackground ?? params.run_in_background ?? false,
     isolated: agentConfig?.isolated ?? params.isolated ?? false,
+    fastMode: params.fast_mode ?? agentConfig?.fastMode,
     isolation,
   };
 }

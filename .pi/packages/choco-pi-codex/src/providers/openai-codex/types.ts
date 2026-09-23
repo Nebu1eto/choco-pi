@@ -1,10 +1,12 @@
 import type { AssistantMessage, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
+import { Check } from "typebox/value";
 import type {
   ResponseCreateParamsStreaming,
   ResponseOutputItem,
 } from "openai/resources/responses/responses.js";
 import type { CodexCompactionDiagnostic } from "../../adapter/compaction/diagnostics.ts";
+import type { CodexFastModeDecision } from "./fast-mode-decision.ts";
 
 const ProtocolValueSchema = Type.Union([
   Type.Unsafe<object>({ type: "object" }),
@@ -14,6 +16,7 @@ const ProtocolValueSchema = Type.Union([
   Type.Null(),
 ]);
 const ProtocolPropertyValueSchema = Type.Union([ProtocolValueSchema, Type.Undefined()]);
+const ProtocolObjectSchema = Type.Record(Type.String(), ProtocolPropertyValueSchema);
 
 export type ProtocolPrimitive = boolean | number | string | null;
 export type ProtocolValue = Static<typeof ProtocolValueSchema>;
@@ -21,6 +24,10 @@ export type ProtocolPropertyValue = Static<typeof ProtocolPropertyValueSchema>;
 export type ProviderOutputItem = ResponseOutputItem | Extract<ProtocolValue, object>;
 export interface ProtocolObject {
   [key: string]: ProtocolPropertyValue;
+}
+
+export function isProtocolObject<Value>(value: Value): value is Value & ProtocolObject {
+  return Check(ProtocolObjectSchema, value);
 }
 
 export interface WebSocketArrayBufferData {
@@ -190,6 +197,7 @@ export type CodexProviderStreamOptions = SimpleStreamOptions & {
 };
 export type CodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type OpenAICodexStreamOptions = CodexProviderStreamOptions & {
+  fastModeDecision?: CodexFastModeDecision | undefined;
   midTurnSteering?: boolean | undefined;
   asyncCodeMode?: boolean | undefined;
   reasoningEffort?: CodexReasoningEffort | undefined;

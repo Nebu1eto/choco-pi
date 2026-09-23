@@ -3,6 +3,7 @@ import { getKeybindings, Key, matchesKey, truncateToWidth, type TUI } from "@ear
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { AgentRecord } from "../types.ts";
+import { decideSessionFastMode, snapshotFastMode } from "../fast-mode-bridge.ts";
 import type { AgentActivity, Theme } from "./agent-widget.ts";
 import { ConversationViewer } from "./conversation-viewer.ts";
 import {
@@ -13,8 +14,19 @@ import {
 import { installMethodPatch } from "./method-patch-registry.ts";
 
 const FOCUS_WIDGET_KEY = "subagent-focus";
-const FOCUSED_MODEL_CONTROLS_SYMBOL = Symbol.for("choco-pi.model-controls.focused-sessions");
-const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+type ThinkingLevel = Parameters<AgentSession["setThinkingLevel"]>[0];
+
+function isThinkingLevel(value: string): value is ThinkingLevel {
+  return (
+    value === "off" ||
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh" ||
+    value === "max"
+  );
+}
 
 type EditorLike = {
   handleInput(data: string): void;
@@ -50,6 +62,7 @@ export type FocusManager = {
     signal?: AbortSignal,
     opts?: { isBackground?: boolean },
   ): Promise<AgentRecord | undefined>;
+  setFastMode(id: string, requested: boolean): AgentRecord | undefined;
 };
 
 export type FocusState = { kind: "orchestrator" } | { kind: "agent"; agentId: string };
@@ -82,15 +95,28 @@ type ActiveFocus = {
   pendingMessages: RenderTarget | undefined;
 };
 
-type FocusedModelControlsRegistry = Map<string, { setFast(action: string): string }>;
+export function executeFocusedFastMode(
+  manager: FocusManager,
+  record: AgentRecord,
+  actionInput: string,
+): string {
+  const session = record.session;
+  if (!session) throw new Error("Focused Fast mode controls are unavailable.");
+  const sessionId = session.sessionManager?.getSessionId?.();
+  const action = actionInput.trim().toLowerCase();
+  if (action && action !== "on" && action !== "off" && action !== "status")
+    throw new Error("Usage: /fast [on|off|status]");
 
-function focusedModelControlsRegistry(): FocusedModelControlsRegistry | undefined {
-  // SAFETY: Both extensions share this private Symbol.for slot and independently declare its map shape.
-  return (
-    globalThis as typeof globalThis & {
-      [FOCUSED_MODEL_CONTROLS_SYMBOL]?: FocusedModelControlsRegistry;
-    }
-  )[FOCUSED_MODEL_CONTROLS_SYMBOL];
+  const current = snapshotFastMode(sessionId);
+  if (action !== "status") {
+    const requested = action === "on" || (action === "" && !current.requested);
+    if (!manager.setFastMode(record.id, requested))
+      throw new Error("Focused Fast mode target is unavailable.");
+  }
+  const decision = decideSessionFastMode(sessionId, session.model);
+  const requested = decision?.requested ?? record.fastModeRequested ?? false;
+  const supported = decision?.supported ?? false;
+  return `Fast mode: ${requested ? "on" : "off"}${supported ? "" : " (saved; inactive for this model)"}`;
 }
 
 /**
@@ -230,10 +256,7 @@ function focusLabel(record: AgentRecord): string {
 
 function withoutFocusedUsage(runtime: FocusedAgentRuntime): FocusedAgentRuntime {
   return {
-    modelId: runtime.modelId,
-    modelName: runtime.modelName,
-    provider: runtime.provider,
-    thinking: runtime.thinking,
+    ...runtime,
     costTotal: null,
     contextPercent: null,
     contextWindow: null,
@@ -491,6 +514,7 @@ export class FocusedAgentController {
     const argument = match[2]?.trim() ?? "";
     const session = active.record.session;
     if (!session) return true;
+    const generation = active.record.resultGeneration;
 
     const run = async (): Promise<void> => {
       if (command === "model") {
@@ -501,20 +525,28 @@ export class FocusedAgentController {
           if (!model) throw new Error(`Model not found: ${argument}`);
           await session.setModel(model, { persist: false });
         }
+        if (
+          this.active !== active ||
+          active.record.session !== session ||
+          active.record.resultGeneration !== generation
+        )
+          return;
       } else if (command === "effort") {
-        if (!THINKING_LEVELS.has(argument)) {
+        if (!isThinkingLevel(argument)) {
           throw new Error(`Unsupported reasoning effort: ${argument || "(empty)"}`);
         }
-        // SAFETY: THINKING_LEVELS enumerates every AgentSession thinking-level value.
-        session.setThinkingLevel(argument as Parameters<AgentSession["setThinkingLevel"]>[0], {
-          persist: false,
-        });
+        session.setThinkingLevel(argument, { persist: false });
       } else {
-        const controls = focusedModelControlsRegistry()?.get(session.sessionId);
-        if (!controls) throw new Error("Focused Fast mode controls are unavailable.");
-        const status = controls.setFast(argument);
-        if (argument.toLowerCase() === "status") this.ui?.notify(status, "info");
+        const status = executeFocusedFastMode(this.manager, active.record, argument);
+        if (argument.toLowerCase() === "status" || status.includes("inactive"))
+          this.ui?.notify(status, "info");
       }
+      if (
+        this.active !== active ||
+        active.record.session !== session ||
+        active.record.resultGeneration !== generation
+      )
+        return;
       active.viewer.invalidate();
       active.tui.requestRender(true);
     };

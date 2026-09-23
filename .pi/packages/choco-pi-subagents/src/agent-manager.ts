@@ -16,6 +16,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { resumeAgent, runAgent, type MainSessionFork, type ToolActivity } from "./agent-runner.ts";
 import { cleanupChildSessionOwner } from "./child-session-cleanup.ts";
+import { setSessionFastMode, snapshotFastMode } from "./fast-mode-bridge.ts";
 import { normalizeMaxConcurrent, schedulingMaxConcurrent } from "./limits.ts";
 import { assignHandle, handleBase } from "./mention.ts";
 import {
@@ -268,6 +269,8 @@ interface SpawnOptions {
   maxSubagentDepth?: number;
   /** Config-discovery root inherited by nested launches when it differs from the working directory. */
   configCwd?: string;
+  /** Explicit request; omitted snapshots the immediate parent's current request. */
+  fastModeRequested?: boolean;
   /** Root session id, inherited by nested launches so transcripts stay grouped. */
   rootSessionId?: string;
 }
@@ -275,6 +278,7 @@ interface SpawnOptions {
 interface ResumeOptions {
   /** Rebind the accepted record's alias for this resumed run. */
   name?: string;
+  fastModeRequested?: boolean;
   /**
    * Run the resumed turn detached in the background: return immediately with
    * the record still "running" (or "queued" at the concurrency limit) and
@@ -451,6 +455,8 @@ export class AgentManager {
     if (!this.isProviderAvailable(providerKey)) throw new ProviderUnavailableError(providerKey);
 
     const id = randomUUID().slice(0, 17);
+    const inheritedFastMode = snapshotFastMode(ctx.sessionManager?.getSessionId?.());
+    const fastModeRequested = options.fastModeRequested ?? inheritedFastMode.requested;
     const abortController = new AbortController();
     const record: AgentRecord = {
       id,
@@ -489,6 +495,9 @@ export class AgentManager {
       parentAgentId: options.parentAgentId,
       maxSubagentDepth: options.maxSubagentDepth,
       rootSessionId: options.rootSessionId,
+      fastModeRequested,
+      fastModeSource: options.fastModeRequested === undefined ? "inherited" : "explicit",
+      fastModeRevision: 0,
     };
     const reclaimedTombstone =
       options.parentAgentId === undefined && options.reclaim !== undefined
@@ -647,6 +656,12 @@ export class AgentManager {
       record.abortController!,
     );
 
+    const fastModeInitialization = {
+      requested: record.fastModeRequested ?? false,
+      source: record.fastModeSource ?? "default",
+      revision: record.fastModeRevision ?? 0,
+    };
+    record.fastModeInitialization = fastModeInitialization;
     const promise = this.runner
       .runAgent(ctx, type, prompt, {
         pi,
@@ -696,6 +711,8 @@ export class AgentManager {
           depth: record.depth ?? 1,
           maxSubagentDepth: record.maxSubagentDepth,
         },
+        fastMode: fastModeInitialization,
+        fastModeGeneration: runGeneration,
         onSessionCreated: (session) => {
           if (record.resultGeneration !== runGeneration) return;
           // Cancellation stops provider work, not ownership of the child that
@@ -917,6 +934,23 @@ export class AgentManager {
     this.onSpawned?.(id);
   }
 
+  /** Update one accepted generation without changing resume persistence semantics. */
+  setFastMode(id: string, requested: boolean): AgentRecord | undefined {
+    const record = this.agents.get(id);
+    if (!record) return undefined;
+    record.fastModeRequested = requested;
+    record.fastModeSource = "explicit";
+    record.fastModeRevision = (record.fastModeRevision ?? 0) + 1;
+    if (record.fastModeInitialization) {
+      record.fastModeInitialization.requested = requested;
+      record.fastModeInitialization.source = "explicit";
+      record.fastModeInitialization.revision = record.fastModeRevision;
+    }
+    const state = setSessionFastMode(record.session?.sessionManager?.getSessionId?.(), requested);
+    if (state) record.fastModeRevision = state.revision;
+    return record;
+  }
+
   /**
    * Stop the nested children a settled parent owns. Nested records are hidden
    * from the UI and only their owner can consume them, so a child outliving its
@@ -1036,6 +1070,16 @@ export class AgentManager {
         ownTombstone.alias = nextAlias;
       }
       record.alias = nextAlias;
+    }
+    if (options?.fastModeRequested !== undefined) {
+      record.fastModeRequested = options.fastModeRequested;
+      record.fastModeSource = "explicit";
+      record.fastModeRevision = (record.fastModeRevision ?? 0) + 1;
+      const state = setSessionFastMode(
+        record.session.sessionManager?.getSessionId?.(),
+        options.fastModeRequested,
+      );
+      if (state) record.fastModeRevision = state.revision;
     }
 
     // Background resume: settle asynchronously and notify on completion exactly

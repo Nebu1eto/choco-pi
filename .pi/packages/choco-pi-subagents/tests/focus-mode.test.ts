@@ -58,6 +58,7 @@ test("focused mouse routing isolates orchestrator reasoning and restores inherit
     steer: () => true,
     abort: () => true,
     resume: async () => undefined,
+    setFastMode: () => undefined,
   });
   try {
     assert.equal(controller.focus(record, tui, theme), true);
@@ -166,7 +167,6 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   const renderRequests: boolean[] = [];
   const listeners = new Set<AgentSessionEventListener>();
   const childEfforts: string[] = [];
-  const childFastActions: string[] = [];
   const selectedModels: Model<Api>[] = [];
   let sessionCost = 2.5;
   let sessionContext: TestContextUsage = {
@@ -205,23 +205,6 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
       childEfforts.push(level);
     },
   });
-  const controlsSymbol = Symbol.for("choco-pi.model-controls.focused-sessions");
-  // SAFETY: The fixture declares only the private Symbol.for slot consumed by focus mode.
-  const controlsHost = globalThis as typeof globalThis & {
-    [controlsSymbol]?: Map<string, { setFast(action: string): string }>;
-  };
-  controlsHost[controlsSymbol] = new Map([
-    [
-      session.sessionId,
-      {
-        setFast(action) {
-          childFastActions.push(action);
-          return `Fast mode: ${action}`;
-        },
-      },
-    ],
-  ]);
-  t.after(() => delete controlsHost[controlsSymbol]);
   const record = partialFixture<AgentRecord>({
     id: "agent-7",
     type: "implementer",
@@ -294,6 +277,12 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
         resumeCalls.push({ id, message });
         return record;
       },
+      setFastMode(id, requested) {
+        if (id !== record.id) return undefined;
+        record.fastModeRequested = requested;
+        record.fastModeRevision = (record.fastModeRevision ?? 0) + 1;
+        return record;
+      },
     },
     {
       onSteered: (id, message) => events.push({ id, message }),
@@ -327,6 +316,11 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
     costTotal: 2.5,
     contextPercent: 12.5,
     contextWindow: 200_000,
+    sessionId: "",
+    fastModeRequested: false,
+    fastModeSupported: false,
+    fastModeActive: false,
+    fastModeRevision: 0,
   });
   sessionCost = 3.75;
   sessionContext = { percent: null, contextWindow: 200_000, tokens: null };
@@ -338,6 +332,11 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
     costTotal: 3.75,
     contextPercent: null,
     contextWindow: 200_000,
+    sessionId: "",
+    fastModeRequested: false,
+    fastModeSupported: false,
+    fastModeActive: false,
+    fastModeRevision: 0,
   });
   record.session = partialFixture<AgentSession>({
     model: partialFixture<Model<Api>>({
@@ -361,6 +360,11 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
     costTotal: 0.75,
     contextPercent: 1,
     contextWindow: 300_000,
+    sessionId: "",
+    fastModeRequested: false,
+    fastModeSupported: false,
+    fastModeActive: false,
+    fastModeRevision: 0,
   });
   record.session = partialFixture<AgentSession>({
     model: partialFixture<Model<Api>>({
@@ -382,6 +386,11 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
     costTotal: null,
     contextPercent: null,
     contextWindow: 524_288,
+    sessionId: "",
+    fastModeRequested: false,
+    fastModeSupported: false,
+    fastModeActive: false,
+    fastModeRevision: 0,
   });
   record.session = undefined;
   assert.deepEqual(
@@ -394,6 +403,11 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
       costTotal: null,
       contextPercent: null,
       contextWindow: null,
+      sessionId: "",
+      fastModeRequested: false,
+      fastModeSupported: false,
+      fastModeActive: false,
+      fastModeRevision: 0,
     },
     "an evicted focused session keeps child identity but never exposes main usage",
   );
@@ -422,7 +436,7 @@ test("focus survives Esc and restores exact predecessors on exit", async (t) => 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(selectedModels[0]?.id, "gpt-5.6-luna");
   assert.deepEqual(childEfforts, ["high"]);
-  assert.deepEqual(childFastActions, ["on"]);
+  assert.equal(record.fastModeRequested, true);
   assert.deepEqual(orchestratorSubmits, [], "focused commands never reach the main command router");
   assert.deepEqual(steerCalls, [], "focused commands are not sent to the model as steering text");
 
@@ -543,6 +557,7 @@ test("/exit at a focused prompt stops the agent instead of quitting pi", () => {
       async resume() {
         return undefined;
       },
+      setFastMode: () => undefined,
     },
     { hasSwitcher: () => true },
   );
@@ -690,6 +705,7 @@ test("focus switch isolates expansion, dequeue, pending UI, subscriptions, and i
       async resume() {
         return undefined;
       },
+      setFastMode: () => undefined,
     },
     { hasSwitcher: () => true },
   );

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { registerSessionResourceCleanup } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -71,6 +72,8 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   let currentSources: HookSource[] = [];
   let envFile = hookEnvironmentFile(sessionId);
   let lastCwd = "";
+  let lifecycleGeneration = 0;
+  let unregisterResourceCleanup: (() => void) | undefined;
 
   function reload(ctx: ExtensionContext): void {
     const loaded = loadHookSources({ cwd: ctx.cwd });
@@ -235,6 +238,10 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   const disposeExternalProducers = (): void => {
     if (externalProducersDisposed) return;
     externalProducersDisposed = true;
+    lifecycleGeneration += 1;
+    const unregister = unregisterResourceCleanup;
+    unregisterResourceCleanup = undefined;
+    unregister?.();
     watchers?.dispose();
     watchers = undefined;
     supplemental.dispose();
@@ -243,9 +250,17 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
   };
 
   pi.on("session_start", async (event, ctx) => {
+    lifecycleGeneration += 1;
+    const generation = lifecycleGeneration;
     watchers?.dispose();
     watchers = undefined;
     reload(ctx);
+    unregisterResourceCleanup?.();
+    const ownedSessionId = sessionId;
+    unregisterResourceCleanup = registerSessionResourceCleanup((cleanupSessionId) => {
+      if (cleanupSessionId === undefined || cleanupSessionId === ownedSessionId)
+        disposeExternalProducers();
+    });
     lastCwd = ctx.cwd;
     supplemental.setContext(ctx);
     const generationToken = supplemental.captureGeneration();
@@ -254,13 +269,15 @@ export default function chocoPiHooks(pi: ExtensionAPI): void {
     else if (pi.getFlag("init-only") || pi.getFlag("init")) setupTrigger = "init";
     if (setupTrigger) {
       await dispatch("Setup", ctx, { trigger: setupTrigger });
-      if (!supplemental.isCurrentGeneration(generationToken)) return;
+      if (generation !== lifecycleGeneration || !supplemental.isCurrentGeneration(generationToken))
+        return;
     }
     const result = await dispatch("SessionStart", ctx, {
       source: sourceForStart(event.reason),
       model: ctx.model?.id,
     });
-    if (!supplemental.isCurrentGeneration(generationToken)) return;
+    if (generation !== lifecycleGeneration || !supplemental.isCurrentGeneration(generationToken))
+      return;
     notify(ctx, result.systemMessages);
     watchers = createHookWatchers({
       cwd: ctx.cwd,

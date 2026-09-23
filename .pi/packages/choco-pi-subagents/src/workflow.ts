@@ -28,6 +28,7 @@ export const WorkflowStepSchema = Type.Object(
     ),
     model: Type.Optional(Type.String({ description: "Optional model override." })),
     thinking: Type.Optional(Type.Union(THINKING_LEVELS.map((level) => Type.Literal(level)))),
+    fast_mode: Type.Optional(Type.Boolean({ description: "Request fast mode for this step." })),
     max_turns: Type.Optional(
       Type.Integer({ minimum: 1, description: "Per-step turn limit override." }),
     ),

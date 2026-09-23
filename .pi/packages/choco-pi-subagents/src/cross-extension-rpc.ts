@@ -103,6 +103,10 @@ function wireString(value: RpcWireValue | undefined): string | undefined {
   return Value.Check(RpcStringSchema, value) ? value : undefined;
 }
 
+function wireBoolean(value: RpcWireValue | undefined): boolean | undefined {
+  return Value.Check(RpcBooleanSchema, value) ? value : undefined;
+}
+
 function requestId(raw: RpcWireValue): string {
   const id = wireString(wireObject(raw)?.requestId);
   if (!id) throw new Error("RPC requestId must be a non-empty string");
@@ -192,6 +196,10 @@ export function registerRpcHandlers(deps: RpcDeps): RpcHandle {
             normalizedOptions = { ...normalizedOptions, model: resolution.model };
             break;
         }
+      }
+      const fastModeRequested = wireBoolean(options?.fast_mode);
+      if (fastModeRequested !== undefined) {
+        normalizedOptions = { ...normalizedOptions, fastModeRequested };
       }
 
       return { id: manager.spawn(pi, ctx, type, prompt, normalizedOptions) };
