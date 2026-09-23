@@ -417,6 +417,7 @@ export async function runAgentBrowserScript(
     process.execPath,
     [
       "--permission",
+      `--allow-fs-read=${workerPath}`,
       "--max-old-space-size=64",
       workerPath,
       String(AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES),

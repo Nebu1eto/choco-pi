@@ -37,6 +37,8 @@ export const GLOBAL_VALUE_FLAGS = [
   "--max-output",
   "--model",
   "--idle-timeout",
+  "--input-mode",
+  "--ca-cert",
 ] as const;
 
 export const COMMAND_VALUE_FLAGS = [
@@ -76,6 +78,10 @@ export const COMMAND_VALUE_FLAGS = [
   "--username",
   "--password",
   "--wait-until",
+  "--frame",
+  "--params",
+  "--fps",
+  "--contact-sheet-threshold",
 ] as const;
 
 export const OPTIONAL_GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set(["--restore"]);
@@ -107,6 +113,8 @@ export const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES: ReadonlySet<string> = ne
   "--verbose",
   "-v",
   "--webgpu",
+  "--no-webmcp",
+  "--no-ca-cert",
 ]);
 
 export interface UpstreamGlobalFlagOccurrence {

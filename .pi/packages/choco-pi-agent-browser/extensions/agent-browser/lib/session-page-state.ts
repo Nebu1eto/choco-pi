@@ -310,14 +310,20 @@ function buildSessionRefDetails(
 }
 
 function extractRefSnapshotRefs<Data>(data: Data): SessionRefMap | undefined {
-  if (!isRecord(data) || !isRecord(data.refs)) return undefined;
-  const snapshotLines = hasRuntimeType(data.snapshot, "string")
-    ? parseSnapshotLines(data.snapshot)
+  if (!isRecord(data)) return undefined;
+  const nestedSnapshot = isRecord(data.snapshot) ? data.snapshot : undefined;
+  const normalizedData =
+    nestedSnapshot && isRecord(nestedSnapshot.refs)
+      ? { ...data, refs: nestedSnapshot.refs, snapshot: nestedSnapshot.tree }
+      : data;
+  if (!isRecord(normalizedData.refs)) return undefined;
+  const snapshotLines = hasRuntimeType(normalizedData.snapshot, "string")
+    ? parseSnapshotLines(normalizedData.snapshot)
     : [];
   const lineByRef = new Map(
     snapshotLines.flatMap((line) => (line.ref ? [[line.ref, line.raw] as const] : [])),
   );
-  const entries = enrichSnapshotRefEntries(getSnapshotRefEntries(data), snapshotLines);
+  const entries = enrichSnapshotRefEntries(getSnapshotRefEntries(normalizedData), snapshotLines);
   const refs = Object.fromEntries(
     entries.flatMap((entry) => {
       if (!/^e\d+$/.test(entry.id) || entry.role.length === 0) return [];
@@ -344,9 +350,14 @@ function extractRefSnapshotRefs<Data>(data: Data): SessionRefMap | undefined {
 export function extractRefSnapshotFromData<Data>(data: Data): SessionRefSnapshot | undefined {
   if (!isRecord(data)) return undefined;
   const refs = extractRefSnapshotRefs(data);
-  const refIds = isRecord(data.refs)
-    ? Object.keys(data.refs).filter((refId) => /^e\d+$/.test(refId))
-    : [];
+  const nestedRefs =
+    isRecord(data.snapshot) && isRecord(data.snapshot.refs) ? data.snapshot.refs : undefined;
+  const refIds =
+    isRecord(data.refs) || nestedRefs
+      ? Object.keys(isRecord(data.refs) ? data.refs : (nestedRefs ?? {})).filter((refId) =>
+          /^e\d+$/.test(refId),
+        )
+      : [];
   const target = extractSessionTabTargetFromData(data);
   return refs ? { refIds, refs, target } : { refIds, target };
 }
@@ -557,6 +568,7 @@ export class SessionPageState {
   private tabPinningReasons = new Map<string, SessionTabPinningReason>();
   private tabTargetUnknownOrders = new Map<string, number>();
   private tabTargets = new Map<string, OrderedSessionTabTarget>();
+  private updateOrdersBySession = new Map<string, number>();
   private updateOrder = 0;
 
   static fromBranch(branch: unknown[]): SessionPageState {
@@ -647,10 +659,17 @@ export class SessionPageState {
     return state;
   }
 
-  beginUpdate(): SessionPageStateUpdateToken {
+  beginUpdate(sessionName?: string): SessionPageStateUpdateToken {
     this.updateOrder += 1;
+    if (sessionName) this.updateOrdersBySession.set(sessionName, this.updateOrder);
     // SAFETY: updateOrder is minted only here and increases monotonically, which is the token brand invariant.
     return this.updateOrder as SessionPageStateUpdateToken;
+  }
+
+  isCurrentUpdate(update: SessionPageStateUpdateToken, sessionName?: string): boolean {
+    return (
+      update === (sessionName ? this.updateOrdersBySession.get(sessionName) : this.updateOrder)
+    );
   }
 
   reset(): void {
@@ -659,7 +678,8 @@ export class SessionPageState {
     this.tabPinningReasons = new Map<string, SessionTabPinningReason>();
     this.tabTargetUnknownOrders = new Map<string, number>();
     this.tabTargets = new Map<string, OrderedSessionTabTarget>();
-    this.updateOrder = 0;
+    this.updateOrdersBySession = new Map<string, number>();
+    this.updateOrder += 1;
   }
 
   get(sessionName: string | undefined): SessionPageStateView {
@@ -764,6 +784,8 @@ export class SessionPageState {
   }
 
   clearSession(sessionName: string): void {
+    this.updateOrder += 1;
+    this.updateOrdersBySession.set(sessionName, this.updateOrder);
     this.refSnapshotInvalidations.delete(sessionName);
     this.refSnapshots.delete(sessionName);
     this.tabPinningReasons.delete(sessionName);

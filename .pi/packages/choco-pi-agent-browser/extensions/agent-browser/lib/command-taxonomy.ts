@@ -57,6 +57,7 @@ const ADDITIONAL_COMMAND_TOKENS = [
   "vitals",
   "wait",
   "web-vitals",
+  "webmcp",
   "window",
 ] as const;
 
@@ -386,8 +387,9 @@ export function isOpenNavigationCommand(command: string | undefined): boolean {
 
 export function isReadOnlyDiagnosticSessionTargetCommand(
   command: string | undefined,
-  _subcommand?: string,
+  subcommand?: string,
 ): boolean {
+  if (command === "webmcp") return subcommand === "list" || subcommand === "result";
   return hasCommandCapability(command, "readOnlyDiagnosticSessionTarget");
 }
 
@@ -439,6 +441,13 @@ export function isUnverifiedPageTransitionCommand(
 
 export function isPageMutationCommand(command: string | undefined): boolean {
   return hasCommandCapability(command, "triggersPostMutationSnapshot");
+}
+
+export function isWebMcpMutationCommand(
+  command: string | undefined,
+  subcommand: string | undefined,
+): boolean {
+  return command === "webmcp" && (subcommand === "invoke" || subcommand === "cancel");
 }
 
 export function isPageChangeSummaryCommand(command: string | undefined): boolean {

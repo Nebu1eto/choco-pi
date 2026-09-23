@@ -1,6 +1,4 @@
 import type { ChildProcess } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type {
@@ -18,6 +16,7 @@ import {
   buildToolPromptGuidelines,
 } from "./playbook.ts";
 import { SessionPageState } from "./session-page-state.ts";
+import { SnapshotRevisionStore } from "./snapshot-revisions.ts";
 import {
   canUseHeadlessCompatibilityUserAgent,
   createEphemeralSessionSeed,
@@ -54,23 +53,37 @@ import {
   type RuntimeRecord,
   type RuntimeValue,
 } from "./parsing.ts";
-import { runAgentBrowserProcess } from "./process.ts";
+import {
+  getAgentBrowserExecutableContext,
+  hasAgentBrowserExecutableContext,
+  runAgentBrowserProcess,
+  withAgentBrowserExecutableContext,
+} from "./process.ts";
 import {
   getAgentBrowserProcessEnvironment,
   withIsolatedAgentBrowserEnvironment,
 } from "./process-environment.ts";
+import { resolveAgentBrowserCompatibility } from "./upstream-version.ts";
+import type {
+  AgentBrowserCapability,
+  AgentBrowserCompatibilityProfile,
+} from "./compatibility-contract.ts";
 import {
-  TARGET_AGENT_BROWSER_VERSION,
-  TARGET_AGENT_BROWSER_VERSION_LABEL,
-  getAgentBrowserVersionValidationError,
-  parseAgentBrowserVersionOutput,
-} from "./upstream-version.ts";
+  getAgentBrowserExecutableFingerprintKey,
+  resolveAgentBrowserExecutable,
+} from "./executable-resolution.ts";
 import {
   buildPromptPolicy,
   getLatestUserPrompt,
   shouldAppendBrowserSystemPrompt,
 } from "./prompt-policy.ts";
-import { isCloseAllCommand, isCloseCommand } from "./command-taxonomy.ts";
+import {
+  isCloseAllCommand,
+  isCloseCommand,
+  isOpenNavigationCommand,
+  isRecordPageTransitionCommand,
+  isUnverifiedPageTransitionCommand,
+} from "./command-taxonomy.ts";
 import { hasLaunchScopedFlagToken } from "./launch-scoped-flags.ts";
 import { cleanupSecureTempArtifacts } from "./temp.ts";
 import { AGENT_BROWSER_PARAMS } from "./input-modes/params.ts";
@@ -154,8 +167,18 @@ import {
   applyRecordingArtifactsToReservations,
   restoreRecordingReservationStateFromBranch,
   retireRecordingReservation,
+  enumerateRecordingReservationDestinations,
   type ActiveRecordingReservation,
 } from "./recording-reservations.ts";
+import {
+  assertRecordingDestinationsAvailable,
+  getRecordingContactSheetRequest,
+} from "./recording-contact-sheet.ts";
+import {
+  preflightWebMcpParams,
+  WebMcpInvocationRegistry,
+  type WebMcpOwner,
+} from "./webmcp-policy.ts";
 import { createDeferredAgentBrowserWebSearchTool } from "./web-search-registration.ts";
 import {
   isDirectAgentBrowserBashAllowed,
@@ -177,6 +200,95 @@ type BashToolCallLike = {
 function isBashToolCallEvent<Event>(event: Event): event is Event & BashToolCallLike {
   if (!isRecord(event) || event.toolName !== "bash" || !isRecord(event.input)) return false;
   return hasRuntimeType(event.input.command, "string");
+}
+
+const CAPABILITY_FLAG_REQUIREMENTS = new Map<string, AgentBrowserCapability>([
+  ["--ca-cert", "custom-ca-trust"],
+  ["--contact-sheet", "recording-contact-sheet"],
+  ["--contact-sheet-threshold", "recording-contact-sheet"],
+  ["--cursor", "recording-cursor"],
+  ["--delta", "delta-snapshot"],
+  ["--fps", "recording-fps"],
+  ["--if-changed", "screenshot-if-changed"],
+  ["--input-mode", "input-mode"],
+  ["--no-ca-cert", "custom-ca-trust"],
+  ["--no-webmcp", "webmcp"],
+  ["--threshold", "screenshot-if-changed"],
+]);
+
+export function getRequestedAgentBrowserCapabilities(
+  args: readonly string[],
+  stdin?: string,
+): AgentBrowserCapability[] {
+  const requested = new Set<AgentBrowserCapability>();
+  const inspectToken = (token: string) => {
+    const flag = token.split("=", 1)[0];
+    const capability = CAPABILITY_FLAG_REQUIREMENTS.get(flag);
+    if (capability) requested.add(capability);
+    if (token === "webmcp") requested.add("webmcp");
+  };
+  for (const token of args) inspectToken(token);
+  if (stdin) {
+    for (const token of stdin.match(/(?:^|\s)(?:--[\w-]+|webmcp)(?=$|[=\s])/gu) ?? [])
+      inspectToken(token.trim());
+  }
+  return [...requested];
+}
+
+export function getUnsupportedCapabilityError(
+  profile: AgentBrowserCompatibilityProfile | undefined,
+  args: readonly string[],
+  stdin?: string,
+): string | undefined {
+  if (!profile?.detectedVersion) return undefined;
+  const unsupported = getRequestedAgentBrowserCapabilities(args, stdin).filter(
+    (capability) => profile.capabilities[capability] === "unsupported",
+  );
+  return unsupported.length === 0
+    ? undefined
+    : `agent-browser ${profile.detectedVersion} does not support the requested capability: ${unsupported.join(", ")}. Upgrade agent-browser or omit that operation-specific option.`;
+}
+
+export async function probeAgentBrowserCompatibility(options: {
+  fingerprint: NonNullable<AgentBrowserCompatibilityProfile["executable"]>;
+  runVersion: () => Promise<Awaited<ReturnType<typeof runAgentBrowserProcess>>>;
+  signal?: AbortSignal;
+}): Promise<AgentBrowserCompatibilityProfile | undefined> {
+  if (options.signal?.aborted) return undefined;
+  const probe = await options.runVersion();
+  if (options.signal?.aborted || probe.spawnError || probe.exitCode !== 0 || probe.timedOut)
+    return undefined;
+  return {
+    ...resolveAgentBrowserCompatibility(probe.stdout),
+    executable: options.fingerprint,
+  };
+}
+
+function getOptionValue(args: readonly string[], flag: string): string | undefined {
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === flag) return args[index + 1];
+    if (token?.startsWith(`${flag}=`)) return token.slice(flag.length + 1);
+  }
+  return undefined;
+}
+
+function getWebMcpOwner(options: {
+  args: readonly string[];
+  generation: number;
+  namespace?: string;
+  session: string;
+}): WebMcpOwner {
+  return {
+    frame: getOptionValue(options.args, "--frame"),
+    generation: options.generation,
+    namespace: options.namespace,
+    session: options.session,
+  };
+}
+
+function isAbortSignalAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 type OwnedManagedSession = {
@@ -328,6 +440,61 @@ function getArtifactPreflightValidationError(options: {
     }
   }
   return undefined;
+}
+
+async function getRecordingDestinationPreflightError(options: {
+  activeRecordingReservations: Iterable<ActiveRecordingReservation>;
+  args: string[];
+  cwd: string;
+  outputPath?: string;
+  stdin?: string;
+}): Promise<string | undefined> {
+  const parsed = getArtifactCommandSteps(options.args, options.stdin);
+  if (parsed.error) return parsed.error;
+  const activeAbsolutePaths = new Set<string>();
+  for (const reservation of options.activeRecordingReservations) {
+    for (const destination of enumerateRecordingReservationDestinations(reservation))
+      activeAbsolutePaths.add(destination.absolutePath);
+  }
+  const outputAbsolutePath = options.outputPath
+    ? canonicalizeExplicitArtifactDestination(
+        options.cwd,
+        normalizeRequestedOutputPath(options.outputPath),
+      )
+    : undefined;
+  const destinations: Array<{ absolutePath: string; path: string }> = [];
+  for (const step of parsed.steps) {
+    const command = extractUpstreamCommandTokens(step);
+    if (command[0] !== "record" || !["start", "restart"].includes(command[1] ?? "")) continue;
+    const videoPath = getExplicitArtifactDestination(command);
+    if (!videoPath) continue;
+    destinations.push({
+      absolutePath: canonicalizeExplicitArtifactDestination(options.cwd, videoPath),
+      path: videoPath,
+    });
+    const contactSheet = getRecordingContactSheetRequest(command, options.cwd).destination;
+    if (contactSheet)
+      destinations.push({
+        absolutePath: canonicalizeExplicitArtifactDestination(
+          options.cwd,
+          contactSheet.absolutePath,
+        ),
+        path: contactSheet.path,
+      });
+  }
+  if (destinations.length === 0) return undefined;
+  try {
+    await assertRecordingDestinationsAvailable({
+      activeAbsolutePaths,
+      destinations,
+      outputAbsolutePath,
+    });
+    return undefined;
+  } catch (error) {
+    return error instanceof Error
+      ? error.message
+      : "Recording destinations could not be checked safely.";
+  }
 }
 
 function commandClosesAllSessions(args: string[], stdin: string | undefined): boolean {
@@ -1490,27 +1657,14 @@ export function mergeBrowserRunArtifactManifest(
       });
 }
 
-function findPackageRoot(startDir: string): string {
-  let currentDir = startDir;
-  while (true) {
-    const packageJsonPath = join(currentDir, "package.json");
-    if (existsSync(packageJsonPath)) {
-      const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
-      if (isRecord(packageJson) && packageJson.name === "choco-pi-agent-browser") return currentDir;
-    }
-    const parentDir = dirname(currentDir);
-    if (parentDir === currentDir) return startDir;
-    currentDir = parentDir;
-  }
-}
-
 interface InstalledDocsPaths {
   readmePath: string;
 }
 
-function getInstalledDocsPaths(): InstalledDocsPaths {
-  const packageRoot = findPackageRoot(dirname(fileURLToPath(import.meta.url)));
-  return { readmePath: join(packageRoot, "README.md") };
+export function resolveInstalledDocsPaths(
+  runtimeModuleUrl: string = import.meta.url,
+): InstalledDocsPaths {
+  return { readmePath: fileURLToPath(new URL("../../../README.md", runtimeModuleUrl)) };
 }
 
 function hasArgvFlag(argv: readonly string[], longFlag: string, shortFlag: string): boolean {
@@ -1536,7 +1690,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
     browserDefaultProfile: agentBrowserConfig.trustedBrowserDefaultProfile,
     browserExecutablePath: agentBrowserConfig.trustedBrowserExecutablePath,
     includeWebSearch: webSearchToolAvailable,
-    docs: getInstalledDocsPaths(),
+    docs: resolveInstalledDocsPaths(),
   });
   const implicitSessionIdleTimeoutMs = String(getImplicitSessionIdleTimeoutMs());
   const implicitSessionCloseTimeoutMs = getImplicitSessionCloseTimeoutMs();
@@ -1555,6 +1709,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
   let managedSessionNamespace: string | undefined;
   let freshSessionOrdinal = 0;
   let sessionPageState = new SessionPageState();
+  const snapshotRevisionStore = new SnapshotRevisionStore();
+  const snapshotIdentityBySession = new Map<
+    string,
+    { documentGeneration: number; tabGeneration: number }
+  >();
   let traceOwners = new Map<string, TraceOwner>();
   let artifactManifest: SessionArtifactManifest | undefined;
   let activeRecordingReservations = new Map<string, ActiveRecordingReservation>();
@@ -1576,7 +1735,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
   const activeScriptExecutions = new Set<Promise<void>>();
   let branchRestoreGeneration = 0;
   let branchStateGeneration = 0;
-  const validatedUpstreamPathKeys = new Set<string>();
+  const warnedUpstreamFingerprints = new Set<string>();
+  const compatibilityByFingerprint = new Map<string, AgentBrowserCompatibilityProfile>();
+  const webMcpInvocations = new WebMcpInvocationRegistry();
+  const webMcpOwnersByInvocation = new Map<string, WebMcpOwner>();
+  const webMcpGenerationBySession = new Map<string, number>();
 
   const appendRecordingTransitions = (
     transitions: ReturnType<typeof applyRecordingArtifactsToReservations>,
@@ -1745,55 +1908,39 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
     return handledClosedSessionKeys;
   };
 
-  const validateUpstreamVersion = async (
+  const inspectUpstreamVersion = async (
     cwd: string,
     signal?: AbortSignal,
-  ): Promise<AgentBrowserToolResult | undefined> => {
+  ): Promise<{
+    profile?: AgentBrowserCompatibilityProfile;
+    warnings: readonly string[];
+  }> => {
     const processEnvironment = getAgentBrowserProcessEnvironment();
-    const pathKey = `${cwd}\0${processEnvironment.PATH ?? processEnvironment.Path ?? ""}`;
-    if (validatedUpstreamPathKeys.has(pathKey)) return undefined;
-    const probe = await runAgentBrowserProcess({
-      args: ["--version"],
-      cwd,
+    const fingerprint =
+      getAgentBrowserExecutableContext() ??
+      (await resolveAgentBrowserExecutable({
+        cwd,
+        path: processEnvironment.PATH ?? processEnvironment.Path,
+        pathExt: processEnvironment.PATHEXT,
+      }));
+    if (!fingerprint || signal?.aborted) return { warnings: [] };
+    const fingerprintKey = getAgentBrowserExecutableFingerprintKey(fingerprint);
+    const cached = compatibilityByFingerprint.get(fingerprintKey);
+    if (cached) {
+      const warnings = warnedUpstreamFingerprints.has(fingerprintKey)
+        ? []
+        : cached.warnings.map((warning) => warning.message);
+      return { profile: cached, warnings };
+    }
+    const profile = await probeAgentBrowserCompatibility({
+      fingerprint,
+      runVersion: () =>
+        runAgentBrowserProcess({ args: ["--version"], cwd, signal, timeoutMs: 5_000 }),
       signal,
-      timeoutMs: 5_000,
     });
-    // SAFETY: runAgentBrowserProcess stores Node child-process spawn errors in spawnError.
-    if (
-      (probe.spawnError as NodeJS.ErrnoException | undefined)?.code === "ENOENT" ||
-      probe.exitCode === 127 ||
-      probe.aborted
-    )
-      return undefined;
-    let error: string | undefined;
-    let observedVersion: string | undefined;
-    if (probe.spawnError || probe.exitCode !== 0) {
-      const detail = redactSensitiveText(
-        probe.spawnError?.message ?? (probe.stderr.trim() || `exit ${probe.exitCode}`),
-      );
-      error = `agent-browser --version could not be validated (${detail}). Run pi-agent-browser-doctor before browser-backed calls.`;
-    } else {
-      observedVersion = parseAgentBrowserVersionOutput(probe.stdout);
-      error = getAgentBrowserVersionValidationError(probe.stdout);
-    }
-    if (!error) {
-      validatedUpstreamPathKeys.add(pathKey);
-      return undefined;
-    }
-    return {
-      content: [{ type: "text", text: error }],
-      details: {
-        expectedVersion: TARGET_AGENT_BROWSER_VERSION,
-        failureCategory: "validation-error",
-        observedVersion,
-        resultCategory: "failure",
-        versionValidation: {
-          expected: TARGET_AGENT_BROWSER_VERSION_LABEL,
-          observed: observedVersion,
-        },
-      },
-      isError: true,
-    };
+    if (!profile) return { warnings: [] };
+    compatibilityByFingerprint.set(fingerprintKey, profile);
+    return { profile, warnings: profile.warnings.map((warning) => warning.message) };
   };
 
   const clearSessionScopedBrowserState = (sessionName: string, namespace?: string): void => {
@@ -1805,6 +1952,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
     networkRoutesBySession.delete(key);
     traceOwners.delete(key);
     sessionPageState.clearSession(key);
+    snapshotIdentityBySession.delete(key);
+    snapshotRevisionStore.invalidateSession(namespace, sessionName);
+    webMcpGenerationBySession.set(key, (webMcpGenerationBySession.get(key) ?? 0) + 1);
   };
 
   const closeScriptSessionLeaseWithinQueue = async (
@@ -2253,7 +2403,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
   pi.on("tool_result", async (event) => buildAgentBrowserToolResultPatch(event));
 
-  const agentBrowserTool = {
+  const agentBrowserTool: ToolDefinition<typeof AGENT_BROWSER_PARAMS> = {
     name: "agent_browser",
     label: "Agent Browser",
     description:
@@ -2279,7 +2429,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
       );
       return component;
     },
-    async execute(toolCallId, params: AgentBrowserExecuteParams, signal, onUpdate, ctx) {
+    async execute(
+      toolCallId,
+      params: AgentBrowserExecuteParams,
+      signal,
+      onUpdate,
+      ctx,
+    ): Promise<AgentBrowserToolResult> {
       const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
       const outputPath =
         isRecord(params) && hasRuntimeType(params.outputPath, "string")
@@ -2309,6 +2465,58 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
           validationError: outputPathValidationError,
         });
       }
+      const nestedSafetySteps = getArtifactCommandSteps(
+        resolvedInput.toolArgs,
+        resolvedInput.toolStdin,
+      );
+      if (nestedSafetySteps.batch) {
+        const unsafeNestedStep = nestedSafetySteps.steps.find((step) => {
+          const command = extractUpstreamCommandTokens(step);
+          return (
+            (command[0] === "snapshot" && command.includes("--delta")) || command[0] === "webmcp"
+          );
+        });
+        if (unsafeNestedStep)
+          return buildValidationFailureResult({
+            attemptedKind: resolvedInput.kind,
+            kind: "invalid",
+            redactedArgs: resolvedInput.redactedArgs,
+            status: "invalid",
+            toolArgs: resolvedInput.toolArgs,
+            toolStdin: resolvedInput.toolStdin,
+            validationError:
+              "Nested batch snapshot --delta and WebMCP operations require standalone calls so revision identity, params preflight, action policy, and detached invocation ownership can be enforced before execution.",
+          });
+      }
+      const recordingPreflightGeneration = branchStateGeneration;
+      const recordingDestinationError = await getRecordingDestinationPreflightError({
+        activeRecordingReservations: activeRecordingReservations.values(),
+        args: resolvedInput.toolArgs,
+        cwd: ctx.cwd,
+        outputPath,
+        stdin: resolvedInput.toolStdin,
+      });
+      if (recordingPreflightGeneration !== branchStateGeneration)
+        return buildValidationFailureResult({
+          attemptedKind: resolvedInput.kind,
+          kind: "invalid",
+          redactedArgs: resolvedInput.redactedArgs,
+          status: "invalid",
+          toolArgs: resolvedInput.toolArgs,
+          toolStdin: resolvedInput.toolStdin,
+          validationError:
+            "Browser session ownership changed while recording destinations were checked; retry once with current state.",
+        });
+      if (recordingDestinationError)
+        return buildValidationFailureResult({
+          attemptedKind: resolvedInput.kind,
+          kind: "invalid",
+          redactedArgs: resolvedInput.redactedArgs,
+          status: "invalid",
+          toolArgs: resolvedInput.toolArgs,
+          toolStdin: resolvedInput.toolStdin,
+          validationError: recordingDestinationError,
+        });
       const applyUnserializedOutputPath = async (
         result: AgentBrowserToolResult,
         preserveTextContent = false,
@@ -2355,19 +2563,75 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
       if (
         !electronHostOnlyAction &&
         browserBackedVersionCheck &&
+        !hasAgentBrowserExecutableContext() &&
+        signal?.aborted !== true
+      ) {
+        const processEnvironment = getAgentBrowserProcessEnvironment();
+        const executable = await resolveAgentBrowserExecutable({
+          cwd: ctx.cwd,
+          path: processEnvironment.PATH ?? processEnvironment.Path,
+          pathExt: processEnvironment.PATHEXT,
+        });
+        const executionAborted = isAbortSignalAborted(signal);
+        if (executable && !executionAborted) {
+          return withAgentBrowserExecutableContext(executable, () =>
+            agentBrowserTool.execute(toolCallId, params, signal, onUpdate, ctx),
+          );
+        }
+      }
+      let compatibilityWarnings: readonly string[] = [];
+      let compatibilityProfile: AgentBrowserCompatibilityProfile | undefined;
+      if (
+        !electronHostOnlyAction &&
+        browserBackedVersionCheck &&
         !isPlainTextInspectionArgs(resolvedInput.toolArgs) &&
         !isCloseCommand(versionCheckCommand) &&
         signal?.aborted !== true
       ) {
-        const versionFailure =
+        const inspection =
           resolvedInput.kind === "script"
             ? await withIsolatedAgentBrowserEnvironment(() =>
-                validateUpstreamVersion(ctx.cwd, signal),
+                inspectUpstreamVersion(ctx.cwd, signal),
               )
-            : await validateUpstreamVersion(ctx.cwd, signal);
-        if (versionFailure)
-          return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, result: versionFailure });
+            : await inspectUpstreamVersion(ctx.cwd, signal);
+        compatibilityWarnings = inspection.warnings;
+        compatibilityProfile = inspection.profile;
       }
+      const appendCompatibilityWarnings = (
+        result: AgentBrowserToolResult,
+      ): AgentBrowserToolResult => {
+        if (compatibilityWarnings.length === 0) return result;
+        if (compatibilityProfile?.executable)
+          warnedUpstreamFingerprints.add(
+            getAgentBrowserExecutableFingerprintKey(compatibilityProfile.executable),
+          );
+        const details = isRecord(result.details) ? result.details : {};
+        return {
+          ...result,
+          content: [
+            ...result.content,
+            ...compatibilityWarnings.map((warning) => ({ type: "text" as const, text: warning })),
+          ],
+          details: { ...details, compatibilityWarnings: [...compatibilityWarnings] },
+        };
+      };
+      const unsupportedCapabilityError = getUnsupportedCapabilityError(
+        compatibilityProfile,
+        resolvedInput.toolArgs,
+        resolvedInput.toolStdin,
+      );
+      if (unsupportedCapabilityError)
+        return appendCompatibilityWarnings(
+          buildValidationFailureResult({
+            attemptedKind: resolvedInput.kind,
+            kind: "invalid",
+            redactedArgs: resolvedInput.redactedArgs,
+            status: "invalid",
+            toolArgs: resolvedInput.toolArgs,
+            toolStdin: resolvedInput.toolStdin,
+            validationError: unsupportedCapabilityError,
+          }),
+        );
       if (resolvedInput.kind === "script") {
         if (!ctx.sessionManager.getSessionFile()) {
           return buildValidationFailureResult({
@@ -2484,7 +2748,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
             },
           };
         }
-        return applyUnserializedOutputPath(scriptResult);
+        return applyUnserializedOutputPath(appendCompatibilityWarnings(scriptResult));
       }
       const { toolArgs } = resolvedInput;
       const compiledElectron =
@@ -2624,7 +2888,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
       if (electronHostResult) {
         return compiledElectron?.action === "cleanup"
           ? electronHostResult
-          : applyUnserializedOutputPath(electronHostResult);
+          : applyUnserializedOutputPath(appendCompatibilityWarnings(electronHostResult));
       }
 
       const explicitSessionName = extractExplicitSessionName(toolArgs);
@@ -2647,10 +2911,73 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
           ? (getSessionContextKey(explicitSessionName, callerOwnedSessionNamespace) ??
             explicitSessionName)
           : undefined;
+      const webMcpCommandTokens = extractUpstreamCommandTokens(toolArgs);
+      const webMcpSubcommand =
+        webMcpCommandTokens[0] === "webmcp" ? webMcpCommandTokens[1] : undefined;
+      const webMcpSessionName = explicitSessionName ?? managedSessionName;
+      const webMcpNamespace = explicitSessionName
+        ? callerOwnedSessionNamespace
+        : managedSessionNamespace;
+      const webMcpSessionKey =
+        getSessionContextKey(webMcpSessionName, webMcpNamespace) ?? webMcpSessionName;
+      const webMcpGeneration = webMcpGenerationBySession.get(webMcpSessionKey) ?? 0;
+      const webMcpOwner = getWebMcpOwner({
+        args: webMcpCommandTokens,
+        generation: webMcpGeneration,
+        namespace: webMcpNamespace,
+        session: webMcpSessionName,
+      });
+      if (webMcpSubcommand === "invoke") {
+        try {
+          await preflightWebMcpParams(getOptionValue(webMcpCommandTokens, "--params"), ctx.cwd);
+        } catch (error) {
+          return buildValidationFailureResult({
+            attemptedKind: resolvedInput.kind,
+            kind: "invalid",
+            redactedArgs: resolvedInput.redactedArgs,
+            status: "invalid",
+            toolArgs: resolvedInput.toolArgs,
+            toolStdin: resolvedInput.toolStdin,
+            validationError:
+              error instanceof Error ? error.message : "WebMCP params could not be checked safely.",
+          });
+        }
+        if ((webMcpGenerationBySession.get(webMcpSessionKey) ?? 0) !== webMcpGeneration)
+          return buildValidationFailureResult({
+            attemptedKind: resolvedInput.kind,
+            kind: "invalid",
+            redactedArgs: resolvedInput.redactedArgs,
+            status: "invalid",
+            toolArgs: resolvedInput.toolArgs,
+            toolStdin: resolvedInput.toolStdin,
+            validationError:
+              "WebMCP session generation changed during params validation; inspect the current page before retrying.",
+          });
+      }
+      const webMcpInvocationId =
+        webMcpSubcommand === "result" || webMcpSubcommand === "cancel"
+          ? webMcpCommandTokens[2]
+          : undefined;
+      if (webMcpInvocationId) {
+        try {
+          webMcpInvocations.assertOwned(webMcpInvocationId, webMcpOwner);
+        } catch (error) {
+          return buildValidationFailureResult({
+            attemptedKind: resolvedInput.kind,
+            kind: "invalid",
+            redactedArgs: resolvedInput.redactedArgs,
+            status: "invalid",
+            toolArgs: resolvedInput.toolArgs,
+            toolStdin: resolvedInput.toolStdin,
+            validationError:
+              error instanceof Error ? error.message : "WebMCP invocation ownership check failed.",
+          });
+        }
+      }
       const runBrowserCommand = async () => {
         const branchRestoreGenerationAtStart = branchRestoreGeneration;
         const generationAtStart = branchStateGeneration;
-        const sessionPageStateUpdate = sessionPageState.beginUpdate();
+        const sessionPageStateUpdate = sessionPageState.beginUpdate(webMcpSessionKey);
         const browserRunState: BrowserRunState = {
           allowedDomainsBySession,
           artifactManifest,
@@ -2694,6 +3021,58 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
             ));
         const attachedSessionKnown =
           reusableSessionKey !== undefined && attachedSessionKeys.has(reusableSessionKey);
+        const clearsWebMcpPage =
+          isCloseCommand(webMcpCommandTokens[0]) ||
+          isUnverifiedPageTransitionCommand(webMcpCommandTokens[0], webMcpCommandTokens[1]) ||
+          isOpenNavigationCommand(webMcpCommandTokens[0]) ||
+          isRecordPageTransitionCommand(webMcpCommandTokens);
+        if (clearsWebMcpPage) {
+          for (const [invocationId, owner] of webMcpOwnersByInvocation) {
+            if (
+              owner.session !== webMcpOwner.session ||
+              owner.namespace !== webMcpOwner.namespace ||
+              owner.generation !== webMcpOwner.generation
+            )
+              continue;
+            const cancelArgs = [
+              ...(owner.namespace ? ["--namespace", owner.namespace] : []),
+              "--session",
+              owner.session,
+              "webmcp",
+              "cancel",
+              invocationId,
+            ];
+            const cancellation = await runAgentBrowserProcess({
+              args: cancelArgs,
+              cwd: ctx.cwd,
+              signal,
+              timeoutMs: params.timeoutMs,
+            });
+            if (
+              !cancellation.spawnError &&
+              cancellation.exitCode === 0 &&
+              !cancellation.aborted &&
+              !cancellation.timedOut
+            ) {
+              webMcpInvocations.settle(invocationId, owner);
+              webMcpOwnersByInvocation.delete(invocationId);
+            } else if (!isCloseCommand(webMcpCommandTokens[0])) {
+              return buildValidationFailureResult({
+                attemptedKind: resolvedInput.kind,
+                kind: "invalid",
+                redactedArgs: resolvedInput.redactedArgs,
+                status: "invalid",
+                toolArgs: resolvedInput.toolArgs,
+                toolStdin: resolvedInput.toolStdin,
+                validationError:
+                  "Pending WebMCP invocation cleanup failed; navigation was not attempted.",
+              });
+            } else {
+              webMcpInvocations.takeOwned(owner);
+              webMcpOwnersByInvocation.delete(invocationId);
+            }
+          }
+        }
         let result = await runAgentBrowserTool({
           ctx,
           cwd: ctx.cwd,
@@ -2708,9 +3087,36 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
           preserveAttachedBrowserSession: attachedSessionRequested || attachedSessionKnown,
           promptPolicy,
           sessionPageStateUpdate,
+          snapshotIdentityBySession,
+          snapshotRevisionStore,
           signal,
           state: browserRunState,
         });
+        const webMcpResultDetails = isRecord(result.details) ? result.details : undefined;
+        const webMcpResultData = isRecord(webMcpResultDetails?.data)
+          ? webMcpResultDetails.data
+          : undefined;
+        const detachedInvocationId = hasRuntimeType(webMcpResultData?.invocationId, "string")
+          ? webMcpResultData.invocationId
+          : undefined;
+        if (
+          result.isError !== true &&
+          webMcpSubcommand === "invoke" &&
+          webMcpCommandTokens.includes("--detach") &&
+          detachedInvocationId
+        ) {
+          webMcpInvocations.register({ invocationId: detachedInvocationId, ...webMcpOwner });
+          webMcpOwnersByInvocation.set(detachedInvocationId, webMcpOwner);
+        } else if (
+          result.isError !== true &&
+          webMcpInvocationId &&
+          (webMcpSubcommand === "result" || webMcpSubcommand === "cancel")
+        ) {
+          webMcpInvocations.settle(webMcpInvocationId, webMcpOwner);
+          webMcpOwnersByInvocation.delete(webMcpInvocationId);
+        }
+        if (result.isError !== true && clearsWebMcpPage && !isCloseCommand(webMcpCommandTokens[0]))
+          webMcpGenerationBySession.set(webMcpSessionKey, webMcpGeneration + 1);
         const branchRestoreStillCurrent =
           branchRestoreGenerationAtStart === branchRestoreGeneration;
         const resultDetails = isRecord(result.details) ? result.details : undefined;
@@ -2881,7 +3287,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
           : runBrowserCommand();
       };
       if (!commandTouchesArtifactLifecycle(toolArgs, resolvedInput.toolStdin, outputPath))
-        return runWithinSessionQueue();
+        return appendCompatibilityWarnings(await runWithinSessionQueue());
       return artifactExecutionQueue.run(async () => {
         const artifactValidationError = getArtifactPreflightValidationError({
           activeRecordingReservations: activeRecordingReservations.values(),
@@ -2890,7 +3296,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
           outputPath,
           stdin: resolvedInput.toolStdin,
         });
-        if (!artifactValidationError) return runWithinSessionQueue();
+        if (!artifactValidationError)
+          return appendCompatibilityWarnings(await runWithinSessionQueue());
         return applyAgentBrowserOutputPath({
           cwd: ctx.cwd,
           outputPath,

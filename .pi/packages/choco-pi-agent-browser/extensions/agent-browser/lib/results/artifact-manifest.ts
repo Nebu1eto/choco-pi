@@ -13,7 +13,9 @@ export function isPendingRecordingCommand(
   kind: FileArtifactKind | "spill" | undefined,
 ): boolean {
   return (
-    command === "record" && (subcommand === "start" || subcommand === "restart") && kind === "video"
+    command === "record" &&
+    (subcommand === "start" || subcommand === "restart") &&
+    (kind === "video" || kind === "image")
   );
 }
 

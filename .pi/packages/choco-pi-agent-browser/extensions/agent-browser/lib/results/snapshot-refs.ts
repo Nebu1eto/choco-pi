@@ -21,13 +21,24 @@ export interface SnapshotLineRefInfo {
 }
 
 export function getSnapshotRefRecord<Value>(data: Value): AgentBrowserResultRecord | undefined {
-  if (!isRecord(data) || !isRecord(data.refs)) return undefined;
+  if (!isRecord(data)) return undefined;
+  const refs = isRecord(data.refs)
+    ? data.refs
+    : isRecord(data.snapshot) && isRecord(data.snapshot.refs)
+      ? data.snapshot.refs
+      : undefined;
+  if (!refs) return undefined;
   // SAFETY: the upstream snapshot contract defines refs as a JSON object keyed by ref id; these checks establish both enclosing object levels.
-  return data.refs as AgentBrowserResultRecord;
+  return refs as AgentBrowserResultRecord;
 }
 
 export function getSnapshotLineTextByRef<Value>(data: Value): Map<string, string> {
-  const snapshot = isRecord(data) && hasRuntimeType(data.snapshot, "string") ? data.snapshot : "";
+  const snapshot =
+    isRecord(data) && hasRuntimeType(data.snapshot, "string")
+      ? data.snapshot
+      : isRecord(data) && isRecord(data.snapshot) && hasRuntimeType(data.snapshot.tree, "string")
+        ? data.snapshot.tree
+        : "";
   const lineByRef = new Map<string, string>();
   for (const line of snapshot.split("\n")) {
     const ref = line.match(/\bref=([^,\]\s]+)/)?.[1];
