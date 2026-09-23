@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createNativeHost } from "./native-host-support.ts";
+import { createNativeHost, NATIVE_LIVE_MODEL } from "./native-host-support.ts";
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 
 const live = process.env.CHOCO_PI_NATIVE_LIVE === "1";
@@ -54,7 +54,7 @@ test(
 );
 
 for (const scenario of ["native", "off", "sse", "fallback"] as const) {
-  test(`steering UI correlates real Astra delivery: ${scenario}`, { skip: !live }, async () => {
+  test(`steering UI correlates real GPT-6 delivery: ${scenario}`, { skip: !live }, async () => {
     const frames: string[][] = [];
     // SAFETY: The production native input hook uses only setWidget in this SDK UI fixture.
     // Interactive rendering is exercised separately by native-steering-tui.ts.
@@ -84,7 +84,7 @@ for (const scenario of ["native", "off", "sse", "fallback"] as const) {
       }
     });
     try {
-      assert.equal(host.session.model?.id, "gpt-6-astra");
+      assert.equal(host.session.model?.id, NATIVE_LIVE_MODEL);
       assert.equal(host.session.model?.provider, "openai-codex");
       await host.session.prompt("Explain five approaches to sorting a list with examples.");
       await steer;
