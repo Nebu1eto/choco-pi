@@ -3,7 +3,19 @@ import { mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { Type, type Static, type TSchema } from "typebox";
+import { Value } from "typebox/value";
 import { buildGlobalSettings, installProfile } from "../scripts/install-profile.mjs";
+
+const CodexConfigSchema = Type.Object({
+  openai: Type.Object({ fast: Type.Boolean() }),
+});
+
+function parseJson<T extends TSchema>(contents: string, schema: T): Static<T> {
+  const parsed: unknown = JSON.parse(contents);
+  assert.ok(Value.Check(schema, parsed), "JSON fixture must match its expected schema");
+  return parsed;
+}
 
 test("global settings preserve user preferences and dedupe every tracked local package", () => {
   const root = process.cwd();
@@ -79,10 +91,15 @@ test("profile installer links tracked config and is idempotent", async (context)
     await readlink(path.join(agentDir, "choco-pi-codex.json")),
     path.resolve(".pi/choco-pi-codex.json"),
   );
-  const codexConfig = JSON.parse(
+  const codexConfig = parseJson(
     await readFile(path.join(agentDir, "choco-pi-codex.json"), "utf8"),
+    CodexConfigSchema,
   );
-  assert.equal(codexConfig.openai.fast, false);
+  const sourceCodexConfig = parseJson(
+    await readFile(path.resolve(".pi/choco-pi-codex.json"), "utf8"),
+    CodexConfigSchema,
+  );
+  assert.equal(codexConfig.openai.fast, sourceCodexConfig.openai.fast);
   const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
   assert.deepEqual(
     settings.packages,
@@ -119,6 +136,32 @@ test("profile installer links tracked config and is idempotent", async (context)
     "openai-codex/gpt-5.6-luna": "xhigh",
     "synthetic/hf:moonshotai/Kimi-K3": "high",
   });
+});
+
+test("profile installer preserves enabled and disabled fast preferences", async (context) => {
+  const fixtureDir = await mkdtemp(path.join(tmpdir(), "choco-pi-profile-fast-"));
+  context.after(() => rm(fixtureDir, { recursive: true, force: true }));
+
+  for (const fast of [true, false]) {
+    const root = path.join(fixtureDir, fast ? "enabled" : "disabled");
+    const agentDir = path.join(root, "agent");
+    const sourceConfig = path.join(root, ".pi", "choco-pi-codex.json");
+    await mkdir(path.dirname(sourceConfig), { recursive: true });
+    await writeFile(path.join(root, ".pi", "settings.json"), '{"packages":[]}\n', "utf8");
+    await writeFile(sourceConfig, `${JSON.stringify({ openai: { fast } })}\n`, "utf8");
+
+    const firstInstall = await installProfile({ root, agentDir });
+    const secondInstall = await installProfile({ root, agentDir });
+    const installedConfig = path.join(agentDir, "choco-pi-codex.json");
+
+    assert.equal(await readlink(installedConfig), sourceConfig);
+    assert.ok(firstInstall.links.every(({ action }) => action === "linked"));
+    assert.ok(secondInstall.links.every(({ action }) => action === "unchanged"));
+    assert.equal(
+      parseJson(await readFile(installedConfig, "utf8"), CodexConfigSchema).openai.fast,
+      fast,
+    );
+  }
 });
 
 test("profile installer preserves a conflicting file unless backup is explicit", async (context) => {

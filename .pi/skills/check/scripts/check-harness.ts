@@ -5,6 +5,13 @@ import {
   isString,
   type RuntimeValue,
 } from "../../../extensions/lib/runtime-values.ts";
+import {
+  type CommandResult,
+  type RunCommand,
+  type RuntimeVersionObservation,
+  probeLauncherVersion,
+  readImportedSdkVersion,
+} from "../../../extensions/lib/pi-runtime-identity.ts";
 
 import { execFile } from "node:child_process";
 import { access, readFile, realpath } from "node:fs/promises";
@@ -18,7 +25,6 @@ export const PI_SDK_TARGET = "0.86.1";
 type CheckStatus = "pass" | "warn" | "fail";
 
 type Check = { id: string; status: CheckStatus; detail: string };
-type RunResult = { status: number; stdout: string; stderr: string };
 type Settings = { packages?: unknown; tuiMode?: unknown };
 type SubagentsSettings = { disableDefaultAgents?: unknown; fallbackSubagent?: unknown };
 
@@ -27,9 +33,12 @@ export type HarnessOptions = {
   mode: "full" | "automatic";
   requiredCapabilities?: readonly Capability[];
   nodeVersion?: string;
+  signal?: AbortSignal;
+  runtimeIdentity?: RuntimeVersionObservation;
+  readImportedRuntime?: () => Promise<RuntimeVersionObservation>;
   readText?: (target: string) => Promise<string>;
   pathExists?: (target: string) => Promise<boolean>;
-  runCommand?: (command: string, args: string[]) => Promise<RunResult>;
+  runCommand?: RunCommand;
 };
 
 export type HarnessReport = {
@@ -71,9 +80,17 @@ async function defaultExists(target: string): Promise<boolean> {
   }
 }
 
-async function defaultRun(command: string, args: string[]): Promise<RunResult> {
+async function defaultRun(
+  command: string,
+  args: readonly string[],
+  options: { signal?: AbortSignal; timeoutMs: number },
+): Promise<CommandResult> {
   try {
-    const result = await execFileAsync(command, args, { encoding: "utf8", timeout: 10_000 });
+    const result = await execFileAsync(command, args, {
+      encoding: "utf8",
+      timeout: options.timeoutMs,
+      signal: options.signal,
+    });
     return { status: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error: unknown) {
     const value = isRecord(error) ? error : {};
@@ -150,15 +167,46 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
   const nodeVersion = options.nodeVersion ?? process.version;
   add("node", atLeast(nodeVersion, "24.0.0") ? "pass" : "fail", `${nodeVersion}; required >=24`);
 
-  const piVersionResult = await run("pi", ["--version"]);
-  if (piVersionResult.status !== 0) add("pi", "fail", "pi executable is unavailable");
-  else {
-    const piVersion = piVersionResult.stdout.trim();
+  const importedRuntime = await (options.readImportedRuntime ?? readImportedSdkVersion)();
+  const primaryRuntime = options.runtimeIdentity ?? importedRuntime;
+  const primaryId = options.runtimeIdentity ? "active-host" : "imported-sdk";
+  const primaryProvenanceValid = options.runtimeIdentity
+    ? primaryRuntime.source === "active-host" && primaryRuntime.authoritative
+    : primaryRuntime.source === "imported-sdk" && primaryRuntime.authoritative;
+  if (!primaryProvenanceValid) {
     add(
-      "pi",
-      piVersion === PI_SDK_TARGET ? "pass" : "fail",
-      `${piVersion}; required exactly ${PI_SDK_TARGET}`,
+      primaryId,
+      "fail",
+      `invalid primary runtime provenance: received ${primaryRuntime.source} (${primaryRuntime.authoritative ? "authoritative" : "non-authoritative"}); expected authoritative ${primaryId} evidence`,
     );
+  } else if (!primaryRuntime.version) {
+    add(primaryId, "fail", primaryRuntime.error ?? `${primaryId} version is unavailable`);
+  } else {
+    add(
+      primaryId,
+      primaryRuntime.version === PI_SDK_TARGET ? "pass" : "fail",
+      `Pi ${primaryRuntime.version}; required exactly ${PI_SDK_TARGET}${primaryRuntime.path ? `; ${primaryRuntime.path}` : ""}`,
+    );
+  }
+  if (primaryRuntime.source !== "imported-sdk") {
+    if (importedRuntime.source !== "imported-sdk" || !importedRuntime.authoritative) {
+      add("imported-sdk", "fail", "invalid imported SDK provenance");
+    } else if (!importedRuntime.version) {
+      add("imported-sdk", "fail", importedRuntime.error ?? "imported SDK version is unavailable");
+    } else {
+      add(
+        "imported-sdk",
+        importedRuntime.version === PI_SDK_TARGET ? "pass" : "fail",
+        `Pi ${importedRuntime.version}; required exactly ${PI_SDK_TARGET}${importedRuntime.path ? `; ${importedRuntime.path}` : ""}`,
+      );
+    }
+  }
+  if (options.mode === "full") {
+    const launcher = await probeLauncherVersion({ runCommand: run, signal: options.signal });
+    const launcherDetail = launcher.version
+      ? `direct PATH resolves Pi ${launcher.version}; not used for ${primaryId} validation`
+      : `${launcher.error ?? "unavailable"}; not used for ${primaryId} validation`;
+    add("launcher", launcher.version === primaryRuntime.version ? "pass" : "warn", launcherDetail);
   }
 
   let settings: Settings | undefined;
@@ -279,6 +327,8 @@ export async function checkHarness(options: HarnessOptions): Promise<HarnessRepo
     "extensions/tool-search.ts",
     "extensions/file-checkpoints.ts",
     "extensions/exec-session-guidance.ts",
+    "extensions/harness-check.ts",
+    "extensions/lib/pi-runtime-identity.ts",
     "extensions/provider-usage.ts",
     "review-policy.md",
     "writing-policy.md",
