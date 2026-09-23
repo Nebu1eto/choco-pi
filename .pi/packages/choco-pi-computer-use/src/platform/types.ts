@@ -95,9 +95,11 @@ export interface PlatformFocusWindowResult {
 }
 
 export interface HelperActPerformed {
-  grounding?: "description" | "coordinates" | "keyboard-events";
+  grounding?: "description" | "coordinates" | "keyboard-events" | "focus";
   /** `ax` means the platform accessibility API (AX on macOS, UIA on Windows). */
   delivery?: "ax" | NativeInputDelivery;
+  /** `caller_required`: a pid-targeted pointer event was posted; the helper cannot attest its effect. */
+  verification?: "caller_required";
   refound?: boolean;
   /** Free-form diagnostic naming the platform's delta mechanism. */
   deltaSource?: string;
@@ -123,10 +125,14 @@ export interface HelperActResult {
   outcome: ActOutcome;
   performed?: HelperActPerformed;
   evidence?: JsonObject;
-  error?: { code?: string; message?: string; whatIsThere?: JsonValue };
+  /** `effectPossible: false` means the helper proved nothing was delivered. */
+  error?: { code?: string; message?: string; whatIsThere?: JsonValue; effectPossible?: boolean };
   rootDelta?: PlatformRootDelta[];
   steps?: HelperActResult[];
   stoppedAt?: number;
+  /** Frontmost application before/after delivery, when the helper reports it. */
+  frontmostBefore?: JsonValue;
+  frontmostAfter?: JsonValue;
 }
 
 export interface PlatformTarget {
@@ -149,16 +155,129 @@ export type PlatformActTarget =
   | { ref: string }
   | { x: number; y: number }
   | { focus: PlatformPoint };
-type PlatformDeliveryPolicy = "ax_only" | "background" | "default" | "foreground";
+export type PlatformDeliveryPolicy = "ax_only" | "background" | "foreground";
 type PlatformMouseButton = "left" | "right" | "middle";
 type PlatformActDeliveryParam = { delivery?: NativeInputDelivery };
 export type PlatformPoint = { x: number; y: number };
 
+/** Owning client session for a helper request; generation changes when the session is reset. */
+export interface PlatformRequestSession {
+  id: string;
+  generation: number;
+}
+
+/**
+ * Helper `cancel` acknowledgement (protocol 7). Terminal: `stopped` (reached a
+ * checkpoint; delivers nothing more) and `completed` (finished first).
+ * Non-terminal: `stopping` (flagged but still executing; delivery may continue
+ * until the helper reports stopped). `not_found`: the helper had not seen the
+ * request; it tombstones the id and refuses it if it arrives later.
+ * `unacknowledged`: no ack arrived within the client's wait, so delivery state
+ * is unknown.
+ */
+export type HelperCancelState =
+  | "stopped"
+  | "stopping"
+  | "completed"
+  | "not_found"
+  | "unacknowledged";
+
+export interface HelperCancelAck {
+  acknowledged: boolean;
+  state: HelperCancelState;
+  /** Action index (batch step) at which the request stopped. */
+  stoppedAt?: number;
+  /** False only when the helper proved nothing was delivered before stopping. */
+  effectPossible?: boolean;
+}
+
+/** `result` carried by a helper `cancelled` error. */
+export interface HelperCancelledResult {
+  outcome: "partial" | "rejected_before_delivery";
+  stoppedAt?: number;
+  reason?: "cancelled" | "deadline";
+}
+
+/**
+ * Delivery state of an interrupted request: a cancel state, or `refused` for
+ * an ownership refusal. Only `stopped`, `completed`, and `refused` are
+ * terminal; see `HelperCancelState`.
+ */
+export type HelperInterruptionState = HelperCancelState | "refused";
+
+/** Why a non-terminal `stopping` interruption cannot prove delivery ended. */
+export const HELPER_STOPPING_REASON = "delivery may continue until the helper reports stopped";
+
+/**
+ * A helper request stopped by cancellation or deadline, or refused because
+ * another session owns the helper. Transports attach it to their errors as
+ * `interruption`; shared code maps it to a structured tool result.
+ */
+export class HelperInterruption {
+  readonly code: "cancelled" | "owned_by_other_session";
+  /**
+   * False only when the helper proved nothing was delivered. Always true for a
+   * non-terminal `stopping` state.
+   */
+  readonly effectPossible?: boolean;
+  readonly cancel?: HelperCancelAck;
+  readonly result?: HelperCancelledResult;
+  /** True when the client gave up (timeout) rather than the helper stopping on its own. */
+  readonly clientTimeout: boolean;
+  /**
+   * `stopped` when the helper itself answered `cancelled`; `refused` for
+   * ownership; otherwise the cancel acknowledgement's state.
+   */
+  readonly state: HelperInterruptionState;
+  /** Present for `stopping`: `HELPER_STOPPING_REASON`. */
+  readonly reason?: string;
+
+  constructor(fields: {
+    code: HelperInterruption["code"];
+    effectPossible?: boolean;
+    cancel?: HelperCancelAck;
+    result?: HelperCancelledResult;
+    clientTimeout?: boolean;
+    state?: HelperInterruptionState;
+  }) {
+    this.code = fields.code;
+    this.state =
+      fields.state ??
+      (fields.code === "owned_by_other_session"
+        ? "refused"
+        : fields.result
+          ? "stopped"
+          : (fields.cancel?.state ?? "unacknowledged"));
+    const stopping = this.state === "stopping";
+    this.effectPossible = stopping ? true : fields.effectPossible;
+    if (stopping) this.reason = HELPER_STOPPING_REASON;
+    this.cancel = fields.cancel;
+    this.result = fields.result;
+    this.clientTimeout = fields.clientTimeout === true;
+  }
+}
+
+/** Helper `claim` result (protocol 7). */
+export interface HelperClaimResult {
+  claimed: boolean;
+  owner?: PlatformRequestSession;
+  ttlMs?: number;
+}
+
 export interface PlatformActRequestBase {
+  /** Unique per request. */
+  requestId: string;
+  session: PlatformRequestSession;
+  /** Absolute deadline in Unix epoch milliseconds after which the helper must not deliver. */
+  deadlineMs: number;
   lookId: string;
   pid?: number;
   target: PlatformActTarget;
   policy: PlatformDeliveryPolicy;
+  /** Present only when a host-issued grant covers the target and policy is "foreground". */
+  foregroundGrant?: true;
+  /** Resolve a focus target through the target app's AX focused element, not system focus. */
+  focusResolution?: "ax_focused_element";
 }
 
 export type PlatformActRequest = PlatformActRequestBase &

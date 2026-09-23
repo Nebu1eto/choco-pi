@@ -10,6 +10,7 @@ import {
 } from "../src/bridge.ts";
 import { restoreOutline, type LookResponse, type SerializedOutlineNode } from "../src/outline.ts";
 import { replacePlatformBackendForTest } from "../src/platform/index.ts";
+import { createTestExtensionContext } from "./helpers/extension-context.ts";
 import type { ComputerUsePlatformBackend, PlatformRoot } from "../src/platform/types.ts";
 
 const root: PlatformRoot = {
@@ -73,9 +74,8 @@ function stateIdFromContent<T>(content: AgentToolResult<T>["content"]): string {
   return match[1];
 }
 
-function contextFixture(): ExtensionContext {
-  // SAFETY: Bridge setup reads only cwd from this fixture; the fake backend ignores the remaining host context.
-  return { cwd: "/Users/Nebuleto/Workspace/choco-pi", hasUI: false } as ExtensionContext;
+function contextFixture(): Promise<ExtensionContext> {
+  return createTestExtensionContext(process.cwd());
 }
 
 test("observation prerequisites self-heal for reads and fail safely for actions", async () => {
@@ -165,7 +165,7 @@ test("observation prerequisites self-heal for reads and fail safely for actions"
     },
   };
   const restoreBackend = replacePlatformBackendForTest(backend);
-  const ctx = contextFixture();
+  const ctx = await contextFixture();
   const signal = new AbortController().signal;
 
   try {

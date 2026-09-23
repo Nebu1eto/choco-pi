@@ -11,7 +11,6 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
-  canRetryInForeground,
   outcomeAfterCheck,
   outcomeAfterObservedValues,
   prepareAction,
@@ -36,10 +35,12 @@ import {
   type CdpPageSnapshot,
 } from "./cdp.ts";
 import {
+  foregroundGrantCovers,
   getComputerUseConfig,
   isBrowserUseEnabled,
   isHeadlessMode,
   loadComputerUseConfig,
+  type ComputerUseConfig,
 } from "./config.ts";
 import {
   isJsonObject,
@@ -105,17 +106,22 @@ import {
 } from "./contract.ts";
 import { toFiniteNumber } from "./platform/coerce.ts";
 import { currentPlatformBackend } from "./platform/index.ts";
-import type {
-  FramePoints,
-  HelperActPerformed,
-  HelperActResult,
-  NativeInputDelivery,
-  PlatformActRequest,
-  PlatformApp as HelperApp,
-  PlatformDiagnostics,
-  PlatformFrontmostResult as FrontmostResult,
-  PlatformPoint,
-  PlatformRoot as HelperWindow,
+import {
+  HelperInterruption,
+  type HelperCancelAck,
+  type HelperInterruptionState,
+  type FramePoints,
+  type HelperActPerformed,
+  type HelperActResult,
+  type NativeInputDelivery,
+  type PlatformActRequest,
+  type PlatformActRequestBase,
+  type PlatformApp as HelperApp,
+  type PlatformDeliveryPolicy,
+  type PlatformDiagnostics,
+  type PlatformFrontmostResult as FrontmostResult,
+  type PlatformPoint,
+  type PlatformRoot as HelperWindow,
 } from "./platform/types.ts";
 import type { PermissionStatus } from "./permissions.ts";
 import { ResourceScheduler, StaleResourceStateError, type StoredState } from "./runtime.ts";
@@ -155,9 +161,25 @@ interface ActivationFlags {
 
 type ExecutionVariant = "stealth" | "default";
 type ActionDelivery = "ax" | NativeInputDelivery;
-type DeliveryPolicy = "ax_only" | "background" | "default" | "foreground";
+type DeliveryPolicy = PlatformDeliveryPolicy;
 type ActOutcome = "worked" | "didnt" | "unknown";
 type ObservationRefreshReason = "missing" | "stale";
+type ComputerUseDetailsConfig = ComputerUseConfig & { notes?: string[] };
+
+/**
+ * Structured refusal returned instead of foreground delivery. Foreground input
+ * requires a host-issued grant; nothing retries or escalates automatically.
+ */
+interface ForegroundRefusal {
+  code: "foreground_required";
+  target: { app: string; bundleId?: string; pid: number; windowTitle: string };
+  action: string;
+  capability: string;
+  /** False only when the helper proved nothing was delivered. */
+  effectPossible: boolean;
+  grantHint: string;
+  reason: string;
+}
 
 export interface ObservationRefreshRequirement {
   code: "observation_refresh_required";
@@ -202,9 +224,15 @@ interface ExecutionTrace {
   actionCount?: number;
   stoppedAt?: number;
   backgroundFirst?: boolean;
+  /** True only after a granted retry: a covered background attempt was refused with proof of no delivery. */
   escalatedToForeground?: boolean;
   escalationReason?: string;
   backgroundAttempt?: { outcome: "foreground_required" | "didnt"; reason: string };
+  requestId?: string;
+  foregroundGrant?: true;
+  refusal?: ForegroundRefusal;
+  frontmostBefore?: JsonValue;
+  frontmostAfter?: JsonValue;
   verification?: {
     status: "verified" | "preexisting" | "failed";
     text?: string;
@@ -244,10 +272,7 @@ interface ComputerUseDetails {
   note?: WindowNote;
   activation: ActivationFlags;
   execution: ExecutionTrace;
-  config?: {
-    browser_use: boolean;
-    headless: boolean;
-  };
+  config?: ComputerUseDetailsConfig;
   helper?: PlatformDiagnostics;
   status?: "ok";
   axDiagnostics?: {
@@ -267,9 +292,29 @@ interface ComputerUseDetails {
     | "duplicated_ax_labels"
     | "browser_wait_verification";
 }
+/** Execution of a helper request that was stopped (cancel/deadline) or refused by ownership. */
+interface InterruptedExecutionTrace {
+  strategy: "act";
+  outcome: "partial" | "rejected_before_delivery";
+  /** Action index at which the helper stopped, when it reported one. */
+  stoppedAt?: number;
+  reason?: string;
+  effectPossible: boolean;
+  cancel?: HelperCancelAck;
+  /** `stopping` is non-terminal: delivery may continue until the helper reports stopped. */
+  state?: HelperInterruptionState;
+  /** Why the state cannot prove delivery ended (present for `stopping`). */
+  stateReason?: string;
+}
+
 interface TerminalDesktopActionDetails {
   tool: "act_ui";
-  status: "target_closed" | "post_action_observation_failed";
+  status:
+    | "target_closed"
+    | "post_action_observation_failed"
+    | "foreground_required"
+    | "cancelled"
+    | "owned_by_other_session";
   baseStateId: string;
   target: {
     app: string;
@@ -280,8 +325,9 @@ interface TerminalDesktopActionDetails {
     windowRef?: string;
     nativeWindowRef?: string;
   };
-  execution: ExecutionTrace;
+  execution: ExecutionTrace | InterruptedExecutionTrace;
   error: { code: string; message: string };
+  config?: ComputerUseDetailsConfig;
 }
 
 interface ListWindowsDetails {
@@ -523,8 +569,12 @@ function staleObservation(
     : new StaleResourceStateError(record.resourceKey, record.epoch, currentEpoch);
 }
 
+/** Helper-request owner: stable per process, new generation after each session shutdown. */
+const helperRequestSession = { id: randomUUID(), generation: 0 };
+
 /** Release handles and state owned by the current Pi session. */
 export async function shutdownComputerUseSession(): Promise<void> {
+  helperRequestSession.generation += 1;
   await resourceScheduler.close();
   resourceScheduler = new ResourceScheduler();
   disconnectCdp();
@@ -563,19 +613,35 @@ function currentRuntimeMode(): ExecutionVariant {
 }
 
 function currentDeliveryPolicy(): DeliveryPolicy {
-  if (isHeadlessMode()) return "background";
-  const value = (
-    process.env.PI_COMPUTER_USE_DELIVERY_POLICY ??
-    process.env.PI_COMPUTER_USE_EVENT_DELIVERY ??
-    "default"
-  ).toLowerCase();
-  return value === "background" || value === "pid"
-    ? "background"
-    : value === "foreground" || value === "hid"
-      ? "foreground"
-      : value === "ax_only" || value === "ax-only"
-        ? "ax_only"
-        : "default";
+  if (isHeadlessMode()) return "ax_only";
+  const value = deliveryPolicyEnv()?.value;
+  return value === "ax_only" || value === "ax-only" ? "ax_only" : "background";
+}
+
+function deliveryPolicyEnv(): { name: string; value: string } | undefined {
+  for (const name of ["PI_COMPUTER_USE_DELIVERY_POLICY", "PI_COMPUTER_USE_EVENT_DELIVERY"]) {
+    const raw = process.env[name];
+    if (raw !== undefined) return { name, value: raw.trim().toLowerCase() };
+  }
+  return undefined;
+}
+
+/** Configuration diagnostics surfaced in tool details; never changes delivery. */
+function deliveryPolicyNotes(): string[] {
+  const env = deliveryPolicyEnv();
+  if (!env) return [];
+  if (env.value === "foreground" || env.value === "hid") {
+    return [
+      `${env.name}=${env.value} is ignored: foreground delivery requires a host-issued grant (PI_COMPUTER_USE_FOREGROUND_GRANT or "foreground_grant" in the computer-use config).`,
+    ];
+  }
+  if (["", "default", "background", "pid", "ax_only", "ax-only"].includes(env.value)) return [];
+  return [`${env.name}=${env.value} is not recognized; background delivery is used.`];
+}
+
+function detailsConfig(): ComputerUseDetailsConfig {
+  const notes = deliveryPolicyNotes();
+  return notes.length > 0 ? { ...getComputerUseConfig(), notes } : getComputerUseConfig();
 }
 
 function nativeInputDelivery(policy = currentDeliveryPolicy()): NativeInputDelivery {
@@ -1447,7 +1513,7 @@ async function buildToolResult(
     activation: result.activation,
     execution,
     status: "ok",
-    config: getComputerUseConfig(),
+    config: detailsConfig(),
     helper: runtimeState.helperDiagnostics,
     imageReason: fallbackReason?.reason,
   };
@@ -1569,9 +1635,81 @@ function executionTraceFromAct(
     rootDelta,
     delivery: result.performed?.delivery,
     deliveryPolicy: policy,
+    frontmostBefore: result.frontmostBefore,
+    frontmostAfter: result.frontmostAfter,
   });
 }
 
+/** Pessimistic default: unless the helper states nothing was delivered, an effect is possible. */
+function errorEffectPossible(error: Error): boolean {
+  return !("effectPossible" in error && error.effectPossible === false);
+}
+
+function foregroundCapability(action: NativePreparedAction): string {
+  if ((action.action === "click" || action.action === "press") && "x" in action.target)
+    return "coordinate_pointer_input";
+  if (isPointerOnlyClick(action)) return "pointer_input";
+  if (action.action === "typeText" || action.action === "keypress")
+    return "focus" in action.target ? "focused_keyboard_input" : "keyboard_input";
+  return "foreground_input";
+}
+
+function foregroundGrantHint(
+  target: ResolvedTarget,
+  action: NativePreparedAction,
+  headless: boolean,
+  policy: DeliveryPolicy,
+): string {
+  if (headless)
+    return "Headless mode permits accessibility delivery only; foreground input is unavailable while headless is enabled.";
+  if (currentDeliveryPolicy() === "ax_only")
+    return "The host delivery policy is ax_only; foreground input is unavailable until the user changes PI_COMPUTER_USE_DELIVERY_POLICY.";
+  if (foregroundGrantCovers(target.bundleId))
+    return policy === "foreground" || action.wantsForeground
+      ? "A host foreground grant covers this app, and the helper still could not deliver this action. Observe the current state before choosing another approach."
+      : "A host foreground grant covers this app, but the background attempt may have had an effect, so it was not retried in the foreground. Observe the current state; setText on an editable ref needs no foreground input.";
+  const grantValue = target.bundleId ?? "*";
+  return `Foreground input for ${target.appName} needs a host-issued grant that the model cannot issue: the user can set PI_COMPUTER_USE_FOREGROUND_GRANT=${grantValue} (comma-separated bundle ids) or add "${grantValue}" to "foreground_grant" in .pi/computer-use.json, then restart pi.`;
+}
+
+function foregroundRefusal(
+  target: ResolvedTarget,
+  action: NativePreparedAction,
+  headless: boolean,
+  policy: DeliveryPolicy,
+  effectPossible: boolean,
+  reason: string,
+): ForegroundRefusal {
+  return {
+    code: "foreground_required",
+    target: {
+      app: target.appName,
+      bundleId: target.bundleId,
+      pid: target.pid,
+      windowTitle: target.windowTitle,
+    },
+    action: action.action,
+    capability: foregroundCapability(action),
+    effectPossible,
+    grantHint: foregroundGrantHint(target, action, headless, policy),
+    reason,
+  };
+}
+
+function isKeyboardAction(action: NativePreparedAction): boolean {
+  return action.action === "typeText" || action.action === "keypress";
+}
+
+/** A ref click that only pointer input can realize (no AX press, not a text input). */
+function isPointerOnlyClick(action: NativePreparedAction): boolean {
+  return (action.action === "click" || action.action === "press") && action.pointerOnly;
+}
+
+/**
+ * Delivers one action exactly once. Foreground delivery is used only when the
+ * action wants it and a host-issued grant covers the target; otherwise the
+ * helper's foreground need becomes a structured refusal, never a retry.
+ */
 async function helperAct(
   target: ResolvedTarget,
   action: NativePreparedAction,
@@ -1587,78 +1725,157 @@ async function helperAct(
   const textTimeout =
     "text" in action.params ? action.params.text.length * 25 + 4_000 : COMMAND_TIMEOUT_MS;
   const timeoutMs = Math.max(COMMAND_TIMEOUT_MS, textTimeout);
-  if ((action.usesCurrentFocus || action.needsForeground) && !headless) {
-    const foreground = checked(
-      await currentPlatformBackend.act(helperActRequest(target, action, "foreground"), {
-        signal,
-        timeoutMs,
-      }),
-    );
-    const trace = executionTraceFromAct(foreground, "foreground");
-    trace.backgroundFirst = false;
-    return trace;
-  }
-  try {
-    const initialPolicy = headless ? "ax_only" : "background";
-    const result = checked(
-      await currentPlatformBackend.act(helperActRequest(target, action, initialPolicy), {
-        signal,
-        timeoutMs,
-      }),
-    );
-    if (canRetryInForeground(action, result.outcome, headless)) {
-      const foreground = checked(
-        await currentPlatformBackend.act(helperActRequest(target, action, "foreground"), {
-          signal,
-          timeoutMs,
-        }),
-      );
-      const trace = executionTraceFromAct(foreground, "foreground");
-      trace.backgroundFirst = true;
-      trace.escalatedToForeground = true;
-      trace.escalationReason = "side_effect_free_didnt";
-      trace.backgroundAttempt = {
-        outcome: "didnt",
-        reason:
-          "Background input produced no observable value change; a foreground retry was safe.",
+  const basePolicy: DeliveryPolicy = headless ? "ax_only" : currentDeliveryPolicy();
+  const policy: DeliveryPolicy =
+    basePolicy === "background" && action.wantsForeground && foregroundGrantCovers(target.bundleId)
+      ? "foreground"
+      : basePolicy;
+  const attempt = async (attemptPolicy: DeliveryPolicy): Promise<HelperAttempt> => {
+    const request = helperActRequest(target, action, attemptPolicy, timeoutMs);
+    try {
+      const result = checked(await currentPlatformBackend.act(request, { signal, timeoutMs }));
+      return { request, result };
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "foreground_required"))
+        throw error;
+      return {
+        request,
+        thrown: { message: error.message, effectPossible: errorEffectPossible(error) },
       };
-      return trace;
     }
-    const trace = executionTraceFromAct(result, "background");
-    trace.backgroundFirst = true;
-    return trace;
-  } catch (error) {
-    const code =
-      error instanceof Error && "code" in error && error.code === "foreground_required"
-        ? error.code
-        : undefined;
-    if (code !== "foreground_required" || headless) throw error;
-    const foreground = checked(
-      await currentPlatformBackend.act(helperActRequest(target, action, "foreground"), {
-        signal,
-        timeoutMs,
-      }),
-    );
-    const trace = executionTraceFromAct(foreground, "foreground");
+  };
+  const first = await attempt(policy);
+  const firstRefusal = helperRefusalSignal(first);
+  // The only escalation: a host grant covers the target, the helper refused a
+  // background attempt, and it proved nothing was delivered. Exactly one retry.
+  if (
+    policy === "background" &&
+    firstRefusal?.effectPossible === false &&
+    foregroundGrantCovers(target.bundleId)
+  ) {
+    const second = await attempt("foreground");
+    const trace = attemptTrace(target, action, headless, "foreground", second);
     trace.backgroundFirst = true;
     trace.escalatedToForeground = true;
-    trace.escalationReason = code;
-    trace.backgroundAttempt = {
-      outcome: "foreground_required",
-      reason: error instanceof Error ? error.message : String(error),
-    };
+    trace.escalationReason = "foreground_required";
+    trace.backgroundAttempt = { outcome: "foreground_required", reason: firstRefusal.message };
     return trace;
   }
+  return attemptTrace(target, action, headless, policy, first);
+}
+
+type HelperAttempt = { request: PlatformActRequest } & (
+  | { result: HelperActResult; thrown?: undefined }
+  | { result?: undefined; thrown: { message: string; effectPossible: boolean } }
+);
+
+/** A helper foreground_required refusal, thrown or returned, with its delivery evidence. */
+function helperRefusalSignal(
+  attempt: HelperAttempt,
+): { message: string; effectPossible: boolean } | undefined {
+  if (attempt.thrown) return attempt.thrown;
+  const error = attempt.result.error;
+  if (error?.code !== "foreground_required") return undefined;
+  return {
+    message: error.message ?? "The helper requires foreground delivery for this action.",
+    effectPossible: error.effectPossible !== false,
+  };
+}
+
+function attemptTrace(
+  target: ResolvedTarget,
+  action: NativePreparedAction,
+  headless: boolean,
+  policy: DeliveryPolicy,
+  attempt: HelperAttempt,
+): ExecutionTrace {
+  const { request } = attempt;
+  if (attempt.thrown) {
+    const { message, effectPossible } = attempt.thrown;
+    return executionTrace("act", policy === "ax_only" ? "stealth" : "default", {
+      outcome: "didnt",
+      deliveryPolicy: policy,
+      error: { code: "foreground_required", message },
+      backgroundFirst: policy !== "foreground",
+      backgroundAttempt: { outcome: "foreground_required", reason: message },
+      requestId: request.requestId,
+      foregroundGrant: request.foregroundGrant,
+      refusal: foregroundRefusal(target, action, headless, policy, effectPossible, message),
+    });
+  }
+  const { result } = attempt;
+  const trace = executionTraceFromAct(result, policy);
+  trace.requestId = request.requestId;
+  trace.foregroundGrant = request.foregroundGrant;
+  trace.backgroundFirst = policy !== "foreground";
+  const refusal = refusalForResult(target, action, headless, policy, result);
+  if (refusal) {
+    trace.outcome = "didnt";
+    trace.refusal = refusal;
+    trace.backgroundAttempt = {
+      outcome: result.error?.code === "foreground_required" ? "foreground_required" : "didnt",
+      reason: refusal.reason,
+    };
+  }
+  return trace;
+}
+
+function refusalForResult(
+  target: ResolvedTarget,
+  action: NativePreparedAction,
+  headless: boolean,
+  policy: DeliveryPolicy,
+  result: HelperActResult,
+): ForegroundRefusal | undefined {
+  if (result.error?.code === "foreground_required") {
+    return foregroundRefusal(
+      target,
+      action,
+      headless,
+      policy,
+      result.error.effectPossible !== false,
+      result.error.message ?? "The helper requires foreground delivery for this action.",
+    );
+  }
+  // A `didnt` is a foreground need for foreground-wanting, keyboard, and
+  // pointer-only click actions. It proves delivery happened, so it is never
+  // retried (effectPossible stays true). Headless ax_only batches map it too.
+  if (policy === "foreground" || result.outcome !== "didnt") return undefined;
+  if (headless && !isPointerOnlyClick(action)) return undefined;
+  if (!action.wantsForeground && !isKeyboardAction(action) && !isPointerOnlyClick(action))
+    return undefined;
+  return foregroundRefusal(
+    target,
+    action,
+    headless,
+    policy,
+    true,
+    "Background input produced no observable change; foreground delivery was not attempted.",
+  );
 }
 
 function helperActRequest(
   target: ResolvedTarget,
   action: NativePreparedAction,
-  policy = currentDeliveryPolicy(),
+  policy: DeliveryPolicy,
+  timeoutMs: number,
 ): PlatformActRequest {
   const look = currentLookOrThrow();
+  const foregroundGrant = policy === "foreground" ? foregroundGrantCovers(target.bundleId) : false;
+  if (policy === "foreground" && !foregroundGrant)
+    throw new Error(`Foreground delivery for ${target.appName} has no host-issued grant.`);
   const delivery = nativeInputDelivery(policy);
-  const base = { lookId: look.lookId, pid: target.pid, target: action.target, policy };
+  const base: PlatformActRequestBase = {
+    requestId: randomUUID(),
+    session: { id: helperRequestSession.id, generation: helperRequestSession.generation },
+    deadlineMs: Date.now() + timeoutMs,
+    lookId: look.lookId,
+    pid: target.pid,
+    target: action.target,
+    policy,
+  };
+  if (foregroundGrant) base.foregroundGrant = true;
+  if ("focus" in action.target) base.focusResolution = "ax_focused_element";
   return (() => {
     switch (action.action) {
       case "press":
@@ -2668,31 +2885,48 @@ async function dispatchUiTransaction(
   headless: boolean,
   signal?: AbortSignal,
 ): Promise<ExecutionTrace> {
-  // Strict-headless batches have one immutable delivery class. When foreground
-  // fallback is permitted, decide independently per action so a completed
-  // background prefix is never replayed as part of a foreground batch.
+  // Strict-headless batches have one immutable delivery class. Otherwise each
+  // action is delivered once, independently; the first refusal stops the
+  // transaction and nothing is retried or escalated.
   if (headless && currentPlatformBackend.actBatch) {
     const actionState: ActionState = { currentFocus: false };
-    const requests = actions.map((action) => {
-      const prepared = prepareUiAction(action, actionState, look, true);
-      // SAFETY: UiAction has no wait variant, so prepareAction can only return a native action for this schema-validated input.
-      return helperActRequest(target, prepared as NativePreparedAction, "ax_only");
-    });
     const textLength = actions.reduce((sum, action) => sum + (action.text?.length ?? 0), 0);
+    const timeoutMs = Math.max(COMMAND_TIMEOUT_MS, textLength * 25 + 6_000);
+    const prepared = actions.map((action): NativePreparedAction => {
+      const candidate = prepareUiAction(action, actionState, look, true);
+      if (candidate.action === "wait")
+        throw new Error("Native action transactions cannot contain wait actions.");
+      return candidate;
+    });
+    const requests = prepared.map((action) =>
+      helperActRequest(target, action, "ax_only", timeoutMs),
+    );
     const result = await currentPlatformBackend.actBatch(requests, {
       signal,
-      timeoutMs: Math.max(COMMAND_TIMEOUT_MS, textLength * 25 + 6_000),
+      timeoutMs,
     });
     if (!result.steps || result.steps.length === 0)
       throw new Error("Native action transaction returned no checked steps.");
     const execution = aggregateExecutions(
-      result.steps.map((step) => executionTraceFromAct(step, "ax_only")),
+      result.steps.map((step, index) => {
+        const trace = executionTraceFromAct(step, "ax_only");
+        trace.requestId = requests[index]?.requestId;
+        const action = prepared[index];
+        const refusal = action && refusalForResult(target, action, true, "ax_only", step);
+        if (refusal) {
+          trace.outcome = "didnt";
+          trace.refusal = refusal;
+        }
+        return trace;
+      }),
     );
     const batchTrace = executionTraceFromAct(result, "ax_only");
     execution.outcome = result.outcome;
     execution.performed = result.performed;
     execution.rootDelta = batchTrace.rootDelta;
-    execution.stoppedAt = result.stoppedAt;
+    execution.stoppedAt = result.stoppedAt ?? execution.stoppedAt;
+    execution.frontmostBefore = batchTrace.frontmostBefore;
+    execution.frontmostAfter = batchTrace.frontmostAfter;
     return execution;
   }
   const steps: ExecutionTrace[] = [];
@@ -2700,9 +2934,56 @@ async function dispatchUiTransaction(
   for (const action of actions) {
     const step = await dispatchUiAction(action, target, look, headless, actionState, signal);
     steps.push(step);
-    if (step.outcome === "didnt") break;
+    if (step.refusal || step.outcome === "didnt") break;
   }
   return aggregateExecutions(steps);
+}
+
+interface UnverifiedAction {
+  index: number;
+  action: UiAction;
+  outcome: ActOutcome;
+}
+
+/**
+ * Executed actions whose effect is not verified: the whole execution did not
+ * end `worked` (after any postcondition or value check), and the action's own
+ * step outcome is `unknown` or `didnt`.
+ */
+function unverifiedActions(execution: ExecutionTrace, actions: UiAction[]): UnverifiedAction[] {
+  if (execution.outcome === "worked") return [];
+  const steps = execution.steps;
+  return actions.flatMap((action, index) => {
+    const outcome = (steps ? steps[index]?.outcome : execution.outcome) ?? "unknown";
+    return outcome === "worked" ? [] : [{ index, action, outcome }];
+  });
+}
+
+function unverifiedEffectText(unverified: UnverifiedAction[]): string {
+  if (unverified.length === 0) return "";
+  const listed = unverified
+    .map(({ index, action, outcome }) => `action ${index + 1} (${action.action}: ${outcome})`)
+    .join(", ");
+  return ` Effect not verified for ${listed}; confirm it in the returned state before reporting success.`;
+}
+
+/** Notes the region of each unverified ref action without claiming a change. */
+function markUnverifiedRegions(
+  note: WindowNote | undefined,
+  outline: Outline,
+  unverified: UnverifiedAction[],
+): void {
+  if (!note) return;
+  for (const { action } of unverified) {
+    const ref = action.ref?.trim();
+    const key = ref ? noteRegionKeyForRef(outline, ref) : undefined;
+    const region = key ? note.regions.find((candidate) => candidate.key === key) : undefined;
+    if (!region) continue;
+    region.detail =
+      region.detail === "acted here"
+        ? "acted here; some effects not verified"
+        : "effect not verified";
+  }
 }
 
 function aggregateExecutions(steps: ExecutionTrace[]): ExecutionTrace {
@@ -2712,7 +2993,16 @@ function aggregateExecutions(steps: ExecutionTrace[]): ExecutionTrace {
     : outcomes.includes("unknown")
       ? "unknown"
       : "worked";
-  const fallback = steps.find((step) => step.escalatedToForeground);
+  const refusedAt = steps.findIndex((step) => step.refusal !== undefined);
+  const refused = refusedAt >= 0 ? steps[refusedAt] : undefined;
+  const escalated = steps.find((step) => step.escalatedToForeground === true);
+  // A top-level policy or delivery is reported only when every delivering step
+  // (waits deliver nothing) agrees.
+  const delivering = steps.filter((step) => step.strategy !== "wait");
+  const shared = <T>(values: Array<T | undefined>): T | undefined =>
+    values.length > 0 && values.every((value) => value !== undefined && value === values[0])
+      ? values[0]
+      : undefined;
   return executionTrace(
     "act",
     steps.every((step) => step.variant === "stealth") ? "stealth" : "default",
@@ -2722,9 +3012,15 @@ function aggregateExecutions(steps: ExecutionTrace[]): ExecutionTrace {
       actionCount: steps.length,
       rootDelta: steps.flatMap((step) => step.rootDelta ?? []),
       backgroundFirst: true,
-      escalatedToForeground: Boolean(fallback),
-      escalationReason: fallback?.escalationReason,
-      backgroundAttempt: fallback?.backgroundAttempt,
+      deliveryPolicy: shared(delivering.map((step) => step.deliveryPolicy)),
+      delivery: shared(delivering.map((step) => step.delivery)),
+      refusal: refused?.refusal,
+      stoppedAt: refused ? refusedAt : undefined,
+      escalatedToForeground: escalated ? true : undefined,
+      escalationReason: escalated?.escalationReason,
+      backgroundAttempt: refused?.backgroundAttempt ?? escalated?.backgroundAttempt,
+      frontmostBefore: steps[0]?.frontmostBefore,
+      frontmostAfter: steps.at(-1)?.frontmostAfter,
     },
   );
 }
@@ -2841,6 +3137,152 @@ async function terminalDesktopActionResult(
   };
 }
 
+/** Structured refusal: foreground delivery was needed but not granted; nothing was retried. */
+function foregroundRequiredResult(
+  target: ResolvedTarget,
+  baseStateId: string,
+  execution: ExecutionTrace,
+  refusal: ForegroundRefusal,
+): AgentToolResult<TerminalDesktopActionDetails> {
+  const details: TerminalDesktopActionDetails = {
+    tool: "act_ui",
+    status: "foreground_required",
+    baseStateId,
+    target: {
+      app: target.appName,
+      bundleId: target.bundleId,
+      pid: target.pid,
+      windowTitle: target.windowTitle,
+      windowId: target.windowId,
+      windowRef: target.windowRef,
+      nativeWindowRef: target.nativeWindowRef,
+    },
+    execution,
+    error: { code: refusal.code, message: refusal.reason },
+    config: detailsConfig(),
+  };
+  const step = execution.stoppedAt !== undefined ? ` (action ${execution.stoppedAt + 1})` : "";
+  const effect = refusal.effectPossible
+    ? "The refused action may still have reached the app; observe before continuing."
+    : "The refused action delivered no input.";
+  const prefix =
+    execution.stoppedAt !== undefined && execution.stoppedAt > 0
+      ? " Earlier actions in this call were delivered."
+      : "";
+  return {
+    content: [
+      {
+        type: "text",
+        text: [
+          `foreground_required: ${refusal.action}${step} in ${target.appName} — ${target.windowTitle} needs ${refusal.capability}, which requires granted foreground delivery. It will not be retried automatically.`,
+          `${effect}${prefix}`,
+          refusal.grantHint,
+          "Call observe_ui for a fresh state before the next act_ui.",
+        ].join("\n"),
+      },
+    ],
+    details,
+  };
+}
+
+interface HelperInterruptionOutcome {
+  code: "cancelled" | "owned_by_other_session";
+  message: string;
+  execution: InterruptedExecutionTrace;
+}
+
+/**
+ * Maps helper protocol-7 interruptions to a structured act result: `cancelled`
+ * (helper stop on cancel/deadline, or a client timeout the helper acknowledged)
+ * and `owned_by_other_session`. Anything else is not an interruption.
+ */
+function helperInterruption(error: Error): HelperInterruptionOutcome | undefined {
+  const interruption =
+    "interruption" in error && error.interruption instanceof HelperInterruption
+      ? error.interruption
+      : undefined;
+  if (!interruption) return undefined;
+  // Pessimistic default: only an explicit false proves nothing was delivered.
+  const effectPossible = interruption.effectPossible !== false;
+  if (interruption.code === "owned_by_other_session") {
+    return {
+      code: "owned_by_other_session",
+      message: error.message,
+      execution: { strategy: "act", outcome: "rejected_before_delivery", effectPossible },
+    };
+  }
+  const { result, cancel, state } = interruption;
+  // A `stopping` ack is not a stop: the request may still be delivering.
+  const stopping = state === "stopping";
+  const execution: InterruptedExecutionTrace = {
+    strategy: "act",
+    outcome:
+      !stopping && (result?.outcome === "rejected_before_delivery" || !effectPossible)
+        ? "rejected_before_delivery"
+        : "partial",
+    effectPossible: stopping || effectPossible,
+    state,
+  };
+  const stoppedAt = result?.stoppedAt ?? cancel?.stoppedAt;
+  if (stoppedAt !== undefined) execution.stoppedAt = stoppedAt;
+  const reason = result?.reason ?? (interruption.clientTimeout ? "client_timeout" : undefined);
+  if (reason) execution.reason = reason;
+  if (interruption.reason) execution.stateReason = interruption.reason;
+  if (cancel) execution.cancel = cancel;
+  return { code: "cancelled", message: error.message, execution };
+}
+
+/** Headline for a cancelled act; only a terminal helper report says it stopped. */
+function cancelledHeadline(execution: InterruptedExecutionTrace): string {
+  const at = execution.stoppedAt !== undefined ? ` at action ${execution.stoppedAt + 1}` : "";
+  switch (execution.state) {
+    case "stopping":
+      return `cancelled: the helper acknowledged the cancel but had not stopped this act_ui request; ${execution.stateReason ?? "delivery may continue until the helper reports stopped"}.`;
+    case "completed":
+      return "cancelled: the act_ui request completed in the helper before the cancel reached it; its result was not received.";
+    case "not_found":
+      return "cancelled: the helper had not registered this act_ui request; it refuses the request if it arrives within 60 s.";
+    case "unacknowledged":
+      return "cancelled: the helper did not acknowledge the cancel; whether this act_ui request is still delivering is unknown.";
+    default:
+      return `cancelled: the helper stopped this act_ui request (${execution.outcome}${at}).`;
+  }
+}
+
+function helperInterruptedResult(
+  target: ResolvedTarget,
+  baseStateId: string,
+  interruption: HelperInterruptionOutcome,
+): AgentToolResult<TerminalDesktopActionDetails> {
+  const { code, message, execution } = interruption;
+  if (execution.effectPossible) clearDesktopOperationState(operationState());
+  const details: TerminalDesktopActionDetails = {
+    tool: "act_ui",
+    status: code,
+    baseStateId,
+    target: {
+      app: target.appName,
+      bundleId: target.bundleId,
+      pid: target.pid,
+      windowTitle: target.windowTitle,
+      windowId: target.windowId,
+      windowRef: target.windowRef,
+      nativeWindowRef: target.nativeWindowRef,
+    },
+    execution,
+    error: { code, message },
+    config: detailsConfig(),
+  };
+  const headline =
+    code === "owned_by_other_session"
+      ? `owned_by_other_session: the computer-use helper is controlled by another session; ${target.appName} — ${target.windowTitle} was not touched by this request.`
+      : cancelledHeadline(execution);
+  const effect = execution.effectPossible
+    ? "Some input may already have reached the app; call observe_ui before continuing."
+    : "The helper reported that this request delivered no input. Earlier actions in the same call may have been delivered.";
+  return { content: [{ type: "text", text: `${headline}\n${effect}` }], details };
+}
+
 async function performDesktopTransaction(
   params: ActParams,
   actions: UiAction[],
@@ -2857,7 +3299,17 @@ async function performDesktopTransaction(
   const noteBefore = state.currentNote;
   return await withWindowWriteLock(target, async () => {
     const headless = getComputerUseConfig().headless;
-    const execution = await dispatchUiTransaction(actions, target, look, headless, signal);
+    let execution: ExecutionTrace;
+    try {
+      execution = await dispatchUiTransaction(actions, target, look, headless, signal);
+    } catch (error) {
+      const interruption =
+        signal?.aborted || !(error instanceof Error) ? undefined : helperInterruption(error);
+      if (!interruption) throw error;
+      return helperInterruptedResult(target, baseView.stateId, interruption);
+    }
+    if (execution.refusal)
+      return foregroundRequiredResult(target, baseView.stateId, execution, execution.refusal);
     const executedActions = actions.slice(0, execution.actionCount ?? actions.length);
     try {
       if (condition) {
@@ -2916,10 +3368,13 @@ async function performDesktopTransaction(
         executedActions,
         (ref) => nodeByRef(capture.outline, ref)?.value,
       );
-      for (const action of executedActions) {
+      const unverified = unverifiedActions(execution, executedActions);
+      const unverifiedIndexes = new Set(unverified.map((entry) => entry.index));
+      for (const [index, action] of executedActions.entries()) {
+        // Only a verified effect marks its region "changed (acted here)".
         state.currentNote = noteAfterAct(
           state.currentNote ?? noteBefore,
-          action.ref,
+          unverifiedIndexes.has(index) ? undefined : action.ref,
           capture.outline,
           {
             window: noteWindowForTarget(capture.target, capture.look),
@@ -2927,9 +3382,10 @@ async function performDesktopTransaction(
           },
         );
       }
+      markUnverifiedRegions(state.currentNote, capture.outline, unverified);
       return await buildToolResult(
         "act_ui",
-        `Executed ${executedActions.length} checked UI action${executedActions.length === 1 ? "" : "s"} in ${target.appName} — ${target.windowTitle}. Returned state ${capture.capture.stateId}.`,
+        `Executed ${executedActions.length} checked UI action${executedActions.length === 1 ? "" : "s"} in ${target.appName} — ${target.windowTitle}. Returned state ${capture.capture.stateId}.${unverifiedEffectText(unverified)}`,
         capture,
         execution,
         signal,

@@ -8,6 +8,12 @@ export interface ComputerUseConfig {
   headless: boolean;
   cursor_overlay: boolean;
   managed_browser: "helium" | "chrome";
+  /**
+   * Host-issued foreground grant: bundle ids (or "*") whose actions may use
+   * foreground delivery. Only config files and the environment set it; no tool
+   * parameter can, so a model can never grant itself focus-stealing input.
+   */
+  foreground_grant: string[];
 }
 
 export interface ComputerUseConfigSource {
@@ -28,9 +34,10 @@ const DEFAULT_CONFIG: ComputerUseConfig = {
   headless: false,
   cursor_overlay: true,
   managed_browser: "chrome",
+  foreground_grant: [],
 };
 
-let activeConfig: ComputerUseConfig = { ...DEFAULT_CONFIG };
+let activeConfig: ComputerUseConfig = { ...DEFAULT_CONFIG, foreground_grant: [] };
 let activeLoadedConfig: LoadedComputerUseConfig = { config: activeConfig, sources: [], env: {} };
 
 function parseBoolean(value: JsonField): boolean | undefined {
@@ -41,6 +48,21 @@ function parseBoolean(value: JsonField): boolean | undefined {
   if (["1", "true", "yes", "on", "enabled"].includes(normalized)) return true;
   if (["0", "false", "no", "off", "disabled"].includes(normalized)) return false;
   return undefined;
+}
+
+function normalizeGrantEntries(entries: string[]): string[] {
+  const out: string[] = [];
+  for (const entry of entries) {
+    const trimmed = entry.trim();
+    if (trimmed.length > 0 && !out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
+}
+
+function parseForegroundGrant(value: JsonField): string[] | undefined {
+  if (isString(value)) return normalizeGrantEntries(value.split(","));
+  if (!Array.isArray(value)) return undefined;
+  return normalizeGrantEntries(value.filter(isString));
 }
 
 function normalizePartial(raw: JsonValue): Partial<ComputerUseConfig> {
@@ -56,6 +78,8 @@ function normalizePartial(raw: JsonValue): Partial<ComputerUseConfig> {
   const managedBrowser = source.managed_browser;
   if (managedBrowser === "helium" || managedBrowser === "chrome")
     out.managed_browser = managedBrowser;
+  const foregroundGrant = parseForegroundGrant(source.foreground_grant);
+  if (foregroundGrant !== undefined) out.foreground_grant = foregroundGrant;
   return out;
 }
 
@@ -84,6 +108,9 @@ function readEnv(): Partial<ComputerUseConfig> {
   const managedBrowser = process.env.PI_COMPUTER_USE_MANAGED_BROWSER;
   if (managedBrowser === "helium" || managedBrowser === "chrome")
     out.managed_browser = managedBrowser;
+  const foregroundGrant = process.env.PI_COMPUTER_USE_FOREGROUND_GRANT;
+  if (foregroundGrant !== undefined)
+    out.foreground_grant = normalizeGrantEntries(foregroundGrant.split(","));
   return out;
 }
 
@@ -93,7 +120,7 @@ export function loadComputerUseConfig(cwd: string): LoadedComputerUseConfig {
     readConfigFile(path.join(cwd, ".pi", "computer-use.json")),
   ];
   const env = readEnv();
-  const config = { ...DEFAULT_CONFIG };
+  const config: ComputerUseConfig = { ...DEFAULT_CONFIG, foreground_grant: [] };
   for (const source of sources) {
     if (source.values) Object.assign(config, source.values);
   }
@@ -117,4 +144,13 @@ export function isHeadlessMode(): boolean {
 
 export function isBrowserUseEnabled(): boolean {
   return activeConfig.browser_use;
+}
+
+/** True only when the host-issued grant names this bundle id exactly, or is "*". */
+export function foregroundGrantCovers(bundleId: string | undefined): boolean {
+  const grant = activeConfig.foreground_grant;
+  if (grant.includes("*")) return true;
+  const normalized = bundleId?.trim();
+  if (!normalized) return false;
+  return grant.includes(normalized);
 }
