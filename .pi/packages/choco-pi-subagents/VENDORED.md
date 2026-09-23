@@ -925,3 +925,11 @@ session entries: plain messages through `appendMessage`, compaction summaries as
 retain-none `appendCompaction` entries, and branch summaries through
 `branchWithSummary`, followed by `session.refreshContext()`. System messages
 remain omitted. `tests/mention-clone.test.ts` covers the second clone turn.
+
+## 2026-09-23 choco-pi patch: background-by-default top-level spawns
+
+The top-level Agent tool resolves an omitted `run_in_background` to `true` for
+spawns and resumes (`ResolveOptions.defaultRunInBackground`); explicit `false`
+and agent-file values still win. Nested spawns keep the foreground default,
+because a settled parent aborts the children it owns and nested completion
+notifications reach only a running parent. Workflow steps are unchanged.

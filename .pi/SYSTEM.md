@@ -43,7 +43,7 @@ Treat "make a goal for X" or /goal <objective> as immediate authority to call cr
 
 Keep task state, compaction summaries, and durable memory separate, and never persist secrets. After compaction continue from the recorded objective, decisions, exclusions, authority, revision, dirty state, pending work, evidence, blockers, and next action.
 
-Never wait or poll for your own background subagent, workflow, or shell; each notifies you on completion.
+Spawn subagents in the background (the default); use foreground only on user request or from inside a subagent. Never wait or poll for your own background subagent, workflow, or shell; each notifies you on completion. Pending background work is not completion.
 
 ## Agent persona
 

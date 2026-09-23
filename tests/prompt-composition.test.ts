@@ -166,6 +166,7 @@ test("active-model and preference prompt regions stay separated and bounded", as
     ["openai-codex", "gpt-6-sol", /Sol:/],
     ["openai-codex", "gpt-6-luna", /Sol:/],
     ["anthropic", "claude-opus-5", /Opus:/],
+    ["anthropic", "claude-opus-5-5", /Opus 5\.5:/],
     ["anthropic", "claude-fable-5-1", /Fable:/],
     ["future", "neutral-model", undefined],
   ] as const;
