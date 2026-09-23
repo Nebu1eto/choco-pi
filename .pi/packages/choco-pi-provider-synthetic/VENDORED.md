@@ -176,3 +176,11 @@ hidden even though the live API declares it. To re-enable it, set the static
 map entry back to `low: "low"`, remove the matching entry from
 `THINKING_LEVEL_MAP_OVERRIDES`, and restore exact live-catalog parity in the
 model test.
+
+## 2026-09-23 choco-pi patch: oxlint and oxfmt replace Biome
+
+Biome and `@aliou/biome-plugins` are removed. `lint` runs `oxlint`, `format`
+runs `oxfmt .`, and the new `fmt:check` runs `oxfmt --check .`; both tools are
+exact devDependencies matching the harness root (`oxlint@1.79.0`,
+`oxfmt@0.64.0`) and resolve the root `oxlint.config.ts` and `.oxfmtrc.json`,
+including the anti-slop rules. `AGENTS.md` and `README.md` name the new tools.

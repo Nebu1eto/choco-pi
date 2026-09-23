@@ -193,8 +193,8 @@ pnpm install && pnpm prepare
 Pre-commit hooks run on every commit:
 
 - TypeScript type checking
-- Biome linting
-- Biome formatting with auto-fix
+- oxlint linting
+- oxfmt formatting
 
 ### Commands
 

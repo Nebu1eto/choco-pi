@@ -19,23 +19,24 @@
     "access": "public"
   },
   "scripts": {
-    "lint": "biome check .",
+    "lint": "oxlint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "pi:dev": "${PI_BIN:-/opt/homebrew/bin/pi} --no-extensions -e ./extensions/zentui/index.ts",
     "pi:install-local": "${PI_BIN:-/opt/homebrew/bin/pi} install ./ -l",
-    "fmt": "biome format --write .",
-    "fmt:check": "biome format .",
+    "fmt": "oxfmt .",
+    "fmt:check": "oxfmt --check .",
     "verify": "npm run lint && npm run typecheck && npm run test",
     "pack:check": "npm pack --dry-run",
     "prepublishOnly": "npm run verify && npm run pack:check"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.0",
     "@earendil-works/pi-ai": "0.87.1",
     "@earendil-works/pi-coding-agent": "0.87.1",
     "@earendil-works/pi-tui": "0.87.1",
     "@types/node": "^26.0.0",
+    "oxfmt": "0.64.0",
+    "oxlint": "1.79.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.8"
   },

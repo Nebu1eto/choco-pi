@@ -192,3 +192,10 @@ Host-provided Pi SDK peer contracts and any development SDK dependencies now
 require exactly `0.87.1`, matching the harness target. This SDK alignment is
 separate from installer policy; TypeBox and unrelated
 dependencies retain their existing contracts.
+
+## oxlint and oxfmt replace Biome (2026-09-23)
+
+`@biomejs/biome` is removed. `lint` runs `oxlint`, `fmt` runs `oxfmt .`, and
+`fmt:check` runs `oxfmt --check .`, declared as exact devDependencies matching
+the harness root (`oxlint@1.79.0`, `oxfmt@0.64.0`). The package has no
+install tree of its own, so its scripts resolve the root binaries and configs.
