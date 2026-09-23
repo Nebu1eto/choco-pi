@@ -118,8 +118,9 @@ function translateBackendError(
   return new SearchError(error.kind, error.message, {
     adapterId: `agent-browser.${provider}`,
     cause: error,
+    deadlineKind: error.kind === "deadline" ? "attempt" : undefined,
     family: provider,
-    retryable: error.retryable,
+    retryable: error.kind === "deadline" ? true : error.retryable,
     status: error.status,
   });
 }

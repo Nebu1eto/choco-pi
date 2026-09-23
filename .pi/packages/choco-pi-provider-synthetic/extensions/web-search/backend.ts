@@ -7,6 +7,7 @@ export const SYNTHETIC_SEARCH_ADAPTER_ID = "synthetic.search" as const;
 export const SYNTHETIC_SEARCH_PROVIDER_FAMILY = "synthetic" as const;
 
 export interface SyntheticSearchBackendConfig extends SyntheticUtilityApiConfig {
+  eligibilityRevision?: number;
   webSearch: boolean;
 }
 
@@ -79,7 +80,20 @@ export interface SyntheticSearchBackend {
 }
 
 interface ResolvedConnection {
+  cacheKey: EligibilityCacheKey;
   client: SyntheticSearchClient;
+}
+
+interface EligibilityCacheKey {
+  apiKey: string | undefined;
+  eligibilityRevision: number | undefined;
+  proxyUrl: string | undefined;
+  requiresAuth: boolean | undefined;
+}
+
+interface EligibilityCacheEntry {
+  key: EligibilityCacheKey;
+  availability: Extract<SyntheticSearchAvailability, { status: "available" | "ineligible" }>;
 }
 
 const ABORTED_FAILURE: SyntheticSearchFailure = {
@@ -136,6 +150,7 @@ export function createSyntheticSearchBackend(
 ): SyntheticSearchBackend {
   let generation = 0;
   let controller = new AbortController();
+  let eligibilityCache: EligibilityCacheEntry | undefined;
 
   function isCurrent(owner: number): boolean {
     return owner === generation;
@@ -152,6 +167,15 @@ export function createSyntheticSearchBackend(
 
   function requestSignal(signal?: AbortSignal): AbortSignal {
     return signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
+  }
+
+  function cacheKeysEqual(left: EligibilityCacheKey, right: EligibilityCacheKey): boolean {
+    return (
+      left.apiKey === right.apiKey &&
+      left.eligibilityRevision === right.eligibilityRevision &&
+      left.proxyUrl === right.proxyUrl &&
+      left.requiresAuth === right.requiresAuth
+    );
   }
 
   async function resolveConnection(
@@ -207,7 +231,15 @@ export function createSyntheticSearchBackend(
     }
 
     const createClient = dependencies.createClient ?? ((value) => new SyntheticClient(value));
-    return { client: createClient(options) };
+    return {
+      cacheKey: {
+        apiKey: options.apiKey,
+        eligibilityRevision: config.eligibilityRevision,
+        proxyUrl: options.proxyUrl,
+        requiresAuth: options.requiresAuth,
+      },
+      client: createClient(options),
+    };
   }
 
   async function availabilityForConnection(
@@ -215,6 +247,9 @@ export function createSyntheticSearchBackend(
     owner: number,
     signal: AbortSignal,
   ): Promise<SyntheticSearchAvailability> {
+    if (eligibilityCache && cacheKeysEqual(eligibilityCache.key, connection.cacheKey)) {
+      return eligibilityCache.availability;
+    }
     const quotaResult = await connection.client.quotas({ signal });
     const interruptedAfterQuota = failureForSignal(owner, signal);
     if (interruptedAfterQuota) {
@@ -228,13 +263,16 @@ export function createSyntheticSearchBackend(
     }
 
     const entitlement: SyntheticSearchEntitlement = detectBillingMode(quotaResult.data.quotas);
-    return entitlement === "subscription"
-      ? { status: "available" }
-      : {
-          status: "ineligible",
-          reason:
-            "Synthetic web search requires an eligible subscription; PAYG is not auto-enabled.",
-        };
+    const availability: EligibilityCacheEntry["availability"] =
+      entitlement === "subscription"
+        ? { status: "available" }
+        : {
+            status: "ineligible",
+            reason:
+              "Synthetic web search requires an eligible subscription; PAYG is not auto-enabled.",
+          };
+    eligibilityCache = { key: connection.cacheKey, availability };
+    return availability;
   }
 
   async function resolveAvailability(
@@ -341,6 +379,7 @@ export function createSyntheticSearchBackend(
       generation++;
       controller.abort();
       controller = new AbortController();
+      eligibilityCache = undefined;
     },
   };
 }

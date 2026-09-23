@@ -2,6 +2,7 @@ import { createEventBus, createExtensionRuntime } from "@earendil-works/pi-codin
 import { describe, expect, it } from "vitest";
 import { loadExtensionFromFactory } from "../../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
 import unifiedSearchCore from "../../../choco-pi-web-search/extension.ts";
+import { registeredCanonicalSearchFrontend } from "../../../choco-pi-web-search/tests/fixtures/registered-canonical-tool.ts";
 import { getSearchScope } from "../../../choco-pi-web-search/index.ts";
 import syntheticWebSearchExtension from "./index.ts";
 
@@ -20,7 +21,7 @@ describe("Synthetic web-search registration mode", () => {
     expect(getSearchScope(bus).adapters.has("synthetic.search")).toBe(false);
   });
 
-  it("suppresses the standalone tool when canonical core loads first", async () => {
+  it("keeps the standalone tool without canonical frontend confirmation", async () => {
     const bus = createEventBus();
     await loadExtensionFromFactory(
       unifiedSearchCore,
@@ -28,6 +29,34 @@ describe("Synthetic web-search registration mode", () => {
       bus,
       createExtensionRuntime(),
       "<unified-search-core>",
+    );
+    const loaded = await loadExtensionFromFactory(
+      syntheticWebSearchExtension,
+      process.cwd(),
+      bus,
+      createExtensionRuntime(),
+      "<canonical-synthetic-search>",
+    );
+
+    expect(loaded.tools.has("synthetic_web_search")).toBe(true);
+    expect(getSearchScope(bus).adapters.has("synthetic.search")).toBe(false);
+  });
+
+  it("suppresses the standalone tool after the full canonical handshake", async () => {
+    const bus = createEventBus();
+    await loadExtensionFromFactory(
+      unifiedSearchCore,
+      process.cwd(),
+      bus,
+      createExtensionRuntime(),
+      "<unified-search-core>",
+    );
+    await loadExtensionFromFactory(
+      registeredCanonicalSearchFrontend,
+      process.cwd(),
+      bus,
+      createExtensionRuntime(),
+      "<canonical-search-frontend>",
     );
     const loaded = await loadExtensionFromFactory(
       syntheticWebSearchExtension,

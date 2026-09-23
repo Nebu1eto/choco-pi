@@ -105,6 +105,44 @@ test("selection normalization accepts shared values and rejects unknown values",
   assert.throws(() => normalizeSearchProviderSelection(["removed-provider"]), /invalid provider/);
 });
 
+test("persisted provider aliases cannot both be present", async () => {
+  const child = await runFixture(
+    { searchProvider: "openai", provider: "exa" },
+    conflictFixturePath,
+  );
+  assert.equal(child.status, 0, child.stderr);
+  const messages: string[] = JSON.parse(child.stdout);
+  assert.equal(messages.length, 6);
+  for (const message of messages) {
+    assert.match(message, /both searchProvider and provider are present/);
+    assert.match(message, /web-search\.json/);
+  }
+});
+
+test("persisted provider rejects unknown strings", async () => {
+  const child = await runFixture({ searchProvider: "gogle" }, conflictFixturePath);
+  assert.equal(child.status, 0, child.stderr);
+  const messages: string[] = JSON.parse(child.stdout);
+  assert.equal(messages.length, 6);
+  for (const message of messages) {
+    assert.match(message, /Invalid provider.*gogle/);
+    assert.match(message, /web-search\.json/);
+  }
+});
+
+test("persisted provider accepts auto and every provider keyword", async () => {
+  for (const provider of ["auto", "all", "openai", "exa", "kagi", "synthetic", "brave"]) {
+    const child = await run(
+      { searchProvider: provider },
+      `
+        const { getConfiguredSearchRouting } = await import(${JSON.stringify(moduleUrl)});
+        getConfiguredSearchRouting();
+      `,
+    );
+    assert.equal(child.status, 0, `${provider}: ${child.stderr}`);
+  }
+});
+
 test("registered search schemas expose canonical logical providers and actions", async () => {
   const child = await run(
     {},

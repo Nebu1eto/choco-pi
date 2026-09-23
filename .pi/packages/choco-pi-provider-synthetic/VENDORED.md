@@ -103,7 +103,10 @@ the harness's unified web-search registry. It resolves Synthetic credentials
 independently of the selected model, supports authenticated direct and proxy
 calls plus explicitly unauthenticated proxies, and performs the subscription
 eligibility check lazily on the same credential-bound client used for each
-search. PAYG accounts remain ineligible and are never auto-enabled.
+search. Canonical availability caches that check by configuration revision and
+credential identity, reports PAYG accounts as unavailable, and prevents auto
+routing from selecting them. PAYG accounts remain ineligible and are never
+auto-enabled.
 
 The extracted backend has no process-global config, credential, entitlement,
 or client cache. Cancellation and lifecycle invalidation are checked around
@@ -112,6 +115,11 @@ network, request, abort, and stale categories without including API keys,
 proxy secrets, or provider response bodies. Reachable client modules use
 explicit `.ts` relative imports so native strip-types tests can load the
 production adapter boundary.
+
+The package test command runs the upstream Vitest suites under `extensions`
+and `src`, then runs the native `node:test` integration suites under `tests`.
+This preserves both runner styles without making Vitest reject native suites as
+files with no tests.
 
 The historical standalone `synthetic_web_search` registration and rendering
 remain available when this extension runs without the canonical core. When the

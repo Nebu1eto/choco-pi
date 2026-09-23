@@ -106,6 +106,46 @@ test("Synthetic canonical adapter registration and routing", async (context) => 
   assert.equal(adapter.transport, "synthetic-v2-search");
   assert.equal(adapter.capabilities.constraints?.numResults, true);
 
+  bindSearchSession(
+    sharedScope,
+    SessionManager.inMemory("/tmp/choco-pi-synthetic-search-adapter-test"),
+  );
+  const session = sharedScope.session;
+  assert.ok(session);
+  globalThis.fetch = async () => {
+    fetchCalls++;
+    return Response.json({});
+  };
+  const availabilityContext = {
+    session,
+    generation: session.generation,
+    signal: session.signal,
+  };
+  assert.deepEqual(await adapter.availability(availabilityContext), {
+    status: "unavailable",
+    reason: "Synthetic web search requires an eligible subscription; PAYG is not auto-enabled.",
+    transport: "synthetic-v2-search",
+    billing: "subscription",
+  });
+  assert.equal((await adapter.availability(availabilityContext)).status, "unavailable");
+  assert.equal(fetchCalls, 1, "PAYG eligibility must be cached for the same configuration");
+
+  sharedBus.emit(SYNTHETIC_CONFIG_UPDATED_EVENT, {
+    config: config({ proxyUrl: "https://subscription-proxy.example.test" }),
+  });
+  globalThis.fetch = async () => {
+    fetchCalls++;
+    return Response.json({
+      subscription: {
+        limit: 100,
+        requests: 1,
+        renewsAt: "2027-01-01T00:00:00Z",
+      },
+    });
+  };
+  assert.equal((await adapter.availability(availabilityContext)).status, "available");
+  assert.equal(fetchCalls, 2, "a changed configuration must receive a fresh eligibility probe");
+
   const otherBus = createEventBus();
   const isolatedObservation = await observeScope(otherBus, "<isolated-scope-observer>");
   const isolatedScope = isolatedObservation.scope;
@@ -143,10 +183,6 @@ test("Synthetic canonical adapter registration and routing", async (context) => 
           },
     );
   };
-  bindSearchSession(
-    sharedScope,
-    SessionManager.inMemory("/tmp/choco-pi-synthetic-search-adapter-test"),
-  );
   const response = await search(
     {
       query: "query independent of conversation provider",
@@ -166,13 +202,11 @@ test("Synthetic canonical adapter registration and routing", async (context) => 
     "Synthetic returned 2 results; limited to 1 by numResults.",
     "1 Synthetic result snippet(s) were excerpted to the shared 20KB response budget.",
   ]);
-  assert.equal(fetchCalls, 2);
+  assert.equal(fetchCalls, 3);
 
   sharedBus.emit(SYNTHETIC_CONFIG_UPDATED_EVENT, {
     config: config({ webSearch: false }),
   });
-  const session = sharedScope.session;
-  assert.ok(session);
   assert.deepEqual(
     await adapter.availability({
       session,
@@ -186,5 +220,5 @@ test("Synthetic canonical adapter registration and routing", async (context) => 
       billing: "subscription",
     },
   );
-  assert.equal(fetchCalls, 2);
+  assert.equal(fetchCalls, 3);
 });

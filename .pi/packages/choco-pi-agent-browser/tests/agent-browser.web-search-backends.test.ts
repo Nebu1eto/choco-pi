@@ -514,6 +514,58 @@ test("real Pi wrappers isolate adapter scopes and suppress standalone discovery 
     returnedQuery: "canonical query",
   });
 
+  const fallbackCalls: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = new URL(input instanceof Request ? input.url : input.toString());
+    fallbackCalls.push(url.hostname);
+    if (url.hostname === "api.search.brave.com")
+      return new Response("backend timed out", { status: 408 });
+    return new Response(
+      JSON.stringify({
+        results: [
+          {
+            highlights: ["Fallback snippet"],
+            title: "Fallback result",
+            url: "https://example.test/fallback",
+          },
+        ],
+      }),
+      { status: 200 },
+    );
+  };
+  const fallbackResponse = await search(
+    { provider: "auto", query: "fallback query" },
+    { routing: { providers: ["brave", "exa"] }, scope: integratedScope },
+  );
+  assert.equal(fallbackResponse.adapterId, "agent-browser.exa");
+  assert.deepEqual(fallbackCalls, ["api.search.brave.com", "api.exa.ai"]);
+
+  fallbackCalls.length = 0;
+  const fanoutResponse = await search(
+    { provider: "all", query: "fanout query" },
+    { scope: integratedScope },
+  );
+  assert.deepEqual(fallbackCalls.toSorted(), ["api.exa.ai", "api.search.brave.com"]);
+  assert.deepEqual(
+    fanoutResponse.providerResponses?.map(({ adapterId, provider }) => ({ adapterId, provider })),
+    [{ adapterId: "agent-browser.exa", provider: "exa" }],
+  );
+
+  fallbackCalls.length = 0;
+  globalThis.fetch = async (input) => {
+    const url = new URL(input instanceof Request ? input.url : input.toString());
+    fallbackCalls.push(url.hostname);
+    return new Response("credentials rejected", { status: 401 });
+  };
+  await assert.rejects(
+    search(
+      { provider: "auto", query: "auth query" },
+      { routing: { providers: ["brave", "exa"] }, scope: integratedScope },
+    ),
+    (error: Error & { kind?: string }) => error.kind === "auth",
+  );
+  assert.deepEqual(fallbackCalls, ["api.search.brave.com"]);
+
   const standaloneBus = createEventBus();
   const standaloneLoader = new DefaultResourceLoader({
     agentDir: join(fixtureRoot, "standalone-agent"),
