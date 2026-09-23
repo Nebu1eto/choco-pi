@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { appendPersonaDefinitions } from "../.pi/extensions/lib/agent-preferences.ts";
+import {
+  appendPersonaDefinitions,
+  DEFAULT_PERSONA,
+  renderPersonaAnnouncement,
+} from "../.pi/extensions/lib/agent-preferences.ts";
 import { runtimeTypeOf, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import runtimeAgentPreferences from "../.pi/extensions/runtime-agent-preferences.ts";
 
@@ -175,7 +179,7 @@ test(
     assert.ok(result?.message);
     assert.deepEqual(result.message, {
       customType: "choco-pi-agent-persona",
-      content: "Agent persona: critical",
+      content: renderPersonaAnnouncement(DEFAULT_PERSONA),
       display: false,
     });
   }),
@@ -198,9 +202,19 @@ test(
     assert.ok(defaultResult?.message);
     assert.deepEqual(defaultResult.message, {
       customType: "choco-pi-agent-persona",
-      content: "Agent persona: critical",
+      content: renderPersonaAnnouncement(DEFAULT_PERSONA),
       display: false,
     });
+
+    const configured = DEFAULT_PERSONA === "critical" ? "pessimistic" : "critical";
+    writeSettings(agentDir, { agentPersona: configured });
+    const configuredResult = asBeforeAgentStartResult(
+      handler(
+        { prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+        { cwd: agentDir },
+      ),
+    );
+    assert.equal(configuredResult?.message?.content, renderPersonaAnnouncement(configured));
 
     writeSettings(agentDir, { agentPersona: "unset" });
     const unsetResult = handler(
@@ -225,7 +239,7 @@ test(
     );
     assert.ok(result?.message);
     assert.equal(result.systemPrompt, undefined);
-    assert.equal(result.message.content, "Agent persona: critical");
+    assert.equal(result.message.content, renderPersonaAnnouncement(DEFAULT_PERSONA));
   }),
 );
 
@@ -235,7 +249,8 @@ test(
     const projectDir = path.join(agentDir, "project");
     const agentFile = path.join(projectDir, ".pi", "agents", "reviewer.md");
     mkdirSync(path.dirname(agentFile), { recursive: true });
-    writeFileSync(agentFile, "---\npersona: pessimistic\n---\n\nReview the change.\n");
+    // The frontmatter differs from the default so the override is observable.
+    writeFileSync(agentFile, "---\npersona: critical\n---\n\nReview the change.\n");
 
     const { handlers, api } = createApi();
     registerExtension(api);
@@ -252,9 +267,12 @@ test(
         ),
       );
 
-    assert.equal(invoke()?.message?.content, "Agent persona: pessimistic");
+    assert.equal(invoke()?.message?.content, renderPersonaAnnouncement("critical"));
     assert.equal(invoke("Persona: unset"), undefined);
-    assert.equal(invoke("Persona: critical")?.message?.content, "Agent persona: critical");
+    assert.equal(
+      invoke("Persona: pessimistic")?.message?.content,
+      renderPersonaAnnouncement("pessimistic"),
+    );
   }),
 );
 

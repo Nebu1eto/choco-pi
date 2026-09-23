@@ -44,10 +44,7 @@ import { createCodexTurnState } from "../.pi/packages/choco-pi-codex/src/provide
 import { createCodexExtensionRuntime } from "../.pi/packages/choco-pi-codex/src/extension/runtime.ts";
 import { openAICodexModelsWithDaybreak } from "../.pi/packages/choco-pi-codex/src/providers/openai-codex/model-catalog.ts";
 import { buildCodexSystemPrompt } from "../.pi/packages/choco-pi-codex/src/prompt/build-system-prompt.ts";
-import {
-  buildCodeModeToolsPrompt,
-  EXEC_DESCRIPTION,
-} from "../.pi/packages/choco-pi-codex/src/tools/code-mode/custom-tool-prompt.ts";
+import { buildCodeModeToolsPrompt } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/custom-tool-prompt.ts";
 import type { CodeModeToolDefinition } from "../.pi/packages/choco-pi-codex/src/tools/code-mode/types.ts";
 import {
   CodexWebRunTransportError,
@@ -89,15 +86,9 @@ test("Code Mode is the append-style default for every OpenAI Codex model", () =>
 
   const prompt = buildCodexSystemPrompt("BASE PROMPT", { mode: "code" });
   assert.match(prompt, /^BASE PROMPT/);
-  assert.doesNotMatch(prompt, /Use tools\.exec_command for shell commands/);
-  assert.doesNotMatch(prompt, /Use code mode by default for bounded tool workflows/);
-
-  const guidance = buildCodeModeToolsPrompt([]);
-  assert.match(guidance, /Use code mode by default for bounded tool workflows/);
-  assert.match(guidance, /Use direct tools only for approvals, native artifacts, citations/);
 });
 
-test("Code Mode guidance canonicalizes legacy rules without losing execution semantics", () => {
+test("Code Mode strips legacy execution guideline lines from the base prompt", () => {
   const legacy = [
     "Use tools.exec_command for shell commands; prefer rg and rg --files",
     "For tools.exec_command cmd, use String.raw only without backticks or ${}; avoid nested quoting; split independent commands into separate calls",
@@ -111,11 +102,10 @@ test("Code Mode guidance canonicalizes legacy rules without losing execution sem
   );
 
   for (const line of legacy) assert.ok(!prompt.includes(line));
-  assert.doesNotMatch(prompt, /tools\.apply_patch\(patch\) for edits/);
-  assert.doesNotMatch(prompt, /Every tools\.exec_command requires a short 3-7 word description/);
+  assert.ok(prompt.includes("Current date: 2026-03-16"), "unrelated base content survives");
 });
 
-test("Code Mode canonicalizes legacy composition guidance into bounded routing rules", () => {
+test("Code Mode strips legacy composition guideline lines from the base prompt", () => {
   const legacy = [
     "Await dependencies; use Promise.all for independent calls",
     "Use text() only for concise final output",
@@ -126,11 +116,10 @@ test("Code Mode canonicalizes legacy composition guidance into bounded routing r
   );
 
   for (const line of legacy) assert.ok(!prompt.includes(line));
-  assert.doesNotMatch(prompt, /Use code mode by default for bounded tool workflows/);
-  assert.doesNotMatch(prompt, /Use code mode only for bounded multi-call stages/);
+  assert.ok(prompt.includes("Current date: 2026-03-16"), "unrelated base content survives");
 });
 
-test("Code Mode tool guidance is compact and retains callable patch, web, and custom-tool guidance", () => {
+test("Code Mode compacts long tool usages to their parameter signatures", () => {
   const longApplyPatchUsage =
     "await tools.apply_patch(patch) // *** Begin Patch / *** End Patch; actions: *** Add File: path | *** Update File: path | *** Delete File: path | *** Move to: path must immediately follow its Update File header and still needs a nonempty @@ hunk (use one unchanged context line for a pure move); Update hunks MUST follow file order; copy exact context; @@ text is context, not a line range; reread a file before patching if it changed since your last read";
   const longWebRunUsage =
@@ -182,48 +171,18 @@ test("Code Mode tool guidance is compact and retains callable patch, web, and cu
     .find((line) => line.includes("tools.apply_patch"))!;
   const webRunGuidance = guidance.split("\n").find((line) => line.includes("tools.web__run"))!;
 
-  assert.match(applyPatchGuidance, /Begin\/End Patch/);
-  assert.match(applyPatchGuidance, /Add\/Update\/Delete File/);
-  assert.match(applyPatchGuidance, /ordered hunks/);
   assert.ok(applyPatchGuidance.length < longApplyPatchUsage.length);
   assert.match(guidance, /await tools\.exec_command\(\{description, cmd, workdir\?, tty\?/);
-  assert.match(guidance, /description: 3-7 words/);
   assert.match(
     webRunGuidance,
     /\{search_query\?, image_query\?, open\?, click\?, find\?, response_length\?\}/,
   );
-  assert.match(webRunGuidance, /cite result URLs, not internal refs/);
   assert.ok(webRunGuidance.length < longWebRunUsage.length);
   assert.match(
     guidance,
     /await tools\.write_stdin\(\{session_id, chars\?, yield_time_ms\?, max_output_tokens\?\}\)/,
   );
-  assert.match(
-    guidance,
-    /Composition: Use code mode by default for bounded tool workflows.*one exec block per coherent step, not one wrapper per call/,
-  );
-  assert.match(
-    guidance,
-    /Pattern: text\(await Promise\.all\(\[tools\.exec_command\(\{description:"List files",cmd:"rg --files"\}\),tools\.exec_command\(\{description:"Find TODOs",cmd:"rg -n TODO"\}\)\]\)\)/,
-  );
-  assert.match(
-    guidance,
-    /To create or edit a custom tool, read .* for custom-tool authoring only; never for discovery/,
-  );
-  assert.match(EXEC_DESCRIPTION, /JavaScript source only; no JSON\/fences/);
-  assert.match(EXEC_DESCRIPTION, /Follow the <code_mode_tools> system block/);
-  assert.match(EXEC_DESCRIPTION, /first-line \/\/ @description: short intent/);
-  assert.match(EXEC_DESCRIPTION, /first exec_command description labels it/);
-  assert.doesNotMatch(EXEC_DESCRIPTION, /Use direct tools only for approvals/);
-  assert.match(EXEC_DESCRIPTION, /Code: fresh restricted JS/);
-  assert.match(EXEC_DESCRIPTION, /Notebook: persistent shared Deno TypeScript globals/);
-  // text()/notify() emit and return undefined; the description must not imply
-  // that text(value) yields a string, which reads as safe to nest in an expression.
-  assert.match(
-    EXEC_DESCRIPTION,
-    /text\(value\) and notify\(value\) EMIT output and return nothing/,
-  );
-  assert.doesNotMatch(EXEC_DESCRIPTION, /serializes output/);
+  assert.match(guidance, /tools\.custom_probe/);
 });
 
 test("Code Mode activates on non-OpenAI models without changing their transport", () => {

@@ -43,6 +43,23 @@ test("global settings preserve user preferences and dedupe every tracked local p
   assert.equal(settings.defaultModel, "user-model");
 });
 
+test("user thinking levels win and the profile only fills in missing models", () => {
+  const settings = buildGlobalSettings(
+    {
+      packages: [],
+      modelThinkingLevels: { "a/shared": "medium", "a/profile-only": "high" },
+    },
+    { modelThinkingLevels: { "a/shared": "low", "a/user-only": "xhigh" } },
+    process.cwd(),
+  );
+
+  assert.deepEqual(settings.modelThinkingLevels, {
+    "a/shared": "low",
+    "a/profile-only": "high",
+    "a/user-only": "xhigh",
+  });
+});
+
 test("tracked npm package pins dedupe stale older versions of the same package", () => {
   const settings = buildGlobalSettings(
     { packages: ["npm:example-extension@4.0.0", "npm:@example/subagents@0.16.1"] },
@@ -124,21 +141,8 @@ test("profile installer links tracked config and is idempotent", async (context)
     ].map((name) => path.resolve(".pi/packages", name)),
   );
   assert.deepEqual(settings.extensions, [path.resolve(".pi/extensions")]);
-  assert.deepEqual(settings.modelThinkingLevels, {
-    "anthropic/claude-opus-5-5": "medium",
-    "anthropic/claude-opus-5": "medium",
-    "anthropic/claude-opus-4-6": "high",
-    "anthropic/claude-sonnet-5": "xhigh",
-    "openai/gpt-6-astra": "low",
-    "openai-codex/gpt-6-astra": "low",
-    "openai-codex/gpt-6-sol": "medium",
-    "openai-codex/gpt-6-luna": "high",
-    "openai-codex/gpt-5.6-sol": "medium",
-    "openai-codex/gpt-daybreak-blue-latest": "high",
-    "openai-codex/gpt-5.6-terra": "high",
-    "openai-codex/gpt-5.6-luna": "xhigh",
-    "synthetic/hf:moonshotai/Kimi-K3": "high",
-  });
+  const projectSettings = JSON.parse(await readFile(path.resolve(".pi/settings.json"), "utf8"));
+  assert.deepEqual(settings.modelThinkingLevels, projectSettings.modelThinkingLevels);
 });
 
 test("profile installer preserves enabled and disabled fast preferences", async (context) => {

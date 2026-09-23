@@ -165,9 +165,16 @@ export function buildGlobalSettings(projectSettings, existingSettings, root, sup
       (entry) => !isForeignProfileDirectory(entry, root, name),
     ),
   ];
+  const thinkingLevels = {
+    ...projectSettings.modelThinkingLevels,
+    ...existingSettings.modelThinkingLevels,
+  };
   return {
     ...existingSettings,
     ...projectSettings,
+    // Per-model thinking levels are tuned by the user as models change: the
+    // profile only fills in models the user has not set.
+    ...(Object.keys(thinkingLevels).length > 0 && { modelThinkingLevels: thinkingLevels }),
     packages: mergePackages(canonicalPackages, retainedPackages),
     extensions: unique(profileDirectories("extensions")),
     skills: unique(profileDirectories("skills")),

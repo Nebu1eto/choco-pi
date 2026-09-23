@@ -20,37 +20,9 @@ test("read-only roles deny mutation tools while keeping extensions", async () =>
   }
 });
 
-test("implementer role remains selected with model and thinking overrides", async () => {
-  // The fork ships TypeScript source only (`pi.extensions: ["./src/index.ts"]`),
-  // so these load straight from `src/` under Node's type stripping instead of
-  // from a built `dist/`.
-  const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
-  const { loadCustomAgents } = await import(
-    pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href
-  );
-  const { resolveAgentInvocationConfig } = await import(
-    pathToFileURL(resolve(packageRoot, "invocation-config.ts")).href
-  );
-  const agents = loadCustomAgents(process.cwd());
-  const implementer = agents.get("implementer");
-  assert.ok(implementer);
-  assert.match(implementer.systemPrompt, /implementation leaf/);
-  assert.equal(implementer.model, undefined);
-  assert.equal(implementer.thinking, undefined);
-  assert.equal(implementer.defaultModel, "anthropic/claude-opus-5");
-  assert.equal(implementer.defaultThinking, "medium");
-
-  const invocation = resolveAgentInvocationConfig(implementer, {
-    model: "openai-codex/gpt-5.6-terra",
-    thinking: "high",
-  });
-  assert.equal(agents.get("implementer"), implementer);
-  assert.equal(invocation.modelInput, "openai-codex/gpt-5.6-terra");
-  assert.equal(invocation.modelFromParams, true);
-  assert.equal(invocation.thinking, "high");
-});
-
-test("role defaults follow hard pin, caller, then default precedence", async () => {
+test("role model and thinking follow hard pin, caller, then default precedence", async () => {
+  // The fork ships TypeScript source only, so these load straight from `src/`
+  // under Node's type stripping.
   const packageRoot = resolve(".pi/packages/choco-pi-subagents/src");
   const { loadCustomAgents } = await import(
     pathToFileURL(resolve(packageRoot, "custom-agents.ts")).href
@@ -60,24 +32,29 @@ test("role defaults follow hard pin, caller, then default precedence", async () 
   );
   const implementer = loadCustomAgents(process.cwd()).get("implementer");
   assert.ok(implementer);
+  // The implementer takes caller overrides, so it declares defaults, not pins.
+  assert.equal(implementer.model, undefined);
+  assert.equal(implementer.thinking, undefined);
+  assert.ok(implementer.defaultModel, "implementer declares a default model");
+  assert.ok(implementer.defaultThinking, "implementer declares a default thinking level");
+
+  const caller = { model: "openai-codex/gpt-5.6-terra", thinking: "high" };
 
   const defaults = resolveAgentInvocationConfig(implementer, {});
-  assert.equal(defaults.modelInput, "anthropic/claude-opus-5");
+  assert.equal(defaults.modelInput, implementer.defaultModel);
   assert.equal(defaults.modelFromParams, false);
-  assert.equal(defaults.thinking, "medium");
+  assert.equal(defaults.thinking, implementer.defaultThinking);
+
+  const fromCaller = resolveAgentInvocationConfig(implementer, caller);
+  assert.equal(fromCaller.modelInput, caller.model);
+  assert.equal(fromCaller.modelFromParams, true);
+  assert.equal(fromCaller.thinking, caller.thinking);
 
   const pinned = resolveAgentInvocationConfig(
-    {
-      ...implementer,
-      model: "anthropic/claude-opus-5",
-      thinking: "xhigh",
-    },
-    {
-      model: "openai-codex/gpt-5.6-terra",
-      thinking: "high",
-    },
+    { ...implementer, model: "test/pinned-model", thinking: "xhigh" },
+    caller,
   );
-  assert.equal(pinned.modelInput, "anthropic/claude-opus-5");
+  assert.equal(pinned.modelInput, "test/pinned-model");
   assert.equal(pinned.modelFromParams, false);
   assert.equal(pinned.thinking, "xhigh");
 });
