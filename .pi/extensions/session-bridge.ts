@@ -1,14 +1,21 @@
 import { isNumber, isObject, isString, type RuntimeValue } from "./lib/runtime-values.ts";
 import {
-  enqueueSessionDelivery,
+  effectiveSessionDeliveryMode,
   limitSessionWait,
   SESSION_WAIT_LIMIT_MS,
+  submitSessionDelivery,
+  type SessionDeliveryTracker,
 } from "./lib/session-communication.ts";
+import {
+  releaseMailboxSubmission,
+  reserveMailboxSubmission,
+  type SubmittedMailboxClaim,
+} from "./lib/session-mailbox-delivery.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readdir, rename, stat, unlink, watch } from "node:fs/promises";
 import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import { registerSessionResourceCleanup, type Model } from "@earendil-works/pi-ai";
 import {
   AgentSession,
   createAgentSession,
@@ -72,7 +79,7 @@ type ManagedSession = {
   session: AgentSession;
   status: "busy" | "idle";
   error?: string;
-  deliveryChain: Promise<void>;
+  deliveryTracker: SessionDeliveryTracker;
   unsubscribe?: () => void;
 };
 
@@ -229,7 +236,17 @@ async function createIndependentSession(
     throw error;
   }
 
-  const managed: ManagedSession = { session, status: "idle", deliveryChain: Promise.resolve() };
+  const managed: ManagedSession = {
+    session,
+    status: "idle",
+    deliveryTracker: {
+      deliveries: new Set(),
+      onError: (error) => {
+        managed.error = errorMessage(error);
+        managed.status = managed.session.isIdle ? "idle" : "busy";
+      },
+    },
+  };
   managed.unsubscribe = session.subscribe((event) => {
     if (event.type === "agent_start") managed.status = "busy";
     if (event.type === "agent_settled") {
@@ -311,45 +328,59 @@ async function withNextMailboxSequence(
 
 async function sendSessionMessage(
   ctx: ExtensionContext,
-  input: { sessionId: string; mode: DeliveryMode; message: string },
-): Promise<{ accepted: "direct" | "mailbox"; status: SessionStatus }> {
+  input: { sessionId: string; mode?: DeliveryMode; message: string },
+): Promise<{ accepted: "direct" | "mailbox"; effectiveMode: "steer"; status: SessionStatus }> {
   const message = input.message.trim();
   if (!message) throw new Error("Message must not be empty.");
-  if (input.sessionId === ctx.sessionManager.getSessionId()) {
+  const cwd = ctx.cwd;
+  const fromSessionId = ctx.sessionManager.getSessionId();
+  if (input.sessionId === fromSessionId) {
     throw new Error("Use the current conversation directly instead of sending to itself.");
   }
-  const fromSessionId = ctx.sessionManager.getSessionId();
+  const effectiveMode = effectiveSessionDeliveryMode(input.mode);
   const managed = bridgeState().runtimes.get(input.sessionId);
-  if (managed?.session.sessionManager.getCwd() === ctx.cwd) {
-    enqueueSessionDelivery(managed, () =>
+  if (managed?.session.sessionManager.getCwd() === cwd) {
+    submitSessionDelivery(managed.deliveryTracker, () =>
       startManagedTask(managed, () =>
         managed.session.sendUserMessage(formatIncomingMessage(fromSessionId, message), {
-          deliverAs: input.mode === "queue" ? "followUp" : "steer",
+          deliverAs: effectiveMode,
         }),
       ),
     );
-    return { accepted: "direct", status: managed.status };
+    return { accepted: "direct", effectiveMode, status: managed.status };
   }
 
   const live = await readLiveState(input.sessionId);
   try {
-    await findProjectSession(ctx.cwd, input.sessionId);
+    await findProjectSession(cwd, input.sessionId);
   } catch (error) {
-    if (!isFresh(live) || live.cwd !== ctx.cwd) throw error;
+    if (!isFresh(live) || live.cwd !== cwd) throw error;
   }
-  if (input.mode === "steer" && !isFresh(live)) {
-    throw new Error("The target session is not active; use queue to deliver when it resumes.");
+  if (!isFresh(live) || live.cwd !== cwd) {
+    throw new Error(
+      "The target conversation is inactive. Open or resume it first, then send the message again.",
+    );
+  }
+  const confirmedLive = await readLiveState(input.sessionId);
+  if (
+    !isFresh(confirmedLive) ||
+    confirmedLive.cwd !== cwd ||
+    confirmedLive.ownerId !== live.ownerId
+  ) {
+    throw new Error(
+      "The target conversation changed or stopped; retry after confirming it is live.",
+    );
   }
   await queueMailboxMessage({
     version: BRIDGE_VERSION,
     id: randomUUID(),
     fromSessionId,
     targetSessionId: input.sessionId,
-    mode: input.mode,
+    mode: effectiveMode,
     message,
     createdAt: new Date().toISOString(),
   });
-  return { accepted: "mailbox", status: isFresh(live) ? live.status : "inactive" };
+  return { accepted: "mailbox", effectiveMode, status: confirmedLive.status };
 }
 
 function messageMarker(messageId: string): string {
@@ -666,20 +697,19 @@ function installUserCommands(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("session-send", {
-    description: "Send to another conversation: /session-send <id> <queue|steer> <message>",
+    description: "Steer a live conversation: /session-send <id> [queue|steer] <message>",
     handler: async (args, ctx) => {
       try {
-        const match = args.trim().match(/^(\S+)\s+(queue|steer)\s+([\s\S]+)$/);
-        if (!match) throw new Error("Usage: /session-send <id> <queue|steer> <message>");
+        const match = args.trim().match(/^(\S+)\s+(?:(queue|steer)\s+)?([\s\S]+)$/);
+        if (!match) throw new Error("Usage: /session-send <id> [queue|steer] <message>");
         const [, sessionId, mode, message] = match;
         const result = await sendSessionMessage(ctx, {
           sessionId,
-          // SAFETY: The host declaration or preceding runtime check establishes this shape at this boundary.
-          mode: mode as DeliveryMode,
+          mode: mode === "queue" || mode === "steer" ? mode : undefined,
           message,
         });
         ctx.ui.notify(
-          `Message accepted via ${result.accepted}; target is ${result.status}.`,
+          `Steering message submitted via ${result.accepted}; target is ${result.status}.`,
           "info",
         );
       } catch (error) {
@@ -762,11 +792,12 @@ export function installAgentTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "session_send",
     label: "Send conversation message",
-    description: "Send a queued or steering message to another conversation.",
-    promptSnippet: "Message another project conversation.",
+    description:
+      "Steer and resume a live conversation. Legacy mode 'queue' is accepted as a deprecated alias for 'steer'.",
+    promptSnippet: "Steer another live project conversation.",
     parameters: Type.Object({
       session_id: Type.String({ description: "Target session ID" }),
-      mode: Type.Union([Type.Literal("queue"), Type.Literal("steer")]),
+      mode: Type.Optional(Type.Union([Type.Literal("queue"), Type.Literal("steer")])),
       message: Type.String({ description: "Message to deliver" }),
     }),
     executionMode: "sequential",
@@ -853,91 +884,224 @@ export function installAgentTools(pi: ExtensionAPI): void {
   });
 }
 
-function installLiveSessionBridge(pi: ExtensionAPI): void {
-  const ownerId = randomUUID();
-  let currentContext: ExtensionContext | undefined;
-  let currentState: LiveSessionState | undefined;
-  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-  let mailboxTimer: ReturnType<typeof setInterval> | undefined;
-  let mailboxAbortController: AbortController | undefined;
-  let mailboxRunning = false;
-  let recoverClaimedMessages = true;
-  let desiredStatus: "busy" | "idle" | undefined;
-  let publishChain = Promise.resolve();
+export type LiveSessionBridgeDependencies = {
+  mailboxPath(sessionId: string): string;
+  publishLiveState(state: LiveSessionState): Promise<void>;
+  removeOwnedLiveState(sessionId: string, ownerId: string): Promise<void>;
+  watchMailbox(directory: string, signal: AbortSignal, onJsonFile: () => void): Promise<void>;
+};
 
-  const transcriptHasMessage = (messageId: string): boolean => {
-    const marker = messageMarker(messageId);
-    return (
-      currentContext?.sessionManager
-        .getBranch()
-        .some(
-          (entry) =>
-            entry.type === "message" &&
-            isRecord(entry.message) &&
-            contentText(entry.message.content, true).includes(marker),
-        ) ?? false
+const liveSessionBridgeDefaults: LiveSessionBridgeDependencies = {
+  mailboxPath,
+  publishLiveState,
+  removeOwnedLiveState,
+  watchMailbox: async (directory, signal, onJsonFile) => {
+    for await (const event of watch(directory, { persistent: false, signal })) {
+      if (event.filename?.endsWith(".json")) onJsonFile();
+    }
+  },
+};
+
+export function installLiveSessionBridge(
+  pi: ExtensionAPI,
+  dependencies: LiveSessionBridgeDependencies = liveSessionBridgeDefaults,
+): void {
+  const ownerId = randomUUID();
+  let generation = 0;
+  type Lifecycle = {
+    generation: number;
+    ctx: ExtensionContext;
+    sessionId: string;
+    cwd: string;
+    abortController: AbortController;
+    heartbeatTimer?: ReturnType<typeof setInterval>;
+    mailboxTimer?: ReturnType<typeof setInterval>;
+    desiredStatus: "busy" | "idle";
+    unregisterResourceCleanup?: () => void;
+    mailboxRunning: boolean;
+    mailboxPending: boolean;
+    mailboxRetryAt: number;
+    recoverClaimedMessages: boolean;
+    submitted: Map<string, SubmittedMailboxClaim>;
+  };
+  let current: Lifecycle | undefined;
+  let publicationTail = Promise.resolve();
+
+  const serializePublication = (operation: () => Promise<void>): Promise<void> => {
+    const result = publicationTail.then(operation);
+    publicationTail = result.then(
+      () => undefined,
+      () => undefined,
     );
+    return result;
   };
 
-  const waitForAcceptedMessage = async (messageId: string, signal?: AbortSignal): Promise<void> => {
-    const deadline = Date.now() + MAILBOX_ACCEPT_TIMEOUT_MS;
-    while (!transcriptHasMessage(messageId)) {
-      if (Date.now() >= deadline && currentContext?.isIdle()) {
-        throw new Error(`Target did not accept mailbox message ${messageId}.`);
-      }
-      await delay(WAIT_POLL_INTERVAL_MS, signal);
+  const isCurrent = (lifecycle: Lifecycle): boolean =>
+    current === lifecycle &&
+    lifecycle.generation === generation &&
+    !lifecycle.abortController.signal.aborted;
+
+  const transcriptHasMessage = (lifecycle: Lifecycle, messageId: string): boolean => {
+    if (!isCurrent(lifecycle)) return false;
+    const marker = messageMarker(messageId);
+    return lifecycle.ctx.sessionManager
+      .getBranch()
+      .some(
+        (entry) =>
+          entry.type === "message" &&
+          isRecord(entry.message) &&
+          contentText(entry.message.content, true).includes(marker),
+      );
+  };
+
+  const publish = async (lifecycle: Lifecycle, status?: "busy" | "idle") => {
+    if (!isCurrent(lifecycle)) return;
+    if (status) lifecycle.desiredStatus = status;
+    const publication = serializePublication(async () => {
+      if (!isCurrent(lifecycle)) return;
+      const sessionFile = lifecycle.ctx.sessionManager.getSessionFile();
+      if (!sessionFile) return;
+      const state: LiveSessionState = {
+        version: BRIDGE_VERSION,
+        sessionId: lifecycle.sessionId,
+        sessionFile,
+        cwd: lifecycle.cwd,
+        pid: process.pid,
+        ownerId,
+        status: lifecycle.desiredStatus,
+        model: lifecycle.ctx.model
+          ? `${lifecycle.ctx.model.provider}/${lifecycle.ctx.model.id}`
+          : undefined,
+        effort: lifecycle.ctx.thinkingLevel,
+        updatedAt: new Date().toISOString(),
+      };
+      if (!isCurrent(lifecycle)) return;
+      await dependencies.publishLiveState(state);
+    });
+    await publication;
+  };
+
+  const restoreClaim = async (
+    lifecycle: Lifecycle,
+    claimedPath: string,
+    sourcePath: string,
+  ): Promise<void> => {
+    if (!isCurrent(lifecycle)) return;
+    try {
+      await rename(claimedPath, sourcePath);
+    } catch (error) {
+      if (!isRecord(error) || error.code !== "ENOENT") throw error;
     }
   };
 
-  const waitUntilIdle = async (signal?: AbortSignal): Promise<void> => {
-    while (currentContext && !currentContext.isIdle()) await delay(WAIT_POLL_INTERVAL_MS, signal);
+  const reportDeliveryError = (lifecycle: Lifecycle, error: RuntimeValue): void => {
+    if (!isCurrent(lifecycle)) return;
+    pi.sendMessage(
+      {
+        customType: "choco-pi:session-bridge-error",
+        content: `Session bridge delivery error: ${errorMessage(error)}`,
+        display: true,
+        details: {},
+      },
+      { triggerTurn: false },
+    );
   };
 
-  const publish = async (status?: "busy" | "idle") => {
-    if (status) desiredStatus = status;
-    publishChain = publishChain
-      .catch(() => undefined)
-      .then(async () => {
-        const ctx = currentContext;
-        const sessionFile = ctx?.sessionManager.getSessionFile();
-        if (!ctx || !sessionFile) return;
-        currentState = {
-          version: BRIDGE_VERSION,
-          sessionId: ctx.sessionManager.getSessionId(),
-          sessionFile,
-          cwd: ctx.cwd,
-          pid: process.pid,
-          ownerId,
-          status: desiredStatus ?? currentState?.status ?? (ctx.isIdle() ? "idle" : "busy"),
-          model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
-          effort: ctx.thinkingLevel,
-          updatedAt: new Date().toISOString(),
-        };
-        await publishLiveState(currentState);
-      });
-    await publishChain;
+  const reconcileSubmitted = async (lifecycle: Lifecycle): Promise<void> => {
+    if (!isCurrent(lifecycle)) return;
+    for (const [messageId, claim] of lifecycle.submitted) {
+      if (!isCurrent(lifecycle)) return;
+      if (transcriptHasMessage(lifecycle, messageId)) {
+        try {
+          await unlink(claim.claimedPath);
+        } catch (error) {
+          if (!isRecord(error) || error.code !== "ENOENT") {
+            reportDeliveryError(lifecycle, error);
+            continue;
+          }
+        }
+        if (isCurrent(lifecycle)) releaseMailboxSubmission(lifecycle.submitted, messageId);
+        continue;
+      }
+      if (lifecycle.ctx.isIdle() && Date.now() - claim.submittedAt >= MAILBOX_ACCEPT_TIMEOUT_MS) {
+        try {
+          await restoreClaim(lifecycle, claim.claimedPath, claim.sourcePath);
+          if (isCurrent(lifecycle)) releaseMailboxSubmission(lifecycle.submitted, messageId);
+        } catch (error) {
+          reportDeliveryError(lifecycle, error);
+        }
+      }
+    }
   };
 
-  const drainMailbox = async () => {
-    if (mailboxRunning || !currentState) return;
-    mailboxRunning = true;
+  const dispatchClaimedMessage = async (
+    lifecycle: Lifecycle,
+    message: MailboxMessage,
+    claimedPath: string,
+    sourcePath: string,
+  ): Promise<void> => {
+    if (!isCurrent(lifecycle)) return;
+    if (transcriptHasMessage(lifecycle, message.id)) {
+      await unlink(claimedPath);
+      return;
+    }
+    if (
+      !reserveMailboxSubmission(lifecycle.submitted, message.id, {
+        claimedPath,
+        sourcePath,
+        submittedAt: Date.now(),
+      })
+    )
+      return;
     try {
-      const directory = mailboxPath(currentState.sessionId);
+      pi.sendUserMessage(
+        formatIncomingMessage(message.fromSessionId, message.message, message.id),
+        {
+          deliverAs: "steer",
+        },
+      );
+    } catch (error) {
+      releaseMailboxSubmission(lifecycle.submitted, message.id);
+      lifecycle.mailboxRetryAt = Date.now() + MAILBOX_FALLBACK_INTERVAL_MS;
+      try {
+        await restoreClaim(lifecycle, claimedPath, sourcePath);
+      } catch (restoreError) {
+        reportDeliveryError(lifecycle, restoreError);
+      }
+      throw error;
+    }
+  };
+
+  const drainMailbox = async (lifecycle: Lifecycle) => {
+    if (!isCurrent(lifecycle)) return;
+    if (Date.now() < lifecycle.mailboxRetryAt) return;
+    if (lifecycle.mailboxRunning) {
+      lifecycle.mailboxPending = true;
+      return;
+    }
+    lifecycle.mailboxRunning = true;
+    lifecycle.mailboxPending = false;
+    try {
+      const directory = dependencies.mailboxPath(lifecycle.sessionId);
       let files: string[];
       try {
-        files = (await readdir(directory))
+        const directoryEntries = await readdir(directory);
+        files = directoryEntries
           .filter(
             (file) =>
               !file.startsWith(".") &&
-              (file.endsWith(".json") || (recoverClaimedMessages && file.endsWith(".claimed"))),
+              (file.endsWith(".json") ||
+                (lifecycle.recoverClaimedMessages && file.endsWith(".claimed"))),
           )
-          .sort();
+          .sort((left, right) => left.localeCompare(right));
       } catch (error) {
         if (isRecord(error) && error.code === "ENOENT") return;
         throw error;
       }
+      if (!isCurrent(lifecycle)) return;
 
       for (const file of files) {
+        if (!isCurrent(lifecycle)) return;
         const listedPath = join(directory, file);
         const originalName = file.replace(/\.json(?:\.\d+\.[A-Za-z0-9-]+\.claimed)?$/, ".json");
         const sourcePath = join(directory, originalName);
@@ -951,83 +1115,168 @@ function installLiveSessionBridge(pi: ExtensionAPI): void {
             if (isRecord(error) && error.code === "ENOENT") continue;
             throw error;
           }
+          if (!isCurrent(lifecycle)) return;
         }
 
+        let message: MailboxMessage | undefined;
         try {
-          const message = parseMailboxMessage(await readJson(claimedPath));
-          if (!message || message.targetSessionId !== currentState.sessionId) {
+          message = parseMailboxMessage(await readJson(claimedPath));
+        } catch (error) {
+          if (!isCurrent(lifecycle)) return;
+          if (error instanceof SyntaxError) {
+            reportDeliveryError(lifecycle, error);
             await unlink(claimedPath);
             continue;
           }
-          if (!transcriptHasMessage(message.id)) {
-            pi.sendUserMessage(
-              formatIncomingMessage(message.fromSessionId, message.message, message.id),
-              {
-                deliverAs: message.mode === "queue" ? "followUp" : "steer",
-              },
-            );
-            await waitForAcceptedMessage(message.id, mailboxAbortController?.signal);
-          }
-          await waitUntilIdle(mailboxAbortController?.signal);
-          await unlink(claimedPath);
-        } catch (error) {
+          lifecycle.mailboxRetryAt = Date.now() + MAILBOX_FALLBACK_INTERVAL_MS;
           try {
-            await rename(claimedPath, sourcePath);
-          } catch {
-            // A later poll can recover any remaining claimed file after process restart.
+            await restoreClaim(lifecycle, claimedPath, sourcePath);
+          } catch (restoreError) {
+            reportDeliveryError(lifecycle, restoreError);
           }
-          throw error;
+          reportDeliveryError(lifecycle, error);
+          continue;
+        }
+        if (!isCurrent(lifecycle)) return;
+        if (
+          !message ||
+          message.targetSessionId !== lifecycle.sessionId ||
+          message.fromSessionId === lifecycle.sessionId
+        ) {
+          await unlink(claimedPath);
+          continue;
+        }
+        try {
+          await dispatchClaimedMessage(lifecycle, message, claimedPath, sourcePath);
+        } catch (error) {
+          reportDeliveryError(lifecycle, error);
         }
       }
-      recoverClaimedMessages = false;
+      lifecycle.recoverClaimedMessages = false;
+      await reconcileSubmitted(lifecycle);
     } finally {
-      mailboxRunning = false;
+      lifecycle.mailboxRunning = false;
+      if (isCurrent(lifecycle) && lifecycle.mailboxPending) {
+        void drainMailbox(lifecycle).catch((error: RuntimeValue) =>
+          reportDeliveryError(lifecycle, error),
+        );
+      }
     }
   };
 
-  const watchMailbox = async (directory: string, signal: AbortSignal) => {
+  const watchMailbox = async (lifecycle: Lifecycle, directory: string) => {
     try {
-      for await (const event of watch(directory, { persistent: false, signal })) {
-        if (event.filename?.endsWith(".json")) await drainMailbox();
-      }
+      await dependencies.watchMailbox(directory, lifecycle.abortController.signal, () => {
+        if (!isCurrent(lifecycle)) return;
+        void drainMailbox(lifecycle).catch((error: RuntimeValue) =>
+          reportDeliveryError(lifecycle, error),
+        );
+      });
     } catch (error) {
       if (!isRecord(error) || error.name !== "AbortError") throw error;
     }
   };
 
+  const invalidate = (): Lifecycle | undefined => {
+    const previous = current;
+    generation += 1;
+    current = undefined;
+    if (!previous) return undefined;
+    const unregister = previous.unregisterResourceCleanup;
+    previous.unregisterResourceCleanup = undefined;
+    unregister?.();
+    previous.abortController.abort();
+    if (previous.heartbeatTimer) clearInterval(previous.heartbeatTimer);
+    if (previous.mailboxTimer) clearInterval(previous.mailboxTimer);
+    return previous;
+  };
+
+  const removeLifecycleState = (lifecycle: Lifecycle): Promise<void> =>
+    serializePublication(() => dependencies.removeOwnedLiveState(lifecycle.sessionId, ownerId));
+
+  const cleanupLifecycle = (lifecycle: Lifecycle): Promise<void> => {
+    if (current === lifecycle) invalidate();
+    return removeLifecycleState(lifecycle);
+  };
+
+  const reportCleanupFailure = (error: RuntimeValue): void => {
+    process.emitWarning(`Session bridge cleanup failed: ${errorMessage(error)}`);
+  };
+
   pi.on("session_start", async (_event, ctx) => {
-    currentContext = ctx;
-    const directory = mailboxPath(ctx.sessionManager.getSessionId());
+    const previous = invalidate();
+    const lifecycle: Lifecycle = {
+      generation,
+      ctx,
+      sessionId: ctx.sessionManager.getSessionId(),
+      cwd: ctx.cwd,
+      abortController: new AbortController(),
+      desiredStatus: ctx.isIdle() ? "idle" : "busy",
+      mailboxRunning: false,
+      mailboxPending: false,
+      mailboxRetryAt: 0,
+      recoverClaimedMessages: true,
+      submitted: new Map(),
+    };
+    current = lifecycle;
+    lifecycle.unregisterResourceCleanup = registerSessionResourceCleanup((cleanupSessionId) => {
+      if (cleanupSessionId !== undefined && cleanupSessionId !== lifecycle.sessionId) return;
+      void cleanupLifecycle(lifecycle).catch(reportCleanupFailure);
+    });
+    if (previous) {
+      await removeLifecycleState(previous);
+      if (!isCurrent(lifecycle)) return;
+    }
+    const directory = dependencies.mailboxPath(lifecycle.sessionId);
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    heartbeatTimer ??= setInterval(
-      () => void publish().catch(() => undefined),
+    if (!isCurrent(lifecycle)) return;
+    lifecycle.heartbeatTimer = setInterval(
+      () =>
+        void publish(lifecycle).catch((error: RuntimeValue) =>
+          reportDeliveryError(lifecycle, error),
+        ),
       HEARTBEAT_INTERVAL_MS,
     );
-    mailboxTimer ??= setInterval(
-      () => void drainMailbox().catch(() => undefined),
+    lifecycle.mailboxTimer = setInterval(
+      () =>
+        void drainMailbox(lifecycle).catch((error: RuntimeValue) =>
+          reportDeliveryError(lifecycle, error),
+        ),
       MAILBOX_FALLBACK_INTERVAL_MS,
     );
-    mailboxAbortController ??= new AbortController();
-    heartbeatTimer.unref();
-    mailboxTimer.unref();
-    void watchMailbox(directory, mailboxAbortController.signal).catch(() => undefined);
-    await publish(ctx.isIdle() ? "idle" : "busy");
-    void drainMailbox().catch(() => undefined);
+    lifecycle.heartbeatTimer.unref();
+    lifecycle.mailboxTimer.unref();
+    void watchMailbox(lifecycle, directory).catch((error: RuntimeValue) =>
+      reportDeliveryError(lifecycle, error),
+    );
+    await publish(lifecycle);
+    if (isCurrent(lifecycle)) {
+      void drainMailbox(lifecycle).catch((error: RuntimeValue) =>
+        reportDeliveryError(lifecycle, error),
+      );
+    }
   });
   pi.on("agent_start", async (_event, ctx) => {
-    currentContext = ctx;
-    await publish("busy");
+    const lifecycle = current;
+    if (!lifecycle || ctx.sessionManager.getSessionId() !== lifecycle.sessionId) return;
+    await publish(lifecycle, "busy");
+    if (isCurrent(lifecycle)) await reconcileSubmitted(lifecycle);
   });
   pi.on("agent_settled", async (_event, ctx) => {
-    currentContext = ctx;
-    await publish("idle");
+    const lifecycle = current;
+    if (!lifecycle || ctx.sessionManager.getSessionId() !== lifecycle.sessionId) return;
+    await publish(lifecycle, "idle");
+    if (isCurrent(lifecycle)) {
+      await reconcileSubmitted(lifecycle);
+      void drainMailbox(lifecycle).catch((error: RuntimeValue) =>
+        reportDeliveryError(lifecycle, error),
+      );
+    }
   });
   pi.on("session_shutdown", async () => {
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
-    if (mailboxTimer) clearInterval(mailboxTimer);
-    mailboxAbortController?.abort();
-    await publishChain.catch(() => undefined);
-    if (currentState) await removeOwnedLiveState(currentState.sessionId, ownerId);
+    const lifecycle = invalidate();
+    if (!lifecycle) return;
+    await removeLifecycleState(lifecycle);
   });
 }
 

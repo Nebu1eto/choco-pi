@@ -5,7 +5,7 @@ import type {
   ExtensionCommandContext,
   RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
-import { enqueueSessionDelivery } from "../.pi/extensions/lib/session-communication.ts";
+import { submitSessionDelivery } from "../.pi/extensions/lib/session-communication.ts";
 import { reinterpretHostValue } from "../.pi/extensions/lib/runtime-values.ts";
 import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import type {
@@ -269,21 +269,24 @@ test("review cancellation before completion is ignored; completion before shutdo
 
 test("accepted asynchronous delivery survives rejection and does not block the next delivery", async () => {
   const first = deferred<void>();
-  const queue = { deliveryChain: Promise.resolve() };
+  const errors: RuntimeValue[] = [];
+  const tracker = {
+    deliveries: new Set<Promise<void>>(),
+    onError: (error: RuntimeValue) => errors.push(error),
+  };
   let starts = 0;
-  enqueueSessionDelivery(queue, () => {
+  submitSessionDelivery(tracker, () => {
     starts += 1;
     return first.promise;
   });
-  assert.equal(starts, 0, "acceptance returns before delivery starts");
-  await Promise.resolve();
   assert.equal(starts, 1);
 
   first.reject(new Error("receiver rejected after acceptance"));
-  await queue.deliveryChain;
-  enqueueSessionDelivery(queue, async () => {
+  await Promise.resolve();
+  submitSessionDelivery(tracker, async () => {
     starts += 1;
   });
-  await queue.deliveryChain;
+  await Promise.resolve();
   assert.equal(starts, 2);
+  assert.equal(errors.length, 1);
 });
