@@ -11,7 +11,10 @@ import {
 } from "../extensions/agent-browser/lib/executable-resolution.ts";
 import { extractRefSnapshotFromData } from "../extensions/agent-browser/lib/session-page-state.ts";
 import { buildAgentBrowserSpawnCommand } from "../extensions/agent-browser/lib/process.ts";
-import { getRequestedAgentBrowserCapabilities } from "../extensions/agent-browser/lib/runtime-extension.ts";
+import {
+  getRequestedAgentBrowserCapabilities,
+  getUnsupportedCapabilityError,
+} from "../extensions/agent-browser/lib/runtime-extension.ts";
 import { resolveAgentBrowserCompatibility } from "../extensions/agent-browser/lib/upstream-version.ts";
 
 test("new global flag payloads cannot become commands", () => {
@@ -68,6 +71,42 @@ test("capability detection covers raw nested batch operations without exposing p
       'snapshot --delta\nwebmcp invoke charge --params {"secret":"value"}',
     ),
     ["delta-snapshot", "webmcp"],
+  );
+});
+
+test("capability detection distinguishes commands, option values, and command-owned flags", () => {
+  const legacy = resolveAgentBrowserCompatibility("agent-browser 0.34.0");
+  assert.equal(getUnsupportedCapabilityError(legacy, ["fill", "#query", "webmcp"]), undefined);
+  assert.equal(getUnsupportedCapabilityError(legacy, ["snapshot", "--cursor"]), undefined);
+  assert.match(getUnsupportedCapabilityError(legacy, ["webmcp", "list"]) ?? "", /webmcp/u);
+  assert.match(
+    getUnsupportedCapabilityError(legacy, ["record", "start", "take.webm", "--cursor"]) ?? "",
+    /recording-cursor/u,
+  );
+  assert.deepEqual(
+    getRequestedAgentBrowserCapabilities(["set", "--name", "--cursor", "value"]),
+    [],
+  );
+  assert.deepEqual(
+    getRequestedAgentBrowserCapabilities(["record", "start", "take.webm", "--", "--cursor"]),
+    [],
+  );
+});
+
+test("stdin capability detection parses each command instead of scanning raw text", () => {
+  assert.deepEqual(
+    getRequestedAgentBrowserCapabilities(
+      ["batch"],
+      '[["fill","#query","webmcp"],["snapshot","--cursor"]]',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    getRequestedAgentBrowserCapabilities(
+      ["batch"],
+      '[["webmcp","list"],["record","start","take.webm","--cursor"]]',
+    ),
+    ["webmcp", "recording-cursor"],
   );
 });
 

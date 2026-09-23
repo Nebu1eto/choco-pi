@@ -8,19 +8,46 @@ import type {
 import type { CodexCompactionDiagnostic } from "../../adapter/compaction/diagnostics.ts";
 import type { CodexFastModeDecision } from "./fast-mode-decision.ts";
 
-const ProtocolValueSchema = Type.Union([
+const ProtocolValueTypeSchema = Type.Union([
   Type.Unsafe<object>({ type: "object" }),
   Type.String(),
   Type.Number(),
   Type.Boolean(),
   Type.Null(),
 ]);
+const ProtocolPropertyValueTypeSchema = Type.Union([ProtocolValueTypeSchema, Type.Undefined()]);
+const ProtocolValueSchema = Type.Cyclic(
+  {
+    ProtocolValue: Type.Union([
+      Type.Record(Type.String(), Type.Ref("ProtocolValue")),
+      Type.Array(Type.Ref("ProtocolValue")),
+      Type.String(),
+      Type.Number(),
+      Type.Boolean(),
+      Type.Null(),
+    ]),
+  },
+  "ProtocolValue",
+);
 const ProtocolPropertyValueSchema = Type.Union([ProtocolValueSchema, Type.Undefined()]);
 const ProtocolObjectSchema = Type.Record(Type.String(), ProtocolPropertyValueSchema);
+const ResponsesBodySchema = Type.Intersect([
+  ProtocolObjectSchema,
+  Type.Object({
+    model: Type.String(),
+    store: Type.Boolean(),
+    stream: Type.Boolean(),
+    input: Type.Array(ProtocolValueSchema),
+    text: Type.Object({ verbosity: Type.String() }),
+    include: Type.Array(Type.String()),
+    tool_choice: Type.Union([Type.Literal("auto"), Type.Literal("none"), Type.Literal("required")]),
+    parallel_tool_calls: Type.Boolean(),
+  }),
+]);
 
 export type ProtocolPrimitive = boolean | number | string | null;
-export type ProtocolValue = Static<typeof ProtocolValueSchema>;
-export type ProtocolPropertyValue = Static<typeof ProtocolPropertyValueSchema>;
+export type ProtocolValue = Static<typeof ProtocolValueTypeSchema>;
+export type ProtocolPropertyValue = Static<typeof ProtocolPropertyValueTypeSchema>;
 export type ProviderOutputItem = ResponseOutputItem | Extract<ProtocolValue, object>;
 export interface ProtocolObject {
   [key: string]: ProtocolPropertyValue;
@@ -28,6 +55,10 @@ export interface ProtocolObject {
 
 export function isProtocolObject<Value>(value: Value): value is Value & ProtocolObject {
   return Check(ProtocolObjectSchema, value);
+}
+
+export function isResponsesBody<Value>(value: Value): value is Value & ResponsesBody {
+  return Check(ResponsesBodySchema, value);
 }
 
 export interface WebSocketArrayBufferData {

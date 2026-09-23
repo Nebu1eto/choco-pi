@@ -32,7 +32,11 @@ import { runInChildSessionContext } from "./child-context.ts";
 import { buildParentContext, extractText } from "./context.ts";
 import { DEFAULT_AGENTS } from "./default-agents.ts";
 import { detectEnv } from "./env.ts";
-import { createChildFastModeExtension, type FastModeSnapshot } from "./fast-mode-bridge.ts";
+import {
+  createChildFastModeExtension,
+  reconcileChildFastMode,
+  type FastModeSnapshot,
+} from "./fast-mode-bridge.ts";
 import { registerSubagentStatusMessage } from "./limits.ts";
 import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.ts";
 import {
@@ -1348,6 +1352,12 @@ export async function runAgent(
       });
     },
   });
+  if (options.nestedRuntime && options.agentId) {
+    reconcileChildFastMode(session.sessionManager.getSessionId(), {
+      id: options.agentId,
+      manager: options.nestedRuntime.manager,
+    });
+  }
 
   // With `allowedToolNames` unset, the registry is scoped by `excludeTools` but
   // the ACTIVE set still needs managing: pi activates only its four default

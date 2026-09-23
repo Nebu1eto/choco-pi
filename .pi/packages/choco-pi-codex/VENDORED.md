@@ -244,6 +244,12 @@ serialization for identical inputs, and omission of the unproven
 `prompt_cache_retention` field on the ChatGPT-backed Codex endpoint. The test
 documents existing upstream request behavior; no provider source was changed.
 
+Payload-hook replacements on the custom Codex provider are validated as complete
+recursive protocol bodies, including nested objects and arrays, and replace the
+original body instead of being spread over it. Responses Lite normalization and
+the frozen fast-mode decision still run afterward; focused tests pin transport,
+field-removal, and service-tier behavior.
+
 ## Codex SSE EOF handling (pi 0.85.1 backport)
 
 `src/providers/openai-codex/sse.ts` ports upstream pi issue #9047's fix so EOF

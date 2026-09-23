@@ -80,7 +80,13 @@ type ManagedSession = {
   status: "busy" | "idle";
   error?: string;
   deliveryTracker: SessionDeliveryTracker;
+  admission?: StartupAdmission;
   unsubscribe?: () => void;
+};
+
+type StartupAdmission = {
+  started: Promise<void>;
+  release(): void;
 };
 
 type BridgeState = {
@@ -124,6 +130,20 @@ function isRecord(value: RuntimeValue): value is Record<string, RuntimeValue> {
 
 function errorMessage(error: RuntimeValue): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function startupAdmission(): StartupAdmission {
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { started, release };
+}
+
+function releaseManagedAdmission(managed: ManagedSession): void {
+  const admission = managed.admission;
+  managed.admission = undefined;
+  admission?.release();
 }
 
 function mailboxPath(sessionId: string): string {
@@ -236,6 +256,15 @@ async function createIndependentSession(
     throw error;
   }
 
+  const managed = manageSession(session);
+  void startManagedTask(managed, () => session.sendUserMessage(initialPrompt)).catch(
+    () => undefined,
+  );
+
+  return managedSessionSnapshot(managed);
+}
+
+function manageSession(session: AgentSession): ManagedSession {
   const managed: ManagedSession = {
     session,
     status: "idle",
@@ -248,18 +277,65 @@ async function createIndependentSession(
     },
   };
   managed.unsubscribe = session.subscribe((event) => {
-    if (event.type === "agent_start") managed.status = "busy";
+    if (event.type === "agent_start") {
+      managed.status = "busy";
+      releaseManagedAdmission(managed);
+    }
     if (event.type === "agent_settled") {
       managed.status = "idle";
       managed.error = session.state.errorMessage;
     }
   });
   bridgeState().runtimes.set(session.sessionId, managed);
-  void startManagedTask(managed, () => session.sendUserMessage(initialPrompt)).catch(
-    () => undefined,
-  );
+  return managed;
+}
 
-  return managedSessionSnapshot(managed);
+export function registerManagedSession(session: AgentSession): () => void {
+  const managed = manageSession(session);
+  return () => {
+    if (bridgeState().runtimes.get(session.sessionId) === managed) {
+      bridgeState().runtimes.delete(session.sessionId);
+    }
+    releaseManagedAdmission(managed);
+    managed.unsubscribe?.();
+  };
+}
+
+async function admitManagedDelivery(
+  managed: ManagedSession,
+  deliver: () => Promise<void>,
+): Promise<void> {
+  while (managed.admission) await managed.admission.started;
+
+  if (!managed.session.isIdle) {
+    submitSessionDelivery(managed.deliveryTracker, () => startManagedTask(managed, deliver));
+    return;
+  }
+
+  const admission = startupAdmission();
+  managed.admission = admission;
+  let delivery: Promise<void>;
+  try {
+    delivery = startManagedTask(managed, deliver);
+  } catch (error) {
+    managed.status = managed.session.isIdle ? "idle" : "busy";
+    managed.error = errorMessage(error);
+    releaseManagedAdmission(managed);
+    throw error;
+  }
+  managed.deliveryTracker.deliveries.add(delivery);
+  void delivery.then(
+    () => managed.deliveryTracker.deliveries.delete(delivery),
+    (error: RuntimeValue) => {
+      managed.deliveryTracker.deliveries.delete(delivery);
+      managed.deliveryTracker.onError(error instanceof Error ? error : new Error(String(error)));
+    },
+  );
+  try {
+    await Promise.race([admission.started, delivery]);
+  } finally {
+    if (managed.admission === admission) releaseManagedAdmission(managed);
+  }
 }
 
 async function queueMailboxMessage(message: MailboxMessage): Promise<void> {
@@ -340,12 +416,10 @@ async function sendSessionMessage(
   const effectiveMode = effectiveSessionDeliveryMode(input.mode);
   const managed = bridgeState().runtimes.get(input.sessionId);
   if (managed?.session.sessionManager.getCwd() === cwd) {
-    submitSessionDelivery(managed.deliveryTracker, () =>
-      startManagedTask(managed, () =>
-        managed.session.sendUserMessage(formatIncomingMessage(fromSessionId, message), {
-          deliverAs: effectiveMode,
-        }),
-      ),
+    await admitManagedDelivery(managed, () =>
+      managed.session.sendUserMessage(formatIncomingMessage(fromSessionId, message), {
+        deliverAs: effectiveMode,
+      }),
     );
     return { accepted: "direct", effectiveMode, status: managed.status };
   }
@@ -923,6 +997,7 @@ export function installLiveSessionBridge(
     mailboxRetryAt: number;
     recoverClaimedMessages: boolean;
     submitted: Map<string, SubmittedMailboxClaim>;
+    admission?: StartupAdmission;
   };
   let current: Lifecycle | undefined;
   let publicationTail = Promise.resolve();
@@ -1054,13 +1129,23 @@ export function installLiveSessionBridge(
     )
       return;
     try {
+      while (lifecycle.admission) {
+        await lifecycle.admission.started;
+        if (!isCurrent(lifecycle)) return;
+      }
+      const admission = lifecycle.ctx.isIdle() ? startupAdmission() : undefined;
+      lifecycle.admission = admission;
       pi.sendUserMessage(
         formatIncomingMessage(message.fromSessionId, message.message, message.id),
         {
           deliverAs: "steer",
         },
       );
+      if (admission) await admission.started;
     } catch (error) {
+      const admission = lifecycle.admission;
+      lifecycle.admission = undefined;
+      admission?.release();
       releaseMailboxSubmission(lifecycle.submitted, message.id);
       lifecycle.mailboxRetryAt = Date.now() + MAILBOX_FALLBACK_INTERVAL_MS;
       try {
@@ -1186,6 +1271,8 @@ export function installLiveSessionBridge(
     previous.unregisterResourceCleanup = undefined;
     unregister?.();
     previous.abortController.abort();
+    previous.admission?.release();
+    previous.admission = undefined;
     if (previous.heartbeatTimer) clearInterval(previous.heartbeatTimer);
     if (previous.mailboxTimer) clearInterval(previous.mailboxTimer);
     return previous;
@@ -1259,6 +1346,9 @@ export function installLiveSessionBridge(
   pi.on("agent_start", async (_event, ctx) => {
     const lifecycle = current;
     if (!lifecycle || ctx.sessionManager.getSessionId() !== lifecycle.sessionId) return;
+    const admission = lifecycle.admission;
+    lifecycle.admission = undefined;
+    admission?.release();
     await publish(lifecycle, "busy");
     if (isCurrent(lifecycle)) await reconcileSubmitted(lifecycle);
   });

@@ -31,7 +31,7 @@ import type {
   OpenAICodexStreamOptions,
   ResponsesBody,
 } from "./openai-codex/types.ts";
-import { isProtocolObject } from "./openai-codex/types.ts";
+import { isResponsesBody } from "./openai-codex/types.ts";
 import { recordWebSocketSseFallback } from "./openai-codex/websocket.ts";
 import {
   isWebSocketMessageTooBigError,
@@ -68,7 +68,7 @@ export async function prepareCodexRequestBody<TApi extends Api>(
 ): Promise<ResponsesBody> {
   let body = buildRequestBody(model, context, options);
   const nextBody = await options?.onPayload?.(body, model);
-  if (nextBody !== undefined && isProtocolObject(nextBody)) body = { ...body, ...nextBody };
+  if (nextBody !== undefined && isResponsesBody(nextBody)) body = nextBody;
   if (responsesLite) {
     body = isResponsesLiteRequest(body)
       ? namespaceExistingResponsesLiteRequest({ ...body, parallel_tool_calls: false })
