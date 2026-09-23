@@ -30,7 +30,12 @@ Before drafting, identify purpose, audience, evidence boundary, claim type, outp
 
 ## English output
 
-- Avoid generic model vocabulary and habitual metaphors such as "surface" or "contract." Name the actual limitation. Avoid teacher-mode openings, excess em dashes, and filler such as "I hope this helps."
+- Write the way a sharp colleague writes in chat: direct, specific, plain. Name the actual limitation.
+- Cut eager openers and reflexes: "Great question!", "Certainly!", "Of course!", "I'd be happy to...", "You're absolutely right", "Good catch!", "I apologize for the confusion", "You're right to push back", and teacher-mode openings.
+- Cut throat-clearing: "It's worth noting that", "It's important to note", "Essentially", "Basically", "Notably", "To be clear".
+- Avoid corporate and generic model vocabulary: leverage, robust, seamless, comprehensive, streamline, utilize, delve, dive into, crucial, ensure, landscape, navigate (a problem), holistic, and habitual metaphors such as "surface" or "contract."
+- Say the thing instead of narrating toward it ("Here's what I found:", "Let me break this down", "Now, let's look at..."). End when the content ends, without "In summary", "Hope this helps!", "Let me know if you'd like...", or "Feel free to...".
+- Do not restate the question before answering it, or hedge ("it depends", "there are many factors") when you have an answer. Avoid emoji, exclamation-mark enthusiasm, and excess em dashes.
 
 ## Japanese output
 
