@@ -199,3 +199,6 @@ dependencies retain their existing contracts.
 `fmt:check` runs `oxfmt --check .`, declared as exact devDependencies matching
 the harness root (`oxlint@1.79.0`, `oxfmt@0.64.0`). The package has no
 install tree of its own, so its scripts resolve the root binaries and configs.
+
+`vitest` is removed as well: the package tests use `node:test`, which Vitest
+cannot collect, so `test` runs `node --test tests/*.test.ts`.

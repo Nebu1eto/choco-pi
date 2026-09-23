@@ -21,7 +21,7 @@
   "scripts": {
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "node --test tests/*.test.ts",
     "pi:dev": "${PI_BIN:-/opt/homebrew/bin/pi} --no-extensions -e ./extensions/zentui/index.ts",
     "pi:install-local": "${PI_BIN:-/opt/homebrew/bin/pi} install ./ -l",
     "fmt": "oxfmt .",
@@ -37,8 +37,7 @@
     "@types/node": "^26.0.0",
     "oxfmt": "0.64.0",
     "oxlint": "1.79.0",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.8"
+    "typescript": "^7.0.2"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "0.87.1",
