@@ -73,6 +73,7 @@ import {
   setFallbackSubagent,
 } from "./agent-types.ts";
 import { inChildSessionContext, isChildSessionId } from "./child-context.ts";
+import { extractText } from "./context.ts";
 import { type RpcHandle, registerRpcHandlers } from "./cross-extension-rpc.ts";
 import { loadCustomAgents } from "./custom-agents.ts";
 import { GroupJoinManager } from "./group-join.ts";
@@ -173,6 +174,7 @@ import type {
 import { continueRunningAgentNavigation, FocusedAgentController } from "./ui/focus-mode.ts";
 import {
   parseSubagentMessageNotification,
+  renderAgentMessageEnvelope,
   renderAgentMessageNotification,
   renderSubagentNotification,
 } from "./ui/notification-render.ts";
@@ -461,6 +463,13 @@ export default function (pi: ExtensionAPI) {
       return new Text(renderSubagentNotification(details, { expanded }, theme), 0, 0);
     },
   );
+  // agent_message envelopes addressed to the root session (agent-message.ts).
+  // Without this the host prints the raw <agent-message> wrapper.
+  pi.registerMessageRenderer("subagent-message", (message, _options, theme) => {
+    const content = Array.isArray(message.content) ? extractText(message.content) : message.content;
+    const rendered = renderAgentMessageEnvelope(content, theme);
+    return rendered === undefined ? undefined : new Text(rendered, 0, 0);
+  });
 
   // Read directly rather than waiting for applyAndEmitLoaded below: this decides
   // the initial load, which happens hundreds of lines before settings are applied.

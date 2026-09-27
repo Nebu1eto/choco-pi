@@ -6,9 +6,11 @@ import type { AgentConfig } from "../src/types.ts";
 import type { NotificationDetails } from "../src/types.ts";
 import {
   parseSubagentMessageNotification,
+  renderAgentMessageEnvelope,
   renderAgentMessageNotification,
   renderSubagentNotification,
 } from "../src/ui/notification-render.ts";
+import { formatAgentMessage } from "../src/messaging.ts";
 
 function partialFixture<T extends object>(fixture: Partial<T>): T {
   // SAFETY: Each test supplies the named slice exercised by its subject.
@@ -361,4 +363,19 @@ test("renders the usageLimit block with reset, kind, suggestion, and status", ()
     theme,
   );
   assert.match(paused, /Delegation: Paused/);
+});
+
+test("renderAgentMessageEnvelope mirrors the child viewer head and indented body", () => {
+  const envelope = formatAgentMessage("reviewer-1", "line one\nline two", "MESSAGE");
+  const rendered = renderAgentMessageEnvelope(envelope, theme);
+  assert.equal(rendered, "✉ reviewer-1 [MESSAGE]\n  line one\n  line two");
+  assert.doesNotMatch(rendered ?? "", /<agent-message/);
+});
+
+test("renderAgentMessageEnvelope leaves non-envelope content to the host default", () => {
+  assert.equal(renderAgentMessageEnvelope("plain text", theme), undefined);
+  assert.equal(
+    renderAgentMessageEnvelope('<agent-message from="x" type="MESSAGE">\nunterminated', theme),
+    undefined,
+  );
 });

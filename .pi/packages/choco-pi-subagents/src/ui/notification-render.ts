@@ -2,6 +2,7 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { renderAgentName } from "../agent-color.ts";
+import { parseAgentMessage } from "../messaging.ts";
 import type { NotificationDetails } from "../types.ts";
 import { formatResetAt } from "../usage-limit-seam.ts";
 import {
@@ -49,6 +50,24 @@ export function renderAgentMessageNotification(
   const route = `${message.from} → ${message.to}`;
   const queued = message.queued ? " (queued)" : "";
   return `${theme.fg("accent", "✉")} ${theme.fg("toolTitle", route)} ${theme.fg("dim", `[${message.type}]${queued}`)}`;
+}
+
+/**
+ * Transcript rendering for an agent-authored envelope delivered to the root
+ * session. Mirrors the child conversation viewer: an accent `✉ from [TYPE]`
+ * head and the bare body indented two cells. Returns undefined when the
+ * content is not a complete envelope so the host's default label rendering
+ * still shows whatever arrived.
+ */
+export function renderAgentMessageEnvelope(content: string, theme: Theme): string | undefined {
+  const envelope = parseAgentMessage(content.trim());
+  if (!envelope) return undefined;
+  const head = theme.fg("accent", `✉ ${envelope.from} [${envelope.type}]`);
+  const body = envelope.body
+    .split("\n")
+    .map((line) => `  ${line}`)
+    .join("\n");
+  return `${head}\n${body}`;
 }
 
 function compact(value: string, maximum: number): string {
