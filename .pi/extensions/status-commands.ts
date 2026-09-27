@@ -349,6 +349,7 @@ function preferencesSummary(ctx: ExtensionCommandContext): void {
       [
         `Agent language: ${preferences.language ?? "match user"}`,
         `Agent style: ${preferences.style ?? "default"}`,
+        `On usage limit: ${preferences.onUsageLimit}`,
         "Run /preferences in the interactive TUI to change preferences.",
       ].join("\n"),
       "info",

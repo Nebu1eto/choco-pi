@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
+import {
+  providerKeyFromUnavailableMessage,
+  providerUnavailableMessage,
+} from "./provider-health.ts";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const STEP_ID_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,63}$";
@@ -119,6 +123,8 @@ export type WorkflowRunnerContext = {
 export type WorkflowStepRunner = {
   providerKey?(step: WorkflowStepDefinition): string | undefined;
   isProviderAvailable?(providerKey: string): boolean;
+  /** Refusal text for a closed provider (owner-scoped usage-limit details). */
+  unavailableMessage?(providerKey: string): string;
   run(
     step: WorkflowStepDefinition,
     prompt: string,
@@ -127,7 +133,8 @@ export type WorkflowStepRunner = {
 };
 
 function unavailableProvider(error: string | undefined): string | undefined {
-  return error?.match(/^Provider (.+) unavailable \(temporarily rate limited\)\.$/)?.[1];
+  // Accepts the usage-limit form, which appends the reset time and suggestion.
+  return providerKeyFromUnavailableMessage(error);
 }
 
 export type WorkflowTypeResolver = (requested: string) => string | undefined;
@@ -571,7 +578,11 @@ class WorkflowController {
         this.runner.providerKey?.(step) === providerKey,
     );
     const count = pendingSteps.length;
-    const error = `Provider ${providerKey} unavailable (temporarily rate limited); ${count} step${count === 1 ? "" : "s"} skipped.`;
+    // Usage-limit closures extend the base text with "until <T>; suggested: <model>".
+    const message =
+      this.runner.unavailableMessage?.(providerKey) ?? providerUnavailableMessage(providerKey);
+    const unavailable = message.replace(/\.$/, "");
+    const error = `${unavailable}; ${count} step${count === 1 ? "" : "s"} skipped.`;
     for (const step of pendingSteps) {
       const state = this.states.get(step.id)!;
       state.status = "skipped";

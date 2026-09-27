@@ -28,7 +28,11 @@ import {
   getToolNamesForType,
 } from "./agent-types.ts";
 import { AGENT_MESSAGE_TOOL_NAME, createAgentMessageTool } from "./agent-message.ts";
-import { runInChildSessionContext } from "./child-context.ts";
+import {
+  registerChildSessionId,
+  runInChildSessionContext,
+  unregisterChildSessionId,
+} from "./child-context.ts";
 import { buildParentContext, extractText } from "./context.ts";
 import { DEFAULT_AGENTS } from "./default-agents.ts";
 import { detectEnv } from "./env.ts";
@@ -1334,6 +1338,11 @@ export async function runAgent(
   }
 
   const { session } = await runInChildSessionContext(() => createAgentSession(sessionOpts));
+  // Publish the child id before bindExtensions: root extensions initialise in
+  // the child during that call, outside the async child context, and use the
+  // manager registry probe to stay inert. The manager removes it on dispose.
+  const childSessionId = session.sessionManager.getSessionId();
+  registerChildSessionId(childSessionId);
 
   const baseSessionName = agentConfig?.name ?? type;
   session.setSessionName(
@@ -1344,14 +1353,20 @@ export async function runAgent(
   // (e.g. loading credentials, setting up state). Tool gating already happened
   // at session construction via the `tools:` allowlist above — no separate
   // post-bind filter is needed. All ExtensionBindings fields are optional.
-  await session.bindExtensions({
-    onError: (err) => {
-      options.onToolActivity?.({
-        type: "end",
-        toolName: `extension-error:${err.extensionPath}`,
-      });
-    },
-  });
+  try {
+    await session.bindExtensions({
+      onError: (err) => {
+        options.onToolActivity?.({
+          type: "end",
+          toolName: `extension-error:${err.extensionPath}`,
+        });
+      },
+    });
+  } catch (error) {
+    // No record will own this session, so nothing else would remove its id.
+    unregisterChildSessionId(childSessionId);
+    throw error;
+  }
   if (options.nestedRuntime && options.agentId) {
     reconcileChildFastMode(session.sessionManager.getSessionId(), {
       id: options.agentId,

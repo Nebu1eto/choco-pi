@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { providerUnavailableMessage, resetProviderHealth } from "../src/provider-health.ts";
 import {
   renderWorkflowPrompt,
   validateWorkflowDefinition,
@@ -1016,4 +1017,36 @@ test("a cancelled step reports cancellation instead of the runner's abort text",
   assert.equal(result.status, "cancelled");
   assert.equal(result.steps[0].status, "cancelled");
   assert.equal(result.steps[0].error, "Step cancelled.");
+});
+
+test("provider precheck names a usage-limit closure's reset and suggestion", async () => {
+  const providerKey = "anthropic-workflow-usage-limit";
+  const until = Date.now() + 3_600_000;
+  const closure = { until, suggestedModel: "openai-codex/gpt-sol" };
+  try {
+    const runner = Object.assign(new DeferredRunner(), {
+      providerKey: (step: WorkflowStepDefinition): string | undefined => step.model,
+      isProviderAvailable: (key: string): boolean => key !== providerKey,
+      // The owner-scoped refusal text comes from the runner (the manager in production).
+      unavailableMessage: (key: string): string => providerUnavailableMessage(key, closure),
+    });
+    const manager = new WorkflowManager();
+    const started = manager.start(
+      definition([
+        { id: "closed", subagent_type: "Explore", prompt: "closed", model: providerKey },
+      ]),
+      resolveType,
+      runner,
+      1,
+    );
+    await flush();
+    assert.deepEqual(runner.starts, []);
+    assert.equal(
+      manager.get(started.workflowId)?.steps[0].error,
+      `Provider ${providerKey} unavailable (temporarily rate limited). Usage limit until ${new Date(until).toISOString()}; suggested: openai-codex/gpt-sol; 1 step skipped.`,
+    );
+    assert.equal((await manager.wait(started.workflowId)!).status, "error");
+  } finally {
+    resetProviderHealth(providerKey);
+  }
 });

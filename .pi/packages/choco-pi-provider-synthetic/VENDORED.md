@@ -184,3 +184,10 @@ runs `oxfmt .`, and the new `fmt:check` runs `oxfmt --check .`; both tools are
 exact devDependencies matching the harness root (`oxlint@1.79.0`,
 `oxfmt@0.64.0`) and resolve the root `oxlint.config.ts` and `.oxfmtrc.json`,
 including the anti-slop rules. `AGENTS.md` and `README.md` name the new tools.
+
+## choco-pi patch: Synthetic 429 quota refresh
+
+`extensions/provider/runtime.ts` calls `requestQuotas(pi)` for a synthetic assistant
+`message_end` error whose message starts with `429`, before context-overflow handling.
+This refreshes quota state after a provider usage limit. Validation: root `pnpm lint`,
+`pnpm fmt:check`, and `pnpm typecheck`.

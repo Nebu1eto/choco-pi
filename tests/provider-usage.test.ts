@@ -1,4 +1,5 @@
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import test from "node:test";
 import statusCommands, {
@@ -16,6 +17,8 @@ import {
   normalizeClaudeUsage,
   normalizeCodexUsage,
   normalizeSyntheticUsage,
+  providerAccountId,
+  providerUsageWindows,
   quotaHealth,
   refillPace,
   usageFailureMessage,
@@ -652,5 +655,37 @@ test("marks a usage report that was rebuilt from the cache", () => {
       windows: [{ label: "Weekly credits", percent: 10, qualifier: "used" }],
     }),
     /^Synthetic — cached just now\n/,
+  );
+});
+
+function registryContext(tokens: Record<string, string>): ExtensionContext {
+  return reinterpretHostValue<ExtensionContext>({
+    modelRegistry: {
+      getProviderAuthStatus: (provider: string) => ({ configured: provider in tokens }),
+      getApiKeyForProvider: async (provider: string) => tokens[provider],
+    },
+  });
+}
+
+test("providerUsageWindows resolves undefined for disconnected or unknown providers", async () => {
+  const ctx = registryContext({});
+  for (const provider of ["anthropic", "openai-codex", "synthetic", "unknown"]) {
+    assert.equal(await providerUsageWindows(ctx, provider), undefined, provider);
+  }
+});
+
+test("providerAccountId derives account identities without exposing credentials", async () => {
+  const claims = { "https://api.openai.com/auth": { chatgpt_account_id: "acct-123" } };
+  const jwt = `e30.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.sig`;
+  const ctx = registryContext({ "openai-codex": jwt, synthetic: "syn-secret-key" });
+  assert.equal(await providerAccountId(ctx, "openai-codex"), "acct-123");
+  const synthetic = await providerAccountId(ctx, "synthetic");
+  assert.match(synthetic ?? "", /^[0-9a-f]{16}$/);
+  assert.equal(synthetic?.includes("syn-secret"), false);
+  assert.equal(await providerAccountId(ctx, "anthropic"), undefined);
+  assert.equal(await providerAccountId(ctx, "unknown"), undefined);
+  assert.equal(
+    await providerAccountId(registryContext({ "openai-codex": "not-a-jwt" }), "openai-codex"),
+    undefined,
   );
 });

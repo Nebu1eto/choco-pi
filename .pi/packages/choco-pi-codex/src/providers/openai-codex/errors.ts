@@ -131,7 +131,39 @@ function formatLimitUsage(
   return `${label}: ${parts.join(", ")}.`;
 }
 
-export function formatCodexUsageLimitError<T>(value: T): string | undefined {
+/** Structured usage-limit data parsed alongside the friendly message; epoch milliseconds. */
+export type CodexUsageLimitDetails = {
+  resetAt?: number;
+  planType?: string;
+};
+
+export type CodexUsageLimitParseResult = {
+  message: string;
+  details: CodexUsageLimitDetails;
+};
+
+function resolveResetAtMs(
+  seconds: number | undefined,
+  resetsAt: number | undefined,
+): number | undefined {
+  if (resetsAt !== undefined && resetsAt > 0) return Math.round(resetsAt * 1000);
+  if (seconds !== undefined) return Date.now() + Math.max(0, seconds) * 1000;
+  return undefined;
+}
+
+function usageLimitDetails(
+  planType: string | undefined,
+  seconds: number | undefined,
+  resetsAt: number | undefined,
+): CodexUsageLimitDetails {
+  const details: CodexUsageLimitDetails = {};
+  const resetAt = resolveResetAtMs(seconds, resetsAt);
+  if (resetAt !== undefined) details.resetAt = resetAt;
+  if (planType !== undefined) details.planType = planType;
+  return details;
+}
+
+export function parseCodexUsageLimitError<T>(value: T): CodexUsageLimitParseResult | undefined {
   const envelope = normalizeCodexErrorEnvelope(
     Check(StringSchema, value)
       ? (parseJsonObject(value) ?? extractJsonObjectFromMessage(value))
@@ -142,11 +174,12 @@ export function formatCodexUsageLimitError<T>(value: T): string | undefined {
   if (!isTerminalRateLimitError(`${code} ${envelope.error?.message ?? ""}`)) return undefined;
 
   const plan = envelope.error?.plan_type ? ` (${envelope.error.plan_type.toLowerCase()} plan)` : "";
-  const reset = formatReset(
+  const resetSeconds =
     envelope.error?.resets_in_seconds ??
-      asNumber(header(envelope.headers, "X-Codex-Primary-Reset-After-Seconds")),
-    envelope.error?.resets_at ?? asNumber(header(envelope.headers, "X-Codex-Primary-Reset-At")),
-  );
+    asNumber(header(envelope.headers, "X-Codex-Primary-Reset-After-Seconds"));
+  const resetsAt =
+    envelope.error?.resets_at ?? asNumber(header(envelope.headers, "X-Codex-Primary-Reset-At"));
+  const reset = formatReset(resetSeconds, resetsAt);
   const activeLimit = header(envelope.headers, "X-Codex-Active-Limit");
   const main = formatLimitUsage(
     envelope.headers,
@@ -159,7 +192,49 @@ export function formatCodexUsageLimitError<T>(value: T): string | undefined {
     "X-Codex-Bengalfox-",
     extraName ? `Extra ${extraName}` : "Extra limit",
   );
-  return [`Codex usage limit reached${plan}.`, reset, main, extra].filter(Boolean).join(" ");
+  return {
+    message: [`Codex usage limit reached${plan}.`, reset, main, extra].filter(Boolean).join(" "),
+    details: usageLimitDetails(envelope.error?.plan_type, resetSeconds, resetsAt),
+  };
+}
+
+export function formatCodexUsageLimitError<T>(value: T): string | undefined {
+  return parseCodexUsageLimitError(value)?.message;
+}
+
+const usageLimitDetailsByError = new WeakMap<Error, CodexUsageLimitDetails>();
+
+/** Attach parsed usage-limit data to an error whose message is already the friendly text. */
+export function attachCodexUsageLimitDetails<E extends Error>(
+  error: E,
+  details: CodexUsageLimitDetails | undefined,
+): E {
+  if (details) usageLimitDetailsByError.set(error, details);
+  return error;
+}
+
+/**
+ * Resolve structured usage-limit data for a provider error: attached HTTP details first, then a
+ * WebSocket event payload (`error` or `response.failed`), then JSON embedded in the message.
+ * Returns undefined unless the error is a terminal usage-limit error.
+ */
+export function resolveCodexUsageLimitDetails<T>(error: T): CodexUsageLimitDetails | undefined {
+  if (error instanceof Error) {
+    const attached = usageLimitDetailsByError.get(error);
+    if (attached) return attached;
+  }
+  if (isRecord(error)) {
+    const payload = error["payload"]!;
+    if (isRecord(payload)) {
+      const fromEvent = parseCodexUsageLimitError(payload);
+      if (fromEvent) return fromEvent.details;
+      const response = payload["response"]!;
+      const fromResponse = isRecord(response) ? parseCodexUsageLimitError(response) : undefined;
+      if (fromResponse) return fromResponse.details;
+    }
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return parseCodexUsageLimitError(message)?.details;
 }
 
 export function isTerminalRateLimitError(errorText: string): boolean {
@@ -209,6 +284,7 @@ interface ParsedErrorResponse {
   message: string;
   friendlyMessage?: string | undefined;
   code?: string | undefined;
+  usageLimit?: CodexUsageLimitDetails | undefined;
 }
 
 export async function parseErrorResponse(response: Response): Promise<ParsedErrorResponse> {
@@ -216,15 +292,18 @@ export async function parseErrorResponse(response: Response): Promise<ParsedErro
   let message = raw || response.statusText || "Request failed";
   let friendlyMessage: string | undefined;
   let code: string | undefined;
+  let usageLimit: CodexUsageLimitDetails | undefined;
 
   try {
     const parsed = parseJsonObject(raw);
     if (!parsed) throw new Error("Malformed error response");
-    friendlyMessage = formatCodexUsageLimitError({
+    const usageLimitResult = parseCodexUsageLimitError({
       ...parsed,
       status_code: response.status,
       headers: Object.fromEntries(response.headers.entries()),
     });
+    friendlyMessage = usageLimitResult?.message;
+    usageLimit = usageLimitResult?.details;
     const err = normalizeCodexErrorEnvelope(parsed)?.error;
     if (err) {
       code = err.code || err.type;
@@ -235,6 +314,7 @@ export async function parseErrorResponse(response: Response): Promise<ParsedErro
           : undefined;
         const when = mins !== undefined ? ` Try again in ~${mins} min.` : "";
         friendlyMessage = `You have hit your ChatGPT usage limit${plan}.${when}`.trim();
+        usageLimit = usageLimitDetails(err.plan_type, undefined, err.resets_at);
       }
       message = friendlyMessage || err.message || message;
     }
@@ -244,5 +324,6 @@ export async function parseErrorResponse(response: Response): Promise<ParsedErro
 
   const result: ParsedErrorResponse = { message, friendlyMessage };
   if (code) result.code = code;
+  if (usageLimit) result.usageLimit = usageLimit;
   return result;
 }

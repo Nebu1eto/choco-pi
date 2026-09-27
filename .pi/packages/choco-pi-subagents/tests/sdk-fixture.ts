@@ -20,6 +20,7 @@ import {
 export async function createSdkFixture(
   model?: Model<Api>,
   factories: readonly ExtensionFactory[] = [],
+  credentialedProviders: readonly string[] = [],
 ): Promise<{
   session: AgentSession;
   pi: ExtensionAPI;
@@ -48,7 +49,9 @@ export async function createSdkFixture(
   });
   await loader.reload();
   const credentials = new InMemoryCredentialStore();
-  const providerIds = model ? ["anthropic", model.provider] : ["anthropic"];
+  const providerIds = model
+    ? ["anthropic", model.provider, ...credentialedProviders]
+    : ["anthropic", ...credentialedProviders];
   for (const providerId of new Set(providerIds)) {
     await credentials.modify(providerId, async () => ({ type: "api_key", key: "test-key" }));
   }

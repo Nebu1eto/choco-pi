@@ -334,3 +334,31 @@ test("bounds long descriptions and transcript paths", () => {
   assert.match(transcript, /^ {6}Transcript · …\/tasks\/x+\.\.\.$/);
   assert.doesNotMatch(transcript, /\/var\/folders/);
 });
+
+test("renders the usageLimit block with reset, kind, suggestion, and status", () => {
+  const rendered = renderSubagentNotification(
+    notificationFixture({
+      status: "error",
+      error: "Codex usage limit reached",
+      usageLimit: {
+        provider: "openai-codex",
+        accountId: "default",
+        kind: "quota",
+        resetAt: Date.UTC(2026, 0, 1, 12),
+        status: "reported",
+      },
+    }),
+    { expanded: false },
+    theme,
+  );
+  assert.match(
+    rendered,
+    /Usage limit · openai-codex · quota · resets 2026-01-01T12:00:00\.000Z · suggested none available · reported/,
+  );
+  const paused = renderSubagentNotification(
+    notificationFixture({ status: "waiting_for_reset" }),
+    { expanded: false },
+    theme,
+  );
+  assert.match(paused, /Delegation: Paused/);
+});

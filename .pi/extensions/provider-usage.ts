@@ -39,7 +39,7 @@ const ANTHROPIC_HEADERS = { "anthropic-beta": "oauth-2025-04-20" };
 
 const usageCache = createUsageCache({ storage: createFileUsageCacheStorage() });
 
-type UsageWindow = {
+export type UsageWindow = {
   label: string;
   percent: number;
   qualifier: "used" | "remaining";
@@ -60,7 +60,7 @@ type UsageWindow = {
   pace?: { health: "over" | "under"; label: string };
 };
 
-type ProviderUsage = {
+export type ProviderUsage = {
   name: string;
   plan?: string;
   status?: string;
@@ -549,6 +549,10 @@ async function claudeProfile(token: string): Promise<RuntimeValue> {
 async function claudeUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
   const token = await providerToken(ctx, "anthropic");
   if (!token) return { name: "Claude Code", status: "not connected", windows: [] };
+  return readClaudeUsage(token);
+}
+
+async function readClaudeUsage(token: string): Promise<ProviderUsage> {
   const [usage, profile] = await Promise.all([
     usageCache.request(
       "anthropic:usage",
@@ -612,6 +616,10 @@ export async function resetCodexUsage(
 async function syntheticUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
   const token = await providerToken(ctx, "synthetic");
   if (!token) return { name: "Synthetic", status: "not connected", windows: [] };
+  return readSyntheticUsage(token);
+}
+
+async function readSyntheticUsage(token: string): Promise<ProviderUsage> {
   const usage = await usageCache.request(
     `synthetic:usage:${identityKey(token)}`,
     () => fetchUsageJson("https://api.synthetic.new/v2/quotas", token, {}),
@@ -621,6 +629,81 @@ async function syntheticUsage(ctx: ExtensionContext): Promise<ProviderUsage> {
     normalizeSyntheticUsage(usage.payload, usage.previous, usage.payloadAt),
     usage,
   );
+}
+
+/**
+ * Quota windows of one provider together with the epoch ms they were read. A
+ * reading served from the store carries the time it was originally fetched, so
+ * a caller can tell a live reading from one that predates an event.
+ */
+export type ProviderUsageSnapshot = { windows: UsageWindow[]; observedAt: number };
+
+/**
+ * Reads the quota windows of `provider` (`anthropic`, `openai-codex` or
+ * `synthetic`). Resolves `undefined` when the provider is unknown or not
+ * connected, or when no reading can be obtained; it never rejects.
+ */
+export async function providerUsageSnapshot(
+  ctx: ExtensionContext,
+  provider: string,
+): Promise<ProviderUsageSnapshot | undefined> {
+  try {
+    let usage: ProviderUsage;
+    if (provider === "anthropic") {
+      const token = await providerToken(ctx, provider);
+      if (!token) return undefined;
+      usage = await readClaudeUsage(token);
+    } else if (provider === "openai-codex") {
+      const token = await providerToken(ctx, provider);
+      if (!token) return undefined;
+      const accountId = codexAccountId(token);
+      if (!accountId) return undefined;
+      usage = await readCodexUsage(token, accountId);
+    } else if (provider === "synthetic") {
+      const token = await providerToken(ctx, provider);
+      if (!token) return undefined;
+      usage = await readSyntheticUsage(token);
+    } else {
+      return undefined;
+    }
+    return { windows: usage.windows, observedAt: usage.cached?.at.getTime() ?? Date.now() };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Quota windows of `provider`, or `undefined` when none can be read. Never rejects. */
+export async function providerUsageWindows(
+  ctx: ExtensionContext,
+  provider: string,
+): Promise<UsageWindow[] | undefined> {
+  return (await providerUsageSnapshot(ctx, provider))?.windows;
+}
+
+/**
+ * Stable account identity for closing a provider per account: the ChatGPT
+ * account ID for Codex, the OAuth profile's account UUID for Anthropic, and a
+ * non-reversible key of the API key for Synthetic, so no credential leaves this
+ * module. Resolves `undefined` when it cannot be derived; never rejects.
+ */
+export async function providerAccountId(
+  ctx: ExtensionContext,
+  provider: string,
+): Promise<string | undefined> {
+  try {
+    if (provider !== "anthropic" && provider !== "openai-codex" && provider !== "synthetic") {
+      return undefined;
+    }
+    const token = await providerToken(ctx, provider);
+    if (!token) return undefined;
+    if (provider === "openai-codex") return codexAccountId(token);
+    if (provider === "synthetic") return identityKey(token);
+    const profile = await claudeProfile(token);
+    const account = isRecord(profile) && isRecord(profile.account) ? profile.account : undefined;
+    return account ? stringValue(account.uuid) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function currencyValue(value: string): number {

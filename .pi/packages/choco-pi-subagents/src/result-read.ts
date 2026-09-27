@@ -23,9 +23,12 @@ type ResultReadRecord = Pick<
   | "resultConsumed"
 >;
 
+/** Statuses whose generation is still active (no terminal result yet). */
+export type ActiveResultStatus = "queued" | "running" | "waiting_for_reset";
+
 export type ResultReadClaim =
-  | { kind: "active"; generation: number; status: "queued" | "running" }
-  | { kind: "active-refused"; generation: number; status: "queued" | "running" }
+  | { kind: "active"; generation: number; status: ActiveResultStatus }
+  | { kind: "active-refused"; generation: number; status: ActiveResultStatus }
   | { kind: "terminal"; generation: number }
   | { kind: "terminal-refused"; generation: number }
   | { kind: "terminal-pending"; generation: number };
@@ -70,7 +73,12 @@ export function claimSubagentResultRead(
 ): ResultReadClaim {
   if (signal?.aborted) throw signal.reason;
   const generation = currentGeneration(record);
-  if (record.status === "queued" || record.status === "running") {
+  // A usage-limit-parked run is still the current, unpublished generation.
+  if (
+    record.status === "queued" ||
+    record.status === "running" ||
+    record.status === "waiting_for_reset"
+  ) {
     if (record.activeResultReadGeneration === generation) {
       return { kind: "active-refused", generation, status: record.status };
     }
@@ -224,13 +232,13 @@ export async function waitForSubagentResult(
     if (remaining <= 0) return "timed-out";
     await delay(Math.min(queuePollMs, remaining), signal);
   }
-  if (record.status !== "running") return "settled";
+  if (record.status !== "running" && record.status !== "waiting_for_reset") return "settled";
   const remaining = deadline - Date.now();
   if (!record.promise || remaining <= 0) return "timed-out";
   return settleWithin(record.promise, remaining, signal);
 }
 
-export function formatResultReadTimeout(id: string, status: "queued" | "running"): string {
+export function formatResultReadTimeout(id: string, status: ActiveResultStatus): string {
   return (
     `Optimistic result read timed out after 5 seconds: agent ${id} is still ${status}. ` +
     "It continues in the background and its result remains unconsumed. " +

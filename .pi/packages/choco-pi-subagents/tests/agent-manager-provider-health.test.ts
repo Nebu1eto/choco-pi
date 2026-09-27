@@ -5,7 +5,18 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { AgentManager, type AgentManagerRunner } from "../src/agent-manager.ts";
-import { classifyTerminalFailure, recordSuccess } from "../src/provider-health.ts";
+import {
+  classifyTerminalFailure,
+  closeUntil,
+  isAvailable,
+  MAX_USAGE_LIMIT_CLOSED_MS,
+  providerKeyFromUnavailableMessage,
+  ProviderUnavailableError,
+  recordFailure,
+  recordSuccess,
+  resetProviderHealth,
+  usageLimitClosure,
+} from "../src/provider-health.ts";
 
 type RunResult = {
   responseText: string;
@@ -139,5 +150,43 @@ test("ordinary errors and cancellation do not close a provider or its peers", as
     manager.dispose();
     recordSuccess(anthropic);
     recordSuccess(openai);
+  }
+});
+
+test("usage-limit closures are owner+account keyed, cap at 24 h, and stay out of the transient registry", (t) => {
+  let now = 10_000;
+  t.mock.method(Date, "now", () => now);
+  const provider = "openai-codex-provider-health-usage-limit";
+  const key = { owner: "owner-x", providerKey: provider, accountId: "acct-1" };
+  try {
+    const until = closeUntil(key, now + 48 * 3_600_000, { suggestedModel: "anthropic/opus" });
+    assert.equal(until, now + MAX_USAGE_LIMIT_CLOSED_MS);
+    assert.equal(isAvailable(provider, now), true, "the provider-only registry is untouched");
+    assert.equal(usageLimitClosure({ ...key, owner: "owner-y" }, now), undefined);
+    assert.equal(usageLimitClosure({ ...key, accountId: "acct-2" }, now), undefined);
+    assert.equal(closeUntil(key, now + 1_000), until, "a later closure never shortens it");
+
+    recordFailure(provider, "rate_limit", 1_000);
+    recordSuccess(provider);
+    assert.deepEqual(usageLimitClosure(key, now + 400_000), { until, suggestedModel: undefined });
+
+    const message = new ProviderUnavailableError(provider, {
+      until,
+      suggestedModel: "anthropic/opus",
+    }).message;
+    assert.equal(
+      message,
+      `Provider ${provider} unavailable (temporarily rate limited). Usage limit until ${new Date(until).toISOString()}; suggested: anthropic/opus.`,
+    );
+    assert.equal(providerKeyFromUnavailableMessage(message), provider);
+
+    now = until;
+    assert.equal(usageLimitClosure(key), undefined, "the closure expires at its deadline");
+    assert.equal(
+      new ProviderUnavailableError(provider).message,
+      `Provider ${provider} unavailable (temporarily rate limited).`,
+    );
+  } finally {
+    resetProviderHealth(provider);
   }
 });

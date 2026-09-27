@@ -155,7 +155,12 @@ export type MessageDeliveryClass = "running" | "queued" | "closing" | "finished"
 /** Classify whether a recipient can receive now, before session creation, or not at all. */
 export function classifyMessageDelivery(record: MessagingRecord): MessageDeliveryClass {
   const generation = record.resultGeneration ?? 1;
-  const active = record.status === "running" || record.status === "queued";
+  // A usage-limit-parked recipient is held like a queued one: its messages
+  // join the continuation prompt when the provider window resets.
+  const active =
+    record.status === "running" ||
+    record.status === "queued" ||
+    record.status === "waiting_for_reset";
   if (
     active &&
     record.cancellation?.generation === generation &&

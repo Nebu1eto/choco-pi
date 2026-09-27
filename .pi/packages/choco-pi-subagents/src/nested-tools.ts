@@ -20,6 +20,7 @@ import { SUBAGENT_DEPTH_CEILING } from "./limits.ts";
 import { formatSteerMessage, getAgentIdentity } from "./messaging.ts";
 import { resolveModel } from "./model-resolver.ts";
 import { checkModelScope } from "./model-scope.ts";
+import { ResumeModelError } from "./resume-model-error.ts";
 import {
   createOutputFilePath,
   getOutputTranscriptDefault,
@@ -129,6 +130,8 @@ export interface NestedAgentManager {
     signal?: AbortSignal,
     options?: {
       name?: string;
+      /** `provider/id`; validated and applied by the manager before the run. */
+      model?: string;
       budgets?: NestedSpawnOptions["budgets"];
       fastModeRequested?: boolean;
     },
@@ -187,6 +190,13 @@ function formatRecord(record: AgentRecord, position: ResultPosition): string {
   }
   if (record.status === "queued" || record.status === "running") {
     return `Agent ${record.id} is ${record.status}.`;
+  }
+  if (record.status === "waiting_for_reset") {
+    const resetAt = record.usageLimit?.resetAt;
+    return (
+      `Agent ${record.id} paused until ${resetAt === undefined ? "its provider usage window resets (time unknown)" : new Date(resetAt).toISOString()}; ` +
+      "result will arrive as a notification."
+    );
   }
   // A truncated run must not read as a finished one. The top-level path carries
   // this in its result headline; a nested result has no headline, so the note
@@ -278,23 +288,47 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
             true,
           );
         }
-        if (existing.status === "running" || existing.status === "queued") {
+        if (
+          existing.status === "running" ||
+          existing.status === "queued" ||
+          existing.status === "waiting_for_reset"
+        ) {
           return textResult(
             `Nested agent "${params.resume}" is still ${existing.status} — it can only be resumed once its current run finishes.\n` +
               `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it a message mid-run.`,
             true,
           );
         }
-        const resumed = await context.manager.resume(params.resume, params.prompt, signal, {
-          name: params.name,
-          fastModeRequested: params.fast_mode,
-          budgets: {
-            timeoutMs: params.timeout_ms,
-            maxToolCalls: params.max_tool_calls,
-            maxTokens: params.max_tokens,
-            idleTimeoutMs: params.idle_timeout_ms,
-          },
-        });
+        // Same path as the top-level Agent tool: resolve the caller's model, then
+        // let the manager validate scope/availability and switch the session.
+        let resumeModel: string | undefined;
+        if (params.model) {
+          const resolution = resolveModel(params.model, ctx.modelRegistry);
+          if (resolution.tag === "error") return textResult(resolution.message, true);
+          resumeModel = `${resolution.model.provider}/${resolution.model.id}`;
+        }
+        let resumed: AgentRecord | undefined;
+        try {
+          resumed = await context.manager.resume(params.resume, params.prompt, signal, {
+            name: params.name,
+            model: resumeModel,
+            fastModeRequested: params.fast_mode,
+            budgets: {
+              timeoutMs: params.timeout_ms,
+              maxToolCalls: params.max_tool_calls,
+              maxTokens: params.max_tokens,
+              idleTimeoutMs: params.idle_timeout_ms,
+            },
+          });
+        } catch (error) {
+          if (error instanceof ResumeModelError) {
+            return textResult(
+              `Failed to resume nested agent "${params.resume}": ${error.message}`,
+              true,
+            );
+          }
+          throw error;
+        }
         if (!resumed) return textResult(`Failed to resume nested agent "${params.resume}".`, true);
         const address = resumed.alias ?? resumed.handle ?? resumed.id;
         return textResult(
@@ -533,7 +567,9 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           }
           if (
             outcome === "timed-out" &&
-            (record.status === "queued" || record.status === "running")
+            (record.status === "queued" ||
+              record.status === "running" ||
+              record.status === "waiting_for_reset")
           ) {
             return textResult(formatResultReadTimeout(record.id, record.status));
           }
@@ -615,7 +651,11 @@ export function createNestedSubagentTools(context: NestedToolContext): ToolDefin
           true,
         );
       }
-      if (record.status !== "running" && record.status !== "queued") {
+      if (
+        record.status !== "running" &&
+        record.status !== "queued" &&
+        record.status !== "waiting_for_reset"
+      ) {
         return textResult(
           `Nested agent "${params.agent_id}" is already settled (status: ${record.status}). ` +
             "Its transcript is still readable with get_subagent_result.",

@@ -14,6 +14,7 @@ import { createGoalRuntimeStatus, type StatusContext } from "./goal-runtime-stat
 import { createGoalStateController } from "./goal-state-controller.ts";
 import { createProviderLimitAutoResumeScheduler } from "./provider-limit-auto-resume.ts";
 import { compactContinuationPrompt } from "./prompts.ts";
+import { createGoalRecoveryOwnershipPublisher } from "./recovery-ownership.ts";
 import { createGoalRecoveryRuntime } from "./recovery-runtime.ts";
 import {
   clearActiveHostOverflowRecovery,
@@ -126,6 +127,7 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
   const recoveryRuntime = createGoalRecoveryRuntime({
     getGoal: () => stateController.getGoal(),
     getRecoveryState: () => runtimeState.recoveryState,
+    getOwnerSessionId: ownerSessionId,
     clearContinuationState: continuation.clearContinuationState,
     pauseGoalForRecovery(ctx, recoveryReason) {
       stateController.pauseForRecovery(ctx, recoveryReason);
@@ -171,6 +173,13 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
     resumeGoalWithContinuation,
   });
 
+  let recoveryOwnershipOwner: string | undefined;
+  const recoveryOwnership = createGoalRecoveryOwnershipPublisher({
+    getOwnerSessionId: () => recoveryOwnershipOwner,
+    getGoal: () => persistence.getGoal(),
+    isProviderLimitAutoResumeScheduled: providerLimitAutoResume.isScheduledFor,
+  });
+
   const completeGoal = (source: GoalEntrySource, ctx: ExtensionContext): GoalResult => {
     providerLimitAutoResume.clear();
     goalAccounting.accountProgress(ctx, false, 0, true);
@@ -195,7 +204,29 @@ export function createGoalRuntimeController(pi: ExtensionAPI): GoalRuntimeContro
     completeGoal,
     resumeGoalWithContinuation,
     ...eventHandlers,
+    onSessionStart(event, ctx) {
+      recoveryOwnershipOwner = ownerSessionId(ctx);
+      recoveryOwnership.install();
+      return eventHandlers.onSessionStart(event, ctx);
+    },
+    async onSessionShutdown(event, ctx) {
+      try {
+        return await eventHandlers.onSessionShutdown(event, ctx);
+      } finally {
+        recoveryOwnership.dispose();
+        recoveryOwnershipOwner = undefined;
+      }
+    },
   };
+}
+
+/** The root session id keys the shared usage-limit policy; a stale context yields no owner. */
+function ownerSessionId(ctx: ExtensionContext): string | undefined {
+  try {
+    return ctx.sessionManager.getSessionId();
+  } catch {
+    return undefined;
+  }
 }
 
 export function registerGoalRuntimeController(pi: ExtensionAPI): void {

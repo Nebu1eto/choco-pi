@@ -11,6 +11,7 @@ import {
 import { hasAgentBadge } from "../agent-color.ts";
 import type { AgentManager } from "../agent-manager.ts";
 import type { AgentRecord, WidgetMode } from "../types.ts";
+import { formatResetAt } from "../usage-limit-seam.ts";
 import { getLifetimeTotal, getSessionContextPercent } from "../usage.ts";
 import { buildAgentTree, type AgentTreeRow } from "./agent-tree.ts";
 import {
@@ -366,6 +367,8 @@ export class FleetPanel {
           if (
             record.status === "running" ||
             record.status === "queued" ||
+            // Parked on a usage limit: still owned and resumable, so keep it listed.
+            record.status === "waiting_for_reset" ||
             record.id === this.viewingAgentId ||
             record.id === focusedId
           ) {
@@ -826,7 +829,9 @@ export class FleetPanel {
     const errorText =
       record.status === "error" && record.error
         ? theme.fg("error", ` error: ${sanitizeStopError(record.error)}`)
-        : "";
+        : record.status === "waiting_for_reset"
+          ? theme.fg("warning", ` paused until ${formatResetAt(record.usageLimit?.resetAt)}`)
+          : "";
     const status =
       record.status === "running"
         ? theme.fg("accent", SPINNER[this.frame % SPINNER.length])

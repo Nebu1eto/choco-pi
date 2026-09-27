@@ -1,11 +1,5 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
@@ -19,10 +13,23 @@ import {
   type JsonRecord,
   type RuntimeValue,
 } from "./runtime-values.ts";
+import {
+  DEFAULT_ON_USAGE_LIMIT,
+  parseOnUsageLimit,
+  type OnUsageLimit,
+} from "./usage-limit-contract.ts";
+
+export {
+  DEFAULT_ON_USAGE_LIMIT,
+  ON_USAGE_LIMIT_VALUES,
+  parseOnUsageLimit,
+  type OnUsageLimit,
+} from "./usage-limit-contract.ts";
 
 export const AGENT_LANGUAGE_KEY = "agentLanguage";
 export const AGENT_STYLE_KEY = "agentStyle";
 export const AGENT_PERSONA_KEY = "agentPersona";
+export const AGENT_ON_USAGE_LIMIT_KEY = "agentOnUsageLimit";
 export const PERSONA_MESSAGE_TYPE = "choco-pi-agent-persona";
 export const PERSONA_DEFINITIONS_HEADING = "## Agent persona";
 export const SESSION_AUTO_NAME_KEY = "sessionAutoName";
@@ -55,18 +62,47 @@ const PRESET_STYLES_DIR = fileURLToPath(new URL("../agent-preferences/styles/", 
 
 export interface AgentPreferences {
   persona: Persona;
+  /** Always set by the readers; optional so partial fallbacks stay valid. */
+  onUsageLimit?: OnUsageLimit;
   language?: string;
   style?: string;
   sessionAutoName?: boolean;
   sessionAutoNameModel?: string;
 }
 
+/** Preferences as read from the settings file, with every defaulted key resolved. */
+export interface ResolvedAgentPreferences extends AgentPreferences {
+  onUsageLimit: OnUsageLimit;
+}
+
 interface AgentPreferenceValues {
   agentPersona: string;
+  agentOnUsageLimit: OnUsageLimit;
   agentLanguage: string;
   agentStyle: string;
   sessionAutoName: boolean;
   sessionAutoNameModel: string;
+}
+
+export type AgentPreferenceChange = { key: keyof AgentPreferenceValues; value: unknown };
+
+const agentPreferenceChangeListeners = new Set<(change: AgentPreferenceChange) => void>();
+
+export function onAgentPreferenceChange(
+  listener: (change: AgentPreferenceChange) => void,
+): () => void {
+  agentPreferenceChangeListeners.add(listener);
+  return () => agentPreferenceChangeListeners.delete(listener);
+}
+
+function emitAgentPreferenceChange(change: AgentPreferenceChange): void {
+  for (const listener of agentPreferenceChangeListeners) {
+    try {
+      listener(change);
+    } catch {
+      // A preference observer must not interrupt persistence or other observers.
+    }
+  }
 }
 
 interface AgentPersonaFrontmatter {
@@ -87,12 +123,10 @@ function globalSettingsPath(agentDir: string): string {
   return path.join(agentDir, "settings.json");
 }
 
-function readSettingsObject(agentDir: string): JsonRecord {
-  const filePath = globalSettingsPath(agentDir);
-  if (!existsSync(filePath)) return {};
+function parseSettingsObject(filePath: string, raw: string): JsonRecord {
   let parsed: RuntimeValue;
   try {
-    parsed = JSON.parse(readFileSync(filePath, "utf8"));
+    parsed = JSON.parse(raw);
   } catch (error) {
     throw new Error(
       `Could not parse ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
@@ -104,10 +138,32 @@ function readSettingsObject(agentDir: string): JsonRecord {
   return parsed;
 }
 
-export function readAgentPreferences(agentDir: string = getAgentDir()): AgentPreferences {
-  const settings = readSettingsObject(agentDir);
-  const preferences: AgentPreferences = {
+function readSettingsObject(agentDir: string): JsonRecord {
+  const filePath = globalSettingsPath(agentDir);
+  if (!existsSync(filePath)) return {};
+  return parseSettingsObject(filePath, readFileSync(filePath, "utf8"));
+}
+
+function isMissingFileError(error: RuntimeValue): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+async function readSettingsObjectAsync(agentDir: string): Promise<JsonRecord> {
+  const filePath = globalSettingsPath(agentDir);
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf8");
+  } catch (error) {
+    if (isMissingFileError(error)) return {};
+    throw error;
+  }
+  return parseSettingsObject(filePath, raw);
+}
+
+function preferencesFromSettings(settings: JsonRecord): ResolvedAgentPreferences {
+  const preferences: ResolvedAgentPreferences = {
     persona: parsePersona(settings[AGENT_PERSONA_KEY]) ?? DEFAULT_PERSONA,
+    onUsageLimit: parseOnUsageLimit(settings[AGENT_ON_USAGE_LIMIT_KEY]) ?? DEFAULT_ON_USAGE_LIMIT,
   };
   const language = settings[AGENT_LANGUAGE_KEY];
   if (isString(language) && language !== "") {
@@ -126,6 +182,17 @@ export function readAgentPreferences(agentDir: string = getAgentDir()): AgentPre
     preferences.sessionAutoNameModel = sessionAutoNameModel;
   }
   return preferences;
+}
+
+export function readAgentPreferences(agentDir: string = getAgentDir()): ResolvedAgentPreferences {
+  return preferencesFromSettings(readSettingsObject(agentDir));
+}
+
+/** Non-blocking variant of {@link readAgentPreferences} with identical semantics. */
+export async function readAgentPreferencesAsync(
+  agentDir: string = getAgentDir(),
+): Promise<ResolvedAgentPreferences> {
+  return preferencesFromSettings(await readSettingsObjectAsync(agentDir));
 }
 
 export function parsePersona(value: RuntimeValue): Persona | undefined {
@@ -208,30 +275,78 @@ export function appendPersonaDefinitions(systemPrompt: string): string | undefin
   return `${systemPrompt}\n\n${PERSONA_DEFINITIONS_BLOCK}`;
 }
 
-function writeSettingsObject(agentDir: string, settings: JsonRecord): void {
-  mkdirSync(agentDir, { recursive: true });
+async function writeSettingsObject(agentDir: string, settings: JsonRecord): Promise<void> {
+  await mkdir(agentDir, { recursive: true });
   const filePath = globalSettingsPath(agentDir);
   const temporary = `${filePath}.tmp-${process.pid}`;
-  writeFileSync(temporary, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
-  renameSync(temporary, filePath);
+  try {
+    await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+    await rename(temporary, filePath);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
+
+let pendingWrites: Promise<void> = Promise.resolve();
+
+/**
+ * Runs one read-modify-write cycle after every previously queued cycle, so
+ * concurrent writers never drop each other's keys or share the temporary file.
+ * Resolves to whether the file changed.
+ */
+function queueSettingsUpdate<Key extends keyof AgentPreferenceValues>(
+  key: Key,
+  value: AgentPreferenceValues[Key] | undefined,
+  agentDir: string,
+  skipUnchanged: boolean,
+): Promise<boolean> {
+  const write = pendingWrites.then(async () => {
+    const settings = await readSettingsObjectAsync(agentDir);
+    if (skipUnchanged && settings[key] === value) return false;
+    if (value === undefined) {
+      delete settings[key];
+    } else {
+      settings[key] = value;
+    }
+    await writeSettingsObject(agentDir, settings);
+    emitAgentPreferenceChange({ key, value });
+    return true;
+  });
+  pendingWrites = write.then(
+    () => undefined,
+    () => undefined,
+  );
+  return write;
 }
 
 /**
  * Sets one agent preference in the global settings file, preserving every
- * other key. `undefined` deletes the key.
+ * other key. `undefined` deletes the key. Writes are serialized in-process.
  */
-export function writeAgentPreference<Key extends keyof AgentPreferenceValues>(
+export async function writeAgentPreference<Key extends keyof AgentPreferenceValues>(
   key: Key,
   value: AgentPreferenceValues[Key] | undefined,
   agentDir: string = getAgentDir(),
-): void {
-  const settings = readSettingsObject(agentDir);
-  if (value === undefined) {
-    delete settings[key];
-  } else {
-    settings[key] = value;
-  }
-  writeSettingsObject(agentDir, settings);
+): Promise<void> {
+  await queueSettingsUpdate(key, value, agentDir, false);
+}
+
+/**
+ * Like {@link writeAgentPreference}, but compares inside the write queue and
+ * resolves `false` without writing when the stored value already matches.
+ */
+export function writeAgentPreferenceIfChanged<Key extends keyof AgentPreferenceValues>(
+  key: Key,
+  value: AgentPreferenceValues[Key] | undefined,
+  agentDir: string = getAgentDir(),
+): Promise<boolean> {
+  return queueSettingsUpdate(key, value, agentDir, true);
+}
+
+/** Resolves once every agent preference write queued so far has settled. */
+export function flushAgentPreferenceWrites(): Promise<void> {
+  return pendingWrites;
 }
 
 export interface AgentStyleDocument {

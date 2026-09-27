@@ -1,33 +1,41 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  DEFAULT_ON_USAGE_LIMIT,
   DEFAULT_PERSONA,
   AGENT_PREFERENCES_MARKER,
   AGENT_PREFERENCES_MARKER_END,
+  ON_USAGE_LIMIT_VALUES,
   PERSONA_DEFINITIONS_BLOCK,
   activeAgentName,
   appendPersonaDefinitions,
   buildAgentPreferencesBlock,
   discoverAgentStyles,
+  flushAgentPreferenceWrites,
   parseAgentStyleDocument,
   parsePersona,
   personaDirectiveFromPrompt,
   readAgentPreferences,
+  readAgentPreferencesAsync,
   resolveAgentPersonaOverride,
   resolveAgentStyle,
   resolvePersona,
+  onAgentPreferenceChange,
   writeAgentPreference,
   type AgentStyle,
 } from "../.pi/extensions/lib/agent-preferences.ts";
 
-function withTempDirs(run: (dirs: { agent: string; presets: string }) => void): () => void {
-  return () => {
+function withTempDirs(
+  run: (dirs: { agent: string; presets: string }) => void | Promise<void>,
+): () => Promise<void> {
+  return async () => {
     const root = mkdtempSync(path.join(tmpdir(), "agent-preferences-"));
     try {
-      run({ agent: path.join(root, "agent"), presets: path.join(root, "presets") });
+      await run({ agent: path.join(root, "agent"), presets: path.join(root, "presets") });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -72,16 +80,16 @@ const styleOf = (name: string, body: string): AgentStyle => ({
 
 test(
   "store round-trips both keys and preserves unrelated settings",
-  withTempDirs(({ agent }) => {
+  withTempDirs(async ({ agent }) => {
     mkdirSync(agent, { recursive: true });
     writeFileSync(
       path.join(agent, "settings.json"),
       JSON.stringify({ theme: "nord-dark", compaction: { enabled: true } }, null, 2),
     );
-    writeAgentPreference("agentLanguage", "Korean", agent);
-    writeAgentPreference("agentStyle", "concise", agent);
-    writeAgentPreference("sessionAutoName", false, agent);
-    writeAgentPreference("sessionAutoNameModel", "openai-codex/gpt-5.6-luna", agent);
+    await writeAgentPreference("agentLanguage", "Korean", agent);
+    await writeAgentPreference("agentStyle", "concise", agent);
+    await writeAgentPreference("sessionAutoName", false, agent);
+    await writeAgentPreference("sessionAutoNameModel", "openai-codex/gpt-5.6-luna", agent);
 
     const preferences = readAgentPreferences(agent);
     assert.equal(preferences.language, "Korean");
@@ -94,7 +102,7 @@ test(
     assert.equal(settings.theme, "nord-dark");
     assert.deepEqual(settings.compaction, { enabled: true });
 
-    writeAgentPreference("agentLanguage", undefined, agent);
+    await writeAgentPreference("agentLanguage", undefined, agent);
     const after = readAgentPreferences(agent);
     assert.equal(after.language, undefined);
     assert.equal(after.style, "concise");
@@ -103,16 +111,125 @@ test(
 
 test(
   "store creates the settings file when missing and ignores invalid values",
-  withTempDirs(({ agent }) => {
-    assert.deepEqual(readAgentPreferences(agent), { persona: DEFAULT_PERSONA });
-    writeAgentPreference("agentStyle", "concise", agent);
+  withTempDirs(async ({ agent }) => {
+    const defaults = { persona: DEFAULT_PERSONA, onUsageLimit: DEFAULT_ON_USAGE_LIMIT };
+    assert.deepEqual(readAgentPreferences(agent), defaults);
+    assert.deepEqual(await readAgentPreferencesAsync(agent), defaults);
+    await writeAgentPreference("agentStyle", "concise", agent);
     assert.equal(readAgentPreferences(agent).style, "concise");
 
     writeFileSync(
       path.join(agent, "settings.json"),
       JSON.stringify({ agentLanguage: "", agentStyle: 42 }),
     );
-    assert.deepEqual(readAgentPreferences(agent), { persona: DEFAULT_PERSONA });
+    assert.deepEqual(readAgentPreferences(agent), defaults);
+    assert.deepEqual(await readAgentPreferencesAsync(agent), defaults);
+  }),
+);
+
+test(
+  "on-usage-limit defaults to none, round-trips every value, and rejects invalid values",
+  withTempDirs(async ({ agent }) => {
+    assert.equal(DEFAULT_ON_USAGE_LIMIT, "none");
+    assert.equal(readAgentPreferences(agent).onUsageLimit, "none");
+    assert.equal((await readAgentPreferencesAsync(agent)).onUsageLimit, "none");
+
+    for (const value of ON_USAGE_LIMIT_VALUES) {
+      await writeAgentPreference("agentOnUsageLimit", value, agent);
+      const settings = JSON.parse(await readFile(path.join(agent, "settings.json"), "utf8"));
+      assert.equal(settings.agentOnUsageLimit, value);
+      assert.equal(readAgentPreferences(agent).onUsageLimit, value);
+      assert.equal((await readAgentPreferencesAsync(agent)).onUsageLimit, value);
+    }
+
+    for (const invalid of ["bogus", "Fallback", 7, null]) {
+      await writeFile(
+        path.join(agent, "settings.json"),
+        JSON.stringify({ agentOnUsageLimit: invalid }),
+      );
+      assert.equal(readAgentPreferences(agent).onUsageLimit, "none", String(invalid));
+      assert.equal((await readAgentPreferencesAsync(agent)).onUsageLimit, "none", String(invalid));
+    }
+  }),
+);
+
+test(
+  "the async reader surfaces the same parse errors as the sync reader",
+  withTempDirs(async ({ agent }) => {
+    await mkdir(agent, { recursive: true });
+    await writeFile(path.join(agent, "settings.json"), "{ not json");
+    assert.throws(() => readAgentPreferences(agent), /Could not parse/);
+    await assert.rejects(readAgentPreferencesAsync(agent), /Could not parse/);
+
+    await writeFile(path.join(agent, "settings.json"), "[]");
+    assert.throws(() => readAgentPreferences(agent), /Expected a JSON object/);
+    await assert.rejects(readAgentPreferencesAsync(agent), /Expected a JSON object/);
+  }),
+);
+
+test(
+  "the async writer keeps the file format, leaves no temporary file, and serializes writes",
+  withTempDirs(async ({ agent }) => {
+    await mkdir(agent, { recursive: true });
+    await writeFile(path.join(agent, "settings.json"), JSON.stringify({ theme: "nord-dark" }));
+    await writeAgentPreference("agentOnUsageLimit", "fallback", agent);
+    assert.equal(
+      await readFile(path.join(agent, "settings.json"), "utf8"),
+      `${JSON.stringify({ theme: "nord-dark", agentOnUsageLimit: "fallback" }, null, 2)}\n`,
+    );
+    assert.deepEqual(await readdir(agent), ["settings.json"]);
+
+    const concurrent = [
+      writeAgentPreference("agentLanguage", "Korean", agent),
+      writeAgentPreference("agentStyle", "concise", agent),
+      writeAgentPreference("agentOnUsageLimit", "auto-resume", agent),
+      writeAgentPreference("sessionAutoName", false, agent),
+    ];
+    await Promise.all(concurrent);
+    await flushAgentPreferenceWrites();
+    const settings = JSON.parse(await readFile(path.join(agent, "settings.json"), "utf8"));
+    assert.deepEqual(settings, {
+      theme: "nord-dark",
+      agentOnUsageLimit: "auto-resume",
+      agentLanguage: "Korean",
+      agentStyle: "concise",
+      sessionAutoName: false,
+    });
+    assert.deepEqual(await readdir(agent), ["settings.json"]);
+  }),
+);
+
+test(
+  "a failed write rejects its caller without blocking later writes",
+  withTempDirs(async ({ agent }) => {
+    await mkdir(agent, { recursive: true });
+    await writeFile(path.join(agent, "settings.json"), "{ not json");
+    await assert.rejects(
+      writeAgentPreference("agentOnUsageLimit", "fallback", agent),
+      /Could not parse/,
+    );
+    await writeFile(path.join(agent, "settings.json"), "{}");
+    await writeAgentPreference("agentOnUsageLimit", "fallback", agent);
+    assert.equal(readAgentPreferences(agent).onUsageLimit, "fallback");
+  }),
+);
+
+test(
+  "preference-change listeners observe persisted writes, can unsubscribe, and cannot break writes",
+  withTempDirs(async ({ agent }) => {
+    const changes: { key: string; value: unknown }[] = [];
+    const unsubscribe = onAgentPreferenceChange((change) => changes.push(change));
+    const unsubscribeThrowing = onAgentPreferenceChange(() => {
+      throw new Error("listener failure");
+    });
+
+    await writeAgentPreference("agentLanguage", "Korean", agent);
+    assert.deepEqual(changes, [{ key: "agentLanguage", value: "Korean" }]);
+
+    unsubscribe();
+    unsubscribeThrowing();
+    await writeAgentPreference("agentStyle", "concise", agent);
+    assert.deepEqual(changes, [{ key: "agentLanguage", value: "Korean" }]);
   }),
 );
 
@@ -218,17 +335,17 @@ test("persona parsing trims and normalizes only known string values", () => {
 
 test(
   "persona settings default to pessimistic and preserve explicit values",
-  withTempDirs(({ agent }) => {
+  withTempDirs(async ({ agent }) => {
     assert.equal(readAgentPreferences(agent).persona, "pessimistic");
 
     mkdirSync(agent, { recursive: true });
     writeFileSync(path.join(agent, "settings.json"), JSON.stringify({ agentPersona: "wrong" }));
     assert.equal(readAgentPreferences(agent).persona, "pessimistic");
 
-    writeAgentPreference("agentPersona", "critical", agent);
+    await writeAgentPreference("agentPersona", "critical", agent);
     assert.equal(readAgentPreferences(agent).persona, "critical");
 
-    writeAgentPreference("agentPersona", "unset", agent);
+    await writeAgentPreference("agentPersona", "unset", agent);
     assert.equal(readAgentPreferences(agent).persona, "unset");
   }),
 );

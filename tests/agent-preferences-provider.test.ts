@@ -1,36 +1,58 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   agentPreferencesCompletions,
   buildAgentPreferencesSection,
   resolveAgentPreferencesArgs,
 } from "../.pi/extensions/lib/agent-preferences-dialog.ts";
-import { getPreferencesProvider, PERSONA_VALUES } from "../.pi/extensions/lib/agent-preferences.ts";
-import type { RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
+import {
+  flushAgentPreferenceWrites,
+  getPreferencesProvider,
+  onAgentPreferenceChange,
+  ON_USAGE_LIMIT_VALUES,
+  PERSONA_VALUES,
+} from "../.pi/extensions/lib/agent-preferences.ts";
+import { reinterpretHostValue, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
 import { realZentuiLoader, SKIP_WITHOUT_ZENTUI, ZENTUI_BUILD } from "./zentui-build.ts";
 
 type Notice = [string, string];
 
-function createCtx(notices: Notice[]): RuntimeValue {
+const STALE_CONTEXT_ERROR =
+  "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
+
+/** Waits for queued preference writes and the notifications that follow them. */
+async function settleWrites(): Promise<void> {
+  await flushAgentPreferenceWrites();
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+function createCtx(
+  notices: Notice[],
+  getUi: () => RuntimeValue = () => ({
+    notify: (message: string, level: string) => notices.push([message, level]),
+    theme: { fg: (_color: string, value: string) => value, bold: (value: string) => value },
+  }),
+): ExtensionCommandContext {
   const models = [
     { provider: "synthetic", id: "hf:Qwen/Qwen3.8-27B" },
     { provider: "openai-codex", id: "gpt-6-luna" },
     { provider: "openai-codex", id: "gpt-5.6-luna" },
   ];
-  return {
+  return reinterpretHostValue<ExtensionCommandContext>({
     hasUI: true,
     mode: "tui",
-    ui: {
-      notify: (message: string, level: string) => notices.push([message, level]),
-      theme: { fg: (_color: string, value: string) => value, bold: (value: string) => value },
+    get ui() {
+      return getUi();
     },
     modelRegistry: { getAvailable: () => models },
     scopedModels: [],
-  };
+  });
 }
 
 function withAgentDir(run: (agentDir: string, notices: Notice[]) => void | Promise<void>) {
@@ -55,42 +77,58 @@ function withAgentDir(run: (agentDir: string, notices: Notice[]) => void | Promi
 
 test(
   "the Agent section reads and writes the global preferences",
-  withAgentDir((agentDir) => {
+  withAgentDir(async (agentDir) => {
     const notices: Notice[] = [];
     // SAFETY: the fixture supplies every host member the section touches.
-    const section = buildAgentPreferencesSection(createCtx(notices) as never);
+    const section = buildAgentPreferencesSection(createCtx(notices));
     assert.equal(section.id, "agent");
 
     const items = section.buildItems();
     assert.deepEqual(
       items.map((item) => item.id),
-      ["agentLanguage", "agentStyle", "agentPersona", "sessionAutoName", "sessionAutoNameModel"],
+      [
+        "agentLanguage",
+        "agentStyle",
+        "agentPersona",
+        "agentOnUsageLimit",
+        "sessionAutoName",
+        "sessionAutoNameModel",
+      ],
     );
     assert.equal(items[0].currentValue, "Match user");
     assert.equal(items[1].currentValue, "Default");
     assert.ok(items[1].values?.includes("concise"), "shipped presets must be offered");
     assert.equal(items[2].currentValue, "pessimistic");
     assert.deepEqual(items[2].values, PERSONA_VALUES);
-    assert.equal(items[3].currentValue, "Enabled");
-    assert.equal(items[4].currentValue, "openai-codex/gpt-6-luna");
+    assert.equal(items[3].label, "On usage limit");
+    assert.equal(items[3].currentValue, "none");
+    assert.deepEqual(items[3].values, ON_USAGE_LIMIT_VALUES);
+    assert.ok(items[3].description?.includes("auto-resume waits for the quota reset"));
+    assert.equal(items[4].currentValue, "Enabled");
+    assert.equal(items[5].currentValue, "openai-codex/gpt-6-luna");
 
     assert.deepEqual(section.handleChange("agentLanguage", "Korean"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentStyle", "concise"), { kind: "update" });
     assert.deepEqual(section.handleChange("agentPersona", "critical"), { kind: "update" });
+    assert.deepEqual(section.handleChange("agentOnUsageLimit", "fallback"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoName", "Disabled"), { kind: "update" });
     assert.deepEqual(section.handleChange("sessionAutoNameModel", "openai-codex/gpt-5.6-luna"), {
       kind: "update",
     });
-    const settings = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
+    await settleWrites();
+    const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
     assert.equal(settings.agentLanguage, "Korean");
     assert.equal(settings.agentStyle, "concise");
     assert.equal(settings.agentPersona, "critical");
+    assert.equal(settings.agentOnUsageLimit, "fallback");
     assert.equal(settings.sessionAutoName, false);
     assert.equal(settings.sessionAutoNameModel, "openai-codex/gpt-5.6-luna");
     assert.equal(settings.theme, "nord-dark", "unrelated settings must survive");
+    assert.equal(section.buildItems()[3].currentValue, "fallback");
 
     section.handleChange("agentPersona", "unset");
-    const unset = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
+    await settleWrites();
+    const unset = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
     assert.equal(unset.agentPersona, "unset");
 
     assert.deepEqual(section.handleChange("agentLanguage", "Custom…"), {
@@ -100,18 +138,49 @@ test(
 
     section.handleChange("agentLanguage", "Match user");
     section.handleChange("agentStyle", "Default");
-    const cleared = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
+    await settleWrites();
+    const cleared = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
     assert.equal(cleared.agentLanguage, undefined);
     assert.equal(cleared.agentStyle, undefined);
   }),
 );
 
 test(
+  "rewriting the same usage-limit value emits no preference change",
+  withAgentDir(async () => {
+    const notices: Notice[] = [];
+    const ctx = createCtx(notices);
+    const section = buildAgentPreferencesSection(ctx);
+    const changes: { key: string; value: unknown }[] = [];
+    const unsubscribe = onAgentPreferenceChange((change) => changes.push(change));
+    try {
+      section.handleChange("agentOnUsageLimit", "auto-resume");
+      await settleWrites();
+      assert.deepEqual(changes, [{ key: "agentOnUsageLimit", value: "auto-resume" }]);
+
+      section.handleChange("agentOnUsageLimit", "auto-resume");
+      assert.deepEqual(resolveAgentPreferencesArgs("usage-limit auto-resume", ctx), {
+        open: false,
+      });
+      await settleWrites();
+      assert.equal(changes.length, 1, "an unchanged value must not notify observers");
+      assert.deepEqual(notices.at(-1), ["On usage limit: auto-resume", "info"]);
+
+      section.handleChange("agentOnUsageLimit", "none");
+      await settleWrites();
+      assert.deepEqual(changes.at(-1), { key: "agentOnUsageLimit", value: "none" });
+    } finally {
+      unsubscribe();
+    }
+  }),
+);
+
+test(
   "direct agent arguments write values and reject an unknown style",
-  withAgentDir((agentDir) => {
+  withAgentDir(async (agentDir) => {
     const notices: Notice[] = [];
     // SAFETY: the fixture supplies every host member the argument handler touches.
-    const ctx = createCtx(notices) as never;
+    const ctx = createCtx(notices);
 
     assert.deepEqual(resolveAgentPreferencesArgs("agent", ctx), { open: true, section: "agent" });
     assert.deepEqual(resolveAgentPreferencesArgs("language", ctx), {
@@ -125,17 +194,44 @@ test(
       focusId: "agentPersona",
     });
     assert.equal(resolveAgentPreferencesArgs("editor enable", ctx), undefined);
+    assert.deepEqual(resolveAgentPreferencesArgs("usage-limit", ctx), {
+      open: true,
+      section: "agent",
+      focusId: "agentOnUsageLimit",
+    });
 
     assert.deepEqual(resolveAgentPreferencesArgs("language Japanese", ctx), { open: false });
     assert.deepEqual(resolveAgentPreferencesArgs("style concise", ctx), { open: false });
     assert.deepEqual(resolveAgentPreferencesArgs("persona pessimistic", ctx), { open: false });
-    const settings = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
+    assert.deepEqual(resolveAgentPreferencesArgs("usage-limit fallback", ctx), { open: false });
+    await settleWrites();
+    const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
     assert.equal(settings.agentLanguage, "Japanese");
     assert.equal(settings.agentStyle, "concise");
     assert.equal(settings.agentPersona, "pessimistic");
+    assert.equal(settings.agentOnUsageLimit, "fallback");
+    assert.deepEqual(notices.at(-1), ["On usage limit: fallback", "info"]);
+
+    assert.deepEqual(resolveAgentPreferencesArgs("usage-limit bogus", ctx), { open: false });
+    await settleWrites();
+    const usageLimitUnchanged = JSON.parse(
+      await readFile(path.join(agentDir, "settings.json"), "utf8"),
+    );
+    assert.equal(
+      usageLimitUnchanged.agentOnUsageLimit,
+      "fallback",
+      "an unknown usage-limit value must not be written",
+    );
+    assert.deepEqual(notices.at(-1), [
+      'On usage limit "bogus" is not one of auto-resume, fallback, none.',
+      "warning",
+    ]);
 
     assert.deepEqual(resolveAgentPreferencesArgs("persona nope", ctx), { open: false });
-    const personaUnchanged = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
+    await settleWrites();
+    const personaUnchanged = JSON.parse(
+      await readFile(path.join(agentDir, "settings.json"), "utf8"),
+    );
     assert.equal(
       personaUnchanged.agentPersona,
       "pessimistic",
@@ -147,15 +243,46 @@ test(
     ]);
 
     assert.deepEqual(resolveAgentPreferencesArgs("style nope", ctx), { open: false });
-    const unchanged = JSON.parse(readFileSync(path.join(agentDir, "settings.json"), "utf8"));
+    await settleWrites();
+    const unchanged = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
     assert.equal(unchanged.agentStyle, "concise", "an unknown style must not be written");
     assert.equal(notices.at(-1)?.[1], "warning");
+  }),
+);
+
+test(
+  "a stale dialog context after a preference write is contained without losing the write",
+  withAgentDir(async (agentDir) => {
+    const ctx = createCtx([], () => {
+      throw new Error(STALE_CONTEXT_ERROR);
+    });
+    const section = buildAgentPreferencesSection(ctx);
+
+    section.handleChange("agentLanguage", "Korean");
+    await settleWrites();
+
+    const settings = JSON.parse(await readFile(path.join(agentDir, "settings.json"), "utf8"));
+    assert.equal(settings.agentLanguage, "Korean");
   }),
 );
 
 test("agent persona completions filter persona values", () => {
   assert.deepEqual(agentPreferencesCompletions("persona p"), [
     { value: "persona pessimistic", label: "persona pessimistic" },
+  ]);
+});
+
+test("usage-limit completions offer the command and filter its values", () => {
+  assert.deepEqual(agentPreferencesCompletions("usage"), [
+    { value: "usage-limit ", label: "usage-limit" },
+  ]);
+  assert.deepEqual(agentPreferencesCompletions("usage-limit "), [
+    { value: "usage-limit auto-resume", label: "usage-limit auto-resume" },
+    { value: "usage-limit fallback", label: "usage-limit fallback" },
+    { value: "usage-limit none", label: "usage-limit none" },
+  ]);
+  assert.deepEqual(agentPreferencesCompletions("usage-limit f"), [
+    { value: "usage-limit fallback", label: "usage-limit fallback" },
   ]);
 });
 
@@ -184,7 +311,7 @@ test(
 
     const notices: Notice[] = [];
     // SAFETY: the fixture supplies every host member the argument resolver touches.
-    const ctx = createCtx(notices) as never;
+    const ctx = createCtx(notices);
     assert.deepEqual(await provider.resolveArgs("working-line", ctx), {
       open: true,
       section: "workingLine",

@@ -4,6 +4,8 @@ import test from "node:test";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { AgentManager, type AgentManagerRunner } from "../src/agent-manager.ts";
+import { resetProviderHealth } from "../src/provider-health.ts";
+import type { UsageLimitPolicy } from "../src/usage-limit-seam.ts";
 
 interface Deferred<Value> {
   promise: Promise<Value>;
@@ -179,5 +181,95 @@ test("a stopped run rejects resume until settlement, then starts a fresh generat
     ]);
   } finally {
     manager.dispose();
+  }
+});
+
+test("a usage-limit-parked record refuses resume until stopped, then resumes as a fresh generation", async () => {
+  const session = reinterpretHostValue<AgentSession>({
+    sessionManager: { getSessionFile: () => undefined },
+    model: { provider: "anthropic-generation-usage-limit", id: "m" },
+    dispose: () => undefined,
+  });
+  const initial = deferred<{
+    responseText: string;
+    session: AgentSession;
+    aborted: boolean;
+    steered: boolean;
+    failure?: string;
+  }>();
+  const runner: AgentManagerRunner = {
+    runAgent: () => initial.promise,
+    resumeAgent: async () => ({ text: "resumed" }),
+  };
+  const owner = "generation-usage-limit-owner";
+  const slotKey = Symbol.for("choco-pi.usage-limit-policy");
+  interface Slot {
+    [slotKey]?: Map<string, UsageLimitPolicy>;
+  }
+  // SAFETY: The test owns this process-global slot for its duration.
+  const slots = globalThis as typeof globalThis & Slot;
+  const policies = slots[slotKey] ?? new Map<string, UsageLimitPolicy>();
+  slots[slotKey] = policies;
+  policies.set(owner, {
+    owner,
+    generation: 1,
+    preference: async () => "auto-resume",
+    classify: () => ({
+      kind: "quota",
+      provider: "anthropic-generation-usage-limit",
+      modelId: "m",
+      resetAt: Date.now() + 3_600_000,
+      confidence: "structured",
+    }),
+    corroborate: async (classification) => ({ ready: false, classification }),
+    pickFallback: () => undefined,
+    closeProvider: () => undefined,
+    isClosed: () => false,
+  });
+  const manager = new AgentManager(undefined, 1, undefined, undefined, runner);
+  const ctx = reinterpretHostValue<ExtensionContext>({
+    cwd: process.cwd(),
+    model: { provider: "anthropic-generation-usage-limit", id: "m" },
+    sessionManager: { getSessionId: () => owner },
+  });
+  try {
+    const id = manager.spawn(reinterpretHostValue<ExtensionAPI>({}), ctx, "implementer", "task", {
+      description: "parked generation",
+      isBackground: true,
+      isolated: true,
+    });
+    const promise = manager.getRecord(id)?.promise;
+    initial.resolve({
+      responseText: "",
+      session,
+      aborted: false,
+      steered: false,
+      failure: "limit",
+    });
+    await promise;
+    const record = manager.getRecord(id);
+    assert.equal(record?.status, "waiting_for_reset");
+    assert.equal(record?.resultGeneration, 1);
+    assert.equal(await manager.resume(id, "again", undefined, { isBackground: true }), undefined);
+    assert.equal(record?.resultGeneration, 1, "refused resume does not advance the generation");
+
+    assert.equal(manager.abort(id), true);
+    assert.equal(record?.terminalResultGeneration, 1);
+    // The limit's closure still holds: resume is refused like spawn.
+    await assert.rejects(
+      manager.resume(id, "again", undefined, { isBackground: true }),
+      /Provider anthropic-generation-usage-limit unavailable/,
+    );
+    assert.equal(record?.resultGeneration, 1, "a refused resume changes nothing");
+    resetProviderHealth("anthropic-generation-usage-limit");
+    const resumed = await manager.resume(id, "again", undefined, { isBackground: true });
+    assert.equal(resumed?.resultGeneration, 2);
+    assert.equal(resumed?.usageLimit, undefined, "a caller resume starts a new outcome");
+    await resumed?.promise;
+    assert.equal(record?.status, "completed");
+  } finally {
+    manager.dispose();
+    policies.delete(owner);
+    resetProviderHealth("anthropic-generation-usage-limit");
   }
 });
