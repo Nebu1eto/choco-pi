@@ -1,21 +1,27 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
 import { modelPickerSubmenu } from "./model-picker.ts";
+import type { RuntimeValue } from "./runtime-values.ts";
 import {
   AGENT_LANGUAGE_CUSTOM_OUTCOME,
   AGENT_LANGUAGE_KEY,
+  AGENT_ON_USAGE_LIMIT_KEY,
   AGENT_PERSONA_KEY,
   AGENT_STYLE_KEY,
   DEFAULT_SESSION_AUTO_NAME_MODEL,
+  ON_USAGE_LIMIT_VALUES,
   SESSION_AUTO_NAME_KEY,
   SESSION_AUTO_NAME_MODEL_KEY,
   SESSION_AUTO_NAME_FALLBACK_MODEL,
   PERSONA_VALUES,
   discoverAgentStyles,
+  parseOnUsageLimit,
   parsePersona,
   readAgentPreferences,
   resolveAgentStyle,
   writeAgentPreference,
+  writeAgentPreferenceIfChanged,
+  type OnUsageLimit,
   type PreferencesExtraSection,
   type PreferencesOutcomeFocus,
   type PreferencesSectionChange,
@@ -30,6 +36,42 @@ const DEFAULT_STYLE_LABEL = "Default";
 const LANGUAGE_PRESETS = ["English", "Korean", "Japanese", "Chinese"];
 const ENABLED_LABEL = "Enabled";
 const DISABLED_LABEL = "Disabled";
+const STALE_CONTEXT_ERROR =
+  "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
+
+function isStaleContextError(error: RuntimeValue): boolean {
+  return error instanceof Error && error.message === STALE_CONTEXT_ERROR;
+}
+
+function notifyIfContextActive(
+  ctx: ExtensionCommandContext,
+  message: string,
+  level: "info" | "error",
+): boolean {
+  try {
+    ctx.ui.notify(message, level);
+    return true;
+  } catch (error) {
+    if (isStaleContextError(error)) return false;
+    throw error;
+  }
+}
+
+async function writeAndNotify(
+  ctx: ExtensionCommandContext,
+  write: () => Promise<void>,
+  successMessage: string,
+  failureMessage: (error: RuntimeValue) => string,
+): Promise<void> {
+  try {
+    await write();
+  } catch (error) {
+    if (isStaleContextError(error)) return;
+    if (!notifyIfContextActive(ctx, failureMessage(error), "error")) throw error;
+    return;
+  }
+  notifyIfContextActive(ctx, successMessage, "info");
+}
 
 function modelValue(model: { provider: string; id: string }): string {
   return `${model.provider}/${model.id}`;
@@ -50,75 +92,90 @@ function languageValues(current: string | undefined): string[] {
   return values;
 }
 
-function writeLanguage(ctx: ExtensionCommandContext, value: string | undefined): void {
-  try {
-    writeAgentPreference(AGENT_LANGUAGE_KEY, value);
-    ctx.ui.notify(
-      value === undefined
-        ? "Agent language: match user"
-        : `Agent language: ${value} (applies from the next turn)`,
-      "info",
-    );
-  } catch (error) {
-    ctx.ui.notify(
+async function writeLanguage(
+  ctx: ExtensionCommandContext,
+  value: string | undefined,
+): Promise<void> {
+  await writeAndNotify(
+    ctx,
+    () => writeAgentPreference(AGENT_LANGUAGE_KEY, value),
+    value === undefined
+      ? "Agent language: match user"
+      : `Agent language: ${value} (applies from the next turn)`,
+    (error) =>
       `Could not update agent language: ${error instanceof Error ? error.message : String(error)}`,
-      "error",
-    );
-  }
+  );
 }
 
-function writeStyle(ctx: ExtensionCommandContext, value: string | undefined): void {
-  try {
-    writeAgentPreference(AGENT_STYLE_KEY, value);
-    ctx.ui.notify(
-      value === undefined
-        ? "Agent style: default"
-        : `Agent style: ${value} (applies from the next turn)`,
-      "info",
-    );
-  } catch (error) {
-    ctx.ui.notify(
+async function writeStyle(ctx: ExtensionCommandContext, value: string | undefined): Promise<void> {
+  await writeAndNotify(
+    ctx,
+    () => writeAgentPreference(AGENT_STYLE_KEY, value),
+    value === undefined
+      ? "Agent style: default"
+      : `Agent style: ${value} (applies from the next turn)`,
+    (error) =>
       `Could not update agent style: ${error instanceof Error ? error.message : String(error)}`,
-      "error",
-    );
-  }
+  );
 }
 
-function writePersona(ctx: ExtensionCommandContext, value: Persona | undefined): void {
-  try {
-    writeAgentPreference(AGENT_PERSONA_KEY, value);
-    ctx.ui.notify(`Agent persona: ${value} (applies from the next turn)`, "info");
-  } catch (error) {
-    ctx.ui.notify(
+async function writePersona(
+  ctx: ExtensionCommandContext,
+  value: Persona | undefined,
+): Promise<void> {
+  await writeAndNotify(
+    ctx,
+    () => writeAgentPreference(AGENT_PERSONA_KEY, value),
+    `Agent persona: ${value} (applies from the next turn)`,
+    (error) =>
       `Could not update agent persona: ${error instanceof Error ? error.message : String(error)}`,
-      "error",
-    );
-  }
+  );
 }
 
-function writeSessionAutoName(ctx: ExtensionCommandContext, enabled: boolean): void {
-  try {
-    writeAgentPreference(SESSION_AUTO_NAME_KEY, enabled);
-    ctx.ui.notify(`Automatic session naming ${enabled ? "enabled" : "disabled"}`, "info");
-  } catch (error) {
-    ctx.ui.notify(
+async function writeOnUsageLimit(ctx: ExtensionCommandContext, value: OnUsageLimit): Promise<void> {
+  await writeAndNotify(
+    ctx,
+    // An unchanged value neither writes nor emits, so it cannot cancel an armed usage-limit wait.
+    async () => {
+      await writeAgentPreferenceIfChanged(AGENT_ON_USAGE_LIMIT_KEY, value);
+    },
+    `On usage limit: ${value}`,
+    (error) =>
+      `Could not update the usage-limit behavior: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+
+async function writeSessionAutoName(ctx: ExtensionCommandContext, enabled: boolean): Promise<void> {
+  await writeAndNotify(
+    ctx,
+    () => writeAgentPreference(SESSION_AUTO_NAME_KEY, enabled),
+    `Automatic session naming ${enabled ? "enabled" : "disabled"}`,
+    (error) =>
       `Could not update automatic session naming: ${error instanceof Error ? error.message : String(error)}`,
-      "error",
-    );
-  }
+  );
 }
 
-function writeSessionAutoNameModel(ctx: ExtensionCommandContext, model: string): void {
+async function writeSessionAutoNameModel(
+  ctx: ExtensionCommandContext,
+  model: string,
+): Promise<void> {
+  let changed: boolean;
   try {
-    if (readAgentPreferences().sessionAutoNameModel === model) return;
-    writeAgentPreference(SESSION_AUTO_NAME_MODEL_KEY, model);
-    ctx.ui.notify(`Session naming model: ${model}`, "info");
+    changed = await writeAgentPreferenceIfChanged(SESSION_AUTO_NAME_MODEL_KEY, model);
   } catch (error) {
-    ctx.ui.notify(
-      `Could not update the session naming model: ${error instanceof Error ? error.message : String(error)}`,
-      "error",
-    );
+    if (isStaleContextError(error)) return;
+    if (
+      !notifyIfContextActive(
+        ctx,
+        `Could not update the session naming model: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      )
+    ) {
+      throw error;
+    }
+    return;
   }
+  if (changed) notifyIfContextActive(ctx, `Session naming model: ${model}`, "info");
 }
 
 function handleAgentPreferenceChange(
@@ -130,31 +187,37 @@ function handleAgentPreferenceChange(
     if (newValue === CUSTOM_LANGUAGE_LABEL) {
       return { kind: "outcome", outcome: AGENT_LANGUAGE_CUSTOM_OUTCOME };
     }
-    writeLanguage(ctx, newValue === MATCH_USER_LABEL ? undefined : newValue);
+    void writeLanguage(ctx, newValue === MATCH_USER_LABEL ? undefined : newValue);
     return { kind: "update" };
   }
   if (id === "agentStyle") {
-    writeStyle(ctx, newValue === DEFAULT_STYLE_LABEL ? undefined : newValue);
+    void writeStyle(ctx, newValue === DEFAULT_STYLE_LABEL ? undefined : newValue);
     return { kind: "update" };
   }
   if (id === "agentPersona") {
-    writePersona(ctx, parsePersona(newValue));
+    void writePersona(ctx, parsePersona(newValue));
+    return { kind: "update" };
+  }
+  if (id === AGENT_ON_USAGE_LIMIT_KEY) {
+    const onUsageLimit = parseOnUsageLimit(newValue);
+    if (onUsageLimit) void writeOnUsageLimit(ctx, onUsageLimit);
     return { kind: "update" };
   }
   if (id === SESSION_AUTO_NAME_KEY) {
-    writeSessionAutoName(ctx, newValue === ENABLED_LABEL);
+    void writeSessionAutoName(ctx, newValue === ENABLED_LABEL);
     return { kind: "update" };
   }
   if (id === SESSION_AUTO_NAME_MODEL_KEY) {
-    writeSessionAutoNameModel(ctx, newValue);
+    void writeSessionAutoNameModel(ctx, newValue);
   }
   return { kind: "update" };
 }
 
 /**
  * Builds the Agent section of the preferences panel: the global agent
- * language, agent style, and agent persona rows backed by
- * `~/.pi/agent/settings.json`.
+ * language, agent style, agent persona, and usage-limit rows backed by
+ * `~/.pi/agent/settings.json`. Row changes persist asynchronously; await
+ * `flushAgentPreferenceWrites` to observe them on disk.
  */
 export function buildAgentPreferencesSection(
   ctx: ExtensionCommandContext,
@@ -202,6 +265,14 @@ export function buildAgentPreferencesSection(
           values: [...PERSONA_VALUES],
         },
         {
+          id: AGENT_ON_USAGE_LIMIT_KEY,
+          label: "On usage limit",
+          description:
+            "What happens when the active provider reports a usage limit: none leaves the run settled with the error (default); fallback switches to a similar-tier model on another provider and continues; auto-resume waits for the quota reset, then continues. Sub-agents report limits to their parent, and are parked and resumed only under auto-resume.",
+          currentValue: preferences.onUsageLimit,
+          values: [...ON_USAGE_LIMIT_VALUES],
+        },
+        {
           id: SESSION_AUTO_NAME_KEY,
           label: "Auto-name sessions",
           description:
@@ -219,7 +290,9 @@ export function buildAgentPreferencesSection(
               const separator = value.indexOf("/");
               return { provider: value.slice(0, separator), id: value.slice(separator + 1) };
             }),
-            onPick: (value) => writeSessionAutoNameModel(ctx, value),
+            onPick: (value) => {
+              void writeSessionAutoNameModel(ctx, value);
+            },
           }),
         },
       ];
@@ -247,7 +320,7 @@ export async function runAgentPreferencesOutcome(
         ctx.ui.notify("Agent language unchanged (input canceled)", "info");
       } else {
         const trimmed = edited.trim();
-        writeLanguage(ctx, trimmed === "" ? undefined : trimmed);
+        await writeLanguage(ctx, trimmed === "" ? undefined : trimmed);
       }
     } catch (error) {
       ctx.ui.notify(
@@ -262,9 +335,10 @@ export async function runAgentPreferencesOutcome(
 
 /**
  * Handles the agent-specific `/preferences` argument grammar
- * (`agent`, `language [name]`, `style [name]`, `persona [value]`). Returns the
- * section/focus to open, `{ open: false }` after handling a direct write, or
- * `undefined` when the arguments belong to the zentui grammar.
+ * (`agent`, `language [name]`, `style [name]`, `persona [value]`,
+ * `usage-limit [value]`). Returns the section/focus to open, `{ open: false }`
+ * after starting a direct write, or `undefined` when the arguments belong to
+ * the zentui grammar.
  */
 export function resolveAgentPreferencesArgs(
   args: string,
@@ -278,7 +352,7 @@ export function resolveAgentPreferencesArgs(
     if (rest.length === 0) {
       return { open: true, section: AGENT_SECTION_ID, focusId: "agentLanguage" };
     }
-    writeLanguage(ctx, rest.join(" "));
+    void writeLanguage(ctx, rest.join(" "));
     return { open: false };
   }
   if (command === "style") {
@@ -293,7 +367,7 @@ export function resolveAgentPreferencesArgs(
       );
       return { open: false };
     }
-    writeStyle(ctx, name);
+    void writeStyle(ctx, name);
     return { open: false };
   }
   if (command === "persona") {
@@ -309,7 +383,23 @@ export function resolveAgentPreferencesArgs(
       );
       return { open: false };
     }
-    writePersona(ctx, persona);
+    void writePersona(ctx, persona);
+    return { open: false };
+  }
+  if (command === "usage-limit") {
+    if (rest.length === 0) {
+      return { open: true, section: AGENT_SECTION_ID, focusId: AGENT_ON_USAGE_LIMIT_KEY };
+    }
+    const value = rest.join(" ");
+    const onUsageLimit = parseOnUsageLimit(value.toLowerCase());
+    if (!onUsageLimit) {
+      ctx.ui.notify(
+        `On usage limit "${value}" is not one of ${ON_USAGE_LIMIT_VALUES.join(", ")}.`,
+        "warning",
+      );
+      return { open: false };
+    }
+    void writeOnUsageLimit(ctx, onUsageLimit);
     return { open: false };
   }
   return undefined;
@@ -330,7 +420,14 @@ export function agentPreferencesCompletions(prefix: string): { value: string; la
       label: `persona ${persona}`,
     })).filter((item) => item.value.startsWith(`persona ${personaPrefix}`));
   }
-  const candidates = ["agent", "language ", "style ", "persona "];
+  if (/^usage-limit\s/i.test(normalized)) {
+    const valuePrefix = normalized.replace(/^usage-limit\s+/i, "");
+    return ON_USAGE_LIMIT_VALUES.map((value) => ({
+      value: `usage-limit ${value}`,
+      label: `usage-limit ${value}`,
+    })).filter((item) => item.value.startsWith(`usage-limit ${valuePrefix}`));
+  }
+  const candidates = ["agent", "language ", "style ", "persona ", "usage-limit "];
   return candidates.flatMap((candidate) =>
     candidate.startsWith(normalized.toLowerCase())
       ? [{ value: candidate, label: candidate.trimEnd() }]

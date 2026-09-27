@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   appendPersonaDefinitions,
   DEFAULT_PERSONA,
+  readAgentPreferences,
   renderPersonaAnnouncement,
 } from "../.pi/extensions/lib/agent-preferences.ts";
 import { runtimeTypeOf, type RuntimeValue } from "../.pi/extensions/lib/runtime-values.ts";
@@ -177,6 +178,35 @@ test(
       ),
     );
     assert.ok(result?.message);
+    assert.deepEqual(result.message, {
+      customType: "choco-pi-agent-persona",
+      content: renderPersonaAnnouncement(DEFAULT_PERSONA),
+      display: false,
+    });
+  }),
+);
+
+test(
+  "the on-usage-limit preference is persisted only and never enters the prompt",
+  withAgentDir((agentDir) => {
+    writeSettings(agentDir, { agentOnUsageLimit: "auto-resume", agentLanguage: "Korean" });
+    assert.equal(readAgentPreferences(agentDir).onUsageLimit, "auto-resume");
+    const { handlers, api } = createApi();
+    registerExtension(api);
+
+    const handler = handlers.get("before_agent_start");
+    assert.ok(handler);
+    const result = asBeforeAgentStartResult(
+      handler(
+        { prompt: "Root request", systemPrompt: SYSTEM_PROMPT_WITH_PERSONAS },
+        { cwd: agentDir },
+      ),
+    );
+    assert.ok(result);
+    const systemPrompt = result.systemPrompt;
+    assert.ok(systemPrompt);
+    assert.ok(systemPrompt.includes("Preferred response language: Korean"));
+    assert.ok(!systemPrompt.includes("auto-resume"));
     assert.deepEqual(result.message, {
       customType: "choco-pi-agent-persona",
       content: renderPersonaAnnouncement(DEFAULT_PERSONA),

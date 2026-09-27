@@ -25,6 +25,7 @@ import {
   type SyntheticQuotasSnapshotPayload,
 } from "../../src/types/quotas.ts";
 import { SYNTHETIC_OVERFLOW_PATTERN } from "./context-overflow.ts";
+import { requestQuotas } from "../_shared/quota-events.ts";
 
 export async function activateSyntheticProvider(
   pi: ExtensionAPI,
@@ -117,6 +118,7 @@ export async function activateSyntheticProvider(
     if (msg.provider !== "synthetic") return;
 
     const errorMessage = msg.errorMessage ?? "";
+    if (/^429\b/.test(errorMessage)) requestQuotas(pi);
     if (errorMessage.includes("context_length_exceeded")) return;
     if (!SYNTHETIC_OVERFLOW_PATTERN.test(errorMessage)) return;
 

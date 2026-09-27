@@ -15,6 +15,8 @@ export function formatTaskNotificationStatus(status: string, error?: string): st
       return "Budget exceeded";
     case "watchdog_stopped":
       return "Watchdog stopped";
+    case "waiting_for_reset":
+      return "Paused (provider usage limit; resumes after reset)";
     default:
       return `Unknown status: ${status || "(empty)"}`;
   }

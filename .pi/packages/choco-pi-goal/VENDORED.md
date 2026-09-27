@@ -6,8 +6,8 @@ goal policy remains in the owning prompt guidelines.
 This directory is a **vendored, renamed copy** of the upstream open-source
 package **pi-codex-goal**. This is not the original source repository.
 
-- Original source code: https://github.com/fitchmultz/pi-codex-goal
-- Package on npm: https://www.npmjs.com/package/pi-codex-goal
+- Original source code: <https://github.com/fitchmultz/pi-codex-goal>
+- Package on npm: <https://www.npmjs.com/package/pi-codex-goal>
 - Base version: `pi-codex-goal@0.2.0`
 - Tarball shasum: `c37c5d0b9e27a28ad74f1232a04e391e474f782a`
 - Tarball integrity: `sha512-NCL7WJ1wLwMyiTlKlc9sTTTZdTQzSS2HJcuth3PYD8YWDjt9eVpNQdAGVW/sz7UjvCCpzlD9dAg7yRIt9H3t7g==`
@@ -113,3 +113,35 @@ dependencies retain their existing contracts.
 
 Test fixtures now provide the `ExtensionAPI["on"]` return value required by Pi
 0.86.1. This is a test-only type update; runtime source is unchanged.
+
+## choco-pi patch: usage-limit recovery ownership and shared classifier
+
+The root usage-limit policy (`.pi/extensions/lib/usage-limit-contract.ts`)
+must know when this package owns provider-limit recovery, and goal mode must
+recognise the limits the shared classifier detects. The package still imports
+nothing from the repository root; both seams are validated structurally.
+
+- `src/recovery-ownership.ts` (new): publishes
+  `globalThis[Symbol.for("choco-pi-goal:recovery")]` with
+  `recoveryOwnership(owner?)`, which returns the root `GoalRecoveryOwnership`
+  contract `{ owner, goalId, status, providerLimitResumeScheduled }` (copied by name)
+  for an `active` or `paused` goal and `undefined` otherwise. Several runtimes in one process share the entry;
+  an owner argument restricts lookup to that runtime, while the no-argument lookup preserves the first owning runtime.
+- `src/goal-runtime-controller.ts`: installs the reader when the runtime is
+  started, refreshes its owner from `ctx.sessionManager.getSessionId()` on each
+  `session_start`, and removes it after `session_shutdown` (the slot is deleted
+  once no runtime remains).
+- `src/usage-limit-seam.ts` (new): `classifyViaSeam(owner, input)` reads
+  `globalThis[Symbol.for("choco-pi.usage-limit-policy")]` as
+  `Map<ownerSessionId, policy>`, validates `classify` and its result, and never
+  throws.
+- `src/recovery.ts`: `AssistantErrorMessage` carries optional `provider` and
+  `model`; `isProviderLimitError` accepts an optional classifier context and
+  treats `quota` or `billing` as a provider limit. A `transient` result, an
+  absent seam, or an absent owner policy falls back to the upstream regex.
+- `src/recovery-machine.ts` / `src/recovery-runtime.ts`: a classifier-confirmed
+  provider limit is planned as a pause even when its wording (such as a bare
+  `429`) reads as retryable, so the unchanged 5-minute provider-limit
+  auto-resume is scheduled.
+- `tests/recovery-ownership.test.ts` (new) covers ownership states, dispose,
+  seam use, regex fallback, and the resume schedule.

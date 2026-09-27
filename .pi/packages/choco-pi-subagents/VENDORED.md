@@ -933,3 +933,172 @@ spawns and resumes (`ResolveOptions.defaultRunInBackground`); explicit `false`
 and agent-file values still win. Nested spawns keep the foreground default,
 because a settled parent aborts the children it owns and nested completion
 notifications reach only a running parent. Workflow steps are unchanged.
+
+## 2026-09-24 choco-pi patch: On Usage Limit (subagents)
+
+Implements `docs/on-usage-limit-plan.md` §3.4. The manager never substitutes a
+child's model; the parent decides.
+
+- `src/usage-limit-seam.ts` (new): structural reader for
+  `globalThis[Symbol.for("choco-pi.usage-limit-policy")]`
+  (`Map<rootSessionId, UsageLimitPolicy>`), with contract shapes copied by name
+  (`SubagentUsageLimit`, `subagents:usage_limit`). Every policy answer is
+  validated with TypeBox; throwing, malformed, or slow (> 20 s) calls read as
+  "no answer". The package only reads the slot.
+- `provider-health.ts`: `closeUntil(key, untilMs, { suggestedModel })` (24 h
+  cap, never shortens), `clearUsageLimitClosure`, `usageLimitClosure`,
+  `resetProviderHealth`. `recordFailure` no longer shortens an active usage
+  closure and `recordSuccess` keeps it. `ProviderUnavailableError` (spawn,
+  startAgent, drainQueue) and workflow skip text append
+  `Usage limit until <ISO>; suggested: <provider/id>` while such a closure is
+  active; `providerKeyFromUnavailableMessage` accepts both forms.
+- `child-context.ts` / `agent-runner.ts`: child session ids are registered
+  right after `createAgentSession` and before `bindExtensions`, removed in
+  `AgentManager.removeRecord` (or on bind failure). The manager registry entry
+  exposes `isChildSessionContext()` and `isChildSessionId(id)`.
+- `agent-manager.ts`: per-record usage scope (root owner, cwd, registry,
+  parent `scopedModels`) snapshotted at spawn; nested records inherit the
+  parent's owner. Terminal failures on the spawn and resume paths are classified
+  through the owner's policy (`quota`/`billing`; an `inferred` limit that
+  corroborates as ready stays transient). `none`/`fallback`: settle `error`
+  with `record.usageLimit` (`reported`) and the reset/suggestion appended to
+  the error. `auto-resume` + `quota`: new non-terminal status
+  `waiting_for_reset` (generation unpublished, pool slot released, foreground
+  caller answered and record converted to background), wake at
+  `min(resetAt + 30 s, now + 24 h)` with re-corroboration, 5-minute polls for
+  at most 6 h when the reset is unknown, same-model continuation as a new
+  background generation, second limit → `error`/`exhausted`. Stop settles
+  `stopped` with one notification; session switch, shutdown and dispose cancel
+  without notifying. Not parked (reported instead): `billing`, worktree,
+  workflow and `/btw` records, and foreground `resume()`.
+  `resume(..., { model: "provider/id" })` validates registry availability,
+  `checkModelScope`, and provider closures, then `session.setModel`; failures
+  throw `ResumeModelError` before any state change.
+- `types.ts`, `result-read.ts`, `stop-subagent.ts`, `messaging.ts`,
+  `nested-tools.ts`, `ui/fleet-panel.ts`, `ui/agent-widget.ts`: the new
+  status is active for result reads, stoppable, holds agent messages for the
+  continuation prompt, and stays visible in the fleet.
+- `index.ts`: `subagents:usage_limit` event on each transition, one
+  `subagent-usage-limit` nudge when a child parks, `<usage-limit>` in the task
+  notification, `usageLimit` in notification details and lifecycle events,
+  foreground "paused until" result, Agent tool `resume` + `model`.
+- `notification-status.ts`, `ui/notification-render.ts`: render the pause
+  status and the usage-limit line (provider, kind, reset, suggestion or "none
+  available", status).
+- Tests: new `tests/usage-limit.test.ts`; extended provider-health,
+  generation, workflow, notification-status and notification-render suites.
+
+Review corrections (supersede the bullets above where they differ):
+
+- Closures are owner-scoped. `provider-health.ts` no longer stores usage-limit
+  closures in the provider-only registry: `closeUntil`, `usageLimitClosure`
+  and `clearUsageLimitClosure` take `{ owner, providerKey, accountId }`;
+  `isAvailable`, `recordFailure` and `recordSuccess` are upstream again;
+  `resetProviderHealth` also drops every owner's closure for the provider;
+  `providerUnavailableMessage` / `ProviderUnavailableError` take the closure
+  as an optional argument. `AgentManager.isProviderAvailable(key, owner?)`
+  checks the owner's policy `isClosed(provider, account)`, then the manager's
+  keyed closure, then the transient registry; the account is the one last
+  classified for that owner and provider, else `"default"`. spawn,
+  startAgent, drainQueue, resume-with-model and workflow (new optional
+  `WorkflowStepRunner.unavailableMessage`, wired in `index.ts` with the
+  root session id) use it. A confirmed reset reopens the account's policy
+  closure with `closeProvider(provider, account, now)`.
+- Corroboration verdict: the seam reads an optional `evidence`
+  (`confirmed` | `capacity` | `unavailable`). Only `confirmed` parks.
+  `capacity`, `ready: true` without evidence, and an `inferred` limit
+  without `confirmed` evidence are ordinary transient failures (no block, no
+  closure). A `structured`/`parsed` limit with `unavailable` evidence or no
+  answer is reported and closed, never parked; without the field, `ready:
+false` still counts as confirmed for such limits.
+- Evaluation rechecks the run generation, cancellation and disposal after
+  each await, before any closure read or write.
+- Queued post-reset continuations own the parked promise: queue entries carry
+  a `finalize` hook, called on queued stop (with the one final notification),
+  drain failure, `abortAll`/dispose and `cancelUsageLimitWaits` (without).
+  The drain does not drop a continuation for a transient closure.
+- Stopping a parked record settles `usageLimit.status: "exhausted"` (the
+  contract has no stopped value) with exactly one final event; the task
+  notification's `<usage-limit>` line adds `stopped before reset`.
+  `record.error` stays `Stopped by user request.`
+- `resume()` reserves the record synchronously before the async model switch
+  and refuses every competing resume until the switch settles.
+  `AgentManagerRunner.setSessionModel` (optional, defaults to
+  `session.setModel`) is the injectable switch. `ResumeModelError` moved to
+  `src/resume-model-error.ts` (re-exported by `agent-manager.ts`) so
+  `nested-tools.ts` can use it without an import cycle.
+- Foreground `resume()` parks under `auto-resume` with the same
+  foreground-to-background conversion as spawn; `index.ts` answers the
+  resume call with the "paused until" text. Worktree records park: the spawn
+  defers worktree cleanup (`deferredWorktrees`) to the task's final settle
+  (continuation settle, parked stop/exhaustion, queued drop, record removal).
+  Workflow steps and `/btw` records still report instead of parking: both
+  deliver their result once into an aggregate or side conversation that has
+  already moved on by the time a reset arrives.
+- Nested `Agent` resume resolves `model` with `resolveModel` and forwards it
+  to `manager.resume`; `ResumeModelError` becomes an error result.
+- Tests: `tests/usage-limit-fixture.ts` (real SDK sessions, registry models
+  and a delegating `ExtensionContext`; no casts), `tests/usage-limit.test.ts`
+  moved onto it, new `tests/usage-limit-review.test.ts`; `tests/sdk-fixture.ts`
+  takes optional extra credentialed providers.
+
+Review corrections, round 2 (supersede the bullets above where they differ):
+
+- Billing: a `kind: "billing"` classification is always reported (usage-limit
+  block, scoped suggestion, closure until `resetAt ?? now + 30 min`) and never
+  parked, whatever corroboration answers; `corroborationVerdict` no longer
+  discards the real classifier's `billing`/`inferred` result as transient.
+- Account keys: `usage-limit-seam.ts` mirrors the contract's optional
+  `accountId?(provider)` (`accountIdWithPolicy`; a present non-function member
+  rejects the policy; absent, throwing or empty answers fall back). The
+  manager resolves an owner's account as policy `accountId`, else the last
+  classified account, else `"default"`, for both `isClosed` checks and
+  closure writes; a classification naming a different account closes that
+  account too, and a confirmed reset reopens every closed account
+  (`UsageWait.accountIds`).
+- Resume availability: `resume()` (foreground or background, with or without
+  `model`) runs the owner-scoped availability check on the session's model
+  after any switch and before any state change; a refusal throws
+  `ResumeModelError` carrying the `ProviderUnavailableError` text with
+  `until`/`suggested`. `index.ts` reports it on the `@mention` and
+  `choco-pi-hooks:subagent-continue` resume paths instead of rejecting.
+- Queued post-reset continuations carry a `repark` hook: when a slot frees and
+  the account is usage-limit closed again, the drain returns the record to
+  `waiting_for_reset` on the new closure's reset (or bounded polling), keeping
+  the parked promise and `finalize`. A transient-only closure still dispatches.
+- Codex metadata: before `corroborate`, an `openai-codex` child failure scans
+  the child session's own `getBranch()` for the latest valid
+  `choco-pi-codex-usage-limit` entry (structural copy of the contract's
+  `CodexUsageLimitEntry`, ms epoch, `observedAt` within 60 s, `resetAt` not
+  before `observedAt`) and sets `resetAt`, `accountId` and
+  `confidence: "structured"`.
+- Tests: new `tests/usage-limit-round2.test.ts` (billing through the root's
+  real `createUsageLimitPolicy`); fixture gains `accountId`, `corroborated`
+  and `installPolicyObject`; the parked-generation test in
+  `agent-manager-generation.test.ts` now expects the closed-provider refusal
+  before the closure lifts.
+
+Review corrections, round 3 (supersede the bullets above where they differ):
+
+- Steering across a re-park: steering accepted while parked moves into
+  `UsageWait.continuation` when the reset is confirmed. It builds the
+  post-reset prompt, survives `reparkQueuedWake` (later steering is appended),
+  and is cleared only when a continuation run actually starts, so each message
+  is delivered exactly once.
+- Child session id: `usage-limit-seam.ts` mirrors the contract's optional
+  `UsageLimitClassification.sessionId` (type and TypeBox schema). The manager
+  sets it to the failing child's own session id (or `subagent:<recordId>` when
+  the child has none) before `corroborate`, and keeps it on the corroborated
+  and woken classifications even when the policy's answer omits it, so the
+  owner's policy never enriches a child failure from the root branch. The
+  child-branch Codex enrichment is unchanged.
+- `AgentManager.assertResumable(id, model?)`: a side-effect-free pre-check.
+  It returns false where `resume()` would return undefined (unknown, no
+  session, live/unsettled run, pending model switch), and throws the
+  `ResumeModelError` that `resume()` would throw (invalid or out-of-scope model,
+  closed target or current provider). `resume()` shares its helpers
+  (`resumeBlockedByRun`, `resolveResumeModel`, `assertResumeProviderOpen`).
+  `index.ts` `startBackgroundResume` calls it before touching
+  `toolCallId`, `joinMode` or `outputFile`.
+- Tests: new `tests/usage-limit-round3.test.ts`; `tests/workflow.test.ts`
+  builds the health-aware runner with `Object.assign` instead of a cast.

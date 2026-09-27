@@ -44,7 +44,7 @@ import {
   projectAgentsDir,
   serializeAgentFile,
 } from "./agent-file-toggle.ts";
-import { AgentManager } from "./agent-manager.ts";
+import { AgentManager, ResumeModelError } from "./agent-manager.ts";
 import { createAgentMessageTool } from "./agent-message.ts";
 import {
   getAgentConversation,
@@ -72,7 +72,7 @@ import {
   setDefaultsDisabled,
   setFallbackSubagent,
 } from "./agent-types.ts";
-import { inChildSessionContext } from "./child-context.ts";
+import { inChildSessionContext, isChildSessionId } from "./child-context.ts";
 import { type RpcHandle, registerRpcHandlers } from "./cross-extension-rpc.ts";
 import { loadCustomAgents } from "./custom-agents.ts";
 import { GroupJoinManager } from "./group-join.ts";
@@ -185,6 +185,12 @@ import {
   getSessionContextPercent,
   type LifetimeUsage,
 } from "./usage.ts";
+import {
+  describeUsageLimit,
+  formatResetAt,
+  SUBAGENTS_USAGE_LIMIT_EVENT,
+  type SubagentsUsageLimitEvent,
+} from "./usage-limit-seam.ts";
 import { isWorktreeIsolationEnabled, setWorktreeIsolationEnabled } from "./worktree.ts";
 import {
   WorkflowDefinitionSchema,
@@ -317,6 +323,16 @@ function formatTaskNotification(record: AgentRecord, resultMaxLen: number): stri
     record.toolCallId ? `<tool-use-id>${escapeXml(record.toolCallId)}</tool-use-id>` : null,
     record.outputFile ? `<output-file>${escapeXml(record.outputFile)}</output-file>` : null,
     `<status>${escapeXml(status)}</status>`,
+    record.usageLimit
+      ? `<usage-limit>${escapeXml(
+          describeUsageLimit(record.usageLimit) +
+            // The contract has no "stopped" usage status; a stopped wait reads as
+            // exhausted, and the notification says why.
+            (record.status === "stopped" && record.usageLimit.status === "exhausted"
+              ? "; stopped before reset"
+              : ""),
+        )}</usage-limit>`
+      : null,
     `<summary>Agent "${escapeXml(record.description)}" ${record.status}${getStatusNote(record.status)}</summary>`,
     `<result>${escapeXml(resultPreview)}</result>`,
     `<usage><total_tokens>${totalTokens}</total_tokens><tool_uses>${record.toolUses}</tool_uses>${ctxXml}${compactXml}<duration_ms>${durationMs}</duration_ms></usage>`,
@@ -376,6 +392,7 @@ function buildNotificationDetails(
     durationMs: record.completedAt ? record.completedAt - record.startedAt : 0,
     outputFile: record.outputFile,
     error: record.error,
+    usageLimit: record.usageLimit,
     resultPreview: record.result
       ? record.result.length > resultMaxLen
         ? record.result.slice(0, resultMaxLen) + "…"
@@ -473,7 +490,10 @@ export default function (pi: ExtensionAPI) {
   const notificationGate = new NotificationGate<AgentRecord>({
     resolve: (key) => {
       const record = manager.getRecord(key);
-      return record && record.status !== "running" && record.status !== "queued"
+      return record &&
+        record.status !== "running" &&
+        record.status !== "queued" &&
+        record.status !== "waiting_for_reset"
         ? record
         : undefined;
     },
@@ -580,6 +600,7 @@ export default function (pi: ExtensionAPI) {
       durationMs,
       tokens,
       agentTranscriptPath: record.outputFile ?? record.sessionFile,
+      ...(record.usageLimit && { usageLimit: record.usageLimit }),
       ...(record.sideConversation && { sideConversation: true }),
       ...(record.workflowId && {
         workflowId: record.workflowId,
@@ -753,6 +774,45 @@ export default function (pi: ExtensionAPI) {
     getMaxSubagentDepth,
   });
 
+  // Usage-limit transitions: an informational event on every transition, plus
+  // one nudge to the owning parent when a child parks. The final outcome (with
+  // the usageLimit block) travels through the ordinary completion notification.
+  manager.setUsageLimitListener((record) => {
+    const usageLimit = record.usageLimit;
+    if (!usageLimit) return;
+    const event: SubagentsUsageLimitEvent = {
+      agentId: record.id,
+      provider: usageLimit.provider,
+      resetAt: usageLimit.resetAt,
+      status: usageLimit.status,
+    };
+    pi.events.emit(SUBAGENTS_USAGE_LIMIT_EVENT, event);
+    if (record.status !== "waiting_for_reset") return;
+    const name = record.alias ?? record.handle ?? record.id;
+    const until =
+      usageLimit.resetAt === undefined
+        ? "the provider reports capacity again (reset time unknown)"
+        : formatResetAt(usageLimit.resetAt);
+    const content =
+      `child ${name} paused until ${until}: ${usageLimit.provider} usage limit (${usageLimit.kind}). ` +
+      `It resumes on the same model after the reset; its result will arrive as a notification. ` +
+      `Suggested model: ${usageLimit.suggestedModel ?? "none available"}. ` +
+      `To continue elsewhere now, stop it with stop_subagent and resume it with a model.`;
+    const message = { customType: "subagent-usage-limit", content, display: true };
+    if (record.parentAgentId) {
+      const parent = manager.getRecord(record.parentAgentId);
+      if (parent?.session && parent.status === "running") {
+        void parent.session
+          .sendCustomMessage(message, { deliverAs: "steer", triggerTurn: false })
+          .catch(() => {
+            /* informational only; the final notification still follows */
+          });
+      }
+      return;
+    }
+    pi.sendMessage(message, { deliverAs: "steer", triggerTurn: false });
+  });
+
   // Expose manager via Symbol.for() global registry for cross-package access.
   // Standard Node.js pattern for cross-package singletons (used by OpenTelemetry, etc.).
   //
@@ -850,6 +910,11 @@ export default function (pi: ExtensionAPI) {
       return record?.parentAgentId ? undefined : record;
     },
     disposeSettledRecord: (id: string) => manager.disposeSettledRecord(id),
+    // Child-session probes for root extensions (usage-limit policy): a child is
+    // registered by id before its extensions bind, and the async context covers
+    // session construction and resource loading.
+    isChildSessionContext: () => inChildSessionContext(),
+    isChildSessionId: (id: string) => isChildSessionId(id),
   };
   interface GlobalManagerRegistry {
     [key: symbol]: typeof registryEntry | undefined;
@@ -943,6 +1008,9 @@ export default function (pi: ExtensionAPI) {
         );
       });
     }
+    // A new/resumed/forked session never inherits a parked usage-limit wait;
+    // the no-op case is the first start of this activation.
+    manager.cancelUsageLimitWaits("Session switched; usage-limit wait cancelled.");
     manager.clearCompleted(true);
     // Guard mirrors the `!scheduler.isActive()` pattern below: session_start
     // fires once per activation, but a double-bind must not leak listeners.
@@ -1070,10 +1138,18 @@ export default function (pi: ExtensionAPI) {
         // must keep holding, since record.outputFile is the sole gate every
         // downstream consumer keys off and a resume must not re-open it.
         const config = getAgentConfig(record.type);
-        const resumedRecord = await startBackgroundResume(ctx, record, mention.message, {
-          outputTranscript: config?.outputTranscript ?? getOutputTranscriptDefault(),
-          maxTurns: normalizeMaxTurns(config?.maxTurns ?? getDefaultMaxTurns()),
-        });
+        let resumedRecord: AgentRecord | undefined;
+        try {
+          resumedRecord = await startBackgroundResume(ctx, record, mention.message, {
+            outputTranscript: config?.outputTranscript ?? getOutputTranscriptDefault(),
+            maxTurns: normalizeMaxTurns(config?.maxTurns ?? getDefaultMaxTurns()),
+          });
+        } catch (error) {
+          // A closed provider refuses the resume with the usage-limit details.
+          if (!(error instanceof ResumeModelError)) throw error;
+          ctx.ui.notify(`Could not resume ${target}: ${error.message}`, "warning");
+          return { action: "handled" };
+        }
         ctx.ui.notify(
           resumedRecord
             ? `Resuming ${target}`
@@ -1242,6 +1318,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_before_switch", () => {
     sideConversations.dismiss();
     focus.unfocus();
+    // Parked usage-limit waits belong to the session being left.
+    manager.cancelUsageLimitWaits("Session switched; usage-limit wait cancelled.");
     manager.clearCompleted(true);
     scheduler.stop();
   });
@@ -1504,6 +1582,8 @@ export default function (pi: ExtensionAPI) {
       maxTurns?: number;
       toolCallId?: string;
       name?: string;
+      /** `provider/id` to switch to before the resumed run (Agent tool only). */
+      model?: string;
       fastModeRequested?: boolean;
       budgets?: {
         timeoutMs?: number;
@@ -1514,6 +1594,10 @@ export default function (pi: ExtensionAPI) {
     },
   ): Promise<AgentRecord | undefined> {
     const id = existing.id;
+    // Every refusal the manager can decide synchronously (live run, invalid or
+    // closed model, closed provider) comes before any record or file change;
+    // a closed provider throws the same ResumeModelError resume() would.
+    if (!manager.assertResumable(id, opts.model)) return undefined;
     const joinMode = resolveJoinMode(defaultJoinMode, true);
     // Assigned unconditionally: the completion notification carries this as
     // `<tool-use-id>`, so a mention-resume (which passes none) has to CLEAR the
@@ -1545,6 +1629,7 @@ export default function (pi: ExtensionAPI) {
     const record = await manager.resume(id, prompt, undefined, {
       isBackground: true,
       name: opts.name,
+      model: opts.model,
       fastModeRequested: opts.fastModeRequested,
       budgets: opts.budgets,
       onToolActivity: bgCallbacks.onToolActivity,
@@ -1618,9 +1703,17 @@ export default function (pi: ExtensionAPI) {
         existing.status === "queued"
       )
         return;
-      void startBackgroundResume(ctx, existing, reason, {
-        outputTranscript: getOutputTranscriptDefault(),
-      });
+      void (async () => {
+        try {
+          await startBackgroundResume(ctx, existing, reason, {
+            outputTranscript: getOutputTranscriptDefault(),
+          });
+        } catch (error) {
+          // A closed provider refuses the continuation with the usage-limit details.
+          if (!(error instanceof ResumeModelError)) throw error;
+          ctx.ui.notify(`Could not continue agent ${id}: ${error.message}`, "warning");
+        }
+      })();
     },
   );
 
@@ -1724,7 +1817,8 @@ export default function (pi: ExtensionAPI) {
       }),
       model: Type.Optional(
         Type.String({
-          description: 'Model override as "provider/modelId" or a fuzzy name.',
+          description:
+            'Model override as "provider/modelId" or a fuzzy name. With resume: continue a usage-limited child on another model.',
         }),
       ),
       thinking: Type.Optional(
@@ -1771,7 +1865,8 @@ export default function (pi: ExtensionAPI) {
       ),
       resume: Type.Optional(
         Type.String({
-          description: "Finished agent ID to resume; name optionally renames its alias.",
+          description:
+            "Finished agent ID to resume; name optionally renames its alias; model switches it first (continue a usage-limited child on another model).",
         }),
       ),
       isolated: Type.Optional(
@@ -2147,6 +2242,17 @@ export default function (pi: ExtensionAPI) {
               `${TERMINAL_RESULT_RETRIEVAL_GUIDANCE} Use steer_subagent to send it a message mid-run.`,
           );
         }
+        if (existing.status === "waiting_for_reset") {
+          return textResult(
+            `Agent "${params.resume}" is paused until its provider usage window resets ` +
+              `(${formatResetAt(existing.usageLimit?.resetAt)}) and will resume on its own. ` +
+              `To continue it on another model now, stop it with stop_subagent, then resume it with model.`,
+          );
+        }
+        // Only a caller-supplied model switches the resumed session; an agent
+        // file's default model never overrides the model the child already has.
+        const resumeModel =
+          resolvedConfig.modelFromParams && model ? `${model.provider}/${model.id}` : undefined;
 
         // Background resume: detached run that notifies on completion, mirroring
         // a background spawn. Previously run_in_background was silently ignored
@@ -2154,14 +2260,23 @@ export default function (pi: ExtensionAPI) {
         // so a resumed agent always blocked the main loop until it finished.
         if (runInBackground) {
           const id = existing.id;
-          const record = await startBackgroundResume(ctx, existing, params.prompt, {
-            outputTranscript,
-            maxTurns: effectiveMaxTurns,
-            toolCallId,
-            name: params.name,
-            fastModeRequested: params.fast_mode,
-            budgets,
-          });
+          let record: AgentRecord | undefined;
+          try {
+            record = await startBackgroundResume(ctx, existing, params.prompt, {
+              outputTranscript,
+              maxTurns: effectiveMaxTurns,
+              toolCallId,
+              name: params.name,
+              model: resumeModel,
+              fastModeRequested: params.fast_mode,
+              budgets,
+            });
+          } catch (error) {
+            if (error instanceof ResumeModelError) {
+              return textResult(`Failed to resume agent "${params.resume}": ${error.message}`);
+            }
+            throw error;
+          }
           if (!record) {
             return textResult(`Failed to resume agent "${params.resume}".`);
           }
@@ -2192,15 +2307,39 @@ export default function (pi: ExtensionAPI) {
           );
         }
 
-        const record = await manager.resume(params.resume, params.prompt, signal, {
-          name: params.name,
-          fastModeRequested: params.fast_mode,
-          budgets,
-        });
+        let record: AgentRecord | undefined;
+        try {
+          record = await manager.resume(params.resume, params.prompt, signal, {
+            name: params.name,
+            model: resumeModel,
+            fastModeRequested: params.fast_mode,
+            budgets,
+          });
+        } catch (error) {
+          if (error instanceof ResumeModelError) {
+            return textResult(`Failed to resume agent "${params.resume}": ${error.message}`);
+          }
+          throw error;
+        }
         if (!record) {
           return textResult(`Failed to resume agent "${params.resume}".`);
         }
         const address = record.alias ?? record.handle ?? record.id;
+        // Parked on a usage limit under auto-resume: the manager converted this
+        // resume to background, so answer now, exactly like a foreground spawn.
+        if (record.status === "waiting_for_reset") {
+          const until =
+            record.usageLimit?.resetAt === undefined
+              ? "the provider reports capacity again (reset time unknown)"
+              : formatResetAt(record.usageLimit.resetAt);
+          return textResult(
+            `Agent alias: @${address}\nAgent paused until ${until}; result will arrive as a notification.\n` +
+              `Agent ID: ${record.id}\n` +
+              (record.usageLimit ? `Usage limit: ${describeUsageLimit(record.usageLimit)}\n` : "") +
+              `It resumes on the same model after the reset. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE}`,
+            buildDetails(detailBase, record),
+          );
+        }
         // A failed resume surfaces the error, plus any partial output THIS
         // resume produced (never the previous turn's answer, #144).
         if (
@@ -2423,6 +2562,24 @@ export default function (pi: ExtensionAPI) {
 
       const details = buildDetails(detailBase, record, fgState, { tokens: tokenText });
 
+      // Parked on a provider usage limit under auto-resume: the manager has
+      // converted this child to background, so answer the tool call now.
+      if (record.status === "waiting_for_reset") {
+        const address = record.alias ?? record.handle ?? record.id;
+        const until =
+          record.usageLimit?.resetAt === undefined
+            ? "the provider reports capacity again (reset time unknown)"
+            : formatResetAt(record.usageLimit.resetAt);
+        return textResult(
+          `${fallbackNote}Agent paused until ${until}; result will arrive as a notification.\n` +
+            `Agent ID: ${record.id}\n` +
+            `Alias: @${address}\n` +
+            (record.usageLimit ? `Usage limit: ${describeUsageLimit(record.usageLimit)}\n` : "") +
+            `It resumes on the same model after the reset. ${TERMINAL_RESULT_RETRIEVAL_GUIDANCE}`,
+          details,
+        );
+      }
+
       if (
         record.status === "error" ||
         record.status === "budget_exceeded" ||
@@ -2476,122 +2633,135 @@ export default function (pi: ExtensionAPI) {
     return { config, resolvedConfig, model };
   };
 
-  const createWorkflowRunner = (ctx: ExtensionContext): WorkflowStepRunner => ({
-    providerKey: (step) => {
-      try {
-        return (resolveWorkflowStepModel(ctx, step).model?.provider ?? "unknown").toLowerCase();
-      } catch {
-        return undefined;
-      }
-    },
-    isProviderAvailable: (providerKey) => manager.isProviderAvailable(providerKey),
-    run: async (step, prompt, workflowContext) => {
-      const { config, resolvedConfig, model } = resolveWorkflowStepModel(ctx, step);
-      const scopeVerdict = checkModelScope({
-        model,
-        cwd: ctx.cwd,
-        modelRegistry: ctx.modelRegistry,
-        callerSupplied: resolvedConfig.modelFromParams,
-        agentLabel: config?.displayName ?? step.subagent_type,
-        modelInput: resolvedConfig.modelInput,
-      });
-      if (scopeVerdict.kind === "error") throw new Error(scopeVerdict.message);
-      if (scopeVerdict.kind === "warn") ctx.ui.notify(scopeVerdict.message, "warning");
+  const createWorkflowRunner = (ctx: ExtensionContext): WorkflowStepRunner => {
+    // Workflow steps are spawned under this root session; its usage-limit
+    // policy and closures govern their availability.
+    let owner: string | undefined;
+    try {
+      owner = ctx.sessionManager.getSessionId();
+    } catch {
+      owner = undefined;
+    }
+    return {
+      providerKey: (step) => {
+        try {
+          return (resolveWorkflowStepModel(ctx, step).model?.provider ?? "unknown").toLowerCase();
+        } catch {
+          return undefined;
+        }
+      },
+      isProviderAvailable: (providerKey) => manager.isProviderAvailable(providerKey, owner),
+      unavailableMessage: (providerKey) => manager.providerUnavailableMessage(providerKey, owner),
+      run: async (step, prompt, workflowContext) => {
+        const { config, resolvedConfig, model } = resolveWorkflowStepModel(ctx, step);
+        const scopeVerdict = checkModelScope({
+          model,
+          cwd: ctx.cwd,
+          modelRegistry: ctx.modelRegistry,
+          callerSupplied: resolvedConfig.modelFromParams,
+          agentLabel: config?.displayName ?? step.subagent_type,
+          modelInput: resolvedConfig.modelInput,
+        });
+        if (scopeVerdict.kind === "error") throw new Error(scopeVerdict.message);
+        if (scopeVerdict.kind === "warn") ctx.ui.notify(scopeVerdict.message, "warning");
 
-      const effectiveMaxTurns = normalizeMaxTurns(resolvedConfig.maxTurns ?? getDefaultMaxTurns());
-      const parentModelId = ctx.model?.id;
-      const effectiveModelId = model?.id;
-      const invocation: AgentInvocation = {
-        modelName:
-          effectiveModelId && effectiveModelId !== parentModelId
-            ? (model?.name ?? effectiveModelId).replace(/^Claude\s+/i, "").toLowerCase()
-            : undefined,
-        thinking: resolvedConfig.thinking,
-        maxTurns: normalizeMaxTurns(resolvedConfig.maxTurns),
-        isolated: resolvedConfig.isolated,
-        inheritContext: false,
-        runInBackground: true,
-        isolation: resolvedConfig.isolation,
-        fastMode: resolvedConfig.fastMode,
-      };
-      const { state, callbacks } = createActivityTracker(effectiveMaxTurns);
-      const outputTranscript = config?.outputTranscript ?? getOutputTranscriptDefault();
+        const effectiveMaxTurns = normalizeMaxTurns(
+          resolvedConfig.maxTurns ?? getDefaultMaxTurns(),
+        );
+        const parentModelId = ctx.model?.id;
+        const effectiveModelId = model?.id;
+        const invocation: AgentInvocation = {
+          modelName:
+            effectiveModelId && effectiveModelId !== parentModelId
+              ? (model?.name ?? effectiveModelId).replace(/^Claude\s+/i, "").toLowerCase()
+              : undefined,
+          thinking: resolvedConfig.thinking,
+          maxTurns: normalizeMaxTurns(resolvedConfig.maxTurns),
+          isolated: resolvedConfig.isolated,
+          inheritContext: false,
+          runInBackground: true,
+          isolation: resolvedConfig.isolation,
+          fastMode: resolvedConfig.fastMode,
+        };
+        const { state, callbacks } = createActivityTracker(effectiveMaxTurns);
+        const outputTranscript = config?.outputTranscript ?? getOutputTranscriptDefault();
 
-      let id = "";
-      const originalOnSessionCreated = callbacks.onSessionCreated;
-      callbacks.onSessionCreated = (session: any) => {
-        originalOnSessionCreated(session);
+        let id = "";
+        const originalOnSessionCreated = callbacks.onSessionCreated;
+        callbacks.onSessionCreated = (session: any) => {
+          originalOnSessionCreated(session);
+          const record = manager.getRecord(id);
+          if (record?.outputFile) {
+            record.outputCleanup = streamToOutputFile(session, record.outputFile, id, ctx.cwd);
+          }
+        };
+
+        id = manager.spawn(pi, ctx, step.subagent_type, prompt, {
+          description: `Workflow step: ${step.id}`,
+          model,
+          maxTurns: effectiveMaxTurns,
+          isolated: resolvedConfig.isolated,
+          inheritContext: false,
+          thinkingLevel: resolvedConfig.thinking,
+          fastModeRequested: resolvedConfig.fastMode,
+          isBackground: true,
+          isolation: resolvedConfig.isolation,
+          invocation,
+          signal: workflowContext.signal,
+          workflowId: workflowContext.workflowId,
+          workflowStepId: step.id,
+          rootSessionId: ctx.sessionManager.getSessionId(),
+          ...callbacks,
+        });
+        workflowContext.onAgentStarted(id);
+
         const record = manager.getRecord(id);
-        if (record?.outputFile) {
-          record.outputCleanup = streamToOutputFile(session, record.outputFile, id, ctx.cwd);
+        if (!record) throw new Error(`Workflow step "${step.id}" disappeared after launch.`);
+        record.resultConsumed = !workflowManager.shouldNotifySteps(workflowContext.workflowId);
+        if (outputTranscript) {
+          record.outputFile = createOutputFilePath(ctx.cwd, id, ctx.sessionManager.getSessionId());
+          writeInitialEntry(record.outputFile, id, prompt, ctx.cwd);
         }
-      };
+        agentActivity.set(id, state);
+        fleet.ensureTimer();
+        fleet.update();
+        pi.events.emit("subagents:created", {
+          id,
+          type: step.subagent_type,
+          description: record.description,
+          isBackground: true,
+          workflowId: workflowContext.workflowId,
+          workflowStepId: step.id,
+        });
 
-      id = manager.spawn(pi, ctx, step.subagent_type, prompt, {
-        description: `Workflow step: ${step.id}`,
-        model,
-        maxTurns: effectiveMaxTurns,
-        isolated: resolvedConfig.isolated,
-        inheritContext: false,
-        thinkingLevel: resolvedConfig.thinking,
-        fastModeRequested: resolvedConfig.fastMode,
-        isBackground: true,
-        isolation: resolvedConfig.isolation,
-        invocation,
-        signal: workflowContext.signal,
-        workflowId: workflowContext.workflowId,
-        workflowStepId: step.id,
-        rootSessionId: ctx.sessionManager.getSessionId(),
-        ...callbacks,
-      });
-      workflowContext.onAgentStarted(id);
-
-      const record = manager.getRecord(id);
-      if (!record) throw new Error(`Workflow step "${step.id}" disappeared after launch.`);
-      record.resultConsumed = !workflowManager.shouldNotifySteps(workflowContext.workflowId);
-      if (outputTranscript) {
-        record.outputFile = createOutputFilePath(ctx.cwd, id, ctx.sessionManager.getSessionId());
-        writeInitialEntry(record.outputFile, id, prompt, ctx.cwd);
-      }
-      agentActivity.set(id, state);
-      fleet.ensureTimer();
-      fleet.update();
-      pi.events.emit("subagents:created", {
-        id,
-        type: step.subagent_type,
-        description: record.description,
-        isBackground: true,
-        workflowId: workflowContext.workflowId,
-        workflowStepId: step.id,
-      });
-
-      const abort = () => manager.abort(id);
-      workflowContext.signal.addEventListener("abort", abort, { once: true });
-      if (workflowContext.signal.aborted) abort();
-      try {
-        while (record.status === "queued") {
-          await new Promise<void>((resolve) => setTimeout(resolve, QUEUE_WAIT_POLL_MS));
+        const abort = () => manager.abort(id);
+        workflowContext.signal.addEventListener("abort", abort, { once: true });
+        if (workflowContext.signal.aborted) abort();
+        try {
+          while (record.status === "queued") {
+            await new Promise<void>((resolve) => setTimeout(resolve, QUEUE_WAIT_POLL_MS));
+          }
+          if (record.promise) await record.promise;
+        } finally {
+          workflowContext.signal.removeEventListener("abort", abort);
         }
-        if (record.promise) await record.promise;
-      } finally {
-        workflowContext.signal.removeEventListener("abort", abort);
-      }
 
-      const successful = record.status === "completed" || record.status === "steered";
-      return {
-        status: successful
-          ? "completed"
-          : workflowContext.signal.aborted && record.status === "stopped"
-            ? "cancelled"
-            : "error",
-        output: record.result,
-        error: successful
-          ? undefined
-          : (record.error ?? `Agent ended with status ${record.status}.`),
-        agentId: id,
-      };
-    },
-  });
+        const successful = record.status === "completed" || record.status === "steered";
+        return {
+          status: successful
+            ? "completed"
+            : workflowContext.signal.aborted && record.status === "stopped"
+              ? "cancelled"
+              : "error",
+          output: record.result,
+          error: successful
+            ? undefined
+            : (record.error ?? `Agent ended with status ${record.status}.`),
+          agentId: id,
+        };
+      },
+    };
+  };
 
   pi.registerTool(
     defineTool({
@@ -2794,7 +2964,9 @@ export default function (pi: ExtensionAPI) {
             }
             if (
               waitOutcome !== "timed-out" ||
-              (record.status !== "running" && record.status !== "queued")
+              (record.status !== "running" &&
+                record.status !== "queued" &&
+                record.status !== "waiting_for_reset")
             ) {
               claim = claimSubagentResultRead(record, signal);
               if (
@@ -2837,7 +3009,11 @@ export default function (pi: ExtensionAPI) {
           output += `Cancellation: ${cancellation.cause} — ${cancellation.reason}\n\n`;
         }
 
-        if (record.status === "running" || record.status === "queued") {
+        if (record.status === "waiting_for_reset") {
+          output +=
+            `Agent is paused until its provider usage window resets (${formatResetAt(record.usageLimit?.resetAt)}); ` +
+            "it resumes on the same model and reports through its completion notification.";
+        } else if (record.status === "running" || record.status === "queued") {
           output +=
             waitOutcome === "timed-out"
               ? formatResultReadTimeout(record.id, record.status)

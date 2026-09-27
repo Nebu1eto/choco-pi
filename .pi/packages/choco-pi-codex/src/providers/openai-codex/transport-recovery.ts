@@ -25,11 +25,13 @@ import {
   MAX_STREAM_MAX_RETRIES,
 } from "./constants.ts";
 import {
+  attachCodexUsageLimitDetails,
   createErrorMessage,
   isRetryableRequestStatus,
   isRetryableStreamStatus,
   NonRetryableProviderError,
   parseErrorResponse,
+  resolveCodexUsageLimitDetails,
 } from "./errors.ts";
 import {
   buildSSEHeaders,
@@ -45,6 +47,7 @@ import {
 import { codexDiagnosticsFailure, noThrowCodexDiagnosticsSink } from "./diagnostic-failure.ts";
 import { supportsResponsesLiteModel } from "./responses-lite-model.ts";
 import { applyResponsesLiteWebSocketMetadata } from "./responses-lite.ts";
+import { recordUsageLimitSignal } from "./usage-limit-signal.ts";
 import {
   combineAbortSignals,
   compressRequestBodyZstd,
@@ -250,10 +253,17 @@ async function openCodexSSE<TApi extends Api>(
       await sleep(codexStreamRetryDelayMs(attempt + 1), options?.signal);
       continue;
     }
-    if (info.code) throw createCodexHttpError(message, info.code, response.status);
-    throw isRetryableStreamStatus(response.status)
-      ? new Error(message)
-      : new NonRetryableProviderError(message);
+    if (info.code)
+      throw attachCodexUsageLimitDetails(
+        createCodexHttpError(message, info.code, response.status),
+        info.usageLimit,
+      );
+    throw attachCodexUsageLimitDetails(
+      isRetryableStreamStatus(response.status)
+        ? new Error(message)
+        : new NonRetryableProviderError(message),
+      info.usageLimit,
+    );
   }
   throw lastError ?? new Error("Failed after retries");
 }
@@ -302,6 +312,7 @@ export function createCodexTransportStream<TApi extends Api>(
     const diagnostics = noThrowCodexDiagnosticsSink(deps.getDiagnostics?.());
     let lane: Exclude<CodexDiagnosticsLane, "prewarm"> = "response";
     let diagnosticsFailureRecorded = false;
+    let usageLimitAccountId: string | undefined;
     const recordFailure = <T>(transport: "websocket" | "sse", error: T) => {
       if (!diagnostics) return;
       diagnosticsFailureRecorded = true;
@@ -314,6 +325,7 @@ export function createCodexTransportStream<TApi extends Api>(
       }
 
       const accountId = extractAccountId(apiKey);
+      usageLimitAccountId = accountId;
       const canonicalSessionToken = captureCanonicalSessionToken(effectiveOptions?.sessionId);
       const reconstructedBody = await deps.prepareRequestBody(
         model,
@@ -650,10 +662,17 @@ export function createCodexTransportStream<TApi extends Api>(
     } catch (error) {
       if (!diagnosticsFailureRecorded)
         recordFailure(effectiveTransport === "sse" ? "sse" : "websocket", error);
+      const aborted = !!effectiveOptions?.signal?.aborted;
+      const errorMessage = createErrorMessage(output, error, aborted);
+      const sessionId = effectiveOptions.sessionId;
+      const usageLimit = aborted || !sessionId ? undefined : resolveCodexUsageLimitDetails(error);
+      // Record before emitting so the extension's message_end handler can drain it.
+      if (sessionId && usageLimit)
+        recordUsageLimitSignal(sessionId, { ...usageLimit, accountId: usageLimitAccountId });
       stream.push({
         type: "error",
-        reason: effectiveOptions.signal?.aborted ? "aborted" : "error",
-        error: createErrorMessage(output, error, !!effectiveOptions?.signal?.aborted),
+        reason: aborted ? "aborted" : "error",
+        error: errorMessage,
       });
       stream.end();
     } finally {

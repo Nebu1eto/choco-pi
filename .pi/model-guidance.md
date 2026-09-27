@@ -13,6 +13,8 @@ This file solely owns choco-pi model routing and model-specific behavioral advic
 
 On capacity errors, retry the same model three times with bounded backoff, then use the comparable other provider. On rate limits, move Fable to Opus, another Anthropic model to comparable OpenAI or Kimi K3, and OpenAI to comparable Anthropic or Kimi K3. `splitDeferredTools` is available only for `openai-codex` and `openai-responses`; compact descriptions benefit all providers, but deferred loading must not alter shared tool semantics.
 
+`.pi/model-fallbacks.json` mirrors the tier list above for usage-limit fallback; update both together.
+
 ## Runtime sections
 
 The runtime hook injects `shared` plus only the exact active provider/model section. Models without an exact section receive only the neutral shared rules, never another model's advice.

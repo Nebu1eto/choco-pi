@@ -14,6 +14,8 @@ export function resolveStopOutcome(record: AgentRecord | undefined): StopOutcome
   const unpublished =
     record.resultGeneration !== undefined &&
     record.terminalResultGeneration !== record.resultGeneration;
+  // Parked on a usage limit: no live run, so a stop settles it immediately.
+  if (record.status === "waiting_for_reset") return { kind: "stop", record };
   if (record.status !== "running" && record.status !== "queued") {
     return { kind: unpublished ? "pending" : "already_settled", record };
   }

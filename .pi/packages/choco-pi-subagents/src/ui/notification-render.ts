@@ -3,6 +3,7 @@ import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { renderAgentName } from "../agent-color.ts";
 import type { NotificationDetails } from "../types.ts";
+import { formatResetAt } from "../usage-limit-seam.ts";
 import {
   fgPreservingNestedStyles,
   formatMs,
@@ -72,6 +73,8 @@ function statusPresentation(status: string): StatusPresentation {
       return { icon: "■", iconColor: "warning", outputColor: "warning", title: "Watchdog stopped" };
     case "error":
       return { icon: "✗", iconColor: "error", outputColor: "error", title: "Failed" };
+    case "waiting_for_reset":
+      return { icon: "■", iconColor: "warning", outputColor: "warning", title: "Paused" };
     default:
       return {
         icon: "✗",
@@ -179,6 +182,22 @@ function renderOne(details: NotificationDetails, expanded: boolean, theme: Theme
   ) {
     lines.push(
       theme.fg("error", `      Error: ${compact(details.error ?? "unknown", MAX_RESULT_CELLS)}`),
+    );
+  }
+  if (details.usageLimit) {
+    const limit = details.usageLimit;
+    const usageParts = [
+      limit.provider,
+      limit.kind,
+      `resets ${formatResetAt(limit.resetAt)}`,
+      `suggested ${limit.suggestedModel ?? "none available"}`,
+      limit.status,
+    ];
+    lines.push(
+      `      ${theme.fg("warning", "Usage limit")}${theme.fg("dim", " · ")}${theme.fg(
+        "dim",
+        compact(usageParts.join(" · "), MAX_RESULT_CELLS),
+      )}`,
     );
   }
   for (const line of resultLines(details, expanded)) {

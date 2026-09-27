@@ -477,3 +477,24 @@ Mid-turn Steering and Async Code Mode now gate on `supportsNativeResponsesModel`
 The WebSocket request gate, async exec decoration and call tracking, the
 `openai-codex` input-hook steering gate, and the setting descriptions share it.
 Other models and SSE keep ordinary behavior.
+
+## choco-pi patch: structured Codex usage-limit reset signal
+
+User-facing error text is unchanged. `errors.ts` adds `parseCodexUsageLimitError`
+(`formatCodexUsageLimitError` now returns its `message`), which also exposes
+`{ resetAt, planType }` with `resetAt` in epoch milliseconds (absolute
+`resets_at` / `X-Codex-Primary-Reset-At` first, else now plus
+`resets_in_seconds` / `X-Codex-Primary-Reset-After-Seconds`). `parseErrorResponse`
+returns it as `usageLimit`. The SSE HTTP error path attaches it to the thrown
+error through a `WeakMap` (`attachCodexUsageLimitDetails`), and
+`resolveCodexUsageLimitDetails` also reads WebSocket `error` /
+`response.failed` payloads. On a non-aborted terminal usage-limit failure,
+`transport-recovery.ts` records a per-session signal
+(`providers/openai-codex/usage-limit-signal.ts`, pruned after 10 minutes on write
+and ignored when stale on read, account id included) before it emits the error
+event. The extension's `message_end` handler (`extension/usage-limit-entry.ts`)
+drains it for Codex error messages and appends the `choco-pi-codex-usage-limit`
+custom entry, a structural copy of root `CodexUsageLimitEntry` (no root import).
+`session_shutdown` and `session_before_switch` clear the current session's signal.
+A host test confirms the provider's stream `sessionId` equals
+`ctx.sessionManager.getSessionId()` at `message_end`.

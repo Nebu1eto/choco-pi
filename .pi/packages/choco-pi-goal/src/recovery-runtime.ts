@@ -14,6 +14,8 @@ import type { ThreadGoal } from "./types.ts";
 interface RecoveryRuntimeDeps<TContext> {
   getGoal: () => ThreadGoal | null;
   getRecoveryState: () => GoalRecoveryMachineState;
+  /** Session id that owns the shared usage-limit policy; undefined when the context cannot tell. */
+  getOwnerSessionId: (ctx: TContext) => string | undefined;
   clearContinuationState: () => void;
   pauseGoalForRecovery: (ctx: TContext, recoveryReason: string) => void;
   refreshUi: (ctx: TContext) => void;
@@ -57,8 +59,16 @@ export function createGoalRecoveryRuntime<TContext>(deps: RecoveryRuntimeDeps<TC
       return;
     }
 
-    const wasProviderLimit = isProviderLimitError(message.errorMessage);
-    const action = planRecoveryForAssistantError(deps.getRecoveryState(), message);
+    const wasProviderLimit = isProviderLimitError(message.errorMessage, {
+      ownerSessionId: deps.getOwnerSessionId(ctx),
+      provider: message.provider,
+      modelId: message.model,
+    });
+    const action = planRecoveryForAssistantError(
+      deps.getRecoveryState(),
+      message,
+      wasProviderLimit,
+    );
     applyRecoveryAction(action, ctx);
     const currentGoal = deps.getGoal();
     if (

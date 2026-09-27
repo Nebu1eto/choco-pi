@@ -1,6 +1,7 @@
 import { isContextOverflow } from "@earendil-works/pi-ai";
 
 import { assistantMessageForOverflowCheck } from "./recovery-adapters.ts";
+import { classifyViaSeam } from "./usage-limit-seam.ts";
 
 export const CONTEXT_OVERFLOW_SIGNATURE = "context_overflow";
 
@@ -15,6 +16,8 @@ export interface AssistantErrorMessage {
   role: string;
   stopReason?: string;
   errorMessage?: string;
+  provider?: string;
+  model?: string;
   usage?: {
     input: number;
     output: number;
@@ -70,7 +73,41 @@ export function isContextOverflowError(errorMessage: string | undefined): boolea
   );
 }
 
-export function isProviderLimitError(errorMessage: string | undefined): boolean {
+/** Identifies the usage-limit policy owner and the errored model for the shared classifier seam. */
+export interface ProviderLimitClassifierContext {
+  ownerSessionId: string | undefined;
+  provider: string | undefined;
+  modelId: string | undefined;
+}
+
+/**
+ * Consults the shared usage-limit classifier first when a classifier context is supplied: `quota`
+ * and `billing` are provider limits. A missing seam, a missing owner policy, an unusable context,
+ * or a `transient` classification defers to the package's own provider-limit wording.
+ */
+export function isProviderLimitError(
+  errorMessage: string | undefined,
+  classifierContext?: ProviderLimitClassifierContext,
+): boolean {
+  if (
+    classifierContext?.ownerSessionId &&
+    classifierContext.provider &&
+    classifierContext.modelId &&
+    errorMessage
+  ) {
+    const classification = classifyViaSeam(classifierContext.ownerSessionId, {
+      provider: classifierContext.provider,
+      modelId: classifierContext.modelId,
+      errorMessage,
+    });
+    if (classification?.kind === "quota" || classification?.kind === "billing") {
+      return true;
+    }
+  }
+  return isProviderLimitMessage(errorMessage);
+}
+
+function isProviderLimitMessage(errorMessage: string | undefined): boolean {
   return /GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|usage limit has been reached|available balance|insufficient_quota|out of budget|quota exceeded|billing/i.test(
     errorMessage ?? "",
   );

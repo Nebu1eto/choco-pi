@@ -174,6 +174,7 @@ function incrementOverflowCompactionAttempts(state: GoalRecoveryMachineState): R
 export function planRecoveryForAssistantError(
   state: GoalRecoveryMachineState,
   message: AssistantErrorMessage,
+  providerLimit = false,
 ): RecoveryAction {
   if (isContextOverflowError(message.errorMessage)) {
     return incrementOverflowCompactionAttempts(state);
@@ -182,7 +183,9 @@ export function planRecoveryForAssistantError(
   const signature = failureSignature(message.errorMessage);
   state.counters = countersForFailureSignature(state.counters, signature);
 
-  if (!isRetryableTransientError(message.errorMessage)) {
+  // A classifier-confirmed provider limit is terminal even when its wording (such as a bare 429)
+  // would otherwise read as a retryable transient failure.
+  if (providerLimit || !isRetryableTransientError(message.errorMessage)) {
     return {
       type: "pause",
       reason: `non-retryable provider error (${signature})`,

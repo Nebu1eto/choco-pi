@@ -4,9 +4,10 @@
 
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { SubagentUsageLimit } from "./usage-limit-seam.ts";
 import type { LifetimeUsage } from "./usage.ts";
 
-export type { ThinkingLevel };
+export type { SubagentUsageLimit, ThinkingLevel };
 
 /** Agent type: any string name (built-in defaults or user-defined). */
 export type SubagentType = string;
@@ -171,9 +172,17 @@ export interface AgentRecord {
     | "stopped"
     | "budget_exceeded"
     | "watchdog_stopped"
-    | "error";
+    | "error"
+    /**
+     * Parked after a provider usage limit under the root `auto-resume`
+     * preference. Not terminal: the generation stays unpublished, no pool slot
+     * is held, and a wake-up resumes it on the same model or settles it.
+     */
+    | "waiting_for_reset";
   result?: string;
   error?: string;
+  /** Provider usage-limit details for the current generation chain, if one was hit. */
+  usageLimit?: SubagentUsageLimit;
   toolUses: number;
   startedAt: number;
   completedAt?: number;
@@ -321,6 +330,8 @@ export interface NotificationDetails {
   outputFile?: string;
   error?: string;
   resultPreview: string;
+  /** Provider usage-limit block, when the outcome involved one. */
+  usageLimit?: SubagentUsageLimit;
   /** Additional agents in a group notification. */
   others?: NotificationDetails[];
 }

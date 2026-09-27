@@ -29,3 +29,10 @@ test("formats unknown notification statuses conservatively", () => {
   assert.equal(formatTaskNotificationStatus("future_terminal"), "Unknown status: future_terminal");
   assert.equal(formatTaskNotificationStatus(""), "Unknown status: (empty)");
 });
+
+test("formats a usage-limit park as a non-terminal pause", () => {
+  assert.equal(
+    formatTaskNotificationStatus("waiting_for_reset"),
+    "Paused (provider usage limit; resumes after reset)",
+  );
+});

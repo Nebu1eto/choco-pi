@@ -38,6 +38,13 @@ import { formatCompactionCacheDiagnostic } from "../adapter/compaction/diagnosti
 import type { CodexExtensionRuntime } from "./runtime.ts";
 import type { CodexToolRegistration } from "./tools.ts";
 import type { CodexUiController } from "./ui.ts";
+import { clearUsageLimitSignal } from "../providers/openai-codex/usage-limit-signal.ts";
+import {
+  CODEX_USAGE_LIMIT_ENTRY,
+  type CodexUsageLimitEntry,
+  isCodexErrorAssistantMessage,
+  takeCodexUsageLimitEntry,
+} from "./usage-limit-entry.ts";
 import { withLiveCtx } from "./live-context.ts";
 import { resetRegisteredToolCapture } from "../tools/code-mode/registered-tool-bridge.ts";
 import { isNativeSteerPending } from "../providers/openai-codex/native-steering.ts";
@@ -283,10 +290,20 @@ export function registerCodexEvents(
   pi.on("tool_execution_end", async (event) => {
     if (event.toolName === "exec_command") tracker.recordEnd(event.toolCallId);
   });
+  pi.on("message_end", (event, ctx) => {
+    if (!isCodexErrorAssistantMessage(event.message)) return;
+    // The host passes `sessionManager.getSessionId()` as the provider's stream `sessionId`.
+    const entry = takeCodexUsageLimitEntry(event.message, ctx.sessionManager.getSessionId());
+    if (entry) pi.appendEntry<CodexUsageLimitEntry>(CODEX_USAGE_LIMIT_ENTRY, entry);
+  });
+  pi.on("session_before_switch", (_event, ctx) => {
+    clearUsageLimitSignal(ctx.sessionManager.getSessionId());
+  });
 
   pi.on("session_shutdown", async (_event, ctx) => {
     runtime.cancelCacheKeepalive();
     resetRegisteredToolCapture(ctx);
+    clearUsageLimitSignal(ctx.sessionManager.getSessionId());
     const failures: BoundaryValue[] = [];
     await runShutdownStep(failures, () =>
       runtime.shutdownTransport(ctx.sessionManager.getSessionId()),

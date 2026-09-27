@@ -10,22 +10,31 @@
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { resumeAgent, runAgent, type MainSessionFork, type ToolActivity } from "./agent-runner.ts";
+import { unregisterChildSessionId } from "./child-context.ts";
 import { cleanupChildSessionOwner } from "./child-session-cleanup.ts";
 import { setSessionFastMode, snapshotFastMode } from "./fast-mode-bridge.ts";
 import { normalizeMaxConcurrent, schedulingMaxConcurrent } from "./limits.ts";
 import { assignHandle, handleBase } from "./mention.ts";
+import type { ModelEntry } from "./model-resolver.ts";
+import { checkModelScope } from "./model-scope.ts";
+import { ResumeModelError } from "./resume-model-error.ts";
 import {
   classifyTerminalFailure,
+  clearUsageLimitClosure,
+  closeUntil,
   isAvailable,
   ProviderUnavailableError,
+  providerUnavailableMessage,
   recordFailure,
   recordSuccess,
   retryAfterMsFromFailure,
+  usageLimitClosure,
+  type UsageLimitClosure,
 } from "./provider-health.ts";
 import {
   beginResultGeneration,
@@ -44,9 +53,25 @@ import type {
   AgentTombstone,
   IsolationMode,
   MentionResolution,
+  SubagentUsageLimit,
   SubagentType,
   ThinkingLevel,
 } from "./types.ts";
+import {
+  accountIdWithPolicy,
+  classifyWithPolicy,
+  closeProviderWithPolicy,
+  corroborateWithPolicy,
+  describeUsageLimit,
+  isClosedWithPolicy,
+  latestCodexUsageLimitEntry,
+  pickFallbackWithPolicy,
+  preferenceFromPolicy,
+  readUsageLimitPolicy,
+  type Corroboration,
+  type UsageLimitClassification,
+  type UsageLimitPolicy,
+} from "./usage-limit-seam.ts";
 import { addUsage } from "./usage.ts";
 import {
   adoptHookWorktree,
@@ -65,9 +90,194 @@ export type CompactionInfo = { reason: "manual" | "threshold" | "overflow"; toke
 export interface AgentManagerRunner {
   runAgent: typeof runAgent;
   resumeAgent: typeof resumeAgent;
+  /**
+   * Apply a caller-selected model to an idle child session. Defaults to
+   * `session.setModel(model)`; tests inject delayed or failing authentication.
+   */
+  setSessionModel?: (session: AgentSession, model: Model<Api>) => Promise<void>;
 }
 
 const DEFAULT_AGENT_MANAGER_RUNNER: AgentManagerRunner = { runAgent, resumeAgent };
+
+/** Margin after a reported reset before the wake-up re-checks readiness. */
+const USAGE_LIMIT_RESET_MARGIN_MS = 30_000;
+/** Longest single wait; a later reset re-arms after re-checking readiness. */
+const USAGE_LIMIT_MAX_WAIT_MS = 24 * 60 * 60_000;
+/** Poll cadence and bound when the provider gives no reset estimate. */
+const USAGE_LIMIT_POLL_MS = 5 * 60_000;
+const USAGE_LIMIT_MAX_POLL_MS = 6 * 60 * 60_000;
+/** Closure applied when the provider gives no reset estimate. */
+const USAGE_LIMIT_DEFAULT_CLOSE_MS = 30 * 60_000;
+
+/** Continuation prompt for a child resumed after its usage window reset. */
+export const USAGE_LIMIT_RESUME_PROMPT =
+  "The provider usage window has reset. Continue the previous task from where it stopped; do not repeat tool calls that already completed.";
+
+/** Registry surface read by the usage-limit suggestion and resume-model paths. */
+interface UsageModelRegistry {
+  getAll(): ModelEntry[];
+  getAvailable?(): ModelEntry[];
+  find(provider: string, modelId: string): Model<Api> | undefined;
+}
+
+type ModelRef = { provider: string; id: string };
+
+/** Values snapshotted at spawn so settle-time decisions never touch a stale ctx. */
+interface UsageLimitScope {
+  /** Root session id whose usage-limit policy governs this record. */
+  owner?: string;
+  cwd: string;
+  modelRegistry?: UsageModelRegistry;
+  /** The parent's scoped models as `provider/id`; empty means unrestricted. */
+  scoped: string[];
+}
+
+interface UsageLimitDecision {
+  usageLimit: SubagentUsageLimit;
+  classification: UsageLimitClassification;
+  accountIds: string[];
+  park: boolean;
+}
+
+interface UsageWait {
+  generation: number;
+  owner: string;
+  providerKey: string;
+  /** Every account the limit closed; all of them reopen on a confirmed reset. */
+  accountIds: string[];
+  classification: UsageLimitClassification;
+  resumeOptions: ResumeOptions;
+  /**
+   * Steering accepted while parked, carried into the post-reset prompt. Kept
+   * here across re-parks and cleared only when a continuation actually starts,
+   * so each message is delivered exactly once.
+   */
+  continuation: string[];
+  /** Set once the wait falls back to polling (no usable reset estimate). */
+  pollUntil?: number;
+  timer?: ReturnType<typeof setTimeout>;
+  parkedPromise: Promise<string>;
+  release(value: string | PromiseLike<string>): void;
+}
+
+/** Raised by `resume(..., { model })` before any run state changes. */
+export { ResumeModelError };
+
+export type UsageLimitListener = (record: AgentRecord) => void;
+
+function modelRefOf(model: ModelRef | undefined): ModelRef | undefined {
+  return model === undefined ? undefined : { provider: model.provider, id: model.id };
+}
+
+function scopedModelKeys(ctx: ExtensionContext): string[] {
+  try {
+    // Older hosts and test fixtures omit scopedModels; widen before reading.
+    const scoped: ExtensionContext["scopedModels"] | undefined = ctx.scopedModels;
+    if (scoped === undefined) return [];
+    return scoped.map((entry) => `${entry.model.provider}/${entry.model.id}`);
+  } catch {
+    return [];
+  }
+}
+
+function withUsageLimitNote(failure: string, usageLimit: SubagentUsageLimit): string {
+  return `${failure}\n\nUsage limit: ${describeUsageLimit(usageLimit)}.`;
+}
+
+/** Parking is limited to records whose resume path preserves every invariant. */
+function canParkForReset(record: AgentRecord): boolean {
+  // Workflow steps and /btw answers have single-shot aggregate delivery, so
+  // both are reported instead. Worktree runs park; their worktree is kept until
+  // the final settle (see `deferredWorktrees`).
+  return record.workflowId === undefined && !record.sideConversation;
+}
+
+/**
+ * `confirmed`: exhaustion confirmed, parking allowed. `unconfirmed`: an explicit
+ * provider limit that corroboration could not confirm; reported and closed, never
+ * parked. `transient`: not a usage limit (capacity reported, or an inferred limit
+ * without confirmation); handled as an ordinary transient failure. A billing
+ * failure is always reported, whatever the evidence: it never resets on its own
+ * and the host already refuses to retry it.
+ */
+type UsageLimitVerdict = "confirmed" | "unconfirmed" | "transient";
+
+function corroborationVerdict(
+  initial: UsageLimitClassification,
+  corroboration: Corroboration | undefined,
+): UsageLimitVerdict {
+  if (initial.kind === "billing") return "unconfirmed";
+  const classification = corroboration?.classification ?? initial;
+  if (classification.kind === "billing") return "unconfirmed";
+  if (classification.kind === "transient") return "transient";
+  const evidence = corroboration?.evidence;
+  if (evidence === "confirmed") return "confirmed";
+  if (evidence === "capacity") return "transient";
+  // Policies without the evidence field: `ready` means capacity is available.
+  if (evidence === undefined && corroboration?.ready === true) return "transient";
+  // A bare 429 is only a usage limit when exhaustion is confirmed.
+  if (classification.confidence === "inferred") return "transient";
+  // Explicit provider limit text, answered "not ready" by a policy that predates
+  // the evidence field: the only confirmation such a policy can give.
+  if (evidence === undefined && corroboration !== undefined) return "confirmed";
+  return "unconfirmed";
+}
+
+function accountKey(owner: string, providerKey: string): string {
+  return `${owner}\u0000${providerKey}`;
+}
+
+/**
+ * Apply the Codex provider's structured limit entry from the failing child's
+ * own branch. The entry is appended on that session's errored `message_end`,
+ * so the root branch never carries it for a child failure.
+ */
+function withCodexUsageEntry(
+  classification: UsageLimitClassification,
+  model: ModelRef,
+  session: AgentSession | undefined,
+  failedAt: number,
+): UsageLimitClassification {
+  if (session === undefined || model.provider.toLowerCase() !== "openai-codex") {
+    return classification;
+  }
+  let entry: ReturnType<typeof latestCodexUsageLimitEntry>;
+  try {
+    entry = latestCodexUsageLimitEntry(session.sessionManager.getBranch(), failedAt);
+  } catch {
+    return classification;
+  }
+  if (entry === undefined) return classification;
+  const upgraded: UsageLimitClassification = { ...classification, confidence: "structured" };
+  if (entry.resetAt !== undefined) upgraded.resetAt = entry.resetAt;
+  if (entry.accountId !== undefined) upgraded.accountId = entry.accountId;
+  return upgraded;
+}
+
+/**
+ * The failing child's own session id, so the owner's policy never enriches a
+ * child classification from the root branch. A child without a readable
+ * session id gets a record-scoped marker that can never equal a root session.
+ */
+function childSessionId(record: AgentRecord, session: AgentSession | undefined): string {
+  let sessionId: string | undefined;
+  try {
+    sessionId = session?.sessionManager?.getSessionId?.();
+  } catch {
+    sessionId = undefined;
+  }
+  return sessionId !== undefined && sessionId !== "" ? sessionId : `subagent:${record.id}`;
+}
+
+function withSessionId(
+  classification: UsageLimitClassification,
+  sessionId: string | undefined,
+): UsageLimitClassification {
+  return sessionId === undefined ? classification : { ...classification, sessionId };
+}
+
+/** Terminal handling for a queued entry that never started (stop, shutdown, drop). */
+type QueuedFinalizer = (notify: boolean) => void;
 
 async function removeHookWorktree(pi: ExtensionAPI, path: string): Promise<void> {
   let claimed = false;
@@ -278,6 +488,13 @@ interface SpawnOptions {
 interface ResumeOptions {
   /** Rebind the accepted record's alias for this resumed run. */
   name?: string;
+  /**
+   * Continue on another model (`provider/id`), e.g. after a usage limit.
+   * Validated against the registry, scope, and provider closures, then applied
+   * with `session.setModel`; failures throw `ResumeModelError` before any run
+   * state changes.
+   */
+  model?: string;
   fastModeRequested?: boolean;
   /**
    * Run the resumed turn detached in the background: return immediately with
@@ -328,9 +545,36 @@ export class AgentManager {
   private tombstones = new Map<string, AgentTombstone>();
 
   /** Queue of background agents waiting to start. */
-  private queue: { id: string; providerKey: string; start: () => void }[] = [];
+  private queue: {
+    id: string;
+    providerKey: string;
+    start: () => void;
+    /**
+     * Post-reset continuation only: owns the parked task's promise and final
+     * notification while queued, so every queued terminal path must call it.
+     */
+    finalize?: QueuedFinalizer;
+    /**
+     * Post-reset continuation only: return the task to `waiting_for_reset`
+     * when its provider account was closed again by a usage limit while queued.
+     */
+    repark?: () => void;
+  }[] = [];
   /** Number of currently running background agents. */
   private runningBackground = 0;
+  /** Usage-limit inputs snapshotted per record at spawn. */
+  private usageScopes = new Map<string, UsageLimitScope>();
+  /** Records parked in `waiting_for_reset`, keyed by id. */
+  private usageWaits = new Map<string, UsageWait>();
+  /** Generation of a record's post-reset continuation run. */
+  private wakeRuns = new Map<string, number>();
+  /** Account id last classified per owner+provider; availability checks use it. */
+  private classifiedAccounts = new Map<string, string>();
+  /** Records whose resume() holds exclusive ownership across its async model switch. */
+  private resumeReservations = new Set<string>();
+  /** Worktree cleanup deferred by a parked spawn; runs on the task's final settle. */
+  private deferredWorktrees = new Map<string, () => void>();
+  private usageLimitListener?: UsageLimitListener;
 
   constructor(
     onComplete?: OnAgentComplete,
@@ -365,8 +609,762 @@ export class AgentManager {
     return schedulingMaxConcurrent(this.maxConcurrent);
   }
 
-  isProviderAvailable(providerKey: string): boolean {
-    return isAvailable(providerKey.toLowerCase());
+  isProviderAvailable(providerKey: string, owner?: string): boolean {
+    return this.providerBlock(providerKey, owner) === undefined;
+  }
+
+  /** Refusal text for `providerKey` under `owner`, with any usage-limit details. */
+  providerUnavailableMessage(providerKey: string, owner?: string): string {
+    const key = providerKey.toLowerCase();
+    return providerUnavailableMessage(key, this.providerBlock(key, owner)?.closure);
+  }
+
+  private unavailableError(providerKey: string, owner: string | undefined): Error {
+    const key = providerKey.toLowerCase();
+    return new ProviderUnavailableError(key, this.providerBlock(key, owner)?.closure);
+  }
+
+  /**
+   * Account key for `owner`'s closures on `providerKey`: the owner policy's
+   * current account when it answers, else the account last classified for this
+   * owner and provider, else `"default"`. Availability checks and closure
+   * writes both use it, so a root closure and a manager closure share a key.
+   */
+  private accountFor(
+    owner: string,
+    providerKey: string,
+    policy: UsageLimitPolicy | undefined = readUsageLimitPolicy(owner),
+  ): string {
+    const key = providerKey.toLowerCase();
+    const fromPolicy = policy === undefined ? undefined : accountIdWithPolicy(policy, key);
+    return fromPolicy ?? this.classifiedAccounts.get(accountKey(owner, key)) ?? "default";
+  }
+
+  /**
+   * Why `providerKey` is closed for `owner`, or undefined when it is open. The
+   * owner's usage-limit closures (policy first, then the manager's own record of
+   * them, which carries the reset time and suggestion) are consulted before the
+   * process-global transient registry. Other owners and accounts never block.
+   * `usage` is true when a usage-limit closure (not a transient one) blocks.
+   */
+  private providerBlock(
+    providerKey: string,
+    owner: string | undefined,
+  ): { closure?: UsageLimitClosure; usage: boolean } | undefined {
+    const key = providerKey.toLowerCase();
+    if (owner !== undefined) {
+      const policy = readUsageLimitPolicy(owner);
+      const accountId = this.accountFor(owner, key, policy);
+      const closure = usageLimitClosure({ owner, providerKey: key, accountId });
+      if (policy !== undefined && isClosedWithPolicy(policy, key, accountId)) {
+        return { closure, usage: true };
+      }
+      if (closure !== undefined) return { closure, usage: true };
+    }
+    return isAvailable(key) ? undefined : { usage: false };
+  }
+
+  /** Observe usage-limit transitions (reported, parked, resumed, exhausted). */
+  setUsageLimitListener(listener: UsageLimitListener | undefined): void {
+    this.usageLimitListener = listener;
+  }
+
+  private notifyUsageLimit(record: AgentRecord): void {
+    if (this.disposed || record.usageLimit === undefined) return;
+    try {
+      this.usageLimitListener?.(record);
+    } catch {
+      /* ignore observer errors */
+    }
+  }
+
+  private captureUsageScope(ctx: ExtensionContext, options: SpawnOptions): UsageLimitScope {
+    const parent =
+      options.parentAgentId === undefined ? undefined : this.usageScopes.get(options.parentAgentId);
+    let owner = options.rootSessionId ?? parent?.owner;
+    if (owner === undefined) {
+      try {
+        owner = ctx.sessionManager?.getSessionId?.();
+      } catch {
+        owner = undefined;
+      }
+    }
+    const scoped = scopedModelKeys(ctx);
+    // Widened read: test fixtures and RPC contexts may omit the registry.
+    const modelRegistry: UsageModelRegistry | undefined = ctx.modelRegistry;
+    return {
+      owner,
+      cwd: ctx.cwd ?? parent?.cwd ?? process.cwd(),
+      modelRegistry: modelRegistry ?? parent?.modelRegistry,
+      scoped: scoped.length > 0 ? scoped : (parent?.scoped ?? []),
+    };
+  }
+
+  /**
+   * Classify a terminal failure through the owner's usage-limit policy. Only
+   * `quota`/`billing` results count, and only a confirmed exhaustion parks
+   * (`corroborationVerdict`). Closures are keyed by owner, provider and
+   * account. `eligible` is rechecked after every await, before any closure
+   * read or write. Never switches the child's model.
+   */
+  private async evaluateUsageLimit(
+    record: AgentRecord,
+    failure: string,
+    providerKey: string,
+    model: ModelRef,
+    session: AgentSession | undefined,
+    allowPark: boolean,
+    reportStatus: "reported" | "exhausted",
+    eligible: () => boolean,
+  ): Promise<UsageLimitDecision | undefined> {
+    const failedAt = Date.now();
+    const scope = this.usageScopes.get(record.id);
+    const owner = scope?.owner;
+    const policy = readUsageLimitPolicy(owner);
+    if (scope === undefined || owner === undefined || policy === undefined) return undefined;
+    const classified = classifyWithPolicy(policy, {
+      provider: model.provider,
+      modelId: model.id,
+      errorMessage: failure,
+    });
+    if (classified === undefined || classified.kind === "transient") return undefined;
+    const sessionId = childSessionId(record, session);
+    const initial = withSessionId(
+      withCodexUsageEntry(classified, model, session, failedAt),
+      sessionId,
+    );
+    const preference = await preferenceFromPolicy(policy);
+    if (!eligible()) return undefined;
+    const corroboration = await corroborateWithPolicy(policy, initial);
+    // A cancelled or superseded evaluation reads and writes no closure.
+    if (!eligible()) return undefined;
+    const verdict = corroborationVerdict(initial, corroboration);
+    if (verdict === "transient") return undefined;
+    // The child's session stays attached whatever the policy answered.
+    const corroborated = withSessionId(corroboration?.classification ?? initial, sessionId);
+    // Billing stays billing whatever corroboration answered: reported, never parked.
+    const classification: UsageLimitClassification =
+      initial.kind === "billing" ? { ...corroborated, kind: "billing" } : corroborated;
+
+    const limitedAccount = classification.accountId;
+    if (limitedAccount !== undefined) {
+      this.classifiedAccounts.set(accountKey(owner, providerKey.toLowerCase()), limitedAccount);
+    }
+    // The key availability checks use; the limited account is closed too when
+    // the policy's current account differs (as the root controller does).
+    const accountId = this.accountFor(owner, providerKey, policy);
+    const accountIds =
+      limitedAccount === undefined || limitedAccount === accountId
+        ? [accountId]
+        : [accountId, limitedAccount];
+    const now = Date.now();
+    const resetAt =
+      classification.resetAt !== undefined && Number.isFinite(classification.resetAt)
+        ? classification.resetAt
+        : undefined;
+    const requestedUntil =
+      resetAt !== undefined && resetAt > now ? resetAt : now + USAGE_LIMIT_DEFAULT_CLOSE_MS;
+    for (const account of accountIds) {
+      closeProviderWithPolicy(
+        policy,
+        providerKey,
+        account,
+        Math.min(requestedUntil, now + USAGE_LIMIT_MAX_WAIT_MS),
+      );
+    }
+    const suggestedModel = this.suggestFallback(policy, scope, owner, model, record);
+    for (const account of accountIds) {
+      closeUntil({ owner, providerKey, accountId: account }, requestedUntil, { suggestedModel });
+    }
+    const park =
+      allowPark &&
+      preference === "auto-resume" &&
+      classification.kind === "quota" &&
+      verdict === "confirmed";
+    return {
+      classification,
+      accountIds,
+      park,
+      usageLimit: {
+        provider: model.provider,
+        accountId: limitedAccount ?? accountId,
+        kind: classification.kind,
+        resetAt,
+        suggestedModel,
+        status: park ? "waiting_for_reset" : reportStatus,
+      },
+    };
+  }
+
+  /** Policy suggestion re-validated against availability and the parent's scope. */
+  private suggestFallback(
+    policy: UsageLimitPolicy,
+    scope: UsageLimitScope,
+    owner: string,
+    current: ModelRef,
+    record: AgentRecord,
+  ): string | undefined {
+    const registry = scope.modelRegistry;
+    let available: ModelRef[] = [];
+    try {
+      available = (registry?.getAvailable?.() ?? []).map((entry) => ({
+        provider: entry.provider,
+        id: entry.id,
+      }));
+    } catch {
+      available = [];
+    }
+    const pick = pickFallbackWithPolicy(policy, current, {
+      available,
+      scoped: scope.scoped,
+      isClosed: (providerKey, accountId) => {
+        const key = providerKey.toLowerCase();
+        return (
+          isClosedWithPolicy(policy, key, accountId) ||
+          usageLimitClosure({ owner, providerKey: key, accountId }) !== undefined ||
+          !isAvailable(key)
+        );
+      },
+    });
+    if (pick === undefined) return undefined;
+    const key = `${pick.provider}/${pick.id}`;
+    const lowered = key.toLowerCase();
+    if (lowered === `${current.provider}/${current.id}`.toLowerCase()) return undefined;
+    if (!available.some((entry) => `${entry.provider}/${entry.id}`.toLowerCase() === lowered)) {
+      return undefined;
+    }
+    if (scope.scoped.length > 0 && !scope.scoped.some((entry) => entry.toLowerCase() === lowered)) {
+      return undefined;
+    }
+    if (registry !== undefined) {
+      const verdict = checkModelScope({
+        model: pick,
+        cwd: scope.cwd,
+        modelRegistry: registry,
+        callerSupplied: true,
+        agentLabel: record.type,
+        modelInput: key,
+      });
+      if (verdict.kind === "error") return undefined;
+    }
+    return key;
+  }
+
+  /** Evaluate only while this generation may still settle normally. */
+  private async evaluateRunUsageLimit(
+    record: AgentRecord,
+    generation: number,
+    runBudget: RunBudgetState,
+    failure: string | undefined,
+    providerKey: string,
+    model: ModelRef | undefined,
+    session: AgentSession | undefined,
+    allowPark: boolean,
+    reportStatus: "reported" | "exhausted",
+  ): Promise<UsageLimitDecision | undefined> {
+    const eligible = () =>
+      !this.disposed &&
+      record.resultGeneration === generation &&
+      record.status !== "stopped" &&
+      record.cancellation?.generation !== generation &&
+      runBudget.forcedStatus === undefined;
+    if (failure === undefined || model === undefined || !eligible()) return undefined;
+    let decision: UsageLimitDecision | undefined;
+    try {
+      decision = await this.evaluateUsageLimit(
+        record,
+        failure,
+        providerKey,
+        model,
+        session,
+        allowPark,
+        reportStatus,
+        eligible,
+      );
+    } catch {
+      decision = undefined;
+    }
+    return decision !== undefined && eligible() ? decision : undefined;
+  }
+
+  /**
+   * Park a failed run: the generation stays unpublished and holds no pool slot.
+   * Callers release their slot, detach signals, and mark their run settled.
+   */
+  private parkForReset(
+    record: AgentRecord,
+    generation: number,
+    decision: UsageLimitDecision,
+    providerKey: string,
+    resumeOptions: ResumeOptions,
+  ): void {
+    const owner = this.usageScopes.get(record.id)?.owner ?? "";
+    let release: (value: string | PromiseLike<string>) => void = () => undefined;
+    const parkedPromise = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    record.status = "waiting_for_reset";
+    // A parked foreground child has already answered its caller; from here it
+    // behaves as background and reports through the completion notification.
+    record.isBackground = true;
+    record.usageLimit = { ...decision.usageLimit, status: "waiting_for_reset" };
+    record.promise = parkedPromise;
+    const wait: UsageWait = {
+      generation,
+      owner,
+      providerKey,
+      accountIds: decision.accountIds,
+      classification: decision.classification,
+      resumeOptions,
+      continuation: [],
+      parkedPromise,
+      release,
+    };
+    this.usageWaits.set(record.id, wait);
+    this.notifyUsageLimit(record);
+    this.armUsageWake(record, wait, decision.usageLimit.resetAt);
+  }
+
+  private isCurrentWait(record: AgentRecord | undefined, wait: UsageWait): record is AgentRecord {
+    return (
+      !this.disposed &&
+      record !== undefined &&
+      this.usageWaits.get(record.id) === wait &&
+      record.status === "waiting_for_reset" &&
+      record.resultGeneration === wait.generation
+    );
+  }
+
+  private armUsageWake(record: AgentRecord, wait: UsageWait, resetAt: number | undefined): void {
+    const now = Date.now();
+    let delay: number;
+    if (resetAt !== undefined && resetAt + USAGE_LIMIT_RESET_MARGIN_MS > now) {
+      wait.pollUntil = undefined;
+      delay = Math.min(resetAt + USAGE_LIMIT_RESET_MARGIN_MS, now + USAGE_LIMIT_MAX_WAIT_MS) - now;
+    } else {
+      wait.pollUntil ??= now + USAGE_LIMIT_MAX_POLL_MS;
+      if (now >= wait.pollUntil) {
+        this.settleParked(record, wait, {
+          status: "error",
+          usageStatus: "exhausted",
+          reason: `${record.error ?? "Provider usage limit."}\n\nAuto-resume gave up: no usage-window reset was confirmed within ${USAGE_LIMIT_MAX_POLL_MS / 3_600_000} h.`,
+          notify: true,
+        });
+        return;
+      }
+      delay = Math.min(USAGE_LIMIT_POLL_MS, wait.pollUntil - now);
+    }
+    if (wait.timer !== undefined) clearTimeout(wait.timer);
+    wait.timer = setTimeout(() => {
+      wait.timer = undefined;
+      void this.wakeUsageLimited(record.id, wait);
+    }, delay);
+    wait.timer.unref?.();
+  }
+
+  private async wakeUsageLimited(id: string, wait: UsageWait): Promise<void> {
+    const record = this.agents.get(id);
+    if (!this.isCurrentWait(record, wait)) return;
+    const policy = readUsageLimitPolicy(wait.owner);
+    if (policy === undefined) {
+      this.settleParked(record, wait, {
+        status: "error",
+        usageStatus: "exhausted",
+        reason: `${record.error ?? "Provider usage limit."}\n\nAuto-resume gave up: the usage-limit policy is no longer available to confirm the reset.`,
+        notify: true,
+      });
+      return;
+    }
+    const result = await corroborateWithPolicy(policy, wait.classification);
+    const current = this.agents.get(id);
+    if (current !== record || !this.isCurrentWait(current, wait)) return;
+    if (result?.ready === true) {
+      this.resumeAfterReset(record, wait);
+      return;
+    }
+    let nextReset: number | undefined;
+    if (result !== undefined && result.classification.kind !== "transient") {
+      wait.classification = withSessionId(result.classification, wait.classification.sessionId);
+      nextReset = result.classification.resetAt;
+      if (record.usageLimit !== undefined) {
+        record.usageLimit = { ...record.usageLimit, resetAt: nextReset };
+      }
+    }
+    this.armUsageWake(record, wait, nextReset);
+  }
+
+  /** Resume the parked record on the same model as a new background generation. */
+  private resumeAfterReset(record: AgentRecord, wait: UsageWait): void {
+    this.usageWaits.delete(record.id);
+    // The owner's policy confirmed the reset: reopen every account the limit closed.
+    const policy = readUsageLimitPolicy(wait.owner);
+    for (const accountId of wait.accountIds) {
+      clearUsageLimitClosure({ owner: wait.owner, providerKey: wait.providerKey, accountId });
+      if (policy !== undefined) {
+        closeProviderWithPolicy(policy, wait.providerKey, accountId, Date.now());
+      }
+    }
+    // Steering accepted since the last park joins what an earlier, re-parked
+    // continuation carried; the wait holds it until a dispatch starts.
+    wait.continuation = [...wait.continuation, ...(record.pendingSteers ?? [])];
+    record.pendingSteers = undefined;
+    const prompt = [USAGE_LIMIT_RESUME_PROMPT, ...wait.continuation].join("\n\n");
+    if (record.usageLimit !== undefined) {
+      record.usageLimit = { ...record.usageLimit, status: "resumed" };
+    }
+    const generation = (record.resultGeneration ?? 1) + 1;
+    this.wakeRuns.set(record.id, generation);
+    // Settlement of the parked promise stays with this wait until the
+    // continuation actually starts; a queued continuation that never starts
+    // (stop, shutdown, session switch) settles it through `finalize`.
+    this.queueBackgroundResume(record.id, record, prompt, undefined, wait.resumeOptions, {
+      onRunStarted: (promise) => {
+        // Delivered in this run's prompt; never again.
+        wait.continuation = [];
+        if (promise !== wait.parkedPromise) wait.release(promise);
+      },
+      finalize: (notify) => this.settleDroppedWake(record, wait, generation, notify),
+      repark: () => this.reparkQueuedWake(record, wait, generation),
+    });
+    // After the status leaves waiting_for_reset, so observers never mistake
+    // the resume for a second park.
+    this.notifyUsageLimit(record);
+  }
+
+  /**
+   * A queued post-reset continuation whose provider account was closed again
+   * by a usage limit before a slot freed: return it to `waiting_for_reset` on
+   * the new closure's reset, keeping the parked promise and its finalizer.
+   */
+  private reparkQueuedWake(record: AgentRecord, wait: UsageWait, generation: number): void {
+    if (this.wakeRuns.get(record.id) === generation) this.wakeRuns.delete(record.id);
+    const key = wait.providerKey.toLowerCase();
+    const block = this.providerBlock(key, wait.owner);
+    const resetAt = block?.closure?.until;
+    // The account this re-closure is keyed under reopens with the others.
+    const account = this.accountFor(wait.owner, key);
+    if (!wait.accountIds.includes(account)) wait.accountIds.push(account);
+    wait.generation = record.resultGeneration ?? generation;
+    wait.pollUntil = undefined;
+    if (resetAt !== undefined) wait.classification = { ...wait.classification, resetAt };
+    record.status = "waiting_for_reset";
+    record.error = providerUnavailableMessage(key, block?.closure);
+    record.usageLimit =
+      record.usageLimit === undefined
+        ? undefined
+        : {
+            ...record.usageLimit,
+            resetAt: resetAt ?? record.usageLimit.resetAt,
+            status: "waiting_for_reset",
+          };
+    this.usageWaits.set(record.id, wait);
+    this.notifyUsageLimit(record);
+    this.armUsageWake(record, wait, resetAt);
+  }
+
+  /**
+   * Final outcome of a post-reset continuation that was queued and never
+   * started. The caller has already set the terminal status and published it.
+   */
+  private settleDroppedWake(
+    record: AgentRecord,
+    wait: UsageWait,
+    generation: number,
+    notify: boolean,
+  ): void {
+    if (this.wakeRuns.get(record.id) === generation) this.wakeRuns.delete(record.id);
+    record.error ??= record.cancellation?.reason;
+    if (record.usageLimit !== undefined) {
+      record.usageLimit = { ...record.usageLimit, status: "exhausted" };
+    }
+    this.finishDeferredWorktree(record);
+    wait.release(record.result ?? "");
+    if (!notify || this.disposed) return;
+    this.notifyUsageLimit(record);
+    try {
+      this.onComplete?.(record);
+    } catch {
+      /* ignore completion side-effect errors */
+    }
+  }
+
+  /** Run the worktree cleanup a parked spawn deferred, exactly once. */
+  private finishDeferredWorktree(record: AgentRecord): void {
+    const finish = this.deferredWorktrees.get(record.id);
+    if (finish === undefined) return;
+    this.deferredWorktrees.delete(record.id);
+    try {
+      finish();
+    } catch {
+      /* ignore cleanup errors, like the spawn settle path */
+    }
+  }
+
+  /**
+   * Worktree cleanup for a spawn's final outcome. Synchronous so it can run
+   * before the result is published; hook-managed removal completes in the
+   * background, as it reports no branch.
+   */
+  private cleanupRecordWorktree(
+    pi: ExtensionAPI,
+    record: AgentRecord,
+    baseCwd: string,
+    customCwd: string | undefined,
+    description: string,
+  ): void {
+    const worktree = record.worktree;
+    if (worktree === undefined) return;
+    if (worktree.hookManaged === true) {
+      record.worktreeResult = { hasChanges: false };
+      void removeHookWorktree(pi, worktree.path).catch(() => undefined);
+      return;
+    }
+    const wtResult = cleanupWorktree(baseCwd, worktree, description);
+    record.worktreeResult = wtResult;
+    if (wtResult.hasChanges && wtResult.branch) {
+      const repoNote = customCwd === undefined ? "" : ` in \`${baseCwd}\``;
+      record.result =
+        (record.result ?? "") +
+        `\n\n---\nChanges saved to branch \`${wtResult.branch}\`${repoNote}. Merge with: \`git merge ${wtResult.branch}\`${customCwd === undefined ? "" : ` (run in \`${baseCwd}\`)`}`;
+    }
+  }
+
+  /** Settle a parked record without running it again. */
+  private settleParked(
+    record: AgentRecord,
+    wait: UsageWait | undefined,
+    outcome: {
+      status: "stopped" | "error";
+      usageStatus?: SubagentUsageLimit["status"];
+      reason: string;
+      cause?: CancellationCause;
+      notify: boolean;
+    },
+  ): void {
+    if (wait !== undefined) {
+      if (wait.timer !== undefined) clearTimeout(wait.timer);
+      wait.timer = undefined;
+    }
+    this.usageWaits.delete(record.id);
+    const generation = record.resultGeneration ?? 1;
+    record.status = outcome.status;
+    if (outcome.cause !== undefined) {
+      record.cancellation = {
+        generation,
+        cause: outcome.cause,
+        reason: outcome.reason,
+        requestedAt: Date.now(),
+      };
+    }
+    record.error = outcome.reason;
+    record.pendingSteers = undefined;
+    if (record.usageLimit !== undefined && outcome.usageStatus !== undefined) {
+      record.usageLimit = { ...record.usageLimit, status: outcome.usageStatus };
+    }
+    record.completedAt = Date.now();
+    if (record.outputCleanup) {
+      try {
+        record.outputCleanup();
+      } catch {
+        /* ignore */
+      }
+      record.outputCleanup = undefined;
+    }
+    this.finishDeferredWorktree(record);
+    publishTerminalResult(record);
+    wait?.release(record.result ?? "");
+    if (!outcome.notify || this.disposed) return;
+    this.notifyUsageLimit(record);
+    try {
+      this.onComplete?.(record);
+    } catch {
+      /* ignore completion side-effect errors */
+    }
+  }
+
+  /**
+   * Cancel every usage-limit wait (session switch), including post-reset
+   * continuations still queued. They settle as `stopped` (usage status
+   * `exhausted`) without a notification into the next session. Returns the count.
+   */
+  cancelUsageLimitWaits(reason: string): number {
+    let count = 0;
+    // settleParked never removes records, so iterating the live map is safe.
+    for (const record of this.agents.values()) {
+      if (record.status !== "waiting_for_reset") continue;
+      this.settleParked(record, this.usageWaits.get(record.id), {
+        status: "stopped",
+        usageStatus: "exhausted",
+        reason,
+        cause: "shutdown",
+        notify: false,
+      });
+      count++;
+    }
+    const continuations = this.queue.filter((entry) => entry.finalize !== undefined);
+    this.queue = this.queue.filter((entry) => entry.finalize === undefined);
+    for (const entry of continuations) {
+      const record = this.agents.get(entry.id);
+      if (record === undefined || record.status !== "queued") continue;
+      this.stopQueuedRecord(record, "shutdown", reason);
+      entry.finalize?.(false);
+      count++;
+    }
+    return count;
+  }
+
+  /** Terminal state for a queued record that will never start. */
+  private stopQueuedRecord(record: AgentRecord, cause: CancellationCause, reason: string): void {
+    record.status = "stopped";
+    this.requestCancellation(record, record.resultGeneration ?? 1, cause, reason);
+    record.completedAt = Date.now();
+    publishTerminalResult(record);
+  }
+
+  /** Validate and apply a caller-selected model to an idle child session. */
+  private async applyResumeModel(
+    record: AgentRecord,
+    session: AgentSession,
+    input: string,
+  ): Promise<void> {
+    const model = this.resolveResumeModel(record, input);
+    try {
+      if (this.runner.setSessionModel === undefined) {
+        await session.setModel(model);
+      } else {
+        await this.runner.setSessionModel(session, model);
+      }
+    } catch (error) {
+      throw new ResumeModelError(
+        `Failed to switch agent to "${input}": ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Synchronous validation of a resume's `provider/id`: format, registry,
+   * authentication, the parent's scope, and owner-scoped availability.
+   */
+  private resolveResumeModel(record: AgentRecord, input: string): Model<Api> {
+    const slash = input.indexOf("/");
+    if (slash <= 0 || slash === input.length - 1) {
+      throw new ResumeModelError(`Invalid model "${input}": expected provider/id.`);
+    }
+    const provider = input.slice(0, slash);
+    const modelId = input.slice(slash + 1);
+    const scope = this.usageScopes.get(record.id);
+    const registry = scope?.modelRegistry;
+    if (scope === undefined || registry === undefined) {
+      throw new ResumeModelError(
+        `Cannot resolve model "${input}": no model registry is available for this agent.`,
+      );
+    }
+    let model: Model<Api> | undefined;
+    let available: ModelEntry[] = [];
+    try {
+      model = registry.find(provider, modelId);
+      available = registry.getAvailable?.() ?? registry.getAll();
+    } catch {
+      model = undefined;
+    }
+    const wanted = input.toLowerCase();
+    if (
+      model === undefined ||
+      !available.some((entry) => `${entry.provider}/${entry.id}`.toLowerCase() === wanted)
+    ) {
+      throw new ResumeModelError(
+        `Model not available: "${input}" (unknown to the registry or missing authentication).`,
+      );
+    }
+    const verdict = checkModelScope({
+      model,
+      cwd: scope.cwd,
+      modelRegistry: registry,
+      callerSupplied: true,
+      agentLabel: record.type,
+      modelInput: input,
+    });
+    if (verdict.kind === "error") throw new ResumeModelError(verdict.message);
+    const targetKey = model.provider.toLowerCase();
+    const block = this.providerBlock(targetKey, scope.owner);
+    if (block !== undefined) {
+      throw new ResumeModelError(providerUnavailableMessage(targetKey, block.closure));
+    }
+    return model;
+  }
+
+  /** A live or unsettled run owns the record; resume() refuses it silently. */
+  private resumeBlockedByRun(id: string, record: AgentRecord): boolean {
+    return (
+      record.status === "running" ||
+      record.status === "queued" ||
+      (record.resultGeneration !== undefined &&
+        record.terminalResultGeneration !== record.resultGeneration) ||
+      this.resumeReservations.has(id)
+    );
+  }
+
+  /** Throw the owner-scoped availability refusal for the record's current provider. */
+  private assertResumeProviderOpen(id: string, session: AgentSession): void {
+    const key = (session.model?.provider ?? "unknown").toLowerCase();
+    const block = this.providerBlock(key, this.usageScopes.get(id)?.owner);
+    if (block !== undefined) {
+      throw new ResumeModelError(providerUnavailableMessage(key, block.closure));
+    }
+  }
+
+  /**
+   * Side-effect-free pre-check for callers that prepare a resume (output file,
+   * notification ids) before calling `resume()`. Returns false where `resume()`
+   * would return undefined without starting (unknown, no session, live run,
+   * pending model switch); throws the same `ResumeModelError` it would throw
+   * for an invalid model or a closed provider. `resume()` re-checks everything.
+   */
+  assertResumable(id: string, model?: string): boolean {
+    const record = this.agents.get(id);
+    if (this.disposed || !record?.session || this.resumeBlockedByRun(id, record)) return false;
+    if (model === undefined) this.assertResumeProviderOpen(id, record.session);
+    else this.resolveResumeModel(record, model);
+    return true;
+  }
+
+  /** Start (or queue) a detached resume generation; shared by resume() and wake-ups. */
+  private queueBackgroundResume(
+    id: string,
+    record: AgentRecord,
+    prompt: string,
+    signal: AbortSignal | undefined,
+    options: ResumeOptions,
+    hooks: {
+      onRunStarted?: (promise: Promise<string>) => void;
+      finalize?: QueuedFinalizer;
+      repark?: () => void;
+    } = {},
+  ): void {
+    record.isBackground = true;
+    beginResultGeneration(record);
+    record.result = undefined;
+    record.error = undefined;
+    record.cancellation = undefined;
+    record.completedAt = undefined;
+    record.status = "queued";
+
+    const start = () => {
+      this.startResume(id, record, prompt, signal, options);
+      if (record.promise !== undefined) hooks.onRunStarted?.(record.promise);
+    };
+    if (occupiesPoolSlot(record) && this.runningBackground >= this.getSchedulingMaxConcurrent()) {
+      // At the concurrency limit — queue it, drains when a slot frees.
+      this.queue.push({
+        id,
+        providerKey: (record.session?.model?.provider ?? "unknown").toLowerCase(),
+        start,
+        finalize: hooks.finalize,
+        repark: hooks.repark,
+      });
+    } else {
+      start();
+    }
   }
 
   private requestCancellation(
@@ -452,7 +1450,10 @@ export class AgentManager {
     // can fix and retry; the RPC layer converts throws into error envelopes.
     assertValidSpawnCwd(options.cwd);
     const providerKey = providerKeyFor(options, ctx);
-    if (!this.isProviderAvailable(providerKey)) throw new ProviderUnavailableError(providerKey);
+    const usageScope = this.captureUsageScope(ctx, options);
+    if (!this.isProviderAvailable(providerKey, usageScope.owner)) {
+      throw this.unavailableError(providerKey, usageScope.owner);
+    }
 
     const id = randomUUID().slice(0, 17);
     const inheritedFastMode = snapshotFastMode(ctx.sessionManager?.getSessionId?.());
@@ -505,6 +1506,7 @@ export class AgentManager {
         : undefined;
     let previousTombstoneId: string | undefined;
     this.agents.set(id, record);
+    this.usageScopes.set(id, usageScope);
     // The retained tombstone now describes this live incarnation. Besides
     // proving ownership for later alias rebinding, moving its id prevents the
     // evicted id from reopening a duplicate while this reclaimed record exists.
@@ -544,6 +1546,7 @@ export class AgentManager {
       this.startAgent(id, record, args);
     } catch (err) {
       this.agents.delete(id);
+      this.usageScopes.delete(id);
       if (
         previousTombstoneId !== undefined &&
         reclaimedTombstone !== undefined &&
@@ -567,7 +1570,23 @@ export class AgentManager {
     // curated errors; drainQueue parks a throw on the record as an error.
     assertValidSpawnCwd(options.cwd);
     const providerKey = providerKeyFor(options, ctx);
-    if (!this.isProviderAvailable(providerKey)) throw new ProviderUnavailableError(providerKey);
+    const owner = this.usageScopes.get(id)?.owner;
+    if (!this.isProviderAvailable(providerKey, owner)) {
+      throw this.unavailableError(providerKey, owner);
+    }
+    // Snapshot the requested model now; settle-time code must not read a ctx
+    // the host may have retired. The live session model wins when available.
+    const runModel = modelRefOf(options.model ?? ctx.model);
+    // Continuation callbacks for a post-reset resume. A foreground caller's
+    // callbacks stream into a tool call that has already returned, so drop them.
+    const wakeResumeOptions: ResumeOptions = options.isBackground
+      ? {
+          budgets: options.budgets,
+          onToolActivity: options.onToolActivity,
+          onAssistantUsage: options.onAssistantUsage,
+          onCompaction: options.onCompaction,
+        }
+      : { budgets: options.budgets };
     // Single resolution point for the caller-supplied cwd — the worktree base
     // repo and both cleanup calls below MUST agree on this value forever.
     const customCwd = options.cwd ?? undefined; // null (RPC "unset") → undefined
@@ -745,6 +1764,40 @@ export class AgentManager {
       .then(async ({ responseText, session, aborted, steered, failure }) => {
         try {
           runBudget.controller?.dispose();
+          // Before detach: a parent abort during evaluation must still cancel.
+          const usageDecision = aborted
+            ? undefined
+            : await this.evaluateRunUsageLimit(
+                record,
+                runGeneration,
+                runBudget,
+                failure,
+                providerKey,
+                modelRefOf(session?.model) ?? runModel,
+                session ?? record.session,
+                canParkForReset(record),
+                "reported",
+              );
+          if (usageDecision?.park === true) {
+            // Parked: keep the session, transcript stream, and any worktree for
+            // the same-model continuation; publish nothing yet. The worktree is
+            // cleaned on the task's final settle, whichever path reaches it.
+            detach();
+            record.session = session;
+            record.result = responseText;
+            record.error = failure;
+            if (record.worktree !== undefined) {
+              this.deferredWorktrees.set(id, () =>
+                this.cleanupRecordWorktree(pi, record, baseCwd, customCwd, options.description),
+              );
+            }
+            this.abortOwnedChildren(id);
+            releaseRunPoolSlot();
+            currentRunSettled = true;
+            this.parkForReset(record, runGeneration, usageDecision, providerKey, wakeResumeOptions);
+            this.drainQueue();
+            return responseText;
+          }
           let finalResult = responseText;
           let terminalStatus: AgentRecord["status"];
           if (aborted) {
@@ -806,7 +1859,13 @@ export class AgentManager {
           if (runBudget.forcedReason !== undefined) record.error = runBudget.forcedReason;
           else if (record.cancellation?.generation === runGeneration) {
             record.error = record.cancellation.reason;
-          } else if (failure) record.error = failure;
+          } else if (failure) {
+            record.error =
+              usageDecision === undefined
+                ? failure
+                : withUsageLimitNote(failure, usageDecision.usageLimit);
+          }
+          if (usageDecision !== undefined) record.usageLimit = usageDecision.usageLimit;
           record.result = finalResult;
           record.session = session;
           record.completedAt ??= Date.now();
@@ -814,12 +1873,14 @@ export class AgentManager {
             record.cancellation?.generation !== runGeneration &&
             runBudget.forcedStatus === undefined
           ) {
-            if (failure !== undefined) {
+            // A usage-limit decision already applied its own closure via closeUntil.
+            if (failure !== undefined && usageDecision === undefined) {
               const kind = classifyTerminalFailure(failure);
               if (kind) recordFailure(providerKey, kind, retryAfterMsFromFailure(failure));
-            } else if (!aborted) recordSuccess(providerKey);
+            } else if (failure === undefined && !aborted) recordSuccess(providerKey);
           }
           publishTerminalResult(record);
+          if (usageDecision !== undefined) this.notifyUsageLimit(record);
 
           this.abortOwnedChildren(id);
 
@@ -969,9 +2030,18 @@ export class AgentManager {
       const next = this.queue.shift()!;
       const record = this.agents.get(next.id);
       if (!record || record.status !== "queued") continue;
-      if (!this.isProviderAvailable(next.providerKey)) {
+      const owner = this.usageScopes.get(next.id)?.owner;
+      const block = this.providerBlock(next.providerKey, owner);
+      // A post-reset continuation whose account was closed again by a usage
+      // limit waits for the new reset instead of dispatching or dropping; a
+      // transient closure from another run must not hold or drop the task.
+      if (block?.usage === true && next.repark !== undefined) {
+        next.repark();
+        continue;
+      }
+      if (next.finalize === undefined && block !== undefined) {
         record.status = "error";
-        record.error = new ProviderUnavailableError(next.providerKey).message;
+        record.error = providerUnavailableMessage(next.providerKey.toLowerCase(), block.closure);
         record.completedAt = Date.now();
         publishTerminalResult(record);
         this.onComplete?.(record);
@@ -986,7 +2056,8 @@ export class AgentManager {
         record.error = err instanceof Error ? err.message : String(err);
         record.completedAt = Date.now();
         publishTerminalResult(record);
-        this.onComplete?.(record);
+        if (next.finalize === undefined) this.onComplete?.(record);
+        else next.finalize(true);
       }
     }
   }
@@ -1046,14 +2117,44 @@ export class AgentManager {
     // A live run cannot be resumed safely in either mode: it owns the record's
     // abort controller and session prompt. Refuse before changing its alias or
     // any run state so a failed attempt leaves every address intact.
-    if (
-      record.status === "running" ||
-      record.status === "queued" ||
-      (record.resultGeneration !== undefined &&
-        record.terminalResultGeneration !== record.resultGeneration)
-    ) {
-      return undefined;
+    // Another resume may also hold this record across its asynchronous model
+    // switch. Refuse before any side effect: the host applies a model after
+    // async authentication with no running check, so two switches must never
+    // overlap.
+    if (this.resumeBlockedByRun(id, record)) return undefined;
+
+    // Model switch first, before any alias or run state changes, so a refused
+    // or failed switch leaves the record exactly as it was.
+    if (options?.model !== undefined) {
+      const session = record.session;
+      const generation = record.resultGeneration;
+      // Reserved synchronously, before the first await; released only after the
+      // switch settles, and everything from there to the new generation's
+      // running/queued state is synchronous.
+      this.resumeReservations.add(id);
+      try {
+        await this.applyResumeModel(record, session, options.model);
+      } finally {
+        this.resumeReservations.delete(id);
+      }
+      if (
+        this.disposed ||
+        this.agents.get(id) !== record ||
+        record.session !== session ||
+        record.resultGeneration !== generation ||
+        ownsUnsettledGeneration(record)
+      ) {
+        return undefined;
+      }
     }
+    // Same owner-scoped availability gate as spawn, for every resumed dispatch
+    // (with or without a model, foreground or background). Synchronous and
+    // before any state change; with a model it re-checks the switched target.
+    this.assertResumeProviderOpen(id, record.session);
+    // A caller-initiated resume starts a new task outcome; the previous
+    // chain's usage-limit block no longer describes it.
+    record.usageLimit = undefined;
+    this.wakeRuns.delete(id);
 
     if (options?.name !== undefined) {
       const previousAlias = record.alias;
@@ -1089,25 +2190,7 @@ export class AgentManager {
     // returned before its background branch, and resume() only ever awaited
     // inline), so a resumed agent always blocked the caller until it finished.
     if (options?.isBackground) {
-      record.isBackground = true;
-      beginResultGeneration(record);
-      record.result = undefined;
-      record.error = undefined;
-      record.cancellation = undefined;
-      record.completedAt = undefined;
-      record.status = "queued";
-
-      const start = () => this.startResume(id, record, prompt, signal, options);
-      if (occupiesPoolSlot(record) && this.runningBackground >= this.getSchedulingMaxConcurrent()) {
-        // At the concurrency limit — queue it, drains when a slot frees.
-        this.queue.push({
-          id,
-          providerKey: (record.session.model?.provider ?? "unknown").toLowerCase(),
-          start,
-        });
-      } else {
-        start();
-      }
+      this.queueBackgroundResume(id, record, prompt, signal, options);
       return record;
     }
 
@@ -1133,6 +2216,7 @@ export class AgentManager {
     else signal?.addEventListener("abort", onParentAbort, { once: true });
     const runBudget = this.armRunBudgets(record, runGeneration, options?.budgets, abortController);
     const session = record.session;
+    const resumeProviderKey = (session.model?.provider ?? "unknown").toLowerCase();
 
     const resumePromise = (async (): Promise<AgentRecord> => {
       try {
@@ -1156,10 +2240,33 @@ export class AgentManager {
           },
           signal: abortController.signal,
         });
+        // A limit under auto-resume parks exactly like a foreground spawn: the
+        // caller gets the paused record now and the outcome as a notification.
+        const usageDecision = await this.evaluateRunUsageLimit(
+          record,
+          runGeneration,
+          runBudget,
+          failure,
+          resumeProviderKey,
+          modelRefOf(session.model),
+          session,
+          canParkForReset(record),
+          "reported",
+        );
         if (record.resultGeneration !== runGeneration) return record;
         if (this.disposed) {
           this.abortOwnedChildren(id);
           this.removeRecord(id, record);
+          return record;
+        }
+        if (usageDecision?.park === true) {
+          record.result = text;
+          record.error = failure;
+          this.abortOwnedChildren(id);
+          // The caller's streaming callbacks belong to a call that returns now.
+          this.parkForReset(record, runGeneration, usageDecision, resumeProviderKey, {
+            budgets: options?.budgets,
+          });
           return record;
         }
         // Same contract as the spawn path (#144): a failed final turn is an
@@ -1171,10 +2278,17 @@ export class AgentManager {
           record.error = cancellation.reason;
         }
         if (runBudget.forcedReason !== undefined) record.error = runBudget.forcedReason;
-        else if (failure) record.error = failure;
+        else if (failure) {
+          record.error =
+            usageDecision === undefined
+              ? failure
+              : withUsageLimitNote(failure, usageDecision.usageLimit);
+        }
+        if (usageDecision !== undefined) record.usageLimit = usageDecision.usageLimit;
         record.result = text;
         record.completedAt = Date.now();
         markResultGenerationConsumed(record);
+        if (usageDecision !== undefined) this.notifyUsageLimit(record);
       } catch (err) {
         if (record.resultGeneration !== runGeneration) return record;
         if (this.disposed) {
@@ -1224,6 +2338,7 @@ export class AgentManager {
     record.status = "running";
     record.startedAt = Date.now();
     const runGeneration = record.resultGeneration ?? 1;
+    const resumeProviderKey = (record.session.model?.provider ?? "unknown").toLowerCase();
     const runTookPoolSlot = occupiesPoolSlot(record);
     let runPoolSlotHeld = runTookPoolSlot;
     if (runTookPoolSlot) this.runningBackground++;
@@ -1287,6 +2402,7 @@ export class AgentManager {
     }
 
     const settle = () => {
+      if (this.wakeRuns.get(id) === runGeneration) this.wakeRuns.delete(id);
       runBudget.controller?.dispose();
       detach();
       // Final flush of streaming output file
@@ -1335,12 +2451,42 @@ export class AgentManager {
         },
         signal: abortController.signal,
       })
-      .then(({ text, failure }) => {
+      .then(async ({ text, failure }) => {
         try {
           runBudget.controller?.dispose();
+          // A post-reset continuation that hits the limit again is exhausted;
+          // any other resumed run may park like a fresh spawn.
+          const isWakeRun = this.wakeRuns.get(id) === runGeneration;
+          const usageDecision = await this.evaluateRunUsageLimit(
+            record,
+            runGeneration,
+            runBudget,
+            failure,
+            resumeProviderKey,
+            modelRefOf(record.session?.model),
+            record.session,
+            !isWakeRun && canParkForReset(record),
+            isWakeRun ? "exhausted" : "reported",
+          );
           if (record.resultGeneration !== runGeneration) return text;
           if (this.disposed) {
             settle();
+            return text;
+          }
+          if (usageDecision?.park === true) {
+            detach();
+            record.result = text;
+            record.error = failure;
+            this.abortOwnedChildren(id);
+            releaseRunPoolSlot();
+            currentRunSettled = true;
+            this.parkForReset(record, runGeneration, usageDecision, resumeProviderKey, {
+              budgets: options.budgets,
+              onToolActivity: options.onToolActivity,
+              onAssistantUsage: options.onAssistantUsage,
+              onCompaction: options.onCompaction,
+            });
+            this.drainQueue();
             return text;
           }
           // Don't overwrite status if externally stopped via abort().
@@ -1350,18 +2496,26 @@ export class AgentManager {
               // Same contract as the spawn path (#144): a failed final turn is an
               // error, not a completion — but the resumed text stays available.
               record.status = failure ? "error" : "completed";
-              if (failure) record.error = failure;
+              if (failure) {
+                record.error =
+                  usageDecision === undefined
+                    ? failure
+                    : withUsageLimitNote(failure, usageDecision.usageLimit);
+              }
             } else {
               record.status = forcedStatus;
               record.error = runBudget.forcedReason;
             }
           }
+          if (usageDecision !== undefined) record.usageLimit = usageDecision.usageLimit;
           if (record.cancellation?.generation === runGeneration && record.error === undefined) {
             record.error = record.cancellation.reason;
           }
           record.result = text;
           record.completedAt ??= Date.now();
+          this.finishDeferredWorktree(record);
           publishTerminalResult(record);
+          if (usageDecision !== undefined) this.notifyUsageLimit(record);
           settle();
           return text;
         } finally {
@@ -1385,6 +2539,7 @@ export class AgentManager {
             record.error = record.cancellation.reason;
           }
           record.completedAt ??= Date.now();
+          this.finishDeferredWorktree(record);
           publishTerminalResult(record);
           settle();
           return "";
@@ -1407,6 +2562,11 @@ export class AgentManager {
   steer(id: string, message: string): boolean {
     const record = this.agents.get(id);
     if (!record) return false;
+    // A parked session is idle; hold the message for the post-reset prompt.
+    if (record.status === "waiting_for_reset") {
+      (record.pendingSteers ??= []).push(message);
+      return true;
+    }
     if (record.status !== "running" && record.status !== "queued") return false;
     if (record.cancellation?.generation === (record.resultGeneration ?? 1)) return false;
     if (record.session) {
@@ -1524,7 +2684,11 @@ export class AgentManager {
   /** Active top-level background records governed by the shared pool cap. */
   getScheduledActiveCount(): number {
     return [...this.agents.values()].filter(
-      (record) => ownsUnsettledGeneration(record) && occupiesPoolSlot(record),
+      (record) =>
+        ownsUnsettledGeneration(record) &&
+        occupiesPoolSlot(record) &&
+        // Parked records hold no pool slot until their continuation starts.
+        record.status !== "waiting_for_reset",
     ).length;
   }
 
@@ -1532,18 +2696,30 @@ export class AgentManager {
     const record = this.agents.get(id);
     if (!record) return false;
 
+    // A parked record has no live run: cancel its wait and settle it now, with
+    // a terminal usage status so exactly one final event follows the park.
+    if (record.status === "waiting_for_reset") {
+      this.settleParked(record, this.usageWaits.get(id), {
+        status: "stopped",
+        usageStatus: "exhausted",
+        reason: "Stopped by user request.",
+        cause: "user_stop",
+        notify: true,
+      });
+      return true;
+    }
+
     // Remove from queue if queued
     if (record.status === "queued") {
+      const entry = this.queue.find((q) => q.id === id);
       this.queue = this.queue.filter((q) => q.id !== id);
-      record.status = "stopped";
-      this.requestCancellation(
-        record,
-        record.resultGeneration ?? 1,
-        "user_stop",
-        "Stopped by user request.",
-      );
-      record.completedAt = Date.now();
-      publishTerminalResult(record);
+      this.stopQueuedRecord(record, "user_stop", "Stopped by user request.");
+      // A queued post-reset continuation still owes the parked task's promise
+      // and its one final notification.
+      if (entry?.finalize !== undefined) {
+        entry.finalize(true);
+        return true;
+      }
       // Ordinary queued Agent calls historically settle without a completion
       // nudge. Workflow controllers still need this transition to reach their
       // aggregate/UI bookkeeping after cancellation.
@@ -1572,7 +2748,18 @@ export class AgentManager {
   /** Dispose a record's session and remove it from the map. */
   private removeRecord(id: string, record: AgentRecord): void {
     this.tombstone(record);
+    this.finishDeferredWorktree(record);
+    const wait = this.usageWaits.get(id);
+    if (wait?.timer !== undefined) clearTimeout(wait.timer);
+    this.usageWaits.delete(id);
+    this.usageScopes.delete(id);
+    this.wakeRuns.delete(id);
     if (record.session) {
+      try {
+        unregisterChildSessionId(record.session.sessionManager.getSessionId());
+      } catch {
+        /* a stub or retired session manager has no id to release */
+      }
       cleanupChildSessionOwner(record.session);
       record.session.dispose?.();
     }
@@ -1647,6 +2834,8 @@ export class AgentManager {
   /** Abort all running and queued agents immediately. */
   abortAll(): number {
     let count = 0;
+    // Parked records settle as stopped; nothing will read a notification now.
+    count += this.cancelUsageLimitWaits("Manager shutdown requested.");
     // Clear queued agents first
     for (const queued of this.queue) {
       const record = this.agents.get(queued.id);
@@ -1660,6 +2849,7 @@ export class AgentManager {
         );
         record.completedAt = Date.now();
         publishTerminalResult(record);
+        queued.finalize?.(false);
         count++;
       }
     }

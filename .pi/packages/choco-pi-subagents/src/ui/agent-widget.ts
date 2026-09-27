@@ -94,6 +94,7 @@ export interface AgentDetails {
     | "budget_exceeded"
     | "watchdog_stopped"
     | "error"
+    | "waiting_for_reset"
     | "background";
   /** Human-readable description of what the agent is currently doing. */
   activity?: string;
